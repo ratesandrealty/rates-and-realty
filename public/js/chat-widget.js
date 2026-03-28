@@ -79,6 +79,8 @@
       box-shadow: 0 12px 48px rgba(0,0,0,0.55);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Manrope, sans-serif;
       font-size: 14px;
+      touch-action: pan-y;
+      overscroll-behavior: contain;
     }
     #rr-chat-window.open { display: flex; }
 
@@ -334,12 +336,15 @@
     chatBtn.classList.remove('pulse');
     if (messagesEl.children.length === 0) initChat();
     setTimeout(() => chatInput.focus(), 120);
-    // Inject backdrop to block scroll bleed-through
+    // Lock page scroll while chat is open
+    document.body.style.overflow = 'hidden';
+    // Inject backdrop to block scroll bleed-through on mobile
     if (!document.getElementById('rr-chat-backdrop')) {
       const backdrop = document.createElement('div');
       backdrop.id = 'rr-chat-backdrop';
       backdrop.style.cssText = 'position:fixed;inset:0;z-index:2147483638;touch-action:none;';
       backdrop.addEventListener('click', closeChat);
+      backdrop.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive: false });
       document.body.appendChild(backdrop);
     }
   }
@@ -347,6 +352,7 @@
   function closeChat() {
     isOpen = false;
     chatWindow.classList.remove('open');
+    document.body.style.overflow = '';
     document.getElementById('rr-chat-backdrop')?.remove();
   }
 
