@@ -119,6 +119,8 @@
       flex: 1; overflow-y: auto; padding: 14px 14px 6px;
       display: flex; flex-direction: column; gap: 10px;
       scroll-behavior: smooth; min-height: 160px;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
     #rr-chat-messages::-webkit-scrollbar { width: 4px; }
     #rr-chat-messages::-webkit-scrollbar-track { background: transparent; }
@@ -319,6 +321,11 @@
   const sendBtn      = document.getElementById('rr-send-btn');
   const badge        = document.getElementById('rr-chat-badge');
 
+  // Prevent touch scroll bleed-through to page
+  chatWindow.addEventListener('touchmove', function(e) {
+    e.stopPropagation();
+  }, { passive: true });
+
   // ── Open / Close ────────────────────────────────────────────────────
   function openChat() {
     isOpen = true;
@@ -327,11 +334,20 @@
     chatBtn.classList.remove('pulse');
     if (messagesEl.children.length === 0) initChat();
     setTimeout(() => chatInput.focus(), 120);
+    // Inject backdrop to block scroll bleed-through
+    if (!document.getElementById('rr-chat-backdrop')) {
+      const backdrop = document.createElement('div');
+      backdrop.id = 'rr-chat-backdrop';
+      backdrop.style.cssText = 'position:fixed;inset:0;z-index:2147483638;touch-action:none;';
+      backdrop.addEventListener('click', closeChat);
+      document.body.appendChild(backdrop);
+    }
   }
 
   function closeChat() {
     isOpen = false;
     chatWindow.classList.remove('open');
+    document.getElementById('rr-chat-backdrop')?.remove();
   }
 
   chatBtn.addEventListener('click', () => isOpen ? closeChat() : openChat());
