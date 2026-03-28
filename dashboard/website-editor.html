@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-03P16TMWM8"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-03P16TMWM8');
+  </script>
+  <title>Website Editor | Rates & Realty</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/components/styles.css">
+
+  <!-- GrapesJS -->
+  <link rel="stylesheet" href="https://unpkg.com/grapesjs/dist/css/grapes.min.css">
+  <script src="https://unpkg.com/grapesjs"></script>
+  <script src="https://unpkg.com/grapesjs-blocks-basic"></script>
+
+  <style>
+    body { overflow: hidden; }
+    #site-header { flex-shrink: 0; }
+    .editor-layout {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      height: calc(100vh - 76px);
+      overflow: hidden;
+    }
+    .editor-sidebar {
+      background: rgba(8,8,8,0.98);
+      border-right: 1px solid rgba(255,255,255,0.08);
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .editor-sidebar-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: rgba(182,171,147,0.45);
+      padding: 12px 4px 4px;
+    }
+    .editor-page-btn {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: none;
+      color: #b6ab93;
+      font-size: 0.85rem;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      font-family: "Manrope", sans-serif;
+    }
+    .editor-page-btn:hover, .editor-page-btn.is-active {
+      border-color: rgba(215,175,82,0.3);
+      color: #f0cb79;
+      background: rgba(215,175,82,0.08);
+    }
+    .editor-main {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .editor-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(8,8,8,0.98);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .editor-toolbar-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #f6f1e8;
+      flex: 1;
+    }
+    .editor-status {
+      font-size: 0.78rem;
+      color: #b6ab93;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .editor-canvas { flex: 1; overflow: hidden; position: relative; }
+    #gjs { height: 100% !important; }
+
+    /* Override GrapesJS theme to match dark CRM */
+    .gjs-one-bg { background-color: #0a0a0a !important; }
+    .gjs-two-color { color: #f6f1e8 !important; }
+    .gjs-three-bg { background-color: #141414 !important; }
+    .gjs-four-color, .gjs-four-color-h:hover { color: #d7af52 !important; }
+    .gjs-cv-canvas { background: #1a1a1a !important; }
+    .gjs-pn-panel { background-color: #0d0d0d !important; border-color: rgba(255,255,255,0.08) !important; }
+    .gjs-pn-btn { color: #b6ab93 !important; }
+    .gjs-pn-btn.gjs-pn-active, .gjs-pn-btn:hover { color: #d7af52 !important; }
+    .gjs-block { border-color: rgba(255,255,255,0.1) !important; background: #111 !important; color: #d4cbb8 !important; }
+    .gjs-block:hover { border-color: rgba(215,175,82,0.3) !important; }
+    .gjs-block-label { color: #b6ab93 !important; }
+    .gjs-title { background: #0d0d0d !important; color: #d7af52 !important; border-color: rgba(255,255,255,0.08) !important; }
+    .gjs-layer { background: #111 !important; color: #d4cbb8 !important; }
+    .gjs-layer:hover { background: #1a1a1a !important; }
+    .gjs-clm-tag { background: rgba(215,175,82,0.1) !important; color: #d7af52 !important; }
+
+    /* Save indicator */
+    #save-indicator {
+      position: fixed;
+      top: 90px;
+      right: 20px;
+      z-index: 999;
+      padding: 8px 18px;
+      border-radius: 999px;
+      background: rgba(159,211,170,0.15);
+      border: 1px solid rgba(159,211,170,0.25);
+      color: #9fd3aa;
+      font-size: 0.82rem;
+      font-weight: 600;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    #save-indicator.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <div class="editor-layout">
+    <!-- Sidebar -->
+    <aside class="editor-sidebar">
+      <div style="margin-bottom:8px;">
+        <a href="/dashboard/admin.html" class="editor-page-btn" style="display:flex;align-items:center;gap:8px;">
+          <svg viewBox="0 0 20 20" fill="none" width="14" height="14"><path d="M12 4L6 10l6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Back to CRM
+        </a>
+      </div>
+
+      <div class="editor-sidebar-label">Pages</div>
+      <button class="editor-page-btn is-active" data-page="index" data-path="/index.html">
+        🏠 Home Page
+      </button>
+      <button class="editor-page-btn" data-page="about" data-path="/public/about.html">
+        👤 About Page
+      </button>
+      <button class="editor-page-btn" data-page="contact" data-path="/public/contact.html">
+        ✉ Contact Page
+      </button>
+
+      <div class="editor-sidebar-label">Actions</div>
+      <button class="editor-page-btn" id="save-btn">
+        💾 Save Page
+      </button>
+      <button class="editor-page-btn" id="preview-btn">
+        👁 Live Preview
+      </button>
+      <button class="editor-page-btn" id="clear-btn">
+        🗑 Clear Canvas
+      </button>
+
+      <div class="editor-sidebar-label">Note</div>
+      <p style="font-size:0.78rem;color:rgba(182,171,147,0.5);line-height:1.6;padding:0 4px;">
+        Build visually with drag-and-drop blocks. Click "Save Page" to export HTML. For live editing, serve pages through a local server.
+      </p>
+    </aside>
+
+    <!-- Main Editor Area -->
+    <div class="editor-main">
+      <div class="editor-toolbar">
+        <span class="editor-toolbar-title" id="current-page-label">Home Page</span>
+        <span class="editor-status" id="editor-status">Ready</span>
+        <button class="btn btn-secondary btn-sm" id="toolbar-undo">↩ Undo</button>
+        <button class="btn btn-secondary btn-sm" id="toolbar-redo">↪ Redo</button>
+        <button class="btn btn-ghost btn-sm" id="toolbar-fullscreen">⛶ Fullscreen</button>
+        <button class="btn btn-primary btn-sm" id="toolbar-save">Save</button>
+      </div>
+
+      <div class="editor-canvas">
+        <div id="gjs"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="save-indicator">✓ Saved</div>
+
+  <script type="module" src="/components/layout.js"></script>
+  <script type="module">
+    import { requireAdmin } from "/api/auth-api.js";
+
+    try {
+      await requireAdmin();
+    } catch (_) {
+      window.location.href = "/auth/index.html";
+    }
+
+    const PAGE_LABELS = {
+      index: "Home Page",
+      about: "About Page",
+      contact: "Contact Page"
+    };
+
+    const STORAGE_KEY = "rnr_editor_";
+    let currentPage = "index";
+    let currentPath = "/index.html";
+
+    // Initialize GrapesJS
+    const editor = grapesjs.init({
+      container: "#gjs",
+      height: "100%",
+      storageManager: false,
+      deviceManager: {
+        devices: [
+          { name: "Desktop", width: "" },
+          { name: "Tablet", width: "768px", widthMedia: "768px" },
+          { name: "Mobile", width: "375px", widthMedia: "375px" }
+        ]
+      },
+      panels: {
+        defaults: [
+          {
+            id: "panel-top",
+            el: ".editor-toolbar",
+            buttons: [
+              { id: "set-indesktop", className: "gjs-pn-btn", label: "🖥", command: "set-device-desktop", active: true, togglable: false },
+              { id: "set-intablet", className: "gjs-pn-btn", label: "📱", command: "set-device-tablet", togglable: false },
+              { id: "set-inmobile", className: "gjs-pn-btn", label: "📲", command: "set-device-mobile", togglable: false }
+            ]
+          },
+          { id: "panel-switcher", el: ".editor-toolbar", buttons: [] },
+          {
+            id: "basic-actions",
+            el: ".editor-toolbar",
+            buttons: [
+              { id: "visibility", className: "gjs-pn-btn", label: "🔲", command: "sw-visibility", active: true },
+              { id: "preview", className: "gjs-pn-btn", label: "👁", command: "preview" },
+              { id: "fullscreen", className: "gjs-pn-btn", label: "⛶", command: "fullscreen" }
+            ]
+          }
+        ]
+      },
+      plugins: ["gjs-blocks-basic"],
+      pluginsOpts: {
+        "gjs-blocks-basic": {
+          flexGrid: true,
+          category: "Layout"
+        }
+      },
+      canvas: {
+        styles: [
+          "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap"
+        ]
+      }
+    });
+
+    // Load stored content for current page
+    function loadPage(pageKey) {
+      const stored = localStorage.getItem(STORAGE_KEY + pageKey);
+      if (stored) {
+        try {
+          const data = JSON.parse(stored);
+          editor.setComponents(data.html || "");
+          editor.setStyle(data.css || "");
+          setStatus("Loaded from local storage");
+        } catch (_) {
+          setStatus("Error loading page");
+        }
+      } else {
+        // Load default starter for the page
+        fetchPageContent(pageKey);
+      }
+    }
+
+    async function fetchPageContent(pageKey) {
+      const paths = { index: "/index.html", about: "/public/about.html", contact: "/public/contact.html" };
+      try {
+        setStatus("Loading page...");
+        const res = await fetch(paths[pageKey] || "/index.html");
+        const html = await res.text();
+        // Extract body content
+        const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+        const bodyContent = match ? match[1].trim() : html;
+        editor.setComponents(bodyContent);
+        setStatus("Page loaded");
+      } catch (err) {
+        setStatus("Could not fetch page — start from scratch");
+        editor.setComponents("<div style='padding:40px;text-align:center;color:#b6ab93;'>Start building your page here.</div>");
+      }
+    }
+
+    function savePage() {
+      const html = editor.getHtml();
+      const css = editor.getCss();
+      localStorage.setItem(STORAGE_KEY + currentPage, JSON.stringify({ html, css, savedAt: new Date().toISOString() }));
+      showSaved();
+      setStatus("Saved to local storage");
+
+      // Also copy to clipboard as full HTML for manual use
+      const fullHtml = buildFullHtml(html, css);
+      // Store full export
+      localStorage.setItem(STORAGE_KEY + currentPage + "_export", fullHtml);
+    }
+
+    function buildFullHtml(html, css) {
+      return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rates &amp; Realty</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/components/styles.css">
+  <style>${css}</style>
+</head>
+<body>
+${html}
+</body>
+</html>`;
+    }
+
+    function setStatus(msg) {
+      const el = document.getElementById("editor-status");
+      if (el) el.textContent = msg;
+    }
+
+    function showSaved() {
+      const ind = document.getElementById("save-indicator");
+      if (!ind) return;
+      ind.classList.add("show");
+      setTimeout(() => ind.classList.remove("show"), 2200);
+    }
+
+    // Page switcher buttons
+    document.querySelectorAll("[data-page]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-page]").forEach((b) => b.classList.remove("is-active"));
+        btn.classList.add("is-active");
+        currentPage = btn.dataset.page;
+        currentPath = btn.dataset.path;
+        document.getElementById("current-page-label").textContent = PAGE_LABELS[currentPage] || currentPage;
+        loadPage(currentPage);
+      });
+    });
+
+    // Save button
+    document.getElementById("save-btn")?.addEventListener("click", savePage);
+    document.getElementById("toolbar-save")?.addEventListener("click", savePage);
+
+    // Preview button
+    document.getElementById("preview-btn")?.addEventListener("click", () => {
+      const html = editor.getHtml();
+      const css = editor.getCss();
+      const full = buildFullHtml(html, css);
+      const blob = new Blob([full], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    });
+
+    // Clear button
+    document.getElementById("clear-btn")?.addEventListener("click", () => {
+      if (confirm("Clear the canvas? This will remove all content for this page.")) {
+        editor.setComponents("");
+        editor.setStyle("");
+        localStorage.removeItem(STORAGE_KEY + currentPage);
+        setStatus("Canvas cleared");
+      }
+    });
+
+    // Undo/Redo
+    document.getElementById("toolbar-undo")?.addEventListener("click", () => editor.runCommand("core:undo"));
+    document.getElementById("toolbar-redo")?.addEventListener("click", () => editor.runCommand("core:redo"));
+
+    // Auto-save every 60 seconds
+    setInterval(() => {
+      if (editor.getDirtyCount() > 0) {
+        savePage();
+        editor.store();
+      }
+    }, 60000);
+
+    // Load initial page
+    loadPage(currentPage);
+  </script>
+</body>
+</html>

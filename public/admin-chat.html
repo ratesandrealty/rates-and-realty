@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat Conversations — Rates & Realty CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/components/styles.css" />
+  <script src="/api/env.js"></script>
+  <script src="/components/layout.js" defer></script>
+  <style>
+    body { background: #060606; color: #f6f1e8; font-family: 'Manrope', sans-serif; }
+
+    .chat-admin-wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 100px 24px 80px;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 36px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .page-header h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 2.2rem;
+      font-weight: 600;
+      color: #f6f1e8;
+      margin: 0;
+    }
+    .page-header p { color: #b6ab93; margin: 4px 0 0; font-size: 0.9rem; }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 36px;
+    }
+    .stat-card {
+      background: rgba(16,16,16,0.9);
+      border: 1px solid rgba(201,168,76,0.15);
+      border-radius: 16px;
+      padding: 20px 24px;
+    }
+    .stat-card .label { font-size: 0.72rem; color: #b6ab93; text-transform: uppercase; letter-spacing: .1em; margin-bottom: 8px; }
+    .stat-card .value { font-family: 'Cormorant Garamond', serif; font-size: 2rem; color: #C9A84C; font-weight: 700; }
+
+    .filter-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filter-bar input {
+      flex: 1;
+      min-width: 200px;
+      padding: 9px 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: #f6f1e8;
+      font-size: 0.88rem;
+      font-family: 'Manrope', sans-serif;
+      outline: none;
+    }
+    .filter-bar input:focus { border-color: rgba(201,168,76,0.4); }
+    .filter-btn {
+      padding: 9px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.04);
+      color: #b6ab93;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .filter-btn:hover, .filter-btn.active { border-color: rgba(201,168,76,0.4); color: #C9A84C; background: rgba(201,168,76,0.06); }
+
+    .conv-table {
+      background: rgba(14,14,14,0.98);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 20px;
+      overflow: hidden;
+    }
+    .conv-table-head {
+      display: grid;
+      grid-template-columns: 2fr 1.5fr 2fr 1fr 80px;
+      gap: 0;
+      padding: 12px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      background: rgba(255,255,255,0.02);
+    }
+    .conv-table-head span {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: #b6ab93;
+    }
+
+    .conv-row {
+      display: grid;
+      grid-template-columns: 2fr 1.5fr 2fr 1fr 80px;
+      gap: 0;
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      cursor: pointer;
+      transition: background .15s;
+      align-items: center;
+    }
+    .conv-row:last-child { border-bottom: none; }
+    .conv-row:hover { background: rgba(255,255,255,0.03); }
+    .conv-row.unread { background: rgba(201,168,76,0.04); }
+
+    .conv-session { font-size: 0.78rem; color: #b6ab93; font-family: monospace; }
+    .conv-guest strong { font-size: 0.88rem; color: #f6f1e8; display: block; }
+    .conv-guest span { font-size: 0.76rem; color: #b6ab93; }
+    .conv-preview { font-size: 0.82rem; color: #b6ab93; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+    .conv-time { font-size: 0.76rem; color: #b6ab93; }
+    .conv-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+    .badge-unread {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: #C9A84C;
+      color: #111;
+      font-size: 0.65rem;
+      font-weight: 800;
+      margin-left: 6px;
+    }
+
+    /* Expanded transcript panel */
+    .transcript-panel {
+      display: none;
+      grid-column: 1 / -1;
+      background: rgba(8,8,8,0.98);
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding: 20px;
+    }
+    .transcript-panel.open { display: block; }
+    .transcript-msg {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .transcript-msg .role {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: 3px 8px;
+      border-radius: 6px;
+      flex-shrink: 0;
+      height: fit-content;
+      margin-top: 2px;
+    }
+    .transcript-msg.user .role { background: rgba(201,168,76,0.15); color: #C9A84C; }
+    .transcript-msg.assistant .role { background: rgba(126,184,232,0.1); color: #7eb8e8; }
+    .transcript-msg .text { font-size: 0.86rem; color: #d4cbb8; line-height: 1.6; }
+
+    .btn-view-crm {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 8px;
+      background: rgba(201,168,76,0.1);
+      border: 1px solid rgba(201,168,76,0.25);
+      color: #C9A84C;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-decoration: none;
+      transition: all .15s;
+    }
+    .btn-view-crm:hover { background: rgba(201,168,76,0.18); }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #b6ab93;
+    }
+    .empty-state .icon { font-size: 3rem; margin-bottom: 16px; }
+    .empty-state h3 { font-size: 1.2rem; color: #f6f1e8; margin-bottom: 8px; }
+
+    .loading-spinner {
+      text-align: center;
+      padding: 60px 20px;
+      color: #b6ab93;
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 768px) {
+      .stats-row { grid-template-columns: 1fr 1fr; }
+      .conv-table-head { display: none; }
+      .conv-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+        padding: 14px 16px;
+      }
+      .conv-actions { justify-content: flex-start; margin-top: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <div class="chat-admin-wrap">
+    <div class="page-header">
+      <div>
+        <h1>Chat Conversations</h1>
+        <p>AI chat sessions from the public-facing widget</p>
+      </div>
+      <a href="/dashboard/admin.html" class="btn-view-crm">← Back to CRM</a>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="stats-row" id="stats-row">
+      <div class="stat-card"><div class="label">Total Sessions</div><div class="value" id="stat-total">—</div></div>
+      <div class="stat-card"><div class="label">With Email</div><div class="value" id="stat-email">—</div></div>
+      <div class="stat-card"><div class="label">Today</div><div class="value" id="stat-today">—</div></div>
+      <div class="stat-card"><div class="label">This Week</div><div class="value" id="stat-week">—</div></div>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="filter-bar">
+      <input type="text" id="search-input" placeholder="Search by name, email, or message…" oninput="filterRows()" />
+      <button class="filter-btn active" onclick="setFilter('all', this)">All</button>
+      <button class="filter-btn" onclick="setFilter('with-email', this)">With Email</button>
+      <button class="filter-btn" onclick="setFilter('today', this)">Today</button>
+      <button class="filter-btn" onclick="loadConversations()">↻ Refresh</button>
+    </div>
+
+    <!-- Table -->
+    <div class="conv-table" id="conv-table">
+      <div class="loading-spinner">Loading conversations…</div>
+    </div>
+  </div>
+
+  <div id="site-footer"></div>
+
+  <script src="/api/env.js"></script>
+  <script>
+    const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+    const headers = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' };
+
+    let allConversations = [];
+    let currentFilter = 'all';
+
+    async function loadConversations() {
+      const table = document.getElementById('conv-table');
+      table.innerHTML = '<div class="loading-spinner">Loading conversations…</div>';
+
+      try {
+        const res = await fetch(`${SB_URL}/rest/v1/chat_conversations?select=*&order=last_message_at.desc&limit=200`, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        allConversations = await res.json();
+        updateStats(allConversations);
+        renderTable(allConversations);
+      } catch (err) {
+        table.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><h3>Could not load conversations</h3><p>${err.message}</p></div>`;
+      }
+    }
+
+    function updateStats(rows) {
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const weekAgo = new Date(now - 7 * 86400000).toISOString();
+
+      document.getElementById('stat-total').textContent = rows.length;
+      document.getElementById('stat-email').textContent = rows.filter(r => r.guest_email).length;
+      document.getElementById('stat-today').textContent = rows.filter(r => r.last_message_at?.slice(0, 10) === todayStr).length;
+      document.getElementById('stat-week').textContent = rows.filter(r => r.last_message_at >= weekAgo).length;
+    }
+
+    function setFilter(f, btn) {
+      currentFilter = f;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyFilters();
+    }
+
+    function filterRows() { applyFilters(); }
+
+    function applyFilters() {
+      const q = document.getElementById('search-input').value.toLowerCase();
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+
+      let filtered = allConversations.filter(r => {
+        if (currentFilter === 'with-email' && !r.guest_email) return false;
+        if (currentFilter === 'today' && r.last_message_at?.slice(0, 10) !== todayStr) return false;
+        if (q) {
+          const haystack = [r.guest_name, r.guest_email, r.last_message, r.session_id].join(' ').toLowerCase();
+          if (!haystack.includes(q)) return false;
+        }
+        return true;
+      });
+      renderTable(filtered);
+    }
+
+    function renderTable(rows) {
+      const table = document.getElementById('conv-table');
+      if (!rows.length) {
+        table.innerHTML = '<div class="empty-state"><div class="icon">💬</div><h3>No conversations found</h3><p>Chat sessions will appear here once visitors start using the widget.</p></div>';
+        return;
+      }
+
+      const head = `
+        <div class="conv-table-head">
+          <span>Session / Page</span>
+          <span>Guest</span>
+          <span>Last Message</span>
+          <span>Time</span>
+          <span></span>
+        </div>`;
+
+      const bodyRows = rows.map((r, i) => {
+        const sessionShort = (r.session_id || '').slice(0, 12) + '…';
+        const page = r.page_url ? new URL(r.page_url).pathname.replace('/public/', '').replace('.html', '') : '—';
+        const guestName = r.guest_name || 'Anonymous';
+        const guestEmail = r.guest_email || '';
+        const preview = (r.last_message || '').slice(0, 80) + ((r.last_message || '').length > 80 ? '…' : '');
+        const timeAgo = formatTime(r.last_message_at);
+        const msgCount = r.message_count || 0;
+        const crmLink = r.contact_id ? `/admin/contacts.html?id=${r.contact_id}` : '';
+
+        return `
+          <div class="conv-row" onclick="toggleTranscript(${i})" id="row-${i}">
+            <div>
+              <div class="conv-session">${sessionShort}</div>
+              <div style="font-size:0.74rem;color:#6b6358;margin-top:2px;">${page} · ${msgCount} msgs</div>
+            </div>
+            <div class="conv-guest">
+              <strong>${escHtml(guestName)}</strong>
+              <span>${escHtml(guestEmail)}</span>
+            </div>
+            <div class="conv-preview">${escHtml(preview)}</div>
+            <div class="conv-time">${timeAgo}</div>
+            <div class="conv-actions">
+              ${crmLink ? `<a href="${crmLink}" class="btn-view-crm" onclick="event.stopPropagation()">CRM →</a>` : ''}
+            </div>
+          </div>
+          <div class="transcript-panel" id="transcript-${i}">
+            <div style="font-size:0.78rem;color:#b6ab93;margin-bottom:14px;">
+              Session: <code style="color:#C9A84C">${r.session_id}</code>
+              ${r.page_url ? `· <a href="${r.page_url}" target="_blank" style="color:#7eb8e8;">${r.page_url}</a>` : ''}
+              ${r.utm_source ? `· UTM: ${escHtml(r.utm_source)}` : ''}
+            </div>
+            ${renderMessages(r.messages)}
+          </div>`;
+      }).join('');
+
+      table.innerHTML = head + bodyRows;
+    }
+
+    function renderMessages(messages) {
+      if (!messages || !Array.isArray(messages) || !messages.length) {
+        return '<p style="color:#b6ab93;font-size:0.84rem;">No message transcript stored.</p>';
+      }
+      return messages.map(m => `
+        <div class="transcript-msg ${m.role}">
+          <span class="role">${m.role === 'user' ? 'Visitor' : 'AI'}</span>
+          <span class="text">${escHtml(m.content || '')}</span>
+        </div>`).join('');
+    }
+
+    function toggleTranscript(i) {
+      const panel = document.getElementById(`transcript-${i}`);
+      panel.classList.toggle('open');
+    }
+
+    function formatTime(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      const now = new Date();
+      const diff = now - d;
+      if (diff < 60000) return 'just now';
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+      if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+
+    function escHtml(s) {
+      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Auto-refresh every 60s
+    loadConversations();
+    setInterval(loadConversations, 60000);
+  </script>
+</body>
+</html>
