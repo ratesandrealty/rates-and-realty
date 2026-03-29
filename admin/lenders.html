@@ -503,16 +503,31 @@ const PROGRAM_COLORS = {
 // ── LOAD LENDERS ─────────────────────────────────
 async function loadLenders() {
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/lenders?order=name&limit=200`, {
-      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
-    });
+    const res = await fetch(
+      `${SB_URL}/rest/v1/lenders?order=name&limit=200`,
+      {
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': `Bearer ${SB_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     allLenders = await res.json();
+    if (!Array.isArray(allLenders)) {
+      console.error('Unexpected response:', allLenders);
+      allLenders = [];
+    }
     filteredLenders = [...allLenders];
-    document.getElementById('lenderCount').textContent = allLenders.length + ' lenders synced from ClickUp';
+    const countEl = document.getElementById('lenderCount');
+    if (countEl) countEl.textContent = allLenders.length + ' lenders synced from ClickUp';
     renderLenderList(filteredLenders);
     renderLendersTable(filteredLenders);
   } catch(e) {
     console.error('Load lenders error:', e);
+    const countEl = document.getElementById('lenderCount');
+    if (countEl) countEl.textContent = 'Error loading: ' + e.message;
   }
 }
 
