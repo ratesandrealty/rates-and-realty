@@ -243,6 +243,25 @@ export async function getAppointments() {
   }
 }
 
+async function syncToGoogleCalendar(appointmentId) {
+  try {
+    const res = await fetch(
+      'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/google-calendar-sync',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_id: appointmentId })
+      }
+    );
+    const result = await res.json();
+    if (result.success) {
+      console.log('Synced to Google Calendar:', result.google_event_link);
+    }
+  } catch(e) {
+    console.warn('Google Calendar sync failed silently:', e);
+  }
+}
+
 export async function createAppointment({ title, type, date, time, leadId, contactId, notes }) {
   const scheduledAt = time ? `${date}T${time}:00` : `${date}T09:00:00`;
   try {
@@ -256,6 +275,7 @@ export async function createAppointment({ title, type, date, time, leadId, conta
       status: "scheduled"
     }).select().single();
     if (error) throw error;
+    if (data.id) syncToGoogleCalendar(data.id);
     if (leadId) {
       await logActivity({ leadId, type: "appointment_booked", description: `${type || "Appointment"}: ${title} on ${date}` }).catch(() => {});
     }
