@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://maps.googleapis.com https://maps.gstatic.com; connect-src 'self' https://*.supabase.co https://ljywhvbmsibwnssxpesh.supabase.co https://accounts.google.com wss://*.supabase.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; frame-src 'self' https://cal.com;">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>My Loan Portal — Rates & Realty</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -830,14 +831,16 @@
   const SUPABASE_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
 
-  let supabase;
+  // Use _supabase to avoid conflict with window.supabase (the CDN library)
+  var _supabase = null;
   try {
-    if (window.supabase && window.supabase.createClient) {
-      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    } else if (window.Supabase && window.Supabase.createClient) {
-      supabase = window.Supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    var _factory = (window.supabase && window.supabase.createClient) ||
+                   (window.Supabase && window.Supabase.createClient);
+    if (_factory) {
+      _supabase = _factory(SUPABASE_URL, SUPABASE_KEY);
+      console.log('Supabase client initialized OK');
     } else {
-      console.error('Supabase library not loaded. window.supabase =', window.supabase);
+      console.error('Supabase library not loaded. window.supabase =', typeof window.supabase);
     }
   } catch(e) {
     console.error('Supabase init error:', e);
@@ -847,7 +850,7 @@
   async function checkSession() {
     console.log('checkSession called');
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await _supabase.auth.getSession();
       if (session && session.user) {
         showDashboard(session.user);
       }
@@ -880,8 +883,8 @@
   }
 
   async function signIn() {
-    console.log('signIn called, supabase:', typeof supabase, supabase);
-    if (!supabase) {
+    console.log('signIn called, _supabase:', typeof _supabase, _supabase);
+    if (!_supabase) {
       alert('Error: Supabase failed to load. Please refresh the page.');
       return;
     }
@@ -902,7 +905,7 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await _supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
         const msg = error.message === 'Invalid login credentials'
@@ -949,7 +952,7 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Creating account...'; }
 
     try {
-      const { data, error } = await supabase.auth.signUp({
+      const { data, error } = await _supabase.auth.signUp({
         email,
         password,
         options: { data: { first_name: first, last_name: last, phone } }
@@ -963,7 +966,7 @@
 
       // Add to CRM contacts
       try {
-        await supabase.from('contacts').insert([{
+        await _supabase.from('contacts').insert([{
           first_name: first, last_name: last,
           email, phone,
           source: 'borrower_portal',
@@ -1006,7 +1009,7 @@
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    await _supabase.auth.signOut();
     document.getElementById('mainView').style.display = 'block';
     document.getElementById('dashboardView').style.display = 'none';
   }
@@ -1141,7 +1144,7 @@
     const btn = document.getElementById('uploadAllBtn');
     btn.disabled = true;
 
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session } } = await _supabase.auth.getSession();
     const user = session?.user;
     const meta = user?.user_metadata || {};
     const borrowerName = [meta.first_name, meta.last_name].filter(Boolean).join(' ') ||
@@ -1217,7 +1220,7 @@
   }
 
   async function loadUploadHistory() {
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session } } = await _supabase.auth.getSession();
     if (!session?.user) return;
 
     const { data } = await supabase
