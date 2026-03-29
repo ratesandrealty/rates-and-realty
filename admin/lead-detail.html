@@ -3812,235 +3812,359 @@ async function load1003() {
 
 /* ── MISMO 3.4 EXPORT ── */
 async function exportMISMO() {
-  const cid = getContactId();
-  const c = contactData;
-  const l = leadData;
+  const contactId = getContactId();
+  if (!contactId) return alert('No contact ID found.');
 
-  // Gather 1003 form data if available
-  const gv = id => document.getElementById(id)?.value || '';
-  const gr = name => document.querySelector(`input[name="${name}"]:checked`)?.value || '';
+  await save1003();
 
-  const firstName = gv('f_first_name') || c.first_name || '';
-  const middleName = gv('f_middle_name') || '';
-  const lastName = gv('f_last_name') || c.last_name || '';
-  const suffix = gv('f_suffix') || '';
-  const ssn = gv('f_ssn') || '';
-  const dob = gv('f_dob') || c.date_of_birth || '';
-  const citizenship = gv('f_citizenship') || '';
-  const marital = gv('f_marital_status') || '';
-  const depCount = gv('f_dependents_count') || '0';
-  const cellPhone = gv('f_cell_phone') || c.phone || '';
-  const homePhone = gv('f_home_phone') || '';
-  const email = gv('f_email') || c.email || '';
+  const { data } = await sb
+    .from('mortgage_applications')
+    .select('*')
+    .eq('contact_id', contactId)
+    .single();
 
-  const curStreet = gv('f_current_street') || c.address || '';
-  const curCity = gv('f_current_city') || c.city || '';
-  const curState = gv('f_current_state') || c.state || '';
-  const curZip = gv('f_current_zip') || c.zip || '';
-  const curYears = parseInt(gv('f_current_years')) || 0;
-  const curMonths = parseInt(gv('f_current_months')) || 0;
-  const curHousing = gv('f_current_housing') || '';
+  if (!data) return alert('No application data found. Please save first.');
 
-  const loanAmt = gv('f_loan_amount') || l.loan_amount || 0;
-  const loanPurpose = gv('f_loan_purpose') || l.purpose || 'Purchase';
-  const propStreet = gv('f_prop_street') || l.property_address || '';
-  const propCity = gv('f_prop_city') || '';
-  const propState = gv('f_prop_state') || '';
-  const propZip = gv('f_prop_zip') || '';
-  const propCounty = gv('f_prop_county') || '';
-  const propValue = gv('f_prop_value') || l.purchase_price || 0;
-  const numUnits = gv('f_num_units') || 1;
+  // Validate minimum required fields before export
+  const errors = [];
+  if (!data.first_name || !data.last_name) errors.push('Borrower name is required');
+  if (!data.ssn) errors.push('SSN is required');
+  if (!data.date_of_birth) errors.push('Date of birth is required');
+  if (!data.loan_amount) errors.push('Loan amount is required');
+  if (!data.loan_purpose) errors.push('Loan purpose is required');
+  if (!data.property_address_street) errors.push('Property address is required');
+  if (!data.property_address_city) errors.push('Property city is required');
+  if (!data.property_address_state) errors.push('Property state is required');
+  if (!data.property_address_zip) errors.push('Property ZIP is required');
+  if (!data.current_address_street) errors.push('Borrower current address is required');
+  if (!data.current_housing_type) errors.push('Current housing type (own/rent) is required');
 
-  const loName = gv('f_lo_name') || 'Rene Duarte';
-  const loNmls = gv('f_lo_nmls') || '1795044';
-
-  const loanId = leadId || 'LOAN001';
-  const now = new Date().toISOString();
-
-  // Collect employment XML
-  let employmentXML = '';
-  document.querySelectorAll('#employment-container .employment-block').forEach(block => {
-    const id = block.id;
-    const employer = document.getElementById(id + '_employer')?.value || '';
-    const title = document.getElementById(id + '_title')?.value || '';
-    const base = document.getElementById(id + '_base')?.value || '0';
-    if (employer) {
-      employmentXML += `
-                    <EMPLOYMENT>
-                      <EmployerName>${esc(employer)}</EmployerName>
-                      <PositionDescription>${esc(title)}</PositionDescription>
-                      <CurrentEmploymentMonthlyBasePayAmount>${base}</CurrentEmploymentMonthlyBasePayAmount>
-                    </EMPLOYMENT>`;
-    }
-  });
-  if (!employmentXML) {
-    employmentXML = `
-                    <EMPLOYMENT>
-                      <EmployerName>${esc(c.employer_name || '')}</EmployerName>
-                      <PositionDescription>${esc(c.job_title || '')}</PositionDescription>
-                      <CurrentEmploymentMonthlyBasePayAmount>${c.monthly_income || 0}</CurrentEmploymentMonthlyBasePayAmount>
-                    </EMPLOYMENT>`;
+  if (errors.length > 0) {
+    alert('Please complete these required fields before exporting:\n\n' + errors.map(e => '• ' + e).join('\n'));
+    return;
   }
 
-  const liabXML = liabilitiesData.map(lb => `
-          <LIABILITY>
-            <CREDITOR>
-              <NAME><FullName>${esc(lb.creditor)}</FullName></NAME>
-            </CREDITOR>
-            <LiabilityType>${esc(lb.type || 'Other')}</LiabilityType>
-            <CreditLiabilityAccountBalance>${lb.balance || 0}</CreditLiabilityAccountBalance>
-            <CreditLiabilityMonthlyPaymentAmount>${lb.monthly_payment || 0}</CreditLiabilityMonthlyPaymentAmount>
-            <CreditLiabilityPayoffStatusIndicator>${lb.payoff_required ? 'true' : 'false'}</CreditLiabilityPayoffStatusIndicator>
-          </LIABILITY>`).join('');
+  const now = new Date();
+  const appDate = now.toISOString().split('T')[0];
+  const createdDatetime = now.toISOString();
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<MESSAGE xmlns="http://www.mismo.org/residential/2009/schemas"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         MISMOVersionIdentifier="3.4">
+  // Format SSN: strip non-digits
+  const ssnRaw = (data.ssn || '').replace(/\D/g,'');
+
+  // Housing expense type mapping
+  const housingMap = { 'own': 'Own', 'rent': 'Rent', 'no_expense': 'NoHousingExpense' };
+  const housingType = housingMap[data.current_housing_type] || 'Rent';
+
+  // Loan purpose mapping
+  const purposeMap = { 'purchase': 'Purchase', 'refinance': 'Refinance', 'construction': 'ConstructionToPermanent', 'other': 'Other' };
+  const loanPurpose = purposeMap[data.loan_purpose] || 'Purchase';
+
+  // Loan type mapping
+  const loanTypeMap = { 'conventional': 'Conventional', 'fha': 'FHA', 'va': 'VA', 'usda': 'USDARuralDevelopment', 'other': 'Other' };
+  const loanType = loanTypeMap[data.loan_type] || 'Conventional';
+
+  // Citizenship mapping
+  const citizenMap = { 'us_citizen': 'USCitizen', 'permanent_resident': 'PermanentResidentAlien', 'non_permanent_resident': 'NonPermanentResidentAlien' };
+  const citizenship = citizenMap[data.citizenship] || 'USCitizen';
+
+  // Occupancy mapping
+  const occupancyMap = { 'primary': 'PrimaryResidence', 'second_home': 'SecondHome', 'investment': 'Investor', 'fha_secondary': 'FHASecondaryResidence' };
+  const occupancy = occupancyMap[data.occupancy_type] || 'PrimaryResidence';
+
+  // Residency duration in months
+  const residencyMonths = ((parseInt(data.current_address_years) || 0) * 12) + (parseInt(data.current_address_months) || 0);
+
+  // Employment data (first employment block)
+  const employments = Array.isArray(data.employments) ? data.employments : [];
+  const emp = employments[0] || {};
+  const hasEmployment = emp.employer || emp.base;
+  const baseIncome = parseFloat(emp.base || 0);
+  const overtimeIncome = parseFloat(emp.overtime || 0);
+  const bonusIncome = parseFloat(emp.bonus || 0);
+  const commissionIncome = parseFloat(emp.commission || 0);
+
+  // Property value
+  const propValue = parseFloat(data.property_value || data.loan_amount || 0);
+
+  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<MESSAGE
+  xmlns="http://www.mismo.org/residential/2009/schemas"
+  xmlns:xlink="http://www.w3.org/1999/xlink"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.mismo.org/residential/2009/schemas"
+  MISMOVersionIdentifier="3.4">
   <ABOUT_VERSIONS>
     <ABOUT_VERSION>
-      <CreatedDatetime>${now}</CreatedDatetime>
+      <CreatedDatetime>${createdDatetime}</CreatedDatetime>
       <DataVersionIdentifier>3.4</DataVersionIdentifier>
+      <ModifiedDatetime>${createdDatetime}</ModifiedDatetime>
     </ABOUT_VERSION>
   </ABOUT_VERSIONS>
   <DEAL_SETS>
     <DEAL_SET>
       <DEALS>
         <DEAL>
+          <COLLATERALS>
+            <COLLATERAL>
+              <SUBJECT_PROPERTY>
+                <ADDRESS>
+                  <AddressLineText>${esc(data.property_address_street || '')}</AddressLineText>
+                  <AddressUnitIdentifier>${esc(data.property_address_unit || '')}</AddressUnitIdentifier>
+                  <CityName>${esc(data.property_address_city || '')}</CityName>
+                  <CountyName>${esc(data.property_address_county || '')}</CountyName>
+                  <PostalCode>${esc(data.property_address_zip || '')}</PostalCode>
+                  <StateCode>${esc(data.property_address_state || '')}</StateCode>
+                  <CountryCode>US</CountryCode>
+                </ADDRESS>
+                <PROPERTY_DETAIL>
+                  <PropertyEstimatedValueAmount>${propValue}</PropertyEstimatedValueAmount>
+                  <PropertyUnitsCount>${data.number_of_units || 1}</PropertyUnitsCount>
+                  <PropertyCurrentUsageType>${occupancy}</PropertyCurrentUsageType>
+                  <MixedUsageIndicator>false</MixedUsageIndicator>
+                  <ManufacturedHomeIndicator>false</ManufacturedHomeIndicator>
+                </PROPERTY_DETAIL>
+              </SUBJECT_PROPERTY>
+            </COLLATERAL>
+          </COLLATERALS>
           <LOANS>
             <LOAN>
               <LOAN_IDENTIFIERS>
                 <LOAN_IDENTIFIER>
-                  <LoanIdentifier>${esc(loanId)}</LoanIdentifier>
                   <LoanIdentifierType>LenderLoan</LoanIdentifierType>
                 </LOAN_IDENTIFIER>
               </LOAN_IDENTIFIERS>
+              <APPLICATION>
+                <APPLICATION_DETAIL>
+                  <ApplicationDate>${appDate}</ApplicationDate>
+                  <ApplicationSignedDate>${appDate}</ApplicationSignedDate>
+                </APPLICATION_DETAIL>
+              </APPLICATION>
               <LOAN_DETAIL>
-                <BaseLoanAmount>${loanAmt}</BaseLoanAmount>
-                <LoanPurposeType>${esc(loanPurpose)}</LoanPurposeType>
+                <BaseLoanAmount>${parseFloat(data.loan_amount || 0)}</BaseLoanAmount>
+                <LoanPurposeType>${loanPurpose}</LoanPurposeType>
+                <MortgageType>${loanType}</MortgageType>
+                <LienPriorityType>FirstLien</LienPriorityType>
+                <AmortizationType>Fixed</AmortizationType>
               </LOAN_DETAIL>
-              <PROPERTY>
-                <ADDRESS>
-                  <AddressLineText>${esc(propStreet)}</AddressLineText>
-                  <CityName>${esc(propCity)}</CityName>
-                  <StateCode>${esc(propState)}</StateCode>
-                  <PostalCode>${esc(propZip)}</PostalCode>
-                  <CountyName>${esc(propCounty)}</CountyName>
-                </ADDRESS>
-                <PROPERTY_DETAIL>
-                  <PropertyEstimatedValueAmount>${propValue}</PropertyEstimatedValueAmount>
-                  <PropertyUnitsCount>${numUnits}</PropertyUnitsCount>
-                </PROPERTY_DETAIL>
-              </PROPERTY>
+              <PROPOSED_HOUSING_EXPENSE>
+                <HOUSING_EXPENSE>
+                  <HousingExpenseType>FirstMortgagePrincipalAndInterest</HousingExpenseType>
+                  <HousingExpensePaymentAmount>0</HousingExpensePaymentAmount>
+                </HOUSING_EXPENSE>
+                <HOUSING_EXPENSE>
+                  <HousingExpenseType>HazardInsurance</HousingExpenseType>
+                  <HousingExpensePaymentAmount>0</HousingExpensePaymentAmount>
+                </HOUSING_EXPENSE>
+                <HOUSING_EXPENSE>
+                  <HousingExpenseType>RealEstateTax</HousingExpenseType>
+                  <HousingExpensePaymentAmount>0</HousingExpensePaymentAmount>
+                </HOUSING_EXPENSE>
+              </PROPOSED_HOUSING_EXPENSE>
             </LOAN>
           </LOANS>
           <PARTIES>
-            <PARTY>
+            <PARTY xlink:label="Party1">
+              <ADDRESSES>
+                <ADDRESS>
+                  <AddressLineText>${esc(data.current_address_street || '')}</AddressLineText>
+                  <AddressUnitIdentifier>${esc(data.current_address_unit || '')}</AddressUnitIdentifier>
+                  <CityName>${esc(data.current_address_city || '')}</CityName>
+                  <PostalCode>${esc(data.current_address_zip || '')}</PostalCode>
+                  <StateCode>${esc(data.current_address_state || '')}</StateCode>
+                  <CountryCode>${esc(data.current_address_country || 'US')}</CountryCode>
+                  <AddressType>Current</AddressType>
+                </ADDRESS>
+              </ADDRESSES>
               <INDIVIDUAL>
-                <NAME>
-                  <FirstName>${esc(firstName)}</FirstName>
-                  <MiddleName>${esc(middleName)}</MiddleName>
-                  <LastName>${esc(lastName)}</LastName>
-                  <SuffixName>${esc(suffix)}</SuffixName>
-                </NAME>
                 <CONTACT_POINTS>
                   <CONTACT_POINT>
                     <CONTACT_POINT_TELEPHONE>
-                      <ContactPointTelephoneValue>${esc(cellPhone)}</ContactPointTelephoneValue>
-                    </CONTACT_POINT_TELEPHONE>
-                  </CONTACT_POINT>
-                  <CONTACT_POINT>
-                    <CONTACT_POINT_TELEPHONE>
-                      <ContactPointTelephoneValue>${esc(homePhone)}</ContactPointTelephoneValue>
+                      <ContactPointTelephoneValue>${(data.cell_phone || data.home_phone || '').replace(/\D/g,'')}</ContactPointTelephoneValue>
+                      <ContactPointTelephoneType>Cell</ContactPointTelephoneType>
                     </CONTACT_POINT_TELEPHONE>
                   </CONTACT_POINT>
                   <CONTACT_POINT>
                     <CONTACT_POINT_EMAIL>
-                      <ContactPointEmailValue>${esc(email)}</ContactPointEmailValue>
+                      <ContactPointEmailValue>${esc(data.email || '')}</ContactPointEmailValue>
                     </CONTACT_POINT_EMAIL>
                   </CONTACT_POINT>
                 </CONTACT_POINTS>
+                <NAME>
+                  <FirstName>${esc(data.first_name || '')}</FirstName>
+                  <MiddleName>${esc(data.middle_name || '')}</MiddleName>
+                  <LastName>${esc(data.last_name || '')}</LastName>
+                  <SuffixName>${esc(data.suffix || '')}</SuffixName>
+                </NAME>
               </INDIVIDUAL>
               <ROLES>
                 <ROLE>
                   <BORROWER>
+                    <BORROWER_DETAIL>
+                      <BorrowerBirthDate>${esc(data.date_of_birth || '')}</BorrowerBirthDate>
+                      <CitizenshipResidencyType>${citizenship}</CitizenshipResidencyType>
+                      <MaritalStatusType>${data.marital_status === 'married' ? 'Married' : data.marital_status === 'separated' ? 'Separated' : 'Unmarried'}</MaritalStatusType>
+                      <DependentCount>${data.dependents_count || 0}</DependentCount>
+                      <FirstTimeHomebuyerIndicator>false</FirstTimeHomebuyerIndicator>
+                    </BORROWER_DETAIL>
+                    <CURRENT_INCOME>
+                      ${hasEmployment ? `
+                      <CURRENT_INCOME_ITEM>
+                        <CurrentIncomeItemType>Base</CurrentIncomeItemType>
+                        <CurrentIncomeMonthlyTotalAmount>${baseIncome || 0}</CurrentIncomeMonthlyTotalAmount>
+                      </CURRENT_INCOME_ITEM>
+                      ${overtimeIncome > 0 ? `<CURRENT_INCOME_ITEM>
+                        <CurrentIncomeItemType>Overtime</CurrentIncomeItemType>
+                        <CurrentIncomeMonthlyTotalAmount>${overtimeIncome}</CurrentIncomeMonthlyTotalAmount>
+                      </CURRENT_INCOME_ITEM>` : ''}
+                      ${bonusIncome > 0 ? `<CURRENT_INCOME_ITEM>
+                        <CurrentIncomeItemType>Bonus</CurrentIncomeItemType>
+                        <CurrentIncomeMonthlyTotalAmount>${bonusIncome}</CurrentIncomeMonthlyTotalAmount>
+                      </CURRENT_INCOME_ITEM>` : ''}
+                      ` : `
+                      <CURRENT_INCOME_ITEM>
+                        <CurrentIncomeItemType>Base</CurrentIncomeItemType>
+                        <CurrentIncomeMonthlyTotalAmount>0</CurrentIncomeMonthlyTotalAmount>
+                      </CURRENT_INCOME_ITEM>`}
+                    </CURRENT_INCOME>
+                    <DECLARATIONS>
+                      <DECLARATION>
+                        <BorrowerOccupyPropertyIndicator>${data.decl_primary_residence ? 'true' : 'false'}</BorrowerOccupyPropertyIndicator>
+                        <UndisclosedBorrowedFundsIndicator>${data.decl_borrowed_funds ? 'true' : 'false'}</UndisclosedBorrowedFundsIndicator>
+                        <UndisclosedMortgageApplicationIndicator>${data.decl_applying_other_mortgage ? 'true' : 'false'}</UndisclosedMortgageApplicationIndicator>
+                        <OutstandingJudgmentsIndicator>${data.decl_outstanding_judgments ? 'true' : 'false'}</OutstandingJudgmentsIndicator>
+                        <PresentlyDelinquentIndicator>${data.decl_delinquent_federal ? 'true' : 'false'}</PresentlyDelinquentIndicator>
+                        <PartyToLawsuitIndicator>false</PartyToLawsuitIndicator>
+                        <PriorPropertyDeedInLieuConveyedIndicator>${data.decl_deed_in_lieu ? 'true' : 'false'}</PriorPropertyDeedInLieuConveyedIndicator>
+                        <PriorPropertyShortSaleCompletedIndicator>${data.decl_short_sale ? 'true' : 'false'}</PriorPropertyShortSaleCompletedIndicator>
+                        <PriorPropertyForeclosureCompletedIndicator>${data.decl_foreclosure ? 'true' : 'false'}</PriorPropertyForeclosureCompletedIndicator>
+                        <BankruptcyIndicator>${data.decl_bankruptcy ? 'true' : 'false'}</BankruptcyIndicator>
+                        <CoSignerIndicator>${data.decl_cosigner ? 'true' : 'false'}</CoSignerIndicator>
+                      </DECLARATION>
+                    </DECLARATIONS>
+                    <EMPLOYERS>
+                      ${hasEmployment ? `
+                      <EMPLOYER>
+                        <EMPLOYER_DETAIL>
+                          <EmployerName>${esc(emp.employer || '')}</EmployerName>
+                          <EmploymentPositionDescription>${esc(emp.title || '')}</EmploymentPositionDescription>
+                          <EmploymentStartDate>${esc(emp.start_date || '')}</EmploymentStartDate>
+                          <EmploymentStatusType>Current</EmploymentStatusType>
+                          <SelfEmployedIndicator>${emp.self_employed && emp.self_employed !== 'no' ? 'true' : 'false'}</SelfEmployedIndicator>
+                          <SpecialBorrowerSellerRelationshipIndicator>false</SpecialBorrowerSellerRelationshipIndicator>
+                        </EMPLOYER_DETAIL>
+                        <ADDRESS>
+                          <AddressLineText>${esc(emp.street || '')}</AddressLineText>
+                          <CityName>${esc(emp.city || '')}</CityName>
+                          <StateCode>${esc((emp.state_zip || '').split(' ')[0] || '')}</StateCode>
+                          <PostalCode>${esc((emp.state_zip || '').split(' ')[1] || '')}</PostalCode>
+                          <CountryCode>US</CountryCode>
+                        </ADDRESS>
+                        <INCOME>
+                          <INCOME_ITEM>
+                            <IncomeType>Base</IncomeType>
+                            <IncomeMonthlyTotalAmount>${baseIncome || 0}</IncomeMonthlyTotalAmount>
+                          </INCOME_ITEM>
+                        </INCOME>
+                      </EMPLOYER>` : `
+                      <EMPLOYER>
+                        <EMPLOYER_DETAIL>
+                          <EmployerName>Not Provided</EmployerName>
+                          <EmploymentStatusType>Current</EmploymentStatusType>
+                          <SelfEmployedIndicator>false</SelfEmployedIndicator>
+                          <SpecialBorrowerSellerRelationshipIndicator>false</SpecialBorrowerSellerRelationshipIndicator>
+                        </EMPLOYER_DETAIL>
+                        <INCOME>
+                          <INCOME_ITEM>
+                            <IncomeType>Base</IncomeType>
+                            <IncomeMonthlyTotalAmount>0</IncomeMonthlyTotalAmount>
+                          </INCOME_ITEM>
+                        </INCOME>
+                      </EMPLOYER>`}
+                    </EMPLOYERS>
                     <RESIDENCES>
                       <RESIDENCE>
                         <ADDRESS>
-                          <AddressLineText>${esc(curStreet)}</AddressLineText>
-                          <CityName>${esc(curCity)}</CityName>
-                          <StateCode>${esc(curState)}</StateCode>
-                          <PostalCode>${esc(curZip)}</PostalCode>
+                          <AddressLineText>${esc(data.current_address_street || '')}</AddressLineText>
+                          <AddressUnitIdentifier>${esc(data.current_address_unit || '')}</AddressUnitIdentifier>
+                          <CityName>${esc(data.current_address_city || '')}</CityName>
+                          <PostalCode>${esc(data.current_address_zip || '')}</PostalCode>
+                          <StateCode>${esc(data.current_address_state || '')}</StateCode>
+                          <CountryCode>US</CountryCode>
                         </ADDRESS>
                         <RESIDENCE_DETAIL>
-                          <BorrowerResidencyDurationMonthsCount>${(curYears * 12) + curMonths}</BorrowerResidencyDurationMonthsCount>
-                          <BorrowerResidencyType>${esc(curHousing)}</BorrowerResidencyType>
+                          <BorrowerResidencyBasisType>${housingType}</BorrowerResidencyBasisType>
+                          <BorrowerResidencyDurationMonthsCount>${residencyMonths}</BorrowerResidencyDurationMonthsCount>
+                          <BorrowerResidencyType>Current</BorrowerResidencyType>
+                          ${housingType === 'Rent' && data.current_rent_amount ?
+                            `<HousingExpenseMonthlyPaymentAmount>${data.current_rent_amount}</HousingExpenseMonthlyPaymentAmount>` : ''}
                         </RESIDENCE_DETAIL>
                       </RESIDENCE>
                     </RESIDENCES>
-                    <BORROWER_DETAIL>
-                      <BorrowerBirthDate>${esc(dob)}</BorrowerBirthDate>
-                      <CitizenshipResidencyType>${esc(citizenship)}</CitizenshipResidencyType>
-                      <MaritalStatusType>${esc(marital)}</MaritalStatusType>
-                      <DependentCount>${depCount}</DependentCount>
-                    </BORROWER_DETAIL>${employmentXML}
-                    <DECLARATIONS>
-                      <DECLARATION>
-                        <BorrowerOccupyPropertyIndicator>${gr('decl_primary') === 'yes'}</BorrowerOccupyPropertyIndicator>
-                        <IntentToOccupyType>${gr('decl_primary') === 'yes' ? 'Yes' : 'No'}</IntentToOccupyType>
-                        <HomeownerPastThreeYearsType>${curHousing === 'own' ? 'Yes' : 'No'}</HomeownerPastThreeYearsType>
-                        <OutstandingJudgmentsIndicator>${gr('decl_judgments') === 'yes'}</OutstandingJudgmentsIndicator>
-                        <PresentlyDelinquentIndicator>${gr('decl_federal') === 'yes'}</PresentlyDelinquentIndicator>
-                        <PartyToLawsuitIndicator>false</PartyToLawsuitIndicator>
-                        <ForeclosurePastSevenYearsIndicator>${gr('decl_foreclosure') === 'yes'}</ForeclosurePastSevenYearsIndicator>
-                        <BankruptcyIndicator>${gr('decl_bankruptcy') === 'yes'}</BankruptcyIndicator>
-                      </DECLARATION>
-                    </DECLARATIONS>
                   </BORROWER>
                 </ROLE>
               </ROLES>
               <TAXPAYER_IDENTIFIERS>
                 <TAXPAYER_IDENTIFIER>
                   <TaxpayerIdentifierType>SocialSecurityNumber</TaxpayerIdentifierType>
-                  <TaxpayerIdentifierValue>${esc(ssn)}</TaxpayerIdentifierValue>
+                  <TaxpayerIdentifierValue>${ssnRaw}</TaxpayerIdentifierValue>
                 </TAXPAYER_IDENTIFIER>
               </TAXPAYER_IDENTIFIERS>
             </PARTY>
-            <PARTY>
+            <PARTY xlink:label="Party_LO">
               <ROLES>
                 <ROLE>
                   <LOAN_ORIGINATOR>
                     <LOAN_ORIGINATOR_DETAIL>
-                      <LoanOriginatorNMLSIdentifier>${esc(loNmls)}</LoanOriginatorNMLSIdentifier>
+                      <LoanOriginatorNMLSIdentifier>${esc(data.lo_nmls || '1795044')}</LoanOriginatorNMLSIdentifier>
+                      <LoanOriginatorOrganizationNMLSIdentifier>${esc(data.lo_nmls || '1795044')}</LoanOriginatorOrganizationNMLSIdentifier>
                     </LOAN_ORIGINATOR_DETAIL>
                   </LOAN_ORIGINATOR>
                 </ROLE>
               </ROLES>
               <INDIVIDUAL>
                 <NAME>
-                  <FullName>${esc(loName)}</FullName>
+                  <FullName>${esc(data.lo_name || 'Rene Duarte')}</FullName>
                 </NAME>
+                <CONTACT_POINTS>
+                  <CONTACT_POINT>
+                    <CONTACT_POINT_EMAIL>
+                      <ContactPointEmailValue>rduarte@emortgagecapital.com</ContactPointEmailValue>
+                    </CONTACT_POINT_EMAIL>
+                  </CONTACT_POINT>
+                  <CONTACT_POINT>
+                    <CONTACT_POINT_TELEPHONE>
+                      <ContactPointTelephoneValue>7144728508</ContactPointTelephoneValue>
+                    </CONTACT_POINT_TELEPHONE>
+                  </CONTACT_POINT>
+                </CONTACT_POINTS>
               </INDIVIDUAL>
             </PARTY>
           </PARTIES>
-          <LIABILITIES>${liabXML}
-          </LIABILITIES>
+          <RELATIONSHIPS>
+            <RELATIONSHIP xlink:arcrole="urn:fdc:mismo.org:2009:residential:BORROWER-LOAN" xlink:from="Party1" xlink:to="Loan1"/>
+          </RELATIONSHIPS>
         </DEAL>
       </DEALS>
     </DEAL_SET>
   </DEAL_SETS>
 </MESSAGE>`;
 
+  // Download the XML
   const blob = new Blob([xml], { type: 'application/xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const borrowerName = `${lastName}_${firstName}`.replace(/\s+/g, '') || 'Borrower';
+  const borrowerName = `${data.last_name || 'Borrower'}_${data.first_name || ''}`.trim();
   a.href = url;
-  a.download = `MISMO_3.4_${borrowerName}_${new Date().toISOString().split('T')[0]}.xml`;
+  a.download = `MISMO_3.4_${borrowerName}_${appDate}.xml`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+
+  await sb.from('mortgage_applications')
+    .update({ mismo_exported_at: new Date().toISOString(), mismo_version: '3.4' })
+    .eq('contact_id', contactId);
+
   toast('MISMO 3.4 XML exported');
   await logActivity('document_uploaded', `MISMO 3.4 export: ${borrowerName}`).catch(()=>{});
 }
