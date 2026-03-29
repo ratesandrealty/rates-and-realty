@@ -1022,6 +1022,31 @@
         grid-template-columns: repeat(2, 1fr) !important;
       }
     }
+
+    @media (max-width: 768px) {
+      /* Allow all content panels to expand naturally */
+      .content-panel, .right-panel, .panel-content,
+      [id*="Panel"], [class*="panel-body"],
+      [class*="content-area"] {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        min-height: unset !important;
+      }
+
+      /* But keep the whole page scrollable */
+      body, html {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+      }
+
+      /* Checklist items full width */
+      #checklistPanel, #checklistItems {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+      }
+    }
   </style>
   <script>
     function loadGooglePlaces() {
@@ -1318,27 +1343,64 @@
 
     <!-- Checklist panel -->
     <div class="ld-notes-panel" id="sidebar-checklist-panel" style="display:none;">
-      <div id="checklistPanel" style="padding: 16px 20px;">
+      <div id="checklistPanel" style="padding: 16px 20px; width: 100%;">
 
         <!-- Loan Document Checklist by Type -->
         <div style="margin-bottom: 20px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
             <span style="font-size:12px; text-transform:uppercase; letter-spacing:0.5px;
                          color:rgba(255,255,255,0.4); font-weight:600;">Document Checklist</span>
-            <select id="checklistType" onchange="loadChecklist(this.value)"
-              style="padding:5px 10px; background:rgba(255,255,255,0.06);
-                     border:1px solid rgba(255,255,255,0.12); border-radius:6px;
-                     color:#fff; font-size:12px; outline:none; cursor:pointer;">
-              <option value="fha">FHA Purchase</option>
-              <option value="conventional">Conventional</option>
-              <option value="va">VA Loan</option>
-              <option value="dscr">DSCR Investor</option>
-              <option value="jumbo">Jumbo</option>
-              <option value="bank_statement">Bank Statement</option>
-            </select>
+            <div style="position:relative; display:inline-block;" id="checklistTypeContainer">
+              <button onclick="toggleChecklistDropdown()" id="checklistTypeBtn" style="
+                display:flex; align-items:center; gap:8px;
+                padding:6px 12px; background:#1e1e1e;
+                border:1px solid rgba(201,168,76,0.4); border-radius:8px;
+                color:#c9a84c; font-size:12px; font-weight:700;
+                cursor:pointer; white-space:nowrap; min-width:130px;
+                justify-content:space-between;">
+                <span id="checklistTypeLabel">FHA Purchase</span>
+                <span style="font-size:10px;">▼</span>
+              </button>
+              <div id="checklistTypeDropdown" style="
+                display:none; position:absolute; top:calc(100% + 4px); right:0;
+                background:#1e1e1e; border:1px solid rgba(201,168,76,0.4);
+                border-radius:10px; z-index:99999; min-width:160px;
+                box-shadow:0 8px 32px rgba(0,0,0,0.6); overflow:hidden;">
+                <div onclick="setChecklistType('fha','FHA Purchase')"
+                  style="padding:10px 14px; color:#fff; font-size:13px; cursor:pointer;
+                         transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.06);"
+                  onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+                  onmouseout="this.style.background='transparent'">🏠 FHA Purchase</div>
+                <div onclick="setChecklistType('conventional','Conventional')"
+                  style="padding:10px 14px; color:#fff; font-size:13px; cursor:pointer;
+                         transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.06);"
+                  onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+                  onmouseout="this.style.background='transparent'">🏡 Conventional</div>
+                <div onclick="setChecklistType('va','VA Loan')"
+                  style="padding:10px 14px; color:#fff; font-size:13px; cursor:pointer;
+                         transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.06);"
+                  onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+                  onmouseout="this.style.background='transparent'">🎖️ VA Loan</div>
+                <div onclick="setChecklistType('dscr','DSCR Investor')"
+                  style="padding:10px 14px; color:#fff; font-size:13px; cursor:pointer;
+                         transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.06);"
+                  onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+                  onmouseout="this.style.background='transparent'">📊 DSCR Investor</div>
+                <div onclick="setChecklistType('jumbo','Jumbo')"
+                  style="padding:10px 14px; color:#fff; font-size:13px; cursor:pointer;
+                         transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.06);"
+                  onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+                  onmouseout="this.style.background='transparent'">🏰 Jumbo</div>
+                <div onclick="setChecklistType('bank_statement','Bank Statement')"
+                  style="padding:10px 14px; color:#fff; font-size:13px; cursor:pointer;
+                         transition:background 0.15s;"
+                  onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+                  onmouseout="this.style.background='transparent'">🏦 Bank Statement</div>
+              </div>
+            </div>
           </div>
 
-          <div id="checklistItems" style="display:flex; flex-direction:column; gap:8px;"></div>
+          <div id="checklistItems" style="display:flex; flex-direction:column; gap:6px; width:100%;"></div>
 
           <!-- Progress bar -->
           <div style="margin-top:16px; padding:12px 14px; background:rgba(255,255,255,0.03);
@@ -3774,6 +3836,28 @@ function switchNoteTab(tab) {
     loadChecklist(_currentChecklistType);
   }
 }
+
+/* ── CHECKLIST DROPDOWN ── */
+function toggleChecklistDropdown() {
+  const dd = document.getElementById('checklistTypeDropdown');
+  if (!dd) return;
+  dd.style.display = dd.style.display === 'block' ? 'none' : 'block';
+}
+
+function setChecklistType(type, label) {
+  const labelEl = document.getElementById('checklistTypeLabel');
+  if (labelEl) labelEl.textContent = label;
+  const dd = document.getElementById('checklistTypeDropdown');
+  if (dd) dd.style.display = 'none';
+  loadChecklist(type);
+}
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#checklistTypeContainer')) {
+    const dd = document.getElementById('checklistTypeDropdown');
+    if (dd) dd.style.display = 'none';
+  }
+});
 
 /* ── THEME ── */
 function toggleTheme() {
