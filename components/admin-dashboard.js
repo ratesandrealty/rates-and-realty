@@ -1257,17 +1257,20 @@ function bindModals() {
     const fd = new FormData(e.target);
     setMessage(msg, "Saving...");
     try {
+      const contactId = document.getElementById("appointmentContactId")?.value || null;
       await createAppointment({
         title: fd.get("title"),
         type: fd.get("type"),
         date: fd.get("date"),
         time: fd.get("time"),
-        leadId: fd.get("lead_id") || null,
+        leadId: null,
+        contactId: contactId,
         notes: fd.get("notes")
       });
       setMessage(msg, "Appointment saved!", "success");
       allAppointments = await getAppointments();
       e.target.reset();
+      if (typeof clearAppointmentContact === "function") clearAppointmentContact();
       if (activeTab === "calendar") renderCalendar();
       setTimeout(() => closeModal("appointment-modal"), 800);
     } catch (err) { setMessage(msg, err.message, "error"); }

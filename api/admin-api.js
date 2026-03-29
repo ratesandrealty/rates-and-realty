@@ -243,7 +243,7 @@ export async function getAppointments() {
   }
 }
 
-export async function createAppointment({ title, type, date, time, leadId, notes }) {
+export async function createAppointment({ title, type, date, time, leadId, contactId, notes }) {
   const scheduledAt = time ? `${date}T${time}:00` : `${date}T09:00:00`;
   try {
     const { data, error } = await supabase.from("appointments").insert({
@@ -251,6 +251,7 @@ export async function createAppointment({ title, type, date, time, leadId, notes
       type: type || "call",
       scheduled_at: scheduledAt,
       lead_id: leadId || null,
+      contact_id: contactId || null,
       notes: notes || null,
       status: "scheduled"
     }).select().single();
