@@ -847,11 +847,15 @@
     }
   </style>
   <script>
-    // Load Google Maps Places after page ready
     function loadGooglePlaces() {
+      if (typeof google !== 'undefined' && google.maps) {
+        initAddressAutocomplete();
+        return;
+      }
       const script = document.createElement('script');
-      script.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyACmn2j8wwVNO53MLWGPFFsImjEUxe4D50&libraries=places&callback=initAddressAutocomplete';
+      script.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyACmn2j8wwVNO53MLWGPFFsImjEUxe4D50&libraries=places&callback=initAddressAutocomplete&loading=async';
       script.async = true;
+      script.defer = true;
       document.head.appendChild(script);
     }
     window.addEventListener('load', loadGooglePlaces);
@@ -3713,12 +3717,14 @@ function addEmployment(type) {
     employmentCount++;
     document.getElementById('employment-container').insertAdjacentHTML(
       'beforeend', createEmploymentBlock('current', employmentCount, false));
-    attachAutocompleteToBlock(`current_emp_${employmentCount}`);
+    const blockId = `current_emp_${employmentCount}`;
+    setTimeout(() => attachAutocompleteToBlock(blockId), 100);
   } else {
     prevEmploymentCount++;
     document.getElementById('prev-employment-container').insertAdjacentHTML(
       'beforeend', createEmploymentBlock('prev', prevEmploymentCount, true));
-    attachAutocompleteToBlock(`prev_emp_${prevEmploymentCount}`);
+    const blockId = `prev_emp_${prevEmploymentCount}`;
+    setTimeout(() => attachAutocompleteToBlock(blockId), 100);
   }
 }
 
@@ -3775,7 +3781,7 @@ function addFormerAddress() {
       </div>
     </div>`;
   document.getElementById('former-addresses-container').insertAdjacentHTML('beforeend', html);
-  attachAutocompleteToBlock(id);
+  setTimeout(() => attachAutocompleteToBlock(`former_addr_${formerAddressCount}`), 100);
 }
 
 /* ── 1003 — MILITARY TOGGLE ── */
@@ -4089,18 +4095,80 @@ async function load1003() {
 }
 
 /* ── GOOGLE MAPS ADDRESS AUTOCOMPLETE ── */
-function initAddressAutocomplete() {
-  const addressFields = [
-    { street: 'f_current_street', city: 'f_current_city', state: 'f_current_state', zip: 'f_current_zip' },
-    { street: 'f_prop_street', city: 'f_prop_city', state: 'f_prop_state', zip: 'f_prop_zip' },
-    { street: 'cb_current_street', city: 'cb_current_city', state: 'cb_current_state', zip: 'cb_current_zip' },
-    { street: 'current_emp_0_street', city: 'current_emp_0_city' },
+window.initAddressAutocomplete = function() {
+  const addressConfigs = [
+    {
+      streetId: 'f_current_street',
+      cityId: 'f_current_city',
+      stateId: 'f_current_state',
+      zipId: 'f_current_zip'
+    },
+    {
+      streetId: 'f_prop_street',
+      cityId: 'f_prop_city',
+      stateId: 'f_prop_state',
+      zipId: 'f_prop_zip'
+    },
+    {
+      streetId: 'cb_current_street',
+      cityId: 'cb_current_city',
+      stateId: 'cb_current_state',
+      zipId: 'cb_current_zip'
+    }
   ];
 
-  addressFields.forEach(fields => {
-    const streetEl = document.getElementById(fields.street);
+  addressConfigs.forEach(config => {
+    const streetEl = document.getElementById(config.streetId);
     if (!streetEl) return;
 
+    try {
+      const autocomplete = new google.maps.places.Autocomplete(streetEl, {
+        componentRestrictions: { country: 'us' },
+        fields: ['address_components'],
+        types: ['address']
+      });
+
+      streetEl.setAttribute('autocomplete', 'new-password');
+
+      autocomplete.addListener('place_changed', () => {
+        const place = autocomplete.getPlace();
+        if (!place.address_components) return;
+
+        let streetNum = '', route = '', city = '', state = '', zip = '';
+
+        place.address_components.forEach(component => {
+          const types = component.types;
+          if (types.includes('street_number')) streetNum = component.long_name;
+          if (types.includes('route')) route = component.long_name;
+          if (types.includes('locality')) city = component.long_name;
+          if (types.includes('sublocality_level_1') && !city) city = component.long_name;
+          if (types.includes('administrative_area_level_1')) state = component.short_name;
+          if (types.includes('postal_code')) zip = component.long_name;
+        });
+
+        streetEl.value = `${streetNum} ${route}`.trim();
+
+        const cityEl = document.getElementById(config.cityId);
+        const stateEl = document.getElementById(config.stateId);
+        const zipEl = document.getElementById(config.zipId);
+
+        if (cityEl) cityEl.value = city;
+        if (stateEl) stateEl.value = state;
+        if (zipEl) zipEl.value = zip;
+      });
+    } catch(e) {
+      console.warn('Autocomplete init failed for', config.streetId, e);
+    }
+  });
+}
+
+window.attachAutocompleteToBlock = function(blockId) {
+  if (typeof google === 'undefined' || !google.maps) return;
+
+  const streetEl = document.getElementById(blockId + '_street');
+  if (!streetEl) return;
+
+  try {
     const autocomplete = new google.maps.places.Autocomplete(streetEl, {
       componentRestrictions: { country: 'us' },
       fields: ['address_components'],
@@ -4111,60 +4179,30 @@ function initAddressAutocomplete() {
       const place = autocomplete.getPlace();
       if (!place.address_components) return;
 
-      let street_number = '', route = '', city = '', state = '', zip = '';
-      place.address_components.forEach(component => {
-        const types = component.types;
-        if (types.includes('street_number')) street_number = component.long_name;
-        if (types.includes('route')) route = component.long_name;
-        if (types.includes('locality')) city = component.long_name;
-        if (types.includes('administrative_area_level_2') && !city) city = component.long_name;
-        if (types.includes('administrative_area_level_1')) state = component.short_name;
-        if (types.includes('postal_code')) zip = component.long_name;
+      let streetNum = '', route = '', city = '', state = '', zip = '';
+      place.address_components.forEach(c => {
+        if (c.types.includes('street_number')) streetNum = c.long_name;
+        if (c.types.includes('route')) route = c.long_name;
+        if (c.types.includes('locality')) city = c.long_name;
+        if (c.types.includes('administrative_area_level_1')) state = c.short_name;
+        if (c.types.includes('postal_code')) zip = c.long_name;
       });
 
-      streetEl.value = `${street_number} ${route}`.trim();
-      if (fields.city && document.getElementById(fields.city))
-        document.getElementById(fields.city).value = city;
-      if (fields.state && document.getElementById(fields.state))
-        document.getElementById(fields.state).value = state;
-      if (fields.zip && document.getElementById(fields.zip))
-        document.getElementById(fields.zip).value = zip;
+      streetEl.value = `${streetNum} ${route}`.trim();
+
+      const cityEl = document.getElementById(blockId + '_city');
+      const stateEl = document.getElementById(blockId + '_state');
+      const zipEl = document.getElementById(blockId + '_zip');
+      const stateZipEl = document.getElementById(blockId + '_state_zip');
+
+      if (cityEl) cityEl.value = city;
+      if (stateEl) stateEl.value = state;
+      if (zipEl) zipEl.value = zip;
+      if (stateZipEl) stateZipEl.value = `${state} ${zip}`.trim();
     });
-  });
-}
-
-function attachAutocompleteToBlock(blockId) {
-  if (typeof google === 'undefined' || !google.maps) return;
-  const streetEl = document.getElementById(blockId + '_street');
-  if (!streetEl) return;
-
-  const autocomplete = new google.maps.places.Autocomplete(streetEl, {
-    componentRestrictions: { country: 'us' },
-    fields: ['address_components'],
-    types: ['address']
-  });
-
-  autocomplete.addListener('place_changed', () => {
-    const place = autocomplete.getPlace();
-    if (!place.address_components) return;
-    let street_number = '', route = '', city = '', state = '', zip = '';
-    place.address_components.forEach(c => {
-      if (c.types.includes('street_number')) street_number = c.long_name;
-      if (c.types.includes('route')) route = c.long_name;
-      if (c.types.includes('locality')) city = c.long_name;
-      if (c.types.includes('administrative_area_level_1')) state = c.short_name;
-      if (c.types.includes('postal_code')) zip = c.long_name;
-    });
-    streetEl.value = `${street_number} ${route}`.trim();
-    const cityEl = document.getElementById(blockId + '_city');
-    const stateEl = document.getElementById(blockId + '_state');
-    const zipEl = document.getElementById(blockId + '_zip');
-    const stateZipEl = document.getElementById(blockId + '_state_zip');
-    if (cityEl) cityEl.value = city;
-    if (stateEl) stateEl.value = state;
-    if (zipEl) zipEl.value = zip;
-    if (stateZipEl) stateZipEl.value = `${state} ${zip}`;
-  });
+  } catch(e) {
+    console.warn('Block autocomplete failed:', blockId, e);
+  }
 }
 
 /* ── CO-BORROWER FUNCTIONS ── */
@@ -4186,9 +4224,9 @@ async function searchCoBorrowerContacts(query) {
   }
 
   coBorrowerSearchTimeout = setTimeout(async () => {
-    const { data } = await sb
+    const { data } = await supabase
       .from('contacts')
-      .select('id, first_name, last_name, phone, email, cell_phone')
+      .select('id, first_name, last_name, phone, secondary_phone, email')
       .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%,email.ilike.%${query}%`)
       .limit(8);
 
@@ -4199,38 +4237,49 @@ async function searchCoBorrowerContacts(query) {
     }
 
     resultsDiv.innerHTML = data.map(c => {
-      const cJson = JSON.stringify(c).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      const fullName = `${c.first_name || ''} ${c.last_name || ''}`.trim();
+      const contactInfo = [c.phone, c.email].filter(Boolean).join(' · ');
+      const safeContact = JSON.stringify({
+        id: c.id,
+        first_name: c.first_name,
+        last_name: c.last_name,
+        phone: c.phone,
+        email: c.email
+      });
       return `
-      <div onclick='selectCoBorrower("${c.id}", "${esc(c.first_name)} ${esc(c.last_name)}", JSON.parse(this.dataset.contact))'
-        data-contact='${JSON.stringify(c).replace(/'/g, "&#39;")}'
-        style="padding:12px 16px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.06);
-               color:var(--text); font-size:14px; transition:background 0.15s;"
-        onmouseover="this.style.background='rgba(201,168,76,0.1)'"
-        onmouseout="this.style.background=''">
-        <div style="font-weight:600;">${esc(c.first_name)} ${esc(c.last_name)}</div>
-        <div style="font-size:12px; color:var(--muted); margin-top:2px;">
-          ${esc(c.phone || c.cell_phone || '')} ${c.email ? '&middot; ' + esc(c.email) : ''}
-        </div>
-      </div>`;
+        <div onclick='selectCoBorrower("${c.id}", "${fullName}", ${safeContact})'
+          style="padding:12px 16px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.06);
+                 color:#fff; font-size:14px; transition:background 0.15s;"
+          onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+          onmouseout="this.style.background='none'">
+          <div style="font-weight:600;">${fullName}</div>
+          <div style="font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px;">${contactInfo}</div>
+        </div>`;
     }).join('');
 
     resultsDiv.style.display = 'block';
   }, 300);
 }
 
-function selectCoBorrower(contactId, name, contact) {
+async function selectCoBorrower(contactId, name, contact) {
+  if (typeof contact === 'string') {
+    try { contact = JSON.parse(contact); } catch(e) { contact = {}; }
+  }
   document.getElementById('coBorrowerResults').style.display = 'none';
   document.getElementById('coBorrowerSearch').value = '';
 
   const linkedDiv = document.getElementById('coBorrowerLinked');
-  document.getElementById('coBorrowerLinkedName').textContent = 'Linked: ' + name;
+  document.getElementById('coBorrowerLinkedName').textContent = '✓ Linked: ' + name;
   linkedDiv.style.display = 'flex';
 
-  const sv = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
-  sv('cb_first_name', contact.first_name);
-  sv('cb_last_name', contact.last_name);
-  sv('cb_cell_phone', contact.cell_phone || contact.phone);
-  sv('cb_email', contact.email);
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val) el.value = val;
+  };
+  setVal('cb_first_name', contact.first_name);
+  setVal('cb_last_name', contact.last_name);
+  setVal('cb_cell_phone', contact.phone);
+  setVal('cb_email', contact.email);
 
   window._coBorrowerContactId = contactId;
 }
