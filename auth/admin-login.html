@@ -4,121 +4,299 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin Login — Rates & Realty</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
-      background: #111;
+      background: #0f0f0f;
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
       font-family: Georgia, serif;
+      background-image: radial-gradient(ellipse at 50% 0%, rgba(201,168,76,0.08) 0%, transparent 60%);
     }
+
     .login-card {
       background: #1a1a1a;
-      border: 1px solid rgba(201,168,76,0.3);
-      border-radius: 16px;
-      padding: 48px 40px;
+      border: 1px solid rgba(201,168,76,0.25);
+      border-radius: 20px;
+      padding: 48px 44px;
       width: 100%;
-      max-width: 400px;
+      max-width: 420px;
       text-align: center;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.6);
     }
-    .logo {
-      width: 56px; height: 56px;
-      background: #c9a84c;
+
+    .logo-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .logo-box {
+      width: 52px; height: 52px;
+      background: linear-gradient(135deg, #c9a84c, #a07830);
       border-radius: 12px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 24px; font-weight: 700; color: #111;
-      margin: 0 auto 20px;
+      font-size: 22px; font-weight: 800; color: #1a1a1a;
+      letter-spacing: -1px;
     }
-    h1 { color: #fff; font-size: 22px; margin-bottom: 6px; }
-    p { color: rgba(255,255,255,0.4); font-size: 13px; margin-bottom: 32px; font-family: sans-serif; }
-    input {
-      width: 100%;
-      padding: 14px 16px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(201,168,76,0.3);
-      border-radius: 8px;
+
+    .logo-text h1 {
       color: #fff;
-      font-size: 16px;
-      margin-bottom: 16px;
-      outline: none;
-      transition: border 0.2s;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: left;
+      line-height: 1.2;
     }
-    input:focus { border-color: #c9a84c; }
-    button {
+
+    .logo-text p {
+      color: rgba(255,255,255,0.4);
+      font-size: 11px;
+      font-family: sans-serif;
+      text-align: left;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .divider {
+      height: 1px;
+      background: rgba(201,168,76,0.15);
+      margin: 0 0 28px;
+    }
+
+    .login-title {
+      font-size: 14px;
+      font-family: sans-serif;
+      margin-bottom: 24px;
+      color: rgba(255,255,255,0.5);
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+      text-align: left;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: rgba(255,255,255,0.4);
+      font-family: sans-serif;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 13px 16px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 15px;
+      font-family: sans-serif;
+      outline: none;
+      transition: border 0.2s, background 0.2s;
+    }
+
+    .form-group input:focus {
+      border-color: rgba(201,168,76,0.5);
+      background: rgba(255,255,255,0.08);
+    }
+
+    .form-group input::placeholder { color: rgba(255,255,255,0.2); }
+
+    .login-btn {
       width: 100%;
       padding: 14px;
-      background: #c9a84c;
-      color: #111;
+      background: linear-gradient(135deg, #c9a84c, #a07830);
+      color: #1a1a1a;
       border: none;
-      border-radius: 8px;
-      font-size: 16px;
+      border-radius: 10px;
+      font-size: 15px;
       font-weight: 700;
       cursor: pointer;
       font-family: Georgia, serif;
-      transition: opacity 0.2s;
+      margin-top: 8px;
+      transition: opacity 0.2s, transform 0.1s;
+      letter-spacing: 0.3px;
     }
-    button:hover { opacity: 0.88; }
-    .error {
-      color: #ff6b6b;
+
+    .login-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .login-btn:active { transform: translateY(0); }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .error-msg {
+      color: #ff7070;
       font-size: 13px;
-      margin-top: 12px;
-      display: none;
       font-family: sans-serif;
+      margin-top: 14px;
+      padding: 10px 14px;
+      background: rgba(255,100,100,0.08);
+      border: 1px solid rgba(255,100,100,0.2);
+      border-radius: 8px;
+      display: none;
+      text-align: left;
     }
+
+    .success-msg {
+      color: #81c784;
+      font-size: 13px;
+      font-family: sans-serif;
+      margin-top: 14px;
+      padding: 10px 14px;
+      background: rgba(76,175,80,0.08);
+      border: 1px solid rgba(76,175,80,0.2);
+      border-radius: 8px;
+      display: none;
+      text-align: left;
+    }
+
     .footer-note {
-      margin-top: 24px;
-      color: rgba(255,255,255,0.2);
+      margin-top: 28px;
+      color: rgba(255,255,255,0.18);
       font-size: 11px;
       font-family: sans-serif;
+      line-height: 1.6;
     }
+
+    .back-to-site {
+      display: inline-block;
+      margin-top: 16px;
+      color: rgba(255,255,255,0.25);
+      font-size: 12px;
+      font-family: sans-serif;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .back-to-site:hover { color: rgba(255,255,255,0.5); }
+
+    .loading-spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(26,26,26,0.3);
+      border-top-color: #1a1a1a;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  <div class="login-card">
-    <div class="logo">R</div>
-    <h1>Rates & Realty CRM</h1>
-    <p>Admin access only — enter your password to continue</p>
-    <input type="password" id="passwordInput" placeholder="Password"
-           onkeydown="if(event.key==='Enter') checkPassword()">
-    <button onclick="checkPassword()">Sign In →</button>
-    <div class="error" id="errorMsg">Incorrect password. Try again.</div>
-    <div class="footer-note">Rene Duarte · MLO NMLS #1795044</div>
+
+<div class="login-card">
+
+  <div class="logo-wrap">
+    <div class="logo-box">R&R</div>
+    <div class="logo-text">
+      <h1>Rates & Realty</h1>
+      <p>CRM Admin Portal</p>
+    </div>
   </div>
 
-  <script>
-    // Check if already authenticated
-    if (localStorage.getItem('rr_admin_auth') === 'authenticated_2024') {
+  <div class="divider"></div>
+  <p class="login-title">Sign in to access your CRM dashboard</p>
+
+  <div class="form-group">
+    <label>Email Address</label>
+    <input type="email" id="emailInput"
+      placeholder="rene@ratesandrealty.com"
+      value="rene@ratesandrealty.com"
+      onkeydown="if(event.key==='Enter') document.getElementById('passwordInput').focus()">
+  </div>
+
+  <div class="form-group">
+    <label>Password</label>
+    <input type="password" id="passwordInput"
+      placeholder="&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;"
+      onkeydown="if(event.key==='Enter') signIn()">
+  </div>
+
+  <button class="login-btn" id="loginBtn" onclick="signIn()">
+    Sign In to CRM
+  </button>
+
+  <div class="error-msg" id="errorMsg"></div>
+  <div class="success-msg" id="successMsg"></div>
+
+  <div class="footer-note">
+    Rene Duarte &middot; MLO NMLS #1795044<br>
+    Rates &amp; Realty &middot; E Mortgage Capital<br>
+    Secured admin access only
+  </div>
+
+  <a href="/" class="back-to-site">&larr; Back to website</a>
+
+</div>
+
+<script src="/api/env.js"></script>
+<script>
+  const sb = window.supabase.createClient(
+    window.APP_CONFIG.SUPABASE_URL,
+    window.APP_CONFIG.SUPABASE_ANON_KEY
+  );
+
+  // Check if already logged in
+  async function checkSession() {
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) {
       const redirect = new URLSearchParams(window.location.search).get('redirect');
       window.location.href = redirect || '/admin/contacts.html';
     }
+  }
+  checkSession();
 
-    function checkPassword() {
-      const input = document.getElementById('passwordInput').value;
-      const errorMsg = document.getElementById('errorMsg');
+  async function signIn() {
+    const email = document.getElementById('emailInput').value.trim();
+    const password = document.getElementById('passwordInput').value;
+    const btn = document.getElementById('loginBtn');
+    const errorMsg = document.getElementById('errorMsg');
+    const successMsg = document.getElementById('successMsg');
 
-      // Password: RatesRealty2024!
-      // SHA-256 hash stored — never plaintext in code
-      const correctHash = 'a8f5f167f44f4964e6c998dee827110c';
+    errorMsg.style.display = 'none';
+    successMsg.style.display = 'none';
 
-      // Simple password check — change 'RatesRealty2024!' to your preferred password
-      if (input === 'RatesRealty2024!') {
-        localStorage.setItem('rr_admin_auth', 'authenticated_2024');
-        const redirect = new URLSearchParams(window.location.search).get('redirect');
-        window.location.href = redirect || '/admin/contacts.html';
-      } else {
-        errorMsg.style.display = 'block';
-        document.getElementById('passwordInput').value = '';
-        document.getElementById('passwordInput').focus();
-        // Shake animation
-        const card = document.querySelector('.login-card');
-        card.style.animation = 'none';
-        card.style.transform = 'translateX(-8px)';
-        setTimeout(() => card.style.transform = 'translateX(8px)', 100);
-        setTimeout(() => card.style.transform = 'translateX(0)', 200);
-      }
+    if (!email || !password) {
+      errorMsg.textContent = 'Please enter your email and password.';
+      errorMsg.style.display = 'block';
+      return;
     }
-  </script>
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading-spinner"></span>Signing in...';
+
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      errorMsg.textContent = error.message === 'Invalid login credentials'
+        ? 'Incorrect email or password. Please try again.'
+        : error.message;
+      errorMsg.style.display = 'block';
+      btn.disabled = false;
+      btn.innerHTML = 'Sign In to CRM';
+      document.getElementById('passwordInput').value = '';
+      document.getElementById('passwordInput').focus();
+      return;
+    }
+
+    successMsg.textContent = 'Signed in successfully — redirecting...';
+    successMsg.style.display = 'block';
+    btn.innerHTML = 'Signed in!';
+
+    setTimeout(() => {
+      const redirect = new URLSearchParams(window.location.search).get('redirect');
+      window.location.href = redirect || '/admin/contacts.html';
+    }, 800);
+  }
+</script>
+
 </body>
 </html>
