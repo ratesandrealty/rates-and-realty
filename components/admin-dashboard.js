@@ -575,9 +575,7 @@ function renderCalendar() {
   document.getElementById("cal-today")?.addEventListener("click", () => { calendarDate = new Date(); renderCalendar(); });
   root.querySelectorAll(".calendar-cell").forEach((cell) => {
     cell.addEventListener("click", () => {
-      const dateInput = document.querySelector("#appointment-form [name='date']");
-      if (dateInput) dateInput.value = cell.dataset.date;
-      openModal("appointment-modal");
+      openDayView(cell.dataset.date);
     });
   });
 
@@ -1277,6 +1275,196 @@ function bindModals() {
     } catch (err) { setMessage(msg, err.message, "error"); }
   });
 }
+
+// ── DAY VIEW POPUP ───────────────────────────────────────────────────────────
+
+let _dayViewDate = null;
+
+async function openDayView(dateStr) {
+  _dayViewDate = dateStr;
+
+  const modal = document.getElementById("dayViewModal");
+  const list = document.getElementById("dayViewList");
+  const title = document.getElementById("dayViewTitle");
+  const count = document.getElementById("dayViewCount");
+
+  const d = new Date(dateStr + "T00:00:00");
+  const options = { weekday: "long", year: "numeric", month: "long", day: "numeric" };
+  title.textContent = d.toLocaleDateString("en-US", options);
+
+  list.innerHTML = '<div style="text-align:center; padding:32px; color:rgba(255,255,255,0.3); font-family:sans-serif; font-size:14px;">Loading appointments...</div>';
+  modal.style.display = "flex";
+  document.body.style.overflow = "hidden";
+
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    const startOfDay = dateStr + "T00:00:00.000Z";
+    const endOfDay = dateStr + "T23:59:59.999Z";
+
+    const { data: appointments, error } = await supabase
+      .from("appointments")
+      .select("*, contacts(first_name, last_name, phone, email)")
+      .gte("scheduled_at", startOfDay)
+      .lte("scheduled_at", endOfDay)
+      .order("scheduled_at", { ascending: true });
+
+    if (error) throw error;
+
+    if (!appointments || appointments.length === 0) {
+      count.textContent = "No appointments scheduled";
+      list.innerHTML = `
+        <div style="text-align:center; padding:40px 20px;">
+          <div style="font-size:40px; margin-bottom:12px;">📅</div>
+          <p style="color:rgba(255,255,255,0.4); font-size:14px; font-family:sans-serif;">No appointments for this day yet.</p>
+          <p style="color:rgba(255,255,255,0.25); font-size:13px; font-family:sans-serif; margin-top:4px;">Click the button below to add one.</p>
+        </div>`;
+      return;
+    }
+
+    count.textContent = appointments.length + " appointment" + (appointments.length !== 1 ? "s" : "");
+
+    list.innerHTML = appointments.map(apt => {
+      const time = apt.scheduled_at
+        ? new Date(apt.scheduled_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+        : "All day";
+
+      const clientName = apt.contacts
+        ? ((apt.contacts.first_name || "") + " " + (apt.contacts.last_name || "")).trim()
+        : (apt.attendee_name || "");
+
+      const clientPhone = apt.contacts?.phone || apt.attendee_phone || "";
+      const clientEmail = apt.contacts?.email || apt.attendee_email || "";
+
+      const typeColors = {
+        "appointment": "#c9a84c",
+        "showing": "#64b5f6",
+        "call": "#81c784",
+        "follow-up": "#ffb74d",
+        "milestone": "#ce93d8"
+      };
+      const typeColor = typeColors[apt.type] || "#c9a84c";
+
+      return `
+        <div style="
+          background:rgba(255,255,255,0.04);
+          border:1px solid rgba(255,255,255,0.08);
+          border-left:3px solid ${typeColor};
+          border-radius:10px; padding:16px; margin-bottom:12px;
+          position:relative;">
+
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+            <div style="flex:1;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <span style="font-size:12px; font-weight:700; color:${typeColor};
+                  text-transform:uppercase; letter-spacing:0.5px; font-family:sans-serif;">
+                  ${apt.type || "Appointment"}
+                </span>
+                <span style="font-size:13px; color:rgba(255,255,255,0.5); font-family:sans-serif;">
+                  ${time}
+                </span>
+              </div>
+
+              <div style="font-size:15px; font-weight:700; color:#fff;
+                          font-family:Georgia,serif; margin-bottom:6px;">
+                ${apt.title || (clientName ? "Meeting with " + clientName : "Appointment")}
+              </div>
+
+              ${clientName ? `
+              <div style="font-size:13px; color:rgba(255,255,255,0.6); font-family:sans-serif; margin-bottom:4px;">
+                👤 ${clientName}
+              </div>` : ""}
+
+              ${clientPhone ? `
+              <div style="font-size:13px; color:rgba(255,255,255,0.5); font-family:sans-serif; margin-bottom:2px;">
+                📞 <a href="tel:${clientPhone}" style="color:rgba(255,255,255,0.5); text-decoration:none;">${clientPhone}</a>
+              </div>` : ""}
+
+              ${clientEmail ? `
+              <div style="font-size:13px; color:rgba(255,255,255,0.5); font-family:sans-serif; margin-bottom:2px;">
+                ✉️ ${clientEmail}
+              </div>` : ""}
+
+              ${apt.notes ? `
+              <div style="font-size:12px; color:rgba(255,255,255,0.35);
+                          font-family:sans-serif; margin-top:8px;
+                          padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
+                ${apt.notes}
+              </div>` : ""}
+
+              ${apt.meeting_url ? `
+              <a href="${apt.meeting_url}" target="_blank" style="
+                display:inline-block; margin-top:8px; padding:5px 12px;
+                background:rgba(100,181,246,0.15); border:1px solid rgba(100,181,246,0.3);
+                border-radius:6px; color:#64b5f6; font-size:12px;
+                text-decoration:none; font-family:sans-serif;">
+                🔗 Join Meeting
+              </a>` : ""}
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:6px; flex-shrink:0;">
+              ${apt.google_event_id ? `
+              <span style="font-size:10px; color:#81c784; font-family:sans-serif;
+                background:rgba(76,175,80,0.1); border:1px solid rgba(76,175,80,0.2);
+                padding:3px 8px; border-radius:4px; white-space:nowrap;">
+                📅 In Google Cal
+              </span>` : `
+              <button onclick="window._syncSingleAppointment('${apt.id}')" style="
+                font-size:10px; color:rgba(255,255,255,0.4); font-family:sans-serif;
+                background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);
+                padding:3px 8px; border-radius:4px; cursor:pointer; white-space:nowrap;">
+                Sync to GCal
+              </button>`}
+            </div>
+          </div>
+        </div>`;
+    }).join("");
+
+  } catch (e) {
+    console.error("Day view error:", e);
+    list.innerHTML = '<div style="padding:20px; color:#ff7070; font-family:sans-serif; font-size:14px;">Error loading appointments: ' + e.message + '</div>';
+  }
+}
+
+function closeDayView() {
+  document.getElementById("dayViewModal").style.display = "none";
+  document.body.style.overflow = "";
+  _dayViewDate = null;
+}
+window.closeDayView = closeDayView;
+
+function openNewAppointmentFromDay() {
+  const savedDate = _dayViewDate;
+  closeDayView();
+  setTimeout(() => {
+    const dateInput = document.querySelector("#appointment-form [name='date']");
+    if (dateInput && savedDate) dateInput.value = savedDate;
+    openModal("appointment-modal");
+  }, 100);
+}
+window.openNewAppointmentFromDay = openNewAppointmentFromDay;
+
+window._syncSingleAppointment = async function(appointmentId) {
+  try {
+    const res = await fetch(
+      "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/google-calendar-sync",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appointment_id: appointmentId })
+      }
+    );
+    const result = await res.json();
+    if (result.success && _dayViewDate) {
+      openDayView(_dayViewDate);
+    }
+  } catch (e) {
+    console.error("Sync error:", e);
+  }
+};
+
+document.getElementById("dayViewModal")?.addEventListener("click", function(e) {
+  if (e.target === this) closeDayView();
+});
 
 function openModal(id) {
   document.getElementById(id)?.classList.add("is-open");
