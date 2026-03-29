@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>My Loan Portal — Rates & Realty</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -829,7 +829,19 @@
 <script>
   const SUPABASE_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
-  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let supabase;
+  try {
+    if (window.supabase && window.supabase.createClient) {
+      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    } else if (window.Supabase && window.Supabase.createClient) {
+      supabase = window.Supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    } else {
+      console.error('Supabase library not loaded. window.supabase =', window.supabase);
+    }
+  } catch(e) {
+    console.error('Supabase init error:', e);
+  }
 
   // Check if already logged in
   async function checkSession() {
@@ -868,7 +880,11 @@
   }
 
   async function signIn() {
-    console.log('signIn called, supabase:', typeof supabase);
+    console.log('signIn called, supabase:', typeof supabase, supabase);
+    if (!supabase) {
+      alert('Error: Supabase failed to load. Please refresh the page.');
+      return;
+    }
     const email = document.getElementById('loginEmail').value.trim();
     const password = document.getElementById('loginPassword').value;
     const btn = document.getElementById('signInBtn');
