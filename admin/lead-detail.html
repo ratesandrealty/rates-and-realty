@@ -1513,7 +1513,7 @@
 
       <div class="ld-section">
         <div class="ld-section-title">Lead Information</div>
-        <div class="ld-form-grid cols-3">
+        <div class="ld-form-grid" style="grid-template-columns: repeat(3,1fr); gap:12px;">
           <div class="ld-field">
             <label class="ld-label">Lead Source</label>
             <select class="ld-select" id="f-source">
@@ -1947,7 +1947,7 @@
           <div class="app-section-title" style="margin:0;border:none;padding:0;">Current Address</div>
         </div>
         <div id="current-address-container">
-          <div class="form-grid-address">
+          <div class="ld-form-grid" style="grid-template-columns: 3fr 1fr; gap:12px; margin-bottom:12px;">
             <div class="ld-field">
               <label class="ld-label">Street Address</label>
               <input class="ld-input" type="text" id="f_current_street" placeholder="123 Main St">
@@ -6058,6 +6058,30 @@ function handleOCRDrop(e) {
   if (file) previewOCRFile(file);
 }
 
+function renderPDFPreview(file) {
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    try {
+      const typedArray = new Uint8Array(e.target.result);
+      const pdf = await pdfjsLib.getDocument(typedArray).promise;
+      const totalPages = pdf.numPages;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.getElementById('ocrPDFCanvas');
+      const ctx = canvas.getContext('2d');
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const info = document.getElementById('ocrPDFPageInfo');
+      if (info) info.textContent = `Page 1 of ${totalPages} — ${(file.size/1024).toFixed(0)} KB PDF`;
+    } catch(err) {
+      console.error('PDF render error:', err);
+      document.getElementById('ocrPDFPreview').innerHTML = '<div style="font-size:48px;">📄</div><div style="color:rgba(255,255,255,0.5);font-size:13px;">Preview unavailable</div>';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 function previewOCRFile(file) {
   if (!file) return;
   _selectedOCRFile = file;
@@ -6092,12 +6116,29 @@ function previewOCRFile(file) {
       document.getElementById('ocrPDFPreview').style.display = 'none';
     };
     reader.readAsDataURL(file);
+  } else if (file.type === 'application/pdf') {
+    document.getElementById('ocrPreviewImg').style.display = 'none';
+    let pdfContainer = document.getElementById('ocrPDFPreview');
+    pdfContainer.style.display = 'block';
+    pdfContainer.innerHTML = '<canvas id="ocrPDFCanvas" style="width:100%;border-radius:8px;"></canvas><div id="ocrPDFPageInfo" style="text-align:center;color:rgba(255,255,255,0.4);font-size:12px;margin-top:6px;"></div>';
+
+    // Load PDF.js from CDN if not already loaded
+    if (!window.pdfjsLib) {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        renderPDFPreview(file);
+      };
+      document.head.appendChild(script);
+    } else {
+      renderPDFPreview(file);
+    }
   } else {
     document.getElementById('ocrPreviewImg').style.display = 'none';
     const pdfPrev = document.getElementById('ocrPDFPreview');
     pdfPrev.style.display = 'block';
-    document.getElementById('ocrPDFName').textContent = file.name;
-    document.getElementById('ocrPDFMeta').textContent = size + ' PDF Document';
+    pdfPrev.innerHTML = '<div style="font-size:48px;">📄</div><div style="color:rgba(255,255,255,0.5);font-size:13px;">' + file.name + '</div>';
   }
 }
 
@@ -6183,6 +6224,25 @@ async function startOCR(file) {
           clearInterval(_ocrPollInterval);
           overlay.style.display = 'none';
           _ocrFields = d.fields || {};
+          // Claude AI cleanup — fix garbled OCR text
+          try {
+            const cleanResp = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: 'claude-haiku-4-5-20251001',
+                max_tokens: 1000,
+                system: 'You are an OCR correction assistant. You receive raw OCR-extracted fields from a US document (driver\'s license, pay stub, W2, bank statement). Fix garbled text, correct obvious OCR errors, normalize formats. For addresses: fix city names (e.g. "SN BERNRDNO" → "San Bernardino"), proper-case names, format ZIP as 5 digits, state as 2-letter abbreviation. For names: proper case. For dates: MM/DD/YYYY. For SSN: XXX-XX-XXXX format. Return ONLY a valid JSON object with the same keys as input, corrected values. No explanation, no markdown.',
+                messages: [{ role: 'user', content: 'Clean these OCR fields: ' + JSON.stringify(_ocrFields) }]
+              })
+            });
+            if (cleanResp.ok) {
+              const cleanData = await cleanResp.json();
+              const rawText = cleanData.content?.[0]?.text || '';
+              const cleaned = JSON.parse(rawText.replace(/```json|```/g, '').trim());
+              if (cleaned && typeof cleaned === 'object') _ocrFields = { ..._ocrFields, ...cleaned };
+            }
+          } catch(e) { console.warn('AI cleanup skipped:', e); }
           renderOCRFields(_ocrFields, d.doc_type);
         } else if (d.status==='failed') {
           clearInterval(_ocrPollInterval);
