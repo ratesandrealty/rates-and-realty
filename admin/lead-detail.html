@@ -3521,9 +3521,11 @@ async function confirmDocUpload() {
   for (const file of _pendingDocFiles) {
     console.log('Uploading doc:', file.name, 'contactId:', contactId, 'leadId:', leadId, 'docType:', docType);
     try {
+      const { data: sessionData } = await sb.auth.getSession();
+      console.log('Auth state:', sessionData?.session?.user?.email || 'NOT LOGGED IN');
       const ts = Date.now();
       const path = `${contactId || leadId}/${docType}/${ts}_${file.name}`;
-      const { error: uploadError } = await sb.storage.from('borrower-documents').upload(path, file, { upsert: true });
+      const { error: uploadError } = await sb.storage.from('borrower-documents').upload(path, file, { upsert: true, duplex: 'half' });
       console.log('Storage upload result:', uploadError ? 'ERROR: '+uploadError.message : 'OK, path: '+path);
       if (uploadError) throw new Error('Storage upload failed: ' + uploadError.message);
       const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
@@ -4996,16 +4998,30 @@ async function save1003() {
       prev_income: document.getElementById(id + '_prev_income')?.value || ''
     });
   });
-  data.employments = employments;
+  // Strip any undefined fields that might not exist in schema
+  const cleanData = Object.fromEntries(
+    Object.entries(data).filter(([k, v]) => v !== undefined)
+  );
+  cleanData.employments = employments;
+
+  console.log('Saving 1003 with fields:', Object.keys(cleanData));
 
   try {
-    const { error } = await sb
+    const { data: upsertResult, error } = await sb
       .from('mortgage_applications')
-      .upsert([data], { onConflict: 'contact_id' });
-    if (error) throw error;
-    toast('Application saved');
+      .upsert([cleanData], { onConflict: 'contact_id' })
+      .select();
+
+    console.log('Upsert result:', upsertResult, 'Error:', error);
+
+    if (error) {
+      console.error('Full save error:', JSON.stringify(error));
+      toast('Error saving: ' + (error.message || error.details || JSON.stringify(error)), true);
+      return;
+    }
+    toast('Application saved!');
   } catch (err) {
-    console.error(err);
+    console.error('Save exception:', err);
     toast('Error saving: ' + err.message, true);
   }
 }
