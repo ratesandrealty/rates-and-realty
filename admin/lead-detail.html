@@ -846,6 +846,16 @@
       animation: vnPulse 1s ease-in-out infinite;
     }
   </style>
+  <script>
+    // Load Google Maps Places after page ready
+    function loadGooglePlaces() {
+      const script = document.createElement('script');
+      script.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyACmn2j8wwVNO53MLWGPFFsImjEUxe4D50&libraries=places&callback=initAddressAutocomplete';
+      script.async = true;
+      document.head.appendChild(script);
+    }
+    window.addEventListener('load', loadGooglePlaces);
+  </script>
 </head>
 <body class="admin-page">
 
@@ -1306,14 +1316,212 @@
           <label class="ld-label">Type of Credit</label>
           <div style="display:flex; gap:20px; margin-top:8px;">
             <label style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:14px;cursor:pointer;">
-              <input type="radio" name="credit_type" value="individual" id="f_credit_individual" checked> Individual Credit
+              <input type="radio" name="credit_type" value="individual" id="f_credit_individual" onchange="toggleCoBorrower(false)" checked> Individual Credit
             </label>
             <label style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:14px;cursor:pointer;">
-              <input type="radio" name="credit_type" value="joint" id="f_credit_joint"> Joint Credit
+              <input type="radio" name="credit_type" value="joint" id="f_credit_joint" onchange="toggleCoBorrower(true)"> Joint Credit
             </label>
           </div>
         </div>
       </div>
+
+      <!-- ═══ CO-BORROWER PANEL (Joint Credit) ═══ -->
+      <div id="co-borrower-panel" style="display:none; padding:24px; border-bottom:1px solid rgba(255,255,255,0.06);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+          <div class="app-section-title" style="margin:0;border:none;padding:0;width:100%;">Co-Borrower Information</div>
+        </div>
+
+        <!-- CRM CONTACT SEARCH -->
+        <div style="margin-bottom:20px; padding:16px; background:var(--gold-bg); border:1px solid var(--gold-bdr); border-radius:10px;">
+          <label class="ld-label" style="display:block; margin-bottom:8px;">Search CRM Contacts to Link as Co-Borrower</label>
+          <div style="position:relative;">
+            <input class="ld-input" type="text" id="coBorrowerSearch"
+              placeholder="Type name, phone, or email to search contacts..."
+              oninput="searchCoBorrowerContacts(this.value)"
+              style="width:100%; box-sizing:border-box;">
+            <div id="coBorrowerResults" style="display:none; position:absolute; top:100%; left:0;
+              right:0; background:var(--surface2); border:1px solid var(--gold-bdr);
+              border-radius:0 0 8px 8px; z-index:1000; max-height:200px; overflow-y:auto;"></div>
+          </div>
+          <div id="coBorrowerLinked" style="display:none; margin-top:10px; padding:10px 14px;
+            background:rgba(76,175,80,0.1); border:1px solid rgba(76,175,80,0.3);
+            border-radius:8px; justify-content:space-between; align-items:center;">
+            <span id="coBorrowerLinkedName" style="color:#81c784; font-size:14px; font-weight:600;"></span>
+            <button onclick="unlinkCoBorrower()" style="padding:4px 10px; background:rgba(255,100,100,0.15);
+              border:1px solid rgba(255,100,100,0.3); border-radius:6px; color:#ff9999;
+              font-size:12px; cursor:pointer;">Unlink</button>
+          </div>
+        </div>
+
+        <!-- CO-BORROWER PERSONAL INFO -->
+        <div class="ld-form-grid cols-4">
+          <div class="ld-field">
+            <label class="ld-label">First Name</label>
+            <input class="ld-input" type="text" id="cb_first_name" placeholder="First">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Middle Name</label>
+            <input class="ld-input" type="text" id="cb_middle_name" placeholder="Middle">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Last Name</label>
+            <input class="ld-input" type="text" id="cb_last_name" placeholder="Last">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Suffix</label>
+            <select class="ld-select" id="cb_suffix">
+              <option value="">None</option>
+              <option>Jr.</option><option>Sr.</option>
+              <option>II</option><option>III</option>
+            </select>
+          </div>
+        </div>
+        <div class="ld-form-grid cols-3">
+          <div class="ld-field">
+            <label class="ld-label">SSN</label>
+            <input class="ld-input" type="text" id="cb_ssn" placeholder="XXX-XX-XXXX" maxlength="11">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Date of Birth</label>
+            <input class="ld-input" type="date" id="cb_dob">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Citizenship</label>
+            <select class="ld-select" id="cb_citizenship">
+              <option value="us_citizen">U.S. Citizen</option>
+              <option value="permanent_resident">Permanent Resident Alien</option>
+              <option value="non_permanent_resident">Non-Permanent Resident Alien</option>
+            </select>
+          </div>
+        </div>
+        <div class="ld-form-grid cols-4">
+          <div class="ld-field">
+            <label class="ld-label">Cell Phone</label>
+            <input class="ld-input" type="tel" id="cb_cell_phone" placeholder="(714) 000-0000">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Home Phone</label>
+            <input class="ld-input" type="tel" id="cb_home_phone" placeholder="(714) 000-0000">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Email</label>
+            <input class="ld-input" type="email" id="cb_email" placeholder="co@email.com">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Marital Status</label>
+            <select class="ld-select" id="cb_marital_status">
+              <option value="">Select...</option>
+              <option value="married">Married</option>
+              <option value="separated">Separated</option>
+              <option value="unmarried">Unmarried</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- CO-BORROWER CURRENT ADDRESS -->
+        <h4 style="color:var(--muted); font-size:13px; margin:16px 0 10px; text-transform:uppercase; letter-spacing:0.5px;">Current Address</h4>
+        <div class="ld-form-grid cols-4">
+          <div class="ld-field" style="grid-column:span 3;">
+            <label class="ld-label">Street Address</label>
+            <input class="ld-input" type="text" id="cb_current_street" placeholder="123 Main St">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Unit #</label>
+            <input class="ld-input" type="text" id="cb_current_unit">
+          </div>
+        </div>
+        <div class="ld-form-grid cols-4">
+          <div class="ld-field">
+            <label class="ld-label">City</label>
+            <input class="ld-input" type="text" id="cb_current_city">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">State</label>
+            <input class="ld-input" type="text" id="cb_current_state" maxlength="2">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">ZIP</label>
+            <input class="ld-input" type="text" id="cb_current_zip" maxlength="10">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Housing</label>
+            <select class="ld-select" id="cb_housing_type">
+              <option value="">Select...</option>
+              <option value="own">Own</option>
+              <option value="rent">Rent</option>
+              <option value="no_expense">No Housing Expense</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- CO-BORROWER EMPLOYMENT -->
+        <h4 style="color:var(--muted); font-size:13px; margin:16px 0 10px; text-transform:uppercase; letter-spacing:0.5px;">Employment &amp; Income</h4>
+        <div class="ld-form-grid cols-3">
+          <div class="ld-field" style="grid-column:span 2;">
+            <label class="ld-label">Employer Name</label>
+            <input class="ld-input" type="text" id="cb_employer" placeholder="ABC Company">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Phone</label>
+            <input class="ld-input" type="tel" id="cb_employer_phone" placeholder="(714) 000-0000">
+          </div>
+        </div>
+        <div class="ld-form-grid cols-4">
+          <div class="ld-field">
+            <label class="ld-label">Position / Title</label>
+            <input class="ld-input" type="text" id="cb_title" placeholder="Manager">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Start Date</label>
+            <input class="ld-input" type="date" id="cb_start_date">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Base $/month</label>
+            <input class="ld-input" type="number" id="cb_base_income" placeholder="0">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Self Employed?</label>
+            <select class="ld-select" id="cb_self_employed">
+              <option value="no">No</option>
+              <option value="lt25">Yes, &lt;25%</option>
+              <option value="gt25">Yes, &ge;25%</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- CO-BORROWER DECLARATIONS -->
+        <h4 style="color:var(--muted); font-size:13px; margin:16px 0 10px; text-transform:uppercase; letter-spacing:0.5px;">Co-Borrower Declarations</h4>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div class="declaration-row">
+            <span>Outstanding judgments?</span>
+            <div class="yn-toggle">
+              <label><input type="radio" name="cb_judgments" value="yes"> YES</label>
+              <label><input type="radio" name="cb_judgments" value="no" checked> NO</label>
+            </div>
+          </div>
+          <div class="declaration-row">
+            <span>Delinquent on federal debt?</span>
+            <div class="yn-toggle">
+              <label><input type="radio" name="cb_federal" value="yes"> YES</label>
+              <label><input type="radio" name="cb_federal" value="no" checked> NO</label>
+            </div>
+          </div>
+          <div class="declaration-row">
+            <span>Foreclosure in last 7 years?</span>
+            <div class="yn-toggle">
+              <label><input type="radio" name="cb_foreclosure" value="yes"> YES</label>
+              <label><input type="radio" name="cb_foreclosure" value="no" checked> NO</label>
+            </div>
+          </div>
+          <div class="declaration-row">
+            <span>Bankruptcy in last 7 years?</span>
+            <div class="yn-toggle">
+              <label><input type="radio" name="cb_bankruptcy" value="yes"> YES</label>
+              <label><input type="radio" name="cb_bankruptcy" value="no" checked> NO</label>
+            </div>
+          </div>
+        </div>
+      </div><!-- /co-borrower-panel -->
 
       <!-- ═══ CURRENT ADDRESS ═══ -->
       <div class="ld-section" style="padding:24px; border-bottom:1px solid rgba(255,255,255,0.06);">
@@ -3505,10 +3713,12 @@ function addEmployment(type) {
     employmentCount++;
     document.getElementById('employment-container').insertAdjacentHTML(
       'beforeend', createEmploymentBlock('current', employmentCount, false));
+    attachAutocompleteToBlock(`current_emp_${employmentCount}`);
   } else {
     prevEmploymentCount++;
     document.getElementById('prev-employment-container').insertAdjacentHTML(
       'beforeend', createEmploymentBlock('prev', prevEmploymentCount, true));
+    attachAutocompleteToBlock(`prev_emp_${prevEmploymentCount}`);
   }
 }
 
@@ -3565,6 +3775,7 @@ function addFormerAddress() {
       </div>
     </div>`;
   document.getElementById('former-addresses-container').insertAdjacentHTML('beforeend', html);
+  attachAutocompleteToBlock(id);
 }
 
 /* ── 1003 — MILITARY TOGGLE ── */
@@ -3635,6 +3846,33 @@ async function save1003() {
     lo_org: gv('f_lo_org'),
     lo_nmls: gv('f_lo_nmls'),
     lo_name: gv('f_lo_name'),
+    co_borrower_contact_id: window._coBorrowerContactId || null,
+    co_borrower_first_name: gv('cb_first_name'),
+    co_borrower_middle_name: gv('cb_middle_name'),
+    co_borrower_last_name: gv('cb_last_name'),
+    co_borrower_suffix: gv('cb_suffix'),
+    co_borrower_ssn: gv('cb_ssn'),
+    co_borrower_dob: gv('cb_dob'),
+    co_borrower_citizenship: gv('cb_citizenship'),
+    co_borrower_marital_status: gv('cb_marital_status'),
+    co_borrower_cell_phone: gv('cb_cell_phone'),
+    co_borrower_home_phone: gv('cb_home_phone'),
+    co_borrower_email: gv('cb_email'),
+    co_borrower_current_street: gv('cb_current_street'),
+    co_borrower_current_city: gv('cb_current_city'),
+    co_borrower_current_state: gv('cb_current_state'),
+    co_borrower_current_zip: gv('cb_current_zip'),
+    co_borrower_housing_type: gv('cb_housing_type'),
+    co_borrower_base_income: parseFloat(gv('cb_base_income')) || 0,
+    co_borrower_employer: gv('cb_employer'),
+    co_borrower_employer_phone: gv('cb_employer_phone'),
+    co_borrower_title: gv('cb_title'),
+    co_borrower_start_date: gv('cb_start_date') || null,
+    co_borrower_self_employed: gv('cb_self_employed'),
+    co_borrower_decl_judgments: gr('cb_judgments') === 'yes',
+    co_borrower_decl_federal: gr('cb_federal') === 'yes',
+    co_borrower_decl_foreclosure: gr('cb_foreclosure') === 'yes',
+    co_borrower_decl_bankruptcy: gr('cb_bankruptcy') === 'yes',
     updated_at: new Date().toISOString()
   };
 
@@ -3805,10 +4043,211 @@ async function load1003() {
         empContainer.innerHTML = createEmploymentBlock('current', 0, false);
       }
     }
+
+    // Load co-borrower data
+    if (data.co_borrower_contact_id) {
+      window._coBorrowerContactId = data.co_borrower_contact_id;
+      document.getElementById('f_credit_joint').checked = true;
+      toggleCoBorrower(true);
+      const linkedDiv = document.getElementById('coBorrowerLinked');
+      document.getElementById('coBorrowerLinkedName').textContent =
+        'Linked: ' + (data.co_borrower_first_name || '') + ' ' + (data.co_borrower_last_name || '');
+      linkedDiv.style.display = 'flex';
+    } else if (data.co_borrower_first_name) {
+      document.getElementById('f_credit_joint').checked = true;
+      toggleCoBorrower(true);
+    }
+    sv('cb_first_name', data.co_borrower_first_name);
+    sv('cb_middle_name', data.co_borrower_middle_name);
+    sv('cb_last_name', data.co_borrower_last_name);
+    sv('cb_suffix', data.co_borrower_suffix);
+    sv('cb_ssn', data.co_borrower_ssn);
+    sv('cb_dob', data.co_borrower_dob);
+    sv('cb_citizenship', data.co_borrower_citizenship);
+    sv('cb_marital_status', data.co_borrower_marital_status);
+    sv('cb_cell_phone', data.co_borrower_cell_phone);
+    sv('cb_home_phone', data.co_borrower_home_phone);
+    sv('cb_email', data.co_borrower_email);
+    sv('cb_current_street', data.co_borrower_current_street);
+    sv('cb_current_city', data.co_borrower_current_city);
+    sv('cb_current_state', data.co_borrower_current_state);
+    sv('cb_current_zip', data.co_borrower_current_zip);
+    sv('cb_housing_type', data.co_borrower_housing_type);
+    sv('cb_base_income', data.co_borrower_base_income);
+    sv('cb_employer', data.co_borrower_employer);
+    sv('cb_employer_phone', data.co_borrower_employer_phone);
+    sv('cb_title', data.co_borrower_title);
+    sv('cb_start_date', data.co_borrower_start_date);
+    sv('cb_self_employed', data.co_borrower_self_employed);
+    if (data.co_borrower_decl_judgments) sr('cb_judgments', 'yes');
+    if (data.co_borrower_decl_federal) sr('cb_federal', 'yes');
+    if (data.co_borrower_decl_foreclosure) sr('cb_foreclosure', 'yes');
+    if (data.co_borrower_decl_bankruptcy) sr('cb_bankruptcy', 'yes');
   } catch (err) {
     console.warn('load1003:', err.message);
   }
 }
+
+/* ── GOOGLE MAPS ADDRESS AUTOCOMPLETE ── */
+function initAddressAutocomplete() {
+  const addressFields = [
+    { street: 'f_current_street', city: 'f_current_city', state: 'f_current_state', zip: 'f_current_zip' },
+    { street: 'f_prop_street', city: 'f_prop_city', state: 'f_prop_state', zip: 'f_prop_zip' },
+    { street: 'cb_current_street', city: 'cb_current_city', state: 'cb_current_state', zip: 'cb_current_zip' },
+    { street: 'current_emp_0_street', city: 'current_emp_0_city' },
+  ];
+
+  addressFields.forEach(fields => {
+    const streetEl = document.getElementById(fields.street);
+    if (!streetEl) return;
+
+    const autocomplete = new google.maps.places.Autocomplete(streetEl, {
+      componentRestrictions: { country: 'us' },
+      fields: ['address_components'],
+      types: ['address']
+    });
+
+    autocomplete.addListener('place_changed', () => {
+      const place = autocomplete.getPlace();
+      if (!place.address_components) return;
+
+      let street_number = '', route = '', city = '', state = '', zip = '';
+      place.address_components.forEach(component => {
+        const types = component.types;
+        if (types.includes('street_number')) street_number = component.long_name;
+        if (types.includes('route')) route = component.long_name;
+        if (types.includes('locality')) city = component.long_name;
+        if (types.includes('administrative_area_level_2') && !city) city = component.long_name;
+        if (types.includes('administrative_area_level_1')) state = component.short_name;
+        if (types.includes('postal_code')) zip = component.long_name;
+      });
+
+      streetEl.value = `${street_number} ${route}`.trim();
+      if (fields.city && document.getElementById(fields.city))
+        document.getElementById(fields.city).value = city;
+      if (fields.state && document.getElementById(fields.state))
+        document.getElementById(fields.state).value = state;
+      if (fields.zip && document.getElementById(fields.zip))
+        document.getElementById(fields.zip).value = zip;
+    });
+  });
+}
+
+function attachAutocompleteToBlock(blockId) {
+  if (typeof google === 'undefined' || !google.maps) return;
+  const streetEl = document.getElementById(blockId + '_street');
+  if (!streetEl) return;
+
+  const autocomplete = new google.maps.places.Autocomplete(streetEl, {
+    componentRestrictions: { country: 'us' },
+    fields: ['address_components'],
+    types: ['address']
+  });
+
+  autocomplete.addListener('place_changed', () => {
+    const place = autocomplete.getPlace();
+    if (!place.address_components) return;
+    let street_number = '', route = '', city = '', state = '', zip = '';
+    place.address_components.forEach(c => {
+      if (c.types.includes('street_number')) street_number = c.long_name;
+      if (c.types.includes('route')) route = c.long_name;
+      if (c.types.includes('locality')) city = c.long_name;
+      if (c.types.includes('administrative_area_level_1')) state = c.short_name;
+      if (c.types.includes('postal_code')) zip = c.long_name;
+    });
+    streetEl.value = `${street_number} ${route}`.trim();
+    const cityEl = document.getElementById(blockId + '_city');
+    const stateEl = document.getElementById(blockId + '_state');
+    const zipEl = document.getElementById(blockId + '_zip');
+    const stateZipEl = document.getElementById(blockId + '_state_zip');
+    if (cityEl) cityEl.value = city;
+    if (stateEl) stateEl.value = state;
+    if (zipEl) zipEl.value = zip;
+    if (stateZipEl) stateZipEl.value = `${state} ${zip}`;
+  });
+}
+
+/* ── CO-BORROWER FUNCTIONS ── */
+function toggleCoBorrower(show) {
+  document.getElementById('co-borrower-panel').style.display = show ? 'block' : 'none';
+  if (show && typeof google !== 'undefined' && google.maps) {
+    setTimeout(() => attachAutocompleteToBlock('cb_current'), 300);
+  }
+}
+
+let coBorrowerSearchTimeout;
+async function searchCoBorrowerContacts(query) {
+  clearTimeout(coBorrowerSearchTimeout);
+  const resultsDiv = document.getElementById('coBorrowerResults');
+
+  if (!query || query.length < 2) {
+    resultsDiv.style.display = 'none';
+    return;
+  }
+
+  coBorrowerSearchTimeout = setTimeout(async () => {
+    const { data } = await sb
+      .from('contacts')
+      .select('id, first_name, last_name, phone, email, cell_phone')
+      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%,email.ilike.%${query}%`)
+      .limit(8);
+
+    if (!data || data.length === 0) {
+      resultsDiv.innerHTML = '<div style="padding:12px 16px; color:var(--muted); font-size:13px;">No contacts found</div>';
+      resultsDiv.style.display = 'block';
+      return;
+    }
+
+    resultsDiv.innerHTML = data.map(c => {
+      const cJson = JSON.stringify(c).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      return `
+      <div onclick='selectCoBorrower("${c.id}", "${esc(c.first_name)} ${esc(c.last_name)}", JSON.parse(this.dataset.contact))'
+        data-contact='${JSON.stringify(c).replace(/'/g, "&#39;")}'
+        style="padding:12px 16px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.06);
+               color:var(--text); font-size:14px; transition:background 0.15s;"
+        onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+        onmouseout="this.style.background=''">
+        <div style="font-weight:600;">${esc(c.first_name)} ${esc(c.last_name)}</div>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+          ${esc(c.phone || c.cell_phone || '')} ${c.email ? '&middot; ' + esc(c.email) : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    resultsDiv.style.display = 'block';
+  }, 300);
+}
+
+function selectCoBorrower(contactId, name, contact) {
+  document.getElementById('coBorrowerResults').style.display = 'none';
+  document.getElementById('coBorrowerSearch').value = '';
+
+  const linkedDiv = document.getElementById('coBorrowerLinked');
+  document.getElementById('coBorrowerLinkedName').textContent = 'Linked: ' + name;
+  linkedDiv.style.display = 'flex';
+
+  const sv = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+  sv('cb_first_name', contact.first_name);
+  sv('cb_last_name', contact.last_name);
+  sv('cb_cell_phone', contact.cell_phone || contact.phone);
+  sv('cb_email', contact.email);
+
+  window._coBorrowerContactId = contactId;
+}
+
+function unlinkCoBorrower() {
+  document.getElementById('coBorrowerLinked').style.display = 'none';
+  document.getElementById('coBorrowerLinkedName').textContent = '';
+  window._coBorrowerContactId = null;
+}
+
+// Close search results when clicking outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#coBorrowerSearch') && !e.target.closest('#coBorrowerResults')) {
+    const r = document.getElementById('coBorrowerResults');
+    if (r) r.style.display = 'none';
+  }
+});
 
 /* ── MISMO 3.4 EXPORT ── */
 async function exportMISMO() {
@@ -4110,6 +4549,114 @@ async function exportMISMO() {
                 </TAXPAYER_IDENTIFIER>
               </TAXPAYER_IDENTIFIERS>
             </PARTY>
+            ${data.co_borrower_first_name ? `
+            <PARTY xlink:label="Party2">
+              <ADDRESSES>
+                <ADDRESS>
+                  <AddressLineText>${esc(data.co_borrower_current_street || '')}</AddressLineText>
+                  <CityName>${esc(data.co_borrower_current_city || '')}</CityName>
+                  <PostalCode>${esc(data.co_borrower_current_zip || '')}</PostalCode>
+                  <StateCode>${esc(data.co_borrower_current_state || '')}</StateCode>
+                  <CountryCode>US</CountryCode>
+                  <AddressType>Current</AddressType>
+                </ADDRESS>
+              </ADDRESSES>
+              <INDIVIDUAL>
+                <CONTACT_POINTS>
+                  <CONTACT_POINT>
+                    <CONTACT_POINT_TELEPHONE>
+                      <ContactPointTelephoneValue>${(data.co_borrower_cell_phone || data.co_borrower_home_phone || '').replace(/\D/g,'')}</ContactPointTelephoneValue>
+                      <ContactPointTelephoneType>Cell</ContactPointTelephoneType>
+                    </CONTACT_POINT_TELEPHONE>
+                  </CONTACT_POINT>
+                  <CONTACT_POINT>
+                    <CONTACT_POINT_EMAIL>
+                      <ContactPointEmailValue>${esc(data.co_borrower_email || '')}</ContactPointEmailValue>
+                    </CONTACT_POINT_EMAIL>
+                  </CONTACT_POINT>
+                </CONTACT_POINTS>
+                <NAME>
+                  <FirstName>${esc(data.co_borrower_first_name || '')}</FirstName>
+                  <MiddleName>${esc(data.co_borrower_middle_name || '')}</MiddleName>
+                  <LastName>${esc(data.co_borrower_last_name || '')}</LastName>
+                  <SuffixName>${esc(data.co_borrower_suffix || '')}</SuffixName>
+                </NAME>
+              </INDIVIDUAL>
+              <ROLES>
+                <ROLE>
+                  <BORROWER>
+                    <BORROWER_DETAIL>
+                      <BorrowerBirthDate>${esc(data.co_borrower_dob || '')}</BorrowerBirthDate>
+                      <CitizenshipResidencyType>${
+                        data.co_borrower_citizenship === 'permanent_resident' ? 'PermanentResidentAlien' :
+                        data.co_borrower_citizenship === 'non_permanent_resident' ? 'NonPermanentResidentAlien' :
+                        'USCitizen'
+                      }</CitizenshipResidencyType>
+                      <MaritalStatusType>${
+                        data.co_borrower_marital_status === 'married' ? 'Married' :
+                        data.co_borrower_marital_status === 'separated' ? 'Separated' : 'Unmarried'
+                      }</MaritalStatusType>
+                    </BORROWER_DETAIL>
+                    <CURRENT_INCOME>
+                      <CURRENT_INCOME_ITEM>
+                        <CurrentIncomeItemType>Base</CurrentIncomeItemType>
+                        <CurrentIncomeMonthlyTotalAmount>${data.co_borrower_base_income || 0}</CurrentIncomeMonthlyTotalAmount>
+                      </CURRENT_INCOME_ITEM>
+                    </CURRENT_INCOME>
+                    <DECLARATIONS>
+                      <DECLARATION>
+                        <OutstandingJudgmentsIndicator>${data.co_borrower_decl_judgments ? 'true' : 'false'}</OutstandingJudgmentsIndicator>
+                        <PresentlyDelinquentIndicator>${data.co_borrower_decl_federal ? 'true' : 'false'}</PresentlyDelinquentIndicator>
+                        <PriorPropertyForeclosureCompletedIndicator>${data.co_borrower_decl_foreclosure ? 'true' : 'false'}</PriorPropertyForeclosureCompletedIndicator>
+                        <BankruptcyIndicator>${data.co_borrower_decl_bankruptcy ? 'true' : 'false'}</BankruptcyIndicator>
+                      </DECLARATION>
+                    </DECLARATIONS>
+                    <EMPLOYERS>
+                      <EMPLOYER>
+                        <EMPLOYER_DETAIL>
+                          <EmployerName>${esc(data.co_borrower_employer || 'Not Provided')}</EmployerName>
+                          <EmploymentPositionDescription>${esc(data.co_borrower_title || '')}</EmploymentPositionDescription>
+                          <EmploymentStartDate>${esc(data.co_borrower_start_date || '')}</EmploymentStartDate>
+                          <EmploymentStatusType>Current</EmploymentStatusType>
+                          <SelfEmployedIndicator>false</SelfEmployedIndicator>
+                          <SpecialBorrowerSellerRelationshipIndicator>false</SpecialBorrowerSellerRelationshipIndicator>
+                        </EMPLOYER_DETAIL>
+                        <INCOME>
+                          <INCOME_ITEM>
+                            <IncomeType>Base</IncomeType>
+                            <IncomeMonthlyTotalAmount>${data.co_borrower_base_income || 0}</IncomeMonthlyTotalAmount>
+                          </INCOME_ITEM>
+                        </INCOME>
+                      </EMPLOYER>
+                    </EMPLOYERS>
+                    <RESIDENCES>
+                      <RESIDENCE>
+                        <ADDRESS>
+                          <AddressLineText>${esc(data.co_borrower_current_street || '')}</AddressLineText>
+                          <CityName>${esc(data.co_borrower_current_city || '')}</CityName>
+                          <PostalCode>${esc(data.co_borrower_current_zip || '')}</PostalCode>
+                          <StateCode>${esc(data.co_borrower_current_state || '')}</StateCode>
+                          <CountryCode>US</CountryCode>
+                        </ADDRESS>
+                        <RESIDENCE_DETAIL>
+                          <BorrowerResidencyBasisType>${
+                            data.co_borrower_housing_type === 'own' ? 'Own' :
+                            data.co_borrower_housing_type === 'no_expense' ? 'NoHousingExpense' : 'Rent'
+                          }</BorrowerResidencyBasisType>
+                          <BorrowerResidencyType>Current</BorrowerResidencyType>
+                        </RESIDENCE_DETAIL>
+                      </RESIDENCE>
+                    </RESIDENCES>
+                  </BORROWER>
+                </ROLE>
+              </ROLES>
+              <TAXPAYER_IDENTIFIERS>
+                <TAXPAYER_IDENTIFIER>
+                  <TaxpayerIdentifierType>SocialSecurityNumber</TaxpayerIdentifierType>
+                  <TaxpayerIdentifierValue>${(data.co_borrower_ssn || '').replace(/\D/g,'')}</TaxpayerIdentifierValue>
+                </TAXPAYER_IDENTIFIER>
+              </TAXPAYER_IDENTIFIERS>
+            </PARTY>` : ''}
             <PARTY xlink:label="Party_LO">
               <ROLES>
                 <ROLE>
@@ -4142,6 +4689,7 @@ async function exportMISMO() {
           </PARTIES>
           <RELATIONSHIPS>
             <RELATIONSHIP xlink:arcrole="urn:fdc:mismo.org:2009:residential:BORROWER-LOAN" xlink:from="Party1" xlink:to="Loan1"/>
+            ${data.co_borrower_first_name ? `<RELATIONSHIP xlink:arcrole="urn:fdc:mismo.org:2009:residential:BORROWER-LOAN" xlink:from="Party2" xlink:to="Loan1"/>` : ''}
           </RELATIONSHIPS>
         </DEAL>
       </DEALS>
