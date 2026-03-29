@@ -971,11 +971,21 @@
       }
 
       /* Forms: 2 columns on tablet */
-      .form-grid-4, .form-grid-3 {
+      .ld-form-grid.cols-4, .form-grid-4, .form-grid-3 {
+        grid-template-columns: repeat(2, 1fr) !important;
+      }
+      .ld-form-grid.cols-3 {
         grid-template-columns: repeat(2, 1fr) !important;
       }
       .form-grid-2 {
         grid-template-columns: 1fr !important;
+      }
+
+      /* 1003 header wraps on mobile */
+      .ld-section h2, .app-section-title { font-size: 15px !important; }
+      [style*="justify-content:space-between"] {
+        flex-wrap: wrap !important;
+        gap: 8px !important;
       }
 
       /* Tags row wraps nicely */
@@ -1000,9 +1010,9 @@
 
     @media screen and (max-width: 480px) {
       /* Single column on small phones */
+      .ld-form-grid.cols-4, .ld-form-grid.cols-3,
       .form-grid-4, .form-grid-3, .form-grid-2 {
-        display: flex !important;
-        flex-direction: column !important;
+        grid-template-columns: 1fr !important;
       }
       body { font-size: 13px !important; }
       h1, h2 { font-size: clamp(18px, 6vw, 28px) !important; }
@@ -1604,7 +1614,16 @@
         <h2 style="color:var(--gold); font-size:18px; margin:0; font-family:'Cormorant Garamond',serif;">
           Uniform Residential Loan Application (1003)
         </h2>
-        <div style="display:flex; gap:10px;">
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button onclick="openOCRUpload()" style="
+            display:inline-flex; align-items:center; gap:8px;
+            padding:10px 18px; border-radius:10px;
+            background:rgba(201,168,76,0.1);
+            border:1px solid rgba(201,168,76,0.35);
+            color:#c9a84c; font-size:13px; font-weight:700;
+            cursor:pointer; transition:all 0.2s; white-space:nowrap;">
+            Scan Doc → Auto-fill
+          </button>
           <button class="ld-btn-save" onclick="save1003()">Save Application</button>
           <button class="ld-btn-cancel" onclick="exportMISMO()" style="border-color:var(--gold-bdr);color:var(--gold);">Export MISMO 3.4</button>
         </div>
@@ -5826,6 +5845,213 @@ loadData().then(() => loadContactMeta());
       }
     });
   })();
+
+/* ── OCR SCAN SYSTEM ── */
+let _ocrJobId = null;
+let _ocrFields = {};
+let _ocrPollInterval = null;
+
+function openOCRUpload() {
+  const modal = document.getElementById('ocrModal');
+  if (modal) {
+    modal.style.display = 'flex';
+    document.getElementById('ocrStatus').style.display = 'none';
+    document.getElementById('ocrResults').style.display = 'none';
+    _ocrFields = {};
+  }
+}
+
+function handleOCRDrop(e) {
+  const file = e.dataTransfer?.files?.[0];
+  if (file) startOCR(file);
+}
+
+async function startOCR(file) {
+  if (!file) return;
+  const statusEl = document.getElementById('ocrStatus');
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = '⏳ Uploading and scanning...';
+
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+
+    const resp = await fetch(
+      'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'start',
+          file_base64: base64,
+          file_name: file.name,
+          file_type: file.type,
+          contact_id: typeof getContactId === 'function' ? getContactId() : null
+        })
+      }
+    );
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Failed to start OCR');
+
+    _ocrJobId = data.job_id;
+    statusEl.innerHTML = 'AI is reading your document... (5-15 seconds)';
+    let polls = 0;
+    _ocrPollInterval = setInterval(async () => {
+      polls++;
+      if (polls > 20) {
+        clearInterval(_ocrPollInterval);
+        statusEl.innerHTML = 'Taking longer than expected — try again or check file quality.';
+        return;
+      }
+      try {
+        const r = await fetch(
+          'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'result', job_id: _ocrJobId })
+          }
+        );
+        const d = await r.json();
+        if (d.status === 'completed') {
+          clearInterval(_ocrPollInterval);
+          _ocrFields = d.fields || {};
+          showOCRResults(_ocrFields);
+        } else if (d.status === 'failed') {
+          clearInterval(_ocrPollInterval);
+          statusEl.innerHTML = 'Scan failed: ' + (d.error || 'Unknown error');
+        }
+      } catch(e) { console.error('poll error', e); }
+    }, 3000);
+
+  } catch(e) {
+    statusEl.innerHTML = 'Error: ' + e.message;
+  }
+}
+
+function showOCRResults(fields) {
+  const statusEl = document.getElementById('ocrStatus');
+  const resultsEl = document.getElementById('ocrResults');
+  const listEl = document.getElementById('ocrFieldsList');
+  const LABELS = {
+    first_name:'First Name', last_name:'Last Name',
+    date_of_birth:'Date of Birth', ssn:'SSN',
+    phone:'Phone', email:'Email',
+    employer_name:'Employer', base_income:'Base Income/mo',
+    current_address_street:'Street Address'
+  };
+  const displayFields = Object.entries(fields).filter(([k]) => !k.startsWith('_') && LABELS[k]);
+  if (displayFields.length === 0) {
+    statusEl.innerHTML = 'No fields extracted. Try a clearer scan.';
+    return;
+  }
+  statusEl.innerHTML = 'Found ' + displayFields.length + ' fields — check boxes to apply';
+  statusEl.style.borderColor = 'rgba(76,175,80,0.3)';
+  listEl.innerHTML = displayFields.map(([key, val]) => `
+    <div style="display:flex; align-items:center; gap:10px; padding:8px 12px;
+      background:rgba(255,255,255,0.04); border-radius:7px;
+      border:1px solid rgba(255,255,255,0.08);">
+      <input type="checkbox" id="ocr_chk_${key}" checked
+        style="width:15px;height:15px;cursor:pointer;accent-color:#c9a84c;flex-shrink:0;">
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:10px; text-transform:uppercase; color:rgba(255,255,255,0.35);
+          letter-spacing:0.5px;">${LABELS[key]}</div>
+        <div style="font-size:13px; color:#fff; white-space:nowrap; overflow:hidden;
+          text-overflow:ellipsis;">${val}</div>
+      </div>
+    </div>`).join('');
+  resultsEl.style.display = 'block';
+}
+
+function applyOCRFields() {
+  const MAP = {
+    first_name:'f_first_name', last_name:'f_last_name',
+    date_of_birth:'f_dob', ssn:'f_ssn',
+    phone:'f_cell_phone', email:'f_email',
+    employer_name:'f_employer_name',
+    current_address_street:'f_current_street',
+    base_income:'f_base_income'
+  };
+  let count = 0;
+  Object.entries(_ocrFields).forEach(([key, val]) => {
+    const chk = document.getElementById('ocr_chk_' + key);
+    if (!chk?.checked) return;
+    const fieldId = MAP[key];
+    if (fieldId) {
+      const el = document.getElementById(fieldId);
+      if (el) { el.value = val; count++; }
+    }
+  });
+  document.getElementById('ocrModal').style.display = 'none';
+  if (typeof toast === 'function') toast('Applied ' + count + ' fields to 1003');
+}
   </script>
+
+<!-- OCR Scan Modal -->
+<div id="ocrModal" style="display:none; position:fixed; inset:0; z-index:10000;
+  background:rgba(0,0,0,0.8); backdrop-filter:blur(4px);
+  align-items:center; justify-content:center; padding:20px;">
+  <div style="background:#1a1a1a; border:1px solid rgba(201,168,76,0.3);
+    border-radius:20px; padding:28px; width:100%; max-width:460px;
+    box-shadow:0 24px 60px rgba(0,0,0,0.6);">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <h3 style="color:#c9a84c; font-size:17px; margin:0;">Scan Document → Auto-fill 1003</h3>
+      <button onclick="document.getElementById('ocrModal').style.display='none'"
+        style="background:none;border:none;color:rgba(255,255,255,0.5);
+               font-size:22px;cursor:pointer;line-height:1;">×</button>
+    </div>
+
+    <p style="font-size:13px; color:rgba(255,255,255,0.45); margin-bottom:18px; line-height:1.6;">
+      Upload a pay stub, W-2, tax return, or ID. AI will extract
+      name, DOB, employer, income, address and fill the 1003 automatically.
+    </p>
+
+    <div id="ocrDropZone"
+      onclick="document.getElementById('ocrFileInput').click()"
+      ondragover="event.preventDefault();document.getElementById('ocrDropZone').style.borderColor='#c9a84c'"
+      ondragleave="document.getElementById('ocrDropZone').style.borderColor='rgba(201,168,76,0.3)'"
+      ondrop="event.preventDefault();document.getElementById('ocrDropZone').style.borderColor='rgba(201,168,76,0.3)';handleOCRDrop(event)"
+      style="border:2px dashed rgba(201,168,76,0.3); border-radius:12px;
+             padding:28px; text-align:center; cursor:pointer; margin-bottom:14px;
+             transition:border-color 0.2s; background:rgba(201,168,76,0.02);">
+      <div style="font-size:32px; margin-bottom:8px;">📄</div>
+      <div style="font-size:14px; color:rgba(255,255,255,0.6); font-weight:600;">
+        Drop file here or click to browse
+      </div>
+      <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:5px;">
+        PDF, JPG, PNG — Pay stubs, W-2s, Tax returns, IDs
+      </div>
+    </div>
+    <input type="file" id="ocrFileInput" accept=".pdf,.jpg,.jpeg,.png"
+      style="display:none" onchange="startOCR(this.files[0])">
+
+    <div id="ocrStatus" style="display:none; padding:12px 16px; border-radius:8px;
+      background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+      font-size:13px; color:rgba(255,255,255,0.7); text-align:center; margin-bottom:12px;">
+    </div>
+
+    <div id="ocrResults" style="display:none;">
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px;
+        color:rgba(255,255,255,0.4); font-weight:600; margin-bottom:8px;">
+        Review Extracted Fields
+      </div>
+      <div id="ocrFieldsList" style="display:flex; flex-direction:column; gap:5px;
+        max-height:220px; overflow-y:auto; margin-bottom:12px;"></div>
+      <button onclick="applyOCRFields()" style="
+        width:100%; padding:12px;
+        background:linear-gradient(135deg,#c9a84c,#a07830);
+        border:none; border-radius:10px; color:#1a1a1a;
+        font-size:14px; font-weight:700; cursor:pointer;">
+        Apply Fields to 1003
+      </button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
