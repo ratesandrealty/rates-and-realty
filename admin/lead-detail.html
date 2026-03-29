@@ -3036,7 +3036,7 @@ async function loadData() {
     liabilitiesData = Array.isArray(contactData.liabilities) ? [...contactData.liabilities] : [];
     populateUI();
     renderLiabilities();
-    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocuments(), loadDocumentsGrid(), loadCreditApps(), loadAllTags().then(function() { return loadContactTags(contactId); })]);
+    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocumentsGrid(), loadCreditApps(), loadAllTags().then(function() { return loadContactTags(contactId); })]);
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
@@ -3359,7 +3359,7 @@ const DOC_TYPES = [
   { key: 'other',        label: 'Other Documents',    icon: '📎', desc: 'Additional supporting docs' },
 ];
 
-async function loadDocuments() {
+async function loadDocumentsChecklist() {
   const el = document.getElementById('docs-list');
   let uploaded = [];
   try {
@@ -3419,7 +3419,7 @@ async function updateDocStatus(docType, status, existingId) {
       });
     }
     toast('✓ Document status updated');
-    loadDocuments();
+    loadDocumentsGrid();
   } catch (err) {
     toast('Error: ' + err.message, true);
   }
@@ -3447,7 +3447,7 @@ function handleDocUpload(docType) {
         contact_id: contactId || null
       });
       toast('✓ ' + file.name + ' uploaded');
-      loadDocuments();
+      loadDocumentsGrid();
       await logActivity('document_uploaded', `Document uploaded: ${docType} — ${file.name}`);
     } catch (err) {
       toast('Upload error: ' + err.message, true);
@@ -4036,6 +4036,7 @@ function switchTab(name, btn) {
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
   if (name === 'application') load1003();
+  if (name === 'documents') loadDocumentsGrid();
   if (name === 'mismo') loadMISMOHistory();
 }
 
@@ -4933,7 +4934,6 @@ async function save1003() {
     co_borrower_employer_phone: gv('cb_employer_phone'),
     co_borrower_title: gv('cb_title'),
     co_borrower_start_date: gv('cb_start_date') || null,
-    co_borrower_self_employed: gv('cb_self_employed'),
     co_borrower_decl_judgments: gr('cb_judgments') === 'yes',
     co_borrower_decl_federal: gr('cb_federal') === 'yes',
     co_borrower_decl_foreclosure: gr('cb_foreclosure') === 'yes',
@@ -5143,7 +5143,7 @@ async function load1003() {
     sv('cb_employer_phone', data.co_borrower_employer_phone);
     sv('cb_title', data.co_borrower_title);
     sv('cb_start_date', data.co_borrower_start_date);
-    sv('cb_self_employed', data.co_borrower_self_employed);
+    // co_borrower_self_employed removed — not in schema
     if (data.co_borrower_decl_judgments) sr('cb_judgments', 'yes');
     if (data.co_borrower_decl_federal) sr('cb_federal', 'yes');
     if (data.co_borrower_decl_foreclosure) sr('cb_foreclosure', 'yes');
