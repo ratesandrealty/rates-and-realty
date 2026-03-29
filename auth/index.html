@@ -3,57 +3,733 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Google Analytics -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-03P16TMWM8"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-03P16TMWM8');
-  </script>
-  <title>Borrower Login | Rates & Realty</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/components/styles.css">
-  <link rel="stylesheet" href="/public/css/responsive.css">
+  <title>My Loan Portal — Rates & Realty</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #c9a84c;
+      --gold-light: #e8c97a;
+      --dark: #0d0d0d;
+      --card: #161616;
+      --border: rgba(201,168,76,0.2);
+    }
+
+    body {
+      background: var(--dark);
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── BACKGROUND ── */
+    .bg-gradient {
+      position: fixed; inset: 0; z-index: 0;
+      background:
+        radial-gradient(ellipse 80% 60% at 100% 0%, rgba(201,168,76,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 0% 100%, rgba(201,168,76,0.05) 0%, transparent 50%),
+        var(--dark);
+    }
+
+    .content { position: relative; z-index: 1; }
+
+    /* ── NAV ── */
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 40px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .nav-brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+    .nav-logo {
+      width: 42px; height: 42px;
+      background: linear-gradient(135deg, var(--gold), #a07830);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 16px; font-weight: 700; color: #1a1a1a;
+    }
+    .nav-name { font-family: 'Cormorant Garamond', serif; font-size: 18px; color: #fff; }
+    .nav-tagline { font-size: 10px; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 1px; }
+    .nav-links { display: flex; gap: 8px; align-items: center; }
+    .nav-link {
+      padding: 8px 16px; border-radius: 8px; font-size: 13px;
+      text-decoration: none; color: rgba(255,255,255,0.6);
+      transition: all 0.2s;
+    }
+    .nav-link:hover { color: #fff; background: rgba(255,255,255,0.06); }
+    .nav-cta {
+      padding: 9px 20px; background: var(--gold);
+      color: #1a1a1a; border-radius: 10px; font-size: 13px;
+      font-weight: 700; text-decoration: none; transition: opacity 0.2s;
+    }
+    .nav-cta:hover { opacity: 0.88; }
+
+    /* ── HERO ── */
+    .hero {
+      display: grid; grid-template-columns: 1fr 480px;
+      gap: 60px; align-items: center;
+      padding: 80px 40px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 14px; border-radius: 20px;
+      background: rgba(201,168,76,0.1); border: 1px solid var(--border);
+      font-size: 11px; color: var(--gold); text-transform: uppercase;
+      letter-spacing: 1px; font-weight: 600; margin-bottom: 24px;
+    }
+    .hero-badge::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--gold); animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+    }
+
+    h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(42px, 5vw, 64px);
+      font-weight: 600; line-height: 1.1;
+      margin-bottom: 20px;
+    }
+    h1 span { color: var(--gold); }
+
+    .hero-sub {
+      font-size: 17px; color: rgba(255,255,255,0.55);
+      line-height: 1.7; margin-bottom: 36px; max-width: 520px;
+    }
+
+    /* ── TRUST STATS ── */
+    .trust-row {
+      display: flex; gap: 32px; margin-bottom: 40px; flex-wrap: wrap;
+    }
+    .trust-item { }
+    .trust-num {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 28px; font-weight: 700; color: var(--gold);
+    }
+    .trust-label {
+      font-size: 12px; color: rgba(255,255,255,0.4);
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    /* ── VALUE PROPS ── */
+    .value-chips { display: flex; flex-wrap: wrap; gap: 10px; }
+    .chip {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 14px; background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
+      font-size: 13px; color: rgba(255,255,255,0.7);
+    }
+    .chip-icon { font-size: 15px; }
+
+    /* ── AUTH CARD ── */
+    .auth-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 40px;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.5);
+    }
+
+    .auth-tabs {
+      display: flex; gap: 4px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 10px; padding: 4px;
+      margin-bottom: 28px;
+    }
+    .auth-tab {
+      flex: 1; padding: 10px; border-radius: 8px;
+      border: none; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+      font-family: 'Inter', sans-serif;
+      color: rgba(255,255,255,0.4); background: none;
+    }
+    .auth-tab.active {
+      background: var(--gold); color: #1a1a1a;
+    }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      display: block; font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      color: rgba(255,255,255,0.4); margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .form-group input {
+      width: 100%; padding: 13px 16px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px; color: #fff; font-size: 15px;
+      font-family: 'Inter', sans-serif; outline: none;
+      transition: border 0.2s, background 0.2s;
+    }
+    .form-group input:focus {
+      border-color: rgba(201,168,76,0.5);
+      background: rgba(255,255,255,0.07);
+    }
+    .form-group input::placeholder { color: rgba(255,255,255,0.2); }
+
+    .auth-btn {
+      width: 100%; padding: 15px;
+      background: linear-gradient(135deg, var(--gold), #a07830);
+      border: none; border-radius: 10px;
+      color: #1a1a1a; font-size: 15px; font-weight: 700;
+      cursor: pointer; font-family: 'Cormorant Garamond', serif;
+      letter-spacing: 0.3px; transition: opacity 0.2s, transform 0.1s;
+      margin-top: 8px;
+    }
+    .auth-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .auth-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .auth-divider {
+      text-align: center; font-size: 12px;
+      color: rgba(255,255,255,0.2); margin: 20px 0;
+      position: relative;
+    }
+    .auth-divider::before, .auth-divider::after {
+      content: ''; position: absolute; top: 50%;
+      width: 40%; height: 1px; background: rgba(255,255,255,0.08);
+    }
+    .auth-divider::before { left: 0; }
+    .auth-divider::after { right: 0; }
+
+    .cal-btn {
+      width: 100%; padding: 13px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
+      color: rgba(255,255,255,0.7); font-size: 14px; font-weight: 600;
+      cursor: pointer; font-family: 'Inter', sans-serif;
+      transition: all 0.2s; text-decoration: none;
+      display: block; text-align: center;
+    }
+    .cal-btn:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: var(--border); }
+
+    .msg {
+      padding: 10px 14px; border-radius: 8px;
+      font-size: 13px; margin-top: 14px; display: none;
+      font-family: 'Inter', sans-serif;
+    }
+    .msg.error { background: rgba(255,100,100,0.08); border: 1px solid rgba(255,100,100,0.2); color: #ff9090; }
+    .msg.success { background: rgba(76,175,80,0.08); border: 1px solid rgba(76,175,80,0.2); color: #81c784; }
+
+    .secure-note {
+      display: flex; align-items: center; justify-content: center;
+      gap: 6px; margin-top: 16px;
+      font-size: 11px; color: rgba(255,255,255,0.25);
+    }
+
+    /* ── FEATURES BELOW ── */
+    .features {
+      max-width: 1200px; margin: 0 auto;
+      padding: 60px 40px 80px;
+    }
+    .features-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 36px; font-weight: 600;
+      text-align: center; margin-bottom: 8px;
+    }
+    .features-sub {
+      text-align: center; color: rgba(255,255,255,0.4);
+      font-size: 15px; margin-bottom: 48px;
+    }
+    .features-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+    .feature-card {
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 14px; padding: 28px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .feature-card:hover {
+      border-color: var(--border);
+      transform: translateY(-2px);
+    }
+    .feature-icon {
+      font-size: 32px; margin-bottom: 14px; display: block;
+    }
+    .feature-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 20px; font-weight: 600;
+      color: #fff; margin-bottom: 8px;
+    }
+    .feature-desc {
+      font-size: 14px; color: rgba(255,255,255,0.45);
+      line-height: 1.6;
+    }
+
+    /* ── TESTIMONIAL ── */
+    .testimonial-section {
+      background: rgba(201,168,76,0.04);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 60px 40px;
+    }
+    .testimonials {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 24px; max-width: 1200px; margin: 0 auto;
+    }
+    .testimonial {
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px; padding: 24px;
+    }
+    .stars { color: var(--gold); font-size: 14px; margin-bottom: 12px; }
+    .testimonial-text {
+      font-size: 14px; color: rgba(255,255,255,0.65);
+      line-height: 1.7; margin-bottom: 16px;
+      font-style: italic;
+    }
+    .testimonial-author {
+      font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.8);
+    }
+    .testimonial-detail {
+      font-size: 12px; color: rgba(255,255,255,0.35);
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      padding: 32px 40px; text-align: center;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.2); font-size: 12px;
+    }
+    footer a { color: rgba(255,255,255,0.3); text-decoration: none; }
+
+    /* ── DASHBOARD (shown after login) ── */
+    #dashboardView {
+      display: none; max-width: 900px; margin: 0 auto;
+      padding: 40px;
+    }
+    .welcome-banner {
+      background: linear-gradient(135deg, rgba(201,168,76,0.15), rgba(201,168,76,0.05));
+      border: 1px solid var(--border); border-radius: 16px;
+      padding: 28px 32px; margin-bottom: 28px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .dashboard-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 16px; margin-bottom: 28px;
+    }
+    .dash-card {
+      background: var(--card); border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 12px; padding: 20px; text-decoration: none; color: #fff;
+      transition: all 0.2s; display: block;
+    }
+    .dash-card:hover { border-color: var(--border); transform: translateY(-2px); }
+    .dash-card-icon { font-size: 28px; margin-bottom: 10px; }
+    .dash-card-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .dash-card-desc { font-size: 12px; color: rgba(255,255,255,0.4); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; padding: 40px 20px; gap: 40px; }
+      .features-grid { grid-template-columns: 1fr; }
+      .testimonials { grid-template-columns: 1fr; }
+      .dashboard-grid { grid-template-columns: 1fr 1fr; }
+      nav { padding: 16px 20px; }
+      .features { padding: 40px 20px; }
+    }
+    @media (max-width: 480px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+      .trust-row { gap: 20px; }
+    }
+  </style>
 </head>
 <body>
-  <div id="site-header"></div>
-  <main class="section">
-    <div class="container auth-layout">
-      <section>
-        <p class="kicker">Secure Portal</p>
-        <h1>Borrower sign in and account creation.</h1>
-        <p class="section-copy">This area uses Supabase Auth. Borrowers can create an account, sign in, and continue their application from the dashboard.</p>
-      </section>
-      <section class="panel">
-        <div class="tab-row">
-          <button class="tab-button is-active" type="button" data-auth-tab="login">Login</button>
-          <button class="tab-button" type="button" data-auth-tab="signup">Sign Up</button>
-        </div>
-        <form id="login-form" class="stack-form" novalidate>
-          <label class="field"><span>Email</span><input name="email" type="email" required></label>
-          <label class="field"><span>Password</span><input name="password" type="password" minlength="6" required></label>
-          <p id="login-message" class="form-message" aria-live="polite"></p>
-          <button class="btn btn-primary" type="submit">Sign In</button>
-        </form>
-        <form id="signup-form" class="stack-form is-hidden" novalidate>
-          <div class="input-row">
-            <label class="field"><span>First Name</span><input name="firstName" type="text" required></label>
-            <label class="field"><span>Last Name</span><input name="lastName" type="text" required></label>
-          </div>
-          <label class="field"><span>Email</span><input name="email" type="email" required></label>
-          <label class="field"><span>Password</span><input name="password" type="password" minlength="6" required></label>
-          <label class="field"><span>Phone</span><input name="phone" type="tel"></label>
-          <p id="signup-message" class="form-message" aria-live="polite"></p>
-          <button class="btn btn-primary" type="submit">Create Account</button>
-        </form>
-      </section>
+<div class="bg-gradient"></div>
+<div class="content">
+
+  <!-- NAV -->
+  <nav>
+    <a href="/" class="nav-brand">
+      <div class="nav-logo">R&R</div>
+      <div>
+        <div class="nav-name">Rates & Realty</div>
+        <div class="nav-tagline">AI-Powered Mortgage</div>
+      </div>
+    </a>
+    <div class="nav-links">
+      <a href="/public/index.html" class="nav-link">← Public Site</a>
+      <a href="https://cal.com/rene-duarte-rates-realty" target="_blank" class="nav-cta">Book a Call</a>
     </div>
-  </main>
-  <div id="site-footer"></div>
-  <script type="module" src="/components/layout.js"></script>
-  <script type="module" src="/components/auth-page.js"></script>
+  </nav>
+
+  <!-- HERO + AUTH -->
+  <div id="mainView">
+    <section class="hero">
+      <!-- LEFT: COPY -->
+      <div>
+        <div class="hero-badge">🔐 Secure Borrower Portal</div>
+
+        <h1>Your Path to<br><span>Homeownership</span><br>Starts Here.</h1>
+
+        <p class="hero-sub">
+          Sign in to track your loan application in real time, upload documents securely,
+          message Rene directly, and get expert guidance at every step — from pre-approval to closing.
+        </p>
+
+        <div class="trust-row">
+          <div class="trust-item">
+            <div class="trust-num">21</div>
+            <div class="trust-label">Day avg close</div>
+          </div>
+          <div class="trust-item">
+            <div class="trust-num">50+</div>
+            <div class="trust-label">Lender options</div>
+          </div>
+          <div class="trust-item">
+            <div class="trust-num">$0</div>
+            <div class="trust-label">To start</div>
+          </div>
+          <div class="trust-item">
+            <div class="trust-num">★ 5.0</div>
+            <div class="trust-label">Client rating</div>
+          </div>
+        </div>
+
+        <div class="value-chips">
+          <div class="chip"><span class="chip-icon">🔒</span> Bank-level security</div>
+          <div class="chip"><span class="chip-icon">📱</span> Mobile friendly</div>
+          <div class="chip"><span class="chip-icon">⚡</span> Same-day pre-approval</div>
+          <div class="chip"><span class="chip-icon">🤝</span> Direct access to Rene</div>
+        </div>
+      </div>
+
+      <!-- RIGHT: AUTH CARD -->
+      <div class="auth-card">
+        <div class="auth-tabs">
+          <button class="auth-tab active" id="loginTab" onclick="switchTab('login')">Sign In</button>
+          <button class="auth-tab" id="signupTab" onclick="switchTab('signup')">Create Account</button>
+        </div>
+
+        <!-- LOGIN FORM -->
+        <div id="loginForm">
+          <div class="form-group">
+            <label>Email Address</label>
+            <input type="email" id="loginEmail" placeholder="you@email.com"
+              onkeydown="if(event.key==='Enter') document.getElementById('loginPassword').focus()">
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="loginPassword" placeholder="••••••••••"
+              onkeydown="if(event.key==='Enter') signIn()">
+          </div>
+          <button class="auth-btn" onclick="signIn()" id="signInBtn">
+            Sign In to My Portal →
+          </button>
+          <div class="msg error" id="loginError"></div>
+          <div class="msg success" id="loginSuccess"></div>
+
+          <div class="auth-divider">or</div>
+
+          <a href="https://cal.com/rene-duarte-rates-realty"
+            target="_blank" class="cal-btn">
+            📅 Book a Free Consultation Instead
+          </a>
+        </div>
+
+        <!-- SIGNUP FORM -->
+        <div id="signupForm" style="display:none;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div class="form-group">
+              <label>First Name</label>
+              <input type="text" id="signupFirst" placeholder="John">
+            </div>
+            <div class="form-group">
+              <label>Last Name</label>
+              <input type="text" id="signupLast" placeholder="Smith">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Email Address</label>
+            <input type="email" id="signupEmail" placeholder="you@email.com">
+          </div>
+          <div class="form-group">
+            <label>Phone Number</label>
+            <input type="tel" id="signupPhone" placeholder="(714) 000-0000">
+          </div>
+          <div class="form-group">
+            <label>Create Password</label>
+            <input type="password" id="signupPassword" placeholder="Min 8 characters">
+          </div>
+          <button class="auth-btn" onclick="signUp()" id="signUpBtn">
+            Create My Account →
+          </button>
+          <div class="msg error" id="signupError"></div>
+          <div class="msg success" id="signupSuccess"></div>
+          <p style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:14px; text-align:center; line-height:1.5;">
+            By creating an account, you agree to our terms. Your information
+            is encrypted and never sold.
+          </p>
+        </div>
+
+        <div class="secure-note">
+          🔒 256-bit SSL encryption · NMLS #1795044
+        </div>
+      </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section class="features">
+      <h2 class="features-title">Everything You Need, In One Place</h2>
+      <p class="features-sub">Your portal gives you full visibility into your loan — no more waiting on hold.</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <span class="feature-icon">📊</span>
+          <div class="feature-title">Real-Time Loan Status</div>
+          <div class="feature-desc">See exactly where your application stands — from pre-approval to clear to close — updated in real time as your file moves through underwriting.</div>
+        </div>
+        <div class="feature-card">
+          <span class="feature-icon">📁</span>
+          <div class="feature-title">Secure Document Upload</div>
+          <div class="feature-desc">Upload pay stubs, bank statements, and tax returns directly to your encrypted file. No more emailing sensitive documents.</div>
+        </div>
+        <div class="feature-card">
+          <span class="feature-icon">💬</span>
+          <div class="feature-title">Direct Messaging</div>
+          <div class="feature-desc">Message Rene directly through your portal. Get answers fast — no phone tag, no voicemail, no waiting.</div>
+        </div>
+        <div class="feature-card">
+          <span class="feature-icon">🤖</span>
+          <div class="feature-title">AI Mortgage Assistant</div>
+          <div class="feature-desc">Our AI answers your mortgage questions 24/7 — rates, programs, timelines, requirements — so you're never left guessing.</div>
+        </div>
+        <div class="feature-card">
+          <span class="feature-icon">📅</span>
+          <div class="feature-title">Schedule Anytime</div>
+          <div class="feature-desc">Book consultations, appraisals, and signings directly from your portal. Your calendar, your schedule.</div>
+        </div>
+        <div class="feature-card">
+          <span class="feature-icon">🎉</span>
+          <div class="feature-title">Closing Countdown</div>
+          <div class="feature-desc">Track your closing date and see every step remaining. Know exactly what's needed to get to the finish line faster.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TESTIMONIALS -->
+    <section class="testimonial-section">
+      <div class="testimonials">
+        <div class="testimonial">
+          <div class="stars">★★★★★</div>
+          <p class="testimonial-text">"Rene made our first home purchase so smooth. The portal let us track everything in real time — we always knew exactly where we stood. Closed in 19 days!"</p>
+          <div class="testimonial-author">Maria & Carlos G.</div>
+          <div class="testimonial-detail">FHA Purchase · Garden Grove, CA</div>
+        </div>
+        <div class="testimonial">
+          <div class="stars">★★★★★</div>
+          <p class="testimonial-text">"As a self-employed investor, I was told 'no' by three other lenders. Rene found me a bank statement loan and closed my DSCR refi in under 3 weeks. Incredible."</p>
+          <div class="testimonial-author">Tony A.</div>
+          <div class="testimonial-detail">DSCR Refinance · Orange County, CA</div>
+        </div>
+        <div class="testimonial">
+          <div class="stars">★★★★★</div>
+          <p class="testimonial-text">"The down payment assistance program Rene found us saved us $24,000 out of pocket. We would have rented another year without his help. Life changing."</p>
+          <div class="testimonial-author">James & Sarah W.</div>
+          <div class="testimonial-detail">DPA + FHA · Westminster, CA</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- DASHBOARD (shown after login) -->
+  <div id="dashboardView">
+    <div class="welcome-banner">
+      <div>
+        <div style="font-size:13px; color:rgba(255,255,255,0.4); margin-bottom:4px;">Welcome back 👋</div>
+        <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:600;" id="welcomeName">Loading...</div>
+        <div style="font-size:13px; color:rgba(255,255,255,0.4); margin-top:4px;" id="welcomeEmail"></div>
+      </div>
+      <button onclick="signOut()" style="
+        padding:9px 18px; background:rgba(255,255,255,0.06);
+        border:1px solid rgba(255,255,255,0.1); border-radius:8px;
+        color:rgba(255,255,255,0.5); font-size:13px; cursor:pointer;">
+        Sign Out
+      </button>
+    </div>
+
+    <div class="dashboard-grid">
+      <a href="https://cal.com/rene-duarte-rates-realty" target="_blank" class="dash-card">
+        <div class="dash-card-icon">📅</div>
+        <div class="dash-card-title">Book Appointment</div>
+        <div class="dash-card-desc">Schedule a call with Rene</div>
+      </a>
+      <a href="/public/credit-optimization.html" class="dash-card">
+        <div class="dash-card-icon">💳</div>
+        <div class="dash-card-title">Credit Optimization</div>
+        <div class="dash-card-desc">Boost your score in 30-45 days</div>
+      </a>
+      <a href="/public/down-payment-assistance.html" class="dash-card">
+        <div class="dash-card-icon">🏠</div>
+        <div class="dash-card-title">Down Payment Help</div>
+        <div class="dash-card-desc">Find programs you qualify for</div>
+      </a>
+      <a href="tel:7144728508" class="dash-card">
+        <div class="dash-card-icon">📞</div>
+        <div class="dash-card-title">Call Rene Direct</div>
+        <div class="dash-card-desc">(714) 472-8508</div>
+      </a>
+      <a href="https://cal.com/rene-duarte-rates-realty" target="_blank" class="dash-card">
+        <div class="dash-card-icon">🤖</div>
+        <div class="dash-card-title">AI Assistant</div>
+        <div class="dash-card-desc">Get instant mortgage answers</div>
+      </a>
+      <a href="/public/index.html" class="dash-card">
+        <div class="dash-card-icon">🔍</div>
+        <div class="dash-card-title">Explore Loan Programs</div>
+        <div class="dash-card-desc">FHA, VA, DSCR, and more</div>
+      </a>
+    </div>
+
+    <div style="background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2);
+      border-radius:14px; padding:24px; margin-top:8px;">
+      <div style="font-size:14px; font-weight:600; color:#c9a84c; margin-bottom:8px;">
+        📋 Your Application Status
+      </div>
+      <div style="font-size:14px; color:rgba(255,255,255,0.5); line-height:1.7;">
+        No active application found. Ready to start?
+        <a href="https://cal.com/rene-duarte-rates-realty" target="_blank"
+          style="color:#c9a84c; font-weight:600;">Book a free consultation</a>
+        with Rene to get your pre-approval started — it takes less than 15 minutes.
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p>© 2026 Rates & Realty · Rene Duarte · NMLS #1795044 · E Mortgage Capital</p>
+    <p style="margin-top:6px;">
+      <a href="/public/index.html">Home</a> ·
+      <a href="tel:7144728508">(714) 472-8508</a> ·
+      <a href="mailto:rduarte@emortgagecapital.com">Email Rene</a>
+    </p>
+  </footer>
+
+</div><!-- end content -->
+
+<script>
+  const SUPABASE_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // Check if already logged in
+  async function checkSession() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) showDashboard(session.user);
+  }
+  checkSession();
+
+  function switchTab(tab) {
+    document.getElementById('loginTab').classList.toggle('active', tab === 'login');
+    document.getElementById('signupTab').classList.toggle('active', tab === 'signup');
+    document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+    document.getElementById('signupForm').style.display = tab === 'signup' ? 'block' : 'none';
+  }
+
+  async function signIn() {
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    const btn = document.getElementById('signInBtn');
+    const err = document.getElementById('loginError');
+    const suc = document.getElementById('loginSuccess');
+
+    err.style.display = 'none';
+    suc.style.display = 'none';
+
+    if (!email || !password) {
+      err.textContent = 'Please enter your email and password.';
+      err.style.display = 'block'; return;
+    }
+
+    btn.disabled = true; btn.textContent = 'Signing in...';
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      err.textContent = error.message === 'Invalid login credentials'
+        ? 'Incorrect email or password. Please try again.'
+        : error.message;
+      err.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Sign In to My Portal →';
+      return;
+    }
+
+    suc.textContent = '✓ Signed in! Loading your portal...';
+    suc.style.display = 'block';
+    setTimeout(() => showDashboard(data.user), 800);
+  }
+
+  async function signUp() {
+    const first = document.getElementById('signupFirst').value.trim();
+    const last = document.getElementById('signupLast').value.trim();
+    const email = document.getElementById('signupEmail').value.trim();
+    const phone = document.getElementById('signupPhone').value.trim();
+    const password = document.getElementById('signupPassword').value;
+    const btn = document.getElementById('signUpBtn');
+    const err = document.getElementById('signupError');
+    const suc = document.getElementById('signupSuccess');
+
+    err.style.display = 'none'; suc.style.display = 'none';
+
+    if (!first || !email || !password) {
+      err.textContent = 'Please fill in all required fields.';
+      err.style.display = 'block'; return;
+    }
+    if (password.length < 8) {
+      err.textContent = 'Password must be at least 8 characters.';
+      err.style.display = 'block'; return;
+    }
+
+    btn.disabled = true; btn.textContent = 'Creating account...';
+
+    const { data, error } = await supabase.auth.signUp({
+      email, password,
+      options: { data: { first_name: first, last_name: last, phone } }
+    });
+
+    if (error) {
+      err.textContent = error.message;
+      err.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Create My Account →';
+      return;
+    }
+
+    // Also add to CRM contacts table
+    try {
+      await supabase.from('contacts').insert([{
+        first_name: first, last_name: last,
+        email, phone,
+        source: 'borrower_portal',
+        contact_type: 'lead',
+        created_at: new Date().toISOString()
+      }]);
+    } catch(e) { console.warn('CRM insert failed:', e); }
+
+    suc.textContent = '✓ Account created! Check your email to verify, then sign in.';
+    suc.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Create My Account →';
+    setTimeout(() => switchTab('login'), 3000);
+  }
+
+  function showDashboard(user) {
+    document.getElementById('mainView').style.display = 'none';
+    document.getElementById('dashboardView').style.display = 'block';
+    const meta = user.user_metadata || {};
+    const name = [meta.first_name, meta.last_name].filter(Boolean).join(' ') || user.email;
+    document.getElementById('welcomeName').textContent = name;
+    document.getElementById('welcomeEmail').textContent = user.email;
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    document.getElementById('mainView').style.display = 'block';
+    document.getElementById('dashboardView').style.display = 'none';
+  }
+</script>
 </body>
 </html>
