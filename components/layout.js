@@ -74,7 +74,7 @@ if (headerRoot) {
       <a class="nav-link" href="/public/about.html">About</a>
     `;
     actions = `
-      <a class="btn btn-secondary btn-sm" href="/auth/index.html">Login</a>
+      <a class="btn btn-secondary btn-sm" href="/auth/admin-login.html">Login</a>
       <a class="btn btn-primary btn-sm" href="https://cal.com/rene-duarte-rates-realty" target="_blank">Apply Now</a>
     `;
   }
