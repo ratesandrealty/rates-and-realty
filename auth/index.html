@@ -1,12 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://maps.googleapis.com https://maps.gstatic.com; connect-src 'self' https://*.supabase.co https://ljywhvbmsibwnssxpesh.supabase.co https://accounts.google.com wss://*.supabase.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; frame-src 'self' https://cal.com;">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>My Loan Portal — Rates & Realty</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Auth uses direct fetch() to Supabase REST API — no CDN needed -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -828,444 +827,393 @@
 </div><!-- end content -->
 
 <script>
-  const SUPABASE_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
-  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
+// ── CONFIG ─────────────────────────────────────
+var SB_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
 
-  // Use _supabase to avoid conflict with window.supabase (the CDN library)
-  var _supabase = null;
+// ── SUPABASE AUTH VIA DIRECT FETCH ─────────────
+async function sbSignIn(email, password) {
+  var res = await fetch(SB_URL + '/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+    body: JSON.stringify({ email: email, password: password })
+  });
+  return res.json();
+}
+
+async function sbSignUp(email, password, firstName, lastName, phone) {
+  var res = await fetch(SB_URL + '/auth/v1/signup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+    body: JSON.stringify({
+      email: email, password: password,
+      data: { first_name: firstName, last_name: lastName, phone: phone }
+    })
+  });
+  return res.json();
+}
+
+async function sbInsertContact(data, accessToken) {
+  await fetch(SB_URL + '/rest/v1/contacts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SB_KEY,
+      'Authorization': 'Bearer ' + accessToken,
+      'Prefer': 'return=minimal'
+    },
+    body: JSON.stringify(data)
+  });
+}
+
+async function sbGetSession() {
+  var stored = localStorage.getItem('sb_session');
+  if (!stored) return null;
   try {
-    var _factory = (window.supabase && window.supabase.createClient) ||
-                   (window.Supabase && window.Supabase.createClient);
-    if (_factory) {
-      _supabase = _factory(SUPABASE_URL, SUPABASE_KEY);
-      console.log('Supabase client initialized OK');
-    } else {
-      console.error('Supabase library not loaded. window.supabase =', typeof window.supabase);
+    var session = JSON.parse(stored);
+    if (session.expires_at && Date.now() / 1000 > session.expires_at) {
+      localStorage.removeItem('sb_session');
+      return null;
     }
-  } catch(e) {
-    console.error('Supabase init error:', e);
+    return session;
+  } catch(e) { return null; }
+}
+
+async function sbSignOut() {
+  var session = await sbGetSession();
+  if (session && session.access_token) {
+    await fetch(SB_URL + '/auth/v1/logout', {
+      method: 'POST',
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + session.access_token }
+    }).catch(function(){});
+  }
+  localStorage.removeItem('sb_session');
+}
+
+async function sbFetchDocs(userId, accessToken) {
+  var res = await fetch(
+    SB_URL + '/rest/v1/borrower_documents?user_id=eq.' + userId + '&order=uploaded_at.desc&limit=20',
+    { headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + accessToken } }
+  );
+  if (!res.ok) return [];
+  return res.json();
+}
+
+// ── UI FUNCTIONS ────────────────────────────────
+function switchTab(tab) {
+  var loginTab   = document.getElementById('loginTab');
+  var signupTab  = document.getElementById('signupTab');
+  var loginForm  = document.getElementById('loginForm');
+  var signupForm = document.getElementById('signupForm');
+  if (!loginTab || !signupTab || !loginForm || !signupForm) return;
+  if (tab === 'login') {
+    loginTab.classList.add('active');
+    signupTab.classList.remove('active');
+    loginForm.style.display  = 'block';
+    signupForm.style.display = 'none';
+  } else {
+    signupTab.classList.add('active');
+    loginTab.classList.remove('active');
+    signupForm.style.display = 'block';
+    loginForm.style.display  = 'none';
+  }
+}
+
+function showMsg(id, text, isError) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.style.display = 'block';
+  el.style.background = isError ? 'rgba(255,100,100,0.08)' : 'rgba(76,175,80,0.08)';
+  el.style.border = isError ? '1px solid rgba(255,100,100,0.2)' : '1px solid rgba(76,175,80,0.2)';
+  el.style.color = isError ? '#ff9090' : '#81c784';
+}
+
+function hideMsg(id) {
+  var el = document.getElementById(id);
+  if (el) el.style.display = 'none';
+}
+
+function showDashboard(user) {
+  var mainView = document.getElementById('mainView');
+  var dashView = document.getElementById('dashboardView');
+  if (mainView) mainView.style.display = 'none';
+  if (dashView) dashView.style.display = 'block';
+  var meta = user.user_metadata || {};
+  var name = [meta.first_name, meta.last_name].filter(Boolean).join(' ')
+             || (user.email ? user.email.split('@')[0] : 'Welcome');
+  var nameEl  = document.getElementById('welcomeName');
+  var emailEl = document.getElementById('welcomeEmail');
+  if (nameEl)  nameEl.textContent  = name;
+  if (emailEl) emailEl.textContent = user.email || '';
+  setTimeout(loadUploadHistory, 500);
+}
+
+async function signOut() {
+  await sbSignOut();
+  var mainView = document.getElementById('mainView');
+  var dashView = document.getElementById('dashboardView');
+  if (mainView) mainView.style.display = 'block';
+  if (dashView) dashView.style.display = 'none';
+}
+
+// ── SIGN IN ─────────────────────────────────────
+async function signIn() {
+  var email    = (document.getElementById('loginEmail')    || {}).value || '';
+  email = email.trim();
+  var password = (document.getElementById('loginPassword') || {}).value || '';
+  var btn      =  document.getElementById('signInBtn');
+
+  hideMsg('loginError');
+  hideMsg('loginSuccess');
+
+  if (!email || !password) {
+    showMsg('loginError', 'Please enter your email and password.', true);
+    return;
   }
 
-  // Check if already logged in
-  async function checkSession() {
-    console.log('checkSession called');
-    try {
-      const { data: { session } } = await _supabase.auth.getSession();
-      if (session && session.user) {
-        showDashboard(session.user);
-      }
-    } catch(e) {
-      console.warn('Session check failed:', e);
-    }
-  }
-  checkSession();
-  document.addEventListener('DOMContentLoaded', checkSession);
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
 
-  function switchTab(tab) {
-    const loginTab = document.getElementById('loginTab');
-    const signupTab = document.getElementById('signupTab');
-    const loginForm = document.getElementById('loginForm');
-    const signupForm = document.getElementById('signupForm');
+  try {
+    var data = await sbSignIn(email, password);
 
-    if (!loginTab || !signupTab || !loginForm || !signupForm) return;
-
-    if (tab === 'login') {
-      loginTab.classList.add('active');
-      signupTab.classList.remove('active');
-      loginForm.style.display = 'block';
-      signupForm.style.display = 'none';
-    } else {
-      loginTab.classList.remove('active');
-      signupTab.classList.add('active');
-      loginForm.style.display = 'none';
-      signupForm.style.display = 'block';
-    }
-  }
-
-  async function signIn() {
-    console.log('signIn called, _supabase:', typeof _supabase, _supabase);
-    if (!_supabase) {
-      alert('Error: Supabase failed to load. Please refresh the page.');
-      return;
-    }
-    const email = document.getElementById('loginEmail').value.trim();
-    const password = document.getElementById('loginPassword').value;
-    const btn = document.getElementById('signInBtn');
-    const errEl = document.getElementById('loginError');
-    const sucEl = document.getElementById('loginSuccess');
-
-    if (errEl) errEl.style.display = 'none';
-    if (sucEl) sucEl.style.display = 'none';
-
-    if (!email || !password) {
-      if (errEl) { errEl.textContent = 'Please enter your email and password.'; errEl.style.display = 'block'; }
-      return;
-    }
-
-    if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
-
-    try {
-      const { data, error } = await _supabase.auth.signInWithPassword({ email, password });
-
-      if (error) {
-        const msg = error.message === 'Invalid login credentials'
-          ? 'Incorrect email or password. Please try again.'
-          : error.message;
-        if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
-        if (btn) { btn.disabled = false; btn.textContent = 'Sign In to My Portal →'; }
-        document.getElementById('loginPassword').value = '';
-        return;
-      }
-
-      if (sucEl) { sucEl.textContent = '✓ Signed in! Loading your portal...'; sucEl.style.display = 'block'; }
-      if (btn) btn.textContent = '✓ Signed in!';
-      setTimeout(() => showDashboard(data.user), 800);
-
-    } catch(e) {
-      if (errEl) { errEl.textContent = 'Connection error. Please try again.'; errEl.style.display = 'block'; }
+    if (data.error || !data.access_token) {
+      var msg = (data.error_description || data.msg || data.error || 'Login failed');
+      if (msg === 'Invalid login credentials') msg = 'Incorrect email or password. Please try again.';
+      showMsg('loginError', msg, true);
       if (btn) { btn.disabled = false; btn.textContent = 'Sign In to My Portal →'; }
+      var pw = document.getElementById('loginPassword');
+      if (pw) pw.value = '';
+      return;
     }
+
+    localStorage.setItem('sb_session', JSON.stringify({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at: data.expires_at || (Math.floor(Date.now()/1000) + (data.expires_in || 3600)),
+      user: data.user
+    }));
+
+    showMsg('loginSuccess', '✓ Signed in! Loading your portal...', false);
+    if (btn) btn.textContent = '✓ Signed in!';
+    setTimeout(function() { showDashboard(data.user); }, 800);
+
+  } catch(e) {
+    showMsg('loginError', 'Connection error. Please check your internet and try again.', true);
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In to My Portal →'; }
+  }
+}
+
+// ── SIGN UP ─────────────────────────────────────
+async function signUp() {
+  var first    = (document.getElementById('signupFirst')    || {}).value || '';
+  first = first.trim();
+  var last     = (document.getElementById('signupLast')     || {}).value || '';
+  last = last.trim();
+  var email    = (document.getElementById('signupEmail')    || {}).value || '';
+  email = email.trim();
+  var phone    = (document.getElementById('signupPhone')    || {}).value || '';
+  phone = phone.trim();
+  var password = (document.getElementById('signupPassword') || {}).value || '';
+  var btn      =  document.getElementById('signUpBtn');
+
+  hideMsg('signupError');
+  hideMsg('signupSuccess');
+
+  if (!first || !email || !password) {
+    showMsg('signupError', 'Please fill in your name, email and password.', true);
+    return;
+  }
+  if (password.length < 6) {
+    showMsg('signupError', 'Password must be at least 6 characters.', true);
+    return;
   }
 
-  async function signUp() {
-    const first = document.getElementById('signupFirst').value.trim();
-    const last = document.getElementById('signupLast').value.trim();
-    const email = document.getElementById('signupEmail').value.trim();
-    const phone = document.getElementById('signupPhone').value.trim();
-    const password = document.getElementById('signupPassword').value;
-    const btn = document.getElementById('signUpBtn');
-    const errEl = document.getElementById('signupError');
-    const sucEl = document.getElementById('signupSuccess');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating account...'; }
 
-    if (errEl) errEl.style.display = 'none';
-    if (sucEl) sucEl.style.display = 'none';
+  try {
+    var data = await sbSignUp(email, password, first, last, phone);
 
-    if (!first || !email || !password) {
-      if (errEl) { errEl.textContent = 'Please fill in name, email and password.'; errEl.style.display = 'block'; }
-      return;
-    }
-    if (password.length < 6) {
-      if (errEl) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = 'block'; }
+    if (data.error || (!data.id && !(data.user && data.user.id))) {
+      var msg = data.msg || data.error_description || data.error || 'Sign up failed';
+      showMsg('signupError', msg, true);
+      if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
       return;
     }
 
-    if (btn) { btn.disabled = true; btn.textContent = 'Creating account...'; }
-
-    try {
-      const { data, error } = await _supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { first_name: first, last_name: last, phone } }
-      });
-
-      if (error) {
-        if (errEl) { errEl.textContent = error.message; errEl.style.display = 'block'; }
-        if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
-        return;
-      }
-
-      // Add to CRM contacts
+    var accessToken = data.access_token;
+    if (accessToken) {
       try {
-        await _supabase.from('contacts').insert([{
+        await sbInsertContact({
           first_name: first, last_name: last,
-          email, phone,
+          email: email, phone: phone,
           source: 'borrower_portal',
           contact_type: 'lead',
           created_at: new Date().toISOString()
-        }]);
-      } catch(e) { console.warn('CRM insert:', e); }
-
-      if (sucEl) {
-        sucEl.textContent = '✓ Account created! Check your email to verify, then sign in.';
-        sucEl.style.display = 'block';
-      }
-      if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
-      setTimeout(() => switchTab('login'), 3000);
-
-    } catch(e) {
-      if (errEl) { errEl.textContent = 'Connection error. Please try again.'; errEl.style.display = 'block'; }
-      if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
+        }, accessToken);
+      } catch(e) {}
     }
+
+    showMsg('signupSuccess', '✓ Account created! Check your email to verify, then sign in.', false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
+    setTimeout(function() { switchTab('login'); }, 3000);
+
+  } catch(e) {
+    showMsg('signupError', 'Connection error. Please try again.', true);
+    if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
   }
+}
 
-  function showDashboard(user) {
-    const mainView = document.getElementById('mainView');
-    const dashView = document.getElementById('dashboardView');
-    if (mainView) mainView.style.display = 'none';
-    if (dashView) dashView.style.display = 'block';
-
-    const meta = user.user_metadata || {};
-    const name = [meta.first_name, meta.last_name].filter(Boolean).join(' ') ||
-                  user.email?.split('@')[0] || 'Welcome';
-
-    const nameEl = document.getElementById('welcomeName');
-    const emailEl = document.getElementById('welcomeEmail');
-    if (nameEl) nameEl.textContent = name;
-    if (emailEl) emailEl.textContent = user.email;
-
-    if (typeof loadUploadHistory === 'function') {
-      setTimeout(loadUploadHistory, 500);
-    }
+// ── CHECK SESSION ON LOAD ───────────────────────
+async function checkSession() {
+  var session = await sbGetSession();
+  if (session && session.user) {
+    showDashboard(session.user);
   }
+}
 
-  async function signOut() {
-    await _supabase.auth.signOut();
-    document.getElementById('mainView').style.display = 'block';
-    document.getElementById('dashboardView').style.display = 'none';
-  }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', checkSession);
+} else {
+  checkSession();
+}
 
-  // ── DOCUMENT UPLOAD ──────────────────────────────────────
+// ── DOCUMENT UPLOAD ─────────────────────────────
+var selectedCategory = 'Pay Stubs';
+var fileQueue = [];
 
-  let selectedCategory = 'Pay Stubs';
-  let fileQueue = [];
+function selectCategory(btn, category) {
+  selectedCategory = category;
+  document.querySelectorAll('.cat-btn').forEach(function(b) {
+    b.classList.remove('active');
+    b.style.borderColor = 'rgba(255,255,255,0.1)';
+    b.style.background = 'rgba(255,255,255,0.04)';
+    b.style.color = 'rgba(255,255,255,0.6)';
+  });
+  btn.classList.add('active');
+  btn.style.borderColor = 'rgba(201,168,76,0.6)';
+  btn.style.background = 'rgba(201,168,76,0.15)';
+  btn.style.color = '#c9a84c';
+}
 
-  function selectCategory(btn, category) {
-    selectedCategory = category;
-    document.querySelectorAll('.cat-btn').forEach(b => {
-      b.classList.remove('active');
-      b.style.borderColor = 'rgba(255,255,255,0.1)';
-      b.style.background = 'rgba(255,255,255,0.04)';
-      b.style.color = 'rgba(255,255,255,0.6)';
-    });
-    btn.classList.add('active');
-    btn.style.borderColor = 'rgba(201,168,76,0.6)';
-    btn.style.background = 'rgba(201,168,76,0.15)';
-    btn.style.color = '#c9a84c';
-  }
+function handleDragOver(e) { e.preventDefault(); e.stopPropagation(); document.getElementById('dropZone').classList.add('drag-over'); }
+function handleDragLeave(e) { e.preventDefault(); document.getElementById('dropZone').classList.remove('drag-over'); }
+function handleDrop(e) { e.preventDefault(); e.stopPropagation(); document.getElementById('dropZone').classList.remove('drag-over'); addFilesToQueue(Array.from(e.dataTransfer.files)); }
+function handleFileSelect(e) { addFilesToQueue(Array.from(e.target.files)); e.target.value = ''; }
 
-  function handleDragOver(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    document.getElementById('dropZone').classList.add('drag-over');
-  }
+function getFileIcon(type) {
+  if (type.indexOf('pdf') >= 0) return '📄';
+  if (type.indexOf('image') >= 0) return '🖼️';
+  if (type.indexOf('word') >= 0 || type.indexOf('document') >= 0) return '📝';
+  return '📎';
+}
 
-  function handleDragLeave(e) {
-    e.preventDefault();
-    document.getElementById('dropZone').classList.remove('drag-over');
-  }
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
 
-  function handleDrop(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    document.getElementById('dropZone').classList.remove('drag-over');
-    addFilesToQueue(Array.from(e.dataTransfer.files));
-  }
+function addFilesToQueue(files) {
+  files.forEach(function(file) {
+    if (file.size > 52428800) { alert(file.name + ' is too large. Max 50MB.'); return; }
+    var id = 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    fileQueue.push({ id: id, file: file, status: 'ready', category: selectedCategory });
+  });
+  renderFileQueue();
+}
 
-  function handleFileSelect(e) {
-    addFilesToQueue(Array.from(e.target.files));
-    e.target.value = '';
-  }
+function removeFile(id) { fileQueue = fileQueue.filter(function(f) { return f.id !== id; }); renderFileQueue(); }
 
-  function getFileIcon(type) {
-    if (type.includes('pdf')) return '📄';
-    if (type.includes('image')) return '🖼️';
-    if (type.includes('word') || type.includes('document')) return '📝';
-    return '📎';
-  }
+function renderFileQueue() {
+  var queueEl = document.getElementById('fileQueue');
+  var listEl = document.getElementById('fileList');
+  if (fileQueue.length === 0) { queueEl.style.display = 'none'; return; }
+  queueEl.style.display = 'block';
+  var pending = fileQueue.filter(function(f) { return f.status === 'ready'; }).length;
+  document.getElementById('uploadBtnText').textContent = pending > 0
+    ? 'Upload ' + pending + ' File' + (pending > 1 ? 's' : '') + ' to Google Drive'
+    : 'All Files Uploaded ✓';
 
-  function formatSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-  }
+  listEl.innerHTML = fileQueue.map(function(item) {
+    var icon = getFileIcon(item.file.type);
+    var size = formatSize(item.file.size);
+    var statusHtml = '', cls = 'file-item', rmBtn = '<button class="file-remove" onclick="removeFile(\'' + item.id + '\')">✕</button>';
+    if (item.status === 'uploading') { cls += ' uploading'; statusHtml = '<div class="progress-bar"><div class="progress-fill" id="prog_' + item.id + '"></div></div>'; rmBtn = ''; }
+    else if (item.status === 'success') { cls += ' success'; statusHtml = '<span class="file-status" style="color:#81c784;">✓ Uploaded</span>'; rmBtn = ''; }
+    else if (item.status === 'error') { cls += ' error'; statusHtml = '<span class="file-status" style="color:#ff7070;">✗ Failed</span>'; }
+    return '<div class="' + cls + '" id="' + item.id + '"><span class="file-icon">' + icon + '</span><div style="flex:1;min-width:0;"><div class="file-name">' + item.file.name + '</div><div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:2px;">' + item.category + ' · ' + size + '</div>' + statusHtml + '</div>' + rmBtn + '</div>';
+  }).join('');
+}
 
-  function addFilesToQueue(files) {
-    files.forEach(file => {
-      if (file.size > 52428800) {
-        alert(file.name + ' is too large. Max 50MB per file.');
-        return;
-      }
-      const id = 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-      fileQueue.push({ id, file, status: 'ready', category: selectedCategory });
-    });
+async function uploadAllFiles() {
+  var pending = fileQueue.filter(function(f) { return f.status === 'ready'; });
+  if (pending.length === 0) return;
+  var btn = document.getElementById('uploadAllBtn');
+  btn.disabled = true;
+
+  var session = await sbGetSession();
+  var user = session ? session.user : null;
+  var meta = user ? (user.user_metadata || {}) : {};
+  var borrowerName = [meta.first_name, meta.last_name].filter(Boolean).join(' ') || 'Borrower';
+
+  for (var i = 0; i < pending.length; i++) {
+    var item = pending[i];
+    item.status = 'uploading';
     renderFileQueue();
-  }
-
-  function removeFile(id) {
-    fileQueue = fileQueue.filter(f => f.id !== id);
+    var progBar = document.getElementById('prog_' + item.id);
+    var progress = 0;
+    var progInterval = setInterval(function(pb) { progress = Math.min(progress + Math.random() * 15, 85); if (pb) pb.style.width = progress + '%'; }.bind(null, progBar), 200);
+    try {
+      var formData = new FormData();
+      formData.append('file', item.file);
+      formData.append('borrower_name', borrowerName);
+      formData.append('category', item.category);
+      formData.append('user_id', user ? user.id : '');
+      formData.append('loan_type', 'Purchase');
+      var res = await fetch(SB_URL + '/functions/v1/google-drive-upload', { method: 'POST', body: formData });
+      clearInterval(progInterval);
+      var result = await res.json();
+      if (result.success) { if (progBar) progBar.style.width = '100%'; item.status = 'success'; }
+      else { item.status = 'error'; }
+    } catch (err) { clearInterval(progInterval); item.status = 'error'; }
     renderFileQueue();
+    await new Promise(function(r) { setTimeout(r, 400); });
   }
+  btn.disabled = false;
+  var ok = fileQueue.filter(function(f) { return f.status === 'success'; }).length;
+  if (ok > 0) { showUploadSuccess(ok); loadUploadHistory(); }
+}
 
-  function renderFileQueue() {
-    const queueEl = document.getElementById('fileQueue');
-    const listEl = document.getElementById('fileList');
+function showUploadSuccess(count) {
+  var toast = document.createElement('div');
+  toast.innerHTML = '✅ ' + count + ' file' + (count > 1 ? 's' : '') + ' uploaded to Google Drive!';
+  toast.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;background:linear-gradient(135deg,#4CAF50,#388E3C);color:#fff;padding:14px 22px;border-radius:12px;font-weight:700;font-size:14px;font-family:sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.4);animation:slideUp 0.3s ease;';
+  document.body.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 4000);
+}
 
-    if (fileQueue.length === 0) {
-      queueEl.style.display = 'none';
-      return;
-    }
-
-    queueEl.style.display = 'block';
-
-    const pendingCount = fileQueue.filter(f => f.status === 'ready').length;
-    document.getElementById('uploadBtnText').textContent =
-      pendingCount > 0
-        ? 'Upload ' + pendingCount + ' File' + (pendingCount > 1 ? 's' : '') + ' to Google Drive'
-        : 'All Files Uploaded ✓';
-
-    listEl.innerHTML = fileQueue.map(item => {
-      const icon = getFileIcon(item.file.type);
-      const size = formatSize(item.file.size);
-      let statusHtml = '';
-      let itemClass = 'file-item';
-      let removeBtn = '<button class="file-remove" onclick="removeFile(\'' + item.id + '\')">✕</button>';
-
-      if (item.status === 'uploading') {
-        itemClass += ' uploading';
-        statusHtml = '<div class="progress-bar"><div class="progress-fill" id="prog_' + item.id + '"></div></div>';
-        removeBtn = '';
-      } else if (item.status === 'success') {
-        itemClass += ' success';
-        statusHtml = '<span class="file-status" style="color:#81c784;">✓ Uploaded</span>';
-        removeBtn = '';
-      } else if (item.status === 'error') {
-        itemClass += ' error';
-        statusHtml = '<span class="file-status" style="color:#ff7070;">✗ Failed</span>';
-      }
-
-      return '<div class="' + itemClass + '" id="' + item.id + '">' +
-        '<span class="file-icon">' + icon + '</span>' +
-        '<div style="flex:1; min-width:0;">' +
-          '<div class="file-name">' + item.file.name + '</div>' +
-          '<div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:2px;">' +
-            item.category + ' · ' + size +
-          '</div>' +
-          statusHtml +
-        '</div>' +
-        removeBtn +
-      '</div>';
-    }).join('');
-  }
-
-  async function uploadAllFiles() {
-    const pending = fileQueue.filter(f => f.status === 'ready');
-    if (pending.length === 0) return;
-
-    const btn = document.getElementById('uploadAllBtn');
-    btn.disabled = true;
-
-    const { data: { session } } = await _supabase.auth.getSession();
-    const user = session?.user;
-    const meta = user?.user_metadata || {};
-    const borrowerName = [meta.first_name, meta.last_name].filter(Boolean).join(' ') ||
-                          user?.email?.split('@')[0] || 'Borrower';
-
-    for (const item of pending) {
-      item.status = 'uploading';
-      renderFileQueue();
-
-      const progBar = document.getElementById('prog_' + item.id);
-      let progress = 0;
-      const progInterval = setInterval(() => {
-        progress = Math.min(progress + Math.random() * 15, 85);
-        if (progBar) progBar.style.width = progress + '%';
-      }, 200);
-
-      try {
-        const formData = new FormData();
-        formData.append('file', item.file);
-        formData.append('borrower_name', borrowerName);
-        formData.append('category', item.category);
-        formData.append('user_id', user?.id || '');
-        formData.append('loan_type', 'Purchase');
-
-        const res = await fetch(
-          'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/google-drive-upload',
-          { method: 'POST', body: formData }
-        );
-
-        clearInterval(progInterval);
-        const result = await res.json();
-
-        if (result.success) {
-          if (progBar) progBar.style.width = '100%';
-          item.status = 'success';
-          item.driveLink = result.drive_link;
-          item.folderPath = result.folder_path;
-        } else {
-          item.status = 'error';
-          item.error = result.error;
-        }
-      } catch (err) {
-        clearInterval(progInterval);
-        item.status = 'error';
-        item.error = err.message;
-      }
-
-      renderFileQueue();
-      await new Promise(r => setTimeout(r, 400));
-    }
-
-    btn.disabled = false;
-
-    const successCount = fileQueue.filter(f => f.status === 'success').length;
-    if (successCount > 0) {
-      showUploadSuccess(successCount);
-      loadUploadHistory();
-    }
-  }
-
-  function showUploadSuccess(count) {
-    const toast = document.createElement('div');
-    toast.innerHTML = '✅ ' + count + ' file' + (count > 1 ? 's' : '') + ' uploaded to Google Drive!';
-    toast.style.cssText =
-      'position:fixed; bottom:24px; right:24px; z-index:9999;' +
-      'background:linear-gradient(135deg,#4CAF50,#388E3C);' +
-      'color:#fff; padding:14px 22px; border-radius:12px;' +
-      'font-weight:700; font-size:14px; font-family:sans-serif;' +
-      'box-shadow:0 8px 24px rgba(0,0,0,0.4);' +
-      'animation: slideUp 0.3s ease;';
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 4000);
-  }
-
-  async function loadUploadHistory() {
-    const { data: { session } } = await _supabase.auth.getSession();
-    if (!session?.user) return;
-
-    const { data } = await supabase
-      .from('borrower_documents')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .order('uploaded_at', { ascending: false })
-      .limit(20);
-
-    const historyEl = document.getElementById('uploadHistoryList');
+async function loadUploadHistory() {
+  var session = await sbGetSession();
+  if (!session || !session.user) return;
+  var historyEl = document.getElementById('uploadHistoryList');
+  try {
+    var data = await sbFetchDocs(session.user.id, session.access_token);
     if (!data || data.length === 0) {
-      historyEl.innerHTML = '<div style="text-align:center; padding:20px; color:rgba(255,255,255,0.25); font-size:13px;">No documents uploaded yet</div>';
+      historyEl.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.25);font-size:13px;">No documents uploaded yet</div>';
       return;
     }
-
-    const catIcons = {
-      'Pay Stubs': '💵', 'W-2s & Tax Returns': '📄', 'Bank Statements': '🏦',
-      'Photo ID': '🪪', 'Purchase Contract': '📋', 'Appraisal': '🏠',
-      'Insurance': '🛡️', 'Other Documents': '📎'
-    };
-
-    historyEl.innerHTML = data.map(doc => {
-      const icon = catIcons[doc.document_category] || '📎';
-      const date = new Date(doc.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      const size = doc.file_size ? formatSize(doc.file_size) : '';
-      return '<div class="history-item">' +
-        '<span style="font-size:20px;">' + icon + '</span>' +
-        '<div style="flex:1; min-width:0;">' +
-          '<div style="font-size:13px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' +
-            doc.file_name +
-          '</div>' +
-          '<div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:2px;">' +
-            doc.document_category + ' · ' + date + (size ? ' · ' + size : '') +
-          '</div>' +
-        '</div>' +
-        (doc.storage_path ?
-          '<a href="' + doc.storage_path + '" target="_blank" style="' +
-            'padding:5px 12px; background:rgba(201,168,76,0.1);' +
-            'border:1px solid rgba(201,168,76,0.3); border-radius:6px;' +
-            'color:#c9a84c; font-size:11px; text-decoration:none;' +
-            'font-weight:600; flex-shrink:0; white-space:nowrap;">' +
-            'View in Drive ↗</a>' : '') +
-      '</div>';
+    var icons = { 'Pay Stubs':'💵','W-2s & Tax Returns':'📄','Bank Statements':'🏦','Photo ID':'🪪','Purchase Contract':'📋','Appraisal':'🏠','Insurance':'🛡️','Other Documents':'📎' };
+    historyEl.innerHTML = data.map(function(doc) {
+      var icon = icons[doc.document_category] || '📎';
+      var date = new Date(doc.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      var size = doc.file_size ? formatSize(doc.file_size) : '';
+      return '<div class="history-item"><span style="font-size:20px;">' + icon + '</span><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + doc.file_name + '</div><div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:2px;">' + doc.document_category + ' · ' + date + (size ? ' · ' + size : '') + '</div></div>' + (doc.storage_path ? '<a href="' + doc.storage_path + '" target="_blank" style="padding:5px 12px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:6px;color:#c9a84c;font-size:11px;text-decoration:none;font-weight:600;flex-shrink:0;white-space:nowrap;">View in Drive ↗</a>' : '') + '</div>';
     }).join('');
+  } catch(e) {
+    historyEl.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.25);font-size:13px;">No documents uploaded yet</div>';
   }
+}
 </script>
 </body>
 </html>
