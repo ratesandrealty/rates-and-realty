@@ -1197,9 +1197,7 @@
                      letter-spacing:0.5px;white-space:nowrap;">Text</span>
       </a>
 
-      <button onclick="openNewTaskModal ? openNewTaskModal() :
-        (document.getElementById('taskModal') &&
-        (document.getElementById('taskModal').style.display='flex'))"
+      <button onclick="openTaskForm()"
         style="
         display:flex; flex-direction:column; align-items:center;
         justify-content:center; gap:5px; padding:12px 4px;
@@ -1218,36 +1216,53 @@
     <div style="
       display: flex; align-items: center;
       justify-content: space-between;
-      padding: 14px 20px;
+      padding: 12px 16px;
       border-bottom: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
     ">
-      <div style="display:flex; gap:8px;">
-        <button id="tabNotes" onclick="setSidebarTab('notes', this)" style="
-          padding:7px 16px; border-radius:8px; font-size:13px; font-weight:700;
-          border:none; cursor:pointer; transition:all 0.2s;
-          background:rgba(201,168,76,0.15); color:#c9a84c;">
+      <div style="
+        display: flex;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        gap: 8px;
+        flex: 1;
+        min-width: 0;
+      ">
+        <button id="tabNotes" onclick="switchNoteTab('notes')" style="
+          padding: 8px 18px; border-radius: 8px; border: none;
+          font-size: 13px; font-weight: 700; cursor: pointer;
+          white-space: nowrap; flex-shrink: 0; transition: all 0.2s;
+          background: rgba(201,168,76,0.15); color: #c9a84c;">
           Notes
         </button>
-        <button id="tabTexts" onclick="setSidebarTab('texts', this)" style="
-          padding:7px 16px; border-radius:8px; font-size:13px; font-weight:600;
-          border:none; cursor:pointer; transition:all 0.2s;
-          background:transparent; color:rgba(255,255,255,0.4);">
+        <button id="tabTexts" onclick="switchNoteTab('texts')" style="
+          padding: 8px 18px; border-radius: 8px; border: none;
+          font-size: 13px; font-weight: 600; cursor: pointer;
+          white-space: nowrap; flex-shrink: 0; transition: all 0.2s;
+          background: transparent; color: rgba(255,255,255,0.4);">
           Texts
         </button>
-        <button id="tabChecks" onclick="setSidebarTab('checklist', this)" style="
-          padding:7px 16px; border-radius:8px; font-size:13px; font-weight:600;
-          border:none; cursor:pointer; transition:all 0.2s;
-          background:transparent; color:rgba(255,255,255,0.4);">
-          Checks
+        <button id="tabChecklist" onclick="switchNoteTab('checklist')" style="
+          padding: 8px 18px; border-radius: 8px; border: none;
+          font-size: 13px; font-weight: 600; cursor: pointer;
+          white-space: nowrap; flex-shrink: 0; transition: all 0.2s;
+          background: transparent; color: rgba(255,255,255,0.4);">
+          Checklist
         </button>
       </div>
       <button onclick="toggleNoteForm()" style="
         padding:8px 16px; background:#c9a84c; border:none;
         border-radius:8px; color:#1a1a1a; font-size:13px;
-        font-weight:700; cursor:pointer; white-space:nowrap;">
+        font-weight:700; cursor:pointer; white-space:nowrap;
+        flex-shrink:0; margin-left:8px;">
         + Add Note
       </button>
     </div>
+    <style>
+    div:has(>#tabNotes) { scrollbar-width: none; }
+    div:has(>#tabNotes)::-webkit-scrollbar { display: none; }
+    </style>
 
     <!-- Notes panel -->
     <div class="ld-notes-panel" id="sidebar-notes-panel">
@@ -1302,12 +1317,58 @@
       </div>
     </div>
 
-    <!-- Checklist panel (placeholder) -->
+    <!-- Checklist panel -->
     <div class="ld-notes-panel" id="sidebar-checklist-panel" style="display:none;">
-      <div class="ld-empty" style="padding:24px 0;">
-        <div class="ld-empty-icon">✅</div>
-        <h4>Checklists</h4>
-        <p>Custom checklists coming soon</p>
+      <div id="checklistPanel" style="padding: 16px 20px;">
+
+        <!-- Loan Document Checklist by Type -->
+        <div style="margin-bottom: 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <span style="font-size:12px; text-transform:uppercase; letter-spacing:0.5px;
+                         color:rgba(255,255,255,0.4); font-weight:600;">Document Checklist</span>
+            <select id="checklistType" onchange="loadChecklist(this.value)"
+              style="padding:5px 10px; background:rgba(255,255,255,0.06);
+                     border:1px solid rgba(255,255,255,0.12); border-radius:6px;
+                     color:#fff; font-size:12px; outline:none; cursor:pointer;">
+              <option value="fha">FHA Purchase</option>
+              <option value="conventional">Conventional</option>
+              <option value="va">VA Loan</option>
+              <option value="dscr">DSCR Investor</option>
+              <option value="jumbo">Jumbo</option>
+              <option value="bank_statement">Bank Statement</option>
+            </select>
+          </div>
+
+          <div id="checklistItems" style="display:flex; flex-direction:column; gap:8px;"></div>
+
+          <!-- Progress bar -->
+          <div style="margin-top:16px; padding:12px 14px; background:rgba(255,255,255,0.03);
+                      border-radius:8px; border:1px solid rgba(255,255,255,0.07);">
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+              <span style="font-size:12px; color:rgba(255,255,255,0.5);">File Completion</span>
+              <span id="checklistProgress" style="font-size:12px; font-weight:700; color:#c9a84c;">0%</span>
+            </div>
+            <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
+              <div id="checklistProgressBar" style="height:100%; background:#c9a84c;
+                   border-radius:3px; width:0%; transition:width 0.4s ease;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add custom item -->
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <input type="text" id="customCheckItem" placeholder="Add custom checklist item..."
+            onkeydown="if(event.key==='Enter') addCustomCheckItem()"
+            style="flex:1; padding:9px 12px; background:rgba(255,255,255,0.05);
+                   border:1px solid rgba(255,255,255,0.1); border-radius:8px;
+                   color:#fff; font-size:13px; outline:none;">
+          <button onclick="addCustomCheckItem()" style="
+            padding:9px 16px; background:rgba(201,168,76,0.15);
+            border:1px solid rgba(201,168,76,0.3); border-radius:8px;
+            color:#c9a84c; font-size:13px; cursor:pointer; white-space:nowrap;">
+            + Add
+          </button>
+        </div>
       </div>
     </div>
   </aside>
@@ -3520,6 +3581,199 @@ function setSidebarTab(name, btn) {
   const panel = document.getElementById('sidebar-' + name + '-panel');
   if (panel) panel.style.display = 'flex', panel.style.flexDirection = 'column', panel.style.flex = '1';
   if (btn) btn.classList.add('active');
+}
+
+/* ── CHECKLIST SYSTEM ── */
+const CHECKLISTS = {
+  fha: [
+    'Photo ID (Driver\'s License or Passport)',
+    'Social Security Card',
+    'Last 2 Pay Stubs',
+    'Last 2 Years W-2s',
+    'Last 2 Months Bank Statements (all pages)',
+    'Last 2 Years Federal Tax Returns',
+    'Purchase Contract (signed)',
+    'Appraisal (ordered)',
+    'Homeowner\'s Insurance Quote',
+    'Gift Letter (if applicable)',
+    'Signed Disclosures',
+    'Credit Authorization',
+  ],
+  conventional: [
+    'Photo ID',
+    'Last 2 Pay Stubs',
+    'Last 2 Years W-2s',
+    'Last 2 Months Bank Statements',
+    'Purchase Contract',
+    'Appraisal (ordered)',
+    'Homeowner\'s Insurance Quote',
+    'Signed Disclosures',
+  ],
+  va: [
+    'Photo ID',
+    'DD-214 or Certificate of Eligibility (COE)',
+    'Last 2 Pay Stubs',
+    'Last 2 Years W-2s',
+    'Last 2 Months Bank Statements',
+    'Purchase Contract',
+    'VA Appraisal (ordered)',
+    'Homeowner\'s Insurance Quote',
+    'Signed Disclosures',
+  ],
+  dscr: [
+    'Photo ID',
+    'Entity Documents (LLC/Corp formation, EIN)',
+    'Lease Agreement OR Market Rent Appraisal',
+    'Last 2 Months Bank Statements',
+    'Purchase Contract',
+    'Appraisal (ordered)',
+    'Insurance Quote',
+    'Property Management Agreement (if applicable)',
+  ],
+  jumbo: [
+    'Photo ID',
+    'Last 2 Pay Stubs',
+    'Last 2 Years W-2s',
+    'Last 2 Years Federal Tax Returns',
+    '6 Months Bank Statements (all accounts)',
+    'Asset / Investment Statements',
+    'Purchase Contract',
+    'Appraisal (ordered)',
+    'Homeowner\'s Insurance Quote',
+    'Signed Disclosures',
+  ],
+  bank_statement: [
+    'Photo ID',
+    '12-24 Months Business Bank Statements',
+    '12-24 Months Personal Bank Statements (if using)',
+    'Business License',
+    'CPA Letter (if applicable)',
+    'Purchase Contract',
+    'Appraisal (ordered)',
+    'Insurance Quote',
+    'Signed Disclosures',
+  ],
+};
+
+let _checklistState = {};
+let _customItems = [];
+let _currentChecklistType = 'fha';
+
+function loadChecklist(type) {
+  _currentChecklistType = type || 'fha';
+  const items = CHECKLISTS[_currentChecklistType] || [];
+  renderChecklist(items);
+}
+
+function renderChecklist(baseItems) {
+  const container = document.getElementById('checklistItems');
+  if (!container) return;
+
+  const allItems = [...baseItems, ..._customItems];
+
+  container.innerHTML = allItems.map((item, index) => {
+    const key = _currentChecklistType + '_' + index;
+    const checked = _checklistState[key] || false;
+    const isCustom = index >= baseItems.length;
+
+    return `
+      <div style="
+        display:flex; align-items:center; gap:12px; padding:10px 12px;
+        background:${checked ? 'rgba(76,175,80,0.06)' : 'rgba(255,255,255,0.03)'};
+        border:1px solid ${checked ? 'rgba(76,175,80,0.2)' : 'rgba(255,255,255,0.07)'};
+        border-radius:8px; transition:all 0.2s; cursor:pointer;
+      " onclick="toggleCheck('${key}', this)">
+        <div style="
+          width:20px; height:20px; border-radius:5px; flex-shrink:0;
+          border:2px solid ${checked ? '#4CAF50' : 'rgba(255,255,255,0.2)'};
+          background:${checked ? '#4CAF50' : 'transparent'};
+          display:flex; align-items:center; justify-content:center;
+          transition:all 0.2s;
+        ">
+          ${checked ? '<span style="color:#fff;font-size:12px;">✓</span>' : ''}
+        </div>
+        <span style="font-size:13px; flex:1;
+          color:${checked ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.8)'};
+          text-decoration:${checked ? 'line-through' : 'none'};
+          transition:all 0.2s;">
+          ${item}
+        </span>
+        ${isCustom ? `
+        <button onclick="event.stopPropagation(); removeCustomItem(${index - baseItems.length})"
+          style="background:none;border:none;color:rgba(255,100,100,0.5);
+                 cursor:pointer;font-size:14px;padding:0 4px;">✕</button>
+        ` : ''}
+      </div>`;
+  }).join('');
+
+  updateChecklistProgress(allItems.length);
+}
+
+function toggleCheck(key, el) {
+  _checklistState[key] = !_checklistState[key];
+  const checked = _checklistState[key];
+  el.style.background = checked ? 'rgba(76,175,80,0.06)' : 'rgba(255,255,255,0.03)';
+  el.style.border = '1px solid ' + (checked ? 'rgba(76,175,80,0.2)' : 'rgba(255,255,255,0.07)');
+  const checkbox = el.querySelector('div');
+  checkbox.style.borderColor = checked ? '#4CAF50' : 'rgba(255,255,255,0.2)';
+  checkbox.style.background = checked ? '#4CAF50' : 'transparent';
+  checkbox.innerHTML = checked ? '<span style="color:#fff;font-size:12px;">✓</span>' : '';
+  const label = el.querySelector('span');
+  label.style.color = checked ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.8)';
+  label.style.textDecoration = checked ? 'line-through' : 'none';
+  const items = CHECKLISTS[_currentChecklistType] || [];
+  updateChecklistProgress(items.length + _customItems.length);
+}
+
+function updateChecklistProgress(total) {
+  const checked = Object.keys(_checklistState).filter(k =>
+    k.startsWith(_currentChecklistType) && _checklistState[k]
+  ).length;
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const progressEl = document.getElementById('checklistProgress');
+  const barEl = document.getElementById('checklistProgressBar');
+  if (progressEl) progressEl.textContent = pct + '%';
+  if (barEl) {
+    barEl.style.width = pct + '%';
+    barEl.style.background = pct === 100 ? '#4CAF50' : '#c9a84c';
+  }
+}
+
+function addCustomCheckItem() {
+  const input = document.getElementById('customCheckItem');
+  const val = input?.value.trim();
+  if (!val) return;
+  _customItems.push(val);
+  input.value = '';
+  loadChecklist(_currentChecklistType);
+}
+
+function removeCustomItem(index) {
+  _customItems.splice(index, 1);
+  loadChecklist(_currentChecklistType);
+}
+
+function switchNoteTab(tab) {
+  // Update tab button styles
+  ['tabNotes','tabTexts','tabChecklist'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      const isActive = (id === 'tabNotes' && tab === 'notes') ||
+                       (id === 'tabTexts' && tab === 'texts') ||
+                       (id === 'tabChecklist' && tab === 'checklist');
+      btn.style.background = isActive ? 'rgba(201,168,76,0.15)' : 'transparent';
+      btn.style.color = isActive ? '#c9a84c' : 'rgba(255,255,255,0.4)';
+      btn.style.fontWeight = isActive ? '700' : '600';
+    }
+  });
+
+  // Show/hide panels via setSidebarTab
+  setSidebarTab(tab);
+
+  // Load checklist when switching to it
+  if (tab === 'checklist') {
+    loadChecklist(_currentChecklistType);
+  }
 }
 
 /* ── THEME ── */
