@@ -255,7 +255,33 @@
   }
   checkSession();
 
+  let loginAttempts = 0;
+  let lockoutUntil = null;
+
+  function checkRateLimit() {
+    if (lockoutUntil && Date.now() < lockoutUntil) {
+      const secs = Math.ceil((lockoutUntil - Date.now()) / 1000);
+      showError(`Too many attempts. Try again in ${secs} seconds.`);
+      return false;
+    }
+    loginAttempts++;
+    if (loginAttempts >= 5) {
+      lockoutUntil = Date.now() + 30000;
+      loginAttempts = 0;
+      showError('Too many failed attempts. Locked for 30 seconds.');
+      return false;
+    }
+    return true;
+  }
+
+  function showError(msg) {
+    const errorMsg = document.getElementById('errorMsg');
+    errorMsg.textContent = msg;
+    errorMsg.style.display = 'block';
+  }
+
   async function signIn() {
+    if (!checkRateLimit()) return;
     const email = document.getElementById('emailInput').value.trim();
     const password = document.getElementById('passwordInput').value;
     const btn = document.getElementById('loginBtn');
@@ -288,6 +314,7 @@
       return;
     }
 
+    loginAttempts = 0;
     successMsg.textContent = 'Signed in successfully — redirecting...';
     successMsg.style.display = 'block';
     btn.innerHTML = 'Signed in!';
