@@ -71,7 +71,7 @@
     #rr-chat-btn.pulse { animation: rrPulse 2s ease-out 3; }
 
     #rr-chat-window {
-      position: fixed; bottom: 90px; right: 24px; z-index: 2147483639;
+      position: fixed; bottom: 90px; right: 24px; z-index: 9999;
       width: 360px; max-height: 580px;
       background: #1a1505; border: 1px solid rgba(186,117,23,0.35);
       border-radius: 16px; overflow: hidden;
@@ -336,13 +336,18 @@
     chatBtn.classList.remove('pulse');
     if (messagesEl.children.length === 0) initChat();
     setTimeout(() => chatInput.focus(), 120);
-    // Lock page scroll while chat is open
+    // Lock page scroll — save position so it doesn't jump on restore
+    const scrollY = window.scrollY;
+    document.body.dataset.chatScrollY = scrollY;
     document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = '100%';
     // Inject backdrop to block scroll bleed-through on mobile
     if (!document.getElementById('rr-chat-backdrop')) {
       const backdrop = document.createElement('div');
       backdrop.id = 'rr-chat-backdrop';
-      backdrop.style.cssText = 'position:fixed;inset:0;z-index:2147483638;touch-action:none;';
+      backdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.5);touch-action:none;-webkit-overflow-scrolling:none;';
       backdrop.addEventListener('click', closeChat);
       backdrop.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive: false });
       document.body.appendChild(backdrop);
@@ -352,7 +357,13 @@
   function closeChat() {
     isOpen = false;
     chatWindow.classList.remove('open');
+    // Restore scroll position
+    const scrollY = parseInt(document.body.dataset.chatScrollY || '0', 10);
     document.body.style.overflow = '';
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.width = '';
+    window.scrollTo(0, scrollY);
     document.getElementById('rr-chat-backdrop')?.remove();
   }
 

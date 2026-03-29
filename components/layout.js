@@ -149,14 +149,26 @@ if (headerRoot) {
       hamburger?.classList.add("is-open");
       mobileNav?.classList.add("is-open");
       overlay?.classList.add("is-visible");
+      // Lock scroll and save position to prevent jump on restore
+      const scrollY = window.scrollY;
+      document.body.dataset.navScrollY = scrollY;
       document.body.style.overflow = "hidden";
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = "100%";
     }
     function closeMenu() {
       hamburger?.setAttribute("aria-expanded", "false");
       hamburger?.classList.remove("is-open");
       mobileNav?.classList.remove("is-open");
       overlay?.classList.remove("is-visible");
+      // Restore scroll position
+      const scrollY = parseInt(document.body.dataset.navScrollY || "0", 10);
       document.body.style.overflow = "";
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      window.scrollTo(0, scrollY);
     }
 
     hamburger?.addEventListener("click", () => {
@@ -164,6 +176,8 @@ if (headerRoot) {
       else openMenu();
     });
     overlay?.addEventListener("click", closeMenu);
+    overlay?.addEventListener("touchmove", function(e) { e.stopPropagation(); }, { passive: true });
+    mobileNav?.addEventListener("touchmove", function(e) { e.stopPropagation(); }, { passive: true });
     mobileNav?.querySelectorAll("a").forEach((a) => a.addEventListener("click", closeMenu));
 
     // ── Loans dropdown (click for touch + keyboard, hover handled by CSS) ──
