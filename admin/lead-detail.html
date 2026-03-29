@@ -5850,20 +5850,73 @@ loadData().then(() => loadContactMeta());
 let _ocrJobId = null;
 let _ocrFields = {};
 let _ocrPollInterval = null;
+let _selectedOCRFile = null;
 
 function openOCRUpload() {
   const modal = document.getElementById('ocrModal');
   if (modal) {
     modal.style.display = 'flex';
-    document.getElementById('ocrStatus').style.display = 'none';
-    document.getElementById('ocrResults').style.display = 'none';
-    _ocrFields = {};
+    clearOCRFile();
   }
 }
 
 function handleOCRDrop(e) {
   const file = e.dataTransfer?.files?.[0];
-  if (file) startOCR(file);
+  if (file) previewOCRFile(file);
+}
+
+function previewOCRFile(file) {
+  if (!file) return;
+  _selectedOCRFile = file;
+
+  document.getElementById('ocrDropContent').style.display = 'none';
+  document.getElementById('ocrPreview').style.display = 'block';
+  document.getElementById('ocrDropZone').style.cursor = 'default';
+
+  document.getElementById('ocrPreviewName').textContent = file.name;
+  const size = file.size < 1048576
+    ? (file.size/1024).toFixed(1) + ' KB'
+    : (file.size/1048576).toFixed(1) + ' MB';
+  document.getElementById('ocrPreviewMeta').textContent = size + ' · ' + (file.type.split('/')[1]?.toUpperCase() || 'FILE');
+
+  const name = file.name.toLowerCase();
+  let docType = 'Document';
+  if (name.includes('w2') || name.includes('w-2')) docType = 'W-2';
+  else if (name.includes('paystub') || name.includes('pay_stub') || name.includes('earnings')) docType = 'Pay Stub';
+  else if (name.includes('1040') || name.includes('tax')) docType = 'Tax Return';
+  else if (name.includes('bank') || name.includes('statement')) docType = 'Bank Statement';
+  else if (name.includes('id') || name.includes('license') || name.includes('passport')) docType = 'ID Document';
+  else if (file.type === 'application/pdf') docType = 'PDF';
+  else if (file.type.startsWith('image/')) docType = 'Image';
+  document.getElementById('ocrPreviewDocType').textContent = docType;
+
+  const thumb = document.getElementById('ocrPreviewThumb');
+  if (file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      thumb.innerHTML = '<img src="' + e.target.result + '" style="width:100%;height:100%;object-fit:cover;border-radius:6px;">';
+    };
+    reader.readAsDataURL(file);
+  } else {
+    thumb.innerHTML = '📄';
+    thumb.style.fontSize = '32px';
+  }
+}
+
+function clearOCRFile() {
+  _selectedOCRFile = null;
+  document.getElementById('ocrDropContent').style.display = 'block';
+  document.getElementById('ocrPreview').style.display = 'none';
+  document.getElementById('ocrDropZone').style.cursor = 'pointer';
+  document.getElementById('ocrDropZone').style.borderColor = 'rgba(201,168,76,0.3)';
+  document.getElementById('ocrFileInput').value = '';
+  document.getElementById('ocrStatus').style.display = 'none';
+  document.getElementById('ocrResults').style.display = 'none';
+  _ocrFields = {};
+}
+
+function scanSelectedFile() {
+  if (_selectedOCRFile) startOCR(_selectedOCRFile);
 }
 
 async function startOCR(file) {
@@ -6011,24 +6064,59 @@ function applyOCRFields() {
       name, DOB, employer, income, address and fill the 1003 automatically.
     </p>
 
+    <!-- Drop Zone -->
     <div id="ocrDropZone"
       onclick="document.getElementById('ocrFileInput').click()"
-      ondragover="event.preventDefault();document.getElementById('ocrDropZone').style.borderColor='#c9a84c'"
+      ondragover="event.preventDefault();document.getElementById('ocrDropZone').style.borderColor='#c9a84c';event.stopPropagation();"
       ondragleave="document.getElementById('ocrDropZone').style.borderColor='rgba(201,168,76,0.3)'"
       ondrop="event.preventDefault();document.getElementById('ocrDropZone').style.borderColor='rgba(201,168,76,0.3)';handleOCRDrop(event)"
       style="border:2px dashed rgba(201,168,76,0.3); border-radius:12px;
-             padding:28px; text-align:center; cursor:pointer; margin-bottom:14px;
+             padding:24px; text-align:center; cursor:pointer; margin-bottom:14px;
              transition:border-color 0.2s; background:rgba(201,168,76,0.02);">
-      <div style="font-size:32px; margin-bottom:8px;">📄</div>
-      <div style="font-size:14px; color:rgba(255,255,255,0.6); font-weight:600;">
-        Drop file here or click to browse
+      <div id="ocrDropContent">
+        <div style="font-size:32px; margin-bottom:8px;">📄</div>
+        <div style="font-size:14px; color:rgba(255,255,255,0.6); font-weight:600;">
+          Drop file here or click to browse
+        </div>
+        <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:5px;">
+          PDF · JPG · PNG — Pay stubs, W-2s, Tax returns, IDs
+        </div>
       </div>
-      <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:5px;">
-        PDF, JPG, PNG — Pay stubs, W-2s, Tax returns, IDs
+      <!-- Preview shown after file selected -->
+      <div id="ocrPreview" style="display:none;">
+        <div style="display:flex; align-items:center; gap:12px;
+                    background:rgba(255,255,255,0.05); border-radius:10px;
+                    padding:12px; text-align:left;">
+          <div id="ocrPreviewThumb" style="width:56px; height:72px; border-radius:6px;
+            background:rgba(255,255,255,0.08); display:flex; align-items:center;
+            justify-content:center; font-size:28px; flex-shrink:0; overflow:hidden;">
+            📄
+          </div>
+          <div style="flex:1; min-width:0;">
+            <div id="ocrPreviewName" style="font-size:13px; font-weight:700; color:#fff;
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:4px;">
+            </div>
+            <div id="ocrPreviewMeta" style="font-size:11px; color:rgba(255,255,255,0.4); margin-bottom:8px;"></div>
+            <div id="ocrPreviewDocType" style="font-size:11px; padding:3px 8px; border-radius:20px;
+              background:rgba(201,168,76,0.12); border:1px solid rgba(201,168,76,0.3);
+              color:#c9a84c; font-weight:600; display:inline-block;"></div>
+          </div>
+          <button onclick="event.stopPropagation(); clearOCRFile()" style="
+            background:rgba(255,100,100,0.1); border:1px solid rgba(255,100,100,0.3);
+            border-radius:6px; color:#ff9090; font-size:11px; cursor:pointer;
+            padding:5px 10px; flex-shrink:0;">Clear</button>
+        </div>
+        <button onclick="event.stopPropagation(); scanSelectedFile()" style="
+          width:100%; margin-top:10px; padding:11px;
+          background:linear-gradient(135deg,#c9a84c,#a07830);
+          border:none; border-radius:9px; color:#1a1a1a;
+          font-size:14px; font-weight:700; cursor:pointer;">
+          Scan This Document
+        </button>
       </div>
     </div>
     <input type="file" id="ocrFileInput" accept=".pdf,.jpg,.jpeg,.png"
-      style="display:none" onchange="startOCR(this.files[0])">
+      style="display:none" onchange="previewOCRFile(this.files[0])">
 
     <div id="ocrStatus" style="display:none; padding:12px 16px; border-radius:8px;
       background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
