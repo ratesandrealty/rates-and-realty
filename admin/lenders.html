@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lenders & Guidelines — Rates & Realty CRM</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #c9a84c; --dark: #0d0d0d; --card: #161616;
+      --card2: #1e1e1e; --border: rgba(255,255,255,0.08);
+      --text: rgba(255,255,255,0.85); --muted: rgba(255,255,255,0.4);
+    }
+    html, body { height: 100%; background: var(--dark); color: var(--text); font-family: 'Inter', sans-serif; }
+
+    /* ── TOP NAV ── */
+    .topnav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px; background: #111;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .brand-logo { width: 32px; height: 32px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--gold), #a07830);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Cormorant Garamond', serif; font-size: 12px; font-weight: 700; color: #1a1a1a; }
+    .brand-name { font-family: 'Cormorant Garamond', serif; font-size: 16px; color: #fff; font-weight: 600; }
+    .nav-tabs { display: flex; gap: 4px; }
+    .nav-tab {
+      padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; border: none;
+      background: transparent; color: var(--muted);
+    }
+    .nav-tab.active { background: rgba(201,168,76,0.12); color: var(--gold); }
+    .nav-tab:hover:not(.active) { background: rgba(255,255,255,0.05); color: var(--text); }
+    .nav-right { display: flex; align-items: center; gap: 10px; }
+    .btn-sync {
+      padding: 7px 14px; background: rgba(201,168,76,0.1);
+      border: 1px solid rgba(201,168,76,0.3); border-radius: 8px;
+      color: var(--gold); font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .btn-back {
+      padding: 7px 14px; background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border); border-radius: 8px;
+      color: var(--muted); font-size: 12px; text-decoration: none;
+    }
+
+    /* ── LAYOUT ── */
+    .page { display: flex; height: calc(100vh - 57px); overflow: hidden; }
+
+    /* ── LEFT PANEL ── */
+    .left-panel {
+      width: 340px; flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      background: #111;
+    }
+    .panel-header {
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .search-box {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 9px; padding: 8px 12px;
+      margin-bottom: 10px;
+    }
+    .search-box input {
+      flex: 1; background: none; border: none; outline: none;
+      color: var(--text); font-size: 13px;
+    }
+    .search-box input::placeholder { color: rgba(255,255,255,0.25); }
+    .filter-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter-chip {
+      padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+      border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.5);
+      cursor: pointer; transition: all 0.2s; background: rgba(255,255,255,0.03);
+    }
+    .filter-chip.active {
+      border-color: rgba(201,168,76,0.5); background: rgba(201,168,76,0.12); color: var(--gold);
+    }
+
+    /* Lender list */
+    .lender-list { flex: 1; overflow-y: auto; }
+    .lender-list::-webkit-scrollbar { width: 3px; }
+    .lender-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); }
+
+    .lender-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 18px; cursor: pointer; transition: background 0.15s;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .lender-row:hover { background: rgba(255,255,255,0.04); }
+    .lender-row.selected { background: rgba(201,168,76,0.07); border-left: 3px solid var(--gold); }
+    .lender-avatar {
+      width: 36px; height: 36px; border-radius: 9px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; color: #fff;
+    }
+    .lender-info { flex: 1; min-width: 0; }
+    .lender-name { font-size: 13px; font-weight: 600; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lender-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+    .tag-pill {
+      padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 600;
+    }
+    .lender-priority { font-size: 10px; flex-shrink: 0; }
+
+    /* ── RIGHT PANEL ── */
+    .right-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    /* Tabs */
+    .panel-tabs {
+      display: flex; border-bottom: 1px solid var(--border);
+      padding: 0 24px; flex-shrink: 0; background: #111;
+    }
+    .ptab {
+      padding: 14px 16px; font-size: 13px; font-weight: 600;
+      cursor: pointer; border-bottom: 2px solid transparent;
+      color: var(--muted); transition: all 0.2s;
+    }
+    .ptab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+    /* Tab content */
+    .tab-content { flex: 1; overflow-y: auto; }
+
+    /* ── GUIDELINE AI TAB ── */
+    .ai-tab { display: flex; flex-direction: column; height: 100%; }
+
+    .lender-scope-bar {
+      padding: 12px 24px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+      background: rgba(201,168,76,0.03);
+    }
+    .scope-label { font-size: 11px; color: var(--muted); font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+    .scope-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+    .scope-chip {
+      padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+      border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.5);
+      cursor: pointer; transition: all 0.2s;
+    }
+    .scope-chip.active {
+      border-color: rgba(201,168,76,0.5); background: rgba(201,168,76,0.12); color: var(--gold);
+    }
+
+    /* Chat messages */
+    .chat-messages {
+      flex: 1; overflow-y: auto; padding: 20px 24px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .chat-messages::-webkit-scrollbar { width: 3px; }
+    .chat-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); }
+
+    .empty-chat {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center; padding: 40px;
+    }
+    .empty-chat h3 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 24px; color: #fff; margin-bottom: 8px;
+    }
+    .empty-chat p { font-size: 13px; color: var(--muted); max-width: 380px; line-height: 1.7; }
+
+    /* Quick prompts */
+    .quick-prompts {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 8px; margin-top: 20px; max-width: 500px;
+    }
+    .qp-btn {
+      padding: 10px 14px; border-radius: 10px; text-align: left;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.6); font-size: 12px; cursor: pointer;
+      transition: all 0.2s; line-height: 1.4;
+    }
+    .qp-btn:hover { border-color: rgba(201,168,76,0.4); color: var(--gold); background: rgba(201,168,76,0.05); }
+
+    /* Messages */
+    .msg { display: flex; gap: 12px; }
+    .msg.user { flex-direction: row-reverse; }
+    .msg-av { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; font-size: 13px; }
+    .msg.ai .msg-av { background: linear-gradient(135deg, var(--gold), #a07830); }
+    .msg.user .msg-av { background: rgba(255,255,255,0.1); font-size: 11px; font-weight: 700; }
+    .msg-body { max-width: 80%; }
+    .msg.user .msg-body { align-items: flex-end; display: flex; flex-direction: column; }
+    .msg-bubble {
+      padding: 12px 16px; font-size: 13px; line-height: 1.7;
+      border-radius: 4px;
+    }
+    .msg.ai .msg-bubble {
+      background: var(--card2); border: 1px solid var(--border);
+      border-radius: 0 12px 12px 12px; color: var(--text);
+    }
+    .msg.user .msg-bubble {
+      background: rgba(201,168,76,0.1); border: 1px solid rgba(201,168,76,0.2);
+      border-radius: 12px 0 12px 12px; color: var(--text);
+    }
+    .msg-sources { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .src-badge {
+      padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700;
+      background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.4);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .thinking-bubble {
+      padding: 12px 16px; background: var(--card2); border: 1px solid var(--border);
+      border-radius: 0 12px 12px 12px; display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--muted);
+    }
+    .dots { display: flex; gap: 3px; }
+    .dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--gold);
+      animation: dot 1.2s infinite; }
+    .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes dot { 0%,60%,100%{opacity:0.2;transform:scale(0.8)} 30%{opacity:1;transform:scale(1)} }
+
+    /* Input */
+    .chat-input-area {
+      padding: 12px 24px 16px; border-top: 1px solid var(--border); flex-shrink: 0;
+    }
+    .input-row {
+      display: flex; gap: 10px; align-items: flex-end;
+      background: var(--card2); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px; padding: 10px 12px; transition: border 0.2s;
+    }
+    .input-row:focus-within { border-color: rgba(201,168,76,0.4); }
+    #aiInput {
+      flex: 1; background: none; border: none; outline: none;
+      color: var(--text); font-size: 13px; font-family: 'Inter', sans-serif;
+      resize: none; max-height: 100px; line-height: 1.5;
+    }
+    #aiInput::placeholder { color: rgba(255,255,255,0.2); }
+    #aiSendBtn {
+      width: 34px; height: 34px; border-radius: 9px; border: none;
+      background: linear-gradient(135deg, var(--gold), #a07830);
+      color: #1a1a1a; font-size: 15px; cursor: pointer; flex-shrink: 0;
+    }
+    #aiSendBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── LENDER DETAIL TAB ── */
+    .detail-tab { padding: 24px; }
+    .detail-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+    .detail-avatar { width: 56px; height: 56px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; font-weight: 700; color: #fff; flex-shrink: 0; }
+    .detail-name { font-family: 'Cormorant Garamond', serif;
+      font-size: 22px; color: #fff; font-weight: 600; }
+    .detail-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+    .detail-card {
+      background: var(--card2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px;
+    }
+    .detail-card-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--muted); font-weight: 600; margin-bottom: 8px; }
+    .detail-card-value { font-size: 14px; font-weight: 600; color: var(--text); }
+
+    .program-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    .detail-input {
+      width: 100%; padding: 9px 12px; background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+      color: var(--text); font-size: 13px; outline: none; font-family: 'Inter', sans-serif;
+      margin-top: 4px;
+    }
+    .detail-input:focus { border-color: rgba(201,168,76,0.4); }
+    .detail-textarea {
+      width: 100%; padding: 9px 12px; background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+      color: var(--text); font-size: 13px; outline: none; font-family: 'Inter', sans-serif;
+      resize: vertical; min-height: 80px; margin-top: 4px;
+    }
+    .save-btn {
+      padding: 10px 24px; background: linear-gradient(135deg, var(--gold), #a07830);
+      border: none; border-radius: 9px; color: #1a1a1a; font-size: 13px;
+      font-weight: 700; cursor: pointer; margin-top: 16px;
+    }
+    .clickup-link {
+      display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+      padding: 6px 14px; background: rgba(122,100,224,0.1);
+      border: 1px solid rgba(122,100,224,0.3); border-radius: 8px;
+      color: #a78bfa; font-size: 12px; font-weight: 600; text-decoration: none;
+    }
+
+    /* ── LENDERS LIST TAB ── */
+    .lenders-grid { padding: 20px 24px; }
+    .lenders-table { width: 100%; border-collapse: collapse; }
+    .lenders-table th { text-align: left; font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.5px; color: var(--muted); font-weight: 600; padding: 8px 12px;
+      border-bottom: 1px solid var(--border); }
+    .lenders-table td { padding: 12px 12px; border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 13px; color: var(--text); vertical-align: middle; }
+    .lenders-table tr:hover td { background: rgba(255,255,255,0.03); }
+    .lenders-table tr { cursor: pointer; }
+
+    @media (max-width: 768px) {
+      .left-panel { display: none; }
+      .right-panel { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<div class="topnav">
+  <a href="/admin/contacts.html" class="nav-brand">
+    <div class="brand-logo">R&R</div>
+    <div class="brand-name">Rates & Realty</div>
+  </a>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchMainTab('ai')">Guideline AI</button>
+    <button class="nav-tab" onclick="switchMainTab('database')">Lender Database</button>
+  </div>
+  <div class="nav-right">
+    <button class="btn-sync" onclick="syncFromClickUp()">Sync ClickUp</button>
+    <a href="/admin/contacts.html" class="btn-back">CRM</a>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- LEFT: Lender list (for AI context) -->
+  <div class="left-panel" id="leftPanel">
+    <div class="panel-header">
+      <div class="search-box">
+        <span style="font-size:14px;color:var(--muted);">🔍</span>
+        <input type="text" id="lenderSearch" placeholder="Search lenders..."
+          oninput="filterLenders(this.value)">
+      </div>
+      <div class="filter-row">
+        <div class="filter-chip active" onclick="setFilter('all', this)">All</div>
+        <div class="filter-chip" onclick="setFilter('conventional', this)">Conv</div>
+        <div class="filter-chip" onclick="setFilter('fha', this)">FHA</div>
+        <div class="filter-chip" onclick="setFilter('va', this)">VA</div>
+        <div class="filter-chip" onclick="setFilter('non-qm', this)">Non-QM</div>
+        <div class="filter-chip" onclick="setFilter('jumbo', this)">Jumbo</div>
+        <div class="filter-chip" onclick="setFilter('commercial', this)">Comm</div>
+        <div class="filter-chip" onclick="setFilter('dscr', this)">DSCR</div>
+      </div>
+    </div>
+    <div class="lender-list" id="lenderList">
+      <div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">
+        Loading lenders...
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Content panels -->
+  <div class="right-panel">
+
+    <!-- ── AI TAB ── -->
+    <div id="aiTabContent" style="display:flex;flex-direction:column;height:100%;">
+      <!-- Scope bar -->
+      <div class="lender-scope-bar">
+        <span class="scope-label">Search in:</span>
+        <div class="scope-chips" id="scopeChips">
+          <div class="scope-chip active" onclick="toggleScope('all', this)" data-scope="all">
+            All Guidelines
+          </div>
+          <div class="scope-chip" onclick="toggleScope('Fannie Mae', this)">FNMA</div>
+          <div class="scope-chip" onclick="toggleScope('Freddie Mac', this)">FHLMC</div>
+          <div class="scope-chip" onclick="toggleScope('FHA', this)">FHA</div>
+          <div class="scope-chip" onclick="toggleScope('VA', this)">VA</div>
+          <div class="scope-chip" onclick="toggleScope('DSCR Loans', this)">DSCR</div>
+          <div class="scope-chip" onclick="toggleScope('Bank Statement Loans', this)">Bank Stmt</div>
+          <div class="scope-chip" onclick="toggleScope('Jumbo', this)">Jumbo</div>
+          <div class="scope-chip" onclick="toggleScope('Commercial RE', this)">Commercial</div>
+          <div class="scope-chip" onclick="toggleScope('CalHFA', this)">CalHFA</div>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="chat-messages" id="chatMessages">
+        <div class="empty-chat" id="emptyChatState">
+          <div style="font-size:48px;margin-bottom:16px;">📋</div>
+          <h3>Instant Guideline Answers</h3>
+          <p>Ask about any lending guideline across Fannie Mae, Freddie Mac, FHA, VA, DSCR, Non-QM, Commercial, and your wholesale lenders.</p>
+          <div class="quick-prompts">
+            <button class="qp-btn" onclick="askQuestion('What is the minimum credit score for FHA vs Conventional?')">
+              Min credit score FHA vs Conventional?
+            </button>
+            <button class="qp-btn" onclick="askQuestion('What are the DSCR requirements for investor loans?')">
+              DSCR requirements for investors?
+            </button>
+            <button class="qp-btn" onclick="askQuestion('What DTI is allowed for VA loans with high residual income?')">
+              Max DTI for VA loans?
+            </button>
+            <button class="qp-btn" onclick="askQuestion('What down payment assistance programs are available in California?')">
+              California DPA programs?
+            </button>
+            <button class="qp-btn" onclick="askQuestion('How do I qualify a self-employed borrower with bank statements?')">
+              Bank statement loan qualifying?
+            </button>
+            <button class="qp-btn" onclick="askQuestion('What are warrantable condo requirements for Fannie Mae?')">
+              Warrantable condo rules?
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div class="chat-input-area">
+        <div class="input-row">
+          <textarea id="aiInput" rows="1" placeholder="Ask about guidelines, programs, eligibility, overlays..."
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendGuidelineQuestion();}"
+            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'"></textarea>
+          <button id="aiSendBtn" onclick="sendGuidelineQuestion()">➤</button>
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.2);text-align:center;margin-top:6px;">
+          Powered by AI — Always verify with lender before submitting
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DATABASE TAB ── -->
+    <div id="dbTabContent" style="display:none;flex:1;overflow-y:auto;">
+      <div class="lenders-grid">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <div>
+            <div style="font-family:'Cormorant Garamond',serif;font-size:22px;color:#fff;font-weight:600;">
+              Lender Database
+            </div>
+            <div id="lenderCount" style="font-size:12px;color:var(--muted);margin-top:2px;"></div>
+          </div>
+          <button onclick="syncFromClickUp()" style="padding:8px 16px;background:rgba(122,100,224,0.1);
+            border:1px solid rgba(122,100,224,0.3);border-radius:8px;color:#a78bfa;
+            font-size:12px;font-weight:600;cursor:pointer;">
+            Sync from ClickUp
+          </button>
+        </div>
+        <table class="lenders-table">
+          <thead>
+            <tr>
+              <th>Lender Name</th>
+              <th>Type</th>
+              <th>Programs</th>
+              <th>Priority</th>
+              <th>ClickUp</th>
+            </tr>
+          </thead>
+          <tbody id="lendersTableBody">
+            <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--muted);">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── LENDER DETAIL PANEL ── -->
+    <div id="lenderDetailPanel" style="display:none;flex:1;overflow-y:auto;">
+      <div class="detail-tab" id="lenderDetailContent"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────
+const SB_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
+
+// ── STATE ────────────────────────────────────────
+let allLenders = [];
+let filteredLenders = [];
+let selectedFilter = 'all';
+let selectedLender = null;
+let selectedScopes = ['all'];
+let chatHistory = [];
+let currentMainTab = 'ai';
+
+// ── COLORS ──────────────────────────────────────
+const TYPE_COLORS = {
+  conventional: { bg: 'rgba(0,102,204,0.15)', color: '#4da6ff', border: 'rgba(0,102,204,0.3)' },
+  government: { bg: 'rgba(0,153,76,0.15)', color: '#4dff99', border: 'rgba(0,153,76,0.3)' },
+  non_qm: { bg: 'rgba(201,168,76,0.15)', color: '#c9a84c', border: 'rgba(201,168,76,0.3)' },
+  commercial: { bg: 'rgba(204,0,0,0.15)', color: '#ff6666', border: 'rgba(204,0,0,0.3)' },
+};
+const PROGRAM_COLORS = {
+  'fha': '#4dff99', 'va': '#cc99ff', 'conventional': '#4da6ff',
+  'jumbo': '#ffcc66', 'non-qm': '#c9a84c', 'commercial': '#ff6666',
+  'dscr': '#ff9966', 'usda': '#66ff99', 'heloc': '#66ccff',
+  'heloan': '#99ccff', 'reverse': '#cc99ff', 'sba': '#ffaa44',
+  'hard-money': '#ff8888', 'arm': '#aaaaff',
+};
+
+// ── LOAD LENDERS ─────────────────────────────────
+async function loadLenders() {
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/lenders?order=name&limit=200`, {
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+    });
+    allLenders = await res.json();
+    filteredLenders = [...allLenders];
+    document.getElementById('lenderCount').textContent = allLenders.length + ' lenders synced from ClickUp';
+    renderLenderList(filteredLenders);
+    renderLendersTable(filteredLenders);
+  } catch(e) {
+    console.error('Load lenders error:', e);
+  }
+}
+
+function getAvatarColor(name) {
+  const colors = ['#c9a84c','#4da6ff','#4dff99','#cc99ff','#ff6666','#ffcc66','#ff9966'];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function getInitials(name) {
+  return name.split(/\s+/).slice(0,2).map(w => w[0]).join('').toUpperCase();
+}
+
+function renderLenderList(lenders) {
+  const list = document.getElementById('lenderList');
+  if (!lenders.length) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">No lenders found</div>';
+    return;
+  }
+  list.innerHTML = lenders.map(l => {
+    const color = getAvatarColor(l.name);
+    const initials = getInitials(l.name);
+    const progs = (l.programs || []).slice(0, 3);
+    const isSelected = selectedLender?.id === l.id;
+    return `
+      <div class="lender-row ${isSelected ? 'selected' : ''}" onclick="selectLender('${l.id}')">
+        <div class="lender-avatar" style="background:${color}22;border:1px solid ${color}44;color:${color};">
+          ${initials}
+        </div>
+        <div class="lender-info">
+          <div class="lender-name">${l.name}</div>
+          <div class="lender-tags">
+            ${progs.map(p => `<span class="tag-pill" style="background:${PROGRAM_COLORS[p]||'#888'}22;color:${PROGRAM_COLORS[p]||'#888'};border:1px solid ${PROGRAM_COLORS[p]||'#888'}44;">${p}</span>`).join('')}
+          </div>
+        </div>
+        <div class="lender-priority" style="color:${l.priority==='high'?'#ff9966':l.priority==='low'?'rgba(255,255,255,0.2)':'var(--muted)'};">
+          ${l.priority==='high'?'★':''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderLendersTable(lenders) {
+  const tbody = document.getElementById('lendersTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = lenders.map(l => {
+    const color = getAvatarColor(l.name);
+    const progs = (l.programs || []).slice(0, 4);
+    const typeLabel = { conventional: 'Conventional', government: 'Government', non_qm: 'Non-QM', commercial: 'Commercial' }[l.lender_type] || l.lender_type || '-';
+    return `
+      <tr onclick="selectLenderAndShow('${l.id}')">
+        <td>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:30px;height:30px;border-radius:7px;background:${color}22;border:1px solid ${color}44;
+              color:${color};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">
+              ${getInitials(l.name)}
+            </div>
+            <span style="font-weight:600;">${l.name}</span>
+          </div>
+        </td>
+        <td><span style="font-size:11px;padding:3px 8px;border-radius:8px;
+          background:${TYPE_COLORS[l.lender_type]?.bg||'rgba(255,255,255,0.06)'};
+          color:${TYPE_COLORS[l.lender_type]?.color||'rgba(255,255,255,0.5)'};">${typeLabel}</span></td>
+        <td>${progs.map(p=>`<span style="font-size:10px;padding:2px 7px;border-radius:8px;margin-right:3px;background:${PROGRAM_COLORS[p]||'#888'}22;color:${PROGRAM_COLORS[p]||'#888'};">${p}</span>`).join('')}</td>
+        <td><span style="color:${l.priority==='high'?'#ff9966':l.priority==='low'?'rgba(255,255,255,0.3)':'var(--text)'};">${l.priority||'normal'}</span></td>
+        <td>${l.clickup_task_id ? `<a href="${l.clickup_url}" target="_blank" onclick="event.stopPropagation()" style="color:#a78bfa;font-size:12px;text-decoration:none;">Open</a>` : '-'}</td>
+      </tr>`;
+  }).join('');
+}
+
+// ── FILTERS ─────────────────────────────────────
+function setFilter(tag, el) {
+  selectedFilter = tag;
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  filterLenders(document.getElementById('lenderSearch').value);
+}
+
+function filterLenders(query) {
+  filteredLenders = allLenders.filter(l => {
+    const matchQuery = !query || l.name.toLowerCase().includes(query.toLowerCase());
+    const matchFilter = selectedFilter === 'all' || (l.programs || []).includes(selectedFilter);
+    return matchQuery && matchFilter;
+  });
+  renderLenderList(filteredLenders);
+}
+
+// ── SELECT LENDER ────────────────────────────────
+function selectLender(id) {
+  selectedLender = allLenders.find(l => l.id === id);
+  renderLenderList(filteredLenders);
+}
+
+function selectLenderAndShow(id) {
+  selectedLender = allLenders.find(l => l.id === id);
+  showLenderDetail(selectedLender);
+}
+
+function showLenderDetail(lender) {
+  if (!lender) return;
+  const color = getAvatarColor(lender.name);
+  const initials = getInitials(lender.name);
+  const typeC = TYPE_COLORS[lender.lender_type] || { bg: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)' };
+  const progs = lender.programs || [];
+
+  document.getElementById('lenderDetailPanel').style.display = 'flex';
+  document.getElementById('lenderDetailPanel').style.flexDirection = 'column';
+  document.getElementById('dbTabContent').style.display = 'none';
+
+  document.getElementById('lenderDetailContent').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <button onclick="showDBTab()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;">← Back to list</button>
+      <a href="${lender.clickup_url||'#'}" target="_blank" class="clickup-link">
+        View in ClickUp
+      </a>
+    </div>
+
+    <div class="detail-header">
+      <div class="detail-avatar" style="background:${color}22;border:1px solid ${color}44;color:${color};">
+        ${initials}
+      </div>
+      <div>
+        <div class="detail-name">${lender.name}</div>
+        <div class="detail-meta">${lender.list_name || ''} · Last synced: ${new Date(lender.last_synced_at).toLocaleDateString()}</div>
+      </div>
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-card">
+        <div class="detail-card-label">Lender Type</div>
+        <div class="detail-card-value">
+          <span style="padding:4px 10px;border-radius:8px;font-size:13px;
+            background:${typeC.bg};color:${typeC.color};">
+            ${lender.lender_type || 'conventional'}
+          </span>
+        </div>
+      </div>
+      <div class="detail-card">
+        <div class="detail-card-label">Priority</div>
+        <div class="detail-card-value" style="color:${lender.priority==='high'?'#ff9966':'var(--text)'};">
+          ${lender.priority || 'normal'}
+        </div>
+      </div>
+      <div class="detail-card" style="grid-column:span 2;">
+        <div class="detail-card-label">Loan Programs</div>
+        <div class="program-grid" style="margin-top:6px;">
+          ${progs.map(p => `<span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;background:${PROGRAM_COLORS[p]||'#888'}22;color:${PROGRAM_COLORS[p]||'#888'};border:1px solid ${PROGRAM_COLORS[p]||'#888'}44;">${p}</span>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- Editable fields -->
+    <div style="background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:14px;">Lender Details</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Contact Name</label>
+          <input type="text" class="detail-input" id="edit_contact_name" value="${lender.contact_name||''}" placeholder="Rep name">
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Phone</label>
+          <input type="text" class="detail-input" id="edit_phone" value="${lender.contact_phone||''}" placeholder="(714) 000-0000">
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Email</label>
+          <input type="email" class="detail-input" id="edit_email" value="${lender.contact_email||''}" placeholder="rep@lender.com">
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Website</label>
+          <input type="text" class="detail-input" id="edit_website" value="${lender.website||''}" placeholder="https://lender.com">
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Min Credit Score</label>
+          <input type="number" class="detail-input" id="edit_credit" value="${lender.min_credit_score||''}" placeholder="620">
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Max LTV %</label>
+          <input type="number" class="detail-input" id="edit_ltv" value="${lender.max_ltv||''}" placeholder="97">
+        </div>
+        <div style="grid-column:span 2;">
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Notes / Overlays / Niches</label>
+          <textarea class="detail-textarea" id="edit_notes" placeholder="Lender overlays, special programs, niche products...">${lender.notes||''}</textarea>
+        </div>
+      </div>
+      <button class="save-btn" onclick="saveLenderDetails('${lender.id}', '${lender.clickup_task_id||''}')">
+        Save & Sync to ClickUp
+      </button>
+    </div>
+  `;
+}
+
+async function saveLenderDetails(lenderId, clickupId) {
+  const updates = {
+    contact_name: document.getElementById('edit_contact_name').value,
+    contact_phone: document.getElementById('edit_phone').value,
+    contact_email: document.getElementById('edit_email').value,
+    website: document.getElementById('edit_website').value,
+    min_credit_score: parseInt(document.getElementById('edit_credit').value) || null,
+    max_ltv: parseFloat(document.getElementById('edit_ltv').value) || null,
+    notes: document.getElementById('edit_notes').value,
+    updated_at: new Date().toISOString(),
+  };
+
+  await fetch(`${SB_URL}/rest/v1/lenders?id=eq.${lenderId}`, {
+    method: 'PATCH',
+    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`,
+      'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+    body: JSON.stringify(updates)
+  });
+
+  if (clickupId && updates.notes) {
+    await fetch(`https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/clickup-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'update_lender', task_id: clickupId, notes: updates.notes,
+        contact_name: updates.contact_name, contact_email: updates.contact_email,
+        contact_phone: updates.contact_phone, website: updates.website })
+    }).catch(() => {});
+  }
+
+  const idx = allLenders.findIndex(l => l.id === lenderId);
+  if (idx >= 0) Object.assign(allLenders[idx], updates);
+
+  showToast('Lender saved');
+}
+
+function showDBTab() {
+  document.getElementById('lenderDetailPanel').style.display = 'none';
+  document.getElementById('dbTabContent').style.display = 'block';
+}
+
+// ── MAIN TABS ────────────────────────────────────
+function switchMainTab(tab) {
+  currentMainTab = tab;
+  document.querySelectorAll('.nav-tab').forEach((t,i) => {
+    t.classList.toggle('active', (i===0&&tab==='ai')||(i===1&&tab==='database'));
+  });
+  document.getElementById('aiTabContent').style.display = tab==='ai' ? 'flex' : 'none';
+  document.getElementById('dbTabContent').style.display = tab==='database' ? 'block' : 'none';
+  document.getElementById('lenderDetailPanel').style.display = 'none';
+  document.getElementById('leftPanel').style.display = tab==='ai' ? 'flex' : 'none';
+  if (tab==='database') renderLendersTable(filteredLenders);
+}
+
+// ── SCOPE CHIPS ──────────────────────────────────
+function toggleScope(scope, el) {
+  if (scope === 'all') {
+    selectedScopes = ['all'];
+    document.querySelectorAll('.scope-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    return;
+  }
+  const allChip = document.querySelector('.scope-chip[data-scope="all"]');
+  if (allChip) allChip.classList.remove('active');
+  selectedScopes = selectedScopes.filter(s => s !== 'all');
+
+  if (selectedScopes.includes(scope)) {
+    selectedScopes = selectedScopes.filter(s => s !== scope);
+    el.classList.remove('active');
+  } else {
+    selectedScopes.push(scope);
+    el.classList.add('active');
+  }
+  if (selectedScopes.length === 0) {
+    selectedScopes = ['all'];
+    if (allChip) allChip.classList.add('active');
+  }
+}
+
+// ── GUIDELINE AI CHAT ────────────────────────────
+function askQuestion(q) {
+  document.getElementById('aiInput').value = q;
+  sendGuidelineQuestion();
+}
+
+function appendMsg(text, isUser) {
+  const empty = document.getElementById('emptyChatState');
+  if (empty) empty.remove();
+
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + (isUser ? 'user' : 'ai');
+
+  const av = document.createElement('div');
+  av.className = 'msg-av';
+  av.textContent = isUser ? 'R' : '📋';
+
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.+)$/gm, '<li style="list-style:none;padding-left:14px;position:relative;"><span style="position:absolute;left:0;color:var(--gold);">•</span>$1</li>')
+    .replace(/\n/g, '<br>');
+
+  body.appendChild(bubble);
+  div.appendChild(av);
+  div.appendChild(body);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return body;
+}
+
+function showSources(body, sources) {
+  if (!sources || sources.length === 0) return;
+  const srcDiv = document.createElement('div');
+  srcDiv.className = 'msg-sources';
+  srcDiv.innerHTML = sources.map(s => `<span class="src-badge">${s}</span>`).join('');
+  body.appendChild(srcDiv);
+}
+
+async function sendGuidelineQuestion() {
+  const input = document.getElementById('aiInput');
+  const btn = document.getElementById('aiSendBtn');
+  const q = input.value.trim();
+  if (!q) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  appendMsg(q, true);
+  chatHistory.push({ role: 'user', content: q });
+
+  btn.disabled = true;
+
+  const container = document.getElementById('chatMessages');
+  const thinkDiv = document.createElement('div');
+  thinkDiv.id = 'thinking';
+  thinkDiv.className = 'msg ai';
+  thinkDiv.innerHTML = `<div class="msg-av">📋</div>
+    <div class="thinking-bubble">
+      <div class="dots"><span></span><span></span><span></span></div>
+      Searching guidelines...
+    </div>`;
+  container.appendChild(thinkDiv);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    const lenders = selectedScopes.includes('all') ? [] : selectedScopes;
+    const res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/guideline-ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, lenders, history: chatHistory.slice(-8) })
+    });
+    const data = await res.json();
+    document.getElementById('thinking')?.remove();
+    const body = appendMsg(data.reply || 'No response', false);
+    showSources(body, data.sources);
+    chatHistory.push({ role: 'assistant', content: data.reply });
+  } catch(e) {
+    document.getElementById('thinking')?.remove();
+    appendMsg('Connection error. Please try again.', false);
+  }
+  btn.disabled = false;
+}
+
+// ── SYNC FROM CLICKUP ────────────────────────────
+async function syncFromClickUp() {
+  showToast('Syncing from ClickUp...');
+  try {
+    const res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/clickup-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'sync_lenders' })
+    });
+    const data = await res.json();
+    if (data.success) {
+      await loadLenders();
+      showToast('Synced ' + data.count + ' lenders from ClickUp');
+    }
+  } catch(e) {
+    alert('Sync error: ' + e.message);
+  }
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:9999;background:#c9a84c;
+    color:#1a1a1a;padding:12px 20px;border-radius:10px;font-weight:700;font-size:13px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.4);`;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// ── INIT ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', loadLenders);
+document.getElementById('leftPanel').style.display = 'flex';
+</script>
+</body>
+</html>
