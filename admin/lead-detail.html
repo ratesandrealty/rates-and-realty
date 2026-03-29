@@ -969,45 +969,153 @@
     <div class="ld-sidebar-name" id="sidebar-name">Loading…</div>
     <div class="ld-sidebar-email" id="sidebar-email">—</div>
 
-    <div class="ld-action-row">
-      <button class="ld-action-btn" id="btn-call" onclick="callContact()">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-          <path d="M6.5 3.5C6.5 3.5 5 5 5 7.5c0 4.5 7 10.5 10.5 10.5 1.5 0 3-1.5 3-1.5l-3-3-1.5 1.5S12 13 10 11S7 7.5 7 7.5L8.5 6l-2-2.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-        </svg>
-        Call
-      </button>
-      <button class="ld-action-btn" id="btn-email" onclick="emailContact()">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-          <rect x="2" y="5" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
-          <path d="M2 7l8 5 8-5" stroke="currentColor" stroke-width="1.4"/>
-        </svg>
-        Email
-      </button>
-      <button class="ld-action-btn" onclick="toast('SMS integration coming soon')">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-          <path d="M18 3H2a1 1 0 00-1 1v9a1 1 0 001 1h3v3l4-3h9a1 1 0 001-1V4a1 1 0 00-1-1z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-        </svg>
-        Text
-      </button>
-      <button class="ld-action-btn" onclick="openTaskForm()">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-          <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.4"/>
-          <path d="M7 10h6M10 7v6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-        </svg>
-        Task
+    <div id="contactTagsHeader" style="
+      padding: 12px 20px 4px;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    ">
+      <span style="font-size:10px; text-transform:uppercase; letter-spacing:0.5px;
+                   color:rgba(255,255,255,0.25); font-weight:600; flex-shrink:0;">
+        Tags
+      </span>
+      <div id="contactTagsContainer" style="
+        display:flex; flex-wrap:wrap; gap:6px; align-items:center;
+      "></div>
+      <div class="tag-input-container" id="tagInputContainer">
+        <button onclick="toggleTagDropdown()" style="
+          padding: 3px 10px; border-radius: 20px;
+          background: rgba(255,255,255,0.04);
+          border: 1px dashed rgba(255,255,255,0.15);
+          color: rgba(255,255,255,0.35); font-size: 11px;
+          cursor: pointer; transition: all 0.2s; white-space:nowrap;
+        "
+        onmouseover="this.style.borderColor='rgba(201,168,76,0.4)';this.style.color='#c9a84c'"
+        onmouseout="this.style.borderColor='rgba(255,255,255,0.15)';this.style.color='rgba(255,255,255,0.35)'">
+          + Tag
+        </button>
+        <div class="tag-dropdown" id="tagDropdown">
+          <div style="padding:8px 12px; border-bottom:1px solid rgba(255,255,255,0.08);
+                      position:sticky; top:0; background:#1e1e1e;">
+            <input type="text" id="tagSearch" placeholder="Search or create..."
+              oninput="filterTags(this.value)"
+              style="width:100%; padding:6px 10px; background:rgba(255,255,255,0.06);
+                     border:1px solid rgba(255,255,255,0.1); border-radius:6px;
+                     color:#fff; font-size:12px; outline:none; box-sizing:border-box;">
+          </div>
+          <div id="tagDropdownList"></div>
+          <div class="tag-create-row" id="tagCreateRow"
+               onclick="showCreateTagModal()" style="display:none;">
+            <span>✨</span>
+            <span id="tagCreateLabel">Create new tag</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    ">
+      <a id="callBtn" href="tel:" style="
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 6px; padding: 14px 8px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 12px; text-decoration: none;
+        cursor: pointer; transition: all 0.2s;
+        color: rgba(255,255,255,0.7);
+      "
+      onmouseover="this.style.borderColor='rgba(201,168,76,0.4)';this.style.color='#c9a84c'"
+      onmouseout="this.style.borderColor='rgba(255,255,255,0.1)';this.style.color='rgba(255,255,255,0.7)'">
+        <span style="font-size:20px;">📞</span>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Call</span>
+      </a>
+
+      <a id="emailBtn" href="mailto:" style="
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 6px; padding: 14px 8px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 12px; text-decoration: none;
+        cursor: pointer; transition: all 0.2s;
+        color: rgba(255,255,255,0.7);
+      "
+      onmouseover="this.style.borderColor='rgba(201,168,76,0.4)';this.style.color='#c9a84c'"
+      onmouseout="this.style.borderColor='rgba(255,255,255,0.1)';this.style.color='rgba(255,255,255,0.7)'">
+        <span style="font-size:20px;">✉️</span>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Email</span>
+      </a>
+
+      <a id="smsBtn" href="sms:" style="
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 6px; padding: 14px 8px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 12px; text-decoration: none;
+        cursor: pointer; transition: all 0.2s;
+        color: rgba(255,255,255,0.7);
+      "
+      onmouseover="this.style.borderColor='rgba(201,168,76,0.4)';this.style.color='#c9a84c'"
+      onmouseout="this.style.borderColor='rgba(255,255,255,0.1)';this.style.color='rgba(255,255,255,0.7)'">
+        <span style="font-size:20px;">💬</span>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Text</span>
+      </a>
+
+      <button onclick="openNewTaskModal ? openNewTaskModal() : document.getElementById('taskModal') && (document.getElementById('taskModal').style.display='flex')"
+        style="
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 6px; padding: 14px 8px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 12px; cursor: pointer; transition: all 0.2s;
+        color: rgba(255,255,255,0.7); width: 100%;
+      "
+      onmouseover="this.style.borderColor='rgba(201,168,76,0.4)';this.style.color='#c9a84c'"
+      onmouseout="this.style.borderColor='rgba(255,255,255,0.1)';this.style.color='rgba(255,255,255,0.7)'">
+        <span style="font-size:20px;">✅</span>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Task</span>
       </button>
     </div>
 
     <!-- Sidebar tabs -->
-    <div class="ld-sidebar-tabs">
-      <button class="ld-sidebar-tab active" onclick="setSidebarTab('notes', this)">Notes</button>
-      <button class="ld-sidebar-tab" onclick="setSidebarTab('texts', this)">Texts</button>
-      <button class="ld-sidebar-tab" onclick="setSidebarTab('checklist', this)">Checks</button>
+    <div style="
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    ">
+      <div style="display:flex; gap:8px;">
+        <button id="tabNotes" onclick="setSidebarTab('notes', this)" style="
+          padding:7px 16px; border-radius:8px; font-size:13px; font-weight:700;
+          border:none; cursor:pointer; transition:all 0.2s;
+          background:rgba(201,168,76,0.15); color:#c9a84c;">
+          Notes
+        </button>
+        <button id="tabTexts" onclick="setSidebarTab('texts', this)" style="
+          padding:7px 16px; border-radius:8px; font-size:13px; font-weight:600;
+          border:none; cursor:pointer; transition:all 0.2s;
+          background:transparent; color:rgba(255,255,255,0.4);">
+          Texts
+        </button>
+        <button id="tabChecks" onclick="setSidebarTab('checklist', this)" style="
+          padding:7px 16px; border-radius:8px; font-size:13px; font-weight:600;
+          border:none; cursor:pointer; transition:all 0.2s;
+          background:transparent; color:rgba(255,255,255,0.4);">
+          Checks
+        </button>
+      </div>
+      <button onclick="toggleNoteForm()" style="
+        padding:8px 16px; background:#c9a84c; border:none;
+        border-radius:8px; color:#1a1a1a; font-size:13px;
+        font-weight:700; cursor:pointer; white-space:nowrap;">
+        + Add Note
+      </button>
     </div>
 
     <!-- Notes panel -->
     <div class="ld-notes-panel" id="sidebar-notes-panel">
-      <button class="ld-add-note-btn" onclick="toggleNoteForm()">+ Add Note</button>
       <div class="ld-note-form" id="note-form">
         <div style="position: relative;">
           <textarea id="note-textarea" placeholder="Write a note…" style="padding-right: 48px;"></textarea>
@@ -1247,24 +1355,6 @@
               <option value="afternoon">Afternoon</option>
               <option value="evening">Evening</option>
             </select>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAG PANEL -->
-      <div class="tag-panel" style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
-        <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.35);font-weight:600;flex-shrink:0;">Tags</span>
-        <div id="contactTagsContainer" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;"></div>
-        <div class="tag-input-container" id="tagInputContainer">
-          <button onclick="toggleTagDropdown()" style="padding:4px 12px;border-radius:20px;background:rgba(255,255,255,0.05);border:1px dashed rgba(255,255,255,0.2);color:rgba(255,255,255,0.4);font-size:12px;cursor:pointer;" onmouseover="this.style.borderColor='rgba(201,168,76,0.5)';this.style.color='#c9a84c'" onmouseout="this.style.borderColor='rgba(255,255,255,0.2)';this.style.color='rgba(255,255,255,0.4)'">+ Add Tag</button>
-          <div class="tag-dropdown" id="tagDropdown">
-            <div style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);position:sticky;top:0;background:#1e1e1e;">
-              <input type="text" id="tagSearch" placeholder="Search or create tag..." oninput="filterTags(this.value)" style="width:100%;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:12px;outline:none;box-sizing:border-box;">
-            </div>
-            <div id="tagDropdownList"></div>
-            <div class="tag-create-row" id="tagCreateRow" onclick="showCreateTagModal()" style="display:none;">
-              <span>✨</span> <span id="tagCreateLabel">Create new tag</span>
-            </div>
           </div>
         </div>
       </div>
@@ -2510,8 +2600,12 @@ function populateUI() {
   document.getElementById('sidebar-avatar').textContent = initials;
   document.getElementById('sidebar-name').textContent = name;
   document.getElementById('sidebar-email').textContent = contactData.email || '—';
-  document.getElementById('btn-call').onclick = callContact;
-  document.getElementById('btn-email').onclick = emailContact;
+  const callBtn = document.getElementById('callBtn');
+  const emailBtn = document.getElementById('emailBtn');
+  const smsBtn = document.getElementById('smsBtn');
+  if (callBtn && contactData.phone) callBtn.href = 'tel:' + contactData.phone.replace(/\D/g,'');
+  if (emailBtn && contactData.email) emailBtn.href = 'mailto:' + contactData.email;
+  if (smsBtn && contactData.phone) smsBtn.href = 'sms:' + contactData.phone.replace(/\D/g,'');
 
   // Lead Details tab
   setVal('f-source', leadData.source || contactData.source);
