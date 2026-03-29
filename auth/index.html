@@ -386,6 +386,18 @@
       30% { transform: translateY(-6px); }
     }
 
+    /* ── SUPPRESS AUTOFILL ── */
+    input::-webkit-contacts-auto-fill-button,
+    input::-webkit-credentials-auto-fill-button {
+      visibility: hidden !important;
+      display: none !important;
+      pointer-events: none !important;
+    }
+    input[data-lpignore="true"] + div[data-lastpass-icon-root],
+    input[data-lpignore="true"] ~ [data-lastpass-icon-root] {
+      display: none !important;
+    }
+
     /* ── SELECT DARK THEME ── */
     select {
       background-color: rgba(255,255,255,0.06) !important;
@@ -1562,6 +1574,41 @@ async function saveMyApplication() {
 
 document.getElementById('applicationModal')?.addEventListener('click', function(e) { if (e.target === this) closeApplicationModal(); });
 
+// Suppress autofill on all application modal inputs
+(function() {
+  var observer = new MutationObserver(function() {
+    var modal = document.getElementById('applicationModal');
+    if (!modal) return;
+    modal.querySelectorAll('input, select').forEach(function(el) {
+      if (!el.getAttribute('data-lpignore')) {
+        el.setAttribute('data-lpignore', 'true');
+        el.setAttribute('data-form-type', 'other');
+        el.setAttribute('autocorrect', 'off');
+        el.setAttribute('autocapitalize', 'off');
+        el.setAttribute('spellcheck', 'false');
+        if (!el.getAttribute('autocomplete') || el.getAttribute('autocomplete') === 'on') {
+          el.setAttribute('autocomplete', 'off');
+        }
+      }
+    });
+  });
+  var modal = document.getElementById('applicationModal');
+  if (modal) {
+    observer.observe(modal, { childList: true, subtree: true });
+    // Also run once immediately
+    modal.querySelectorAll('input, select').forEach(function(el) {
+      el.setAttribute('data-lpignore', 'true');
+      el.setAttribute('data-form-type', 'other');
+      el.setAttribute('autocorrect', 'off');
+      el.setAttribute('autocapitalize', 'off');
+      el.setAttribute('spellcheck', 'false');
+      if (!el.getAttribute('autocomplete') || el.getAttribute('autocomplete') === 'on') {
+        el.setAttribute('autocomplete', 'off');
+      }
+    });
+  }
+})();
+
 // ── DYNAMIC EMPLOYMENT BLOCKS ───────────────────
 var _empBlocks = [];
 var _addrBlocks = [];
@@ -1658,7 +1705,7 @@ function renderPreviousAddresses() {
     return '<div id="' + block.id + '" style="background:rgba(100,181,246,0.04);border:1px solid rgba(100,181,246,0.15);border-radius:12px;padding:18px;margin-bottom:14px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;"><span style="font-size:12px;font-weight:700;color:rgba(100,181,246,0.8);text-transform:uppercase;letter-spacing:0.5px;">📍 Previous Address ' + (index + 1) + '</span><button type="button" onclick="removePreviousAddress(\'' + block.id + '\')" style="padding:3px 10px;background:rgba(255,80,80,0.1);border:1px solid rgba(255,80,80,0.3);border-radius:6px;color:#ff9999;font-size:11px;cursor:pointer;">Remove</button></div>' +
       '<div style="display:grid;grid-template-columns:3fr 1fr;gap:12px;margin-bottom:12px;">' +
-        '<div><label style="' + lStyle + '">Street Address</label><input type="text" id="' + block.id + '_street" placeholder="123 Former St" style="' + iStyle + '"></div>' +
+        '<div><label style="' + lStyle + '">Street Address</label><input type="text" id="' + block.id + '_street" placeholder="123 Former St" autocomplete="new-password" data-lpignore="true" data-form-type="other" style="' + iStyle + '"></div>' +
         '<div><label style="' + lStyle + '">Unit #</label><input type="text" id="' + block.id + '_unit" placeholder="Apt" style="' + iStyle + '"></div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:2fr 0.8fr 1fr 0.8fr;gap:12px;margin-bottom:12px;">' +
@@ -1754,7 +1801,7 @@ function collectAddressHistory() {
         <div><strong style="color:#64b5f6;">2-Year Address History Required</strong><br>If you have lived at your current address for less than 2 years, add your previous address(es) below until you have covered 2 full years.</div>
       </div>
       <div style="display:grid;grid-template-columns:3fr 1fr;gap:12px;margin-bottom:12px;">
-        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Street Address</label><input id="app_street" type="text" placeholder="123 Main St" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Street Address</label><input id="app_street" type="text" placeholder="123 Main St" autocomplete="new-password" data-lpignore="true" data-form-type="other" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
         <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Unit #</label><input id="app_unit" type="text" placeholder="Apt 2B" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
       </div>
       <div style="display:grid;grid-template-columns:2fr 0.8fr 1fr 0.8fr;gap:12px;margin-bottom:16px;">
@@ -1784,7 +1831,7 @@ function collectAddressHistory() {
         <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Loan Type</label><select id="app_loan_type" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"><option value="conventional">Conventional</option><option value="fha">FHA</option><option value="va">VA</option><option value="dscr">DSCR</option><option value="jumbo">Jumbo</option><option value="bank_statement">Bank Statement</option></select></div>
       </div>
       <div style="display:grid;grid-template-columns:3fr 1fr;gap:12px;margin-bottom:12px;">
-        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Property Address</label><input id="app_prop_street" type="text" placeholder="123 Main St, City, CA 92648" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Property Address</label><input id="app_prop_street" type="text" placeholder="123 Main St, City, CA 92648" autocomplete="new-password" data-lpignore="true" data-form-type="other" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
         <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Property Value</label><input id="app_prop_value" type="number" placeholder="$0" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
       </div>
       <div id="appSaveStatus" style="display:none;margin-top:16px;padding:10px 14px;border-radius:8px;font-size:13px;font-family:sans-serif;"></div>
