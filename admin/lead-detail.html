@@ -827,6 +827,18 @@
       background: rgba(255,100,100,0.15); border: none; border-radius: 6px;
       color: #ff9999; padding: 4px 10px; font-size: 12px; cursor: pointer;
     }
+    .tag-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; border:1px solid rgba(255,255,255,0.15); cursor:pointer; transition:all 0.2s; white-space:nowrap; }
+    .tag-badge:hover { opacity:0.8; }
+    .tag-badge .tag-remove { font-size:13px; line-height:1; opacity:0.6; margin-left:2px; cursor:pointer; }
+    .tag-badge .tag-remove:hover { opacity:1; }
+    .tag-input-container { position:relative; display:inline-block; }
+    .tag-dropdown { position:absolute; top:100%; left:0; background:#1e1e1e; border:1px solid rgba(201,168,76,0.4); border-radius:10px; z-index:9999; min-width:220px; max-height:260px; overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.5); display:none; }
+    .tag-dropdown-item { padding:9px 14px; cursor:pointer; display:flex; align-items:center; gap:10px; font-size:13px; color:rgba(255,255,255,0.8); transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .tag-dropdown-item:last-child { border-bottom:none; }
+    .tag-dropdown-item:hover { background:rgba(201,168,76,0.1); }
+    .tag-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .tag-create-row { padding:10px 14px; cursor:pointer; display:flex; align-items:center; gap:8px; font-size:12px; color:#c9a84c; font-weight:600; border-top:1px solid rgba(201,168,76,0.2); position:sticky; bottom:0; background:#1e1e1e; }
+    .tag-create-row:hover { background:rgba(201,168,76,0.08); }
     @media (max-width: 900px) {
       .ld-form-grid.cols-4, .form-grid-4, .form-grid-3 { grid-template-columns: repeat(2, 1fr); }
       .form-grid-2, .form-grid-5050, .form-grid-7030, .form-grid-address { grid-template-columns: 1fr; }
@@ -1235,6 +1247,24 @@
               <option value="afternoon">Afternoon</option>
               <option value="evening">Evening</option>
             </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAG PANEL -->
+      <div class="tag-panel" style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+        <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.35);font-weight:600;flex-shrink:0;">Tags</span>
+        <div id="contactTagsContainer" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;"></div>
+        <div class="tag-input-container" id="tagInputContainer">
+          <button onclick="toggleTagDropdown()" style="padding:4px 12px;border-radius:20px;background:rgba(255,255,255,0.05);border:1px dashed rgba(255,255,255,0.2);color:rgba(255,255,255,0.4);font-size:12px;cursor:pointer;" onmouseover="this.style.borderColor='rgba(201,168,76,0.5)';this.style.color='#c9a84c'" onmouseout="this.style.borderColor='rgba(255,255,255,0.2)';this.style.color='rgba(255,255,255,0.4)'">+ Add Tag</button>
+          <div class="tag-dropdown" id="tagDropdown">
+            <div style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);position:sticky;top:0;background:#1e1e1e;">
+              <input type="text" id="tagSearch" placeholder="Search or create tag..." oninput="filterTags(this.value)" style="width:100%;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:12px;outline:none;box-sizing:border-box;">
+            </div>
+            <div id="tagDropdownList"></div>
+            <div class="tag-create-row" id="tagCreateRow" onclick="showCreateTagModal()" style="display:none;">
+              <span>✨</span> <span id="tagCreateLabel">Create new tag</span>
+            </div>
           </div>
         </div>
       </div>
@@ -2349,6 +2379,25 @@
 <!-- Toast -->
 <div class="ld-toast" id="ld-toast"></div>
 
+<!-- TAG COLOR PICKER MODAL -->
+<div id="createTagModal" style="display:none;position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:16px;padding:28px;width:320px;box-shadow:0 24px 60px rgba(0,0,0,0.6);">
+    <h3 style="color:#c9a84c;margin:0 0 20px;font-size:16px;">✨ Create New Tag</h3>
+    <div style="margin-bottom:14px;">
+      <label style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:6px;">Tag Name</label>
+      <input type="text" id="newTagName" placeholder="e.g. Hot Lead, VIP, Follow Up" style="width:100%;padding:10px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;">
+    </div>
+    <div style="margin-bottom:20px;">
+      <label style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:8px;">Tag Color</label>
+      <div id="colorPicker" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button onclick="closeCreateTagModal()" style="flex:1;padding:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:rgba(255,255,255,0.6);cursor:pointer;font-size:14px;">Cancel</button>
+      <button onclick="createAndApplyTag()" style="flex:1;padding:10px;background:#c9a84c;border:none;border-radius:8px;color:#1a1a1a;font-weight:700;cursor:pointer;font-size:14px;">Create Tag</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="/api/env.js"></script>
 <script>
@@ -2435,7 +2484,7 @@ async function loadData() {
     liabilitiesData = Array.isArray(contactData.liabilities) ? [...contactData.liabilities] : [];
     populateUI();
     renderLiabilities();
-    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocuments(), loadCreditApps()]);
+    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocuments(), loadCreditApps(), loadAllTags().then(function() { return loadContactTags(contactId); })]);
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
@@ -4988,6 +5037,139 @@ if (localStorage.getItem('rr-theme') === 'light') {
   document.body.classList.add('light');
   document.getElementById('theme-toggle').textContent = '🌙';
 }
+
+/* ── TAG SYSTEM ── */
+var TAG_COLORS = ['#c9a84c','#FFD700','#EF5350','#64B5F6','#81C784','#CE93D8','#FFA726','#26C6DA','#FF8A65','#888888','#4CAF50','#E91E63','#2196F3','#9C27B0','#FF5722'];
+var _allTags = [];
+var _contactTags = [];
+var _selectedTagColor = '#c9a84c';
+var _tagDropdownOpen = false;
+
+async function loadAllTags() {
+  var res = await sb.from('tags').select('*').order('name');
+  _allTags = res.data || [];
+}
+
+async function loadContactTags(cid) {
+  if (!cid) return;
+  var res = await sb.from('contact_tags').select('tag_id, tags(id, name, color)').eq('contact_id', cid);
+  _contactTags = (res.data || []).map(function(ct) { return ct.tags; }).filter(Boolean);
+  renderContactTags();
+}
+
+function renderContactTags() {
+  var container = document.getElementById('contactTagsContainer');
+  if (!container) return;
+  container.innerHTML = _contactTags.map(function(tag) {
+    return '<span class="tag-badge" style="background:' + tag.color + '22;border-color:' + tag.color + '66;color:' + tag.color + ';"><span class="tag-dot" style="background:' + tag.color + ';"></span>' + tag.name + '<span class="tag-remove" onclick="removeTag(\'' + tag.id + '\')">×</span></span>';
+  }).join('');
+}
+
+async function toggleTagDropdown() {
+  var dropdown = document.getElementById('tagDropdown');
+  if (!dropdown) return;
+  _tagDropdownOpen = !_tagDropdownOpen;
+  dropdown.style.display = _tagDropdownOpen ? 'block' : 'none';
+  if (_tagDropdownOpen) {
+    await loadAllTags();
+    renderTagDropdown(_allTags);
+    var s = document.getElementById('tagSearch'); if (s) s.focus();
+  }
+}
+
+function renderTagDropdown(tags) {
+  var list = document.getElementById('tagDropdownList');
+  if (!list) return;
+  var appliedIds = _contactTags.map(function(t) { return t.id; });
+  list.innerHTML = tags.map(function(tag) {
+    var applied = appliedIds.indexOf(tag.id) >= 0;
+    return '<div class="tag-dropdown-item" onclick="applyTag(\'' + tag.id + '\')" style="' + (applied ? 'opacity:0.4;' : '') + '"><span class="tag-dot" style="background:' + tag.color + ';"></span><span style="flex:1;">' + tag.name + '</span>' + (applied ? '<span style="font-size:11px;color:#c9a84c;">✓</span>' : '') + '</div>';
+  }).join('');
+}
+
+function filterTags(query) {
+  var filtered = _allTags.filter(function(t) { return t.name.toLowerCase().indexOf(query.toLowerCase()) >= 0; });
+  renderTagDropdown(filtered);
+  var createRow = document.getElementById('tagCreateRow');
+  var createLabel = document.getElementById('tagCreateLabel');
+  if (createRow && createLabel) {
+    if (query.trim()) { createLabel.textContent = 'Create "' + query.trim() + '"'; createRow.style.display = 'flex'; createRow.dataset.newTagName = query.trim(); }
+    else { createRow.style.display = 'none'; }
+  }
+}
+
+async function applyTag(tagId) {
+  var cid = getContactId();
+  if (!cid) return;
+  if (_contactTags.find(function(t) { return t.id === tagId; })) return;
+  await sb.from('contact_tags').insert([{ contact_id: cid, tag_id: tagId, created_at: new Date().toISOString() }]);
+  await loadContactTags(cid);
+  renderTagDropdown(_allTags);
+  showToast('Tag added ✓');
+}
+
+async function removeTag(tagId) {
+  var cid = getContactId();
+  if (!cid) return;
+  await sb.from('contact_tags').delete().eq('contact_id', cid).eq('tag_id', tagId);
+  await loadContactTags(cid);
+  showToast('Tag removed');
+}
+
+function showCreateTagModal() {
+  var createRow = document.getElementById('tagCreateRow');
+  var modal = document.getElementById('createTagModal');
+  var nameInput = document.getElementById('newTagName');
+  if (createRow && createRow.dataset.newTagName) nameInput.value = createRow.dataset.newTagName;
+  var picker = document.getElementById('colorPicker');
+  if (picker) {
+    _selectedTagColor = '#c9a84c';
+    picker.innerHTML = TAG_COLORS.map(function(color) {
+      return '<div onclick="selectTagColor(\'' + color + '\',this)" style="width:28px;height:28px;border-radius:50%;background:' + color + ';cursor:pointer;border:3px solid ' + (color === _selectedTagColor ? '#fff' : 'transparent') + ';" onmouseover="this.style.transform=\'scale(1.2)\'" onmouseout="this.style.transform=\'scale(1)\'"></div>';
+    }).join('');
+  }
+  if (modal) modal.style.display = 'flex';
+  document.getElementById('tagDropdown').style.display = 'none';
+  _tagDropdownOpen = false;
+  setTimeout(function() { if (nameInput) nameInput.focus(); }, 100);
+}
+
+function selectTagColor(color, el) {
+  _selectedTagColor = color;
+  document.querySelectorAll('#colorPicker div').forEach(function(d) { d.style.border = '3px solid transparent'; });
+  el.style.border = '3px solid #fff';
+}
+
+function closeCreateTagModal() {
+  var modal = document.getElementById('createTagModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function createAndApplyTag() {
+  var name = (document.getElementById('newTagName') || {}).value;
+  if (!name || !name.trim()) { alert('Please enter a tag name.'); return; }
+  name = name.trim();
+  var res = await sb.from('tags').insert([{ name: name, color: _selectedTagColor }]).select().single();
+  if (res.error) {
+    var existing = await sb.from('tags').select('*').eq('name', name).single();
+    if (existing.data) { closeCreateTagModal(); await applyTag(existing.data.id); return; }
+    alert('Error creating tag: ' + res.error.message); return;
+  }
+  _allTags.push(res.data);
+  closeCreateTagModal();
+  await applyTag(res.data.id);
+  showToast('Tag created ✓');
+}
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#tagInputContainer') && !e.target.closest('#createTagModal')) {
+    var dropdown = document.getElementById('tagDropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    _tagDropdownOpen = false;
+  }
+});
+
+document.getElementById('createTagModal')?.addEventListener('click', function(e) { if (e.target === this) closeCreateTagModal(); });
 
 loadData().then(() => loadContactMeta());
 </script>

@@ -342,6 +342,7 @@
       cursor: pointer; transition: all .15s;
     }
     .ct-view-btn:hover { background: var(--gold-bdr); color: #111; }
+    .tag-badge-sm { display:inline-block; padding:2px 8px; border-radius:12px; font-size:10px; font-weight:700; white-space:nowrap; }
 
     /* ── EMPTY / LOADING ── */
     .ct-empty {
@@ -634,6 +635,7 @@
             <th onclick="sortBy('source')">Source</th>
             <th onclick="sortBy('lead_score')">Lead Score</th>
             <th onclick="sortBy('credit_score')">Credit Score</th>
+            <th>Tags</th>
             <th onclick="sortBy('monthly_income')">Mo. Income</th>
             <th onclick="sortBy('status')">Status</th>
             <th onclick="sortBy('created_at')">Created</th>
@@ -936,7 +938,7 @@ function renderTable() {
   document.getElementById('ct-count').textContent = filtered.length.toLocaleString();
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="10">
+    tbody.innerHTML = `<tr><td colspan="11">
       <div class="ct-empty">
         <div class="ct-empty-icon">👥</div>
         <h4>No contacts found</h4>
@@ -980,6 +982,7 @@ function renderTable() {
       <td style="text-transform:capitalize;">${esc(c.source || '—')}</td>
       <td><span class="score-tier-badge-sm ${tierClass}" title="${lt.toUpperCase()}">${tierEmoji} ${ls}</span></td>
       <td><span class="ct-score-badge ${scoreClass}">${scoreLabel}</span></td>
+      <td><div id="tags_${c.id}" style="display:flex;flex-wrap:wrap;gap:3px;"></div></td>
       <td>${c.monthly_income ? fmt$(c.monthly_income) : '—'}</td>
       <td>${c.status ? `<span class="ct-status-pill ${statusClass}">${statusLabel}</span>` : '<span class="sp-none">—</span>'}</td>
       <td style="white-space:nowrap;">${fmtDate(c.created_at)}</td>
@@ -988,6 +991,27 @@ function renderTable() {
   }).join('');
 
   renderPagination();
+  loadTagsForContacts(page);
+}
+
+async function loadTagsForContacts(contacts) {
+  if (!contacts || contacts.length === 0) return;
+  var ids = contacts.map(function(c) { return c.id; });
+  var res = await sb.from('contact_tags').select('contact_id, tags(id, name, color)').in('contact_id', ids);
+  if (!res.data) return;
+  var tagMap = {};
+  res.data.forEach(function(ct) {
+    if (!tagMap[ct.contact_id]) tagMap[ct.contact_id] = [];
+    if (ct.tags) tagMap[ct.contact_id].push(ct.tags);
+  });
+  Object.keys(tagMap).forEach(function(cid) {
+    var container = document.getElementById('tags_' + cid);
+    if (!container) return;
+    var tags = tagMap[cid];
+    container.innerHTML = tags.slice(0,3).map(function(tag) {
+      return '<span class="tag-badge-sm" style="background:' + tag.color + '22;border:1px solid ' + tag.color + '55;color:' + tag.color + ';">' + tag.name + '</span>';
+    }).join('') + (tags.length > 3 ? '<span style="font-size:10px;color:rgba(255,255,255,0.3);">+' + (tags.length - 3) + '</span>' : '');
+  });
 }
 
 function renderPagination() {
