@@ -1231,15 +1231,16 @@ function bindModals() {
     e.preventDefault();
     const msg = document.getElementById("task-modal-message");
     const title = e.target.title.value.trim();
-    const leadId = e.target.lead_id.value.trim();
+    const contactId = document.getElementById("taskContactId")?.value || null;
     const dueDate = e.target.due_date.value;
     const priority = e.target.priority.value;
     if (!title) return;
     setMessage(msg, "Creating...");
     try {
-      await createTask({ leadId: leadId || null, title, dueDate, priority });
+      await createTask({ leadId: null, contactId: contactId, title, dueDate, priority });
       setMessage(msg, "Task created!", "success");
       e.target.reset();
+      if (typeof clearTaskContact === "function") clearTaskContact();
       allTasks = await getAllTasks();
       if (activeTab === "tasks") renderAllTasksTable(allTasks);
       setTimeout(() => closeModal("task-modal"), 800);

@@ -619,7 +619,51 @@
       <form id="task-modal-form" class="stack-form" novalidate>
         <label class="field"><span>Task Title *</span><input name="title" type="text" required placeholder="Follow up call, send docs..."></label>
         <div class="input-row">
-          <label class="field"><span>Lead ID</span><input name="lead_id" type="text" placeholder="Link to a lead"></label>
+          <div style="position:relative;">
+            <label style="font-size:12px; color:rgba(255,255,255,0.5);
+                          text-transform:uppercase; letter-spacing:0.5px;
+                          display:block; margin-bottom:6px;">
+              Link to Contact
+            </label>
+            <input type="text" id="taskContactSearch"
+              placeholder="Type name, phone, or email..."
+              oninput="searchTaskContact(this.value)"
+              autocomplete="off"
+              style="width:100%; padding:12px 16px;
+                     background:rgba(255,255,255,0.06);
+                     border:1px solid rgba(255,255,255,0.12);
+                     border-radius:10px; color:#fff; font-size:14px;
+                     box-sizing:border-box; outline:none;
+                     transition:border 0.2s;">
+
+            <input type="hidden" id="taskContactId">
+
+            <div id="taskContactResults" style="
+              display:none; position:absolute; top:100%; left:0; right:0;
+              background:#1e1e1e; border:1px solid rgba(201,168,76,0.3);
+              border-top:none; border-radius:0 0 10px 10px;
+              z-index:9999; max-height:200px; overflow-y:auto;
+              box-shadow:0 8px 24px rgba(0,0,0,0.4);">
+            </div>
+
+            <div id="taskContactLinked" style="
+              display:none; margin-top:8px; padding:10px 14px;
+              background:rgba(76,175,80,0.1);
+              border:1px solid rgba(76,175,80,0.25);
+              border-radius:8px;
+              flex-direction:row; justify-content:space-between; align-items:center;">
+              <div>
+                <span id="taskContactName"
+                  style="color:#81c784; font-size:14px; font-weight:600;"></span>
+                <span id="taskContactPhone"
+                  style="color:rgba(255,255,255,0.4); font-size:12px; margin-left:8px;"></span>
+              </div>
+              <button onclick="clearTaskContact()" style="
+                padding:3px 10px; background:rgba(255,100,100,0.15);
+                border:1px solid rgba(255,100,100,0.3); border-radius:6px;
+                color:#ff9999; font-size:11px; cursor:pointer;">✕</button>
+            </div>
+          </div>
           <label class="field"><span>Due Date</span><input name="due_date" type="date"></label>
         </div>
         <label class="field"><span>Priority</span>
@@ -828,7 +872,76 @@
         const r = document.getElementById('appointmentContactResults');
         if (r) r.style.display = 'none';
       }
+      if (!e.target.closest('#taskContactSearch') &&
+          !e.target.closest('#taskContactResults')) {
+        const r = document.getElementById('taskContactResults');
+        if (r) r.style.display = 'none';
+      }
     });
+
+    let _taskContactTimer;
+
+    window.searchTaskContact = async function(query) {
+      const resultsDiv = document.getElementById('taskContactResults');
+      clearTimeout(_taskContactTimer);
+
+      if (!query || query.length < 2) {
+        resultsDiv.style.display = 'none';
+        return;
+      }
+
+      _taskContactTimer = setTimeout(async () => {
+        const { data } = await supabase
+          .from('contacts')
+          .select('id, first_name, last_name, phone, email')
+          .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%,email.ilike.%${query}%`)
+          .limit(8);
+
+        if (!data || data.length === 0) {
+          resultsDiv.innerHTML = `<div style="padding:14px 16px;
+            color:rgba(255,255,255,0.35); font-size:13px;">
+            No contacts found</div>`;
+          resultsDiv.style.display = 'block';
+          return;
+        }
+
+        resultsDiv.innerHTML = data.map(c => {
+          const name = `${c.first_name || ''} ${c.last_name || ''}`.trim();
+          const sub = [c.phone, c.email].filter(Boolean).join(' \u00b7 ');
+          return `<div
+            onclick="selectTaskContact('${c.id}','${name.replace(/'/g, "\\'")}','${(c.phone || '').replace(/'/g, "\\'")}')"
+            style="padding:12px 16px; cursor:pointer;
+                   border-bottom:1px solid rgba(255,255,255,0.05);
+                   transition:background 0.15s;"
+            onmouseover="this.style.background='rgba(201,168,76,0.1)'"
+            onmouseout="this.style.background='transparent'">
+            <div style="font-weight:600; color:#fff; font-size:14px;">${name}</div>
+            <div style="font-size:12px; color:rgba(255,255,255,0.4);
+                        margin-top:2px;">${sub}</div>
+          </div>`;
+        }).join('');
+
+        resultsDiv.style.display = 'block';
+      }, 280);
+    };
+
+    window.selectTaskContact = function(id, name, phone) {
+      document.getElementById('taskContactId').value = id;
+      document.getElementById('taskContactResults').style.display = 'none';
+      document.getElementById('taskContactSearch').value = '';
+      document.getElementById('taskContactSearch').style.display = 'none';
+      document.getElementById('taskContactName').textContent = '\u2713 ' + name;
+      document.getElementById('taskContactPhone').textContent = phone;
+      document.getElementById('taskContactLinked').style.display = 'flex';
+    };
+
+    window.clearTaskContact = function() {
+      document.getElementById('taskContactId').value = '';
+      document.getElementById('taskContactSearch').value = '';
+      document.getElementById('taskContactSearch').style.display = 'block';
+      document.getElementById('taskContactLinked').style.display = 'none';
+      document.getElementById('taskContactResults').style.display = 'none';
+    };
   </script>
   <script>
     document.addEventListener('DOMContentLoaded', function () {
