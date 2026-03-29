@@ -832,49 +832,77 @@
 
   // Check if already logged in
   async function checkSession() {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) showDashboard(session.user);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session && session.user) {
+        showDashboard(session.user);
+      }
+    } catch(e) {
+      console.warn('Session check failed:', e);
+    }
   }
   checkSession();
+  document.addEventListener('DOMContentLoaded', checkSession);
 
   function switchTab(tab) {
-    document.getElementById('loginTab').classList.toggle('active', tab === 'login');
-    document.getElementById('signupTab').classList.toggle('active', tab === 'signup');
-    document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
-    document.getElementById('signupForm').style.display = tab === 'signup' ? 'block' : 'none';
+    const loginTab = document.getElementById('loginTab');
+    const signupTab = document.getElementById('signupTab');
+    const loginForm = document.getElementById('loginForm');
+    const signupForm = document.getElementById('signupForm');
+
+    if (!loginTab || !signupTab || !loginForm || !signupForm) return;
+
+    if (tab === 'login') {
+      loginTab.classList.add('active');
+      signupTab.classList.remove('active');
+      loginForm.style.display = 'block';
+      signupForm.style.display = 'none';
+    } else {
+      loginTab.classList.remove('active');
+      signupTab.classList.add('active');
+      loginForm.style.display = 'none';
+      signupForm.style.display = 'block';
+    }
   }
 
   async function signIn() {
     const email = document.getElementById('loginEmail').value.trim();
     const password = document.getElementById('loginPassword').value;
     const btn = document.getElementById('signInBtn');
-    const err = document.getElementById('loginError');
-    const suc = document.getElementById('loginSuccess');
+    const errEl = document.getElementById('loginError');
+    const sucEl = document.getElementById('loginSuccess');
 
-    err.style.display = 'none';
-    suc.style.display = 'none';
+    if (errEl) errEl.style.display = 'none';
+    if (sucEl) sucEl.style.display = 'none';
 
     if (!email || !password) {
-      err.textContent = 'Please enter your email and password.';
-      err.style.display = 'block'; return;
-    }
-
-    btn.disabled = true; btn.textContent = 'Signing in...';
-
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      err.textContent = error.message === 'Invalid login credentials'
-        ? 'Incorrect email or password. Please try again.'
-        : error.message;
-      err.style.display = 'block';
-      btn.disabled = false; btn.textContent = 'Sign In to My Portal →';
+      if (errEl) { errEl.textContent = 'Please enter your email and password.'; errEl.style.display = 'block'; }
       return;
     }
 
-    suc.textContent = '✓ Signed in! Loading your portal...';
-    suc.style.display = 'block';
-    setTimeout(() => showDashboard(data.user), 800);
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+      if (error) {
+        const msg = error.message === 'Invalid login credentials'
+          ? 'Incorrect email or password. Please try again.'
+          : error.message;
+        if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Sign In to My Portal →'; }
+        document.getElementById('loginPassword').value = '';
+        return;
+      }
+
+      if (sucEl) { sucEl.textContent = '✓ Signed in! Loading your portal...'; sucEl.style.display = 'block'; }
+      if (btn) btn.textContent = '✓ Signed in!';
+      setTimeout(() => showDashboard(data.user), 800);
+
+    } catch(e) {
+      if (errEl) { errEl.textContent = 'Connection error. Please try again.'; errEl.style.display = 'block'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign In to My Portal →'; }
+    }
   }
 
   async function signUp() {
@@ -884,59 +912,78 @@
     const phone = document.getElementById('signupPhone').value.trim();
     const password = document.getElementById('signupPassword').value;
     const btn = document.getElementById('signUpBtn');
-    const err = document.getElementById('signupError');
-    const suc = document.getElementById('signupSuccess');
+    const errEl = document.getElementById('signupError');
+    const sucEl = document.getElementById('signupSuccess');
 
-    err.style.display = 'none'; suc.style.display = 'none';
+    if (errEl) errEl.style.display = 'none';
+    if (sucEl) sucEl.style.display = 'none';
 
     if (!first || !email || !password) {
-      err.textContent = 'Please fill in all required fields.';
-      err.style.display = 'block'; return;
+      if (errEl) { errEl.textContent = 'Please fill in name, email and password.'; errEl.style.display = 'block'; }
+      return;
     }
-    if (password.length < 8) {
-      err.textContent = 'Password must be at least 8 characters.';
-      err.style.display = 'block'; return;
-    }
-
-    btn.disabled = true; btn.textContent = 'Creating account...';
-
-    const { data, error } = await supabase.auth.signUp({
-      email, password,
-      options: { data: { first_name: first, last_name: last, phone } }
-    });
-
-    if (error) {
-      err.textContent = error.message;
-      err.style.display = 'block';
-      btn.disabled = false; btn.textContent = 'Create My Account →';
+    if (password.length < 6) {
+      if (errEl) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = 'block'; }
       return;
     }
 
-    // Also add to CRM contacts table
-    try {
-      await supabase.from('contacts').insert([{
-        first_name: first, last_name: last,
-        email, phone,
-        source: 'borrower_portal',
-        contact_type: 'lead',
-        created_at: new Date().toISOString()
-      }]);
-    } catch(e) { console.warn('CRM insert failed:', e); }
+    if (btn) { btn.disabled = true; btn.textContent = 'Creating account...'; }
 
-    suc.textContent = '✓ Account created! Check your email to verify, then sign in.';
-    suc.style.display = 'block';
-    btn.disabled = false; btn.textContent = 'Create My Account →';
-    setTimeout(() => switchTab('login'), 3000);
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { first_name: first, last_name: last, phone } }
+      });
+
+      if (error) {
+        if (errEl) { errEl.textContent = error.message; errEl.style.display = 'block'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
+        return;
+      }
+
+      // Add to CRM contacts
+      try {
+        await supabase.from('contacts').insert([{
+          first_name: first, last_name: last,
+          email, phone,
+          source: 'borrower_portal',
+          contact_type: 'lead',
+          created_at: new Date().toISOString()
+        }]);
+      } catch(e) { console.warn('CRM insert:', e); }
+
+      if (sucEl) {
+        sucEl.textContent = '✓ Account created! Check your email to verify, then sign in.';
+        sucEl.style.display = 'block';
+      }
+      if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
+      setTimeout(() => switchTab('login'), 3000);
+
+    } catch(e) {
+      if (errEl) { errEl.textContent = 'Connection error. Please try again.'; errEl.style.display = 'block'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Create My Account →'; }
+    }
   }
 
   function showDashboard(user) {
-    document.getElementById('mainView').style.display = 'none';
-    document.getElementById('dashboardView').style.display = 'block';
+    const mainView = document.getElementById('mainView');
+    const dashView = document.getElementById('dashboardView');
+    if (mainView) mainView.style.display = 'none';
+    if (dashView) dashView.style.display = 'block';
+
     const meta = user.user_metadata || {};
-    const name = [meta.first_name, meta.last_name].filter(Boolean).join(' ') || user.email;
-    document.getElementById('welcomeName').textContent = name;
-    document.getElementById('welcomeEmail').textContent = user.email;
-    setTimeout(loadUploadHistory, 500);
+    const name = [meta.first_name, meta.last_name].filter(Boolean).join(' ') ||
+                  user.email?.split('@')[0] || 'Welcome';
+
+    const nameEl = document.getElementById('welcomeName');
+    const emailEl = document.getElementById('welcomeEmail');
+    if (nameEl) nameEl.textContent = name;
+    if (emailEl) emailEl.textContent = user.email;
+
+    if (typeof loadUploadHistory === 'function') {
+      setTimeout(loadUploadHistory, 500);
+    }
   }
 
   async function signOut() {
