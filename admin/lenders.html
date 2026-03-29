@@ -1,3 +1,8 @@
+<!--
+  SETUP: Add CLICKUP_API_TOKEN to Supabase Edge Function secrets:
+  https://supabase.com/dashboard/project/ljywhvbmsibwnssxpesh/settings/functions
+  Get your token from: app.clickup.com/settings/apps (API token)
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -318,6 +323,13 @@
     <button class="nav-tab" onclick="switchMainTab('database')">Lender Database</button>
   </div>
   <div class="nav-right">
+    <label style="padding:7px 14px;background:rgba(100,181,246,0.1);
+      border:1px solid rgba(100,181,246,0.3);border-radius:8px;
+      color:#64b5f6;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">
+      Upload PDF Guidelines
+      <input type="file" accept=".pdf" multiple style="display:none"
+        onchange="uploadGuidelinePDFs(this.files)">
+    </label>
     <button class="btn-sync" onclick="syncFromClickUp()">Sync ClickUp</button>
     <a href="/admin/contacts.html" class="btn-back">CRM</a>
   </div>
@@ -875,6 +887,99 @@ async function syncFromClickUp() {
     }
   } catch(e) {
     alert('Sync error: ' + e.message);
+  }
+}
+
+async function uploadGuidelinePDFs(files) {
+  if (!files || files.length === 0) return;
+
+  for (const file of Array.from(files)) {
+    showToast('Uploading ' + file.name + '...');
+
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+
+    const name = file.name.toLowerCase();
+    let lenderName = 'Custom';
+    if (name.includes('fannie') || name.includes('fnma')) lenderName = 'Fannie Mae';
+    else if (name.includes('freddie') || name.includes('fhlmc')) lenderName = 'Freddie Mac';
+    else if (name.includes('fha') || name.includes('hud')) lenderName = 'FHA';
+    else if (name.includes('va ') || name.includes('_va_')) lenderName = 'VA';
+    else if (name.includes('usda')) lenderName = 'USDA';
+    else if (name.includes('dscr')) lenderName = 'DSCR Loans';
+    else if (name.includes('jumbo')) lenderName = 'Jumbo';
+    else if (name.includes('calhfa')) lenderName = 'CalHFA';
+
+    try {
+      const ocrRes = await fetch(
+        'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'start',
+            file_base64: base64,
+            file_name: file.name,
+            file_type: 'application/pdf'
+          })
+        }
+      );
+      const ocrData = await ocrRes.json();
+
+      if (ocrData.success) {
+        showToast(file.name + ' uploaded — OCR scanning...');
+
+        let polls = 0;
+        const pollInterval = setInterval(async () => {
+          polls++;
+          if (polls > 20) { clearInterval(pollInterval); return; }
+
+          const r = await fetch(
+            'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'result', job_id: ocrData.job_id })
+            }
+          );
+          const result = await r.json();
+
+          if (result.status === 'completed') {
+            clearInterval(pollInterval);
+            const rawText = result.fields?._raw_lines || 'Text extracted';
+            await fetch(`${SB_URL}/rest/v1/lender_guidelines`, {
+              method: 'POST',
+              headers: {
+                'apikey': SB_KEY,
+                'Authorization': `Bearer ${SB_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+              },
+              body: JSON.stringify({
+                lender_name: lenderName,
+                lender_type: 'custom',
+                category: 'general',
+                guideline_key: file.name.replace('.pdf',''),
+                guideline_text: rawText,
+                loan_programs: [lenderName],
+                tags: ['pdf-upload', lenderName.toLowerCase().replace(/\s+/g,'-')],
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+            });
+            showToast(lenderName + ' guidelines extracted and saved!');
+          }
+        }, 3000);
+      } else {
+        showToast('Upload failed: ' + (ocrData.error || 'Unknown error'));
+      }
+    } catch(e) {
+      showToast('Error: ' + e.message);
+    }
   }
 }
 
