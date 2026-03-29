@@ -1717,6 +1717,21 @@
             </select></div>
         </div>
 
+        <div class="ld-form-grid" style="grid-template-columns:repeat(3,1fr)!important;gap:10px 14px;margin-bottom:12px;">
+          <div class="ld-field">
+            <label class="ld-label">Driver License #</label>
+            <input class="ld-input" type="text" id="f_dl_number" placeholder="A1234567">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">DL State</label>
+            <input class="ld-input" type="text" id="f_dl_state" placeholder="CA" maxlength="2">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">DL Expiration Date</label>
+            <input class="ld-input" type="date" id="f_dl_expiry">
+          </div>
+        </div>
+
         <div class="f-row-4">
           <div><label class="flbl">Marital Status</label>
             <select id="f_marital_status" class="finp">
@@ -3504,14 +3519,16 @@ async function confirmDocUpload() {
   btn.disabled = true;
 
   for (const file of _pendingDocFiles) {
+    console.log('Uploading doc:', file.name, 'contactId:', contactId, 'leadId:', leadId, 'docType:', docType);
     try {
       const ts = Date.now();
       const path = `${contactId || leadId}/${docType}/${ts}_${file.name}`;
       const { error: uploadError } = await sb.storage.from('borrower-documents').upload(path, file, { upsert: true });
+      console.log('Storage upload result:', uploadError ? 'ERROR: '+uploadError.message : 'OK, path: '+path);
       if (uploadError) throw new Error('Storage upload failed: ' + uploadError.message);
       const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
       const fileUrl = urlData.publicUrl;
-      await sb.from('uploaded_documents').insert({
+      const { error: insertError } = await sb.from('uploaded_documents').insert({
         contact_id: contactId || null,
         lead_id: leadId || null,
         document_type: docType,
@@ -3523,6 +3540,7 @@ async function confirmDocUpload() {
         file_size: file.size,
         uploaded_at: new Date().toISOString()
       });
+      console.log('DB insert result:', insertError ? 'ERROR: '+insertError.message : 'OK');
     } catch(err) {
       console.error('Upload error:', err);
       toast('Upload failed: ' + file.name, true);
@@ -4875,6 +4893,9 @@ async function save1003() {
     cell_phone: gv('f_cell_phone'),
     work_phone: gv('f_work_phone'),
     email: gv('f_email'),
+    dl_number: gv('f_dl_number') || null,
+    dl_state: gv('f_dl_state') || null,
+    dl_expiry: gv('f_dl_expiry') || null,
     current_address_street: gv('f_current_street'),
     current_address_unit: gv('f_current_unit'),
     current_address_city: gv('f_current_city'),
@@ -6300,6 +6321,8 @@ const OCR_FIELD_MAP = {
   driver_license_number:    'f_dl_number',
   dl_number:                'f_dl_number',
   id_expiration_date:       'f_dl_expiry',
+  dl_state:                 'f_dl_state',
+  license_state:            'f_dl_state',
   phone:                    'f_cell_phone',
   email:                    'f_email',
   current_address_street:   'f_current_street',
