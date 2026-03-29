@@ -195,7 +195,7 @@ export async function addLeadNote({ leadId, body }) {
 export async function createTask({ leadId, contactId, title, dueDate, priority }) {
   const { data, error } = await supabase.from("tasks").insert({
     related_table: "leads",
-    related_id: leadId || null,
+    related_id: contactId || leadId || null,
     contact_id: contactId || null,
     title,
     due_date: dueDate || null,
