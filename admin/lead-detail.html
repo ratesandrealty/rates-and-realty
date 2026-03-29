@@ -2567,7 +2567,7 @@
         <!-- Header -->
         <div style="padding:22px 24px 16px; display:flex; justify-content:space-between; align-items:center;">
           <div class="ld-section-title" style="margin:0;border:none;padding:0;">Documents</div>
-          <button onclick="showDocUploadModal()" style="padding:9px 18px; background:var(--gold); color:#000; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">+ Upload Document</button>
+          <button onclick="triggerDocFileInput()" style="padding:9px 18px; background:var(--gold); color:#000; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">+ Upload Document</button>
         </div>
 
         <!-- Upload area -->
@@ -2578,7 +2578,7 @@
           <div style="font-size:32px; margin-bottom:8px;">📎</div>
           <div style="color:rgba(255,255,255,0.6); font-size:14px;">Drag & drop files here or <span style="color:var(--gold);cursor:pointer;" onclick="triggerDocFileInput()">browse</span></div>
           <div style="color:rgba(255,255,255,0.3); font-size:12px; margin-top:4px;">PDF, JPG, PNG, DOCX — max 25MB</div>
-          <input type="file" id="doc-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.docx" style="display:none" onchange="handleDocFileSelect(this.files)">
+          <input type="file" id="doc-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.docx" style="display:none">
         </div>
 
         <!-- Doc type filter tabs -->
@@ -3496,6 +3496,15 @@ function showDocUploadModal() {
   const modal = document.getElementById('doc-upload-modal');
   modal.style.display = 'flex';
   const info = document.getElementById('upload-modal-file-info');
+  if (!_pendingDocFiles.length) {
+    // Files selected via input will re-call this after selection
+    document.getElementById('doc-file-input').onchange = function() {
+      _pendingDocFiles = Array.from(this.files);
+      if (_pendingDocFiles.length) showDocUploadModal();
+    };
+    document.getElementById('doc-file-input').click();
+    return;
+  }
   if (_pendingDocFiles.length) {
     info.textContent = _pendingDocFiles.map(f => f.name).join(', ') + ` (${_pendingDocFiles.length} file${_pendingDocFiles.length>1?'s':''})`;
   } else {
