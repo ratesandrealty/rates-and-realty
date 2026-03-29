@@ -4213,73 +4213,108 @@ function toggleCoBorrower(show) {
   }
 }
 
-let coBorrowerSearchTimeout;
+let _cbSearchTimer = null;
+
 async function searchCoBorrowerContacts(query) {
-  clearTimeout(coBorrowerSearchTimeout);
+  clearTimeout(_cbSearchTimer);
   const resultsDiv = document.getElementById('coBorrowerResults');
 
   if (!query || query.length < 2) {
-    resultsDiv.style.display = 'none';
+    if (resultsDiv) resultsDiv.style.display = 'none';
     return;
   }
 
-  coBorrowerSearchTimeout = setTimeout(async () => {
-    const { data } = await supabase
-      .from('contacts')
-      .select('id, first_name, last_name, phone, secondary_phone, email')
-      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%,email.ilike.%${query}%`)
-      .limit(8);
+  _cbSearchTimer = setTimeout(async function() {
+    try {
+      const client = window._supabaseClient ||
+                     window.supabase ||
+                     (typeof sb !== 'undefined' ? sb : null);
 
-    if (!data || data.length === 0) {
-      resultsDiv.innerHTML = '<div style="padding:12px 16px; color:var(--muted); font-size:13px;">No contacts found</div>';
+      if (!client) {
+        console.error('Co-borrower search: No Supabase client found');
+        return;
+      }
+
+      const { data, error } = await client
+        .from('contacts')
+        .select('id, first_name, last_name, phone, email, secondary_phone')
+        .or('first_name.ilike.%' + query + '%,last_name.ilike.%' + query + '%,phone.ilike.%' + query + '%,email.ilike.%' + query + '%')
+        .limit(8);
+
+      if (error) {
+        console.error('Co-borrower search error:', error);
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        resultsDiv.innerHTML = '<div style="padding:14px 16px; color:rgba(255,255,255,0.35); font-size:13px; font-family:sans-serif;">No contacts found for &quot;' + query + '&quot;</div>';
+        resultsDiv.style.display = 'block';
+        return;
+      }
+
+      resultsDiv.innerHTML = data.map(function(c) {
+        var name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim();
+        var phone = c.phone || c.secondary_phone || '';
+        var info = [phone, c.email].filter(Boolean).join(' · ');
+        var safeName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        var safePhone = phone.replace(/'/g, "\\'");
+        return '<div onclick="selectCoBorrower(\'' + c.id + '\',\'' + safeName + '\',\'' + safePhone + '\')" ' +
+          'style="padding:12px 16px; cursor:pointer; ' +
+          'border-bottom:1px solid rgba(255,255,255,0.06); ' +
+          'transition:background 0.15s;" ' +
+          'onmouseover="this.style.background=\'rgba(201,168,76,0.12)\'" ' +
+          'onmouseout="this.style.background=\'transparent\'">' +
+          '<div style="font-weight:600; color:#fff; font-size:14px;">' + name + '</div>' +
+          '<div style="font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px;">' + info + '</div>' +
+          '</div>';
+      }).join('');
+
       resultsDiv.style.display = 'block';
-      return;
+
+    } catch(e) {
+      console.error('Co-borrower search exception:', e);
     }
-
-    resultsDiv.innerHTML = data.map(c => {
-      const fullName = `${c.first_name || ''} ${c.last_name || ''}`.trim();
-      const contactInfo = [c.phone, c.email].filter(Boolean).join(' · ');
-      const safeContact = JSON.stringify({
-        id: c.id,
-        first_name: c.first_name,
-        last_name: c.last_name,
-        phone: c.phone,
-        email: c.email
-      });
-      return `
-        <div onclick='selectCoBorrower("${c.id}", "${fullName}", ${safeContact})'
-          style="padding:12px 16px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.06);
-                 color:#fff; font-size:14px; transition:background 0.15s;"
-          onmouseover="this.style.background='rgba(201,168,76,0.1)'"
-          onmouseout="this.style.background='none'">
-          <div style="font-weight:600;">${fullName}</div>
-          <div style="font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px;">${contactInfo}</div>
-        </div>`;
-    }).join('');
-
-    resultsDiv.style.display = 'block';
   }, 300);
 }
 
-async function selectCoBorrower(contactId, name, contact) {
-  if (typeof contact === 'string') {
-    try { contact = JSON.parse(contact); } catch(e) { contact = {}; }
-  }
+function selectCoBorrower(contactId, name, phone) {
   document.getElementById('coBorrowerResults').style.display = 'none';
   document.getElementById('coBorrowerSearch').value = '';
+  document.getElementById('coBorrowerSearch').style.display = 'none';
 
-  const linkedDiv = document.getElementById('coBorrowerLinked');
-  document.getElementById('coBorrowerLinkedName').textContent = '✓ Linked: ' + name;
-  linkedDiv.style.display = 'flex';
+  var linkedDiv = document.getElementById('coBorrowerLinked');
+  var nameSpan = document.getElementById('coBorrowerLinkedName');
+  if (nameSpan) nameSpan.textContent = '✓ Linked: ' + name;
+  if (linkedDiv) linkedDiv.style.display = 'flex';
 
-  const setVal = (id, val) => {
-    const el = document.getElementById(id);
+  var setVal = function(id, val) {
+    var el = document.getElementById(id);
     if (el && val) el.value = val;
   };
-  setVal('cb_first_name', contact.first_name);
-  setVal('cb_last_name', contact.last_name);
-  setVal('cb_cell_phone', contact.phone);
-  setVal('cb_email', contact.email);
+
+  var client = window._supabaseClient ||
+               window.supabase ||
+               (typeof sb !== 'undefined' ? sb : null);
+  if (client) {
+    client.from('contacts')
+      .select('first_name, last_name, phone, secondary_phone, email, address, city, state, zip')
+      .eq('id', contactId)
+      .single()
+      .then(function(result) {
+        if (result.data) {
+          var c = result.data;
+          setVal('cb_first_name', c.first_name);
+          setVal('cb_last_name', c.last_name);
+          setVal('cb_cell_phone', c.phone || c.secondary_phone);
+          setVal('cb_home_phone', c.secondary_phone);
+          setVal('cb_email', c.email);
+          setVal('cb_current_street', c.address);
+          setVal('cb_current_city', c.city);
+          setVal('cb_current_state', c.state);
+          setVal('cb_current_zip', c.zip);
+        }
+      });
+  }
 
   window._coBorrowerContactId = contactId;
 }
@@ -4292,8 +4327,10 @@ function unlinkCoBorrower() {
 
 // Close search results when clicking outside
 document.addEventListener('click', function(e) {
-  if (!e.target.closest('#coBorrowerSearch') && !e.target.closest('#coBorrowerResults')) {
-    const r = document.getElementById('coBorrowerResults');
+  if (e.target &&
+      e.target.id !== 'coBorrowerSearch' &&
+      !e.target.closest('#coBorrowerResults')) {
+    var r = document.getElementById('coBorrowerResults');
     if (r) r.style.display = 'none';
   }
 });
