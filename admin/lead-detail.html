@@ -3507,9 +3507,10 @@ async function confirmDocUpload() {
     try {
       const ts = Date.now();
       const path = `${contactId || leadId}/${docType}/${ts}_${file.name}`;
-      const { error: upErr } = await sb.storage.from('borrower-documents').upload(path, file);
-      if (upErr) throw upErr;
-      const fileUrl = `${window.APP_CONFIG.SUPABASE_URL}/storage/v1/object/public/borrower-documents/${path}`;
+      const { error: uploadError } = await sb.storage.from('borrower-documents').upload(path, file, { upsert: true });
+      if (uploadError) throw new Error('Storage upload failed: ' + uploadError.message);
+      const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
+      const fileUrl = urlData.publicUrl;
       await sb.from('uploaded_documents').insert({
         contact_id: contactId || null,
         lead_id: leadId || null,
@@ -4909,9 +4910,6 @@ async function save1003() {
     decl_bankruptcy: gr('decl_bankruptcy') === 'yes',
     military_service: gr('military_service') === 'yes',
     military_status: gv('f_military_status'),
-    lo_org: gv('f_lo_org'),
-    lo_nmls: gv('f_lo_nmls'),
-    lo_name: gv('f_lo_name'),
     co_borrower_contact_id: window._coBorrowerContactId || null,
     co_borrower_first_name: gv('cb_first_name'),
     co_borrower_middle_name: gv('cb_middle_name'),
