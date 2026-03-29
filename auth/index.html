@@ -1141,7 +1141,7 @@ function renderFileQueue() {
     var statusHtml = '', cls = 'file-item', rmBtn = '<button class="file-remove" onclick="removeFile(\'' + item.id + '\')">✕</button>';
     if (item.status === 'uploading') { cls += ' uploading'; statusHtml = '<div class="progress-bar"><div class="progress-fill" id="prog_' + item.id + '"></div></div>'; rmBtn = ''; }
     else if (item.status === 'success') { cls += ' success'; statusHtml = '<span class="file-status" style="color:#81c784;">✓ Uploaded</span>'; rmBtn = ''; }
-    else if (item.status === 'error') { cls += ' error'; statusHtml = '<span class="file-status" style="color:#ff7070;">✗ Failed</span>'; }
+    else if (item.status === 'error') { cls += ' error'; statusHtml = '<span class="file-status" style="color:#ff7070;" title="' + (item.errorMsg || '') + '">✗ Failed — ' + (item.errorMsg ? item.errorMsg.slice(0,40) : 'see console') + '</span>'; }
     return '<div class="' + cls + '" id="' + item.id + '"><span class="file-icon">' + icon + '</span><div style="flex:1;min-width:0;"><div class="file-name">' + item.file.name + '</div><div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:2px;">' + item.category + ' · ' + size + '</div>' + statusHtml + '</div>' + rmBtn + '</div>';
   }).join('');
 }
@@ -1149,40 +1149,90 @@ function renderFileQueue() {
 async function uploadAllFiles() {
   var pending = fileQueue.filter(function(f) { return f.status === 'ready'; });
   if (pending.length === 0) return;
-  var btn = document.getElementById('uploadAllBtn');
-  btn.disabled = true;
 
-  var session = await sbGetSession();
-  var user = session ? session.user : null;
-  var meta = user ? (user.user_metadata || {}) : {};
-  var borrowerName = [meta.first_name, meta.last_name].filter(Boolean).join(' ') || 'Borrower';
+  var btn = document.getElementById('uploadAllBtn');
+  if (btn) btn.disabled = true;
+
+  var userId = '';
+  var borrowerName = 'Borrower';
+  try {
+    var stored = localStorage.getItem('sb_session');
+    if (stored) {
+      var session = JSON.parse(stored);
+      userId = (session.user && session.user.id) || '';
+      var meta = (session.user && session.user.user_metadata) || {};
+      borrowerName = [meta.first_name, meta.last_name].filter(Boolean).join(' ')
+                     || (session.user && session.user.email ? session.user.email.split('@')[0] : 'Borrower');
+    }
+  } catch(e) {}
 
   for (var i = 0; i < pending.length; i++) {
     var item = pending[i];
     item.status = 'uploading';
     renderFileQueue();
-    var progBar = document.getElementById('prog_' + item.id);
+
     var progress = 0;
-    var progInterval = setInterval(function(pb) { progress = Math.min(progress + Math.random() * 15, 85); if (pb) pb.style.width = progress + '%'; }.bind(null, progBar), 200);
+    var progInterval = setInterval((function(itemId) {
+      return function() {
+        progress = Math.min(progress + Math.random() * 12, 88);
+        var bar = document.getElementById('prog_' + itemId);
+        if (bar) bar.style.width = progress + '%';
+      };
+    })(item.id), 200);
+
     try {
-      var formData = new FormData();
-      formData.append('file', item.file);
-      formData.append('borrower_name', borrowerName);
-      formData.append('category', item.category);
-      formData.append('user_id', user ? user.id : '');
-      formData.append('loan_type', 'Purchase');
-      var res = await fetch(SB_URL + '/functions/v1/google-drive-upload', { method: 'POST', body: formData });
+      var fd = new FormData();
+      fd.append('file', item.file);
+      fd.append('borrower_name', borrowerName);
+      fd.append('category', item.category || selectedCategory || 'Documents');
+      fd.append('user_id', userId);
+      fd.append('loan_type', 'Purchase');
+
+      console.log('Uploading to Edge Function:', item.file.name, 'for:', borrowerName);
+
+      var res = await fetch(SB_URL + '/functions/v1/google-drive-upload', {
+        method: 'POST',
+        body: fd
+      });
+
       clearInterval(progInterval);
-      var result = await res.json();
-      if (result.success) { if (progBar) progBar.style.width = '100%'; item.status = 'success'; }
-      else { item.status = 'error'; }
-    } catch (err) { clearInterval(progInterval); item.status = 'error'; }
+
+      var text = await res.text();
+      console.log('Upload response:', res.status, text.slice(0, 300));
+
+      var result;
+      try { result = JSON.parse(text); } catch(e) { result = { error: text }; }
+
+      if (result.success) {
+        var bar = document.getElementById('prog_' + item.id);
+        if (bar) bar.style.width = '100%';
+        item.status = 'success';
+        item.driveLink = result.drive_link;
+        console.log('Uploaded:', item.file.name, '→', result.drive_link);
+      } else {
+        item.status = 'error';
+        item.errorMsg = result.error || 'Upload failed (status ' + res.status + ')';
+        console.error('Upload error:', item.errorMsg);
+      }
+
+    } catch(e) {
+      clearInterval(progInterval);
+      item.status = 'error';
+      item.errorMsg = 'Network error: ' + e.message;
+      console.error('Upload exception:', e);
+    }
+
     renderFileQueue();
-    await new Promise(function(r) { setTimeout(r, 400); });
+    await new Promise(function(r) { setTimeout(r, 300); });
   }
-  btn.disabled = false;
-  var ok = fileQueue.filter(function(f) { return f.status === 'success'; }).length;
-  if (ok > 0) { showUploadSuccess(ok); loadUploadHistory(); }
+
+  if (btn) btn.disabled = false;
+
+  var successCount = fileQueue.filter(function(f) { return f.status === 'success'; }).length;
+  if (successCount > 0) {
+    showUploadSuccess(successCount);
+    setTimeout(loadUploadHistory, 1000);
+  }
 }
 
 function showUploadSuccess(count) {
@@ -1194,24 +1244,44 @@ function showUploadSuccess(count) {
 }
 
 async function loadUploadHistory() {
-  var session = await sbGetSession();
-  if (!session || !session.user) return;
   var historyEl = document.getElementById('uploadHistoryList');
+  if (!historyEl) return;
+
   try {
-    var data = await sbFetchDocs(session.user.id, session.access_token);
-    if (!data || data.length === 0) {
+    var stored = localStorage.getItem('sb_session');
+    if (!stored) return;
+    var session = JSON.parse(stored);
+    var userId = (session.user && session.user.id) || '';
+    if (!userId) return;
+
+    var res = await fetch(
+      SB_URL + '/rest/v1/borrower_documents?user_id=eq.' + userId + '&order=uploaded_at.desc&limit=20',
+      {
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + session.access_token,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    var docs = await res.json();
+    if (!Array.isArray(docs) || docs.length === 0) {
       historyEl.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.25);font-size:13px;">No documents uploaded yet</div>';
       return;
     }
+
     var icons = { 'Pay Stubs':'💵','W-2s & Tax Returns':'📄','Bank Statements':'🏦','Photo ID':'🪪','Purchase Contract':'📋','Appraisal':'🏠','Insurance':'🛡️','Other Documents':'📎' };
-    historyEl.innerHTML = data.map(function(doc) {
+    historyEl.innerHTML = docs.map(function(doc) {
       var icon = icons[doc.document_category] || '📎';
       var date = new Date(doc.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-      var size = doc.file_size ? formatSize(doc.file_size) : '';
+      var size = doc.file_size ? (doc.file_size < 1048576
+        ? (doc.file_size/1024).toFixed(1)+' KB'
+        : (doc.file_size/1048576).toFixed(1)+' MB') : '';
       return '<div class="history-item"><span style="font-size:20px;">' + icon + '</span><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + doc.file_name + '</div><div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:2px;">' + doc.document_category + ' · ' + date + (size ? ' · ' + size : '') + '</div></div>' + (doc.storage_path ? '<a href="' + doc.storage_path + '" target="_blank" style="padding:5px 12px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:6px;color:#c9a84c;font-size:11px;text-decoration:none;font-weight:600;flex-shrink:0;white-space:nowrap;">View in Drive ↗</a>' : '') + '</div>';
     }).join('');
   } catch(e) {
-    historyEl.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.25);font-size:13px;">No documents uploaded yet</div>';
+    console.error('History load error:', e);
   }
 }
 </script>
