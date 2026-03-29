@@ -1,5 +1,8 @@
 // Rates & Realty CRM — Supabase Auth Guard
 (async function() {
+  // Never run auth guard on the login page itself
+  if (window.location.pathname.includes('admin-login')) return;
+
   // Load Supabase if not already loaded
   if (typeof window.supabase === 'undefined') {
     await new Promise((resolve) => {
