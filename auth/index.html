@@ -381,6 +381,10 @@
       from { transform: translateY(20px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
     }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-6px); }
+    }
 
     /* ── RESPONSIVE ── */
     @media (max-width: 900px) {
@@ -631,18 +635,23 @@
         <div class="dash-card-title">Call Rene Direct</div>
         <div class="dash-card-desc">(714) 472-8508</div>
       </a>
-      <a href="https://cal.com/rene-duarte-rates-realty" target="_blank" class="dash-card">
+      <div onclick="openAIChat()" class="dash-card" style="cursor:pointer;">
         <div class="dash-card-icon">🤖</div>
         <div class="dash-card-title">AI Assistant</div>
         <div class="dash-card-desc">Get instant mortgage answers</div>
-      </a>
+      </div>
+      <div onclick="openApplicationTab()" class="dash-card" style="cursor:pointer;">
+        <div class="dash-card-icon">📋</div>
+        <div class="dash-card-title">My Application</div>
+        <div class="dash-card-desc">Fill out your 1003 loan application</div>
+      </div>
       <a onclick="document.getElementById('uploadPanel').scrollIntoView({behavior:'smooth'})"
          class="dash-card" style="cursor:pointer;">
         <div class="dash-card-icon">📁</div>
         <div class="dash-card-title">Upload Documents</div>
         <div class="dash-card-desc">Drag & drop your loan docs</div>
       </a>
-      <a href="/public/index.html" class="dash-card">
+      <a href="https://beta.ratesandrealty.com/public/index.html" target="_blank" class="dash-card">
         <div class="dash-card-icon">🔍</div>
         <div class="dash-card-title">Explore Loan Programs</div>
         <div class="dash-card-desc">FHA, VA, DSCR, and more</div>
@@ -1284,6 +1293,333 @@ async function loadUploadHistory() {
     console.error('History load error:', e);
   }
 }
+
+// ── AI CHAT ─────────────────────────────────────
+var aiChatHistory = [];
+
+function openAIChat() {
+  var modal = document.getElementById('aiChatModal');
+  if (modal) {
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    setTimeout(function() { var inp = document.getElementById('aiChatInput'); if (inp) inp.focus(); }, 300);
+  }
+}
+
+function closeAIChat() {
+  var modal = document.getElementById('aiChatModal');
+  if (modal) modal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function sendQuickReply(text) {
+  var qr = document.getElementById('quickReplies');
+  if (qr) qr.remove();
+  document.getElementById('aiChatInput').value = text;
+  sendAIMessage();
+}
+
+function appendMessage(text, isUser) {
+  var container = document.getElementById('aiChatMessages');
+  var div = document.createElement('div');
+  div.style.cssText = 'display:flex; gap:10px; align-items:flex-start;' + (isUser ? 'flex-direction:row-reverse;' : '');
+  var avatar = document.createElement('div');
+  avatar.style.cssText = 'width:32px;height:32px;border-radius:8px;flex-shrink:0;background:' + (isUser ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg,#c9a84c,#a07830)') + ';display:flex;align-items:center;justify-content:center;font-size:14px;';
+  avatar.textContent = isUser ? '👤' : '🤖';
+  var bubble = document.createElement('div');
+  bubble.style.cssText = 'padding:12px 14px;max-width:85%;font-size:14px;line-height:1.6;color:rgba(255,255,255,0.85);' + (isUser ? 'background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.2);border-radius:12px 0 12px 12px;' : 'background:rgba(255,255,255,0.06);border-radius:0 12px 12px 12px;');
+  bubble.textContent = text;
+  div.appendChild(avatar);
+  div.appendChild(bubble);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return bubble;
+}
+
+async function sendAIMessage() {
+  var input = document.getElementById('aiChatInput');
+  var btn = document.getElementById('aiSendBtn');
+  var text = (input ? input.value : '').trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+  appendMessage(text, true);
+  aiChatHistory.push({ role: 'user', content: text });
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+  var container = document.getElementById('aiChatMessages');
+  var typingDiv = document.createElement('div');
+  typingDiv.id = 'typing-indicator';
+  typingDiv.style.cssText = 'display:flex;gap:10px;align-items:flex-start;';
+  typingDiv.innerHTML = '<div style="width:32px;height:32px;border-radius:8px;flex-shrink:0;background:linear-gradient(135deg,#c9a84c,#a07830);display:flex;align-items:center;justify-content:center;font-size:14px;">🤖</div><div style="background:rgba(255,255,255,0.06);border-radius:0 12px 12px 12px;padding:12px 16px;display:flex;gap:4px;align-items:center;"><span style="width:6px;height:6px;border-radius:50%;background:#c9a84c;animation:bounce 1s infinite 0s;display:block;"></span><span style="width:6px;height:6px;border-radius:50%;background:#c9a84c;animation:bounce 1s infinite 0.2s;display:block;"></span><span style="width:6px;height:6px;border-radius:50%;background:#c9a84c;animation:bounce 1s infinite 0.4s;display:block;"></span></div>';
+  container.appendChild(typingDiv);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    var res = await fetch(SB_URL + '/functions/v1/ai-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, history: aiChatHistory.slice(-10), source: 'borrower_portal' })
+    });
+    var data = await res.json();
+    typingDiv.remove();
+    var reply = data.reply || data.message || data.response || (data.content && data.content[0] && data.content[0].text) || "I'd be happy to help! For personalized guidance, call Rene at (714) 472-8508.";
+    appendMessage(reply, false);
+    aiChatHistory.push({ role: 'assistant', content: reply });
+  } catch(e) {
+    typingDiv.remove();
+    appendMessage("I'm having trouble connecting. Please call Rene at (714) 472-8508 for immediate help!", false);
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '➤'; }
+}
+
+document.getElementById('aiChatModal')?.addEventListener('click', function(e) { if (e.target === this) closeAIChat(); });
+
+// ── 1003 APPLICATION ────────────────────────────
+var _myContactId = null;
+var _myAppId = null;
+
+function openApplicationTab() {
+  var modal = document.getElementById('applicationModal');
+  if (modal) {
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    loadMyApplication();
+  }
+}
+
+function closeApplicationModal() {
+  var modal = document.getElementById('applicationModal');
+  if (modal) modal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+async function loadMyApplication() {
+  try {
+    var stored = localStorage.getItem('sb_session');
+    if (!stored) return;
+    var session = JSON.parse(stored);
+    var userEmail = session.user && session.user.email;
+    var userId = session.user && session.user.id;
+    var meta = (session.user && session.user.user_metadata) || {};
+
+    var emailEl = document.getElementById('app_email');
+    if (emailEl) emailEl.value = userEmail || '';
+    var fnEl = document.getElementById('app_first_name');
+    if (fnEl && !fnEl.value && meta.first_name) fnEl.value = meta.first_name;
+    var lnEl = document.getElementById('app_last_name');
+    if (lnEl && !lnEl.value && meta.last_name) lnEl.value = meta.last_name;
+
+    if (!userEmail) return;
+
+    var contactRes = await fetch(
+      SB_URL + '/rest/v1/contacts?email=eq.' + encodeURIComponent(userEmail) + '&limit=1',
+      { headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + session.access_token } }
+    );
+    var contacts = await contactRes.json();
+    if (contacts && contacts.length > 0) _myContactId = contacts[0].id;
+
+    var appRes = await fetch(
+      SB_URL + '/rest/v1/mortgage_applications?borrower_user_id=eq.' + userId + '&limit=1',
+      { headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + session.access_token } }
+    );
+    var apps = await appRes.json();
+    if (apps && apps.length > 0) {
+      var app = apps[0];
+      _myAppId = app.id;
+      var sv = function(id, val) { var el = document.getElementById(id); if (el && val != null) el.value = val; };
+      sv('app_first_name', app.first_name); sv('app_middle_name', app.middle_name);
+      sv('app_last_name', app.last_name); sv('app_suffix', app.suffix);
+      sv('app_dob', app.date_of_birth); sv('app_marital', app.marital_status);
+      sv('app_citizenship', app.citizenship); sv('app_cell_phone', app.cell_phone);
+      sv('app_home_phone', app.home_phone); sv('app_street', app.current_address_street);
+      sv('app_unit', app.current_address_unit); sv('app_city', app.current_address_city);
+      sv('app_state', app.current_address_state); sv('app_zip', app.current_address_zip);
+      sv('app_housing', app.current_housing_type);
+      sv('app_employer', app.employments && app.employments[0] ? app.employments[0].employer_name : '');
+      sv('app_title', app.employments && app.employments[0] ? app.employments[0].title : '');
+      sv('app_emp_start', app.employments && app.employments[0] ? app.employments[0].start_date : '');
+      sv('app_base_income', app.employments && app.employments[0] ? app.employments[0].base_monthly : '');
+      sv('app_overtime', app.employments && app.employments[0] ? app.employments[0].overtime_monthly : '');
+      sv('app_loan_amount', app.loan_amount); sv('app_loan_purpose', app.loan_purpose);
+      sv('app_loan_type', app.loan_type_app || app.loan_type);
+      sv('app_prop_street', app.property_address_street); sv('app_prop_value', app.property_value);
+    }
+  } catch(e) { console.error('Load application error:', e); }
+}
+
+async function saveMyApplication() {
+  var statusEl = document.getElementById('appSaveStatus');
+  try {
+    var stored = localStorage.getItem('sb_session');
+    if (!stored) return;
+    var session = JSON.parse(stored);
+    var userId = session.user && session.user.id;
+    var userEmail = session.user && session.user.email;
+    var gv = function(id) { var el = document.getElementById(id); return el ? el.value : null; };
+
+    var appData = {
+      borrower_user_id: userId, borrower_email: userEmail, contact_id: _myContactId,
+      first_name: gv('app_first_name'), middle_name: gv('app_middle_name'),
+      last_name: gv('app_last_name'), suffix: gv('app_suffix'),
+      date_of_birth: gv('app_dob'), marital_status: gv('app_marital'),
+      citizenship: gv('app_citizenship'), cell_phone: gv('app_cell_phone'),
+      home_phone: gv('app_home_phone'), email: userEmail,
+      current_address_street: gv('app_street'), current_address_unit: gv('app_unit'),
+      current_address_city: gv('app_city'), current_address_state: gv('app_state'),
+      current_address_zip: gv('app_zip'), current_housing_type: gv('app_housing'),
+      loan_amount: parseFloat(gv('app_loan_amount')) || null,
+      loan_purpose: gv('app_loan_purpose'),
+      property_address_street: gv('app_prop_street'),
+      property_value: parseFloat(gv('app_prop_value')) || null,
+      employments: [{ employer_name: gv('app_employer'), title: gv('app_title'),
+        start_date: gv('app_emp_start'), base_monthly: parseFloat(gv('app_base_income')) || 0,
+        overtime_monthly: parseFloat(gv('app_overtime')) || 0 }],
+      updated_at: new Date().toISOString()
+    };
+
+    var res;
+    if (_myAppId) {
+      res = await fetch(SB_URL + '/rest/v1/mortgage_applications?id=eq.' + _myAppId, {
+        method: 'PATCH',
+        headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        body: JSON.stringify(appData)
+      });
+    } else {
+      appData.created_at = new Date().toISOString();
+      res = await fetch(SB_URL + '/rest/v1/mortgage_applications', {
+        method: 'POST',
+        headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        body: JSON.stringify(appData)
+      });
+    }
+    var result = await res.json();
+    if (Array.isArray(result) && result[0] && result[0].id) _myAppId = result[0].id;
+
+    if (statusEl) {
+      statusEl.textContent = '✓ Application saved successfully!';
+      statusEl.style.display = 'block';
+      statusEl.style.background = 'rgba(76,175,80,0.1)';
+      statusEl.style.border = '1px solid rgba(76,175,80,0.3)';
+      statusEl.style.color = '#81c784';
+      setTimeout(function() { statusEl.style.display = 'none'; }, 3000);
+    }
+  } catch(e) {
+    console.error('Save error:', e);
+    if (statusEl) {
+      statusEl.textContent = 'Error saving. Please try again.';
+      statusEl.style.display = 'block';
+      statusEl.style.background = 'rgba(255,100,100,0.1)';
+      statusEl.style.color = '#ff9090';
+    }
+  }
+}
+
+document.getElementById('applicationModal')?.addEventListener('click', function(e) { if (e.target === this) closeApplicationModal(); });
 </script>
+
+<!-- ── AI CHAT MODAL ── -->
+<div id="aiChatModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);align-items:flex-end;justify-content:center;padding-bottom:0;">
+  <div style="background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:20px 20px 0 0;width:100%;max-width:600px;height:80vh;display:flex;flex-direction:column;box-shadow:0 -12px 60px rgba(0,0,0,0.6);">
+    <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#c9a84c,#a07830);display:flex;align-items:center;justify-content:center;font-size:18px;">🤖</div>
+        <div>
+          <div style="font-weight:700;color:#fff;font-size:15px;">Rene's AI Assistant</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);">Rates & Realty · NMLS #1795044</div>
+        </div>
+      </div>
+      <button onclick="closeAIChat()" style="width:32px;height:32px;border-radius:50%;border:none;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;">×</button>
+    </div>
+    <div id="aiChatMessages" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;overscroll-behavior:contain;">
+      <div style="display:flex;gap:10px;align-items:flex-start;">
+        <div style="width:32px;height:32px;border-radius:8px;flex-shrink:0;background:linear-gradient(135deg,#c9a84c,#a07830);display:flex;align-items:center;justify-content:center;font-size:14px;">🤖</div>
+        <div style="background:rgba(255,255,255,0.06);border-radius:0 12px 12px 12px;padding:12px 14px;max-width:85%;font-size:14px;color:rgba(255,255,255,0.85);line-height:1.6;">Hi! I'm Rene's AI assistant for Rates & Realty. I can answer questions about mortgages, down payment programs, loan types, and the home buying process. What's on your mind?</div>
+      </div>
+      <div id="quickReplies" style="display:flex;flex-wrap:wrap;gap:8px;padding-left:42px;">
+        <button onclick="sendQuickReply('How do I qualify for a mortgage?')" style="padding:7px 14px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:20px;color:#c9a84c;font-size:12px;cursor:pointer;">How do I qualify?</button>
+        <button onclick="sendQuickReply('What down payment help is available?')" style="padding:7px 14px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:20px;color:#c9a84c;font-size:12px;cursor:pointer;">Down payment help?</button>
+        <button onclick="sendQuickReply('What is a DSCR loan?')" style="padding:7px 14px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:20px;color:#c9a84c;font-size:12px;cursor:pointer;">What is a DSCR loan?</button>
+        <button onclick="sendQuickReply('How can I improve my credit score?')" style="padding:7px 14px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:20px;color:#c9a84c;font-size:12px;cursor:pointer;">Improve my credit?</button>
+      </div>
+    </div>
+    <div style="padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);display:flex;gap:10px;align-items:flex-end;flex-shrink:0;">
+      <textarea id="aiChatInput" placeholder="Ask about mortgages, rates, programs..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIMessage();}" oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'" style="flex:1;padding:10px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;color:#fff;font-size:14px;resize:none;outline:none;font-family:sans-serif;line-height:1.5;max-height:100px;overflow-y:auto;"></textarea>
+      <button onclick="sendAIMessage()" id="aiSendBtn" style="width:42px;height:42px;background:#c9a84c;border:none;border-radius:10px;color:#1a1a1a;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── APPLICATION MODAL ── -->
+<div id="applicationModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.85);backdrop-filter:blur(4px);align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto;">
+  <div style="background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:20px;width:100%;max-width:800px;margin:0 auto;padding:0 0 32px;box-shadow:0 24px 80px rgba(0,0,0,0.6);">
+    <div style="padding:20px 28px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#1a1a1a;border-radius:20px 20px 0 0;z-index:10;">
+      <div>
+        <h2 style="color:#c9a84c;font-size:18px;margin:0 0 4px;font-family:Georgia,serif;">📋 My Loan Application</h2>
+        <p style="color:rgba(255,255,255,0.4);font-size:12px;margin:0;">Your information is saved automatically and securely</p>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <button onclick="saveMyApplication()" style="padding:9px 18px;background:#c9a84c;border:none;border-radius:8px;color:#1a1a1a;font-size:13px;font-weight:700;cursor:pointer;">💾 Save</button>
+        <button onclick="closeApplicationModal()" style="width:36px;height:36px;border-radius:50%;border:none;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:18px;cursor:pointer;">×</button>
+      </div>
+    </div>
+    <div style="padding:24px 28px;">
+      <h3 style="color:#c9a84c;font-size:14px;font-weight:700;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid rgba(201,168,76,0.2);text-transform:uppercase;letter-spacing:0.5px;">1a. Personal Information</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 0.6fr;gap:12px;margin-bottom:16px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">First Name</label><input id="app_first_name" type="text" placeholder="First" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Middle Name</label><input id="app_middle_name" type="text" placeholder="Middle" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Last Name</label><input id="app_last_name" type="text" placeholder="Last" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Suffix</label><select id="app_suffix" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"><option value="">None</option><option>Jr.</option><option>Sr.</option><option>II</option><option>III</option></select></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Date of Birth</label><input id="app_dob" type="date" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Marital Status</label><select id="app_marital" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"><option value="">Select...</option><option value="married">Married</option><option value="separated">Separated</option><option value="unmarried">Unmarried</option></select></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Citizenship</label><select id="app_citizenship" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"><option value="us_citizen">U.S. Citizen</option><option value="permanent_resident">Permanent Resident</option><option value="non_permanent_resident">Non-Permanent Resident</option></select></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:24px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Cell Phone</label><input id="app_cell_phone" type="tel" placeholder="(714) 000-0000" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Home Phone</label><input id="app_home_phone" type="tel" placeholder="(714) 000-0000" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div style="grid-column:span 2;"><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Email</label><input id="app_email" type="email" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:7px;color:rgba(255,255,255,0.5);font-size:14px;box-sizing:border-box;outline:none;" readonly></div>
+      </div>
+
+      <h3 style="color:#c9a84c;font-size:14px;font-weight:700;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid rgba(201,168,76,0.2);text-transform:uppercase;letter-spacing:0.5px;">Current Address</h3>
+      <div style="display:grid;grid-template-columns:3fr 1fr;gap:12px;margin-bottom:12px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Street Address</label><input id="app_street" type="text" placeholder="123 Main St" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Unit #</label><input id="app_unit" type="text" placeholder="Apt 2B" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 0.8fr 1fr 0.8fr;gap:12px;margin-bottom:24px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">City</label><input id="app_city" type="text" placeholder="City" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">State</label><input id="app_state" type="text" placeholder="CA" maxlength="2" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">ZIP</label><input id="app_zip" type="text" placeholder="92648" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Housing</label><select id="app_housing" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"><option value="">Select</option><option value="own">Own</option><option value="rent">Rent</option></select></div>
+      </div>
+
+      <h3 style="color:#c9a84c;font-size:14px;font-weight:700;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid rgba(201,168,76,0.2);text-transform:uppercase;letter-spacing:0.5px;">Employment & Income</h3>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Employer Name</label><input id="app_employer" type="text" placeholder="ABC Company" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Position / Title</label><input id="app_title" type="text" placeholder="Manager" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:24px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Start Date</label><input id="app_emp_start" type="date" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Base $/month</label><input id="app_base_income" type="number" placeholder="0" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Overtime $/month</label><input id="app_overtime" type="number" placeholder="0" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Other $/month</label><input id="app_other_income" type="number" placeholder="0" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+      </div>
+
+      <h3 style="color:#c9a84c;font-size:14px;font-weight:700;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid rgba(201,168,76,0.2);text-transform:uppercase;letter-spacing:0.5px;">Loan Information</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Loan Amount</label><input id="app_loan_amount" type="number" placeholder="$0" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Loan Purpose</label><select id="app_loan_purpose" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"><option value="">Select...</option><option value="purchase">Purchase</option><option value="refinance">Refinance</option><option value="construction">Construction</option></select></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Loan Type</label><select id="app_loan_type" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"><option value="conventional">Conventional</option><option value="fha">FHA</option><option value="va">VA</option><option value="dscr">DSCR</option><option value="jumbo">Jumbo</option><option value="bank_statement">Bank Statement</option></select></div>
+      </div>
+      <div style="display:grid;grid-template-columns:3fr 1fr;gap:12px;margin-bottom:12px;">
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Property Address</label><input id="app_prop_street" type="text" placeholder="123 Main St, City, CA 92648" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+        <div><label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Property Value</label><input id="app_prop_value" type="number" placeholder="$0" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#fff;font-size:14px;box-sizing:border-box;outline:none;"></div>
+      </div>
+      <div id="appSaveStatus" style="display:none;margin-top:16px;padding:10px 14px;border-radius:8px;font-size:13px;font-family:sans-serif;"></div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
