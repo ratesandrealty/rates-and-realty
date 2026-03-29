@@ -2549,13 +2549,80 @@
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-documents">
       <div class="ld-section" style="padding:0;">
-        <div style="padding:22px 24px 16px;">
-          <div class="ld-section-title" style="margin-bottom:0;border:none;padding:0;">Document Checklist</div>
+        <!-- Header -->
+        <div style="padding:22px 24px 16px; display:flex; justify-content:space-between; align-items:center;">
+          <div class="ld-section-title" style="margin:0;border:none;padding:0;">Documents</div>
+          <button onclick="showDocUploadModal()" style="padding:9px 18px; background:var(--gold); color:#000; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">+ Upload Document</button>
         </div>
-        <div id="docs-list">
-          <div class="ld-empty" style="padding:48px;">
-            <div class="ld-empty-icon">📁</div>
-            <p>Loading documents…</p>
+
+        <!-- Upload area -->
+        <div id="doc-drop-zone" style="margin:0 24px 20px; border:2px dashed rgba(201,168,76,0.3); border-radius:12px; padding:32px; text-align:center; cursor:pointer; transition:all .2s;"
+          ondragover="event.preventDefault();this.style.borderColor='var(--gold)'"
+          ondragleave="this.style.borderColor='rgba(201,168,76,0.3)'"
+          ondrop="handleDocDrop(event)">
+          <div style="font-size:32px; margin-bottom:8px;">📎</div>
+          <div style="color:rgba(255,255,255,0.6); font-size:14px;">Drag & drop files here or <span style="color:var(--gold);cursor:pointer;" onclick="triggerDocFileInput()">browse</span></div>
+          <div style="color:rgba(255,255,255,0.3); font-size:12px; margin-top:4px;">PDF, JPG, PNG, DOCX — max 25MB</div>
+          <input type="file" id="doc-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.docx" style="display:none" onchange="handleDocFileSelect(this.files)">
+        </div>
+
+        <!-- Doc type filter tabs -->
+        <div style="padding:0 24px 12px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="doc-filter-btn active" onclick="filterDocs('all',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(201,168,76,0.4);background:var(--gold);color:#000;font-size:12px;font-weight:600;cursor:pointer;">All</button>
+          <button class="doc-filter-btn" onclick="filterDocs('w2',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">W-2</button>
+          <button class="doc-filter-btn" onclick="filterDocs('pay_stubs',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Pay Stubs</button>
+          <button class="doc-filter-btn" onclick="filterDocs('bank_statements',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Bank Stmts</button>
+          <button class="doc-filter-btn" onclick="filterDocs('gov_id',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Gov ID</button>
+          <button class="doc-filter-btn" onclick="filterDocs('tax_returns',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Tax Returns</button>
+          <button class="doc-filter-btn" onclick="filterDocs('other',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Other</button>
+        </div>
+
+        <!-- Documents grid -->
+        <div id="docs-list" style="padding:0 24px 24px; display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px;">
+          <div style="grid-column:1/-1; text-align:center; padding:48px; color:rgba(255,255,255,0.3);">
+            <div style="font-size:40px; margin-bottom:8px;">📁</div>
+            <p>No documents uploaded yet</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- PDF Viewer Modal -->
+      <div id="doc-viewer-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9999; align-items:center; justify-content:center;">
+        <div style="background:#1a1a1a; border-radius:16px; width:90vw; max-width:900px; height:88vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(255,255,255,0.1);">
+          <div style="padding:16px 20px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08);">
+            <div>
+              <div id="doc-viewer-name" style="font-weight:600; font-size:15px;"></div>
+              <div id="doc-viewer-meta" style="font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px;"></div>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <a id="doc-viewer-download" href="#" download style="padding:7px 14px; background:rgba(255,255,255,0.08); border-radius:8px; color:#fff; text-decoration:none; font-size:13px;">Download</a>
+              <button onclick="closeDocViewer()" style="padding:7px 14px; background:rgba(255,255,255,0.08); border:none; border-radius:8px; color:#fff; font-size:13px; cursor:pointer;">Close</button>
+            </div>
+          </div>
+          <div id="doc-viewer-body" style="flex:1; overflow:hidden; display:flex; align-items:center; justify-content:center; padding:0;"></div>
+        </div>
+      </div>
+
+      <!-- Upload modal -->
+      <div id="doc-upload-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9998; align-items:center; justify-content:center;">
+        <div style="background:#1e1e1e; border-radius:16px; width:420px; padding:28px; border:1px solid rgba(255,255,255,0.1);">
+          <div style="font-size:17px; font-weight:600; margin-bottom:20px;">Upload Document</div>
+          <div style="margin-bottom:14px;">
+            <label class="ld-label">Document Type</label>
+            <select id="upload-doc-type" class="ld-select">
+              <option value="w2">W-2</option>
+              <option value="pay_stubs">Pay Stubs</option>
+              <option value="bank_statements">Bank Statements</option>
+              <option value="gov_id">Gov ID / Driver's License</option>
+              <option value="tax_returns">Tax Returns</option>
+              <option value="purchase_contract">Purchase Contract</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div id="upload-modal-file-info" style="padding:12px; background:rgba(255,255,255,0.04); border-radius:8px; font-size:13px; color:rgba(255,255,255,0.6); margin-bottom:16px;">No file selected</div>
+          <div style="display:flex; gap:10px; justify-content:flex-end;">
+            <button onclick="closeDocUploadModal()" style="padding:9px 18px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#fff; cursor:pointer; font-size:13px;">Cancel</button>
+            <button onclick="confirmDocUpload()" style="padding:9px 18px; background:var(--gold); border:none; border-radius:8px; color:#000; font-weight:600; cursor:pointer; font-size:13px;">Upload</button>
           </div>
         </div>
       </div>
@@ -2969,7 +3036,7 @@ async function loadData() {
     liabilitiesData = Array.isArray(contactData.liabilities) ? [...contactData.liabilities] : [];
     populateUI();
     renderLiabilities();
-    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocuments(), loadCreditApps(), loadAllTags().then(function() { return loadContactTags(contactId); })]);
+    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocuments(), loadDocumentsGrid(), loadCreditApps(), loadAllTags().then(function() { return loadContactTags(contactId); })]);
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
@@ -3387,6 +3454,212 @@ function handleDocUpload(docType) {
     }
   };
   input.click();
+}
+
+// ── Document Tab: Upload + Viewer ──────────────────────────────
+let _pendingDocFiles = [];
+let _currentDocFilter = 'all';
+let _allDocs = [];
+
+function triggerDocFileInput() {
+  document.getElementById('doc-file-input').click();
+}
+
+function handleDocFileSelect(files) {
+  _pendingDocFiles = Array.from(files);
+  showDocUploadModal();
+}
+
+function handleDocDrop(e) {
+  e.preventDefault();
+  document.getElementById('doc-drop-zone').style.borderColor = 'rgba(201,168,76,0.3)';
+  _pendingDocFiles = Array.from(e.dataTransfer.files);
+  if (_pendingDocFiles.length) showDocUploadModal();
+}
+
+function showDocUploadModal() {
+  const modal = document.getElementById('doc-upload-modal');
+  modal.style.display = 'flex';
+  const info = document.getElementById('upload-modal-file-info');
+  if (_pendingDocFiles.length) {
+    info.textContent = _pendingDocFiles.map(f => f.name).join(', ') + ` (${_pendingDocFiles.length} file${_pendingDocFiles.length>1?'s':''})`;
+  } else {
+    info.innerHTML = '<span style="cursor:pointer;color:var(--gold);" onclick="triggerDocFileInput()">Click to select files</span>';
+  }
+}
+
+function closeDocUploadModal() {
+  document.getElementById('doc-upload-modal').style.display = 'none';
+  _pendingDocFiles = [];
+}
+
+async function confirmDocUpload() {
+  if (!_pendingDocFiles.length) {
+    document.getElementById('doc-file-input').click();
+    return;
+  }
+  const docType = document.getElementById('upload-doc-type').value;
+  const btn = document.querySelector('#doc-upload-modal button[onclick="confirmDocUpload()"]');
+  btn.textContent = 'Uploading…';
+  btn.disabled = true;
+
+  for (const file of _pendingDocFiles) {
+    try {
+      const ts = Date.now();
+      const path = `${contactId || leadId}/${docType}/${ts}_${file.name}`;
+      const { error: upErr } = await sb.storage.from('borrower-documents').upload(path, file);
+      if (upErr) throw upErr;
+      const fileUrl = `${window.APP_CONFIG.SUPABASE_URL}/storage/v1/object/public/borrower-documents/${path}`;
+      await sb.from('uploaded_documents').insert({
+        contact_id: contactId || null,
+        lead_id: leadId || null,
+        document_type: docType,
+        type: docType,
+        file_name: file.name,
+        file_path: path,
+        file_url: fileUrl,
+        status: 'received',
+        file_size: file.size,
+        uploaded_at: new Date().toISOString()
+      });
+    } catch(err) {
+      console.error('Upload error:', err);
+      toast('Upload failed: ' + file.name, true);
+    }
+  }
+
+  btn.textContent = 'Upload';
+  btn.disabled = false;
+  closeDocUploadModal();
+  toast(_pendingDocFiles.length + ' document(s) uploaded');
+  loadDocumentsGrid();
+}
+
+async function loadDocumentsGrid() {
+  const container = document.getElementById('docs-list');
+  if (!container) return;
+  container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:32px;color:rgba(255,255,255,0.3);">Loading…</div>';
+
+  try {
+    const idField = contactId ? 'contact_id' : 'lead_id';
+    const idVal = contactId || leadId;
+    const { data } = await sb.from('uploaded_documents')
+      .select('*')
+      .eq(idField, idVal)
+      .order('uploaded_at', { ascending: false });
+    _allDocs = data || [];
+  } catch(e) {
+    _allDocs = [];
+  }
+  renderDocsGrid();
+}
+
+function filterDocs(type, btn) {
+  _currentDocFilter = type;
+  document.querySelectorAll('.doc-filter-btn').forEach(b => {
+    b.style.background = 'transparent'; b.style.color = 'rgba(255,255,255,0.6)'; b.style.border = '1px solid rgba(255,255,255,0.15)';
+  });
+  btn.style.background = 'var(--gold)'; btn.style.color = '#000'; btn.style.border = '1px solid var(--gold)';
+  renderDocsGrid();
+}
+
+function renderDocsGrid() {
+  const container = document.getElementById('docs-list');
+  if (!container) return;
+  const filtered = _currentDocFilter === 'all' ? _allDocs : _allDocs.filter(d => d.document_type === _currentDocFilter);
+
+  if (!filtered.length) {
+    container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:rgba(255,255,255,0.3);"><div style="font-size:40px;margin-bottom:8px;">📁</div><p>No documents found</p></div>';
+    return;
+  }
+
+  const iconMap = { pdf:'📄', jpg:'🖼️', jpeg:'🖼️', png:'🖼️', docx:'📝', doc:'📝' };
+  const statusColors = { received:'rgba(201,168,76,0.8)', reviewed:'rgba(100,180,255,0.8)', approved:'rgba(80,200,120,0.8)', not_received:'rgba(255,255,255,0.3)' };
+
+  container.innerHTML = filtered.map(doc => {
+    const ext = (doc.file_name||'').split('.').pop().toLowerCase();
+    const icon = iconMap[ext] || '📎';
+    const size = doc.file_size ? (doc.file_size > 1048576 ? (doc.file_size/1048576).toFixed(1)+' MB' : (doc.file_size/1024).toFixed(0)+' KB') : '';
+    const date = doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+    const statusColor = statusColors[doc.status] || statusColors.not_received;
+    const typeLabel = doc.document_type?.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) || 'Document';
+    return `
+      <div onclick="openDocViewer('${doc.id}')" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
+        onmouseenter="this.style.borderColor='rgba(201,168,76,0.35)';this.style.background='rgba(255,255,255,0.07)'"
+        onmouseleave="this.style.borderColor='rgba(255,255,255,0.08)';this.style.background='rgba(255,255,255,0.04)'">
+        <div style="font-size:32px;margin-bottom:10px;text-align:center;">${icon}</div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${doc.file_name}">${doc.file_name}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:8px;">${typeLabel} ${size ? '· '+size : ''}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:10px;">${date}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:11px;font-weight:600;color:${statusColor};text-transform:uppercase;letter-spacing:0.5px;">${doc.status||'received'}</span>
+          <select onclick="event.stopPropagation()" onchange="updateDocStatus('${doc.document_type}',this.value,'${doc.id}')" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:rgba(255,255,255,0.6);font-size:11px;padding:3px 6px;cursor:pointer;">
+            <option value="received" ${doc.status==='received'?'selected':''}>Received</option>
+            <option value="reviewed" ${doc.status==='reviewed'?'selected':''}>Reviewed</option>
+            <option value="approved" ${doc.status==='approved'?'selected':''}>Approved</option>
+            <option value="not_received" ${doc.status==='not_received'?'selected':''}>Missing</option>
+          </select>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function openDocViewer(docId) {
+  const doc = _allDocs.find(d => String(d.id) === String(docId));
+  if (!doc) return;
+  const modal = document.getElementById('doc-viewer-modal');
+  modal.style.display = 'flex';
+  document.getElementById('doc-viewer-name').textContent = doc.file_name;
+  const size = doc.file_size ? (doc.file_size > 1048576 ? (doc.file_size/1048576).toFixed(1)+' MB' : (doc.file_size/1024).toFixed(0)+' KB') : '';
+  document.getElementById('doc-viewer-meta').textContent = (doc.document_type||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) + (size?' · '+size:'');
+  const fileUrl = doc.file_url || `${window.APP_CONFIG.SUPABASE_URL}/storage/v1/object/public/borrower-documents/${doc.file_path}`;
+  document.getElementById('doc-viewer-download').href = fileUrl;
+  document.getElementById('doc-viewer-download').download = doc.file_name;
+  const body = document.getElementById('doc-viewer-body');
+  const ext = (doc.file_name||'').split('.').pop().toLowerCase();
+  if (['jpg','jpeg','png','gif','webp'].includes(ext)) {
+    body.innerHTML = `<img src="${fileUrl}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;">`;
+  } else if (ext === 'pdf') {
+    body.innerHTML = '<div style="color:rgba(255,255,255,0.4);text-align:center;">Loading PDF…</div>';
+    renderViewerPDF(fileUrl);
+  } else {
+    body.innerHTML = `<div style="text-align:center;color:rgba(255,255,255,0.5);"><div style="font-size:64px;margin-bottom:16px;">📎</div><p>${doc.file_name}</p><a href="${fileUrl}" download="${doc.file_name}" style="color:var(--gold);">Download to view</a></div>`;
+  }
+}
+
+async function renderViewerPDF(url) {
+  if (!window.pdfjsLib) {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; doRenderViewerPDF(url); };
+    document.head.appendChild(script);
+  } else { doRenderViewerPDF(url); }
+}
+
+async function doRenderViewerPDF(url) {
+  try {
+    const resp = await fetch(url);
+    const buffer = await resp.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument(new Uint8Array(buffer)).promise;
+    const body = document.getElementById('doc-viewer-body');
+    body.style.overflowY = 'auto';
+    body.style.padding = '16px';
+    body.innerHTML = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const vp = page.getViewport({ scale: 1.4 });
+      const canvas = document.createElement('canvas');
+      canvas.width = vp.width; canvas.height = vp.height;
+      canvas.style.cssText = 'width:100%;display:block;margin-bottom:12px;border-radius:6px;';
+      body.appendChild(canvas);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+    }
+  } catch(e) { document.getElementById('doc-viewer-body').innerHTML = '<div style="color:rgba(255,255,255,0.4);text-align:center;">Failed to render PDF</div>'; }
+}
+
+function closeDocViewer() {
+  document.getElementById('doc-viewer-modal').style.display = 'none';
+  document.getElementById('doc-viewer-body').innerHTML = '';
 }
 
 /* ── CREDIT APPS ── */
@@ -6019,19 +6292,40 @@ const OCR_FIELD_LABELS = {
 };
 
 const OCR_FIELD_MAP = {
-  first_name: 'f_first_name',
-  last_name: 'f_last_name',
-  middle_name: 'f_middle_name',
-  date_of_birth: 'f_dob',
-  ssn: 'f_ssn',
-  phone: 'f_cell_phone',
-  email: 'f_email',
-  employer_name: 'f_employer_name',
-  base_income: 'f_base_income',
-  current_address_street: 'f_current_street',
-  address_city: 'f_city',
-  address_state: 'f_state',
-  address_zip: 'f_zip',
+  first_name:               'f_first_name',
+  last_name:                'f_last_name',
+  middle_name:              'f_middle_name',
+  date_of_birth:            'f_dob',
+  dob:                      'f_dob',
+  ssn:                      'f_ssn',
+  social_security_number:   'f_ssn',
+  driver_license_number:    'f_dl_number',
+  dl_number:                'f_dl_number',
+  id_expiration_date:       'f_dl_expiry',
+  phone:                    'f_cell_phone',
+  email:                    'f_email',
+  current_address_street:   'f_current_street',
+  street_address:           'f_current_street',
+  address:                  'f_current_street',
+  unit:                     'f_current_unit',
+  city:                     'f_current_city',
+  current_address_city:     'f_current_city',
+  state:                    'f_current_state',
+  current_address_state:    'f_current_state',
+  zip:                      'f_current_zip',
+  zip_code:                 'f_current_zip',
+  current_address_zip:      'f_current_zip',
+  country:                  'f_current_country',
+  employer_name:            'current_emp_0_employer',
+  employer_phone:           'current_emp_0_phone',
+  employer_street:          'current_emp_0_street',
+  employer_city:            'current_emp_0_city',
+  employer_state:           'current_emp_0_state',
+  employer_zip:             'current_emp_0_zip',
+  position:                 'current_emp_0_title',
+  monthly_income:           'current_emp_0_base',
+  gross_monthly_income:     'current_emp_0_base',
+  base_income:              'current_emp_0_base',
 };
 
 const DOC_TYPE_LABELS = {
@@ -6346,7 +6640,18 @@ function applyOCRFields() {
     const fieldId = OCR_FIELD_MAP[key];
     if (fieldId) {
       const el = document.getElementById(fieldId);
-      if (el && val) { el.value = String(val); count++; }
+      if (el && val) {
+        // Handle date inputs — convert MM/DD/YYYY to YYYY-MM-DD
+        if (el.type === 'date' && String(val).match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+          const [m, d, y] = String(val).split('/');
+          el.value = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+        } else {
+          el.value = String(val);
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        count++;
+      }
     }
   });
   closeOCRModal();
