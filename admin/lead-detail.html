@@ -4359,8 +4359,7 @@ function toggleTheme() {
 
 /* ── NAVIGATION ── */
 function goBack() {
-  if (document.referrer) history.back();
-  else location.href = '/dashboard/admin.html';
+  window.location.href = '/admin/contacts.html';
 }
 
 /* ── CONTACT ACTIONS ── */
@@ -6622,10 +6621,21 @@ async function startOCR(file) {
     if (!data.job_id) throw new Error('No job ID returned');
     _ocrJobId = data.job_id;
 
+    // Hard timeout — force stop after 45 seconds no matter what
+    const hardTimeout = setTimeout(() => {
+      clearInterval(_ocrPollInterval);
+      const ov = document.getElementById('ocrScanOverlay');
+      if (ov) ov.remove();
+      const sb = document.getElementById('ocrScanBtn') || document.querySelector('#ocrModal button[onclick*="scan"], #ocrModal button[onclick*="Scan"]');
+      if (sb) { sb.disabled = false; sb.textContent = 'Scan'; }
+      document.querySelector('#ocrModal .ocr-subtitle, #ocrModal [id*="sub"]').textContent = 'Scan timed out — try again';
+    }, 45000);
+
     let polls = 0;
     _ocrPollInterval = setInterval(async () => {
       polls++;
       if (polls > 30) {
+        clearTimeout(hardTimeout);
         clearInterval(_ocrPollInterval);
         overlay.style.display = 'none';
         document.getElementById('ocrHeaderSub').textContent = 'Scan timed out — try again';
@@ -6645,6 +6655,7 @@ async function startOCR(file) {
         );
         const d = await r.json();
         if (d.status==='completed') {
+          clearTimeout(hardTimeout);
           clearInterval(_ocrPollInterval);
           overlay.style.display = 'none';
           _ocrFields = d.fields || {};
@@ -6689,6 +6700,7 @@ async function startOCR(file) {
           } catch(e) { console.warn('AI OCR cleanup skipped:', e); }
           renderOCRFields(_ocrFields, d.doc_type);
         } else if (d.status==='failed') {
+          clearTimeout(hardTimeout);
           clearInterval(_ocrPollInterval);
           overlay.style.display = 'none';
           document.getElementById('ocrHeaderSub').textContent = 'Scan failed: '+(d.error||'Unknown error');
