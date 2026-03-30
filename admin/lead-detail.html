@@ -2568,7 +2568,7 @@
         <div style="padding:22px 24px 16px; display:flex; justify-content:space-between; align-items:center;">
           <div class="ld-section-title" style="margin:0;border:none;padding:0;">Documents</div>
           <div style="display:flex;gap:8px;">
-            <button onclick="document.getElementById('ocrModal').style.display='flex'" style="padding:9px 18px;background:rgba(255,255,255,0.06);color:var(--gold);border:1px solid rgba(201,168,76,0.4);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">🔍 Scan → 1003</button>
+            <button onclick="openDocScanPicker()" style="padding:9px 18px;background:rgba(255,255,255,0.06);color:var(--gold);border:1px solid rgba(201,168,76,0.4);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">🔍 Scan → 1003</button>
             <button onclick="triggerDocFileInput()" style="padding:9px 18px;background:var(--gold);color:#000;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">+ Upload Document</button>
           </div>
         </div>
@@ -7045,6 +7045,210 @@ async function glSend() {
   btn.disabled = false;
   btn.textContent = '➤';
 }
+
+// ── Doc Scan Picker ──────────────────────────────────────────
+let _docScanSelected = new Set();
+let _docScanResults = {};
+
+async function openDocScanPicker() {
+  _docScanSelected.clear();
+  document.getElementById('docScanPickerModal').style.display = 'flex';
+  const list = document.getElementById('docScanPickerList');
+  list.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:rgba(255,255,255,0.3);">Loading documents…</div>';
+
+  const { data: docs } = await sb.from('uploaded_documents')
+    .select('*')
+    .eq('contact_id', contactId)
+    .order('uploaded_at', { ascending: false });
+
+  if (!docs?.length) {
+    list.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:rgba(255,255,255,0.3);">No documents uploaded yet</div>';
+    return;
+  }
+
+  const iconMap = { pdf:'📄', jpg:'🖼️', jpeg:'🖼️', png:'🖼️', docx:'📝' };
+  list.innerHTML = docs.map(doc => {
+    const ext = (doc.file_name||'').split('.').pop().toLowerCase();
+    const icon = iconMap[ext] || '📎';
+    const size = doc.file_size ? (doc.file_size > 1048576 ? (doc.file_size/1048576).toFixed(1)+' MB' : (doc.file_size/1024).toFixed(0)+' KB') : '';
+    const type = (doc.document_type||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+    return `
+      <div id="docpick_${doc.id}" onclick="toggleDocScanSelect('${doc.id}')"
+        data-file-url="${doc.file_url || ''}" data-file-name="${doc.file_name}" data-file-type="${ext}"
+        style="background:rgba(255,255,255,0.04);border:2px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .15s;text-align:center;">
+        <div style="font-size:36px;margin-bottom:8px;">${icon}</div>
+        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${doc.file_name}">${doc.file_name}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:4px;">${type}${size?' · '+size:''}</div>
+        <div style="margin-top:10px;width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);margin:10px auto 0;display:flex;align-items:center;justify-content:center;font-size:12px;" id="docpick_check_${doc.id}"></div>
+      </div>`;
+  }).join('');
+}
+
+function toggleDocScanSelect(docId) {
+  const el = document.getElementById('docpick_' + docId);
+  const check = document.getElementById('docpick_check_' + docId);
+  if (_docScanSelected.has(docId)) {
+    _docScanSelected.delete(docId);
+    el.style.border = '2px solid rgba(255,255,255,0.08)';
+    el.style.background = 'rgba(255,255,255,0.04)';
+    check.textContent = '';
+    check.style.background = '';
+    check.style.borderColor = 'rgba(255,255,255,0.2)';
+  } else {
+    _docScanSelected.add(docId);
+    el.style.border = '2px solid var(--gold)';
+    el.style.background = 'rgba(201,168,76,0.08)';
+    check.textContent = '✓';
+    check.style.background = 'var(--gold)';
+    check.style.color = '#000';
+    check.style.borderColor = 'var(--gold)';
+  }
+  const count = _docScanSelected.size;
+  document.getElementById('docScanPickerCount').textContent = count + ' selected';
+  const btn = document.getElementById('docScanStartBtn');
+  btn.disabled = count === 0;
+  btn.style.opacity = count > 0 ? '1' : '0.5';
+}
+
+function closeDocScanPicker() {
+  document.getElementById('docScanPickerModal').style.display = 'none';
+}
+
+async function scanSelectedDocs() {
+  if (_docScanSelected.size === 0) return;
+  closeDocScanPicker();
+
+  // Show loading
+  document.getElementById('docScanResultsModal').style.display = 'flex';
+  document.getElementById('docScanResultsSub').textContent = 'Scanning ' + _docScanSelected.size + ' document(s)…';
+  document.getElementById('docScanResultsList').innerHTML = '<div style="text-align:center;padding:40px;"><div style="font-size:32px;margin-bottom:12px;">⏳</div><div style="color:rgba(255,255,255,0.5);">AI is reading your documents…</div></div>';
+
+  _docScanResults = {};
+  const docs = [..._docScanSelected].map(id => {
+    const el = document.getElementById('docpick_' + id);
+    return { id, url: el?.dataset.fileUrl, name: el?.dataset.fileName, type: el?.dataset.fileType };
+  });
+
+  let allFields = {};
+  let scannedCount = 0;
+
+  for (const doc of docs) {
+    try {
+      document.getElementById('docScanResultsSub').textContent = `Scanning ${++scannedCount} of ${docs.length}: ${doc.name}…`;
+
+      // Fetch file and convert to base64
+      const resp = await fetch(doc.url);
+      const blob = await resp.blob();
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result.split(',')[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(blob);
+      });
+
+      // Call OCR edge function
+      const ocrResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/textract-ocr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
+        body: JSON.stringify({ action: 'start', file_base64: base64, file_name: doc.name, file_type: blob.type, contact_id: contactId })
+      });
+
+      if (ocrResp.ok) {
+        const ocrData = await ocrResp.json();
+        if (ocrData.fields) {
+          Object.keys(ocrData.fields).forEach(k => {
+            if (ocrData.fields[k] && !allFields[k]) allFields[k] = ocrData.fields[k];
+          });
+          _docScanResults[doc.name] = ocrData.fields;
+        }
+      }
+    } catch(e) { console.error('Scan error for', doc.name, e); }
+  }
+
+  // Show results
+  renderDocScanResults(allFields, docs.length);
+}
+
+function renderDocScanResults(allFields, docCount) {
+  const sub = document.getElementById('docScanResultsSub');
+  const list = document.getElementById('docScanResultsList');
+
+  const fieldEntries = Object.entries(allFields).filter(([k,v]) => v && !k.startsWith('_') && OCR_FIELD_LABELS[k]);
+  sub.textContent = `${fieldEntries.length} fields extracted from ${docCount} document(s)`;
+
+  if (!fieldEntries.length) {
+    list.innerHTML = '<div style="text-align:center;padding:40px;color:rgba(255,255,255,0.4);">No recognizable fields found in selected documents</div>';
+    return;
+  }
+
+  let html = '';
+
+  // Summary table of all fields
+  html += '<div style="margin-bottom:20px;">';
+  html += '<div style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">All Extracted Fields</div>';
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;">';
+
+  fieldEntries.forEach(([key, val]) => {
+    const label = OCR_FIELD_LABELS[key] || key;
+    const maps1003 = OCR_FIELD_MAP[key] ? true : false;
+    html += `
+      <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px;">
+        <input type="checkbox" id="dsr_${key}" checked style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;flex-shrink:0;">
+        <div style="min-width:0;">
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${label}</div>
+          <div style="font-size:14px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${String(val)}</div>
+        </div>
+        ${maps1003 ? '<div style="font-size:10px;color:rgba(201,168,76,0.6);padding:2px 6px;background:rgba(201,168,76,0.06);border-radius:4px;flex-shrink:0;">→ 1003</div>' : ''}
+      </div>`;
+  });
+
+  html += '</div></div>';
+
+  // Per-document breakdown
+  if (Object.keys(_docScanResults).length > 1) {
+    html += '<div style="margin-top:20px;border-top:1px solid rgba(255,255,255,0.06);padding-top:16px;">';
+    html += '<div style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Per Document</div>';
+    Object.entries(_docScanResults).forEach(([docName, fields]) => {
+      const count = Object.values(fields).filter(v => v).length;
+      html += `<div style="margin-bottom:8px;font-size:12px;color:rgba(255,255,255,0.4);">📄 ${docName} — ${count} fields</div>`;
+    });
+    html += '</div>';
+  }
+
+  list.innerHTML = html;
+  window._docScanAllFields = allFields;
+}
+
+function applyDocScanResults() {
+  if (!window._docScanAllFields) return;
+  let count = 0;
+  Object.entries(window._docScanAllFields).forEach(([key, val]) => {
+    const chk = document.getElementById('dsr_' + key);
+    if (!chk?.checked) return;
+    const fieldId = OCR_FIELD_MAP[key];
+    if (fieldId) {
+      const el = document.getElementById(fieldId);
+      if (el && val) {
+        if (el.type === 'date' && String(val).match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+          const [m, d, y] = String(val).split('/');
+          el.value = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+        } else { el.value = String(val); }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        count++;
+      }
+    }
+  });
+  closeDocScanResults();
+  // Switch to 1003 tab
+  const appTabBtn = document.getElementById('tab-btn-application');
+  if (appTabBtn) switchTab('application', appTabBtn);
+  if (typeof toast === 'function') toast('Applied ' + count + ' fields to 1003 Application');
+}
+
+function closeDocScanResults() {
+  document.getElementById('docScanResultsModal').style.display = 'none';
+  window._docScanAllFields = null;
+}
   </script>
 
 <!-- OCR Scan Modal -->
@@ -7262,6 +7466,52 @@ async function glSend() {
 
 <input type="file" id="ocrFileInput" accept=".pdf,.jpg,.jpeg,.png"
   style="display:none" onchange="previewOCRFile(this.files[0])">
+
+<div id="docScanPickerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border-radius:16px;width:92vw;max-width:1100px;max-height:88vh;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.1);overflow:hidden;">
+
+    <!-- Header -->
+    <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:17px;font-weight:700;">📄 Select Documents to Scan</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;">Select one or more documents — AI will extract all fields and show combined results</div>
+      </div>
+      <button onclick="closeDocScanPicker()" style="background:rgba(255,255,255,0.06);border:none;border-radius:8px;color:#fff;padding:8px 14px;cursor:pointer;font-size:13px;">✕ Close</button>
+    </div>
+
+    <!-- Doc grid -->
+    <div id="docScanPickerList" style="flex:1;overflow-y:auto;padding:20px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;">
+      <div style="grid-column:1/-1;text-align:center;padding:40px;color:rgba(255,255,255,0.3);">Loading documents…</div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:16px 24px;border-top:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;">
+      <div id="docScanPickerCount" style="font-size:13px;color:rgba(255,255,255,0.4);">0 selected</div>
+      <div style="display:flex;gap:10px;">
+        <button onclick="closeDocScanPicker()" style="padding:9px 18px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;cursor:pointer;font-size:13px;">Cancel</button>
+        <button onclick="scanSelectedDocs()" id="docScanStartBtn" disabled style="padding:9px 20px;background:var(--gold);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px;opacity:0.5;">🔍 Scan Selected</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scan Results Modal -->
+<div id="docScanResultsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10000;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border-radius:16px;width:92vw;max-width:900px;max-height:88vh;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.1);overflow:hidden;">
+    <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:17px;font-weight:700;">✨ Extracted Fields</div>
+        <div id="docScanResultsSub" style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;"></div>
+      </div>
+      <button onclick="closeDocScanResults()" style="background:rgba(255,255,255,0.06);border:none;border-radius:8px;color:#fff;padding:8px 14px;cursor:pointer;font-size:13px;">✕ Close</button>
+    </div>
+    <div id="docScanResultsList" style="flex:1;overflow-y:auto;padding:20px 24px;"></div>
+    <div style="padding:16px 24px;border-top:1px solid rgba(255,255,255,0.08);display:flex;justify-content:flex-end;gap:10px;">
+      <button onclick="closeDocScanResults()" style="padding:9px 18px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;cursor:pointer;font-size:13px;">Cancel</button>
+      <button onclick="applyDocScanResults()" style="padding:9px 20px;background:var(--gold);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px;">Apply to 1003</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
