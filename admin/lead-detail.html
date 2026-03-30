@@ -6622,6 +6622,36 @@ async function startOCR(file) {
       const overlay = document.getElementById('ocrScanOverlay');
       if (overlay) overlay.remove();
       _ocrFields = data.fields || {};
+
+      // Auto-save scanned document to Documents tab
+      if (_selectedOCRFile && contactId) {
+        try {
+          const ts = Date.now();
+          const safeName = _selectedOCRFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const docType = 'gov_id';
+          const path = `${contactId}/${docType}/${ts}_${safeName}`;
+          const { error: uploadError } = await sb.storage
+            .from('borrower-documents')
+            .upload(path, _selectedOCRFile, { upsert: true });
+          if (!uploadError) {
+            const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
+            await sb.from('uploaded_documents').insert({
+              contact_id: contactId || null,
+              lead_id: leadId || null,
+              document_type: docType,
+              type: docType,
+              file_name: _selectedOCRFile.name,
+              file_path: path,
+              file_url: urlData.publicUrl,
+              status: 'received',
+              file_size: _selectedOCRFile.size,
+              uploaded_at: new Date().toISOString()
+            });
+            console.log('Scanned doc auto-saved to Documents tab');
+          }
+        } catch(e) { console.warn('Auto-save scanned doc failed:', e); }
+      }
+
       console.log('Final OCR fields before render:', JSON.stringify(_ocrFields));
       renderOCRFields(_ocrFields, data.doc_type || "Driver's License");
       return;
