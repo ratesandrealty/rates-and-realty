@@ -1689,6 +1689,7 @@
             cursor:pointer; transition:all 0.2s; white-space:nowrap;">
             Scan Doc → Auto-fill
           </button>
+          <span id="autoSaveIndicator" style="font-size:11px;color:rgba(255,255,255,0.4);opacity:0;transition:opacity 0.3s;margin-right:12px;"></span>
           <button class="ld-btn-save" onclick="save1003()">Save Application</button>
           <button class="ld-btn-cancel" onclick="exportMISMO()" style="border-color:var(--gold-bdr);color:var(--gold);">Export MISMO 3.4</button>
         </div>
@@ -3011,6 +3012,7 @@ let leadData = {};
 let notesData = [];
 let tasksData = [];
 let liabilitiesData = [];
+let _autoSaveTimer = null;
 
 /* ── URL PARAMS ── */
 const params = new URLSearchParams(location.search);
@@ -5044,6 +5046,31 @@ function toggleMilitary(show) {
   document.getElementById('military-details').style.display = show ? 'block' : 'none';
 }
 
+/* ── AUTO-SAVE ── */
+function triggerAutoSave() {
+  if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+  const ind = document.getElementById('autoSaveIndicator');
+  if (ind) { ind.textContent = '⏳ Saving...'; ind.style.opacity = '1'; ind.style.color = 'rgba(255,255,255,0.4)'; }
+  _autoSaveTimer = setTimeout(async () => {
+    await save1003();
+    const ind2 = document.getElementById('autoSaveIndicator');
+    if (ind2) {
+      ind2.textContent = '✓ Saved';
+      ind2.style.color = 'rgba(80,200,120,0.8)';
+      setTimeout(() => { ind2.style.opacity = '0'; }, 2000);
+    }
+  }, 2000);
+}
+
+function attachAutoSave() {
+  const panel = document.getElementById('tab-application');
+  if (!panel) return;
+  panel.querySelectorAll('input, select, textarea').forEach(el => {
+    const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
+    el.addEventListener(evt, triggerAutoSave);
+  });
+}
+
 /* ── 1003 — SAVE TO SUPABASE ── */
 async function save1003() {
   const cid = getContactId();
@@ -5354,6 +5381,9 @@ async function load1003() {
     if (data.co_borrower_decl_federal) sr('cb_federal', 'yes');
     if (data.co_borrower_decl_foreclosure) sr('cb_foreclosure', 'yes');
     if (data.co_borrower_decl_bankruptcy) sr('cb_bankruptcy', 'yes');
+
+    // Attach auto-save after fields are populated
+    attachAutoSave();
   } catch (err) {
     console.warn('load1003:', err.message);
   }
@@ -6203,7 +6233,6 @@ async function recalculateScore() {
     if (leadId) {
       const tier = score >= 80 ? 'hot' : score >= 50 ? 'warm' : 'cold';
       await sb.from('leads').update({ score, score_tier: tier }).eq('id', leadId).catch(()=>{});
-      if (contactId) await sb.from('contacts').update({ lead_score: score, score_tier: tier }).eq('id', contactId).catch(()=>{});
       leadData.score = score;
       leadData.score_tier = tier;
       setVal('f-score', score);
