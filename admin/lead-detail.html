@@ -1100,9 +1100,11 @@
     </svg>
     Back
   </button>
+  <a href="pipeline.html" class="ab-back" style="text-decoration:none;">🏁 Pipeline</a>
   <div class="ab-name" id="topbar-name">Loading…</div>
   <span class="ld-status-badge sb-new" id="topbar-status">New Lead</span>
   <span class="ld-score-tier-badge" id="topbar-score-tier" style="display:none;"></span>
+  <div id="pipelineStageBar" style="display:flex;align-items:center;gap:0;margin-left:12px;flex-wrap:nowrap;"></div>
   <div class="ab-divider"></div>
   <div class="ab-controls">
     <select class="ab-select" id="select-status" onchange="updateStatus(this.value)">
@@ -3092,6 +3094,7 @@ function populateUI() {
   // Top bar
   document.getElementById('topbar-name').textContent = name;
   setStatusBadge(leadData.status || 'new');
+  renderPipelineStage(leadData.status || 'new');
 
   // Score card
   renderScoreCard(leadData, contactData);
@@ -4463,6 +4466,43 @@ function setStatusBadge(status) {
   el.textContent = labels[status] || status;
   el.className = 'ld-status-badge sb-' + (status || 'new');
   setSelectVal('select-status', status);
+}
+
+/* ── PIPELINE STAGE INDICATOR ── */
+function renderPipelineStage(currentStatus) {
+  const bar = document.getElementById('pipelineStageBar');
+  if (!bar) return;
+
+  const stages = [
+    { id: 'new', label: 'New', statuses: ['new','new lead'] },
+    { id: 'contacted', label: 'Contacted', statuses: ['contacted'] },
+    { id: 'qualified', label: 'Qualified', statuses: ['qualified','pre-qualified','prequalified'] },
+    { id: 'application', label: 'Application', statuses: ['application','applied'] },
+    { id: 'processing', label: 'Processing', statuses: ['processing','underwriting','submitted','in_process','in_escrow'] },
+    { id: 'closed', label: 'Closed', statuses: ['closed','closed won','funded'] },
+  ];
+
+  const current = (currentStatus || '').toLowerCase().trim();
+  let activeIdx = stages.findIndex(s => s.statuses.includes(current));
+  if (activeIdx === -1) activeIdx = 0;
+
+  bar.innerHTML = stages.map((stage, idx) => {
+    const isPast = idx < activeIdx;
+    const isActive = idx === activeIdx;
+    const bg = isActive ? 'rgba(201,168,76,0.9)' : isPast ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.05)';
+    const color = isActive ? '#000' : isPast ? 'rgba(201,168,76,0.8)' : 'rgba(255,255,255,0.25)';
+    const fw = isActive ? '700' : '500';
+    const borderR = idx === stages.length - 1 ? '20px' : '0';
+    const borderL = idx === 0 ? '20px' : '0';
+    return `<a href="pipeline.html" title="View Pipeline" style="
+      padding:4px 10px; background:${bg}; color:${color};
+      font-size:10px; font-weight:${fw}; text-decoration:none;
+      border-radius:${borderL} ${borderR} ${borderR} ${borderL};
+      border-right:${idx < stages.length-1 ? '1px solid rgba(0,0,0,0.2)' : 'none'};
+      white-space:nowrap; transition:all .15s;
+      display:flex;align-items:center;gap:4px;
+    ">${isActive ? '● ' : ''}${stage.label}</a>`;
+  }).join('');
 }
 
 /* ── HELPERS ── */
