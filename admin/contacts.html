@@ -1220,7 +1220,7 @@ function closeCSVImport() {
 }
 
 function downloadCSVTemplate() {
-  const template = 'first_name,last_name,email,phone,source,status,notes\nJohn,Smith,john@email.com,714-555-1234,Referral,New Lead,Interested in FHA loan\nJane,Doe,jane@email.com,949-555-5678,Website,Qualified,Pre-approval request';
+  const template = 'first_name,last_name,email,phone,source,status,notes,company,address,city,state,zip,loan_type,loan_amount,credit_score,tags\nJohn,Smith,john@email.com,714-555-1234,Referral,New Lead,Interested in FHA,Smith LLC,123 Main St,Garden Grove,CA,92840,FHA,450000,680,first-time buyer;referral\nJane,Doe,jane@email.com,949-555-5678,Website,Qualified,,,,,,Conventional,650000,720,';
   const blob = new Blob([template], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = 'contacts_import_template.csv'; a.click();
@@ -1250,7 +1250,15 @@ function parseCSV(text) {
     'email':'email','email_address':'email',
     'phone':'phone','phone_number':'phone','cell':'phone','mobile':'phone',
     'source':'source','lead_source':'source',
-    'status':'status','notes':'notes','note':'notes'
+    'status':'status','notes':'notes','note':'notes',
+    'company':'company','business':'company',
+    'address':'address','street':'address','street_address':'address',
+    'city':'city','state':'state',
+    'zip':'zip','zip_code':'zip','postal_code':'zip',
+    'loan_type':'loan_type','loantype':'loan_type',
+    'loan_amount':'loan_amount','loanamount':'loan_amount',
+    'credit_score':'credit_score','fico':'credit_score','credit':'credit_score',
+    'tags':'tags','tag':'tags'
   };
   const rawHeaders = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase().replace(/ /g,'_'));
   const mapped = rawHeaders.map(h => fieldMap[h] || h);
@@ -1270,7 +1278,7 @@ function parseCSV(text) {
   document.getElementById('csvPreviewStats').textContent = `✓ ${_csvParsedData.length} contacts ready${warnings.length ? ` (${warnings.length} skipped)` : ''}`;
   document.getElementById('csvWarnings').textContent = warnings.slice(0,3).join(' | ');
 
-  const cols = ['first_name','last_name','email','phone','source','status'];
+  const cols = ['first_name','last_name','email','phone','source','status','loan_type','credit_score','tags'];
   document.getElementById('csvPreviewTable').innerHTML =
     `<tr style="background:rgba(255,255,255,0.06)">${cols.map(c=>`<th style="padding:8px 10px;text-align:left;color:rgba(255,255,255,0.5);font-size:11px;text-transform:uppercase">${c}</th>`).join('')}</tr>` +
     _csvParsedData.slice(0,8).map(r=>`<tr style="border-top:1px solid rgba(255,255,255,0.04)">${cols.map(c=>`<td style="padding:7px 10px;color:rgba(255,255,255,0.8)">${r[c]||''}</td>`).join('')}</tr>`).join('');
@@ -1289,20 +1297,59 @@ async function importCSVContacts() {
 
   for (const row of _csvParsedData) {
     try {
-      const { error } = await sb.from('contacts').upsert({
-        first_name: row.first_name || '',
-        last_name: row.last_name || '',
-        email: row.email || null,
-        phone: row.phone || null,
-        source: row.source || 'CSV Import',
+      const contactData = {
+        first_name: row.first_name || row.firstname || row.fname || '',
+        last_name: row.last_name || row.lastname || row.lname || '',
+        email: row.email || row.email_address || null,
+        phone: row.phone || row.phone_number || row.cell || row.mobile || null,
+        source: row.source || row.lead_source || 'CSV Import',
         status: row.status || 'New Lead',
-        notes: row.notes || null,
+        notes: row.notes || row.note || null,
+        company: row.company || null,
+        address: row.address || row.street || null,
+        city: row.city || null,
+        state: row.state || null,
+        zip: row.zip || row.zip_code || row.postal_code || null,
+        loan_type: row.loan_type || null,
+        loan_amount: row.loan_amount ? parseFloat(String(row.loan_amount).replace(/[$,]/g,'')) : null,
+        credit_score: row.credit_score ? parseInt(row.credit_score) : null,
+        tags: row.tags ? row.tags.split(';').map(t => t.trim()).filter(Boolean) : null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
-      }, { onConflict: 'email', ignoreDuplicates: false });
+      };
+      const { error } = await sb.from('contacts').upsert(contactData, { onConflict: 'email', ignoreDuplicates: false });
       if (error) errors++; else imported++;
     } catch { errors++; }
     status.textContent = `Importing ${imported + errors} of ${_csvParsedData.length}…`;
+  }
+
+  // Auto-create leads for imported contacts
+  if (imported > 0) {
+    status.textContent = `Creating leads for ${imported} contacts…`;
+    try {
+      const emails = _csvParsedData.filter(r => r.email).map(r => r.email);
+      if (emails.length) {
+        const { data: newContacts } = await sb.from('contacts')
+          .select('id,status,source,loan_type')
+          .in('email', emails);
+
+        for (const contact of (newContacts || [])) {
+          const { data: existingLead } = await sb.from('leads')
+            .select('id').eq('contact_id', contact.id).single();
+
+          if (!existingLead) {
+            await sb.from('leads').insert({
+              contact_id: contact.id,
+              status: contact.status || 'New Lead',
+              source: contact.source || 'CSV Import',
+              loan_type: contact.loan_type || null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            });
+          }
+        }
+      }
+    } catch(e) { console.warn('Lead sync error:', e); }
   }
 
   status.textContent = `✓ ${imported} imported${errors ? `, ${errors} errors` : ''}`;
