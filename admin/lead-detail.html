@@ -6576,7 +6576,10 @@ async function startOCR(file) {
       'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
       {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
+        },
         body: JSON.stringify({
           action: 'start',
           file_base64: base64,
@@ -6587,7 +6590,8 @@ async function startOCR(file) {
       }
     );
     const data = await resp.json();
-    if (!data.success) throw new Error(data.error || 'Failed to start OCR');
+    if (data.error) throw new Error(data.error);
+    if (!data.job_id) throw new Error('Failed to start OCR — no job_id returned');
     _ocrJobId = data.job_id;
 
     let polls = 0;
@@ -6604,7 +6608,10 @@ async function startOCR(file) {
           'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
           {
             method: 'POST',
-            headers: {'Content-Type':'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
+            },
             body: JSON.stringify({action:'result', job_id:_ocrJobId})
           }
         );
