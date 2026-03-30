@@ -6437,7 +6437,7 @@ function openOCRUpload() {
 
 function closeOCRModal() {
   document.getElementById('ocrModal').style.display = 'none';
-  if (_ocrPollInterval) clearInterval(_ocrPollInterval);
+  if (window._ocrPollTimer) clearInterval(window._ocrPollTimer);
   document.body.style.overflow = '';
 }
 
@@ -6534,7 +6534,7 @@ function clearOCRFile() {
   _selectedOCRFile = null;
   _ocrJobId = null;
   _ocrFields = {};
-  if (_ocrPollInterval) clearInterval(_ocrPollInterval);
+  if (window._ocrPollTimer) clearInterval(window._ocrPollTimer);
 
   document.getElementById('ocrEmptyState').style.display = 'flex';
   document.getElementById('ocrImagePreview').style.display = 'none';
@@ -6591,30 +6591,14 @@ async function startOCR(file) {
     const data = await resp.json();
     if (data.error) throw new Error(data.error);
 
-    // If sync response already has fields (new behavior), skip polling
-    if (data.status === 'completed' && data.fields) {
-      clearInterval(pollTimer);
-      document.getElementById('ocrScanOverlay')?.remove();
+    // Handle synchronous response — fields returned immediately
+    if (data.status === 'completed' && data.fields && Object.keys(data.fields).length > 0) {
+      clearInterval(window._ocrPollTimer);
+      clearTimeout(window._ocrHardTimeout);
+      const overlay = document.getElementById('ocrScanOverlay');
+      if (overlay) overlay.remove();
       _ocrFields = data.fields || {};
-      // Claude AI cleanup
-      try {
-        const cleanResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/ai-chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
-          body: JSON.stringify({
-            message: `Fix these OCR fields from a ${data.doc_type || 'document'}. Return ONLY raw JSON same keys corrected values. Fields: ${JSON.stringify(_ocrFields)}`,
-            session_id: 'ocr-' + Date.now(),
-            mode: 'ocr_cleanup'
-          })
-        });
-        if (cleanResp.ok) {
-          const cleanData = await cleanResp.json();
-          const rawText = cleanData.reply || cleanData.message || '';
-          const m = rawText.match(/\{[\s\S]*\}/);
-          if (m) { const c = JSON.parse(m[0]); if (c) _ocrFields = {..._ocrFields, ...c}; }
-        }
-      } catch(e) { console.warn('AI cleanup skipped:', e); }
-      renderOCRFields(_ocrFields, data.doc_type || 'Document');
+      renderOCRFields(_ocrFields, data.doc_type || "Driver's License");
       return;
     }
 
@@ -6622,8 +6606,8 @@ async function startOCR(file) {
     _ocrJobId = data.job_id;
 
     // Hard timeout — force stop after 45 seconds no matter what
-    const hardTimeout = setTimeout(() => {
-      clearInterval(_ocrPollInterval);
+    window._ocrHardTimeout = setTimeout(() => {
+      clearInterval(window._ocrPollTimer);
       const ov = document.getElementById('ocrScanOverlay');
       if (ov) ov.remove();
       const sb = document.getElementById('ocrScanBtn') || document.querySelector('#ocrModal button[onclick*="scan"], #ocrModal button[onclick*="Scan"]');
@@ -6632,11 +6616,11 @@ async function startOCR(file) {
     }, 45000);
 
     let polls = 0;
-    _ocrPollInterval = setInterval(async () => {
+    window._ocrPollTimer = setInterval(async () => {
       polls++;
       if (polls > 30) {
-        clearTimeout(hardTimeout);
-        clearInterval(_ocrPollInterval);
+        clearTimeout(window._ocrHardTimeout);
+        clearInterval(window._ocrPollTimer);
         overlay.style.display = 'none';
         document.getElementById('ocrHeaderSub').textContent = 'Scan timed out — try again';
         return;
@@ -6655,8 +6639,8 @@ async function startOCR(file) {
         );
         const d = await r.json();
         if (d.status==='completed') {
-          clearTimeout(hardTimeout);
-          clearInterval(_ocrPollInterval);
+          clearTimeout(window._ocrHardTimeout);
+          clearInterval(window._ocrPollTimer);
           overlay.style.display = 'none';
           _ocrFields = d.fields || {};
           // Claude AI cleanup — fix garbled OCR text via edge function
@@ -6700,8 +6684,8 @@ async function startOCR(file) {
           } catch(e) { console.warn('AI OCR cleanup skipped:', e); }
           renderOCRFields(_ocrFields, d.doc_type);
         } else if (d.status==='failed') {
-          clearTimeout(hardTimeout);
-          clearInterval(_ocrPollInterval);
+          clearTimeout(window._ocrHardTimeout);
+          clearInterval(window._ocrPollTimer);
           overlay.style.display = 'none';
           document.getElementById('ocrHeaderSub').textContent = 'Scan failed: '+(d.error||'Unknown error');
         }
