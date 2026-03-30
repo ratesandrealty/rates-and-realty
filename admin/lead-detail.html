@@ -3717,8 +3717,18 @@ async function renderViewerPDF(url) {
 
 async function doRenderViewerPDF(url) {
   try {
-    const resp = await fetch(url);
-    const buffer = await resp.arrayBuffer();
+    // Try fetching with auth header first
+    let buffer;
+    try {
+      const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${window.APP_CONFIG?.SUPABASE_ANON_KEY || ''}` } });
+      if (resp.ok) { buffer = await resp.arrayBuffer(); }
+    } catch(e) {}
+    // Fallback: try without auth
+    if (!buffer) {
+      const resp2 = await fetch(url);
+      if (!resp2.ok) throw new Error('HTTP ' + resp2.status);
+      buffer = await resp2.arrayBuffer();
+    }
     const pdf = await pdfjsLib.getDocument(new Uint8Array(buffer)).promise;
     const body = document.getElementById('doc-viewer-body');
     body.style.overflowY = 'auto';
