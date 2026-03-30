@@ -1475,6 +1475,7 @@
       <button class="ld-tab-btn active" onclick="switchTab('lead-details', this)">Lead Details</button>
       <button class="ld-tab-btn" onclick="switchTab('application', this)" id="tab-btn-application">1003 Application</button>
       <button class="ld-tab-btn" onclick="switchTab('guidelines', this)">Guidelines</button>
+      <button class="ld-tab-btn" onclick="switchTab('lenders', this)">Lenders</button>
       <button class="ld-tab-btn" onclick="switchTab('documents', this)">Documents</button>
       <button class="ld-tab-btn" onclick="switchTab('tasks', this)">Tasks</button>
       <button class="ld-tab-btn" onclick="switchTab('contact-log', this)">Contact Log</button>
@@ -2949,6 +2950,46 @@
 
     </div><!-- /tab-guidelines -->
 
+    <!-- ═══════════════════════════════════════════
+         TAB: LENDERS
+    ═══════════════════════════════════════════ -->
+    <div class="ld-tab-panel" id="tab-lenders" style="display:none;">
+      <!-- Header -->
+      <div style="padding:20px 0 16px; display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px;font-weight:700;">Lender Matching</div>
+          <div id="lender-match-sub" style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;">Loading matches based on borrower profile…</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <select id="lender-type-filter" onchange="filterLenders()" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;padding:8px 12px;font-size:13px;cursor:pointer;">
+            <option value="">All Types</option>
+            <option value="conventional">Conventional</option>
+            <option value="government">FHA/VA/USDA</option>
+            <option value="non_qm">Non-QM</option>
+            <option value="commercial">Commercial</option>
+          </select>
+          <button onclick="loadLenderMatches()" style="padding:9px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:13px;cursor:pointer;">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <!-- Borrower profile summary bar -->
+      <div id="lender-borrower-bar" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 20px;margin-bottom:16px;display:flex;gap:24px;flex-wrap:wrap;">
+        <div><div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;">Credit Score</div><div id="lb-credit" style="font-size:15px;font-weight:700;margin-top:2px;">—</div></div>
+        <div><div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;">Loan Amount</div><div id="lb-amount" style="font-size:15px;font-weight:700;margin-top:2px;">—</div></div>
+        <div><div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;">Loan Type</div><div id="lb-type" style="font-size:15px;font-weight:700;margin-top:2px;">—</div></div>
+        <div><div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;">LTV</div><div id="lb-ltv" style="font-size:15px;font-weight:700;margin-top:2px;">—</div></div>
+        <div style="margin-left:auto;display:flex;align-items:center;"><span id="lb-match-count" style="background:rgba(201,168,76,0.15);color:var(--gold);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;"></span></div>
+      </div>
+
+      <!-- Lender cards grid -->
+      <div id="lender-matches-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;">
+        <div style="grid-column:1/-1;text-align:center;padding:48px;color:rgba(255,255,255,0.3);">
+          <div style="font-size:40px;margin-bottom:8px;">🏦</div>
+          <div>Loading lenders…</div>
+        </div>
+      </div>
+    </div><!-- /tab-lenders -->
+
   </main>
 </div><!-- /ld-body -->
 
@@ -4175,6 +4216,7 @@ function switchTab(name, btn) {
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
   if (name === 'application') load1003();
+  if (name === 'lenders') loadLenderMatches();
   if (name === 'documents') loadDocumentsGrid();
   if (name === 'mismo') loadMISMOHistory();
 }
@@ -7248,6 +7290,163 @@ function applyDocScanResults() {
 function closeDocScanResults() {
   document.getElementById('docScanResultsModal').style.display = 'none';
   window._docScanAllFields = null;
+}
+
+// ── Lenders Tab ────────────────────────────────────────────────
+let _allLenders = [];
+let _lenderSubmissions = {};
+
+async function loadLenderMatches() {
+  const grid = document.getElementById('lender-matches-grid');
+  const sub = document.getElementById('lender-match-sub');
+  if (!grid) return;
+
+  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:rgba(255,255,255,0.3);"><div style="font-size:32px;margin-bottom:8px;">⏳</div>Loading lenders…</div>';
+
+  // Get borrower profile from 1003 fields
+  const creditScore = parseInt(document.getElementById('f_credit_score')?.value || document.getElementById('f-score')?.value || '0');
+  const loanAmount = parseFloat(document.getElementById('f_loan_amount')?.value || '0');
+  const loanType = document.getElementById('f_loan_type_app')?.value || '';
+  const propValue = parseFloat(document.getElementById('f_prop_value')?.value || '0');
+  const ltv = propValue > 0 && loanAmount > 0 ? ((loanAmount / propValue) * 100).toFixed(1) : null;
+
+  // Update borrower bar
+  document.getElementById('lb-credit').textContent = creditScore || '—';
+  document.getElementById('lb-amount').textContent = loanAmount ? '$' + loanAmount.toLocaleString() : '—';
+  document.getElementById('lb-type').textContent = loanType || '—';
+  document.getElementById('lb-ltv').textContent = ltv ? ltv + '%' : '—';
+
+  // Fetch all active lenders
+  const { data: lenders } = await sb.from('lenders').select('*').eq('is_active', true).order('priority', { ascending: false });
+  _allLenders = lenders || [];
+
+  // Fetch existing submissions for this lead
+  if (leadId) {
+    const { data: subs } = await sb.from('lead_lender_submissions').select('*').eq('lead_id', leadId);
+    _lenderSubmissions = {};
+    (subs || []).forEach(s => _lenderSubmissions[s.lender_id] = s);
+  }
+
+  // Smart filter — score each lender
+  const scored = _allLenders.map(l => {
+    let score = 0;
+    let qualifies = true;
+    if (creditScore > 0 && l.min_credit_score && creditScore < l.min_credit_score) qualifies = false;
+    if (loanAmount > 0 && l.max_loan_amount && loanAmount > l.max_loan_amount) qualifies = false;
+    if (loanAmount > 0 && l.min_loan_amount && loanAmount < l.min_loan_amount) qualifies = false;
+    if (ltv && l.max_ltv && parseFloat(ltv) > l.max_ltv) qualifies = false;
+    if (qualifies) score += 50;
+    if (l.priority === 'high') score += 20;
+    if (l.priority === 'preferred') score += 30;
+    return { ...l, _score: score, _qualifies: qualifies };
+  }).sort((a, b) => b._score - a._score);
+
+  _allLenders = scored;
+  const qualCount = scored.filter(l => l._qualifies).length;
+  document.getElementById('lb-match-count').textContent = qualCount + ' lenders match';
+  sub.textContent = qualCount + ' of ' + scored.length + ' lenders qualify for this borrower';
+
+  renderLenderGrid(scored);
+}
+
+function filterLenders() {
+  const type = document.getElementById('lender-type-filter').value;
+  const filtered = type ? _allLenders.filter(l => l.lender_type === type) : _allLenders;
+  renderLenderGrid(filtered);
+}
+
+function renderLenderGrid(lenders) {
+  const grid = document.getElementById('lender-matches-grid');
+  if (!lenders.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:rgba(255,255,255,0.3);">No lenders found</div>';
+    return;
+  }
+
+  const statusColors = { not_submitted:'rgba(255,255,255,0.2)', submitted:'rgba(100,160,255,0.8)', approved:'rgba(80,200,120,0.9)', declined:'rgba(255,80,80,0.8)', on_hold:'rgba(255,180,0,0.8)', conditional:'rgba(200,140,255,0.8)' };
+  const typeColors = { conventional:'rgba(100,180,255,0.15)', government:'rgba(80,200,120,0.15)', non_qm:'rgba(200,140,255,0.15)', commercial:'rgba(255,160,50,0.15)' };
+
+  grid.innerHTML = lenders.map(l => {
+    const sub = _lenderSubmissions[l.id];
+    const status = sub?.status || 'not_submitted';
+    const statusColor = statusColors[status] || statusColors.not_submitted;
+    const typeColor = typeColors[l.lender_type] || 'rgba(255,255,255,0.05)';
+    const programs = (l.programs || []).slice(0,3).join(', ');
+    const matchBorder = l._qualifies ? '1px solid rgba(201,168,76,0.3)' : '1px solid rgba(255,255,255,0.06)';
+    const contactName = l.rep_name || l.contact_name || '';
+    const contactPhone = l.rep_phone || l.contact_phone || '';
+    const contactEmail = l.rep_email || l.contact_email || '';
+
+    return `
+      <div style="background:rgba(255,255,255,0.03);border:${matchBorder};border-radius:14px;padding:18px;transition:all .2s;${!l._qualifies?'opacity:0.55':''}"
+        onmouseenter="this.style.background='rgba(255,255,255,0.06)'"
+        onmouseleave="this.style.background='rgba(255,255,255,0.03)'">
+
+        <!-- Header row -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
+          <div>
+            <div style="font-size:15px;font-weight:700;">${l.name}</div>
+            <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;">
+              <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${typeColor};font-weight:600;text-transform:uppercase;letter-spacing:0.4px;">${(l.lender_type||'').replace('_',' ')}</span>
+              ${l._qualifies ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(201,168,76,0.15);color:var(--gold);font-weight:600;">✓ Qualifies</span>' : '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.4);font-weight:600;">✗ Outside criteria</span>'}
+            </div>
+          </div>
+          <select onchange="updateLenderStatus('${l.id}', this.value)" style="background:#1a1a1a;border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;padding:5px 8px;font-size:11px;cursor:pointer;-webkit-appearance:none;">
+            <option value="not_submitted" ${status==='not_submitted'?'selected':''}>Not Submitted</option>
+            <option value="submitted" ${status==='submitted'?'selected':''}>Submitted</option>
+            <option value="approved" ${status==='approved'?'selected':''}>Approved ✓</option>
+            <option value="conditional" ${status==='conditional'?'selected':''}>Conditional</option>
+            <option value="declined" ${status==='declined'?'selected':''}>Declined ✗</option>
+            <option value="on_hold" ${status==='on_hold'?'selected':''}>On Hold</option>
+          </select>
+        </div>
+
+        <!-- Loan criteria -->
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">
+          ${l.min_credit_score ? `<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:8px;text-align:center;"><div style="font-size:10px;color:rgba(255,255,255,0.4);">Min FICO</div><div style="font-size:13px;font-weight:700;">${l.min_credit_score}</div></div>` : ''}
+          ${l.max_ltv ? `<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:8px;text-align:center;"><div style="font-size:10px;color:rgba(255,255,255,0.4);">Max LTV</div><div style="font-size:13px;font-weight:700;">${l.max_ltv}%</div></div>` : ''}
+          ${l.max_loan_amount ? `<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:8px;text-align:center;"><div style="font-size:10px;color:rgba(255,255,255,0.4);">Max Loan</div><div style="font-size:13px;font-weight:700;">$${(l.max_loan_amount/1000).toFixed(0)}K</div></div>` : ''}
+        </div>
+
+        <!-- Programs -->
+        ${programs ? `<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:10px;">${programs}</div>` : ''}
+
+        <!-- Contact + actions -->
+        <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:10px;display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:12px;color:rgba(255,255,255,0.5);">${contactName}</div>
+          <div style="display:flex;gap:6px;">
+            ${contactPhone ? `<a href="tel:${contactPhone}" title="${contactPhone}" style="padding:5px 10px;background:rgba(255,255,255,0.06);border-radius:6px;color:#fff;text-decoration:none;font-size:12px;">📞</a>` : ''}
+            ${contactEmail ? `<a href="mailto:${contactEmail}" title="${contactEmail}" style="padding:5px 10px;background:rgba(255,255,255,0.06);border-radius:6px;color:#fff;text-decoration:none;font-size:12px;">✉️</a>` : ''}
+            ${l.website ? `<a href="${l.website}" target="_blank" style="padding:5px 10px;background:rgba(255,255,255,0.06);border-radius:6px;color:#fff;text-decoration:none;font-size:12px;">🌐</a>` : ''}
+            ${l.clickup_url ? `<a href="${l.clickup_url}" target="_blank" title="View in ClickUp" style="padding:5px 10px;background:rgba(255,255,255,0.06);border-radius:6px;color:#fff;text-decoration:none;font-size:12px;">📋</a>` : ''}
+          </div>
+        </div>
+
+        <!-- Notes if submitted -->
+        ${sub?.notes ? `<div style="margin-top:8px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;font-size:11px;color:rgba(255,255,255,0.5);">${sub.notes}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+async function updateLenderStatus(lenderId, status) {
+  const existing = _lenderSubmissions[lenderId];
+  const data = {
+    lead_id: leadId || null,
+    contact_id: contactId || null,
+    lender_id: lenderId,
+    status,
+    submitted_at: status === 'submitted' ? new Date().toISOString() : (existing?.submitted_at || null),
+    updated_at: new Date().toISOString()
+  };
+
+  if (existing) {
+    await sb.from('lead_lender_submissions').update(data).eq('id', existing.id);
+    _lenderSubmissions[lenderId] = { ...existing, ...data };
+  } else {
+    const { data: newSub } = await sb.from('lead_lender_submissions').insert({ ...data, created_at: new Date().toISOString() }).select().single();
+    if (newSub) _lenderSubmissions[lenderId] = newSub;
+  }
+
+  if (typeof toast === 'function') toast('Lender status updated: ' + status.replace('_',' '));
 }
   </script>
 
