@@ -39,10 +39,9 @@ serve(async (req) => {
       const s3Resp = await signedS3Put(s3Url, bytes, file_type, AWS_ACCESS_KEY, AWS_SECRET_KEY, AWS_REGION, S3_BUCKET, s3Key)
       if (!s3Resp.ok) throw new Error('S3 upload failed: ' + await s3Resp.text())
 
-      // Synchronous Textract AnalyzeDocument — returns results immediately
-      const textractResp = await callTextract('AnalyzeDocument', {
-        Document: { S3Object: { Bucket: S3_BUCKET, Name: s3Key } },
-        FeatureTypes: ['FORMS', 'TABLES']
+      // Synchronous DetectDocumentText — faster, no FeatureTypes needed
+      const textractResp = await callTextract('DetectDocumentText', {
+        Document: { S3Object: { Bucket: S3_BUCKET, Name: s3Key } }
       }, AWS_ACCESS_KEY, AWS_SECRET_KEY, AWS_REGION)
 
       const textractData = await textractResp.json()
@@ -161,53 +160,38 @@ function detectDocType(fileName: string, fields: Record<string, string>): string
 
 function extractFields(blocks: any[], fileName: string): Record<string, string> {
   const fields: Record<string, string> = {}
-  const keyMap: Record<string, string[]> = {
-    first_name: ['FN', 'FIRST NAME', 'FIRST'],
-    last_name: ['LN', 'LAST NAME', 'LAST'],
-    date_of_birth: ['DOB', 'DATE OF BIRTH', 'BIRTH DATE'],
-    driver_license_number: ['DL', 'LICENSE NO', 'LICENSE NUMBER', 'DL#'],
-    id_expiration_date: ['EXP', 'EXPIRATION', 'EXPIRES'],
-    street_address: ['ADD', 'ADDRESS', '449', 'STREET'],
-    city: ['CITY'],
-    state: ['STATE'],
-    zip_code: ['ZIP', 'POSTAL'],
-    ssn: ['SSN', 'SOCIAL SECURITY'],
-  }
 
-  // Build block id map
-  const blockMap: Record<string, any> = {}
-  for (const b of blocks) blockMap[b.Id] = b
-
-  // Extract KEY_VALUE_SET pairs
+  // Parse LINE blocks for raw text
+  const lines: string[] = []
   for (const block of blocks) {
-    if (block.BlockType !== 'KEY_VALUE_SET' || !block.EntityTypes?.includes('KEY')) continue
-    const keyText = getBlockText(block, blockMap).toUpperCase().trim()
-    const valueBlock = block.Relationships?.find((r: any) => r.Type === 'VALUE')
-    if (!valueBlock) continue
-    const valBlock = blockMap[valueBlock.Ids?.[0]]
-    if (!valBlock) continue
-    const valueText = getBlockText(valBlock, blockMap).trim()
-    if (!valueText) continue
+    if (block.BlockType === 'LINE' && block.Text) lines.push(block.Text.trim())
+  }
+  console.log('OCR lines:', lines)
 
-    for (const [fieldName, keys] of Object.entries(keyMap)) {
-      if (keys.some(k => keyText.includes(k))) {
-        fields[fieldName] = valueText
-        break
-      }
+  // CA Driver License specific parsing
+  for (const line of lines) {
+    const upper = line.toUpperCase()
+    // LN = Last Name
+    if (upper.startsWith('LN ')) fields.last_name = line.substring(3).trim()
+    // FN = First Name
+    else if (upper.startsWith('FN ')) fields.first_name = line.substring(3).trim()
+    // DOB
+    else if (upper.startsWith('DOB ')) fields.date_of_birth = line.substring(4).trim()
+    // DL number (starts with letter + 7 digits)
+    else if (/^[A-Z]\d{7}$/.test(upper)) fields.driver_license_number = line.trim()
+    // EXP date
+    else if (upper.startsWith('EXP ')) fields.id_expiration_date = line.substring(4).trim()
+    // Address line (number + street)
+    else if (/^\d+\s+[A-Z]/.test(upper) && !fields.street_address) fields.street_address = line.trim()
+    // City State ZIP line
+    else if (/^[A-Z\s]+,?\s+[A-Z]{2}\s+\d{5}/.test(upper) || /[A-Z]{2}\s+\d{5}/.test(upper)) {
+      const m = line.match(/^(.+?)\s+([A-Z]{2})\s+(\d{5})$/)
+      if (m) { fields.city = m[1].trim(); fields.state = m[2]; fields.zip_code = m[3] }
     }
-    // Also store raw
-    const rawKey = keyText.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-    if (rawKey && valueText) fields[rawKey] = valueText
   }
 
-  // CA DL specific: parse address line
-  if (fields.street_address) {
-    const addrParts = parseCAAddress(fields.street_address)
-    if (addrParts.city) fields.city = addrParts.city
-    if (addrParts.state) fields.state = addrParts.state
-    if (addrParts.zip) fields.zip_code = addrParts.zip
-    if (addrParts.street) fields.street_address = addrParts.street
-  }
+  // Also store all raw lines for debugging
+  fields._raw_lines = lines.slice(0, 20).join(' | ')
 
   return fields
 }
