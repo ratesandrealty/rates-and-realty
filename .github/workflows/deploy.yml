@@ -14,8 +14,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy to Hostinger via FTP
+      - name: Deploy to Hostinger via FTP (attempt 1)
         id: ftp-deploy
+        timeout-minutes: 2
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_HOST }}
@@ -33,27 +34,38 @@ jobs:
             **/node_modules/**
             **/.env*
 
-      - name: Retry FTP deploy on failure
-        if: failure() && steps.ftp-deploy.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_HOST }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
-          port: 21
-          local-dir: ./
-          server-dir: /public_html/beta/
-          dangerous-clean-slate: false
-          security: loose
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/.env*
-
-      - name: Retry FTP deploy (attempt 3)
+      - name: Wait before retry 2
         if: failure()
+        run: echo "Attempt 1 failed, waiting 15s..." && sleep 15
+
+      - name: FTP Deploy (attempt 2)
+        id: ftp-retry-2
+        if: failure()
+        timeout-minutes: 2
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          local-dir: ./
+          server-dir: /public_html/beta/
+          dangerous-clean-slate: false
+          security: loose
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.env*
+
+      - name: Wait before retry 3
+        if: failure()
+        run: echo "Attempt 2 failed, waiting 15s..." && sleep 15
+
+      - name: FTP Deploy (attempt 3)
+        if: failure()
+        timeout-minutes: 2
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_HOST }}
