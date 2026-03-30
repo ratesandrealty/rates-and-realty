@@ -6572,23 +6572,32 @@ async function startOCR(file) {
       r.readAsDataURL(file);
     });
 
-    const resp = await fetch(
-      'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
-        },
-        body: JSON.stringify({
-          action: 'start',
-          file_base64: base64,
-          file_name: file.name,
-          file_type: file.type,
-          contact_id: typeof getContactId === 'function' ? getContactId() : null
-        })
-      }
-    );
+    const ocrAbort = new AbortController();
+    const ocrFetchTimeout = setTimeout(() => ocrAbort.abort(), 30000);
+    let resp;
+    try {
+      resp = await fetch(
+        'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
+          },
+          body: JSON.stringify({
+            action: 'start',
+            file_base64: base64,
+            file_name: file.name,
+            file_type: file.type,
+            contact_id: typeof getContactId === 'function' ? getContactId() : null
+          }),
+          signal: ocrAbort.signal
+        }
+      );
+    } finally {
+      clearTimeout(ocrFetchTimeout);
+    }
+    if (!resp.ok) throw new Error('OCR request failed: ' + resp.status);
     const data = await resp.json();
     console.log('OCR start response:', JSON.stringify(data));
     // Sync response — completed immediately
