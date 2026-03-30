@@ -6591,7 +6591,35 @@ async function startOCR(file) {
     );
     const data = await resp.json();
     if (data.error) throw new Error(data.error);
-    if (!data.job_id) throw new Error('Failed to start OCR — no job_id returned');
+
+    // If sync response already has fields (new behavior), skip polling
+    if (data.status === 'completed' && data.fields) {
+      clearInterval(pollTimer);
+      document.getElementById('ocrScanOverlay')?.remove();
+      _ocrFields = data.fields || {};
+      // Claude AI cleanup
+      try {
+        const cleanResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/ai-chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
+          body: JSON.stringify({
+            message: `Fix these OCR fields from a ${data.doc_type || 'document'}. Return ONLY raw JSON same keys corrected values. Fields: ${JSON.stringify(_ocrFields)}`,
+            session_id: 'ocr-' + Date.now(),
+            mode: 'ocr_cleanup'
+          })
+        });
+        if (cleanResp.ok) {
+          const cleanData = await cleanResp.json();
+          const rawText = cleanData.reply || cleanData.message || '';
+          const m = rawText.match(/\{[\s\S]*\}/);
+          if (m) { const c = JSON.parse(m[0]); if (c) _ocrFields = {..._ocrFields, ...c}; }
+        }
+      } catch(e) { console.warn('AI cleanup skipped:', e); }
+      renderOCRFields(_ocrFields, data.doc_type || 'Document');
+      return;
+    }
+
+    if (!data.job_id) throw new Error('No job ID returned');
     _ocrJobId = data.job_id;
 
     let polls = 0;
@@ -6668,10 +6696,14 @@ async function startOCR(file) {
       } catch(e) { console.error('poll error', e); }
     }, 3000);
 
-  } catch(e) {
-    overlay.style.display = 'none';
-    document.getElementById('ocrHeaderSub').textContent = 'Error: '+e.message;
-    document.getElementById('ocrScanBtn').disabled = false;
+  } catch(err) {
+    console.error('OCR start error full:', err);
+    // Show the actual error not just generic message
+    document.querySelector('#ocrModal .ocr-header-sub, #ocrModal [id*="header"]').textContent = 'Error: ' + err.message;
+    const overlay = document.getElementById('ocrScanOverlay');
+    if (overlay) overlay.remove();
+    const scanBtn = document.getElementById('ocrScanBtn') || document.querySelector('#ocrModal button[onclick*="scan"]');
+    if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = 'Scan'; }
   }
 }
 
