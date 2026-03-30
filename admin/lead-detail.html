@@ -3539,26 +3539,66 @@ async function confirmDocUpload() {
       const { data: sessionData } = await sb.auth.getSession();
       console.log('Auth state:', sessionData?.session?.user?.email || 'NOT LOGGED IN');
       const ts = Date.now();
-      const path = `${contactId || leadId}/${docType}/${ts}_${file.name}`;
-      const { error: uploadError } = await sb.storage.from('borrower-documents').upload(path, file, { upsert: true, duplex: 'half' });
-      console.log('Storage upload result:', uploadError ? 'ERROR: '+uploadError.message : 'OK, path: '+path);
-      if (uploadError) throw new Error('Storage upload failed: ' + uploadError.message);
-      const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
-      const fileUrl = urlData.publicUrl;
-      const { error: insertError } = await sb.from('uploaded_documents').insert({
-        contact_id: contactId || null,
-        lead_id: leadId || null,
-        document_type: docType,
-        type: docType,
-        file_name: file.name,
-        file_path: path,
-        file_url: fileUrl,
-        status: 'received',
-        file_size: file.size,
-        uploaded_at: new Date().toISOString()
-      });
-      console.log('DB insert result:', insertError ? 'ERROR: '+insertError.message : 'OK');
-      if (insertError) throw new Error('DB insert failed: ' + insertError.message);
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const path = `${contactId || leadId}/${docType}/${ts}_${safeName}`;
+
+        // Convert file to base64 for edge function
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        // Upload via edge function (uses service role, bypasses RLS)
+        const uploadResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/google-drive-upload`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
+          },
+          body: JSON.stringify({
+            action: 'upload_to_storage',
+            file_base64: base64,
+            file_name: safeName,
+            file_type: file.type || 'application/octet-stream',
+            storage_path: path,
+            contact_id: contactId || null,
+            lead_id: leadId || null,
+            document_type: docType,
+            file_size: file.size
+          })
+        });
+
+        if (!uploadResp.ok) {
+          const errText = await uploadResp.text();
+          console.error('Edge function error:', errText);
+          // Fallback: try direct upload with anon key
+          const { error: directError } = await sb.storage
+            .from('borrower-documents')
+            .upload(path, file, { upsert: true });
+
+          if (directError) throw new Error('Upload failed: ' + directError.message);
+
+          const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
+          const { error: insertError } = await sb.from('uploaded_documents').insert({
+            contact_id: contactId || null,
+            lead_id: leadId || null,
+            document_type: docType,
+            type: docType,
+            file_name: file.name,
+            file_path: path,
+            file_url: urlData.publicUrl,
+            status: 'received',
+            file_size: file.size,
+            uploaded_at: new Date().toISOString()
+          });
+          if (insertError) throw new Error('DB insert failed: ' + insertError.message);
+        } else {
+          const result = await uploadResp.json();
+          console.log('Edge upload result:', result);
+          if (result.error) throw new Error(result.error);
+        }
     } catch(err) {
       console.error('Upload error for', file.name, ':', err);
       toast('Upload failed: ' + err.message, true);
