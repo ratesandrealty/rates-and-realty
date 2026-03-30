@@ -39,32 +39,43 @@ serve(async (req) => {
       const s3Resp = await signedS3Put(s3Url, bytes, file_type, AWS_ACCESS_KEY, AWS_SECRET_KEY, AWS_REGION, S3_BUCKET, s3Key)
       if (!s3Resp.ok) throw new Error('S3 upload failed: ' + await s3Resp.text())
 
-      // Start Textract AnalyzeDocument
-      const textractResp = await callTextract('StartDocumentAnalysis', {
-        DocumentLocation: { S3Object: { Bucket: S3_BUCKET, Name: s3Key } },
+      // Synchronous Textract AnalyzeDocument — returns results immediately
+      const textractResp = await callTextract('AnalyzeDocument', {
+        Document: { S3Object: { Bucket: S3_BUCKET, Name: s3Key } },
         FeatureTypes: ['FORMS', 'TABLES']
       }, AWS_ACCESS_KEY, AWS_SECRET_KEY, AWS_REGION)
 
       const textractData = await textractResp.json()
-      const textractJobId = textractData.JobId
-      if (!textractJobId) throw new Error('Textract did not return JobId: ' + JSON.stringify(textractData))
+      if (textractData.__type?.includes('Error') || textractData.message) {
+        throw new Error('Textract error: ' + (textractData.message || JSON.stringify(textractData)))
+      }
 
-      // Insert ocr_jobs record
+      const blocks = textractData.Blocks || []
+      const fields = extractFields(blocks, file_name)
+      const docType = detectDocType(file_name, fields)
+
       const { data: job, error: jobError } = await supabase
         .from('ocr_jobs')
         .insert({
           contact_id: contact_id || null,
           file_name,
           s3_key: s3Key,
-          textract_job_id: textractJobId,
-          status: 'processing'
+          textract_job_id: 'sync-' + Date.now(),
+          status: 'completed',
+          extracted_fields: fields,
+          completed_at: new Date().toISOString()
         })
         .select()
         .single()
 
       if (jobError) throw new Error('DB insert failed: ' + jobError.message)
 
-      return new Response(JSON.stringify({ job_id: job.id, status: 'processing' }), {
+      return new Response(JSON.stringify({
+        job_id: job.id,
+        status: 'completed',
+        fields,
+        doc_type: docType
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
