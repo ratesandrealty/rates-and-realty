@@ -626,6 +626,7 @@
         text-decoration:none; white-space:nowrap;">
         Lenders
       </a>
+      <button onclick="openCSVImport()" style="padding:9px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:13px;cursor:pointer;">📥 Import CSV</button>
       <button class="ct-btn-new" onclick="openNewContactModal()">+ New Contact</button>
       <span id="adminUserEmail" style="font-size:12px;color:rgba(255,255,255,0.35);font-family:sans-serif;padding:6px 10px;background:rgba(255,255,255,0.04);border-radius:6px;"></span>
       <button class="ct-theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle theme">🌙</button>
@@ -1199,12 +1200,191 @@ document.getElementById('new-contact-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeNewContactModal();
 });
 
+// ── CSV Import ─────────────────────────────────────────────────
+let _csvParsedData = [];
+
+function openCSVImport() {
+  _csvParsedData = [];
+  document.getElementById('csvImportModal').style.display = 'flex';
+  document.getElementById('csvPreview').style.display = 'none';
+  document.getElementById('csvImportBtn').disabled = true;
+  document.getElementById('csvImportBtn').style.opacity = '0.5';
+  document.getElementById('csvImportStatus').textContent = '';
+  document.getElementById('csvFileInput').value = '';
+}
+
+function closeCSVImport() {
+  document.getElementById('csvImportModal').style.display = 'none';
+}
+
+function downloadCSVTemplate() {
+  const template = 'first_name,last_name,email,phone,source,status,notes\nJohn,Smith,john@email.com,714-555-1234,Referral,New Lead,Interested in FHA loan\nJane,Doe,jane@email.com,949-555-5678,Website,Qualified,Pre-approval request';
+  const blob = new Blob([template], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'contacts_import_template.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function handleCSVDrop(e) {
+  const file = e.dataTransfer.files[0];
+  if (file) handleCSVFile(file);
+}
+
+function handleCSVFile(file) {
+  if (!file || !file.name.endsWith('.csv')) {
+    alert('Please upload a .csv file'); return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => parseCSV(e.target.result);
+  reader.readAsText(file);
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) { alert('CSV must have a header row and at least one data row'); return; }
+
+  const rawHeaders = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase().replace(/ /g,'_'));
+  const fieldMap = {
+    'first_name': 'first_name', 'firstname': 'first_name', 'fname': 'first_name',
+    'last_name': 'last_name', 'lastname': 'last_name', 'lname': 'last_name',
+    'email': 'email', 'email_address': 'email',
+    'phone': 'phone', 'phone_number': 'phone', 'cell': 'phone', 'mobile': 'phone',
+    'source': 'source', 'lead_source': 'source',
+    'status': 'status',
+    'notes': 'notes', 'note': 'notes',
+    'company': 'company', 'address': 'address', 'city': 'city', 'state': 'state', 'zip': 'zip'
+  };
+
+  const mappedHeaders = rawHeaders.map(h => fieldMap[h] || h);
+  _csvParsedData = [];
+  const warnings = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) || [];
+    const row = {};
+    mappedHeaders.forEach((h, idx) => {
+      row[h] = (vals[idx] || '').replace(/^"|"$/g,'').trim();
+    });
+    if (!row.email && !row.phone) { warnings.push('Row ' + i + ': No email or phone — skipped'); continue; }
+    _csvParsedData.push(row);
+  }
+
+  // Render preview
+  const preview = document.getElementById('csvPreview');
+  const stats = document.getElementById('csvPreviewStats');
+  const table = document.getElementById('csvPreviewTable');
+  const warn = document.getElementById('csvWarnings');
+
+  preview.style.display = 'block';
+  stats.textContent = '✓ ' + _csvParsedData.length + ' contacts ready to import' + (warnings.length ? ' (' + warnings.length + ' rows skipped)' : '');
+  warn.textContent = warnings.slice(0,3).join(' | ');
+
+  const previewCols = ['first_name','last_name','email','phone','source','status'];
+  table.innerHTML =
+    '<tr style="background:rgba(255,255,255,0.06);">' +
+      previewCols.map(c => '<th style="padding:8px 10px;text-align:left;color:rgba(255,255,255,0.5);font-size:11px;text-transform:uppercase;">' + c + '</th>').join('') +
+    '</tr>' +
+    _csvParsedData.slice(0,8).map(r =>
+      '<tr style="border-top:1px solid rgba(255,255,255,0.04);">' +
+        previewCols.map(c => '<td style="padding:7px 10px;color:rgba(255,255,255,0.8);">' + (r[c]||'') + '</td>').join('') +
+      '</tr>'
+    ).join('');
+
+  const btn = document.getElementById('csvImportBtn');
+  btn.disabled = _csvParsedData.length === 0;
+  btn.style.opacity = _csvParsedData.length > 0 ? '1' : '0.5';
+}
+
+async function importCSVContacts() {
+  if (!_csvParsedData.length) return;
+  const btn = document.getElementById('csvImportBtn');
+  const status = document.getElementById('csvImportStatus');
+  btn.disabled = true; btn.textContent = 'Importing…';
+
+  let imported = 0, errors = 0;
+  const batchSize = 10;
+
+  for (let i = 0; i < _csvParsedData.length; i += batchSize) {
+    const batch = _csvParsedData.slice(i, i + batchSize);
+    status.textContent = 'Importing ' + Math.min(i + batchSize, _csvParsedData.length) + ' of ' + _csvParsedData.length + '…';
+
+    for (const row of batch) {
+      try {
+        const contactData = {
+          first_name: row.first_name || '',
+          last_name: row.last_name || '',
+          email: row.email || null,
+          phone: row.phone || null,
+          source: row.source || 'CSV Import',
+          status: row.status || 'New Lead',
+          notes: row.notes || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        const { error } = await sb.from('contacts')
+          .upsert(contactData, { onConflict: 'email', ignoreDuplicates: false });
+
+        if (error) { errors++; console.error('Import error:', error); }
+        else imported++;
+      } catch(e) { errors++; }
+    }
+  }
+
+  status.textContent = '✓ Done! ' + imported + ' imported, ' + errors + ' errors';
+  btn.textContent = '✓ Complete';
+  if (typeof loadContacts === 'function') loadContacts();
+  setTimeout(closeCSVImport, 2000);
+}
+
+// ── Backup ─────────────────────────────────────────────────────
+async function loadBackupStatus() {
+  const el = document.getElementById('backupStatus');
+  if (!el) return;
+  try {
+    const { data } = await sb.from('backup_logs').select('*').order('created_at', { ascending: false }).limit(1).single();
+    if (data) {
+      el.innerHTML = '✓ Last backup: <strong>' + data.backup_date + '</strong> — ' +
+        (data.results?.contacts?.count || 0) + ' contacts, ' +
+        (data.results?.leads?.count || 0) + ' leads, ' +
+        (data.results?.applications?.count || 0) + ' applications';
+    } else {
+      el.textContent = 'No backups yet. Run your first backup now.';
+    }
+  } catch(e) { document.getElementById('backupStatus').textContent = 'No backups yet.'; }
+}
+
+async function runManualBackup() {
+  const btn = document.getElementById('backupBtn');
+  const status = document.getElementById('backupStatus');
+  btn.textContent = '⏳ Backing up…'; btn.disabled = true;
+  status.textContent = 'Running backup…';
+  try {
+    const resp = await fetch(window.APP_CONFIG.SUPABASE_URL + '/functions/v1/weekly-backup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY }
+    });
+    const data = await resp.json();
+    if (data.success) {
+      status.innerHTML = '✓ Backup complete! ' + (data.results?.contacts?.count||0) + ' contacts, ' + (data.results?.leads?.count||0) + ' leads saved to Google Drive';
+      if (typeof toast === 'function') toast('Backup saved to Google Drive ✓');
+    } else {
+      status.textContent = 'Backup failed: ' + (data.error || 'Unknown error');
+    }
+  } catch(e) {
+    status.textContent = 'Backup failed: ' + e.message;
+  }
+  btn.textContent = '▶ Run Now'; btn.disabled = false;
+}
+
 /* ── BOOT ── */
 if (localStorage.getItem('rr-theme') === 'light') {
   document.body.classList.add('light');
   document.getElementById('theme-btn').textContent = '🌙';
 }
 loadContacts();
+loadBackupStatus();
 </script>
   <script>
   // Mobile hamburger menu
@@ -1230,5 +1410,78 @@ loadContacts();
     });
   })();
   </script>
+
+<!-- CSV Import Modal -->
+<div id="csvImportModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border-radius:16px;width:92vw;max-width:680px;max-height:88vh;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.1);overflow:hidden;">
+    <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:17px;font-weight:700;">📥 Import Contacts from CSV</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;">Upload a CSV file to bulk import contacts</div>
+      </div>
+      <button onclick="closeCSVImport()" style="background:rgba(255,255,255,0.06);border:none;border-radius:8px;color:#fff;padding:8px 14px;cursor:pointer;">✕</button>
+    </div>
+
+    <div style="padding:24px;flex:1;overflow-y:auto;">
+      <!-- Download template -->
+      <div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:10px;padding:14px 16px;margin-bottom:20px;">
+        <div style="font-size:13px;font-weight:600;color:var(--gold);margin-bottom:6px;">📋 Required CSV Format</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:10px;">
+          Your CSV must include these column headers (case-insensitive):<br>
+          <code style="color:rgba(201,168,76,0.8);">first_name, last_name, email, phone, source, status, notes</code>
+        </div>
+        <button onclick="downloadCSVTemplate()" style="padding:6px 14px;background:var(--gold);border:none;border-radius:6px;color:#000;font-size:12px;font-weight:600;cursor:pointer;">⬇ Download Template</button>
+      </div>
+
+      <!-- Drop zone -->
+      <div id="csvDropZone" onclick="document.getElementById('csvFileInput').click()"
+        style="border:2px dashed rgba(255,255,255,0.15);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .2s;"
+        ondragover="event.preventDefault();this.style.borderColor='var(--gold)'"
+        ondragleave="this.style.borderColor='rgba(255,255,255,0.15)'"
+        ondrop="event.preventDefault();this.style.borderColor='rgba(255,255,255,0.15)';handleCSVDrop(event)">
+        <div style="font-size:36px;margin-bottom:8px;">📂</div>
+        <div style="font-size:14px;font-weight:600;">Click or drag CSV file here</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:4px;">.csv files only</div>
+        <input type="file" id="csvFileInput" accept=".csv" style="display:none" onchange="handleCSVFile(this.files[0])">
+      </div>
+
+      <!-- Preview -->
+      <div id="csvPreview" style="display:none;margin-top:16px;">
+        <div id="csvPreviewStats" style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:10px;"></div>
+        <div style="max-height:220px;overflow-y:auto;border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+          <table id="csvPreviewTable" style="width:100%;border-collapse:collapse;font-size:12px;">
+          </table>
+        </div>
+        <div id="csvWarnings" style="margin-top:8px;font-size:12px;color:#ff9f4a;"></div>
+      </div>
+    </div>
+
+    <div style="padding:16px 24px;border-top:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;">
+      <div id="csvImportStatus" style="font-size:13px;color:rgba(255,255,255,0.5);"></div>
+      <div style="display:flex;gap:10px;">
+        <button onclick="closeCSVImport()" style="padding:9px 18px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;cursor:pointer;font-size:13px;">Cancel</button>
+        <button onclick="importCSVContacts()" id="csvImportBtn" disabled style="padding:9px 20px;background:var(--gold);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px;opacity:0.5;">Import Contacts</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Backup Card -->
+<div style="max-width:800px;margin:24px auto;padding:0 16px;">
+  <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:20px 24px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;">☁️ Weekly Google Drive Backup</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;">Auto-backs up contacts, leads & applications every Sunday</div>
+      </div>
+      <button onclick="runManualBackup()" id="backupBtn" style="padding:8px 16px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:var(--gold);font-size:13px;font-weight:600;cursor:pointer;">▶ Run Now</button>
+    </div>
+    <div id="backupStatus" style="font-size:13px;color:rgba(255,255,255,0.5);">Loading last backup info…</div>
+    <div style="margin-top:12px;font-size:12px;color:rgba(255,255,255,0.3);">
+      📁 Backup folder: <span style="color:rgba(201,168,76,0.6);">Rates & Realty CRM Backups</span> in Google Drive
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
