@@ -6652,51 +6652,6 @@ async function startOCR(file) {
           clearInterval(window._ocrPollTimer);
           overlay.style.display = 'none';
           _ocrFields = d.fields || {};
-          // Claude AI cleanup — fix garbled OCR text via edge function
-          try {
-            const SUPA_URL = document.querySelector('script[data-supa-url]')?.dataset?.supaUrl
-              || (() => { const m = document.cookie.match(/supa_url=([^;]+)/); return m?.[1]; })()
-              || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-            const SUPA_KEY = (() => {
-              const scripts = document.querySelectorAll('script:not([src])');
-              for (const s of scripts) {
-                const m = s.textContent.match(/eyJ[A-Za-z0-9_\-\.]+/);
-                if (m) return m[0];
-              }
-              return null;
-            })();
-
-            const cleanResp = await fetch(`${SUPA_URL}/functions/v1/ai-chat`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${SUPA_KEY}`
-              },
-              body: JSON.stringify({
-                message: `You are an OCR correction assistant for US mortgage documents. Fix these raw OCR fields extracted from a California Driver License. Rules: (1) LN field = last_name, FN field = last_name on CA DL — keep hyphens intact e.g. ORTIZ-PELAYO stays ORTIZ-PELAYO. (2) Fix garbled city names: SN BERNRDNO → San Bernardino, LOS ANGLS → Los Angeles, etc. (3) Street address: if you see a clearly wrong value, correct it using other context clues from the document. (4) Proper-case all names and cities. (5) DOB format: MM/DD/YYYY. (6) State: 2-letter abbrev. Return ONLY a raw JSON object, no markdown, no explanation, same keys as input with corrected values. Fields: ${JSON.stringify(_ocrFields)}`,
-                session_id: 'ocr-cleanup-' + Date.now(),
-                mode: 'ocr_cleanup'
-              })
-            });
-
-            if (cleanResp.ok) {
-              const cleanData = await cleanResp.json();
-              const rawText = cleanData.reply || cleanData.message || cleanData.content?.[0]?.text || '';
-              const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                const cleaned = JSON.parse(jsonMatch[0]);
-                if (cleaned && typeof cleaned === 'object') {
-                  // Only merge fields that have values — don't overwrite good data with empty
-                  // Only add NEW fields, never overwrite existing good data
-                  Object.keys(cleaned).forEach(k => {
-                    if (!_ocrFields[k] && cleaned[k] && cleaned[k] !== 'null' && cleaned[k] !== 'N/A') {
-                      _ocrFields[k] = String(cleaned[k]);
-                    }
-                  });
-                }
-              }
-            }
-          } catch(e) { console.warn('AI OCR cleanup skipped:', e); }
           console.log('Final OCR fields before render:', JSON.stringify(_ocrFields));
           renderOCRFields(_ocrFields, d.doc_type);
         } else if (d.status==='failed') {
