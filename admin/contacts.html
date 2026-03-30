@@ -626,8 +626,10 @@
         text-decoration:none; white-space:nowrap;">
         Lenders
       </a>
-      <button onclick="openCSVImport()" style="padding:9px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:13px;cursor:pointer;">📥 Import CSV</button>
-      <button class="ct-btn-new" onclick="openNewContactModal()">+ New Contact</button>
+      <div style="display:flex;gap:8px;">
+        <button onclick="openCSVImport()" style="padding:9px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;">📥 Import CSV</button>
+        <button class="ct-btn-new" onclick="openNewContactModal()">+ New Contact</button>
+      </div>
       <span id="adminUserEmail" style="font-size:12px;color:rgba(255,255,255,0.35);font-family:sans-serif;padding:6px 10px;background:rgba(255,255,255,0.04);border-radius:6px;"></span>
       <button class="ct-theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle theme">🌙</button>
     </div>
@@ -1241,59 +1243,41 @@ function handleCSVFile(file) {
 
 function parseCSV(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) { alert('CSV must have a header row and at least one data row'); return; }
-
-  const rawHeaders = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase().replace(/ /g,'_'));
+  if (lines.length < 2) { alert('CSV needs header + data rows'); return; }
   const fieldMap = {
-    'first_name': 'first_name', 'firstname': 'first_name', 'fname': 'first_name',
-    'last_name': 'last_name', 'lastname': 'last_name', 'lname': 'last_name',
-    'email': 'email', 'email_address': 'email',
-    'phone': 'phone', 'phone_number': 'phone', 'cell': 'phone', 'mobile': 'phone',
-    'source': 'source', 'lead_source': 'source',
-    'status': 'status',
-    'notes': 'notes', 'note': 'notes',
-    'company': 'company', 'address': 'address', 'city': 'city', 'state': 'state', 'zip': 'zip'
+    'first_name':'first_name','firstname':'first_name','fname':'first_name',
+    'last_name':'last_name','lastname':'last_name','lname':'last_name',
+    'email':'email','email_address':'email',
+    'phone':'phone','phone_number':'phone','cell':'phone','mobile':'phone',
+    'source':'source','lead_source':'source',
+    'status':'status','notes':'notes','note':'notes'
   };
-
-  const mappedHeaders = rawHeaders.map(h => fieldMap[h] || h);
+  const rawHeaders = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase().replace(/ /g,'_'));
+  const mapped = rawHeaders.map(h => fieldMap[h] || h);
   _csvParsedData = [];
   const warnings = [];
 
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
-    const vals = lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) || [];
+    const vals = lines[i].split(',').map(v => v.replace(/^"|"$/g,'').trim());
     const row = {};
-    mappedHeaders.forEach((h, idx) => {
-      row[h] = (vals[idx] || '').replace(/^"|"$/g,'').trim();
-    });
-    if (!row.email && !row.phone) { warnings.push('Row ' + i + ': No email or phone — skipped'); continue; }
+    mapped.forEach((h,idx) => { row[h] = vals[idx] || ''; });
+    if (!row.email && !row.phone) { warnings.push(`Row ${i}: skipped (no email or phone)`); continue; }
     _csvParsedData.push(row);
   }
 
-  // Render preview
-  const preview = document.getElementById('csvPreview');
-  const stats = document.getElementById('csvPreviewStats');
-  const table = document.getElementById('csvPreviewTable');
-  const warn = document.getElementById('csvWarnings');
+  document.getElementById('csvPreview').style.display = 'block';
+  document.getElementById('csvPreviewStats').textContent = `✓ ${_csvParsedData.length} contacts ready${warnings.length ? ` (${warnings.length} skipped)` : ''}`;
+  document.getElementById('csvWarnings').textContent = warnings.slice(0,3).join(' | ');
 
-  preview.style.display = 'block';
-  stats.textContent = '✓ ' + _csvParsedData.length + ' contacts ready to import' + (warnings.length ? ' (' + warnings.length + ' rows skipped)' : '');
-  warn.textContent = warnings.slice(0,3).join(' | ');
-
-  const previewCols = ['first_name','last_name','email','phone','source','status'];
-  table.innerHTML =
-    '<tr style="background:rgba(255,255,255,0.06);">' +
-      previewCols.map(c => '<th style="padding:8px 10px;text-align:left;color:rgba(255,255,255,0.5);font-size:11px;text-transform:uppercase;">' + c + '</th>').join('') +
-    '</tr>' +
-    _csvParsedData.slice(0,8).map(r =>
-      '<tr style="border-top:1px solid rgba(255,255,255,0.04);">' +
-        previewCols.map(c => '<td style="padding:7px 10px;color:rgba(255,255,255,0.8);">' + (r[c]||'') + '</td>').join('') +
-      '</tr>'
-    ).join('');
+  const cols = ['first_name','last_name','email','phone','source','status'];
+  document.getElementById('csvPreviewTable').innerHTML =
+    `<tr style="background:rgba(255,255,255,0.06)">${cols.map(c=>`<th style="padding:8px 10px;text-align:left;color:rgba(255,255,255,0.5);font-size:11px;text-transform:uppercase">${c}</th>`).join('')}</tr>` +
+    _csvParsedData.slice(0,8).map(r=>`<tr style="border-top:1px solid rgba(255,255,255,0.04)">${cols.map(c=>`<td style="padding:7px 10px;color:rgba(255,255,255,0.8)">${r[c]||''}</td>`).join('')}</tr>`).join('');
 
   const btn = document.getElementById('csvImportBtn');
-  btn.disabled = _csvParsedData.length === 0;
-  btn.style.opacity = _csvParsedData.length > 0 ? '1' : '0.5';
+  btn.disabled = !_csvParsedData.length;
+  btn.style.opacity = _csvParsedData.length ? '1' : '0.5';
 }
 
 async function importCSVContacts() {
@@ -1301,41 +1285,30 @@ async function importCSVContacts() {
   const btn = document.getElementById('csvImportBtn');
   const status = document.getElementById('csvImportStatus');
   btn.disabled = true; btn.textContent = 'Importing…';
-
   let imported = 0, errors = 0;
-  const batchSize = 10;
 
-  for (let i = 0; i < _csvParsedData.length; i += batchSize) {
-    const batch = _csvParsedData.slice(i, i + batchSize);
-    status.textContent = 'Importing ' + Math.min(i + batchSize, _csvParsedData.length) + ' of ' + _csvParsedData.length + '…';
-
-    for (const row of batch) {
-      try {
-        const contactData = {
-          first_name: row.first_name || '',
-          last_name: row.last_name || '',
-          email: row.email || null,
-          phone: row.phone || null,
-          source: row.source || 'CSV Import',
-          status: row.status || 'New Lead',
-          notes: row.notes || null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-
-        const { error } = await sb.from('contacts')
-          .upsert(contactData, { onConflict: 'email', ignoreDuplicates: false });
-
-        if (error) { errors++; console.error('Import error:', error); }
-        else imported++;
-      } catch(e) { errors++; }
-    }
+  for (const row of _csvParsedData) {
+    try {
+      const { error } = await sb.from('contacts').upsert({
+        first_name: row.first_name || '',
+        last_name: row.last_name || '',
+        email: row.email || null,
+        phone: row.phone || null,
+        source: row.source || 'CSV Import',
+        status: row.status || 'New Lead',
+        notes: row.notes || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'email', ignoreDuplicates: false });
+      if (error) errors++; else imported++;
+    } catch { errors++; }
+    status.textContent = `Importing ${imported + errors} of ${_csvParsedData.length}…`;
   }
 
-  status.textContent = '✓ Done! ' + imported + ' imported, ' + errors + ' errors';
-  btn.textContent = '✓ Complete';
+  status.textContent = `✓ ${imported} imported${errors ? `, ${errors} errors` : ''}`;
+  btn.textContent = '✓ Done';
   if (typeof loadContacts === 'function') loadContacts();
-  setTimeout(closeCSVImport, 2000);
+  setTimeout(closeCSVImport, 2500);
 }
 
 // ── Backup ─────────────────────────────────────────────────────
@@ -1343,38 +1316,31 @@ async function loadBackupStatus() {
   const el = document.getElementById('backupStatus');
   if (!el) return;
   try {
-    const { data } = await sb.from('backup_logs').select('*').order('created_at', { ascending: false }).limit(1).single();
+    const { data } = await sb.from('backup_logs').select('*').order('created_at',{ascending:false}).limit(1).single();
     if (data) {
-      el.innerHTML = '✓ Last backup: <strong>' + data.backup_date + '</strong> — ' +
-        (data.results?.contacts?.count || 0) + ' contacts, ' +
-        (data.results?.leads?.count || 0) + ' leads, ' +
-        (data.results?.applications?.count || 0) + ' applications';
-    } else {
-      el.textContent = 'No backups yet. Run your first backup now.';
-    }
-  } catch(e) { document.getElementById('backupStatus').textContent = 'No backups yet.'; }
+      el.innerHTML = `✓ Last backup: <strong style="color:#fff">${data.backup_date}</strong> — ${data.results?.contacts?.count||0} contacts · ${data.results?.leads?.count||0} leads · ${data.results?.applications?.count||0} applications`;
+    } else { el.textContent = 'No backups yet — click Run Now to start'; }
+  } catch { el.textContent = 'No backups yet — click Run Now to start'; }
 }
 
 async function runManualBackup() {
   const btn = document.getElementById('backupBtn');
   const status = document.getElementById('backupStatus');
-  btn.textContent = '⏳ Backing up…'; btn.disabled = true;
-  status.textContent = 'Running backup…';
+  btn.textContent = '⏳ Running…'; btn.disabled = true;
+  status.textContent = 'Backing up to Google Drive…';
   try {
-    const resp = await fetch(window.APP_CONFIG.SUPABASE_URL + '/functions/v1/weekly-backup', {
+    const resp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/weekly-backup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY }
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` }
     });
     const data = await resp.json();
     if (data.success) {
-      status.innerHTML = '✓ Backup complete! ' + (data.results?.contacts?.count||0) + ' contacts, ' + (data.results?.leads?.count||0) + ' leads saved to Google Drive';
-      if (typeof toast === 'function') toast('Backup saved to Google Drive ✓');
+      status.innerHTML = `✓ Saved to Google Drive — ${data.results?.contacts?.count||0} contacts · ${data.results?.leads?.count||0} leads`;
+      if (typeof toast === 'function') toast('Backup complete ✓ Saved to Google Drive');
     } else {
-      status.textContent = 'Backup failed: ' + (data.error || 'Unknown error');
+      status.textContent = 'Error: ' + (data.error || 'Check Google token');
     }
-  } catch(e) {
-    status.textContent = 'Backup failed: ' + e.message;
-  }
+  } catch(e) { status.textContent = 'Failed: ' + e.message; }
   btn.textContent = '▶ Run Now'; btn.disabled = false;
 }
 
@@ -1417,7 +1383,7 @@ loadBackupStatus();
     <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;">
       <div>
         <div style="font-size:17px;font-weight:700;">📥 Import Contacts from CSV</div>
-        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;">Upload a CSV file to bulk import contacts</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;">Bulk import contacts from a spreadsheet</div>
       </div>
       <button onclick="closeCSVImport()" style="background:rgba(255,255,255,0.06);border:none;border-radius:8px;color:#fff;padding:8px 14px;cursor:pointer;">✕</button>
     </div>
@@ -1425,9 +1391,8 @@ loadBackupStatus();
     <div style="padding:24px;flex:1;overflow-y:auto;">
       <!-- Download template -->
       <div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:10px;padding:14px 16px;margin-bottom:20px;">
-        <div style="font-size:13px;font-weight:600;color:var(--gold);margin-bottom:6px;">📋 Required CSV Format</div>
+        <div style="font-size:13px;font-weight:600;color:var(--gold);margin-bottom:6px;">📋 Required CSV Columns</div>
         <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:10px;">
-          Your CSV must include these column headers (case-insensitive):<br>
           <code style="color:rgba(201,168,76,0.8);">first_name, last_name, email, phone, source, status, notes</code>
         </div>
         <button onclick="downloadCSVTemplate()" style="padding:6px 14px;background:var(--gold);border:none;border-radius:6px;color:#000;font-size:12px;font-weight:600;cursor:pointer;">⬇ Download Template</button>
@@ -1468,18 +1433,15 @@ loadBackupStatus();
 
 <!-- Backup Card -->
 <div style="max-width:800px;margin:24px auto;padding:0 16px;">
-  <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:20px 24px;">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
+  <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:20px 24px;margin-top:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <div>
-        <div style="font-size:15px;font-weight:700;">☁️ Weekly Google Drive Backup</div>
-        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;">Auto-backs up contacts, leads & applications every Sunday</div>
+        <div style="font-size:14px;font-weight:700;">☁️ Google Drive Backup</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:2px;">Auto-runs every Sunday — contacts, leads & applications</div>
       </div>
-      <button onclick="runManualBackup()" id="backupBtn" style="padding:8px 16px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:var(--gold);font-size:13px;font-weight:600;cursor:pointer;">▶ Run Now</button>
+      <button onclick="runManualBackup()" id="backupBtn" style="padding:7px 14px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:var(--gold);font-size:12px;font-weight:600;cursor:pointer;">▶ Run Now</button>
     </div>
-    <div id="backupStatus" style="font-size:13px;color:rgba(255,255,255,0.5);">Loading last backup info…</div>
-    <div style="margin-top:12px;font-size:12px;color:rgba(255,255,255,0.3);">
-      📁 Backup folder: <span style="color:rgba(201,168,76,0.6);">Rates & Realty CRM Backups</span> in Google Drive
-    </div>
+    <div id="backupStatus" style="font-size:12px;color:rgba(255,255,255,0.4);">Checking last backup…</div>
   </div>
 </div>
 
