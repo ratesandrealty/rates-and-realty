@@ -15,71 +15,10 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    const AWS_ACCESS_KEY = Deno.env.get('AWS_ACCESS_KEY_ID')!
-    const AWS_SECRET_KEY = Deno.env.get('AWS_SECRET_ACCESS_KEY')!
-    const AWS_REGION = 'us-east-2'
-    const S3_BUCKET = 'rates-realty-documents'
-
     const body = await req.json()
     const { action, job_id } = body
 
-    // ── START: Upload to S3 + kick off Textract ──
-    if (action === 'start') {
-      const { file_base64, file_name, file_type, contact_id } = body
-
-      // Decode base64
-      const binaryStr = atob(file_base64)
-      const bytes = new Uint8Array(binaryStr.length)
-      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-
-      // Upload to S3
-      const s3Key = `ocr/${contact_id || 'unknown'}/${Date.now()}_${file_name}`
-      const s3Url = `https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${s3Key}`
-
-      const s3Resp = await signedS3Put(s3Url, bytes, file_type, AWS_ACCESS_KEY, AWS_SECRET_KEY, AWS_REGION, S3_BUCKET, s3Key)
-      if (!s3Resp.ok) throw new Error('S3 upload failed: ' + await s3Resp.text())
-
-      // Synchronous DetectDocumentText — faster, no FeatureTypes needed
-      const textractResp = await callTextract('DetectDocumentText', {
-        Document: { S3Object: { Bucket: S3_BUCKET, Name: s3Key } }
-      }, AWS_ACCESS_KEY, AWS_SECRET_KEY, AWS_REGION)
-
-      const textractData = await textractResp.json()
-      if (textractData.__type?.includes('Error') || textractData.message) {
-        throw new Error('Textract error: ' + (textractData.message || JSON.stringify(textractData)))
-      }
-
-      const blocks = textractData.Blocks || []
-      const fields = extractFields(blocks, file_name)
-      const docType = detectDocType(file_name, fields)
-
-      const { data: job, error: jobError } = await supabase
-        .from('ocr_jobs')
-        .insert({
-          contact_id: contact_id || null,
-          file_name,
-          s3_key: s3Key,
-          textract_job_id: 'sync-' + Date.now(),
-          status: 'completed',
-          extracted_fields: fields,
-          completed_at: new Date().toISOString()
-        })
-        .select()
-        .single()
-
-      if (jobError) throw new Error('DB insert failed: ' + jobError.message)
-
-      return new Response(JSON.stringify({
-        job_id: job.id,
-        status: 'completed',
-        fields,
-        doc_type: docType
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
-
-    // ── RESULT: Poll Textract + extract fields ──
+    // ── RESULT: Return completed job from DB ──
     if (action === 'result') {
       const { data: job } = await supabase
         .from('ocr_jobs')
@@ -88,53 +27,121 @@ serve(async (req) => {
         .single()
 
       if (!job) throw new Error('Job not found')
-      if (job.status === 'completed') {
-        return new Response(JSON.stringify({ status: 'completed', fields: job.extracted_fields, doc_type: job.doc_type || 'unknown' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+
+      return new Response(JSON.stringify({
+        status: job.status,
+        fields: job.extracted_fields || {},
+        doc_type: job.doc_type || 'Document',
+        error: job.error_message
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
+    // ── START: Use Claude Vision to extract fields ──
+    if (action === 'start') {
+      const { file_base64, file_name, file_type, contact_id } = body
+
+      const ANTHROPIC_KEY = Deno.env.get('ANTHROPIC_API_KEY')
+      if (!ANTHROPIC_KEY) throw new Error('ANTHROPIC_API_KEY not set')
+
+      // Detect doc type from filename
+      const nameLower = (file_name || '').toLowerCase()
+      let docType = 'Document'
+      if (nameLower.includes('id') || nameLower.includes('license') || nameLower.includes('dl')) docType = "Driver's License"
+      else if (nameLower.includes('w2') || nameLower.includes('w-2')) docType = 'W-2'
+      else if (nameLower.includes('pay') || nameLower.includes('stub')) docType = 'Pay Stub'
+      else if (nameLower.includes('bank') || nameLower.includes('statement')) docType = 'Bank Statement'
+      else if (nameLower.includes('tax') || nameLower.includes('1040')) docType = 'Tax Return'
+
+      // Call Claude Vision
+      const mediaType = file_type?.includes('pdf') ? 'application/pdf' : (file_type || 'image/jpeg')
+
+      const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 1024,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: mediaType === 'application/pdf' ? 'document' : 'image',
+                source: { type: 'base64', media_type: mediaType, data: file_base64 }
+              },
+              {
+                type: 'text',
+                text: `Extract all fields from this ${docType}. Return ONLY a JSON object with these keys (use null for missing fields):
+{
+  "first_name": "",
+  "last_name": "",
+  "middle_name": "",
+  "date_of_birth": "MM/DD/YYYY",
+  "ssn": "XXX-XX-XXXX",
+  "driver_license_number": "",
+  "dl_state": "",
+  "id_expiration_date": "MM/DD/YYYY",
+  "street_address": "",
+  "city": "",
+  "state": "",
+  "zip_code": "",
+  "employer_name": "",
+  "position": "",
+  "monthly_income": "",
+  "gross_income": ""
+}
+For CA Driver License: LN = last name, FN = first name. Proper-case all names. Return ONLY the JSON object, no explanation.`
+              }
+            ]
+          }]
         })
+      })
+
+      if (!claudeResp.ok) {
+        const errText = await claudeResp.text()
+        throw new Error('Claude API error: ' + errText)
       }
 
-      // Check Textract job status
-      const statusResp = await callTextract('GetDocumentAnalysis', {
-        JobId: job.textract_job_id,
-        MaxResults: 1000
-      }, AWS_ACCESS_KEY, AWS_SECRET_KEY, AWS_REGION)
+      const claudeData = await claudeResp.json()
+      const rawText = claudeData.content?.[0]?.text || '{}'
 
-      const statusData = await statusResp.json()
-      console.log('Textract status:', statusData.JobStatus)
-
-      if (statusData.JobStatus === 'IN_PROGRESS') {
-        return new Response(JSON.stringify({ status: 'processing' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+      let fields: Record<string, string> = {}
+      try {
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+        if (jsonMatch) fields = JSON.parse(jsonMatch[0])
+      } catch(e) {
+        console.error('JSON parse error:', e, rawText)
       }
 
-      if (statusData.JobStatus === 'FAILED') {
-        await supabase.from('ocr_jobs').update({ status: 'failed', error_message: statusData.StatusMessage }).eq('id', job_id)
-        return new Response(JSON.stringify({ status: 'failed', error: statusData.StatusMessage }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-      }
+      // Remove null values
+      Object.keys(fields).forEach(k => { if (!fields[k]) delete fields[k] })
 
-      if (statusData.JobStatus === 'SUCCEEDED') {
-        // Extract key-value pairs from FORMS feature
-        const blocks = statusData.Blocks || []
-        const fields = extractFields(blocks, job.file_name)
-
-        await supabase.from('ocr_jobs').update({
+      // Save to DB
+      const { data: job, error: jobError } = await supabase
+        .from('ocr_jobs')
+        .insert({
+          contact_id: contact_id || null,
+          file_name,
+          s3_key: 'claude-vision',
+          textract_job_id: 'claude-' + Date.now(),
           status: 'completed',
           extracted_fields: fields,
           completed_at: new Date().toISOString()
-        }).eq('id', job_id)
-
-        return new Response(JSON.stringify({ status: 'completed', fields, doc_type: detectDocType(job.file_name, fields) }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
-      }
+        .select()
+        .single()
 
-      return new Response(JSON.stringify({ status: 'processing' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      if (jobError) console.error('DB insert error:', jobError)
+
+      return new Response(JSON.stringify({
+        job_id: job?.id,
+        status: 'completed',
+        fields,
+        doc_type: docType
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     throw new Error('Unknown action: ' + action)
@@ -146,144 +153,3 @@ serve(async (req) => {
     })
   }
 })
-
-function detectDocType(fileName: string, fields: Record<string, string>): string {
-  const name = (fileName || '').toLowerCase()
-  if (name.includes('w2') || name.includes('w-2')) return "W-2"
-  if (name.includes('pay') || name.includes('stub')) return "Pay Stub"
-  if (name.includes('bank') || name.includes('statement')) return "Bank Statement"
-  if (name.includes('id') || name.includes('license') || name.includes('dl')) return "Driver's License"
-  if (name.includes('tax') || name.includes('1040')) return "Tax Return"
-  if (fields.driver_license_number || fields.dl_number) return "Driver's License"
-  return "Document"
-}
-
-function extractFields(blocks: any[], fileName: string): Record<string, string> {
-  const fields: Record<string, string> = {}
-
-  // Parse LINE blocks for raw text
-  const lines: string[] = []
-  for (const block of blocks) {
-    if (block.BlockType === 'LINE' && block.Text) lines.push(block.Text.trim())
-  }
-  console.log('OCR lines:', lines)
-
-  // CA Driver License specific parsing
-  for (const line of lines) {
-    const upper = line.toUpperCase()
-    // LN = Last Name
-    if (upper.startsWith('LN ')) fields.last_name = line.substring(3).trim()
-    // FN = First Name
-    else if (upper.startsWith('FN ')) fields.first_name = line.substring(3).trim()
-    // DOB
-    else if (upper.startsWith('DOB ')) fields.date_of_birth = line.substring(4).trim()
-    // DL number (starts with letter + 7 digits)
-    else if (/^[A-Z]\d{7}$/.test(upper)) fields.driver_license_number = line.trim()
-    // EXP date
-    else if (upper.startsWith('EXP ')) fields.id_expiration_date = line.substring(4).trim()
-    // Address line (number + street)
-    else if (/^\d+\s+[A-Z]/.test(upper) && !fields.street_address) fields.street_address = line.trim()
-    // City State ZIP line
-    else if (/^[A-Z\s]+,?\s+[A-Z]{2}\s+\d{5}/.test(upper) || /[A-Z]{2}\s+\d{5}/.test(upper)) {
-      const m = line.match(/^(.+?)\s+([A-Z]{2})\s+(\d{5})$/)
-      if (m) { fields.city = m[1].trim(); fields.state = m[2]; fields.zip_code = m[3] }
-    }
-  }
-
-  // Also store all raw lines for debugging
-  fields._raw_lines = lines.slice(0, 20).join(' | ')
-
-  return fields
-}
-
-function getBlockText(block: any, blockMap: Record<string, any>): string {
-  if (block.BlockType === 'WORD') return block.Text || ''
-  if (block.BlockType === 'LINE') return block.Text || ''
-  const childRel = block.Relationships?.find((r: any) => r.Type === 'CHILD')
-  if (!childRel) return ''
-  return childRel.Ids.map((id: string) => blockMap[id]?.Text || '').join(' ')
-}
-
-function parseCAAddress(addr: string): { street?: string; city?: string; state?: string; zip?: string } {
-  const m = addr.match(/^(.+?)\s+([A-Z\s]+),?\s+([A-Z]{2})\s+(\d{5})$/)
-  if (m) return { street: m[1], city: m[2].trim(), state: m[3], zip: m[4] }
-  return {}
-}
-
-async function signedS3Put(url: string, body: Uint8Array, contentType: string, accessKey: string, secretKey: string, region: string, bucket: string, key: string): Promise<Response> {
-  const now = new Date()
-  const dateStr = now.toISOString().replace(/[:\-]|\.\d{3}/g, '').substring(0, 15) + 'Z'
-  const dateShort = dateStr.substring(0, 8)
-
-  const payloadHash = await sha256Hex(body)
-  const canonicalHeaders = `content-type:${contentType}\nhost:${bucket}.s3.${region}.amazonaws.com\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${dateStr}\n`
-  const signedHeaders = 'content-type;host;x-amz-content-sha256;x-amz-date'
-  const canonicalRequest = `PUT\n/${key}\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`
-  const credScope = `${dateShort}/${region}/s3/aws4_request`
-  const strToSign = `AWS4-HMAC-SHA256\n${dateStr}\n${credScope}\n${await sha256Hex(new TextEncoder().encode(canonicalRequest))}`
-  const sigKey = await getSigningKey(secretKey, dateShort, region, 's3')
-  const signature = await hmacHex(sigKey, strToSign)
-  const auth = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
-
-  return fetch(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': contentType, 'x-amz-date': dateStr, 'x-amz-content-sha256': payloadHash, 'Authorization': auth },
-    body
-  })
-}
-
-async function callTextract(operation: string, payload: any, accessKey: string, secretKey: string, region: string): Promise<Response> {
-  const url = `https://textract.${region}.amazonaws.com`
-  const body = JSON.stringify(payload)
-  const bodyBytes = new TextEncoder().encode(body)
-  const now = new Date()
-  const dateStr = now.toISOString().replace(/[:\-]|\.\d{3}/g, '').substring(0, 15) + 'Z'
-  const dateShort = dateStr.substring(0, 8)
-  const payloadHash = await sha256Hex(bodyBytes)
-  const target = `Textract_20181106.${operation}`
-  const canonicalHeaders = `content-type:application/x-amz-json-1.1\nhost:textract.${region}.amazonaws.com\nx-amz-date:${dateStr}\nx-amz-target:${target}\n`
-  const signedHeaders = 'content-type;host;x-amz-date;x-amz-target'
-  const canonicalRequest = `POST\n/\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`
-  const credScope = `${dateShort}/${region}/textract/aws4_request`
-  const strToSign = `AWS4-HMAC-SHA256\n${dateStr}\n${credScope}\n${await sha256Hex(new TextEncoder().encode(canonicalRequest))}`
-  const sigKey = await getSigningKey(secretKey, dateShort, region, 'textract')
-  const signature = await hmacHex(sigKey, strToSign)
-  const auth = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
-
-  return fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-amz-json-1.1', 'x-amz-date': dateStr, 'x-amz-target': target, 'Authorization': auth },
-    body
-  })
-}
-
-async function sha256Hex(data: Uint8Array | string): Promise<string> {
-  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
-  const hash = await crypto.subtle.digest('SHA-256', bytes)
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-async function hmacHex(key: ArrayBuffer | CryptoKey, data: string): Promise<string> {
-  const cryptoKey = key instanceof ArrayBuffer
-    ? await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-    : key
-  const sig = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(data))
-  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-async function getSigningKey(secret: string, date: string, region: string, service: string): Promise<CryptoKey> {
-  const kDate = await crypto.subtle.importKey('raw',
-    await crypto.subtle.sign('HMAC',
-      await crypto.subtle.importKey('raw', new TextEncoder().encode('AWS4' + secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']),
-      new TextEncoder().encode(date)
-    ), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  const kRegion = await crypto.subtle.importKey('raw',
-    await crypto.subtle.sign('HMAC', kDate, new TextEncoder().encode(region)),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  const kService = await crypto.subtle.importKey('raw',
-    await crypto.subtle.sign('HMAC', kRegion, new TextEncoder().encode(service)),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  return crypto.subtle.importKey('raw',
-    await crypto.subtle.sign('HMAC', kService, new TextEncoder().encode('aws4_request')),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-}
