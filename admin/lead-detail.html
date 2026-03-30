@@ -6605,6 +6605,7 @@ async function startOCR(file) {
       const overlay = document.getElementById('ocrScanOverlay');
       if (overlay) overlay.remove();
       _ocrFields = data.fields || {};
+      console.log('Final OCR fields before render:', JSON.stringify(_ocrFields));
       renderOCRFields(_ocrFields, data.doc_type || "Driver's License");
       return;
     }
@@ -6686,15 +6687,17 @@ async function startOCR(file) {
                 const cleaned = JSON.parse(jsonMatch[0]);
                 if (cleaned && typeof cleaned === 'object') {
                   // Only merge fields that have values — don't overwrite good data with empty
+                  // Only add NEW fields, never overwrite existing good data
                   Object.keys(cleaned).forEach(k => {
-                    if (cleaned[k] && cleaned[k] !== 'null' && cleaned[k] !== 'N/A' && String(cleaned[k]).trim() !== '') {
-                      _ocrFields[k] = cleaned[k];
+                    if (!_ocrFields[k] && cleaned[k] && cleaned[k] !== 'null' && cleaned[k] !== 'N/A') {
+                      _ocrFields[k] = String(cleaned[k]);
                     }
                   });
                 }
               }
             }
           } catch(e) { console.warn('AI OCR cleanup skipped:', e); }
+          console.log('Final OCR fields before render:', JSON.stringify(_ocrFields));
           renderOCRFields(_ocrFields, d.doc_type);
         } else if (d.status==='failed') {
           clearTimeout(window._ocrHardTimeout);
