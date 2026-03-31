@@ -69,7 +69,7 @@ async function loadAll() {
     populateLoanTypeSelect();
     renderActiveTab();
   } catch (err) {
-    console.error("Dashboard load error full:", err.message, err.stack);
+    console.error("Dashboard load error full:", err.message, err.stack, err);
   }
 }
 

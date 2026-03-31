@@ -3,6 +3,7 @@ import { supabase } from "/api/supabase-client.js";
 // ── DASHBOARD DATA ────────────────────────────────────────────────────────────
 
 export async function getAdminDashboardData() {
+  console.log('getAdminDashboardData starting...');
   const [contactsResult, leadsResult, applicationsResult, documentsResult, notesResult, tasksResult] = await Promise.all([
     supabase.from("contacts").select("*").order("created_at", { ascending: false }),
     supabase.from("leads").select("*, contacts(first_name, last_name, email, phone, credit_score, employer_name, monthly_income)").order("created_at", { ascending: false }),
@@ -12,9 +13,14 @@ export async function getAdminDashboardData() {
     supabase.from("tasks").select("*").order("created_at", { ascending: false })
   ]);
 
-  if (contactsResult.error) throw contactsResult.error;
-  if (leadsResult.error) throw leadsResult.error;
-  // Non-fatal: applications join may fail if FK not set up
+  console.log('Results:', {
+    contacts: contactsResult.error || contactsResult.data?.length,
+    leads: leadsResult.error || leadsResult.data?.length,
+    applications: applicationsResult.error || applicationsResult.data?.length
+  });
+
+  if (contactsResult.error) console.warn("Contacts load error:", contactsResult.error);
+  if (leadsResult.error) console.warn("Leads load error:", leadsResult.error);
   if (applicationsResult.error) console.warn("Applications load error:", applicationsResult.error);
   if (documentsResult.error) console.warn("Documents load error:", documentsResult.error);
   if (notesResult.error) console.warn("Notes load error:", notesResult.error);
