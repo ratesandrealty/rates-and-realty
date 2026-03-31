@@ -14,10 +14,11 @@ export async function getAdminDashboardData() {
 
   if (contactsResult.error) throw contactsResult.error;
   if (leadsResult.error) throw leadsResult.error;
-  if (applicationsResult.error) throw applicationsResult.error;
-  if (documentsResult.error) throw documentsResult.error;
-  if (notesResult.error) throw notesResult.error;
-  if (tasksResult.error) throw tasksResult.error;
+  // Non-fatal: applications join may fail if FK not set up
+  if (applicationsResult.error) console.warn("Applications load error:", applicationsResult.error);
+  if (documentsResult.error) console.warn("Documents load error:", documentsResult.error);
+  if (notesResult.error) console.warn("Notes load error:", notesResult.error);
+  if (tasksResult.error) console.warn("Tasks load error:", tasksResult.error);
 
   return {
     contacts: contactsResult.data || [],

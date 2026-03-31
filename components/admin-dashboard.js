@@ -771,6 +771,7 @@ function renderWeeklyBar(weeklyLeads) {
 let _allApplications = [];
 
 function renderApplications(applications) {
+  console.log('renderApplications called with', (applications||[]).length, 'apps');
   _allApplications = applications || [];
   renderAppStats(_allApplications);
   filterApplications();
@@ -897,8 +898,8 @@ function filterApplications() {
   }).join("");
 }
 
-// Expose filterApplications globally for the search/filter inputs
-window.filterApplications = typeof filterApplications !== 'undefined' ? filterApplications : function() {};
+// Expose to global scope for inline HTML event handlers
+window.filterApplications = function() { filterApplications(); };
 
 function renderDocuments(documents) {
   const el = document.getElementById("admin-document-table");
