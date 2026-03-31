@@ -1,34 +1,15 @@
-// admin-api.js v2026033101
+// admin-api.js v2026033102
 import { supabase } from "/api/supabase-client.js";
 
 // ── DASHBOARD DATA ────────────────────────────────────────────────────────────
 
 export async function getAdminDashboardData() {
-  console.log('getAdminDashboardData v2026033101 starting...');
+  console.log('getAdminDashboardData v2026033102 starting...');
 
-  // Direct fetch for applications to avoid FK ambiguity with Supabase client
-  let applicationsResult = { data: [], error: null };
-  try {
-    const appsRes = await fetch(
-      `${window.APP_CONFIG?.SUPABASE_URL}/rest/v1/mortgage_applications?select=id,loan_type,loan_amount,status,updated_at,property_address_street,property_address_city,property_value,contact_id,contacts!mortgage_applications_contact_id_fkey(id,first_name,last_name,email,phone,credit_score,monthly_income,pipeline_status)&order=updated_at.desc`,
-      { headers: {
-        'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${window.APP_CONFIG?.SUPABASE_ANON_KEY}`
-      }}
-    );
-    const applicationsData = await appsRes.json();
-    applicationsResult = {
-      data: Array.isArray(applicationsData) ? applicationsData : [],
-      error: applicationsData?.code ? applicationsData : null
-    };
-  } catch (e) {
-    console.error('Applications direct fetch failed:', e);
-    applicationsResult = { data: [], error: e };
-  }
-
-  const [contactsResult, leadsResult, documentsResult, notesResult, tasksResult] = await Promise.all([
+  const [contactsResult, leadsResult, applicationsResult, documentsResult, notesResult, tasksResult] = await Promise.all([
     supabase.from("contacts").select("*").order("created_at", { ascending: false }),
     supabase.from("leads").select("*, contacts(first_name, last_name, email, phone, credit_score, employer_name, monthly_income)").order("created_at", { ascending: false }),
+    supabase.from("mortgage_applications").select("id, loan_type, loan_amount, status, updated_at, contact_id, property_address_street").order("updated_at", { ascending: false }),
     supabase.from("uploaded_documents").select("*").order("created_at", { ascending: false }),
     supabase.from("notes").select("*").order("created_at", { ascending: false }),
     supabase.from("tasks").select("*").order("created_at", { ascending: false })
