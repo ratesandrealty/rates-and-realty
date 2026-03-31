@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drip Campaign Builder — Rates & Realty</title>
+<script src="/api/env.js?v=2026033003"></script>
+<style>
+  :root { --gold: #c9a84c; --bg: #0d0d0d; --surface: #141414; --surface2: #1a1a1a; --surface3: #222; --border: rgba(255,255,255,0.07); --text: #fff; --muted: rgba(255,255,255,0.4); }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  /* Header */
+  .hdr { display:flex; align-items:center; gap:10px; padding:10px 20px; background:var(--surface); border-bottom:1px solid var(--border); }
+  .hdr h1 { font-size:15px; font-weight:700; flex:1; }
+  .btn { padding:7px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; border:none; }
+  .btn-gold { background:var(--gold); color:#000; }
+  .btn-ghost { background:rgba(255,255,255,0.06); color:#fff; border:1px solid var(--border); }
+  .btn-danger { background:rgba(255,60,60,0.1); color:#ff6b6b; border:1px solid rgba(255,60,60,0.2); }
+  .btn-green { background:rgba(80,200,120,0.15); color:#50c878; border:1px solid rgba(80,200,120,0.3); }
+
+  /* Layout */
+  .layout { display:flex; height:calc(100vh - 48px); }
+
+  /* Left: Campaign list */
+  .sidebar { width:240px; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+  .sidebar-hdr { padding:14px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+  .sidebar-hdr span { font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; }
+  .camp-list { flex:1; overflow-y:auto; padding:8px; }
+  .camp-item { padding:10px 12px; border-radius:8px; cursor:pointer; margin-bottom:4px; border:1px solid transparent; transition:all .15s; }
+  .camp-item:hover { background:rgba(255,255,255,0.04); }
+  .camp-item.active { background:rgba(201,168,76,0.08); border-color:rgba(201,168,76,0.2); }
+  .camp-name { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .camp-meta { font-size:11px; color:var(--muted); margin-top:2px; }
+  .status-dot { width:7px; height:7px; border-radius:50%; display:inline-block; margin-right:5px; }
+  .dot-draft { background:rgba(255,255,255,0.2); }
+  .dot-active { background:#50c878; }
+  .dot-paused { background:#ffa030; }
+
+  /* Center: Builder */
+  .builder { flex:1; overflow-y:auto; padding:20px; }
+  .builder-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--muted); text-align:center; }
+  .builder-empty .icon { font-size:48px; margin-bottom:12px; }
+
+  /* Campaign header */
+  .camp-hdr { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:16px; }
+  .camp-hdr-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .camp-title-input { flex:1; min-width:200px; background:transparent; border:none; color:#fff; font-size:18px; font-weight:700; outline:none; }
+  .camp-title-input::placeholder { color:rgba(255,255,255,0.2); }
+
+  /* Trigger */
+  .trigger-bar { background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.15); border-radius:10px; padding:12px 16px; margin-bottom:16px; display:flex; align-items:center; gap:12px; }
+  .trigger-label { font-size:11px; color:var(--gold); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; flex-shrink:0; }
+  .trigger-select { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:7px; color:#fff; padding:6px 10px; font-size:12px; cursor:pointer; }
+  .trigger-select option { background:#1a1a1a; }
+
+  /* Steps */
+  .steps-wrap { position:relative; }
+  .step-connector { width:2px; height:24px; background:rgba(255,255,255,0.08); margin:0 auto; }
+
+  /* Step card */
+  .step-card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; margin-bottom:0; overflow:hidden;
+    transition:border-color .15s;
+  }
+  .step-card:hover { border-color:rgba(255,255,255,0.15); }
+  .step-card.step-email { border-left:3px solid var(--gold); }
+  .step-card.step-delay { border-left:3px solid rgba(100,160,255,0.6); }
+  .step-card.step-condition { border-left:3px solid rgba(200,140,255,0.6); }
+
+  .step-hdr { display:flex; align-items:center; gap:10px; padding:12px 16px; cursor:pointer; }
+  .step-icon { font-size:18px; flex-shrink:0; }
+  .step-type-badge { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; padding:2px 8px; border-radius:6px; flex-shrink:0; }
+  .badge-email { background:rgba(201,168,76,0.15); color:var(--gold); }
+  .badge-delay { background:rgba(100,160,255,0.15); color:#60a0ff; }
+  .badge-condition { background:rgba(200,140,255,0.15); color:#c08fe0; }
+  .step-summary { flex:1; font-size:13px; color:#fff; }
+  .step-summary-sub { font-size:11px; color:var(--muted); }
+  .step-actions { display:flex; gap:6px; margin-left:auto; }
+  .step-btn { padding:4px 8px; border-radius:6px; font-size:11px; cursor:pointer; border:none; font-weight:600; }
+  .step-btn-del { background:rgba(255,60,60,0.1); color:#ff6b6b; }
+  .step-btn-edit { background:rgba(255,255,255,0.06); color:var(--muted); }
+  .step-chevron { color:var(--muted); font-size:12px; transition:transform .15s; }
+  .step-chevron.open { transform:rotate(180deg); }
+
+  /* Step body (expanded) */
+  .step-body { display:none; padding:0 16px 16px; border-top:1px solid var(--border); }
+  .step-body.open { display:block; }
+
+  /* Email step */
+  .field { margin-bottom:12px; }
+  .field label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:var(--muted); display:block; margin-bottom:5px; }
+  .field input, .field select, .field textarea {
+    width:100%; padding:8px 12px; background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.08); border-radius:7px; color:#fff;
+    font-size:13px; outline:none; font-family:inherit;
+  }
+  .field textarea { min-height:100px; resize:vertical; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color:rgba(201,168,76,0.35); }
+  .field select option { background:#1a1a1a; }
+
+  /* Canva picker */
+  .canva-selected-preview { margin-top:8px; background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:10px 12px; display:flex; align-items:center; gap:10px; }
+
+  /* Delay step */
+  .delay-row { display:flex; gap:8px; align-items:center; margin-top:10px; }
+  .delay-num { width:80px; padding:8px 12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:7px; color:#fff; font-size:16px; font-weight:700; text-align:center; outline:none; }
+  .delay-unit { padding:8px 12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:7px; color:#fff; font-size:13px; cursor:pointer; outline:none; }
+  .delay-unit option { background:#1a1a1a; }
+
+  /* Add step */
+  .add-step-row { display:flex; gap:8px; justify-content:center; margin-top:8px; }
+  .add-step-btn { display:flex; align-items:center; gap:6px; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; border:1px dashed rgba(255,255,255,0.15); background:transparent; color:var(--muted); transition:all .15s; }
+  .add-step-btn:hover { border-color:var(--gold); color:var(--gold); }
+
+  /* Right: Contacts panel */
+  .contacts-panel { width:260px; background:var(--surface); border-left:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+  .contacts-panel-hdr { padding:14px 16px; border-bottom:1px solid var(--border); }
+  .contacts-panel-hdr h3 { font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; }
+  .contact-filter { padding:10px 12px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; gap:6px; }
+  .contact-filter select { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:7px; color:#fff; padding:5px 8px; font-size:11px; cursor:pointer; }
+  .contact-filter select option { background:#1a1a1a; }
+  .contact-filter-count { font-size:11px; color:var(--muted); }
+  .contact-list { flex:1; overflow-y:auto; padding:8px; }
+  .contact-row { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:7px; cursor:pointer; border:1px solid transparent; transition:all .15s; }
+  .contact-row:hover { background:rgba(255,255,255,0.04); }
+  .contact-row.enrolled { border-color:rgba(201,168,76,0.2); background:rgba(201,168,76,0.04); }
+  .contact-avatar { width:28px; height:28px; border-radius:50%; background:rgba(201,168,76,0.2); color:var(--gold); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .contact-info { flex:1; min-width:0; }
+  .contact-name { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .contact-email { font-size:10px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .contact-enroll-btn { font-size:10px; padding:3px 7px; border-radius:5px; cursor:pointer; border:none; font-weight:600; flex-shrink:0; }
+  .btn-enroll { background:rgba(201,168,76,0.15); color:var(--gold); }
+  .btn-enrolled { background:rgba(80,200,120,0.15); color:#50c878; }
+
+  /* Stats bar */
+  .stats-bar { padding:12px 16px; border-top:1px solid var(--border); display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .stat-mini { text-align:center; }
+  .stat-mini-num { font-size:18px; font-weight:700; color:var(--gold); }
+  .stat-mini-lbl { font-size:10px; color:var(--muted); }
+
+  /* Toast */
+  #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#222; border:1px solid var(--border); border-radius:10px; padding:9px 18px; font-size:12px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9999; }
+  #toast.show { opacity:1; }
+
+  /* Canva modal */
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:1000; align-items:center; justify-content:center; }
+  .modal-overlay.open { display:flex; }
+  .modal { background:var(--surface); border-radius:16px; width:90vw; max-width:800px; max-height:85vh; display:flex; flex-direction:column; border:1px solid var(--border); overflow:hidden; }
+  .modal-hdr { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+  .modal-body { flex:1; overflow-y:auto; padding:16px 20px; }
+  .canva-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
+  .canva-grid-item { border:2px solid var(--border); border-radius:10px; overflow:hidden; cursor:pointer; transition:all .15s; }
+  .canva-grid-item:hover { border-color:rgba(201,168,76,0.4); transform:translateY(-2px); }
+  .canva-grid-item.selected { border-color:var(--gold); }
+  .canva-grid-item img { width:100%; height:100px; object-fit:cover; display:block; }
+  .canva-grid-name { font-size:11px; padding:6px 8px; color:var(--muted); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .modal-footer { padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px; }
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <a href="email-marketing.html" style="color:var(--muted);text-decoration:none;font-size:13px;">← Back</a>
+  <h1>⚡ Drip Campaign Builder</h1>
+  <div id="hdrActions" style="display:flex;gap:8px;"></div>
+</div>
+
+<div class="layout">
+
+  <!-- LEFT: Campaign list -->
+  <div class="sidebar">
+    <div class="sidebar-hdr">
+      <span>Campaigns</span>
+      <button class="btn btn-gold" onclick="newCampaign()" style="padding:5px 10px;font-size:11px;">+ New</button>
+    </div>
+    <div class="camp-list" id="campList">
+      <div style="text-align:center;padding:24px;color:var(--muted);font-size:12px;">Loading…</div>
+    </div>
+  </div>
+
+  <!-- CENTER: Builder -->
+  <div class="builder" id="builder">
+    <div class="builder-empty">
+      <div class="icon">⚡</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:8px;">Drip Campaign Builder</div>
+      <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Select a campaign from the left or create a new one to start building your email sequence.</div>
+      <button class="btn btn-gold" onclick="newCampaign()" style="margin-top:20px;">+ Create Campaign</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: Contacts -->
+  <div class="contacts-panel">
+    <div class="contacts-panel-hdr">
+      <h3>📋 Enroll Contacts</h3>
+    </div>
+    <div class="contact-filter">
+      <select id="contactStatusFilter" onchange="loadContacts()">
+        <option value="">All Contacts</option>
+        <option value="new">New Lead</option>
+        <option value="contacted">Contacted</option>
+        <option value="qualified">Qualified</option>
+      </select>
+      <select id="contactSourceFilter" onchange="loadContacts()">
+        <option value="">All Sources</option>
+        <option value="website">Website</option>
+        <option value="referral">Referral</option>
+        <option value="facebook">Facebook</option>
+      </select>
+      <div class="contact-filter-count" id="contactFilterCount">—</div>
+    </div>
+    <div class="contact-list" id="contactList">
+      <div style="text-align:center;padding:20px;font-size:12px;color:var(--muted);">Select a campaign first</div>
+    </div>
+    <div class="stats-bar" id="statsBar">
+      <div class="stat-mini"><div class="stat-mini-num" id="statEnrolled">—</div><div class="stat-mini-lbl">Enrolled</div></div>
+      <div class="stat-mini"><div class="stat-mini-num" id="statSteps">—</div><div class="stat-mini-lbl">Steps</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Canva picker modal -->
+<div class="modal-overlay" id="canvaModal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div>
+        <div style="font-size:16px;font-weight:700;">🎨 Pick a Canva Design</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px;">Select a design to embed in this email step</div>
+      </div>
+      <button class="btn btn-ghost" onclick="closeCanvaModal()" style="padding:5px 10px;font-size:11px;">✕ Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="canva-grid" id="canvaGrid">
+        <div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">Loading your Canva designs…</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeCanvaModal()">Cancel</button>
+      <button class="btn btn-gold" onclick="confirmCanvaSelection()">Use This Design</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+
+let _campaigns = [];
+let _activeCampaign = null;
+let _contacts = [];
+let _enrollments = [];
+let _canvaDesigns = [];
+let _selectedCanvaDesign = null;
+let _canvaTargetStepIdx = null;
+
+// ── Load campaigns ────────────────────────────────────────────
+async function loadCampaigns() {
+  const res = await fetch(`${SB_URL}/rest/v1/drip_campaigns?order=created_at.desc`, {
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+  });
+  _campaigns = await res.json();
+  renderCampList();
+}
+
+function renderCampList() {
+  const el = document.getElementById('campList');
+  if (!_campaigns.length) {
+    el.innerHTML = '<div style="text-align:center;padding:20px;font-size:12px;color:var(--muted);">No campaigns yet</div>';
+    return;
+  }
+  el.innerHTML = _campaigns.map(c => `
+    <div class="camp-item ${_activeCampaign?.id === c.id ? 'active' : ''}" onclick="selectCampaign('${c.id}')">
+      <div class="camp-name">
+        <span class="status-dot dot-${c.status}"></span>${c.name}
+      </div>
+      <div class="camp-meta">${(c.steps||[]).length} steps · ${c.status}</div>
+    </div>`).join('');
+}
+
+// ── Select / load campaign ────────────────────────────────────
+async function selectCampaign(id) {
+  _activeCampaign = _campaigns.find(c => c.id === id);
+  if (!_activeCampaign) return;
+  renderCampList();
+  renderBuilder();
+  await loadEnrollments();
+  await loadContacts();
+}
+
+// ── Render builder ────────────────────────────────────────────
+function renderBuilder() {
+  const c = _activeCampaign;
+  if (!c) return;
+  const steps = c.steps || [];
+
+  document.getElementById('hdrActions').innerHTML = `
+    <span style="font-size:11px;color:var(--muted);margin-right:4px;">Status:</span>
+    <select onchange="updateCampStatus(this.value)" style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:#fff;padding:5px 8px;font-size:11px;cursor:pointer;">
+      <option value="draft" ${c.status==='draft'?'selected':''}>Draft</option>
+      <option value="active" ${c.status==='active'?'selected':''}>Active</option>
+      <option value="paused" ${c.status==='paused'?'selected':''}>Paused</option>
+    </select>
+    <button class="btn btn-ghost" onclick="saveCampaign()" style="padding:6px 12px;font-size:11px;">💾 Save</button>
+    <button class="btn btn-danger" onclick="deleteCampaign()" style="padding:6px 12px;font-size:11px;">🗑 Delete</button>
+  `;
+
+  document.getElementById('statSteps').textContent = steps.length;
+
+  const stepsHtml = steps.map((step, idx) => renderStep(step, idx)).join(`
+    <div class="step-connector"></div>
+  `);
+
+  document.getElementById('builder').innerHTML = `
+    <div class="camp-hdr">
+      <div class="camp-hdr-row">
+        <input class="camp-title-input" id="campTitleInput" value="${c.name}" placeholder="Campaign name…" oninput="_activeCampaign.name = this.value">
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;">
+        <input type="text" value="${c.description||''}" placeholder="Add a description…"
+          style="background:transparent;border:none;color:var(--muted);font-size:12px;outline:none;width:100%;"
+          oninput="_activeCampaign.description = this.value">
+      </div>
+    </div>
+
+    <!-- Trigger -->
+    <div class="trigger-bar">
+      <span class="trigger-label">⚡ Trigger</span>
+      <select class="trigger-select" onchange="_activeCampaign.trigger_type=this.value">
+        <option value="manual" ${c.trigger_type==='manual'?'selected':''}>Manual enrollment only</option>
+        <option value="new_lead" ${c.trigger_type==='new_lead'?'selected':''}>When new contact is added</option>
+        <option value="status_change" ${c.trigger_type==='status_change'?'selected':''}>When lead status changes</option>
+        <option value="tag_added" ${c.trigger_type==='tag_added'?'selected':''}>When tag is added</option>
+      </select>
+      <span style="font-size:11px;color:var(--muted);">→ Enrollment starts the sequence</span>
+    </div>
+
+    <!-- Steps -->
+    <div class="steps-wrap" id="stepsWrap">
+      ${steps.length ? stepsHtml : '<div style="text-align:center;padding:32px;color:var(--muted);font-size:13px;">No steps yet — add your first email or delay below</div>'}
+    </div>
+
+    <!-- Add step buttons -->
+    <div class="step-connector" ${!steps.length ? 'style="display:none"' : ''}></div>
+    <div class="add-step-row">
+      <button class="add-step-btn" onclick="addStep('email')">✉️ + Email</button>
+      <button class="add-step-btn" onclick="addStep('delay')">⏱ + Delay</button>
+    </div>
+  `;
+}
+
+function renderStep(step, idx) {
+  if (step.type === 'delay') {
+    return `
+      <div class="step-card step-delay" id="step_${idx}">
+        <div class="step-hdr" onclick="toggleStep(${idx})">
+          <span class="step-icon">⏱</span>
+          <span class="step-type-badge badge-delay">Delay</span>
+          <div class="step-summary">
+            Wait <strong>${step.delay_value || 1} ${step.delay_unit || 'day'}${(step.delay_value||1) !== 1 ? 's' : ''}</strong>
+            <div class="step-summary-sub">before sending the next step</div>
+          </div>
+          <div class="step-actions">
+            <button class="step-btn step-btn-del" onclick="event.stopPropagation();removeStep(${idx})">✕</button>
+          </div>
+          <span class="step-chevron" id="chevron_${idx}">▾</span>
+        </div>
+        <div class="step-body" id="body_${idx}">
+          <div class="delay-row">
+            <div style="font-size:13px;color:var(--muted);">Wait</div>
+            <input type="number" class="delay-num" min="1" max="365" value="${step.delay_value||1}"
+              oninput="_activeCampaign.steps[${idx}].delay_value=parseInt(this.value)||1;updateStepSummary(${idx})">
+            <select class="delay-unit" onchange="_activeCampaign.steps[${idx}].delay_unit=this.value;updateStepSummary(${idx})">
+              <option value="minute" ${step.delay_unit==='minute'?'selected':''}>Minute(s)</option>
+              <option value="hour" ${step.delay_unit==='hour'?'selected':''}>Hour(s)</option>
+              <option value="day" ${step.delay_unit==='day'?'selected':''}>Day(s)</option>
+              <option value="week" ${step.delay_unit==='week'?'selected':''}>Week(s)</option>
+            </select>
+            <div style="font-size:13px;color:var(--muted);">after previous step</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // Email step
+  const hasCanva = step.canva_design_id;
+  return `
+    <div class="step-card step-email" id="step_${idx}">
+      <div class="step-hdr" onclick="toggleStep(${idx})">
+        <span class="step-icon">✉️</span>
+        <div style="background:rgba(201,168,76,0.1);color:var(--gold);font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;flex-shrink:0;">EMAIL ${idx + 1 - (_activeCampaign.steps||[]).slice(0,idx).filter(s=>s.type==='delay').length}</div>
+        <div class="step-summary">
+          ${step.subject ? `<strong>${step.subject}</strong>` : '<span style="color:var(--muted)">No subject yet</span>'}
+          <div class="step-summary-sub">${hasCanva ? '🎨 Canva design attached' : 'Text only'}</div>
+        </div>
+        <div class="step-actions">
+          <button class="step-btn step-btn-del" onclick="event.stopPropagation();removeStep(${idx})">✕</button>
+        </div>
+        <span class="step-chevron" id="chevron_${idx}">▾</span>
+      </div>
+      <div class="step-body" id="body_${idx}">
+        <div style="padding-top:12px;">
+          <div class="field">
+            <label>Subject Line</label>
+            <input type="text" value="${step.subject||''}" placeholder="e.g. Welcome to Rates & Realty, {name}!"
+              oninput="_activeCampaign.steps[${idx}].subject=this.value;updateStepSummary(${idx})">
+          </div>
+          <div class="field">
+            <label>Email Body <span style="font-size:10px;color:var(--muted);">(use {name} for first name)</span></label>
+            <textarea placeholder="Hi {name},&#10;&#10;Write your email here..."
+              oninput="_activeCampaign.steps[${idx}].body=this.value">${step.body||''}</textarea>
+          </div>
+
+          <!-- Canva design picker -->
+          <div class="field">
+            <label>🎨 Attach Canva Design (optional)</label>
+            <div style="margin-bottom:6px;">
+              <button class="btn btn-ghost" onclick="openCanvaModal(${idx})" style="font-size:11px;padding:6px 12px;">
+                ${hasCanva ? '🎨 Change Design' : '+ Pick from Canva'}
+              </button>
+              ${hasCanva ? `<button class="btn btn-danger" onclick="removeCanva(${idx})" style="font-size:11px;padding:6px 12px;margin-left:6px;">✕ Remove</button>` : ''}
+            </div>
+            ${hasCanva ? `
+              <div class="canva-selected-preview">
+                <img src="${step.canva_thumbnail}" style="width:48px;height:36px;object-fit:cover;border-radius:4px;">
+                <div>
+                  <div style="font-size:12px;font-weight:600;">${step.canva_title||'Canva Design'}</div>
+                  <a href="${step.canva_view_url}" target="_blank" style="font-size:11px;color:var(--gold);">View in Canva →</a>
+                </div>
+              </div>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function toggleStep(idx) {
+  const body = document.getElementById(`body_${idx}`);
+  const chev = document.getElementById(`chevron_${idx}`);
+  body.classList.toggle('open');
+  chev.classList.toggle('open');
+}
+
+function updateStepSummary(idx) {
+  const step = _activeCampaign.steps[idx];
+  const card = document.getElementById(`step_${idx}`);
+  if (!card) return;
+  const wasOpen = document.getElementById(`body_${idx}`)?.classList.contains('open');
+  card.outerHTML = renderStep(step, idx);
+  if (wasOpen) toggleStep(idx);
+}
+
+function addStep(type) {
+  if (!_activeCampaign) return;
+  const steps = _activeCampaign.steps || [];
+  if (type === 'email') {
+    steps.push({ type: 'email', subject: '', body: '', canva_design_id: null, canva_thumbnail: null, canva_title: null, canva_view_url: null });
+  } else if (type === 'delay') {
+    steps.push({ type: 'delay', delay_value: 1, delay_unit: 'day' });
+  }
+  _activeCampaign.steps = steps;
+  renderBuilder();
+  setTimeout(() => toggleStep(steps.length - 1), 50);
+  showToast(`${type === 'email' ? '✉️ Email' : '⏱ Delay'} step added`);
+}
+
+function removeStep(idx) {
+  if (!confirm('Remove this step?')) return;
+  _activeCampaign.steps.splice(idx, 1);
+  renderBuilder();
+}
+
+// ── Canva modal ───────────────────────────────────────────────
+async function openCanvaModal(stepIdx) {
+  _canvaTargetStepIdx = stepIdx;
+  _selectedCanvaDesign = null;
+  document.getElementById('canvaModal').classList.add('open');
+
+  const grid = document.getElementById('canvaGrid');
+  if (_canvaDesigns.length) { renderCanvaGrid(); return; }
+  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">Loading Canva designs…</div>';
+
+  try {
+    const resp = await fetch(`${SB_URL}/functions/v1/canva-designs`, { headers: { Authorization: `Bearer ${SB_KEY}` } });
+    if (resp.ok) { const data = await resp.json(); _canvaDesigns = data.designs || []; }
+  } catch(e) {}
+
+  if (!_canvaDesigns.length) {
+    _canvaDesigns = [
+      { id: 'DAHEqaMFcqs', title: 'Grow Your Investor Client Base', thumbnail: 'https://design.canva.ai/M1bN5SRbV4Y5yQc', view_url: 'https://www.canva.com/d/syfNFxwTjsEeABY', edit_url: 'https://www.canva.com/d/7IFlPQsRLR4yFS9' },
+      { id: 'DAGeKximNLo', title: 'Pre Approval', thumbnail: 'https://design.canva.ai/UHuW0zW4d2lXtef', view_url: 'https://www.canva.com/d/YbrBbVPgJAAsYM3', edit_url: 'https://www.canva.com/d/3L0RuvtD_mFTtNi' },
+      { id: 'DAFYJ5-R8EI', title: 'Mortgage Rate Update', thumbnail: 'https://design.canva.ai/gY0FuhBqllHEu6m', view_url: 'https://www.canva.com/d/CoijyZ7w0fdV70d', edit_url: 'https://www.canva.com/d/KCQ7LxOKflcOGSW' },
+      { id: 'DAGhqY_VBl4', title: 'Mortgage Loan Flyers', thumbnail: 'https://design.canva.ai/9Lb5bbKRvcLdmlG', view_url: 'https://www.canva.com/d/P7D1iJN3ysqDQRA', edit_url: 'https://www.canva.com/d/G6yW7Vy7syhEStc' },
+      { id: 'DAGcTeP2B28', title: 'Loan Options', thumbnail: 'https://design.canva.ai/RamwI0sDd-sYmsV', view_url: 'https://www.canva.com/d/22MDQvBGlOpHp7Y', edit_url: 'https://www.canva.com/d/9fOSzCRcWg1ZxgH' },
+      { id: 'DAGcblSGm7I', title: 'Buyers Guide', thumbnail: 'https://design.canva.ai/9B9C9Z-O4VjdfhE', view_url: 'https://www.canva.com/d/gEhw4r1TTPKpEvE', edit_url: 'https://www.canva.com/d/cvwWvglTqwzjDx1' },
+      { id: 'DAGieMVgZMk', title: 'Jumbo Loan Flyer', thumbnail: 'https://design.canva.ai/n1khwtEx4cx3J1g', view_url: 'https://www.canva.com/d/qqyQzOqFDG-pLO5', edit_url: 'https://www.canva.com/d/nrcygmi2DqV4Xi0' },
+      { id: 'DAGblaQ33UY', title: 'Pre-Underwritten Pre-Approval', thumbnail: 'https://design.canva.ai/oUgsOaBkX2m8Lg0', view_url: 'https://www.canva.com/d/z9c6I3xqZByEpZe', edit_url: 'https://www.canva.com/d/ivpGNYpeLJ7Wstf' },
+      { id: 'DAGeepUhwMo', title: 'Rene Duarte Mortgage Loan', thumbnail: 'https://design.canva.ai/l0o9tmZuQ0JnOZC', view_url: 'https://www.canva.com/d/IyCueWcRxwpU3iU', edit_url: 'https://www.canva.com/d/M7lHDPO80Qcc2i1' },
+      { id: 'DAGbRZuoM2o', title: 'Open House', thumbnail: 'https://design.canva.ai/FQbGi_vfOmb4bVu', view_url: 'https://www.canva.com/d/wk6xpfyAgMUjm5w', edit_url: 'https://www.canva.com/d/YDz-C0gYqyjR15T' },
+    ];
+  }
+  renderCanvaGrid();
+}
+
+function renderCanvaGrid() {
+  document.getElementById('canvaGrid').innerHTML = _canvaDesigns.map(d => `
+    <div class="canva-grid-item ${_selectedCanvaDesign?.id === d.id ? 'selected' : ''}" onclick="selectCanvaDesign('${d.id}')">
+      <img src="${d.thumbnail}" alt="${d.title||'Design'}" onerror="this.style.background='#222';this.style.height='100px';">
+      <div class="canva-grid-name">${d.title||'Untitled'}</div>
+    </div>`).join('');
+}
+
+function selectCanvaDesign(id) {
+  _selectedCanvaDesign = _canvaDesigns.find(d => d.id === id);
+  renderCanvaGrid();
+}
+
+function confirmCanvaSelection() {
+  if (!_selectedCanvaDesign || _canvaTargetStepIdx === null) { showToast('Please select a design first'); return; }
+  const step = _activeCampaign.steps[_canvaTargetStepIdx];
+  step.canva_design_id = _selectedCanvaDesign.id;
+  step.canva_thumbnail = _selectedCanvaDesign.thumbnail;
+  step.canva_title = _selectedCanvaDesign.title;
+  step.canva_view_url = _selectedCanvaDesign.view_url;
+  closeCanvaModal();
+  renderBuilder();
+  setTimeout(() => toggleStep(_canvaTargetStepIdx), 50);
+  showToast('🎨 Canva design attached!');
+}
+
+function closeCanvaModal() {
+  document.getElementById('canvaModal').classList.remove('open');
+  _selectedCanvaDesign = null;
+  _canvaTargetStepIdx = null;
+}
+
+function removeCanva(idx) {
+  const step = _activeCampaign.steps[idx];
+  step.canva_design_id = null; step.canva_thumbnail = null; step.canva_title = null; step.canva_view_url = null;
+  renderBuilder();
+  setTimeout(() => toggleStep(idx), 50);
+}
+
+// ── Save campaign ─────────────────────────────────────────────
+async function saveCampaign() {
+  if (!_activeCampaign) return;
+  const { id, name, description, status, trigger_type, steps } = _activeCampaign;
+  const payload = { name, description, status, trigger_type, steps, updated_at: new Date().toISOString() };
+
+  const url = id ? `${SB_URL}/rest/v1/drip_campaigns?id=eq.${id}` : `${SB_URL}/rest/v1/drip_campaigns`;
+  const method = id ? 'PATCH' : 'POST';
+
+  const res = await fetch(url, {
+    method,
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    body: JSON.stringify(payload)
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    if (!id && data[0]) {
+      _activeCampaign.id = data[0].id;
+      _campaigns.unshift(data[0]);
+    } else {
+      const idx = _campaigns.findIndex(c => c.id === id);
+      if (idx >= 0) _campaigns[idx] = { ..._campaigns[idx], ...payload };
+    }
+    renderCampList();
+    showToast('✓ Campaign saved!');
+  } else {
+    showToast('⚠️ Save failed');
+  }
+}
+
+async function updateCampStatus(status) {
+  if (!_activeCampaign?.id) return;
+  _activeCampaign.status = status;
+  await saveCampaign();
+}
+
+async function deleteCampaign() {
+  if (!_activeCampaign?.id) return;
+  if (!confirm(`Delete "${_activeCampaign.name}"?`)) return;
+  await fetch(`${SB_URL}/rest/v1/drip_campaigns?id=eq.${_activeCampaign.id}`, {
+    method: 'DELETE', headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+  });
+  _campaigns = _campaigns.filter(c => c.id !== _activeCampaign.id);
+  _activeCampaign = null;
+  renderCampList();
+  document.getElementById('builder').innerHTML = `<div class="builder-empty"><div class="icon">⚡</div><div style="font-size:16px;font-weight:700;margin-bottom:8px;">Campaign deleted</div><button class="btn btn-gold" onclick="newCampaign()" style="margin-top:16px;">+ Create New</button></div>`;
+  document.getElementById('hdrActions').innerHTML = '';
+}
+
+// ── New campaign ──────────────────────────────────────────────
+function newCampaign() {
+  _activeCampaign = { id: null, name: 'New Campaign', description: '', status: 'draft', trigger_type: 'manual', steps: [] };
+  renderCampList();
+  renderBuilder();
+  document.getElementById('hdrActions').innerHTML = `
+    <button class="btn btn-gold" onclick="saveCampaign()" style="padding:6px 12px;font-size:11px;">💾 Save Campaign</button>
+  `;
+  setTimeout(() => document.getElementById('campTitleInput')?.focus(), 100);
+}
+
+// ── Contacts & enrollments ────────────────────────────────────
+async function loadContacts() {
+  let query = `${SB_URL}/rest/v1/contacts?select=id,first_name,last_name,email&order=created_at.desc&limit=100`;
+  const res = await fetch(query, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+  _contacts = (await res.json()).filter(c => c.email);
+  document.getElementById('contactFilterCount').textContent = `${_contacts.length} contacts with email`;
+  renderContactList();
+}
+
+async function loadEnrollments() {
+  if (!_activeCampaign?.id) return;
+  const res = await fetch(`${SB_URL}/rest/v1/drip_enrollments?campaign_id=eq.${_activeCampaign.id}&select=contact_id,status`, {
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+  });
+  _enrollments = await res.json();
+  document.getElementById('statEnrolled').textContent = _enrollments.length;
+}
+
+function renderContactList() {
+  const enrolledIds = new Set(_enrollments.map(e => e.contact_id));
+  const el = document.getElementById('contactList');
+  if (!_activeCampaign?.id) {
+    el.innerHTML = '<div style="text-align:center;padding:20px;font-size:12px;color:var(--muted);">Save campaign first</div>';
+    return;
+  }
+  if (!_contacts.length) { el.innerHTML = '<div style="text-align:center;padding:20px;font-size:12px;color:var(--muted);">No contacts found</div>'; return; }
+  el.innerHTML = _contacts.map(c => {
+    const isEnrolled = enrolledIds.has(c.id);
+    const initials = `${(c.first_name||'?')[0]}${(c.last_name||'')[0]||''}`.toUpperCase();
+    const name = `${c.first_name||''} ${c.last_name||''}`.trim() || 'Unknown';
+    return `
+      <div class="contact-row ${isEnrolled?'enrolled':''}" onclick="toggleEnroll('${c.id}','${name}',${isEnrolled})">
+        <div class="contact-avatar">${initials}</div>
+        <div class="contact-info">
+          <div class="contact-name">${name}</div>
+          <div class="contact-email">${c.email}</div>
+        </div>
+        <button class="contact-enroll-btn ${isEnrolled?'btn-enrolled':'btn-enroll'}" onclick="event.stopPropagation();toggleEnroll('${c.id}','${name}',${isEnrolled})">
+          ${isEnrolled ? '✓' : '+'}
+        </button>
+      </div>`;
+  }).join('');
+}
+
+async function toggleEnroll(contactId, name, isEnrolled) {
+  if (!_activeCampaign?.id) { showToast('Save the campaign first'); return; }
+  if (isEnrolled) {
+    await fetch(`${SB_URL}/rest/v1/drip_enrollments?campaign_id=eq.${_activeCampaign.id}&contact_id=eq.${contactId}`, {
+      method: 'DELETE', headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+    });
+    _enrollments = _enrollments.filter(e => e.contact_id !== contactId);
+    showToast(`Removed ${name} from campaign`);
+  } else {
+    await fetch(`${SB_URL}/rest/v1/drip_enrollments`, {
+      method: 'POST',
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ campaign_id: _activeCampaign.id, contact_id: contactId, status: 'active', enrolled_at: new Date().toISOString() })
+    });
+    _enrollments.push({ contact_id: contactId, status: 'active' });
+    showToast(`✓ ${name} enrolled in campaign`);
+  }
+  document.getElementById('statEnrolled').textContent = _enrollments.length;
+  renderContactList();
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ── Init ──────────────────────────────────────────────────────
+loadCampaigns();
+loadContacts();
+</script>
+</body>
+</html>
