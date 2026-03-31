@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const TRESTLE_TOKEN_URL = "https://replication.trestle.us/connect/token";
-const TRESTLE_API_BASE = "https://api.bridgedataoutput.com/api/v2/OData/trestle";
+const TRESTLE_TOKEN_URL = "https://api.cotality.com/trestle/oidc/connect/token";
+const TRESTLE_API_BASE = "https://api.cotality.com/trestle/odata";
 
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
