@@ -948,7 +948,7 @@ function filterApplications() {
     const updated = app.updated_at ? new Date(app.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—";
 
     const hasContact = app.contact_id && app.contact_id !== "null";
-    const clickHandler = hasContact ? `window.location.href='/admin/lead-detail.html?id=${app.contact_id}'` : `alert('No contact linked to this application.')`;
+    const clickHandler = hasContact ? `console.log('Card clicked, contact_id:','${app.contact_id}');window.location.href='../admin/lead-detail.html?id=${app.contact_id}'` : `alert('No contact linked to this application.')`;
 
     return `<div style="background:#111;border:1px solid rgba(255,255,255,0.06);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .15s,box-shadow .15s;"
       onclick="${clickHandler}"
