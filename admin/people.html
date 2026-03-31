@@ -336,7 +336,7 @@ function normStatus(s) {
 
 async function loadPeople() {
   const [cR, lR] = await Promise.all([
-    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,email,phone,secondary_phone,source,lead_score,score_tier,lead_temperature,contact_type,loan_type,loan_amount,referred_by,pipeline_status,notes,tags,credit_score,created_at,updated_at&order=created_at.desc&limit=500`, { headers: hdrs() }),
+    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,email,phone,secondary_phone,source,lead_score,score_tier,lead_temperature,contact_type,loan_type,loan_amount,referred_by,referral_partner_id,pipeline_status,notes,tags,credit_score,created_at,updated_at&order=created_at.desc&limit=500`, { headers: hdrs() }),
     fetch(`${SB}/rest/v1/leads?select=contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at&order=created_at.desc&limit=500`, { headers: hdrs() })
   ]);
   const contacts = await cR.json();
@@ -559,7 +559,26 @@ async function confirmSaveView() {
 
 function showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 2500); }
 
-loadPeople();
+// Check for referral partner filter from URL
+const _urlParams = new URLSearchParams(window.location.search);
+const _rpFilterId = _urlParams.get('referral_partner_id');
+const _rpFilterName = _urlParams.get('partner_name');
+
+if (_rpFilterId && _rpFilterName) {
+  const banner = document.createElement('div');
+  banner.style.cssText = 'background:rgba(201,168,76,0.08);border-bottom:1px solid rgba(201,168,76,0.2);padding:8px 20px;font-size:12px;color:#c9a84c;display:flex;align-items:center;gap:10px;flex-shrink:0;';
+  banner.innerHTML = `🤝 Showing referrals from <strong style="margin:0 4px">${decodeURIComponent(_rpFilterName)}</strong> <button onclick="window.location.href='people.html'" style="margin-left:auto;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:rgba(255,255,255,0.5);padding:3px 10px;font-size:11px;cursor:pointer;">✕ Clear Filter</button>`;
+  const topbar = document.querySelector('.topbar');
+  if (topbar) topbar.insertAdjacentElement('afterend', banner);
+}
+
+loadPeople().then(() => {
+  if (_rpFilterId) {
+    _allPeople = _allPeople.filter(p => p.referral_partner_id === _rpFilterId);
+    updateTabCounts();
+    applyFilters();
+  }
+});
 </script>
 </body>
 </html>

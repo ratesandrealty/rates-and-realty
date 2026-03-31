@@ -289,6 +289,7 @@ async function openDetail(id) {
       <div style="flex:1"><div style="font-size:16px;font-weight:800">${name}</div><div style="font-size:12px;color:var(--muted);margin-top:2px">${p.title||''} ${p.company?'· '+p.company:''}</div>
         <div style="margin-top:6px;display:flex;gap:6px"><span class="type-pill type-${typeClass(p.source_type||'')}">${p.source_type||'Other'}</span><span class="pc-badge ${p.status==='VIP'?'badge-vip':p.status==='Inactive'?'badge-inactive':'badge-active'}">${p.status}</span></div>
       </div>
+      <button id="expandToggleBtn" onclick="togglePanelSize()" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:rgba(255,255,255,0.5);cursor:pointer;padding:5px 10px;font-size:12px;margin-right:8px;transition:all .15s;" title="Expand to full view">⤢ Expand</button>
       <button onclick="closeDetail()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;padding:4px">✕</button>
     </div>
     <div class="dp-body">
@@ -306,7 +307,7 @@ async function openDetail(id) {
       </div>
       ${p.notes ? `<div class="dp-section"><div class="dp-section-title">📝 Notes</div><div style="font-size:13px;color:rgba(255,255,255,0.6);line-height:1.6">${p.notes}</div></div>` : ''}
       <div class="dp-section">
-        <div class="dp-section-title" style="display:flex;align-items:center;justify-content:space-between">Referred Borrowers (${refs.length})<button class="btn btn-ghost btn-xs" onclick="window.location.href='people.html'">View All →</button></div>
+        <div class="dp-section-title" style="display:flex;align-items:center;justify-content:space-between">Referred Borrowers (${refs.length})<button class="btn btn-ghost btn-xs" onclick="viewAllReferrals('${p.id}','${name}')">View All →</button></div>
         ${refs.length ? refs.map(r => `<div class="referral-list-item" onclick="window.location.href='lead-detail.html?contact_id=${r.id}'">
           <div style="width:28px;height:28px;border-radius:50%;background:rgba(201,168,76,0.15);color:var(--gold);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${(r.first_name||'?')[0]}${(r.last_name||'')[0]||''}</div>
           <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600">${r.first_name||''} ${r.last_name||''}</div><div style="font-size:10px;color:var(--muted)">${r.pipeline_status||'New Lead'}</div></div>
@@ -320,7 +321,34 @@ async function openDetail(id) {
     </div>`;
   document.getElementById('detailOverlay').classList.add('open');
 }
-function closeDetail() { document.getElementById('detailOverlay').classList.remove('open'); }
+function closeDetail() {
+  _panelExpanded = false;
+  const panel = document.getElementById('detailPanel');
+  if (panel) { panel.style.width = '420px'; panel.style.maxWidth = '420px'; }
+  const overlay = document.getElementById('detailOverlay');
+  if (overlay) { overlay.classList.remove('open'); overlay.style.justifyContent = 'flex-end'; }
+}
+
+let _panelExpanded = false;
+function togglePanelSize() {
+  _panelExpanded = !_panelExpanded;
+  const panel = document.getElementById('detailPanel');
+  const btn = document.getElementById('expandToggleBtn');
+  const overlay = document.getElementById('detailOverlay');
+  if (_panelExpanded) {
+    panel.style.width = '100vw'; panel.style.maxWidth = '100vw';
+    overlay.style.justifyContent = 'center';
+    btn.textContent = '⤡ Compact'; btn.title = 'Return to compact view';
+  } else {
+    panel.style.width = '420px'; panel.style.maxWidth = '420px';
+    overlay.style.justifyContent = 'flex-end';
+    btn.textContent = '⤢ Expand'; btn.title = 'Expand to full view';
+  }
+}
+
+function viewAllReferrals(partnerId, partnerName) {
+  window.location.href = `people.html?referral_partner_id=${partnerId}&partner_name=${encodeURIComponent(partnerName)}`;
+}
 
 function openAddModal() { _editId = null; document.getElementById('modalTitle').textContent = '🤝 Add Referral Partner'; document.getElementById('savePartnerBtn').textContent = 'Add Partner'; ['pf_first','pf_last','pf_company','pf_title','pf_email','pf_phone','pf_notes'].forEach(id => document.getElementById(id).value = ''); document.getElementById('pf_type').value = 'Realtor'; document.getElementById('pf_status').value = 'Active'; document.getElementById('addModal').classList.add('open'); setTimeout(() => document.getElementById('pf_first').focus(), 50); }
 function closeAddModal() { document.getElementById('addModal').classList.remove('open'); }
