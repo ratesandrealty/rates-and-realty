@@ -1,3 +1,11 @@
+// Supabase config helper — reads APP_CONFIG with hardcoded URL fallback
+function getSupabaseConfig() {
+  return {
+    url: window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co',
+    key: window.APP_CONFIG?.SUPABASE_ANON_KEY
+  };
+}
+
 import { requireAdmin } from "/api/auth-api.js";
 import {
   addLeadNote, calculateLeadScore, completeTask, createAppointment, createLead, createTask,
@@ -780,8 +788,10 @@ function renderWeeklyBar(weeklyLeads) {
 let _allApplications = [];
 
 async function loadApplications(forceRefresh) {
-  // Wait for APP_CONFIG if not ready yet
-  if (!window.APP_CONFIG?.SUPABASE_URL) {
+  const { url: SUPABASE_URL, key: SUPABASE_KEY } = getSupabaseConfig();
+
+  // Wait for APP_CONFIG if key not ready yet
+  if (!SUPABASE_KEY) {
     console.warn('APP_CONFIG not ready, retrying in 500ms...');
     setTimeout(() => loadApplications(forceRefresh), 500);
     return;
@@ -793,9 +803,6 @@ async function loadApplications(forceRefresh) {
     renderApplications(dashboardData.applications);
     return;
   }
-
-  const SUPABASE_URL = window.APP_CONFIG.SUPABASE_URL;
-  const SUPABASE_KEY = window.APP_CONFIG.SUPABASE_ANON_KEY;
 
   console.log('loadApplications firing, URL:', SUPABASE_URL?.slice(0, 40));
 
