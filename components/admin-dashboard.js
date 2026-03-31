@@ -791,7 +791,7 @@ function renderAppStats(apps) {
   const el = document.getElementById("app-stats-row");
   if (!el) return;
   const total = apps.length;
-  const active = apps.filter(a => a.status === 'active').length;
+  const active = apps.filter(a => (a.status || 'draft') === 'active').length;
   const amounts = apps.map(a => a.loan_amount || 0).filter(a => a > 0);
   const avg = amounts.length ? amounts.reduce((s,a) => s+a, 0) / amounts.length : 0;
   const pipeline = apps.reduce((s,a) => s + (a.loan_amount || 0), 0);
@@ -808,13 +808,15 @@ function renderAppStats(apps) {
 
 function filterApplications() {
   const el = document.getElementById("application-table");
-  if (!el) return;
+  console.log('filterApplications: container found:', !!el, 'apps count:', _allApplications.length);
+  if (_allApplications.length) console.log('filterApplications: first app:', JSON.stringify(_allApplications[0]).substring(0, 300));
+  if (!el) { console.warn('filterApplications: #application-table element not found in DOM'); return; }
   const q = (document.getElementById("appSearchInput")?.value || "").toLowerCase();
   const statusF = document.getElementById("appStatusFilter")?.value || "";
   const sortBy = document.getElementById("appSortBy")?.value || "newest";
 
   let filtered = _allApplications.filter(app => {
-    if (statusF && (app.status || "").toLowerCase() !== statusF) return false;
+    if (statusF && (app.status || "draft").toLowerCase() !== statusF.toLowerCase()) return false;
     if (q) {
       const c = app._contact || {};
       const hay = `${c.first_name||""} ${c.last_name||""} ${c.email||""} ${app.property_address_street||""} ${app.property_address_city||""}`.toLowerCase();
