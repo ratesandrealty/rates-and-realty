@@ -743,120 +743,61 @@
       window.APP_CONFIG.SUPABASE_ANON_KEY
     );
 
-    /* ── MOCK LISTINGS ── */
-    const ALL_LISTINGS = [
-      {
-        id: "prop-001",
-        address: "8441 Westminster Blvd",
-        city: "Westminster, CA 92683",
-        price: 679000,
-        beds: 3, baths: 2, sqft: 1450,
-        type: "house",
-        badge: "New Listing", badgeStyle: "gold",
-        lat: 33.7480, lng: -117.9978,
-        bg: "linear-gradient(135deg,#1a2840,#0d1a2e)",
-        icon: "🏡", dom: 3, yearBuilt: 1978, garage: "2-car"
-      },
-      {
-        id: "prop-002",
-        address: "9852 Garden Grove Blvd",
-        city: "Garden Grove, CA 92844",
-        price: 879000,
-        beds: 4, baths: 3, sqft: 2100,
-        type: "house",
-        badge: "Open House Sun", badgeStyle: "blue",
-        lat: 33.7743, lng: -117.9378,
-        bg: "linear-gradient(135deg,#1a2a1a,#0d1e0d)",
-        icon: "🏠", dom: 7, yearBuilt: 1989, garage: "2-car"
-      },
-      {
-        id: "prop-003",
-        address: "13521 Bolsa Ave",
-        city: "Westminster, CA 92683",
-        price: 649000,
-        beds: 3, baths: 2, sqft: 1280,
-        type: "house",
-        badge: null,
-        lat: 33.7521, lng: -118.0054,
-        bg: "linear-gradient(135deg,#2a1a10,#1e1008)",
-        icon: "🏡", dom: 14, yearBuilt: 1965, garage: "1-car"
-      },
-      {
-        id: "prop-004",
-        address: "10941 Lampson Ave",
-        city: "Garden Grove, CA 92840",
-        price: 549000,
-        beds: 2, baths: 2, sqft: 1020,
-        type: "condo",
-        badge: "Price Reduced", badgeStyle: "gold",
-        lat: 33.7760, lng: -117.9600,
-        bg: "linear-gradient(135deg,#1a1a2a,#0d0d20)",
-        icon: "🏢", dom: 21, yearBuilt: 1995, garage: "1-car"
-      },
-      {
-        id: "prop-005",
-        address: "8632 11th St",
-        city: "Westminster, CA 92683",
-        price: 1050000,
-        beds: 5, baths: 3, sqft: 2800,
-        type: "house",
-        badge: "Luxury", badgeStyle: "gold",
-        lat: 33.7500, lng: -117.9950,
-        bg: "linear-gradient(135deg,#2a2010,#201808)",
-        icon: "🏡", dom: 5, yearBuilt: 2002, garage: "3-car"
-      },
-      {
-        id: "prop-006",
-        address: "9301 Cerritos Ave",
-        city: "Anaheim, CA 92804",
-        price: 725000,
-        beds: 3, baths: 2, sqft: 1560,
-        type: "house",
-        badge: null,
-        lat: 33.7950, lng: -117.9850,
-        bg: "linear-gradient(135deg,#101a2a,#081018)",
-        icon: "🏠", dom: 10, yearBuilt: 1971, garage: "2-car"
-      },
-      {
-        id: "prop-007",
-        address: "14021 Edwards St",
-        city: "Westminster, CA 92683",
-        price: 810000,
-        beds: 4, baths: 2, sqft: 1780,
-        type: "house",
-        badge: null,
-        lat: 33.7558, lng: -117.9886,
-        bg: "linear-gradient(135deg,#1a2a20,#101e14)",
-        icon: "🏡", dom: 18, yearBuilt: 1983, garage: "2-car"
-      },
-      {
-        id: "prop-008",
-        address: "11092 Trask Ave",
-        city: "Garden Grove, CA 92843",
-        price: 499000,
-        beds: 2, baths: 1, sqft: 980,
-        type: "house",
-        badge: "Starter Home", badgeStyle: "blue",
-        lat: 33.7640, lng: -117.9480,
-        bg: "linear-gradient(135deg,#201a10,#181208)",
-        icon: "🏡", dom: 28, yearBuilt: 1958, garage: "1-car"
-      },
-      {
-        id: "prop-009",
-        address: "8811 Westminster Ave",
-        city: "Westminster, CA 92683",
-        price: 895000,
-        beds: 3, baths: 3, sqft: 1900,
-        type: "house",
-        badge: "Remodeled", badgeStyle: "gold",
-        lat: 33.7491, lng: -117.9911,
-        bg: "linear-gradient(135deg,#2a1820,#1e1018)",
-        icon: "🏡", dom: 9, yearBuilt: 1975, garage: "2-car"
-      }
-    ];
-
     /* ── STATE ── */
-    let filteredListings = [...ALL_LISTINGS];
+    let ALL_LISTINGS = [];
+    let filteredListings = [];
+
+    const TRESTLE_PROXY = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/trestle-proxy';
+
+    /* ── LOAD LISTINGS FROM TRESTLE MLS ── */
+    async function loadListings() {
+      const grid = document.getElementById("sh-listings-grid");
+      grid.innerHTML = '<div style="text-align:center;padding:60px;color:rgba(255,255,255,0.35);font-size:0.9rem;">Loading MLS listings...</div>';
+      try {
+        const res = await fetch(TRESTLE_PROXY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: 'Property',
+            params: {
+              '$filter': "StandardStatus eq 'Active' and (City eq 'Westminster' or City eq 'Garden Grove' or City eq 'Huntington Beach' or City eq 'Anaheim' or City eq 'Santa Ana')",
+              '$orderby': 'ListPrice desc',
+              '$top': '50',
+              '$select': 'ListingKey,UnparsedAddress,City,StateOrProvince,PostalCode,ListPrice,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,StandardStatus,DaysOnMarket,YearBuilt,Media,Latitude,Longitude,ListingId,OpenHouseCount'
+            }
+          })
+        });
+        const data = await res.json();
+        if (data.error) { console.error('Trestle API error:', data); throw new Error(data.error); }
+        const listings = (data.value || []).map(p => ({
+          id: p.ListingKey,
+          address: p.UnparsedAddress || 'Address unavailable',
+          city: `${p.City || ''}, ${p.StateOrProvince || 'CA'} ${p.PostalCode || ''}`.trim(),
+          price: p.ListPrice || 0,
+          beds: p.BedroomsTotal || 0,
+          baths: p.BathroomsTotalInteger || 0,
+          sqft: p.LivingArea || 0,
+          type: (p.PropertySubType || p.PropertyType || 'house').toLowerCase(),
+          dom: p.DaysOnMarket || 0,
+          yearBuilt: p.YearBuilt,
+          lat: p.Latitude,
+          lng: p.Longitude,
+          photo: p.Media?.[0]?.MediaURL || null,
+          badge: p.DaysOnMarket != null && p.DaysOnMarket <= 3 ? 'New Listing'
+               : (p.OpenHouseCount || 0) > 0 ? 'Open House' : null,
+          badgeStyle: p.DaysOnMarket != null && p.DaysOnMarket <= 3 ? 'gold' : 'blue',
+          listingId: p.ListingId
+        }));
+        console.log('Trestle: loaded', listings.length, 'listings');
+        ALL_LISTINGS = listings;
+        filteredListings = [...listings];
+        renderCards();
+        updateMapMarkers();
+      } catch(err) {
+        console.error('Trestle load error:', err);
+        grid.innerHTML = '<div style="text-align:center;padding:60px;color:#f87171;font-size:0.9rem;">Could not load listings. Please try again later.</div>';
+      }
+    }
     let favoritedIds = new Set();
     let userEmail = localStorage.getItem("sh_user_email") || "";
     let pendingFavPropId = null;
@@ -986,9 +927,11 @@
       grid.innerHTML = filteredListings.map(p => `
         <div class="sh-card" id="card-${p.id}" data-prop-id="${p.id}">
           <div class="sh-card-photo">
-            <div class="sh-card-photo-bg" style="background:${p.bg};">
-              <span class="sh-card-photo-icon">${p.icon}</span>
-            </div>
+            ${p.photo
+              ? `<img src="${p.photo}" alt="${p.address}" style="width:100%;height:200px;object-fit:cover;display:block;" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                 <div class="sh-card-photo-bg" style="background:linear-gradient(135deg,#1a2840,#0d1a2e);display:none;"><span class="sh-card-photo-icon">🏠</span></div>`
+              : `<div class="sh-card-photo-bg" style="background:linear-gradient(135deg,#1a2840,#0d1a2e);"><span class="sh-card-photo-icon">🏠</span></div>`
+            }
             <div class="sh-card-photo-overlay"></div>
             ${p.badge ? `<span class="sh-card-badge sh-card-badge-${p.badgeStyle || 'gold'}">${p.badge}</span>` : ""}
             <button class="sh-fav-btn ${favoritedIds.has(p.id) ? 'is-faved' : ''}"
@@ -1006,11 +949,11 @@
               <span style="color:rgba(255,255,255,0.15);">·</span>
               <span class="sh-card-stat"><strong>${p.baths}</strong> ba</span>
               <span style="color:rgba(255,255,255,0.15);">·</span>
-              <span class="sh-card-stat"><strong>${p.sqft.toLocaleString()}</strong> sqft</span>
+              <span class="sh-card-stat"><strong>${p.sqft ? p.sqft.toLocaleString() : '—'}</strong> sqft</span>
             </div>
             <div class="sh-card-addr">${p.address}</div>
             <div class="sh-card-city">${p.city}</div>
-            <div class="sh-card-type">${p.type === "house" ? "Single Family" : p.type === "condo" ? "Condo/Townhome" : "Multi-Family"}</div>
+            <div class="sh-card-type">${p.type.includes('single') || p.type === 'house' ? 'Single Family' : p.type.includes('condo') || p.type.includes('townho') ? 'Condo/Townhome' : p.type.includes('multi') ? 'Multi-Family' : p.type.charAt(0).toUpperCase() + p.type.slice(1)}</div>
             <div class="sh-card-actions">
               <button class="sh-card-btn-primary"
                       onclick="openShowingModal('${p.address}, ${p.city}')">
@@ -1036,7 +979,7 @@
 
       filteredListings = ALL_LISTINGS.filter(p => {
         if (q && !`${p.address} ${p.city}`.toLowerCase().includes(q)) return false;
-        if (type && p.type !== type) return false;
+        if (type && !p.type.includes(type)) return false;
         if (priceRange) {
           const [lo, hi] = priceRange.split("-").map(Number);
           if (p.price < lo || p.price > hi) return false;
@@ -1253,7 +1196,7 @@
               <div style="font-size:0.8rem;color:#444;margin-bottom:2px;">${prop.address}</div>
               <div style="font-size:0.76rem;color:#666;margin-bottom:8px;">${prop.city}</div>
               <div style="font-size:0.78rem;color:#444;margin-bottom:10px;">
-                ${prop.beds} bd · ${prop.baths} ba · ${prop.sqft.toLocaleString()} sqft
+                ${prop.beds} bd · ${prop.baths} ba · ${prop.sqft ? prop.sqft.toLocaleString() : '—'} sqft
               </div>
               <button onclick="openShowingModal('${prop.address}, ${prop.city}')"
                 style="width:100%;padding:8px 12px;border-radius:999px;
@@ -1309,7 +1252,7 @@
     }
 
     /* ── INIT ── */
-    renderCards();
+    loadListings();
     loadFavorites();
   </script>
 
