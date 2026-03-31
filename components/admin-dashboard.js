@@ -913,6 +913,8 @@ function filterApplications() {
 
   const AV_BG = ['rgba(201,168,76,0.2)','rgba(80,200,120,0.2)','rgba(96,160,255,0.2)','rgba(192,132,240,0.2)','rgba(251,146,60,0.2)'];
   const AV_FG = ['#c9a84c','#50c878','#60a0ff','#c084f0','#fb923c'];
+  const _isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const _leadBase = _isLocal ? `${window.location.origin}/admin/lead-detail.html` : '/admin/lead-detail.html';
 
   el.innerHTML = filtered.map(app => {
     const c = app.contacts || {};
@@ -948,7 +950,8 @@ function filterApplications() {
     const updated = app.updated_at ? new Date(app.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—";
 
     const hasContact = app.contact_id && app.contact_id !== "null";
-    const clickHandler = hasContact ? `console.log('Card clicked, contact_id:','${app.contact_id}');window.location.href='../admin/lead-detail.html?id=${app.contact_id}'` : `alert('No contact linked to this application.')`;
+    const navUrl = `${_leadBase}?id=${app.contact_id}`;
+    const clickHandler = hasContact ? `console.log('Navigating to:','${navUrl}');window.location.href='${navUrl}'` : `alert('No contact linked to this application.')`;
 
     return `<div style="background:#111;border:1px solid rgba(255,255,255,0.06);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .15s,box-shadow .15s;"
       onclick="${clickHandler}"
