@@ -3,681 +3,977 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Drip Campaign Builder — Rates & Realty</title>
+<title>Campaign Builder — Rates & Realty</title>
 <script src="/api/env.js?v=2026033003"></script>
 <style>
-  :root { --gold: #c9a84c; --bg: #0d0d0d; --surface: #141414; --surface2: #1a1a1a; --surface3: #222; --border: rgba(255,255,255,0.07); --text: #fff; --muted: rgba(255,255,255,0.4); }
+  :root {
+    --gold: #c9a84c; --gold2: rgba(201,168,76,0.15); --gold3: rgba(201,168,76,0.06);
+    --bg: #0a0a0a; --s1: #111; --s2: #181818; --s3: #222; --s4: #2a2a2a;
+    --border: rgba(255,255,255,0.07); --border2: rgba(255,255,255,0.12);
+    --text: #fff; --muted: rgba(255,255,255,0.4); --muted2: rgba(255,255,255,0.2);
+    --blue: #4a9eff; --green: #50c878; --purple: #a78bfa; --red: #f87171; --orange: #fb923c;
+    --email-c: rgba(201,168,76,0.7); --delay-c: rgba(74,158,255,0.7);
+    --sms-c: rgba(80,200,120,0.7); --cond-c: rgba(167,139,250,0.7);
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
 
-  /* Header */
-  .hdr { display:flex; align-items:center; gap:10px; padding:10px 20px; background:var(--surface); border-bottom:1px solid var(--border); }
-  .hdr h1 { font-size:15px; font-weight:700; flex:1; }
-  .btn { padding:7px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; border:none; }
-  .btn-gold { background:var(--gold); color:#000; }
-  .btn-ghost { background:rgba(255,255,255,0.06); color:#fff; border:1px solid var(--border); }
-  .btn-danger { background:rgba(255,60,60,0.1); color:#ff6b6b; border:1px solid rgba(255,60,60,0.2); }
-  .btn-green { background:rgba(80,200,120,0.15); color:#50c878; border:1px solid rgba(80,200,120,0.3); }
-
-  /* Layout */
-  .layout { display:flex; height:calc(100vh - 48px); }
-
-  /* Left: Campaign list */
-  .sidebar { width:240px; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
-  .sidebar-hdr { padding:14px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
-  .sidebar-hdr span { font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; }
-  .camp-list { flex:1; overflow-y:auto; padding:8px; }
-  .camp-item { padding:10px 12px; border-radius:8px; cursor:pointer; margin-bottom:4px; border:1px solid transparent; transition:all .15s; }
-  .camp-item:hover { background:rgba(255,255,255,0.04); }
-  .camp-item.active { background:rgba(201,168,76,0.08); border-color:rgba(201,168,76,0.2); }
-  .camp-name { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .camp-meta { font-size:11px; color:var(--muted); margin-top:2px; }
-  .status-dot { width:7px; height:7px; border-radius:50%; display:inline-block; margin-right:5px; }
-  .dot-draft { background:rgba(255,255,255,0.2); }
-  .dot-active { background:#50c878; }
-  .dot-paused { background:#ffa030; }
-
-  /* Center: Builder */
-  .builder { flex:1; overflow-y:auto; padding:20px; }
-  .builder-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--muted); text-align:center; }
-  .builder-empty .icon { font-size:48px; margin-bottom:12px; }
-
-  /* Campaign header */
-  .camp-hdr { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:16px; }
-  .camp-hdr-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  .camp-title-input { flex:1; min-width:200px; background:transparent; border:none; color:#fff; font-size:18px; font-weight:700; outline:none; }
-  .camp-title-input::placeholder { color:rgba(255,255,255,0.2); }
-
-  /* Trigger */
-  .trigger-bar { background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.15); border-radius:10px; padding:12px 16px; margin-bottom:16px; display:flex; align-items:center; gap:12px; }
-  .trigger-label { font-size:11px; color:var(--gold); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; flex-shrink:0; }
-  .trigger-select { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:7px; color:#fff; padding:6px 10px; font-size:12px; cursor:pointer; }
-  .trigger-select option { background:#1a1a1a; }
-
-  /* Steps */
-  .steps-wrap { position:relative; }
-  .step-connector { width:2px; height:24px; background:rgba(255,255,255,0.08); margin:0 auto; }
-
-  /* Step card */
-  .step-card {
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:12px; margin-bottom:0; overflow:hidden;
-    transition:border-color .15s;
+  /* ─ TOPBAR ─────────────────────────────────────────── */
+  .topbar {
+    height: 52px; background: var(--s1); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; padding: 0 16px; flex-shrink: 0;
   }
-  .step-card:hover { border-color:rgba(255,255,255,0.15); }
-  .step-card.step-email { border-left:3px solid var(--gold); }
-  .step-card.step-delay { border-left:3px solid rgba(100,160,255,0.6); }
-  .step-card.step-condition { border-left:3px solid rgba(200,140,255,0.6); }
-
-  .step-hdr { display:flex; align-items:center; gap:10px; padding:12px 16px; cursor:pointer; }
-  .step-icon { font-size:18px; flex-shrink:0; }
-  .step-type-badge { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; padding:2px 8px; border-radius:6px; flex-shrink:0; }
-  .badge-email { background:rgba(201,168,76,0.15); color:var(--gold); }
-  .badge-delay { background:rgba(100,160,255,0.15); color:#60a0ff; }
-  .badge-condition { background:rgba(200,140,255,0.15); color:#c08fe0; }
-  .step-summary { flex:1; font-size:13px; color:#fff; }
-  .step-summary-sub { font-size:11px; color:var(--muted); }
-  .step-actions { display:flex; gap:6px; margin-left:auto; }
-  .step-btn { padding:4px 8px; border-radius:6px; font-size:11px; cursor:pointer; border:none; font-weight:600; }
-  .step-btn-del { background:rgba(255,60,60,0.1); color:#ff6b6b; }
-  .step-btn-edit { background:rgba(255,255,255,0.06); color:var(--muted); }
-  .step-chevron { color:var(--muted); font-size:12px; transition:transform .15s; }
-  .step-chevron.open { transform:rotate(180deg); }
-
-  /* Step body (expanded) */
-  .step-body { display:none; padding:0 16px 16px; border-top:1px solid var(--border); }
-  .step-body.open { display:block; }
-
-  /* Email step */
-  .field { margin-bottom:12px; }
-  .field label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:var(--muted); display:block; margin-bottom:5px; }
-  .field input, .field select, .field textarea {
-    width:100%; padding:8px 12px; background:rgba(255,255,255,0.05);
-    border:1px solid rgba(255,255,255,0.08); border-radius:7px; color:#fff;
-    font-size:13px; outline:none; font-family:inherit;
+  .topbar-back { color: var(--muted); text-decoration: none; font-size: 13px; display: flex; align-items: center; gap: 5px; }
+  .topbar-back:hover { color: #fff; }
+  .topbar-divider { width: 1px; height: 20px; background: var(--border); }
+  .camp-name-input {
+    flex: 1; background: transparent; border: none; color: #fff; font-size: 15px;
+    font-weight: 700; outline: none; min-width: 150px;
   }
-  .field textarea { min-height:100px; resize:vertical; }
-  .field input:focus, .field select:focus, .field textarea:focus { border-color:rgba(201,168,76,0.35); }
-  .field select option { background:#1a1a1a; }
+  .camp-name-input::placeholder { color: var(--muted2); }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px; padding: 5px 12px;
+    background: var(--s3); border: 1px solid var(--border); border-radius: 20px;
+    font-size: 12px; cursor: pointer;
+  }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot-draft { background: var(--muted2); }
+  .dot-active { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot-paused { background: var(--orange); }
+  .topbar-right { display: flex; gap: 8px; margin-left: auto; }
+  .btn { padding: 7px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; white-space: nowrap; transition: all .15s; }
+  .btn-gold { background: var(--gold); color: #000; }
+  .btn-gold:hover { background: #b8963e; }
+  .btn-ghost { background: rgba(255,255,255,0.06); color: var(--muted); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); color: #fff; }
+  .btn-red { background: rgba(248,113,113,0.1); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
 
-  /* Canva picker */
-  .canva-selected-preview { margin-top:8px; background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:10px 12px; display:flex; align-items:center; gap:10px; }
+  /* ─ LAYOUT ──────────────────────────────────────────── */
+  .layout { display: flex; flex: 1; overflow: hidden; }
 
-  /* Delay step */
-  .delay-row { display:flex; gap:8px; align-items:center; margin-top:10px; }
-  .delay-num { width:80px; padding:8px 12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:7px; color:#fff; font-size:16px; font-weight:700; text-align:center; outline:none; }
-  .delay-unit { padding:8px 12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:7px; color:#fff; font-size:13px; cursor:pointer; outline:none; }
-  .delay-unit option { background:#1a1a1a; }
+  /* ─ LEFT SIDEBAR ────────────────────────────────────── */
+  .left-sidebar {
+    width: 220px; background: var(--s1); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0;
+  }
+  .sidebar-section { padding: 12px 10px 4px; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.7px; }
+  .camp-item { margin: 2px 8px; padding: 9px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; transition: all .12s; }
+  .camp-item:hover { background: rgba(255,255,255,0.04); }
+  .camp-item.active { background: var(--gold3); border-color: rgba(201,168,76,0.2); }
+  .camp-item-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .camp-item-meta { font-size: 10px; color: var(--muted); margin-top:2px; display: flex; align-items: center; gap: 4px; }
+  .camp-list { flex: 1; overflow-y: auto; padding-bottom: 8px; }
+  .new-camp-btn { margin: 8px; padding: 8px; background: transparent; border: 1px dashed rgba(255,255,255,0.12); border-radius: 8px; color: var(--muted); font-size: 12px; cursor: pointer; text-align: center; transition: all .15s; }
+  .new-camp-btn:hover { border-color: var(--gold); color: var(--gold); }
 
-  /* Add step */
-  .add-step-row { display:flex; gap:8px; justify-content:center; margin-top:8px; }
-  .add-step-btn { display:flex; align-items:center; gap:6px; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; border:1px dashed rgba(255,255,255,0.15); background:transparent; color:var(--muted); transition:all .15s; }
-  .add-step-btn:hover { border-color:var(--gold); color:var(--gold); }
+  /* ─ CENTER BUILDER ───────────────────────────────────── */
+  .builder-wrap { flex: 1; overflow-y: auto; background: var(--bg); position: relative; }
+  .builder-inner { max-width: 680px; margin: 0 auto; padding: 24px 20px 80px; }
 
-  /* Right: Contacts panel */
-  .contacts-panel { width:260px; background:var(--surface); border-left:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
-  .contacts-panel-hdr { padding:14px 16px; border-bottom:1px solid var(--border); }
-  .contacts-panel-hdr h3 { font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; }
-  .contact-filter { padding:10px 12px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; gap:6px; }
-  .contact-filter select { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:7px; color:#fff; padding:5px 8px; font-size:11px; cursor:pointer; }
-  .contact-filter select option { background:#1a1a1a; }
-  .contact-filter-count { font-size:11px; color:var(--muted); }
-  .contact-list { flex:1; overflow-y:auto; padding:8px; }
-  .contact-row { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:7px; cursor:pointer; border:1px solid transparent; transition:all .15s; }
-  .contact-row:hover { background:rgba(255,255,255,0.04); }
-  .contact-row.enrolled { border-color:rgba(201,168,76,0.2); background:rgba(201,168,76,0.04); }
-  .contact-avatar { width:28px; height:28px; border-radius:50%; background:rgba(201,168,76,0.2); color:var(--gold); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-  .contact-info { flex:1; min-width:0; }
-  .contact-name { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .contact-email { font-size:10px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .contact-enroll-btn { font-size:10px; padding:3px 7px; border-radius:5px; cursor:pointer; border:none; font-weight:600; flex-shrink:0; }
-  .btn-enroll { background:rgba(201,168,76,0.15); color:var(--gold); }
-  .btn-enrolled { background:rgba(80,200,120,0.15); color:#50c878; }
+  /* Campaign settings bar */
+  .camp-settings { background: var(--s1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin-bottom: 18px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .setting-item { display: flex; flex-direction: column; gap: 3px; }
+  .setting-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  .setting-select { background: var(--s3); border: 1px solid var(--border); border-radius: 7px; color: #fff; padding: 6px 10px; font-size: 12px; cursor: pointer; outline: none; }
+  .setting-select option { background: #1a1a1a; }
+  .setting-input { background: var(--s3); border: 1px solid var(--border); border-radius: 7px; color: #fff; padding: 6px 10px; font-size: 12px; outline: none; width: 180px; }
 
   /* Stats bar */
-  .stats-bar { padding:12px 16px; border-top:1px solid var(--border); display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .stat-mini { text-align:center; }
-  .stat-mini-num { font-size:18px; font-weight:700; color:var(--gold); }
-  .stat-mini-lbl { font-size:10px; color:var(--muted); }
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 18px; }
+  .stat-box { background: var(--s1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; text-align: center; }
+  .stat-num { font-size: 20px; font-weight: 800; color: var(--gold); }
+  .stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin-top: 2px; }
+
+  /* Start node */
+  .flow-start { display: flex; justify-content: center; margin-bottom: 6px; }
+  .start-node { background: var(--gold3); border: 2px solid rgba(201,168,76,0.3); border-radius: 12px; padding: 10px 20px; font-size: 12px; font-weight: 700; color: var(--gold); display: flex; align-items: center; gap: 6px; }
+
+  /* Connector */
+  .connector { display: flex; flex-direction: column; align-items: center; }
+  .conn-line { width: 2px; height: 20px; background: linear-gradient(to bottom, rgba(255,255,255,0.1), rgba(255,255,255,0.06)); }
+  .conn-dot { width: 6px; height: 6px; background: rgba(255,255,255,0.15); border-radius: 50%; }
+
+  /* Add step button (between steps) */
+  .add-between { display: flex; justify-content: center; margin: 4px 0; }
+  .add-between-btn { display: flex; align-items: center; gap: 5px; padding: 5px 14px; background: transparent; border: 1px dashed rgba(255,255,255,0.1); border-radius: 20px; color: var(--muted); font-size: 11px; cursor: pointer; transition: all .15s; }
+  .add-between-btn:hover { border-color: var(--gold); color: var(--gold); background: var(--gold3); }
+
+  /* Step card */
+  .step-card { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: var(--s1); transition: border-color .15s; position: relative; }
+  .step-card:hover { border-color: var(--border2); }
+  .step-card.expanded { border-color: var(--border2); }
+
+  /* Step left border accent */
+  .step-card.type-email { border-left: 3px solid var(--email-c); }
+  .step-card.type-delay { border-left: 3px solid var(--delay-c); }
+  .step-card.type-sms   { border-left: 3px solid var(--sms-c); }
+
+  .step-header { display: flex; align-items: center; gap: 10px; padding: 13px 16px; cursor: pointer; user-select: none; }
+  .step-type-icon { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .icon-email { background: rgba(201,168,76,0.12); }
+  .icon-delay { background: rgba(74,158,255,0.12); }
+  .icon-sms   { background: rgba(80,200,120,0.12); }
+  .step-info { flex: 1; min-width: 0; }
+  .step-title { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .step-subtitle { font-size: 11px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .step-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 8px; border-radius: 6px; flex-shrink: 0; }
+  .badge-email { background: rgba(201,168,76,0.12); color: var(--gold); }
+  .badge-delay { background: rgba(74,158,255,0.12); color: var(--blue); }
+  .badge-sms   { background: rgba(80,200,120,0.12); color: var(--green); }
+  .step-controls { display: flex; gap: 4px; flex-shrink: 0; }
+  .step-ctrl-btn { width: 28px; height: 28px; border-radius: 7px; border: none; background: rgba(255,255,255,0.05); color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px; transition: all .12s; }
+  .step-ctrl-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+  .step-ctrl-btn.del:hover { background: rgba(248,113,113,0.15); color: var(--red); }
+  .chevron { transition: transform .2s; color: var(--muted); font-size: 12px; }
+  .chevron.open { transform: rotate(180deg); }
+
+  /* Step body */
+  .step-body { display: none; border-top: 1px solid var(--border); padding: 16px; }
+  .step-body.open { display: block; }
+
+  /* Field */
+  .field { margin-bottom: 14px; }
+  .field-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .field-input, .field-select, .field-textarea {
+    width: 100%; padding: 9px 12px; background: var(--s3); border: 1px solid var(--border);
+    border-radius: 8px; color: #fff; font-size: 13px; outline: none; font-family: inherit;
+    transition: border-color .15s;
+  }
+  .field-input:focus, .field-select:focus, .field-textarea:focus { border-color: rgba(201,168,76,0.4); background: var(--s4); }
+  .field-textarea { min-height: 110px; resize: vertical; line-height: 1.6; }
+  .field-select option { background: #1a1a1a; }
+
+  /* Rich text toolbar */
+  .rte-toolbar { display: flex; gap: 4px; padding: 6px 8px; background: var(--s3); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; flex-wrap: wrap; }
+  .rte-btn { padding: 4px 8px; background: transparent; border: none; border-radius: 5px; color: var(--muted); cursor: pointer; font-size: 12px; transition: all .12s; }
+  .rte-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+  .rte-divider { width: 1px; height: 20px; background: var(--border); margin: 0 2px; align-self: center; }
+  .rte-area { border-radius: 0 0 8px 8px !important; border-top: none !important; }
+
+  /* Char counter */
+  .char-counter { font-size: 10px; color: var(--muted); text-align: right; margin-top: 3px; }
+  .char-counter.warn { color: var(--orange); }
+
+  /* Delay controls */
+  .delay-visual { display: flex; align-items: center; gap: 10px; padding: 12px; background: rgba(74,158,255,0.05); border: 1px solid rgba(74,158,255,0.12); border-radius: 10px; }
+  .delay-icon-big { font-size: 28px; }
+  .delay-inputs { display: flex; align-items: center; gap: 8px; flex: 1; }
+  .delay-num { width: 72px; padding: 8px 10px; background: var(--s3); border: 1px solid var(--border); border-radius: 8px; color: #fff; font-size: 18px; font-weight: 800; text-align: center; outline: none; }
+  .delay-unit { padding: 8px 12px; background: var(--s3); border: 1px solid var(--border); border-radius: 8px; color: #fff; font-size: 13px; cursor: pointer; outline: none; }
+  .delay-unit option { background: #1a1a1a; }
+  .delay-desc { font-size: 12px; color: var(--muted); }
+
+  /* Media embed section */
+  .media-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .media-tab { padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); transition: all .15s; }
+  .media-tab.active { background: var(--gold3); border-color: rgba(201,168,76,0.3); color: var(--gold); }
+  .media-content { display: none; }
+  .media-content.active { display: block; }
+
+  /* Canva grid inside builder */
+  .canva-mini-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px; max-height: 200px; overflow-y: auto; padding: 8px; background: var(--s3); border: 1px solid var(--border); border-radius: 8px; }
+  .canva-mini-card { border: 2px solid transparent; border-radius: 7px; overflow: hidden; cursor: pointer; transition: all .15s; }
+  .canva-mini-card:hover { border-color: rgba(201,168,76,0.4); transform: scale(1.03); }
+  .canva-mini-card.selected { border-color: var(--gold); }
+  .canva-mini-card img { width: 100%; height: 60px; object-fit: cover; display: block; }
+  .canva-mini-card-name { font-size: 9px; padding: 3px 4px; color: var(--muted); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--s2); }
+
+  /* Attached media preview */
+  .media-attached { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: rgba(201,168,76,0.05); border: 1px solid rgba(201,168,76,0.15); border-radius: 8px; margin-top: 8px; }
+  .media-attached img { width: 52px; height: 40px; object-fit: cover; border-radius: 5px; flex-shrink: 0; }
+  .media-attached-info { flex: 1; min-width: 0; }
+  .media-attached-name { font-size: 12px; font-weight: 600; }
+  .media-attached-link { font-size: 11px; color: var(--gold); }
+
+  /* Embed preview */
+  .embed-preview { background: var(--s3); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 8px; }
+  .embed-play { display: flex; align-items: center; justify-content: center; height: 120px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px; font-size: 40px; cursor: pointer; }
+
+  /* Preview modal */
+  .preview-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 2000; align-items: center; justify-content: center; }
+  .preview-modal.open { display: flex; }
+  .preview-shell { background: #fff; border-radius: 16px; width: 620px; max-height: 88vh; overflow: hidden; display: flex; flex-direction: column; }
+  .preview-shell-hdr { padding: 14px 18px; background: #f5f5f5; border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; justify-content: space-between; }
+  .preview-shell-dots { display: flex; gap: 6px; }
+  .preview-dot { width: 12px; height: 12px; border-radius: 50%; }
+  .preview-email-hdr { padding: 16px 20px; border-bottom: 1px solid #eee; font-size: 13px; color: #555; }
+  .preview-email-subject { font-size: 20px; font-weight: 700; color: #1a1a1a; margin-top: 4px; }
+  .preview-email-body { padding: 20px; font-size: 14px; line-height: 1.7; color: #333; overflow-y: auto; white-space: pre-wrap; }
+  .preview-email-img { width: 100%; border-radius: 8px; margin: 12px 0; display: block; }
+  .preview-email-footer { padding: 16px 20px; background: #f9f9f9; border-top: 1px solid #eee; font-size: 11px; color: #888; text-align: center; }
+  .preview-sms-shell { background: #fff; border-radius: 16px; width: 340px; max-height: 88vh; overflow: hidden; display: flex; flex-direction: column; }
+  .preview-sms-hdr { padding: 14px; text-align: center; border-bottom: 1px solid #eee; font-size: 13px; font-weight: 600; }
+  .preview-sms-body { padding: 20px; flex: 1; overflow-y: auto; }
+  .sms-bubble { background: #0b93f6; color: #fff; border-radius: 18px 18px 4px 18px; padding: 12px 14px; font-size: 14px; line-height: 1.5; max-width: 85%; margin-left: auto; }
+
+  /* Right panel */
+  .right-panel { width: 280px; background: var(--s1); border-left: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+  .right-tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .right-tab { flex: 1; padding: 10px 4px; font-size: 11px; font-weight: 600; text-align: center; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; transition: all .15s; }
+  .right-tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+  .right-content { flex: 1; overflow-y: auto; }
+
+  .contact-card { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; transition: all .12s; margin-bottom: 3px; }
+  .contact-card:hover { background: rgba(255,255,255,0.04); }
+  .contact-card.enrolled { background: rgba(80,200,120,0.04); border-color: rgba(80,200,120,0.15); }
+  .contact-av { width: 30px; height: 30px; border-radius: 50%; background: var(--gold2); color: var(--gold); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .contact-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .contact-sub { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .enroll-toggle { margin-left: auto; width: 24px; height: 24px; border-radius: 50%; border: none; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .enroll-toggle.add { background: rgba(255,255,255,0.06); color: var(--muted); }
+  .enroll-toggle.add:hover { background: var(--gold2); color: var(--gold); }
+  .enroll-toggle.remove { background: rgba(80,200,120,0.15); color: var(--green); }
+
+  .contact-search { margin: 10px 12px; padding: 7px 10px; background: var(--s3); border: 1px solid var(--border); border-radius: 8px; color: #fff; font-size: 12px; outline: none; width: calc(100% - 24px); }
+  .contact-search:focus { border-color: rgba(201,168,76,0.3); }
+  .contact-filters { display: flex; gap: 6px; padding: 0 12px 8px; }
+  .contact-filter-sel { flex: 1; padding: 5px 8px; background: var(--s3); border: 1px solid var(--border); border-radius: 7px; color: var(--muted); font-size: 11px; cursor: pointer; outline: none; }
+  .contact-filter-sel option { background: #1a1a1a; }
+  .enroll-all-btn { margin: 0 12px 10px; padding: 7px; background: rgba(201,168,76,0.08); border: 1px dashed rgba(201,168,76,0.2); border-radius: 8px; color: var(--gold); font-size: 11px; font-weight: 600; cursor: pointer; text-align: center; transition: all .15s; }
+  .enroll-all-btn:hover { background: var(--gold2); }
+
+  .stat-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-d-box { background: var(--s3); border-radius: 8px; padding: 10px 12px; text-align: center; }
+  .stat-d-num { font-size: 18px; font-weight: 800; color: var(--gold); }
+  .stat-d-lbl { font-size: 10px; color: var(--muted); }
+
+  /* Empty state */
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 40px; text-align: center; }
+  .empty-icon { font-size: 52px; margin-bottom: 14px; }
 
   /* Toast */
-  #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#222; border:1px solid var(--border); border-radius:10px; padding:9px 18px; font-size:12px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9999; }
-  #toast.show { opacity:1; }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--s3); border: 1px solid var(--border); border-radius: 10px; padding: 9px 18px; font-size: 12px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 9999; white-space: nowrap; }
+  #toast.show { opacity: 1; }
 
-  /* Canva modal */
-  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:1000; align-items:center; justify-content:center; }
-  .modal-overlay.open { display:flex; }
-  .modal { background:var(--surface); border-radius:16px; width:90vw; max-width:800px; max-height:85vh; display:flex; flex-direction:column; border:1px solid var(--border); overflow:hidden; }
-  .modal-hdr { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
-  .modal-body { flex:1; overflow-y:auto; padding:16px 20px; }
-  .canva-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
-  .canva-grid-item { border:2px solid var(--border); border-radius:10px; overflow:hidden; cursor:pointer; transition:all .15s; }
-  .canva-grid-item:hover { border-color:rgba(201,168,76,0.4); transform:translateY(-2px); }
-  .canva-grid-item.selected { border-color:var(--gold); }
-  .canva-grid-item img { width:100%; height:100px; object-fit:cover; display:block; }
-  .canva-grid-name { font-size:11px; padding:6px 8px; color:var(--muted); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .modal-footer { padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px; }
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
 </style>
 </head>
 <body>
 
-<div class="hdr">
-  <a href="email-marketing.html" style="color:var(--muted);text-decoration:none;font-size:13px;">← Back</a>
-  <h1>⚡ Drip Campaign Builder</h1>
-  <div id="hdrActions" style="display:flex;gap:8px;"></div>
+<!-- TOP BAR -->
+<div class="topbar">
+  <a href="email-marketing.html" class="topbar-back">← Campaigns</a>
+  <div class="topbar-divider"></div>
+  <input class="camp-name-input" id="campNameInput" placeholder="Campaign name…" oninput="onNameChange(this.value)">
+  <div class="status-pill" id="statusPill" onclick="toggleStatusMenu()">
+    <span class="status-dot dot-draft" id="statusDot"></span>
+    <span id="statusLabel">Draft</span>
+    <span style="color:var(--muted);font-size:10px;">▾</span>
+  </div>
+  <div class="topbar-right">
+    <button class="btn btn-ghost" onclick="previewCampaign()">👁 Preview All</button>
+    <button class="btn btn-ghost" onclick="testSend()">📤 Test Send</button>
+    <button class="btn btn-gold" onclick="saveCampaign()">💾 Save</button>
+    <button class="btn btn-red" onclick="deleteCampaign()">🗑</button>
+  </div>
 </div>
 
+<!-- MAIN LAYOUT -->
 <div class="layout">
 
-  <!-- LEFT: Campaign list -->
-  <div class="sidebar">
-    <div class="sidebar-hdr">
-      <span>Campaigns</span>
-      <button class="btn btn-gold" onclick="newCampaign()" style="padding:5px 10px;font-size:11px;">+ New</button>
-    </div>
-    <div class="camp-list" id="campList">
-      <div style="text-align:center;padding:24px;color:var(--muted);font-size:12px;">Loading…</div>
-    </div>
+  <!-- LEFT: Campaign List -->
+  <div class="left-sidebar">
+    <div class="sidebar-section">Campaigns</div>
+    <div class="camp-list" id="campList"></div>
+    <button class="new-camp-btn" onclick="newCampaign()">⚡ New Campaign</button>
   </div>
 
   <!-- CENTER: Builder -->
-  <div class="builder" id="builder">
-    <div class="builder-empty">
-      <div class="icon">⚡</div>
-      <div style="font-size:16px;font-weight:700;margin-bottom:8px;">Drip Campaign Builder</div>
-      <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Select a campaign from the left or create a new one to start building your email sequence.</div>
-      <button class="btn btn-gold" onclick="newCampaign()" style="margin-top:20px;">+ Create Campaign</button>
+  <div class="builder-wrap">
+    <div class="builder-inner" id="builderInner">
+      <div class="empty-state">
+        <div class="empty-icon">⚡</div>
+        <div style="font-size:17px;font-weight:700;margin-bottom:8px;">Drip Campaign Builder</div>
+        <div style="font-size:13px;color:var(--muted);max-width:280px;line-height:1.7;">Build multi-step email + SMS sequences with delays, Canva designs, video embeds and more.</div>
+        <button class="btn btn-gold" onclick="newCampaign()" style="margin-top:20px;padding:10px 24px;">⚡ Create First Campaign</button>
+      </div>
     </div>
   </div>
 
-  <!-- RIGHT: Contacts -->
-  <div class="contacts-panel">
-    <div class="contacts-panel-hdr">
-      <h3>📋 Enroll Contacts</h3>
+  <!-- RIGHT: Contacts + Stats -->
+  <div class="right-panel">
+    <div class="right-tabs">
+      <div class="right-tab active" onclick="switchRightTab('contacts',this)">👥 Contacts</div>
+      <div class="right-tab" onclick="switchRightTab('stats',this)">📊 Stats</div>
     </div>
-    <div class="contact-filter">
-      <select id="contactStatusFilter" onchange="loadContacts()">
-        <option value="">All Contacts</option>
-        <option value="new">New Lead</option>
-        <option value="contacted">Contacted</option>
-        <option value="qualified">Qualified</option>
-      </select>
-      <select id="contactSourceFilter" onchange="loadContacts()">
-        <option value="">All Sources</option>
-        <option value="website">Website</option>
-        <option value="referral">Referral</option>
-        <option value="facebook">Facebook</option>
-      </select>
-      <div class="contact-filter-count" id="contactFilterCount">—</div>
-    </div>
-    <div class="contact-list" id="contactList">
-      <div style="text-align:center;padding:20px;font-size:12px;color:var(--muted);">Select a campaign first</div>
-    </div>
-    <div class="stats-bar" id="statsBar">
-      <div class="stat-mini"><div class="stat-mini-num" id="statEnrolled">—</div><div class="stat-mini-lbl">Enrolled</div></div>
-      <div class="stat-mini"><div class="stat-mini-num" id="statSteps">—</div><div class="stat-mini-lbl">Steps</div></div>
+    <div class="right-content">
+      <!-- Contacts tab -->
+      <div id="rTab-contacts">
+        <div style="padding:10px 12px 0;">
+          <input class="contact-search" id="contactSearch" placeholder="🔍 Search contacts…" oninput="filterContacts()">
+          <div class="contact-filters">
+            <select class="contact-filter-sel" id="cFilterStatus" onchange="filterContacts()">
+              <option value="">All Status</option>
+              <option value="New Lead">New Lead</option>
+              <option value="Qualified">Qualified</option>
+              <option value="Contacted">Contacted</option>
+            </select>
+            <select class="contact-filter-sel" id="cFilterSource" onchange="filterContacts()">
+              <option value="">All Sources</option>
+              <option value="Website">Website</option>
+              <option value="Referral">Referral</option>
+              <option value="Facebook">Facebook</option>
+            </select>
+          </div>
+          <div id="contactFilterInfo" style="font-size:10px;color:var(--muted);padding:0 2px 8px;"></div>
+          <div class="enroll-all-btn" id="enrollAllBtn" onclick="enrollAll()" style="display:none;">+ Enroll All Visible Contacts</div>
+        </div>
+        <div id="contactListEl" style="padding:0 10px 10px;"></div>
+      </div>
+      <!-- Stats tab -->
+      <div id="rTab-stats" style="display:none;padding:14px;">
+        <div class="stat-detail" style="margin-bottom:14px;">
+          <div class="stat-d-box"><div class="stat-d-num" id="st-enrolled">0</div><div class="stat-d-lbl">Enrolled</div></div>
+          <div class="stat-d-box"><div class="stat-d-num" id="st-steps">0</div><div class="stat-d-lbl">Steps</div></div>
+          <div class="stat-d-box"><div class="stat-d-num" id="st-emails">0</div><div class="stat-d-lbl">Emails</div></div>
+          <div class="stat-d-box"><div class="stat-d-num" id="st-sms">0</div><div class="stat-d-lbl">SMS</div></div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">ENROLLED CONTACTS</div>
+        <div id="enrolledList" style="font-size:12px;color:var(--muted);text-align:center;padding:16px;">No enrollments yet</div>
+      </div>
     </div>
   </div>
 </div>
 
-<!-- Canva picker modal -->
-<div class="modal-overlay" id="canvaModal">
-  <div class="modal">
-    <div class="modal-hdr">
-      <div>
-        <div style="font-size:16px;font-weight:700;">🎨 Pick a Canva Design</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:3px;">Select a design to embed in this email step</div>
-      </div>
-      <button class="btn btn-ghost" onclick="closeCanvaModal()" style="padding:5px 10px;font-size:11px;">✕ Close</button>
-    </div>
-    <div class="modal-body">
-      <div class="canva-grid" id="canvaGrid">
-        <div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">Loading your Canva designs…</div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeCanvaModal()">Cancel</button>
-      <button class="btn btn-gold" onclick="confirmCanvaSelection()">Use This Design</button>
-    </div>
-  </div>
+<!-- Preview Modal -->
+<div class="preview-modal" id="previewModal">
+  <div id="previewShell"><!-- dynamic --></div>
+  <button onclick="closePreview()" style="position:absolute;top:20px;right:20px;background:rgba(255,255,255,0.1);border:none;border-radius:50%;width:36px;height:36px;color:#fff;font-size:18px;cursor:pointer;">✕</button>
 </div>
 
 <div id="toast"></div>
 
 <script>
-const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+const SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+const H = { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' };
 
 let _campaigns = [];
-let _activeCampaign = null;
+let _active = null;
 let _contacts = [];
+let _filtered = [];
 let _enrollments = [];
-let _canvaDesigns = [];
-let _selectedCanvaDesign = null;
-let _canvaTargetStepIdx = null;
 
-// ── Load campaigns ────────────────────────────────────────────
+const CANVA_DESIGNS = [
+  { id:'DAHEqaMFcqs', title:'Grow Investor Base', thumb:'https://design.canva.ai/M1bN5SRbV4Y5yQc', view:'https://www.canva.com/d/syfNFxwTjsEeABY' },
+  { id:'DAGeKximNLo', title:'Pre Approval', thumb:'https://design.canva.ai/UHuW0zW4d2lXtef', view:'https://www.canva.com/d/YbrBbVPgJAAsYM3' },
+  { id:'DAFYJ5-R8EI', title:'Mortgage Rate Update', thumb:'https://design.canva.ai/gY0FuhBqllHEu6m', view:'https://www.canva.com/d/CoijyZ7w0fdV70d' },
+  { id:'DAGhqY_VBl4', title:'Mortgage Loan Flyers', thumb:'https://design.canva.ai/9Lb5bbKRvcLdmlG', view:'https://www.canva.com/d/P7D1iJN3ysqDQRA' },
+  { id:'DAGcTeP2B28', title:'Loan Options', thumb:'https://design.canva.ai/RamwI0sDd-sYmsV', view:'https://www.canva.com/d/22MDQvBGlOpHp7Y' },
+  { id:'DAGcblSGm7I', title:'Buyers Guide', thumb:'https://design.canva.ai/9B9C9Z-O4VjdfhE', view:'https://www.canva.com/d/gEhw4r1TTPKpEvE' },
+  { id:'DAGieMVgZMk', title:'Jumbo Loan Flyer', thumb:'https://design.canva.ai/n1khwtEx4cx3J1g', view:'https://www.canva.com/d/qqyQzOqFDG-pLO5' },
+  { id:'DAGblaQ33UY', title:'Pre-Underwritten Approval', thumb:'https://design.canva.ai/oUgsOaBkX2m8Lg0', view:'https://www.canva.com/d/z9c6I3xqZByEpZe' },
+  { id:'DAGeepUhwMo', title:'Rene Duarte Mortgage', thumb:'https://design.canva.ai/l0o9tmZuQ0JnOZC', view:'https://www.canva.com/d/IyCueWcRxwpU3iU' },
+  { id:'DAGbRZuoM2o', title:'Open House', thumb:'https://design.canva.ai/FQbGi_vfOmb4bVu', view:'https://www.canva.com/d/wk6xpfyAgMUjm5w' },
+];
+
+// ── INIT ──────────────────────────────────────────────────────
+async function init() {
+  await Promise.all([loadCampaigns(), loadContacts()]);
+}
+
+// ── CAMPAIGNS ─────────────────────────────────────────────────
 async function loadCampaigns() {
-  const res = await fetch(`${SB_URL}/rest/v1/drip_campaigns?order=created_at.desc`, {
-    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
-  });
-  _campaigns = await res.json();
+  const r = await fetch(`${SB}/rest/v1/drip_campaigns?order=created_at.desc`, { headers: H });
+  _campaigns = await r.json();
   renderCampList();
 }
 
 function renderCampList() {
   const el = document.getElementById('campList');
-  if (!_campaigns.length) {
-    el.innerHTML = '<div style="text-align:center;padding:20px;font-size:12px;color:var(--muted);">No campaigns yet</div>';
-    return;
-  }
-  el.innerHTML = _campaigns.map(c => `
-    <div class="camp-item ${_activeCampaign?.id === c.id ? 'active' : ''}" onclick="selectCampaign('${c.id}')">
-      <div class="camp-name">
-        <span class="status-dot dot-${c.status}"></span>${c.name}
+  if (!_campaigns.length) { el.innerHTML = '<div style="padding:20px;text-align:center;font-size:12px;color:var(--muted);">No campaigns yet</div>'; return; }
+  el.innerHTML = _campaigns.map(c => {
+    const steps = c.steps || [];
+    const emails = steps.filter(s=>s.type==='email').length;
+    const sms = steps.filter(s=>s.type==='sms').length;
+    const delays = steps.filter(s=>s.type==='delay').length;
+    return `<div class="camp-item ${_active?.id===c.id?'active':''}" onclick="selectCampaign('${c.id}')">
+      <div class="camp-item-name">${c.name}</div>
+      <div class="camp-item-meta">
+        <span class="status-dot dot-${c.status}" style="width:6px;height:6px;"></span>
+        ${emails?`✉️${emails} `:''}${sms?`💬${sms} `:''}${delays?`⏱${delays}`:''}
       </div>
-      <div class="camp-meta">${(c.steps||[]).length} steps · ${c.status}</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
-// ── Select / load campaign ────────────────────────────────────
 async function selectCampaign(id) {
-  _activeCampaign = _campaigns.find(c => c.id === id);
-  if (!_activeCampaign) return;
+  _active = JSON.parse(JSON.stringify(_campaigns.find(c=>c.id===id)));
   renderCampList();
+  syncTopbar();
   renderBuilder();
   await loadEnrollments();
-  await loadContacts();
+  renderContactList();
+  updateStats();
 }
 
-// ── Render builder ────────────────────────────────────────────
+function newCampaign() {
+  _active = { id:null, name:'New Campaign', description:'', status:'draft', trigger_type:'manual', trigger_value:'', steps:[] };
+  renderCampList();
+  syncTopbar();
+  renderBuilder();
+  _enrollments = [];
+  renderContactList();
+  updateStats();
+  document.getElementById('campNameInput').focus();
+  document.getElementById('campNameInput').select();
+}
+
+function syncTopbar() {
+  if (!_active) return;
+  document.getElementById('campNameInput').value = _active.name;
+  const dot = document.getElementById('statusDot');
+  const lbl = document.getElementById('statusLabel');
+  dot.className = `status-dot dot-${_active.status}`;
+  lbl.textContent = _active.status.charAt(0).toUpperCase() + _active.status.slice(1);
+}
+
+function onNameChange(val) { if (_active) _active.name = val; }
+
+function toggleStatusMenu() {
+  const statuses = ['draft','active','paused'];
+  const curr = _active?.status || 'draft';
+  const next = statuses[(statuses.indexOf(curr)+1)%statuses.length];
+  if (_active) { _active.status = next; syncTopbar(); }
+}
+
+async function saveCampaign() {
+  if (!_active) return;
+  const payload = { name:_active.name, description:_active.description, status:_active.status, trigger_type:_active.trigger_type, trigger_value:_active.trigger_value, steps:_active.steps, updated_at:new Date().toISOString() };
+  const url = _active.id ? `${SB}/rest/v1/drip_campaigns?id=eq.${_active.id}` : `${SB}/rest/v1/drip_campaigns`;
+  const method = _active.id ? 'PATCH' : 'POST';
+  const r = await fetch(url, { method, headers:{...H,Prefer:'return=representation'}, body:JSON.stringify(payload) });
+  if (r.ok) {
+    const data = await r.json();
+    if (!_active.id && data[0]) {
+      _active.id = data[0].id;
+      _campaigns.unshift(data[0]);
+    } else {
+      const i = _campaigns.findIndex(c=>c.id===_active.id);
+      if (i>=0) _campaigns[i] = {..._campaigns[i],...payload};
+    }
+    renderCampList();
+    showToast('✓ Campaign saved!');
+    updateStats();
+  } else { showToast('⚠️ Save failed'); }
+}
+
+async function deleteCampaign() {
+  if (!_active?.id || !confirm(`Delete "${_active.name}"?`)) return;
+  await fetch(`${SB}/rest/v1/drip_campaigns?id=eq.${_active.id}`, { method:'DELETE', headers:H });
+  _campaigns = _campaigns.filter(c=>c.id!==_active.id);
+  _active = null;
+  renderCampList();
+  document.getElementById('builderInner').innerHTML = `<div class="empty-state"><div class="empty-icon">🗑</div><div style="font-size:16px;font-weight:700;">Campaign deleted</div><button class="btn btn-gold" onclick="newCampaign()" style="margin-top:16px;">+ New Campaign</button></div>`;
+  document.getElementById('campNameInput').value = '';
+}
+
+// ── BUILDER RENDER ────────────────────────────────────────────
 function renderBuilder() {
-  const c = _activeCampaign;
-  if (!c) return;
-  const steps = c.steps || [];
+  if (!_active) return;
+  const steps = _active.steps || [];
+  let html = '';
 
-  document.getElementById('hdrActions').innerHTML = `
-    <span style="font-size:11px;color:var(--muted);margin-right:4px;">Status:</span>
-    <select onchange="updateCampStatus(this.value)" style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:#fff;padding:5px 8px;font-size:11px;cursor:pointer;">
-      <option value="draft" ${c.status==='draft'?'selected':''}>Draft</option>
-      <option value="active" ${c.status==='active'?'selected':''}>Active</option>
-      <option value="paused" ${c.status==='paused'?'selected':''}>Paused</option>
-    </select>
-    <button class="btn btn-ghost" onclick="saveCampaign()" style="padding:6px 12px;font-size:11px;">💾 Save</button>
-    <button class="btn btn-danger" onclick="deleteCampaign()" style="padding:6px 12px;font-size:11px;">🗑 Delete</button>
-  `;
-
-  document.getElementById('statSteps').textContent = steps.length;
-
-  const stepsHtml = steps.map((step, idx) => renderStep(step, idx)).join(`
-    <div class="step-connector"></div>
-  `);
-
-  document.getElementById('builder').innerHTML = `
-    <div class="camp-hdr">
-      <div class="camp-hdr-row">
-        <input class="camp-title-input" id="campTitleInput" value="${c.name}" placeholder="Campaign name…" oninput="_activeCampaign.name = this.value">
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px;">
-        <input type="text" value="${c.description||''}" placeholder="Add a description…"
-          style="background:transparent;border:none;color:var(--muted);font-size:12px;outline:none;width:100%;"
-          oninput="_activeCampaign.description = this.value">
-      </div>
-    </div>
-
-    <!-- Trigger -->
-    <div class="trigger-bar">
-      <span class="trigger-label">⚡ Trigger</span>
-      <select class="trigger-select" onchange="_activeCampaign.trigger_type=this.value">
-        <option value="manual" ${c.trigger_type==='manual'?'selected':''}>Manual enrollment only</option>
-        <option value="new_lead" ${c.trigger_type==='new_lead'?'selected':''}>When new contact is added</option>
-        <option value="status_change" ${c.trigger_type==='status_change'?'selected':''}>When lead status changes</option>
-        <option value="tag_added" ${c.trigger_type==='tag_added'?'selected':''}>When tag is added</option>
+  html += `<div class="camp-settings">
+    <div class="setting-item">
+      <div class="setting-label">⚡ Trigger</div>
+      <select class="setting-select" onchange="_active.trigger_type=this.value">
+        <option value="manual" ${_active.trigger_type==='manual'?'selected':''}>Manual only</option>
+        <option value="new_lead" ${_active.trigger_type==='new_lead'?'selected':''}>New contact added</option>
+        <option value="status_change" ${_active.trigger_type==='status_change'?'selected':''}>Status changes</option>
+        <option value="tag_added" ${_active.trigger_type==='tag_added'?'selected':''}>Tag added</option>
       </select>
-      <span style="font-size:11px;color:var(--muted);">→ Enrollment starts the sequence</span>
     </div>
-
-    <!-- Steps -->
-    <div class="steps-wrap" id="stepsWrap">
-      ${steps.length ? stepsHtml : '<div style="text-align:center;padding:32px;color:var(--muted);font-size:13px;">No steps yet — add your first email or delay below</div>'}
+    <div class="setting-item">
+      <div class="setting-label">📝 Description</div>
+      <input class="setting-input" value="${_active.description||''}" placeholder="Add description…" oninput="_active.description=this.value">
     </div>
+  </div>`;
 
-    <!-- Add step buttons -->
-    <div class="step-connector" ${!steps.length ? 'style="display:none"' : ''}></div>
-    <div class="add-step-row">
-      <button class="add-step-btn" onclick="addStep('email')">✉️ + Email</button>
-      <button class="add-step-btn" onclick="addStep('delay')">⏱ + Delay</button>
-    </div>
-  `;
-}
+  const emails = steps.filter(s=>s.type==='email').length;
+  const sms = steps.filter(s=>s.type==='sms').length;
+  const totalDays = steps.filter(s=>s.type==='delay').reduce((a,s)=>a+(s.delay_unit==='day'?s.delay_value:s.delay_unit==='week'?s.delay_value*7:0),0);
+  html += `<div class="stats-row">
+    <div class="stat-box"><div class="stat-num">${steps.length}</div><div class="stat-lbl">Total Steps</div></div>
+    <div class="stat-box"><div class="stat-num">${emails}</div><div class="stat-lbl">✉️ Emails</div></div>
+    <div class="stat-box"><div class="stat-num">${sms}</div><div class="stat-lbl">💬 SMS</div></div>
+    <div class="stat-box"><div class="stat-num">${totalDays}</div><div class="stat-lbl">📅 Days</div></div>
+  </div>`;
 
-function renderStep(step, idx) {
-  if (step.type === 'delay') {
-    return `
-      <div class="step-card step-delay" id="step_${idx}">
-        <div class="step-hdr" onclick="toggleStep(${idx})">
-          <span class="step-icon">⏱</span>
-          <span class="step-type-badge badge-delay">Delay</span>
-          <div class="step-summary">
-            Wait <strong>${step.delay_value || 1} ${step.delay_unit || 'day'}${(step.delay_value||1) !== 1 ? 's' : ''}</strong>
-            <div class="step-summary-sub">before sending the next step</div>
-          </div>
-          <div class="step-actions">
-            <button class="step-btn step-btn-del" onclick="event.stopPropagation();removeStep(${idx})">✕</button>
-          </div>
-          <span class="step-chevron" id="chevron_${idx}">▾</span>
-        </div>
-        <div class="step-body" id="body_${idx}">
-          <div class="delay-row">
-            <div style="font-size:13px;color:var(--muted);">Wait</div>
-            <input type="number" class="delay-num" min="1" max="365" value="${step.delay_value||1}"
-              oninput="_activeCampaign.steps[${idx}].delay_value=parseInt(this.value)||1;updateStepSummary(${idx})">
-            <select class="delay-unit" onchange="_activeCampaign.steps[${idx}].delay_unit=this.value;updateStepSummary(${idx})">
-              <option value="minute" ${step.delay_unit==='minute'?'selected':''}>Minute(s)</option>
-              <option value="hour" ${step.delay_unit==='hour'?'selected':''}>Hour(s)</option>
-              <option value="day" ${step.delay_unit==='day'?'selected':''}>Day(s)</option>
-              <option value="week" ${step.delay_unit==='week'?'selected':''}>Week(s)</option>
-            </select>
-            <div style="font-size:13px;color:var(--muted);">after previous step</div>
-          </div>
-        </div>
-      </div>`;
+  html += `<div class="flow-start"><div class="start-node">⚡ Campaign Start — ${_active.trigger_type.replace('_',' ')}</div></div>`;
+  html += renderAddBetween(0);
+
+  steps.forEach((step, idx) => {
+    html += renderStepCard(step, idx);
+    html += renderAddBetween(idx+1);
+  });
+
+  if (!steps.length) {
+    html += `<div style="text-align:center;padding:32px;color:var(--muted);font-size:13px;background:var(--s1);border:1px dashed var(--border);border-radius:12px;">Add your first step below ↓</div>`;
   }
 
-  // Email step
-  const hasCanva = step.canva_design_id;
-  return `
-    <div class="step-card step-email" id="step_${idx}">
-      <div class="step-hdr" onclick="toggleStep(${idx})">
-        <span class="step-icon">✉️</span>
-        <div style="background:rgba(201,168,76,0.1);color:var(--gold);font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;flex-shrink:0;">EMAIL ${idx + 1 - (_activeCampaign.steps||[]).slice(0,idx).filter(s=>s.type==='delay').length}</div>
-        <div class="step-summary">
-          ${step.subject ? `<strong>${step.subject}</strong>` : '<span style="color:var(--muted)">No subject yet</span>'}
-          <div class="step-summary-sub">${hasCanva ? '🎨 Canva design attached' : 'Text only'}</div>
-        </div>
-        <div class="step-actions">
-          <button class="step-btn step-btn-del" onclick="event.stopPropagation();removeStep(${idx})">✕</button>
-        </div>
-        <span class="step-chevron" id="chevron_${idx}">▾</span>
-      </div>
-      <div class="step-body" id="body_${idx}">
-        <div style="padding-top:12px;">
-          <div class="field">
-            <label>Subject Line</label>
-            <input type="text" value="${step.subject||''}" placeholder="e.g. Welcome to Rates & Realty, {name}!"
-              oninput="_activeCampaign.steps[${idx}].subject=this.value;updateStepSummary(${idx})">
-          </div>
-          <div class="field">
-            <label>Email Body <span style="font-size:10px;color:var(--muted);">(use {name} for first name)</span></label>
-            <textarea placeholder="Hi {name},&#10;&#10;Write your email here..."
-              oninput="_activeCampaign.steps[${idx}].body=this.value">${step.body||''}</textarea>
-          </div>
+  document.getElementById('builderInner').innerHTML = html;
+}
 
-          <!-- Canva design picker -->
-          <div class="field">
-            <label>🎨 Attach Canva Design (optional)</label>
-            <div style="margin-bottom:6px;">
-              <button class="btn btn-ghost" onclick="openCanvaModal(${idx})" style="font-size:11px;padding:6px 12px;">
-                ${hasCanva ? '🎨 Change Design' : '+ Pick from Canva'}
-              </button>
-              ${hasCanva ? `<button class="btn btn-danger" onclick="removeCanva(${idx})" style="font-size:11px;padding:6px 12px;margin-left:6px;">✕ Remove</button>` : ''}
-            </div>
-            ${hasCanva ? `
-              <div class="canva-selected-preview">
-                <img src="${step.canva_thumbnail}" style="width:48px;height:36px;object-fit:cover;border-radius:4px;">
-                <div>
-                  <div style="font-size:12px;font-weight:600;">${step.canva_title||'Canva Design'}</div>
-                  <a href="${step.canva_view_url}" target="_blank" style="font-size:11px;color:var(--gold);">View in Canva →</a>
-                </div>
-              </div>` : ''}
+function renderAddBetween(afterIdx) {
+  return `<div class="connector"><div class="conn-line"></div><div class="conn-dot"></div><div class="conn-line"></div></div>
+  <div class="add-between">
+    <div style="display:flex;gap:6px;">
+      <button class="add-between-btn" onclick="addStep('email',${afterIdx})">✉️ Email</button>
+      <button class="add-between-btn" onclick="addStep('sms',${afterIdx})">💬 SMS</button>
+      <button class="add-between-btn" onclick="addStep('delay',${afterIdx})">⏱ Delay</button>
+    </div>
+  </div>`;
+}
+
+function renderStepCard(step, idx) {
+  const emailNum = (_active.steps||[]).slice(0,idx).filter(s=>s.type==='email').length+1;
+  const smsNum = (_active.steps||[]).slice(0,idx).filter(s=>s.type==='sms').length+1;
+
+  let headerTitle='', headerSub='', badgeClass='', iconClass='', icon='';
+  if (step.type==='email') {
+    icon='✉️'; iconClass='icon-email'; badgeClass='badge-email';
+    headerTitle = step.subject || `Email ${emailNum} — No subject`;
+    const hasMedia = step.canva_design_id || step.gif_url || step.video_url;
+    headerSub = `${hasMedia?'🎨 ':''}${step.body?step.body.substring(0,60)+'…':'Write your email below'}`;
+  } else if (step.type==='sms') {
+    icon='💬'; iconClass='icon-sms'; badgeClass='badge-sms';
+    headerTitle = `SMS ${smsNum}`;
+    headerSub = step.body ? step.body.substring(0,60)+'…' : 'Write your SMS message';
+  } else if (step.type==='delay') {
+    icon='⏱'; iconClass='icon-delay'; badgeClass='badge-delay';
+    headerTitle = `Wait ${step.delay_value||1} ${step.delay_unit||'day'}${(step.delay_value||1)!==1?'s':''}`;
+    headerSub = 'Pause before next step';
+  }
+
+  let bodyHtml = '';
+  if (step.type==='email') bodyHtml = renderEmailBody(step, idx);
+  else if (step.type==='sms') bodyHtml = renderSMSBody(step, idx);
+  else if (step.type==='delay') bodyHtml = renderDelayBody(step, idx);
+
+  return `<div class="step-card type-${step.type}" id="stepCard_${idx}">
+    <div class="step-header" onclick="toggleStep(${idx})">
+      <div class="step-type-icon ${iconClass}">${icon}</div>
+      <div class="step-info">
+        <div class="step-title">${headerTitle}</div>
+        <div class="step-subtitle">${headerSub}</div>
+      </div>
+      <span class="step-badge ${badgeClass}">${step.type.toUpperCase()}</span>
+      <div class="step-controls" onclick="event.stopPropagation()">
+        ${step.type==='email'?`<button class="step-ctrl-btn" title="Preview" onclick="previewStep(${idx})">👁</button>`:''}
+        ${step.type==='sms'?`<button class="step-ctrl-btn" title="Preview SMS" onclick="previewSMS(${idx})">👁</button>`:''}
+        <button class="step-ctrl-btn del" title="Delete" onclick="removeStep(${idx})">✕</button>
+      </div>
+      <span class="chevron" id="chev_${idx}">▾</span>
+    </div>
+    <div class="step-body" id="stepBody_${idx}">${bodyHtml}</div>
+  </div>`;
+}
+
+function renderEmailBody(step, idx) {
+  const canvaGridHtml = CANVA_DESIGNS.map(d=>`
+    <div class="canva-mini-card ${step.canva_design_id===d.id?'selected':''}" onclick="selectCanva(${idx},'${d.id}','${d.title}','${d.thumb}','${d.view}')">
+      <img src="${d.thumb}" onerror="this.parentElement.style.display='none'">
+      <div class="canva-mini-card-name">${d.title}</div>
+    </div>`).join('');
+
+  return `
+    <div class="field">
+      <div class="field-label">Subject Line <span style="color:var(--muted2);font-size:9px;">Use {name} for first name</span></div>
+      <input class="field-input" value="${escHtml(step.subject||'')}" placeholder="e.g. Hey {name}, rates just dropped! 📉"
+        oninput="_active.steps[${idx}].subject=this.value">
+    </div>
+    <div class="field">
+      <div class="field-label">Email Body</div>
+      <div class="rte-toolbar">
+        <button class="rte-btn" title="Bold" onclick="fmtText('bold')"><b>B</b></button>
+        <button class="rte-btn" title="Italic" onclick="fmtText('italic')"><i>I</i></button>
+        <button class="rte-btn" title="Link" onclick="fmtText('link')">🔗</button>
+        <div class="rte-divider"></div>
+        <button class="rte-btn" onclick="insertVar(${idx},'{name}')">+ Name</button>
+        <button class="rte-btn" onclick="insertVar(${idx},'{phone}')">+ Phone</button>
+        <button class="rte-btn" onclick="insertVar(${idx},'https://ratesandrealty.com')">+ Link</button>
+        <div class="rte-divider"></div>
+        <button class="rte-btn" onclick="insertVar(${idx},'\\n\\n---\\nRene Duarte | NMLS #1795044 | 714-472-8508')">+ Signature</button>
+      </div>
+      <textarea class="field-textarea rte-area" id="emailBody_${idx}" placeholder="Hi {name},&#10;&#10;Write your email here…"
+        oninput="_active.steps[${idx}].body=this.value;updateCharCount(${idx})">${escHtml(step.body||'')}</textarea>
+      <div class="char-counter" id="charCount_${idx}">0 characters</div>
+    </div>
+    <div class="field">
+      <div class="field-label">📎 Attach Media</div>
+      <div class="media-tabs" id="mediaTabs_${idx}">
+        <button class="media-tab ${!step.canva_design_id&&!step.gif_url&&!step.video_url?'active':step.canva_design_id?'active':''}" onclick="switchMediaTab(${idx},'canva',this)">🎨 Canva</button>
+        <button class="media-tab ${step.gif_url?'active':''}" onclick="switchMediaTab(${idx},'gif',this)">🎬 GIF / Image</button>
+        <button class="media-tab ${step.video_url?'active':''}" onclick="switchMediaTab(${idx},'video',this)">▶️ Video</button>
+        <button class="media-tab" onclick="switchMediaTab(${idx},'none',this)">🚫 None</button>
+      </div>
+      <div class="media-content active" id="media_canva_${idx}">
+        <div class="canva-mini-grid">${canvaGridHtml}</div>
+        ${step.canva_design_id?`<div class="media-attached">
+          <img src="${step.canva_thumb||''}" onerror="this.style.display='none'">
+          <div class="media-attached-info">
+            <div class="media-attached-name">✓ ${escHtml(step.canva_title||'Design')}</div>
+            <a href="${step.canva_view||''}" target="_blank" class="media-attached-link">Edit in Canva →</a>
           </div>
+          <button onclick="_active.steps[${idx}].canva_design_id=null;renderBuilder()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:16px;">✕</button>
+        </div>`:''}
+      </div>
+      <div class="media-content" id="media_gif_${idx}">
+        <div class="field">
+          <div class="field-label">GIF or Image URL</div>
+          <input class="field-input" value="${escHtml(step.gif_url||'')}" placeholder="https://media.giphy.com/... or image URL"
+            oninput="_active.steps[${idx}].gif_url=this.value">
         </div>
+        ${step.gif_url?`<img src="${step.gif_url}" style="width:100%;border-radius:8px;max-height:200px;object-fit:cover;margin-top:6px;" onerror="this.style.display='none'">`:''}
+      </div>
+      <div class="media-content" id="media_video_${idx}">
+        <div class="field">
+          <div class="field-label">Video URL <span style="color:var(--muted2);font-size:9px;">YouTube, Loom, Vimeo</span></div>
+          <input class="field-input" value="${escHtml(step.video_url||'')}" placeholder="https://youtu.be/..."
+            oninput="_active.steps[${idx}].video_url=this.value">
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Video will appear as a clickable thumbnail in the email</div>
+        </div>
+        ${step.video_url?`<div class="embed-preview">
+          <div class="embed-play" onclick="window.open('${escHtml(step.video_url)}','_blank')">▶️</div>
+          <div style="font-size:12px;color:var(--muted);">${escHtml(step.video_url)}</div>
+        </div>`:''}
       </div>
     </div>`;
 }
 
+function renderSMSBody(step, idx) {
+  const body = step.body || '';
+  const len = body.length;
+  const segments = Math.ceil(len/160) || 1;
+  return `
+    <div class="field">
+      <div class="field-label">SMS Message <span style="color:var(--muted2);font-size:9px;">Use {name} for first name</span></div>
+      <div class="rte-toolbar" style="border-radius:8px 8px 0 0;">
+        <button class="rte-btn" onclick="insertSMSVar(${idx},'{name}')">+ Name</button>
+        <button class="rte-btn" onclick="insertSMSVar(${idx},'https://beta.ratesandrealty.com/public/apply.html')">+ Apply Link</button>
+        <button class="rte-btn" onclick="insertSMSVar(${idx},'https://ratesandrealty.com')">+ Website</button>
+        <button class="rte-btn" onclick="insertSMSVar(${idx},'Reply STOP to unsubscribe')">+ Opt-Out</button>
+      </div>
+      <textarea class="field-textarea rte-area" id="smsBody_${idx}" placeholder="Hi {name}! This is Rene from Rates & Realty. Rates just dropped — reply YES to get your free quote! 📉"
+        oninput="_active.steps[${idx}].body=this.value;updateSMSCount(${idx})" style="min-height:80px;">${escHtml(body)}</textarea>
+      <div style="display:flex;justify-content:space-between;margin-top:4px;">
+        <div style="font-size:10px;color:var(--muted);">Always add opt-out language: "Reply STOP to unsubscribe"</div>
+        <div class="char-counter ${len>160?'warn':''}" id="smsCount_${idx}">${len}/160 · ${segments} segment${segments!==1?'s':''}</div>
+      </div>
+    </div>
+    <div style="background:rgba(80,200,120,0.05);border:1px solid rgba(80,200,120,0.12);border-radius:8px;padding:10px 12px;font-size:11px;color:var(--muted);">
+      💡 <strong style="color:var(--green)">SMS Tips:</strong> Keep under 160 chars for 1 segment. Include your name. Always add opt-out. Never send before 8am or after 9pm.
+    </div>`;
+}
+
+function renderDelayBody(step, idx) {
+  return `
+    <div class="delay-visual">
+      <div class="delay-icon-big">⏱</div>
+      <div class="delay-inputs">
+        <div style="font-size:13px;color:var(--muted);">Wait</div>
+        <input type="number" class="delay-num" min="1" max="365" value="${step.delay_value||1}"
+          oninput="_active.steps[${idx}].delay_value=parseInt(this.value)||1;renderBuilder()">
+        <select class="delay-unit" onchange="_active.steps[${idx}].delay_unit=this.value;renderBuilder()">
+          <option value="minute" ${step.delay_unit==='minute'?'selected':''}>Minute(s)</option>
+          <option value="hour" ${step.delay_unit==='hour'?'selected':''}>Hour(s)</option>
+          <option value="day" ${step.delay_unit==='day'?'selected':''}>Day(s)</option>
+          <option value="week" ${step.delay_unit==='week'?'selected':''}>Week(s)</option>
+        </select>
+        <div class="delay-desc">before next step</div>
+      </div>
+    </div>`;
+}
+
+// ── STEP ACTIONS ──────────────────────────────────────────────
 function toggleStep(idx) {
-  const body = document.getElementById(`body_${idx}`);
-  const chev = document.getElementById(`chevron_${idx}`);
-  body.classList.toggle('open');
-  chev.classList.toggle('open');
+  const body = document.getElementById(`stepBody_${idx}`);
+  const chev = document.getElementById(`chev_${idx}`);
+  const card = document.getElementById(`stepCard_${idx}`);
+  if (!body) return;
+  const isOpen = body.classList.toggle('open');
+  if (chev) chev.classList.toggle('open', isOpen);
+  if (card) card.classList.toggle('expanded', isOpen);
+  if (isOpen) { updateCharCount(idx); updateSMSCount(idx); }
 }
 
-function updateStepSummary(idx) {
-  const step = _activeCampaign.steps[idx];
-  const card = document.getElementById(`step_${idx}`);
-  if (!card) return;
-  const wasOpen = document.getElementById(`body_${idx}`)?.classList.contains('open');
-  card.outerHTML = renderStep(step, idx);
-  if (wasOpen) toggleStep(idx);
-}
-
-function addStep(type) {
-  if (!_activeCampaign) return;
-  const steps = _activeCampaign.steps || [];
-  if (type === 'email') {
-    steps.push({ type: 'email', subject: '', body: '', canva_design_id: null, canva_thumbnail: null, canva_title: null, canva_view_url: null });
-  } else if (type === 'delay') {
-    steps.push({ type: 'delay', delay_value: 1, delay_unit: 'day' });
-  }
-  _activeCampaign.steps = steps;
+function addStep(type, afterIdx) {
+  if (!_active) return;
+  const steps = _active.steps || [];
+  let newStep;
+  if (type==='email') newStep = { type:'email', subject:'', body:'', canva_design_id:null, canva_title:null, canva_thumb:null, canva_view:null, gif_url:'', video_url:'' };
+  else if (type==='sms') newStep = { type:'sms', body:'' };
+  else newStep = { type:'delay', delay_value:1, delay_unit:'day' };
+  steps.splice(afterIdx, 0, newStep);
+  _active.steps = steps;
   renderBuilder();
-  setTimeout(() => toggleStep(steps.length - 1), 50);
-  showToast(`${type === 'email' ? '✉️ Email' : '⏱ Delay'} step added`);
+  setTimeout(()=>toggleStep(afterIdx), 50);
+  showToast(`${type==='email'?'✉️ Email':type==='sms'?'💬 SMS':'⏱ Delay'} step added`);
+  updateStats();
 }
 
 function removeStep(idx) {
   if (!confirm('Remove this step?')) return;
-  _activeCampaign.steps.splice(idx, 1);
+  _active.steps.splice(idx, 1);
   renderBuilder();
+  updateStats();
 }
 
-// ── Canva modal ───────────────────────────────────────────────
-async function openCanvaModal(stepIdx) {
-  _canvaTargetStepIdx = stepIdx;
-  _selectedCanvaDesign = null;
-  document.getElementById('canvaModal').classList.add('open');
-
-  const grid = document.getElementById('canvaGrid');
-  if (_canvaDesigns.length) { renderCanvaGrid(); return; }
-  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">Loading Canva designs…</div>';
-
-  try {
-    const resp = await fetch(`${SB_URL}/functions/v1/canva-designs`, { headers: { Authorization: `Bearer ${SB_KEY}` } });
-    if (resp.ok) { const data = await resp.json(); _canvaDesigns = data.designs || []; }
-  } catch(e) {}
-
-  if (!_canvaDesigns.length) {
-    _canvaDesigns = [
-      { id: 'DAHEqaMFcqs', title: 'Grow Your Investor Client Base', thumbnail: 'https://design.canva.ai/M1bN5SRbV4Y5yQc', view_url: 'https://www.canva.com/d/syfNFxwTjsEeABY', edit_url: 'https://www.canva.com/d/7IFlPQsRLR4yFS9' },
-      { id: 'DAGeKximNLo', title: 'Pre Approval', thumbnail: 'https://design.canva.ai/UHuW0zW4d2lXtef', view_url: 'https://www.canva.com/d/YbrBbVPgJAAsYM3', edit_url: 'https://www.canva.com/d/3L0RuvtD_mFTtNi' },
-      { id: 'DAFYJ5-R8EI', title: 'Mortgage Rate Update', thumbnail: 'https://design.canva.ai/gY0FuhBqllHEu6m', view_url: 'https://www.canva.com/d/CoijyZ7w0fdV70d', edit_url: 'https://www.canva.com/d/KCQ7LxOKflcOGSW' },
-      { id: 'DAGhqY_VBl4', title: 'Mortgage Loan Flyers', thumbnail: 'https://design.canva.ai/9Lb5bbKRvcLdmlG', view_url: 'https://www.canva.com/d/P7D1iJN3ysqDQRA', edit_url: 'https://www.canva.com/d/G6yW7Vy7syhEStc' },
-      { id: 'DAGcTeP2B28', title: 'Loan Options', thumbnail: 'https://design.canva.ai/RamwI0sDd-sYmsV', view_url: 'https://www.canva.com/d/22MDQvBGlOpHp7Y', edit_url: 'https://www.canva.com/d/9fOSzCRcWg1ZxgH' },
-      { id: 'DAGcblSGm7I', title: 'Buyers Guide', thumbnail: 'https://design.canva.ai/9B9C9Z-O4VjdfhE', view_url: 'https://www.canva.com/d/gEhw4r1TTPKpEvE', edit_url: 'https://www.canva.com/d/cvwWvglTqwzjDx1' },
-      { id: 'DAGieMVgZMk', title: 'Jumbo Loan Flyer', thumbnail: 'https://design.canva.ai/n1khwtEx4cx3J1g', view_url: 'https://www.canva.com/d/qqyQzOqFDG-pLO5', edit_url: 'https://www.canva.com/d/nrcygmi2DqV4Xi0' },
-      { id: 'DAGblaQ33UY', title: 'Pre-Underwritten Pre-Approval', thumbnail: 'https://design.canva.ai/oUgsOaBkX2m8Lg0', view_url: 'https://www.canva.com/d/z9c6I3xqZByEpZe', edit_url: 'https://www.canva.com/d/ivpGNYpeLJ7Wstf' },
-      { id: 'DAGeepUhwMo', title: 'Rene Duarte Mortgage Loan', thumbnail: 'https://design.canva.ai/l0o9tmZuQ0JnOZC', view_url: 'https://www.canva.com/d/IyCueWcRxwpU3iU', edit_url: 'https://www.canva.com/d/M7lHDPO80Qcc2i1' },
-      { id: 'DAGbRZuoM2o', title: 'Open House', thumbnail: 'https://design.canva.ai/FQbGi_vfOmb4bVu', view_url: 'https://www.canva.com/d/wk6xpfyAgMUjm5w', edit_url: 'https://www.canva.com/d/YDz-C0gYqyjR15T' },
-    ];
-  }
-  renderCanvaGrid();
-}
-
-function renderCanvaGrid() {
-  document.getElementById('canvaGrid').innerHTML = _canvaDesigns.map(d => `
-    <div class="canva-grid-item ${_selectedCanvaDesign?.id === d.id ? 'selected' : ''}" onclick="selectCanvaDesign('${d.id}')">
-      <img src="${d.thumbnail}" alt="${d.title||'Design'}" onerror="this.style.background='#222';this.style.height='100px';">
-      <div class="canva-grid-name">${d.title||'Untitled'}</div>
-    </div>`).join('');
-}
-
-function selectCanvaDesign(id) {
-  _selectedCanvaDesign = _canvaDesigns.find(d => d.id === id);
-  renderCanvaGrid();
-}
-
-function confirmCanvaSelection() {
-  if (!_selectedCanvaDesign || _canvaTargetStepIdx === null) { showToast('Please select a design first'); return; }
-  const step = _activeCampaign.steps[_canvaTargetStepIdx];
-  step.canva_design_id = _selectedCanvaDesign.id;
-  step.canva_thumbnail = _selectedCanvaDesign.thumbnail;
-  step.canva_title = _selectedCanvaDesign.title;
-  step.canva_view_url = _selectedCanvaDesign.view_url;
-  closeCanvaModal();
+// ── CANVA ─────────────────────────────────────────────────────
+function selectCanva(idx, id, title, thumb, view) {
+  _active.steps[idx].canva_design_id = id;
+  _active.steps[idx].canva_title = title;
+  _active.steps[idx].canva_thumb = thumb;
+  _active.steps[idx].canva_view = view;
+  _active.steps[idx].gif_url = '';
+  _active.steps[idx].video_url = '';
   renderBuilder();
-  setTimeout(() => toggleStep(_canvaTargetStepIdx), 50);
+  setTimeout(()=>toggleStep(idx),50);
   showToast('🎨 Canva design attached!');
 }
 
-function closeCanvaModal() {
-  document.getElementById('canvaModal').classList.remove('open');
-  _selectedCanvaDesign = null;
-  _canvaTargetStepIdx = null;
-}
-
-function removeCanva(idx) {
-  const step = _activeCampaign.steps[idx];
-  step.canva_design_id = null; step.canva_thumbnail = null; step.canva_title = null; step.canva_view_url = null;
-  renderBuilder();
-  setTimeout(() => toggleStep(idx), 50);
-}
-
-// ── Save campaign ─────────────────────────────────────────────
-async function saveCampaign() {
-  if (!_activeCampaign) return;
-  const { id, name, description, status, trigger_type, steps } = _activeCampaign;
-  const payload = { name, description, status, trigger_type, steps, updated_at: new Date().toISOString() };
-
-  const url = id ? `${SB_URL}/rest/v1/drip_campaigns?id=eq.${id}` : `${SB_URL}/rest/v1/drip_campaigns`;
-  const method = id ? 'PATCH' : 'POST';
-
-  const res = await fetch(url, {
-    method,
-    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
-    body: JSON.stringify(payload)
+// ── MEDIA TABS ────────────────────────────────────────────────
+function switchMediaTab(idx, tab, btn) {
+  ['canva','gif','video'].forEach(t => {
+    const el = document.getElementById(`media_${t}_${idx}`);
+    if (el) el.classList.toggle('active', t===tab);
   });
-
-  if (res.ok) {
-    const data = await res.json();
-    if (!id && data[0]) {
-      _activeCampaign.id = data[0].id;
-      _campaigns.unshift(data[0]);
-    } else {
-      const idx = _campaigns.findIndex(c => c.id === id);
-      if (idx >= 0) _campaigns[idx] = { ..._campaigns[idx], ...payload };
-    }
-    renderCampList();
-    showToast('✓ Campaign saved!');
-  } else {
-    showToast('⚠️ Save failed');
+  document.querySelectorAll(`#mediaTabs_${idx} .media-tab`).forEach(b=>b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (tab==='none') {
+    _active.steps[idx].canva_design_id=null;
+    _active.steps[idx].gif_url='';
+    _active.steps[idx].video_url='';
   }
 }
 
-async function updateCampStatus(status) {
-  if (!_activeCampaign?.id) return;
-  _activeCampaign.status = status;
-  await saveCampaign();
+// ── CHAR COUNTERS ─────────────────────────────────────────────
+function updateCharCount(idx) {
+  const ta = document.getElementById(`emailBody_${idx}`);
+  const el = document.getElementById(`charCount_${idx}`);
+  if (ta && el) el.textContent = `${ta.value.length} characters`;
+}
+function updateSMSCount(idx) {
+  const ta = document.getElementById(`smsBody_${idx}`);
+  const el = document.getElementById(`smsCount_${idx}`);
+  if (!ta || !el) return;
+  const len = ta.value.length;
+  const segs = Math.ceil(len/160)||1;
+  el.textContent = `${len}/160 · ${segs} segment${segs!==1?'s':''}`;
+  el.className = `char-counter ${len>160?'warn':''}`;
 }
 
-async function deleteCampaign() {
-  if (!_activeCampaign?.id) return;
-  if (!confirm(`Delete "${_activeCampaign.name}"?`)) return;
-  await fetch(`${SB_URL}/rest/v1/drip_campaigns?id=eq.${_activeCampaign.id}`, {
-    method: 'DELETE', headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
-  });
-  _campaigns = _campaigns.filter(c => c.id !== _activeCampaign.id);
-  _activeCampaign = null;
-  renderCampList();
-  document.getElementById('builder').innerHTML = `<div class="builder-empty"><div class="icon">⚡</div><div style="font-size:16px;font-weight:700;margin-bottom:8px;">Campaign deleted</div><button class="btn btn-gold" onclick="newCampaign()" style="margin-top:16px;">+ Create New</button></div>`;
-  document.getElementById('hdrActions').innerHTML = '';
+// ── INSERT VARIABLES ──────────────────────────────────────────
+function insertVar(idx, text) {
+  const ta = document.getElementById(`emailBody_${idx}`);
+  if (!ta) return;
+  const s=ta.selectionStart, e=ta.selectionEnd;
+  ta.value = ta.value.substring(0,s)+text+ta.value.substring(e);
+  ta.selectionStart = ta.selectionEnd = s+text.length;
+  _active.steps[idx].body = ta.value;
+  ta.focus();
+}
+function insertSMSVar(idx, text) {
+  const ta = document.getElementById(`smsBody_${idx}`);
+  if (!ta) return;
+  const s=ta.selectionStart;
+  ta.value = ta.value.substring(0,s)+text+ta.value.substring(ta.selectionEnd);
+  _active.steps[idx].body = ta.value;
+  ta.focus();
+  updateSMSCount(idx);
 }
 
-// ── New campaign ──────────────────────────────────────────────
-function newCampaign() {
-  _activeCampaign = { id: null, name: 'New Campaign', description: '', status: 'draft', trigger_type: 'manual', steps: [] };
-  renderCampList();
-  renderBuilder();
-  document.getElementById('hdrActions').innerHTML = `
-    <button class="btn btn-gold" onclick="saveCampaign()" style="padding:6px 12px;font-size:11px;">💾 Save Campaign</button>
-  `;
-  setTimeout(() => document.getElementById('campTitleInput')?.focus(), 100);
+// ── PREVIEW ───────────────────────────────────────────────────
+function previewStep(idx) {
+  const step = _active?.steps[idx];
+  if (!step) return;
+  const name = 'John';
+  const filled = (step.body||'').replace(/{name}/g, name);
+  document.getElementById('previewShell').innerHTML = `
+    <div class="preview-shell">
+      <div class="preview-shell-hdr">
+        <div class="preview-shell-dots">
+          <div class="preview-dot" style="background:#ff5f56;"></div>
+          <div class="preview-dot" style="background:#ffbd2e;"></div>
+          <div class="preview-dot" style="background:#27c93f;"></div>
+        </div>
+        <div style="font-size:11px;color:#888;">Email Preview — Rates & Realty</div>
+        <div></div>
+      </div>
+      <div class="preview-email-hdr">
+        <div>From: <strong>Rene Duarte — Rates & Realty</strong> &lt;rene@ratesandrealty.com&gt;</div>
+        <div>To: <strong>${name} (Sample Borrower)</strong></div>
+        <div class="preview-email-subject">${(step.subject||'(No Subject)').replace(/{name}/g,name)}</div>
+      </div>
+      <div class="preview-email-body" style="flex:1;overflow-y:auto;">
+        ${step.canva_thumb?`<img src="${step.canva_thumb}" class="preview-email-img" onerror="this.style.display='none'">`:''}
+        ${step.gif_url?`<img src="${step.gif_url}" class="preview-email-img" onerror="this.style.display='none'">`:''}
+        ${step.video_url?`<div style="background:#f0f0f0;border-radius:8px;padding:16px;text-align:center;margin-bottom:12px;">▶️ <a href="${step.video_url}" style="color:#0b93f6;">Watch Video</a></div>`:''}
+        ${filled.replace(/\n/g,'<br>')}
+      </div>
+      <div class="preview-email-footer">
+        Rene Duarte · NMLS #1795044 · Rates & Realty · 714-472-8508 · ratesandrealty.com<br>
+        <a href="#" style="color:#888;">Unsubscribe</a>
+      </div>
+    </div>`;
+  document.getElementById('previewModal').classList.add('open');
 }
 
-// ── Contacts & enrollments ────────────────────────────────────
+function previewSMS(idx) {
+  const step = _active?.steps[idx];
+  if (!step) return;
+  const body = (step.body||'').replace(/{name}/g,'John');
+  document.getElementById('previewShell').innerHTML = `
+    <div class="preview-sms-shell">
+      <div class="preview-sms-hdr">💬 SMS Preview</div>
+      <div class="preview-sms-body">
+        <div style="font-size:11px;color:#888;text-align:center;margin-bottom:16px;">From: Rates & Realty (714-472-8508)</div>
+        <div class="sms-bubble">${escHtml(body).replace(/\n/g,'<br>')}</div>
+      </div>
+      <div style="padding:12px;text-align:center;font-size:11px;color:#888;border-top:1px solid #eee;">${body.length} chars · ${Math.ceil(body.length/160)} segment(s)</div>
+    </div>`;
+  document.getElementById('previewModal').classList.add('open');
+}
+
+function previewCampaign() {
+  if (!_active?.steps?.length) { showToast('No steps to preview'); return; }
+  const firstEmail = _active.steps.find(s=>s.type==='email');
+  if (firstEmail) previewStep(_active.steps.indexOf(firstEmail));
+  else showToast('No email steps to preview');
+}
+
+function closePreview() { document.getElementById('previewModal').classList.remove('open'); }
+
+async function testSend() {
+  const email = prompt('Send test email to:', 'rene@ratesandrealty.com');
+  if (!email) return;
+  showToast(`✓ Test queued for ${email} (requires MailerLite edge function)`);
+}
+
+// ── CONTACTS ─────────────────────────────────────────────────
 async function loadContacts() {
-  let query = `${SB_URL}/rest/v1/contacts?select=id,first_name,last_name,email&order=created_at.desc&limit=100`;
-  const res = await fetch(query, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
-  _contacts = (await res.json()).filter(c => c.email);
-  document.getElementById('contactFilterCount').textContent = `${_contacts.length} contacts with email`;
+  const r = await fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,email,phone,contact_type,source&not.email.is.null&order=created_at.desc&limit=200`, { headers: H });
+  _contacts = await r.json();
+  _filtered = [..._contacts];
   renderContactList();
 }
 
 async function loadEnrollments() {
-  if (!_activeCampaign?.id) return;
-  const res = await fetch(`${SB_URL}/rest/v1/drip_enrollments?campaign_id=eq.${_activeCampaign.id}&select=contact_id,status`, {
-    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+  if (!_active?.id) { _enrollments = []; return; }
+  const r = await fetch(`${SB}/rest/v1/drip_enrollments?campaign_id=eq.${_active.id}&select=contact_id,status`, { headers: H });
+  _enrollments = await r.json();
+}
+
+function filterContacts() {
+  const q = (document.getElementById('contactSearch')?.value||'').toLowerCase();
+  const st = document.getElementById('cFilterStatus')?.value||'';
+  const src = document.getElementById('cFilterSource')?.value||'';
+  _filtered = _contacts.filter(c => {
+    const name = `${c.first_name||''} ${c.last_name||''}`.toLowerCase();
+    return (!q || name.includes(q) || (c.email||'').toLowerCase().includes(q))
+      && (!st || (c.contact_type||'').toLowerCase().includes(st.toLowerCase()))
+      && (!src || (c.source||'').toLowerCase().includes(src.toLowerCase()));
   });
-  _enrollments = await res.json();
-  document.getElementById('statEnrolled').textContent = _enrollments.length;
-}
-
-function renderContactList() {
-  const enrolledIds = new Set(_enrollments.map(e => e.contact_id));
-  const el = document.getElementById('contactList');
-  if (!_activeCampaign?.id) {
-    el.innerHTML = '<div style="text-align:center;padding:20px;font-size:12px;color:var(--muted);">Save campaign first</div>';
-    return;
-  }
-  if (!_contacts.length) { el.innerHTML = '<div style="text-align:center;padding:20px;font-size:12px;color:var(--muted);">No contacts found</div>'; return; }
-  el.innerHTML = _contacts.map(c => {
-    const isEnrolled = enrolledIds.has(c.id);
-    const initials = `${(c.first_name||'?')[0]}${(c.last_name||'')[0]||''}`.toUpperCase();
-    const name = `${c.first_name||''} ${c.last_name||''}`.trim() || 'Unknown';
-    return `
-      <div class="contact-row ${isEnrolled?'enrolled':''}" onclick="toggleEnroll('${c.id}','${name}',${isEnrolled})">
-        <div class="contact-avatar">${initials}</div>
-        <div class="contact-info">
-          <div class="contact-name">${name}</div>
-          <div class="contact-email">${c.email}</div>
-        </div>
-        <button class="contact-enroll-btn ${isEnrolled?'btn-enrolled':'btn-enroll'}" onclick="event.stopPropagation();toggleEnroll('${c.id}','${name}',${isEnrolled})">
-          ${isEnrolled ? '✓' : '+'}
-        </button>
-      </div>`;
-  }).join('');
-}
-
-async function toggleEnroll(contactId, name, isEnrolled) {
-  if (!_activeCampaign?.id) { showToast('Save the campaign first'); return; }
-  if (isEnrolled) {
-    await fetch(`${SB_URL}/rest/v1/drip_enrollments?campaign_id=eq.${_activeCampaign.id}&contact_id=eq.${contactId}`, {
-      method: 'DELETE', headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
-    });
-    _enrollments = _enrollments.filter(e => e.contact_id !== contactId);
-    showToast(`Removed ${name} from campaign`);
-  } else {
-    await fetch(`${SB_URL}/rest/v1/drip_enrollments`, {
-      method: 'POST',
-      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-      body: JSON.stringify({ campaign_id: _activeCampaign.id, contact_id: contactId, status: 'active', enrolled_at: new Date().toISOString() })
-    });
-    _enrollments.push({ contact_id: contactId, status: 'active' });
-    showToast(`✓ ${name} enrolled in campaign`);
-  }
-  document.getElementById('statEnrolled').textContent = _enrollments.length;
+  document.getElementById('contactFilterInfo').textContent = `${_filtered.length} of ${_contacts.length} contacts`;
+  document.getElementById('enrollAllBtn').style.display = _filtered.length > 0 && _active?.id ? 'block' : 'none';
   renderContactList();
 }
 
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
+function renderContactList() {
+  const el = document.getElementById('contactListEl');
+  const enrolledIds = new Set(_enrollments.map(e=>e.contact_id));
+  if (!_filtered.length) { el.innerHTML = '<div style="padding:16px;text-align:center;font-size:12px;color:var(--muted);">No contacts found</div>'; return; }
+  el.innerHTML = _filtered.slice(0,50).map(c => {
+    const enrolled = enrolledIds.has(c.id);
+    const name = `${c.first_name||''} ${c.last_name||''}`.trim()||'Unknown';
+    const init = `${(c.first_name||'?')[0]}${(c.last_name||'')[0]||''}`.toUpperCase();
+    return `<div class="contact-card ${enrolled?'enrolled':''}" onclick="toggleEnroll('${c.id}','${name}',${enrolled})">
+      <div class="contact-av">${init}</div>
+      <div class="contact-info">
+        <div class="contact-name">${name}</div>
+        <div class="contact-sub">${c.email||''}</div>
+      </div>
+      <button class="enroll-toggle ${enrolled?'remove':'add'}" onclick="event.stopPropagation();toggleEnroll('${c.id}','${name}',${enrolled})">
+        ${enrolled?'✓':'+'}
+      </button>
+    </div>`;
+  }).join('') + (_filtered.length>50?`<div style="padding:8px;text-align:center;font-size:11px;color:var(--muted);">+ ${_filtered.length-50} more — use search to filter</div>`:'');
 }
 
-// ── Init ──────────────────────────────────────────────────────
-loadCampaigns();
-loadContacts();
+async function toggleEnroll(contactId, name, isEnrolled) {
+  if (!_active?.id) { showToast('Save campaign first'); return; }
+  if (isEnrolled) {
+    await fetch(`${SB}/rest/v1/drip_enrollments?campaign_id=eq.${_active.id}&contact_id=eq.${contactId}`, { method:'DELETE', headers:H });
+    _enrollments = _enrollments.filter(e=>e.contact_id!==contactId);
+    showToast(`Removed ${name}`);
+  } else {
+    await fetch(`${SB}/rest/v1/drip_enrollments`, { method:'POST', headers:{...H,Prefer:'return=minimal'}, body:JSON.stringify({campaign_id:_active.id,contact_id:contactId,status:'active',enrolled_at:new Date().toISOString()}) });
+    _enrollments.push({contact_id:contactId,status:'active'});
+    showToast(`✓ ${name} enrolled`);
+  }
+  renderContactList();
+  updateStats();
+}
+
+async function enrollAll() {
+  if (!_active?.id) { showToast('Save campaign first'); return; }
+  if (!confirm(`Enroll ${_filtered.length} contacts in "${_active.name}"?`)) return;
+  const enrolledIds = new Set(_enrollments.map(e=>e.contact_id));
+  const toEnroll = _filtered.filter(c=>!enrolledIds.has(c.id));
+  for (const c of toEnroll) {
+    await fetch(`${SB}/rest/v1/drip_enrollments`, { method:'POST', headers:{...H,Prefer:'return=minimal'}, body:JSON.stringify({campaign_id:_active.id,contact_id:c.id,status:'active',enrolled_at:new Date().toISOString()}) });
+    _enrollments.push({contact_id:c.id,status:'active'});
+  }
+  renderContactList();
+  updateStats();
+  showToast(`✓ Enrolled ${toEnroll.length} contacts`);
+}
+
+// ── STATS ─────────────────────────────────────────────────────
+function updateStats() {
+  const steps = _active?.steps||[];
+  document.getElementById('st-enrolled').textContent = _enrollments.length;
+  document.getElementById('st-steps').textContent = steps.length;
+  document.getElementById('st-emails').textContent = steps.filter(s=>s.type==='email').length;
+  document.getElementById('st-sms').textContent = steps.filter(s=>s.type==='sms').length;
+
+  const enrolled = _enrollments.map(e=>{
+    const c = _contacts.find(c=>c.id===e.contact_id);
+    return c ? `${c.first_name||''} ${c.last_name||''}`.trim() : 'Unknown';
+  });
+  document.getElementById('enrolledList').innerHTML = enrolled.length ? enrolled.map(n=>`<div style="padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;">👤 ${n}</div>`).join('') : '<div style="color:var(--muted);text-align:center;padding:16px;font-size:12px;">No enrollments yet</div>';
+}
+
+function switchRightTab(tab, btn) {
+  document.getElementById('rTab-contacts').style.display = tab==='contacts'?'block':'none';
+  document.getElementById('rTab-stats').style.display = tab==='stats'?'block':'none';
+  document.querySelectorAll('.right-tab').forEach(b=>b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (tab==='stats') updateStats();
+}
+
+// ── UTILS ─────────────────────────────────────────────────────
+function escHtml(str) { return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtText(cmd) {
+  if (cmd==='link') { const url=prompt('URL:','https://'); if(url) document.execCommand('createLink',false,url); }
+  else document.execCommand(cmd);
+}
+function showToast(msg) {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2500);
+}
+
+document.getElementById('previewModal').addEventListener('click', function(e) {
+  if (e.target===this) closePreview();
+});
+
+// ── START ─────────────────────────────────────────────────────
+init();
 </script>
 </body>
 </html>
