@@ -1477,14 +1477,20 @@ async function importMismoFiles() {
 
         console.log('MISMO: Saving application for contact:', contactId, 'loan:', loanAmount, loanType);
         const appRes = await fetch(`${SB_URL}/rest/v1/mortgage_applications`, {
-          method: 'POST', headers: { ...hdrs, Prefer: 'return=representation,resolution=merge-duplicates' },
+          method: 'POST',
+          headers: { ...hdrs, Prefer: 'return=representation' },
           body: JSON.stringify(appPayload)
         });
+
+        if (!appRes.ok) {
+          const errText = await appRes.text();
+          console.error('MISMO: Application save failed:', appRes.status, errText);
+          throw new Error(`App save failed: ${appRes.status} ${errText}`);
+        }
+
         const appResData = await appRes.json();
-        console.log('MISMO: Application POST status:', appRes.status, 'response:', JSON.stringify(appResData).substring(0,200));
-        if (!appRes.ok) console.error('MISMO: Application save failed:', JSON.stringify(appResData));
+        console.log('MISMO: Application saved successfully:', Array.isArray(appResData) ? appResData[0]?.id : appResData?.id);
         const app = Array.isArray(appResData) ? appResData[0] : appResData;
-        console.log('MISMO: App save response — id:', app?.id, 'contact_id:', app?.contact_id);
 
         // ── SAVE LIABILITIES ──
         if (app?.id && liabilities.length) {
