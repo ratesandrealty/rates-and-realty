@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Email & Marketing — Rates & Realty CRM</title>
+<title>Marketing Automations — Rates & Realty CRM</title>
 <script src="/api/env.js?v=2026033003"></script>
 <style>
   :root { --gold: #c9a84c; --bg: #0d0d0d; --surface: #141414; --surface2: #1a1a1a; --border: rgba(255,255,255,0.07); --text: #fff; --text-muted: rgba(255,255,255,0.4); }
@@ -89,7 +89,7 @@
 
 <div class="header">
   <a href="contacts.html" class="btn-back">← Back</a>
-  <h1>📧 Email & Marketing</h1>
+  <h1>📣 Marketing Automations</h1>
 </div>
 
 <div class="layout">
@@ -656,6 +656,110 @@ function showToast(msg) {
   t.textContent = msg; t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3000);
 }
+
+// ── AI Marketing Assistant ────────────────────────────────────
+let _aiHistory = [];
+let _aiPanelOpen = false;
+
+function toggleAIChat() {
+  _aiPanelOpen = !_aiPanelOpen;
+  const panel = document.getElementById('aiChatPanel');
+  panel.style.display = _aiPanelOpen ? 'flex' : 'none';
+  if (_aiPanelOpen) document.getElementById('aiInput').focus();
+}
+
+function aiQuick(msg) {
+  document.getElementById('aiInput').value = msg;
+  sendAIMessage();
+}
+
+function addAIMessage(content, isUser) {
+  const msgs = document.getElementById('aiMessages');
+  const div = document.createElement('div');
+  div.style.cssText = isUser
+    ? 'background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.2);border-radius:10px 10px 3px 10px;padding:11px 13px;font-size:13px;line-height:1.5;max-width:90%;align-self:flex-end;'
+    : 'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px 10px 10px 3px;padding:11px 13px;font-size:13px;line-height:1.5;max-width:95%;white-space:pre-wrap;';
+  div.textContent = content;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+async function sendAIMessage() {
+  const input = document.getElementById('aiInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+
+  addAIMessage(msg, true);
+  _aiHistory.push({ role: 'user', content: msg });
+
+  const loadingEl = addAIMessage('⏳ Thinking...', false);
+
+  try {
+    const resp = await fetch(`${SB_URL}/functions/v1/ai-marketing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}` },
+      body: JSON.stringify({ messages: _aiHistory })
+    });
+    const data = await resp.json();
+    const reply = data.reply || data.content?.[0]?.text || 'Sorry, I could not generate a response.';
+    loadingEl.textContent = reply;
+    _aiHistory.push({ role: 'assistant', content: reply });
+
+    if (reply.length > 100) {
+      const copyBtn = document.createElement('button');
+      copyBtn.textContent = '📋 Copy';
+      copyBtn.style.cssText = 'margin-top:8px;padding:4px 10px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:var(--gold);font-size:11px;cursor:pointer;display:block;';
+      copyBtn.onclick = () => { navigator.clipboard.writeText(reply); copyBtn.textContent = '✓ Copied!'; setTimeout(()=>copyBtn.textContent='📋 Copy',2000); };
+      loadingEl.appendChild(copyBtn);
+    }
+  } catch(e) {
+    loadingEl.textContent = '⚠️ Could not connect to AI. Check your connection.';
+  }
+}
 </script>
+
+<!-- AI Marketing Assistant -->
+<div id="aiChatBtn" onclick="toggleAIChat()" style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;background:var(--gold);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:22px;box-shadow:0 4px 20px rgba(201,168,76,0.4);z-index:500;transition:transform .2s;" onmouseenter="this.style.transform='scale(1.1)'" onmouseleave="this.style.transform='scale(1)'">🤖</div>
+
+<div id="aiChatPanel" style="display:none;position:fixed;bottom:88px;right:24px;width:360px;height:520px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.1);border-radius:16px;flex-direction:column;overflow:hidden;z-index:500;box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+  <div style="padding:14px 16px;background:#141414;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:18px;">🤖</span>
+      <div>
+        <div style="font-size:13px;font-weight:700;">AI Marketing Assistant</div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.4);">Powered by Claude AI</div>
+      </div>
+    </div>
+    <button onclick="toggleAIChat()" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:16px;">✕</button>
+  </div>
+
+  <div id="aiMessages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;">
+    <div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.15);border-radius:10px 10px 10px 3px;padding:11px 13px;font-size:13px;line-height:1.5;max-width:90%;">
+      👋 Hi Rene! I'm your AI Marketing Assistant. I can help you:<br><br>
+      • Write email subject lines & bodies<br>
+      • Plan drip campaign sequences<br>
+      • Create SMS messages<br>
+      • Suggest campaign strategies<br>
+      • Review your email content<br><br>
+      What would you like help with today?
+    </div>
+  </div>
+
+  <div style="padding:10px 12px 4px;display:flex;gap:5px;flex-wrap:wrap;">
+    <button onclick="aiQuick('Write a welcome email for new leads')" style="padding:4px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:rgba(255,255,255,0.7);font-size:11px;cursor:pointer;white-space:nowrap;">Welcome email</button>
+    <button onclick="aiQuick('Create a 5-step drip sequence for cold leads')" style="padding:4px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:rgba(255,255,255,0.7);font-size:11px;cursor:pointer;white-space:nowrap;">Drip sequence</button>
+    <button onclick="aiQuick('Write an SMS follow-up message')" style="padding:4px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:rgba(255,255,255,0.7);font-size:11px;cursor:pointer;white-space:nowrap;">SMS message</button>
+  </div>
+
+  <div style="padding:6px 12px 12px;display:flex;gap:8px;">
+    <input id="aiInput" type="text" placeholder="Ask me anything about marketing..."
+      onkeydown="if(event.key==='Enter')sendAIMessage()"
+      style="flex:1;padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;font-size:13px;outline:none;">
+    <button onclick="sendAIMessage()" style="padding:9px 14px;background:var(--gold);border:none;border-radius:8px;color:#000;font-size:13px;font-weight:700;cursor:pointer;">↑</button>
+  </div>
+</div>
+
 </body>
 </html>
