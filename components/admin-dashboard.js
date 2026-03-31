@@ -100,7 +100,28 @@ function renderActiveTab() {
     case "communications": renderCommunications(); break;
     case "activity": renderActivityFeed(); break;
     case "analytics": renderAnalytics(); break;
-    case "applications": console.log('about to call renderApplications, data:', dashboardData.applications?.length); renderApplications(dashboardData.applications || []); break;
+    case "applications":
+      console.log('about to call renderApplications, data:', dashboardData.applications?.length);
+      if (dashboardData.applications?.length) {
+        renderApplications(dashboardData.applications);
+      } else {
+        // Fallback: direct fetch if supabase client join failed
+        console.log('Applications empty, trying direct fetch...');
+        (async () => {
+          try {
+            const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+            const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+            const res = await fetch(`${SB_URL}/rest/v1/mortgage_applications?select=id,loan_type,loan_amount,status,updated_at,property_address_street,property_address_city,property_value,contact_id,contacts(id,first_name,last_name,email,phone,credit_score,monthly_income,pipeline_status)&order=updated_at.desc`, {
+              headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+            });
+            const apps = await res.json();
+            console.log('Direct fetch apps:', Array.isArray(apps) ? apps.length : 'not array', apps);
+            if (Array.isArray(apps)) { renderApplications(apps); }
+            else { renderApplications([]); }
+          } catch(e) { console.error('Direct fetch failed:', e); renderApplications([]); }
+        })();
+      }
+      break;
     case "documents": renderDocuments(dashboardData.documents); break;
   }
 }

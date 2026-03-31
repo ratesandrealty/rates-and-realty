@@ -1394,12 +1394,18 @@ async function importMismoFiles() {
       };
 
       if (contactId) {
-        await fetch(`${SB_URL}/rest/v1/contacts?id=eq.${contactId}`, { method: 'PATCH', headers: hdrs, body: JSON.stringify(contactPayload) });
+        console.log('MISMO: Updating existing contact:', contactId);
+        const patchRes = await fetch(`${SB_URL}/rest/v1/contacts?id=eq.${contactId}`, { method: 'PATCH', headers: hdrs, body: JSON.stringify(contactPayload) });
+        console.log('MISMO: Contact PATCH status:', patchRes.status);
       } else {
         contactPayload.created_at = new Date().toISOString();
-        const newContactRes = await (await fetch(`${SB_URL}/rest/v1/contacts`, { method: 'POST', headers: hdrs, body: JSON.stringify(contactPayload) })).json();
+        console.log('MISMO: Creating new contact for:', firstName, lastName, email);
+        const createRes = await fetch(`${SB_URL}/rest/v1/contacts`, { method: 'POST', headers: hdrs, body: JSON.stringify(contactPayload) });
+        const newContactRes = await createRes.json();
+        console.log('MISMO: Contact POST status:', createRes.status, 'response:', JSON.stringify(newContactRes).substring(0,200));
         const newContact = Array.isArray(newContactRes) ? newContactRes[0] : newContactRes;
         contactId = newContact?.id;
+        if (!contactId) console.error('MISMO: Failed to get contactId from response');
       }
 
       if (contactId) {
@@ -1433,11 +1439,13 @@ async function importMismoFiles() {
           updated_at: new Date().toISOString()
         };
 
+        console.log('MISMO: Saving application for contact:', contactId, 'loan:', loanAmount, loanType);
         const appRes = await fetch(`${SB_URL}/rest/v1/mortgage_applications`, {
           method: 'POST', headers: { ...hdrs, Prefer: 'return=representation,resolution=merge-duplicates' },
           body: JSON.stringify(appPayload)
         });
         const appResData = await appRes.json();
+        console.log('MISMO: Application POST status:', appRes.status, 'response:', JSON.stringify(appResData).substring(0,200));
         const app = Array.isArray(appResData) ? appResData[0] : appResData;
 
         // ── SAVE LIABILITIES ──
