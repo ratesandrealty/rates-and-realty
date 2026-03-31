@@ -818,7 +818,7 @@ async function loadApplications(forceRefresh) {
 
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/mortgage_applications?select=id,loan_type,loan_amount,status,updated_at,property_address_street,property_address_city,property_value,contact_id,contacts(id,first_name,last_name,email,phone,credit_score,monthly_income,pipeline_status)&order=updated_at.desc`,
+      `${SUPABASE_URL}/rest/v1/mortgage_applications?select=id,loan_type,loan_amount,status,updated_at,property_address_street,property_address_city,property_value,contact_id,contacts!mortgage_applications_contact_id_fkey(id,first_name,last_name,email,phone,credit_score,monthly_income,pipeline_status)&order=updated_at.desc`,
       { headers: {
         'apikey': SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
