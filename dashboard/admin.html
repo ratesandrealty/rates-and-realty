@@ -1371,14 +1371,14 @@ async function importMismoFiles() {
       if (email) {
         const matchRes = await fetch(`${SB_URL}/rest/v1/contacts?email=eq.${encodeURIComponent(email)}&limit=1`, { headers: hdrs });
         const matches = await matchRes.json();
-        if (matches.length) contactId = matches[0].id;
+        if (Array.isArray(matches) && matches.length) contactId = matches[0].id;
       }
       if (!contactId && cellPhone) {
         const cleanPhone = cellPhone.replace(/\D/g, '');
         if (cleanPhone.length >= 10) {
           const matchRes = await fetch(`${SB_URL}/rest/v1/contacts?phone=like.*${cleanPhone.slice(-10)}&limit=1`, { headers: hdrs });
           const matches = await matchRes.json();
-          if (matches.length) contactId = matches[0].id;
+          if (Array.isArray(matches) && matches.length) contactId = matches[0].id;
         }
       }
 
@@ -1397,7 +1397,8 @@ async function importMismoFiles() {
         await fetch(`${SB_URL}/rest/v1/contacts?id=eq.${contactId}`, { method: 'PATCH', headers: hdrs, body: JSON.stringify(contactPayload) });
       } else {
         contactPayload.created_at = new Date().toISOString();
-        const [newContact] = await (await fetch(`${SB_URL}/rest/v1/contacts`, { method: 'POST', headers: hdrs, body: JSON.stringify(contactPayload) })).json();
+        const newContactRes = await (await fetch(`${SB_URL}/rest/v1/contacts`, { method: 'POST', headers: hdrs, body: JSON.stringify(contactPayload) })).json();
+        const newContact = Array.isArray(newContactRes) ? newContactRes[0] : newContactRes;
         contactId = newContact?.id;
       }
 
@@ -1436,7 +1437,8 @@ async function importMismoFiles() {
           method: 'POST', headers: { ...hdrs, Prefer: 'return=representation,resolution=merge-duplicates' },
           body: JSON.stringify(appPayload)
         });
-        const [app] = await appRes.json();
+        const appResData = await appRes.json();
+        const app = Array.isArray(appResData) ? appResData[0] : appResData;
 
         // ── SAVE LIABILITIES ──
         if (app?.id && liabilities.length) {
@@ -1459,7 +1461,7 @@ async function importMismoFiles() {
         // ── CREATE OR UPDATE LEAD ──
         const existingLeadRes = await fetch(`${SB_URL}/rest/v1/leads?contact_id=eq.${contactId}&limit=1`, { headers: hdrs });
         const existingLeads = await existingLeadRes.json();
-        if (existingLeads.length) {
+        if (Array.isArray(existingLeads) && existingLeads.length) {
           await fetch(`${SB_URL}/rest/v1/leads?id=eq.${existingLeads[0].id}`, { method: 'PATCH', headers: hdrs,
             body: JSON.stringify({ status: 'application', loan_type: loanType, loan_amount: loanAmount, updated_at: new Date().toISOString() })
           });

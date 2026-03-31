@@ -771,8 +771,12 @@ function renderWeeklyBar(weeklyLeads) {
 let _allApplications = [];
 
 function renderApplications(applications) {
-  console.log('renderApplications called with', (applications||[]).length, 'apps');
-  _allApplications = applications || [];
+  console.log('renderApplications called, count:', (applications||[]).length, 'first app:', JSON.stringify((applications||[])[0]));
+  _allApplications = (applications || []).map(app => {
+    // Normalize contacts — could be object, array, or null
+    const c = Array.isArray(app.contacts) ? app.contacts[0] : app.contacts;
+    return { ...app, _contact: c || {} };
+  });
   renderAppStats(_allApplications);
   filterApplications();
 }
@@ -806,7 +810,7 @@ function filterApplications() {
   let filtered = _allApplications.filter(app => {
     if (statusF && (app.status || "").toLowerCase() !== statusF) return false;
     if (q) {
-      const c = app.contacts || {};
+      const c = app._contact || {};
       const hay = `${c.first_name||""} ${c.last_name||""} ${c.email||""} ${app.property_address_street||""} ${app.property_address_city||""}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
@@ -815,7 +819,7 @@ function filterApplications() {
 
   filtered.sort((a, b) => {
     if (sortBy === "loan_amount") return (b.loan_amount||0) - (a.loan_amount||0);
-    if (sortBy === "credit_score") return ((b.contacts?.credit_score||0) - (a.contacts?.credit_score||0));
+    if (sortBy === "credit_score") return ((b._contact?.credit_score||0) - (a._contact?.credit_score||0));
     return new Date(b.updated_at||0) - new Date(a.updated_at||0);
   });
 
