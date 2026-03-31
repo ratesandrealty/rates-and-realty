@@ -6,7 +6,7 @@ export async function getAdminDashboardData() {
   const [contactsResult, leadsResult, applicationsResult, documentsResult, notesResult, tasksResult] = await Promise.all([
     supabase.from("contacts").select("*").order("created_at", { ascending: false }),
     supabase.from("leads").select("*, contacts(first_name, last_name, email, phone, credit_score, employer_name, monthly_income)").order("created_at", { ascending: false }),
-    supabase.from("mortgage_applications").select("*").order("updated_at", { ascending: false }),
+    supabase.from("mortgage_applications").select("*, contacts(first_name, last_name, email)").order("updated_at", { ascending: false }),
     supabase.from("uploaded_documents").select("*").order("created_at", { ascending: false }),
     supabase.from("notes").select("*").order("created_at", { ascending: false }),
     supabase.from("tasks").select("*").order("created_at", { ascending: false })

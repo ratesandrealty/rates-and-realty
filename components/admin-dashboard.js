@@ -772,13 +772,20 @@ function renderApplications(applications) {
   const el = document.getElementById("application-table");
   if (!el) return;
   if (!applications.length) { renderEmptyState(el, "Borrower applications will appear here."); return; }
-  el.innerHTML = applications.map((app) => `
+  el.innerHTML = applications.map((app) => {
+    const borrowerName = app.contacts
+      ? `${app.contacts.first_name || ''} ${app.contacts.last_name || ''}`.trim()
+      : 'Unknown Borrower';
+    const loanTypeDisplay = app.loan_type
+      ? app.loan_type.charAt(0).toUpperCase() + app.loan_type.slice(1)
+      : 'Unknown';
+    return `
     <article class="crm-record-card" style="cursor:pointer;transition:border-color .15s,box-shadow .15s;"
-      onclick="window.location.href='/admin/lead-detail.html?contact_id=${app.contact_id}'"
+      onclick="if('${app.contact_id}' !== 'null' && '${app.contact_id}' !== 'undefined') { window.location.href='/admin/lead-detail.html?id=${app.contact_id}'; } else { alert('No contact linked to this application yet.'); }"
       onmouseenter="this.style.borderColor='rgba(201,168,76,0.3)';this.style.boxShadow='0 2px 12px rgba(0,0,0,0.3)'"
       onmouseleave="this.style.borderColor='';this.style.boxShadow=''">
       <div class="crm-record-top">
-        <div><strong>${app.loan_type || "Unknown"}</strong><span>${app.property_address || "No property address"}</span></div>
+        <div><strong>${borrowerName}</strong><span>${loanTypeDisplay} · ${app.property_address || "No property address"}</span></div>
         <span class="status-pill ${statusPillClass(app.status)}">${app.status || "draft"}</span>
       </div>
       <div class="crm-record-meta">
@@ -786,8 +793,8 @@ function renderApplications(applications) {
         <span>Updated ${formatDate(app.updated_at)}</span>
         <span style="margin-left:auto;color:rgba(201,168,76,0.6);font-size:11px;">Open →</span>
       </div>
-    </article>
-  `).join("");
+    </article>`;
+  }).join("");
 }
 
 function renderDocuments(documents) {
