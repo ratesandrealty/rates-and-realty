@@ -1678,6 +1678,17 @@
         </div>
       </div>
 
+      <!-- Connected People -->
+      <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:18px 20px;margin-top:16px;" id="connectedPeopleSection">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div style="font-size:13px;font-weight:700;">👥 Connected People</div>
+          <button onclick="openAddRelationshipModal()" style="padding:5px 12px;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.25);border-radius:7px;color:#c9a84c;font-size:11px;font-weight:600;cursor:pointer;">+ Add Member</button>
+        </div>
+        <div id="relatedContactsList" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="font-size:12px;color:rgba(255,255,255,0.3);padding:8px 0;">No connected people yet</div>
+        </div>
+      </div>
+
       <div class="ld-save-row">
         <button class="ld-btn-cancel" onclick="loadData()">Reset</button>
         <button class="ld-btn-save" onclick="saveLeadDetails()">Save Changes</button>
@@ -2988,6 +2999,44 @@
 </div><!-- /ld-body -->
 
 <!-- Toast -->
+<!-- Add Relationship Modal -->
+<div id="addRelModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:500;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border:1px solid rgba(255,255,255,0.12);border-radius:14px;width:90vw;max-width:500px;overflow:hidden;">
+    <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-size:14px;font-weight:700;">Add Family Member / Co-Borrower</div>
+      <button onclick="closeAddRelModal()" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:16px;">✕</button>
+    </div>
+    <div style="padding:20px;">
+      <div style="margin-bottom:12px;">
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Relationship Type</label>
+        <select id="relType" style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;">
+          <option value="Spouse">Spouse</option>
+          <option value="Co-Borrower" selected>Co-Borrower</option>
+          <option value="Parent">Parent</option>
+          <option value="Child">Child</option>
+          <option value="Sibling">Sibling</option>
+          <option value="Partner">Partner</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Search Existing Contact</label>
+        <input type="text" id="relSearchInput" placeholder="Search by name or email..." oninput="searchRelContacts(this.value)"
+          style="width:100%;padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;">
+        <div id="relSearchResults" style="background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:8px;margin-top:4px;max-height:160px;overflow-y:auto;display:none;"></div>
+      </div>
+      <div id="relSelectedContact" style="display:none;padding:10px 12px;background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.15);border-radius:8px;font-size:12px;margin-bottom:12px;">
+        <div id="relSelectedName" style="font-weight:600;"></div>
+        <div id="relSelectedMeta" style="color:rgba(255,255,255,0.4);margin-top:2px;font-size:11px;"></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button onclick="closeAddRelModal()" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;font-size:12px;cursor:pointer;">Cancel</button>
+        <button onclick="saveRelationship()" style="padding:8px 16px;background:#c9a84c;border:none;border-radius:8px;color:#000;font-size:12px;font-weight:700;cursor:pointer;">Add Connection</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="ld-toast" id="ld-toast"></div>
 
 <!-- TAG COLOR PICKER MODAL -->
@@ -3097,7 +3146,7 @@ async function loadData() {
     liabilitiesData = Array.isArray(contactData.liabilities) ? [...contactData.liabilities] : [];
     populateUI();
     renderLiabilities();
-    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocumentsGrid(), loadCreditApps(), loadAllTags().then(function() { return loadContactTags(contactId); })]);
+    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocumentsGrid(), loadCreditApps(), loadRelatedContacts(contactId), loadAllTags().then(function() { return loadContactTags(contactId); })]);
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
@@ -5073,6 +5122,86 @@ function addFormerAddress() {
 /* ── 1003 — MILITARY TOGGLE ── */
 function toggleMilitary(show) {
   document.getElementById('military-details').style.display = show ? 'block' : 'none';
+}
+
+/* ── CONNECTED PEOPLE / FAMILY MEMBERS ── */
+let _selectedRelContactId = null;
+
+async function loadRelatedContacts(cId) {
+  const [relA, relB] = await Promise.all([
+    sb.from('contact_relationships').select('id,relationship_type,related_contact_id,contacts!contact_relationships_related_contact_id_fkey(id,first_name,last_name,email,phone)').eq('contact_id', cId),
+    sb.from('contact_relationships').select('id,relationship_type,contact_id,contacts!contact_relationships_contact_id_fkey(id,first_name,last_name,email,phone)').eq('related_contact_id', cId)
+  ]);
+  const all = [
+    ...(relA.data||[]).map(r => ({ id:r.id, relationship_type:r.relationship_type, person:r.contacts })),
+    ...(relB.data||[]).map(r => ({ id:r.id, relationship_type:r.relationship_type, person:r.contacts }))
+  ].filter(r => r.person);
+
+  const el = document.getElementById('relatedContactsList');
+  if (!all.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);padding:8px 0;">No connected people yet</div>'; return; }
+  el.innerHTML = all.map(r => {
+    const p = r.person;
+    const name = `${p.first_name||''} ${p.last_name||''}`.trim();
+    const init = `${(p.first_name||'?')[0]}${(p.last_name||'')[0]||''}`.toUpperCase();
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:9px;cursor:pointer;transition:all .15s;"
+      onclick="window.location.href='lead-detail.html?contact_id=${p.id}'"
+      onmouseenter="this.style.borderColor='rgba(201,168,76,0.25)'" onmouseleave="this.style.borderColor='rgba(255,255,255,0.06)'">
+      <div style="width:32px;height:32px;border-radius:50%;background:rgba(201,168,76,0.15);color:#c9a84c;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">${init}</div>
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">${name}</div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${p.email||''} ${p.phone?'· '+p.phone:''}</div></div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:10px;padding:2px 8px;background:rgba(96,160,255,0.12);color:#60a0ff;border-radius:6px;font-weight:600">${r.relationship_type}</span>
+        <button onclick="event.stopPropagation();removeRelationship('${r.id}')" style="background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.2);border-radius:5px;color:#f87171;font-size:10px;padding:2px 6px;cursor:pointer;">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openAddRelationshipModal() {
+  _selectedRelContactId = null;
+  document.getElementById('relSearchInput').value = '';
+  document.getElementById('relSearchResults').style.display = 'none';
+  document.getElementById('relSelectedContact').style.display = 'none';
+  document.getElementById('addRelModal').style.display = 'flex';
+  setTimeout(() => document.getElementById('relSearchInput').focus(), 50);
+}
+function closeAddRelModal() { document.getElementById('addRelModal').style.display = 'none'; }
+
+async function searchRelContacts(q) {
+  if (!q.trim()) { document.getElementById('relSearchResults').style.display = 'none'; return; }
+  const { data: contacts } = await sb.from('contacts').select('id,first_name,last_name,email,phone').or(`first_name.ilike.*${q}*,last_name.ilike.*${q}*,email.ilike.*${q}*`).limit(8);
+  const el = document.getElementById('relSearchResults');
+  if (!contacts?.length) { el.style.display = 'none'; return; }
+  el.innerHTML = contacts.map(c => `
+    <div onclick="selectRelContact('${c.id}','${(c.first_name+' '+(c.last_name||'')).trim().replace(/'/g,"\\'")}','${(c.email||'').replace(/'/g,"\\'")}','${(c.phone||'').replace(/'/g,"\\'")}')"
+      style="padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;transition:background .1s"
+      onmouseenter="this.style.background='rgba(201,168,76,0.08)'" onmouseleave="this.style.background='none'">
+      <div style="width:26px;height:26px;border-radius:50%;background:rgba(201,168,76,0.15);color:#c9a84c;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center">${(c.first_name||'?')[0]}${(c.last_name||'')[0]||''}</div>
+      <div style="flex:1"><div style="font-weight:600">${c.first_name||''} ${c.last_name||''}</div><div style="font-size:10px;color:rgba(255,255,255,0.4)">${c.email||c.phone||''}</div></div>
+    </div>`).join('');
+  el.style.display = 'block';
+}
+
+function selectRelContact(id, name, email, phone) {
+  _selectedRelContactId = id;
+  document.getElementById('relSearchInput').value = name;
+  document.getElementById('relSearchResults').style.display = 'none';
+  document.getElementById('relSelectedContact').style.display = 'block';
+  document.getElementById('relSelectedName').textContent = name;
+  document.getElementById('relSelectedMeta').textContent = [email, phone].filter(Boolean).join(' · ');
+}
+
+async function saveRelationship() {
+  if (!_selectedRelContactId || !contactId) return;
+  await sb.from('contact_relationships').insert({ contact_id: contactId, related_contact_id: _selectedRelContactId, relationship_type: document.getElementById('relType').value });
+  closeAddRelModal();
+  loadRelatedContacts(contactId);
+  if (typeof toast === 'function') toast('Connection added');
+}
+
+async function removeRelationship(relId) {
+  if (!confirm('Remove this connection?')) return;
+  await sb.from('contact_relationships').delete().eq('id', relId);
+  loadRelatedContacts(contactId);
 }
 
 /* ── REFERRAL PARTNERS ── */

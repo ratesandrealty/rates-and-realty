@@ -421,6 +421,7 @@
             <p class="kicker" style="margin-bottom:4px;">Borrower Files</p>
             <h2>Applications</h2>
           </div>
+          <button onclick="openMismoModal()" style="padding:6px 14px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:#c9a84c;font-size:12px;font-weight:600;cursor:pointer;margin-left:auto;">📤 Import MISMO 3.4</button>
         </div>
         <div id="application-table" class="crm-card-grid"></div>
       </section>
@@ -1031,5 +1032,95 @@
     });
   })();
   </script>
+
+<!-- MISMO Import Modal -->
+<div id="mismoModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border:1px solid rgba(255,255,255,0.12);border-radius:16px;width:90vw;max-width:640px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="padding:18px 22px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <div style="font-size:16px;font-weight:700;">📤 Import MISMO 3.4 Files</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:3px;">Upload MISMO XML files to auto-create borrower contacts and applications</div>
+      </div>
+      <button onclick="closeMismoModal()" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:18px;">✕</button>
+    </div>
+    <div style="padding:22px;flex:1;overflow-y:auto;">
+      <div id="mismoDropZone" style="border:2px dashed rgba(201,168,76,0.3);border-radius:12px;padding:40px 24px;text-align:center;cursor:pointer;transition:all .2s;background:rgba(201,168,76,0.03);"
+        onclick="document.getElementById('mismoFileInput').click()"
+        ondragover="event.preventDefault();this.style.borderColor='#c9a84c';this.style.background='rgba(201,168,76,0.08)'"
+        ondragleave="this.style.borderColor='rgba(201,168,76,0.3)';this.style.background='rgba(201,168,76,0.03)'"
+        ondrop="event.preventDefault();this.style.borderColor='rgba(201,168,76,0.3)';this.style.background='rgba(201,168,76,0.03)';handleMismoFiles(event.dataTransfer.files)">
+        <div style="font-size:36px;margin-bottom:10px;">📁</div>
+        <div style="font-size:14px;font-weight:600;color:#c9a84c;">Drop MISMO 3.4 XML files here</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:6px;">or click to browse — supports multiple files</div>
+        <input type="file" id="mismoFileInput" accept=".xml,.mismo" multiple style="display:none" onchange="handleMismoFiles(this.files)">
+      </div>
+      <div id="mismoFileList" style="margin-top:16px;"></div>
+      <div id="mismoResults" style="margin-top:16px;"></div>
+    </div>
+    <div style="padding:14px 22px;border-top:1px solid rgba(255,255,255,0.08);display:flex;justify-content:flex-end;gap:8px;">
+      <button onclick="closeMismoModal()" style="padding:8px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;font-size:13px;cursor:pointer;">Cancel</button>
+      <button id="mismoImportBtn" onclick="importMismoFiles()" style="padding:8px 18px;background:#c9a84c;border:none;border-radius:8px;color:#000;font-size:13px;font-weight:700;cursor:pointer;display:none;">📤 Import All</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let _mismoFiles = [];
+function openMismoModal() { document.getElementById('mismoModal').style.display = 'flex'; _mismoFiles = []; document.getElementById('mismoFileList').innerHTML = ''; document.getElementById('mismoResults').innerHTML = ''; document.getElementById('mismoImportBtn').style.display = 'none'; }
+function closeMismoModal() { document.getElementById('mismoModal').style.display = 'none'; }
+
+function handleMismoFiles(files) {
+  _mismoFiles = Array.from(files).filter(f => f.name.endsWith('.xml') || f.name.endsWith('.mismo'));
+  const list = document.getElementById('mismoFileList');
+  if (!_mismoFiles.length) { list.innerHTML = '<div style="color:#f87171;font-size:12px;">No valid XML files selected</div>'; return; }
+  list.innerHTML = `<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">${_mismoFiles.length} file(s) ready</div>` +
+    _mismoFiles.map(f => `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:8px;margin-bottom:6px;font-size:12px;"><span style="color:#c9a84c;">📄</span><span style="flex:1">${f.name}</span><span style="color:rgba(255,255,255,0.4)">${(f.size/1024).toFixed(1)} KB</span></div>`).join('');
+  document.getElementById('mismoImportBtn').style.display = 'block';
+}
+
+async function importMismoFiles() {
+  if (!_mismoFiles.length) return;
+  const btn = document.getElementById('mismoImportBtn');
+  btn.textContent = '⏳ Importing...'; btn.disabled = true;
+  const results = document.getElementById('mismoResults'); results.innerHTML = '';
+  let ok = 0;
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+  const hdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+
+  for (const file of _mismoFiles) {
+    try {
+      const xml = await file.text();
+      const doc = new DOMParser().parseFromString(xml, 'application/xml');
+      const get = (tag) => doc.querySelector(tag)?.textContent?.trim() || '';
+      const firstName = get('BORROWER_DETAIL FirstName') || get('FirstName') || 'Unknown';
+      const lastName = get('BORROWER_DETAIL LastName') || get('LastName') || '';
+      const email = get('CONTACT_POINT_EMAIL ContactPointEmailValue') || get('EmailAddressText') || null;
+      const phone = get('CONTACT_POINT_TELEPHONE ContactPointTelephoneValue') || get('TelephoneNumberValue') || null;
+      const street = get('AddressLineText') || null;
+      const city = get('CityName') || null;
+      const state = get('StateCode') || null;
+      const zip = get('PostalCode') || null;
+      const loanAmount = get('BaseLoanAmount') || get('NoteAmount') || null;
+      const loanType = get('MortgageType') || get('LoanProgramIdentifier') || null;
+      const loanPurpose = get('LoanPurposeType') || null;
+      const propStreet = get('SUBJECT_PROPERTY AddressLineText') || null;
+      const name = `${firstName} ${lastName}`.trim();
+
+      const [contact] = await (await fetch(`${SB_URL}/rest/v1/contacts`, { method:'POST', headers:hdrs, body:JSON.stringify({ first_name:firstName, last_name:lastName, email, phone, address:street, city, state, zip, source:'MISMO Import', contact_type:'borrower', pipeline_status:'New Lead', created_at:new Date().toISOString(), updated_at:new Date().toISOString() }) })).json();
+
+      if (contact?.id) {
+        await fetch(`${SB_URL}/rest/v1/mortgage_applications`, { method:'POST', headers:{...hdrs,Prefer:'return=minimal'}, body:JSON.stringify({ contact_id:contact.id, first_name:firstName, last_name:lastName, email, loan_amount:parseFloat(loanAmount)||null, loan_type:loanType, loan_purpose:loanPurpose, property_address_street:propStreet, mismo_file_name:file.name, mismo_imported_at:new Date().toISOString(), created_at:new Date().toISOString(), updated_at:new Date().toISOString() }) });
+        await fetch(`${SB_URL}/rest/v1/leads`, { method:'POST', headers:{...hdrs,Prefer:'return=minimal'}, body:JSON.stringify({ contact_id:contact.id, status:'application', source:'MISMO Import', loan_type:loanType, loan_amount:parseFloat(loanAmount)||null, created_at:new Date().toISOString(), updated_at:new Date().toISOString() }) });
+        ok++;
+        results.innerHTML += `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(80,200,120,0.08);border:1px solid rgba(80,200,120,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;"><span style="color:#50c878;">✓</span><div style="flex:1"><strong>${name}</strong> · ${file.name}</div><a href="/admin/lead-detail.html?contact_id=${contact.id}" style="color:#c9a84c;font-size:11px;text-decoration:none;">View →</a></div>`;
+      }
+    } catch(e) {
+      results.innerHTML += `<div style="padding:8px 12px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;color:#f87171;">⚠️ ${file.name}: ${e.message}</div>`;
+    }
+  }
+  btn.textContent = `✓ Done — ${ok} imported`; btn.disabled = false;
+}
+</script>
 </body>
 </html>
