@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Email & Marketing — Rates & Realty CRM</title>
+<script src="/api/env.js?v=2026033003"></script>
+<style>
+  :root { --gold: #c9a84c; --bg: #0d0d0d; --surface: #141414; --surface2: #1a1a1a; --border: rgba(255,255,255,0.07); --text: #fff; --text-muted: rgba(255,255,255,0.4); }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  .header { display:flex; align-items:center; gap:12px; padding:12px 20px; background:var(--surface); border-bottom:1px solid var(--border); }
+  .header h1 { font-size:16px; font-weight:700; }
+  .btn-back { padding:6px 12px; background:rgba(255,255,255,0.06); border:1px solid var(--border); border-radius:7px; color:var(--text-muted); font-size:12px; cursor:pointer; text-decoration:none; }
+
+  .layout { display:flex; gap:0; min-height:calc(100vh - 48px); }
+
+  /* Sidebar tabs */
+  .sidebar { width:200px; background:var(--surface); border-right:1px solid var(--border); padding:16px 0; flex-shrink:0; }
+  .sidebar-item { display:flex; align-items:center; gap:10px; padding:10px 16px; cursor:pointer; font-size:13px; color:var(--text-muted); border-left:3px solid transparent; transition:all .15s; }
+  .sidebar-item:hover { background:rgba(255,255,255,0.04); color:#fff; }
+  .sidebar-item.active { background:rgba(201,168,76,0.08); color:var(--gold); border-left-color:var(--gold); font-weight:600; }
+
+  /* Main content */
+  .main { flex:1; padding:24px; overflow-y:auto; }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+
+  /* Cards */
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }
+  .card-title { font-size:14px; font-weight:700; margin-bottom:14px; display:flex; align-items:center; gap:8px; }
+
+  /* Form elements */
+  .field { margin-bottom:14px; }
+  .field label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); display:block; margin-bottom:6px; }
+  .field input, .field select, .field textarea {
+    width:100%; padding:9px 12px; background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff;
+    font-size:13px; outline:none; font-family:inherit;
+  }
+  .field textarea { min-height:120px; resize:vertical; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color:rgba(201,168,76,0.4); }
+  select option { background:#1a1a1a; }
+
+  /* Buttons */
+  .btn-gold { padding:9px 20px; background:var(--gold); border:none; border-radius:8px; color:#000; font-size:13px; font-weight:700; cursor:pointer; }
+  .btn-ghost { padding:9px 16px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff; font-size:13px; cursor:pointer; }
+  .btn-sm { padding:5px 12px; font-size:11px; font-weight:600; border-radius:6px; cursor:pointer; border:none; }
+
+  /* Stats */
+  .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }
+  .stat-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; text-align:center; }
+  .stat-num { font-size:24px; font-weight:700; color:var(--gold); }
+  .stat-label { font-size:11px; color:var(--text-muted); margin-top:3px; text-transform:uppercase; letter-spacing:0.4px; }
+
+  /* Segment builder */
+  .segment-row { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  .segment-count { font-size:12px; color:var(--gold); font-weight:600; }
+
+  /* Automation list */
+  .auto-item { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:8px; display:flex; align-items:center; gap:12px; }
+  .auto-status { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .auto-status.on { background:#50c878; }
+  .auto-status.off { background:rgba(255,255,255,0.2); }
+  .auto-name { font-size:13px; font-weight:600; flex:1; }
+  .auto-meta { font-size:11px; color:var(--text-muted); }
+
+  /* Campaign list */
+  .camp-item { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:8px; display:flex; align-items:center; gap:12px; }
+  .camp-badge { font-size:10px; padding:2px 8px; border-radius:8px; font-weight:600; text-transform:uppercase; }
+  .badge-sent { background:rgba(80,200,120,0.15); color:#50c878; }
+  .badge-draft { background:rgba(255,255,255,0.08); color:var(--text-muted); }
+  .badge-ready { background:rgba(201,168,76,0.15); color:var(--gold); }
+
+  .divider { border:none; border-top:1px solid var(--border); margin:20px 0; }
+
+  /* Email preview */
+  .email-preview { background:#fff; border-radius:8px; padding:24px; color:#333; font-size:14px; line-height:1.6; min-height:200px; }
+
+  /* Recipient tag */
+  .recipient-tag { display:inline-flex; align-items:center; gap:6px; background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.2); border-radius:20px; padding:3px 10px; font-size:12px; color:var(--gold); margin:2px; }
+
+  #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#222; border:1px solid var(--border); border-radius:10px; padding:10px 20px; font-size:13px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9999; }
+  #toast.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a href="contacts.html" class="btn-back">← Back</a>
+  <h1>📧 Email & Marketing</h1>
+</div>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-item active" onclick="switchTab('blast')">📤 Send Campaign</div>
+    <div class="sidebar-item" onclick="switchTab('automations')">🔄 Automations</div>
+    <div class="sidebar-item" onclick="switchTab('campaigns')">📋 Past Campaigns</div>
+    <div class="sidebar-item" onclick="switchTab('templates')">✉️ Templates</div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- ═══ TAB: SEND CAMPAIGN ═══ -->
+    <div id="tab-blast" class="tab-panel active">
+      <div style="margin-bottom:20px;">
+        <div style="font-size:18px;font-weight:700;">📤 Send Email Campaign</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Blast an email to your contacts or a filtered segment</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 380px;gap:20px;">
+
+        <!-- Left: Compose -->
+        <div>
+          <div class="card">
+            <div class="card-title">✉️ Compose</div>
+
+            <div class="field">
+              <label>Campaign Name (internal)</label>
+              <input type="text" id="campName" placeholder="e.g. March Rate Update Newsletter">
+            </div>
+            <div class="field">
+              <label>Subject Line</label>
+              <input type="text" id="campSubject" placeholder="e.g. 🏡 Rates just dropped — lock in now!">
+            </div>
+            <div class="field">
+              <label>From Name</label>
+              <input type="text" id="campFromName" value="Rene Duarte — Rates & Realty" placeholder="Your name">
+            </div>
+            <div class="field">
+              <label>Email Body</label>
+              <textarea id="campBody" placeholder="Hi {name},&#10;&#10;I wanted to reach out personally...&#10;&#10;Type {name} to personalize with the contact's first name."></textarea>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+              <span style="font-size:11px;color:var(--text-muted);">Use {name} for personalization</span>
+              <button class="btn-ghost" onclick="previewEmail()" style="font-size:12px;padding:6px 12px;">👁 Preview</button>
+            </div>
+          </div>
+
+          <!-- Preview -->
+          <div class="card" id="previewCard" style="display:none;">
+            <div class="card-title">👁 Email Preview</div>
+            <div class="email-preview" id="emailPreview"></div>
+          </div>
+        </div>
+
+        <!-- Right: Recipients + Send -->
+        <div>
+          <div class="card">
+            <div class="card-title">👥 Recipients</div>
+
+            <div class="field">
+              <label>Filter by Status</label>
+              <select id="filterStatus">
+                <option value="">All Contacts</option>
+                <option value="New Lead">New Lead</option>
+                <option value="Contacted">Contacted</option>
+                <option value="Qualified">Qualified</option>
+                <option value="Pre-Qualified">Pre-Qualified</option>
+                <option value="Application">Application</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Filter by Source</label>
+              <select id="filterSource">
+                <option value="">All Sources</option>
+                <option value="Website">Website</option>
+                <option value="Referral">Referral</option>
+                <option value="Facebook">Facebook</option>
+                <option value="Instagram">Instagram</option>
+                <option value="TikTok">TikTok</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Filter by Loan Type</label>
+              <select id="filterLoan">
+                <option value="">All Loan Types</option>
+                <option value="Conventional">Conventional</option>
+                <option value="FHA">FHA</option>
+                <option value="VA">VA</option>
+                <option value="DSCR">DSCR</option>
+                <option value="Jumbo">Jumbo</option>
+              </select>
+            </div>
+
+            <button class="btn-ghost" onclick="loadRecipients()" style="width:100%;margin-bottom:12px;">🔍 Find Recipients</button>
+
+            <div id="recipientCount" style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">Click Find to load recipients</div>
+            <div id="recipientList" style="max-height:180px;overflow-y:auto;"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">🚀 Send</div>
+            <div class="field">
+              <label>Schedule</label>
+              <select id="campSchedule">
+                <option value="now">Send Immediately</option>
+                <option value="schedule">Schedule for Later</option>
+              </select>
+            </div>
+            <div class="field" id="scheduleTimeField" style="display:none;">
+              <label>Send Date & Time</label>
+              <input type="datetime-local" id="campScheduleTime">
+            </div>
+            <button class="btn-gold" onclick="sendCampaign()" style="width:100%;">📤 Send Campaign</button>
+            <div id="sendStatus" style="margin-top:10px;font-size:12px;color:var(--text-muted);text-align:center;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: AUTOMATIONS ═══ -->
+    <div id="tab-automations" class="tab-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+          <div style="font-size:18px;font-weight:700;">🔄 Email Automations</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Drip sequences that fire automatically when contacts are added</div>
+        </div>
+        <button class="btn-gold" onclick="openNewDrip()">+ New Drip</button>
+      </div>
+
+      <!-- Quick drip templates -->
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-title">⚡ Quick Drip Templates</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;" onclick="createDrip('new_lead')">
+            <div style="font-size:20px;margin-bottom:6px;">🆕</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">New Lead Welcome</div>
+            <div style="font-size:11px;color:var(--text-muted);">5 emails over 9 days</div>
+            <div style="margin-top:10px;font-size:11px;color:var(--gold);">Create →</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;" onclick="createDrip('rate_update')">
+            <div style="font-size:20px;margin-bottom:6px;">📉</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Rate Drop Alert</div>
+            <div style="font-size:11px;color:var(--text-muted);">3 emails, urgent sequence</div>
+            <div style="margin-top:10px;font-size:11px;color:var(--gold);">Create →</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;" onclick="createDrip('re_engage')">
+            <div style="font-size:20px;margin-bottom:6px;">🔁</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Cold Lead Re-Engage</div>
+            <div style="font-size:11px;color:var(--text-muted);">4 emails over 30 days</div>
+            <div style="margin-top:10px;font-size:11px;color:var(--gold);">Create →</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Existing automations -->
+      <div class="card">
+        <div class="card-title">Your Automations</div>
+        <div id="automationList">
+          <div style="text-align:center;padding:24px;color:var(--text-muted);">Loading automations…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: PAST CAMPAIGNS ═══ -->
+    <div id="tab-campaigns" class="tab-panel">
+      <div style="font-size:18px;font-weight:700;margin-bottom:20px;">📋 Past Campaigns</div>
+      <div class="card">
+        <div id="campaignList">
+          <div style="text-align:center;padding:24px;color:var(--text-muted);">Loading campaigns…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: TEMPLATES ═══ -->
+    <div id="tab-templates" class="tab-panel">
+      <div style="font-size:18px;font-weight:700;margin-bottom:20px;">✉️ Email Templates</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">
+
+        <div class="card" style="cursor:pointer;" onclick="useTemplate('welcome')">
+          <div style="font-size:24px;margin-bottom:8px;">👋</div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Welcome / Introduction</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Introduce yourself and your services to a new lead</div>
+          <button class="btn-sm btn-gold">Use Template</button>
+        </div>
+
+        <div class="card" style="cursor:pointer;" onclick="useTemplate('rate_update')">
+          <div style="font-size:24px;margin-bottom:8px;">📉</div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Rate Update</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Share current mortgage rates with your contacts</div>
+          <button class="btn-sm btn-gold">Use Template</button>
+        </div>
+
+        <div class="card" style="cursor:pointer;" onclick="useTemplate('preapproval')">
+          <div style="font-size:24px;margin-bottom:8px;">✅</div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Pre-Approval Push</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Encourage contacts to start their pre-approval</div>
+          <button class="btn-sm btn-gold">Use Template</button>
+        </div>
+
+        <div class="card" style="cursor:pointer;" onclick="useTemplate('market_update')">
+          <div style="font-size:24px;margin-bottom:8px;">🏡</div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Market Update Newsletter</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Monthly housing market recap and insights</div>
+          <button class="btn-sm btn-gold">Use Template</button>
+        </div>
+
+        <div class="card" style="cursor:pointer;" onclick="useTemplate('followup')">
+          <div style="font-size:24px;margin-bottom:8px;">📞</div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Follow-Up Check-In</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Gentle nudge for contacts who went quiet</div>
+          <button class="btn-sm btn-gold">Use Template</button>
+        </div>
+
+        <div class="card" style="cursor:pointer;" onclick="useTemplate('referral')">
+          <div style="font-size:24px;margin-bottom:8px;">🤝</div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Referral Request</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Ask satisfied clients for referrals</div>
+          <button class="btn-sm btn-gold">Use Template</button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+
+let _recipients = [];
+
+// ── Tab switching ─────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  event.target.classList.add('active');
+  if (tab === 'automations') loadAutomations();
+  if (tab === 'campaigns') loadCampaigns();
+}
+
+// ── Schedule toggle ───────────────────────────────────────────
+document.getElementById('campSchedule').addEventListener('change', function() {
+  document.getElementById('scheduleTimeField').style.display = this.value === 'schedule' ? 'block' : 'none';
+});
+
+// ── Load recipients from Supabase ─────────────────────────────
+async function loadRecipients() {
+  const status = document.getElementById('filterStatus').value;
+  const source = document.getElementById('filterSource').value;
+  const loan = document.getElementById('filterLoan').value;
+
+  let query = `${SB_URL}/rest/v1/contacts?select=id,first_name,last_name,email,contact_type,source,loan_type&not.email.is.null&order=created_at.desc&limit=200`;
+  if (status) query += `&contact_type=eq.${encodeURIComponent(status)}`;
+  if (source) query += `&source=eq.${encodeURIComponent(source)}`;
+  if (loan) query += `&loan_type=eq.${encodeURIComponent(loan)}`;
+
+  const res = await fetch(query, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+  _recipients = (await res.json()).filter(c => c.email);
+
+  document.getElementById('recipientCount').innerHTML = `<span style="color:var(--gold);font-weight:700;">${_recipients.length}</span> contacts with email addresses`;
+
+  const list = document.getElementById('recipientList');
+  list.innerHTML = _recipients.slice(0, 10).map(c => `
+    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;">
+      <span>${c.first_name || ''} ${c.last_name || ''}</span>
+      <span style="color:var(--text-muted);">${c.email}</span>
+    </div>`).join('') + (_recipients.length > 10 ? `<div style="font-size:11px;color:var(--text-muted);padding:8px 0;">+ ${_recipients.length - 10} more...</div>` : '');
+}
+
+// ── Preview email ─────────────────────────────────────────────
+function previewEmail() {
+  const subject = document.getElementById('campSubject').value;
+  const body = document.getElementById('campBody').value;
+  const sampleName = 'John';
+  const preview = document.getElementById('emailPreview');
+  const card = document.getElementById('previewCard');
+
+  preview.innerHTML = `
+    <div style="border-bottom:1px solid #eee;padding-bottom:12px;margin-bottom:16px;">
+      <div style="font-size:11px;color:#888;margin-bottom:3px;">FROM: Rene Duarte — Rates & Realty</div>
+      <div style="font-size:16px;font-weight:700;color:#1a1a1a;">${subject || '(no subject)'}</div>
+    </div>
+    <div style="white-space:pre-wrap;line-height:1.7;">${body.replace(/{name}/g, sampleName) || '(no content)'}</div>
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid #eee;font-size:11px;color:#888;">
+      Rene Duarte | NMLS #1795044 | Rates & Realty | 714-472-8508 | ratesandrealty.com
+    </div>`;
+  card.style.display = 'block';
+}
+
+// ── Send campaign via MailerLite edge function ────────────────
+async function sendCampaign() {
+  const name = document.getElementById('campName').value.trim();
+  const subject = document.getElementById('campSubject').value.trim();
+  const body = document.getElementById('campBody').value.trim();
+  const fromName = document.getElementById('campFromName').value.trim();
+  const status = document.getElementById('sendStatus');
+
+  if (!name || !subject || !body) { showToast('Please fill in campaign name, subject, and body'); return; }
+  if (_recipients.length === 0) { showToast('Click "Find Recipients" first to select who to send to'); return; }
+
+  if (!confirm(`Send "${subject}" to ${_recipients.length} contacts?`)) return;
+
+  status.textContent = '⏳ Creating campaign in MailerLite…';
+
+  try {
+    const resp = await fetch(`${SB_URL}/functions/v1/mailerlite-send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}` },
+      body: JSON.stringify({
+        action: 'send_campaign',
+        campaign_name: name,
+        subject,
+        body,
+        from_name: fromName || 'Rene Duarte — Rates & Realty',
+        from_email: 'rene@ratesandrealty.com',
+        recipients: _recipients.map(r => ({ email: r.email, name: `${r.first_name || ''} ${r.last_name || ''}`.trim() }))
+      })
+    });
+    const data = await resp.json();
+    if (data.success) {
+      status.innerHTML = `<span style="color:#50c878;">✓ Campaign sent to ${_recipients.length} contacts!</span>`;
+      showToast(`✓ Email sent to ${_recipients.length} contacts`);
+    } else {
+      status.innerHTML = `<span style="color:#ff6b6b;">Error: ${data.error || 'Send failed'}</span>`;
+    }
+  } catch(e) {
+    status.innerHTML = `<span style="color:#ff6b6b;">Error: ${e.message}</span>`;
+  }
+}
+
+// ── Load automations ──────────────────────────────────────────
+async function loadAutomations() {
+  const list = document.getElementById('automationList');
+  try {
+    const resp = await fetch(`${SB_URL}/functions/v1/mailerlite-send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}` },
+      body: JSON.stringify({ action: 'list_automations' })
+    });
+    const data = await resp.json();
+    const autos = data.automations || [];
+    if (!autos.length) { list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted);">No automations yet</div>'; return; }
+    list.innerHTML = autos.map(a => `
+      <div class="auto-item">
+        <div class="auto-status ${a.enabled ? 'on' : 'off'}"></div>
+        <div style="flex:1;">
+          <div class="auto-name">${a.name}</div>
+          <div class="auto-meta">${a.steps_count || 0} steps · ${a.trigger_type?.replace('_',' ') || ''}</div>
+        </div>
+        <a href="${a.dashboard_url || '#'}" target="_blank" style="font-size:11px;color:var(--gold);text-decoration:none;">Edit in MailerLite →</a>
+      </div>`).join('');
+  } catch(e) { list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted);">Could not load automations</div>'; }
+}
+
+// ── Load campaigns ────────────────────────────────────────────
+async function loadCampaigns() {
+  const list = document.getElementById('campaignList');
+  try {
+    const resp = await fetch(`${SB_URL}/functions/v1/mailerlite-send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}` },
+      body: JSON.stringify({ action: 'list_campaigns' })
+    });
+    const data = await resp.json();
+    const camps = data.campaigns || [];
+    if (!camps.length) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);">No campaigns yet. Send your first one!</div>'; return; }
+    list.innerHTML = camps.map(c => `
+      <div class="camp-item">
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:600;">${c.name}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${c.emails?.[0]?.subject || ''}</div>
+        </div>
+        <span class="camp-badge badge-${c.status}">${c.status}</span>
+        <div style="font-size:11px;color:var(--text-muted);">${c.stats?.sent || 0} sent · ${c.stats?.open_rate || 0}% open</div>
+      </div>`).join('');
+  } catch(e) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);">Could not load campaigns</div>'; }
+}
+
+// ── Templates ─────────────────────────────────────────────────
+const TEMPLATES = {
+  welcome: {
+    name: 'New Lead Welcome',
+    subject: '👋 Hi {name}, I\'m Rene — Let\'s talk about your home goals',
+    body: `Hi {name},
+
+I wanted to personally reach out and welcome you! I'm Rene Duarte, your licensed Mortgage Loan Officer at Rates & Realty.
+
+Whether you're looking to purchase your first home, refinance, or explore investment options — I'm here to help you find the best loan for your situation.
+
+Here's what I can do for you:
+- Free consultation — no obligation
+- Same-day pre-approval letters
+- Access to 50+ wholesale lenders
+- FHA, VA, Conventional, DSCR, and more
+
+Ready to get started? Reply to this email or book a quick call:
+https://ratesandrealty.com
+
+Looking forward to helping you achieve your real estate goals!
+
+Best,
+Rene Duarte
+NMLS #1795044 | Rates & Realty
+📞 714-472-8508`
+  },
+  rate_update: {
+    name: 'Rate Update',
+    subject: '📉 Mortgage rates just dropped — time to lock in?',
+    body: `Hi {name},
+
+Quick update — mortgage rates have moved this week and I wanted to make sure you're in the loop.
+
+Current rates as of this week:
+- 30-Year Fixed: Competitive rates available
+- 15-Year Fixed: Even better options
+- FHA Loans: Low down payment options
+- VA Loans: 0% down for veterans
+
+If you've been on the fence about buying or refinancing, now could be the right time to take action before rates change again.
+
+Want to see what rate you'd qualify for? Reply to this email or click below to schedule a free 15-minute call.
+
+Book a call: https://ratesandrealty.com
+
+No pressure — just want to make sure you have the most current information.
+
+Best,
+Rene Duarte | NMLS #1795044 | 714-472-8508`
+  },
+  preapproval: {
+    name: 'Pre-Approval Push',
+    subject: '✅ Get pre-approved today — it\'s faster than you think',
+    body: `Hi {name},
+
+Did you know you can get pre-approved for a mortgage in as little as 24 hours?
+
+A pre-approval letter gives you:
+✅ A clear budget so you know what you can afford
+✅ Credibility with sellers in a competitive market
+✅ A head start over buyers who aren't pre-approved
+✅ Confidence when making an offer
+
+The process is simple — I just need a few documents and I'll handle the rest.
+
+Start your application here: https://beta.ratesandrealty.com/public/apply.html
+
+Or reply to this email and I'll walk you through it personally.
+
+Let's get you ready to make an offer!
+
+Best,
+Rene Duarte | NMLS #1795044 | 714-472-8508`
+  },
+  market_update: {
+    name: 'Market Update Newsletter',
+    subject: '🏡 Southern California Real Estate — Monthly Market Update',
+    body: `Hi {name},
+
+Here's your monthly Southern California real estate and mortgage market update.
+
+📊 MARKET HIGHLIGHTS
+- Home values in Orange County continue to hold strong
+- Inventory remains limited, creating competitive buying conditions
+- Interest rates remain a key factor for affordability
+
+💡 WHAT THIS MEANS FOR BUYERS
+This is still a great time to get into the market if you're ready. With the right loan program, your monthly payment might be lower than you think.
+
+💡 WHAT THIS MEANS FOR HOMEOWNERS
+If you purchased in the last 2-3 years and haven't reviewed your rate, let's talk. There may be options to improve your situation.
+
+Want a personalized rate quote or market analysis for your specific situation?
+
+Reply to this email or schedule a call: https://ratesandrealty.com
+
+Best,
+Rene Duarte
+NMLS #1795044 | Rates & Realty | 714-472-8508`
+  },
+  followup: {
+    name: 'Follow-Up Check-In',
+    subject: '👋 Checking in — still thinking about a home purchase?',
+    body: `Hi {name},
+
+I wanted to check in and see how things are going with your home search or financing goals.
+
+I know life gets busy, and sometimes the timing just isn't right. But I wanted you to know I'm still here whenever you're ready — no pressure at all.
+
+If your situation has changed or you have any questions about current rates, loan options, or the market in general, I'm happy to help.
+
+Even if you're not ready to move forward right now, feel free to reach out anytime.
+
+Hope you're doing well!
+
+Best,
+Rene Duarte
+NMLS #1795044 | Rates & Realty
+📞 714-472-8508 | ratesandrealty.com`
+  },
+  referral: {
+    name: 'Referral Request',
+    subject: '🤝 Know someone who needs a great mortgage?',
+    body: `Hi {name},
+
+I hope everything is going well! I wanted to reach out with a quick favor.
+
+Do you know anyone who is:
+- Looking to buy a home?
+- Wanting to refinance their current mortgage?
+- Interested in investment properties?
+
+If so, I'd love the opportunity to help them the same way I've tried to help you.
+
+Referrals are the highest compliment I can receive, and I promise to take great care of anyone you send my way.
+
+Simply have them reach out to me directly:
+📞 714-472-8508
+📧 rene@ratesandrealty.com
+🌐 ratesandrealty.com
+
+Thank you for your trust and support!
+
+Best,
+Rene Duarte
+NMLS #1795044 | Rates & Realty`
+  }
+};
+
+function useTemplate(key) {
+  const t = TEMPLATES[key];
+  if (!t) return;
+  document.getElementById('campName').value = t.name;
+  document.getElementById('campSubject').value = t.subject;
+  document.getElementById('campBody').value = t.body;
+  switchTabDirect('blast');
+  showToast('Template loaded — customize and send!');
+}
+
+function switchTabDirect(tab) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector('.sidebar-item').classList.add('active');
+}
+
+function createDrip(type) {
+  window.open('https://dashboard.mailerlite.com/automations', '_blank');
+  showToast('Opening MailerLite — create your automation there and it will sync back here');
+}
+
+function openNewDrip() {
+  window.open('https://dashboard.mailerlite.com/automations', '_blank');
+}
+
+// ── Toast ─────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+</script>
+</body>
+</html>
