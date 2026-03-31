@@ -780,26 +780,42 @@ function renderWeeklyBar(weeklyLeads) {
 let _allApplications = [];
 
 async function loadApplications(forceRefresh) {
+  // Wait for APP_CONFIG if not ready yet
+  if (!window.APP_CONFIG?.SUPABASE_URL) {
+    console.warn('APP_CONFIG not ready, retrying in 500ms...');
+    setTimeout(() => loadApplications(forceRefresh), 500);
+    return;
+  }
+
   // Use cached data if available and not forcing refresh
   if (!forceRefresh && dashboardData?.applications?.length) {
     console.log('loadApplications: using cached data,', dashboardData.applications.length, 'apps');
     renderApplications(dashboardData.applications);
     return;
   }
-  // Direct fetch from Supabase
-  console.log('loadApplications: direct fetch from Supabase...');
+
+  const SUPABASE_URL = window.APP_CONFIG.SUPABASE_URL;
+  const SUPABASE_KEY = window.APP_CONFIG.SUPABASE_ANON_KEY;
+
+  console.log('loadApplications firing, URL:', SUPABASE_URL?.slice(0, 40));
+
   try {
-    const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-    const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
-    if (!SB_KEY) { console.error('loadApplications: no SB_KEY in APP_CONFIG'); renderApplications([]); return; }
-    const res = await fetch(`${SB_URL}/rest/v1/mortgage_applications?select=id,loan_type,loan_amount,status,updated_at,property_address_street,property_address_city,property_value,contact_id,contacts(id,first_name,last_name,email,phone,credit_score,monthly_income,pipeline_status)&order=updated_at.desc`, {
-      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
-    });
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/mortgage_applications?select=id,loan_type,loan_amount,status,updated_at,property_address_street,property_address_city,property_value,contact_id,contacts(id,first_name,last_name,email,phone,credit_score,monthly_income,pipeline_status)&order=updated_at.desc`,
+      { headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json'
+      }}
+    );
     const apps = await res.json();
-    console.log('loadApplications: fetched', Array.isArray(apps) ? apps.length : 'not array');
+    console.log('Applications fetched:', Array.isArray(apps) ? apps.length : 'not array', 'records');
     if (Array.isArray(apps)) { dashboardData.applications = apps; renderApplications(apps); }
     else { console.error('loadApplications: unexpected response', apps); renderApplications([]); }
-  } catch(e) { console.error('loadApplications: fetch failed:', e); renderApplications([]); }
+  } catch(e) {
+    console.error('loadApplications failed:', e);
+    renderApplications([]);
+  }
 }
 window.loadApplications = loadApplications;
 
