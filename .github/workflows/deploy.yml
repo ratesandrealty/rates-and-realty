@@ -7,78 +7,31 @@ on:
 
 jobs:
   deploy:
+    name: Deploy to Hostinger
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
 
-      - name: Deploy to Hostinger via FTP (attempt 1)
-        id: ftp-deploy
-        timeout-minutes: 2
+      - name: FTP Deploy
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.FTP_HOST }}
-          username: ${{ secrets.FTP_USERNAME }}
+          server: 217.21.76.228
+          username: u184081206
           password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
           port: 21
+          protocol: ftps
           local-dir: ./
-          server-dir: /public_html/beta/
-          dangerous-clean-slate: false
+          server-dir: /public_html/
           security: loose
+          timeout: 60000
+          log-level: verbose
           exclude: |
             **/.git*
             **/.git*/**
             **/node_modules/**
-            **/.env*
-
-      - name: Wait before retry 2
-        if: failure()
-        run: echo "Attempt 1 failed, waiting 15s..." && sleep 15
-
-      - name: FTP Deploy (attempt 2)
-        id: ftp-retry-2
-        if: failure()
-        timeout-minutes: 2
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_HOST }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
-          port: 21
-          local-dir: ./
-          server-dir: /public_html/beta/
-          dangerous-clean-slate: false
-          security: loose
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/.env*
-
-      - name: Wait before retry 3
-        if: failure()
-        run: echo "Attempt 2 failed, waiting 15s..." && sleep 15
-
-      - name: FTP Deploy (attempt 3)
-        if: failure()
-        timeout-minutes: 2
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_HOST }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
-          port: 21
-          local-dir: ./
-          server-dir: /public_html/beta/
-          dangerous-clean-slate: false
-          security: loose
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/.env*
+            .github/**
