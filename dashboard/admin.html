@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; img-src * data: blob:; connect-src *; frame-ancestors 'self';">
   <!-- Google Analytics -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-03P16TMWM8"></script>
   <script>
@@ -1251,9 +1252,9 @@ function closeMismoModal() {
   document.getElementById('mismoResults').innerHTML = '';
   const btn = document.getElementById('mismoImportBtn');
   btn.style.display = 'none'; btn.textContent = '📤 Import All'; btn.disabled = false; btn.onclick = importMismoFiles;
-  // Re-activate Applications tab to trigger fresh data fetch
-  const appTab = document.querySelector('[data-crm-nav="applications"]');
-  if (appTab) appTab.click();
+  // Refresh applications list with newly imported data
+  if (typeof window.loadApplications === 'function') window.loadApplications(true);
+  else { const appTab = document.querySelector('[data-crm-nav="applications"]'); if (appTab) appTab.click(); }
 }
 
 function handleMismoFiles(files) {
@@ -1271,22 +1272,24 @@ async function importMismoFiles() {
   btn.textContent = '⏳ Importing...'; btn.disabled = true;
   const results = document.getElementById('mismoResults'); results.innerHTML = '';
   let ok = 0;
-  const SB_URL = window.APP_CONFIG?.SUPABASE_URL;
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL
+    || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+
+  if (!SB_KEY) {
+    console.error('No Supabase key found in APP_CONFIG:', window.APP_CONFIG);
+    alert('Database configuration missing. Please refresh and try again.');
+    btn.textContent = '📤 Import All'; btn.disabled = false;
+    return;
+  }
+  console.log('MISMO import starting, SB_URL:', SB_URL?.substring(0, 30), 'files:', _mismoFiles.length);
+
   const hdrs = {
     'apikey': SB_KEY,
     'Authorization': `Bearer ${SB_KEY}`,
     'Content-Type': 'application/json',
     'Prefer': 'return=representation'
   };
-
-  if (!SB_URL || !SB_KEY) {
-    console.error('MISSING Supabase config — APP_CONFIG:', window.APP_CONFIG);
-    alert('Configuration error — cannot connect to database');
-    btn.textContent = '📤 Import All'; btn.disabled = false;
-    return;
-  }
-  console.log('MISMO import starting, SB_URL:', SB_URL?.substring(0, 30), 'files:', _mismoFiles.length);
 
   for (const file of _mismoFiles) {
     try {
