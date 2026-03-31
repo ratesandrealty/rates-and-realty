@@ -218,6 +218,16 @@ async function loadPartners() {
   const refCount = {};
   referrals.forEach(r => { refCount[r.referral_partner_id] = (refCount[r.referral_partner_id] || 0) + 1; });
   _partners.forEach(p => { p._referral_count = refCount[p.id] || p.total_referrals || 0; });
+
+  // Load won/lost counts per partner
+  try {
+    const wlRes = await fetch(`${SB}/rest/v1/leads?select=deal_outcome,contacts(referral_partner_id)&not.deal_outcome.is.null`, { headers: H() });
+    const wlData = await wlRes.json();
+    const wonCount = {}, lostCount = {};
+    wlData.forEach(l => { const pid = l.contacts?.referral_partner_id; if (!pid) return; if (l.deal_outcome === 'won') wonCount[pid] = (wonCount[pid]||0)+1; if (l.deal_outcome === 'lost') lostCount[pid] = (lostCount[pid]||0)+1; });
+    _partners.forEach(p => { p._won_count = wonCount[p.id]||0; p._lost_count = lostCount[p.id]||0; });
+  } catch(e) { _partners.forEach(p => { p._won_count = 0; p._lost_count = 0; }); }
+
   updateStats();
   filterPartners();
 }
@@ -262,9 +272,10 @@ function renderGrid() {
         ${p.email ? `<div class="pc-info-row" style="margin-top:10px"><span class="icon">✉️</span>${p.email}</div>` : ''}
         ${p.phone ? `<div class="pc-info-row"><span class="icon">📞</span>${p.phone}</div>` : ''}
         ${p.notes ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4">${p.notes.substring(0,80)}${p.notes.length>80?'…':''}</div>` : ''}
-        <div class="pc-stats">
+        <div class="pc-stats" style="grid-template-columns:repeat(4,1fr)">
           <div class="pc-stat"><div class="pc-stat-num">${p._referral_count||0}</div><div class="pc-stat-lbl">Referrals</div></div>
-          <div class="pc-stat"><div class="pc-stat-num">${p.total_closed||0}</div><div class="pc-stat-lbl">Closed</div></div>
+          <div class="pc-stat"><div class="pc-stat-num" style="color:var(--green)">${p._won_count||0}</div><div class="pc-stat-lbl">Won</div></div>
+          <div class="pc-stat"><div class="pc-stat-num" style="color:var(--red)">${p._lost_count||0}</div><div class="pc-stat-lbl">Lost</div></div>
           <div class="pc-stat"><div class="pc-stat-num">${fmt$(p.total_volume||0)}</div><div class="pc-stat-lbl">Volume</div></div>
         </div>
       </div>
@@ -294,9 +305,10 @@ async function openDetail(id) {
     </div>
     <div class="dp-body">
       <div class="dp-section"><div class="dp-section-title">📊 Performance</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px">
           <div class="stat-card"><div class="stat-num">${p._referral_count||0}</div><div class="stat-lbl">Referrals</div></div>
-          <div class="stat-card"><div class="stat-num">${p.total_closed||0}</div><div class="stat-lbl">Closed</div></div>
+          <div class="stat-card"><div class="stat-num" style="color:var(--green)">${p._won_count||0}</div><div class="stat-lbl" style="color:var(--green)">Won</div></div>
+          <div class="stat-card"><div class="stat-num" style="color:var(--red)">${p._lost_count||0}</div><div class="stat-lbl" style="color:var(--red)">Lost</div></div>
           <div class="stat-card"><div class="stat-num">${fmt$(p.total_volume||0)}</div><div class="stat-lbl">Volume</div></div>
         </div>
       </div>

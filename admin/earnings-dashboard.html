@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Earnings Dashboard — Rates & Realty</title>
+<script src="/api/env.js?v=2026033003"></script>
+<style>
+:root{--gold:#c9a84c;--gold2:#e4b84e;--bg:#0a0a0a;--surface:#111;--surface2:#181818;--surface3:#222;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#fff;--muted:rgba(255,255,255,0.38);--green:#50c878;--red:#f87171;--blue:#60a0ff;--orange:#fb923c}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+.topbar{display:flex;align-items:center;gap:12px;padding:0 20px;height:52px;background:var(--surface);border-bottom:1px solid var(--border)}
+.topbar h1{font-size:16px;font-weight:800;color:var(--gold)}
+.topbar-right{margin-left:auto;display:flex;gap:8px}
+.btn{padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none}
+.btn-ghost{background:rgba(255,255,255,0.06);color:#fff;border:1px solid var(--border2)}
+.page{padding:20px;max-width:1400px;margin:0 auto}
+.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+.kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;position:relative;overflow:hidden}
+.kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.kpi-earned::before{background:var(--gold)}
+.kpi-won::before{background:var(--green)}
+.kpi-lost::before{background:var(--red)}
+.kpi-pending::before{background:var(--orange)}
+.kpi-rate::before{background:var(--blue)}
+.kpi-num{font-size:26px;font-weight:800;margin-bottom:3px}
+.kpi-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.6px}
+.kpi-sub{font-size:11px;margin-top:6px}
+.charts-row{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:24px}
+.chart-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px}
+.chart-title{font-size:13px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
+.chart-wrap{position:relative;height:220px}
+.tables-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+.table-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+.table-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.table-hdr h3{font-size:13px;font-weight:700}
+.deal-table{width:100%;border-collapse:collapse;font-size:12px}
+.deal-table th{padding:8px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);background:rgba(255,255,255,0.02);border-bottom:1px solid var(--border)}
+.deal-table td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.03);vertical-align:middle}
+.deal-table tr:hover td{background:rgba(255,255,255,0.02);cursor:pointer}
+.earn-won{color:var(--green);font-weight:700}
+.earn-lost{color:var(--red);font-weight:700}
+.partner-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.03);transition:background .15s;cursor:pointer}
+.partner-row:hover{background:rgba(255,255,255,0.03)}
+.partner-av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.progress-bar{height:6px;border-radius:3px;background:rgba(255,255,255,0.06);overflow:hidden;flex:1;margin:0 8px}
+.progress-fill{height:100%;border-radius:3px;background:var(--gold);transition:width .4s}
+.time-filter{display:flex;gap:4px;background:rgba(255,255,255,0.04);border-radius:8px;padding:3px}
+.tf-btn{padding:4px 10px;border-radius:6px;border:none;background:transparent;color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s}
+.tf-btn.active{background:rgba(255,255,255,0.1);color:#fff}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
+#toast.show{opacity:1}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="people.html" style="color:var(--muted);text-decoration:none;font-size:12px;">← Back</a>
+  <h1>💰 Earnings Dashboard</h1>
+  <div class="topbar-right">
+    <div class="time-filter">
+      <button class="tf-btn" onclick="setTime('30d',this)">30D</button>
+      <button class="tf-btn active" onclick="setTime('ytd',this)">YTD</button>
+      <button class="tf-btn" onclick="setTime('all',this)">All Time</button>
+    </div>
+    <button class="btn btn-ghost" onclick="exportEarnings()">📥 Export</button>
+  </div>
+</div>
+
+<div class="page">
+  <div class="kpi-row">
+    <div class="kpi-card kpi-earned"><div class="kpi-num" id="kpiEarned">$0</div><div class="kpi-label">Total Earned</div><div class="kpi-sub" id="kpiEarnedSub" style="color:var(--gold)"></div></div>
+    <div class="kpi-card kpi-won"><div class="kpi-num" id="kpiWon" style="color:var(--green)">0</div><div class="kpi-label">Deals Won</div><div class="kpi-sub" id="kpiWonVol" style="color:var(--green)"></div></div>
+    <div class="kpi-card kpi-lost"><div class="kpi-num" id="kpiLost" style="color:var(--red)">0</div><div class="kpi-label">Deals Lost</div><div class="kpi-sub" id="kpiLostVol" style="color:var(--red)"></div></div>
+    <div class="kpi-card kpi-pending"><div class="kpi-num" id="kpiPipeline" style="color:var(--orange)">$0</div><div class="kpi-label">Pipeline Value</div><div class="kpi-sub" id="kpiPendingCount" style="color:var(--orange)"></div></div>
+    <div class="kpi-card kpi-rate"><div class="kpi-num" id="kpiRate" style="color:var(--blue)">0%</div><div class="kpi-label">Win Rate</div><div class="kpi-sub" id="kpiAvgDeal" style="color:var(--blue)"></div></div>
+  </div>
+
+  <div class="charts-row">
+    <div class="chart-card">
+      <div class="chart-title">📈 Monthly Earnings <span style="font-size:11px;color:var(--muted)">Actual earnings by month</span></div>
+      <div class="chart-wrap"><canvas id="earningsChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">🎯 Deal Outcomes</div>
+      <div class="chart-wrap" style="height:200px;display:flex;align-items:center;justify-content:center"><canvas id="outcomeChart" style="max-width:200px;max-height:200px"></canvas></div>
+    </div>
+  </div>
+
+  <div class="tables-row">
+    <div class="table-card">
+      <div class="table-hdr"><h3 style="color:var(--green)">🏆 Won Deals</h3><span id="wonCount" style="font-size:11px;color:var(--muted)"></span></div>
+      <table class="deal-table"><thead><tr><th>Borrower</th><th>Loan</th><th>Earnings</th><th>Date</th></tr></thead><tbody id="wonTable"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
+    </div>
+    <div class="table-card">
+      <div class="table-hdr"><h3 style="color:var(--red)">❌ Lost Deals</h3><span id="lostCount" style="font-size:11px;color:var(--muted)"></span></div>
+      <table class="deal-table"><thead><tr><th>Borrower</th><th>Loan</th><th>Est. Earnings</th><th>Reason</th></tr></thead><tbody id="lostTable"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
+    </div>
+  </div>
+
+  <div class="chart-card" style="margin-bottom:24px">
+    <div class="chart-title">🤝 Earnings by Referral Partner</div>
+    <div id="partnerEarnings"><div style="text-align:center;padding:24px;color:var(--muted);font-size:13px;">Loading partner data...</div></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
+
+let _leads = [], _timeFilter = 'ytd';
+let _earningsChart = null, _outcomeChart = null;
+
+function fmt$(n) { if(!n) return '$0'; if(n>=1000000) return '$'+(n/1000000).toFixed(1)+'M'; if(n>=1000) return '$'+(n/1000).toFixed(0)+'K'; return '$'+Math.round(n); }
+function getTimeAgo(d) { const diff=Math.floor((Date.now()-new Date(d))/86400000); return diff===0?'Today':diff===1?'1d ago':diff<30?diff+'d ago':Math.floor(diff/30)+'mo ago'; }
+
+async function loadData() {
+  const r = await fetch(`${SB}/rest/v1/leads?select=id,contact_id,loan_amount,loan_type,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,contacts(first_name,last_name,referral_partner_id)&order=created_at.desc`, { headers: H });
+  _leads = await r.json();
+  updateAll();
+}
+
+function filterByTime(leads) {
+  const now = Date.now();
+  return leads.filter(l => {
+    const d = new Date(l.closed_date || l.created_at).getTime();
+    if (_timeFilter === '30d') return now - d < 30 * 86400000;
+    if (_timeFilter === 'ytd') return new Date(l.closed_date || l.created_at).getFullYear() === new Date().getFullYear();
+    return true;
+  });
+}
+
+function setTime(t, el) { _timeFilter = t; document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active')); el.classList.add('active'); updateAll(); }
+
+function updateAll() {
+  const leads = filterByTime(_leads);
+  const won = leads.filter(l => l.deal_outcome === 'won');
+  const lost = leads.filter(l => l.deal_outcome === 'lost');
+  const pending = leads.filter(l => l.deal_outcome === 'pending' || !l.deal_outcome);
+  const totalEarned = won.reduce((s,l) => s+(l.actual_earnings||0), 0);
+  const pipelineVal = pending.reduce((s,l) => s+(l.estimated_earnings||0), 0);
+  const wonVol = won.reduce((s,l) => s+(l.loan_amount||0), 0);
+  const lostVol = lost.reduce((s,l) => s+(l.loan_amount||0), 0);
+  const winRate = (won.length + lost.length) > 0 ? Math.round(won.length / (won.length + lost.length) * 100) : 0;
+  const avgDeal = won.length > 0 ? totalEarned / won.length : 0;
+
+  document.getElementById('kpiEarned').textContent = fmt$(totalEarned);
+  document.getElementById('kpiEarnedSub').textContent = won.length + ' closed deals';
+  document.getElementById('kpiWon').textContent = won.length;
+  document.getElementById('kpiWonVol').textContent = fmt$(wonVol) + ' volume';
+  document.getElementById('kpiLost').textContent = lost.length;
+  document.getElementById('kpiLostVol').textContent = fmt$(lostVol) + ' lost volume';
+  document.getElementById('kpiPipeline').textContent = fmt$(pipelineVal);
+  document.getElementById('kpiPendingCount').textContent = pending.length + ' active deals';
+  document.getElementById('kpiRate').textContent = winRate + '%';
+  document.getElementById('kpiAvgDeal').textContent = 'avg ' + fmt$(avgDeal);
+
+  buildEarningsChart(leads);
+  buildOutcomeChart(won.length, lost.length, pending.length);
+  buildWonTable(won);
+  buildLostTable(lost);
+  buildPartnerEarnings(leads);
+}
+
+function buildEarningsChart(leads) {
+  const months = {};
+  leads.filter(l => l.deal_outcome === 'won').forEach(l => { const m = (l.closed_date||l.created_at).substring(0,7); months[m] = (months[m]||0) + (l.actual_earnings||0); });
+  const sorted = Object.keys(months).sort().slice(-12);
+  const labels = sorted.map(m => { const d=new Date(m+'-01'); return d.toLocaleString('default',{month:'short',year:'2-digit'}); });
+  const data = sorted.map(m => months[m]);
+  if (_earningsChart) _earningsChart.destroy();
+  _earningsChart = new Chart(document.getElementById('earningsChart').getContext('2d'), {
+    type: 'bar', data: { labels: labels.length ? labels : ['No data'], datasets: [{ label: 'Earnings', data: data.length ? data : [0], backgroundColor: 'rgba(201,168,76,0.4)', borderColor: '#c9a84c', borderWidth: 2, borderRadius: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 11 } } }, y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 11 }, callback: v => fmt$(v) } } } }
+  });
+}
+
+function buildOutcomeChart(won, lost, pending) {
+  if (_outcomeChart) _outcomeChart.destroy();
+  _outcomeChart = new Chart(document.getElementById('outcomeChart').getContext('2d'), {
+    type: 'doughnut', data: { labels: ['Won','Lost','Pending'], datasets: [{ data: [won||0,lost||0,pending||0], backgroundColor: ['rgba(80,200,120,0.8)','rgba(248,113,113,0.8)','rgba(251,146,60,0.6)'], borderColor: 'transparent', borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '72%', plugins: { legend: { position: 'bottom', labels: { color: 'rgba(255,255,255,0.5)', font: { size: 11 }, padding: 12, boxWidth: 10 } } } }
+  });
+}
+
+function buildWonTable(won) {
+  document.getElementById('wonCount').textContent = won.length + ' deals';
+  const tbody = document.getElementById('wonTable');
+  if (!won.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:rgba(255,255,255,0.3)">No won deals yet</td></tr>'; return; }
+  tbody.innerHTML = won.slice(0,10).map(l => {
+    const c = l.contacts; const name = c ? `${c.first_name||''} ${c.last_name||''}`.trim() : 'Unknown';
+    return `<tr onclick="window.location.href='lead-detail.html?contact_id=${l.contact_id}'" style="cursor:pointer"><td style="font-weight:600">${name}</td><td style="color:rgba(255,255,255,0.5);font-size:11px">${l.loan_type||'—'}</td><td class="earn-won">+${fmt$(l.actual_earnings||0)}</td><td style="color:rgba(255,255,255,0.4);font-size:11px">${l.closed_date ? new Date(l.closed_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : getTimeAgo(l.created_at)}</td></tr>`;
+  }).join('');
+}
+
+function buildLostTable(lost) {
+  document.getElementById('lostCount').textContent = lost.length + ' deals';
+  const tbody = document.getElementById('lostTable');
+  if (!lost.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:rgba(255,255,255,0.3)">No lost deals</td></tr>'; return; }
+  tbody.innerHTML = lost.slice(0,10).map(l => {
+    const c = l.contacts; const name = c ? `${c.first_name||''} ${c.last_name||''}`.trim() : 'Unknown';
+    return `<tr onclick="window.location.href='lead-detail.html?contact_id=${l.contact_id}'" style="cursor:pointer"><td style="font-weight:600">${name}</td><td style="color:rgba(255,255,255,0.5);font-size:11px">${l.loan_type||'—'}</td><td class="earn-lost">${fmt$(l.estimated_earnings||0)}</td><td style="color:rgba(255,255,255,0.4);font-size:11px;max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.lost_reason||'—'}</td></tr>`;
+  }).join('');
+}
+
+function buildPartnerEarnings(leads) {
+  const el = document.getElementById('partnerEarnings');
+  // Group earnings by referral_partner_id
+  const partnerStats = {};
+  leads.forEach(l => {
+    const pid = l.contacts?.referral_partner_id;
+    if (!pid) return;
+    if (!partnerStats[pid]) partnerStats[pid] = { id: pid, name: '', earnings: 0, won: 0, lost: 0, referrals: 0 };
+    partnerStats[pid].referrals++;
+    if (l.deal_outcome === 'won') { partnerStats[pid].won++; partnerStats[pid].earnings += (l.actual_earnings||0); }
+    if (l.deal_outcome === 'lost') partnerStats[pid].lost++;
+    const c = l.contacts;
+    if (c && !partnerStats[pid].name) partnerStats[pid].name = 'Partner ' + pid.substring(0,6);
+  });
+  const sorted = Object.values(partnerStats).sort((a,b) => b.earnings - a.earnings);
+  if (!sorted.length) { el.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3)">No partner referral data yet</div>'; return; }
+  const maxE = Math.max(...sorted.map(p => p.earnings)) || 1;
+  const colors = ['#c9a84c25','#50c87825','#60a0ff25','#c084f025'];
+  const textC = ['#c9a84c','#50c878','#60a0ff','#c084f0'];
+  el.innerHTML = sorted.map((p, i) => {
+    const col = i % 4;
+    const pct = maxE > 0 ? (p.earnings / maxE * 100) : 0;
+    return `<div class="partner-row" onclick="window.location.href='referral-partners.html'">
+      <div class="partner-av" style="background:${colors[col]};color:${textC[col]}">${p.name.substring(0,2).toUpperCase()}</div>
+      <div style="min-width:130px"><div style="font-size:12px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${p.referrals} referrals</div></div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div style="text-align:right;min-width:80px"><div style="font-size:13px;font-weight:700;color:var(--gold)">${fmt$(p.earnings)}</div><div style="font-size:10px;margin-top:2px"><span style="color:var(--green)">${p.won}W</span><span style="color:var(--muted);margin:0 3px">/</span><span style="color:var(--red)">${p.lost}L</span></div></div>
+    </div>`;
+  }).join('');
+}
+
+function exportEarnings() {
+  const won = _leads.filter(l => l.deal_outcome === 'won');
+  const rows = [['Name','Loan Type','Loan Amount','Actual Earnings','Close Date']];
+  won.forEach(l => { const c = l.contacts; rows.push([`${c?.first_name||''} ${c?.last_name||''}`.trim(), l.loan_type||'', l.loan_amount||0, l.actual_earnings||0, l.closed_date||'']); });
+  const csv = rows.map(r => r.map(c=>`"${c}"`).join(',')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download = 'earnings.csv'; a.click();
+}
+
+loadData();
+</script>
+</body>
+</html>

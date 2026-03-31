@@ -1639,6 +1639,42 @@
         </div>
       </div>
 
+      <!-- Deal Earnings -->
+      <div style="background:rgba(201,168,76,0.04);border:1px solid rgba(201,168,76,0.12);border-radius:12px;padding:16px 18px;margin-top:14px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:rgba(201,168,76,0.7);margin-bottom:14px;">💰 Deal Earnings</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+          <div>
+            <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Estimated Earnings</label>
+            <div style="position:relative;">
+              <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:13px;">$</span>
+              <input type="number" id="estimatedEarnings" placeholder="0.00" min="0" step="100"
+                style="width:100%;padding:9px 12px 9px 24px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;"
+                oninput="saveEarnings()">
+            </div>
+          </div>
+          <div>
+            <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:5px;">Actual Earnings (at close)</label>
+            <div style="position:relative;">
+              <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:13px;">$</span>
+              <input type="number" id="actualEarnings" placeholder="0.00" min="0" step="100"
+                style="width:100%;padding:9px 12px 9px 24px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;"
+                oninput="saveEarnings()">
+            </div>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:8px;">Deal Outcome</label>
+          <div style="display:flex;gap:8px;">
+            <button id="outcomeWon" onclick="setOutcome('won')" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(80,200,120,0.3);background:rgba(80,200,120,0.06);color:rgba(80,200,120,0.6);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">🏆 Won</button>
+            <button id="outcomePending" onclick="setOutcome('pending')" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:var(--gold,#c9a84c);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">⏳ Pending</button>
+            <button id="outcomeLost" onclick="setOutcome('lost')" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(248,113,113,0.3);background:rgba(248,113,113,0.06);color:rgba(248,113,113,0.6);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">❌ Lost</button>
+          </div>
+          <div id="lostReasonWrap" style="display:none;margin-top:8px;">
+            <input type="text" id="lostReason" placeholder="Reason lost (optional)..." style="width:100%;padding:8px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(248,113,113,0.2);border-radius:8px;color:#fff;font-size:12px;outline:none;" oninput="saveEarnings()">
+          </div>
+        </div>
+      </div>
+
       <div class="ld-section">
         <div class="ld-section-title">Contact Info</div>
         <div class="ld-form-grid" style="grid-template-columns:repeat(2,1fr)!important;gap:10px 14px;">
@@ -3186,6 +3222,12 @@ function populateUI() {
   setSelectVal('f-priority', leadData.priority || 'normal');
   setVal('f-score', leadData.score || '');
   setVal('f-assigned', leadData.assigned_to || '');
+
+  // Earnings
+  if (document.getElementById('estimatedEarnings')) document.getElementById('estimatedEarnings').value = leadData.estimated_earnings || '';
+  if (document.getElementById('actualEarnings')) document.getElementById('actualEarnings').value = leadData.actual_earnings || '';
+  if (leadData.deal_outcome) setOutcome(leadData.deal_outcome);
+  if (leadData.lost_reason && document.getElementById('lostReason')) document.getElementById('lostReason').value = leadData.lost_reason;
   setVal('f-created', leadData.created_at ? fmtDate(leadData.created_at) : '');
 
   // Referral partner pre-populate
@@ -5122,6 +5164,43 @@ function addFormerAddress() {
 /* ── 1003 — MILITARY TOGGLE ── */
 function toggleMilitary(show) {
   document.getElementById('military-details').style.display = show ? 'block' : 'none';
+}
+
+/* ── DEAL EARNINGS ── */
+let _currentOutcome = 'pending';
+let _earningsSaveTimer = null;
+
+function setOutcome(outcome) {
+  _currentOutcome = outcome;
+  const styles = {
+    won:     { active:'border:2px solid #50c878;background:rgba(80,200,120,0.15);color:#50c878;',     inactive:'border:2px solid rgba(80,200,120,0.3);background:rgba(80,200,120,0.06);color:rgba(80,200,120,0.6);' },
+    pending: { active:'border:2px solid #c9a84c;background:rgba(201,168,76,0.2);color:#c9a84c;',      inactive:'border:2px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.06);color:rgba(201,168,76,0.5);' },
+    lost:    { active:'border:2px solid #f87171;background:rgba(248,113,113,0.15);color:#f87171;',     inactive:'border:2px solid rgba(248,113,113,0.3);background:rgba(248,113,113,0.06);color:rgba(248,113,113,0.6);' }
+  };
+  ['won','pending','lost'].forEach(o => {
+    const btn = document.getElementById('outcome' + o.charAt(0).toUpperCase() + o.slice(1));
+    if (btn) btn.style.cssText = 'flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;' + (o === outcome ? styles[o].active : styles[o].inactive);
+  });
+  document.getElementById('lostReasonWrap').style.display = outcome === 'lost' ? 'block' : 'none';
+  saveEarnings();
+}
+
+function saveEarnings() {
+  clearTimeout(_earningsSaveTimer);
+  _earningsSaveTimer = setTimeout(async () => {
+    if (!leadId) return;
+    const payload = {
+      estimated_earnings: parseFloat(document.getElementById('estimatedEarnings')?.value) || 0,
+      actual_earnings: parseFloat(document.getElementById('actualEarnings')?.value) || 0,
+      deal_outcome: _currentOutcome,
+      lost_reason: document.getElementById('lostReason')?.value || null,
+      closed_date: _currentOutcome === 'won' ? new Date().toISOString().split('T')[0] : null,
+      updated_at: new Date().toISOString()
+    };
+    await sb.from('leads').update(payload).eq('id', leadId);
+    const ind = document.getElementById('autoSaveIndicator');
+    if (ind) { ind.textContent = '✓ Saved'; ind.style.opacity = '1'; ind.style.color = 'rgba(80,200,120,0.8)'; setTimeout(() => ind.style.opacity = '0', 1500); }
+  }, 800);
 }
 
 /* ── CONNECTED PEOPLE / FAMILY MEMBERS ── */
