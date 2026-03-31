@@ -796,12 +796,11 @@ function renderWeeklyBar(weeklyLeads) {
 let _allApplications = [];
 
 async function loadApplications(forceRefresh) {
-  const { url: SUPABASE_URL, key: SUPABASE_KEY } = getSupabaseConfig();
+  const SUPABASE_URL = window.APP_CONFIG?.SUPABASE_URL;
+  const SUPABASE_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
 
-  // Wait for APP_CONFIG if key not ready yet
-  if (!SUPABASE_KEY) {
-    console.warn('APP_CONFIG not ready, retrying in 500ms...');
-    setTimeout(() => loadApplications(forceRefresh), 500);
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    console.error('APP_CONFIG missing — URL:', !!SUPABASE_URL, 'KEY:', !!SUPABASE_KEY);
     return;
   }
 
@@ -811,6 +810,9 @@ async function loadApplications(forceRefresh) {
     renderApplications(dashboardData.applications);
     return;
   }
+
+  const container = document.getElementById('application-table');
+  if (container) container.innerHTML = '<div style="padding:40px;text-align:center;color:rgba(255,255,255,0.3)">Loading...</div>';
 
   console.log('loadApplications firing, URL:', SUPABASE_URL?.slice(0, 40));
 
@@ -823,13 +825,21 @@ async function loadApplications(forceRefresh) {
         'Content-Type': 'application/json'
       }}
     );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('Applications fetch error:', res.status, errText);
+      if (container) container.innerHTML = `<div style="padding:40px;text-align:center;color:#f87171">Error loading: ${res.status}</div>`;
+      return;
+    }
+
     const apps = await res.json();
-    console.log('Applications fetched:', Array.isArray(apps) ? apps.length : 'not array', 'records');
+    console.log('Applications loaded:', Array.isArray(apps) ? apps.length : 'not array');
     if (Array.isArray(apps)) { dashboardData.applications = apps; renderApplications(apps); }
     else { console.error('loadApplications: unexpected response', apps); renderApplications([]); }
   } catch(e) {
-    console.error('loadApplications failed:', e);
-    renderApplications([]);
+    console.error('loadApplications exception:', e);
+    if (container) container.innerHTML = `<div style="padding:40px;text-align:center;color:#f87171">Error: ${e.message}</div>`;
   }
 }
 window.loadApplications = loadApplications;
