@@ -216,6 +216,43 @@
           </div>
           <div id="overview-appointments"></div>
         </div>
+
+        <!-- Won/Lost Deals + Referral Activity -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;margin-bottom:24px;">
+
+          <!-- Won/Lost Deals -->
+          <div class="panel" style="padding:0;overflow:hidden;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 0;">
+              <div><p class="kicker">Earnings</p><h3 style="margin:0;font-size:1.1rem;">Recent Deals</h3></div>
+              <a href="/admin/earnings-dashboard.html" style="font-size:11px;color:rgba(201,168,76,0.7);text-decoration:none;">View All →</a>
+            </div>
+            <div style="display:flex;gap:4px;padding:10px 20px 0;">
+              <button id="dealsTabWon" onclick="switchDealsTab('won')" style="padding:4px 12px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;background:rgba(80,200,120,0.15);color:#50c878;">Won</button>
+              <button id="dealsTabLost" onclick="switchDealsTab('lost')" style="padding:4px 12px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.4);">Lost</button>
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="leads-table" style="width:100%;">
+                <thead><tr><th>Borrower</th><th>Loan Type</th><th>Closed</th><th>Earnings</th><th></th></tr></thead>
+                <tbody id="dealsTableBody"><tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Loading deals...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Referral Activity -->
+          <div class="panel" style="padding:0;overflow:hidden;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 0;">
+              <div><p class="kicker">Referrals</p><h3 style="margin:0;font-size:1.1rem;">Referral Activity</h3></div>
+              <a href="/admin/referral-partners.html" style="font-size:11px;color:rgba(201,168,76,0.7);text-decoration:none;">Manage Partners →</a>
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="leads-table" style="width:100%;">
+                <thead><tr><th>Borrower</th><th>Referred By</th><th>Type</th><th>Stage</th><th>Added</th></tr></thead>
+                <tbody id="referralTableBody"><tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Loading referrals...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
       </section>
 
       <!-- ── LEADS TAB ─────────────────────────────── -->
@@ -1065,6 +1102,80 @@
 </div>
 
 <script>
+// ── Won/Lost Deals Table ──────────────────────────────────
+let _dealsTab = 'won';
+
+function switchDealsTab(tab) {
+  _dealsTab = tab;
+  document.getElementById('dealsTabWon').style.cssText = 'padding:4px 12px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;' + (tab==='won' ? 'background:rgba(80,200,120,0.15);color:#50c878;' : 'background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.4);');
+  document.getElementById('dealsTabLost').style.cssText = 'padding:4px 12px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;' + (tab==='lost' ? 'background:rgba(248,113,113,0.15);color:#f87171;' : 'background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.4);');
+  loadDealsTable();
+}
+
+async function loadDealsTable() {
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+  const tbody = document.getElementById('dealsTableBody');
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/leads?select=id,contact_id,loan_type,loan_amount,actual_earnings,estimated_earnings,deal_outcome,closed_date,lost_reason,created_at,contacts(first_name,last_name)&deal_outcome=eq.${_dealsTab}&order=closed_date.desc&limit=10`, {
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+    });
+    const deals = await res.json();
+    if (!deals.length) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">No ${_dealsTab} deals yet</td></tr>`; return; }
+    tbody.innerHTML = deals.map(d => {
+      const c = d.contacts;
+      const name = c ? `${c.first_name||''} ${c.last_name||''}`.trim() : 'Unknown';
+      const earn = _dealsTab === 'won' ? (d.actual_earnings||0) : (d.estimated_earnings||0);
+      const earnColor = _dealsTab === 'won' ? '#50c878' : '#f87171';
+      const earnPrefix = _dealsTab === 'won' ? '+$' : '$';
+      const dateStr = d.closed_date ? new Date(d.closed_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+      const badge = _dealsTab === 'won'
+        ? '<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(80,200,120,0.12);color:#50c878;">Won</span>'
+        : '<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(248,113,113,0.12);color:#f87171;">Lost</span>';
+      return `<tr onclick="window.location.href='/admin/lead-detail.html?contact_id=${d.contact_id}'" style="cursor:pointer;">
+        <td style="font-weight:600;">${name}</td>
+        <td style="color:rgba(255,255,255,0.5);font-size:11px;">${d.loan_type||'—'}</td>
+        <td style="color:rgba(255,255,255,0.4);font-size:11px;">${dateStr}</td>
+        <td style="font-weight:700;color:${earnColor};">${earnPrefix}${earn.toLocaleString()}</td>
+        <td>${badge}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Error loading deals</td></tr>`; }
+}
+
+// ── Referral Activity Table ──────────────────────────────
+async function loadReferralTable() {
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+  const tbody = document.getElementById('referralTableBody');
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/contacts?select=id,first_name,last_name,pipeline_status,created_at,referral_partner_id,referral_partners(first_name,last_name,company,source_type)&referral_partner_id=not.is.null&order=created_at.desc&limit=10`, {
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+    });
+    const contacts = await res.json();
+    if (!contacts.length) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">No referral activity yet</td></tr>`; return; }
+    tbody.innerHTML = contacts.map(c => {
+      const name = `${c.first_name||''} ${c.last_name||''}`.trim() || 'Unknown';
+      const rp = c.referral_partners;
+      const rpName = rp ? `${rp.first_name||''} ${rp.last_name||''}`.trim() : '—';
+      const rpType = rp?.source_type || '—';
+      const stage = c.pipeline_status || 'New Lead';
+      const diff = Math.floor((Date.now() - new Date(c.created_at)) / 86400000);
+      const ago = diff === 0 ? 'Today' : diff === 1 ? '1d ago' : diff < 30 ? diff+'d ago' : Math.floor(diff/30)+'mo ago';
+      return `<tr onclick="window.location.href='/admin/lead-detail.html?contact_id=${c.id}'" style="cursor:pointer;">
+        <td style="font-weight:600;">${name}</td>
+        <td style="color:rgba(201,168,76,0.8);font-size:11px;">${rpName}</td>
+        <td style="color:rgba(255,255,255,0.4);font-size:11px;">${rpType}</td>
+        <td><span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5);">${stage}</span></td>
+        <td style="color:rgba(255,255,255,0.4);font-size:11px;">${ago}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Error loading referrals</td></tr>`; }
+}
+
+// Load both tables on page init
+setTimeout(() => { loadDealsTable(); loadReferralTable(); }, 500);
+
 let _mismoFiles = [];
 function openMismoModal() { document.getElementById('mismoModal').style.display = 'flex'; _mismoFiles = []; document.getElementById('mismoFileList').innerHTML = ''; document.getElementById('mismoResults').innerHTML = ''; document.getElementById('mismoImportBtn').style.display = 'none'; }
 function closeMismoModal() { document.getElementById('mismoModal').style.display = 'none'; }
