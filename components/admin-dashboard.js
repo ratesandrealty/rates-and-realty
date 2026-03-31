@@ -60,7 +60,10 @@ function bindSidebarNav() {
   document.querySelectorAll("[data-crm-nav]").forEach((btn) => {
     btn.addEventListener("click", () => navigateTo(btn.dataset.crmNav));
   });
-  if (window.location.hash) navigateTo(window.location.hash.replace("#", ""));
+  // Restore active section from hash or localStorage
+  const hashSection = window.location.hash ? window.location.hash.replace("#", "") : "";
+  const savedSection = hashSection || (function() { try { return localStorage.getItem('activeSection'); } catch(e) { return ''; } })();
+  if (savedSection) navigateTo(savedSection);
 
   document.getElementById("refresh-btn")?.addEventListener("click", loadAll);
   document.getElementById("sidebar-signout-btn")?.addEventListener("click", async () => {
@@ -72,6 +75,9 @@ function bindSidebarNav() {
 
 function navigateTo(tabKey) {
   activeTab = tabKey;
+  // Persist active tab
+  window.location.hash = tabKey;
+  try { localStorage.setItem('activeSection', tabKey); } catch(e) {}
   document.querySelectorAll("[data-crm-nav]").forEach((btn) => {
     btn.classList.toggle("is-active", btn.dataset.crmNav === tabKey);
   });
@@ -94,7 +100,7 @@ function renderActiveTab() {
     case "communications": renderCommunications(); break;
     case "activity": renderActivityFeed(); break;
     case "analytics": renderAnalytics(); break;
-    case "applications": renderApplications(dashboardData.applications); break;
+    case "applications": console.log('about to call renderApplications, data:', dashboardData.applications?.length); renderApplications(dashboardData.applications || []); break;
     case "documents": renderDocuments(dashboardData.documents); break;
   }
 }
