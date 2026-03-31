@@ -1103,6 +1103,7 @@
   <a href="people.html" class="ab-back" style="text-decoration:none;">👥 People</a>
   <a href="pipeline.html" class="ab-back" style="text-decoration:none;">🏁 Pipeline</a>
   <a href="email-marketing.html" class="ab-back" style="text-decoration:none;">📣 Marketing</a>
+  <a href="referral-partners.html" class="ab-back" style="text-decoration:none;">🤝 Partners</a>
   <div class="ab-name" id="topbar-name">Loading…</div>
   <span class="ld-status-badge sb-new" id="topbar-status">New Lead</span>
   <span class="ld-score-tier-badge" id="topbar-score-tier" style="display:none;"></span>
@@ -1568,6 +1569,19 @@
           <div class="ld-field">
             <label class="ld-label">Created Date</label>
             <input class="ld-input" type="text" id="f-created" readonly style="opacity:.6;">
+          </div>
+          <div class="ld-field" id="referralPartnerField">
+            <label class="ld-label">Referral Partner</label>
+            <div style="position:relative;">
+              <input type="text" id="referralPartnerSearch" placeholder="Search referral partners..." autocomplete="off" oninput="searchReferralPartners(this.value)"
+                class="ld-input" style="width:100%;">
+              <div id="referralPartnerDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1a1a1a;border:1px solid rgba(255,255,255,0.12);border-radius:8px;z-index:50;max-height:200px;overflow-y:auto;margin-top:4px;box-shadow:0 8px 24px rgba(0,0,0,0.4);"></div>
+            </div>
+            <div id="referralPartnerSelected" style="display:none;margin-top:8px;align-items:center;gap:8px;padding:8px 10px;background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.15);border-radius:8px;">
+              <span id="rpSelectedName" style="font-size:12px;font-weight:600;flex:1"></span>
+              <span id="rpSelectedMeta" style="font-size:11px;color:rgba(255,255,255,0.4)"></span>
+              <button onclick="clearReferralPartner()" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:14px;padding:0">✕</button>
+            </div>
           </div>
         </div>
       </div>
@@ -3124,6 +3138,15 @@ function populateUI() {
   setVal('f-score', leadData.score || '');
   setVal('f-assigned', leadData.assigned_to || '');
   setVal('f-created', leadData.created_at ? fmtDate(leadData.created_at) : '');
+
+  // Referral partner pre-populate
+  loadReferralPartners().then(() => {
+    if (contactData.referral_partner_id) {
+      const rp = _allReferralPartners.find(p => p.id === contactData.referral_partner_id);
+      if (rp) selectReferralPartner(rp.id, `${rp.first_name} ${rp.last_name||''}`.trim(), rp.source_type||'', rp.company||'');
+    }
+  });
+
   setSelectVal('f-loan-type', leadData.loan_type || '');
   setVal('f-loan-amount', leadData.loan_amount ? fmt$(leadData.loan_amount) : '');
   setVal('f-purchase-price', leadData.purchase_price ? fmt$(leadData.purchase_price) : '');
@@ -5051,6 +5074,62 @@ function addFormerAddress() {
 function toggleMilitary(show) {
   document.getElementById('military-details').style.display = show ? 'block' : 'none';
 }
+
+/* ── REFERRAL PARTNERS ── */
+let _allReferralPartners = [];
+let _selectedReferralPartnerId = null;
+
+async function loadReferralPartners() {
+  const r = await fetch(`${window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co'}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type&order=first_name`, {
+    headers: { apikey: window.APP_CONFIG?.SUPABASE_ANON_KEY, Authorization: `Bearer ${window.APP_CONFIG?.SUPABASE_ANON_KEY}` }
+  });
+  _allReferralPartners = await r.json();
+}
+
+function searchReferralPartners(q) {
+  const dd = document.getElementById('referralPartnerDropdown');
+  if (!q.trim()) { dd.style.display = 'none'; return; }
+  const matches = _allReferralPartners.filter(p => `${p.first_name} ${p.last_name} ${p.company}`.toLowerCase().includes(q.toLowerCase())).slice(0, 8);
+  if (!matches.length) { dd.style.display = 'none'; return; }
+  dd.innerHTML = matches.map(p => `
+    <div onclick="selectReferralPartner('${p.id}','${(p.first_name+' '+(p.last_name||'')).trim().replace(/'/g,"\\'")}','${(p.source_type||'').replace(/'/g,"\\'")}','${(p.company||'').replace(/'/g,"\\'")}')"
+      style="padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,0.04);transition:background .1s"
+      onmouseenter="this.style.background='rgba(201,168,76,0.08)'" onmouseleave="this.style.background='none'">
+      <div style="width:28px;height:28px;border-radius:50%;background:rgba(201,168,76,0.15);color:#c9a84c;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${(p.first_name||'?')[0]}${(p.last_name||'')[0]||''}</div>
+      <div style="flex:1"><div style="font-size:12px;font-weight:600">${p.first_name} ${p.last_name||''}</div><div style="font-size:10px;color:rgba(255,255,255,0.4)">${p.source_type||''} ${p.company?'· '+p.company:''}</div></div>
+    </div>`).join('');
+  dd.style.display = 'block';
+}
+
+function selectReferralPartner(id, name, type, company) {
+  _selectedReferralPartnerId = id;
+  document.getElementById('referralPartnerSearch').value = name;
+  document.getElementById('referralPartnerDropdown').style.display = 'none';
+  const sel = document.getElementById('referralPartnerSelected');
+  sel.style.display = 'flex';
+  document.getElementById('rpSelectedName').textContent = '🤝 ' + name;
+  document.getElementById('rpSelectedMeta').textContent = type + (company ? ' · ' + company : '');
+  saveReferralPartnerToContact(id);
+}
+
+function clearReferralPartner() {
+  _selectedReferralPartnerId = null;
+  document.getElementById('referralPartnerSearch').value = '';
+  document.getElementById('referralPartnerSelected').style.display = 'none';
+  saveReferralPartnerToContact(null);
+}
+
+async function saveReferralPartnerToContact(partnerId) {
+  if (!contactId) return;
+  await sb.from('contacts').update({ referral_partner_id: partnerId, updated_at: new Date().toISOString() }).eq('id', contactId);
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#referralPartnerField')) {
+    const dd = document.getElementById('referralPartnerDropdown');
+    if (dd) dd.style.display = 'none';
+  }
+});
 
 /* ── AUTO-SAVE ── */
 function triggerAutoSave() {
