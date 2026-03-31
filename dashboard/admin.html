@@ -1409,7 +1409,7 @@ async function importMismoFiles() {
         };
 
         const appRes = await fetch(`${SB_URL}/rest/v1/mortgage_applications`, {
-          method: 'POST', headers: { ...hdrs, Prefer: 'return=representation' },
+          method: 'POST', headers: { ...hdrs, Prefer: 'return=representation,resolution=merge-duplicates' },
           body: JSON.stringify(appPayload)
         });
         const [app] = await appRes.json();
@@ -1432,10 +1432,18 @@ async function importMismoFiles() {
           });
         }
 
-        // ── CREATE LEAD ──
-        await fetch(`${SB_URL}/rest/v1/leads`, { method: 'POST', headers: { ...hdrs, Prefer: 'return=minimal' },
-          body: JSON.stringify({ contact_id: contactId, status: 'application', source: 'MISMO Import', loan_type: loanType, loan_amount: loanAmount, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        });
+        // ── CREATE OR UPDATE LEAD ──
+        const existingLeadRes = await fetch(`${SB_URL}/rest/v1/leads?contact_id=eq.${contactId}&limit=1`, { headers: hdrs });
+        const existingLeads = await existingLeadRes.json();
+        if (existingLeads.length) {
+          await fetch(`${SB_URL}/rest/v1/leads?id=eq.${existingLeads[0].id}`, { method: 'PATCH', headers: hdrs,
+            body: JSON.stringify({ status: 'application', loan_type: loanType, loan_amount: loanAmount, updated_at: new Date().toISOString() })
+          });
+        } else {
+          await fetch(`${SB_URL}/rest/v1/leads`, { method: 'POST', headers: { ...hdrs, Prefer: 'return=minimal' },
+            body: JSON.stringify({ contact_id: contactId, status: 'application', source: 'MISMO Import', loan_type: loanType, loan_amount: loanAmount, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          });
+        }
 
         ok++;
         const liabCount = liabilities.length;
