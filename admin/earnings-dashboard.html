@@ -112,15 +112,21 @@ const SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supa
 const KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
 const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 
-let _leads = [], _timeFilter = 'ytd';
+let _leads = [], _partnerMap = {}, _timeFilter = 'ytd';
 let _earningsChart = null, _outcomeChart = null;
 
 function fmt$(n) { if(!n) return '$0'; if(n>=1000000) return '$'+(n/1000000).toFixed(1)+'M'; if(n>=1000) return '$'+(n/1000).toFixed(0)+'K'; return '$'+Math.round(n); }
 function getTimeAgo(d) { const diff=Math.floor((Date.now()-new Date(d))/86400000); return diff===0?'Today':diff===1?'1d ago':diff<30?diff+'d ago':Math.floor(diff/30)+'mo ago'; }
 
 async function loadData() {
-  const r = await fetch(`${SB}/rest/v1/leads?select=id,contact_id,loan_amount,loan_type,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,contacts(first_name,last_name,referral_partner_id)&order=created_at.desc`, { headers: H });
-  _leads = await r.json();
+  const [leadsRes, partnersRes] = await Promise.all([
+    fetch(`${SB}/rest/v1/leads?select=id,contact_id,loan_amount,loan_type,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,contacts(first_name,last_name,referral_partner_id)&order=created_at.desc`, { headers: H }),
+    fetch(`${SB}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type`, { headers: H })
+  ]);
+  _leads = await leadsRes.json();
+  const partners = await partnersRes.json();
+  _partnerMap = {};
+  partners.forEach(p => { _partnerMap[p.id] = p; });
   updateAll();
 }
 
@@ -209,17 +215,19 @@ function buildLostTable(lost) {
 
 function buildPartnerEarnings(leads) {
   const el = document.getElementById('partnerEarnings');
-  // Group earnings by referral_partner_id
   const partnerStats = {};
   leads.forEach(l => {
     const pid = l.contacts?.referral_partner_id;
     if (!pid) return;
-    if (!partnerStats[pid]) partnerStats[pid] = { id: pid, name: '', earnings: 0, won: 0, lost: 0, referrals: 0 };
+    if (!partnerStats[pid]) {
+      const rp = _partnerMap[pid];
+      const rpName = rp ? (rp.company || `${rp.first_name||''} ${rp.last_name||''}`.trim()) : 'Unknown Partner';
+      const rpType = rp?.source_type || '';
+      partnerStats[pid] = { id: pid, name: rpName, type: rpType, earnings: 0, won: 0, lost: 0, referrals: 0 };
+    }
     partnerStats[pid].referrals++;
     if (l.deal_outcome === 'won') { partnerStats[pid].won++; partnerStats[pid].earnings += (l.actual_earnings||0); }
     if (l.deal_outcome === 'lost') partnerStats[pid].lost++;
-    const c = l.contacts;
-    if (c && !partnerStats[pid].name) partnerStats[pid].name = 'Partner ' + pid.substring(0,6);
   });
   const sorted = Object.values(partnerStats).sort((a,b) => b.earnings - a.earnings);
   if (!sorted.length) { el.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3)">No partner referral data yet</div>'; return; }
@@ -228,13 +236,14 @@ function buildPartnerEarnings(leads) {
   const textC = ['#c9a84c','#50c878','#60a0ff','#c084f0'];
   el.innerHTML = sorted.map((p, i) => {
     const col = i % 4;
+    const init = p.name.substring(0,2).toUpperCase();
     const pct = maxE > 0 ? (p.earnings / maxE * 100) : 0;
-    return `<div class="partner-row" onclick="window.location.href='referral-partners.html'">
-      <div class="partner-av" style="background:${colors[col]};color:${textC[col]}">${p.name.substring(0,2).toUpperCase()}</div>
-      <div style="min-width:130px"><div style="font-size:12px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${p.referrals} referrals</div></div>
+    return `<a class="partner-row" href="referral-partners.html" style="text-decoration:none;color:inherit;">
+      <div class="partner-av" style="background:${colors[col]};color:${textC[col]}">${init}</div>
+      <div style="min-width:130px"><div style="font-size:12px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${p.type ? p.type+' · ' : ''}${p.referrals} referrals</div></div>
       <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
       <div style="text-align:right;min-width:80px"><div style="font-size:13px;font-weight:700;color:var(--gold)">${fmt$(p.earnings)}</div><div style="font-size:10px;margin-top:2px"><span style="color:var(--green)">${p.won}W</span><span style="color:var(--muted);margin:0 3px">/</span><span style="color:var(--red)">${p.lost}L</span></div></div>
-    </div>`;
+    </a>`;
   }).join('');
 }
 
