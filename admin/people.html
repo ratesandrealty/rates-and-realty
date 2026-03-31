@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>People — Rates & Realty CRM</title>
+<script src="/api/env.js?v=2026033003"></script>
+<style>
+:root {
+  --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
+  --surface2: #181818; --surface3: #222; --border: rgba(255,255,255,0.06);
+  --border2: rgba(255,255,255,0.12); --text: #fff; --muted: rgba(255,255,255,0.38);
+  --green: #50c878; --red: #f87171; --blue: #60a0ff; --orange: #fb923c;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+.topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;z-index:10}
+.topbar-brand{font-weight:800;font-size:14px;color:var(--gold);letter-spacing:-0.3px;flex-shrink:0}
+.topbar-sep{width:1px;height:18px;background:var(--border2);margin:0 2px}
+.search-wrap{position:relative;flex:1;max-width:340px}
+.search-wrap input{width:100%;padding:7px 12px 7px 32px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;transition:border-color .15s}
+.search-wrap input:focus{border-color:rgba(201,168,76,0.4);background:rgba(255,255,255,0.07)}
+.search-wrap .si{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:13px;pointer-events:none}
+.topbar-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
+.btn-gold{background:var(--gold);color:#000}
+.btn-gold:hover{background:var(--gold2)}
+.btn-ghost{background:rgba(255,255,255,0.06);color:#fff;border:1px solid var(--border2)}
+.btn-ghost:hover{background:rgba(255,255,255,0.1)}
+.btn-sm{padding:5px 10px;font-size:11px}
+.btn-red{background:rgba(248,113,113,0.1);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
+
+.layout{display:flex;flex:1;overflow:hidden}
+
+.views-sidebar{width:196px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.vs-section{padding:10px 12px;border-bottom:1px solid var(--border)}
+.vs-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--muted);margin-bottom:6px}
+.view-item{display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:12px;color:var(--muted);border:1px solid transparent;transition:all .15s;margin-bottom:2px}
+.view-item:hover{background:rgba(255,255,255,0.04);color:#fff}
+.view-item.active{background:rgba(201,168,76,0.08);border-color:rgba(201,168,76,0.18);color:var(--gold);font-weight:600}
+.add-view-btn{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:7px;cursor:pointer;font-size:11px;color:var(--muted);border:1px dashed rgba(255,255,255,0.1);margin-top:6px;transition:all .15s;background:transparent;width:100%}
+.add-view-btn:hover{border-color:var(--gold);color:var(--gold)}
+
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+.tab-bar{display:flex;align-items:center;gap:0;padding:0 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;overflow-x:auto}
+.tab-bar::-webkit-scrollbar{height:3px}
+.tab-pill{display:flex;align-items:center;gap:6px;padding:10px 14px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:all .15s;flex-shrink:0}
+.tab-pill:hover{color:#fff}
+.tab-pill.active{color:var(--gold);border-bottom-color:var(--gold)}
+.tab-pill .tab-count{background:rgba(255,255,255,0.08);color:var(--muted);font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700}
+.tab-pill.active .tab-count{background:rgba(201,168,76,0.15);color:var(--gold)}
+
+.filter-bar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg);flex-shrink:0;flex-wrap:wrap}
+.filter-chip{display:flex;align-items:center;gap:5px;padding:4px 10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:20px;font-size:11px;color:var(--muted);cursor:pointer;transition:all .15s;white-space:nowrap}
+.filter-chip:hover{border-color:var(--gold);color:var(--gold)}
+.filter-chip.active{background:rgba(201,168,76,0.08);border-color:rgba(201,168,76,0.25);color:var(--gold)}
+.filter-chip select{background:transparent;border:none;color:inherit;font-size:11px;cursor:pointer;outline:none;padding:0;font-weight:600}
+.filter-chip select option{background:#1a1a1a;color:#fff}
+.filter-sep{width:1px;height:20px;background:var(--border)}
+.results-count{font-size:11px;color:var(--muted);margin-left:auto}
+.view-toggle{display:flex;gap:2px;background:rgba(255,255,255,0.04);border-radius:7px;padding:2px}
+.view-btn{padding:4px 8px;border-radius:5px;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;transition:all .15s}
+.view-btn.active{background:rgba(255,255,255,0.1);color:#fff}
+
+.table-wrap{flex:1;overflow:auto}
+.people-table{width:100%;border-collapse:collapse;font-size:12px}
+.people-table thead{position:sticky;top:0;z-index:5}
+.people-table th{padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--muted);background:var(--surface);border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;transition:color .15s}
+.people-table th:hover{color:#fff}
+.people-table th.sorted{color:var(--gold)}
+.people-table th .sort-arrow{margin-left:4px;opacity:0.5}
+.people-table th.sorted .sort-arrow{opacity:1;color:var(--gold)}
+.people-table td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.03);vertical-align:middle;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.people-table tr{transition:background .1s;cursor:pointer}
+.people-table tr:hover td{background:rgba(255,255,255,0.03)}
+.people-table tr.selected td{background:rgba(201,168,76,0.05)}
+
+.cb-col{width:36px;text-align:center}
+.cb-col input{width:14px;height:14px;accent-color:var(--gold);cursor:pointer}
+
+.person-cell{display:flex;align-items:center;gap:9px}
+.person-av{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.person-name{font-weight:600;font-size:13px;color:#fff}
+.person-type{font-size:10px;color:var(--muted)}
+
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.3px}
+.badge-new{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5)}
+.badge-qualified{background:rgba(80,200,120,0.12);color:#50c878}
+.badge-closed{background:rgba(192,132,240,0.12);color:#c084f0}
+.badge-contacted{background:rgba(250,204,21,0.12);color:#facc15}
+
+.score-cell{font-weight:700;font-size:13px}
+.score-hot{color:#f87171}
+.score-warm{color:#fb923c}
+.score-cold{color:#60a0ff}
+
+.source-tag{background:rgba(255,255,255,0.06);color:var(--muted);padding:2px 7px;border-radius:6px;font-size:10px;font-weight:600}
+
+.contact-info-cell{font-size:11px;color:rgba(255,255,255,0.6)}
+.contact-info-cell .phone{color:var(--muted);font-size:10px;margin-top:1px}
+
+.referral-cell{display:flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.6)}
+.referral-av{width:18px;height:18px;border-radius:50%;background:rgba(201,168,76,0.15);color:var(--gold);font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center}
+
+.last-touch{font-size:11px;color:var(--muted)}
+
+.row-actions{display:flex;gap:4px;opacity:0;transition:opacity .15s}
+.people-table tr:hover .row-actions{opacity:1}
+.row-action-btn{width:24px;height:24px;border-radius:6px;border:none;background:rgba(255,255,255,0.06);color:var(--muted);cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.row-action-btn:hover{background:rgba(201,168,76,0.15);color:var(--gold)}
+
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding:16px;overflow-y:auto}
+.person-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s}
+.person-card:hover{border-color:rgba(201,168,76,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.3);transform:translateY(-1px)}
+.card-av{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;margin-bottom:10px}
+.card-name{font-size:14px;font-weight:700;margin-bottom:2px}
+.card-email{font-size:11px;color:var(--muted);margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.card-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}
+
+.bulk-bar{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--border2);border-radius:12px;padding:10px 16px;align-items:center;gap:10px;box-shadow:0 8px 32px rgba(0,0,0,0.5);z-index:100;min-width:400px}
+.bulk-bar.show{display:flex}
+.bulk-count{font-size:13px;font-weight:700;color:var(--gold)}
+
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:200;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface2);border-radius:16px;width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column;border:1px solid var(--border2);overflow:hidden}
+.modal-hdr{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-hdr h2{font-size:15px;font-weight:700}
+.modal-body{flex:1;overflow-y:auto;padding:20px}
+.modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.fld{margin-bottom:14px}
+.fld label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);display:block;margin-bottom:5px}
+.fld input,.fld select,.fld textarea{width:100%;padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;font-family:inherit}
+.fld input:focus,.fld select:focus{border-color:rgba(201,168,76,0.35)}
+.fld select option{background:#181818}
+.fld-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:60px}
+.empty-state .icon{font-size:48px;margin-bottom:12px}
+
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
+#toast.show{opacity:1}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
+
+.pipeline-select{background:transparent;border:none;color:inherit;font-size:11px;cursor:pointer;outline:none;font-weight:600;padding:0;max-width:110px}
+.pipeline-select option{background:#1a1a1a;color:#fff}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar-brand">👥 People</span>
+  <div class="topbar-sep"></div>
+  <div class="search-wrap">
+    <span class="si">🔍</span>
+    <input type="text" id="searchInput" placeholder="Search name, email, phone..." oninput="debounceSearch()">
+  </div>
+  <div class="topbar-right">
+    <button class="btn btn-ghost btn-sm" onclick="openImportModal()">📥 Import</button>
+    <button class="btn btn-gold btn-sm" onclick="openNewModal()">+ Add Person</button>
+    <a href="contacts.html" style="font-size:11px;color:var(--muted);text-decoration:none;padding:0 4px;">Old View</a>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="views-sidebar">
+    <div class="vs-section">
+      <div class="vs-label">Saved Views</div>
+      <div id="viewsList"></div>
+      <button class="add-view-btn" onclick="saveCurrentView()">+ Save Current View</button>
+    </div>
+    <div class="vs-section" style="flex:1">
+      <div class="vs-label" style="margin-bottom:8px">Navigate</div>
+      <a href="pipeline.html" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;color:var(--muted);text-decoration:none;font-size:12px;transition:all .15s;margin-bottom:2px" onmouseover="this.style.color='#fff'" onmouseout="this.style.color=''">🏁 Pipeline Board</a>
+      <a href="email-marketing.html" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;color:var(--muted);text-decoration:none;font-size:12px;transition:all .15s;margin-bottom:2px" onmouseover="this.style.color='#fff'" onmouseout="this.style.color=''">📣 Marketing</a>
+      <a href="lenders.html" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;color:var(--muted);text-decoration:none;font-size:12px;transition:all .15s" onmouseover="this.style.color='#fff'" onmouseout="this.style.color=''">🏦 Lenders</a>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="tab-bar">
+      <div class="tab-pill active" onclick="setTab('all',this)">All <span class="tab-count" id="tc-all">—</span></div>
+      <div class="tab-pill" onclick="setTab('hot',this)">🔥 Hot <span class="tab-count" id="tc-hot">—</span></div>
+      <div class="tab-pill" onclick="setTab('warm',this)">🌡 Warm <span class="tab-count" id="tc-warm">—</span></div>
+      <div class="tab-pill" onclick="setTab('cold',this)">❄️ Cold <span class="tab-count" id="tc-cold">—</span></div>
+      <div class="tab-pill" onclick="setTab('new',this)">✨ New <span class="tab-count" id="tc-new">—</span></div>
+      <div class="tab-pill" onclick="setTab('referral',this)">🤝 Referrals <span class="tab-count" id="tc-referral">—</span></div>
+      <div class="tab-pill" onclick="setTab('no_contact',this)">📵 No Contact <span class="tab-count" id="tc-no_contact">—</span></div>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-chip active" id="fc-all" onclick="setFilter('all')">All Types</div>
+      <div class="filter-chip" id="fc-buyer" onclick="setFilter('buyer')">Buyer</div>
+      <div class="filter-chip" id="fc-refinance" onclick="setFilter('refinance')">Refinance</div>
+      <div class="filter-chip" id="fc-investor" onclick="setFilter('investor')">Investor</div>
+      <div class="filter-chip" id="fc-referral_partner" onclick="setFilter('referral_partner')">Referral Partner</div>
+      <div class="filter-sep"></div>
+      <div class="filter-chip">
+        <select id="filterSource" onchange="applyFilters()">
+          <option value="">All Sources</option>
+          <option value="Website">Website</option><option value="Referral">Referral</option>
+          <option value="Facebook">Facebook</option><option value="Instagram">Instagram</option>
+          <option value="TikTok">TikTok</option><option value="Zillow">Zillow</option>
+          <option value="Open House">Open House</option>
+        </select>
+      </div>
+      <div class="filter-chip">
+        <select id="filterLoan" onchange="applyFilters()">
+          <option value="">All Loan Types</option>
+          <option value="Conventional">Conventional</option><option value="FHA">FHA</option>
+          <option value="VA">VA</option><option value="DSCR">DSCR</option>
+          <option value="Jumbo">Jumbo</option><option value="Non-QM">Non-QM</option>
+        </select>
+      </div>
+      <div class="filter-chip">
+        <select id="filterPipeline" onchange="applyFilters()">
+          <option value="">All Stages</option>
+          <option value="New Lead">New Lead</option><option value="Contacted">Contacted</option>
+          <option value="Qualified">Qualified</option><option value="Pre-Qualified">Pre-Qualified</option>
+          <option value="Application">Application</option><option value="Processing">Processing</option>
+          <option value="Closed">Closed</option>
+        </select>
+      </div>
+      <div class="filter-sep"></div>
+      <div class="results-count" id="resultsCount">Loading…</div>
+      <div class="view-toggle">
+        <button class="view-btn active" id="btnTableView" onclick="setView('table')" title="Table view">☰</button>
+        <button class="view-btn" id="btnCardView" onclick="setView('card')" title="Card view">⊞</button>
+      </div>
+    </div>
+
+    <div class="table-wrap" id="tableView">
+      <table class="people-table">
+        <thead>
+          <tr>
+            <th class="cb-col"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
+            <th onclick="sortBy('name')">Name <span class="sort-arrow">↕</span></th>
+            <th onclick="sortBy('pipeline_status')">Pipeline <span class="sort-arrow">↕</span></th>
+            <th>Contact Info</th>
+            <th onclick="sortBy('lead_score')">Score <span class="sort-arrow">↕</span></th>
+            <th onclick="sortBy('source')">Source <span class="sort-arrow">↕</span></th>
+            <th>Loan Type</th>
+            <th>Referred By</th>
+            <th onclick="sortBy('created_at')">Added <span class="sort-arrow">↕</span></th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="peopleTableBody">
+          <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card-grid" id="cardView" style="display:none"></div>
+  </div>
+</div>
+
+<div class="bulk-bar" id="bulkBar">
+  <span class="bulk-count" id="bulkCount">0 selected</span>
+  <div style="width:1px;height:20px;background:var(--border2)"></div>
+  <button class="btn btn-ghost btn-sm" onclick="bulkEnrollCampaign()">📣 Add to Campaign</button>
+  <button class="btn btn-ghost btn-sm" onclick="bulkSendEmail()">✉️ Email All</button>
+  <button class="btn btn-ghost btn-sm" onclick="bulkUpdateStatus()">📋 Update Stage</button>
+  <button class="btn btn-red btn-sm" onclick="clearSelection()">✕ Clear</button>
+</div>
+
+<div class="modal-overlay" id="newModal">
+  <div class="modal">
+    <div class="modal-hdr"><h2>👤 Add New Person</h2><button class="btn btn-ghost btn-sm" onclick="closeNewModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="fld-row">
+        <div class="fld"><label>First Name *</label><input type="text" id="nf_first" placeholder="First name"></div>
+        <div class="fld"><label>Last Name</label><input type="text" id="nf_last" placeholder="Last name"></div>
+      </div>
+      <div class="fld"><label>Email</label><input type="email" id="nf_email" placeholder="email@example.com"></div>
+      <div class="fld-row">
+        <div class="fld"><label>Phone</label><input type="tel" id="nf_phone" placeholder="(714) 555-1234"></div>
+        <div class="fld"><label>Source</label>
+          <select id="nf_source"><option value="Website">Website</option><option value="Referral">Referral</option><option value="Facebook">Facebook</option><option value="Instagram">Instagram</option><option value="TikTok">TikTok</option><option value="Open House">Open House</option><option value="Zillow">Zillow</option><option value="Cold Call">Cold Call</option></select>
+        </div>
+      </div>
+      <div class="fld-row">
+        <div class="fld"><label>Loan Type</label>
+          <select id="nf_loan"><option value="">Select...</option><option>Conventional</option><option>FHA</option><option>VA</option><option>DSCR</option><option>Jumbo</option><option>Non-QM</option><option>HELOC</option></select>
+        </div>
+        <div class="fld"><label>Pipeline Stage</label>
+          <select id="nf_stage"><option>New Lead</option><option>Contacted</option><option>Qualified</option><option>Pre-Qualified</option><option>Application</option></select>
+        </div>
+      </div>
+      <div class="fld"><label>Referred By</label><input type="text" id="nf_referred_by" placeholder="e.g. Sarah Johnson"></div>
+      <div class="fld"><label>Notes</label><textarea id="nf_notes" placeholder="Add any notes..." style="min-height:70px;resize:vertical"></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeNewModal()">Cancel</button><button class="btn btn-gold" onclick="savePerson()">Add Person</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="saveViewModal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-hdr"><h2>💾 Save View</h2><button class="btn btn-ghost btn-sm" onclick="closeSaveView()">✕</button></div>
+    <div class="modal-body">
+      <div class="fld"><label>View Name</label><input type="text" id="viewName" placeholder="e.g. Hot DSCR Leads"></div>
+      <div class="fld"><label>Description</label><input type="text" id="viewDesc" placeholder="Brief description"></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;" id="viewFiltersPreview"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeSaveView()">Cancel</button><button class="btn btn-gold" onclick="confirmSaveView()">Save View</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+const hdrs = () => ({ apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', Prefer: 'return=representation' });
+
+let _allPeople = [], _filtered = [], _selected = new Set();
+let _currentTab = 'all', _currentType = 'all', _currentView = 'table';
+let _sortCol = 'created_at', _sortDir = 'desc', _searchQ = '', _searchTimer = null;
+let _savedViews = [];
+
+const AV_COLORS = ['#c9a84c40','#50c87840','#60a0ff40','#c084f040','#fb923c40','#f8717140'];
+const AV_TEXT = ['#c9a84c','#50c878','#60a0ff','#c084f0','#fb923c','#f87171'];
+function avColor(name) { const i = (name||'?').charCodeAt(0) % AV_COLORS.length; return { bg: AV_COLORS[i], fg: AV_TEXT[i] }; }
+function initials(f, l) { return `${(f||'?')[0]}${(l||'')[0]||''}`.toUpperCase(); }
+
+async function loadPeople() {
+  const [cR, lR] = await Promise.all([
+    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,email,phone,secondary_phone,source,lead_score,score_tier,lead_temperature,contact_type,loan_type,loan_amount,referred_by,pipeline_status,notes,tags,credit_score,created_at,updated_at&order=created_at.desc&limit=500`, { headers: hdrs() }),
+    fetch(`${SB}/rest/v1/leads?select=contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at&order=created_at.desc&limit=500`, { headers: hdrs() })
+  ]);
+  const contacts = await cR.json();
+  const leads = await lR.json();
+  const leadMap = {};
+  leads.forEach(l => { if (!leadMap[l.contact_id]) leadMap[l.contact_id] = l; });
+  _allPeople = contacts.map(c => {
+    const lead = leadMap[c.id] || {};
+    return { ...c, lead_status: lead.status || c.pipeline_status || 'New Lead', effective_loan_type: c.loan_type || lead.loan_type || '', effective_loan_amount: c.loan_amount || lead.loan_amount || 0, effective_score: c.lead_score || lead.score || 0, effective_tier: c.score_tier || lead.score_tier || c.lead_temperature || 'Cold', has_lead: !!lead.contact_id };
+  });
+  updateTabCounts();
+  applyFilters();
+  loadSavedViews();
+}
+
+function updateTabCounts() {
+  const counts = { all: _allPeople.length, hot: 0, warm: 0, cold: 0, new: 0, referral: 0, no_contact: 0 };
+  const weekAgo = Date.now() - 7 * 86400000;
+  _allPeople.forEach(p => {
+    const tier = (p.effective_tier || '').toLowerCase();
+    const score = p.effective_score || 0;
+    if (score >= 80 || tier === 'hot') counts.hot++;
+    else if (score >= 50 || tier === 'warm') counts.warm++;
+    else counts.cold++;
+    if (new Date(p.created_at) > weekAgo) counts.new++;
+    if (p.referred_by) counts.referral++;
+  });
+  Object.entries(counts).forEach(([k, v]) => { const el = document.getElementById('tc-' + k); if (el) el.textContent = v; });
+}
+
+function setTab(tab, el) { _currentTab = tab; document.querySelectorAll('.tab-pill').forEach(t => t.classList.remove('active')); el.classList.add('active'); applyFilters(); }
+function setFilter(type) { _currentType = type; document.querySelectorAll('.filter-chip[id^="fc-"]').forEach(c => c.classList.remove('active')); document.getElementById('fc-' + type)?.classList.add('active'); applyFilters(); }
+function debounceSearch() { clearTimeout(_searchTimer); _searchTimer = setTimeout(() => { _searchQ = document.getElementById('searchInput').value.toLowerCase().trim(); applyFilters(); }, 200); }
+
+function applyFilters() {
+  const source = document.getElementById('filterSource').value;
+  const loan = document.getElementById('filterLoan').value;
+  const pipeline = document.getElementById('filterPipeline').value;
+  const weekAgo = Date.now() - 7 * 86400000;
+  _filtered = _allPeople.filter(p => {
+    const score = p.effective_score || 0;
+    const tier = (p.effective_tier || '').toLowerCase();
+    if (_currentTab === 'hot' && score < 80 && tier !== 'hot') return false;
+    if (_currentTab === 'warm' && (score < 50 || score >= 80) && tier !== 'warm') return false;
+    if (_currentTab === 'cold' && score >= 50 && tier !== 'cold') return false;
+    if (_currentTab === 'new' && new Date(p.created_at) < weekAgo) return false;
+    if (_currentTab === 'referral' && !p.referred_by) return false;
+    if (_currentType !== 'all' && (p.contact_type || '').toLowerCase() !== _currentType.replace('_',' ')) return false;
+    if (source && (p.source || '') !== source) return false;
+    if (loan && (p.effective_loan_type || '') !== loan) return false;
+    if (pipeline && (p.lead_status || '') !== pipeline) return false;
+    if (_searchQ) { const hay = `${p.first_name} ${p.last_name} ${p.email} ${p.phone} ${p.referred_by}`.toLowerCase(); if (!hay.includes(_searchQ)) return false; }
+    return true;
+  });
+  _filtered.sort((a, b) => {
+    let av = a[_sortCol] || '', bv = b[_sortCol] || '';
+    if (_sortCol === 'name') { av = `${a.first_name} ${a.last_name}`; bv = `${b.first_name} ${b.last_name}`; }
+    if (_sortCol === 'lead_score') { av = a.effective_score; bv = b.effective_score; }
+    return _sortDir === 'asc' ? (av < bv ? -1 : av > bv ? 1 : 0) : (av > bv ? -1 : av < bv ? 1 : 0);
+  });
+  document.getElementById('resultsCount').textContent = `${_filtered.length} people`;
+  renderView();
+}
+
+function sortBy(col) { if (_sortCol === col) _sortDir = _sortDir === 'asc' ? 'desc' : 'asc'; else { _sortCol = col; _sortDir = 'desc'; } applyFilters(); }
+
+function renderView() { if (_currentView === 'table') renderTable(); else renderCards(); }
+
+function stageColor(s) {
+  const m = { 'New Lead':'rgba(255,255,255,0.5)','Contacted':'#facc15','Qualified':'#50c878','Pre-Qualified':'#50c878','Application':'#60a0ff','Processing':'#c084f0','Closed':'#c9a84c' };
+  return m[s] || 'rgba(255,255,255,0.5)';
+}
+function stageToBadge(s) { const m = { 'New Lead':'new','Contacted':'contacted','Qualified':'qualified','Pre-Qualified':'qualified','Application':'new','Closed':'closed' }; return m[s] || 'new'; }
+function getTimeAgo(d) { const diff = Math.floor((Date.now() - new Date(d)) / 86400000); if (diff === 0) return 'Today'; if (diff === 1) return 'Yesterday'; if (diff < 7) return `${diff}d ago`; if (diff < 30) return `${Math.floor(diff/7)}w ago`; return `${Math.floor(diff/30)}mo ago`; }
+
+function renderTable() {
+  const tbody = document.getElementById('peopleTableBody');
+  if (!_filtered.length) { tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="icon">👥</div><div>No people found</div><div style="font-size:12px;margin-top:6px">Try adjusting your filters</div></div></td></tr>`; return; }
+  tbody.innerHTML = _filtered.map(p => {
+    const av = avColor(p.first_name);
+    const init = initials(p.first_name, p.last_name);
+    const name = `${p.first_name||''} ${p.last_name||''}`.trim() || 'Unknown';
+    const score = p.effective_score || 0;
+    const scoreClass = score >= 80 ? 'score-hot' : score >= 50 ? 'score-warm' : 'score-cold';
+    const isSelected = _selected.has(p.id);
+    return `<tr onclick="openPerson('${p.id}')" class="${isSelected?'selected':''}">
+      <td class="cb-col" onclick="event.stopPropagation()"><input type="checkbox" ${isSelected?'checked':''} onchange="toggleSelect('${p.id}',this)"></td>
+      <td><div class="person-cell"><div class="person-av" style="background:${av.bg};color:${av.fg}">${init}</div><div><div class="person-name">${name}</div><div class="person-type">${p.contact_type||'Lead'}</div></div></div></td>
+      <td onclick="event.stopPropagation()"><select class="pipeline-select" onchange="updateStageInline('${p.id}',this.value)" style="color:${stageColor(p.lead_status)}">${['New Lead','Contacted','Qualified','Pre-Qualified','Application','Processing','Closed'].map(s=>`<option value="${s}" ${p.lead_status===s?'selected':''}>${s}</option>`).join('')}</select></td>
+      <td><div class="contact-info-cell"><div>${p.email||'—'}</div><div class="phone">${p.phone||''}</div></div></td>
+      <td><span class="score-cell ${scoreClass}">${score||'—'}</span></td>
+      <td><span class="source-tag">${p.source||'—'}</span></td>
+      <td style="color:var(--muted);font-size:11px">${p.effective_loan_type||'—'}</td>
+      <td>${p.referred_by ? `<div class="referral-cell"><div class="referral-av">${(p.referred_by[0]||'?').toUpperCase()}</div>${p.referred_by}</div>` : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
+      <td><div class="last-touch">${getTimeAgo(p.created_at)}</div></td>
+      <td onclick="event.stopPropagation()"><div class="row-actions"><button class="row-action-btn" title="Call" onclick="callPerson('${p.phone||''}')">📞</button><button class="row-action-btn" title="Email" onclick="emailPerson('${p.email||''}')">✉️</button><button class="row-action-btn" title="View" onclick="openPerson('${p.id}')">→</button></div></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderCards() {
+  const grid = document.getElementById('cardView');
+  if (!_filtered.length) { grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="icon">👥</div><div>No people found</div></div>'; return; }
+  grid.innerHTML = _filtered.map(p => {
+    const av = avColor(p.first_name);
+    const init = initials(p.first_name, p.last_name);
+    const name = `${p.first_name||''} ${p.last_name||''}`.trim() || 'Unknown';
+    const score = p.effective_score || 0;
+    const scoreClass = score >= 80 ? 'score-hot' : score >= 50 ? 'score-warm' : 'score-cold';
+    return `<div class="person-card" onclick="openPerson('${p.id}')">
+      <div class="card-av" style="background:${av.bg};color:${av.fg}">${init}</div>
+      <div class="card-name">${name}</div>
+      <div class="card-email">${p.email||p.phone||'No contact info'}</div>
+      <div class="card-row"><span class="badge badge-${stageToBadge(p.lead_status)}">${p.lead_status||'New Lead'}</span><span class="score-cell ${scoreClass}">${score||'?'}</span></div>
+      ${p.effective_loan_type ? `<div style="font-size:11px;color:var(--muted)">${p.effective_loan_type}${p.effective_loan_amount ? ' · $'+Number(p.effective_loan_amount).toLocaleString() : ''}</div>` : ''}
+      ${p.referred_by ? `<div style="font-size:11px;color:rgba(201,168,76,0.7);margin-top:4px">🤝 Referred by ${p.referred_by}</div>` : ''}
+      <div class="card-tags"><span class="source-tag">${p.source||'—'}</span>${(p.tags||[]).slice(0,2).map(t=>`<span class="source-tag">${t}</span>`).join('')}</div>
+    </div>`;
+  }).join('');
+}
+
+function setView(v) { _currentView = v; document.getElementById('tableView').style.display = v === 'table' ? 'block' : 'none'; document.getElementById('cardView').style.display = v === 'card' ? 'grid' : 'none'; document.getElementById('btnTableView').classList.toggle('active', v === 'table'); document.getElementById('btnCardView').classList.toggle('active', v === 'card'); renderView(); }
+
+function toggleSelect(id, cb) { if (cb.checked) _selected.add(id); else _selected.delete(id); updateBulkBar(); }
+function toggleSelectAll(cb) { _filtered.forEach(p => cb.checked ? _selected.add(p.id) : _selected.delete(p.id)); updateBulkBar(); renderTable(); }
+function clearSelection() { _selected.clear(); updateBulkBar(); renderTable(); document.getElementById('selectAll').checked = false; }
+function updateBulkBar() { const bar = document.getElementById('bulkBar'); const n = _selected.size; if (n > 0) { bar.classList.add('show'); document.getElementById('bulkCount').textContent = `${n} selected`; } else bar.classList.remove('show'); }
+
+function openPerson(contactId) { window.location.href = `lead-detail.html?contact_id=${contactId}`; }
+
+async function updateStageInline(contactId, status) {
+  await fetch(`${SB}/rest/v1/contacts?id=eq.${contactId}`, { method: 'PATCH', headers: hdrs(), body: JSON.stringify({ pipeline_status: status, updated_at: new Date().toISOString() }) });
+  await fetch(`${SB}/rest/v1/leads?contact_id=eq.${contactId}`, { method: 'PATCH', headers: hdrs(), body: JSON.stringify({ status, updated_at: new Date().toISOString() }) });
+  const p = _allPeople.find(x => x.id === contactId);
+  if (p) p.lead_status = status;
+  showToast(`✓ Stage updated to ${status}`);
+}
+
+function callPerson(phone) { if (phone) window.location.href = `tel:${phone}`; }
+function emailPerson(email) { if (email) window.location.href = `mailto:${email}`; }
+
+function bulkEnrollCampaign() { window.location.href = 'drip-builder.html'; }
+function bulkSendEmail() { window.location.href = 'email-marketing.html'; }
+async function bulkUpdateStatus() {
+  const status = prompt('Enter new pipeline stage:\nNew Lead, Contacted, Qualified, Pre-Qualified, Application, Processing, Closed');
+  if (!status) return;
+  const ids = [..._selected];
+  for (const id of ids) { await fetch(`${SB}/rest/v1/contacts?id=eq.${id}`, { method:'PATCH', headers:hdrs(), body:JSON.stringify({ pipeline_status: status, updated_at: new Date().toISOString() }) }); }
+  await loadPeople();
+  clearSelection();
+  showToast(`✓ Updated ${ids.length} people to ${status}`);
+}
+
+function openNewModal() { document.getElementById('newModal').classList.add('open'); setTimeout(()=>document.getElementById('nf_first').focus(),50); }
+function closeNewModal() { document.getElementById('newModal').classList.remove('open'); }
+function openImportModal() { window.location.href = 'contacts.html'; }
+
+async function savePerson() {
+  const first = document.getElementById('nf_first').value.trim();
+  if (!first) { showToast('First name is required'); return; }
+  const payload = { first_name: first, last_name: document.getElementById('nf_last').value.trim(), email: document.getElementById('nf_email').value.trim() || null, phone: document.getElementById('nf_phone').value.trim() || null, source: document.getElementById('nf_source').value, loan_type: document.getElementById('nf_loan').value || null, pipeline_status: document.getElementById('nf_stage').value, referred_by: document.getElementById('nf_referred_by').value.trim() || null, notes: document.getElementById('nf_notes').value.trim() || null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  const r = await fetch(`${SB}/rest/v1/contacts`, { method:'POST', headers:hdrs(), body:JSON.stringify(payload) });
+  if (r.ok) {
+    const [nc] = await r.json();
+    if (nc) { await fetch(`${SB}/rest/v1/leads`, { method:'POST', headers:hdrs(), body:JSON.stringify({ contact_id:nc.id, status:payload.pipeline_status, source:payload.source, loan_type:payload.loan_type, created_at:new Date().toISOString(), updated_at:new Date().toISOString() }) }); }
+    closeNewModal();
+    await loadPeople();
+    showToast('✓ Person added!');
+  } else showToast('⚠️ Failed to add person');
+}
+
+async function loadSavedViews() {
+  try { const r = await fetch(`${SB}/rest/v1/saved_views?order=created_at.asc`, { headers: hdrs() }); _savedViews = await r.json(); } catch(e) { _savedViews = []; }
+  renderViewsList();
+}
+function renderViewsList() { document.getElementById('viewsList').innerHTML = _savedViews.map(v => `<div class="view-item" onclick="applyView('${v.id}')"><span>${v.name}</span></div>`).join(''); }
+function applyView(id) { const v = _savedViews.find(x => x.id === id); if (!v) return; document.querySelectorAll('.view-item').forEach(el => el.classList.remove('active')); event.currentTarget.classList.add('active'); applyFilters(); showToast(`View: ${v.name}`); }
+function saveCurrentView() { document.getElementById('viewFiltersPreview').textContent = `Tab: ${_currentTab} · Type: ${_currentType} · Search: "${_searchQ||'none'}"`; document.getElementById('saveViewModal').classList.add('open'); setTimeout(()=>document.getElementById('viewName').focus(),50); }
+function closeSaveView() { document.getElementById('saveViewModal').classList.remove('open'); }
+async function confirmSaveView() {
+  const name = document.getElementById('viewName').value.trim();
+  if (!name) { showToast('Enter a view name'); return; }
+  const payload = { name, description: document.getElementById('viewDesc').value.trim(), filters: { tab: _currentTab, type: _currentType, search: _searchQ, source: document.getElementById('filterSource').value, loan: document.getElementById('filterLoan').value, pipeline: document.getElementById('filterPipeline').value }, created_at: new Date().toISOString() };
+  const r = await fetch(`${SB}/rest/v1/saved_views`, { method:'POST', headers:hdrs(), body:JSON.stringify(payload) });
+  if (r.ok) { closeSaveView(); await loadSavedViews(); showToast(`✓ View "${name}" saved!`); }
+}
+
+function showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 2500); }
+
+loadPeople();
+</script>
+</body>
+</html>
