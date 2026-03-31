@@ -46,11 +46,13 @@ async function initializeAdminDashboard() {
     bindAIChat();
     await loadAll();
   } catch (error) {
+    console.error('Dashboard init error:', error.message, error.stack);
     document.querySelector(".crm-main")?.insertAdjacentHTML("afterbegin", `
       <div class="panel" style="margin-bottom:24px;">
         <p class="kicker">Access Restricted</p>
         <h2>CRM access is limited to your internal team.</h2>
         <p style="color:var(--muted);">Add your email to <code>/api/env.js</code> ADMIN_EMAILS and sign in with that account.</p>
+        <p style="color:var(--muted);font-size:0.8rem;margin-top:8px;">Debug: ${error.message || error}</p>
       </div>
     `);
   }
@@ -67,7 +69,7 @@ async function loadAll() {
     populateLoanTypeSelect();
     renderActiveTab();
   } catch (err) {
-    console.error("Dashboard load error:", err);
+    console.error("Dashboard load error full:", err.message, err.stack);
   }
 }
 
