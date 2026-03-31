@@ -768,34 +768,137 @@ function renderWeeklyBar(weeklyLeads) {
 }
 
 // ── APPLICATIONS & DOCUMENTS ──────────────────────────────────────────────────
+let _allApplications = [];
+
 function renderApplications(applications) {
+  _allApplications = applications || [];
+  renderAppStats(_allApplications);
+  filterApplications();
+}
+
+function renderAppStats(apps) {
+  const el = document.getElementById("app-stats-row");
+  if (!el) return;
+  const total = apps.length;
+  const active = apps.filter(a => a.status === 'active').length;
+  const amounts = apps.map(a => a.loan_amount || 0).filter(a => a > 0);
+  const avg = amounts.length ? amounts.reduce((s,a) => s+a, 0) / amounts.length : 0;
+  const pipeline = apps.reduce((s,a) => s + (a.loan_amount || 0), 0);
+  const fmtBig = n => { if (n >= 1000000) return '$'+(n/1000000).toFixed(1)+'M'; if (n >= 1000) return '$'+(n/1000).toFixed(0)+'K'; return '$'+Math.round(n); };
+  const cardStyle = 'background:#141414;border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:14px 16px;text-align:center;';
+  const numStyle = 'font-size:22px;font-weight:800;color:#c9a84c;';
+  const lblStyle = 'font-size:10px;color:rgba(255,255,255,0.38);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;';
+  el.innerHTML = `
+    <div style="${cardStyle}"><div style="${numStyle}">${total}</div><div style="${lblStyle}">Total Apps</div></div>
+    <div style="${cardStyle}"><div style="${numStyle}">${active}</div><div style="${lblStyle}">Active</div></div>
+    <div style="${cardStyle}"><div style="${numStyle}">${fmtBig(avg)}</div><div style="${lblStyle}">Avg Loan</div></div>
+    <div style="${cardStyle}"><div style="${numStyle}">${fmtBig(pipeline)}</div><div style="${lblStyle}">Pipeline</div></div>`;
+}
+
+function filterApplications() {
   const el = document.getElementById("application-table");
   if (!el) return;
-  if (!applications.length) { renderEmptyState(el, "Borrower applications will appear here."); return; }
-  el.innerHTML = applications.map((app) => {
-    const borrowerName = app.contacts
-      ? `${app.contacts.first_name || ''} ${app.contacts.last_name || ''}`.trim()
-      : 'Unknown Borrower';
-    const loanTypeDisplay = app.loan_type
-      ? app.loan_type.charAt(0).toUpperCase() + app.loan_type.slice(1)
-      : 'Unknown';
-    return `
-    <article class="crm-record-card" style="cursor:pointer;transition:border-color .15s,box-shadow .15s;"
-      onclick="if('${app.contact_id}' !== 'null' && '${app.contact_id}' !== 'undefined') { window.location.href='/admin/lead-detail.html?id=${app.contact_id}'; } else { alert('No contact linked to this application yet.'); }"
-      onmouseenter="this.style.borderColor='rgba(201,168,76,0.3)';this.style.boxShadow='0 2px 12px rgba(0,0,0,0.3)'"
-      onmouseleave="this.style.borderColor='';this.style.boxShadow=''">
-      <div class="crm-record-top">
-        <div><strong>${borrowerName}</strong><span>${loanTypeDisplay} · ${app.property_address || "No property address"}</span></div>
-        <span class="status-pill ${statusPillClass(app.status)}">${app.status || "draft"}</span>
+  const q = (document.getElementById("appSearchInput")?.value || "").toLowerCase();
+  const statusF = document.getElementById("appStatusFilter")?.value || "";
+  const sortBy = document.getElementById("appSortBy")?.value || "newest";
+
+  let filtered = _allApplications.filter(app => {
+    if (statusF && (app.status || "").toLowerCase() !== statusF) return false;
+    if (q) {
+      const c = app.contacts || {};
+      const hay = `${c.first_name||""} ${c.last_name||""} ${c.email||""} ${app.property_address_street||""} ${app.property_address_city||""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (sortBy === "loan_amount") return (b.loan_amount||0) - (a.loan_amount||0);
+    if (sortBy === "credit_score") return ((b.contacts?.credit_score||0) - (a.contacts?.credit_score||0));
+    return new Date(b.updated_at||0) - new Date(a.updated_at||0);
+  });
+
+  const countEl = document.getElementById("appResultsCount");
+  if (countEl) countEl.textContent = `${filtered.length} of ${_allApplications.length} applications`;
+
+  if (!filtered.length) {
+    el.innerHTML = `<div style="text-align:center;padding:48px;color:rgba(255,255,255,0.3);">
+      <div style="font-size:40px;margin-bottom:10px;">📋</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">No applications yet</div>
+      <div style="font-size:12px;">Import a MISMO 3.4 file to get started.</div>
+    </div>`;
+    return;
+  }
+
+  const AV_BG = ['rgba(201,168,76,0.2)','rgba(80,200,120,0.2)','rgba(96,160,255,0.2)','rgba(192,132,240,0.2)','rgba(251,146,60,0.2)'];
+  const AV_FG = ['#c9a84c','#50c878','#60a0ff','#c084f0','#fb923c'];
+
+  el.innerHTML = filtered.map(app => {
+    const c = app.contacts || {};
+    const name = `${c.first_name||""} ${c.last_name||""}`.trim() || "Unknown Borrower";
+    const initials = `${(c.first_name||"?")[0]}${(c.last_name||"")[0]||""}`.toUpperCase();
+    const avIdx = (name.charCodeAt(0) || 0) % 5;
+    const email = c.email || "";
+    const phone = c.phone || "";
+    const contactLine = [email, phone].filter(Boolean).join(" · ") || "No contact info";
+
+    const loanType = app.loan_type ? app.loan_type.charAt(0).toUpperCase() + app.loan_type.slice(1) : "—";
+    const loanAmt = app.loan_amount ? "$" + Number(app.loan_amount).toLocaleString() : "—";
+    const propAddr = [app.property_address_street, app.property_address_city].filter(Boolean).join(", ") || app.property_address || "No property address";
+    const ltv = (app.loan_amount && app.property_value && app.property_value > 0) ? Math.round(app.loan_amount / app.property_value * 100) + "%" : "—";
+
+    const credit = c.credit_score;
+    let creditColor = "rgba(255,255,255,0.25)";
+    let creditBg = "rgba(255,255,255,0.06)";
+    if (credit >= 760) { creditColor = "#50c878"; creditBg = "rgba(80,200,120,0.12)"; }
+    else if (credit >= 720) { creditColor = "#c9a84c"; creditBg = "rgba(201,168,76,0.12)"; }
+    else if (credit >= 680) { creditColor = "#fb923c"; creditBg = "rgba(251,146,60,0.12)"; }
+    else if (credit > 0) { creditColor = "#f87171"; creditBg = "rgba(248,113,113,0.12)"; }
+    const creditDisplay = credit > 0 ? credit : "—";
+
+    const monthlyInc = c.monthly_income ? "$" + Number(c.monthly_income).toLocaleString() + "/mo" : "—";
+    const pipeline = c.pipeline_status || "New Lead";
+    const pipeColor = {"New Lead":"rgba(255,255,255,0.5)","Contacted":"#facc15","Qualified":"#50c878","Pre-Qualified":"#50c878","Application":"#60a0ff","Processing":"#c084f0","Closed":"#c9a84c"}[pipeline] || "rgba(255,255,255,0.5)";
+
+    const status = app.status || "draft";
+    const statusColors = {draft:"rgba(255,255,255,0.06);color:rgba(255,255,255,0.4)",active:"rgba(201,168,76,0.12);color:#c9a84c",submitted:"rgba(96,160,255,0.12);color:#60a0ff",approved:"rgba(80,200,120,0.12);color:#50c878",closed:"rgba(80,200,120,0.15);color:#3da06a",denied:"rgba(248,113,113,0.12);color:#f87171"};
+    const sBadge = statusColors[status] || statusColors.draft;
+
+    const updated = app.updated_at ? new Date(app.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—";
+
+    const hasContact = app.contact_id && app.contact_id !== "null";
+    const clickHandler = hasContact ? `window.location.href='/admin/lead-detail.html?id=${app.contact_id}'` : `alert('No contact linked to this application.')`;
+
+    return `<div style="background:#111;border:1px solid rgba(255,255,255,0.06);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .15s,box-shadow .15s;"
+      onclick="${clickHandler}"
+      onmouseenter="this.style.borderColor='rgba(201,168,76,0.3)';this.style.boxShadow='0 4px 20px rgba(0,0,0,0.4)'"
+      onmouseleave="this.style.borderColor='rgba(255,255,255,0.06)';this.style.boxShadow='none'">
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.04);">
+        <div style="width:38px;height:38px;border-radius:50%;background:${AV_BG[avIdx]};color:${AV_FG[avIdx]};font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initials}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:700;${!hasContact?'color:rgba(255,255,255,0.4);':''}">${name}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${contactLine}</div>
+        </div>
+        <span style="padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;background:${sBadge}">${status}</span>
       </div>
-      <div class="crm-record-meta">
-        <span>${currency(app.loan_amount)} loan</span>
-        <span>Updated ${formatDate(app.updated_at)}</span>
-        <span style="margin-left:auto;color:rgba(201,168,76,0.6);font-size:11px;">Open →</span>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-bottom:1px solid rgba(255,255,255,0.04);">
+        <div style="padding:10px 18px;"><div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Loan Type</div><div style="font-size:13px;font-weight:600;">${loanType}</div></div>
+        <div style="padding:10px 18px;"><div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Loan Amount</div><div style="font-size:13px;font-weight:700;color:#c9a84c;">${loanAmt}</div></div>
+        <div style="padding:10px 18px;"><div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Property</div><div style="font-size:12px;color:rgba(255,255,255,0.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${propAddr}</div></div>
+        <div style="padding:10px 18px;"><div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">LTV</div><div style="font-size:13px;font-weight:600;">${ltv}</div></div>
       </div>
-    </article>`;
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;">
+        <div style="padding:10px 18px;"><div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Credit</div><div><span style="padding:2px 8px;border-radius:8px;font-size:12px;font-weight:700;background:${creditBg};color:${creditColor};">${creditDisplay}</span></div></div>
+        <div style="padding:10px 18px;"><div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Income</div><div style="font-size:12px;color:rgba(255,255,255,0.6);">${monthlyInc}</div></div>
+        <div style="padding:10px 18px;"><div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Pipeline</div><div><span style="padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(255,255,255,0.06);color:${pipeColor};">${pipeline}</span></div></div>
+        <div style="padding:10px 18px;display:flex;align-items:flex-end;justify-content:space-between;"><div><div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Updated</div><div style="font-size:12px;color:rgba(255,255,255,0.5);">${updated}</div></div>${hasContact?`<span style="font-size:11px;color:rgba(201,168,76,0.7);font-weight:600;">View →</span>`:`<span style="font-size:10px;color:rgba(248,113,113,0.5);">No contact</span>`}</div>
+      </div>
+    </div>`;
   }).join("");
 }
+
+// Expose filterApplications globally for the search/filter inputs
+window.filterApplications = typeof filterApplications !== 'undefined' ? filterApplications : function() {};
 
 function renderDocuments(documents) {
   const el = document.getElementById("admin-document-table");
