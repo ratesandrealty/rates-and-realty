@@ -1244,28 +1244,202 @@ async function importMismoFiles() {
     try {
       const xml = await file.text();
       const doc = new DOMParser().parseFromString(xml, 'application/xml');
-      const get = (tag) => doc.querySelector(tag)?.textContent?.trim() || '';
-      const firstName = get('BORROWER_DETAIL FirstName') || get('FirstName') || 'Unknown';
-      const lastName = get('BORROWER_DETAIL LastName') || get('LastName') || '';
-      const email = get('CONTACT_POINT_EMAIL ContactPointEmailValue') || get('EmailAddressText') || null;
-      const phone = get('CONTACT_POINT_TELEPHONE ContactPointTelephoneValue') || get('TelephoneNumberValue') || null;
-      const street = get('AddressLineText') || null;
-      const city = get('CityName') || null;
-      const state = get('StateCode') || null;
-      const zip = get('PostalCode') || null;
-      const loanAmount = get('BaseLoanAmount') || get('NoteAmount') || null;
-      const loanType = get('MortgageType') || get('LoanProgramIdentifier') || null;
-      const loanPurpose = get('LoanPurposeType') || null;
-      const propStreet = get('SUBJECT_PROPERTY AddressLineText') || null;
+      const g = (sel) => doc.querySelector(sel)?.textContent?.trim() || '';
+      const gAttr = (sel, attr) => doc.querySelector(sel)?.getAttribute(attr) || '';
+      const bool = (sel) => { const v = g(sel).toLowerCase(); return v === 'true' || v === 'yes'; };
+
+      // ── BORROWER PERSONAL ──
+      const firstName = g('BORROWER INDIVIDUAL NAME FirstName') || g('FirstName') || 'Unknown';
+      const lastName = g('BORROWER INDIVIDUAL NAME LastName') || g('LastName') || '';
+      const middleName = g('BORROWER INDIVIDUAL NAME MiddleName') || '';
+      const suffix = g('BORROWER INDIVIDUAL NAME SuffixName') || '';
+      const email = g('CONTACT_POINT_EMAIL ContactPointEmailValue') || g('EmailAddressText') || null;
+      const cellPhone = g('CONTACT_POINT_TELEPHONE ContactPointTelephoneValue') || g('TelephoneNumberValue') || null;
+      const dob = g('BorrowerBirthDate') || g('BirthDate') || null;
+      const maritalStatus = g('MaritalStatusType') || null;
+      const dependentsCount = parseInt(g('DependentCount')) || 0;
+      const citizenship = g('CitizenshipResidencyType') || null;
+      const ssn = g('TaxpayerIdentifierValue') || null;
+
+      // ── ADDRESSES ──
+      const residences = doc.querySelectorAll('RESIDENCE, BORROWER_RESIDENCE');
+      let curAddr = {}, fmrAddr = {};
+      residences.forEach(r => {
+        const type = (r.querySelector('BorrowerResidencyType')?.textContent || '').toLowerCase();
+        const addr = {
+          street: r.querySelector('AddressLineText')?.textContent?.trim() || '',
+          unit: r.querySelector('AddressUnitIdentifier')?.textContent?.trim() || '',
+          city: r.querySelector('CityName')?.textContent?.trim() || '',
+          state: r.querySelector('StateCode')?.textContent?.trim() || '',
+          zip: (r.querySelector('PostalCode')?.textContent?.trim() || '').substring(0,5),
+          months: parseInt(r.querySelector('BorrowerResidencyDurationMonthsCount')?.textContent) || 0,
+          housing: r.querySelector('BorrowerResidencyBasisType')?.textContent?.trim() || ''
+        };
+        if (type.includes('current') || type === '' && !curAddr.street) curAddr = addr;
+        else if (type.includes('prior')) fmrAddr = addr;
+      });
+      // Fallback for current address from first AddressLineText
+      if (!curAddr.street) {
+        curAddr.street = g('AddressLineText') || '';
+        curAddr.city = g('CityName') || '';
+        curAddr.state = g('StateCode') || '';
+        curAddr.zip = (g('PostalCode') || '').substring(0,5);
+      }
+
+      // ── EMPLOYMENT ──
+      const empNode = doc.querySelector('EMPLOYER, EMPLOYMENT');
+      const employerName = empNode?.querySelector('FullName')?.textContent?.trim() || g('EmployerName') || '';
+      const positionTitle = g('EmploymentPositionDescription') || '';
+      const empStartDate = g('EmploymentStartDate') || null;
+      const isSelfEmployed = bool('EmploymentBorrowerSelfEmployedIndicator');
+      const empStreet = empNode?.querySelector('AddressLineText')?.textContent?.trim() || '';
+      const empCity = empNode?.querySelector('CityName')?.textContent?.trim() || '';
+      const empState = empNode?.querySelector('StateCode')?.textContent?.trim() || '';
+      const empZip = empNode?.querySelector('PostalCode')?.textContent?.trim() || '';
+
+      // ── INCOME ──
+      const baseIncome = parseFloat(g('CurrentIncomeMonthlyTotalAmount') || g('EmploymentMonthlyIncomeAmount')) || 0;
+
+      // ── LOAN DETAILS ──
+      const loanPurpose = g('LoanPurposeType') || null;
+      const loanType = g('MortgageType') || g('LoanProgramIdentifier') || null;
+      const loanAmount = parseFloat(g('BaseLoanAmount') || g('NoteAmount')) || null;
+      const interestRate = parseFloat(g('NoteRatePercent')) || null;
+
+      // ── PROPERTY ──
+      const propNode = doc.querySelector('SUBJECT_PROPERTY, COLLATERAL');
+      const propStreet = propNode?.querySelector('AddressLineText')?.textContent?.trim() || g('SubjectPropertyAddress AddressLineText') || '';
+      const propCity = propNode?.querySelector('CityName')?.textContent?.trim() || '';
+      const propState = propNode?.querySelector('StateCode')?.textContent?.trim() || '';
+      const propZip = (propNode?.querySelector('PostalCode')?.textContent?.trim() || '').substring(0,5);
+      const propCounty = propNode?.querySelector('CountyName')?.textContent?.trim() || g('CountyName') || '';
+      const propValue = parseFloat(g('PropertyEstimatedValueAmount') || g('PropertyAppraisedValueAmount')) || null;
+      const purchasePrice = parseFloat(g('SalesContractAmount') || g('PurchasePriceAmount')) || null;
+      const occupancy = g('PropertyUsageType') || null;
+      const numUnits = parseInt(g('FinancedUnitCount')) || 1;
+
+      // ── DECLARATIONS ──
+      const declBankruptcy = bool('BankruptcyIndicator');
+      const declJudgments = bool('OutstandingJudgmentsIndicator');
+      const declDelinquent = bool('PresentlyDelinquentIndicator');
+      const declForeclosure = bool('PriorPropertyForeclosureCompletedIndicator');
+      const declShortSale = bool('PriorPropertyShortSaleCompletedIndicator');
+      const declDeedInLieu = bool('PriorPropertyDeedInLieuConveyedIndicator');
+      const declOtherMortgage = bool('UndisclosedMortgageApplicationIndicator');
+      const declBorrowedFunds = bool('UndisclosedBorrowedFundsIndicator');
+      const declCosigner = bool('UndisclosedComakerOfNoteIndicator');
+
+      // ── LIABILITIES ──
+      const liabilityNodes = doc.querySelectorAll('LIABILITY');
+      const liabilities = [];
+      liabilityNodes.forEach(ln => {
+        const creditor = ln.querySelector('FullName')?.textContent?.trim() || ln.querySelector('LiabilityHolderName')?.textContent?.trim() || '';
+        const monthly = parseFloat(ln.querySelector('LiabilityMonthlyPaymentAmount')?.textContent) || 0;
+        const balance = parseFloat(ln.querySelector('LiabilityUnpaidBalanceAmount')?.textContent) || 0;
+        const ltype = ln.querySelector('LiabilityType')?.textContent?.trim() || '';
+        if (creditor || monthly > 0) liabilities.push({ creditor_name: creditor, monthly_payment: monthly, balance, liability_type: ltype });
+      });
+
       const name = `${firstName} ${lastName}`.trim();
 
-      const [contact] = await (await fetch(`${SB_URL}/rest/v1/contacts`, { method:'POST', headers:hdrs, body:JSON.stringify({ first_name:firstName, last_name:lastName, email, phone, address:street, city, state, zip, source:'MISMO Import', contact_type:'borrower', pipeline_status:'New Lead', created_at:new Date().toISOString(), updated_at:new Date().toISOString() }) })).json();
+      // ── MATCH EXISTING CONTACT OR CREATE ──
+      let contactId = null;
+      if (email) {
+        const matchRes = await fetch(`${SB_URL}/rest/v1/contacts?email=eq.${encodeURIComponent(email)}&limit=1`, { headers: hdrs });
+        const matches = await matchRes.json();
+        if (matches.length) contactId = matches[0].id;
+      }
+      if (!contactId && cellPhone) {
+        const cleanPhone = cellPhone.replace(/\D/g, '');
+        if (cleanPhone.length >= 10) {
+          const matchRes = await fetch(`${SB_URL}/rest/v1/contacts?phone=like.*${cleanPhone.slice(-10)}&limit=1`, { headers: hdrs });
+          const matches = await matchRes.json();
+          if (matches.length) contactId = matches[0].id;
+        }
+      }
 
-      if (contact?.id) {
-        await fetch(`${SB_URL}/rest/v1/mortgage_applications`, { method:'POST', headers:{...hdrs,Prefer:'return=minimal'}, body:JSON.stringify({ contact_id:contact.id, first_name:firstName, last_name:lastName, email, loan_amount:parseFloat(loanAmount)||null, loan_type:loanType, loan_purpose:loanPurpose, property_address_street:propStreet, mismo_file_name:file.name, mismo_imported_at:new Date().toISOString(), created_at:new Date().toISOString(), updated_at:new Date().toISOString() }) });
-        await fetch(`${SB_URL}/rest/v1/leads`, { method:'POST', headers:{...hdrs,Prefer:'return=minimal'}, body:JSON.stringify({ contact_id:contact.id, status:'application', source:'MISMO Import', loan_type:loanType, loan_amount:parseFloat(loanAmount)||null, created_at:new Date().toISOString(), updated_at:new Date().toISOString() }) });
+      const contactPayload = {
+        first_name: firstName, last_name: lastName, middle_name: middleName || null,
+        email: email, phone: cellPhone, ssn_last4: ssn ? ssn.slice(-4) : null,
+        date_of_birth: dob, address: curAddr.street || null, city: curAddr.city || null,
+        state: curAddr.state || null, zip: curAddr.zip || null,
+        employer_name: employerName || null, job_title: positionTitle || null,
+        monthly_income: baseIncome || null, credit_score: null,
+        source: 'MISMO Import', contact_type: 'borrower', pipeline_status: 'Application',
+        updated_at: new Date().toISOString()
+      };
+
+      if (contactId) {
+        await fetch(`${SB_URL}/rest/v1/contacts?id=eq.${contactId}`, { method: 'PATCH', headers: hdrs, body: JSON.stringify(contactPayload) });
+      } else {
+        contactPayload.created_at = new Date().toISOString();
+        const [newContact] = await (await fetch(`${SB_URL}/rest/v1/contacts`, { method: 'POST', headers: hdrs, body: JSON.stringify(contactPayload) })).json();
+        contactId = newContact?.id;
+      }
+
+      if (contactId) {
+        // ── UPSERT APPLICATION ──
+        const appPayload = {
+          contact_id: contactId, first_name: firstName, middle_name: middleName || null, last_name: lastName, suffix: suffix || null,
+          email, cell_phone: cellPhone, date_of_birth: dob, marital_status: maritalStatus, dependents_count: dependentsCount,
+          citizenship, ssn,
+          current_address_street: curAddr.street || null, current_address_city: curAddr.city || null,
+          current_address_state: curAddr.state || null, current_address_zip: curAddr.zip || null,
+          current_address_months: curAddr.months || 0, current_housing_type: curAddr.housing || null,
+          former_address_street: fmrAddr.street || null, former_address_city: fmrAddr.city || null,
+          former_address_state: fmrAddr.state || null, former_address_zip: fmrAddr.zip || null,
+          former_address_months: fmrAddr.months || 0,
+          employer_name: employerName || null, employer_street: empStreet || null,
+          employer_city: empCity || null, employer_state: empState || null, employer_zip: empZip || null,
+          position_title: positionTitle || null, employment_start_date: empStartDate,
+          is_self_employed: isSelfEmployed, base_income: baseIncome || null,
+          loan_purpose: loanPurpose, loan_type: loanType, loan_amount: loanAmount,
+          requested_loan_amount: loanAmount, current_interest_rate: interestRate,
+          property_address_street: propStreet || null, property_address_city: propCity || null,
+          property_address_state: propState || null, property_address_zip: propZip || null,
+          property_address_county: propCounty || null, property_value: propValue,
+          purchase_price: purchasePrice, occupancy_type: occupancy, number_of_units: numUnits,
+          decl_bankruptcy: declBankruptcy, decl_outstanding_judgments: declJudgments,
+          decl_delinquent_federal: declDelinquent, decl_foreclosure: declForeclosure,
+          decl_short_sale: declShortSale, decl_deed_in_lieu: declDeedInLieu,
+          decl_applying_other_mortgage: declOtherMortgage, decl_borrowed_funds: declBorrowedFunds,
+          decl_cosigner: declCosigner,
+          mismo_file_name: file.name, mismo_imported_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        const appRes = await fetch(`${SB_URL}/rest/v1/mortgage_applications`, {
+          method: 'POST', headers: { ...hdrs, Prefer: 'return=representation' },
+          body: JSON.stringify(appPayload)
+        });
+        const [app] = await appRes.json();
+
+        // ── SAVE LIABILITIES ──
+        if (app?.id && liabilities.length) {
+          for (const li of liabilities) {
+            await fetch(`${SB_URL}/rest/v1/liabilities`, {
+              method: 'POST', headers: { ...hdrs, Prefer: 'return=minimal' },
+              body: JSON.stringify({ application_id: app.id, contact_id: contactId, ...li, created_at: new Date().toISOString() })
+            });
+          }
+        }
+
+        // Also save liabilities to contact JSON field
+        if (liabilities.length) {
+          await fetch(`${SB_URL}/rest/v1/contacts?id=eq.${contactId}`, {
+            method: 'PATCH', headers: hdrs,
+            body: JSON.stringify({ liabilities: liabilities })
+          });
+        }
+
+        // ── CREATE LEAD ──
+        await fetch(`${SB_URL}/rest/v1/leads`, { method: 'POST', headers: { ...hdrs, Prefer: 'return=minimal' },
+          body: JSON.stringify({ contact_id: contactId, status: 'application', source: 'MISMO Import', loan_type: loanType, loan_amount: loanAmount, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        });
+
         ok++;
-        results.innerHTML += `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(80,200,120,0.08);border:1px solid rgba(80,200,120,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;"><span style="color:#50c878;">✓</span><div style="flex:1"><strong>${name}</strong> · ${file.name}</div><a href="/admin/lead-detail.html?contact_id=${contact.id}" style="color:#c9a84c;font-size:11px;text-decoration:none;">View →</a></div>`;
+        const liabCount = liabilities.length;
+        results.innerHTML += `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(80,200,120,0.08);border:1px solid rgba(80,200,120,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;"><span style="color:#50c878;">✓</span><div style="flex:1"><strong>${name}</strong> · ${file.name}${liabCount ? ` · ${liabCount} liabilities` : ''}</div><a href="/admin/lead-detail.html?contact_id=${contactId}" style="color:#c9a84c;font-size:11px;text-decoration:none;">View →</a></div>`;
       }
     } catch(e) {
       results.innerHTML += `<div style="padding:8px 12px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;color:#f87171;">⚠️ ${file.name}: ${e.message}</div>`;
