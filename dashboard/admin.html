@@ -24,6 +24,13 @@
       }
     })();
   </script>
+<style>
+  .dashboard-section { position: relative; transition: opacity 0.2s; }
+  .dashboard-section.drag-over { outline: 2px dashed #c9a84c; outline-offset: 4px; }
+  .drag-handle { position:absolute;top:12px;right:12px;cursor:grab;color:rgba(255,255,255,0.15);font-size:18px;user-select:none;transition:color .2s;z-index:2; }
+  .drag-handle:hover { color: #c9a84c; }
+  .drag-handle:active { cursor: grabbing; }
+</style>
 </head>
 <body>
   <script>(function(){ if(localStorage.getItem('rr-theme')==='light') document.body.classList.add('light'); })();</script>
@@ -144,8 +151,11 @@
           </div>
         </div>
 
+        <div class="dashboard-sections-wrapper">
+
         <!-- 6 Stat Cards -->
-        <div class="metric-grid metric-grid-6" id="admin-summary">
+        <div class="metric-grid metric-grid-6 dashboard-section" data-section-id="stats" draggable="true" id="admin-summary">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
           <article class="metric-card skeleton"><strong>—</strong><span>Total Leads</span></article>
           <article class="metric-card skeleton"><strong>—</strong><span>New This Week</span></article>
           <article class="metric-card skeleton"><strong>—</strong><span>Hot Leads</span></article>
@@ -155,7 +165,8 @@
         </div>
 
         <!-- Pipeline Stage Strip -->
-        <div class="panel" style="margin-bottom:24px;padding:20px 24px;">
+        <div class="panel dashboard-section" data-section-id="pipeline" draggable="true" style="margin-bottom:24px;padding:20px 24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
           <div class="crm-section-title">
             <div><p class="kicker">Pipeline</p><h3 style="margin:0;font-size:1.1rem;">Lead Stages</h3></div>
             <button class="btn btn-ghost btn-sm" data-crm-nav="pipeline">View Board →</button>
@@ -164,7 +175,8 @@
         </div>
 
         <!-- Charts row -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+        <div class="dashboard-section" data-section-id="charts" draggable="true" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
           <div class="panel chart-panel" id="overview-bar-chart">
             <p class="kicker">Leads by Status</p>
             <div id="overview-bar-root"></div>
@@ -176,7 +188,8 @@
         </div>
 
         <!-- Recent Activity -->
-        <div style="margin-bottom:24px;">
+        <div class="dashboard-section" data-section-id="activity" draggable="true" style="margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
           <div class="panel" style="overflow:hidden;">
             <div class="crm-section-title">
               <div><p class="kicker">Timeline</p><h3 style="margin:0;font-size:1.1rem;">Recent Activity</h3></div>
@@ -186,7 +199,8 @@
         </div>
 
         <!-- Upcoming appointments -->
-        <div class="panel">
+        <div class="panel dashboard-section" data-section-id="appointments" draggable="true" style="margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
           <div class="crm-section-title">
             <div><p class="kicker">Calendar</p><h3 style="margin:0;font-size:1.1rem;">Upcoming Appointments</h3></div>
             <button class="btn btn-ghost btn-sm" data-crm-nav="calendar">View Calendar →</button>
@@ -195,7 +209,8 @@
         </div>
 
         <!-- Won/Lost Deals + Referral Activity -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;margin-bottom:24px;">
+        <div class="dashboard-section" data-section-id="deals-referrals" draggable="true" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
 
           <!-- Won/Lost Deals -->
           <div class="panel" style="padding:0;overflow:hidden;">
@@ -230,6 +245,8 @@
           </div>
 
         </div>
+
+        </div><!-- /dashboard-sections-wrapper -->
       </section>
 
       <!-- ── LEADS TAB ─────────────────────────────── -->
@@ -1079,6 +1096,53 @@
 </div>
 
 <script>
+// ── Dashboard Section Drag & Drop ──────────────────────────
+(function() {
+  let dragSrc = null;
+  document.querySelectorAll('.dashboard-section').forEach(el => {
+    el.addEventListener('dragstart', e => {
+      dragSrc = el;
+      setTimeout(() => el.style.opacity = '0.4', 0);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    el.addEventListener('dragend', () => {
+      el.style.opacity = '1';
+      document.querySelectorAll('.dashboard-section').forEach(s => s.classList.remove('drag-over'));
+      saveSectionOrder();
+    });
+    el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    el.addEventListener('dragenter', () => el.classList.add('drag-over'));
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', e => {
+      e.stopPropagation();
+      if (dragSrc && dragSrc !== el) {
+        const parent = el.parentNode;
+        const all = [...parent.querySelectorAll('.dashboard-section')];
+        if (all.indexOf(dragSrc) < all.indexOf(el)) parent.insertBefore(dragSrc, el.nextSibling);
+        else parent.insertBefore(dragSrc, el);
+      }
+      el.classList.remove('drag-over');
+    });
+  });
+
+  function saveSectionOrder() {
+    const order = [...document.querySelectorAll('.dashboard-sections-wrapper .dashboard-section')].map(el => el.dataset.sectionId);
+    localStorage.setItem('dashboardSectionOrder', JSON.stringify(order));
+  }
+
+  function restoreSectionOrder() {
+    const saved = localStorage.getItem('dashboardSectionOrder');
+    if (!saved) return;
+    try {
+      const order = JSON.parse(saved);
+      const parent = document.querySelector('.dashboard-sections-wrapper');
+      if (!parent) return;
+      order.forEach(id => { const el = parent.querySelector(`[data-section-id="${id}"]`); if (el) parent.appendChild(el); });
+    } catch(e) {}
+  }
+  restoreSectionOrder();
+})();
+
 // ── Won/Lost Deals Table ──────────────────────────────────
 let _dealsTab = 'won';
 
