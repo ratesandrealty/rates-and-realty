@@ -328,6 +328,11 @@ const AV_TEXT = ['#c9a84c','#50c878','#60a0ff','#c084f0','#fb923c','#f87171'];
 function avColor(name) { const i = (name||'?').charCodeAt(0) % AV_COLORS.length; return { bg: AV_COLORS[i], fg: AV_TEXT[i] }; }
 function initials(f, l) { return `${(f||'?')[0]}${(l||'')[0]||''}`.toUpperCase(); }
 
+function normStatus(s) {
+  const m = { 'new':'New Lead','contacted':'Contacted','qualified':'Qualified','prequalified':'Pre-Qualified','pre-qualified':'Pre-Qualified','application':'Application','processing':'Processing','closed':'Closed','closed won':'Closed','funded':'Closed','lost':'Closed Lost' };
+  return m[(s||'').toLowerCase()] || s || 'New Lead';
+}
+
 async function loadPeople() {
   const [cR, lR] = await Promise.all([
     fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,email,phone,secondary_phone,source,lead_score,score_tier,lead_temperature,contact_type,loan_type,loan_amount,referred_by,pipeline_status,notes,tags,credit_score,created_at,updated_at&order=created_at.desc&limit=500`, { headers: hdrs() }),
@@ -339,7 +344,17 @@ async function loadPeople() {
   leads.forEach(l => { if (!leadMap[l.contact_id]) leadMap[l.contact_id] = l; });
   _allPeople = contacts.map(c => {
     const lead = leadMap[c.id] || {};
-    return { ...c, lead_status: lead.status || c.pipeline_status || 'New Lead', effective_loan_type: c.loan_type || lead.loan_type || '', effective_loan_amount: c.loan_amount || lead.loan_amount || 0, effective_score: c.lead_score || lead.score || 0, effective_tier: c.score_tier || lead.score_tier || c.lead_temperature || 'Cold', has_lead: !!lead.contact_id };
+    const effectiveScore = (c.lead_score && c.lead_score > 0) ? c.lead_score : (lead.score || 0);
+    const effectiveTier = effectiveScore >= 80 ? 'Hot' : effectiveScore >= 50 ? 'Warm' : 'Cold';
+    return {
+      ...c,
+      lead_status: lead.status ? normStatus(lead.status) : (c.pipeline_status || 'New Lead'),
+      effective_loan_type: c.loan_type || lead.loan_type || '',
+      effective_loan_amount: c.loan_amount || lead.loan_amount || 0,
+      effective_score: effectiveScore,
+      effective_tier: effectiveTier,
+      has_lead: !!lead.contact_id,
+    };
   });
   updateTabCounts();
   applyFilters();
@@ -350,13 +365,15 @@ function updateTabCounts() {
   const counts = { all: _allPeople.length, hot: 0, warm: 0, cold: 0, new: 0, referral: 0, no_contact: 0 };
   const weekAgo = Date.now() - 7 * 86400000;
   _allPeople.forEach(p => {
-    const tier = (p.effective_tier || '').toLowerCase();
     const score = p.effective_score || 0;
-    if (score >= 80 || tier === 'hot') counts.hot++;
-    else if (score >= 50 || tier === 'warm') counts.warm++;
+    const tier = (p.effective_tier || '').toLowerCase();
+    const isHot = score >= 80 || tier === 'hot';
+    const isWarm = (score >= 50 && score < 80) || tier === 'warm';
+    if (isHot) counts.hot++;
+    else if (isWarm) counts.warm++;
     else counts.cold++;
     if (new Date(p.created_at) > weekAgo) counts.new++;
-    if (p.referred_by) counts.referral++;
+    if (p.referred_by || (p.source||'').toLowerCase() === 'referral') counts.referral++;
   });
   Object.entries(counts).forEach(([k, v]) => { const el = document.getElementById('tc-' + k); if (el) el.textContent = v; });
 }
@@ -369,19 +386,40 @@ function applyFilters() {
   const source = document.getElementById('filterSource').value;
   const loan = document.getElementById('filterLoan').value;
   const pipeline = document.getElementById('filterPipeline').value;
-  const weekAgo = Date.now() - 7 * 86400000;
   _filtered = _allPeople.filter(p => {
     const score = p.effective_score || 0;
     const tier = (p.effective_tier || '').toLowerCase();
-    if (_currentTab === 'hot' && score < 80 && tier !== 'hot') return false;
-    if (_currentTab === 'warm' && (score < 50 || score >= 80) && tier !== 'warm') return false;
-    if (_currentTab === 'cold' && score >= 50 && tier !== 'cold') return false;
-    if (_currentTab === 'new' && new Date(p.created_at) < weekAgo) return false;
-    if (_currentTab === 'referral' && !p.referred_by) return false;
-    if (_currentType !== 'all' && (p.contact_type || '').toLowerCase() !== _currentType.replace('_',' ')) return false;
-    if (source && (p.source || '') !== source) return false;
-    if (loan && (p.effective_loan_type || '') !== loan) return false;
+
+    // Tab filters
+    if (_currentTab === 'hot') { if (score < 80 && tier !== 'hot') return false; }
+    if (_currentTab === 'warm') { if (!((score >= 50 && score < 80) || tier === 'warm')) return false; }
+    if (_currentTab === 'cold') { if ((score >= 50 || tier === 'hot' || tier === 'warm')) return false; }
+    if (_currentTab === 'new') { const weekAgo = Date.now() - 7 * 86400000; if (new Date(p.created_at) < weekAgo) return false; }
+    if (_currentTab === 'referral') { if (!p.referred_by && (p.source||'').toLowerCase() !== 'referral') return false; }
+
+    // Type filters (loan-type based)
+    if (_currentType === 'buyer') {
+      const lt = (p.effective_loan_type || '').toLowerCase();
+      if (!['conventional','fha','va','usda','jumbo'].some(t => lt.includes(t)) && (p.contact_type||'') !== 'buyer') return false;
+    }
+    if (_currentType === 'refinance') {
+      const lt = (p.effective_loan_type || '').toLowerCase();
+      if (!lt.includes('refinance') && !lt.includes('heloc') && !lt.includes('cashout')) return false;
+    }
+    if (_currentType === 'investor') {
+      const lt = (p.effective_loan_type || '').toLowerCase();
+      if (!lt.includes('dscr') && !lt.includes('investment') && !lt.includes('hard money')) return false;
+    }
+    if (_currentType === 'referral_partner') {
+      if ((p.contact_type||'').toLowerCase() !== 'referral_partner') return false;
+    }
+
+    // Dropdown filters (case-insensitive)
+    if (source && (p.source || '').toLowerCase() !== source.toLowerCase()) return false;
+    if (loan && (p.effective_loan_type || '').toLowerCase() !== loan.toLowerCase()) return false;
     if (pipeline && (p.lead_status || '') !== pipeline) return false;
+
+    // Search
     if (_searchQ) { const hay = `${p.first_name} ${p.last_name} ${p.email} ${p.phone} ${p.referred_by}`.toLowerCase(); if (!hay.includes(_searchQ)) return false; }
     return true;
   });
