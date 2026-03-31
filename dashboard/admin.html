@@ -1338,17 +1338,24 @@ async function importMismoFiles() {
 
       // ── EMPLOYMENT ──
       const empNode = doc.querySelector('EMPLOYER, EMPLOYMENT');
-      const employerName = empNode?.querySelector('FullName')?.textContent?.trim() || g('EmployerName') || '';
-      const positionTitle = g('EmploymentPositionDescription') || '';
-      const empStartDate = g('EmploymentStartDate') || null;
+      const employerName = empNode?.querySelector('LEGAL_ENTITY_DETAIL FullName')?.textContent?.trim()
+        || empNode?.querySelector('FullName')?.textContent?.trim()
+        || g('EmployerName') || '';
+      const positionTitle = empNode?.querySelector('EmploymentPositionDescription')?.textContent?.trim()
+        || g('EmploymentPositionDescription') || '';
+      const empStartDate = empNode?.querySelector('EmploymentStartDate')?.textContent?.trim()
+        || g('EmploymentStartDate') || null;
       const isSelfEmployed = bool('EmploymentBorrowerSelfEmployedIndicator');
-      const empStreet = empNode?.querySelector('AddressLineText')?.textContent?.trim() || '';
-      const empCity = empNode?.querySelector('CityName')?.textContent?.trim() || '';
-      const empState = empNode?.querySelector('StateCode')?.textContent?.trim() || '';
-      const empZip = empNode?.querySelector('PostalCode')?.textContent?.trim() || '';
+      const empStreet = empNode?.querySelector('ADDRESS AddressLineText')?.textContent?.trim() || empNode?.querySelector('AddressLineText')?.textContent?.trim() || '';
+      const empCity = empNode?.querySelector('ADDRESS CityName')?.textContent?.trim() || empNode?.querySelector('CityName')?.textContent?.trim() || '';
+      const empState = empNode?.querySelector('ADDRESS StateCode')?.textContent?.trim() || empNode?.querySelector('StateCode')?.textContent?.trim() || '';
+      const empZip = empNode?.querySelector('ADDRESS PostalCode')?.textContent?.trim() || empNode?.querySelector('PostalCode')?.textContent?.trim() || '';
 
       // ── INCOME ──
-      const baseIncome = parseFloat(g('CurrentIncomeMonthlyTotalAmount') || g('EmploymentMonthlyIncomeAmount')) || 0;
+      const incomeEl = doc.querySelector('CURRENT_INCOME_ITEM CURRENT_INCOME_ITEM_DETAIL');
+      const baseIncome = incomeEl
+        ? parseFloat(incomeEl.querySelector('CurrentIncomeMonthlyTotalAmount')?.textContent || '0')
+        : parseFloat(g('CurrentIncomeMonthlyTotalAmount') || g('EmploymentMonthlyIncomeAmount')) || 0;
 
       // ── LOAN DETAILS ──
       const loanPurpose = g('LoanPurposeType') || null;
@@ -1452,7 +1459,7 @@ async function importMismoFiles() {
           employer_name: employerName || null, employer_street: empStreet || null,
           employer_city: empCity || null, employer_state: empState || null, employer_zip: empZip || null,
           position_title: positionTitle || null, employment_start_date: empStartDate,
-          is_self_employed: isSelfEmployed, base_income: baseIncome || null,
+          is_self_employed: isSelfEmployed, base_income: baseIncome || null, total_monthly_income: baseIncome || null,
           loan_purpose: loanPurpose, loan_type: loanType, loan_amount: loanAmount,
           requested_loan_amount: loanAmount, current_interest_rate: interestRate,
           property_address_street: propStreet || null, property_address_city: propCity || null,
