@@ -1,4 +1,12 @@
-// Supabase config helper — reads APP_CONFIG with hardcoded URL fallback
+// Config fallback — ensures Supabase works even if env.js loads late
+(function() {
+  if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_URL) {
+    window.APP_CONFIG = window.APP_CONFIG || {};
+    window.APP_CONFIG.SUPABASE_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    // Key will be set by env.js — if missing, fetch will fail with 401
+  }
+})();
+
 function getSupabaseConfig() {
   return {
     url: window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co',
