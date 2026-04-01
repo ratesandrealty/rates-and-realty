@@ -205,8 +205,11 @@
 
   function onAuthSuccess(user, isSignup) {
     localStorage.setItem('portal_user', JSON.stringify(user));
+    localStorage.setItem('borrower_user', JSON.stringify(user));
     localStorage.setItem('borrower_email', user.email || '');
     localStorage.setItem('borrower_first_name', user.first_name || '');
+    localStorage.setItem('user_email', user.email || '');
+    localStorage.setItem('user_name', ((user.first_name || '') + ' ' + (user.last_name || '')).trim());
     syncShowingCart(user);
     if (isSignup) {
       _formSignup.classList.add('pa-hidden');
@@ -380,14 +383,27 @@
     },
     getUser: function () {
       try {
-        return JSON.parse(localStorage.getItem('portal_user')) || null;
-      } catch (e) {
-        return null;
-      }
+        var keys = ['portal_user', 'borrower_user'];
+        for (var i = 0; i < keys.length; i++) {
+          var v = localStorage.getItem(keys[i]);
+          if (v) return JSON.parse(v);
+        }
+        var email = localStorage.getItem('borrower_email') || localStorage.getItem('user_email');
+        if (email) return { email: email, first_name: localStorage.getItem('borrower_first_name') || '' };
+      } catch (e) {}
+      return null;
     },
     logout: function () {
-      localStorage.removeItem('portal_user');
+      ['portal_user','borrower_user','borrower_email','borrower_first_name','user_email','user_name','borrower_token','user_token'].forEach(function(k) { localStorage.removeItem(k); });
       window.location.href = '/public/search-homes.html';
+    },
+    setUser: function (user) {
+      localStorage.setItem('portal_user', JSON.stringify(user));
+      localStorage.setItem('borrower_user', JSON.stringify(user));
+      localStorage.setItem('borrower_email', user.email || '');
+      localStorage.setItem('borrower_first_name', user.first_name || '');
+      localStorage.setItem('user_email', user.email || '');
+      localStorage.setItem('user_name', ((user.first_name || '') + ' ' + (user.last_name || '')).trim());
     },
     isLoggedIn: function () {
       return !!this.getUser();
