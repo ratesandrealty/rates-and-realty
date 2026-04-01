@@ -538,6 +538,12 @@
     @media (max-width: 480px) {
       .sh-modal { padding: 26px 20px; }
     }
+    .county-tab { background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#fff;padding:8px 18px;border-radius:20px;cursor:pointer;font-size:13px;font-family:'Manrope',sans-serif;transition:all .2s; }
+    .county-tab:hover { border-color:#c9a84c;color:#c9a84c; }
+    .active-county { border-color:#c9a84c!important;color:#c9a84c!important;background:rgba(201,168,76,0.1)!important; }
+    .city-chip { background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);padding:6px 14px;border-radius:16px;cursor:pointer;font-size:12px;font-family:'Manrope',sans-serif;transition:all .2s; }
+    .city-chip:hover { border-color:#c9a84c;color:#c9a84c; }
+    .active-city { background:#c9a84c!important;color:#000!important;border-color:#c9a84c!important;font-weight:600; }
   </style>
 </head>
 <body>
@@ -799,27 +805,26 @@
     const TRESTLE_PROXY = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/trestle-proxy';
 
     const COUNTIES = {
-      'Orange County': ['Westminster','Garden Grove','Huntington Beach','Anaheim','Santa Ana','Irvine','Fountain Valley','Costa Mesa','Fullerton','Tustin'],
-      'Los Angeles County': ['Long Beach','Downey','Compton','Inglewood','Torrance','Carson','Cerritos'],
-      'Riverside County': ['Riverside','Corona','Murrieta','Temecula','Moreno Valley'],
-      'San Bernardino County': ['San Bernardino','Ontario','Rancho Cucamonga','Fontana']
+      'Orange County': ['Westminster','Garden Grove','Huntington Beach','Anaheim','Santa Ana','Irvine','Fountain Valley','Costa Mesa','Fullerton','Tustin','Orange','Placentia','Yorba Linda','Brea','La Habra'],
+      'Los Angeles County': ['Long Beach','Downey','Compton','Inglewood','Torrance','Carson','Cerritos','Lakewood','Norwalk','Whittier','Bellflower','Paramount'],
+      'Riverside County': ['Riverside','Corona','Murrieta','Temecula','Moreno Valley','Hemet','Perris','Indio','Palm Springs','Palm Desert'],
+      'San Bernardino County': ['San Bernardino','Ontario','Rancho Cucamonga','Fontana','Rialto','Colton','Victorville','Hesperia','Chino','Upland']
     };
 
     /* ── COUNTY/CITY NAV ── */
     function renderCountyNav() {
       const tabsEl = document.getElementById('county-tabs');
       const chipsEl = document.getElementById('city-chips');
+      const icons = {'Orange County':'🍊','Los Angeles County':'🌆','Riverside County':'🏔','San Bernardino County':'🏜'};
       tabsEl.innerHTML = Object.keys(COUNTIES).map(c =>
-        `<button onclick="selectCounty('${c}')" style="padding:7px 16px;border-radius:999px;border:1px solid ${c===activeCounty?'#c9a84c':'rgba(255,255,255,0.1)'};background:${c===activeCounty?'rgba(201,168,76,0.12)':'rgba(22,22,22,0.98)'};color:${c===activeCounty?'#c9a84c':'#b6ab93'};font-size:0.78rem;font-weight:600;cursor:pointer;font-family:'Manrope',sans-serif;transition:all .2s;">${c.replace(' County','')}</button>`
+        `<button onclick="selectCounty('${c}')" class="county-tab ${c===activeCounty?'active-county':''}" data-county="${c}">${icons[c]||''} ${c.replace(' County','')}</button>`
       ).join('');
       const cities = COUNTIES[activeCounty] || [];
-      chipsEl.innerHTML = [
-        `<button onclick="selectCity('')" style="padding:5px 14px;border-radius:999px;border:none;background:${!activeCity?'linear-gradient(135deg,#f2cf85,#C9A84C)':'rgba(255,255,255,0.06)'};color:${!activeCity?'#111':'#b6ab93'};font-size:0.74rem;font-weight:${!activeCity?'700':'500'};cursor:pointer;font-family:'Manrope',sans-serif;">All Cities</button>`,
-        ...cities.map(city =>
-          `<button onclick="selectCity('${city}')" style="padding:5px 14px;border-radius:999px;border:none;background:${city===activeCity?'linear-gradient(135deg,#f2cf85,#C9A84C)':'rgba(255,255,255,0.06)'};color:${city===activeCity?'#111':'#b6ab93'};font-size:0.74rem;font-weight:${city===activeCity?'700':'500'};cursor:pointer;font-family:'Manrope',sans-serif;">${city}</button>`)
-      ].join('');
+      chipsEl.innerHTML = cities.map(city =>
+        `<button onclick="selectCity('${city}')" class="city-chip ${city===activeCity?'active-city':''}" data-city="${city}">${city}</button>`
+      ).join('');
     }
-    function selectCounty(county) { activeCounty = county; activeCity = ''; renderCountyNav(); loadListings(); }
+    function selectCounty(county) { activeCounty = county; activeCity = COUNTIES[county][0]; renderCountyNav(); loadListings(); }
     function selectCity(city) { activeCity = city; renderCountyNav(); loadListings(); }
 
     /* ── SHOWING CART ── */
@@ -876,7 +881,7 @@
       form.style.display = 'block';
       el.innerHTML = showingCart.map(p => `
         <div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
-          <div style="width:50px;height:50px;border-radius:8px;background:linear-gradient(135deg,#1a2840,#0d1a2e);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">🏠</div>
+          ${p.photo ? `<img src="${p.photo}" style="width:60px;height:60px;object-fit:cover;border-radius:8px;flex-shrink:0;" onerror="this.style.display='none'">` : `<div style="width:60px;height:60px;border-radius:8px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">🏠</div>`}
           <div style="flex:1;min-width:0;">
             <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.address}</div>
             <div style="font-size:11px;color:rgba(255,255,255,0.4);">${p.city} · ${p.beds}bd/${p.baths}ba · $${(p.price||0).toLocaleString()}</div>
@@ -913,8 +918,14 @@
             body: JSON.stringify({
               name: user.email,
               email: user.email,
-              property_address: listing.address + ', ' + listing.city,
+              property_address: listing.address + ', ' + listing.city + ', ' + (listing.state||'CA') + ' ' + (listing.zip||''),
               listing_key: listing.id,
+              property_price: listing.price || null,
+              property_beds: listing.beds || null,
+              property_baths: listing.baths || null,
+              property_sqft: listing.sqft || null,
+              property_city: listing.city || null,
+              property_photo: listing.photo || null,
               preferred_date: date || null,
               preferred_time: selectedCartTime,
               notes: notes || null,
@@ -966,8 +977,9 @@
             endpoint: 'Property',
             params: {
               '$filter': cityFilter,
-              '$top': '48',
-              '$select': 'ListingKey,UnparsedAddress,City,StateOrProvince,PostalCode,ListPrice,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,DaysOnMarket,Latitude,Longitude,PhotosCount,ListingContractDate,MlsStatus',
+              '$top': '24',
+              '$expand': 'Media($top=1;$select=MediaURL)',
+              '$select': 'ListingKey,UnparsedAddress,City,StateOrProvince,PostalCode,ListPrice,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,DaysOnMarket,YearBuilt,Latitude,Longitude,MlsStatus',
               '$orderby': 'ListPrice desc'
             }
           })
@@ -984,12 +996,13 @@
           sqft: p.LivingArea || 0,
           type: (p.PropertySubType || p.PropertyType || 'house').toLowerCase(),
           dom: p.DaysOnMarket || 0,
-          yearBuilt: null,
+          yearBuilt: p.YearBuilt || null,
           lat: p.Latitude,
           lng: p.Longitude,
-          photo: null,
-          photosCount: p.PhotosCount || 0,
+          photo: (p.Media && p.Media.length > 0) ? p.Media[0].MediaURL : null,
           mlsStatus: p.MlsStatus || '',
+          state: p.StateOrProvince || 'CA',
+          zip: p.PostalCode || '',
           badge: p.DaysOnMarket != null && p.DaysOnMarket <= 3 ? 'New Listing'
                : p.MlsStatus === 'Active Under Contract' ? 'Under Contract' : null,
           badgeStyle: p.DaysOnMarket != null && p.DaysOnMarket <= 3 ? 'gold' : 'blue',
@@ -1462,7 +1475,7 @@
     /* ── INIT ── */
     document.addEventListener('DOMContentLoaded', function() {
       renderCountyNav();
-      loadListings();
+      selectCounty('Orange County');
       loadFavorites();
       updateCartUI();
     });
