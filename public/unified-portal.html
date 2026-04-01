@@ -671,6 +671,22 @@ input,select,textarea{font-family:inherit}
       <!-- SECTION: PROFILE -->
       <div class="portal-section" id="sec-profile">
         <div class="section-header"><h2>Profile</h2></div>
+
+        <div style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:9px;padding:14px;margin-bottom:16px">
+          <div style="font-size:.7rem;color:#666;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:10px">Your Unique Identifiers</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <div style="font-size:.68rem;color:#666;margin-bottom:4px">Borrower ID (Portal)</div>
+              <div id="profileBorrowerId" style="font-family:monospace;font-size:.95rem;font-weight:700;color:#C9A84C;cursor:pointer" onclick="copyId('profileBorrowerId')" title="Click to copy">—</div>
+            </div>
+            <div>
+              <div style="font-size:.68rem;color:#666;margin-bottom:4px">CRM Contact ID</div>
+              <div id="profileCrmId" style="font-family:monospace;font-size:.95rem;font-weight:700;color:#888;cursor:pointer" onclick="copyId('profileCrmId')" title="Click to copy">—</div>
+            </div>
+          </div>
+          <div style="font-size:.68rem;color:#444;margin-top:8px">Reference either ID when calling Rene at (714) 472-8508</div>
+        </div>
+
         <form class="profile-form" id="profileForm" onsubmit="saveProfile(event)">
           <div class="form-row">
             <div class="form-group"><label>First Name</label><input id="profFirst" type="text"/></div>
@@ -775,6 +791,13 @@ function copyBorrowerId() {
       var confirm = document.getElementById('copyConfirm');
       if (confirm) { confirm.style.display = 'block'; setTimeout(function() { confirm.style.display = 'none'; }, 2000); }
     });
+  }
+}
+
+function copyId(elId) {
+  var text = document.getElementById(elId)?.textContent;
+  if (text && text !== '—') {
+    navigator.clipboard.writeText(text).then(function() { showToast('Copied: ' + text); });
   }
 }
 
@@ -892,6 +915,19 @@ function initPortal(user) {
   var borrowerId = user.borrower_id || 'RR-' + (user.id || '').replace(/-/g,'').substring(0,6).toUpperCase();
   var bidEl = document.getElementById('borrowerIdDisplay');
   if (bidEl) bidEl.textContent = borrowerId;
+  var profBidEl = document.getElementById('profileBorrowerId');
+  if (profBidEl) profBidEl.textContent = borrowerId;
+
+  // Fetch CRM contact crm_id
+  if (user.email) {
+    fetch(SB + '/rest/v1/contacts?email=eq.' + encodeURIComponent(user.email) + '&select=crm_id&limit=1', {
+      headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
+    }).then(function(r) { return r.json(); }).then(function(rows) {
+      var crmId = rows && rows[0] ? rows[0].crm_id : null;
+      var el = document.getElementById('profileCrmId');
+      if (el && crmId) el.textContent = crmId;
+    }).catch(function() {});
+  }
 
   // load everything
   loadDashboardStats();

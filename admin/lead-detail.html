@@ -1165,6 +1165,13 @@
     <div class="ld-avatar" id="sidebar-avatar">??</div>
     <div class="ld-sidebar-name" id="sidebar-name">Loading…</div>
     <div class="ld-sidebar-email" id="sidebar-email">—</div>
+    <div id="sidebarCrmId" style="text-align:center;margin-top:6px;display:none">
+      <span style="display:inline-flex;align-items:center;gap:6px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:4px 10px;cursor:pointer" onclick="navigator.clipboard.writeText(document.getElementById('crmIdBadge')?.textContent||'').then(()=>alert('Copied!'))" title="Click to copy">
+        <i class="fas fa-fingerprint" style="color:#C9A84C;font-size:.7rem"></i>
+        <span style="font-size:.68rem;color:#666">CRM:</span>
+        <span id="crmIdBadge" style="font-family:monospace;font-size:.78rem;font-weight:700;color:#C9A84C">—</span>
+      </span>
+    </div>
 
     <!-- Borrower Portal Info -->
     <div id="portalInfoCard" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:14px;margin:12px 16px">
@@ -3304,6 +3311,10 @@ function populateUI() {
   document.getElementById('sidebar-avatar').textContent = initials;
   document.getElementById('sidebar-name').textContent = name;
   document.getElementById('sidebar-email').textContent = contactData.email || '—';
+  if (contactData.crm_id) {
+    document.getElementById('crmIdBadge').textContent = contactData.crm_id;
+    document.getElementById('sidebarCrmId').style.display = 'block';
+  }
   const callBtn = document.getElementById('callBtn');
   const emailBtn = document.getElementById('emailBtn');
   const smsBtn = document.getElementById('smsBtn');
@@ -3312,7 +3323,7 @@ function populateUI() {
   if (smsBtn && contactData.phone) smsBtn.href = 'sms:' + contactData.phone.replace(/\D/g,'');
 
   // Load portal info
-  if (contactData.email) loadPortalInfo(contactData.email);
+  if (contactData.email) loadPortalInfo(contactData.email, contactData.crm_id);
 
   // Lead Details tab
   setVal('f-source', leadData.source || contactData.source);
@@ -6879,11 +6890,16 @@ let crmContactEmail = null;
 let crmPortalUser = null;
 let pwVisible = false;
 
-async function loadPortalInfo(contactEmail) {
+async function loadPortalInfo(contactEmail, contactCrmId) {
   crmContactEmail = contactEmail;
   if (!contactEmail) return;
   const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+
+  // Show CRM ID immediately
+  const crmIdEl = document.getElementById('crmIdBadge');
+  if (crmIdEl && contactCrmId) crmIdEl.textContent = contactCrmId;
+
   try {
     const res = await fetch(`${SB_P}/rest/v1/portal_users?email=eq.${encodeURIComponent(contactEmail)}&select=id,email,first_name,last_name,borrower_id,temp_password_plain,temp_password,last_login,created_at`, {
       headers: { 'apikey': SK_P, 'Authorization': 'Bearer ' + SK_P }
@@ -6891,21 +6907,51 @@ async function loadPortalInfo(contactEmail) {
     const users = await res.json();
     const user = users?.[0];
     if (!user) {
-      document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#666">Not registered</span>';
+      document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#555">Not yet registered</span> <button onclick="crmCreatePortalAccount()" style="background:none;border:none;color:#C9A84C;font-size:.72rem;cursor:pointer;text-decoration:underline">Create Account</button>';
       document.getElementById('crmBorrowerId').textContent = '—';
       document.getElementById('crmPassword').textContent = '—';
+      const resetBtn = document.getElementById('crmResetPwBtn');
+      if (resetBtn) resetBtn.style.display = 'none';
       return;
     }
     crmPortalUser = user;
     document.getElementById('crmBorrowerId').textContent = user.borrower_id || 'RR-' + (user.id || '').replace(/-/g,'').substring(0,6).toUpperCase();
-    document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#3cb43c">✓ Registered</span>';
+    document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#3cb43c">✓ Portal Active</span>';
     document.getElementById('crmLastLogin').textContent = user.last_login
-      ? new Date(user.last_login).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})
+      ? new Date(user.last_login).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})
       : 'Never';
-    const pw = user.temp_password_plain || user.temp_password || '(custom password set)';
+    const pw = user.temp_password_plain || user.temp_password || '(custom password)';
     document.getElementById('crmPassword').dataset.plain = pw;
     document.getElementById('crmPassword').textContent = '••••••••';
+    const resetBtn = document.getElementById('crmResetPwBtn');
+    if (resetBtn) resetBtn.style.display = 'flex';
   } catch(e) { console.error('Portal info load error:', e); }
+}
+
+async function crmCreatePortalAccount() {
+  if (!crmContactEmail) return;
+  const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  try {
+    const cRes = await fetch(`${SB_P}/rest/v1/contacts?email=eq.${encodeURIComponent(crmContactEmail)}&select=first_name,last_name,phone`, {
+      headers: { 'apikey': SK_P, 'Authorization': 'Bearer ' + SK_P }
+    });
+    const contacts = await cRes.json();
+    const c = contacts?.[0];
+    if (!c) { alert('Contact not found'); return; }
+    const res2 = await fetch(`${SB_P}/functions/v1/portal-auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SK_P },
+      body: JSON.stringify({ action: 'signup', email: crmContactEmail, first_name: c.first_name || 'Borrower', last_name: c.last_name || '', phone: c.phone || '' })
+    });
+    const data = await res2.json();
+    if (data.success || data.code === 'EXISTS') {
+      alert('Portal account created! Welcome email sent to ' + crmContactEmail);
+      loadPortalInfo(crmContactEmail);
+    } else {
+      alert('Error: ' + (data.error || 'Unknown'));
+    }
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
 function togglePasswordVisibility() {
