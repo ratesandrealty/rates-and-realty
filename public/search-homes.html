@@ -174,7 +174,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .cart-fab{position:fixed;bottom:24px;left:24px;z-index:250;background:var(--gold);color:#000;width:52px;height:52px;border:none;border-radius:50%;font-size:20px;box-shadow:0 4px 16px rgba(201,168,76,.3);display:none;align-items:center;justify-content:center;}
 .cart-fab:hover{filter:brightness(1.1);transform:scale(1.05);}
 .cart-fab .badge{position:absolute;top:-4px;right:-4px;background:#e00;color:#fff;width:20px;height:20px;border-radius:50%;font-size:11px;display:flex;align-items:center;justify-content:center;font-weight:700;}
-.cart-drawer{position:fixed;top:0;right:-400px;width:400px;max-width:90vw;height:100vh;background:#1a1a1a;border-left:1px solid var(--border);z-index:350;transition:right .3s;display:flex;flex-direction:column;}
+.cart-drawer{position:fixed;top:0;right:-400px;width:390px;max-width:90vw;height:100vh;background:#111;border-left:1px solid var(--border);z-index:600;transition:right .3s;display:flex;flex-direction:column;isolation:isolate;}
 .cart-drawer.open{right:0;}
 .cart-drawer-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0;}
 .cart-drawer-header h3{font-size:15px;display:flex;align-items:center;gap:8px;font-weight:700;}
@@ -496,7 +496,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
   <i class="fa-solid fa-calendar-check"></i>
   <span class="badge" id="cartBadge">0</span>
 </button>
-<div id="cartOverlay" onclick="toggleCart()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:599;backdrop-filter:blur(2px)"></div>
+<div id="cartOverlay" onclick="toggleCart()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:599"></div>
 <div class="cart-drawer" id="cartDrawer">
   <div class="cart-drawer-header">
     <h3><i class="fa-solid fa-calendar-check" style="color:var(--gold)"></i> Showing Cart (<span id="cartCnt">0</span>)</h3>
@@ -1051,6 +1051,23 @@ function goToStep(n) {
 }
 
 async function submitCart() {
+  // Auth gate — prompt signup if not logged in
+  var user = getPortalUser();
+  if (!user) {
+    showCartAuthModal(function(u) {
+      var n=document.getElementById('cartName');var e=document.getElementById('cartEmail');var p=document.getElementById('cartPhone');
+      if(n&&!n.value)n.value=(u.first_name||'')+' '+(u.last_name||'');
+      if(e&&!e.value)e.value=u.email||'';
+      if(p&&!p.value&&u.phone)p.value=u.phone;
+      showToast('Account linked! Review details and submit.');
+    });
+    return;
+  }
+  // Auto-fill from user if empty
+  var nameEl=document.getElementById('cartName');var emailEl=document.getElementById('cartEmail');
+  if(nameEl&&!nameEl.value)nameEl.value=(user.first_name||'')+' '+(user.last_name||'');
+  if(emailEl&&!emailEl.value)emailEl.value=user.email||'';
+
   var btn = document.getElementById('cartSubmitBtn');
   btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
   var batchId = 'batch_' + Date.now();
@@ -1232,6 +1249,17 @@ function toggleMap() {
 }
 
 /* ===== TOAST ===== */
+/* ===== PORTAL: AUTH HELPERS ===== */
+function getPortalUser() {
+  try { var p=localStorage.getItem('portal_user'); if(p) return JSON.parse(p); var b=localStorage.getItem('borrower_user'); if(b) return JSON.parse(b); } catch(e) {}
+  return null;
+}
+function handleCartSchedule() {
+  var user = getPortalUser();
+  if (!user) { showCartAuthModal(function(u) { toggleCart(); setTimeout(function(){goToStep(2);},300); }); return; }
+  toggleCart(); setTimeout(function(){goToStep(2);},100);
+}
+
 /* ===== PORTAL: SAVE LISTING ===== */
 function handleSaveListing(listingKey, btn) {
   if (typeof PortalAuth === 'undefined') { addToCart(listingKey); return; }
@@ -1266,6 +1294,19 @@ function showToast(msg) {
   t.classList.add('show');
   setTimeout(function() { t.classList.remove('show'); }, 3000);
 }
+
+/* ===== CART AUTH MODAL ===== */
+function showCartAuthModal(onSuccess) {
+  document.getElementById('cartAuthModal')?.remove();
+  var m=document.createElement('div');m.id='cartAuthModal';
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:800;display:flex;align-items:center;justify-content:center;padding:20px';
+  m.innerHTML='<div style="background:#151515;border:1px solid #2a2a2a;border-radius:16px;width:100%;max-width:420px;isolation:isolate"><div style="padding:20px 24px 0"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div><div style="font-size:1rem;font-weight:700;color:#eee">🏠 Save your showings</div><div style="font-size:.75rem;color:#888;margin-top:3px">Free account — track tours in one place</div></div><button onclick="document.getElementById(\'cartAuthModal\').remove()" style="background:#1a1a1a;border:1px solid #333;border-radius:50%;width:30px;height:30px;color:#888;cursor:pointer;font-size:.85rem;flex-shrink:0">✕</button></div><div style="display:flex;border-bottom:1px solid #222"><button id="caTabS" onclick="switchCATab(\'signup\')" style="flex:1;padding:9px;background:none;border:none;border-bottom:2px solid #C9A84C;color:#C9A84C;font-weight:700;font-size:.82rem;cursor:pointer">Create Account</button><button id="caTabL" onclick="switchCATab(\'login\')" style="flex:1;padding:9px;background:none;border:none;border-bottom:2px solid transparent;color:#888;font-size:.82rem;cursor:pointer">Sign In</button></div></div><div id="caFS" style="padding:16px 24px 24px;display:flex;flex-direction:column;gap:9px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><input id="caFirst" placeholder="First Name *" style="background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#eee;font-size:.85rem;outline:none;width:100%"><input id="caLast" placeholder="Last Name" style="background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#eee;font-size:.85rem;outline:none;width:100%"></div><input id="caEmail" type="email" placeholder="Email *" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#eee;font-size:.85rem;outline:none"><input id="caPhone" type="tel" placeholder="Phone" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#eee;font-size:.85rem;outline:none"><div id="caErrS" style="color:#e55;font-size:.75rem;display:none"></div><button id="caBtnS" onclick="submitCAAuth(\'signup\')" style="width:100%;background:#C9A84C;color:#000;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:.9rem;cursor:pointer">Create Free Account →</button><div style="text-align:center;font-size:.7rem;color:#555">We\'ll email your password. No spam.</div></div><div id="caFL" style="padding:16px 24px 24px;display:none;flex-direction:column;gap:9px"><input id="caLE" type="email" placeholder="Email *" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#eee;font-size:.85rem;outline:none"><input id="caLP" type="password" placeholder="Password *" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#eee;font-size:.85rem;outline:none"><div id="caErrL" style="color:#e55;font-size:.75rem;display:none"></div><button id="caBtnL" onclick="submitCAAuth(\'login\')" style="width:100%;background:#C9A84C;color:#000;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:.9rem;cursor:pointer">Sign In →</button></div></div>';
+  document.body.appendChild(m);
+  m.addEventListener('click',function(e){if(e.target===m)m.remove();});
+  window._caCallback=onSuccess;
+}
+window.switchCATab=function(t){document.getElementById('caFS').style.display=t==='signup'?'flex':'none';document.getElementById('caFL').style.display=t==='login'?'flex':'none';document.getElementById('caTabS').style.cssText+=';border-bottom-color:'+(t==='signup'?'#C9A84C':'transparent')+';color:'+(t==='signup'?'#C9A84C':'#888');document.getElementById('caTabL').style.cssText+=';border-bottom-color:'+(t==='login'?'#C9A84C':'transparent')+';color:'+(t==='login'?'#C9A84C':'#888');};
+window.submitCAAuth=async function(type){var btn=document.getElementById(type==='signup'?'caBtnS':'caBtnL');var err=document.getElementById(type==='signup'?'caErrS':'caErrL');btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Please wait...';err.style.display='none';try{var body;if(type==='signup'){var f=document.getElementById('caFirst').value.trim();var e=document.getElementById('caEmail').value.trim();if(!f||!e)throw new Error('First name and email required');body={action:'signup',first_name:f,last_name:document.getElementById('caLast').value.trim(),email:e,phone:document.getElementById('caPhone').value.trim()};}else{var e=document.getElementById('caLE').value.trim();var p=document.getElementById('caLP').value;if(!e||!p)throw new Error('Email and password required');body={action:'login',email:e,password:p};}var res=await fetch(SUPABASE_URL+'/functions/v1/portal-auth',{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},body:JSON.stringify(body)});var data=await res.json();if(!res.ok||data.error)throw new Error(data.error||'Error');var user=data.user||{id:data.user_id,email:body.email,first_name:body.first_name};localStorage.setItem('portal_user',JSON.stringify(user));localStorage.setItem('borrower_email',user.email||'');localStorage.setItem('borrower_first_name',user.first_name||'');if(user.id&&showingCart.length){showingCart.forEach(function(item){fetch(SUPABASE_URL+'/rest/v1/saved_listings',{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Prefer':'resolution=ignore-duplicates'},body:JSON.stringify({portal_user_id:user.id,listing_key:item.listingKey,listing_price:item.price,listing_address:item.address,listing_city:item.city,listing_photo:item.photo})}).catch(function(){});});}document.getElementById('cartAuthModal').remove();showToast(type==='signup'?'✓ Account created! Check email for password.':'✓ Welcome back!');var nl=document.getElementById('navPortalLink');if(nl){nl.style.display='inline';nl.textContent='👤 '+(user.first_name||'Portal');}if(window._caCallback)window._caCallback(user);}catch(ex){err.textContent=ex.message;err.style.display='block';btn.disabled=false;btn.innerHTML=type==='signup'?'Create Free Account →':'Sign In →';}};
 
 /* ===== GOOGLE MAP ===== */
 function initMap() {
