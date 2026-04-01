@@ -570,6 +570,10 @@ let allListings = [];
 let filteredListings = [];
 let map, markers = [], infoWindow, drawingManager, currentShape = null;
 let showingCart = [];
+const PAGE_SIZE = 24;
+let currentPage = 1;
+let totalCount = 0;
+let isLoading = false;
 
 let filters = {
   minPrice: '', maxPrice: '', minPPSF: '', maxPPSF: '',
@@ -755,39 +759,58 @@ function buildODataFilter() {
 
   return '$filter=' + filterStr
     + '&$orderby=' + orderby
-    + '&$top=50'
+    + '&$count=true&$top=' + PAGE_SIZE
     + '&$expand=Media($top=1;$select=MediaURL,Order)'
     + '&$select=ListingKey,ListPrice,UnparsedAddress,City,StateOrProvince,PostalCode,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,StandardStatus,ListingContractDate,DaysOnMarket,Latitude,Longitude,PublicRemarks,YearBuilt,LotSizeAcres,GarageSpaces,AssociationFee,CountyOrParish';
 }
 
 /* ===== FETCH LISTINGS ===== */
-async function fetchListings() {
-  var grid = document.getElementById('listingsGrid');
-  grid.innerHTML = '<div class="loading-overlay"><i class="fa-solid fa-spinner"></i><p>Loading listings...</p></div>';
+async function fetchListings(page, append) {
+  if (isLoading) return;
+  isLoading = true;
+  page = page || 1;
+  append = !!append;
+  currentPage = page;
 
-  var rawFilter = buildODataFilter();
-  console.log('FILTER:', decodeURIComponent(rawFilter.split('&')[0]));
-  console.log('RAW:', rawFilter);
+  var grid = document.getElementById('listingsGrid');
+  if (!append) {
+    grid.innerHTML = '<div class="loading-overlay"><i class="fa-solid fa-spinner"></i><p>Loading listings...</p></div>';
+    allListings = [];
+  }
+
+  var sort = document.getElementById('sortSelect').value || 'ListPrice desc';
+  var skip = (page - 1) * PAGE_SIZE;
+  var filterParts = buildODataFilter();
+  // filterParts is a full rawFilter string starting with $filter=...
+  // We need to replace $top and add $skip
+  var base = filterParts.replace(/\$top=\d+/, '$top=' + PAGE_SIZE);
+  if (base.indexOf('$skip') === -1) base += '&$skip=' + skip;
+  else base = base.replace(/\$skip=\d+/, '$skip=' + skip);
+
+  console.log('[Trestle] page:', page, 'skip:', skip);
+  console.log('RAW:', base);
+
   try {
     var res = await fetch(SUPABASE_URL + '/functions/v1/trestle-proxy', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'apikey': SUPABASE_KEY
-      },
-      body: JSON.stringify({ endpoint: 'Property', rawFilter: rawFilter })
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({ endpoint: 'Property', rawFilter: base })
     });
     var data = await res.json();
-    allListings = data.value || data || [];
-    applyClientFilters();
+    var listings = data.value || [];
+
+    if (append) { allListings = allListings.concat(listings); }
+    else { allListings = listings; totalCount = data['@odata.count'] || 0; }
+
+    applyClientFilters(page, append);
   } catch (e) {
     console.error('Fetch error:', e);
-    grid.innerHTML = '<div class="no-results"><i class="fa-solid fa-triangle-exclamation"></i><p>Error loading listings. Please try again.</p></div>';
+    if (!append) grid.innerHTML = '<div class="no-results"><i class="fa-solid fa-triangle-exclamation"></i><p>Error loading listings.</p></div>';
   }
+  isLoading = false;
 }
 
-function applyClientFilters() {
+function applyClientFilters(page, append) {
   var items = allListings.slice();
 
   // Price per sqft filter (client-side)
@@ -821,15 +844,16 @@ function applyClientFilters() {
   }
 
   filteredListings = items;
-  renderListings();
+  renderListings(page, append);
   renderMarkers();
-  document.getElementById('listingCount').textContent = filteredListings.length + ' home' + (filteredListings.length !== 1 ? 's' : '');
+  var countText = totalCount ? totalCount.toLocaleString() + ' listings' : filteredListings.length + ' home' + (filteredListings.length !== 1 ? 's' : '');
+  document.getElementById('listingCount').textContent = countText;
 }
 
 /* ===== RENDER LISTINGS ===== */
-function renderListings() {
+function renderListings(page, append) {
   var grid = document.getElementById('listingsGrid');
-  if (filteredListings.length === 0) {
+  if (filteredListings.length === 0 && !append) {
     grid.innerHTML = '<div class="no-results"><i class="fa-solid fa-house-circle-xmark"></i><p>No listings found. Try adjusting your filters.</p></div>';
     return;
   }
@@ -841,7 +865,7 @@ function renderListings() {
     var status = l.StandardStatus || 'Active';
     var badgeClass = status === 'Active' ? 'active-badge' : status === 'ComingSoon' ? 'coming' : 'closed';
     var badgeText = status === 'Active' ? 'For Sale' : status === 'ComingSoon' ? 'Coming Soon' : 'Sold';
-    var isLand = l.PropertySubType === 'Land';
+    var isLand = l.PropertyType === 'Land' || (l.PropertySubType||'').toLowerCase().includes('land');
     var inCart = showingCart.some(function(c) { return c.ListingKey === l.ListingKey; });
     var subtype = l.PropertySubType || l.PropertyType || '';
 
@@ -857,8 +881,9 @@ function renderListings() {
       + '<div class="card-address">' + (l.UnparsedAddress || 'Address unavailable') + '</div>'
       + '<div class="card-city">' + (l.City || '') + ', ' + (l.StateOrProvince || 'CA') + ' ' + (l.PostalCode || '') + '</div>'
       + '<div class="card-stats">'
-      + (!isLand ? '<span><i class="fa-solid fa-bed"></i> ' + (l.BedroomsTotal || '-') + ' bd</span><span><i class="fa-solid fa-bath"></i> ' + (l.BathroomsTotalInteger || '-') + ' ba</span>' : '')
-      + '<span><i class="fa-solid fa-ruler-combined"></i> ' + (l.LivingArea ? Number(l.LivingArea).toLocaleString() : '-') + ' sqft</span>'
+      + (!isLand && l.BedroomsTotal != null ? '<span><i class="fa-solid fa-bed"></i> ' + l.BedroomsTotal + ' bd</span>' : '')
+      + (!isLand && l.BathroomsTotalInteger != null ? '<span><i class="fa-solid fa-bath"></i> ' + l.BathroomsTotalInteger + ' ba</span>' : '')
+      + (l.LivingArea ? '<span><i class="fa-solid fa-ruler-combined"></i> ' + Number(l.LivingArea).toLocaleString() + ' sqft</span>' : '')
       + (l.YearBuilt ? '<span><i class="fa-solid fa-calendar"></i> ' + l.YearBuilt + '</span>' : '')
       + '</div>'
       + '<span class="card-type">' + subtype + '</span>'
@@ -870,6 +895,20 @@ function renderListings() {
       + '<button class="btn-pin" onclick="event.stopPropagation();panTo(' + i + ')" title="Show on map"><i class="fa-solid fa-map-pin"></i></button>'
       + '</div></div>';
   }
+
+  // Pagination footer
+  var hasMore = totalCount > 0 ? allListings.length < totalCount : filteredListings.length >= PAGE_SIZE * currentPage;
+  var shown = allListings.length;
+  html += '<div id="loadMoreRow" style="grid-column:1/-1;padding:16px 0;text-align:center">';
+  if (hasMore) {
+    html += '<div style="color:var(--muted);font-size:.78rem;margin-bottom:10px">Showing ' + shown + (totalCount ? ' of ' + totalCount.toLocaleString() : '+') + ' listings</div>';
+    html += '<button onclick="fetchListings(' + (currentPage+1) + ',true)" style="background:var(--gold);color:#000;border:none;border-radius:9px;padding:11px 28px;font-weight:700;font-size:.85rem;cursor:pointer">Load More Listings</button>';
+    html += '<div style="color:var(--muted);font-size:.72rem;margin-top:6px">' + PAGE_SIZE + ' per page</div>';
+  } else if (shown > 0) {
+    html += '<div style="color:var(--muted);font-size:.78rem">All ' + shown + ' listings loaded</div>';
+  }
+  html += '</div>';
+
   grid.innerHTML = html;
 }
 
