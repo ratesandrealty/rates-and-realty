@@ -234,8 +234,9 @@ input,select{font-family:inherit}
 <div class="photo-gallery" id="photoGallery">
   <img class="gallery-main" id="heroPhoto" src="" alt="Property Photo" onerror="this.src='https://placehold.co/1280x440/111/333?text=No+Photo+Available'">
   <div class="status-ribbon active" id="statusRibbon">For Sale</div>
-  <div class="gallery-overlay" id="viewPhotosBtn"><i class="fas fa-images"></i> View Photos</div>
+  <div class="gallery-overlay" id="viewPhotosBtn"><i class="fas fa-images"></i> <span id="photoCount">View Photos</span></div>
 </div>
+<div id="thumbStrip" style="display:none;gap:6px;overflow-x:auto;padding:6px 16px;background:#0d0d0d;border-bottom:1px solid var(--border);scrollbar-width:thin;height:80px"></div>
 
 <!-- PHOTO LIGHTBOX -->
 <div class="lightbox" id="lightbox">
@@ -541,10 +542,18 @@ function populateListing() {
 
   document.title = (l.UnparsedAddress || 'Property') + ' | Rates & Realty';
 
-  // Hero photo
-  const photos = (l.Media || []).map(m => m.MediaURL).filter(Boolean);
+  // Hero photo + thumbnail strip
+  const photos = l.Media ? l.Media.sort((a,b)=>(a.Order||0)-(b.Order||0)).map(m=>m.MediaURL).filter(Boolean) : [];
   lbPhotos = photos;
   document.getElementById('heroPhoto').src = photos[0] || 'https://placehold.co/1280x440/111/333?text=No+Photo+Available';
+  document.getElementById('photoCount').textContent = photos.length > 1 ? `View Photos (${photos.length})` : 'View Photo';
+  const thumbStrip = document.getElementById('thumbStrip');
+  if(thumbStrip && photos.length > 1) {
+    thumbStrip.innerHTML = photos.map((url,i) =>
+      `<img src="${url}" onclick="setHero('${url}',this)" style="width:120px;height:100%;object-fit:cover;border-radius:6px;cursor:pointer;border:2px solid ${i===0?'var(--gold)':'transparent'};flex-shrink:0" onerror="this.style.display='none'">`
+    ).join('');
+    thumbStrip.style.display='flex';
+  } else if(thumbStrip) { thumbStrip.style.display='none'; }
 
   // Status ribbon
   const statusEl = document.getElementById('statusRibbon');
@@ -724,16 +733,16 @@ function calcMortgage() {
 
 /* ===== SIMILAR HOMES ===== */
 async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
-  const minPrice = Math.round(price * 0.70);
-  const maxPrice = Math.round(price * 1.30);
+  const minPrice = Math.round((price||0) * 0.65);
+  const maxPrice = Math.round((price||0) * 1.35);
   let typeFilter;
   if (isLand) {
     typeFilter = "PropertyType eq 'Land'";
   } else {
-    typeFilter = "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse')";
+    typeFilter = "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse'";
   }
-  const filterStr = "City eq '" + city + "' and StandardStatus eq 'Active' and ListPrice ge " + minPrice + " and ListPrice le " + maxPrice + " and ListingKey ne '" + excludeKey + "' and " + typeFilter;
-  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=6&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,StateOrProvince,PostalCode,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,StandardStatus,Latitude,Longitude,Media,YearBuilt,LotSizeAcres,DaysOnMarket,ListingContractDate,GarageSpaces,AssociationFee,CountyOrParish,PublicRemarks";
+  const filterStr = "City eq '" + city + "' and StandardStatus eq 'Active' and ListPrice ge " + minPrice + " and ListPrice le " + maxPrice + " and (" + typeFilter + ")";
+  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=3;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Media";
 
   try {
     const res = await fetch(SB_URL + '/functions/v1/trestle-proxy', {
@@ -742,8 +751,7 @@ async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
       body: JSON.stringify({ endpoint: 'Property', rawFilter: rawFilter })
     });
     const data = await res.json();
-    const listings = (data.value || []).slice(0, 6);
-    // Store for click navigation
+    const listings = (data.value || []).filter(function(l) { return l.ListingKey !== excludeKey; }).slice(0, 6);
     sessionStorage.setItem('all_similar_listings', JSON.stringify(listings));
 
     const grid = document.getElementById('similarGrid');
@@ -788,16 +796,16 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
     return;
   }
 
-  const minPrice = Math.round(price * 0.60);
-  const maxPrice = Math.round(price * 1.40);
+  const minPrice = Math.round((price||0) * 0.55);
+  const maxPrice = Math.round((price||0) * 1.45);
   let typeFilter;
   if (isLand) {
     typeFilter = "PropertyType eq 'Land'";
   } else {
-    typeFilter = "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse')";
+    typeFilter = "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse'";
   }
-  const filterStr = "City eq '" + city + "' and StandardStatus eq 'Active' and ListPrice ge " + minPrice + " and ListPrice le " + maxPrice + " and ListingKey ne '" + excludeKey + "' and " + typeFilter;
-  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,Media";
+  const filterStr = "City eq '" + city + "' and StandardStatus eq 'Active' and ListPrice ge " + minPrice + " and ListPrice le " + maxPrice + " and (" + typeFilter + ")";
+  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=15&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,Media";
 
   try {
     const res = await fetch(SB_URL + '/functions/v1/trestle-proxy', {
@@ -806,7 +814,7 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
       body: JSON.stringify({ endpoint: 'Property', rawFilter: rawFilter })
     });
     const data = await res.json();
-    const nearby = (data.value || []).filter(function(l) { return l.Latitude && l.Longitude; }).slice(0, 10);
+    const nearby = (data.value || []).filter(function(l) { return l.ListingKey !== excludeKey && l.Latitude && l.Longitude; }).slice(0, 10);
 
     // Store for click navigation
     const existing = JSON.parse(sessionStorage.getItem('all_similar_listings') || '[]');
@@ -880,6 +888,12 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
 }
 
 /* ===== LIGHTBOX ===== */
+function setHero(url, thumb) {
+  document.getElementById('heroPhoto').src = url;
+  document.querySelectorAll('#thumbStrip img').forEach(t => t.style.border='2px solid transparent');
+  if(thumb) thumb.style.border='2px solid var(--gold)';
+}
+
 function openLightbox(idx) {
   if (!lbPhotos.length) return;
   lbIndex = idx;
