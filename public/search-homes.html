@@ -582,6 +582,19 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
     <button id="cartNextBtn" onclick="goToStep(2)" style="display:none;width:100%;background:var(--gold);color:#000;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:.9rem;cursor:pointer;margin-top:8px">Schedule These Showings →</button>
   </div>
   <div id="cartStep2" style="flex:1;overflow-y:auto;padding:16px;display:none;flex-direction:column;gap:12px">
+    <div id="cartLoginBanner" style="margin-bottom:14px">
+      <div id="cartLoggedInBanner" style="display:none;background:rgba(0,160,80,.1);border:1px solid rgba(0,160,80,.3);border-radius:9px;padding:10px 14px;font-size:.8rem;color:#3cb43c;align-items:center;gap:8px">
+        <i class="fas fa-user-check"></i>
+        <span id="cartLoggedInText">Booking as you</span>
+        <a href="/public/unified-portal.html" style="color:#C9A84C;text-decoration:none;margin-left:auto;font-size:.72rem;white-space:nowrap">My Portal ↗</a>
+      </div>
+      <div id="cartSignInPrompt" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:9px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div style="font-size:.78rem;color:#888">Already have an account? Skip the form.</div>
+        <button onclick="openCartSignIn()" style="background:#C9A84C;color:#000;border:none;border-radius:7px;padding:7px 14px;font-weight:700;font-size:.78rem;cursor:pointer;white-space:nowrap">
+          <i class="fas fa-sign-in-alt"></i> Sign In
+        </button>
+      </div>
+    </div>
     <div style="font-size:.82rem;color:var(--muted);margin-bottom:4px">When would you like to tour these homes?</div>
     <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px">Preferred Date *</label><input type="date" id="cartDate" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:.88rem;outline:none"></div>
     <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px">Preferred Time *</label><select id="cartTime" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:.88rem;outline:none;cursor:pointer"><option value="">Select a time...</option><option>Morning (9am – 12pm)</option><option>Afternoon (12pm – 4pm)</option><option>Evening (4pm – 7pm)</option><option>Flexible / Any time</option></select></div>
@@ -1128,15 +1141,85 @@ function goToStep(n) {
     else if (s<n) { ind.style.color='#5a5'; ind.style.borderBottomColor='#5a5'; }
     else { ind.style.color='var(--muted)'; ind.style.borderBottomColor='transparent'; }
   });
-  // Pre-fill user info on step 2
+  // Pre-fill user info on step 2 and update login banner
   if (n === 2) {
     var user = getPortalUser();
+    var loggedInBanner = document.getElementById('cartLoggedInBanner');
+    var signInPrompt = document.getElementById('cartSignInPrompt');
     if (user) {
+      if (loggedInBanner) {
+        loggedInBanner.style.display = 'flex';
+        document.getElementById('cartLoggedInText').textContent =
+          'Booking as ' + (user.first_name || '') + ' ' + (user.last_name || '') + ' · ' + (user.email || '');
+      }
+      if (signInPrompt) signInPrompt.style.display = 'none';
       var ne=document.getElementById('cartName'),ee=document.getElementById('cartEmail'),pe=document.getElementById('cartPhone');
-      if(ne&&!ne.value) ne.value = (user.first_name||'')+' '+(user.last_name||'');
-      if(ee&&!ee.value) ee.value = user.email||'';
-      if(pe&&!pe.value&&user.phone) pe.value = user.phone;
+      if(ne&&!ne.value.trim()) ne.value = ((user.first_name||'')+' '+(user.last_name||'')).trim();
+      if(ee&&!ee.value.trim()) ee.value = user.email||'';
+      if(pe&&!pe.value.trim()&&user.phone) pe.value = user.phone;
+    } else {
+      if (loggedInBanner) loggedInBanner.style.display = 'none';
+      if (signInPrompt) signInPrompt.style.display = 'flex';
     }
+  }
+}
+
+function openCartSignIn() {
+  document.getElementById('cartSignInModal')?.remove();
+  var modal = document.createElement('div');
+  modal.id = 'cartSignInModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:800;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = '<div style="background:#151515;border:1px solid #2a2a2a;border-radius:14px;width:100%;max-width:380px;padding:0;overflow:hidden">'
+    + '<div style="padding:16px 20px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center">'
+    + '<div style="font-size:.95rem;font-weight:700;color:#eee">Sign In to Your Portal</div>'
+    + '<button onclick="document.getElementById(\'cartSignInModal\').remove()" style="background:none;border:none;color:#666;cursor:pointer;font-size:1rem">✕</button>'
+    + '</div>'
+    + '<div style="padding:18px 20px;display:flex;flex-direction:column;gap:10px">'
+    + '<input id="csiEmail" type="email" placeholder="Email *" autocomplete="email" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:11px 14px;color:#eee;font-size:.9rem;outline:none">'
+    + '<input id="csiPassword" type="password" placeholder="Password *" autocomplete="current-password" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:11px 14px;color:#eee;font-size:.9rem;outline:none">'
+    + '<div id="csiError" style="color:#e55;font-size:.78rem;display:none;padding:2px 0"></div>'
+    + '<button id="csiBtn" onclick="submitCartSignIn()" style="width:100%;background:#C9A84C;color:#000;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:.92rem;cursor:pointer">Sign In →</button>'
+    + '<div style="text-align:center;font-size:.75rem;color:#555">No account? <span onclick="document.getElementById(\'cartSignInModal\').remove();showCartAuthModal(function(){goToStep(2);})" style="color:#C9A84C;cursor:pointer;text-decoration:underline">Create one free</span></div>'
+    + '</div></div>';
+  document.body.appendChild(modal);
+  modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+  setTimeout(function() { var el = document.getElementById('csiEmail'); if (el) el.focus(); }, 100);
+  modal.addEventListener('keydown', function(e) { if (e.key === 'Enter') submitCartSignIn(); });
+}
+
+async function submitCartSignIn() {
+  var email = document.getElementById('csiEmail')?.value?.trim();
+  var password = document.getElementById('csiPassword')?.value;
+  var btn = document.getElementById('csiBtn');
+  var errEl = document.getElementById('csiError');
+  if (!email || !password) { errEl.textContent = 'Email and password are required'; errEl.style.display = 'block'; return; }
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing in...';
+  errEl.style.display = 'none';
+  try {
+    var res = await fetch(SUPABASE_URL + '/functions/v1/portal-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({ action: 'login', email: email.toLowerCase(), password: password })
+    });
+    var data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Login failed');
+    var user = data.user;
+    localStorage.setItem('portal_user', JSON.stringify(user));
+    localStorage.setItem('borrower_user', JSON.stringify(user));
+    localStorage.setItem('borrower_email', user.email);
+    localStorage.setItem('borrower_first_name', user.first_name || '');
+    localStorage.setItem('user_email', user.email);
+    document.getElementById('cartSignInModal')?.remove();
+    var navLink = document.getElementById('navPortalLink');
+    if (navLink) { navLink.style.display = 'inline'; navLink.textContent = '👤 ' + (user.first_name || 'My Portal'); }
+    goToStep(2);
+    showToast('✓ Welcome back, ' + (user.first_name || '') + '!');
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.innerHTML = 'Sign In →';
   }
 }
 
