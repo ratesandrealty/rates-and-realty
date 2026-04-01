@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-03P16TMWM8"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-03P16TMWM8');
+  </script>
+  <title>Property Details | Rates & Realty</title>
+  <meta name="description" content="View property details, photos, and schedule a showing with Rene Duarte at Rates & Realty.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/components/styles.css">
+  <link rel="stylesheet" href="/public/loan-page.css">
+  <link rel="stylesheet" href="/public/css/responsive.css">
+  <script src="/api/env.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  <style>
+    /* ── BASE ── */
+    body {
+      background: #050505;
+      color: #f6f1e8;
+      font-family: 'Manrope', sans-serif;
+      margin: 0; padding: 0;
+    }
+
+    /* ── BACK BUTTON ── */
+    .pd-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 14px 28px;
+      color: #b6ab93; font-size: 0.88rem; font-weight: 600;
+      text-decoration: none;
+      transition: color .2s;
+    }
+    .pd-back:hover { color: #c9a84c; }
+
+    /* ── HERO PHOTO ── */
+    .pd-hero {
+      width: 100%; max-height: 480px;
+      overflow: hidden; position: relative;
+    }
+    .pd-hero img {
+      width: 100%; height: 480px;
+      object-fit: cover; display: block;
+    }
+    .pd-hero-fallback {
+      width: 100%; height: 480px;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #111 0%, #1a1a1a 50%, #111 100%);
+      font-size: 5rem;
+    }
+    .pd-hero-gradient {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      height: 160px;
+      background: linear-gradient(to top, #050505, transparent);
+      pointer-events: none;
+    }
+
+    /* ── CONTAINER ── */
+    .pd-container {
+      max-width: 1200px; margin: 0 auto;
+      padding: 0 28px 60px;
+    }
+    .pd-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 40px;
+      margin-top: 32px;
+    }
+
+    /* ── LEFT COLUMN ── */
+    .pd-price {
+      font-family: 'Manrope', sans-serif;
+      font-size: 2.4rem; font-weight: 800;
+      color: #c9a84c; margin: 0 0 6px;
+    }
+    .pd-address {
+      font-size: 1.2rem; font-weight: 700;
+      color: #f6f1e8; margin: 0 0 4px;
+    }
+    .pd-city {
+      font-size: 0.95rem; color: #b6ab93;
+      margin: 0 0 24px;
+    }
+
+    /* Stats bar */
+    .pd-stats {
+      display: flex; flex-wrap: wrap; gap: 0;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      padding-bottom: 20px; margin-bottom: 28px;
+    }
+    .pd-stat {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 2px;
+      padding: 10px 18px;
+      border-right: 1px solid rgba(255,255,255,0.06);
+    }
+    .pd-stat:last-child { border-right: none; }
+    .pd-stat-icon { font-size: 16px; margin-bottom: 2px; }
+    .pd-stat-value {
+      font-size: 18px; font-weight: 700;
+      color: #f6f1e8;
+    }
+    .pd-stat-label {
+      font-size: 11px; color: #b6ab93;
+      text-transform: uppercase; letter-spacing: .06em;
+    }
+
+    /* MLS Badge */
+    .pd-badge {
+      display: inline-block;
+      padding: 5px 14px; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 700;
+      letter-spacing: .08em; text-transform: uppercase;
+      background: rgba(201,168,76,0.12);
+      color: #c9a84c;
+      border: 1px solid rgba(201,168,76,0.25);
+      margin-bottom: 28px;
+    }
+
+    /* Property details section */
+    .pd-section-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.5rem; font-weight: 600;
+      color: #f6f1e8; margin: 0 0 14px;
+    }
+    .pd-description {
+      font-size: 0.92rem; color: #b6ab93;
+      line-height: 1.75; margin: 0 0 36px;
+    }
+
+    /* Map */
+    #detail-map {
+      width: 100%; height: 300px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: #111;
+    }
+
+    /* ── RIGHT COLUMN (SIDEBAR) ── */
+    .pd-sidebar {
+      position: sticky; top: 24px;
+      align-self: start;
+    }
+    .pd-card {
+      background: #111;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px; padding: 24px;
+    }
+
+    /* Buttons */
+    .pd-btn-cart {
+      display: block; width: 100%;
+      padding: 14px; border: none; border-radius: 999px;
+      background: linear-gradient(135deg, #f2cf85, #C9A84C);
+      color: #111; font-size: 0.92rem; font-weight: 700;
+      font-family: 'Manrope', sans-serif;
+      cursor: pointer; transition: all .2s;
+      box-shadow: 0 4px 20px rgba(201,168,76,0.3);
+    }
+    .pd-btn-cart:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 28px rgba(201,168,76,0.45);
+    }
+    .pd-btn-showing {
+      display: block; width: 100%;
+      padding: 14px; border-radius: 999px;
+      background: transparent;
+      border: 1.5px solid #c9a84c;
+      color: #c9a84c; font-size: 0.92rem; font-weight: 700;
+      font-family: 'Manrope', sans-serif;
+      cursor: pointer; transition: all .2s;
+      margin-top: 10px;
+    }
+    .pd-btn-showing:hover {
+      background: rgba(201,168,76,0.08);
+    }
+
+    /* Divider */
+    .pd-divider {
+      height: 1px;
+      background: rgba(255,255,255,0.08);
+      margin: 20px 0;
+    }
+
+    /* Agent card */
+    .pd-agent-label {
+      font-size: 0.7rem; font-weight: 700;
+      color: #b6ab93; text-transform: uppercase;
+      letter-spacing: .1em; margin: 0 0 8px;
+    }
+    .pd-agent-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.3rem; font-weight: 600;
+      color: #f6f1e8; margin: 0 0 4px;
+    }
+    .pd-agent-nmls {
+      font-size: 0.75rem; color: #b6ab93;
+      margin: 0 0 12px;
+    }
+    .pd-agent-link {
+      display: block; font-size: 0.85rem;
+      color: #c9a84c; text-decoration: none;
+      margin-bottom: 4px; transition: opacity .2s;
+    }
+    .pd-agent-link:hover { opacity: 0.8; }
+
+    /* CTA */
+    .pd-cta {
+      display: block; text-align: center;
+      padding: 13px; border-radius: 999px;
+      background: rgba(201,168,76,0.1);
+      border: 1px solid rgba(201,168,76,0.25);
+      color: #c9a84c; font-size: 0.85rem; font-weight: 700;
+      text-decoration: none; transition: all .2s;
+    }
+    .pd-cta:hover {
+      background: rgba(201,168,76,0.18);
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      .pd-grid {
+        grid-template-columns: 1fr;
+        gap: 28px;
+      }
+      .pd-sidebar {
+        position: static;
+      }
+      .pd-hero img, .pd-hero-fallback {
+        height: 320px;
+      }
+      .pd-stats {
+        flex-wrap: wrap; gap: 0;
+      }
+      .pd-stat {
+        padding: 8px 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Back button -->
+  <a href="/public/search-homes.html" class="pd-back">&larr; Back to Search</a>
+
+  <!-- Hero photo -->
+  <div class="pd-hero" id="pd-hero"></div>
+
+  <!-- Main content -->
+  <div class="pd-container">
+    <div class="pd-grid">
+
+      <!-- LEFT COLUMN -->
+      <div class="pd-left">
+        <p class="pd-price" id="pd-price"></p>
+        <p class="pd-address" id="pd-address"></p>
+        <p class="pd-city" id="pd-city"></p>
+
+        <div class="pd-stats" id="pd-stats"></div>
+
+        <span class="pd-badge" id="pd-badge"></span>
+
+        <h2 class="pd-section-title">Property Details</h2>
+        <p class="pd-description">Full property description will be loaded from MLS data. Contact Rene for more details about this property.</p>
+
+        <h2 class="pd-section-title" style="margin-top: 12px;">Location</h2>
+        <div id="detail-map"></div>
+      </div>
+
+      <!-- RIGHT COLUMN -->
+      <div class="pd-sidebar">
+        <div class="pd-card">
+          <button class="pd-btn-cart" id="btn-cart">&#127968; Add to Showing Cart</button>
+          <button class="pd-btn-showing" id="btn-showing">&#128197; Schedule a Showing</button>
+
+          <div class="pd-divider"></div>
+
+          <p class="pd-agent-label">Your Agent</p>
+          <p class="pd-agent-name">Rene Duarte</p>
+          <p class="pd-agent-nmls">NMLS #1795044</p>
+          <a href="tel:+17144728508" class="pd-agent-link">(714) 472-8508</a>
+          <a href="mailto:rene@ratesandrealty.com" class="pd-agent-link">rene@ratesandrealty.com</a>
+
+          <div class="pd-divider"></div>
+
+          <a href="/public/apply.html" class="pd-cta">Get Pre-Approved</a>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div id="site-footer"></div>
+
+  <!-- Google Maps -->
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyACmn2j8wwVNO53MLWGPFFsImjEUxe4D50&callback=initDetailMap"></script>
+
+  <script>
+    /* ── LISTING DATA ── */
+    const raw = sessionStorage.getItem('selected_listing');
+    if (!raw) { window.location.href = '/public/search-homes.html'; }
+    const listing = JSON.parse(raw || '{}');
+
+    /* ── HERO ── */
+    const heroEl = document.getElementById('pd-hero');
+    if (listing.photo) {
+      heroEl.innerHTML = '<img src="' + listing.photo + '" alt="Property photo"><div class="pd-hero-gradient"></div>';
+    } else {
+      heroEl.innerHTML = '<div class="pd-hero-fallback">&#127968;</div><div class="pd-hero-gradient"></div>';
+    }
+
+    /* ── PRICE ── */
+    document.getElementById('pd-price').textContent = listing.price
+      ? '$' + Number(listing.price).toLocaleString()
+      : 'Price Unavailable';
+
+    /* ── ADDRESS ── */
+    document.getElementById('pd-address').textContent = listing.address || 'Address Not Available';
+    const cityParts = [listing.city, listing.state].filter(Boolean).join(', ');
+    document.getElementById('pd-city').textContent = cityParts + (listing.zip ? ' ' + listing.zip : '');
+
+    /* ── STATS ── */
+    const stats = [
+      { icon: '&#128716;', value: listing.beds ?? '—', label: 'Beds' },
+      { icon: '&#128703;', value: listing.baths ?? '—', label: 'Baths' },
+      { icon: '&#128208;', value: listing.sqft ? Number(listing.sqft).toLocaleString() : '—', label: 'Sqft' },
+      { icon: '&#127959;', value: listing.yearBuilt ?? '—', label: 'Built' },
+      { icon: '&#128197;', value: listing.dom ?? '—', label: 'DOM' },
+      { icon: '&#127991;', value: listing.type ?? '—', label: 'Type' }
+    ];
+    document.getElementById('pd-stats').innerHTML = stats.map(function(s) {
+      return '<div class="pd-stat"><span class="pd-stat-icon">' + s.icon + '</span><span class="pd-stat-value">' + s.value + '</span><span class="pd-stat-label">' + s.label + '</span></div>';
+    }).join('');
+
+    /* ── MLS BADGE ── */
+    const badge = document.getElementById('pd-badge');
+    badge.textContent = listing.mlsStatus || 'Active';
+
+    /* ── ADD TO CART ── */
+    document.getElementById('btn-cart').addEventListener('click', function() {
+      var cart = JSON.parse(localStorage.getItem('showing_cart') || '[]');
+      var exists = cart.some(function(item) {
+        return item.listingId === listing.listingId || item.id === listing.id;
+      });
+      if (exists) {
+        alert('This property is already in your showing cart.');
+        return;
+      }
+      cart.push(listing);
+      localStorage.setItem('showing_cart', JSON.stringify(cart));
+      alert('Added to showing cart!');
+    });
+
+    /* ── SCHEDULE SHOWING ── */
+    document.getElementById('btn-showing').addEventListener('click', function() {
+      if (window.Cal) {
+        Cal('ui', { styles: { branding: { brandColor: '#c9a84c' } } });
+        Cal('openModal');
+      } else {
+        window.open('https://cal.com/reneduarte', '_blank');
+      }
+    });
+
+    /* ── GOOGLE MAP ── */
+    function initDetailMap() {
+      var lat = parseFloat(listing.lat);
+      var lng = parseFloat(listing.lng);
+      if (isNaN(lat) || isNaN(lng)) {
+        document.getElementById('detail-map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#b6ab93;font-size:0.9rem;">Map location not available</div>';
+        return;
+      }
+      var center = { lat: lat, lng: lng };
+      var map = new google.maps.Map(document.getElementById('detail-map'), {
+        zoom: 15,
+        center: center,
+        styles: [
+          { elementType: 'geometry', stylers: [{ color: '#1a1a1a' }] },
+          { elementType: 'labels.text.fill', stylers: [{ color: '#b6ab93' }] },
+          { elementType: 'labels.text.stroke', stylers: [{ color: '#050505' }] },
+          { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a2a' }] },
+          { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e0e0e' }] }
+        ],
+        disableDefaultUI: true,
+        zoomControl: true
+      });
+      new google.maps.Marker({
+        position: center,
+        map: map,
+        title: listing.address || 'Property'
+      });
+    }
+
+    /* ── PAGE TITLE ── */
+    if (listing.address) {
+      document.title = listing.address + ' | Rates & Realty';
+    }
+  </script>
+
+  <script type="module" src="/components/layout.js"></script>
+</body>
+</html>
