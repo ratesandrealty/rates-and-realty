@@ -511,7 +511,7 @@ input,select,textarea{font-family:inherit}
           <div style="font-size:.7rem;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.12em;padding-bottom:8px;border-bottom:1px solid #C9A84C22;margin-bottom:16px">1B. Current Address</div>
           <div style="background:rgba(201,168,76,.06);border:1px solid #C9A84C22;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:.75rem;color:#888"><i class="fas fa-info-circle" style="color:#C9A84C;margin-right:6px"></i>2-year address history required</div>
           <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px">
-            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Street Address</label><input type="text" id="app_street" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Street Address</label><input type="text" id="app_street" placeholder="Start typing address..." title="Start typing and select from suggestions" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Unit #</label><input type="text" id="app_unit" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:14px">
@@ -1018,6 +1018,11 @@ function navigateSection(section) {
   document.querySelectorAll('#sidebarNav a').forEach(function(a) {
     a.classList.toggle('active', a.getAttribute('data-section') === section);
   });
+  if (section === 'application') {
+    setTimeout(function() {
+      if (window.google && window.google.maps && window.google.maps.places) initAddressAutocomplete();
+    }, 150);
+  }
 }
 
 /* ===== DASHBOARD STATS ===== */
@@ -1193,10 +1198,11 @@ function addPrevAddress(data) {
   var is = 'width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:9px 11px;color:#eee;font-size:.85rem;outline:none;box-sizing:border-box';
   var ls = 'font-size:.66rem;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px';
   block.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:.7rem;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.1em">Previous Address #'+idx+'</div><button onclick="removePrevAddress('+idx+')" style="background:none;border:1px solid #333;color:#555;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:.72rem">✕</button></div>'
-    + '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">Street</label><input type="text" id="paddr_street_'+idx+'" value="'+(data.street||'')+'" style="'+is+'"></div><div style="width:80px"><label style="'+ls+'">Unit</label><input type="text" id="paddr_unit_'+idx+'" value="'+(data.unit||'')+'" style="'+is+'"></div></div>'
+    + '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">Street</label><input type="text" id="paddr_street_'+idx+'" value="'+(data.street||'')+'" placeholder="Start typing address..." style="'+is+'"></div><div style="width:80px"><label style="'+ls+'">Unit</label><input type="text" id="paddr_unit_'+idx+'" value="'+(data.unit||'')+'" style="'+is+'"></div></div>'
     + '<div style="display:grid;grid-template-columns:1fr 80px 100px;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">City</label><input type="text" id="paddr_city_'+idx+'" value="'+(data.city||'')+'" style="'+is+'"></div><div><label style="'+ls+'">State</label><input type="text" id="paddr_state_'+idx+'" value="'+(data.state||'CA')+'" maxlength="2" style="'+is+';text-transform:uppercase"></div><div><label style="'+ls+'">ZIP</label><input type="text" id="paddr_zip_'+idx+'" value="'+(data.zip||'')+'" maxlength="5" style="'+is+'"></div></div>'
     + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px"><div><label style="'+ls+'">Housing</label><select id="paddr_housing_'+idx+'" style="'+is+';cursor:pointer"><option value="">Select</option><option '+(data.housing==='Own'?'selected':'')+'>Own</option><option '+(data.housing==='Rent'?'selected':'')+'>Rent</option><option '+(data.housing==='Family'?'selected':'')+'>Family</option></select></div><div><label style="'+ls+'">Years</label><input type="number" id="paddr_years_'+idx+'" value="'+(data.years||'')+'" min="0" style="'+is+'"></div><div><label style="'+ls+'">Monthly Rent $</label><input type="number" id="paddr_rent_'+idx+'" value="'+(data.monthly_rent||'')+'" style="'+is+'"></div></div>';
   container.appendChild(block);
+  setTimeout(function() { if (typeof attachDynamicPlaces === 'function') attachDynamicPlaces('address', idx); }, 100);
 }
 function removePrevAddress(idx) { var el = document.getElementById('prevAddr_'+idx); if (el) el.remove(); }
 function getPrevAddresses() {
@@ -1229,6 +1235,7 @@ function addPrevEmployer(data) {
     + '<div style="display:grid;grid-template-columns:1fr 80px 80px;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">City</label><input type="text" id="pemp_city_'+idx+'" value="'+(data.city||'')+'" style="'+is+'"></div><div><label style="'+ls+'">State</label><input type="text" id="pemp_state_'+idx+'" value="'+(data.state||'CA')+'" maxlength="2" style="'+is+';text-transform:uppercase"></div><div><label style="'+ls+'">ZIP</label><input type="text" id="pemp_zip_'+idx+'" value="'+(data.zip||'')+'" maxlength="5" style="'+is+'"></div></div>'
     + '<div style="display:grid;grid-template-columns:1fr auto;gap:10px"><div><label style="'+ls+'">Monthly Income $</label><input type="number" id="pemp_income_'+idx+'" value="'+(data.monthly_income||'')+'" style="'+is+'"></div><div style="display:flex;align-items:center;padding-top:20px"><label style="font-size:.82rem;color:#888;display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" id="pemp_selfemp_'+idx+'" '+(data.self_employed?'checked':'')+' style="accent-color:#C9A84C"> Self-Employed</label></div></div>';
   container.appendChild(block);
+  setTimeout(function() { if (typeof attachDynamicPlaces === 'function') attachDynamicPlaces('employer', idx); }, 100);
 }
 function removePrevEmployer(idx) { var el = document.getElementById('prevEmp_'+idx); if (el) el.remove(); }
 function getPrevEmployers() {
@@ -1761,7 +1768,58 @@ document.addEventListener('DOMContentLoaded', function() {
     showAuthPage();
   }
 });
+
+/* ===== GOOGLE PLACES AUTOCOMPLETE ===== */
+function attachPlacesAutocomplete(streetId, cityId, stateId, zipId) {
+  var input = document.getElementById(streetId);
+  if (!input || !window.google || !window.google.maps || !window.google.maps.places) return;
+  var ac = new google.maps.places.Autocomplete(input, {
+    types: ['address'], componentRestrictions: { country: 'us' },
+    fields: ['address_components', 'formatted_address']
+  });
+  if (!document.getElementById('placesStyle')) {
+    var st = document.createElement('style'); st.id = 'placesStyle';
+    st.textContent = '.pac-container{background:#1a1a1a!important;border:1px solid #C9A84C55!important;border-radius:0 0 10px 10px!important;box-shadow:0 8px 24px rgba(0,0,0,.6)!important;z-index:9999!important}.pac-item{background:#1a1a1a!important;border-top:1px solid #222!important;color:#ccc!important;padding:8px 14px!important;font-size:.82rem!important;cursor:pointer!important}.pac-item:hover,.pac-item-selected{background:#2a2a2a!important}.pac-item-query{color:#C9A84C!important;font-weight:600!important}.pac-matched{color:#C9A84C!important;font-weight:700!important}.pac-icon{display:none!important}';
+    document.head.appendChild(st);
+  }
+  ac.addListener('place_changed', function() {
+    var place = ac.getPlace();
+    if (!place || !place.address_components) return;
+    var num = '', route = '', city = '', state = '', zip = '';
+    place.address_components.forEach(function(c) {
+      var t = c.types;
+      if (t.indexOf('street_number') > -1) num = c.long_name;
+      if (t.indexOf('route') > -1) route = c.short_name;
+      if (t.indexOf('locality') > -1) city = c.long_name;
+      if (t.indexOf('sublocality_level_1') > -1 && !city) city = c.long_name;
+      if (t.indexOf('administrative_area_level_1') > -1) state = c.short_name;
+      if (t.indexOf('postal_code') > -1) zip = c.long_name;
+    });
+    input.value = num + (route ? ' ' + route : '');
+    var hl = function(el) { if (!el) return; el.style.borderColor = '#C9A84C'; el.style.background = 'rgba(201,168,76,.05)'; setTimeout(function() { el.style.borderColor = '#2a2a2a'; el.style.background = '#1a1a1a'; }, 2000); };
+    var ce = document.getElementById(cityId); if (ce && city) { ce.value = city; hl(ce); }
+    var se = document.getElementById(stateId); if (se && state) { se.value = state; hl(se); }
+    var ze = document.getElementById(zipId); if (ze && zip) { ze.value = zip; hl(ze); }
+    hl(input);
+    if (typeof updateAppProgress === 'function') updateAppProgress();
+  });
+  return ac;
+}
+
+function initAddressAutocomplete() {
+  attachPlacesAutocomplete('app_street', 'app_city', 'app_state', 'app_zip');
+  attachPlacesAutocomplete('app_emp_street', 'app_emp_city', 'app_emp_state', 'app_emp_zip');
+}
+
+function attachDynamicPlaces(type, idx) {
+  if (!window.google || !window.google.maps || !window.google.maps.places) return;
+  if (type === 'address') attachPlacesAutocomplete('paddr_street_' + idx, 'paddr_city_' + idx, 'paddr_state_' + idx, 'paddr_zip_' + idx);
+  else if (type === 'employer') attachPlacesAutocomplete('pemp_street_' + idx, 'pemp_city_' + idx, 'pemp_state_' + idx, 'pemp_zip_' + idx);
+}
+
+function initPortalMap() { initAddressAutocomplete(); }
 </script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBQDh0BqE9vtyBCLyDoFTMJwVV2iFYyDZQ&libraries=places&callback=initPortalMap"></script>
 <script src="/public/components/footer.js" defer></script>
 </body>
 </html>
