@@ -570,9 +570,10 @@ function updateCityBtn() {
   if(!btn) return;
   var n = selectedCities.length;
   var total = COUNTIES[activeCounty].cities.length;
-  if(n === 0 || n === total) btn.innerHTML = 'All ' + activeCounty.replace(' County','') + ' <i class="fa-solid fa-caret-down" style="font-size:.7rem"></i>';
-  else if(n === 1) btn.innerHTML = selectedCities[0] + ' <i class="fa-solid fa-caret-down" style="font-size:.7rem"></i>';
-  else btn.innerHTML = n + ' Cities <i class="fa-solid fa-caret-down" style="font-size:.7rem"></i>';
+  var caret = ' <i class="fa-solid fa-caret-down" style="font-size:.7rem"></i>';
+  if(n === 0 || n === total) btn.innerHTML = 'All ' + activeCounty.replace(' County','') + ' County' + caret;
+  else if(n === 1) btn.innerHTML = selectedCities[0] + caret;
+  else btn.innerHTML = selectedCities[0] + ' +' + (n-1) + ' more' + caret;
 }
 function toggleCityDropdown() {
   var dd = document.getElementById('cityDropdown');
@@ -599,17 +600,35 @@ function initStatusTabs() {
 function buildODataFilter() {
   var parts = [];
 
-  // City
-  if (selectedCities.length === 1) parts.push("City eq '" + selectedCities[0] + "'");
-  else if (selectedCities.length > 1) parts.push("(" + selectedCities.map(function(c){return "City eq '" + c + "'";}).join(' or ') + ")");
+  // City — fallback to all county cities if none selected
+  var citiesToFilter = selectedCities.length > 0 ? selectedCities : COUNTIES[activeCounty].cities;
+  var cityList = citiesToFilter.slice(0, 10); // Trestle URL length limit
+  if (cityList.length === 1) parts.push("City eq '" + cityList[0] + "'");
+  else if (cityList.length > 1) parts.push("(" + cityList.map(function(c){return "City eq '" + c + "'";}).join(' or ') + ")");
 
   // Status
   if (activeStatus) parts.push("StandardStatus eq '" + activeStatus + "'");
 
   // Property types
-  if (filters.types.length > 0 && filters.types.length < 6) {
-    var tp = filters.types.map(function(t) { return "PropertySubType eq '" + t + "'"; }).join(' or ');
-    parts.push('(' + tp + ')');
+  if (filters.types.length > 0 && filters.types.length < 8) {
+    var hasRes = filters.types.includes('Residential');
+    var hasCondo = filters.types.includes('Condominium');
+    var hasTown = filters.types.includes('Townhouse');
+    // Default state (House+Condo+Townhome) = no type filter, show everything
+    if (hasRes && hasCondo && hasTown && filters.types.length === 3) {
+      // No type filter needed
+    } else {
+      var tp = [];
+      if (hasRes) tp.push("PropertyType eq 'Residential'");
+      if (hasCondo) tp.push("PropertyType eq 'Condominium'");
+      if (hasTown) tp.push("PropertySubType eq 'Townhouse'");
+      if (filters.types.includes('Residential Income')) tp.push("PropertyType eq 'Residential Income'");
+      if (filters.types.includes('Land')) tp.push("PropertyType eq 'Land'");
+      if (filters.types.includes('Mobile Home')) tp.push("PropertyType eq 'Manufactured On Land'");
+      if (filters.types.includes('Commercial')) tp.push("PropertyType eq 'Commercial Sale'");
+      if (tp.length === 1) parts.push(tp[0]);
+      else if (tp.length > 1) parts.push('(' + tp.join(' or ') + ')');
+    }
   }
 
   // Price
@@ -651,6 +670,8 @@ async function fetchListings() {
   grid.innerHTML = '<div class="loading-overlay"><i class="fa-solid fa-spinner"></i><p>Loading listings...</p></div>';
 
   var rawFilter = buildODataFilter();
+  console.log('FILTER:', decodeURIComponent(rawFilter.split('&')[0]));
+  console.log('RAW:', rawFilter);
   try {
     var res = await fetch(SUPABASE_URL + '/functions/v1/trestle-proxy', {
       method: 'POST',
