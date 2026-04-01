@@ -538,10 +538,12 @@
     @media (max-width: 480px) {
       .sh-modal { padding: 26px 20px; }
     }
-    .county-tab { background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#fff;padding:8px 18px;border-radius:20px;cursor:pointer;font-size:13px;font-family:'Manrope',sans-serif;transition:all .2s; }
-    .county-tab:hover { border-color:#c9a84c;color:#c9a84c; }
-    .active-county { border-color:#c9a84c!important;color:#c9a84c!important;background:rgba(201,168,76,0.1)!important; }
-    .city-chip { background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);padding:6px 14px;border-radius:16px;cursor:pointer;font-size:12px;font-family:'Manrope',sans-serif;transition:all .2s; }
+    .county-tab { background:transparent;border:none;border-bottom:2px solid transparent;border-radius:0;color:rgba(255,255,255,0.6);padding:10px 20px;cursor:pointer;font-size:14px;font-weight:600;font-family:'Manrope',sans-serif;transition:all .2s;white-space:nowrap; }
+    .county-tab:hover { color:#c9a84c; }
+    .active-county { border-bottom-color:#c9a84c!important;color:#c9a84c!important; }
+    #city-chips { display:flex;flex-wrap:nowrap;overflow-x:auto;gap:8px;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:rgba(201,168,76,0.3) transparent; }
+    #city-chips::-webkit-scrollbar { height:4px; } #city-chips::-webkit-scrollbar-thumb { background:rgba(201,168,76,0.3);border-radius:2px; }
+    .city-chip { background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);padding:6px 16px;border-radius:20px;cursor:pointer;font-size:12px;font-family:'Manrope',sans-serif;transition:all .2s;white-space:nowrap;flex-shrink:0; }
     .city-chip:hover { border-color:#c9a84c;color:#c9a84c; }
     .active-city { background:#c9a84c!important;color:#000!important;border-color:#c9a84c!important;font-weight:600; }
   </style>
@@ -567,10 +569,10 @@
   </section>
 
   <!-- ── COUNTY/CITY NAV ── -->
-  <div id="county-city-nav" style="background:#080808;border-bottom:1px solid rgba(255,255,255,0.06);padding:14px 0 10px;">
+  <div id="county-city-nav" style="background:#080808;border-bottom:1px solid rgba(255,255,255,0.06);padding:20px 0 12px;">
     <div class="container">
-      <div id="county-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
-      <div id="city-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+      <div id="county-tabs" style="display:flex;gap:0;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:14px;overflow-x:auto;"></div>
+      <div id="city-chips"></div>
     </div>
   </div>
 
@@ -1145,49 +1147,63 @@
 
       countEl.textContent = filteredListings.length + " listing" + (filteredListings.length !== 1 ? "s" : "");
 
-      grid.innerHTML = filteredListings.map(p => `
-        <div class="sh-card" id="card-${p.id}" data-prop-id="${p.id}">
-          <div class="sh-card-photo">
+      grid.innerHTML = filteredListings.map(p => {
+        const typeLabel = p.type.includes('single') || p.type === 'house' ? 'Single Family' : p.type.includes('condo') || p.type.includes('townho') ? 'Condo/Townhome' : p.type.includes('multi') ? 'Multi-Family' : p.type.charAt(0).toUpperCase() + p.type.slice(1);
+        const inCart = showingCart.some(l=>l.id===p.id);
+        return `
+        <div class="sh-card" id="card-${p.id}" data-prop-id="${p.id}" onclick="openPropertyDetail('${p.id}')">
+          <div class="sh-card-photo" style="height:220px;">
             ${p.photo
-              ? `<img src="${p.photo}" alt="${p.address}" style="width:100%;height:200px;object-fit:cover;display:block;" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+              ? `<img src="${p.photo}" alt="${p.address}" style="width:100%;height:220px;object-fit:cover;display:block;" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
                  <div class="sh-card-photo-bg" style="background:linear-gradient(135deg,#1a2840,#0d1a2e);display:none;"><span class="sh-card-photo-icon">🏠</span></div>`
               : `<div class="sh-card-photo-bg" style="background:linear-gradient(135deg,#1a2840,#0d1a2e);"><span class="sh-card-photo-icon">🏠</span></div>`
             }
             <div class="sh-card-photo-overlay"></div>
             ${p.badge ? `<span class="sh-card-badge sh-card-badge-${p.badgeStyle || 'gold'}">${p.badge}</span>` : ""}
-            <button class="sh-fav-btn ${showingCart.some(l=>l.id===p.id) ? 'is-faved' : ''}"
+            <button class="sh-fav-btn ${inCart ? 'is-faved' : ''}"
                     data-prop-id="${p.id}"
                     title="Add to showing cart"
                     onclick="event.stopPropagation(); toggleCartItem('${p.id}')">
-              ${showingCart.some(l=>l.id===p.id) ? "♥" : "♡"}
+              ${inCart ? "♥" : "♡"}
             </button>
             <span class="sh-card-dom">${p.dom} day${p.dom !== 1 ? "s" : ""} on market</span>
           </div>
           <div class="sh-card-body">
             <div class="sh-card-price">${fmt(p.price)}</div>
             <div class="sh-card-stats">
-              <span class="sh-card-stat"><strong>${p.beds}</strong> bd</span>
+              <span class="sh-card-stat">🛏 <strong>${p.beds}</strong> bd</span>
               <span style="color:rgba(255,255,255,0.15);">·</span>
-              <span class="sh-card-stat"><strong>${p.baths}</strong> ba</span>
+              <span class="sh-card-stat">🚿 <strong>${p.baths}</strong> ba</span>
               <span style="color:rgba(255,255,255,0.15);">·</span>
-              <span class="sh-card-stat"><strong>${p.sqft ? p.sqft.toLocaleString() : '—'}</strong> sqft</span>
+              <span class="sh-card-stat">📐 <strong>${p.sqft ? p.sqft.toLocaleString() : '—'}</strong> sqft</span>
             </div>
             <div class="sh-card-addr">${p.address}</div>
             <div class="sh-card-city">${p.city}</div>
-            <div class="sh-card-type">${p.type.includes('single') || p.type === 'house' ? 'Single Family' : p.type.includes('condo') || p.type.includes('townho') ? 'Condo/Townhome' : p.type.includes('multi') ? 'Multi-Family' : p.type.charAt(0).toUpperCase() + p.type.slice(1)}</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
+              <span style="padding:3px 10px;border-radius:999px;font-size:0.68rem;font-weight:600;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5);">${typeLabel}</span>
+              <span style="font-size:0.75rem;color:#c9a84c;font-weight:600;">View Details →</span>
+            </div>
             <div class="sh-card-actions">
               <button class="sh-card-btn-primary"
-                      onclick="openShowingModal('${p.address}, ${p.city}')">
+                      onclick="event.stopPropagation(); openShowingModal('${p.address}, ${p.city}')">
                 Schedule Showing
               </button>
               <button class="sh-card-btn-outline"
-                      onclick="highlightOnMap('${p.id}')">
+                      onclick="event.stopPropagation(); highlightOnMap('${p.id}')">
                 View Map
               </button>
             </div>
           </div>
         </div>
       `).join("");
+    }
+
+    /* ── FILTERS ── */
+    /* ── PROPERTY DETAIL NAV ── */
+    function openPropertyDetail(listingKey) {
+      const listing = ALL_LISTINGS.find(l => l.id === listingKey);
+      if (listing) sessionStorage.setItem('selected_listing', JSON.stringify(listing));
+      window.location.href = `/public/property-detail.html?id=${listingKey}`;
     }
 
     /* ── FILTERS ── */
