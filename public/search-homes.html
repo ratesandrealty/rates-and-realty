@@ -160,7 +160,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .toggle-btn{background:#111;border:1px solid var(--border);color:var(--muted);padding:8px 16px;border-radius:6px;font-size:13px;}
 .toggle-btn:hover{border-color:var(--gold);color:var(--text);}
 .toggle-btn.active{background:var(--gold);color:#000;border-color:var(--gold);font-weight:600;}
-.type-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;}
+.type-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;}
 .type-card{background:#111;border:1px solid var(--border);color:var(--muted);padding:14px 10px;border-radius:8px;text-align:center;font-size:13px;cursor:pointer;transition:all .15s;}
 .type-card:hover{border-color:var(--gold);color:var(--text);}
 .type-card.active{border-color:var(--gold);color:var(--gold);background:#1a1700;}
@@ -237,6 +237,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
       <button class="status-tab active" data-status="Active">For Sale</button>
       <button class="status-tab" data-status="ComingSoon">Coming Soon</button>
       <button class="status-tab" data-status="Closed">Sold</button>
+      <button class="status-tab" data-status="Active" data-lease="true">For Rent</button>
       <button class="status-tab" data-status="">All Properties</button>
     </div>
   </div>
@@ -403,7 +404,9 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
           <div class="type-card active" data-type="Townhouse"><i class="fa-solid fa-city"></i>Townhome</div>
           <div class="type-card" data-type="Residential Income"><i class="fa-solid fa-people-roof"></i>Multi-Family</div>
           <div class="type-card" data-type="Land"><i class="fa-solid fa-mountain-sun"></i>Land</div>
-          <div class="type-card" data-type="Manufactured Home"><i class="fa-solid fa-caravan"></i>Mobile Home</div>
+          <div class="type-card" data-type="Mobile Home"><i class="fa-solid fa-caravan"></i>Mobile Home</div>
+          <div class="type-card" data-type="Commercial Sale"><i class="fa-solid fa-store"></i>Commercial</div>
+          <div class="type-card" data-type="Commercial Lease"><i class="fa-solid fa-briefcase"></i>Com. Lease</div>
         </div>
       </div>
       <!-- More -->
@@ -538,6 +541,7 @@ const COUNTIES = {
 let activeCounty = 'Orange County';
 let selectedCities = ['Westminster'];
 let activeStatus = 'Active';
+let currentLease = false;
 let allListings = [];
 let filteredListings = [];
 let map, markers = [], infoWindow, drawingManager, currentShape = null;
@@ -636,6 +640,7 @@ function initStatusTabs() {
       document.querySelectorAll('.status-tab').forEach(function(s) { s.classList.remove('active'); });
       t.classList.add('active');
       activeStatus = t.dataset.status;
+      currentLease = t.dataset.lease === 'true';
       fetchListings();
     });
   });
@@ -654,34 +659,40 @@ function buildODataFilter() {
   // Status
   if (activeStatus) parts.push("StandardStatus eq '" + activeStatus + "'");
 
-  // Property types — mapped to actual Trestle CRMLS enum values
-  // Trestle uses: Residential (includes SFR+Condo+Townhouse as subtypes),
-  //   ResidentialIncome, ManufacturedInPark, ResidentialLease, CommercialSale, Land
-  if (filters.types.length > 0 && filters.types.length < 8) {
-    var hasRes = filters.types.includes('Residential');
-    var hasCondo = filters.types.includes('Condominium');
-    var hasTown = filters.types.includes('Townhouse');
-    // Default (House+Condo+Townhome) = just filter PropertyType eq 'Residential' which includes all three
-    if (hasRes && hasCondo && hasTown && filters.types.length === 3) {
+  // Property types — For Rent tab overrides type filter
+  if (currentLease) {
+    parts.push("(PropertyType eq 'ResidentialLease' or PropertyType eq 'CommercialLease')");
+  } else {
+    // TYPE_MAP: UI label → Trestle OData enum values
+    var TYPE_MAP = {
+      'Residential':        ["PropertyType eq 'Residential'"],
+      'Condominium':        ["PropertyType eq 'Condominium'"],
+      'Townhouse':          ["PropertyType eq 'Townhouse'"],
+      'Residential Income': ["PropertyType eq 'ResidentialIncome'"],
+      'Land':               ["PropertyType eq 'Land'"],
+      'Mobile Home':        ["PropertyType eq 'ManufacturedInPark'"],
+      'Commercial Sale':    ["PropertyType eq 'CommercialSale'"],
+      'Commercial Lease':   ["PropertyType eq 'CommercialLease'"]
+    };
+    var defaultTypes = ['Residential','Condominium','Townhouse'];
+    var isDefault = filters.types.length === 3 && defaultTypes.every(function(t){return filters.types.includes(t);});
+
+    if (isDefault) {
+      // Default = House+Condo+Townhome, just filter Residential (covers all 3 subtypes)
       parts.push("PropertyType eq 'Residential'");
-    } else {
+    } else if (filters.types.length > 0) {
       var tp = [];
-      // House only = Residential with SFR subtype
-      if (hasRes && !hasCondo && !hasTown) tp.push("PropertySubType eq 'SingleFamilyResidence'");
-      else if (hasRes) tp.push("PropertyType eq 'Residential'");
-      if (hasCondo && !hasRes) tp.push("PropertySubType eq 'Condominium'");
-      if (hasTown && !hasRes) tp.push("PropertySubType eq 'Townhouse'");
-      if (filters.types.includes('Residential Income')) tp.push("PropertyType eq 'ResidentialIncome'");
-      if (filters.types.includes('Land')) tp.push("PropertyType eq 'Land'");
-      if (filters.types.includes('Mobile Home')) tp.push("PropertyType eq 'ManufacturedInPark'");
-      if (filters.types.includes('Commercial')) tp.push("PropertyType eq 'CommercialSale'");
+      filters.types.forEach(function(t) {
+        var mapped = TYPE_MAP[t];
+        if (mapped) mapped.forEach(function(m) { tp.push(m); });
+      });
       if (tp.length === 1) parts.push(tp[0]);
       else if (tp.length > 1) parts.push('(' + tp.join(' or ') + ')');
     }
-  }
 
-  // Exclude leases (ResidentialLease shows $3K/mo apartments mixed with sales)
-  parts.push("PropertyType ne 'ResidentialLease'");
+    // Exclude leases from sale results
+    parts.push("PropertyType ne 'ResidentialLease'");
+  }
 
   // Price
   if (filters.minPrice) parts.push('ListPrice ge ' + filters.minPrice);
