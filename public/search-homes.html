@@ -329,7 +329,6 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
   <div class="loc-bar" style="display:flex;align-items:center;gap:8px;padding:6px 14px;background:#0d0d0d;border-bottom:1px solid #1a1a1a;flex-wrap:wrap">
     <div style="position:relative" id="countyDropWrap">
       <button id="countyDropBtn2" onclick="toggleCountyDrop()" style="display:flex;align-items:center;gap:7px;background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:6px 14px;color:#eee;font-size:.8rem;cursor:pointer;white-space:nowrap;min-width:160px">
-        <span style="font-size:.85rem">\uD83D\uDCCD</span>
         <span id="countyBtnLabel">All Counties</span>
         <i class="fas fa-chevron-down" style="font-size:.65rem;color:#888;margin-left:auto"></i>
       </button>
@@ -343,7 +342,6 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
     </div>
     <div style="position:relative" id="cityDropWrap">
       <button id="cityDropBtn" onclick="toggleCityDrop()" style="display:flex;align-items:center;gap:7px;background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:6px 14px;color:#eee;font-size:.8rem;cursor:pointer;white-space:nowrap;min-width:160px">
-        <span style="font-size:.85rem">\uD83C\uDFD8\uFE0F</span>
         <span id="cityBtnLabel2">All Cities</span>
         <i class="fas fa-chevron-down" style="font-size:.65rem;color:#888;margin-left:auto"></i>
       </button>
@@ -699,7 +697,7 @@ function initCountyDropdown() {
   if (!list) return;
   list.innerHTML = Object.entries(COUNTIES).map(function(entry) {
     var key = entry[0], data = entry[1];
-    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:.82rem;color:#ccc;transition:background .15s" onmouseover="this.style.background=\'#1a1a1a\'" onmouseout="this.style.background=\'transparent\'"><input type="checkbox" value="'+key+'" class="county-cb" onchange="onCountyChange(this)" style="accent-color:#C9A84C;width:14px;height:14px;cursor:pointer;flex-shrink:0"> <span style="font-size:.9rem">'+data.emoji+'</span> <span>'+key+'</span></label>';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:.82rem;color:#ccc;transition:background .15s" onmouseover="this.style.background=\'#1a1a1a\'" onmouseout="this.style.background=\'transparent\'"><input type="checkbox" value="'+key+'" class="county-cb" onchange="onCountyChange(this)" style="accent-color:#C9A84C;width:14px;height:14px;cursor:pointer;flex-shrink:0"> <span>'+key+'</span></label>';
   }).join('');
   // Default: Orange County selected
   var def = document.querySelector('.county-cb[value="Orange County"]');
@@ -709,8 +707,12 @@ function initCountyDropdown() {
 }
 
 function onCountyChange(cb) {
-  if (cb.checked) selectedCounties.add(cb.value);
-  else {
+  if (cb.checked) {
+    selectedCounties.add(cb.value);
+    // Auto-select all cities in this county
+    var countyCities = COUNTIES[cb.value]?.cities || [];
+    countyCities.forEach(function(city) { if (selectedCities.indexOf(city) === -1) selectedCities.push(city); });
+  } else {
     selectedCounties.delete(cb.value);
     var cc = new Set(COUNTIES[cb.value]?.cities || []);
     selectedCities = selectedCities.filter(function(c) { return !cc.has(c); });
@@ -718,6 +720,7 @@ function onCountyChange(cb) {
   updateCityDropdown();
   updateLocationChips();
   updateCountyBtnLabel();
+  updateCityBtnLabel();
   fetchListings();
 }
 
@@ -795,7 +798,7 @@ function updateLocationChips() {
   if (!container) return;
   var chips = [];
   selectedCounties.forEach(function(key) {
-    chips.push('<div style="display:flex;align-items:center;gap:5px;background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.3);border-radius:12px;padding:3px 10px;font-size:.72rem;color:#C9A84C">' + (COUNTIES[key]?.emoji||'') + ' ' + key.replace(' County','') + ' <button onclick="removeCounty(\''+key+'\')" style="background:none;border:none;color:#C9A84C;cursor:pointer;padding:0;font-size:.7rem">\u2715</button></div>');
+    chips.push('<div style="display:flex;align-items:center;gap:5px;background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.3);border-radius:12px;padding:3px 10px;font-size:.72rem;color:#C9A84C">' + key.replace(' County','') + ' <button onclick="removeCounty(\''+key+'\')" style="background:none;border:none;color:#C9A84C;cursor:pointer;padding:0;font-size:.7rem">\u2715</button></div>');
   });
   selectedCities.forEach(function(city) {
     chips.push('<div style="display:flex;align-items:center;gap:5px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);border-radius:12px;padding:3px 10px;font-size:.72rem;color:#60a5fa">' + city + ' <button onclick="removeCity(\''+city+'\')" style="background:none;border:none;color:#60a5fa;cursor:pointer;padding:0;font-size:.7rem">\u2715</button></div>');
