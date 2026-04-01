@@ -2,7 +2,7 @@ import { ADMIN_EMAILS, ADMIN_USER_IDS } from "/api/config.js";
 import { supabase } from "/api/supabase-client.js";
 
 export async function signUpBorrower({ email, password, firstName, lastName, phone }) {
-  const redirectTo = `${window.location.origin}/dashboard/index.html`;
+  const redirectTo = `${window.location.origin}/public/unified-portal.html`;
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -47,7 +47,7 @@ export async function requireUser() {
   if (error) throw error;
   const user = data.session?.user;
   if (!user) {
-    window.location.href = "/auth/index.html";
+    window.location.href = "/public/unified-portal.html";
     throw new Error("Authentication required.");
   }
   return user;
@@ -68,7 +68,7 @@ export async function requireAdmin() {
   const user = await requireUser();
 
   if (!isAdminUser(user)) {
-    window.location.href = "/dashboard/index.html";
+    window.location.href = "/public/unified-portal.html";
     throw new Error("Admin access required.");
   }
 

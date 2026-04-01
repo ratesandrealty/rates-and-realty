@@ -34,12 +34,12 @@ if (headerRoot) {
       <a class="nav-link" href="/dashboard/admin.html#analytics">Analytics</a>
     `;
     actions = `
-      <a class="btn btn-ghost btn-sm" href="/dashboard/index.html">Borrower View</a>
+      <a class="btn btn-ghost btn-sm" href="/public/unified-portal.html">Borrower View</a>
       <a class="btn btn-secondary btn-sm" href="/" target="_blank">Public Site</a>
     `;
   } else if (isBorrowerPortal) {
     navLinks = `
-      <a class="nav-link" href="/dashboard/index.html">My Application</a>
+      <a class="nav-link" href="/public/unified-portal.html">My Application</a>
       <a class="nav-link" href="/public/apply.html">New Application</a>
     `;
     actions = `
@@ -209,7 +209,7 @@ if (footerRoot) {
           </div>
           <nav class="footer-col" aria-label="Footer CRM">
             <a href="/dashboard/admin.html">CRM Dashboard</a>
-            <a href="/dashboard/index.html">Borrower Portal</a>
+            <a href="/public/unified-portal.html">Borrower Portal</a>
             <a href="/">Public Site</a>
           </nav>
         </div>
@@ -249,7 +249,7 @@ if (footerRoot) {
               <a href="/#lead-form">Free Consultation</a>
               <a href="/public/first-time-buyer.html">First-Time Buyer</a>
               <a href="/public/realtor-referral.html">Realtor Partners</a>
-              <a href="/auth/index.html">Borrower Portal</a>
+              <a href="/public/unified-portal.html">Borrower Portal</a>
             </div>
             <div class="footer-col">
               <span class="footer-col-title">Company</span>

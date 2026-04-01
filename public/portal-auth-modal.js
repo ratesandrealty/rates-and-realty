@@ -345,7 +345,7 @@
 
     // Go to portal button
     document.getElementById('pa-go-portal').addEventListener('click', function () {
-      window.location.href = '/public/portal.html';
+      window.location.href = '/public/unified-portal.html';
     });
   }
 

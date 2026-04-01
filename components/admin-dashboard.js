@@ -87,7 +87,7 @@ function bindSidebarNav() {
   document.getElementById("sidebar-signout-btn")?.addEventListener("click", async () => {
     const { supabase } = await import("/api/supabase-client.js");
     await supabase.auth.signOut();
-    window.location.href = "/auth/index.html";
+    window.location.href = "/public/unified-portal.html";
   });
 }
 

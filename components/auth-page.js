@@ -25,7 +25,7 @@ loginForm?.addEventListener("submit", async (event) => {
     if (user && isAdminUser(user)) {
       window.location.href = "/dashboard/admin.html";
     } else {
-      window.location.href = "/dashboard/index.html";
+      window.location.href = "/public/unified-portal.html";
     }
   } catch (error) {
     setMessage(loginMessage, error.message || "Unable to sign in.", "error");

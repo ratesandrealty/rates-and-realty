@@ -207,6 +207,6 @@ function attachHeaderLogout() {
   actions.innerHTML = `${adminLink}<button id="logout-button" class="btn btn-primary btn-sm" type="button">Sign Out</button>`;
   document.getElementById("logout-button")?.addEventListener("click", async () => {
     await signOutBorrower();
-    window.location.href = "/auth/index.html";
+    window.location.href = "/public/unified-portal.html";
   });
 }

@@ -21,7 +21,7 @@ if (leadForm) {
       setMessage(leadMessage, "Lead captured. Redirecting to the borrower portal.", "success");
       leadForm.reset();
       window.setTimeout(() => {
-        window.location.href = "/auth/index.html";
+        window.location.href = "/public/unified-portal.html";
       }, 1200);
     } catch (error) {
       setMessage(leadMessage, error.message || "Unable to submit lead.", "error");

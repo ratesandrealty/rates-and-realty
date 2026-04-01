@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Borrower Portal | Rates &amp; Realty</title>
+<link rel="icon" href="/assets/images/favicon.png"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<script src="/public/listing-alerts.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#C9A84C;--gold-light:#e8c96d;--dark:#0a0a0a;--card:#111;--border:#222;--text:#eee;--muted:#888;--radius:12px}
+body{background:var(--dark);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+a{color:var(--text);text-decoration:none}
+button{cursor:pointer;font-family:inherit}
+input,select,textarea{font-family:inherit}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:var(--dark)}
+::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+
+/* ===== AUTH PAGE ===== */
+.auth-page{min-height:100vh;display:grid;grid-template-columns:1fr 480px;align-items:center;gap:0}
+.auth-left{padding:60px;display:flex;flex-direction:column;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0d0d0d 0%,#111 50%,rgba(201,168,76,.06) 100%)}
+.auth-left h1{font-size:2.4rem;font-weight:700;line-height:1.2;margin-bottom:32px}
+.auth-left h1 span{color:var(--gold)}
+.auth-benefits{list-style:none;margin-bottom:40px}
+.auth-benefits li{display:flex;align-items:center;gap:14px;padding:12px 0;font-size:1rem;color:var(--muted)}
+.auth-benefits li i{color:var(--gold);font-size:1.1rem;width:22px;text-align:center}
+.auth-trust{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.auth-trust-item{text-align:center}
+.auth-trust-item strong{display:block;font-size:1.3rem;color:var(--gold);margin-bottom:2px}
+.auth-trust-item span{font-size:.78rem;color:var(--muted)}
+.auth-right{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:40px;background:var(--dark)}
+.auth-card{width:100%;max-width:400px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:32px}
+.auth-card-logo{display:flex;align-items:center;gap:10px;margin-bottom:24px}
+.auth-card-logo img{height:36px}
+.auth-card-logo span{font-size:1.1rem;font-weight:700;color:var(--gold)}
+.auth-tabs{display:flex;gap:0;margin-bottom:24px;background:#1a1a1a;border-radius:10px;padding:4px}
+.auth-tab{flex:1;padding:10px;text-align:center;font-size:.88rem;font-weight:600;border-radius:8px;border:none;background:transparent;color:var(--muted);transition:all .2s}
+.auth-tab.active{background:var(--gold);color:#000}
+.auth-form{display:none}
+.auth-form.active{display:block}
+.auth-field{margin-bottom:14px}
+.auth-field label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:5px}
+.auth-field input{width:100%;padding:11px 14px;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95rem}
+.auth-field input:focus{outline:none;border-color:var(--gold)}
+.auth-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.auth-btn{width:100%;padding:13px;background:var(--gold);color:#000;border:none;border-radius:10px;font-size:.95rem;font-weight:700;margin-top:6px;transition:background .2s}
+.auth-btn:hover{background:var(--gold-light)}
+.auth-btn:disabled{opacity:.5;cursor:not-allowed}
+.auth-forgot{display:block;text-align:center;margin-top:14px;font-size:.82rem;color:var(--muted);cursor:pointer;border:none;background:none;width:100%}
+.auth-forgot:hover{color:var(--gold)}
+.auth-error{font-size:.84rem;color:#e55;margin-top:8px;padding:8px;background:rgba(200,40,40,.1);border-radius:8px;display:none}
+
+/* ===== TOP NAV ===== */
+.top-nav{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:#0d0d0d;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:200}
+.nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.nav-logo img{height:34px}
+.nav-logo span{font-size:1.1rem;font-weight:700;color:var(--gold)}
+.nav-center a{color:var(--muted);font-size:.9rem;transition:color .2s}
+.nav-center a:hover{color:var(--gold)}
+.nav-right{display:flex;align-items:center;gap:14px}
+.nav-user-name{font-size:.85rem;color:var(--muted)}
+.nav-signout{background:none;border:1px solid var(--border);color:var(--muted);padding:5px 14px;border-radius:20px;font-size:.8rem;transition:all .2s}
+.nav-signout:hover{border-color:var(--gold);color:var(--gold)}
+
+/* ===== LAYOUT ===== */
+.portal-wrap{display:flex;height:calc(100vh - 56px)}
+.sidebar{width:220px;min-width:220px;background:#0d0d0d;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+.main-content{flex:1;padding:24px;overflow-y:auto}
+
+/* ===== SIDEBAR ===== */
+.sidebar-user{padding:20px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.sidebar-avatar{width:40px;height:40px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;color:#000;flex-shrink:0}
+.sidebar-greeting{font-size:.9rem;color:var(--text)}
+.sidebar-greeting span{display:block;font-size:.75rem;color:var(--muted);margin-top:2px}
+.sidebar-nav{list-style:none;padding:12px 0;flex:1}
+.sidebar-nav li a{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:.88rem;color:var(--muted);transition:all .2s;border-left:3px solid transparent}
+.sidebar-nav li a:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.sidebar-nav li a.active{color:var(--gold);border-left-color:var(--gold);background:rgba(201,168,76,.06)}
+.sidebar-nav li a i{width:18px;text-align:center;font-size:.95rem}
+
+/* ===== SECTIONS ===== */
+.portal-section{display:none}
+.portal-section.active{display:block}
+.section-header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.section-header h2{font-size:1.4rem;font-weight:700}
+.count-badge{background:var(--gold);color:#000;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:12px}
+
+/* ===== DASHBOARD ===== */
+.welcome-banner{margin-bottom:24px}
+.welcome-banner h2{font-size:1.6rem;font-weight:700}
+.welcome-banner p{font-size:.88rem;color:var(--muted);margin-top:4px}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;text-align:center;transition:border-color .2s}
+.stat-card:hover{border-color:#333}
+.stat-card .stat-val{font-size:1.6rem;font-weight:700;color:var(--gold);margin-bottom:4px}
+.stat-card .stat-label{font-size:.8rem;color:var(--muted)}
+.quick-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.quick-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 16px;text-align:center;cursor:pointer;transition:all .2s}
+.quick-card:hover{border-color:var(--gold);transform:translateY(-2px)}
+.quick-card .qc-icon{font-size:1.5rem;margin-bottom:8px}
+.quick-card .qc-label{font-size:.85rem;font-weight:600}
+.quick-card .qc-sub{font-size:.75rem;color:var(--muted);margin-top:4px}
+
+/* ===== CARDS GRID ===== */
+.cards-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.listing-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:transform .2s,border-color .2s}
+.listing-card:hover{transform:translateY(-2px);border-color:#333}
+.listing-card img{width:100%;height:140px;object-fit:cover;background:#1a1a1a}
+.listing-card-body{padding:14px}
+.listing-price{font-size:1.15rem;font-weight:700;color:var(--gold);margin-bottom:4px}
+.listing-address{font-size:.88rem;color:var(--text);margin-bottom:2px}
+.listing-city{font-size:.82rem;color:var(--muted);margin-bottom:4px}
+.listing-meta{font-size:.8rem;color:var(--muted);margin-bottom:12px}
+.listing-actions{display:flex;gap:8px}
+.listing-actions button{flex:1;padding:7px 0;border-radius:8px;font-size:.82rem;font-weight:600;border:none;transition:all .2s}
+.btn-view{background:var(--gold);color:#000}
+.btn-view:hover{background:var(--gold-light)}
+.btn-remove{background:transparent;border:1px solid var(--border)!important;color:var(--muted)}
+.btn-remove:hover{border-color:#c33!important;color:#e55}
+
+/* ===== EMPTY STATE ===== */
+.empty-state{text-align:center;padding:60px 20px}
+.empty-state i{font-size:3rem;color:#333;margin-bottom:16px}
+.empty-state h3{font-size:1.1rem;color:var(--muted);margin-bottom:8px;font-weight:500}
+.empty-state p{font-size:.88rem;color:#555;margin-bottom:20px}
+.empty-state a,.empty-state button{display:inline-block;background:var(--gold);color:#000;padding:10px 24px;border-radius:24px;font-size:.88rem;font-weight:700;border:none;transition:background .2s}
+.empty-state a:hover,.empty-state button:hover{background:var(--gold-light)}
+
+/* ===== APPLICATION FORM ===== */
+.app-steps{display:flex;gap:8px;margin-bottom:24px;flex-wrap:wrap}
+.app-step-pill{padding:8px 18px;border-radius:20px;font-size:.84rem;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--muted);transition:all .2s}
+.app-step-pill.active{background:var(--gold);color:#000;border-color:var(--gold)}
+.app-step-pill.completed{background:rgba(201,168,76,.15);color:var(--gold);border-color:var(--gold)}
+.app-form-step{display:none}
+.app-form-step.active{display:block}
+.app-progress{height:4px;background:#1a1a1a;border-radius:4px;margin-bottom:24px;overflow:hidden}
+.app-progress-fill{height:100%;background:var(--gold);border-radius:4px;transition:width .3s}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:6px}
+.form-group input,.form-group select{width:100%;padding:10px 14px;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95rem}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:var(--gold)}
+.form-group input:disabled{opacity:.5;cursor:not-allowed}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.app-nav{display:flex;gap:10px;margin-top:20px;align-items:center}
+.btn-gold{background:var(--gold);color:#000;padding:10px 24px;border-radius:24px;font-size:.88rem;font-weight:700;border:none;transition:background .2s}
+.btn-gold:hover{background:var(--gold-light)}
+.btn-gold:disabled{opacity:.5;cursor:not-allowed}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--muted);padding:10px 20px;border-radius:24px;font-size:.88rem;font-weight:600;transition:all .2s}
+.btn-ghost:hover{border-color:var(--gold);color:var(--gold)}
+
+/* ===== SHOWINGS ===== */
+.showing-batch{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+.showing-batch-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.status-badge{padding:4px 12px;border-radius:12px;font-size:.75rem;font-weight:700;white-space:nowrap}
+.status-pending{background:rgba(201,168,76,.2);color:var(--gold)}
+.status-confirmed{background:rgba(0,180,80,.15);color:#3cb43c}
+.status-cancelled{background:rgba(120,120,120,.15);color:#888}
+.showing-item{display:flex;align-items:center;gap:10px;padding:8px;background:#1a1a1a;border-radius:8px;margin-bottom:6px}
+.showing-item img{width:50px;height:38px;border-radius:6px;object-fit:cover;flex-shrink:0}
+.showing-item-info{flex:1;min-width:0}
+.showing-item-addr{font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.showing-item-price{font-size:.75rem;color:var(--gold)}
+
+/* ===== SHOWING CART ===== */
+.cart-section{margin-bottom:28px}
+.cart-section h3{font-size:1.1rem;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.cart-section h3 i{color:var(--gold)}
+.cart-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.cart-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.cart-card img{width:100%;height:120px;object-fit:cover}
+.cart-card-body{padding:12px}
+.schedule-form{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-top:16px;max-width:500px}
+
+/* ===== DOCUMENTS ===== */
+.doc-categories{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.doc-cat-btn{padding:8px 16px;border-radius:20px;font-size:.82rem;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--muted);transition:all .2s}
+.doc-cat-btn.active{background:var(--gold);color:#000;border-color:var(--gold)}
+.doc-cat-btn:hover{border-color:var(--gold);color:var(--gold)}
+.drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:40px 20px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:20px}
+.drop-zone:hover,.drop-zone.dragover{border-color:var(--gold);background:rgba(201,168,76,.04)}
+.drop-zone i{font-size:2rem;color:#333;margin-bottom:10px}
+.drop-zone p{font-size:.88rem;color:var(--muted)}
+.file-queue{margin-bottom:20px}
+.file-queue-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
+.file-queue-item .fq-name{flex:1;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-queue-item .fq-size{font-size:.75rem;color:var(--muted);flex-shrink:0}
+.file-queue-item .fq-remove{background:none;border:none;color:#666;font-size:.9rem;padding:4px;cursor:pointer}
+.file-queue-item .fq-remove:hover{color:#e55}
+.fq-progress{width:100%;height:3px;background:#1a1a1a;border-radius:2px;margin-top:6px;overflow:hidden}
+.fq-progress-bar{height:100%;background:var(--gold);border-radius:2px;transition:width .3s}
+.upload-btn{margin-bottom:28px}
+.doc-history{margin-top:20px}
+.doc-history-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
+.doc-history-item i{color:var(--gold);font-size:1rem}
+.doc-history-item .dh-name{flex:1;font-size:.85rem}
+.doc-history-item .dh-cat{font-size:.75rem;color:var(--muted);background:#1a1a1a;padding:3px 10px;border-radius:10px}
+.doc-history-item .dh-date{font-size:.75rem;color:var(--muted)}
+.doc-checklist{margin-top:28px}
+.doc-checklist h3{font-size:1.1rem;font-weight:700;margin-bottom:14px}
+.doc-check-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
+.doc-check-item .dc-icon{font-size:1.1rem}
+.doc-check-item .dc-label{flex:1;font-size:.88rem}
+.doc-check-item .dc-label span{display:block;font-size:.75rem;color:var(--muted)}
+.doc-check-item .dc-status{font-size:.78rem;font-weight:700;padding:4px 12px;border-radius:10px}
+.dc-needed{background:rgba(200,40,40,.1);color:#e55}
+.dc-uploaded{background:rgba(0,180,80,.1);color:#3cb43c}
+
+/* ===== APPOINTMENTS ===== */
+.appt-cta{text-align:center;padding:40px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:24px}
+.appt-cta h3{font-size:1.3rem;margin-bottom:10px}
+.appt-cta p{color:var(--muted);font-size:.9rem;margin-bottom:20px}
+.appt-info{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:500px}
+.appt-info h4{font-size:1rem;margin-bottom:12px;color:var(--gold)}
+.appt-info p{font-size:.88rem;color:var(--muted);margin-bottom:8px}
+.appt-info a{color:var(--gold)}
+
+/* ===== PROFILE ===== */
+.profile-form{max-width:500px}
+.profile-divider{border:none;border-top:1px solid var(--border);margin:32px 0}
+.form-msg{font-size:.84rem;margin-top:8px;padding:8px 14px;border-radius:8px;display:none}
+.form-msg.success{display:block;background:rgba(0,180,80,.1);color:#3cb43c}
+.form-msg.error{display:block;background:rgba(200,40,40,.1);color:#e55}
+
+/* ===== TOAST ===== */
+.toast-container{position:fixed;top:70px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:10px;font-size:.88rem;font-weight:500;color:#fff;opacity:0;transform:translateX(40px);transition:all .3s ease;max-width:360px}
+.toast.show{opacity:1;transform:translateX(0)}
+.toast.success{background:rgba(0,160,80,.95)}
+.toast.error{background:rgba(200,40,40,.95)}
+.toast.info{background:rgba(60,130,246,.95)}
+
+/* ===== RESPONSIVE 768 ===== */
+@media(max-width:768px){
+  .auth-page{grid-template-columns:1fr}
+  .auth-left{display:none}
+  .auth-right{min-height:100vh}
+  .portal-wrap{flex-direction:column}
+  .sidebar{width:100%;min-width:100%;flex-direction:row;border-right:none;border-bottom:1px solid var(--border);overflow-x:auto;overflow-y:hidden}
+  .sidebar-user{display:none}
+  .sidebar-nav{display:flex;padding:0;flex-direction:row;align-items:center}
+  .sidebar-nav li a{padding:12px 14px;border-left:none;border-bottom:3px solid transparent;font-size:.8rem;white-space:nowrap}
+  .sidebar-nav li a.active{border-left-color:transparent;border-bottom-color:var(--gold)}
+  .sidebar-nav li a .nav-label{display:none}
+  .sidebar-nav li a i{font-size:1.1rem}
+  .cards-grid{grid-template-columns:repeat(2,1fr)}
+  .stats-row{grid-template-columns:repeat(2,1fr)}
+  .quick-actions{grid-template-columns:repeat(2,1fr)}
+  .main-content{padding:16px}
+  .nav-center{display:none}
+}
+
+/* ===== RESPONSIVE 480 ===== */
+@media(max-width:480px){
+  .portal-wrap{padding-bottom:64px}
+  .sidebar{position:fixed;bottom:0;left:0;right:0;top:auto;z-index:150;width:100%;border-bottom:none;border-top:1px solid var(--border);background:#0d0d0d}
+  .sidebar-nav{justify-content:space-around;width:100%}
+  .sidebar-nav li a{padding:10px 6px;flex-direction:column;gap:2px;font-size:.65rem}
+  .cards-grid{grid-template-columns:1fr}
+  .stats-row{grid-template-columns:1fr 1fr}
+  .quick-actions{grid-template-columns:1fr 1fr}
+  .form-row{grid-template-columns:1fr}
+  .auth-row{grid-template-columns:1fr}
+  .auth-trust{grid-template-columns:repeat(2,1fr);gap:12px}
+  .app-steps{gap:6px}
+  .doc-categories{gap:6px}
+}
+</style>
+</head>
+<body>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- AUTH PAGE -->
+<div id="authPage" style="display:none">
+  <div class="auth-page">
+    <div class="auth-left">
+      <div style="max-width:480px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:40px">
+          <img src="/assets/images/logo.png" alt="Logo" style="height:40px"/>
+          <span style="font-size:1.2rem;font-weight:700;color:var(--gold)">Rates &amp; Realty</span>
+        </div>
+        <h1>Your mortgage journey, <span>all in one place.</span></h1>
+        <ul class="auth-benefits">
+          <li><i class="fas fa-heart"></i> Save &amp; track homes you love</li>
+          <li><i class="fas fa-calendar-check"></i> Schedule showings with one click</li>
+          <li><i class="fas fa-file-alt"></i> Apply for a mortgage online</li>
+          <li><i class="fas fa-bell"></i> Get instant listing alerts</li>
+        </ul>
+        <div class="auth-trust">
+          <div class="auth-trust-item"><strong>21 Day</strong><span>Avg close time</span></div>
+          <div class="auth-trust-item"><strong>50+</strong><span>Lender options</span></div>
+          <div class="auth-trust-item"><strong>$0</strong><span>To start</span></div>
+          <div class="auth-trust-item"><strong>5.0 &#9733;</strong><span>Client rating</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="auth-right">
+      <div class="auth-card">
+        <div class="auth-card-logo">
+          <img src="/assets/images/logo.png" alt="Logo" style="height:32px"/>
+          <span>Rates &amp; Realty</span>
+        </div>
+        <div class="auth-tabs">
+          <button class="auth-tab active" onclick="switchAuthTab('login')">Sign In</button>
+          <button class="auth-tab" onclick="switchAuthTab('signup')">Create Account</button>
+        </div>
+
+        <!-- LOGIN FORM -->
+        <form class="auth-form active" id="loginForm" onsubmit="handleLogin(event)">
+          <div class="auth-field">
+            <label>Email</label>
+            <input type="email" id="loginEmail" required placeholder="you@email.com"/>
+          </div>
+          <div class="auth-field">
+            <label>Password</label>
+            <input type="password" id="loginPassword" required placeholder="Your password"/>
+          </div>
+          <div class="auth-error" id="loginError"></div>
+          <button type="submit" class="auth-btn" id="loginBtn">Sign In</button>
+          <button type="button" class="auth-forgot" onclick="showToast('Coming soon','info')">Forgot password?</button>
+        </form>
+
+        <!-- SIGNUP FORM -->
+        <form class="auth-form" id="signupForm" onsubmit="handleSignup(event)">
+          <div class="auth-row">
+            <div class="auth-field">
+              <label>First Name</label>
+              <input type="text" id="signupFirst" required placeholder="John"/>
+            </div>
+            <div class="auth-field">
+              <label>Last Name</label>
+              <input type="text" id="signupLast" placeholder="Smith"/>
+            </div>
+          </div>
+          <div class="auth-field">
+            <label>Email</label>
+            <input type="email" id="signupEmail" required placeholder="you@email.com"/>
+          </div>
+          <div class="auth-field">
+            <label>Phone</label>
+            <input type="tel" id="signupPhone" placeholder="(555) 000-0000"/>
+          </div>
+          <div class="auth-field">
+            <label>Password <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+            <input type="password" id="signupPassword" placeholder="Create a password"/>
+          </div>
+          <div class="auth-error" id="signupError"></div>
+          <button type="submit" class="auth-btn" id="signupBtn">Create Account</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PORTAL (logged in) -->
+<div id="portalPage" style="display:none">
+
+  <!-- TOP NAV -->
+  <nav class="top-nav">
+    <a href="/" class="nav-logo">
+      <img src="/assets/images/logo.png" alt="Logo"/>
+      <span>Rates &amp; Realty</span>
+    </a>
+    <div class="nav-center">
+      <a href="/public/search-homes.html"><i class="fas fa-arrow-left"></i> Search Homes</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-user-name" id="navUserName"></span>
+      <button class="nav-signout" onclick="portalSignOut()">Sign Out</button>
+    </div>
+  </nav>
+
+  <!-- PORTAL WRAP -->
+  <div class="portal-wrap">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-user">
+        <div class="sidebar-avatar" id="sidebarAvatar">??</div>
+        <div class="sidebar-greeting">
+          Hi, <span id="sidebarName">User</span>
+        </div>
+      </div>
+      <ul class="sidebar-nav" id="sidebarNav">
+        <li><a href="#" data-section="dashboard" class="active"><i class="fas fa-home"></i><span class="nav-label">Dashboard</span></a></li>
+        <li><a href="#" data-section="application"><i class="fas fa-file-alt"></i><span class="nav-label">My Application</span></a></li>
+        <li><a href="#" data-section="saved"><i class="fas fa-heart"></i><span class="nav-label">Saved Homes</span></a></li>
+        <li><a href="#" data-section="showings"><i class="fas fa-calendar-check"></i><span class="nav-label">Showings</span></a></li>
+        <li><a href="#" data-section="alerts"><i class="fas fa-bell"></i><span class="nav-label">Listing Alerts</span></a></li>
+        <li><a href="#" data-section="documents"><i class="fas fa-folder"></i><span class="nav-label">Documents</span></a></li>
+        <li><a href="#" data-section="appointments"><i class="fas fa-calendar"></i><span class="nav-label">Appointments</span></a></li>
+        <li><a href="#" data-section="profile"><i class="fas fa-user"></i><span class="nav-label">Profile</span></a></li>
+        <li><a href="#" onclick="portalSignOut();return false;"><i class="fas fa-sign-out-alt"></i><span class="nav-label">Sign Out</span></a></li>
+      </ul>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+
+      <!-- SECTION: DASHBOARD -->
+      <div class="portal-section active" id="sec-dashboard">
+        <div class="welcome-banner">
+          <h2 id="welcomeHeading">Welcome back 👋</h2>
+          <p id="welcomeSub">Member since --</p>
+        </div>
+        <div class="stats-row">
+          <div class="stat-card"><div class="stat-val" id="statSaved">--</div><div class="stat-label">Saved Homes</div></div>
+          <div class="stat-card"><div class="stat-val" id="statShowings">--</div><div class="stat-label">Showing Requests</div></div>
+          <div class="stat-card"><div class="stat-val" id="statAlerts">--</div><div class="stat-label">Active Alerts</div></div>
+          <div class="stat-card"><div class="stat-val" id="statAppStatus">--</div><div class="stat-label">Application Status</div></div>
+        </div>
+        <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:14px;">Quick Actions</h3>
+        <div class="quick-actions">
+          <div class="quick-card" onclick="window.open('https://cal.com/rene-duarte-rates-realty/30min','_blank')">
+            <div class="qc-icon">📅</div>
+            <div class="qc-label">Book Appointment</div>
+            <div class="qc-sub">Free consultation</div>
+          </div>
+          <div class="quick-card" onclick="navigateSection('application')">
+            <div class="qc-icon">📋</div>
+            <div class="qc-label">My Application</div>
+            <div class="qc-sub">View or complete</div>
+          </div>
+          <div class="quick-card" onclick="navigateSection('alerts')">
+            <div class="qc-icon">🔔</div>
+            <div class="qc-label">Listing Alerts</div>
+            <div class="qc-sub">Manage alerts</div>
+          </div>
+          <div class="quick-card" onclick="navigateSection('saved')">
+            <div class="qc-icon">💰</div>
+            <div class="qc-label">Saved Homes</div>
+            <div class="qc-sub">View favorites</div>
+          </div>
+          <div class="quick-card" onclick="window.location.href='tel:7144728508'">
+            <div class="qc-icon">📞</div>
+            <div class="qc-label">Call Rene</div>
+            <div class="qc-sub">(714) 472-8508</div>
+          </div>
+          <div class="quick-card" onclick="window.open('/public/admin-chat.html','_blank')">
+            <div class="qc-icon">🤖</div>
+            <div class="qc-label">AI Assistant</div>
+            <div class="qc-sub">Get answers fast</div>
+          </div>
+          <div class="quick-card" onclick="navigateSection('documents')">
+            <div class="qc-icon">📁</div>
+            <div class="qc-label">Upload Documents</div>
+            <div class="qc-sub">Secure upload</div>
+          </div>
+          <div class="quick-card" onclick="window.location.href='/public/search-homes.html'">
+            <div class="qc-icon">🔍</div>
+            <div class="qc-label">Search Homes</div>
+            <div class="qc-sub">Browse listings</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION: MY APPLICATION -->
+      <div class="portal-section" id="sec-application">
+        <div class="section-header"><h2>My Application</h2></div>
+        <div class="app-progress"><div class="app-progress-fill" id="appProgressFill" style="width:0%"></div></div>
+        <div class="app-steps">
+          <button class="app-step-pill active" data-appstep="0" onclick="goAppStep(0)">1. Personal Info</button>
+          <button class="app-step-pill" data-appstep="1" onclick="goAppStep(1)">2. Property &amp; Loan</button>
+          <button class="app-step-pill" data-appstep="2" onclick="goAppStep(2)">3. Employment</button>
+          <button class="app-step-pill" data-appstep="3" onclick="goAppStep(3)">4. Assets &amp; Debts</button>
+        </div>
+        <form id="appForm" onsubmit="saveApplication(event)">
+          <!-- Step 0: Personal -->
+          <div class="app-form-step active" data-step="0">
+            <div class="form-row">
+              <div class="form-group"><label>First Name</label><input name="borrowerFirstName" type="text" required placeholder="John"/></div>
+              <div class="form-group"><label>Last Name</label><input name="borrowerLastName" type="text" required placeholder="Smith"/></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>Phone</label><input name="borrowerPhone" type="tel" placeholder="(555) 000-0000"/></div>
+              <div class="form-group"><label>Date of Birth</label><input name="dateOfBirth" type="date"/></div>
+            </div>
+            <div class="form-group"><label>Current Address</label><input name="currentAddress" type="text" placeholder="123 Main St, City, State, ZIP"/></div>
+          </div>
+          <!-- Step 1: Property -->
+          <div class="app-form-step" data-step="1">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Loan Type</label>
+                <select name="loanType">
+                  <option value="Conventional">Conventional</option>
+                  <option value="FHA">FHA</option>
+                  <option value="DSCR">DSCR</option>
+                  <option value="SBA">SBA</option>
+                  <option value="Commercial">Commercial</option>
+                  <option value="Down Payment Assistance">Down Payment Assistance</option>
+                  <option value="Non-QM">Non-QM</option>
+                  <option value="ITIN">ITIN Loans</option>
+                </select>
+              </div>
+              <div class="form-group"><label>Property Address</label><input name="propertyAddress" type="text" placeholder="Address of property"/></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>Purchase Price</label><input name="purchasePrice" type="number" min="0" step="0.01" placeholder="450000"/></div>
+              <div class="form-group"><label>Loan Amount</label><input name="loanAmount" type="number" min="0" step="0.01" placeholder="360000"/></div>
+            </div>
+          </div>
+          <!-- Step 2: Employment -->
+          <div class="app-form-step" data-step="2">
+            <div class="form-row">
+              <div class="form-group"><label>Employer Name</label><input name="employerName" type="text" placeholder="ACME Corp"/></div>
+              <div class="form-group"><label>Job Title</label><input name="jobTitle" type="text" placeholder="Software Engineer"/></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>Monthly Income</label><input name="monthlyIncome" type="number" min="0" step="0.01" placeholder="8500"/></div>
+              <div class="form-group"><label>Years on Job</label><input name="yearsOnJob" type="number" min="0" step="0.1" placeholder="3"/></div>
+            </div>
+          </div>
+          <!-- Step 3: Assets -->
+          <div class="app-form-step" data-step="3">
+            <div class="form-row">
+              <div class="form-group"><label>Cash / Checking ($)</label><input name="cashAssets" type="number" min="0" step="0.01" placeholder="25000"/></div>
+              <div class="form-group"><label>Retirement / Investments ($)</label><input name="investmentAssets" type="number" min="0" step="0.01" placeholder="80000"/></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>Monthly Debt Payments</label><input name="monthlyDebt" type="number" min="0" step="0.01" placeholder="1200"/></div>
+              <div class="form-group"><label>Other Liability Balance</label><input name="otherLiabilities" type="number" min="0" step="0.01" placeholder="5000"/></div>
+            </div>
+          </div>
+          <div class="app-nav">
+            <button type="button" class="btn-ghost" id="appPrevBtn" onclick="prevAppStep()" style="display:none"><i class="fas fa-arrow-left"></i> Previous</button>
+            <button type="button" class="btn-gold" id="appNextBtn" onclick="nextAppStep()">Next <i class="fas fa-arrow-right"></i></button>
+            <button type="submit" class="btn-gold"><i class="fas fa-save"></i> Save Progress</button>
+          </div>
+          <div class="form-msg" id="appMsg"></div>
+        </form>
+      </div>
+
+      <!-- SECTION: SAVED HOMES -->
+      <div class="portal-section" id="sec-saved">
+        <div class="section-header">
+          <h2>Saved Homes</h2>
+          <span class="count-badge" id="savedCount">0</span>
+        </div>
+        <div id="savedGrid" class="cards-grid"></div>
+        <div id="savedEmpty" class="empty-state" style="display:none">
+          <i class="fas fa-heart"></i>
+          <h3>No saved homes yet</h3>
+          <p>Browse listings and save your favorites</p>
+          <a href="/public/search-homes.html">Browse Listings</a>
+        </div>
+      </div>
+
+      <!-- SECTION: SHOWINGS -->
+      <div class="portal-section" id="sec-showings">
+        <div class="section-header"><h2>Showings</h2></div>
+
+        <!-- Cart subsection -->
+        <div class="cart-section">
+          <h3><i class="fas fa-shopping-cart"></i> Showing Cart</h3>
+          <div id="showingCartGrid" class="cart-grid"></div>
+          <div id="showingCartEmpty" style="display:none;color:var(--muted);font-size:.88rem;padding:20px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);text-align:center">
+            <i class="fas fa-home" style="font-size:1.5rem;display:block;margin-bottom:8px;color:#333"></i>
+            No homes in your showing cart.<br><a href="/public/search-homes.html" style="color:var(--gold)">Browse listings</a>
+          </div>
+          <div id="scheduleFormWrap" style="display:none">
+            <div class="schedule-form">
+              <h4 style="font-size:1rem;margin-bottom:14px;color:var(--gold)">Schedule These Showings</h4>
+              <div class="form-row">
+                <div class="form-group"><label>Preferred Date</label><input type="date" id="schedDate"/></div>
+                <div class="form-group"><label>Preferred Time</label>
+                  <select id="schedTime">
+                    <option value="Morning">Morning</option>
+                    <option value="Afternoon">Afternoon</option>
+                    <option value="Evening">Evening</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group"><label>Phone</label><input type="tel" id="schedPhone" placeholder="(555) 000-0000"/></div>
+              <div class="form-group"><label>Notes (optional)</label><input type="text" id="schedNotes" placeholder="Any special requests?"/></div>
+              <button class="btn-gold" onclick="submitShowings()"><i class="fas fa-paper-plane"></i> Request Showings</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Showing requests -->
+        <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:14px;margin-top:20px"><i class="fas fa-calendar-alt" style="color:var(--gold);margin-right:6px"></i>Showing Requests</h3>
+        <div id="showingsList"></div>
+        <div id="showingsEmpty" class="empty-state" style="display:none">
+          <i class="fas fa-calendar-alt"></i>
+          <h3>No showing requests yet</h3>
+          <p>Add homes to your cart and schedule showings</p>
+        </div>
+      </div>
+
+      <!-- SECTION: LISTING ALERTS -->
+      <div class="portal-section" id="sec-alerts">
+        <div class="section-header"><h2>Listing Alerts</h2></div>
+        <div id="alertsContainer"></div>
+      </div>
+
+      <!-- SECTION: DOCUMENTS -->
+      <div class="portal-section" id="sec-documents">
+        <div class="section-header"><h2>Documents</h2></div>
+        <p style="color:var(--muted);font-size:.88rem;margin-bottom:16px">Select a category and upload your documents securely.</p>
+
+        <div class="doc-categories" id="docCategories">
+          <button class="doc-cat-btn active" data-cat="Pay Stubs">Pay Stubs</button>
+          <button class="doc-cat-btn" data-cat="W-2s & Taxes">W-2s &amp; Taxes</button>
+          <button class="doc-cat-btn" data-cat="Bank Statements">Bank Statements</button>
+          <button class="doc-cat-btn" data-cat="Photo ID">Photo ID</button>
+          <button class="doc-cat-btn" data-cat="Purchase Contract">Purchase Contract</button>
+          <button class="doc-cat-btn" data-cat="Appraisal">Appraisal</button>
+          <button class="doc-cat-btn" data-cat="Insurance">Insurance</button>
+          <button class="doc-cat-btn" data-cat="Other">Other</button>
+        </div>
+
+        <div class="drop-zone" id="dropZone">
+          <i class="fas fa-cloud-upload-alt"></i>
+          <p>Drop files here or click to browse</p>
+          <input type="file" id="docFileInput" multiple accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" style="display:none"/>
+        </div>
+
+        <div class="file-queue" id="fileQueue"></div>
+        <div class="upload-btn" id="uploadBtnWrap" style="display:none">
+          <button class="btn-gold" onclick="uploadFiles()"><i class="fas fa-upload"></i> Upload Files</button>
+        </div>
+
+        <h3 style="font-size:1rem;font-weight:700;margin-bottom:12px;margin-top:24px">Upload History</h3>
+        <div id="docHistory"></div>
+
+        <div class="doc-checklist">
+          <h3>Document Checklist</h3>
+          <div id="docChecklist">
+            <div class="doc-check-item"><span class="dc-icon">📄</span><div class="dc-label">Government-issued ID<span>Driver's license or passport</span></div><span class="dc-status dc-needed" id="chk-id">Needed</span></div>
+            <div class="doc-check-item"><span class="dc-icon">💰</span><div class="dc-label">Last 2 Pay Stubs<span>Most recent paystubs from employer</span></div><span class="dc-status dc-needed" id="chk-paystubs">Needed</span></div>
+            <div class="doc-check-item"><span class="dc-icon">🏦</span><div class="dc-label">Bank Statements (2 mo.)<span>All pages from all accounts</span></div><span class="dc-status dc-needed" id="chk-bank">Needed</span></div>
+            <div class="doc-check-item"><span class="dc-icon">📋</span><div class="dc-label">Tax Returns (2 years)<span>Federal returns with all schedules</span></div><span class="dc-status dc-needed" id="chk-taxes">Needed</span></div>
+            <div class="doc-check-item"><span class="dc-icon">🏠</span><div class="dc-label">Purchase Agreement<span>Fully executed contract (if applicable)</span></div><span class="dc-status dc-needed" id="chk-contract">Needed</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION: APPOINTMENTS -->
+      <div class="portal-section" id="sec-appointments">
+        <div class="section-header"><h2>Appointments</h2></div>
+        <div class="appt-cta">
+          <h3>Book a Free Consultation</h3>
+          <p>Meet with Rene to discuss your mortgage options, rates, and next steps.</p>
+          <a href="https://cal.com/rene-duarte-rates-realty/30min" target="_blank" class="btn-gold" style="display:inline-block;text-decoration:none"><i class="fas fa-calendar-plus"></i> Schedule Now</a>
+        </div>
+        <div class="appt-info">
+          <h4><i class="fas fa-user-tie"></i> Rene Duarte</h4>
+          <p>Licensed Mortgage Loan Originator &amp; Real Estate Agent</p>
+          <p><i class="fas fa-phone" style="margin-right:6px;color:var(--gold)"></i> <a href="tel:7144728508">(714) 472-8508</a></p>
+          <p><i class="fas fa-envelope" style="margin-right:6px;color:var(--gold)"></i> <a href="mailto:rene@ratesandrealty.com">rene@ratesandrealty.com</a></p>
+        </div>
+      </div>
+
+      <!-- SECTION: PROFILE -->
+      <div class="portal-section" id="sec-profile">
+        <div class="section-header"><h2>Profile</h2></div>
+        <form class="profile-form" id="profileForm" onsubmit="saveProfile(event)">
+          <div class="form-row">
+            <div class="form-group"><label>First Name</label><input id="profFirst" type="text"/></div>
+            <div class="form-group"><label>Last Name</label><input id="profLast" type="text"/></div>
+          </div>
+          <div class="form-group"><label>Email</label><input id="profEmail" type="email" disabled/></div>
+          <div class="form-group"><label>Phone</label><input id="profPhone" type="tel"/></div>
+          <button type="submit" class="btn-gold"><i class="fas fa-save"></i> Save Changes</button>
+          <div class="form-msg" id="profileMsg"></div>
+        </form>
+
+        <hr class="profile-divider"/>
+
+        <h3 style="font-size:1.1rem;margin-bottom:16px">Change Password</h3>
+        <form class="profile-form" id="passwordForm" onsubmit="changePassword(event)">
+          <div class="form-group"><label>Current Password</label><input id="pwCurrent" type="password" required/></div>
+          <div class="form-group"><label>New Password</label><input id="pwNew" type="password" required/></div>
+          <div class="form-group"><label>Confirm New Password</label><input id="pwConfirm" type="password" required/></div>
+          <button type="submit" class="btn-gold"><i class="fas fa-lock"></i> Update Password</button>
+          <div class="form-msg" id="passwordMsg"></div>
+        </form>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+/* ===== CONSTANTS ===== */
+var SB = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+var SK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+
+var currentUser = null;
+var appCurrentStep = 0;
+var existingAppId = null;
+var appDirty = false;
+var fileQueue = [];
+var selectedDocCat = 'Pay Stubs';
+
+/* ===== AUTH ===== */
+function getUser() {
+  try {
+    var pu = localStorage.getItem('portal_user');
+    if (pu) return JSON.parse(pu);
+    var bu = localStorage.getItem('borrower_user');
+    if (bu) return JSON.parse(bu);
+    var email = localStorage.getItem('borrower_email') || localStorage.getItem('user_email');
+    if (email) return { email: email, first_name: localStorage.getItem('borrower_first_name') || '' };
+  } catch(e) {}
+  return null;
+}
+
+function portalLogin(email, password, onSuccess, onError) {
+  fetch(SB+'/functions/v1/portal-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SK },
+    body: JSON.stringify({ action: 'login', email: email.trim().toLowerCase(), password: password })
+  }).then(function(res) { return res.json().then(function(d) { return { ok: res.ok, data: d }; }); })
+  .then(function(r) {
+    if (!r.ok || r.data.error) throw new Error(r.data.error || 'Login failed');
+    var user = r.data.user;
+    localStorage.setItem('portal_user', JSON.stringify(user));
+    localStorage.setItem('borrower_user', JSON.stringify(user));
+    localStorage.setItem('borrower_email', user.email);
+    localStorage.setItem('borrower_first_name', user.first_name || '');
+    localStorage.setItem('user_email', user.email);
+    if (onSuccess) onSuccess(user);
+  }).catch(function(e) { if (onError) onError(e.message); });
+}
+
+function portalSignup(firstName, lastName, email, phone, password, onSuccess, onError) {
+  fetch(SB+'/functions/v1/portal-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SK },
+    body: JSON.stringify({ action: 'signup', first_name: firstName, last_name: lastName || '', email: email.trim().toLowerCase(), phone: phone || '', password: password || undefined })
+  }).then(function(res) { return res.json().then(function(d) { return { ok: res.ok, data: d }; }); })
+  .then(function(r) {
+    if (r.data.error && r.data.code !== 'EXISTS') throw new Error(r.data.error);
+    if (r.data.code === 'EXISTS' && password) return portalLogin(email, password, onSuccess, onError);
+    if (r.data.code === 'EXISTS') throw new Error('Account exists. Please sign in.');
+    var user = r.data.user || { id: r.data.user_id, email: email, first_name: firstName };
+    localStorage.setItem('portal_user', JSON.stringify(user));
+    localStorage.setItem('borrower_user', JSON.stringify(user));
+    localStorage.setItem('borrower_email', email);
+    localStorage.setItem('borrower_first_name', firstName);
+    localStorage.setItem('user_email', email);
+    if (onSuccess) onSuccess(user);
+  }).catch(function(e) { if (onError) onError(e.message); });
+}
+
+function portalSignOut() {
+  ['portal_user','borrower_user','borrower_email','borrower_first_name','user_email','user_name','borrower_token'].forEach(function(k) { localStorage.removeItem(k); });
+  window.location.reload();
+}
+
+function sbH() { return { 'apikey': SK, 'Authorization': 'Bearer ' + SK, 'Content-Type': 'application/json' }; }
+
+/* ===== TOAST ===== */
+function showToast(msg, type) {
+  var c = document.getElementById('toastContainer');
+  var t = document.createElement('div');
+  t.className = 'toast ' + (type || 'info');
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(function() { t.classList.add('show'); }, 10);
+  setTimeout(function() { t.classList.remove('show'); setTimeout(function() { t.remove(); }, 300); }, 3500);
+}
+
+/* ===== AUTH UI ===== */
+function switchAuthTab(tab) {
+  document.querySelectorAll('.auth-tab').forEach(function(t, i) {
+    t.classList.toggle('active', (tab === 'login' ? i === 0 : i === 1));
+  });
+  document.getElementById('loginForm').classList.toggle('active', tab === 'login');
+  document.getElementById('signupForm').classList.toggle('active', tab === 'signup');
+}
+
+function handleLogin(e) {
+  e.preventDefault();
+  var email = document.getElementById('loginEmail').value;
+  var pw = document.getElementById('loginPassword').value;
+  var btn = document.getElementById('loginBtn');
+  var err = document.getElementById('loginError');
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
+  portalLogin(email, pw, function(user) {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+    initPortal(user);
+  }, function(msg) {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+    err.textContent = msg;
+    err.style.display = 'block';
+  });
+}
+
+function handleSignup(e) {
+  e.preventDefault();
+  var first = document.getElementById('signupFirst').value;
+  var last = document.getElementById('signupLast').value;
+  var email = document.getElementById('signupEmail').value;
+  var phone = document.getElementById('signupPhone').value;
+  var pw = document.getElementById('signupPassword').value;
+  var btn = document.getElementById('signupBtn');
+  var err = document.getElementById('signupError');
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Creating account...';
+  portalSignup(first, last, email, phone, pw, function(user) {
+    btn.disabled = false;
+    btn.textContent = 'Create Account';
+    initPortal(user);
+  }, function(msg) {
+    btn.disabled = false;
+    btn.textContent = 'Create Account';
+    err.textContent = msg;
+    err.style.display = 'block';
+  });
+}
+
+/* ===== SHOW AUTH / PORTAL ===== */
+function showAuthPage() {
+  document.getElementById('authPage').style.display = 'block';
+  document.getElementById('portalPage').style.display = 'none';
+}
+
+function initPortal(user) {
+  currentUser = user;
+  document.getElementById('authPage').style.display = 'none';
+  document.getElementById('portalPage').style.display = 'block';
+
+  // populate nav & sidebar
+  var name = (user.first_name || '') + ' ' + (user.last_name || '');
+  document.getElementById('navUserName').textContent = name.trim() || user.email;
+  document.getElementById('sidebarName').textContent = user.first_name || 'User';
+  var initials = ((user.first_name || '?')[0] + (user.last_name || '?')[0]).toUpperCase();
+  document.getElementById('sidebarAvatar').textContent = initials;
+
+  // welcome
+  document.getElementById('welcomeHeading').textContent = 'Welcome back, ' + (user.first_name || 'there') + ' 👋';
+  var since = user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : '--';
+  document.getElementById('welcomeSub').textContent = 'Member since ' + since;
+
+  // load everything
+  loadDashboardStats();
+  loadApplication();
+  loadSavedHomes();
+  loadShowingCart();
+  loadShowings();
+  loadAlerts();
+  loadDocHistory();
+  loadProfile();
+
+  // sidebar nav
+  document.querySelectorAll('#sidebarNav a[data-section]').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+      e.preventDefault();
+      navigateSection(this.getAttribute('data-section'));
+    });
+  });
+
+  // auto-save application every 30s
+  setInterval(function() {
+    if (appDirty) { saveApplicationData(true); }
+  }, 30000);
+}
+
+function navigateSection(section) {
+  document.querySelectorAll('.portal-section').forEach(function(s) { s.classList.remove('active'); });
+  var sec = document.getElementById('sec-' + section);
+  if (sec) sec.classList.add('active');
+  document.querySelectorAll('#sidebarNav a').forEach(function(a) {
+    a.classList.toggle('active', a.getAttribute('data-section') === section);
+  });
+}
+
+/* ===== DASHBOARD STATS ===== */
+function loadDashboardStats() {
+  var u = currentUser;
+  if (!u || !u.id) return;
+  var h = { 'apikey': SK, 'Authorization': 'Bearer ' + SK };
+
+  fetch(SB + '/rest/v1/saved_listings?portal_user_id=eq.' + u.id + '&select=id', { headers: h })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { document.getElementById('statSaved').textContent = Array.isArray(d) ? d.length : 0; })
+    .catch(function() {});
+
+  fetch(SB + '/rest/v1/showings?or=(portal_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&select=id', { headers: h })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { document.getElementById('statShowings').textContent = Array.isArray(d) ? d.length : 0; })
+    .catch(function() {});
+
+  fetch(SB + '/rest/v1/listing_alerts?portal_user_id=eq.' + u.id + '&is_active=eq.true&select=id', { headers: h })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { document.getElementById('statAlerts').textContent = Array.isArray(d) ? d.length : 0; })
+    .catch(function() {});
+
+  fetch(SB + '/rest/v1/mortgage_applications?or=(borrower_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&order=created_at.desc&limit=1', { headers: h })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (Array.isArray(d) && d.length > 0) {
+        var s = d[0].status || d[0].application_status || 'draft';
+        document.getElementById('statAppStatus').textContent = s.charAt(0).toUpperCase() + s.slice(1);
+      } else {
+        document.getElementById('statAppStatus').textContent = 'Not Started';
+      }
+    })
+    .catch(function() {});
+}
+
+/* ===== APPLICATION ===== */
+var appFieldMap = {
+  borrowerFirstName: 'first_name', borrowerLastName: 'last_name', borrowerPhone: 'phone',
+  dateOfBirth: 'date_of_birth', currentAddress: 'current_address',
+  loanType: 'loan_type', propertyAddress: 'property_address',
+  purchasePrice: 'purchase_price', loanAmount: 'loan_amount',
+  employerName: 'employer_name', jobTitle: 'job_title',
+  monthlyIncome: 'monthly_income', yearsOnJob: 'years_on_job',
+  cashAssets: 'cash_assets', investmentAssets: 'investment_assets',
+  monthlyDebt: 'monthly_debt', otherLiabilities: 'other_liabilities'
+};
+
+function loadApplication() {
+  var u = currentUser;
+  if (!u || !u.id) return;
+  fetch(SB + '/rest/v1/mortgage_applications?or=(borrower_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&order=created_at.desc&limit=1', { headers: sbH() })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (Array.isArray(d) && d.length > 0) {
+        existingAppId = d[0].id;
+        populateAppForm(d[0]);
+      } else {
+        // pre-fill from user
+        var form = document.getElementById('appForm');
+        if (u.first_name) form.borrowerFirstName.value = u.first_name;
+        if (u.last_name) form.borrowerLastName.value = u.last_name;
+        if (u.phone) form.borrowerPhone.value = u.phone;
+      }
+      updateAppProgress();
+    })
+    .catch(function() {});
+}
+
+function populateAppForm(app) {
+  var form = document.getElementById('appForm');
+  Object.keys(appFieldMap).forEach(function(field) {
+    var dbKey = appFieldMap[field];
+    if (app[dbKey] !== undefined && app[dbKey] !== null && form[field]) {
+      form[field].value = app[dbKey];
+    }
+  });
+}
+
+function goAppStep(step) {
+  appCurrentStep = step;
+  document.querySelectorAll('.app-form-step').forEach(function(s, i) {
+    s.classList.toggle('active', i === step);
+  });
+  document.querySelectorAll('.app-step-pill').forEach(function(p, i) {
+    p.classList.remove('active', 'completed');
+    if (i === step) p.classList.add('active');
+    else if (i < step) p.classList.add('completed');
+  });
+  document.getElementById('appPrevBtn').style.display = step === 0 ? 'none' : '';
+  document.getElementById('appNextBtn').style.display = step === 3 ? 'none' : '';
+}
+
+function nextAppStep() { if (appCurrentStep < 3) goAppStep(appCurrentStep + 1); }
+function prevAppStep() { if (appCurrentStep > 0) goAppStep(appCurrentStep - 1); }
+
+function updateAppProgress() {
+  var form = document.getElementById('appForm');
+  var fields = Object.keys(appFieldMap);
+  var filled = 0;
+  fields.forEach(function(f) {
+    if (form[f] && form[f].value && form[f].value.trim() !== '') filled++;
+  });
+  var pct = Math.round((filled / fields.length) * 100);
+  document.getElementById('appProgressFill').style.width = pct + '%';
+}
+
+function saveApplication(e) {
+  if (e) e.preventDefault();
+  saveApplicationData(false);
+}
+
+function saveApplicationData(silent) {
+  var u = currentUser;
+  if (!u || !u.id) return;
+  var form = document.getElementById('appForm');
+  var data = { borrower_user_id: u.id, email: u.email };
+  Object.keys(appFieldMap).forEach(function(field) {
+    var dbKey = appFieldMap[field];
+    var val = form[field] ? form[field].value : '';
+    if (['purchase_price','loan_amount','monthly_income','years_on_job','cash_assets','investment_assets','monthly_debt','other_liabilities'].indexOf(dbKey) > -1) {
+      data[dbKey] = val ? parseFloat(val) : null;
+    } else {
+      data[dbKey] = val || null;
+    }
+  });
+
+  var method, url;
+  if (existingAppId) {
+    method = 'PATCH';
+    url = SB + '/rest/v1/mortgage_applications?id=eq.' + existingAppId;
+  } else {
+    method = 'POST';
+    url = SB + '/rest/v1/mortgage_applications';
+  }
+
+  fetch(url, { method: method, headers: sbH(), body: JSON.stringify(method === 'POST' ? data : data) })
+    .then(function(r) {
+      if (!r.ok) throw new Error('Save failed');
+      appDirty = false;
+      updateAppProgress();
+      if (!silent) {
+        var msg = document.getElementById('appMsg');
+        msg.className = 'form-msg success';
+        msg.textContent = 'Application saved successfully!';
+        setTimeout(function() { msg.className = 'form-msg'; msg.textContent = ''; }, 3000);
+        showToast('Application saved!', 'success');
+      }
+      // if POST, re-fetch to get the id
+      if (method === 'POST') {
+        fetch(SB + '/rest/v1/mortgage_applications?borrower_user_id=eq.' + u.id + '&order=created_at.desc&limit=1', { headers: sbH() })
+          .then(function(r2) { return r2.json(); })
+          .then(function(d2) { if (d2 && d2[0]) existingAppId = d2[0].id; })
+          .catch(function() {});
+      }
+    })
+    .catch(function(e) {
+      if (!silent) {
+        var msg = document.getElementById('appMsg');
+        msg.className = 'form-msg error';
+        msg.textContent = 'Error saving: ' + e.message;
+      }
+    });
+}
+
+// Mark form as dirty on input
+document.addEventListener('input', function(e) {
+  if (e.target.closest('#appForm')) { appDirty = true; updateAppProgress(); }
+});
+
+/* ===== SAVED HOMES ===== */
+function loadSavedHomes() {
+  var u = currentUser;
+  if (!u || !u.id) return;
+  fetch(SB + '/rest/v1/saved_listings?portal_user_id=eq.' + u.id + '&order=saved_at.desc', { headers: sbH() })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { renderSavedHomes(Array.isArray(d) ? d : []); })
+    .catch(function() { renderSavedHomes([]); });
+}
+
+function renderSavedHomes(homes) {
+  var grid = document.getElementById('savedGrid');
+  var empty = document.getElementById('savedEmpty');
+  document.getElementById('savedCount').textContent = homes.length;
+  if (!homes.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.innerHTML = homes.map(function(h) {
+    return '<div class="listing-card">'
+      + (h.listing_photo ? '<img src="' + h.listing_photo + '" alt="Home" onerror="this.style.display=\'none\'"/>' : '<div style="height:140px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;color:#333"><i class="fas fa-home" style="font-size:2rem"></i></div>')
+      + '<div class="listing-card-body">'
+      + '<div class="listing-price">$' + (h.listing_price || 0).toLocaleString() + '</div>'
+      + '<div class="listing-address">' + (h.listing_address || '') + '</div>'
+      + '<div class="listing-city">' + (h.listing_city || '') + '</div>'
+      + (h.listing_beds || h.listing_baths || h.listing_sqft ? '<div class="listing-meta">' + (h.listing_beds ? h.listing_beds + ' bd' : '') + (h.listing_baths ? ' &middot; ' + h.listing_baths + ' ba' : '') + (h.listing_sqft ? ' &middot; ' + Number(h.listing_sqft).toLocaleString() + ' sqft' : '') + '</div>' : '')
+      + '<div class="listing-actions">'
+      + '<button class="btn-view" onclick="viewListing(\'' + (h.listing_key || '') + '\',\'' + encodeURIComponent(h.listing_address || '') + '\')">View</button>'
+      + '<button class="btn-remove" onclick="removeSaved(\'' + h.id + '\')">Remove</button>'
+      + '</div></div></div>';
+  }).join('');
+}
+
+function viewListing(key, addr) {
+  if (key) {
+    sessionStorage.setItem('selectedListingKey', key);
+    window.location.href = '/public/property-detail.html';
+  }
+}
+
+function removeSaved(id) {
+  fetch(SB + '/rest/v1/saved_listings?id=eq.' + id, { method: 'DELETE', headers: sbH() })
+    .then(function() { showToast('Removed from saved', 'info'); loadSavedHomes(); loadDashboardStats(); })
+    .catch(function() { showToast('Error removing', 'error'); });
+}
+
+/* ===== SHOWING CART ===== */
+function loadShowingCart() {
+  var cart = JSON.parse(localStorage.getItem('showingCart') || '[]');
+  var grid = document.getElementById('showingCartGrid');
+  var empty = document.getElementById('showingCartEmpty');
+  var sched = document.getElementById('scheduleFormWrap');
+
+  if (!cart.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    sched.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  sched.style.display = 'block';
+
+  // pre-fill phone
+  if (currentUser && currentUser.phone) {
+    document.getElementById('schedPhone').value = currentUser.phone;
+  }
+
+  grid.innerHTML = cart.map(function(item) {
+    return '<div class="cart-card">'
+      + (item.photo ? '<img src="' + item.photo + '" onerror="this.style.display=\'none\'"/>' : '')
+      + '<div class="cart-card-body">'
+      + '<div style="font-weight:700;color:var(--gold);margin-bottom:3px">$' + (item.price || 0).toLocaleString() + '</div>'
+      + '<div style="font-size:.82rem;margin-bottom:2px">' + (item.address || '') + '</div>'
+      + '<div style="font-size:.75rem;color:var(--muted);margin-bottom:8px">' + (item.city || '') + '</div>'
+      + '<button class="btn-remove" style="width:100%;padding:6px;font-size:.78rem" onclick="removeCartItem(\'' + item.listingKey + '\')">Remove</button>'
+      + '</div></div>';
+  }).join('');
+}
+
+function removeCartItem(key) {
+  var cart = JSON.parse(localStorage.getItem('showingCart') || '[]');
+  cart = cart.filter(function(c) { return c.listingKey !== key; });
+  localStorage.setItem('showingCart', JSON.stringify(cart));
+  loadShowingCart();
+}
+
+function submitShowings() {
+  var cart = JSON.parse(localStorage.getItem('showingCart') || '[]');
+  if (!cart.length) { showToast('Cart is empty', 'error'); return; }
+  var date = document.getElementById('schedDate').value;
+  var time = document.getElementById('schedTime').value;
+  var phone = document.getElementById('schedPhone').value;
+  var notes = document.getElementById('schedNotes').value;
+  if (!date) { showToast('Please select a preferred date', 'error'); return; }
+
+  var u = currentUser;
+  var batchId = 'batch_' + Date.now();
+  var inserts = cart.map(function(item) {
+    return {
+      listing_key: item.listingKey,
+      property_price: item.price,
+      property_address: item.address,
+      property_city: item.city,
+      property_photo: item.photo,
+      property_beds: item.beds,
+      property_baths: item.baths,
+      preferred_date: date,
+      preferred_time: time,
+      phone: phone || null,
+      notes: notes || null,
+      email: u ? u.email : null,
+      name: u ? ((u.first_name || '') + ' ' + (u.last_name || '')).trim() : null,
+      portal_user_id: u ? u.id : null,
+      batch_id: batchId,
+      status: 'pending'
+    };
+  });
+
+  fetch(SB + '/rest/v1/showings', { method: 'POST', headers: sbH(), body: JSON.stringify(inserts) })
+    .then(function(r) {
+      if (!r.ok) throw new Error('Failed');
+      localStorage.removeItem('showingCart');
+      loadShowingCart();
+      loadShowings();
+      loadDashboardStats();
+      showToast('Showings requested! Rene will confirm shortly.', 'success');
+    })
+    .catch(function() { showToast('Error submitting showings. Call (714) 472-8508', 'error'); });
+}
+
+/* ===== SHOWINGS ===== */
+function loadShowings() {
+  var u = currentUser;
+  if (!u || !u.id) return;
+  fetch(SB + '/rest/v1/showings?or=(portal_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&order=created_at.desc', { headers: sbH() })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { renderShowings(Array.isArray(d) ? d : []); })
+    .catch(function() { renderShowings([]); });
+}
+
+function renderShowings(showings) {
+  var list = document.getElementById('showingsList');
+  var empty = document.getElementById('showingsEmpty');
+  if (!showings.length) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // group by batch_id
+  var batches = {};
+  showings.forEach(function(s) {
+    var k = s.batch_id || s.id;
+    if (!batches[k]) batches[k] = [];
+    batches[k].push(s);
+  });
+
+  list.innerHTML = Object.values(batches).map(function(batch) {
+    var f = batch[0];
+    var statusClass = f.status === 'confirmed' ? 'status-confirmed' : f.status === 'cancelled' ? 'status-cancelled' : 'status-pending';
+    var statusLabel = f.status === 'confirmed' ? 'Confirmed' : f.status === 'cancelled' ? 'Cancelled' : 'Pending';
+    var dateStr = f.preferred_date ? new Date(f.preferred_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Date TBD';
+
+    return '<div class="showing-batch">'
+      + '<div class="showing-batch-header">'
+      + '<div><div style="font-size:.88rem;font-weight:700">' + batch.length + ' Home' + (batch.length > 1 ? 's' : '') + ' &middot; ' + dateStr + '</div>'
+      + '<div style="font-size:.75rem;color:var(--muted)">' + (f.preferred_time || '') + ' &middot; Submitted ' + new Date(f.created_at).toLocaleDateString() + '</div></div>'
+      + '<span class="status-badge ' + statusClass + '">' + statusLabel + '</span>'
+      + '</div>'
+      + batch.map(function(s) {
+        return '<div class="showing-item">'
+          + (s.property_photo ? '<img src="' + s.property_photo + '" onerror="this.style.display=\'none\'"/>' : '')
+          + '<div class="showing-item-info">'
+          + '<div class="showing-item-addr">' + (s.property_address || '') + '</div>'
+          + (s.property_price ? '<div class="showing-item-price">$' + s.property_price.toLocaleString() + '</div>' : '')
+          + '</div></div>';
+      }).join('')
+      + '</div>';
+  }).join('');
+}
+
+/* ===== LISTING ALERTS ===== */
+function loadAlerts() {
+  if (typeof ListingAlerts !== 'undefined' && currentUser && currentUser.id) {
+    try {
+      ListingAlerts.renderAlertsList('alertsContainer', { portal_user_id: currentUser.id });
+    } catch(e) {
+      document.getElementById('alertsContainer').innerHTML = '<div class="empty-state"><i class="fas fa-bell"></i><h3>Listing Alerts</h3><p>Unable to load alerts module.</p></div>';
+    }
+  }
+}
+
+/* ===== DOCUMENTS ===== */
+// Category selection
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('doc-cat-btn')) {
+    document.querySelectorAll('.doc-cat-btn').forEach(function(b) { b.classList.remove('active'); });
+    e.target.classList.add('active');
+    selectedDocCat = e.target.getAttribute('data-cat');
+  }
+});
+
+// Drop zone
+document.addEventListener('DOMContentLoaded', function() {
+  var dz = document.getElementById('dropZone');
+  var fi = document.getElementById('docFileInput');
+  if (!dz || !fi) return;
+
+  dz.addEventListener('click', function() { fi.click(); });
+  dz.addEventListener('dragover', function(e) { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', function() { dz.classList.remove('dragover'); });
+  dz.addEventListener('drop', function(e) {
+    e.preventDefault();
+    dz.classList.remove('dragover');
+    addFilesToQueue(e.dataTransfer.files);
+  });
+  fi.addEventListener('change', function() { addFilesToQueue(fi.files); fi.value = ''; });
+});
+
+function addFilesToQueue(files) {
+  for (var i = 0; i < files.length; i++) {
+    fileQueue.push({ file: files[i], category: selectedDocCat, progress: 0 });
+  }
+  renderFileQueue();
+}
+
+function renderFileQueue() {
+  var fq = document.getElementById('fileQueue');
+  var ub = document.getElementById('uploadBtnWrap');
+  if (!fileQueue.length) { fq.innerHTML = ''; ub.style.display = 'none'; return; }
+  ub.style.display = 'block';
+  fq.innerHTML = fileQueue.map(function(f, i) {
+    var sizeMB = (f.file.size / 1024 / 1024).toFixed(1);
+    return '<div class="file-queue-item">'
+      + '<i class="fas fa-file" style="color:var(--gold)"></i>'
+      + '<span class="fq-name">' + f.file.name + '</span>'
+      + '<span class="fq-size">' + sizeMB + ' MB &middot; ' + f.category + '</span>'
+      + '<button class="fq-remove" onclick="removeFromQueue(' + i + ')"><i class="fas fa-times"></i></button>'
+      + '</div>'
+      + (f.progress > 0 ? '<div class="fq-progress"><div class="fq-progress-bar" style="width:' + f.progress + '%"></div></div>' : '');
+  }).join('');
+}
+
+function removeFromQueue(idx) {
+  fileQueue.splice(idx, 1);
+  renderFileQueue();
+}
+
+function uploadFiles() {
+  if (!fileQueue.length) return;
+  var u = currentUser;
+  if (!u || !u.id) { showToast('Please log in first', 'error'); return; }
+  var borrowerName = ((u.first_name || '') + ' ' + (u.last_name || '')).trim();
+
+  var promises = fileQueue.map(function(item, idx) {
+    var fd = new FormData();
+    fd.append('file', item.file);
+    fd.append('borrower_name', borrowerName);
+    fd.append('category', item.category);
+    fd.append('user_id', u.id);
+    fd.append('loan_type', 'Portal Upload');
+
+    return fetch(SB + '/functions/v1/google-drive-upload', {
+      method: 'POST',
+      headers: { 'apikey': SK },
+      body: fd
+    }).then(function(r) {
+      fileQueue[idx].progress = 100;
+      renderFileQueue();
+      return r.json();
+    });
+  });
+
+  Promise.all(promises)
+    .then(function() {
+      showToast(fileQueue.length + ' file(s) uploaded successfully!', 'success');
+      fileQueue = [];
+      renderFileQueue();
+      loadDocHistory();
+    })
+    .catch(function() { showToast('Upload error. Try again or call (714) 472-8508', 'error'); });
+}
+
+function loadDocHistory() {
+  var u = currentUser;
+  if (!u || !u.id) return;
+  fetch(SB + '/rest/v1/borrower_documents?user_id=eq.' + u.id + '&order=uploaded_at.desc&limit=20', { headers: sbH() })
+    .then(function(r) { return r.json(); })
+    .then(function(docs) {
+      var c = document.getElementById('docHistory');
+      if (!Array.isArray(docs) || !docs.length) {
+        c.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No documents uploaded yet.</p>';
+        return;
+      }
+      c.innerHTML = docs.map(function(d) {
+        return '<div class="doc-history-item">'
+          + '<i class="fas fa-file-alt"></i>'
+          + '<span class="dh-name">' + (d.file_name || d.original_name || 'Document') + '</span>'
+          + '<span class="dh-cat">' + (d.category || 'Other') + '</span>'
+          + '<span class="dh-date">' + (d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '') + '</span>'
+          + '</div>';
+      }).join('');
+
+      // update checklist
+      var cats = docs.map(function(d) { return (d.category || '').toLowerCase(); });
+      updateChecklistItem('chk-id', cats, ['photo id', 'id', 'government']);
+      updateChecklistItem('chk-paystubs', cats, ['pay stub', 'paystub', 'pay stubs']);
+      updateChecklistItem('chk-bank', cats, ['bank', 'statement']);
+      updateChecklistItem('chk-taxes', cats, ['tax', 'w-2', 'w2']);
+      updateChecklistItem('chk-contract', cats, ['purchase', 'contract', 'agreement']);
+    })
+    .catch(function() {});
+}
+
+function updateChecklistItem(id, cats, keywords) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var found = cats.some(function(c) { return keywords.some(function(k) { return c.indexOf(k) > -1; }); });
+  if (found) {
+    el.textContent = '✓ Uploaded';
+    el.className = 'dc-status dc-uploaded';
+  } else {
+    el.textContent = 'Needed';
+    el.className = 'dc-status dc-needed';
+  }
+}
+
+/* ===== PROFILE ===== */
+function loadProfile() {
+  var u = currentUser;
+  if (!u) return;
+  document.getElementById('profFirst').value = u.first_name || '';
+  document.getElementById('profLast').value = u.last_name || '';
+  document.getElementById('profEmail').value = u.email || '';
+  document.getElementById('profPhone').value = u.phone || '';
+}
+
+function saveProfile(e) {
+  e.preventDefault();
+  var u = currentUser;
+  if (!u || !u.id) return;
+  var data = {
+    first_name: document.getElementById('profFirst').value,
+    last_name: document.getElementById('profLast').value,
+    phone: document.getElementById('profPhone').value
+  };
+
+  fetch(SB + '/rest/v1/portal_users?id=eq.' + u.id, {
+    method: 'PATCH',
+    headers: sbH(),
+    body: JSON.stringify(data)
+  }).then(function(r) {
+    if (!r.ok) throw new Error('Save failed');
+    // update local
+    u.first_name = data.first_name;
+    u.last_name = data.last_name;
+    u.phone = data.phone;
+    localStorage.setItem('portal_user', JSON.stringify(u));
+    localStorage.setItem('borrower_user', JSON.stringify(u));
+    localStorage.setItem('borrower_first_name', data.first_name);
+    currentUser = u;
+
+    // update UI
+    var name = (data.first_name + ' ' + data.last_name).trim();
+    document.getElementById('navUserName').textContent = name || u.email;
+    document.getElementById('sidebarName').textContent = data.first_name || 'User';
+    document.getElementById('sidebarAvatar').textContent = ((data.first_name || '?')[0] + (data.last_name || '?')[0]).toUpperCase();
+
+    var msg = document.getElementById('profileMsg');
+    msg.className = 'form-msg success';
+    msg.textContent = 'Profile updated!';
+    showToast('Profile saved', 'success');
+    setTimeout(function() { msg.className = 'form-msg'; msg.textContent = ''; }, 3000);
+  }).catch(function(err) {
+    var msg = document.getElementById('profileMsg');
+    msg.className = 'form-msg error';
+    msg.textContent = 'Error: ' + err.message;
+  });
+}
+
+function changePassword(e) {
+  e.preventDefault();
+  var u = currentUser;
+  if (!u || !u.id) return;
+  var current = document.getElementById('pwCurrent').value;
+  var newPw = document.getElementById('pwNew').value;
+  var confirm = document.getElementById('pwConfirm').value;
+  var msg = document.getElementById('passwordMsg');
+
+  if (newPw !== confirm) {
+    msg.className = 'form-msg error';
+    msg.textContent = 'Passwords do not match.';
+    return;
+  }
+  if (newPw.length < 6) {
+    msg.className = 'form-msg error';
+    msg.textContent = 'Password must be at least 6 characters.';
+    return;
+  }
+
+  fetch(SB + '/functions/v1/portal-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SK },
+    body: JSON.stringify({ action: 'change_password', user_id: u.id, current_password: current, new_password: newPw })
+  }).then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.error) throw new Error(d.error);
+    msg.className = 'form-msg success';
+    msg.textContent = 'Password changed successfully!';
+    showToast('Password updated', 'success');
+    document.getElementById('passwordForm').reset();
+    setTimeout(function() { msg.className = 'form-msg'; msg.textContent = ''; }, 3000);
+  })
+  .catch(function(err) {
+    msg.className = 'form-msg error';
+    msg.textContent = err.message;
+  });
+}
+
+/* ===== INIT ===== */
+document.addEventListener('DOMContentLoaded', function() {
+  var user = getUser();
+  if (user && user.id) {
+    initPortal(user);
+  } else {
+    showAuthPage();
+  }
+});
+</script>
+</body>
+</html>
