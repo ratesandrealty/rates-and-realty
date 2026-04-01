@@ -205,6 +205,8 @@
 
   function onAuthSuccess(user, isSignup) {
     localStorage.setItem('portal_user', JSON.stringify(user));
+    localStorage.setItem('borrower_email', user.email || '');
+    localStorage.setItem('borrower_first_name', user.first_name || '');
     syncShowingCart(user);
     if (isSignup) {
       _formSignup.classList.add('pa-hidden');

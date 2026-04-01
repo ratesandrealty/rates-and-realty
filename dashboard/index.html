@@ -18,6 +18,8 @@
   <link rel="stylesheet" href="/components/styles.css">
   <link rel="stylesheet" href="/public/css/responsive.css">
   <link rel="stylesheet" href="/public/css/responsive-global.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="/public/portal-auth-modal.js"></script>
 </head>
 <body>
   <div id="site-header"></div>
@@ -72,6 +74,41 @@
           </div>
         </div>
       </section>
+
+      <!-- SHOWING CART -->
+      <div style="margin-bottom:32px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h2 style="font-size:1.1rem;font-weight:700;color:#eee;display:flex;align-items:center;gap:8px"><i class="fas fa-calendar-check" style="color:#C9A84C"></i> My Showing Cart</h2>
+          <a href="/public/search-homes.html" style="font-size:.8rem;color:#C9A84C;text-decoration:none">+ Add Homes</a>
+        </div>
+        <div id="portalCart" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+          <div style="color:#666;font-size:.85rem;padding:20px;background:#111;border:1px solid #222;border-radius:10px;text-align:center"><i class="fas fa-home" style="font-size:1.5rem;display:block;margin-bottom:8px;color:#333"></i>No homes in cart.<br><a href="/public/search-homes.html" style="color:#C9A84C;text-decoration:none;font-size:.8rem">Browse listings →</a></div>
+        </div>
+        <div id="portalCartCheckout" style="display:none;margin-top:12px;text-align:right">
+          <button onclick="checkoutShowings()" style="background:#C9A84C;color:#000;border:none;border-radius:9px;padding:11px 24px;font-weight:700;font-size:.88rem;cursor:pointer"><i class="fas fa-paper-plane"></i> Request These Showings</button>
+        </div>
+      </div>
+
+      <!-- SAVED HOMES -->
+      <div style="margin-bottom:32px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h2 style="font-size:1.1rem;font-weight:700;color:#eee;display:flex;align-items:center;gap:8px"><i class="fas fa-heart" style="color:#C9A84C"></i> Saved Homes</h2>
+          <a href="/public/search-homes.html" style="font-size:.8rem;color:#C9A84C;text-decoration:none">Browse more →</a>
+        </div>
+        <div id="portalSaved" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
+          <div style="color:#666;font-size:.85rem;padding:20px;background:#111;border:1px solid #222;border-radius:10px;text-align:center"><i class="fas fa-heart" style="font-size:1.5rem;display:block;margin-bottom:8px;color:#333"></i>No saved homes yet.</div>
+        </div>
+      </div>
+
+      <!-- SHOWING REQUESTS -->
+      <div style="margin-bottom:32px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h2 style="font-size:1.1rem;font-weight:700;color:#eee;display:flex;align-items:center;gap:8px"><i class="fas fa-door-open" style="color:#C9A84C"></i> Showing Requests</h2>
+        </div>
+        <div id="portalShowings" style="display:flex;flex-direction:column;gap:10px">
+          <div style="color:#666;font-size:.85rem;padding:16px;background:#111;border:1px solid #222;border-radius:10px;text-align:center">No showing requests yet.</div>
+        </div>
+      </div>
 
       <!-- Main Two-Column Layout -->
       <section class="dashboard-grid">
@@ -240,5 +277,25 @@
   <div id="site-footer"></div>
   <script type="module" src="/components/layout.js"></script>
   <script type="module" src="/components/borrower-dashboard.js"></script>
+  <script>
+  var SB_P='https://ljywhvbmsibwnssxpesh.supabase.co';
+  var SK_P='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  function getPortalUser(){var p=localStorage.getItem('portal_user');if(p)return JSON.parse(p);return null;}
+  async function loadPortalSections(){
+    var user=getPortalUser();
+    var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');
+    renderPortalCart(cart);
+    if(!user||!user.id)return;
+    try{var r=await fetch(SB_P+'/rest/v1/saved_listings?portal_user_id=eq.'+user.id+'&order=saved_at.desc',{headers:{'apikey':SK_P,'Authorization':'Bearer '+SK_P}});var saved=await r.json();if(Array.isArray(saved))renderPortalSaved(saved);}catch(e){}
+    try{var r2=await fetch(SB_P+'/rest/v1/showings?or=(portal_user_id.eq.'+user.id+',email.eq.'+encodeURIComponent(user.email)+')&order=created_at.desc&limit=10',{headers:{'apikey':SK_P,'Authorization':'Bearer '+SK_P}});var sh=await r2.json();if(Array.isArray(sh))renderPortalShowings(sh);}catch(e){}
+  }
+  function renderPortalCart(cart){var c=document.getElementById('portalCart'),co=document.getElementById('portalCartCheckout');if(!c)return;if(!cart.length){c.innerHTML='<div style="color:#666;font-size:.85rem;padding:20px;background:#111;border:1px solid #222;border-radius:10px;text-align:center"><i class="fas fa-home" style="font-size:1.5rem;display:block;margin-bottom:8px;color:#333"></i>No homes in cart.<br><a href="/public/search-homes.html" style="color:#C9A84C;text-decoration:none;font-size:.8rem">Browse listings →</a></div>';if(co)co.style.display='none';return;}if(co)co.style.display='block';c.innerHTML=cart.map(function(i){return'<div style="background:#111;border:1px solid #222;border-radius:10px;overflow:hidden">'+(i.photo?'<img src="'+i.photo+'" style="width:100%;height:140px;object-fit:cover" onerror="this.style.display=\'none\'">':'')+'<div style="padding:12px"><div style="font-weight:700;font-size:.9rem;color:#C9A84C;margin-bottom:3px">$'+(i.price||0).toLocaleString()+'</div><div style="font-size:.78rem;color:#eee;margin-bottom:2px">'+(i.address||'')+'</div><div style="font-size:.72rem;color:#666;margin-bottom:8px">'+(i.city||'')+'</div><div style="display:flex;gap:6px"><button onclick="removeFromPortalCart(\''+i.listingKey+'\')" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:7px;font-size:.75rem;cursor:pointer">Remove</button></div></div></div>';}).join('');}
+  function renderPortalSaved(saved){var c=document.getElementById('portalSaved');if(!c)return;if(!saved.length){c.innerHTML='<div style="color:#666;font-size:.85rem;padding:20px;background:#111;border:1px solid #222;border-radius:10px;text-align:center"><i class="fas fa-heart" style="font-size:1.5rem;display:block;margin-bottom:8px;color:#333"></i>No saved homes yet.</div>';return;}c.innerHTML=saved.map(function(i){return'<div style="background:#111;border:1px solid #222;border-radius:10px;overflow:hidden">'+(i.listing_photo?'<img src="'+i.listing_photo+'" style="width:100%;height:130px;object-fit:cover" onerror="this.style.display=\'none\'">':'')+'<div style="padding:12px"><div style="font-weight:700;font-size:.88rem;color:#C9A84C;margin-bottom:3px">$'+(i.listing_price||0).toLocaleString()+'</div><div style="font-size:.78rem;color:#eee">'+(i.listing_address||'')+'</div><div style="font-size:.72rem;color:#666;margin-bottom:6px">'+(i.listing_city||'')+'</div></div></div>';}).join('');}
+  function renderPortalShowings(showings){var c=document.getElementById('portalShowings');if(!c)return;if(!showings.length){c.innerHTML='<div style="color:#666;font-size:.85rem;padding:16px;background:#111;border:1px solid #222;border-radius:10px;text-align:center">No showing requests yet. <a href="/public/search-homes.html" style="color:#C9A84C;text-decoration:none">Browse homes →</a></div>';return;}var batches={};showings.forEach(function(s){var k=s.batch_id||s.id;if(!batches[k])batches[k]=[];batches[k].push(s);});c.innerHTML=Object.values(batches).map(function(batch){var f=batch[0];var sc=f.status==='confirmed'?'#3cb43c':f.status==='cancelled'?'#666':'#C9A84C';var sl=f.status==='confirmed'?'Confirmed':f.status==='cancelled'?'Cancelled':'Pending';return'<div style="background:#111;border:1px solid #222;border-radius:10px;padding:14px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:.82rem;font-weight:700;color:#eee">'+batch.length+' Home'+(batch.length>1?'s':'')+' · '+(f.preferred_date?new Date(f.preferred_date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}):'Date TBD')+'</div><div style="font-size:.73rem;color:#666">'+(f.preferred_time||'')+' · Submitted '+new Date(f.created_at).toLocaleDateString()+'</div></div><span style="background:'+sc+'22;color:'+sc+';border:1px solid '+sc+'44;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700">'+sl+'</span></div><div style="display:flex;flex-direction:column;gap:5px">'+batch.map(function(s){return'<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#1a1a1a;border-radius:6px">'+(s.property_photo?'<img src="'+s.property_photo+'" style="width:44px;height:34px;object-fit:cover;border-radius:4px;flex-shrink:0">':'')+'<div style="flex:1;min-width:0"><div style="font-size:.78rem;font-weight:600;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(s.property_address||'')+'</div>'+(s.property_price?'<div style="font-size:.7rem;color:#C9A84C">$'+s.property_price.toLocaleString()+'</div>':'')+'</div></div>';}).join('')+'</div></div>';}).join('');}
+  function removeFromPortalCart(k){var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');cart=cart.filter(function(c){return c.listingKey!==k;});localStorage.setItem('showingCart',JSON.stringify(cart));renderPortalCart(cart);}
+  async function checkoutShowings(){var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');var user=getPortalUser();if(!cart.length){alert('Cart is empty.');return;}var date=prompt('Preferred date? (e.g. 2026-04-15)');var time=prompt('Preferred time? (Morning/Afternoon/Evening)');if(!date||!time)return;var batchId='batch_'+Date.now();var inserts=cart.map(function(i){return{listing_key:i.listingKey,property_price:i.price,property_address:i.address,property_city:i.city,property_photo:i.photo,property_beds:i.beds,property_baths:i.baths,preferred_date:date,preferred_time:time,email:user?user.email:null,name:user?(user.first_name+' '+(user.last_name||'')):null,portal_user_id:user?user.id:null,batch_id:batchId,status:'pending'};});try{var r=await fetch(SB_P+'/rest/v1/showings',{method:'POST',headers:{'Content-Type':'application/json','apikey':SK_P,'Authorization':'Bearer '+SK_P},body:JSON.stringify(inserts)});if(r.ok){localStorage.removeItem('showingCart');renderPortalCart([]);loadPortalSections();alert('Showings requested! Rene will confirm shortly.');}else{alert('Error. Call (714) 472-8508');}}catch(e){alert('Error: '+e.message);}}
+  document.addEventListener('DOMContentLoaded',loadPortalSections);
+  if(document.readyState!=='loading')loadPortalSections();
+  </script>
 </body>
 </html>
