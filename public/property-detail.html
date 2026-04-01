@@ -1,410 +1,239 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Google Analytics -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-03P16TMWM8"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-03P16TMWM8');
-  </script>
-  <title>Property Details | Rates & Realty</title>
-  <meta name="description" content="View property details, photos, and schedule a showing with Rene Duarte at Rates & Realty.">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/components/styles.css">
-  <link rel="stylesheet" href="/public/loan-page.css">
-  <link rel="stylesheet" href="/public/css/responsive.css">
-  <script src="/api/env.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-
-  <style>
-    /* ── BASE ── */
-    body {
-      background: #050505;
-      color: #f6f1e8;
-      font-family: 'Manrope', sans-serif;
-      margin: 0; padding: 0;
-    }
-
-    /* ── BACK BUTTON ── */
-    .pd-back {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 14px 28px;
-      color: #b6ab93; font-size: 0.88rem; font-weight: 600;
-      text-decoration: none;
-      transition: color .2s;
-    }
-    .pd-back:hover { color: #c9a84c; }
-
-    /* ── HERO PHOTO ── */
-    .pd-hero {
-      width: 100%; max-height: 480px;
-      overflow: hidden; position: relative;
-    }
-    .pd-hero img {
-      width: 100%; height: 480px;
-      object-fit: cover; display: block;
-    }
-    .pd-hero-fallback {
-      width: 100%; height: 480px;
-      display: flex; align-items: center; justify-content: center;
-      background: linear-gradient(135deg, #111 0%, #1a1a1a 50%, #111 100%);
-      font-size: 5rem;
-    }
-    .pd-hero-gradient {
-      position: absolute; bottom: 0; left: 0; right: 0;
-      height: 160px;
-      background: linear-gradient(to top, #050505, transparent);
-      pointer-events: none;
-    }
-
-    /* ── CONTAINER ── */
-    .pd-container {
-      max-width: 1200px; margin: 0 auto;
-      padding: 0 28px 60px;
-    }
-    .pd-grid {
-      display: grid;
-      grid-template-columns: 1fr 380px;
-      gap: 40px;
-      margin-top: 32px;
-    }
-
-    /* ── LEFT COLUMN ── */
-    .pd-price {
-      font-family: 'Manrope', sans-serif;
-      font-size: 2.4rem; font-weight: 800;
-      color: #c9a84c; margin: 0 0 6px;
-    }
-    .pd-address {
-      font-size: 1.2rem; font-weight: 700;
-      color: #f6f1e8; margin: 0 0 4px;
-    }
-    .pd-city {
-      font-size: 0.95rem; color: #b6ab93;
-      margin: 0 0 24px;
-    }
-
-    /* Stats bar */
-    .pd-stats {
-      display: flex; flex-wrap: wrap; gap: 0;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-      padding-bottom: 20px; margin-bottom: 28px;
-    }
-    .pd-stat {
-      display: flex; flex-direction: column;
-      align-items: center; gap: 2px;
-      padding: 10px 18px;
-      border-right: 1px solid rgba(255,255,255,0.06);
-    }
-    .pd-stat:last-child { border-right: none; }
-    .pd-stat-icon { font-size: 16px; margin-bottom: 2px; }
-    .pd-stat-value {
-      font-size: 18px; font-weight: 700;
-      color: #f6f1e8;
-    }
-    .pd-stat-label {
-      font-size: 11px; color: #b6ab93;
-      text-transform: uppercase; letter-spacing: .06em;
-    }
-
-    /* MLS Badge */
-    .pd-badge {
-      display: inline-block;
-      padding: 5px 14px; border-radius: 999px;
-      font-size: 0.72rem; font-weight: 700;
-      letter-spacing: .08em; text-transform: uppercase;
-      background: rgba(201,168,76,0.12);
-      color: #c9a84c;
-      border: 1px solid rgba(201,168,76,0.25);
-      margin-bottom: 28px;
-    }
-
-    /* Property details section */
-    .pd-section-title {
-      font-family: 'Cormorant Garamond', serif;
-      font-size: 1.5rem; font-weight: 600;
-      color: #f6f1e8; margin: 0 0 14px;
-    }
-    .pd-description {
-      font-size: 0.92rem; color: #b6ab93;
-      line-height: 1.75; margin: 0 0 36px;
-    }
-
-    /* Map */
-    #detail-map {
-      width: 100%; height: 300px;
-      border-radius: 14px;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: #111;
-    }
-
-    /* ── RIGHT COLUMN (SIDEBAR) ── */
-    .pd-sidebar {
-      position: sticky; top: 24px;
-      align-self: start;
-    }
-    .pd-card {
-      background: #111;
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 16px; padding: 24px;
-    }
-
-    /* Buttons */
-    .pd-btn-cart {
-      display: block; width: 100%;
-      padding: 14px; border: none; border-radius: 999px;
-      background: linear-gradient(135deg, #f2cf85, #C9A84C);
-      color: #111; font-size: 0.92rem; font-weight: 700;
-      font-family: 'Manrope', sans-serif;
-      cursor: pointer; transition: all .2s;
-      box-shadow: 0 4px 20px rgba(201,168,76,0.3);
-    }
-    .pd-btn-cart:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 8px 28px rgba(201,168,76,0.45);
-    }
-    .pd-btn-showing {
-      display: block; width: 100%;
-      padding: 14px; border-radius: 999px;
-      background: transparent;
-      border: 1.5px solid #c9a84c;
-      color: #c9a84c; font-size: 0.92rem; font-weight: 700;
-      font-family: 'Manrope', sans-serif;
-      cursor: pointer; transition: all .2s;
-      margin-top: 10px;
-    }
-    .pd-btn-showing:hover {
-      background: rgba(201,168,76,0.08);
-    }
-
-    /* Divider */
-    .pd-divider {
-      height: 1px;
-      background: rgba(255,255,255,0.08);
-      margin: 20px 0;
-    }
-
-    /* Agent card */
-    .pd-agent-label {
-      font-size: 0.7rem; font-weight: 700;
-      color: #b6ab93; text-transform: uppercase;
-      letter-spacing: .1em; margin: 0 0 8px;
-    }
-    .pd-agent-name {
-      font-family: 'Cormorant Garamond', serif;
-      font-size: 1.3rem; font-weight: 600;
-      color: #f6f1e8; margin: 0 0 4px;
-    }
-    .pd-agent-nmls {
-      font-size: 0.75rem; color: #b6ab93;
-      margin: 0 0 12px;
-    }
-    .pd-agent-link {
-      display: block; font-size: 0.85rem;
-      color: #c9a84c; text-decoration: none;
-      margin-bottom: 4px; transition: opacity .2s;
-    }
-    .pd-agent-link:hover { opacity: 0.8; }
-
-    /* CTA */
-    .pd-cta {
-      display: block; text-align: center;
-      padding: 13px; border-radius: 999px;
-      background: rgba(201,168,76,0.1);
-      border: 1px solid rgba(201,168,76,0.25);
-      color: #c9a84c; font-size: 0.85rem; font-weight: 700;
-      text-decoration: none; transition: all .2s;
-    }
-    .pd-cta:hover {
-      background: rgba(201,168,76,0.18);
-    }
-
-    /* ── RESPONSIVE ── */
-    @media (max-width: 900px) {
-      .pd-grid {
-        grid-template-columns: 1fr;
-        gap: 28px;
-      }
-      .pd-sidebar {
-        position: static;
-      }
-      .pd-hero img, .pd-hero-fallback {
-        height: 320px;
-      }
-      .pd-stats {
-        flex-wrap: wrap; gap: 0;
-      }
-      .pd-stat {
-        padding: 8px 12px;
-      }
-    }
-  </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Property Details | Rates & Realty</title>
+<link rel="icon" href="/assets/images/favicon.png"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#C9A84C;--gold-light:#e8c96d;--dark:#0a0a0a;--card-bg:#111;--border:#222;--text:#eee;--muted:#888;--radius:12px}
+body{background:var(--dark);color:var(--text);font-family:'Segoe UI',sans-serif}
+.top-nav{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:60px;background:#0d0d0d;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:200}
+.nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.nav-logo img{height:36px}
+.nav-logo span{font-size:1.1rem;font-weight:700;color:var(--gold)}
+.nav-links{display:flex;gap:20px;align-items:center}
+.nav-links a{color:var(--muted);text-decoration:none;font-size:.9rem}
+.nav-links a:hover{color:var(--gold)}
+.nav-cta{background:var(--gold);color:#000;padding:8px 18px;border-radius:20px;font-weight:700;font-size:.85rem;text-decoration:none}
+.back-btn{display:flex;align-items:center;gap:6px;color:var(--muted);text-decoration:none;font-size:.85rem;padding:6px 14px;border:1px solid var(--border);border-radius:20px;margin-left:16px;transition:all .2s}
+.back-btn:hover{color:var(--text);border-color:var(--text)}
+.photo-gallery{position:relative;background:#111;height:460px;overflow:hidden}
+.gallery-main{width:100%;height:100%;object-fit:cover}
+.gallery-overlay{position:absolute;bottom:16px;right:16px;background:rgba(0,0,0,.75);border:1px solid rgba(255,255,255,.2);color:#fff;padding:8px 16px;border-radius:20px;font-size:.82rem;cursor:pointer;backdrop-filter:blur(4px)}
+.status-ribbon{position:absolute;top:20px;left:20px;background:rgba(0,160,80,.9);color:#fff;padding:6px 14px;border-radius:20px;font-size:.82rem;font-weight:700;backdrop-filter:blur(4px)}
+.status-ribbon.sold{background:rgba(120,120,120,.9)}
+.status-ribbon.coming{background:rgba(201,168,76,.9);color:#000}
+.action-bar{background:#0d0d0d;border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:12px;position:sticky;top:60px;z-index:100}
+.price-display{font-size:1.6rem;font-weight:800;color:#fff;flex:1}
+.price-sqft{font-size:.82rem;color:var(--muted);font-weight:400;margin-left:8px}
+.btn-primary{background:var(--gold);color:#000;border:none;border-radius:10px;padding:12px 22px;font-weight:700;font-size:.88rem;cursor:pointer;white-space:nowrap;transition:background .2s}
+.btn-primary:hover{background:var(--gold-light)}
+.btn-secondary{background:transparent;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-weight:600;font-size:.85rem;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;transition:all .2s}
+.btn-secondary:hover{border-color:var(--gold);color:var(--gold)}
+.btn-secondary.active{color:#e25555;border-color:#e25555}
+.detail-layout{display:grid;grid-template-columns:1fr 360px;gap:24px;max-width:1300px;margin:0 auto;padding:28px 24px}
+.stats-bar{display:flex;gap:24px;flex-wrap:wrap;padding:20px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:20px}
+.stat-item{display:flex;flex-direction:column;gap:2px}
+.stat-val{font-size:1.2rem;font-weight:700;color:#fff}
+.stat-lbl{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.section-card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:20px}
+.section-card h2{font-size:1rem;font-weight:700;color:var(--text);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.section-card h2 i{color:var(--gold)}
+.description-text{color:var(--muted);font-size:.9rem;line-height:1.7}
+.description-text.collapsed{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.read-more{color:var(--gold);font-size:.85rem;cursor:pointer;margin-top:8px;display:inline-block}
+.details-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.detail-item{background:#1a1a1a;border-radius:8px;padding:12px}
+.detail-item .di-label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.detail-item .di-val{font-size:.9rem;color:var(--text);font-weight:600}
+.school-list{display:flex;flex-direction:column;gap:10px}
+.school-item{display:flex;align-items:flex-start;gap:12px;padding:12px;background:#1a1a1a;border-radius:10px}
+.school-icon{width:40px;height:40px;background:rgba(201,168,76,.15);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--gold);font-size:.9rem;flex-shrink:0}
+.school-info .school-name{font-size:.88rem;font-weight:600;color:var(--text);margin-bottom:2px}
+.school-info .school-meta{font-size:.75rem;color:var(--muted)}
+.school-rating{margin-left:auto;background:var(--gold);color:#000;font-weight:700;font-size:.8rem;padding:4px 8px;border-radius:6px;flex-shrink:0}
+.nearby-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.nearby-item{background:#1a1a1a;border-radius:10px;padding:12px;display:flex;align-items:center;gap:10px}
+.nearby-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.9rem;flex-shrink:0}
+.nearby-icon.park{background:rgba(60,180,60,.15);color:#3cb43c}
+.nearby-icon.shop{background:rgba(60,120,255,.15);color:#3c78ff}
+.nearby-icon.restaurant{background:rgba(255,120,60,.15);color:#ff783c}
+.nearby-text .nt-name{font-size:.83rem;font-weight:600;color:var(--text)}
+.nearby-text .nt-dist{font-size:.73rem;color:var(--muted)}
+.nbhood-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.nbhood-stat{text-align:center;padding:14px;background:#1a1a1a;border-radius:10px}
+.nbhood-stat .ns-val{font-size:1.1rem;font-weight:700;color:var(--gold);margin-bottom:4px}
+.nbhood-stat .ns-lbl{font-size:.73rem;color:var(--muted)}
+.similar-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.sim-card{background:#1a1a1a;border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:border-color .2s}
+.sim-card:hover{border-color:var(--gold)}
+.sim-card img{width:100%;height:140px;object-fit:cover}
+.sim-card-body{padding:10px}
+.sim-price{font-weight:700;font-size:.95rem;color:#fff;margin-bottom:3px}
+.sim-addr{font-size:.75rem;color:var(--muted);margin-bottom:5px}
+.sim-stats{font-size:.73rem;color:var(--muted)}
+.detail-map{width:100%;height:300px;border-radius:10px;overflow:hidden;margin-top:14px}
+.right-col{display:flex;flex-direction:column;gap:16px}
+.agent-card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:22px;text-align:center;position:sticky;top:130px}
+.agent-img{width:80px;height:80px;border-radius:50%;object-fit:cover;border:3px solid var(--gold);margin:0 auto 12px}
+.agent-name{font-size:1rem;font-weight:700;color:#fff;margin-bottom:4px}
+.agent-title{font-size:.8rem;color:var(--muted);margin-bottom:2px}
+.agent-nmls{font-size:.75rem;color:var(--muted);margin-bottom:16px}
+.agent-btns{display:flex;flex-direction:column;gap:8px}
+.agent-btn{width:100%;padding:11px;border-radius:9px;font-weight:700;font-size:.85rem;cursor:pointer;transition:all .2s;border:none;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+.agent-btn.gold{background:var(--gold);color:#000}
+.agent-btn.gold:hover{background:var(--gold-light)}
+.agent-btn.outline{background:transparent;border:1px solid var(--border);color:var(--text)}
+.agent-btn.outline:hover{border-color:var(--gold);color:var(--gold)}
+.agent-divider{border:none;border-top:1px solid var(--border);margin:14px 0}
+.mortgage-est{background:#1a1a1a;border-radius:10px;padding:14px;text-align:left}
+.me-title{font-size:.78rem;color:var(--muted);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.me-payment{font-size:1.3rem;font-weight:800;color:var(--gold);margin-bottom:4px}
+.me-detail{font-size:.73rem;color:var(--muted)}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--gold);color:var(--text);padding:12px 24px;border-radius:30px;font-size:.88rem;z-index:600;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+@media(max-width:900px){.detail-layout{grid-template-columns:1fr}.right-col .agent-card{position:relative;top:0}.similar-grid{grid-template-columns:1fr 1fr}.details-grid{grid-template-columns:1fr 1fr}.nbhood-stats{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.photo-gallery{height:280px}.similar-grid{grid-template-columns:1fr}.nearby-grid{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
-
-  <!-- Back button -->
-  <a href="/public/search-homes.html" class="pd-back">&larr; Back to Search</a>
-
-  <!-- Hero photo -->
-  <div class="pd-hero" id="pd-hero"></div>
-
-  <!-- Main content -->
-  <div class="pd-container">
-    <div class="pd-grid">
-
-      <!-- LEFT COLUMN -->
-      <div class="pd-left">
-        <p class="pd-price" id="pd-price"></p>
-        <p class="pd-address" id="pd-address"></p>
-        <p class="pd-city" id="pd-city"></p>
-
-        <div class="pd-stats" id="pd-stats"></div>
-
-        <span class="pd-badge" id="pd-badge"></span>
-
-        <h2 class="pd-section-title">Property Details</h2>
-        <p class="pd-description">Full property description will be loaded from MLS data. Contact Rene for more details about this property.</p>
-
-        <h2 class="pd-section-title" style="margin-top: 12px;">Location</h2>
-        <div id="detail-map"></div>
+<nav class="top-nav">
+  <a href="/" class="nav-logo">
+    <img src="/assets/images/logo.png" alt="Rates & Realty" onerror="this.style.display='none'">
+    <span>Rates & Realty</span>
+  </a>
+  <div style="display:flex;align-items:center">
+    <div class="nav-links">
+      <a href="/public/search-homes.html">Search Homes</a>
+      <a href="/public/apply.html">Apply Now</a>
+      <a href="https://rene-duarte-rates-realty.cal.com/30min" target="_blank" class="nav-cta">Schedule a Call</a>
+    </div>
+    <a href="/public/search-homes.html" class="back-btn"><i class="fas fa-arrow-left"></i> Back to Search</a>
+  </div>
+</nav>
+<div class="photo-gallery" id="photoGallery">
+  <img class="gallery-main" id="heroPhoto" src="" alt="Property Photo" onerror="this.src='https://placehold.co/1200x460/111/333?text=No+Photo+Available'">
+  <div class="status-ribbon" id="statusRibbon">For Sale</div>
+  <div class="gallery-overlay"><i class="fas fa-images"></i> All Photos</div>
+</div>
+<div class="action-bar">
+  <div><div class="price-display" id="priceDisplay">—</div></div>
+  <button class="btn-secondary" id="favBtn" onclick="toggleFavorite()"><i class="fas fa-heart"></i> Save</button>
+  <button class="btn-secondary" onclick="shareProperty()"><i class="fas fa-share"></i> Share</button>
+  <button class="btn-primary" onclick="addToCart()">+ Schedule Showing</button>
+  <button class="btn-primary" style="background:#1a1a1a;color:var(--gold);border:1px solid var(--gold)" onclick="document.getElementById('calcDown').scrollIntoView({behavior:'smooth'})"><i class="fas fa-calculator"></i> Mortgage</button>
+</div>
+<div class="detail-layout">
+  <div>
+    <div class="stats-bar">
+      <div class="stat-item"><div class="stat-val" id="sBeds">—</div><div class="stat-lbl">Bedrooms</div></div>
+      <div class="stat-item"><div class="stat-val" id="sBaths">—</div><div class="stat-lbl">Bathrooms</div></div>
+      <div class="stat-item"><div class="stat-val" id="sSqft">—</div><div class="stat-lbl">Sq Ft</div></div>
+      <div class="stat-item"><div class="stat-val" id="sYear">—</div><div class="stat-lbl">Year Built</div></div>
+      <div class="stat-item"><div class="stat-val" id="sLot">—</div><div class="stat-lbl">Lot Size</div></div>
+      <div class="stat-item"><div class="stat-val" id="sDom">—</div><div class="stat-lbl">Days on Market</div></div>
+    </div>
+    <div class="section-card" style="margin-bottom:20px">
+      <h2 id="fullAddress" style="font-size:1.2rem;font-weight:800;margin-bottom:6px">Loading...</h2>
+      <p id="cityStateZip" style="color:var(--muted);font-size:.9rem;margin-bottom:12px"></p>
+      <div id="detailMap" class="detail-map"></div>
+    </div>
+    <div class="section-card">
+      <h2><i class="fas fa-align-left"></i> About This Home</h2>
+      <div class="description-text collapsed" id="descriptionText">Loading description...</div>
+      <span class="read-more" id="readMore" onclick="toggleDesc()">Read more</span>
+    </div>
+    <div class="section-card">
+      <h2><i class="fas fa-list"></i> Listing Details</h2>
+      <div class="details-grid">
+        <div class="detail-item"><div class="di-label">MLS #</div><div class="di-val" id="dMLS">—</div></div>
+        <div class="detail-item"><div class="di-label">Property Type</div><div class="di-val" id="dType">—</div></div>
+        <div class="detail-item"><div class="di-label">Status</div><div class="di-val" id="dStatus">—</div></div>
+        <div class="detail-item"><div class="di-label">Listed Date</div><div class="di-val" id="dListed">—</div></div>
+        <div class="detail-item"><div class="di-label">Price/Sq Ft</div><div class="di-val" id="dPsf">—</div></div>
+        <div class="detail-item"><div class="di-label">Lot Size (Acres)</div><div class="di-val" id="dLot2">—</div></div>
+        <div class="detail-item"><div class="di-label">Garage</div><div class="di-val" id="dGarage">—</div></div>
+        <div class="detail-item"><div class="di-label">HOA/Month</div><div class="di-val" id="dHOA">—</div></div>
+        <div class="detail-item"><div class="di-label">County</div><div class="di-val" id="dCounty">—</div></div>
       </div>
-
-      <!-- RIGHT COLUMN -->
-      <div class="pd-sidebar">
-        <div class="pd-card">
-          <button class="pd-btn-cart" id="btn-cart">&#127968; Add to Showing Cart</button>
-          <button class="pd-btn-showing" id="btn-showing">&#128197; Schedule a Showing</button>
-
-          <div class="pd-divider"></div>
-
-          <p class="pd-agent-label">Your Agent</p>
-          <p class="pd-agent-name">Rene Duarte</p>
-          <p class="pd-agent-nmls">NMLS #1795044</p>
-          <a href="tel:+17144728508" class="pd-agent-link">(714) 472-8508</a>
-          <a href="mailto:rene@ratesandrealty.com" class="pd-agent-link">rene@ratesandrealty.com</a>
-
-          <div class="pd-divider"></div>
-
-          <a href="/public/apply.html" class="pd-cta">Get Pre-Approved</a>
-        </div>
+    </div>
+    <div class="section-card">
+      <h2><i class="fas fa-graduation-cap"></i> Nearby Schools</h2>
+      <div class="school-list" id="schoolList"><div style="color:var(--muted);font-size:.85rem">Loading school data...</div></div>
+      <p style="font-size:.72rem;color:var(--muted);margin-top:10px">Always verify enrollment with the local school district.</p>
+    </div>
+    <div class="section-card">
+      <h2><i class="fas fa-map-marked-alt"></i> Explore the Neighborhood</h2>
+      <div class="nbhood-stats">
+        <div class="nbhood-stat"><div class="ns-val" id="ns1">—</div><div class="ns-lbl">Median Home Value</div></div>
+        <div class="nbhood-stat"><div class="ns-val" id="ns2">—</div><div class="ns-lbl">Walk Score</div></div>
+        <div class="nbhood-stat"><div class="ns-val" id="ns3">—</div><div class="ns-lbl">Avg Household Income</div></div>
       </div>
-
+      <div class="nearby-grid" id="nearbyPlaces" style="margin-top:16px"><div style="color:var(--muted);font-size:.85rem">Loading nearby places...</div></div>
+    </div>
+    <div class="section-card">
+      <h2><i class="fas fa-calculator"></i> Estimated Monthly Payment</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+        <div><label style="font-size:.78rem;color:var(--muted);display:block;margin-bottom:4px">Down Payment %</label><select id="calcDown" onchange="calcMortgage()" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);outline:none"><option value="3">3% (Conv Min)</option><option value="3.5">3.5% (FHA)</option><option value="5">5%</option><option value="10">10%</option><option value="20" selected>20%</option><option value="25">25%</option></select></div>
+        <div><label style="font-size:.78rem;color:var(--muted);display:block;margin-bottom:4px">Interest Rate %</label><input type="number" id="calcRate" value="6.75" step="0.125" onchange="calcMortgage()" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);outline:none"></div>
+      </div>
+      <div style="background:#1a1a1a;border-radius:10px;padding:16px">
+        <div style="font-size:.78rem;color:var(--muted);margin-bottom:6px">Estimated Monthly Payment (P&I)</div>
+        <div id="calcPayment" style="font-size:1.8rem;font-weight:800;color:var(--gold);margin-bottom:8px">—</div>
+        <div id="calcBreakdown" style="font-size:.75rem;color:var(--muted);line-height:1.6">—</div>
+      </div>
+      <a href="/public/apply.html" style="display:block;margin-top:12px;text-align:center;background:var(--gold);color:#000;padding:11px;border-radius:9px;font-weight:700;font-size:.88rem;text-decoration:none">Get Pre-Qualified Today →</a>
+    </div>
+    <div class="section-card">
+      <h2><i class="fas fa-home"></i> Similar Homes Nearby</h2>
+      <div class="similar-grid" id="similarGrid"><div style="color:var(--muted);font-size:.85rem">Loading similar homes...</div></div>
     </div>
   </div>
-
-  <!-- Footer -->
-  <div id="site-footer"></div>
-
-  <!-- Google Maps -->
-  <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyACmn2j8wwVNO53MLWGPFFsImjEUxe4D50&callback=initDetailMap"></script>
-
-  <script>
-    /* ── LISTING DATA ── */
-    const raw = sessionStorage.getItem('selected_listing');
-    if (!raw) { window.location.href = '/public/search-homes.html'; }
-    const listing = JSON.parse(raw || '{}');
-
-    /* ── HERO ── */
-    const heroEl = document.getElementById('pd-hero');
-    if (listing.photo) {
-      heroEl.innerHTML = '<img src="' + listing.photo + '" alt="Property photo"><div class="pd-hero-gradient"></div>';
-    } else {
-      heroEl.innerHTML = '<div class="pd-hero-fallback">&#127968;</div><div class="pd-hero-gradient"></div>';
-    }
-
-    /* ── PRICE ── */
-    document.getElementById('pd-price').textContent = listing.price
-      ? '$' + Number(listing.price).toLocaleString()
-      : 'Price Unavailable';
-
-    /* ── ADDRESS ── */
-    document.getElementById('pd-address').textContent = listing.address || 'Address Not Available';
-    const cityParts = [listing.city, listing.state].filter(Boolean).join(', ');
-    document.getElementById('pd-city').textContent = cityParts + (listing.zip ? ' ' + listing.zip : '');
-
-    /* ── STATS ── */
-    const stats = [
-      { icon: '&#128716;', value: listing.beds ?? '—', label: 'Beds' },
-      { icon: '&#128703;', value: listing.baths ?? '—', label: 'Baths' },
-      { icon: '&#128208;', value: listing.sqft ? Number(listing.sqft).toLocaleString() : '—', label: 'Sqft' },
-      { icon: '&#127959;', value: listing.yearBuilt ?? '—', label: 'Built' },
-      { icon: '&#128197;', value: listing.dom ?? '—', label: 'DOM' },
-      { icon: '&#127991;', value: listing.type ?? '—', label: 'Type' }
-    ];
-    document.getElementById('pd-stats').innerHTML = stats.map(function(s) {
-      return '<div class="pd-stat"><span class="pd-stat-icon">' + s.icon + '</span><span class="pd-stat-value">' + s.value + '</span><span class="pd-stat-label">' + s.label + '</span></div>';
-    }).join('');
-
-    /* ── MLS BADGE ── */
-    const badge = document.getElementById('pd-badge');
-    badge.textContent = listing.mlsStatus || 'Active';
-
-    /* ── ADD TO CART ── */
-    document.getElementById('btn-cart').addEventListener('click', function() {
-      var cart = JSON.parse(localStorage.getItem('showing_cart') || '[]');
-      var exists = cart.some(function(item) {
-        return item.listingId === listing.listingId || item.id === listing.id;
-      });
-      if (exists) {
-        alert('This property is already in your showing cart.');
-        return;
-      }
-      cart.push(listing);
-      localStorage.setItem('showing_cart', JSON.stringify(cart));
-      alert('Added to showing cart!');
-    });
-
-    /* ── SCHEDULE SHOWING ── */
-    document.getElementById('btn-showing').addEventListener('click', function() {
-      if (window.Cal) {
-        Cal('ui', { styles: { branding: { brandColor: '#c9a84c' } } });
-        Cal('openModal');
-      } else {
-        window.open('https://cal.com/reneduarte', '_blank');
-      }
-    });
-
-    /* ── GOOGLE MAP ── */
-    function initDetailMap() {
-      var lat = parseFloat(listing.lat);
-      var lng = parseFloat(listing.lng);
-      if (isNaN(lat) || isNaN(lng)) {
-        document.getElementById('detail-map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#b6ab93;font-size:0.9rem;">Map location not available</div>';
-        return;
-      }
-      var center = { lat: lat, lng: lng };
-      var map = new google.maps.Map(document.getElementById('detail-map'), {
-        zoom: 15,
-        center: center,
-        styles: [
-          { elementType: 'geometry', stylers: [{ color: '#1a1a1a' }] },
-          { elementType: 'labels.text.fill', stylers: [{ color: '#b6ab93' }] },
-          { elementType: 'labels.text.stroke', stylers: [{ color: '#050505' }] },
-          { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a2a' }] },
-          { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e0e0e' }] }
-        ],
-        disableDefaultUI: true,
-        zoomControl: true
-      });
-      new google.maps.Marker({
-        position: center,
-        map: map,
-        title: listing.address || 'Property'
-      });
-    }
-
-    /* ── PAGE TITLE ── */
-    if (listing.address) {
-      document.title = listing.address + ' | Rates & Realty';
-    }
-  </script>
-
-  <script type="module" src="/components/layout.js"></script>
+  <div class="right-col">
+    <div class="agent-card">
+      <img class="agent-img" src="/assets/images/rene-headshot.jpg" alt="Rene Duarte" onerror="this.src='https://placehold.co/80x80/1a1a1a/C9A84C?text=RD'">
+      <div class="agent-name">Rene Duarte</div>
+      <div class="agent-title">Mortgage Loan Officer</div>
+      <div class="agent-nmls">NMLS #1795044 | Rates & Realty</div>
+      <div class="agent-btns">
+        <a href="tel:7144728508" class="agent-btn gold"><i class="fas fa-phone"></i> Call (714) 472-8508</a>
+        <a href="https://rene-duarte-rates-realty.cal.com/30min" target="_blank" class="agent-btn outline"><i class="fas fa-calendar"></i> Schedule a Call</a>
+        <a href="/public/apply.html" class="agent-btn outline"><i class="fas fa-file-alt"></i> Apply Now</a>
+        <a href="mailto:rene@ratesandrealty.com" class="agent-btn outline"><i class="fas fa-envelope"></i> Email Me</a>
+      </div>
+      <hr class="agent-divider">
+      <div class="mortgage-est">
+        <div class="me-title">Est. Monthly Payment</div>
+        <div class="me-payment" id="agentPayment">Calculating...</div>
+        <div class="me-detail">20% down · 6.75% rate · 30yr fixed</div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const SUPABASE_URL='https://ljywhvbmsibwnssxpesh.supabase.co';
+const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
+let listing=null,descExpanded=false;
+const NEIGHBORHOOD_DATA={'Westminster':{medianValue:'$820K',walkScore:'62',avgIncome:'$78,400'},'Garden Grove':{medianValue:'$790K',walkScore:'58',avgIncome:'$74,100'},'Huntington Beach':{medianValue:'$1.1M',walkScore:'55',avgIncome:'$98,600'},'Anaheim':{medianValue:'$710K',walkScore:'54',avgIncome:'$71,200'},'Irvine':{medianValue:'$1.3M',walkScore:'49',avgIncome:'$125,000'},'Santa Ana':{medianValue:'$680K',walkScore:'72',avgIncome:'$62,000'},'Long Beach':{medianValue:'$750K',walkScore:'68',avgIncome:'$65,800'},'Torrance':{medianValue:'$980K',walkScore:'60',avgIncome:'$92,000'},'Riverside':{medianValue:'$540K',walkScore:'42',avgIncome:'$68,500'},'Corona':{medianValue:'$650K',walkScore:'35',avgIncome:'$88,000'},'Ontario':{medianValue:'$560K',walkScore:'40',avgIncome:'$72,000'},'Rancho Cucamonga':{medianValue:'$680K',walkScore:'38',avgIncome:'$95,000'},'default':{medianValue:'—',walkScore:'—',avgIncome:'—'}};
+const SCHOOL_DATA={'Westminster':[{name:'Westminster High School',grades:'9-12',type:'Public',distance:'0.4 mi',rating:'7'},{name:'Stacey Middle School',grades:'6-8',type:'Public',distance:'0.7 mi',rating:'6'},{name:'Demille Elementary',grades:'K-5',type:'Public',distance:'0.3 mi',rating:'6'}],'Garden Grove':[{name:'Garden Grove High School',grades:'9-12',type:'Public',distance:'0.5 mi',rating:'7'},{name:'Doig Intermediate',grades:'6-8',type:'Public',distance:'0.6 mi',rating:'6'},{name:'Bryant Elementary',grades:'K-5',type:'Public',distance:'0.4 mi',rating:'7'}],'Huntington Beach':[{name:'Huntington Beach High',grades:'9-12',type:'Public',distance:'0.8 mi',rating:'8'},{name:'Dwyer Middle School',grades:'6-8',type:'Public',distance:'0.5 mi',rating:'8'},{name:'Hawes Elementary',grades:'K-5',type:'Public',distance:'0.3 mi',rating:'8'}],'Irvine':[{name:'Northwood High School',grades:'9-12',type:'Public',distance:'1.1 mi',rating:'10'},{name:'Sierra Vista Middle',grades:'6-8',type:'Public',distance:'0.7 mi',rating:'9'},{name:'Westpark Elementary',grades:'K-5',type:'Public',distance:'0.4 mi',rating:'9'}],'Anaheim':[{name:'Anaheim High School',grades:'9-12',type:'Public',distance:'0.6 mi',rating:'6'},{name:'South Junior High',grades:'6-8',type:'Public',distance:'0.5 mi',rating:'5'},{name:'Lincoln Elementary',grades:'K-5',type:'Public',distance:'0.3 mi',rating:'6'}],'default':[{name:'Local High School',grades:'9-12',type:'Public',distance:'< 1 mi',rating:'—'},{name:'Local Middle School',grades:'6-8',type:'Public',distance:'< 1 mi',rating:'—'},{name:'Local Elementary',grades:'K-5',type:'Public',distance:'< 1 mi',rating:'—'}]};
+const NEARBY_DATA={'Westminster':[{icon:'park',fa:'fa-tree',name:'Mile Square Regional Park',dist:'2.1 mi'},{icon:'shop',fa:'fa-shopping-cart',name:'Westminster Mall',dist:'1.3 mi'},{icon:'restaurant',fa:'fa-utensils',name:'Little Saigon District',dist:'0.5 mi'},{icon:'shop',fa:'fa-hospital',name:'Kindred Hospital',dist:'1.8 mi'},{icon:'park',fa:'fa-dumbbell',name:'Sid Goldstein Freedom Park',dist:'0.8 mi'},{icon:'shop',fa:'fa-shopping-bag',name:'Asian Garden Mall',dist:'0.6 mi'}],'Garden Grove':[{icon:'park',fa:'fa-tree',name:'Garden Grove Park',dist:'0.9 mi'},{icon:'shop',fa:'fa-shopping-cart',name:'Garden Grove Towne Center',dist:'1.1 mi'},{icon:'restaurant',fa:'fa-utensils',name:'Little Saigon Dining',dist:'0.8 mi'},{icon:'shop',fa:'fa-hospital',name:'Garden Grove Hospital',dist:'2.0 mi'},{icon:'park',fa:'fa-baseball-ball',name:'Village Green Park',dist:'0.6 mi'},{icon:'shop',fa:'fa-shopping-bag',name:'Knott Avenue Shopping',dist:'1.5 mi'}],'Huntington Beach':[{icon:'park',fa:'fa-umbrella-beach',name:'Huntington State Beach',dist:'1.2 mi'},{icon:'shop',fa:'fa-shopping-bag',name:'Pacific City Mall',dist:'1.5 mi'},{icon:'restaurant',fa:'fa-utensils',name:'Main St Restaurant Row',dist:'1.8 mi'},{icon:'park',fa:'fa-tree',name:'Central Park',dist:'2.0 mi'},{icon:'shop',fa:'fa-hospital',name:'HB Hospital',dist:'2.3 mi'},{icon:'shop',fa:'fa-shopping-cart',name:'Bella Terra',dist:'2.1 mi'}],'default':[{icon:'park',fa:'fa-tree',name:'Local Park',dist:'< 1 mi'},{icon:'shop',fa:'fa-shopping-cart',name:'Shopping Center',dist:'< 1 mi'},{icon:'restaurant',fa:'fa-utensils',name:'Dining District',dist:'< 1 mi'},{icon:'shop',fa:'fa-hospital',name:'Medical Center',dist:'< 2 mi'}]};
+function initPage(){const raw=sessionStorage.getItem('selected_listing');if(!raw){window.location.href='/public/search-homes.html';return;}listing=JSON.parse(raw);populateListing();}
+function populateListing(){const l=listing;const price=l.ListPrice||0;const city=l.City||'';const beds=l.BedroomsTotal;const baths=l.BathroomsTotalInteger;const sqft=l.LivingArea;const isLand=(l.PropertyType==='Land')||(l.PropertySubType||'').toLowerCase().includes('land');document.title=`${l.UnparsedAddress||'Property'} | Rates & Realty`;const photo=l.Media?.[0]?.MediaURL||'';document.getElementById('heroPhoto').src=photo||'https://placehold.co/1200x460/111/333?text=No+Photo';const statusEl=document.getElementById('statusRibbon');const status=l.StandardStatus||'Active';statusEl.textContent=status==='Active'?'For Sale':status==='Closed'?'Sold':status;if(status==='Closed')statusEl.classList.add('sold');if(status==='Coming Soon')statusEl.classList.add('coming');document.getElementById('priceDisplay').innerHTML=`$${price.toLocaleString()} <span class="price-sqft">${sqft&&price?'$'+Math.round(price/sqft).toLocaleString()+'/sqft':''}</span>`;document.getElementById('sBeds').textContent=!isLand&&beds!=null?beds:'—';document.getElementById('sBaths').textContent=!isLand&&baths!=null?baths:'—';document.getElementById('sSqft').textContent=sqft?sqft.toLocaleString()+' sqft':'—';document.getElementById('sYear').textContent=l.YearBuilt||'—';document.getElementById('sLot').textContent=l.LotSizeAcres?l.LotSizeAcres.toFixed(3)+' ac':'—';document.getElementById('sDom').textContent=l.DaysOnMarket!=null?l.DaysOnMarket+' days':'—';document.getElementById('fullAddress').textContent=l.UnparsedAddress||'';document.getElementById('cityStateZip').textContent=[city,l.StateOrProvince,l.PostalCode].filter(Boolean).join(', ');document.getElementById('descriptionText').textContent=l.PublicRemarks||'No description provided. Contact Rene for more details about this property.';document.getElementById('dMLS').textContent=l.ListingKey||'—';document.getElementById('dType').textContent=l.PropertySubType||l.PropertyType||'—';document.getElementById('dStatus').textContent=status;document.getElementById('dListed').textContent=l.ListingContractDate?new Date(l.ListingContractDate).toLocaleDateString():'—';document.getElementById('dPsf').textContent=sqft&&price?'$'+Math.round(price/sqft).toLocaleString():'—';document.getElementById('dLot2').textContent=l.LotSizeAcres?l.LotSizeAcres.toFixed(3):'—';document.getElementById('dGarage').textContent=l.GarageSpaces?l.GarageSpaces+' spaces':'—';document.getElementById('dHOA').textContent=l.AssociationFee?'$'+l.AssociationFee.toLocaleString():'None';document.getElementById('dCounty').textContent=l.CountyOrParish||'—';const nbData=NEIGHBORHOOD_DATA[city]||NEIGHBORHOOD_DATA['default'];document.getElementById('ns1').textContent=nbData.medianValue;document.getElementById('ns2').textContent=nbData.walkScore;document.getElementById('ns3').textContent=nbData.avgIncome;const schools=SCHOOL_DATA[city]||SCHOOL_DATA['default'];document.getElementById('schoolList').innerHTML=schools.map(s=>`<div class="school-item"><div class="school-icon"><i class="fas fa-graduation-cap"></i></div><div class="school-info"><div class="school-name">${s.name}</div><div class="school-meta">Grades ${s.grades} · ${s.type} · ${s.distance}</div></div>${s.rating!=='—'?`<div class="school-rating">${s.rating}/10</div>`:''}</div>`).join('');const nearby=NEARBY_DATA[city]||NEARBY_DATA['default'];document.getElementById('nearbyPlaces').innerHTML=nearby.map(n=>`<div class="nearby-item"><div class="nearby-icon ${n.icon}"><i class="fas ${n.fa}"></i></div><div class="nearby-text"><div class="nt-name">${n.name}</div><div class="nt-dist">${n.dist}</div></div></div>`).join('');initDetailMap(l.Latitude,l.Longitude,l.UnparsedAddress);calcMortgage();loadSimilarHomes(city,price,l.ListingKey);}
+function initDetailMap(lat,lng,addr){if(!lat||!lng)return;const mapEl=document.getElementById('detailMap');const gmap=new google.maps.Map(mapEl,{center:{lat,lng},zoom:15,styles:[{elementType:'geometry',stylers:[{color:'#1a1a1a'}]},{elementType:'labels.text.fill',stylers:[{color:'#888'}]},{featureType:'road',elementType:'geometry',stylers:[{color:'#2a2a2a'}]},{featureType:'water',elementType:'geometry',stylers:[{color:'#0d1b2a'}]}]});new google.maps.Marker({position:{lat,lng},map:gmap,icon:{path:google.maps.SymbolPath.CIRCLE,scale:10,fillColor:'#C9A84C',fillOpacity:1,strokeColor:'#000',strokeWeight:2},title:addr});}
+function calcMortgage(){if(!listing)return;const price=listing.ListPrice||0;const downPct=parseFloat(document.getElementById('calcDown')?.value||20)/100;const rate=parseFloat(document.getElementById('calcRate')?.value||6.75)/100/12;const n=360;const loan=price*(1-downPct);const payment=loan*(rate*Math.pow(1+rate,n))/(Math.pow(1+rate,n)-1);const downAmt=price*downPct;const fmt=v=>isNaN(v)||!isFinite(v)?'—':'$'+Math.round(v).toLocaleString();document.getElementById('calcPayment').textContent=fmt(payment)+'/mo';document.getElementById('agentPayment').textContent=fmt(payment)+'/mo';document.getElementById('calcBreakdown').innerHTML=`Down payment: ${fmt(downAmt)} (${parseFloat(document.getElementById('calcDown')?.value||20)}%)<br>Loan amount: ${fmt(loan)}<br>Rate: ${document.getElementById('calcRate')?.value||6.75}% · 30-year fixed<br><em style="color:#888">*Estimate only. Contact Rene for exact qualification.</em>`;}
+async function loadSimilarHomes(city,price,excludeKey){const minPrice=Math.round(price*0.75);const maxPrice=Math.round(price*1.25);const filterStr=`City eq '${city}' and StandardStatus eq 'Active' and ListPrice ge ${minPrice} and ListPrice le ${maxPrice} and ListingKey ne '${excludeKey}'`;const rawFilter=`$filter=${encodeURIComponent(filterStr)}&$top=6&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Media`;try{const res=await fetch(`${SUPABASE_URL}/functions/v1/trestle-proxy`,{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},body:JSON.stringify({endpoint:'Property',rawFilter})});const data=await res.json();const listings=(data.value||[]).slice(0,6);const grid=document.getElementById('similarGrid');if(!listings.length){grid.innerHTML='<p style="color:var(--muted);font-size:.85rem">No similar homes found in this price range.</p>';return;}grid.innerHTML=listings.map(l=>{const photo=l.Media?.[0]?.MediaURL||'';return`<div class="sim-card" onclick="loadSimilar('${l.ListingKey}')"><img src="${photo||'https://placehold.co/300x140/1a1a1a/444?text=No+Photo'}" alt="${l.UnparsedAddress}" loading="lazy"><div class="sim-card-body"><div class="sim-price">$${(l.ListPrice||0).toLocaleString()}</div><div class="sim-addr">${(l.UnparsedAddress||'').split(',')[0]}</div><div class="sim-stats">${l.BedroomsTotal!=null?l.BedroomsTotal+' bd':''} ${l.BathroomsTotalInteger!=null?'· '+l.BathroomsTotalInteger+' ba':''} ${l.LivingArea?'· '+l.LivingArea.toLocaleString()+' sqft':''}</div></div></div>`;}).join('');}catch(e){document.getElementById('similarGrid').innerHTML='<p style="color:var(--muted);font-size:.85rem">Unable to load similar homes.</p>';}}
+function loadSimilar(listingKey){const allListings=JSON.parse(sessionStorage.getItem('all_similar_listings')||'[]');const found=allListings.find(l=>l.ListingKey===listingKey);if(found){sessionStorage.setItem('selected_listing',JSON.stringify(found));window.scrollTo(0,0);location.reload();}}
+function toggleDesc(){descExpanded=!descExpanded;document.getElementById('descriptionText').classList.toggle('collapsed',!descExpanded);document.getElementById('readMore').textContent=descExpanded?'Show less':'Read more';}
+function toggleFavorite(){const btn=document.getElementById('favBtn');btn.classList.toggle('active');btn.innerHTML=`<i class="fas fa-heart"></i> ${btn.classList.contains('active')?'Saved':'Save'}`;showToast(btn.classList.contains('active')?'Saved to favorites!':'Removed from favorites');}
+function shareProperty(){if(navigator.share){navigator.share({title:listing?.UnparsedAddress,url:location.href});}else{navigator.clipboard.writeText(location.href);showToast('Link copied to clipboard!');}}
+function addToCart(){const l=listing;if(!l)return;let cart=JSON.parse(localStorage.getItem('showingCart')||'[]');if(!cart.some(c=>c.listingKey===l.ListingKey)){cart.push({listingKey:l.ListingKey,price:l.ListPrice,address:l.UnparsedAddress,city:l.City,photo:l.Media?.[0]?.MediaURL||'',beds:l.BedroomsTotal,baths:l.BathroomsTotalInteger});localStorage.setItem('showingCart',JSON.stringify(cart));showToast('Added to showing cart! Go back to submit.');}else{showToast('Already in your showing cart');}}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
+function initMap(){initPage();}
+</script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyACmn2j8wwVNO53MLWGPFFsImjEUxe4D50&callback=initMap"></script>
 </body>
 </html>

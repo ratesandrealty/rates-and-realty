@@ -60,7 +60,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { endpoint, params } = await req.json();
+    const { endpoint, params, rawFilter } = await req.json();
 
     if (!endpoint) {
       return new Response(JSON.stringify({ error: "endpoint is required" }), {
@@ -71,10 +71,13 @@ Deno.serve(async (req: Request) => {
 
     const token = await getTrestleToken();
 
-    // Build query string from params
-    const queryString = params
-      ? "?" + new URLSearchParams(params).toString()
-      : "";
+    // Build query string from params object or use pre-built rawFilter
+    let queryString = "";
+    if (rawFilter) {
+      queryString = "?" + rawFilter;
+    } else if (params) {
+      queryString = "?" + new URLSearchParams(params).toString();
+    }
     const url = `${TRESTLE_API_BASE}/${endpoint}${queryString}`;
 
     const mlsRes = await fetch(url, {
