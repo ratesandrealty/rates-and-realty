@@ -1201,9 +1201,9 @@
         <button id="crmResetPwBtn" onclick="crmSendPasswordReset()" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:7px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-weight:600">
           <i class="fas fa-key"></i> Send Password Reset
         </button>
-        <a id="crmPortalLink" href="/public/unified-portal.html" target="_blank" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:7px 12px;font-size:.75rem;text-decoration:none">
+        <button onclick="adminViewPortal()" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:7px 12px;font-size:.75rem;cursor:pointer;text-decoration:none">
           <i class="fas fa-external-link-alt"></i> View Portal
-        </a>
+        </button>
       </div>
     </div>
 
@@ -2864,6 +2864,7 @@
               <option value="alert">🔔 Alerts</option>
               <option value="form">📋 Forms</option>
               <option value="system">⚙️ System</option>
+              <option value="chat">🤖 AI Chat</option>
             </select>
             <button onclick="loadActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:6px 10px;font-size:.75rem;cursor:pointer;display:flex;align-items:center;gap:5px">
               <i class="fas fa-sync-alt"></i> Refresh
@@ -3611,7 +3612,8 @@ const CHANNEL_CONFIG = {
   task_created:{icon:'✅',color:'#10b981',label:'Task',bg:'rgba(16,185,129,.1)'},
   document_uploaded:{icon:'📄',color:'#06b6d4',label:'Document',bg:'rgba(6,182,212,.1)'},
   lead_updated:{icon:'✏️',color:'#6b7280',label:'Updated',bg:'rgba(107,114,128,.1)'},
-  appointment_booked:{icon:'📅',color:'#f59e0b',label:'Appointment',bg:'rgba(245,158,11,.1)'}
+  appointment_booked:{icon:'📅',color:'#f59e0b',label:'Appointment',bg:'rgba(245,158,11,.1)'},
+  chat:{icon:'🤖',color:'#a78bfa',label:'AI Chat',bg:'rgba(167,139,250,.1)'}
 };
 const STATUS_CONFIG = {
   sent:{color:'#3b82f6',label:'Sent'},delivered:{color:'#10b981',label:'Delivered'},
@@ -3659,7 +3661,8 @@ function renderActivityItem(e, idx) {
   const hasEmail = !!e.email_html;
   const hasSms = !!e.sms_body;
   const hasMeta = e.metadata && typeof e.metadata === 'object' && Object.keys(e.metadata).length > 0;
-  const isExp = hasEmail || hasSms || hasMeta;
+  const hasChat = e.channel === 'chat' && e.metadata?.session_id;
+  const isExp = hasEmail || hasSms || hasMeta || hasChat;
   const title = e.title || activityTitle(e.type);
   return '<div style="display:flex;gap:0;position:relative">'
     + '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;width:44px;padding-top:14px">'
@@ -3679,6 +3682,7 @@ function renderActivityItem(e, idx) {
       + (hasEmail ? '<button onclick="previewEmail(\''+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#3b82f6;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-eye"></i> Preview Email</button>' : '')
       + (hasSms ? '<button onclick="toggleEl(\'sms-'+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#10b981;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-comment-alt"></i> View SMS</button>' : '')
       + (hasMeta ? '<button onclick="toggleEl(\'meta-'+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#6b7280;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-code"></i> Details</button>' : '')
+      + (hasChat ? '<button onclick="loadChatConversation(\''+e.metadata.session_id+'\',\''+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#a78bfa;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-comments"></i> View Conversation</button>' : '')
       + '</div>'
       + (hasSms ? '<div id="sms-'+e.id+'" style="display:none;margin-top:8px;background:#0d1f1a;border:1px solid #10b98133;border-radius:8px;padding:12px"><div style="font-size:.68rem;color:#10b981;font-weight:600;margin-bottom:5px">💬 SMS</div><div style="font-size:.82rem;color:#ccc;line-height:1.6;white-space:pre-wrap">'+esc(e.sms_body)+'</div></div>' : '')
       + (hasMeta ? '<div id="meta-'+e.id+'" style="display:none;margin-top:8px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:12px"><div style="font-size:.68rem;color:#6b7280;font-weight:600;margin-bottom:6px">⚙️ DETAILS</div><div style="font-size:.72rem;font-family:monospace;color:#888;line-height:1.8;white-space:pre-wrap">'+esc(JSON.stringify(e.metadata,null,2))+'</div></div>' : '')
@@ -3715,6 +3719,63 @@ async function logManualNote() {
     await sb.from('activity_events').insert({ lead_id: leadId, contact_id: contactId, type: 'note_added', channel: 'system', title: 'Manual Note', description: note, status: 'sent', created_at: new Date().toISOString() });
     loadActivity();
   } catch(e) { console.error(e); }
+}
+
+const ADMIN_TOKEN = 'rr-admin-28230b361fc0915fd1599c7cd52444d4658990098a120adf';
+
+async function adminViewPortal() {
+  if (!crmContactEmail) { alert('No contact email found'); return; }
+  const btn = document.querySelector('[onclick="adminViewPortal()"]');
+  if (btn) { btn.textContent = 'Loading...'; btn.style.opacity = '.6'; }
+  try {
+    const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+    const res = await fetch(`${SB_P}/functions/v1/portal-auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SK_P },
+      body: JSON.stringify({ action: 'admin_impersonate', token: ADMIN_TOKEN, email: crmContactEmail })
+    });
+    const data = await res.json();
+    if (!data.success || !data.user) {
+      if (confirm('No portal account found. Create one and send welcome email?')) {
+        await crmCreatePortalAccount();
+      }
+      if (btn) { btn.innerHTML = '<i class="fas fa-external-link-alt"></i> View Portal'; btn.style.opacity = '1'; }
+      return;
+    }
+    const adminSession = { ...data.user, _admin_session: true, _viewed_by: 'rene@ratesandrealty.com', _timestamp: Date.now() };
+    window.open('/public/unified-portal.html?admin_session=' + encodeURIComponent(btoa(JSON.stringify(adminSession))), '_blank');
+  } catch(e) { alert('Error: ' + e.message); }
+  if (btn) { btn.innerHTML = '<i class="fas fa-external-link-alt"></i> View Portal'; btn.style.opacity = '1'; }
+}
+
+async function loadChatConversation(sessionId, eventId) {
+  const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  try {
+    const res = await fetch(`${SB_P}/rest/v1/chat_conversations?session_id=eq.${sessionId}&select=messages,guest_name,guest_email,started_at`, {
+      headers: { 'apikey': SK_P, 'Authorization': 'Bearer ' + SK_P }
+    });
+    const rows = await res.json();
+    const convo = rows?.[0];
+    if (!convo) { alert('Conversation not found'); return; }
+    const messages = convo.messages || [];
+    const msgHtml = messages.map(function(m) {
+      const isBot = m.role === 'assistant';
+      return '<div style="margin-bottom:10px;display:flex;gap:8px;'+(isBot?'':'flex-direction:row-reverse')+'">'
+        + '<div style="width:28px;height:28px;border-radius:50%;background:'+(isBot?'#C9A84C22':'#33333388')+';display:flex;align-items:center;justify-content:center;font-size:.75rem;flex-shrink:0">'+(isBot?'🤖':'👤')+'</div>'
+        + '<div style="background:'+(isBot?'#1a1a1a':'#111')+';border:1px solid '+(isBot?'#2a2a2a':'#333')+';border-radius:8px;padding:8px 11px;max-width:75%">'
+        + '<div style="font-size:.72rem;color:#666;margin-bottom:3px">'+(isBot?'AI Assistant':(convo.guest_name||'Visitor'))+'</div>'
+        + '<div style="font-size:.8rem;color:#ccc;line-height:1.5">'+(m.content||'')+'</div></div></div>';
+    }).join('');
+    document.getElementById('emailPreviewSubject').textContent = 'AI Chat: ' + (convo.guest_name || convo.guest_email || 'Visitor');
+    document.getElementById('emailPreviewMeta').textContent = messages.length + ' messages · ' + new Date(convo.started_at).toLocaleString();
+    var chatHtml = '<!DOCTYPE html><html><body style="margin:0;padding:16px;background:#0d0d0d;font-family:\'Segoe UI\',sans-serif">' + msgHtml + '</body></html>';
+    var blob = new Blob([chatHtml], { type: 'text/html' });
+    document.getElementById('emailPreviewFrame').src = URL.createObjectURL(blob);
+    document.getElementById('emailPreviewModal').style.display = 'block';
+    document.body.style.overflow = 'hidden';
+  } catch(e) { alert('Error loading conversation: ' + e.message); }
 }
 
 /* ── COMMUNICATIONS ── */

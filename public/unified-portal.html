@@ -708,6 +708,41 @@ input,select,textarea{font-family:inherit}
 </div>
 
 <script>
+/* ===== ADMIN SESSION CHECK ===== */
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var adminParam = params.get('admin_session');
+  if (adminParam) {
+    try {
+      var adminUser = JSON.parse(atob(adminParam));
+      if (adminUser && adminUser._admin_session && (Date.now() - adminUser._timestamp) < 300000) {
+        var userData = Object.assign({}, adminUser);
+        delete userData._admin_session; delete userData._viewed_by; delete userData._timestamp;
+        localStorage.setItem('portal_user', JSON.stringify(userData));
+        localStorage.setItem('borrower_user', JSON.stringify(userData));
+        localStorage.setItem('borrower_email', userData.email || '');
+        localStorage.setItem('borrower_first_name', userData.first_name || '');
+        document.addEventListener('DOMContentLoaded', function() {
+          var banner = document.createElement('div');
+          banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#7c3aed;color:#fff;text-align:center;padding:7px;font-size:.78rem;font-weight:600;display:flex;align-items:center;justify-content:center;gap:10px';
+          banner.innerHTML = '🔑 Admin View — ' + (userData.first_name||'') + ' ' + (userData.last_name||'') + ' (' + (userData.email||'') + ') <button onclick="closeAdminView()" style="background:rgba(255,255,255,.2);border:none;border-radius:4px;color:#fff;padding:2px 8px;cursor:pointer;font-size:.72rem">✕ Exit</button>';
+          document.body.insertBefore(banner, document.body.firstChild);
+          document.body.style.paddingTop = '34px';
+        });
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    } catch(e) { console.warn('Admin session parse error:', e); }
+  }
+})();
+
+function closeAdminView() {
+  localStorage.removeItem('portal_user');
+  localStorage.removeItem('borrower_user');
+  localStorage.removeItem('borrower_email');
+  localStorage.removeItem('borrower_first_name');
+  window.location.href = '/public/unified-portal.html';
+}
+
 /* ===== CONSTANTS ===== */
 var SB = 'https://ljywhvbmsibwnssxpesh.supabase.co';
 var SK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
