@@ -97,6 +97,10 @@
           <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><rect x="3" y="2" width="14" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M7 7h6M7 11h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           Applications
         </button>
+        <a class="crm-nav-link" href="/admin/showings.html">
+          <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 8h14M8 3v14" stroke="currentColor" stroke-width="1.5"/></svg>
+          Showings
+        </a>
         <button class="crm-nav-link" data-crm-nav="documents">
           <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><path d="M4 2h8l4 4v12a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" stroke-width="1.5"/><path d="M12 2v4h4" stroke="currentColor" stroke-width="1.5"/></svg>
           Documents
@@ -246,6 +250,24 @@
             </div>
           </div>
 
+        </div>
+
+        <!-- SHOWINGS WIDGET -->
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:24px;margin-top:24px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <div>
+              <div style="font-size:11px;letter-spacing:0.1em;color:#888;margin-bottom:4px;">REAL ESTATE</div>
+              <h3 style="color:#fff;margin:0;font-size:18px;">Showing Requests</h3>
+            </div>
+            <a href="/admin/showings.html" style="color:#c9a84c;font-size:13px;text-decoration:none;">View All →</a>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;" id="showing-stats-row">
+            <div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#fff;" id="stat-total-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">Total</div></div>
+            <div style="background:rgba(255,193,7,0.1);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#ffc107;" id="stat-pending-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">Pending</div></div>
+            <div style="background:rgba(40,167,69,0.1);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#28a745;" id="stat-confirmed-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">Confirmed</div></div>
+            <div style="background:rgba(23,162,184,0.1);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#17a2b8;" id="stat-completed-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">Completed</div></div>
+          </div>
+          <div id="recent-showings-list"><div style="color:#666;text-align:center;padding:20px;font-size:13px;">Loading...</div></div>
         </div>
 
         </div><!-- /dashboard-sections-wrapper -->
@@ -1537,6 +1559,57 @@ async function importMismoFiles() {
   }
   btn.textContent = `✓ Done — ${ok} imported`; btn.disabled = false; btn.onclick = closeMismoModal;
 }
+
+/* ── SHOWINGS WIDGET ── */
+async function loadShowingsWidget() {
+  try {
+    const SB_URL = window.APP_CONFIG?.SUPABASE_URL;
+    const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+    if (!SB_URL || !SB_KEY) return;
+    const res = await fetch(`${SB_URL}/rest/v1/showings?select=*&order=created_at.desc&limit=5`, {
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+    });
+    const showings = await res.json();
+    if (!Array.isArray(showings)) return;
+
+    const countRes = await fetch(`${SB_URL}/rest/v1/showings?select=id,status`, {
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+    });
+    const allShowings = await countRes.json();
+    const total = Array.isArray(allShowings) ? allShowings.length : 0;
+    const pending = Array.isArray(allShowings) ? allShowings.filter(s => s.status === 'pending' || !s.status).length : 0;
+    const confirmed = Array.isArray(allShowings) ? allShowings.filter(s => s.status === 'confirmed').length : 0;
+    const completed = Array.isArray(allShowings) ? allShowings.filter(s => s.status === 'completed').length : 0;
+
+    const el = id => document.getElementById(id);
+    if (el('stat-total-showings')) el('stat-total-showings').textContent = total;
+    if (el('stat-pending-showings')) el('stat-pending-showings').textContent = pending;
+    if (el('stat-confirmed-showings')) el('stat-confirmed-showings').textContent = confirmed;
+    if (el('stat-completed-showings')) el('stat-completed-showings').textContent = completed;
+
+    const listEl = el('recent-showings-list');
+    if (!listEl) return;
+    if (!showings.length) {
+      listEl.innerHTML = '<div style="color:#555;text-align:center;padding:16px;font-size:13px;">No showing requests yet.</div>';
+      return;
+    }
+    listEl.innerHTML = showings.map(s => `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+        ${s.property_photo
+          ? `<img src="${s.property_photo}" style="width:48px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;" onerror="this.style.display='none'">`
+          : '<div style="width:48px;height:48px;background:#1a1a1a;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">🏠</div>'}
+        <div style="flex:1;min-width:0;">
+          <div style="color:#fff;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.property_address || 'Unknown Property'}</div>
+          <div style="color:#888;font-size:11px;margin-top:2px;">${s.name || s.email || 'Anonymous'} · ${s.preferred_date || '—'} ${s.preferred_time || ''}</div>
+        </div>
+        <span style="padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;flex-shrink:0;background:${s.status==='confirmed'?'rgba(40,167,69,0.15)':s.status==='completed'?'rgba(23,162,184,0.15)':'rgba(255,193,7,0.15)'};color:${s.status==='confirmed'?'#28a745':s.status==='completed'?'#17a2b8':'#ffc107'};">${s.status || 'pending'}</span>
+        <a href="/admin/showings.html" style="color:#c9a84c;font-size:11px;text-decoration:none;flex-shrink:0;">View →</a>
+      </div>
+    `).join('');
+  } catch(e) { console.warn('Showings widget error:', e); }
+}
+// Load widget on page init
+document.addEventListener('DOMContentLoaded', loadShowingsWidget);
 </script>
 </body>
 </html>
