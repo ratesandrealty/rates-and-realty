@@ -761,8 +761,9 @@
           body: JSON.stringify({
             endpoint: 'Property',
             params: {
+              '$filter': "City eq 'Westminster' or City eq 'Garden Grove' or City eq 'Huntington Beach' or City eq 'Anaheim' or City eq 'Santa Ana' or City eq 'Fountain Valley'",
               '$top': '24',
-              '$select': 'ListingKey,UnparsedAddress,City,StateOrProvince,PostalCode,ListPrice,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,DaysOnMarket,Latitude,Longitude,Media',
+              '$select': 'ListingKey,UnparsedAddress,City,StateOrProvince,PostalCode,ListPrice,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,DaysOnMarket,Latitude,Longitude,PhotosCount,ListingContractDate,MlsStatus',
               '$orderby': 'ListPrice desc'
             }
           })
@@ -779,14 +780,16 @@
           sqft: p.LivingArea || 0,
           type: (p.PropertySubType || p.PropertyType || 'house').toLowerCase(),
           dom: p.DaysOnMarket || 0,
-          yearBuilt: p.YearBuilt,
+          yearBuilt: null,
           lat: p.Latitude,
           lng: p.Longitude,
-          photo: p.Media?.[0]?.MediaURL || null,
+          photo: null,
+          photosCount: p.PhotosCount || 0,
+          mlsStatus: p.MlsStatus || '',
           badge: p.DaysOnMarket != null && p.DaysOnMarket <= 3 ? 'New Listing'
-               : (p.OpenHouseCount || 0) > 0 ? 'Open House' : null,
+               : p.MlsStatus === 'Active Under Contract' ? 'Under Contract' : null,
           badgeStyle: p.DaysOnMarket != null && p.DaysOnMarket <= 3 ? 'gold' : 'blue',
-          listingId: p.ListingId
+          listingId: p.ListingKey
         }));
         console.log('Trestle: loaded', listings.length, 'listings');
         ALL_LISTINGS = listings;
