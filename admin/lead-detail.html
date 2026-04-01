@@ -2848,16 +2848,58 @@
          TAB 6: ACTIVITY
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-activity">
-      <div class="ld-section">
-        <div class="ld-section-title">Activity Log</div>
-        <div class="timeline" id="activity-timeline">
-          <div class="ld-empty">
-            <div class="ld-empty-icon">⚡</div>
-            <p>Loading activity…</p>
+      <div style="padding:20px 24px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+          <div>
+            <h3 style="font-size:1rem;font-weight:700;color:#eee;margin:0 0 4px">Activity &amp; Communications</h3>
+            <div style="font-size:.75rem;color:#555">All emails, logins, showings, alerts, and form submissions</div>
           </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="activityFilter" onchange="loadActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:6px 10px;font-size:.75rem;outline:none;cursor:pointer">
+              <option value="">All Channels</option>
+              <option value="email">📧 Email</option>
+              <option value="sms">💬 SMS</option>
+              <option value="portal">👤 Portal</option>
+              <option value="showing">🏠 Showings</option>
+              <option value="alert">🔔 Alerts</option>
+              <option value="form">📋 Forms</option>
+              <option value="system">⚙️ System</option>
+            </select>
+            <button onclick="loadActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:6px 10px;font-size:.75rem;cursor:pointer;display:flex;align-items:center;gap:5px">
+              <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+            <button onclick="logManualNote()" style="background:#C9A84C;color:#000;border:none;border-radius:7px;padding:6px 12px;font-size:.75rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px">
+              <i class="fas fa-plus"></i> Add Note
+            </button>
+          </div>
+        </div>
+        <div id="activity-timeline" style="display:flex;flex-direction:column;gap:0">
+          <div style="text-align:center;padding:40px;color:#444">
+            <i class="fas fa-bolt" style="font-size:2rem;display:block;margin-bottom:10px;color:#2a2a2a"></i>
+            <div style="font-size:.85rem">Loading activity...</div>
+          </div>
+        </div>
+        <div id="activityLoadMore" style="display:none;text-align:center;margin-top:16px">
+          <button onclick="loadMoreActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:8px 20px;font-size:.78rem;cursor:pointer">Load More</button>
         </div>
       </div>
     </div><!-- /tab-activity -->
+
+    <!-- Email Preview Modal -->
+    <div id="emailPreviewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:900;overflow-y:auto;padding:20px">
+      <div style="max-width:720px;margin:0 auto;background:#111;border:1px solid #2a2a2a;border-radius:14px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center;background:#0d0d0d">
+          <div>
+            <div id="emailPreviewSubject" style="font-size:.9rem;font-weight:700;color:#eee"></div>
+            <div id="emailPreviewMeta" style="font-size:.72rem;color:#666;margin-top:2px"></div>
+          </div>
+          <button onclick="closeEmailPreview()" style="background:#1a1a1a;border:1px solid #333;border-radius:50%;width:28px;height:28px;color:#888;cursor:pointer;font-size:.85rem">✕</button>
+        </div>
+        <div style="background:#fff;height:500px;overflow:hidden">
+          <iframe id="emailPreviewFrame" style="width:100%;height:100%;border:none"></iframe>
+        </div>
+      </div>
+    </div>
 
 
     <!-- ═══════════════════════════════════════════
@@ -3551,32 +3593,128 @@ async function toggleTask(id, wasDone) {
 }
 
 /* ── ACTIVITY ── */
-async function loadActivity() {
-  if (!leadId) return;
+/* ── ACTIVITY TIMELINE (rebuilt) ── */
+let activityOffset = 0;
+const ACTIVITY_PAGE = 20;
+const CHANNEL_CONFIG = {
+  email:{icon:'📧',color:'#3b82f6',label:'Email',bg:'rgba(59,130,246,.1)'},
+  sms:{icon:'💬',color:'#10b981',label:'SMS',bg:'rgba(16,185,129,.1)'},
+  portal:{icon:'👤',color:'#C9A84C',label:'Portal',bg:'rgba(201,168,76,.1)'},
+  showing:{icon:'🏠',color:'#f59e0b',label:'Showing',bg:'rgba(245,158,11,.1)'},
+  alert:{icon:'🔔',color:'#8b5cf6',label:'Alert',bg:'rgba(139,92,246,.1)'},
+  form:{icon:'📋',color:'#06b6d4',label:'Form',bg:'rgba(6,182,212,.1)'},
+  call:{icon:'📞',color:'#ef4444',label:'Call',bg:'rgba(239,68,68,.1)'},
+  system:{icon:'⚙️',color:'#6b7280',label:'System',bg:'rgba(107,114,128,.1)'},
+  note_added:{icon:'📝',color:'#C9A84C',label:'Note',bg:'rgba(201,168,76,.1)'},
+  lead_created:{icon:'🌟',color:'#C9A84C',label:'Lead',bg:'rgba(201,168,76,.1)'},
+  status_changed:{icon:'🔄',color:'#3b82f6',label:'Status',bg:'rgba(59,130,246,.1)'},
+  task_created:{icon:'✅',color:'#10b981',label:'Task',bg:'rgba(16,185,129,.1)'},
+  document_uploaded:{icon:'📄',color:'#06b6d4',label:'Document',bg:'rgba(6,182,212,.1)'},
+  lead_updated:{icon:'✏️',color:'#6b7280',label:'Updated',bg:'rgba(107,114,128,.1)'},
+  appointment_booked:{icon:'📅',color:'#f59e0b',label:'Appointment',bg:'rgba(245,158,11,.1)'}
+};
+const STATUS_CONFIG = {
+  sent:{color:'#3b82f6',label:'Sent'},delivered:{color:'#10b981',label:'Delivered'},
+  read:{color:'#C9A84C',label:'Read'},failed:{color:'#ef4444',label:'Failed'},
+  success:{color:'#10b981',label:'Success'},pending:{color:'#f59e0b',label:'Pending'},
+  received:{color:'#06b6d4',label:'Received'}
+};
+
+async function loadActivity(reset) {
+  if (reset === undefined) reset = true;
+  if (!leadId && !contactId) return;
+  if (reset) activityOffset = 0;
   const el = document.getElementById('activity-timeline');
+  if (reset) el.innerHTML = '<div style="text-align:center;padding:30px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.2rem"></i></div>';
+
+  const channel = document.getElementById('activityFilter')?.value || '';
   try {
-    const { data } = await sb.from('activity_events')
-      .select('*')
-      .eq('lead_id', leadId)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    const events = data || [];
-    if (!events.length) {
-      el.innerHTML = `<div class="ld-empty"><div class="ld-empty-icon">⚡</div><h4>No activity yet</h4></div>`;
+    // Query by lead_id or contact_id
+    let query = sb.from('activity_events').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(activityOffset, activityOffset + ACTIVITY_PAGE - 1);
+    if (leadId) query = query.eq('lead_id', leadId);
+    else if (contactId) query = query.eq('contact_id', contactId);
+    if (channel) query = query.eq('channel', channel);
+
+    const { data: events, count } = await query;
+    if ((!events || !events.length) && reset) {
+      el.innerHTML = '<div style="text-align:center;padding:48px 20px;color:#333"><i class="fas fa-bolt" style="font-size:2.5rem;display:block;margin-bottom:12px;color:#1e1e1e"></i><div style="font-size:.88rem;color:#555">No activity yet.</div><div style="font-size:.75rem;color:#333;margin-top:4px">Activity will appear here as emails, logins, and showings happen.</div></div>';
       return;
     }
-    el.innerHTML = events.map(e => `
-      <div class="tl-item">
-        <div class="tl-icon">${activityIcon(e.type)}</div>
-        <div class="tl-content">
-          <div class="tl-title">${activityTitle(e.type)}</div>
-          <div class="tl-desc">${esc(e.description || '')}</div>
-          <div class="tl-meta">${fmtDateTime(e.created_at)}</div>
-        </div>
-      </div>`).join('');
-  } catch (_) {
-    el.innerHTML = `<div class="ld-empty"><div class="ld-empty-icon">⚡</div><p>No activity to show.</p></div>`;
+    const html = (events || []).map(function(e, idx) { return renderActivityItem(e, idx); }).join('');
+    if (reset) el.innerHTML = html; else el.insertAdjacentHTML('beforeend', html);
+    activityOffset += (events || []).length;
+    const loadMoreEl = document.getElementById('activityLoadMore');
+    if (loadMoreEl) loadMoreEl.style.display = activityOffset < (count || 0) ? 'block' : 'none';
+  } catch(err) {
+    if (reset) el.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Error loading activity: ' + err.message + '</div>';
   }
+}
+
+function renderActivityItem(e, idx) {
+  const cfg = CHANNEL_CONFIG[e.channel] || CHANNEL_CONFIG[e.type] || CHANNEL_CONFIG.system;
+  const sCfg = STATUS_CONFIG[e.status] || { color: '#6b7280', label: e.status || '' };
+  const d = new Date(e.created_at);
+  const ds = d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  const ts = d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+  const hasEmail = !!e.email_html;
+  const hasSms = !!e.sms_body;
+  const hasMeta = e.metadata && typeof e.metadata === 'object' && Object.keys(e.metadata).length > 0;
+  const isExp = hasEmail || hasSms || hasMeta;
+  const title = e.title || activityTitle(e.type);
+  return '<div style="display:flex;gap:0;position:relative">'
+    + '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;width:44px;padding-top:14px">'
+    + '<div style="width:32px;height:32px;background:'+cfg.bg+';border:1px solid '+cfg.color+'33;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.9rem;flex-shrink:0;z-index:1">'+cfg.icon+'</div>'
+    + '<div style="width:1px;flex:1;background:#1a1a1a;min-height:20px;margin-top:4px"></div></div>'
+    + '<div style="flex:1;padding:10px 0 16px 12px;min-width:0">'
+    + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:0"><div style="font-size:.84rem;font-weight:600;color:#eee;margin-bottom:2px">'+esc(title)+'</div>'
+    + '<div style="font-size:.73rem;color:#555;margin-bottom:5px">'+ds+' at '+ts+'</div>'
+    + (e.description ? '<div style="font-size:.78rem;color:#888;line-height:1.5">'+esc(e.description)+'</div>' : '')
+    + '</div>'
+    + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">'
+    + '<span style="background:'+cfg.bg+';color:'+cfg.color+';border:1px solid '+cfg.color+'33;border-radius:12px;padding:2px 8px;font-size:.65rem;font-weight:600">'+cfg.label+'</span>'
+    + (sCfg.label ? '<span style="background:'+sCfg.color+'15;color:'+sCfg.color+';border-radius:12px;padding:2px 7px;font-size:.63rem;font-weight:600">'+sCfg.label+'</span>' : '')
+    + '</div></div>'
+    + (isExp ? '<div style="margin-top:8px;display:flex;gap:7px;flex-wrap:wrap">'
+      + (hasEmail ? '<button onclick="previewEmail(\''+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#3b82f6;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-eye"></i> Preview Email</button>' : '')
+      + (hasSms ? '<button onclick="toggleEl(\'sms-'+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#10b981;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-comment-alt"></i> View SMS</button>' : '')
+      + (hasMeta ? '<button onclick="toggleEl(\'meta-'+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#6b7280;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-code"></i> Details</button>' : '')
+      + '</div>'
+      + (hasSms ? '<div id="sms-'+e.id+'" style="display:none;margin-top:8px;background:#0d1f1a;border:1px solid #10b98133;border-radius:8px;padding:12px"><div style="font-size:.68rem;color:#10b981;font-weight:600;margin-bottom:5px">💬 SMS</div><div style="font-size:.82rem;color:#ccc;line-height:1.6;white-space:pre-wrap">'+esc(e.sms_body)+'</div></div>' : '')
+      + (hasMeta ? '<div id="meta-'+e.id+'" style="display:none;margin-top:8px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:12px"><div style="font-size:.68rem;color:#6b7280;font-weight:600;margin-bottom:6px">⚙️ DETAILS</div><div style="font-size:.72rem;font-family:monospace;color:#888;line-height:1.8;white-space:pre-wrap">'+esc(JSON.stringify(e.metadata,null,2))+'</div></div>' : '')
+      : '')
+    + '</div></div>';
+}
+
+function toggleEl(id) { var el = document.getElementById(id); if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none'; }
+
+const activityEventsCache = {};
+async function previewEmail(eventId) {
+  let e = activityEventsCache[eventId];
+  if (!e) {
+    const { data } = await sb.from('activity_events').select('*').eq('id', eventId).single();
+    e = data; if (e) activityEventsCache[eventId] = e;
+  }
+  if (!e?.email_html) return;
+  document.getElementById('emailPreviewSubject').textContent = e.email_subject || e.title || 'Email Preview';
+  document.getElementById('emailPreviewMeta').textContent = 'To: ' + (e.email_to || 'Unknown') + ' · ' + new Date(e.created_at).toLocaleString();
+  var blob = new Blob([e.email_html], { type: 'text/html' });
+  document.getElementById('emailPreviewFrame').src = URL.createObjectURL(blob);
+  document.getElementById('emailPreviewModal').style.display = 'block';
+  document.body.style.overflow = 'hidden';
+}
+function closeEmailPreview() { document.getElementById('emailPreviewModal').style.display = 'none'; document.body.style.overflow = ''; }
+document.getElementById('emailPreviewModal')?.addEventListener('click', function(ev) { if (ev.target === this) closeEmailPreview(); });
+
+function loadMoreActivity() { loadActivity(false); }
+
+async function logManualNote() {
+  var note = prompt('Add a note to this contact\'s activity:');
+  if (!note) return;
+  try {
+    await sb.from('activity_events').insert({ lead_id: leadId, contact_id: contactId, type: 'note_added', channel: 'system', title: 'Manual Note', description: note, status: 'sent', created_at: new Date().toISOString() });
+    loadActivity();
+  } catch(e) { console.error(e); }
 }
 
 /* ── COMMUNICATIONS ── */
@@ -4423,6 +4561,7 @@ function switchTab(name, btn) {
   if (name === 'alerts' && contactId && typeof ListingAlerts !== 'undefined') {
     ListingAlerts.renderAlertsList('crmAlertsContainer', { contact_id: contactId });
   }
+  if (name === 'activity') loadActivity();
 }
 
 function switchSubtab(name, btn) {
