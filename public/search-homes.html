@@ -176,8 +176,10 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .cart-fab .badge{position:absolute;top:-4px;right:-4px;background:#e00;color:#fff;width:20px;height:20px;border-radius:50%;font-size:11px;display:flex;align-items:center;justify-content:center;font-weight:700;}
 .cart-drawer{position:fixed;top:0;right:-400px;width:400px;max-width:90vw;height:100vh;background:#1a1a1a;border-left:1px solid var(--border);z-index:350;transition:right .3s;display:flex;flex-direction:column;}
 .cart-drawer.open{right:0;}
-.cart-drawer-header{display:flex;align-items:center;justify-content:space-between;padding:20px;border-bottom:1px solid var(--border);}
-.cart-drawer-header h3{font-size:16px;display:flex;align-items:center;gap:8px;}
+.cart-drawer-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0;}
+.cart-drawer-header h3{font-size:15px;display:flex;align-items:center;gap:8px;font-weight:700;}
+.cart-x{background:#1a1a1a;border:1px solid var(--border);border-radius:50%;color:var(--muted);cursor:pointer;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:.9rem;transition:all .2s;flex-shrink:0;}
+.cart-x:hover{background:#2a2a2a;color:var(--text);border-color:var(--text);}
 .cart-items{flex:1;overflow-y:auto;padding:12px;}
 .cart-item{display:flex;gap:10px;padding:10px;border-bottom:1px solid var(--border);align-items:center;}
 .cart-item img{width:60px;height:45px;object-fit:cover;border-radius:4px;}
@@ -490,25 +492,45 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 </div>
 
 <!-- SHOWING CART -->
-<button class="cart-fab" id="cartFab" onclick="openCart()">
+<button class="cart-fab" id="cartFab" onclick="toggleCart()">
   <i class="fa-solid fa-calendar-check"></i>
   <span class="badge" id="cartBadge">0</span>
 </button>
-<div class="drawer-overlay" id="drawerOverlay" onclick="closeCart()"></div>
+<div id="cartOverlay" onclick="toggleCart()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:599;backdrop-filter:blur(2px)"></div>
 <div class="cart-drawer" id="cartDrawer">
   <div class="cart-drawer-header">
-    <h3><i class="fa-solid fa-calendar-check" style="color:var(--gold)"></i> Showing Cart</h3>
-    <button style="background:none;border:none;color:var(--muted);font-size:18px;" onclick="closeCart()"><i class="fa-solid fa-xmark"></i></button>
+    <h3><i class="fa-solid fa-calendar-check" style="color:var(--gold)"></i> Showing Cart (<span id="cartCnt">0</span>)</h3>
+    <button class="cart-x" onclick="toggleCart()"><i class="fa-solid fa-xmark"></i></button>
   </div>
-  <div class="cart-items" id="cartItems"></div>
-  <div class="cart-form">
-    <label>Preferred Date</label>
-    <input type="date" id="showDate">
-    <label>Preferred Time</label>
-    <input type="time" id="showTime">
-    <label>Notes</label>
-    <textarea id="showNotes" placeholder="Any special requests or notes..."></textarea>
-    <button class="btn-submit-showing" onclick="submitShowing()">Submit Showing Request</button>
+  <div style="display:flex;padding:10px 16px;gap:0;border-bottom:1px solid var(--border);flex-shrink:0">
+    <div id="step1ind" style="flex:1;text-align:center;font-size:.72rem;font-weight:700;color:var(--gold);padding:6px 0;border-bottom:2px solid var(--gold)">1. Your Homes</div>
+    <div id="step2ind" style="flex:1;text-align:center;font-size:.72rem;font-weight:600;color:var(--muted);padding:6px 0;border-bottom:2px solid transparent;cursor:pointer" onclick="goToStep(2)">2. Schedule</div>
+    <div id="step3ind" style="flex:1;text-align:center;font-size:.72rem;font-weight:600;color:var(--muted);padding:6px 0;border-bottom:2px solid transparent">3. Confirm</div>
+  </div>
+  <div id="cartStep1" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px">
+    <div id="cartItems"></div>
+    <div id="cartEmptyMsg" style="display:none;text-align:center;padding:40px 20px;color:var(--muted)">
+      <i class="fas fa-home" style="font-size:2rem;display:block;margin-bottom:10px;color:#333"></i>
+      <div style="font-size:.85rem">No homes added yet.</div>
+      <div style="font-size:.75rem;margin-top:6px">Click "+ Showing" on any listing.</div>
+    </div>
+    <button id="cartNextBtn" onclick="goToStep(2)" style="display:none;width:100%;background:var(--gold);color:#000;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:.9rem;cursor:pointer;margin-top:8px">Schedule These Showings →</button>
+  </div>
+  <div id="cartStep2" style="flex:1;overflow-y:auto;padding:16px;display:none;flex-direction:column;gap:12px">
+    <div style="font-size:.82rem;color:var(--muted);margin-bottom:4px">When would you like to tour these homes?</div>
+    <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px">Preferred Date *</label><input type="date" id="cartDate" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:.88rem;outline:none"></div>
+    <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px">Preferred Time *</label><select id="cartTime" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:.88rem;outline:none;cursor:pointer"><option value="">Select a time...</option><option>Morning (9am – 12pm)</option><option>Afternoon (12pm – 4pm)</option><option>Evening (4pm – 7pm)</option><option>Flexible / Any time</option></select></div>
+    <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px">Your Name *</label><input type="text" id="cartName" placeholder="First Last" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:.88rem;outline:none"></div>
+    <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px">Phone *</label><input type="tel" id="cartPhone" placeholder="(714) 555-0000" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:.88rem;outline:none"></div>
+    <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px">Email</label><input type="email" id="cartEmail" placeholder="you@email.com" style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:.88rem;outline:none"></div>
+    <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px">Notes (optional)</label><textarea id="cartNotes" rows="2" placeholder="Any questions or special requests..." style="width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:.85rem;outline:none;resize:none"></textarea></div>
+    <div style="display:flex;gap:8px;margin-top:4px"><button onclick="goToStep(1)" style="flex:0 0 auto;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:9px;padding:12px 16px;font-size:.85rem;cursor:pointer">← Back</button><button onclick="goToStep(3)" style="flex:1;background:var(--gold);color:#000;border:none;border-radius:9px;padding:12px;font-weight:700;font-size:.88rem;cursor:pointer">Review Request →</button></div>
+  </div>
+  <div id="cartStep3" style="flex:1;overflow-y:auto;padding:16px;display:none;flex-direction:column;gap:12px">
+    <div style="font-size:.85rem;font-weight:700;color:var(--text);margin-bottom:4px">Review Your Request</div>
+    <div id="cartSummary" style="background:#1a1a1a;border-radius:9px;padding:14px;font-size:.82rem;color:var(--muted);line-height:1.8"></div>
+    <div id="cartHomesSummary" style="display:flex;flex-direction:column;gap:6px"></div>
+    <div style="display:flex;gap:8px;margin-top:4px"><button onclick="goToStep(2)" style="flex:0 0 auto;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:9px;padding:12px 16px;font-size:.85rem;cursor:pointer">← Back</button><button onclick="submitCart()" id="cartSubmitBtn" style="flex:1;background:var(--gold);color:#000;border:none;border-radius:9px;padding:12px;font-weight:700;font-size:.9rem;cursor:pointer"><i class="fas fa-paper-plane"></i> Submit Request</button></div>
   </div>
 </div>
 
@@ -567,6 +589,9 @@ document.addEventListener('DOMContentLoaded', function() {
   initToggleGroups();
   initTypeGrid();
   fetchListings();
+  // Set cart date min to today
+  var dateEl = document.getElementById('cartDate');
+  if (dateEl) dateEl.min = new Date().toISOString().split('T')[0];
   // Portal nav
   if (typeof PortalAuth !== 'undefined') {
     var user = PortalAuth.getUser();
@@ -919,85 +944,99 @@ function renderCartItems() {
     c.innerHTML = '<p style="text-align:center;color:var(--muted);padding:30px;">No showings added yet.</p>';
     return;
   }
-  var html = '';
-  for (var i = 0; i < showingCart.length; i++) {
-    var l = showingCart[i];
-    var img = (l.Media && l.Media[0]) ? l.Media[0].MediaURL : '';
-    html += '<div class="cart-item">'
-      + (img ? '<img src="' + img + '" alt="">' : '<div style="width:60px;height:45px;background:#222;border-radius:4px;"></div>')
-      + '<div class="cart-item-info">'
-      + '<div class="ci-price">$' + Number(l.ListPrice || 0).toLocaleString() + '</div>'
-      + '<div class="ci-addr">' + (l.UnparsedAddress || '') + ', ' + (l.City || '') + '</div>'
-      + '</div>'
-      + '<button class="remove-btn" onclick="removeCart(' + i + ')"><i class="fa-solid fa-trash"></i></button>'
-      + '</div>';
+  var emptyMsg = document.getElementById('cartEmptyMsg');
+  var nextBtn = document.getElementById('cartNextBtn');
+  var cntEl = document.getElementById('cartCnt');
+  if (cntEl) cntEl.textContent = showingCart.length;
+  if (!showingCart.length) {
+    c.innerHTML = '';
+    if (emptyMsg) emptyMsg.style.display = 'block';
+    if (nextBtn) nextBtn.style.display = 'none';
+  } else {
+    if (emptyMsg) emptyMsg.style.display = 'none';
+    if (nextBtn) nextBtn.style.display = 'block';
+    c.innerHTML = showingCart.map(function(i) {
+      return '<div style="display:flex;gap:9px;align-items:flex-start;padding:10px;background:#1a1a1a;border-radius:9px;border:1px solid var(--border)">'
+        + (i.photo ? '<img src="'+i.photo+'" style="width:58px;height:46px;object-fit:cover;border-radius:6px;flex-shrink:0">' : '')
+        + '<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:.85rem;color:var(--gold)">$'+(i.price||0).toLocaleString()+'</div><div style="font-size:.75rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+i.address+'</div><div style="font-size:.7rem;color:var(--muted)">'+i.city+'</div></div>'
+        + '<button onclick="removeFromCart(\''+i.listingKey+'\')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:.8rem;flex-shrink:0;padding:4px" title="Remove"><i class="fas fa-trash-alt"></i></button>'
+        + '</div>';
+    }).join('');
   }
-  c.innerHTML = html;
 }
 
-function removeCart(i) {
-  showingCart.splice(i, 1);
+function removeFromCart(key) {
+  showingCart = showingCart.filter(function(c){return c.listingKey!==key;});
   updateCartUI();
+  renderCart();
   renderListings();
 }
 
-function openCart() {
-  document.getElementById('cartDrawer').classList.add('open');
-  document.getElementById('drawerOverlay').classList.add('open');
+function toggleCart() {
+  var drawer = document.getElementById('cartDrawer');
+  var overlay = document.getElementById('cartOverlay');
+  var isOpen = drawer.classList.contains('open');
+  drawer.classList.toggle('open');
+  overlay.style.display = isOpen ? 'none' : 'block';
+  document.body.style.overflow = isOpen ? '' : 'hidden';
+  if (!isOpen) { renderCart(); goToStep(1); }
 }
 
-function closeCart() {
-  document.getElementById('cartDrawer').classList.remove('open');
-  document.getElementById('drawerOverlay').classList.remove('open');
-}
-
-async function submitShowing() {
-  if (showingCart.length === 0) { showToast('Add listings to your cart first'); return; }
-  var date = document.getElementById('showDate').value;
-  var time = document.getElementById('showTime').value;
-  var notes = document.getElementById('showNotes').value;
-  if (!date || !time) { showToast('Please select date and time'); return; }
-
-  var payload = showingCart.map(function(l) {
-    return {
-      listing_key: l.ListingKey,
-      address: l.UnparsedAddress,
-      city: l.City,
-      price: l.ListPrice,
-      preferred_date: date,
-      preferred_time: time,
-      notes: notes,
-      status: 'requested'
-    };
-  });
-
-  try {
-    var res = await fetch(SUPABASE_URL + '/rest/v1/showings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'Prefer': 'return=minimal'
-      },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok || res.status === 201) {
-      showToast('Showing request submitted!');
-      showingCart = [];
-      updateCartUI();
-      renderListings();
-      closeCart();
-      document.getElementById('showDate').value = '';
-      document.getElementById('showTime').value = '';
-      document.getElementById('showNotes').value = '';
-    } else {
-      showToast('Error submitting request. Please try again.');
-    }
-  } catch (e) {
-    console.error(e);
-    showToast('Network error. Please try again.');
+function goToStep(n) {
+  if (n === 3) {
+    var date = document.getElementById('cartDate').value;
+    var time = document.getElementById('cartTime').value;
+    var name = document.getElementById('cartName').value.trim();
+    var phone = document.getElementById('cartPhone').value.trim();
+    if (!date || !time || !name || !phone) { showToast('Please fill in date, time, name, and phone'); return; }
+    document.getElementById('cartSummary').innerHTML =
+      '<div><strong style="color:var(--text)">Date:</strong> ' + new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'}) + '</div>'
+      + '<div><strong style="color:var(--text)">Time:</strong> ' + time + '</div>'
+      + '<div><strong style="color:var(--text)">Name:</strong> ' + name + '</div>'
+      + '<div><strong style="color:var(--text)">Phone:</strong> ' + phone + '</div>'
+      + (document.getElementById('cartEmail').value ? '<div><strong style="color:var(--text)">Email:</strong> ' + document.getElementById('cartEmail').value + '</div>' : '')
+      + (document.getElementById('cartNotes').value ? '<div><strong style="color:var(--text)">Notes:</strong> ' + document.getElementById('cartNotes').value + '</div>' : '');
+    document.getElementById('cartHomesSummary').innerHTML = showingCart.map(function(i) {
+      return '<div style="display:flex;gap:8px;align-items:center;background:#1a1a1a;border-radius:7px;padding:8px">'
+        + (i.photo ? '<img src="'+i.photo+'" style="width:48px;height:38px;object-fit:cover;border-radius:5px;flex-shrink:0">' : '')
+        + '<div><div style="font-size:.8rem;font-weight:700;color:var(--text)">$'+(i.price||0).toLocaleString()+'</div><div style="font-size:.72rem;color:var(--muted)">'+i.address+'</div></div></div>';
+    }).join('');
   }
+  [1,2,3].forEach(function(s) {
+    document.getElementById('cartStep'+s).style.display = s===n ? 'flex' : 'none';
+    var ind = document.getElementById('step'+s+'ind');
+    if (s===n) { ind.style.color='var(--gold)'; ind.style.borderBottomColor='var(--gold)'; }
+    else if (s<n) { ind.style.color='#5a5'; ind.style.borderBottomColor='#5a5'; }
+    else { ind.style.color='var(--muted)'; ind.style.borderBottomColor='transparent'; }
+  });
+}
+
+async function submitCart() {
+  var btn = document.getElementById('cartSubmitBtn');
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
+  var batchId = 'batch_' + Date.now();
+  var name = document.getElementById('cartName').value.trim();
+  var phone = document.getElementById('cartPhone').value.trim();
+  var email = document.getElementById('cartEmail').value.trim();
+  var date = document.getElementById('cartDate').value;
+  var time = document.getElementById('cartTime').value;
+  var notes = document.getElementById('cartNotes').value;
+  var inserts = showingCart.map(function(i) {
+    return { listing_key:i.listingKey, property_price:i.price, property_address:i.address, property_city:i.city, property_photo:i.photo, property_beds:i.beds, property_baths:i.baths, preferred_date:date||null, preferred_time:time, name:name, phone:phone, email:email||null, notes:notes, batch_id:batchId, status:'pending' };
+  });
+  try {
+    var r = await fetch(SUPABASE_URL+'/rest/v1/showings', { method:'POST', headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}, body:JSON.stringify(inserts) });
+    if (r.ok) {
+      document.getElementById('cartStep3').innerHTML = '<div style="text-align:center;padding:40px 20px;display:flex;flex-direction:column;align-items:center;gap:16px"><div style="width:64px;height:64px;background:rgba(0,160,80,.15);border-radius:50%;display:flex;align-items:center;justify-content:center"><i class="fas fa-check" style="font-size:1.8rem;color:#3cb43c"></i></div><div style="font-size:1.1rem;font-weight:700;color:var(--text)">Request Submitted!</div><div style="font-size:.85rem;color:var(--muted);line-height:1.6">Rene will confirm your showings within a few hours.<br>You\'ll receive a call at <strong style="color:var(--text)">'+phone+'</strong>.</div><div style="font-size:.78rem;color:var(--muted);background:#1a1a1a;border-radius:8px;padding:12px 16px;width:100%">'+showingCart.length+' home'+(showingCart.length>1?'s':'')+' requested · '+new Date(date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+time+'</div><button onclick="toggleCart();resetCart()" style="width:100%;background:var(--gold);color:#000;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:.9rem;cursor:pointer;margin-top:8px">Done — Close Cart</button><a href="tel:7144728508" style="color:var(--muted);font-size:.78rem;text-decoration:none">Questions? Call (714) 472-8508</a></div>';
+      showingCart = []; updateCartUI();
+    } else { throw new Error('Server error'); }
+  } catch(e) { btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i> Submit Request'; showToast('Error submitting. Please call (714) 472-8508'); }
+}
+
+function resetCart() {
+  showingCart = []; updateCartUI(); renderCart(); goToStep(1);
+  ['cartDate','cartName','cartPhone','cartEmail','cartNotes'].forEach(function(id) { var el=document.getElementById(id); if(el) el.value=''; });
+  var t=document.getElementById('cartTime'); if(t) t.value='';
 }
 
 /* ===== FILTER MODAL ===== */
