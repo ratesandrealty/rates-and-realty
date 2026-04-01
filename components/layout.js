@@ -5,14 +5,14 @@ const isAdminPage = path.includes("/dashboard/admin");
 const isBorrowerPortal = path.includes("/dashboard/index") || path.includes("/auth/index");
 const isPublicPage = !isAdminPage && !isBorrowerPortal;
 
-const LOGO_SRC = "/public/images/logo.png";
+const LOGO_SRC = "/assets/images/logo.png";
 const LOGO_ALT = "Rates & Realty";
 
 function brandHTML() {
   return `
     <a class="brand" href="/">
       <img src="${LOGO_SRC}" alt="${LOGO_ALT}" class="brand-logo"
-           onerror="this.style.display='none';this.nextElementSibling.style.display='grid';">
+           onerror="this.onerror=null;this.src='/assets/images/logo.svg';">
       <span class="brand-mark" style="display:none">R</span>
       <span class="brand-text">
         <strong>Rates &amp; Realty</strong>

@@ -5,7 +5,7 @@
   + '  <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:40px;margin-bottom:36px">'
   + '    <div>'
   + '      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'
-  + '        <img src="/assets/images/logo.png" alt="R&amp;R" style="height:32px" onerror="this.style.display=\'none\'">'
+  + '        <img src="/assets/images/logo.png" alt="R&amp;R" style="height:32px" onerror="this.onerror=null;this.src=\'/assets/images/logo.svg\'">'
   + '        <div>'
   + '          <div style="font-size:.95rem;font-weight:700;color:#C9A84C">Rates &amp; Realty</div>'
   + '          <div style="font-size:.6rem;color:#555;text-transform:uppercase;letter-spacing:.08em">AI-Powered Mortgage</div>'

@@ -6,7 +6,7 @@
   var nav = ''
   + '<nav style="display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:58px;background:#0d0d0d;border-bottom:1px solid #222;position:sticky;top:0;z-index:300;box-shadow:0 2px 20px rgba(0,0,0,.5)">'
   + '  <a href="/" style="display:flex;align-items:center;gap:10px;text-decoration:none">'
-  + '    <img src="/assets/images/logo.png" alt="Rates &amp; Realty" style="height:34px" onerror="this.style.display=\'none\'">'
+  + '    <img src="/assets/images/logo.png" alt="Rates &amp; Realty" style="height:34px" onerror="this.onerror=null;this.src=\'/assets/images/logo.svg\'">'
   + '    <div>'
   + '      <div style="font-size:.95rem;font-weight:700;color:#C9A84C;line-height:1.2">Rates &amp; Realty</div>'
   + '      <div style="font-size:.58rem;color:#666;text-transform:uppercase;letter-spacing:.1em">AI-Powered Mortgage</div>'
