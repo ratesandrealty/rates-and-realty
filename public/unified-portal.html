@@ -1075,59 +1075,92 @@ var appCheckboxMap = {
   app_decl_lawsuit:'decl_lawsuit', app_decl_federal:'decl_delinquent_federal'
 };
 
-function loadApplication() {
+async function loadApplication() {
   var u = currentUser;
-  if (!u || !u.id) return;
-  // pre-fill email
+  if (!u || !u.email) return;
   var emailEl = document.getElementById('app_email');
   if (emailEl && u.email) emailEl.value = u.email;
 
-  var orFilters = ['email.eq.' + encodeURIComponent(u.email)];
-  if (u.id) orFilters.push('borrower_user_id.eq.' + u.id);
-  if (u.borrower_id) orFilters.push('borrower_id.eq.' + u.borrower_id);
-  fetch(SB + '/rest/v1/mortgage_applications?or=(' + orFilters.join(',') + ')&order=created_at.desc&limit=1', { headers: sbH() })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (Array.isArray(d) && d.length > 0) {
-        existingAppId = d[0].id;
-        var app = d[0];
-        // populate text/select fields
-        Object.keys(appFieldMap).forEach(function(elId) {
-          var dbKey = appFieldMap[elId];
-          var el = document.getElementById(elId);
-          if (el && app[dbKey] !== undefined && app[dbKey] !== null) {
-            el.value = app[dbKey];
-          }
-        });
-        // populate checkboxes
-        Object.keys(appCheckboxMap).forEach(function(elId) {
-          var dbKey = appCheckboxMap[elId];
-          var el = document.getElementById(elId);
-          if (el) el.checked = !!app[dbKey];
-        });
-        // Restore previous addresses
-        if (app.former_addresses) {
-          try {
-            var addrs = typeof app.former_addresses === 'string' ? JSON.parse(app.former_addresses) : app.former_addresses;
-            if (Array.isArray(addrs)) { var c = document.getElementById('prevAddressContainer'); if (c) c.innerHTML = ''; prevAddressCount = 0; addrs.forEach(function(a) { addPrevAddress(a); }); }
-          } catch(e) {}
-        }
-        // Restore previous employers
-        if (app.employments) {
-          try {
-            var emps = typeof app.employments === 'string' ? JSON.parse(app.employments) : app.employments;
-            if (Array.isArray(emps)) { var c = document.getElementById('prevEmployerContainer'); if (c) c.innerHTML = ''; prevEmployerCount = 0; emps.forEach(function(e) { addPrevEmployer(e); }); }
-          } catch(e) {}
-        }
-      } else {
-        // pre-fill from user profile
-        if (u.first_name) document.getElementById('app_first_name').value = u.first_name;
-        if (u.last_name) document.getElementById('app_last_name').value = u.last_name;
-        if (u.phone) document.getElementById('app_cell').value = u.phone;
-      }
-      updateAppProgress();
-    })
-    .catch(function() {});
+  var rows = [];
+  var email = encodeURIComponent(u.email);
+
+  // Try email first
+  try { rows = await fetch(SB + '/rest/v1/mortgage_applications?or=(email.eq.' + email + ',borrower_email.eq.' + email + ')&order=updated_at.desc&limit=1', { headers: sbH() }).then(function(r) { return r.json(); }); } catch(e) { rows = []; }
+  // Try borrower_id
+  if (!rows.length && u.borrower_id) { try { rows = await fetch(SB + '/rest/v1/mortgage_applications?borrower_id=eq.' + u.borrower_id + '&order=updated_at.desc&limit=1', { headers: sbH() }).then(function(r) { return r.json(); }); } catch(e) { rows = []; } }
+  // Try portal user ID
+  if (!rows.length && u.id) { try { rows = await fetch(SB + '/rest/v1/mortgage_applications?borrower_user_id=eq.' + u.id + '&order=updated_at.desc&limit=1', { headers: sbH() }).then(function(r) { return r.json(); }); } catch(e) { rows = []; } }
+
+  if (!rows.length || !rows[0]) {
+    // pre-fill from user profile
+    if (u.first_name) { var el = document.getElementById('app_first_name'); if (el) el.value = u.first_name; }
+    if (u.last_name) { var el = document.getElementById('app_last_name'); if (el) el.value = u.last_name; }
+    if (u.phone) { var el = document.getElementById('app_cell'); if (el) el.value = u.phone; }
+    updateAppProgress();
+    return;
+  }
+
+  var d = rows[0];
+  existingAppId = d.id;
+
+  // Set text/select fields
+  var setVal = function(id, val) { var el = document.getElementById(id); if (el && val != null && val !== '') el.value = val; };
+  setVal('app_first_name', d.first_name); setVal('app_middle_name', d.middle_name); setVal('app_last_name', d.last_name);
+  setVal('app_suffix', d.suffix); setVal('app_dob', d.date_of_birth); setVal('app_marital', d.marital_status);
+  setVal('app_citizenship', d.citizenship); setVal('app_cell', d.cell_phone); setVal('app_home_phone', d.home_phone);
+  setVal('app_work_phone', d.work_phone); setVal('app_dl', d.dl_number); setVal('app_dl_state', d.dl_state);
+  setVal('app_street', d.current_address_street); setVal('app_unit', d.current_address_unit);
+  setVal('app_city', d.current_address_city); setVal('app_state', d.current_address_state || 'CA');
+  setVal('app_zip', d.current_address_zip); setVal('app_housing', d.current_housing_type);
+  setVal('app_years', d.current_address_years); setVal('app_rent', d.current_rent_amount);
+  setVal('app_employer', d.employer_name); setVal('app_emp_phone', d.employer_phone);
+  setVal('app_emp_street', d.employer_street); setVal('app_emp_city', d.employer_city);
+  setVal('app_emp_state', d.employer_state); setVal('app_emp_zip', d.employer_zip);
+  setVal('app_title', d.position_title); setVal('app_start_date', d.employment_start_date);
+  setVal('app_base_income', d.base_income); setVal('app_overtime', d.overtime_income);
+  setVal('app_bonus', d.bonus_income); setVal('app_commission', d.commission_income);
+  setVal('app_loan_purpose', d.loan_purpose); setVal('app_loan_type', d.loan_type);
+  setVal('app_prop_street', d.property_address_street); setVal('app_prop_city', d.property_address_city);
+  setVal('app_prop_state', d.property_address_state); setVal('app_prop_zip', d.property_address_zip);
+  setVal('app_purchase_price', d.purchase_price); setVal('app_loan_amount', d.requested_loan_amount);
+  setVal('app_occupancy', d.occupancy_type); setVal('app_monthly_debt', d.monthly_debt);
+
+  // Bank accounts
+  try {
+    var banks = Array.isArray(d.bank_accounts) ? d.bank_accounts : (d.bank_accounts ? JSON.parse(d.bank_accounts) : []);
+    banks.forEach(function(b) {
+      if (b.type === 'checking') setVal('app_checking', b.balance);
+      if (b.type === 'savings') setVal('app_savings', b.balance);
+      if (b.type === 'retirement') setVal('app_retirement', b.balance);
+    });
+  } catch(e) {}
+
+  // Checkboxes
+  var setCbk = function(id, val) { var el = document.getElementById(id); if (el && val) el.checked = true; };
+  setCbk('app_self_emp', d.is_self_employed);
+  setCbk('app_decl_primary', d.decl_primary_residence);
+  setCbk('app_decl_foreclosure', d.decl_foreclosure);
+  setCbk('app_decl_bankruptcy', d.decl_bankruptcy);
+  setCbk('app_decl_lawsuit', d.decl_lawsuit);
+  setCbk('app_decl_federal', d.decl_delinquent_federal);
+
+  // Restore previous addresses
+  var pc = document.getElementById('prevAddressContainer'); if (pc) pc.innerHTML = '';
+  prevAddressCount = 0;
+  try {
+    var addrs = Array.isArray(d.former_addresses) ? d.former_addresses : (d.former_addresses ? JSON.parse(d.former_addresses) : []);
+    if (addrs.length) addrs.forEach(function(a) { addPrevAddress(a); });
+  } catch(e) {}
+
+  // Restore previous employers
+  var ec = document.getElementById('prevEmployerContainer'); if (ec) ec.innerHTML = '';
+  prevEmployerCount = 0;
+  try {
+    var emps = Array.isArray(d.employments) ? d.employments : (d.employments ? JSON.parse(d.employments) : []);
+    if (emps.length) emps.forEach(function(e) { addPrevEmployer(e); });
+  } catch(e) {}
+
+  updateAppProgress();
 }
 
 function updateAppProgress() {
@@ -1209,72 +1242,87 @@ function getPrevEmployers() {
   return emps;
 }
 
-function saveApplication(silent) {
+async function saveApplication(silent) {
   var u = currentUser;
-  if (!u || !u.id) return;
-  var data = { borrower_user_id: u.id, email: u.email };
-
-  // collect text/select fields
-  Object.keys(appFieldMap).forEach(function(elId) {
-    var dbKey = appFieldMap[elId];
-    var el = document.getElementById(elId);
-    var val = el ? el.value : '';
-    if (numericFields.indexOf(dbKey) > -1) {
-      data[dbKey] = val ? parseFloat(val) : null;
-    } else {
-      data[dbKey] = val || null;
-    }
-  });
-
-  // collect checkboxes
-  Object.keys(appCheckboxMap).forEach(function(elId) {
-    var dbKey = appCheckboxMap[elId];
-    var el = document.getElementById(elId);
-    data[dbKey] = el ? el.checked : false;
-  });
-
-  // dynamic sections
-  data.former_addresses = JSON.stringify(getPrevAddresses());
-  data.employments = JSON.stringify(getPrevEmployers());
-
-  // borrower identifiers
-  data.borrower_id = u.borrower_id || u.crm_id || null;
-  data.borrower_user_id = u.id || null;
-
-  var method, url;
-  if (existingAppId) {
-    method = 'PATCH';
-    url = SB + '/rest/v1/mortgage_applications?id=eq.' + existingAppId;
-  } else {
-    method = 'POST';
-    url = SB + '/rest/v1/mortgage_applications';
+  if (!u || !u.email) {
+    if (!silent) showToast('Please sign in to save your application');
+    return;
   }
 
-  fetch(url, { method: method, headers: sbH(), body: JSON.stringify(data) })
-    .then(function(r) {
-      if (!r.ok) throw new Error('Save failed');
-      appDirty = false;
-      updateAppProgress();
-      var now = new Date();
-      var ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      var statusEl = document.getElementById('appSaveStatus');
-      if (statusEl) statusEl.textContent = 'Last saved at ' + ts;
-      if (!silent) {
-        showToast('Application saved!', 'success');
-      }
-      // if POST, re-fetch to get the id
-      if (method === 'POST') {
-        fetch(SB + '/rest/v1/mortgage_applications?borrower_user_id=eq.' + u.id + '&order=created_at.desc&limit=1', { headers: sbH() })
-          .then(function(r2) { return r2.json(); })
-          .then(function(d2) { if (d2 && d2[0]) existingAppId = d2[0].id; })
-          .catch(function() {});
-      }
-    })
-    .catch(function(e) {
-      if (!silent) {
-        showToast('Error saving: ' + e.message, 'error');
-      }
+  var statusEl = document.getElementById('appSaveStatus');
+  var saveBtn = document.querySelector('[onclick="saveApplication()"]');
+  if (statusEl) { statusEl.textContent = 'Saving...'; statusEl.style.color = '#C9A84C'; }
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...'; }
+
+  var val = function(id) { var el = document.getElementById(id); return el && el.value && el.value.trim() ? el.value.trim() : null; };
+  var numVal = function(id) { var v = document.getElementById(id)?.value; return v && v.trim() ? parseFloat(v) : null; };
+  var intVal = function(id) { var v = document.getElementById(id)?.value; return v && v.trim() ? parseInt(v) : null; };
+  var chkVal = function(id) { var el = document.getElementById(id); return el ? el.checked : false; };
+
+  var data = {
+    first_name: val('app_first_name'), middle_name: val('app_middle_name'), last_name: val('app_last_name'),
+    suffix: val('app_suffix'), date_of_birth: val('app_dob'), marital_status: val('app_marital'),
+    citizenship: val('app_citizenship'), cell_phone: val('app_cell'), home_phone: val('app_home_phone'),
+    work_phone: val('app_work_phone'), dl_number: val('app_dl'), dl_state: val('app_dl_state'),
+    current_address_street: val('app_street'), current_address_unit: val('app_unit'),
+    current_address_city: val('app_city'), current_address_state: val('app_state') || 'CA',
+    current_address_zip: val('app_zip'), current_housing_type: val('app_housing'),
+    current_address_years: intVal('app_years'), current_rent_amount: numVal('app_rent'),
+    employer_name: val('app_employer'), employer_phone: val('app_emp_phone'),
+    employer_street: val('app_emp_street'), employer_city: val('app_emp_city'),
+    employer_state: val('app_emp_state'), employer_zip: val('app_emp_zip'),
+    position_title: val('app_title'), employment_start_date: val('app_start_date'),
+    is_self_employed: chkVal('app_self_emp'),
+    base_income: numVal('app_base_income'), overtime_income: numVal('app_overtime'),
+    bonus_income: numVal('app_bonus'), commission_income: numVal('app_commission'),
+    loan_purpose: val('app_loan_purpose'), loan_type: val('app_loan_type'),
+    property_address_street: val('app_prop_street'), property_address_city: val('app_prop_city'),
+    property_address_state: val('app_prop_state'), property_address_zip: val('app_prop_zip'),
+    purchase_price: numVal('app_purchase_price'), requested_loan_amount: numVal('app_loan_amount'),
+    occupancy_type: val('app_occupancy'), monthly_debt: numVal('app_monthly_debt'),
+    bank_accounts: JSON.stringify([
+      { type: 'checking', balance: numVal('app_checking') || 0 },
+      { type: 'savings', balance: numVal('app_savings') || 0 },
+      { type: 'retirement', balance: numVal('app_retirement') || 0 }
+    ]),
+    decl_primary_residence: chkVal('app_decl_primary'), decl_foreclosure: chkVal('app_decl_foreclosure'),
+    decl_bankruptcy: chkVal('app_decl_bankruptcy'), decl_lawsuit: chkVal('app_decl_lawsuit'),
+    decl_delinquent_federal: chkVal('app_decl_federal'),
+    former_addresses: JSON.stringify(typeof getPrevAddresses === 'function' ? getPrevAddresses() : []),
+    employments: JSON.stringify(typeof getPrevEmployers === 'function' ? getPrevEmployers() : []),
+    borrower_id: u.borrower_id || u.crm_id || null,
+    borrower_user_id: u.id || null,
+    email: u.email,
+    updated_at: new Date().toISOString()
+  };
+
+  try {
+    var res = await fetch(SB + '/rest/v1/rpc/save_mortgage_application', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SK, 'Authorization': 'Bearer ' + SK },
+      body: JSON.stringify({ p_email: u.email, p_borrower_id: u.borrower_id || u.crm_id || null, p_borrower_user_id: u.id || null, p_data: data })
     });
+    var result = await res.json();
+
+    if (!res.ok || result.error) {
+      throw new Error(result.message || result.error || result.hint || JSON.stringify(result));
+    }
+
+    appDirty = false;
+    updateAppProgress();
+    if (statusEl) {
+      statusEl.textContent = '✓ Saved at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      statusEl.style.color = '#22c55e';
+      setTimeout(function() { statusEl.textContent = 'Auto-saves every 30 seconds'; statusEl.style.color = '#555'; }, 3000);
+    }
+    if (!silent) showToast('Application saved!', 'success');
+
+  } catch(e) {
+    console.error('Save error:', e);
+    if (statusEl) { statusEl.textContent = '✗ Save failed: ' + e.message; statusEl.style.color = '#ef4444'; }
+    if (!silent) showToast('Save failed: ' + e.message, 'error');
+  }
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '<i class="fas fa-save"></i> Save Progress'; }
 }
 
 // Mark form as dirty on input
