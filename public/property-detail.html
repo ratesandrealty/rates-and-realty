@@ -529,6 +529,40 @@ function initPage() {
   if (!raw) { window.location.href = '/public/search-homes.html'; return; }
   listing = JSON.parse(raw);
   populateListing();
+  // Fetch full photo set (search page only sends 1 photo)
+  fetchFullPhotos(listing.ListingKey);
+}
+
+async function fetchFullPhotos(listingKey) {
+  if (!listingKey) return;
+  try {
+    const rawFilter = "$filter=ListingKey eq '" + listingKey + "'&$top=1&$expand=Media($top=50;$select=MediaURL,Order)&$select=ListingKey,Media";
+    const res = await fetch(SB_URL + '/functions/v1/trestle-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+      body: JSON.stringify({ endpoint: 'Property', rawFilter: rawFilter })
+    });
+    const data = await res.json();
+    const item = (data.value || [])[0];
+    if (!item || !item.Media || item.Media.length <= 1) return;
+    // Update listing with full media
+    listing.Media = item.Media;
+    const photos = item.Media.sort(function(a,b){return (a.Order||0)-(b.Order||0);}).map(function(m){return m.MediaURL;}).filter(Boolean);
+    lbPhotos = photos;
+    // Update hero + thumbnail strip
+    var heroEl = document.getElementById('heroPhoto');
+    if (photos.length > 0) heroEl.src = photos[0];
+    var countEl = document.getElementById('photoCount');
+    if (countEl) countEl.textContent = photos.length > 1 ? 'View Photos (' + photos.length + ')' : 'View Photo';
+    var strip = document.getElementById('thumbStrip');
+    if (strip && photos.length > 1) {
+      strip.style.display = 'flex';
+      strip.innerHTML = photos.map(function(url, i) {
+        return '<img src="' + url + '" onclick="setHero(\'' + url + '\',this)" style="width:110px;height:70px;object-fit:cover;border-radius:6px;cursor:pointer;flex-shrink:0;border:2px solid ' + (i===0?'var(--gold)':'transparent') + ';transition:border-color .2s" loading="lazy" onerror="this.style.display=\'none\'">';
+      }).join('');
+    }
+    console.log('Full photos loaded:', photos.length);
+  } catch(e) { console.warn('Photo fetch failed:', e); }
 }
 
 /* ===== POPULATE ===== */
@@ -743,7 +777,7 @@ async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
     typeFilter = "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse'";
   }
   const filterStr = "City eq '" + city + "' and StandardStatus eq 'Active' and ListPrice ge " + minPrice + " and ListPrice le " + maxPrice + " and (" + typeFilter + ")";
-  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=3;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Media";
+  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Media";
 
   try {
     const res = await fetch(SB_URL + '/functions/v1/trestle-proxy', {
@@ -806,7 +840,7 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
     typeFilter = "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse'";
   }
   const filterStr = "City eq '" + city + "' and StandardStatus eq 'Active' and ListPrice ge " + minPrice + " and ListPrice le " + maxPrice + " and (" + typeFilter + ")";
-  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=15&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,Media";
+  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=15&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,Media";
 
   try {
     const res = await fetch(SB_URL + '/functions/v1/trestle-proxy', {
