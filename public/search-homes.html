@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <title>Search Homes | Rates &amp; Realty</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="/public/portal-auth-modal.js"></script>
 <style>
 :root {
   --gold:#C9A84C;--dark:#0a0a0a;--card-bg:#111;--border:#222;--text:#eee;--muted:#888;
@@ -226,6 +227,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
     <div class="nav-links">
       <a href="/public/search-homes.html">Search Homes</a>
       <a href="/public/apply.html">Apply Now</a>
+      <a href="/public/portal.html" id="navPortalLink" style="display:none">My Portal</a>
       <a href="/public/contact.html" class="cta-pill">Schedule a Call</a>
     </div>
   </div>
@@ -565,6 +567,12 @@ document.addEventListener('DOMContentLoaded', function() {
   initToggleGroups();
   initTypeGrid();
   fetchListings();
+  // Portal nav
+  if (typeof PortalAuth !== 'undefined') {
+    var user = PortalAuth.getUser();
+    var link = document.getElementById('navPortalLink');
+    if (user && link) { link.style.display = 'inline'; link.textContent = '\uD83D\uDC64 ' + user.first_name; }
+  }
 });
 
 /* ===== COUNTY & CITY TABS ===== */
@@ -816,7 +824,7 @@ function renderListings() {
       + '<div class="card-img" onclick="goDetail(' + i + ')">'
       + (img ? '<img src="' + img + '" alt="listing" loading="lazy">' : '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:#333;"><i class="fa-solid fa-image" style="font-size:32px;"></i></div>')
       + '<span class="status-badge ' + badgeClass + '">' + badgeText + '</span>'
-      + '<button class="heart-btn ' + (inCart ? 'liked' : '') + '" onclick="event.stopPropagation();toggleHeart(' + i + ')"><i class="fa-' + (inCart ? 'solid' : 'regular') + ' fa-heart"></i></button>'
+      + '<button class="heart-btn ' + (inCart ? 'liked' : '') + '" onclick="event.stopPropagation();handleSaveListing(\'' + l.ListingKey + '\',this)"><i class="fa-' + (inCart ? 'solid' : 'regular') + ' fa-heart"></i></button>'
       + (l.DaysOnMarket != null ? '<span class="dom-badge">' + l.DaysOnMarket + ' DOM</span>' : '')
       + '</div>'
       + '<div class="card-body" onclick="goDetail(' + i + ')">'
@@ -1146,6 +1154,34 @@ function toggleMap() {
 }
 
 /* ===== TOAST ===== */
+/* ===== PORTAL: SAVE LISTING ===== */
+function handleSaveListing(listingKey, btn) {
+  if (typeof PortalAuth === 'undefined') { addToCart(listingKey); return; }
+  var user = PortalAuth.getUser();
+  if (!user) {
+    PortalAuth.showSignup(function(u) { saveListing(listingKey, u, btn); });
+    return;
+  }
+  saveListing(listingKey, user, btn);
+}
+async function saveListing(listingKey, user, btn) {
+  var listing = allListings.find(function(l){return l.ListingKey===listingKey;});
+  if (!listing) return;
+  try {
+    var chk = await fetch(SUPABASE_URL+'/rest/v1/saved_listings?portal_user_id=eq.'+user.id+'&listing_key=eq.'+listingKey, {headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}});
+    var existing = await chk.json();
+    if (existing.length > 0) {
+      await fetch(SUPABASE_URL+'/rest/v1/saved_listings?portal_user_id=eq.'+user.id+'&listing_key=eq.'+listingKey, {method:'DELETE',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}});
+      if(btn) btn.classList.remove('on');
+      showToast('Removed from saved homes');
+    } else {
+      await fetch(SUPABASE_URL+'/rest/v1/saved_listings', {method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY},body:JSON.stringify({portal_user_id:user.id,listing_key:listingKey,listing_price:listing.ListPrice,listing_address:listing.UnparsedAddress,listing_city:listing.City,listing_photo:(listing.Media&&listing.Media[0])?listing.Media[0].MediaURL:'',listing_beds:listing.BedroomsTotal,listing_baths:listing.BathroomsTotalInteger,listing_sqft:listing.LivingArea,listing_type:listing.PropertySubType||listing.PropertyType})});
+      if(btn) btn.classList.add('on');
+      showToast('Saved! View in your portal →');
+    }
+  } catch(e) { showToast('Error saving listing'); }
+}
+
 function showToast(msg) {
   var t = document.getElementById('toast');
   t.textContent = msg;

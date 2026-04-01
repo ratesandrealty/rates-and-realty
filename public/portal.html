@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Borrower Portal | Rates &amp; Realty</title>
+<link rel="icon" href="/assets/images/favicon.png"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<link rel="stylesheet" href="/public/css/responsive-global.css"/>
+<script src="/public/portal-auth-modal.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#C9A84C;--gold-light:#e8c96d;--dark:#0a0a0a;--card-bg:#111;--border:#222;--text:#eee;--muted:#888;--radius:12px}
+body{background:var(--dark);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+a{color:var(--text);text-decoration:none}
+button{cursor:pointer;font-family:inherit}
+input,select,textarea{font-family:inherit}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:var(--dark)}
+::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+
+/* NAV */
+.top-nav{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:#0d0d0d;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:200}
+.nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.nav-logo img{height:34px}
+.nav-logo span{font-size:1.1rem;font-weight:700;color:var(--gold)}
+.nav-right{display:flex;align-items:center;gap:16px}
+.nav-links{display:flex;gap:20px;align-items:center}
+.nav-links a{color:var(--muted);font-size:.9rem;transition:color .2s}
+.nav-links a:hover{color:var(--gold)}
+.nav-user{display:flex;align-items:center;gap:10px;margin-left:12px}
+.nav-user-name{font-size:.85rem;color:var(--muted)}
+.nav-signout{background:none;border:1px solid var(--border);color:var(--muted);padding:5px 14px;border-radius:20px;font-size:.8rem;transition:all .2s}
+.nav-signout:hover{border-color:var(--gold);color:var(--gold)}
+
+/* LAYOUT */
+.portal-wrap{display:flex;height:calc(100vh - 56px)}
+.sidebar{width:200px;min-width:200px;background:#0d0d0d;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+.main-content{flex:1;padding:24px;overflow-y:auto}
+
+/* SIDEBAR */
+.sidebar-user{padding:20px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.sidebar-avatar{width:38px;height:38px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;color:#000;flex-shrink:0}
+.sidebar-greeting{font-size:.9rem;color:var(--text)}
+.sidebar-greeting span{display:block;font-size:.75rem;color:var(--muted);margin-top:2px}
+.sidebar-nav{list-style:none;padding:12px 0;flex:1}
+.sidebar-nav li{position:relative}
+.sidebar-nav li a{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:.88rem;color:var(--muted);transition:all .2s;border-left:3px solid transparent}
+.sidebar-nav li a:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.sidebar-nav li a.active{color:var(--gold);border-left-color:var(--gold);background:rgba(201,168,76,.06)}
+.sidebar-nav li a i{width:18px;text-align:center;font-size:.95rem}
+
+/* SECTIONS */
+.portal-section{display:none}
+.portal-section.active{display:block}
+.section-header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.section-header h2{font-size:1.4rem;font-weight:700}
+.count-badge{background:var(--gold);color:#000;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:12px}
+
+/* CARDS GRID */
+.cards-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.listing-card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:transform .2s,border-color .2s}
+.listing-card:hover{transform:translateY(-2px);border-color:#333}
+.listing-card img{width:100%;height:140px;object-fit:cover;background:#1a1a1a}
+.listing-card-body{padding:14px}
+.listing-price{font-size:1.15rem;font-weight:700;color:var(--gold);margin-bottom:4px}
+.listing-address{font-size:.88rem;color:var(--text);margin-bottom:2px}
+.listing-city{font-size:.82rem;color:var(--muted);margin-bottom:8px}
+.listing-meta{font-size:.8rem;color:var(--muted);margin-bottom:12px}
+.listing-actions{display:flex;gap:8px}
+.listing-actions button{flex:1;padding:7px 0;border-radius:8px;font-size:.82rem;font-weight:600;border:none;transition:all .2s}
+.btn-view{background:var(--gold);color:#000}
+.btn-view:hover{background:var(--gold-light)}
+.btn-remove{background:transparent;border:1px solid var(--border)!important;color:var(--muted)}
+.btn-remove:hover{border-color:#c33!important;color:#e55}
+
+/* EMPTY STATE */
+.empty-state{text-align:center;padding:60px 20px}
+.empty-state i{font-size:3rem;color:#333;margin-bottom:16px}
+.empty-state h3{font-size:1.1rem;color:var(--muted);margin-bottom:8px;font-weight:500}
+.empty-state p{font-size:.88rem;color:#555;margin-bottom:20px}
+.empty-state a,.empty-state button{display:inline-block;background:var(--gold);color:#000;padding:10px 24px;border-radius:24px;font-size:.88rem;font-weight:700;border:none;transition:background .2s}
+.empty-state a:hover,.empty-state button:hover{background:var(--gold-light)}
+
+/* SHOWINGS */
+.showing-row{display:flex;align-items:center;gap:16px;padding:14px 16px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;transition:border-color .2s}
+.showing-row:hover{border-color:#333}
+.showing-photo{width:60px;height:60px;border-radius:8px;object-fit:cover;background:#1a1a1a;flex-shrink:0}
+.showing-info{flex:1}
+.showing-address{font-size:.92rem;font-weight:600}
+.showing-city{font-size:.82rem;color:var(--muted)}
+.showing-datetime{font-size:.82rem;color:var(--muted);margin-top:2px}
+.status-badge{padding:4px 12px;border-radius:12px;font-size:.75rem;font-weight:700;white-space:nowrap}
+.status-pending{background:rgba(201,168,76,.2);color:var(--gold)}
+.status-confirmed{background:rgba(0,180,80,.15);color:#0c6}
+.status-completed{background:rgba(60,130,246,.15);color:#5af}
+.status-cancelled{background:rgba(120,120,120,.15);color:#888}
+
+/* APPLICATIONS */
+.app-card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:12px;transition:border-color .2s}
+.app-card:hover{border-color:#333}
+.app-loan-amount{font-size:1.3rem;font-weight:700;color:var(--gold);margin-bottom:6px}
+.app-address{font-size:.9rem;margin-bottom:4px}
+.app-meta{display:flex;gap:16px;font-size:.82rem;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+.app-meta span{display:flex;align-items:center;gap:4px}
+.btn-gold{display:inline-block;background:var(--gold);color:#000;padding:10px 24px;border-radius:24px;font-size:.88rem;font-weight:700;border:none;transition:background .2s;margin-top:16px}
+.btn-gold:hover{background:var(--gold-light)}
+
+/* CALCULATOR */
+.calc-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:600px}
+.calc-field label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:6px}
+.calc-field input,.calc-field select{width:100%;padding:10px 14px;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95rem}
+.calc-field input:focus,.calc-field select:focus{outline:none;border-color:var(--gold)}
+.calc-result{margin-top:24px;padding:24px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);max-width:600px}
+.calc-total-label{font-size:.88rem;color:var(--muted);margin-bottom:4px}
+.calc-total{font-size:2rem;font-weight:700;color:var(--gold)}
+.calc-breakdown{margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.calc-breakdown div{font-size:.84rem;color:var(--muted)}
+.calc-breakdown div span{color:var(--text);font-weight:600;margin-left:4px}
+.calc-link{display:inline-block;margin-top:16px;color:var(--gold);font-size:.88rem;font-weight:600;transition:color .2s}
+.calc-link:hover{color:var(--gold-light)}
+
+/* PROFILE */
+.profile-form{max-width:500px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:6px}
+.form-group input{width:100%;padding:10px 14px;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95rem}
+.form-group input:focus{outline:none;border-color:var(--gold)}
+.form-group input:disabled{opacity:.5;cursor:not-allowed}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.btn-save{background:var(--gold);color:#000;padding:10px 24px;border-radius:24px;font-size:.88rem;font-weight:700;border:none;transition:background .2s}
+.btn-save:hover{background:var(--gold-light)}
+.btn-save:disabled{opacity:.5;cursor:not-allowed}
+.profile-divider{border:none;border-top:1px solid var(--border);margin:32px 0}
+.form-msg{font-size:.84rem;margin-top:8px;padding:8px 14px;border-radius:8px;display:none}
+.form-msg.success{display:block;background:rgba(0,180,80,.1);color:#0c6}
+.form-msg.error{display:block;background:rgba(200,40,40,.1);color:#e55}
+
+/* TOAST */
+.toast-container{position:fixed;top:70px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:10px;font-size:.88rem;font-weight:500;color:#fff;opacity:0;transform:translateX(40px);transition:all .3s ease;max-width:360px}
+.toast.show{opacity:1;transform:translateX(0)}
+.toast.success{background:rgba(0,160,80,.95)}
+.toast.error{background:rgba(200,40,40,.95)}
+.toast.info{background:rgba(60,130,246,.95)}
+
+/* RESPONSIVE 768 */
+@media(max-width:768px){
+  .nav-links{display:none}
+  .portal-wrap{flex-direction:column}
+  .sidebar{width:100%;min-width:100%;flex-direction:row;border-right:none;border-bottom:1px solid var(--border);overflow-x:auto;overflow-y:hidden}
+  .sidebar-user{display:none}
+  .sidebar-nav{display:flex;padding:0;flex-direction:row;align-items:center}
+  .sidebar-nav li a{padding:12px 14px;border-left:none;border-bottom:3px solid transparent;font-size:.8rem;white-space:nowrap}
+  .sidebar-nav li a.active{border-left-color:transparent;border-bottom-color:var(--gold)}
+  .sidebar-nav li a span.nav-label{display:none}
+  .sidebar-nav li a i{font-size:1.1rem}
+  .cards-grid{grid-template-columns:repeat(2,1fr)}
+  .main-content{padding:16px}
+}
+
+/* RESPONSIVE 480 */
+@media(max-width:480px){
+  .portal-wrap{padding-bottom:60px}
+  .sidebar{position:fixed;bottom:0;left:0;right:0;top:auto;z-index:150;width:100%;border-bottom:none;border-top:1px solid var(--border);background:#0d0d0d}
+  .sidebar-nav{justify-content:space-around;width:100%}
+  .sidebar-nav li a{padding:10px 8px;flex-direction:column;gap:2px;font-size:.7rem}
+  .cards-grid{grid-template-columns:1fr}
+  .calc-grid{grid-template-columns:1fr}
+  .form-row{grid-template-columns:1fr}
+  .showing-row{flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="top-nav">
+  <a href="/" class="nav-logo">
+    <img src="/assets/images/logo.png" alt="Logo"/>
+    <span>Rates &amp; Realty</span>
+  </a>
+  <div class="nav-right">
+    <div class="nav-links">
+      <a href="/public/search-homes.html">Search Homes</a>
+      <a href="/public/apply.html">Apply Now</a>
+    </div>
+    <div class="nav-user" id="navUser" style="display:none">
+      <span class="nav-user-name" id="navUserName"></span>
+      <button class="nav-signout" onclick="PortalAuth.logout()">Sign Out</button>
+    </div>
+  </div>
+</nav>
+
+<!-- PORTAL WRAP -->
+<div class="portal-wrap">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-user">
+      <div class="sidebar-avatar" id="sidebarAvatar">??</div>
+      <div class="sidebar-greeting">
+        Hi, <span id="sidebarName">User</span>
+      </div>
+    </div>
+    <ul class="sidebar-nav" id="sidebarNav">
+      <li><a href="#" data-section="saved" class="active"><i class="fas fa-home"></i><span class="nav-label">Saved Homes</span></a></li>
+      <li><a href="#" data-section="showings"><i class="fas fa-calendar-alt"></i><span class="nav-label">Showings</span></a></li>
+      <li><a href="#" data-section="applications"><i class="fas fa-file-alt"></i><span class="nav-label">Applications</span></a></li>
+      <li><a href="#" data-section="calculator"><i class="fas fa-calculator"></i><span class="nav-label">Calculator</span></a></li>
+      <li><a href="#" data-section="profile"><i class="fas fa-user"></i><span class="nav-label">Profile</span></a></li>
+      <li><a href="#" id="sidebarLogout"><i class="fas fa-sign-out-alt"></i><span class="nav-label">Sign Out</span></a></li>
+    </ul>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main-content">
+
+    <!-- SAVED HOMES -->
+    <div class="portal-section active" id="sec-saved">
+      <div class="section-header">
+        <h2>Saved Homes</h2>
+        <span class="count-badge" id="savedCount">0</span>
+      </div>
+      <div id="savedGrid" class="cards-grid"></div>
+      <div id="savedEmpty" class="empty-state" style="display:none">
+        <i class="fas fa-home"></i>
+        <h3>No saved homes yet</h3>
+        <p>Browse listings and save your favorites</p>
+        <a href="/public/search-homes.html">Browse Listings</a>
+      </div>
+    </div>
+
+    <!-- SHOWINGS -->
+    <div class="portal-section" id="sec-showings">
+      <div class="section-header">
+        <h2>Showing Requests</h2>
+      </div>
+      <div id="showingsList"></div>
+      <div id="showingsEmpty" class="empty-state" style="display:none">
+        <i class="fas fa-calendar-alt"></i>
+        <h3>No showing requests yet</h3>
+        <p>Request a showing on any listing</p>
+      </div>
+    </div>
+
+    <!-- APPLICATIONS -->
+    <div class="portal-section" id="sec-applications">
+      <div class="section-header">
+        <h2>My Applications</h2>
+      </div>
+      <div id="appsList"></div>
+      <div id="appsEmpty" class="empty-state" style="display:none">
+        <i class="fas fa-file-alt"></i>
+        <h3>No applications yet</h3>
+        <p>Start your pre-qualification today</p>
+        <a href="/public/apply.html">Get Pre-Qualified</a>
+      </div>
+      <div style="margin-top:16px">
+        <a href="/public/apply.html" class="btn-gold">Start New Application</a>
+      </div>
+    </div>
+
+    <!-- CALCULATOR -->
+    <div class="portal-section" id="sec-calculator">
+      <div class="section-header">
+        <h2>Mortgage Calculator</h2>
+      </div>
+      <div class="calc-grid">
+        <div class="calc-field">
+          <label>Home Price ($)</label>
+          <input type="number" id="calcPrice" value="350000" min="0" step="1000"/>
+        </div>
+        <div class="calc-field">
+          <label>Down Payment %</label>
+          <select id="calcDown">
+            <option value="3">3%</option>
+            <option value="3.5">3.5%</option>
+            <option value="5">5%</option>
+            <option value="10">10%</option>
+            <option value="20" selected>20%</option>
+            <option value="25">25%</option>
+            <option value="30">30%</option>
+          </select>
+        </div>
+        <div class="calc-field">
+          <label>Interest Rate %</label>
+          <input type="number" id="calcRate" value="6.875" min="0" max="20" step="0.125"/>
+        </div>
+        <div class="calc-field">
+          <label>Loan Term</label>
+          <select id="calcTerm">
+            <option value="30" selected>30 Years</option>
+            <option value="20">20 Years</option>
+            <option value="15">15 Years</option>
+            <option value="10">10 Years</option>
+          </select>
+        </div>
+        <div class="calc-field">
+          <label>Property Tax Rate %</label>
+          <input type="number" id="calcTax" value="1.25" min="0" max="10" step="0.05"/>
+        </div>
+        <div class="calc-field">
+          <label>Monthly HOA ($)</label>
+          <input type="number" id="calcHoa" value="0" min="0" step="10"/>
+        </div>
+      </div>
+      <div class="calc-result">
+        <div class="calc-total-label">Estimated Monthly Payment</div>
+        <div class="calc-total" id="calcTotal">$0</div>
+        <div class="calc-breakdown">
+          <div>Principal &amp; Interest:<span id="calcPI">$0</span></div>
+          <div>Property Tax:<span id="calcTaxAmt">$0</span></div>
+          <div>Home Insurance:<span id="calcIns">$0</span></div>
+          <div>HOA:<span id="calcHoaAmt">$0</span></div>
+        </div>
+      </div>
+      <a href="/public/apply.html" class="calc-link"><i class="fas fa-arrow-right"></i> Get Pre-Qualified</a>
+    </div>
+
+    <!-- PROFILE -->
+    <div class="portal-section" id="sec-profile">
+      <div class="section-header">
+        <h2>Profile</h2>
+      </div>
+      <form class="profile-form" id="profileForm" onsubmit="return false">
+        <div class="form-row">
+          <div class="form-group">
+            <label>First Name</label>
+            <input type="text" id="profFirst" required/>
+          </div>
+          <div class="form-group">
+            <label>Last Name</label>
+            <input type="text" id="profLast" required/>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="profEmail" disabled/>
+        </div>
+        <div class="form-group">
+          <label>Phone</label>
+          <input type="tel" id="profPhone"/>
+        </div>
+        <button type="button" class="btn-save" id="btnSaveProfile">Save Changes</button>
+        <div class="form-msg" id="profileMsg"></div>
+      </form>
+
+      <hr class="profile-divider"/>
+
+      <h3 style="margin-bottom:16px;font-size:1.1rem">Change Password</h3>
+      <form class="profile-form" id="passwordForm" onsubmit="return false">
+        <div class="form-group">
+          <label>Current Password</label>
+          <input type="password" id="pwCurrent" required/>
+        </div>
+        <div class="form-group">
+          <label>New Password</label>
+          <input type="password" id="pwNew" required/>
+        </div>
+        <div class="form-group">
+          <label>Confirm New Password</label>
+          <input type="password" id="pwConfirm" required/>
+        </div>
+        <button type="button" class="btn-save" id="btnChangePass">Update Password</button>
+        <div class="form-msg" id="passwordMsg"></div>
+      </form>
+    </div>
+
+  </main>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+const SB = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const SK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+
+let currentUser = null;
+
+/* ---- TOAST ---- */
+function showToast(msg, type) {
+  type = type || 'info';
+  var c = document.getElementById('toastContainer');
+  var t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  requestAnimationFrame(function() { t.classList.add('show'); });
+  setTimeout(function() {
+    t.classList.remove('show');
+    setTimeout(function() { t.remove(); }, 300);
+  }, 3500);
+}
+
+/* ---- AUTH CHECK ---- */
+document.addEventListener('DOMContentLoaded', function() {
+  var user = PortalAuth.getUser();
+  if (user) {
+    initPortal(user);
+  } else {
+    PortalAuth.requireAuth(function(u) { initPortal(u); });
+  }
+});
+
+/* ---- INIT PORTAL ---- */
+function initPortal(user) {
+  currentUser = user;
+  var first = user.first_name || user.email.split('@')[0];
+  var last = user.last_name || '';
+  var initials = ((first[0] || '') + (last[0] || '')).toUpperCase() || '??';
+
+  // Nav user
+  document.getElementById('navUser').style.display = 'flex';
+  document.getElementById('navUserName').textContent = first + (last ? ' ' + last : '');
+
+  // Sidebar
+  document.getElementById('sidebarAvatar').textContent = initials;
+  document.getElementById('sidebarName').textContent = first;
+
+  // Sidebar nav
+  setupSidebar();
+
+  // Load default section
+  loadSavedHomes();
+
+  // Profile prefill
+  document.getElementById('profFirst').value = user.first_name || '';
+  document.getElementById('profLast').value = user.last_name || '';
+  document.getElementById('profEmail').value = user.email || '';
+  document.getElementById('profPhone').value = user.phone || '';
+
+  // Calculator
+  setupCalculator();
+
+  // Profile save
+  document.getElementById('btnSaveProfile').addEventListener('click', saveProfile);
+  document.getElementById('btnChangePass').addEventListener('click', changePassword);
+
+  // Sidebar logout
+  document.getElementById('sidebarLogout').addEventListener('click', function(e) {
+    e.preventDefault();
+    PortalAuth.logout();
+  });
+}
+
+/* ---- SIDEBAR NAV ---- */
+function setupSidebar() {
+  var nav = document.getElementById('sidebarNav');
+  nav.addEventListener('click', function(e) {
+    var link = e.target.closest('a[data-section]');
+    if (!link) return;
+    e.preventDefault();
+    var section = link.getAttribute('data-section');
+
+    // Update active
+    nav.querySelectorAll('a').forEach(function(a) { a.classList.remove('active'); });
+    link.classList.add('active');
+
+    // Show section
+    document.querySelectorAll('.portal-section').forEach(function(s) { s.classList.remove('active'); });
+    var target = document.getElementById('sec-' + section);
+    if (target) target.classList.add('active');
+
+    // Load data on switch
+    if (section === 'saved') loadSavedHomes();
+    else if (section === 'showings') loadShowings();
+    else if (section === 'applications') loadApplications();
+  });
+}
+
+/* ---- HELPERS ---- */
+function sbHeaders() {
+  return {
+    'apikey': SK,
+    'Authorization': 'Bearer ' + SK,
+    'Content-Type': 'application/json'
+  };
+}
+
+function fmtMoney(n) {
+  if (n == null) return '$0';
+  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function fmtDate(d) {
+  if (!d) return '';
+  var dt = new Date(d);
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function statusClass(s) {
+  if (!s) return 'status-pending';
+  s = s.toLowerCase();
+  if (s === 'confirmed' || s === 'approved') return 'status-confirmed';
+  if (s === 'completed' || s === 'funded') return 'status-completed';
+  if (s === 'cancelled' || s === 'denied' || s === 'withdrawn') return 'status-cancelled';
+  return 'status-pending';
+}
+
+/* ---- SAVED HOMES ---- */
+function loadSavedHomes() {
+  var grid = document.getElementById('savedGrid');
+  var empty = document.getElementById('savedEmpty');
+  var badge = document.getElementById('savedCount');
+  grid.innerHTML = '<div style="color:var(--muted);font-size:.9rem">Loading...</div>';
+  empty.style.display = 'none';
+
+  fetch(SB + '/rest/v1/saved_listings?portal_user_id=eq.' + currentUser.id + '&order=saved_at.desc', {
+    headers: sbHeaders()
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    grid.innerHTML = '';
+    if (!data || !data.length) {
+      badge.textContent = '0';
+      empty.style.display = 'block';
+      return;
+    }
+    badge.textContent = data.length;
+    data.forEach(function(item) {
+      var card = document.createElement('div');
+      card.className = 'listing-card';
+      var photo = item.listing_photo || item.photo || '/assets/images/placeholder-home.jpg';
+      var price = fmtMoney(item.listing_price || item.price);
+      var addr = item.listing_address || item.address || 'Address unavailable';
+      var city = item.listing_city || item.city || '';
+      var beds = item.listing_beds || item.beds || '—';
+      var baths = item.listing_baths || item.baths || '—';
+      var sqft = item.listing_sqft || item.sqft || '—';
+
+      card.innerHTML =
+        '<img src="' + photo + '" alt="Listing" onerror="this.src=\'/assets/images/placeholder-home.jpg\'"/>' +
+        '<div class="listing-card-body">' +
+          '<div class="listing-price">' + price + '</div>' +
+          '<div class="listing-address">' + addr + '</div>' +
+          '<div class="listing-city">' + city + '</div>' +
+          '<div class="listing-meta">' + beds + ' bd &middot; ' + baths + ' ba &middot; ' + Number(sqft).toLocaleString() + ' sqft</div>' +
+          '<div class="listing-actions">' +
+            '<button class="btn-view" data-id="' + (item.listing_id || item.id) + '">View Listing</button>' +
+            '<button class="btn-remove" data-saved-id="' + item.id + '">Remove</button>' +
+          '</div>' +
+        '</div>';
+
+      // View listing
+      card.querySelector('.btn-view').addEventListener('click', function() {
+        sessionStorage.setItem('viewListing', JSON.stringify(item));
+        window.location.href = '/public/property-detail.html';
+      });
+
+      // Remove
+      card.querySelector('.btn-remove').addEventListener('click', function() {
+        removeSavedHome(item.id, card);
+      });
+
+      grid.appendChild(card);
+    });
+  })
+  .catch(function(err) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    console.error('Failed to load saved homes:', err);
+  });
+}
+
+function removeSavedHome(id, cardEl) {
+  fetch(SB + '/rest/v1/saved_listings?id=eq.' + id, {
+    method: 'DELETE',
+    headers: sbHeaders()
+  })
+  .then(function() {
+    cardEl.remove();
+    var badge = document.getElementById('savedCount');
+    var grid = document.getElementById('savedGrid');
+    var count = grid.querySelectorAll('.listing-card').length;
+    badge.textContent = count;
+    if (count === 0) document.getElementById('savedEmpty').style.display = 'block';
+    showToast('Listing removed', 'success');
+  })
+  .catch(function() {
+    showToast('Failed to remove listing', 'error');
+  });
+}
+
+/* ---- SHOWINGS ---- */
+function loadShowings() {
+  var list = document.getElementById('showingsList');
+  var empty = document.getElementById('showingsEmpty');
+  list.innerHTML = '<div style="color:var(--muted);font-size:.9rem;padding:8px 0">Loading...</div>';
+  empty.style.display = 'none';
+
+  var url = SB + '/rest/v1/showings?or=(email.eq.' + encodeURIComponent(currentUser.email) + ',portal_user_id.eq.' + currentUser.id + ')&order=created_at.desc';
+
+  fetch(url, { headers: sbHeaders() })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    list.innerHTML = '';
+    if (!data || !data.length) {
+      empty.style.display = 'block';
+      return;
+    }
+    data.forEach(function(item) {
+      var row = document.createElement('div');
+      row.className = 'showing-row';
+      var photo = item.property_photo || item.photo || '/assets/images/placeholder-home.jpg';
+      var status = item.status || 'pending';
+      var dateStr = item.preferred_date ? fmtDate(item.preferred_date) : '';
+      var timeStr = item.preferred_time || '';
+
+      row.innerHTML =
+        '<img class="showing-photo" src="' + photo + '" alt="" onerror="this.src=\'/assets/images/placeholder-home.jpg\'"/>' +
+        '<div class="showing-info">' +
+          '<div class="showing-address">' + (item.property_address || item.address || 'Address unavailable') + '</div>' +
+          '<div class="showing-city">' + (item.property_city || item.city || '') + '</div>' +
+          '<div class="showing-datetime"><i class="fas fa-clock" style="margin-right:4px"></i>' + dateStr + (timeStr ? ' at ' + timeStr : '') + '</div>' +
+        '</div>' +
+        '<span class="status-badge ' + statusClass(status) + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
+
+      list.appendChild(row);
+    });
+  })
+  .catch(function(err) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    console.error('Failed to load showings:', err);
+  });
+}
+
+/* ---- APPLICATIONS ---- */
+function loadApplications() {
+  var list = document.getElementById('appsList');
+  var empty = document.getElementById('appsEmpty');
+  list.innerHTML = '<div style="color:var(--muted);font-size:.9rem;padding:8px 0">Loading...</div>';
+  empty.style.display = 'none';
+
+  var url = SB + '/rest/v1/mortgage_applications?email=eq.' + encodeURIComponent(currentUser.email) + '&order=created_at.desc';
+
+  fetch(url, { headers: sbHeaders() })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    list.innerHTML = '';
+    if (!data || !data.length) {
+      empty.style.display = 'block';
+      return;
+    }
+    data.forEach(function(item) {
+      var card = document.createElement('div');
+      card.className = 'app-card';
+      var status = item.status || 'draft';
+      var loanType = item.loan_type || item.program_type || '';
+
+      card.innerHTML =
+        '<div class="app-loan-amount">' + fmtMoney(item.loan_amount) + '</div>' +
+        '<div class="app-address">' + (item.property_address || item.subject_property_address || 'No property specified') + '</div>' +
+        '<div class="app-meta">' +
+          '<span class="status-badge ' + statusClass(status) + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>' +
+          (loanType ? '<span><i class="fas fa-tag"></i> ' + loanType + '</span>' : '') +
+          '<span><i class="fas fa-calendar"></i> ' + fmtDate(item.created_at) + '</span>' +
+        '</div>';
+
+      list.appendChild(card);
+    });
+  })
+  .catch(function(err) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    console.error('Failed to load applications:', err);
+  });
+}
+
+/* ---- CALCULATOR ---- */
+function setupCalculator() {
+  var ids = ['calcPrice', 'calcDown', 'calcRate', 'calcTerm', 'calcTax', 'calcHoa'];
+  ids.forEach(function(id) {
+    document.getElementById(id).addEventListener('input', runCalc);
+    document.getElementById(id).addEventListener('change', runCalc);
+  });
+  runCalc();
+}
+
+function runCalc() {
+  var price = parseFloat(document.getElementById('calcPrice').value) || 0;
+  var downPct = parseFloat(document.getElementById('calcDown').value) || 0;
+  var rate = parseFloat(document.getElementById('calcRate').value) || 0;
+  var term = parseInt(document.getElementById('calcTerm').value) || 30;
+  var taxRate = parseFloat(document.getElementById('calcTax').value) || 0;
+  var hoa = parseFloat(document.getElementById('calcHoa').value) || 0;
+
+  var downAmt = price * (downPct / 100);
+  var loan = price - downAmt;
+  var monthlyRate = (rate / 100) / 12;
+  var payments = term * 12;
+
+  var pi = 0;
+  if (monthlyRate > 0 && loan > 0) {
+    pi = loan * (monthlyRate * Math.pow(1 + monthlyRate, payments)) / (Math.pow(1 + monthlyRate, payments) - 1);
+  } else if (loan > 0) {
+    pi = loan / payments;
+  }
+
+  var monthlyTax = (price * (taxRate / 100)) / 12;
+  var monthlyIns = (price * 0.0035) / 12; // rough estimate
+  var total = pi + monthlyTax + monthlyIns + hoa;
+
+  document.getElementById('calcPI').textContent = fmtMoney(pi);
+  document.getElementById('calcTaxAmt').textContent = fmtMoney(monthlyTax);
+  document.getElementById('calcIns').textContent = fmtMoney(monthlyIns);
+  document.getElementById('calcHoaAmt').textContent = fmtMoney(hoa);
+  document.getElementById('calcTotal').textContent = fmtMoney(total);
+}
+
+/* ---- PROFILE SAVE ---- */
+function saveProfile() {
+  var btn = document.getElementById('btnSaveProfile');
+  var msg = document.getElementById('profileMsg');
+  msg.className = 'form-msg';
+  msg.style.display = 'none';
+
+  var first = document.getElementById('profFirst').value.trim();
+  var last = document.getElementById('profLast').value.trim();
+  var phone = document.getElementById('profPhone').value.trim();
+
+  if (!first) { showFormMsg(msg, 'First name is required', 'error'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  fetch(SB + '/rest/v1/portal_users?id=eq.' + currentUser.id, {
+    method: 'PATCH',
+    headers: sbHeaders(),
+    body: JSON.stringify({ first_name: first, last_name: last, phone: phone })
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error('Save failed');
+    // Update local user
+    currentUser.first_name = first;
+    currentUser.last_name = last;
+    currentUser.phone = phone;
+    if (typeof PortalAuth !== 'undefined' && PortalAuth.setUser) PortalAuth.setUser(currentUser);
+
+    // Update UI
+    var initials = ((first[0] || '') + (last[0] || '')).toUpperCase();
+    document.getElementById('sidebarAvatar').textContent = initials;
+    document.getElementById('sidebarName').textContent = first;
+    document.getElementById('navUserName').textContent = first + (last ? ' ' + last : '');
+
+    showFormMsg(msg, 'Profile updated successfully', 'success');
+    showToast('Profile saved', 'success');
+  })
+  .catch(function() {
+    showFormMsg(msg, 'Failed to save profile. Please try again.', 'error');
+  })
+  .finally(function() {
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
+  });
+}
+
+/* ---- CHANGE PASSWORD ---- */
+function changePassword() {
+  var btn = document.getElementById('btnChangePass');
+  var msg = document.getElementById('passwordMsg');
+  msg.className = 'form-msg';
+  msg.style.display = 'none';
+
+  var current = document.getElementById('pwCurrent').value;
+  var newPw = document.getElementById('pwNew').value;
+  var confirm = document.getElementById('pwConfirm').value;
+
+  if (!current || !newPw || !confirm) { showFormMsg(msg, 'All password fields are required', 'error'); return; }
+  if (newPw.length < 8) { showFormMsg(msg, 'New password must be at least 8 characters', 'error'); return; }
+  if (newPw !== confirm) { showFormMsg(msg, 'New passwords do not match', 'error'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Updating...';
+
+  fetch(SB + '/functions/v1/portal-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SK },
+    body: JSON.stringify({
+      action: 'change_password',
+      user_id: currentUser.id,
+      current_password: current,
+      new_password: newPw
+    })
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+  .then(function(res) {
+    if (!res.ok || res.data.error) {
+      throw new Error(res.data.error || 'Password update failed');
+    }
+    showFormMsg(msg, 'Password updated successfully', 'success');
+    showToast('Password updated', 'success');
+    document.getElementById('pwCurrent').value = '';
+    document.getElementById('pwNew').value = '';
+    document.getElementById('pwConfirm').value = '';
+  })
+  .catch(function(err) {
+    showFormMsg(msg, err.message || 'Failed to update password', 'error');
+  })
+  .finally(function() {
+    btn.disabled = false;
+    btn.textContent = 'Update Password';
+  });
+}
+
+function showFormMsg(el, text, type) {
+  el.textContent = text;
+  el.className = 'form-msg ' + type;
+  el.style.display = 'block';
+}
+</script>
+</body>
+</html>
