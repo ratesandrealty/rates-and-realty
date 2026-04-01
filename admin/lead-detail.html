@@ -1166,6 +1166,44 @@
     <div class="ld-sidebar-name" id="sidebar-name">Loading…</div>
     <div class="ld-sidebar-email" id="sidebar-email">—</div>
 
+    <!-- Borrower Portal Info -->
+    <div id="portalInfoCard" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:14px;margin:12px 16px">
+      <div style="font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:10px">
+        <i class="fas fa-user-circle" style="color:#C9A84C;margin-right:6px"></i>Borrower Portal
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div>
+          <div style="font-size:.68rem;color:#666;margin-bottom:3px">Borrower ID</div>
+          <div id="crmBorrowerId" style="font-size:.95rem;font-weight:700;color:#C9A84C;font-family:monospace">—</div>
+        </div>
+        <div>
+          <div style="font-size:.68rem;color:#666;margin-bottom:3px">Portal Status</div>
+          <div id="crmPortalStatus" style="font-size:.82rem;color:#888">Not registered</div>
+        </div>
+        <div>
+          <div style="font-size:.68rem;color:#666;margin-bottom:3px">Current Password</div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <div id="crmPassword" style="font-size:.82rem;color:#888;font-family:monospace">—</div>
+            <button onclick="togglePasswordVisibility()" id="pwToggleBtn" style="background:none;border:none;color:#555;cursor:pointer;font-size:.75rem" title="Show/Hide">
+              <i class="fas fa-eye"></i>
+            </button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:.68rem;color:#666;margin-bottom:3px">Last Login</div>
+          <div id="crmLastLogin" style="font-size:.8rem;color:#888">Never</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="crmResetPwBtn" onclick="crmSendPasswordReset()" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:7px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-weight:600">
+          <i class="fas fa-key"></i> Send Password Reset
+        </button>
+        <a id="crmPortalLink" href="/public/unified-portal.html" target="_blank" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:7px 12px;font-size:.75rem;text-decoration:none">
+          <i class="fas fa-external-link-alt"></i> View Portal
+        </a>
+      </div>
+    </div>
+
     <div id="contactTagsHeader" style="
       padding: 12px 20px 4px;
       display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
@@ -3272,6 +3310,9 @@ function populateUI() {
   if (callBtn && contactData.phone) callBtn.href = 'tel:' + contactData.phone.replace(/\D/g,'');
   if (emailBtn && contactData.email) emailBtn.href = 'mailto:' + contactData.email;
   if (smsBtn && contactData.phone) smsBtn.href = 'sms:' + contactData.phone.replace(/\D/g,'');
+
+  // Load portal info
+  if (contactData.email) loadPortalInfo(contactData.email);
 
   // Lead Details tab
   setVal('f-source', leadData.source || contactData.source);
@@ -6832,6 +6873,86 @@ document.addEventListener('click', function(e) {
 document.getElementById('createTagModal')?.addEventListener('click', function(e) { if (e.target === this) closeCreateTagModal(); });
 
 loadData().then(() => loadContactMeta());
+
+/* ===== BORROWER PORTAL INFO ===== */
+let crmContactEmail = null;
+let crmPortalUser = null;
+let pwVisible = false;
+
+async function loadPortalInfo(contactEmail) {
+  crmContactEmail = contactEmail;
+  if (!contactEmail) return;
+  const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  try {
+    const res = await fetch(`${SB_P}/rest/v1/portal_users?email=eq.${encodeURIComponent(contactEmail)}&select=id,email,first_name,last_name,borrower_id,temp_password_plain,temp_password,last_login,created_at`, {
+      headers: { 'apikey': SK_P, 'Authorization': 'Bearer ' + SK_P }
+    });
+    const users = await res.json();
+    const user = users?.[0];
+    if (!user) {
+      document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#666">Not registered</span>';
+      document.getElementById('crmBorrowerId').textContent = '—';
+      document.getElementById('crmPassword').textContent = '—';
+      return;
+    }
+    crmPortalUser = user;
+    document.getElementById('crmBorrowerId').textContent = user.borrower_id || 'RR-' + (user.id || '').replace(/-/g,'').substring(0,6).toUpperCase();
+    document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#3cb43c">✓ Registered</span>';
+    document.getElementById('crmLastLogin').textContent = user.last_login
+      ? new Date(user.last_login).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})
+      : 'Never';
+    const pw = user.temp_password_plain || user.temp_password || '(custom password set)';
+    document.getElementById('crmPassword').dataset.plain = pw;
+    document.getElementById('crmPassword').textContent = '••••••••';
+  } catch(e) { console.error('Portal info load error:', e); }
+}
+
+function togglePasswordVisibility() {
+  const el = document.getElementById('crmPassword');
+  const btn = document.getElementById('pwToggleBtn');
+  if (!el) return;
+  pwVisible = !pwVisible;
+  el.textContent = pwVisible ? (el.dataset.plain || '—') : '••••••••';
+  btn.innerHTML = pwVisible ? '<i class="fas fa-eye-slash"></i>' : '<i class="fas fa-eye"></i>';
+}
+
+async function crmSendPasswordReset() {
+  if (!crmContactEmail) { alert('No email found for this contact'); return; }
+  const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  const btn = document.getElementById('crmResetPwBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+  try {
+    const res = await fetch(`${SB_P}/functions/v1/portal-auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SK_P },
+      body: JSON.stringify({ action: 'send_reset', email: crmContactEmail, admin_override: true })
+    });
+    const data = await res.json();
+    if (data.success) {
+      btn.innerHTML = '<i class="fas fa-check"></i> Reset Sent!';
+      btn.style.color = '#3cb43c';
+      btn.style.borderColor = '#3cb43c';
+      setTimeout(function() {
+        loadPortalInfo(crmContactEmail);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-key"></i> Send Password Reset';
+        btn.style.color = '#C9A84C';
+        btn.style.borderColor = '#C9A84C';
+      }, 2000);
+    } else {
+      btn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + (data.error || 'Error');
+      btn.style.color = '#e55';
+      setTimeout(function() { btn.disabled = false; btn.innerHTML = '<i class="fas fa-key"></i> Send Password Reset'; btn.style.color = '#C9A84C'; }, 3000);
+    }
+  } catch(e) {
+    btn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Network Error';
+    btn.style.color = '#e55';
+    setTimeout(function() { btn.disabled = false; btn.innerHTML = '<i class="fas fa-key"></i> Send Password Reset'; btn.style.color = '#C9A84C'; }, 3000);
+  }
+}
 </script>
 
 <script>

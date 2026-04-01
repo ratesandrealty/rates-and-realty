@@ -320,7 +320,7 @@ input,select,textarea{font-family:inherit}
           </div>
           <div class="auth-error" id="loginError"></div>
           <button type="submit" class="auth-btn" id="loginBtn">Sign In</button>
-          <button type="button" class="auth-forgot" onclick="showToast('Coming soon','info')">Forgot password?</button>
+          <button type="button" class="auth-forgot" onclick="handleForgotPassword()">Forgot password?</button>
         </form>
 
         <!-- SIGNUP FORM -->
@@ -361,7 +361,7 @@ input,select,textarea{font-family:inherit}
   <!-- TOP NAV -->
   <nav class="top-nav">
     <a href="/" class="nav-logo">
-      <img src="/assets/images/logo.png" alt="Logo"/>
+      <img src="/assets/images/logo.png" alt="Rates &amp; Realty" style="height:36px" onerror="this.style.display='none'"/>
       <span>Rates &amp; Realty</span>
     </a>
     <div class="nav-center">
@@ -405,6 +405,17 @@ input,select,textarea{font-family:inherit}
         <div class="welcome-banner">
           <h2 id="welcomeHeading">Welcome back 👋</h2>
           <p id="welcomeSub">Member since --</p>
+          <div style="display:inline-flex;align-items:center;gap:10px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:9px;padding:10px 16px;margin-top:10px;cursor:pointer" onclick="copyBorrowerId()" title="Click to copy">
+            <div>
+              <div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.06em;font-weight:700">Borrower ID</div>
+              <div id="borrowerIdDisplay" style="font-size:1.1rem;font-weight:800;color:#C9A84C;font-family:monospace;letter-spacing:.08em">RR-------</div>
+            </div>
+            <div style="color:#555;font-size:.75rem;display:flex;flex-direction:column;align-items:center;gap:2px">
+              <i class="fas fa-copy"></i>
+              <span style="font-size:.6rem">Copy</span>
+            </div>
+          </div>
+          <div id="copyConfirm" style="font-size:.72rem;color:#3cb43c;margin-top:4px;display:none">✓ Copied to clipboard!</div>
         </div>
         <div class="stats-row">
           <div class="stat-card"><div class="stat-val" id="statSaved">--</div><div class="stat-label">Saved Homes</div></div>
@@ -755,6 +766,38 @@ function portalSignOut() {
 
 function sbH() { return { 'apikey': SK, 'Authorization': 'Bearer ' + SK, 'Content-Type': 'application/json' }; }
 
+function copyBorrowerId() {
+  var id = document.getElementById('borrowerIdDisplay')?.textContent;
+  if (id && id !== 'RR-------') {
+    navigator.clipboard.writeText(id).then(function() {
+      var confirm = document.getElementById('copyConfirm');
+      if (confirm) { confirm.style.display = 'block'; setTimeout(function() { confirm.style.display = 'none'; }, 2000); }
+    });
+  }
+}
+
+async function handleForgotPassword() {
+  var emailEl = document.getElementById('loginEmail');
+  var email = emailEl?.value?.trim();
+  var input = email || prompt('Enter your email address to reset your password:');
+  if (!input) return;
+  try {
+    var res = await fetch(SB + '/functions/v1/portal-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SK },
+      body: JSON.stringify({ action: 'send_reset', email: input })
+    });
+    var data = await res.json();
+    if (data.success) {
+      showToast('Password reset email sent to ' + input, 'success');
+    } else {
+      showToast(data.error || 'Error sending reset. Call (714) 472-8508.', 'error');
+    }
+  } catch(e) {
+    showToast('Error. Please call Rene at (714) 472-8508.', 'error');
+  }
+}
+
 /* ===== TOAST ===== */
 function showToast(msg, type) {
   var c = document.getElementById('toastContainer');
@@ -842,6 +885,11 @@ function initPortal(user) {
   document.getElementById('welcomeHeading').textContent = 'Welcome back, ' + (user.first_name || 'there') + ' 👋';
   var since = user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : '--';
   document.getElementById('welcomeSub').textContent = 'Member since ' + since;
+
+  // Borrower ID
+  var borrowerId = user.borrower_id || 'RR-' + (user.id || '').replace(/-/g,'').substring(0,6).toUpperCase();
+  var bidEl = document.getElementById('borrowerIdDisplay');
+  if (bidEl) bidEl.textContent = borrowerId;
 
   // load everything
   loadDashboardStats();
