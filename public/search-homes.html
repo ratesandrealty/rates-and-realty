@@ -1325,7 +1325,6 @@ async function submitCartSignIn() {
 }
 
 async function submitCart() {
-  // Auth gate — prompt signup if not logged in
   var user = getPortalUser();
   if (!user) {
     showCartAuthModal(function(u) {
@@ -1337,30 +1336,35 @@ async function submitCart() {
     });
     return;
   }
-  // Auto-fill from user if empty
   var nameEl=document.getElementById('cartName');var emailEl=document.getElementById('cartEmail');
   if(nameEl&&!nameEl.value)nameEl.value=(user.first_name||'')+' '+(user.last_name||'');
   if(emailEl&&!emailEl.value)emailEl.value=user.email||'';
 
   var btn = document.getElementById('cartSubmitBtn');
   btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
-  var batchId = 'batch_' + Date.now();
   var name = document.getElementById('cartName').value.trim();
   var phone = document.getElementById('cartPhone').value.trim();
   var email = document.getElementById('cartEmail').value.trim();
   var date = document.getElementById('cartDate').value;
   var time = document.getElementById('cartTime').value;
   var notes = document.getElementById('cartNotes').value;
-  var inserts = showingCart.map(function(i) {
-    return { listing_key:i.listingKey, property_price:i.price, property_address:i.address, property_city:i.city, property_photo:i.photo, property_beds:i.beds, property_baths:i.baths, preferred_date:date||null, preferred_time:time, name:name, phone:phone, email:email||null, notes:notes, batch_id:batchId, status:'pending' };
+
+  var homes = showingCart.map(function(i) {
+    return { listingKey:i.listingKey, address:i.address, city:i.city, price:i.price, photo:i.photo, beds:i.beds, baths:i.baths };
   });
+
   try {
-    var r = await fetch(SUPABASE_URL+'/rest/v1/showings', { method:'POST', headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}, body:JSON.stringify(inserts) });
-    if (r.ok) {
-      document.getElementById('cartStep3').innerHTML = '<div style="text-align:center;padding:40px 20px;display:flex;flex-direction:column;align-items:center;gap:16px"><div style="width:64px;height:64px;background:rgba(0,160,80,.15);border-radius:50%;display:flex;align-items:center;justify-content:center"><i class="fas fa-check" style="font-size:1.8rem;color:#3cb43c"></i></div><div style="font-size:1.1rem;font-weight:700;color:var(--text)">Request Submitted!</div><div style="font-size:.85rem;color:var(--muted);line-height:1.6">Rene will confirm your showings within a few hours.<br>You\'ll receive a call at <strong style="color:var(--text)">'+phone+'</strong>.</div><div style="font-size:.78rem;color:var(--muted);background:#1a1a1a;border-radius:8px;padding:12px 16px;width:100%">'+showingCart.length+' home'+(showingCart.length>1?'s':'')+' requested · '+new Date(date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+time+'</div><button onclick="toggleCart();resetCart()" style="width:100%;background:var(--gold);color:#000;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:.9rem;cursor:pointer;margin-top:8px">Done — Close Cart</button><a href="tel:7144728508" style="color:var(--muted);font-size:.78rem;text-decoration:none">Questions? Call (714) 472-8508</a></div>';
-      showingCart = []; updateCartUI();
-    } else { throw new Error('Server error'); }
-  } catch(e) { btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i> Submit Request'; showToast('Error submitting. Please call (714) 472-8508'); }
+    var r = await fetch(SUPABASE_URL+'/rest/v1/rpc/submit_showing_request', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY},
+      body:JSON.stringify({ p_email:email||user.email||null, p_name:name, p_phone:phone, p_portal_user_id:user.id||null, p_borrower_id:user.borrower_id||null, p_preferred_date:date||null, p_preferred_time:time||null, p_notes:notes||null, p_homes:homes })
+    });
+    var result = await r.json();
+    if (!r.ok || result.error) throw new Error(result.message||result.error||JSON.stringify(result));
+
+    document.getElementById('cartStep3').innerHTML = '<div style="text-align:center;padding:40px 20px;display:flex;flex-direction:column;align-items:center;gap:16px"><div style="width:64px;height:64px;background:rgba(0,160,80,.15);border-radius:50%;display:flex;align-items:center;justify-content:center"><i class="fas fa-check" style="font-size:1.8rem;color:#3cb43c"></i></div><div style="font-size:1.1rem;font-weight:700;color:var(--text)">Request Submitted!</div><div style="font-size:.85rem;color:var(--muted);line-height:1.6">Rene will confirm your showings within a few hours.<br>You\'ll receive a call at <strong style="color:var(--text)">'+phone+'</strong>.</div><div style="font-size:.78rem;color:var(--muted);background:#1a1a1a;border-radius:8px;padding:12px 16px;width:100%">'+showingCart.length+' home'+(showingCart.length>1?'s':'')+' requested'+(date?' · '+new Date(date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'')+(time?' · '+time:'')+'</div><button onclick="toggleCart();resetCart()" style="width:100%;background:var(--gold);color:#000;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:.9rem;cursor:pointer;margin-top:8px">Done — Close Cart</button><a href="tel:7144728508" style="color:var(--muted);font-size:.78rem;text-decoration:none">Questions? Call (714) 472-8508</a></div>';
+    showingCart = []; updateCartUI();
+  } catch(e) { console.error('Showing submit error:', e); btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i> Submit Request'; showToast('Error: '+e.message+'. Call (714) 472-8508'); }
 }
 
 function resetCart() {

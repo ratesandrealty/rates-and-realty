@@ -1535,6 +1535,7 @@
       <button class="ld-tab-btn" onclick="switchTab('credit', this)">Credit</button>
       <button class="ld-tab-btn" onclick="switchTab('mismo', this)">MISMO / Loan File</button>
       <button class="ld-tab-btn" onclick="switchTab('alerts', this)"><i class="fas fa-bell" style="margin-right:4px"></i>Alerts</button>
+      <button class="ld-tab-btn" onclick="switchTab('showings', this)"><i class="fas fa-home" style="margin-right:4px"></i>Showings</button>
     </nav>
 
     <!-- ═══════════════════════════════════════════
@@ -3002,6 +3003,22 @@
         <h3 style="font-size:1rem;font-weight:700;color:#eee;margin-bottom:6px"><i class="fas fa-bell" style="color:#C9A84C;margin-right:8px"></i>Listing Alerts</h3>
         <p style="font-size:.8rem;color:#888;margin-bottom:16px">Create search alerts for this contact. They'll receive emails when new listings match.</p>
         <div id="crmAlertsContainer"></div>
+      </div>
+    </div>
+
+    <!-- TAB: SHOWINGS -->
+    <div class="ld-tab-panel" id="tab-showings">
+      <div style="padding:20px 24px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div>
+            <h3 style="font-size:1rem;font-weight:700;color:#eee;margin:0 0 4px">Showing Requests</h3>
+            <div style="font-size:.73rem;color:#555">All showing activity for this contact</div>
+          </div>
+          <span id="showingsCount" style="background:rgba(201,168,76,.1);color:#C9A84C;border-radius:12px;padding:3px 10px;font-size:.72rem;font-weight:700"></span>
+        </div>
+        <div id="contactShowingsContainer">
+          <div style="text-align:center;padding:32px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.5rem"></i></div>
+        </div>
       </div>
     </div>
 
@@ -4623,6 +4640,59 @@ function switchTab(name, btn) {
     ListingAlerts.renderAlertsList('crmAlertsContainer', { contact_id: contactId });
   }
   if (name === 'activity') loadActivity();
+  if (name === 'showings') loadContactShowings();
+}
+
+async function loadContactShowings() {
+  if (!contactId && !contactData?.email) return;
+  var container = document.getElementById('contactShowingsContainer');
+  var countEl = document.getElementById('showingsCount');
+  if (!container) return;
+  var SB_S = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var SK_S = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  try {
+    var url = SB_S+'/rest/v1/showings?order=created_at.desc';
+    if (contactId) url += '&or=(contact_id.eq.'+contactId+',email.eq.'+encodeURIComponent(contactData?.email||'')+')';
+    else url += '&email=eq.'+encodeURIComponent(contactData.email);
+    var rows = await fetch(url, { headers:{'apikey':SK_S,'Authorization':'Bearer '+SK_S} }).then(function(r){return r.json();});
+    if (countEl) countEl.textContent = rows.length+' request'+(rows.length!==1?'s':'');
+    if (!rows.length) { container.innerHTML = '<div style="text-align:center;padding:40px;background:#1a1a1a;border:1px solid #222;border-radius:10px;color:#444"><i class="fas fa-home" style="font-size:2rem;display:block;margin-bottom:10px;color:#222"></i><div style="font-size:.85rem">No showing requests yet.</div></div>'; return; }
+    var batches = {};
+    rows.forEach(function(s) { var k=s.batch_id||s.id; if(!batches[k])batches[k]=[]; batches[k].push(s); });
+    var sc = {pending:'#C9A84C',confirmed:'#22c55e',cancelled:'#666',completed:'#3b82f6'};
+    container.innerHTML = Object.values(batches).map(function(items) {
+      var m = items[0];
+      var ds = m.preferred_date ? new Date(m.preferred_date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}) : 'Date TBD';
+      var status = m.status||'pending';
+      return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:14px;margin-bottom:10px">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px">'
+        + '<div style="font-size:.8rem;color:#eee;font-weight:600">📅 '+ds+(m.preferred_time?' · '+m.preferred_time:'')+'</div>'
+        + '<div style="display:flex;align-items:center;gap:6px">'
+        + '<span style="background:'+(sc[status]||'#C9A84C')+'15;color:'+(sc[status]||'#C9A84C')+';padding:2px 9px;border-radius:10px;font-size:.68rem;font-weight:700;text-transform:uppercase">'+status+'</span>'
+        + '<select onchange="updateShowingBatchStatus(\''+m.batch_id+'\',this.value)" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:6px;padding:3px 6px;font-size:.7rem;outline:none;cursor:pointer"><option value="">Update...</option><option value="pending">Pending</option><option value="confirmed">Confirmed</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select>'
+        + '</div></div>'
+        + items.map(function(item,i) {
+          return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#1a1a1a;border-radius:7px;margin-bottom:5px">'
+            + '<span style="font-size:.68rem;color:#444;width:14px">'+(i+1)+'</span>'
+            + (item.property_photo?'<img src="'+item.property_photo+'" style="width:46px;height:36px;object-fit:cover;border-radius:4px;flex-shrink:0" onerror="this.style.display=\'none\'">':'')
+            + '<div style="flex:1;min-width:0"><div style="font-size:.77rem;color:#ddd;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(item.property_address||'—')+'</div>'
+            + '<div style="font-size:.67rem;color:#555">'+(item.property_city||'')+(item.property_price?' · $'+Number(item.property_price).toLocaleString():'')+'</div></div></div>';
+        }).join('')
+        + (m.notes?'<div style="font-size:.72rem;color:#555;margin-top:8px;font-style:italic">"'+m.notes+'"</div>':'')
+        + '</div>';
+    }).join('');
+  } catch(e) { container.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Error: '+e.message+'</div>'; }
+}
+
+async function updateShowingBatchStatus(batchId, newStatus) {
+  if (!batchId || !newStatus) return;
+  var SB_S = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var SK_S = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  await fetch(SB_S+'/rest/v1/showings?batch_id=eq.'+batchId, {
+    method:'PATCH', headers:{'Content-Type':'application/json','apikey':SK_S,'Authorization':'Bearer '+SK_S},
+    body:JSON.stringify({status:newStatus,updated_at:new Date().toISOString()})
+  });
+  loadContactShowings();
 }
 
 function switchSubtab(name, btn) {
