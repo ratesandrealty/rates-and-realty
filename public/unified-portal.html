@@ -8,6 +8,7 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="/assets/images/favicon.png"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<script src="/public/auth-persist.js"></script>
 <script src="/public/listing-alerts.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -132,11 +133,6 @@ input,select,textarea{font-family:inherit}
 
 /* ===== APPLICATION FORM ===== */
 .app-steps{display:flex;gap:8px;margin-bottom:24px;flex-wrap:wrap}
-.app-step-pill{padding:8px 18px;border-radius:20px;font-size:.84rem;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--muted);transition:all .2s}
-.app-step-pill.active{background:var(--gold);color:#000;border-color:var(--gold)}
-.app-step-pill.completed{background:rgba(201,168,76,.15);color:var(--gold);border-color:var(--gold)}
-.app-form-step{display:none}
-.app-form-step.active{display:block}
 .app-progress{height:4px;background:#1a1a1a;border-radius:4px;margin-bottom:24px;overflow:hidden}
 .app-progress-fill{height:100%;background:var(--gold);border-radius:4px;transition:width .3s}
 .form-group{margin-bottom:16px}
@@ -472,79 +468,119 @@ input,select,textarea{font-family:inherit}
 
       <!-- SECTION: MY APPLICATION -->
       <div class="portal-section" id="sec-application">
-        <div class="section-header"><h2>My Application</h2></div>
-        <div class="app-progress"><div class="app-progress-fill" id="appProgressFill" style="width:0%"></div></div>
-        <div class="app-steps">
-          <button class="app-step-pill active" data-appstep="0" onclick="goAppStep(0)">1. Personal Info</button>
-          <button class="app-step-pill" data-appstep="1" onclick="goAppStep(1)">2. Property &amp; Loan</button>
-          <button class="app-step-pill" data-appstep="2" onclick="goAppStep(2)">3. Employment</button>
-          <button class="app-step-pill" data-appstep="3" onclick="goAppStep(3)">4. Assets &amp; Debts</button>
+        <!-- Save bar -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #1a1a1a">
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:700;color:#eee;margin:0 0 3px">My Loan Application</h2>
+            <div id="appSaveStatus" style="font-size:.73rem;color:#555">Auto-saves every 30 seconds</div>
+          </div>
+          <button onclick="saveApplication()" style="background:#C9A84C;color:#000;border:none;border-radius:8px;padding:9px 18px;font-weight:700;font-size:.82rem;cursor:pointer;display:flex;align-items:center;gap:6px">
+            <i class="fas fa-save"></i> Save Progress
+          </button>
         </div>
-        <form id="appForm" onsubmit="saveApplication(event)">
-          <!-- Step 0: Personal -->
-          <div class="app-form-step active" data-step="0">
-            <div class="form-row">
-              <div class="form-group"><label>First Name</label><input name="borrowerFirstName" type="text" required placeholder="John"/></div>
-              <div class="form-group"><label>Last Name</label><input name="borrowerLastName" type="text" required placeholder="Smith"/></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>Phone</label><input name="borrowerPhone" type="tel" placeholder="(555) 000-0000"/></div>
-              <div class="form-group"><label>Date of Birth</label><input name="dateOfBirth" type="date"/></div>
-            </div>
-            <div class="form-group"><label>Current Address</label><input name="currentAddress" type="text" placeholder="123 Main St, City, State, ZIP"/></div>
+        <!-- Progress -->
+        <div style="margin-bottom:20px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+            <span style="font-size:.72rem;color:#888">Application Progress</span>
+            <span id="appProgress" style="font-size:.72rem;color:#C9A84C;font-weight:700">0%</span>
           </div>
-          <!-- Step 1: Property -->
-          <div class="app-form-step" data-step="1">
-            <div class="form-row">
-              <div class="form-group">
-                <label>Loan Type</label>
-                <select name="loanType">
-                  <option value="Conventional">Conventional</option>
-                  <option value="FHA">FHA</option>
-                  <option value="DSCR">DSCR</option>
-                  <option value="SBA">SBA</option>
-                  <option value="Commercial">Commercial</option>
-                  <option value="Down Payment Assistance">Down Payment Assistance</option>
-                  <option value="Non-QM">Non-QM</option>
-                  <option value="ITIN">ITIN Loans</option>
-                </select>
-              </div>
-              <div class="form-group"><label>Property Address</label><input name="propertyAddress" type="text" placeholder="Address of property"/></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>Purchase Price</label><input name="purchasePrice" type="number" min="0" step="0.01" placeholder="450000"/></div>
-              <div class="form-group"><label>Loan Amount</label><input name="loanAmount" type="number" min="0" step="0.01" placeholder="360000"/></div>
-            </div>
+          <div style="background:#1a1a1a;border-radius:4px;height:5px">
+            <div id="appProgressBar" style="background:linear-gradient(90deg,#C9A84C,#e8c96a);height:5px;border-radius:4px;width:0%;transition:width .4s"></div>
           </div>
-          <!-- Step 2: Employment -->
-          <div class="app-form-step" data-step="2">
-            <div class="form-row">
-              <div class="form-group"><label>Employer Name</label><input name="employerName" type="text" placeholder="ACME Corp"/></div>
-              <div class="form-group"><label>Job Title</label><input name="jobTitle" type="text" placeholder="Software Engineer"/></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>Monthly Income</label><input name="monthlyIncome" type="number" min="0" step="0.01" placeholder="8500"/></div>
-              <div class="form-group"><label>Years on Job</label><input name="yearsOnJob" type="number" min="0" step="0.1" placeholder="3"/></div>
-            </div>
+        </div>
+
+        <!-- 1A. PERSONAL INFORMATION -->
+        <div style="margin-bottom:32px">
+          <div style="font-size:.7rem;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.12em;padding-bottom:8px;border-bottom:1px solid #C9A84C22;margin-bottom:16px">1A. Personal Information</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">First Name *</label><input type="text" id="app_first_name" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Middle Name</label><input type="text" id="app_middle_name" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Last Name *</label><input type="text" id="app_last_name" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Suffix</label><select id="app_suffix" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">None</option><option>Jr</option><option>Sr</option><option>II</option><option>III</option></select></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Date of Birth</label><input type="date" id="app_dob" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Marital Status</label><select id="app_marital" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>Single</option><option>Married</option><option>Separated</option><option>Divorced</option><option>Widowed</option></select></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Citizenship</label><select id="app_citizenship" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>US Citizen</option><option>Permanent Resident</option><option>Non-Permanent Resident</option></select></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Cell Phone *</label><input type="tel" id="app_cell" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Email</label><input type="email" id="app_email" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" disabled></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">DL Number</label><input type="text" id="app_dl" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
           </div>
-          <!-- Step 3: Assets -->
-          <div class="app-form-step" data-step="3">
-            <div class="form-row">
-              <div class="form-group"><label>Cash / Checking ($)</label><input name="cashAssets" type="number" min="0" step="0.01" placeholder="25000"/></div>
-              <div class="form-group"><label>Retirement / Investments ($)</label><input name="investmentAssets" type="number" min="0" step="0.01" placeholder="80000"/></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>Monthly Debt Payments</label><input name="monthlyDebt" type="number" min="0" step="0.01" placeholder="1200"/></div>
-              <div class="form-group"><label>Other Liability Balance</label><input name="otherLiabilities" type="number" min="0" step="0.01" placeholder="5000"/></div>
-            </div>
+        </div>
+
+        <!-- 1B. CURRENT ADDRESS -->
+        <div style="margin-bottom:32px">
+          <div style="font-size:.7rem;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.12em;padding-bottom:8px;border-bottom:1px solid #C9A84C22;margin-bottom:16px">1B. Current Address</div>
+          <div style="background:rgba(201,168,76,.06);border:1px solid #C9A84C22;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:.75rem;color:#888"><i class="fas fa-info-circle" style="color:#C9A84C;margin-right:6px"></i>2-year address history required</div>
+          <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px">
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Street Address</label><input type="text" id="app_street" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Unit #</label><input type="text" id="app_unit" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
           </div>
-          <div class="app-nav">
-            <button type="button" class="btn-ghost" id="appPrevBtn" onclick="prevAppStep()" style="display:none"><i class="fas fa-arrow-left"></i> Previous</button>
-            <button type="button" class="btn-gold" id="appNextBtn" onclick="nextAppStep()">Next <i class="fas fa-arrow-right"></i></button>
-            <button type="submit" class="btn-gold"><i class="fas fa-save"></i> Save Progress</button>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:14px">
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">City</label><input type="text" id="app_city" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">State</label><input type="text" id="app_state" value="CA" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">ZIP</label><input type="text" id="app_zip" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
           </div>
-          <div class="form-msg" id="appMsg"></div>
-        </form>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:14px">
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Housing</label><select id="app_housing" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>Own</option><option>Rent</option><option>Living with Family</option></select></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Years at Address</label><input type="number" id="app_years" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Monthly Rent $</label><input type="number" id="app_rent" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
+          </div>
+        </div>
+
+        <!-- 2. EMPLOYMENT & INCOME -->
+        <div style="margin-bottom:32px">
+          <div style="font-size:.7rem;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.12em;padding-bottom:8px;border-bottom:1px solid #C9A84C22;margin-bottom:16px">2. Employment &amp; Income</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Employer Name</label><input type="text" id="app_employer" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Position / Title</label><input type="text" id="app_title" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Start Date</label><input type="date" id="app_start_date" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div style="display:flex;align-items:flex-end;gap:10px"><label style="font-size:.75rem;color:#888;display:flex;align-items:center;gap:8px;cursor:pointer;padding:12px 0"><input type="checkbox" id="app_self_emp" style="accent-color:#C9A84C"> Self-Employed</label></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Base Income / mo</label><input type="number" id="app_base_income" min="0" step="0.01" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Overtime / mo</label><input type="number" id="app_overtime" min="0" step="0.01" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Bonus / mo</label><input type="number" id="app_bonus" min="0" step="0.01" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Commission / mo</label><input type="number" id="app_commission" min="0" step="0.01" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
+          </div>
+        </div>
+
+        <!-- 3. PROPERTY & LOAN -->
+        <div style="margin-bottom:32px">
+          <div style="font-size:.7rem;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.12em;padding-bottom:8px;border-bottom:1px solid #C9A84C22;margin-bottom:16px">3. Property &amp; Loan</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Loan Purpose</label><select id="app_loan_purpose" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>Purchase</option><option>Refinance</option><option>Cash-Out Refinance</option></select></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Loan Type</label><select id="app_loan_type" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>FHA</option><option>VA</option><option>Conventional</option><option>DSCR</option><option>Jumbo</option><option>Bank Statement</option><option>ITIN</option><option>Non-QM</option></select></div>
+            <div style="grid-column:1/-1"><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Property Address (if known)</label><input type="text" id="app_prop_street" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Purchase Price $</label><input type="number" id="app_purchase_price" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Loan Amount $</label><input type="number" id="app_loan_amount" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Occupancy</label><select id="app_occupancy" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>Primary Residence</option><option>Investment Property</option><option>Second Home</option></select></div>
+          </div>
+        </div>
+
+        <!-- 4. ASSETS & LIABILITIES -->
+        <div style="margin-bottom:32px">
+          <div style="font-size:.7rem;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.12em;padding-bottom:8px;border-bottom:1px solid #C9A84C22;margin-bottom:16px">4. Assets &amp; Liabilities</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Cash / Checking $</label><input type="number" id="app_checking" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Savings $</label><input type="number" id="app_savings" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Retirement / 401k $</label><input type="number" id="app_retirement" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Monthly Debt Payments $</label><input type="number" id="app_monthly_debt" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+          </div>
+        </div>
+
+        <!-- 5. DECLARATIONS -->
+        <div style="margin-bottom:32px">
+          <div style="font-size:.7rem;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.12em;padding-bottom:8px;border-bottom:1px solid #C9A84C22;margin-bottom:16px">5. Declarations</div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <label style="display:flex;align-items:flex-start;gap:10px;font-size:.82rem;color:#ccc;cursor:pointer"><input type="checkbox" id="app_decl_primary" style="accent-color:#C9A84C;margin-top:3px"> Will this be your primary residence?</label>
+            <label style="display:flex;align-items:flex-start;gap:10px;font-size:.82rem;color:#ccc;cursor:pointer"><input type="checkbox" id="app_decl_foreclosure" style="accent-color:#C9A84C;margin-top:3px"> Foreclosure/short sale in last 7 years?</label>
+            <label style="display:flex;align-items:flex-start;gap:10px;font-size:.82rem;color:#ccc;cursor:pointer"><input type="checkbox" id="app_decl_bankruptcy" style="accent-color:#C9A84C;margin-top:3px"> Declared bankruptcy in last 7 years?</label>
+            <label style="display:flex;align-items:flex-start;gap:10px;font-size:.82rem;color:#ccc;cursor:pointer"><input type="checkbox" id="app_decl_lawsuit" style="accent-color:#C9A84C;margin-top:3px"> Party to any lawsuit?</label>
+            <label style="display:flex;align-items:flex-start;gap:10px;font-size:.82rem;color:#ccc;cursor:pointer"><input type="checkbox" id="app_decl_federal" style="accent-color:#C9A84C;margin-top:3px"> Delinquent on any federal debt?</label>
+          </div>
+        </div>
+
+        <div style="text-align:center;padding:16px 0;border-top:1px solid #1a1a1a;margin-top:16px">
+          <button onclick="saveApplication()" style="background:#C9A84C;color:#000;border:none;border-radius:10px;padding:14px 32px;font-weight:700;font-size:.95rem;cursor:pointer"><i class="fas fa-save"></i> Save Application</button>
+          <div style="font-size:.72rem;color:#444;margin-top:8px">Your information is encrypted and secure. NMLS #1795044</div>
+        </div>
       </div>
 
       <!-- SECTION: SAVED HOMES -->
@@ -748,7 +784,6 @@ var SB = 'https://ljywhvbmsibwnssxpesh.supabase.co';
 var SK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
 
 var currentUser = null;
-var appCurrentStep = 0;
 var existingAppId = null;
 var appDirty = false;
 var fileQueue = [];
@@ -966,7 +1001,7 @@ function initPortal(user) {
 
   // auto-save application every 30s
   setInterval(function() {
-    if (appDirty) { saveApplicationData(true); }
+    if (appDirty) { saveApplication(true); }
   }, 30000);
 }
 
@@ -1015,93 +1050,101 @@ function loadDashboardStats() {
 
 /* ===== APPLICATION ===== */
 var appFieldMap = {
-  borrowerFirstName: 'first_name', borrowerLastName: 'last_name', borrowerPhone: 'phone',
-  dateOfBirth: 'date_of_birth', currentAddress: 'current_address',
-  loanType: 'loan_type', propertyAddress: 'property_address',
-  purchasePrice: 'purchase_price', loanAmount: 'loan_amount',
-  employerName: 'employer_name', jobTitle: 'job_title',
-  monthlyIncome: 'monthly_income', yearsOnJob: 'years_on_job',
-  cashAssets: 'cash_assets', investmentAssets: 'investment_assets',
-  monthlyDebt: 'monthly_debt', otherLiabilities: 'other_liabilities'
+  app_first_name:'first_name', app_middle_name:'middle_name', app_last_name:'last_name',
+  app_suffix:'suffix', app_dob:'date_of_birth', app_marital:'marital_status',
+  app_citizenship:'citizenship', app_cell:'cell_phone', app_dl:'dl_number',
+  app_street:'current_address_street', app_unit:'current_address_unit',
+  app_city:'current_address_city', app_state:'current_address_state', app_zip:'current_address_zip',
+  app_housing:'current_housing_type', app_years:'current_address_years', app_rent:'current_rent_amount',
+  app_employer:'employer_name', app_title:'position_title', app_start_date:'employment_start_date',
+  app_base_income:'base_income', app_overtime:'overtime_income', app_bonus:'bonus_income', app_commission:'commission_income',
+  app_loan_purpose:'loan_purpose', app_loan_type:'loan_type', app_prop_street:'property_address',
+  app_purchase_price:'purchase_price', app_loan_amount:'loan_amount', app_occupancy:'occupancy_type',
+  app_checking:'cash_assets', app_savings:'savings_assets', app_retirement:'investment_assets', app_monthly_debt:'monthly_debt'
+};
+var numericFields = ['current_address_years','current_rent_amount','base_income','overtime_income','bonus_income','commission_income','purchase_price','loan_amount','cash_assets','savings_assets','investment_assets','monthly_debt'];
+var appCheckboxMap = {
+  app_self_emp:'is_self_employed', app_decl_primary:'decl_primary_residence',
+  app_decl_foreclosure:'decl_foreclosure', app_decl_bankruptcy:'decl_bankruptcy',
+  app_decl_lawsuit:'decl_lawsuit', app_decl_federal:'decl_delinquent_federal'
 };
 
 function loadApplication() {
   var u = currentUser;
   if (!u || !u.id) return;
+  // pre-fill email
+  var emailEl = document.getElementById('app_email');
+  if (emailEl && u.email) emailEl.value = u.email;
+
   fetch(SB + '/rest/v1/mortgage_applications?or=(borrower_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&order=created_at.desc&limit=1', { headers: sbH() })
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (Array.isArray(d) && d.length > 0) {
         existingAppId = d[0].id;
-        populateAppForm(d[0]);
+        var app = d[0];
+        // populate text/select fields
+        Object.keys(appFieldMap).forEach(function(elId) {
+          var dbKey = appFieldMap[elId];
+          var el = document.getElementById(elId);
+          if (el && app[dbKey] !== undefined && app[dbKey] !== null) {
+            el.value = app[dbKey];
+          }
+        });
+        // populate checkboxes
+        Object.keys(appCheckboxMap).forEach(function(elId) {
+          var dbKey = appCheckboxMap[elId];
+          var el = document.getElementById(elId);
+          if (el) el.checked = !!app[dbKey];
+        });
       } else {
-        // pre-fill from user
-        var form = document.getElementById('appForm');
-        if (u.first_name) form.borrowerFirstName.value = u.first_name;
-        if (u.last_name) form.borrowerLastName.value = u.last_name;
-        if (u.phone) form.borrowerPhone.value = u.phone;
+        // pre-fill from user profile
+        if (u.first_name) document.getElementById('app_first_name').value = u.first_name;
+        if (u.last_name) document.getElementById('app_last_name').value = u.last_name;
+        if (u.phone) document.getElementById('app_cell').value = u.phone;
       }
       updateAppProgress();
     })
     .catch(function() {});
 }
 
-function populateAppForm(app) {
-  var form = document.getElementById('appForm');
-  Object.keys(appFieldMap).forEach(function(field) {
-    var dbKey = appFieldMap[field];
-    if (app[dbKey] !== undefined && app[dbKey] !== null && form[field]) {
-      form[field].value = app[dbKey];
-    }
-  });
-}
-
-function goAppStep(step) {
-  appCurrentStep = step;
-  document.querySelectorAll('.app-form-step').forEach(function(s, i) {
-    s.classList.toggle('active', i === step);
-  });
-  document.querySelectorAll('.app-step-pill').forEach(function(p, i) {
-    p.classList.remove('active', 'completed');
-    if (i === step) p.classList.add('active');
-    else if (i < step) p.classList.add('completed');
-  });
-  document.getElementById('appPrevBtn').style.display = step === 0 ? 'none' : '';
-  document.getElementById('appNextBtn').style.display = step === 3 ? 'none' : '';
-}
-
-function nextAppStep() { if (appCurrentStep < 3) goAppStep(appCurrentStep + 1); }
-function prevAppStep() { if (appCurrentStep > 0) goAppStep(appCurrentStep - 1); }
-
 function updateAppProgress() {
-  var form = document.getElementById('appForm');
-  var fields = Object.keys(appFieldMap);
-  var filled = 0;
-  fields.forEach(function(f) {
-    if (form[f] && form[f].value && form[f].value.trim() !== '') filled++;
+  var section = document.getElementById('sec-application');
+  if (!section) return;
+  var inputs = section.querySelectorAll('input[type="text"], input[type="number"], input[type="tel"], input[type="date"], input[type="email"], select');
+  var total = 0, filled = 0;
+  inputs.forEach(function(inp) {
+    total++;
+    if (inp.value && inp.value.trim() !== '' && inp.value !== 'Select...') filled++;
   });
-  var pct = Math.round((filled / fields.length) * 100);
-  document.getElementById('appProgressFill').style.width = pct + '%';
+  var pct = total > 0 ? Math.round((filled / total) * 100) : 0;
+  var bar = document.getElementById('appProgressBar');
+  var label = document.getElementById('appProgress');
+  if (bar) bar.style.width = pct + '%';
+  if (label) label.textContent = pct + '%';
 }
 
-function saveApplication(e) {
-  if (e) e.preventDefault();
-  saveApplicationData(false);
-}
-
-function saveApplicationData(silent) {
+function saveApplication(silent) {
   var u = currentUser;
   if (!u || !u.id) return;
-  var form = document.getElementById('appForm');
   var data = { borrower_user_id: u.id, email: u.email };
-  Object.keys(appFieldMap).forEach(function(field) {
-    var dbKey = appFieldMap[field];
-    var val = form[field] ? form[field].value : '';
-    if (['purchase_price','loan_amount','monthly_income','years_on_job','cash_assets','investment_assets','monthly_debt','other_liabilities'].indexOf(dbKey) > -1) {
+
+  // collect text/select fields
+  Object.keys(appFieldMap).forEach(function(elId) {
+    var dbKey = appFieldMap[elId];
+    var el = document.getElementById(elId);
+    var val = el ? el.value : '';
+    if (numericFields.indexOf(dbKey) > -1) {
       data[dbKey] = val ? parseFloat(val) : null;
     } else {
       data[dbKey] = val || null;
     }
+  });
+
+  // collect checkboxes
+  Object.keys(appCheckboxMap).forEach(function(elId) {
+    var dbKey = appCheckboxMap[elId];
+    var el = document.getElementById(elId);
+    data[dbKey] = el ? el.checked : false;
   });
 
   var method, url;
@@ -1113,16 +1156,16 @@ function saveApplicationData(silent) {
     url = SB + '/rest/v1/mortgage_applications';
   }
 
-  fetch(url, { method: method, headers: sbH(), body: JSON.stringify(method === 'POST' ? data : data) })
+  fetch(url, { method: method, headers: sbH(), body: JSON.stringify(data) })
     .then(function(r) {
       if (!r.ok) throw new Error('Save failed');
       appDirty = false;
       updateAppProgress();
+      var now = new Date();
+      var ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      var statusEl = document.getElementById('appSaveStatus');
+      if (statusEl) statusEl.textContent = 'Last saved at ' + ts;
       if (!silent) {
-        var msg = document.getElementById('appMsg');
-        msg.className = 'form-msg success';
-        msg.textContent = 'Application saved successfully!';
-        setTimeout(function() { msg.className = 'form-msg'; msg.textContent = ''; }, 3000);
         showToast('Application saved!', 'success');
       }
       // if POST, re-fetch to get the id
@@ -1135,16 +1178,14 @@ function saveApplicationData(silent) {
     })
     .catch(function(e) {
       if (!silent) {
-        var msg = document.getElementById('appMsg');
-        msg.className = 'form-msg error';
-        msg.textContent = 'Error saving: ' + e.message;
+        showToast('Error saving: ' + e.message, 'error');
       }
     });
 }
 
 // Mark form as dirty on input
 document.addEventListener('input', function(e) {
-  if (e.target.closest('#appForm')) { appDirty = true; updateAppProgress(); }
+  if (e.target.closest('#sec-application')) { appDirty = true; updateAppProgress(); }
 });
 
 /* ===== SAVED HOMES ===== */
