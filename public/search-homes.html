@@ -587,6 +587,8 @@ let filters = {
 
 /* ===== INIT ===== */
 document.addEventListener('DOMContentLoaded', function() {
+  // Load cart from localStorage
+  try { var saved = JSON.parse(localStorage.getItem('showingCart')||'[]'); if (Array.isArray(saved)) showingCart = saved; } catch(e) {}
   buildCountyTabs();
   buildCityPills();
   initStatusTabs();
@@ -868,7 +870,7 @@ function renderListings(page, append) {
     var badgeClass = status === 'Active' ? 'active-badge' : status === 'ComingSoon' ? 'coming' : 'closed';
     var badgeText = status === 'Active' ? 'For Sale' : status === 'ComingSoon' ? 'Coming Soon' : 'Sold';
     var isLand = l.PropertyType === 'Land' || (l.PropertySubType||'').toLowerCase().includes('land');
-    var inCart = showingCart.some(function(c) { return c.ListingKey === l.ListingKey; });
+    var inCart = showingCart.some(function(c) { return c.listingKey === l.ListingKey; });
     var subtype = l.PropertySubType || l.PropertyType || '';
 
     html += '<div class="listing-card" data-idx="' + i + '" onmouseenter="highlightMarker(' + i + ')" onmouseleave="unhighlightMarker(' + i + ')">'
@@ -927,13 +929,24 @@ function toggleHeart(i) {
 
 function toggleShowing(i) {
   var l = filteredListings[i];
-  var idx = showingCart.findIndex(function(c) { return c.ListingKey === l.ListingKey; });
+  var idx = showingCart.findIndex(function(c) { return c.listingKey === l.ListingKey; });
   if (idx >= 0) {
     showingCart.splice(idx, 1);
   } else {
-    showingCart.push(l);
+    showingCart.push({
+      listingKey: l.ListingKey,
+      price: l.ListPrice,
+      address: l.UnparsedAddress,
+      city: l.City,
+      photo: (l.Media && l.Media[0]) ? l.Media[0].MediaURL : '',
+      beds: l.BedroomsTotal,
+      baths: l.BathroomsTotalInteger,
+      sqft: l.LivingArea,
+      type: l.PropertySubType || l.PropertyType || ''
+    });
   }
   updateCartUI();
+  updateSearchCartBadge();
   renderListings();
 }
 
@@ -968,6 +981,7 @@ function unhighlightMarker(i) {
 
 /* ===== SHOWING CART ===== */
 function updateCartUI() {
+  localStorage.setItem('showingCart', JSON.stringify(showingCart));
   var fab = document.getElementById('cartFab');
   var badge = document.getElementById('cartBadge');
   if (showingCart.length > 0) {
@@ -1050,6 +1064,16 @@ function goToStep(n) {
     else if (s<n) { ind.style.color='#5a5'; ind.style.borderBottomColor='#5a5'; }
     else { ind.style.color='var(--muted)'; ind.style.borderBottomColor='transparent'; }
   });
+  // Pre-fill user info on step 2
+  if (n === 2) {
+    var user = getPortalUser();
+    if (user) {
+      var ne=document.getElementById('cartName'),ee=document.getElementById('cartEmail'),pe=document.getElementById('cartPhone');
+      if(ne&&!ne.value) ne.value = (user.first_name||'')+' '+(user.last_name||'');
+      if(ee&&!ee.value) ee.value = user.email||'';
+      if(pe&&!pe.value&&user.phone) pe.value = user.phone;
+    }
+  }
 }
 
 async function submitCart() {
@@ -1467,7 +1491,7 @@ function toggleSat() {
 }
 </script>
 <script>
-fetch('/api/env.js').then(r=>r.text()).then(t=>{eval(t);const s=document.createElement('script');s.src='https://maps.googleapis.com/maps/api/js?key='+window.APP_CONFIG.GOOGLE_MAPS_KEY+'&libraries=drawing,geometry&callback=initMap';s.async=true;s.defer=true;document.head.appendChild(s);});
+fetch('/api/env.js').then(r=>r.text()).then(t=>{eval(t);const s=document.createElement('script');s.src='https://maps.googleapis.com/maps/api/js?key='+window.APP_CONFIG.GOOGLE_MAPS_KEY+'&libraries=drawing,geometry,directions&callback=initMap';s.async=true;s.defer=true;document.head.appendChild(s);});
 </script>
 </body>
 </html>
