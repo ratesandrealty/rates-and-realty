@@ -326,18 +326,40 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
     </div>
   </div>
   <!-- Row 3 - Location -->
-  <div class="location-row">
-    <div class="county-tabs" id="countyTabs"></div>
-    <div style="position:relative">
-      <button class="city-pill active" id="cityDropBtn" onclick="toggleCityDropdown()" style="display:flex;align-items:center;gap:4px">Westminster <i class="fa-solid fa-caret-down" style="font-size:.7rem"></i></button>
-      <div id="cityDropdown" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1a1a1a;border:1px solid var(--border);border-radius:10px;padding:8px 0;min-width:240px;max-height:320px;overflow-y:auto;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.6)">
-        <div style="display:flex;justify-content:space-between;padding:4px 12px 8px;border-bottom:1px solid var(--border);margin-bottom:4px">
-          <span style="font-size:.75rem;color:var(--gold);cursor:pointer" onclick="selectAllCities()">Select All</span>
-          <span style="font-size:.75rem;color:var(--muted);cursor:pointer" onclick="clearCities()">Clear</span>
+  <div class="loc-bar" style="display:flex;align-items:center;gap:8px;padding:6px 14px;background:#0d0d0d;border-bottom:1px solid #1a1a1a;flex-wrap:wrap">
+    <div style="position:relative" id="countyDropWrap">
+      <button id="countyDropBtn2" onclick="toggleCountyDrop()" style="display:flex;align-items:center;gap:7px;background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:6px 14px;color:#eee;font-size:.8rem;cursor:pointer;white-space:nowrap;min-width:160px">
+        <span style="font-size:.85rem">\uD83D\uDCCD</span>
+        <span id="countyBtnLabel">All Counties</span>
+        <i class="fas fa-chevron-down" style="font-size:.65rem;color:#888;margin-left:auto"></i>
+      </button>
+      <div id="countyDropMenu" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:400;background:#111;border:1px solid #2a2a2a;border-radius:12px;padding:8px;min-width:220px;box-shadow:0 8px 32px rgba(0,0,0,.7);max-height:340px;overflow-y:auto">
+        <div style="padding:6px 8px 8px;border-bottom:1px solid #1a1a1a;margin-bottom:4px;display:flex;justify-content:space-between">
+          <span style="font-size:.7rem;color:#666;font-weight:700;text-transform:uppercase;letter-spacing:.07em">Select Counties</span>
+          <button onclick="clearCounties()" style="background:none;border:none;color:#C9A84C;font-size:.7rem;cursor:pointer">Clear</button>
         </div>
-        <div id="cityCheckList"></div>
+        <div id="countyCheckboxList"></div>
       </div>
     </div>
+    <div style="position:relative" id="cityDropWrap">
+      <button id="cityDropBtn" onclick="toggleCityDrop()" style="display:flex;align-items:center;gap:7px;background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:6px 14px;color:#eee;font-size:.8rem;cursor:pointer;white-space:nowrap;min-width:160px">
+        <span style="font-size:.85rem">\uD83C\uDFD8\uFE0F</span>
+        <span id="cityBtnLabel2">All Cities</span>
+        <i class="fas fa-chevron-down" style="font-size:.65rem;color:#888;margin-left:auto"></i>
+      </button>
+      <div id="cityDropMenu" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:400;background:#111;border:1px solid #2a2a2a;border-radius:12px;padding:8px;min-width:260px;box-shadow:0 8px 32px rgba(0,0,0,.7);max-height:380px;overflow-y:auto">
+        <div style="padding:6px 8px 8px;border-bottom:1px solid #1a1a1a;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:.7rem;color:#666;font-weight:700;text-transform:uppercase;letter-spacing:.07em">Select Cities</span>
+          <div style="display:flex;gap:8px">
+            <button onclick="selectAllCities()" style="background:none;border:none;color:#C9A84C;font-size:.7rem;cursor:pointer">All</button>
+            <button onclick="clearCities()" style="background:none;border:none;color:#888;font-size:.7rem;cursor:pointer">Clear</button>
+          </div>
+        </div>
+        <input id="citySearch" type="text" placeholder="Search cities..." oninput="filterCityList()" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:6px 10px;color:#eee;font-size:.78rem;outline:none;box-sizing:border-box;margin-bottom:6px">
+        <div id="cityCheckboxList" style="display:flex;flex-direction:column;gap:2px"></div>
+      </div>
+    </div>
+    <div id="locationChips" style="display:flex;flex-wrap:wrap;gap:4px"></div>
   </div>
   <!-- Row 4 - Filters -->
   <div class="filters-row">
@@ -601,24 +623,31 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const COUNTIES = {
   'Orange County': {
     emoji: '\uD83C\uDF4A',
-    cities: ['Westminster','Garden Grove','Huntington Beach','Anaheim','Santa Ana','Irvine','Fountain Valley','Costa Mesa','Fullerton','Buena Park','Cypress','La Habra','Placentia','Brea','Yorba Linda','Orange','Tustin','Lake Forest','Mission Viejo','Laguna Niguel','Newport Beach','Dana Point','Aliso Viejo']
+    cities: ['Anaheim','Brea','Buena Park','Costa Mesa','Cypress','Dana Point','Fountain Valley','Fullerton','Garden Grove','Huntington Beach','Irvine','La Habra','La Palma','Laguna Beach','Laguna Hills','Laguna Niguel','Lake Forest','Los Alamitos','Mission Viejo','Newport Beach','Orange','Placentia','Rancho Santa Margarita','San Clemente','San Juan Capistrano','Santa Ana','Seal Beach','Stanton','Tustin','Villa Park','Westminster','Yorba Linda']
   },
   'Los Angeles County': {
     emoji: '\uD83C\uDFD9\uFE0F',
-    cities: ['Long Beach','Los Angeles','Torrance','Compton','Inglewood','Hawthorne','Carson','El Monte','West Covina','Pomona','Norwalk','Burbank','Pasadena','Whittier','Downey','Glendale','Alhambra','Cerritos','Bellflower']
+    cities: ['Alhambra','Arcadia','Bellflower','Beverly Hills','Burbank','Carson','Cerritos','Claremont','Compton','Covina','Culver City','Diamond Bar','Downey','El Monte','Gardena','Glendale','Glendora','Hawthorne','Hermosa Beach','Inglewood','La Mirada','Lakewood','Lancaster','Long Beach','Los Angeles','Manhattan Beach','Monrovia','Montebello','Norwalk','Palmdale','Pasadena','Pomona','Redondo Beach','Rosemead','San Dimas','Santa Clarita','Santa Monica','Torrance','West Covina','West Hollywood','Whittier']
   },
   'Riverside County': {
-    emoji: '\uD83C\uDFD4\uFE0F',
-    cities: ['Riverside','Moreno Valley','Corona','Temecula','Murrieta','Hemet','Perris','Indio','Palm Springs','Menifee','Beaumont','Lake Elsinore']
+    emoji: '\uD83C\uDF34',
+    cities: ['Banning','Beaumont','Cathedral City','Corona','Desert Hot Springs','Eastvale','Hemet','Indian Wells','Indio','Jurupa Valley','La Quinta','Lake Elsinore','Menifee','Moreno Valley','Murrieta','Norco','Palm Desert','Palm Springs','Perris','Rancho Mirage','Riverside','San Jacinto','Temecula','Wildomar']
   },
   'San Bernardino County': {
-    emoji: '\uD83C\uDFD9\uFE0F',
-    cities: ['San Bernardino','Fontana','Rancho Cucamonga','Ontario','Victorville','Rialto','Colton','Chino','Redlands','Highland','Chino Hills','Upland']
+    emoji: '\u26F0\uFE0F',
+    cities: ['Apple Valley','Chino','Chino Hills','Colton','Fontana','Grand Terrace','Hesperia','Highland','Loma Linda','Montclair','Ontario','Rancho Cucamonga','Redlands','Rialto','San Bernardino','Upland','Victorville','Yucaipa']
+  },
+  'San Diego County': {
+    emoji: '\uD83C\uDF0A',
+    cities: ['Carlsbad','Chula Vista','Coronado','Del Mar','El Cajon','Encinitas','Escondido','La Mesa','National City','Oceanside','Poway','San Diego','San Marcos','Santee','Vista']
+  },
+  'Ventura County': {
+    emoji: '\uD83C\uDF3A',
+    cities: ['Camarillo','Moorpark','Oxnard','Santa Paula','Simi Valley','Thousand Oaks','Ventura']
   }
 };
 
 /* ===== STATE ===== */
-let activeCounty = 'Orange County';
 let selectedCities = ['Westminster'];
 let activeStatus = 'Active';
 let currentLease = false;
@@ -644,8 +673,7 @@ let filters = {
 document.addEventListener('DOMContentLoaded', function() {
   // Load cart from localStorage
   try { var saved = JSON.parse(localStorage.getItem('showingCart')||'[]'); if (Array.isArray(saved)) showingCart = saved; } catch(e) {}
-  buildCountyTabs();
-  buildCityPills();
+  initCountyDropdown();
   initStatusTabs();
   initFilterModalTabs();
   initToggleGroups();
@@ -663,71 +691,157 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 
-/* ===== COUNTY & CITY TABS ===== */
-function buildCountyTabs() {
-  var c = document.getElementById('countyTabs');
-  c.innerHTML = '';
-  Object.entries(COUNTIES).forEach(function(entry) {
-    var name = entry[0], data = entry[1];
-    var b = document.createElement('button');
-    b.className = 'county-tab' + (name === activeCounty ? ' active' : '');
-    b.textContent = data.emoji + ' ' + name.replace(' County', '');
-    b.onclick = function() {
-      activeCounty = name;
-      selectedCities = [data.cities[0]];
-      c.querySelectorAll('.county-tab').forEach(function(t) { t.classList.remove('active'); });
-      b.classList.add('active');
-      buildCityPills();
-      fetchListings();
-    };
-    c.appendChild(b);
+/* ===== COUNTY & CITY DROPDOWNS ===== */
+var selectedCounties = new Set();
+
+function initCountyDropdown() {
+  var list = document.getElementById('countyCheckboxList');
+  if (!list) return;
+  list.innerHTML = Object.entries(COUNTIES).map(function(entry) {
+    var key = entry[0], data = entry[1];
+    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:.82rem;color:#ccc;transition:background .15s" onmouseover="this.style.background=\'#1a1a1a\'" onmouseout="this.style.background=\'transparent\'"><input type="checkbox" value="'+key+'" class="county-cb" onchange="onCountyChange(this)" style="accent-color:#C9A84C;width:14px;height:14px;cursor:pointer;flex-shrink:0"> <span style="font-size:.9rem">'+data.emoji+'</span> <span>'+key+'</span></label>';
+  }).join('');
+  // Default: Orange County selected
+  var def = document.querySelector('.county-cb[value="Orange County"]');
+  if (def) { def.checked = true; selectedCounties.add('Orange County'); }
+  updateCountyBtnLabel();
+  updateCityDropdown();
+}
+
+function onCountyChange(cb) {
+  if (cb.checked) selectedCounties.add(cb.value);
+  else {
+    selectedCounties.delete(cb.value);
+    var cc = new Set(COUNTIES[cb.value]?.cities || []);
+    selectedCities = selectedCities.filter(function(c) { return !cc.has(c); });
+  }
+  updateCityDropdown();
+  updateLocationChips();
+  updateCountyBtnLabel();
+  fetchListings();
+}
+
+function updateCityDropdown() {
+  var list = document.getElementById('cityCheckboxList');
+  if (!list) return;
+  var counties = selectedCounties.size > 0 ? Array.from(selectedCounties).map(function(k) { return COUNTIES[k]; }).filter(Boolean) : Object.values(COUNTIES);
+  var allCities = [];
+  counties.forEach(function(c) { c.cities.forEach(function(city) { if (!allCities.find(function(x) { return x.name === city; })) allCities.push({ name: city }); }); });
+  allCities.sort(function(a, b) { return a.name.localeCompare(b.name); });
+  list.innerHTML = allCities.map(function(city) {
+    return '<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:.8rem;color:#ccc;transition:background .15s" onmouseover="this.style.background=\'#1a1a1a\'" onmouseout="this.style.background=\'transparent\'"><input type="checkbox" value="'+city.name+'" class="city-cb" '+(selectedCities.indexOf(city.name)>-1?'checked':'')+' onchange="onCityChange(this)" style="accent-color:#C9A84C;width:13px;height:13px;cursor:pointer;flex-shrink:0"> '+city.name+'</label>';
+  }).join('');
+  updateCityBtnLabel();
+}
+
+function filterCityList() {
+  var q = (document.getElementById('citySearch')?.value || '').toLowerCase();
+  document.querySelectorAll('.city-cb').forEach(function(cb) {
+    var label = cb.closest('label');
+    if (label) label.style.display = cb.value.toLowerCase().indexOf(q) > -1 ? '' : 'none';
   });
 }
 
-function buildCityPills() {
-  var list = document.getElementById('cityCheckList');
-  if(!list) return;
-  var cities = COUNTIES[activeCounty].cities.slice().sort();
-  list.innerHTML = cities.map(function(c) {
-    var checked = selectedCities.includes(c) ? ' checked' : '';
-    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:.83rem;color:var(--text);transition:background .15s" onmouseenter="this.style.background=\'rgba(255,255,255,.04)\'" onmouseleave="this.style.background=\'transparent\'"><input type="checkbox" value="'+c+'"'+checked+' onchange="toggleCityCheck(\''+c+'\',this.checked)" style="accent-color:var(--gold)"> '+c+'</label>';
-  }).join('');
-  updateCityBtn();
-}
-function toggleCityCheck(city, checked) {
-  if(checked) { if(!selectedCities.includes(city)) selectedCities.push(city); }
-  else { selectedCities = selectedCities.filter(function(c){return c!==city;}); }
-  updateCityBtn();
+function onCityChange(cb) {
+  if (cb.checked) { if (selectedCities.indexOf(cb.value) === -1) selectedCities.push(cb.value); }
+  else { selectedCities = selectedCities.filter(function(c) { return c !== cb.value; }); }
+  updateLocationChips();
+  updateCityBtnLabel();
   fetchListings();
 }
+
 function selectAllCities() {
-  selectedCities = COUNTIES[activeCounty].cities.slice();
-  buildCityPills();
+  document.querySelectorAll('.city-cb').forEach(function(cb) { cb.checked = true; if (selectedCities.indexOf(cb.value) === -1) selectedCities.push(cb.value); });
+  updateLocationChips();
+  updateCityBtnLabel();
   fetchListings();
 }
+
+function clearCounties() {
+  selectedCounties.clear();
+  document.querySelectorAll('.county-cb').forEach(function(cb) { cb.checked = false; });
+  updateCityDropdown();
+  updateLocationChips();
+  updateCountyBtnLabel();
+  fetchListings();
+}
+
 function clearCities() {
   selectedCities = [];
-  buildCityPills();
+  document.querySelectorAll('.city-cb').forEach(function(cb) { cb.checked = false; });
+  updateLocationChips();
+  updateCityBtnLabel();
   fetchListings();
 }
-function updateCityBtn() {
-  var btn = document.getElementById('cityDropBtn');
-  if(!btn) return;
-  var n = selectedCities.length;
-  var total = COUNTIES[activeCounty].cities.length;
-  var caret = ' <i class="fa-solid fa-caret-down" style="font-size:.7rem"></i>';
-  if(n === 0 || n === total) btn.innerHTML = 'All ' + activeCounty.replace(' County','') + ' County' + caret;
-  else if(n === 1) btn.innerHTML = selectedCities[0] + caret;
-  else btn.innerHTML = selectedCities[0] + ' +' + (n-1) + ' more' + caret;
+
+function updateCountyBtnLabel() {
+  var el = document.getElementById('countyBtnLabel');
+  if (!el) return;
+  if (selectedCounties.size === 0) el.textContent = 'All Counties';
+  else if (selectedCounties.size === 1) el.textContent = Array.from(selectedCounties)[0].replace(' County', '');
+  else el.textContent = selectedCounties.size + ' Counties';
 }
-function toggleCityDropdown() {
-  var dd = document.getElementById('cityDropdown');
-  dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+
+function updateCityBtnLabel() {
+  var el = document.getElementById('cityBtnLabel2');
+  if (!el) return;
+  if (selectedCities.length === 0) el.textContent = 'All Cities';
+  else if (selectedCities.length === 1) el.textContent = selectedCities[0];
+  else el.textContent = selectedCities.length + ' Cities';
 }
+
+function updateLocationChips() {
+  var container = document.getElementById('locationChips');
+  if (!container) return;
+  var chips = [];
+  selectedCounties.forEach(function(key) {
+    chips.push('<div style="display:flex;align-items:center;gap:5px;background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.3);border-radius:12px;padding:3px 10px;font-size:.72rem;color:#C9A84C">' + (COUNTIES[key]?.emoji||'') + ' ' + key.replace(' County','') + ' <button onclick="removeCounty(\''+key+'\')" style="background:none;border:none;color:#C9A84C;cursor:pointer;padding:0;font-size:.7rem">\u2715</button></div>');
+  });
+  selectedCities.forEach(function(city) {
+    chips.push('<div style="display:flex;align-items:center;gap:5px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);border-radius:12px;padding:3px 10px;font-size:.72rem;color:#60a5fa">' + city + ' <button onclick="removeCity(\''+city+'\')" style="background:none;border:none;color:#60a5fa;cursor:pointer;padding:0;font-size:.7rem">\u2715</button></div>');
+  });
+  container.innerHTML = chips.join('');
+}
+
+function removeCounty(key) {
+  selectedCounties.delete(key);
+  document.querySelectorAll('.county-cb').forEach(function(cb) { if (cb.value === key) cb.checked = false; });
+  var cc = new Set(COUNTIES[key]?.cities || []);
+  selectedCities = selectedCities.filter(function(c) { return !cc.has(c); });
+  updateCityDropdown();
+  updateLocationChips();
+  updateCountyBtnLabel();
+  fetchListings();
+}
+
+function removeCity(city) {
+  selectedCities = selectedCities.filter(function(c) { return c !== city; });
+  document.querySelectorAll('.city-cb').forEach(function(cb) { if (cb.value === city) cb.checked = false; });
+  updateLocationChips();
+  updateCityBtnLabel();
+  fetchListings();
+}
+
+function toggleCountyDrop() {
+  var menu = document.getElementById('countyDropMenu');
+  var cityMenu = document.getElementById('cityDropMenu');
+  if (cityMenu) cityMenu.style.display = 'none';
+  if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleCityDrop() {
+  var menu = document.getElementById('cityDropMenu');
+  var countyMenu = document.getElementById('countyDropMenu');
+  if (countyMenu) countyMenu.style.display = 'none';
+  if (menu) {
+    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    if (menu.style.display === 'block') { updateCityDropdown(); setTimeout(function() { document.getElementById('citySearch')?.focus(); }, 50); }
+  }
+}
+
 document.addEventListener('click', function(e) {
-  var dd = document.getElementById('cityDropdown');
-  var btn = document.getElementById('cityDropBtn');
-  if(dd && btn && !dd.contains(e.target) && e.target !== btn && !btn.contains(e.target)) dd.style.display = 'none';
+  if (!e.target.closest('#countyDropWrap')) { var m = document.getElementById('countyDropMenu'); if (m) m.style.display = 'none'; }
+  if (!e.target.closest('#cityDropWrap')) { var m = document.getElementById('cityDropMenu'); if (m) m.style.display = 'none'; }
 });
 
 function initStatusTabs() {
@@ -746,11 +860,17 @@ function initStatusTabs() {
 function buildODataFilter() {
   var parts = [];
 
-  // City — fallback to all county cities if none selected
-  var citiesToFilter = selectedCities.length > 0 ? selectedCities : COUNTIES[activeCounty].cities;
-  var cityList = citiesToFilter.slice(0, 10); // Trestle URL length limit
-  if (cityList.length === 1) parts.push("City eq '" + cityList[0] + "'");
-  else if (cityList.length > 1) parts.push("(" + cityList.map(function(c){return "City eq '" + c + "'";}).join(' or ') + ")");
+  // Location — cities take priority, then counties, then all CA
+  if (selectedCities.length > 0) {
+    var cityList = selectedCities.slice(0, 12);
+    if (cityList.length === 1) parts.push("City eq '" + cityList[0] + "'");
+    else parts.push("(" + cityList.map(function(c){return "City eq '" + c + "'";}).join(' or ') + ")");
+  } else if (selectedCounties.size > 0) {
+    var countyFilters = Array.from(selectedCounties).map(function(k) { return "CountyOrParish eq '" + k + "'"; });
+    parts.push("(" + countyFilters.join(' or ') + ")");
+  } else {
+    parts.push("StateOrProvince eq 'CA'");
+  }
 
   // Status
   if (activeStatus) parts.push("StandardStatus eq '" + activeStatus + "'");
