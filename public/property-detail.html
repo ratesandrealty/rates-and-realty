@@ -770,50 +770,34 @@ function calcMortgage() {
 
 /* ===== SIMILAR HOMES ===== */
 async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
-  const minPrice = Math.round((price||0) * 0.65);
-  const maxPrice = Math.round((price||0) * 1.35);
-  let typeFilter;
-  if (isLand) {
-    typeFilter = "PropertyType eq 'Land'";
-  } else {
-    typeFilter = "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse'";
+  var typeFilter = isLand ? "PropertyType eq 'Land'" : "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse'";
+  var attempts = [
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.round((price||0)*0.65)+" and ListPrice le "+Math.round((price||0)*1.35)+" and ("+typeFilter+")",
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ("+typeFilter+")",
+    "City eq '"+city+"' and StandardStatus eq 'Active'"
+  ];
+  var list = [];
+  for (var a = 0; a < attempts.length; a++) {
+    try {
+      var rawFilter = "$filter=" + encodeURIComponent(attempts[a]) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Media,PropertyType,PropertySubType";
+      var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
+      var data = await res.json();
+      list = (data.value||[]).filter(function(l){return l.ListingKey!==excludeKey;}).slice(0,6);
+      if (list.length >= 3) break;
+    } catch(e) { console.warn('similar attempt '+a+' failed',e); }
   }
-  const filterStr = "City eq '" + city + "' and StandardStatus eq 'Active' and ListPrice ge " + minPrice + " and ListPrice le " + maxPrice + " and (" + typeFilter + ")";
-  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Media";
-
-  try {
-    const res = await fetch(SB_URL + '/functions/v1/trestle-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
-      body: JSON.stringify({ endpoint: 'Property', rawFilter: rawFilter })
-    });
-    const data = await res.json();
-    const listings = (data.value || []).filter(function(l) { return l.ListingKey !== excludeKey; }).slice(0, 6);
-    sessionStorage.setItem('all_similar_listings', JSON.stringify(listings));
-
-    const grid = document.getElementById('similarGrid');
-    if (!listings.length) {
-      grid.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No similar homes found in this price range.</p>';
-      return;
-    }
-    grid.innerHTML = listings.map(function(l) {
-      const photo = (l.Media && l.Media[0]) ? l.Media[0].MediaURL : '';
-      const landItem = l.PropertyType === 'Land' || (l.PropertySubType || '').toLowerCase().includes('land');
-      let statsStr = '';
-      if (!landItem) {
-        if (l.BedroomsTotal != null) statsStr += l.BedroomsTotal + ' bd';
-        if (l.BathroomsTotalInteger != null) statsStr += (statsStr ? ' \u00B7 ' : '') + l.BathroomsTotalInteger + ' ba';
-      }
-      if (l.LivingArea) statsStr += (statsStr ? ' \u00B7 ' : '') + l.LivingArea.toLocaleString() + ' sqft';
-      return '<div class="sim-card" onclick="goToSimilar(\'' + l.ListingKey + '\')">' +
-        '<img src="' + (photo || 'https://placehold.co/300x140/1a1a1a/444?text=No+Photo') + '" alt="' + (l.UnparsedAddress || '') + '" loading="lazy">' +
-        '<div class="sim-card-body"><div class="sim-price">$' + (l.ListPrice || 0).toLocaleString() + '</div>' +
-        '<div class="sim-addr">' + ((l.UnparsedAddress || '').split(',')[0]) + '</div>' +
-        '<div class="sim-stats">' + statsStr + '</div></div></div>';
-    }).join('');
-  } catch (e) {
-    document.getElementById('similarGrid').innerHTML = '<p style="color:var(--muted);font-size:.85rem">Unable to load similar homes.</p>';
-  }
+  sessionStorage.setItem('all_similar_listings', JSON.stringify(list));
+  var grid = document.getElementById('similarGrid');
+  if (!list.length) { grid.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No similar homes found nearby.</p>'; return; }
+  grid.innerHTML = list.map(function(l) {
+    var photo = (l.Media&&l.Media[0]) ? l.Media[0].MediaURL : '';
+    var isL = l.PropertyType==='Land';
+    var st = '';
+    if (!isL&&l.BedroomsTotal!=null) st += l.BedroomsTotal+' bd';
+    if (!isL&&l.BathroomsTotalInteger!=null) st += (st?' · ':'')+l.BathroomsTotalInteger+' ba';
+    if (l.LivingArea) st += (st?' · ':'')+l.LivingArea.toLocaleString()+' sf';
+    return '<div class="sim-card" onclick="goToSimilar(\''+l.ListingKey+'\')"><img src="'+(photo||'https://placehold.co/300x140/1a1a1a/444?text=No+Photo')+'" loading="lazy"><div class="sim-card-body"><div class="sim-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="sim-addr">'+((l.UnparsedAddress||'').split(',')[0])+'</div><div class="sim-stats">'+st+'</div></div></div>';
+  }).join('');
 }
 
 function goToSimilar(listingKey) {
@@ -833,95 +817,47 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
     return;
   }
 
-  const minPrice = Math.round((price||0) * 0.55);
-  const maxPrice = Math.round((price||0) * 1.45);
-  let typeFilter;
-  if (isLand) {
-    typeFilter = "PropertyType eq 'Land'";
-  } else {
-    typeFilter = "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse'";
+  var typeFilter = isLand ? "PropertyType eq 'Land'" : "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse' or PropertyType eq 'ResidentialIncome'";
+  var attempts = [
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.round((price||0)*0.6)+" and ListPrice le "+Math.round((price||0)*1.4)+" and ("+typeFilter+")",
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ("+typeFilter+")",
+    "City eq '"+city+"' and StandardStatus eq 'Active'"
+  ];
+  var nearby = [];
+  for (var a = 0; a < attempts.length; a++) {
+    try {
+      var rawFilter = "$filter=" + encodeURIComponent(attempts[a]) + "&$top=12&$orderby=ListingContractDate desc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Latitude,Longitude,Media,PropertyType,PropertySubType";
+
+      var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
+      var data = await res.json();
+      nearby = (data.value||[]).filter(function(l){return l.ListingKey!==excludeKey&&l.Latitude&&l.Longitude;}).slice(0,10);
+      if (nearby.length >= 3) break;
+    } catch(e) { console.warn('nearby attempt '+a+' failed',e); }
   }
-  const filterStr = "City eq '" + city + "' and StandardStatus eq 'Active' and ListPrice ge " + minPrice + " and ListPrice le " + maxPrice + " and (" + typeFilter + ")";
-  const rawFilter = "$filter=" + encodeURIComponent(filterStr) + "&$top=15&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,Media";
 
-  try {
-    const res = await fetch(SB_URL + '/functions/v1/trestle-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
-      body: JSON.stringify({ endpoint: 'Property', rawFilter: rawFilter })
-    });
-    const data = await res.json();
-    const nearby = (data.value || []).filter(function(l) { return l.ListingKey !== excludeKey && l.Latitude && l.Longitude; }).slice(0, 10);
+  // Merge into session storage for navigation
+  var existing = JSON.parse(sessionStorage.getItem('all_similar_listings')||'[]');
+  nearby.forEach(function(n){if(!existing.find(function(m){return m.ListingKey===n.ListingKey;}))existing.push(n);});
+  sessionStorage.setItem('all_similar_listings',JSON.stringify(existing));
 
-    // Store for click navigation
-    const existing = JSON.parse(sessionStorage.getItem('all_similar_listings') || '[]');
-    const merged = [...existing];
-    nearby.forEach(function(n) {
-      if (!merged.find(function(m) { return m.ListingKey === n.ListingKey; })) merged.push(n);
-    });
-    sessionStorage.setItem('all_similar_listings', JSON.stringify(merged));
-
-    // Create map
-    const mapEl = document.getElementById('nearbyHomesMap');
-    nearbyMapRef = new google.maps.Map(mapEl, {
-      center: { lat: subjectLat, lng: subjectLng }, zoom: 14,
-      styles: DARK_MAP_STYLES,
-      disableDefaultUI: true,
-      zoomControl: true
-    });
-
-    // Subject marker (gold)
-    new google.maps.Marker({
-      position: { lat: subjectLat, lng: subjectLng }, map: nearbyMapRef,
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 12, fillColor: '#C9A84C', fillOpacity: 1, strokeColor: '#000', strokeWeight: 2 },
-      title: listing.UnparsedAddress,
-      zIndex: 10
-    });
-
-    // Blue markers for nearby
-    const infoWindow = new google.maps.InfoWindow();
-    nearby.forEach(function(l) {
-      const marker = new google.maps.Marker({
-        position: { lat: l.Latitude, lng: l.Longitude }, map: nearbyMapRef,
-        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: '#3c78ff', fillOpacity: 1, strokeColor: '#000', strokeWeight: 1.5 },
-        title: l.UnparsedAddress
-      });
-      marker.addListener('click', function() {
-        infoWindow.setContent(
-          '<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5">' +
-          '<strong>$' + (l.ListPrice || 0).toLocaleString() + '</strong><br>' +
-          (l.UnparsedAddress || '') + '<br>' +
-          '<a href="#" onclick="goToSimilar(\'' + l.ListingKey + '\');return false;" style="color:#C9A84C;font-weight:700;font-size:12px">View Listing &rarr;</a></div>'
-        );
-        infoWindow.open(nearbyMapRef, marker);
-      });
-    });
-
-    // Nearby homes list (up to 5)
-    const listEl = document.getElementById('nearbyHomesList');
-    const listItems = nearby.slice(0, 5);
-    if (!listItems.length) {
-      listEl.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No nearby active listings found.</p>';
-      return;
-    }
-    listEl.innerHTML = listItems.map(function(l) {
-      const photo = (l.Media && l.Media[0]) ? l.Media[0].MediaURL : '';
-      const landItem = l.PropertyType === 'Land' || (l.PropertySubType || '').toLowerCase().includes('land');
-      let statsStr = '';
-      if (!landItem) {
-        if (l.BedroomsTotal != null) statsStr += l.BedroomsTotal + ' bd';
-        if (l.BathroomsTotalInteger != null) statsStr += (statsStr ? ' \u00B7 ' : '') + l.BathroomsTotalInteger + ' ba';
-      }
-      if (l.LivingArea) statsStr += (statsStr ? ' \u00B7 ' : '') + l.LivingArea.toLocaleString() + ' sqft';
-      return '<div class="nearby-listing" onclick="goToSimilar(\'' + l.ListingKey + '\')">' +
-        '<img src="' + (photo || 'https://placehold.co/80x60/1a1a1a/444?text=No+Photo') + '" alt="" loading="lazy">' +
-        '<div class="nl-info"><div class="nl-price">$' + (l.ListPrice || 0).toLocaleString() + '</div>' +
-        '<div class="nl-addr">' + (l.UnparsedAddress || '') + '</div>' +
-        '<div class="nl-stats">' + statsStr + '</div></div></div>';
-    }).join('');
-  } catch (e) {
-    document.getElementById('nearbyHomesMap').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.85rem">Unable to load nearby homes map.</div>';
-  }
+  // Create map
+  var mapEl = document.getElementById('nearbyHomesMap');
+  nearbyMapRef = new google.maps.Map(mapEl,{center:{lat:subjectLat,lng:subjectLng},zoom:14,styles:DARK_MAP_STYLES,disableDefaultUI:true,zoomControl:true});
+  new google.maps.Marker({position:{lat:subjectLat,lng:subjectLng},map:nearbyMapRef,icon:{path:google.maps.SymbolPath.CIRCLE,scale:12,fillColor:'#C9A84C',fillOpacity:1,strokeColor:'#000',strokeWeight:2},title:listing.UnparsedAddress,zIndex:10});
+  var iw = new google.maps.InfoWindow();
+  nearby.forEach(function(l){
+    var m = new google.maps.Marker({position:{lat:l.Latitude,lng:l.Longitude},map:nearbyMapRef,icon:{path:google.maps.SymbolPath.CIRCLE,scale:8,fillColor:'#3c78ff',fillOpacity:1,strokeColor:'#000',strokeWeight:1.5},title:l.UnparsedAddress});
+    m.addListener('click',function(){iw.setContent('<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br><a href="#" onclick="goToSimilar(\''+l.ListingKey+'\');return false;" style="color:#C9A84C;font-weight:700;font-size:12px">View →</a></div>');iw.open(nearbyMapRef,m);});
+  });
+  var listEl = document.getElementById('nearbyHomesList');
+  var listItems = nearby.slice(0,5);
+  if (!listItems.length) { listEl.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No nearby listings found.</p>'; return; }
+  listEl.innerHTML = listItems.map(function(l){
+    var photo=(l.Media&&l.Media[0])?l.Media[0].MediaURL:'';
+    var isL=l.PropertyType==='Land';var st='';
+    if(!isL&&l.BedroomsTotal!=null)st+=l.BedroomsTotal+' bd';if(!isL&&l.BathroomsTotalInteger!=null)st+=(st?' · ':'')+l.BathroomsTotalInteger+' ba';if(l.LivingArea)st+=(st?' · ':'')+l.LivingArea.toLocaleString()+' sf';
+    return'<div class="nearby-listing" onclick="goToSimilar(\''+l.ListingKey+'\')"><img src="'+(photo||'https://placehold.co/80x60/1a1a1a/444?text=No+Photo')+'" loading="lazy"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div></div>';
+  }).join('');
 }
 
 /* ===== LIGHTBOX ===== */
