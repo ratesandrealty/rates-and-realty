@@ -74,8 +74,8 @@ if (headerRoot) {
       <a class="nav-link" href="/public/about.html">About</a>
     `;
     actions = `
-      <a class="btn btn-secondary btn-sm" href="/auth/admin-login.html">Login</a>
-      <a class="btn btn-primary btn-sm" href="https://cal.com/rene-duarte-rates-realty" target="_blank">Apply Now</a>
+      <a class="btn btn-secondary btn-sm" href="/public/unified-portal.html" id="mainLoginBtn">Login</a>
+      <a class="btn btn-primary btn-sm" href="/public/apply.html">Apply Now</a>
     `;
   }
 
@@ -277,3 +277,16 @@ if (footerRoot) {
     `;
   }
 }
+
+// ── Logged-in state: update Login button ──
+try {
+  var u = JSON.parse(localStorage.getItem('portal_user') || localStorage.getItem('borrower_user') || 'null');
+  if (u && u.first_name) {
+    var loginBtn = document.getElementById('mainLoginBtn');
+    if (loginBtn) {
+      loginBtn.textContent = '\uD83D\uDC64 ' + u.first_name;
+      loginBtn.href = '/public/unified-portal.html';
+    }
+  }
+} catch(e) {}
+
