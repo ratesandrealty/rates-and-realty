@@ -609,27 +609,34 @@ function buildODataFilter() {
   // Status
   if (activeStatus) parts.push("StandardStatus eq '" + activeStatus + "'");
 
-  // Property types
+  // Property types — mapped to actual Trestle CRMLS enum values
+  // Trestle uses: Residential (includes SFR+Condo+Townhouse as subtypes),
+  //   ResidentialIncome, ManufacturedInPark, ResidentialLease, CommercialSale, Land
   if (filters.types.length > 0 && filters.types.length < 8) {
     var hasRes = filters.types.includes('Residential');
     var hasCondo = filters.types.includes('Condominium');
     var hasTown = filters.types.includes('Townhouse');
-    // Default state (House+Condo+Townhome) = no type filter, show everything
+    // Default (House+Condo+Townhome) = just filter PropertyType eq 'Residential' which includes all three
     if (hasRes && hasCondo && hasTown && filters.types.length === 3) {
-      // No type filter needed
+      parts.push("PropertyType eq 'Residential'");
     } else {
       var tp = [];
-      if (hasRes) tp.push("PropertyType eq 'Residential'");
-      if (hasCondo) tp.push("PropertyType eq 'Condominium'");
-      if (hasTown) tp.push("PropertySubType eq 'Townhouse'");
-      if (filters.types.includes('Residential Income')) tp.push("PropertyType eq 'Residential Income'");
+      // House only = Residential with SFR subtype
+      if (hasRes && !hasCondo && !hasTown) tp.push("PropertySubType eq 'SingleFamilyResidence'");
+      else if (hasRes) tp.push("PropertyType eq 'Residential'");
+      if (hasCondo && !hasRes) tp.push("PropertySubType eq 'Condominium'");
+      if (hasTown && !hasRes) tp.push("PropertySubType eq 'Townhouse'");
+      if (filters.types.includes('Residential Income')) tp.push("PropertyType eq 'ResidentialIncome'");
       if (filters.types.includes('Land')) tp.push("PropertyType eq 'Land'");
-      if (filters.types.includes('Mobile Home')) tp.push("PropertyType eq 'Manufactured On Land'");
-      if (filters.types.includes('Commercial')) tp.push("PropertyType eq 'Commercial Sale'");
+      if (filters.types.includes('Mobile Home')) tp.push("PropertyType eq 'ManufacturedInPark'");
+      if (filters.types.includes('Commercial')) tp.push("PropertyType eq 'CommercialSale'");
       if (tp.length === 1) parts.push(tp[0]);
       else if (tp.length > 1) parts.push('(' + tp.join(' or ') + ')');
     }
   }
+
+  // Exclude leases (ResidentialLease shows $3K/mo apartments mixed with sales)
+  parts.push("PropertyType ne 'ResidentialLease'");
 
   // Price
   if (filters.minPrice) parts.push('ListPrice ge ' + filters.minPrice);
