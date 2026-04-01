@@ -260,7 +260,8 @@ input,select{font-family:inherit}
   <div><div class="price-display" id="priceDisplay">--</div></div>
   <button class="btn-secondary" id="favBtn" onclick="toggleFavorite()"><i class="far fa-heart"></i> Save</button>
   <button class="btn-secondary" onclick="shareProperty()"><i class="fas fa-share"></i> Share</button>
-  <button class="btn-primary" onclick="addToCart()"><i class="fas fa-calendar-plus"></i> Schedule Showing</button>
+  <button class="btn-primary" onclick="handleSchedule()"><i class="fas fa-calendar-plus"></i> + Showing</button>
+  <button class="btn-secondary" id="cartActionBtn" onclick="openPropertyCart()" style="position:relative"><i class="fas fa-shopping-cart"></i> Cart <span id="cartBadge" style="display:none;position:absolute;top:-6px;right:-6px;background:#C9A84C;color:#000;border-radius:50%;width:18px;height:18px;font-size:.62rem;font-weight:700;display:flex;align-items:center;justify-content:center">0</span></button>
   <button class="btn-mortgage" onclick="document.getElementById('calcSection').scrollIntoView({behavior:'smooth'})"><i class="fas fa-calculator"></i> Mortgage</button>
 </div>
 
@@ -930,25 +931,27 @@ function shareProperty() {
 
 /* ===== SCHEDULE SHOWING ===== */
 function addToCart() {
-  const l = listing;
-  if (!l) return;
-  let cart = JSON.parse(localStorage.getItem('showingCart') || '[]');
-  if (!cart.some(function(c) { return c.listingKey === l.ListingKey; })) {
-    cart.push({
-      listingKey: l.ListingKey,
-      price: l.ListPrice,
-      address: l.UnparsedAddress,
-      city: l.City,
-      photo: (l.Media && l.Media[0]) ? l.Media[0].MediaURL : '',
-      beds: l.BedroomsTotal,
-      baths: l.BathroomsTotalInteger
-    });
-    localStorage.setItem('showingCart', JSON.stringify(cart));
+  var l = listing; if (!l) return;
+  var cart = JSON.parse(localStorage.getItem('showingCart') || '[]');
+  if (!cart.some(function(c){return c.listingKey===l.ListingKey;})) {
+    cart.push({listingKey:l.ListingKey,price:l.ListPrice,address:l.UnparsedAddress,city:l.City,photo:(l.Media&&l.Media[0])?l.Media[0].MediaURL:'',beds:l.BedroomsTotal,baths:l.BathroomsTotalInteger});
+    localStorage.setItem('showingCart',JSON.stringify(cart));
     showToast('Added to showing cart!');
-  } else {
-    showToast('Already in your showing cart');
-  }
+  } else { showToast('Already in cart'); }
+  updateCartBadge();
 }
+
+function getPortalUser(){try{var p=localStorage.getItem('portal_user');if(p)return JSON.parse(p);var b=localStorage.getItem('borrower_user');if(b)return JSON.parse(b);}catch(e){}return null;}
+
+function handleSchedule(){addToCart();updateCartBadge();}
+
+function updateCartBadge(){var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');var b=document.getElementById('cartBadge');if(!b)return;if(cart.length>0){b.style.display='flex';b.textContent=cart.length;}else{b.style.display='none';}}
+
+function openPropertyCart(){var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');document.getElementById('propCartDrawer')?.remove();document.getElementById('propCartOverlay')?.remove();var ov=document.createElement('div');ov.id='propCartOverlay';ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:700';ov.onclick=function(){ov.remove();document.getElementById('propCartDrawer')?.remove();};document.body.appendChild(ov);var d=document.createElement('div');d.id='propCartDrawer';d.style.cssText='position:fixed;right:0;top:0;width:400px;max-width:95vw;height:100vh;background:#111;border-left:1px solid #222;z-index:701;display:flex;flex-direction:column;isolation:isolate;transform:translateX(100%);transition:transform .3s ease';d.innerHTML='<div style="padding:16px 20px;border-bottom:1px solid #222;display:flex;align-items:center;justify-content:space-between;flex-shrink:0"><h3 style="font-size:.95rem;font-weight:700;color:#eee"><i class="fas fa-shopping-cart" style="color:#C9A84C;margin-right:6px"></i>Cart <span style="color:#C9A84C">('+cart.length+')</span></h3><button onclick="document.getElementById(\'propCartDrawer\')?.remove();document.getElementById(\'propCartOverlay\')?.remove()" style="background:#1a1a1a;border:1px solid #333;border-radius:50%;width:30px;height:30px;color:#888;cursor:pointer;font-size:.85rem">✕</button></div><div style="flex:1;overflow-y:auto;padding:12px">'+(cart.length===0?'<div style="text-align:center;padding:48px 20px;color:#555"><i class="fas fa-shopping-cart" style="font-size:2rem;display:block;margin-bottom:12px;color:#2a2a2a"></i><div style="font-size:.85rem">Cart is empty</div></div>':cart.map(function(item){return'<div style="display:flex;gap:10px;align-items:flex-start;background:#1a1a1a;border:1px solid #222;border-radius:9px;padding:10px;margin-bottom:8px">'+(item.photo?'<img src="'+item.photo+'" style="width:60px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0" onerror="this.style.display=\'none\'">':'')+'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:.85rem;color:#C9A84C">$'+(item.price||0).toLocaleString()+'</div><div style="font-size:.75rem;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(item.address||'')+'</div><div style="font-size:.7rem;color:#666">'+(item.city||'')+'</div></div><button onclick="removeFromPropertyCart(\''+item.listingKey+'\')" style="background:none;border:none;color:#444;cursor:pointer;font-size:.8rem;flex-shrink:0"><i class="fas fa-trash-alt"></i></button></div>';}).join(''))+'</div>'+(cart.length>0?'<div style="padding:16px 20px;border-top:1px solid #222;flex-shrink:0"><button onclick="proceedToCheckout()" style="width:100%;background:#C9A84C;color:#000;border:none;border-radius:10px;padding:13px;font-weight:700;font-size:.9rem;cursor:pointer"><i class="fas fa-calendar-check"></i> Schedule '+cart.length+' Showing'+(cart.length>1?'s':'')+' →</button><div style="display:flex;gap:8px;margin-top:8px"><a href="/public/search-homes.html" style="flex:1;text-align:center;border:1px solid #333;color:#888;border-radius:9px;padding:9px;font-size:.78rem;text-decoration:none">+ Add More</a><a href="/public/portal.html" style="flex:1;text-align:center;border:1px solid #333;color:#888;border-radius:9px;padding:9px;font-size:.78rem;text-decoration:none">My Portal</a></div></div>':'<div style="padding:16px 20px;border-top:1px solid #222;flex-shrink:0"><a href="/public/search-homes.html" style="display:block;text-align:center;background:#C9A84C;color:#000;text-decoration:none;padding:12px;border-radius:10px;font-weight:700;font-size:.88rem">Browse Listings →</a></div>');document.body.appendChild(d);requestAnimationFrame(function(){d.style.transform='translateX(0)';});}
+
+window.removeFromPropertyCart=function(k){var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');cart=cart.filter(function(c){return c.listingKey!==k;});localStorage.setItem('showingCart',JSON.stringify(cart));updateCartBadge();openPropertyCart();};
+
+function proceedToCheckout(){document.getElementById('propCartDrawer')?.remove();document.getElementById('propCartOverlay')?.remove();window.location.href='/public/search-homes.html';}
 
 /* ===== TOAST ===== */
 function showToast(msg) {
@@ -973,12 +976,11 @@ document.addEventListener('keydown', function(e) {
 /* ===== GOOGLE MAPS CALLBACK ===== */
 function initMap() {
   initPage();
+  updateCartBadge();
   // Portal nav
-  if (typeof PortalAuth !== 'undefined') {
-    var user = PortalAuth.getUser();
-    var link = document.getElementById('navPortalLink');
-    if (user && link) { link.style.display = 'inline'; link.textContent = '\uD83D\uDC64 ' + user.first_name; }
-  }
+  var user = getPortalUser();
+  var link = document.getElementById('navPortalLink');
+  if (user && link) { link.style.display = 'inline'; link.textContent = '\uD83D\uDC64 ' + user.first_name; }
 }
 </script>
 <script>
