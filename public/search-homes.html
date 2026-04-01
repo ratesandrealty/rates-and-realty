@@ -556,9 +556,8 @@
     <div class="sh-orb sh-orb-1"></div>
     <div class="sh-orb sh-orb-2"></div>
     <div class="container sh-hero-inner">
-      <div class="sh-eyebrow">🏡 Westminster &amp; Garden Grove</div>
       <h1 class="sh-h1">Find Your Next Home</h1>
-      <p class="sh-sub">Browse active listings in the Westminster, Garden Grove, and surrounding OC area. Save favorites and schedule showings in seconds.</p>
+      <p class="sh-sub">Browse active MLS listings across Southern California. Save favorites and schedule showings in seconds.</p>
       <div class="sh-search-bar">
         <input class="sh-search-input" type="text" id="sh-search-input"
                placeholder="Search by address, city, or zip code..."
@@ -579,38 +578,64 @@
   <!-- ── FILTERS ── -->
   <div class="sh-filters-bar" id="sh-filters-bar">
     <div class="container">
-      <div class="sh-filters-inner">
-        <select class="sh-filter-select" id="filter-type">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <select class="sh-filter-select" id="filter-type" onchange="applyFilters()">
           <option value="">All Types</option>
-          <option value="house">Single Family</option>
-          <option value="condo">Condo / Townhome</option>
-          <option value="multi">Multi-Family</option>
+          <option value="Residential">Single Family</option>
+          <option value="Condominium">Condo</option>
+          <option value="Townhouse">Townhouse</option>
+          <option value="MultiFamily">Multi-Family</option>
+          <option value="Land">Land</option>
+          <option value="Commercial">Commercial</option>
         </select>
-        <select class="sh-filter-select" id="filter-price">
-          <option value="">Any Price</option>
-          <option value="0-500000">Under $500K</option>
-          <option value="500000-700000">$500K – $700K</option>
-          <option value="700000-900000">$700K – $900K</option>
-          <option value="900000-999999999">$900K+</option>
+        <select class="sh-filter-select" id="filter-price-min" onchange="applyFilters()">
+          <option value="">Min Price</option>
+          <option value="200000">$200K</option>
+          <option value="400000">$400K</option>
+          <option value="600000">$600K</option>
+          <option value="800000">$800K</option>
+          <option value="1000000">$1M</option>
+          <option value="1500000">$1.5M</option>
         </select>
-        <select class="sh-filter-select" id="filter-beds">
+        <select class="sh-filter-select" id="filter-price-max" onchange="applyFilters()">
+          <option value="">Max Price</option>
+          <option value="400000">$400K</option>
+          <option value="600000">$600K</option>
+          <option value="800000">$800K</option>
+          <option value="1000000">$1M</option>
+          <option value="1500000">$1.5M</option>
+          <option value="2000000">$2M</option>
+          <option value="3000000">$3M</option>
+          <option value="5000000">$5M+</option>
+        </select>
+        <select class="sh-filter-select" id="filter-beds" onchange="applyFilters()">
           <option value="">Any Beds</option>
+          <option value="1">1+ Bed</option>
           <option value="2">2+ Beds</option>
           <option value="3">3+ Beds</option>
           <option value="4">4+ Beds</option>
           <option value="5">5+ Beds</option>
         </select>
-        <select class="sh-filter-select" id="filter-baths">
+        <select class="sh-filter-select" id="filter-baths" onchange="applyFilters()">
           <option value="">Any Baths</option>
           <option value="1">1+ Bath</option>
           <option value="2">2+ Baths</option>
           <option value="3">3+ Baths</option>
+          <option value="4">4+ Baths</option>
         </select>
-        <div class="sh-view-toggle">
-          <button class="sh-view-btn active" id="view-list-btn">☰ List</button>
-          <button class="sh-view-btn" id="view-map-btn">🗺 Map</button>
-        </div>
+        <select class="sh-filter-select" id="filter-sort" onchange="applyFilters()" style="color:#c9a84c;margin-left:auto;">
+          <option value="price-desc">Price: High to Low</option>
+          <option value="price-asc">Price: Low to High</option>
+          <option value="newest">Newest First</option>
+          <option value="beds-desc">Most Beds</option>
+          <option value="sqft-desc">Largest First</option>
+        </select>
         <span class="sh-result-count" id="sh-result-count"></span>
+        <button onclick="clearFilters()" style="background:none;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.4);padding:9px 14px;border-radius:999px;font-size:0.75rem;cursor:pointer;font-family:'Manrope',sans-serif;">Clear</button>
+        <div class="sh-view-toggle">
+          <button class="sh-view-btn active" id="view-list-btn">List</button>
+          <button class="sh-view-btn" id="view-map-btn">Map</button>
+        </div>
       </div>
     </div>
   </div>
@@ -991,7 +1016,7 @@
         const listings = (data.value || []).map(p => ({
           id: p.ListingKey,
           address: p.UnparsedAddress || 'Address unavailable',
-          city: `${p.City || ''}, ${p.StateOrProvince || 'CA'} ${p.PostalCode || ''}`.trim(),
+          city: p.City || '',
           price: p.ListPrice || 0,
           beds: p.BedroomsTotal || 0,
           baths: p.BathroomsTotalInteger || 0,
@@ -1171,14 +1196,12 @@
           <div class="sh-card-body">
             <div class="sh-card-price">${fmt(p.price)}</div>
             <div class="sh-card-stats">
-              <span class="sh-card-stat">🛏 <strong>${p.beds}</strong> bd</span>
-              <span style="color:rgba(255,255,255,0.15);">·</span>
-              <span class="sh-card-stat">🚿 <strong>${p.baths}</strong> ba</span>
-              <span style="color:rgba(255,255,255,0.15);">·</span>
-              <span class="sh-card-stat">📐 <strong>${p.sqft ? p.sqft.toLocaleString() : '—'}</strong> sqft</span>
+              ${p.beds > 0 ? `<span class="sh-card-stat">🛏 <strong>${p.beds}</strong> bd</span><span style="color:rgba(255,255,255,0.15);">·</span>` : ''}
+              ${p.baths > 0 ? `<span class="sh-card-stat">🚿 <strong>${p.baths}</strong> ba</span><span style="color:rgba(255,255,255,0.15);">·</span>` : ''}
+              ${p.sqft > 0 ? `<span class="sh-card-stat">📐 <strong>${p.sqft.toLocaleString()}</strong> sqft</span>` : ''}
             </div>
             <div class="sh-card-addr">${p.address}</div>
-            <div class="sh-card-city">${p.city}</div>
+            <div class="sh-card-city">${p.city}${p.state ? ', ' + p.state : ''}${p.zip ? ' ' + p.zip : ''}</div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
               <span style="padding:3px 10px;border-radius:999px;font-size:0.68rem;font-weight:600;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5);">${typeLabel}</span>
               <span style="font-size:0.75rem;color:#c9a84c;font-weight:600;">View Details →</span>
@@ -1209,38 +1232,51 @@
 
     /* ── FILTERS ── */
     function applyFilters() {
-      const q = document.getElementById("sh-search-input").value.trim().toLowerCase();
-      const type = document.getElementById("filter-type").value;
-      const priceRange = document.getElementById("filter-price").value;
-      const minBeds = parseInt(document.getElementById("filter-beds").value) || 0;
-      const minBaths = parseInt(document.getElementById("filter-baths").value) || 0;
+      const q = document.getElementById("sh-search-input")?.value.trim().toLowerCase() || '';
+      const type = document.getElementById("filter-type")?.value || '';
+      const minPrice = parseInt(document.getElementById("filter-price-min")?.value) || 0;
+      const maxPrice = parseInt(document.getElementById("filter-price-max")?.value) || Infinity;
+      const minBeds = parseInt(document.getElementById("filter-beds")?.value) || 0;
+      const minBaths = parseInt(document.getElementById("filter-baths")?.value) || 0;
+      const sort = document.getElementById("filter-sort")?.value || 'price-desc';
 
       filteredListings = ALL_LISTINGS.filter(p => {
         if (q && !`${p.address} ${p.city}`.toLowerCase().includes(q)) return false;
-        if (type && !p.type.includes(type)) return false;
-        if (priceRange) {
-          const [lo, hi] = priceRange.split("-").map(Number);
-          if (p.price < lo || p.price > hi) return false;
-        }
-        if (p.beds < minBeds) return false;
-        if (p.baths < minBaths) return false;
+        if (type && p.type && !p.type.toLowerCase().includes(type.toLowerCase())) return false;
+        if (p.price < minPrice || p.price > maxPrice) return false;
+        if (minBeds && p.beds < minBeds) return false;
+        if (minBaths && p.baths < minBaths) return false;
         return true;
+      });
+
+      filteredListings.sort((a, b) => {
+        switch(sort) {
+          case 'price-asc': return a.price - b.price;
+          case 'price-desc': return b.price - a.price;
+          case 'newest': return a.dom - b.dom;
+          case 'beds-desc': return (b.beds||0) - (a.beds||0);
+          case 'sqft-desc': return (b.sqft||0) - (a.sqft||0);
+          default: return b.price - a.price;
+        }
       });
 
       renderCards();
       updateMapMarkers();
-      gtag('event', 'listing_search', {
-        query: q,
-        result_count: filteredListings.length
-      });
     }
 
-    document.getElementById("sh-search-btn").addEventListener("click", applyFilters);
-    document.getElementById("sh-search-input").addEventListener("keydown", e => {
+    function clearFilters() {
+      ['filter-type','filter-price-min','filter-price-max','filter-beds','filter-baths'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      const sortEl = document.getElementById('filter-sort');
+      if (sortEl) sortEl.value = 'price-desc';
+      applyFilters();
+    }
+
+    document.getElementById("sh-search-btn")?.addEventListener("click", applyFilters);
+    document.getElementById("sh-search-input")?.addEventListener("keydown", e => {
       if (e.key === "Enter") applyFilters();
-    });
-    ["filter-type","filter-price","filter-beds","filter-baths"].forEach(id => {
-      document.getElementById(id).addEventListener("change", applyFilters);
     });
 
     /* ── MOBILE VIEW TOGGLE ── */
