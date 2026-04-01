@@ -2,8 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0"/>
 <title>Property Details | Rates &amp; Realty</title>
+<meta name="description" content="View property details, photos, mortgage calculator, and schedule a showing. Rates &amp; Realty — Southern California real estate.">
+<meta name="robots" content="noindex, follow">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Rates &amp; Realty">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="/assets/images/favicon.png"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
 <script src="/public/portal-auth-modal.js"></script>
@@ -517,7 +522,7 @@ input,select{font-family:inherit}
 /* ===== CONFIG ===== */
 const SB_URL='https://ljywhvbmsibwnssxpesh.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
-const GMAP_KEY=window.APP_CONFIG?.GOOGLE_MAPS_KEY||'';
+const GMAP_KEY='AIzaSyBQDh0BqE9vtyBCLyDoFTMJwVV2iFYyDZQ';
 
 /* ===== DATA ===== */
 const SCHOOLS = {
@@ -658,6 +663,18 @@ function populateListing() {
   const isLand = l.PropertyType === 'Land' || (l.PropertySubType || '').toLowerCase().includes('land');
 
   document.title = (l.UnparsedAddress || 'Property') + ' | Rates & Realty';
+
+  // Dynamic SEO meta
+  var metaDesc = document.querySelector('meta[name="description"]');
+  if (metaDesc) metaDesc.setAttribute('content',
+    (l.BedroomsTotal||'')+' bd '+(l.BathroomsTotalInteger||'')+' ba '+(l.LivingArea?l.LivingArea.toLocaleString()+' sqft ':'')+' home in '+(l.City||'Southern California')+'. '+(l.ListPrice?'$'+l.ListPrice.toLocaleString():'')+'. View photos, mortgage calculator, and schedule a showing.');
+  var jsonLd = {"@context":"https://schema.org","@type":"RealEstateListing","name":l.UnparsedAddress||'',"description":l.PublicRemarks||'',"url":window.location.href,"image":l.Media&&l.Media[0]?l.Media[0].MediaURL:'',
+    "offers":{"@type":"Offer","price":l.ListPrice||0,"priceCurrency":"USD","availability":l.StandardStatus==='Active'?"https://schema.org/InStock":"https://schema.org/OutOfStock"},
+    "address":{"@type":"PostalAddress","streetAddress":l.UnparsedAddress||'',"addressLocality":l.City||'',"addressRegion":l.StateOrProvince||'CA',"postalCode":l.PostalCode||''},
+    "numberOfRooms":l.BedroomsTotal||null,"floorSize":l.LivingArea?{"@type":"QuantitativeValue","value":l.LivingArea,"unitCode":"FTK"}:null};
+  var ldScript = document.getElementById('jsonLd');
+  if (!ldScript) { ldScript = document.createElement('script'); ldScript.id = 'jsonLd'; ldScript.type = 'application/ld+json'; document.head.appendChild(ldScript); }
+  ldScript.textContent = JSON.stringify(jsonLd);
 
   // Hero photo + thumbnail strip
   const photos = l.Media ? l.Media.sort((a,b)=>(a.Order||0)-(b.Order||0)).map(m=>m.MediaURL).filter(Boolean) : [];
@@ -1063,5 +1080,6 @@ function initMap() {
 }
 </script>
 <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBQDh0BqE9vtyBCLyDoFTMJwVV2iFYyDZQ&callback=initMap"></script>
+<script src="/public/components/footer.js" defer></script>
 </body>
 </html>
