@@ -1165,13 +1165,6 @@
     <div class="ld-avatar" id="sidebar-avatar">??</div>
     <div class="ld-sidebar-name" id="sidebar-name">Loading…</div>
     <div class="ld-sidebar-email" id="sidebar-email">—</div>
-    <div id="sidebarCrmId" style="text-align:center;margin-top:6px;display:none">
-      <span style="display:inline-flex;align-items:center;gap:6px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:4px 10px;cursor:pointer" onclick="navigator.clipboard.writeText(document.getElementById('crmIdBadge')?.textContent||'').then(()=>alert('Copied!'))" title="Click to copy">
-        <i class="fas fa-fingerprint" style="color:#C9A84C;font-size:.7rem"></i>
-        <span style="font-size:.68rem;color:#666">CRM:</span>
-        <span id="crmIdBadge" style="font-family:monospace;font-size:.78rem;font-weight:700;color:#C9A84C">—</span>
-      </span>
-    </div>
 
     <!-- Borrower Portal Info -->
     <div id="portalInfoCard" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:14px;margin:12px 16px">
@@ -1180,8 +1173,11 @@
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
         <div>
-          <div style="font-size:.68rem;color:#666;margin-bottom:3px">Borrower ID</div>
-          <div id="crmBorrowerId" style="font-size:.95rem;font-weight:700;color:#C9A84C;font-family:monospace">—</div>
+          <div style="font-size:.68rem;color:#666;margin-bottom:3px">Unique ID</div>
+          <div onclick="navigator.clipboard.writeText(document.getElementById('crmBorrowerId').textContent).then(()=>{this.title='Copied!';setTimeout(()=>this.title='Click to copy',1500)})" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px" title="Click to copy">
+            <div id="crmBorrowerId" style="font-family:monospace;font-size:.95rem;font-weight:700;color:#C9A84C;letter-spacing:.06em">—</div>
+            <i class="fas fa-copy" style="font-size:.65rem;color:#444"></i>
+          </div>
         </div>
         <div>
           <div style="font-size:.68rem;color:#666;margin-bottom:3px">Portal Status</div>
@@ -3311,10 +3307,6 @@ function populateUI() {
   document.getElementById('sidebar-avatar').textContent = initials;
   document.getElementById('sidebar-name').textContent = name;
   document.getElementById('sidebar-email').textContent = contactData.email || '—';
-  if (contactData.crm_id) {
-    document.getElementById('crmIdBadge').textContent = contactData.crm_id;
-    document.getElementById('sidebarCrmId').style.display = 'block';
-  }
   const callBtn = document.getElementById('callBtn');
   const emailBtn = document.getElementById('emailBtn');
   const smsBtn = document.getElementById('smsBtn');
@@ -6896,10 +6888,6 @@ async function loadPortalInfo(contactEmail, contactCrmId) {
   const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
 
-  // Show CRM ID immediately
-  const crmIdEl = document.getElementById('crmIdBadge');
-  if (crmIdEl && contactCrmId) crmIdEl.textContent = contactCrmId;
-
   try {
     const res = await fetch(`${SB_P}/rest/v1/portal_users?email=eq.${encodeURIComponent(contactEmail)}&select=id,email,first_name,last_name,borrower_id,temp_password_plain,temp_password,last_login,created_at`, {
       headers: { 'apikey': SK_P, 'Authorization': 'Bearer ' + SK_P }
@@ -6908,14 +6896,14 @@ async function loadPortalInfo(contactEmail, contactCrmId) {
     const user = users?.[0];
     if (!user) {
       document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#555">Not yet registered</span> <button onclick="crmCreatePortalAccount()" style="background:none;border:none;color:#C9A84C;font-size:.72rem;cursor:pointer;text-decoration:underline">Create Account</button>';
-      document.getElementById('crmBorrowerId').textContent = '—';
+      document.getElementById('crmBorrowerId').textContent = contactCrmId || '—';
       document.getElementById('crmPassword').textContent = '—';
       const resetBtn = document.getElementById('crmResetPwBtn');
       if (resetBtn) resetBtn.style.display = 'none';
       return;
     }
     crmPortalUser = user;
-    document.getElementById('crmBorrowerId').textContent = user.borrower_id || 'RR-' + (user.id || '').replace(/-/g,'').substring(0,6).toUpperCase();
+    document.getElementById('crmBorrowerId').textContent = user.borrower_id || contactCrmId || '—';
     document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#3cb43c">✓ Portal Active</span>';
     document.getElementById('crmLastLogin').textContent = user.last_login
       ? new Date(user.last_login).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})
