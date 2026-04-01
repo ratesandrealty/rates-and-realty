@@ -524,6 +524,9 @@ input,select,textarea{font-family:inherit}
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Years at Address</label><input type="number" id="app_years" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Monthly Rent $</label><input type="number" id="app_rent" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
           </div>
+          <!-- Previous addresses -->
+          <div id="prevAddressContainer" style="margin-top:12px;display:flex;flex-direction:column;gap:12px"></div>
+          <button type="button" onclick="addPrevAddress()" style="display:flex;align-items:center;gap:7px;background:none;border:1px dashed #2a2a2a;color:#666;border-radius:8px;padding:10px 16px;width:100%;cursor:pointer;font-size:.8rem;justify-content:center;margin-top:8px;transition:all .2s" onmouseover="this.style.borderColor='#C9A84C';this.style.color='#C9A84C'" onmouseout="this.style.borderColor='#2a2a2a';this.style.color='#666'"><i class="fas fa-plus-circle"></i> Add Previous Address (if less than 2 years at current)</button>
         </div>
 
         <!-- 2. EMPLOYMENT & INCOME -->
@@ -539,6 +542,9 @@ input,select,textarea{font-family:inherit}
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Bonus / mo</label><input type="number" id="app_bonus" min="0" step="0.01" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Commission / mo</label><input type="number" id="app_commission" min="0" step="0.01" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
           </div>
+          <!-- Previous employers -->
+          <div id="prevEmployerContainer" style="margin-top:12px;display:flex;flex-direction:column;gap:12px"></div>
+          <button type="button" onclick="addPrevEmployer()" style="display:flex;align-items:center;gap:7px;background:none;border:1px dashed #2a2a2a;color:#666;border-radius:8px;padding:10px 16px;width:100%;cursor:pointer;font-size:.8rem;justify-content:center;margin-top:8px;transition:all .2s" onmouseover="this.style.borderColor='#C9A84C';this.style.color='#C9A84C'" onmouseout="this.style.borderColor='#2a2a2a';this.style.color='#666'"><i class="fas fa-plus-circle"></i> Add Previous Employer (if less than 2 years at current job)</button>
         </div>
 
         <!-- 3. PROPERTY & LOAN -->
@@ -1076,7 +1082,10 @@ function loadApplication() {
   var emailEl = document.getElementById('app_email');
   if (emailEl && u.email) emailEl.value = u.email;
 
-  fetch(SB + '/rest/v1/mortgage_applications?or=(borrower_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&order=created_at.desc&limit=1', { headers: sbH() })
+  var orFilters = ['email.eq.' + encodeURIComponent(u.email)];
+  if (u.id) orFilters.push('borrower_user_id.eq.' + u.id);
+  if (u.borrower_id) orFilters.push('borrower_id.eq.' + u.borrower_id);
+  fetch(SB + '/rest/v1/mortgage_applications?or=(' + orFilters.join(',') + ')&order=created_at.desc&limit=1', { headers: sbH() })
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (Array.isArray(d) && d.length > 0) {
@@ -1096,6 +1105,20 @@ function loadApplication() {
           var el = document.getElementById(elId);
           if (el) el.checked = !!app[dbKey];
         });
+        // Restore previous addresses
+        if (app.former_addresses) {
+          try {
+            var addrs = typeof app.former_addresses === 'string' ? JSON.parse(app.former_addresses) : app.former_addresses;
+            if (Array.isArray(addrs)) { var c = document.getElementById('prevAddressContainer'); if (c) c.innerHTML = ''; prevAddressCount = 0; addrs.forEach(function(a) { addPrevAddress(a); }); }
+          } catch(e) {}
+        }
+        // Restore previous employers
+        if (app.employments) {
+          try {
+            var emps = typeof app.employments === 'string' ? JSON.parse(app.employments) : app.employments;
+            if (Array.isArray(emps)) { var c = document.getElementById('prevEmployerContainer'); if (c) c.innerHTML = ''; prevEmployerCount = 0; emps.forEach(function(e) { addPrevEmployer(e); }); }
+          } catch(e) {}
+        }
       } else {
         // pre-fill from user profile
         if (u.first_name) document.getElementById('app_first_name').value = u.first_name;
@@ -1123,6 +1146,69 @@ function updateAppProgress() {
   if (label) label.textContent = pct + '%';
 }
 
+/* ── PREVIOUS ADDRESS DYNAMIC BLOCKS ── */
+var prevAddressCount = 0;
+function addPrevAddress(data) {
+  data = data || {};
+  prevAddressCount++;
+  var idx = prevAddressCount;
+  var container = document.getElementById('prevAddressContainer');
+  if (!container) return;
+  var block = document.createElement('div');
+  block.id = 'prevAddr_' + idx;
+  block.style.cssText = 'background:#0d0d0d;border:1px solid #2a2a2a;border-radius:10px;padding:16px';
+  var is = 'width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:9px 11px;color:#eee;font-size:.85rem;outline:none;box-sizing:border-box';
+  var ls = 'font-size:.66rem;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px';
+  block.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:.7rem;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.1em">Previous Address #'+idx+'</div><button onclick="removePrevAddress('+idx+')" style="background:none;border:1px solid #333;color:#555;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:.72rem">✕</button></div>'
+    + '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">Street</label><input type="text" id="paddr_street_'+idx+'" value="'+(data.street||'')+'" style="'+is+'"></div><div style="width:80px"><label style="'+ls+'">Unit</label><input type="text" id="paddr_unit_'+idx+'" value="'+(data.unit||'')+'" style="'+is+'"></div></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 80px 100px;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">City</label><input type="text" id="paddr_city_'+idx+'" value="'+(data.city||'')+'" style="'+is+'"></div><div><label style="'+ls+'">State</label><input type="text" id="paddr_state_'+idx+'" value="'+(data.state||'CA')+'" maxlength="2" style="'+is+';text-transform:uppercase"></div><div><label style="'+ls+'">ZIP</label><input type="text" id="paddr_zip_'+idx+'" value="'+(data.zip||'')+'" maxlength="5" style="'+is+'"></div></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px"><div><label style="'+ls+'">Housing</label><select id="paddr_housing_'+idx+'" style="'+is+';cursor:pointer"><option value="">Select</option><option '+(data.housing==='Own'?'selected':'')+'>Own</option><option '+(data.housing==='Rent'?'selected':'')+'>Rent</option><option '+(data.housing==='Family'?'selected':'')+'>Family</option></select></div><div><label style="'+ls+'">Years</label><input type="number" id="paddr_years_'+idx+'" value="'+(data.years||'')+'" min="0" style="'+is+'"></div><div><label style="'+ls+'">Monthly Rent $</label><input type="number" id="paddr_rent_'+idx+'" value="'+(data.monthly_rent||'')+'" style="'+is+'"></div></div>';
+  container.appendChild(block);
+}
+function removePrevAddress(idx) { var el = document.getElementById('prevAddr_'+idx); if (el) el.remove(); }
+function getPrevAddresses() {
+  var addrs = [];
+  document.querySelectorAll('[id^="prevAddr_"]').forEach(function(block) {
+    var idx = block.id.split('_')[1];
+    var street = document.getElementById('paddr_street_'+idx)?.value;
+    if (!street) return;
+    addrs.push({ street: street, unit: document.getElementById('paddr_unit_'+idx)?.value||'', city: document.getElementById('paddr_city_'+idx)?.value||'', state: document.getElementById('paddr_state_'+idx)?.value||'CA', zip: document.getElementById('paddr_zip_'+idx)?.value||'', housing: document.getElementById('paddr_housing_'+idx)?.value||'', years: parseInt(document.getElementById('paddr_years_'+idx)?.value)||0, monthly_rent: parseFloat(document.getElementById('paddr_rent_'+idx)?.value)||0 });
+  });
+  return addrs;
+}
+
+/* ── PREVIOUS EMPLOYER DYNAMIC BLOCKS ── */
+var prevEmployerCount = 0;
+function addPrevEmployer(data) {
+  data = data || {};
+  prevEmployerCount++;
+  var idx = prevEmployerCount;
+  var container = document.getElementById('prevEmployerContainer');
+  if (!container) return;
+  var block = document.createElement('div');
+  block.id = 'prevEmp_' + idx;
+  block.style.cssText = 'background:#0d0d0d;border:1px solid #2a2a2a;border-radius:10px;padding:16px';
+  var is = 'width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:9px 11px;color:#eee;font-size:.85rem;outline:none;box-sizing:border-box';
+  var ls = 'font-size:.66rem;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px';
+  block.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:.7rem;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.1em">Previous Employer #'+idx+'</div><button onclick="removePrevEmployer('+idx+')" style="background:none;border:1px solid #333;color:#555;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:.72rem">✕</button></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">Employer Name</label><input type="text" id="pemp_name_'+idx+'" value="'+(data.employer_name||'')+'" style="'+is+'"></div><div><label style="'+ls+'">Position / Title</label><input type="text" id="pemp_title_'+idx+'" value="'+(data.title||'')+'" style="'+is+'"></div></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">Phone</label><input type="tel" id="pemp_phone_'+idx+'" value="'+(data.phone||'')+'" style="'+is+'"></div><div><label style="'+ls+'">Start Date</label><input type="date" id="pemp_start_'+idx+'" value="'+(data.start_date||'')+'" style="'+is+'"></div><div><label style="'+ls+'">End Date</label><input type="date" id="pemp_end_'+idx+'" value="'+(data.end_date||'')+'" style="'+is+'"></div></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 80px 80px;gap:10px;margin-bottom:10px"><div><label style="'+ls+'">City</label><input type="text" id="pemp_city_'+idx+'" value="'+(data.city||'')+'" style="'+is+'"></div><div><label style="'+ls+'">State</label><input type="text" id="pemp_state_'+idx+'" value="'+(data.state||'CA')+'" maxlength="2" style="'+is+';text-transform:uppercase"></div><div><label style="'+ls+'">ZIP</label><input type="text" id="pemp_zip_'+idx+'" value="'+(data.zip||'')+'" maxlength="5" style="'+is+'"></div></div>'
+    + '<div style="display:grid;grid-template-columns:1fr auto;gap:10px"><div><label style="'+ls+'">Monthly Income $</label><input type="number" id="pemp_income_'+idx+'" value="'+(data.monthly_income||'')+'" style="'+is+'"></div><div style="display:flex;align-items:center;padding-top:20px"><label style="font-size:.82rem;color:#888;display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" id="pemp_selfemp_'+idx+'" '+(data.self_employed?'checked':'')+' style="accent-color:#C9A84C"> Self-Employed</label></div></div>';
+  container.appendChild(block);
+}
+function removePrevEmployer(idx) { var el = document.getElementById('prevEmp_'+idx); if (el) el.remove(); }
+function getPrevEmployers() {
+  var emps = [];
+  document.querySelectorAll('[id^="prevEmp_"]').forEach(function(block) {
+    var idx = block.id.split('_')[1];
+    var name = document.getElementById('pemp_name_'+idx)?.value;
+    if (!name) return;
+    emps.push({ employer_name: name, title: document.getElementById('pemp_title_'+idx)?.value||'', phone: document.getElementById('pemp_phone_'+idx)?.value||'', start_date: document.getElementById('pemp_start_'+idx)?.value||'', end_date: document.getElementById('pemp_end_'+idx)?.value||'', city: document.getElementById('pemp_city_'+idx)?.value||'', state: document.getElementById('pemp_state_'+idx)?.value||'CA', zip: document.getElementById('pemp_zip_'+idx)?.value||'', monthly_income: parseFloat(document.getElementById('pemp_income_'+idx)?.value)||0, self_employed: document.getElementById('pemp_selfemp_'+idx)?.checked||false });
+  });
+  return emps;
+}
+
 function saveApplication(silent) {
   var u = currentUser;
   if (!u || !u.id) return;
@@ -1146,6 +1232,14 @@ function saveApplication(silent) {
     var el = document.getElementById(elId);
     data[dbKey] = el ? el.checked : false;
   });
+
+  // dynamic sections
+  data.former_addresses = JSON.stringify(getPrevAddresses());
+  data.employments = JSON.stringify(getPrevEmployers());
+
+  // borrower identifiers
+  data.borrower_id = u.borrower_id || u.crm_id || null;
+  data.borrower_user_id = u.id || null;
 
   var method, url;
   if (existingAppId) {
