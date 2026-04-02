@@ -4150,14 +4150,18 @@ async function loadDocumentsGrid() {
   container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:32px;color:rgba(255,255,255,0.3);">Loading…</div>';
 
   try {
-    const idField = contactId ? 'contact_id' : 'lead_id';
-    const idVal = contactId || leadId;
-    const { data } = await sb.from('uploaded_documents')
-      .select('*')
-      .eq(idField, idVal)
-      .order('uploaded_at', { ascending: false });
-    _allDocs = data || [];
+    const payload = { action: 'get_documents' };
+    if (contactId) payload.contact_id = contactId;
+    if (leadId) payload.lead_id = leadId;
+    const res = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/portal-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const result = await res.json();
+    _allDocs = result.documents || [];
   } catch(e) {
+    console.error('loadDocumentsGrid error:', e);
     _allDocs = [];
   }
   renderDocsGrid();
