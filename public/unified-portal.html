@@ -1531,6 +1531,7 @@ function renderShowings(showings) {
 
 /* ===== LISTING ALERTS ===== */
 var ALERT_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/listing-alert-actions';
+var ALERT_HEADERS = {'Content-Type':'application/json','Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4'};
 
 async function loadAlerts() {
   var container = document.getElementById('alertsContainer');
@@ -1539,7 +1540,7 @@ async function loadAlerts() {
   if (!user) return;
   container.innerHTML = '<div style="text-align:center;padding:30px;color:#555"><i class="fas fa-spinner fa-spin"></i> Loading alerts...</div>';
   try {
-    var res = await fetch(ALERT_FN, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'get_alerts',portal_user_id:user.id||null,borrower_id:user.borrower_id||user.crm_id||null}) });
+    var res = await fetch(ALERT_FN, { method:'POST', headers:ALERT_HEADERS, body:JSON.stringify({action:'get_alerts',portal_user_id:user.id||null,borrower_id:user.borrower_id||user.crm_id||null}) });
     var result = await res.json();
     var alerts = result.alerts || [];
     if (!alerts.length) {
@@ -1567,13 +1568,13 @@ async function loadAlerts() {
 }
 
 async function toggleAlert(alertId,isActive) {
-  await fetch(ALERT_FN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'toggle_alert',alert_id:alertId,is_active:isActive})});
+  await fetch(ALERT_FN,{method:'POST',headers:ALERT_HEADERS,body:JSON.stringify({action:'toggle_alert',alert_id:alertId,is_active:isActive})});
   loadAlerts();
 }
 
 async function deleteAlert(alertId) {
   if(!confirm('Delete this listing alert?'))return;
-  await fetch(ALERT_FN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete_alert',alert_id:alertId})});
+  await fetch(ALERT_FN,{method:'POST',headers:ALERT_HEADERS,body:JSON.stringify({action:'delete_alert',alert_id:alertId})});
   loadAlerts();
 }
 
@@ -1601,7 +1602,7 @@ async function submitAlert(){
   }
   var alertData={name:name,frequency:document.getElementById('al_freq')?.value||'Daily',listing_type:alertListingType,counties:selectedCounties,cities:selectedCitiesAlert,min_price:document.getElementById('al_min_price')?.value||null,max_price:document.getElementById('al_max_price')?.value||null,min_beds:document.getElementById('al_beds')?.value||null,min_baths:document.getElementById('al_baths')?.value||null,property_types:Array.from(document.querySelectorAll('.al_proptype:checked')).map(function(e){return e.value;}),has_pool:document.getElementById('al_pool')?.checked||false,has_garage:document.getElementById('al_garage')?.checked||false,new_construction_only:document.getElementById('al_new_construction')?.checked||false,keywords:document.getElementById('al_keywords')?.value?.trim()||null};
   try{
-    var res=await fetch(ALERT_FN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_alert',portal_user_id:user.id||null,email:user.email||null,borrower_id:user.borrower_id||user.crm_id||null,alert:alertData,user_email:user.email})});
+    var res=await fetch(ALERT_FN,{method:'POST',headers:ALERT_HEADERS,body:JSON.stringify({action:'create_alert',portal_user_id:user.id||null,email:user.email||null,borrower_id:user.borrower_id||user.crm_id||null,alert:alertData,user_email:user.email})});
     var result=await res.json();
     if(!res.ok){showToast('Error: '+(result.error||result.message||'Server error '+res.status),'error');if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-bell"></i> Create Alert';}return;}
     if(result.error){showToast('Error: '+result.error,'error');if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-bell"></i> Create Alert';}return;}
