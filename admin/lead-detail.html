@@ -2720,8 +2720,8 @@
           ondrop="handleDocDrop(event)">
           <div style="font-size:32px; margin-bottom:8px;">📎</div>
           <div style="color:rgba(255,255,255,0.6); font-size:14px;">Drag & drop files here or <span style="color:var(--gold);cursor:pointer;" onclick="triggerDocFileInput()">browse</span></div>
-          <div style="color:rgba(255,255,255,0.3); font-size:12px; margin-top:4px;">PDF, JPG, PNG, DOCX — max 25MB</div>
-          <input type="file" id="doc-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.docx" style="display:none">
+          <div style="color:rgba(255,255,255,0.3); font-size:12px; margin-top:4px;">PDF, JPG, PNG, GIF, WEBP, BMP, TIFF, TXT — max 25MB (images auto-convert to PDF)</div>
+          <input type="file" id="doc-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif,.txt" style="display:none">
         </div>
 
         <!-- Doc type filter tabs -->
@@ -3926,30 +3926,70 @@ async function updateDocStatus(docType, status, existingId) {
   }
 }
 
+// ── PDF Auto-Conversion ──────────────────────────────
+const _CONVERT_FN = `${window.APP_CONFIG.SUPABASE_URL}/functions/v1/convert-to-pdf`;
+const _convertibleTypes = ['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/bmp','image/tiff'];
+
+function _fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function _convertToPdfIfNeeded(file) {
+  const isPdf = file.type === 'application/pdf';
+  const isSupported = _convertibleTypes.includes(file.type) || file.type === 'text/plain';
+  if (isPdf) return { file, converted: false };
+  if (!isSupported) return { file, converted: false };
+  try {
+    toast('Converting ' + file.name + ' to PDF…');
+    const base64 = await _fileToBase64(file);
+    const res = await fetch(_CONVERT_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_base64: base64, mime_type: file.type, file_name: file.name })
+    });
+    if (res.status === 415) {
+      toast('This file type cannot be auto-converted. File saved in original format.', true);
+      return { file, converted: false };
+    }
+    const data = await res.json();
+    if (!res.ok || !data.success) return { file, converted: false };
+    const pdfBytes = Uint8Array.from(atob(data.pdf_base64), c => c.charCodeAt(0));
+    return { file: new File([pdfBytes], data.pdf_name, { type: 'application/pdf' }), converted: true };
+  } catch(e) { console.warn('PDF conversion failed, using original:', e); return { file, converted: false }; }
+}
+
 function handleDocUpload(docType) {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.pdf,.jpg,.jpeg,.png,.doc,.docx';
+  input.accept = '.pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif,.txt';
   input.onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     toast('Uploading ' + file.name + '…');
     try {
-      const path = `${contactId || leadId}/${docType}/${Date.now()}_${file.name}`;
-      const { error: upErr } = await sb.storage.from('borrower-documents').upload(path, file);
+      const { file: finalFile, converted } = await _convertToPdfIfNeeded(file);
+      if (converted) toast('Converted to PDF');
+      const safeName = finalFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${contactId || leadId}/${docType}/${Date.now()}_${safeName}`;
+      const { error: upErr } = await sb.storage.from('borrower-documents').upload(path, finalFile);
       if (upErr) throw upErr;
       await sb.from('uploaded_documents').insert({
         document_type: docType,
         type: docType,
-        file_name: file.name,
+        file_name: finalFile.name,
         file_path: path,
         status: 'received',
         lead_id: leadId || null,
         contact_id: contactId || null
       });
-      toast('✓ ' + file.name + ' uploaded');
+      toast('✓ ' + finalFile.name + ' uploaded' + (converted ? ' (converted to PDF)' : ''));
       loadDocumentsGrid();
-      await logActivity('document_uploaded', `Document uploaded: ${docType} — ${file.name}`);
+      await logActivity('document_uploaded', `Document uploaded: ${docType} — ${finalFile.name}${converted ? ' (auto-converted to PDF)' : ''}`);
     } catch (err) {
       toast('Upload error: ' + err.message, true);
     }
@@ -3998,7 +4038,11 @@ function showDocUploadModal() {
     return;
   }
   if (_pendingDocFiles.length) {
-    info.textContent = _pendingDocFiles.map(f => f.name).join(', ') + ` (${_pendingDocFiles.length} file${_pendingDocFiles.length>1?'s':''})`;
+    const names = _pendingDocFiles.map(f => {
+      const willConvert = f.type !== 'application/pdf' && (_convertibleTypes.includes(f.type) || f.type === 'text/plain');
+      return f.name + (willConvert ? ' → PDF' : '');
+    }).join(', ');
+    info.innerHTML = names + ` (${_pendingDocFiles.length} file${_pendingDocFiles.length>1?'s':''})`;
   } else {
     info.innerHTML = '<span style="cursor:pointer;color:var(--gold);" onclick="triggerDocFileInput()">Click to select files</span>';
   }
@@ -4019,22 +4063,22 @@ async function confirmDocUpload() {
   btn.textContent = 'Uploading…';
   btn.disabled = true;
 
+  let convertedCount = 0;
   for (const file of _pendingDocFiles) {
     console.log('Uploading doc:', file.name, 'contactId:', contactId, 'leadId:', leadId, 'docType:', docType);
     try {
+      // Auto-convert images/text to PDF
+      const { file: finalFile, converted } = await _convertToPdfIfNeeded(file);
+      if (converted) convertedCount++;
+
       const { data: sessionData } = await sb.auth.getSession();
       console.log('Auth state:', sessionData?.session?.user?.email || 'NOT LOGGED IN');
       const ts = Date.now();
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const safeName = finalFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
         const path = `${contactId || leadId}/${docType}/${ts}_${safeName}`;
 
         // Convert file to base64 for edge function
-        const base64 = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result.split(',')[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
+        const base64 = await _fileToBase64(finalFile);
 
         // Upload via edge function (uses service role, bypasses RLS)
         const uploadResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/google-drive-upload`, {
@@ -4047,12 +4091,12 @@ async function confirmDocUpload() {
             action: 'upload_to_storage',
             file_base64: base64,
             file_name: safeName,
-            file_type: file.type || 'application/octet-stream',
+            file_type: finalFile.type || 'application/octet-stream',
             storage_path: path,
             contact_id: contactId || null,
             lead_id: leadId || null,
             document_type: docType,
-            file_size: file.size
+            file_size: finalFile.size
           })
         });
 
@@ -4062,7 +4106,7 @@ async function confirmDocUpload() {
           // Fallback: try direct upload with anon key
           const { error: directError } = await sb.storage
             .from('borrower-documents')
-            .upload(path, file, { upsert: true });
+            .upload(path, finalFile, { upsert: true });
 
           if (directError) throw new Error('Upload failed: ' + directError.message);
 
@@ -4072,11 +4116,11 @@ async function confirmDocUpload() {
             lead_id: leadId || null,
             document_type: docType,
             type: docType,
-            file_name: file.name,
+            file_name: finalFile.name,
             file_path: path,
             file_url: urlData.publicUrl,
             status: 'received',
-            file_size: file.size,
+            file_size: finalFile.size,
             uploaded_at: new Date().toISOString()
           });
           if (insertError) throw new Error('DB insert failed: ' + insertError.message);
@@ -4095,7 +4139,8 @@ async function confirmDocUpload() {
   btn.textContent = 'Upload';
   btn.disabled = false;
   closeDocUploadModal();
-  toast(_pendingDocFiles.length + ' document(s) uploaded');
+  const msg = _pendingDocFiles.length + ' document(s) uploaded' + (convertedCount ? ` (${convertedCount} converted to PDF)` : '');
+  toast(msg);
   loadDocumentsGrid();
 }
 
