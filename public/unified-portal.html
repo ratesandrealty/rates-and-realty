@@ -1001,15 +1001,17 @@ function initPortal(user) {
   var profBidEl = document.getElementById('profileBorrowerId');
   if (profBidEl) profBidEl.textContent = uid;
 
-  // load everything
-  loadDashboardStats();
-  loadApplication();
-  loadSavedHomes();
-  loadShowingCart();
-  loadShowings();
-  loadAlerts();
-  loadDocHistory();
-  loadProfile();
+  // load everything — only if user session is valid
+  if (currentUser && currentUser.email) {
+    loadDashboardStats();
+    loadApplication();
+    loadSavedHomes();
+    loadShowingCart();
+    loadShowings();
+    loadAlerts();
+    loadDocHistory();
+    loadProfile();
+  }
 
   // sidebar nav
   document.querySelectorAll('#sidebarNav a[data-section]').forEach(function(a) {
@@ -1044,21 +1046,24 @@ function navigateSection(section) {
 function loadDashboardStats() {
   var u = currentUser;
   if (!u || !u.email) return;
-  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'get_dashboard_stats', portal_user_id: u.id || null, email: u.email, borrower_id: u.borrower_id || u.crm_id || null })
-  }).then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (d.saved_count != null) document.getElementById('statSaved').textContent = d.saved_count;
-      if (d.showings_count != null) document.getElementById('statShowings').textContent = d.showings_count;
-      if (d.alerts_count != null) document.getElementById('statAlerts').textContent = d.alerts_count;
-      if (d.app_status) {
-        var s = d.app_status;
-        document.getElementById('statAppStatus').textContent = s.charAt(0).toUpperCase() + s.slice(1);
-      } else {
-        document.getElementById('statAppStatus').textContent = 'Not Started';
-      }
-    }).catch(function() {});
+  var PD = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data';
+  var h = { 'Content-Type': 'application/json' };
+  // Saved homes count
+  fetch(PD, { method:'POST', headers:h, body:JSON.stringify({ action:'get_saved_homes', portal_user_id:u.id||null, email:u.email }) })
+    .then(function(r){return r.json();}).then(function(d){ var el=document.getElementById('statSaved'); if(el&&d.homes) el.textContent=d.homes.length; }).catch(function(){});
+  // Showings count
+  fetch(PD, { method:'POST', headers:h, body:JSON.stringify({ action:'get_showings', portal_user_id:u.id||null, email:u.email, borrower_id:u.borrower_id||u.crm_id||null }) })
+    .then(function(r){return r.json();}).then(function(d){ var el=document.getElementById('statShowings'); if(el&&d.showings) el.textContent=d.showings.length; }).catch(function(){});
+  // Alerts count — use alert edge function
+  fetch(ALERT_FN, { method:'POST', headers:ALERT_HEADERS, body:JSON.stringify({ action:'get_alerts', portal_user_id:u.id||null, borrower_id:u.borrower_id||u.crm_id||null }) })
+    .then(function(r){return r.json();}).then(function(d){ var el=document.getElementById('statAlerts'); if(el&&d.alerts) el.textContent=d.alerts.filter(function(a){return a.is_active;}).length; }).catch(function(){});
+  // Application status
+  fetch(PD, { method:'POST', headers:h, body:JSON.stringify({ action:'get_application', email:u.email, borrower_id:u.borrower_id||u.crm_id||null, portal_user_id:u.id||null }) })
+    .then(function(r){return r.json();}).then(function(d){
+      var el=document.getElementById('statAppStatus');
+      if(el&&d.application&&d.application.status){ var s=d.application.status; el.textContent=s.charAt(0).toUpperCase()+s.slice(1); }
+      else if(el){ el.textContent='Not Started'; }
+    }).catch(function(){});
 }
 
 /* ===== APPLICATION ===== */
@@ -1441,38 +1446,23 @@ function submitShowings() {
   if (!date) { showToast('Please select a preferred date', 'error'); return; }
 
   var u = currentUser;
-  var batchId = 'batch_' + Date.now();
-  var inserts = cart.map(function(item) {
-    return {
-      listing_key: item.listingKey,
-      property_price: item.price,
-      property_address: item.address,
-      property_city: item.city,
-      property_photo: item.photo,
-      property_beds: item.beds,
-      property_baths: item.baths,
-      preferred_date: date,
-      preferred_time: time,
-      phone: phone || null,
-      notes: notes || null,
-      email: u ? u.email : null,
-      name: u ? ((u.first_name || '') + ' ' + (u.last_name || '')).trim() : null,
-      portal_user_id: u ? u.id : null,
-      batch_id: batchId,
-      status: 'pending'
-    };
+  var homes = cart.map(function(item) {
+    return { listingKey:String(item.listingKey||''), address:String(item.address||''), city:String(item.city||''), price:String(item.price||''), photo:String(item.photo||''), beds:String(item.beds||''), baths:String(item.baths||'') };
   });
 
-  fetch(SB + '/rest/v1/showings', { method: 'POST', headers: sbH(), body: JSON.stringify(inserts) })
-    .then(function(r) {
-      if (!r.ok) throw new Error('Failed');
+  fetch(SB + '/functions/v1/submit-showing', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email:u?u.email:null, name:u?((u.first_name||'')+' '+(u.last_name||'')).trim():null, phone:phone||null, portal_user_id:u?u.id:null, borrower_id:u?u.borrower_id:null, preferred_date:date, preferred_time:time, notes:notes||null, homes:homes })
+  }).then(function(r) { return r.json(); })
+    .then(function(result) {
+      if (result.error) throw new Error(result.error);
       localStorage.removeItem('showingCart');
       loadShowingCart();
       loadShowings();
       loadDashboardStats();
       showToast('Showings requested! Rene will confirm shortly.', 'success');
     })
-    .catch(function() { showToast('Error submitting showings. Call (714) 472-8508', 'error'); });
+    .catch(function(e) { showToast('Error: ' + (e.message||'Call (714) 472-8508'), 'error'); });
 }
 
 /* ===== SHOWINGS ===== */
@@ -1709,11 +1699,16 @@ function uploadFiles() {
 function loadDocHistory() {
   var u = currentUser;
   if (!u || !u.id) return;
-  fetch(SB + '/rest/v1/borrower_documents?user_id=eq.' + u.id + '&order=uploaded_at.desc&limit=20', { headers: sbH() })
-    .then(function(r) { return r.json(); })
-    .then(function(docs) {
-      var c = document.getElementById('docHistory');
-      if (!Array.isArray(docs) || !docs.length) {
+  var c = document.getElementById('docHistory');
+  if (!c) return;
+  // Use portal-data edge function to avoid direct REST 401
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'get_documents', portal_user_id: u.id, email: u.email })
+  }).then(function(r) { return r.json(); })
+    .then(function(result) {
+      var docs = result.documents || [];
+      if (!docs.length) {
         c.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No documents uploaded yet.</p>';
         return;
       }
@@ -1770,10 +1765,10 @@ function saveProfile(e) {
     phone: document.getElementById('profPhone').value
   };
 
-  fetch(SB + '/rest/v1/portal_users?id=eq.' + u.id, {
-    method: 'PATCH',
-    headers: sbH(),
-    body: JSON.stringify(data)
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'update_profile', portal_user_id: u.id, data: data })
   }).then(function(r) {
     if (!r.ok) throw new Error('Save failed');
     // update local
