@@ -5,6 +5,7 @@ const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 const ML_KEY = Deno.env.get('MAILERLITE_API_KEY') || Deno.env.get('MAILER_LITE_API_KEY') || Deno.env.get('ML_API_KEY');
 const SMS_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service';
+const PUSH_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/send-push';
 
 console.log('listing-alert-actions started, ML_KEY present:', !!ML_KEY);
 
@@ -176,6 +177,23 @@ Deno.serve(async (req: Request) => {
             })
           });
         } catch(smsErr) { console.warn('SMS error:', smsErr); }
+      }
+
+      // Push notification
+      if (portal_user_id) {
+        try {
+          await fetch(PUSH_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'send',
+              portal_user_id: portal_user_id,
+              title: 'Alert Created!',
+              message: `Your "${alert.name}" alert is active. We'll notify you when homes match.`,
+              url: 'https://beta.ratesandrealty.com/public/unified-portal.html#alerts'
+            })
+          });
+        } catch(pushErr) { console.warn('Push notification error:', pushErr); }
       }
 
       return ok({ success: true, alert: newAlert, emailed: emailResult.sent, sms_queued: !!userPhone, email_error: emailResult.error, ml_key_present: !!ML_KEY });

@@ -971,6 +971,58 @@ function handleSignup(e) {
   });
 }
 
+/* ===== WEB PUSH NOTIFICATIONS ===== */
+var PUSH_FN = SB + '/functions/v1/send-push';
+
+async function initPushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    var keyRes = await fetch(PUSH_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_vapid_key' })
+    });
+    var keyData = await keyRes.json();
+    var vapid_public_key = keyData.vapid_public_key;
+    if (!vapid_public_key) return;
+
+    var reg = await navigator.serviceWorker.register('/service-worker.js');
+    await navigator.serviceWorker.ready;
+
+    var sub = await reg.pushManager.getSubscription();
+
+    if (!sub) {
+      var permission = await Notification.requestPermission();
+      if (permission !== 'granted') return;
+      var vapidKey = Uint8Array.from(atob(vapid_public_key.replace(/-/g,'+').replace(/_/g,'/')), function(c) { return c.charCodeAt(0); });
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: vapidKey
+      });
+    }
+
+    var user = currentUser;
+    await fetch(PUSH_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'subscribe',
+        portal_user_id: user?.id || null,
+        contact_id: user?.contact_id || null,
+        borrower_id: user?.borrower_id || null,
+        subscription: {
+          endpoint: sub.endpoint,
+          keys: {
+            p256dh: btoa(String.fromCharCode.apply(null, new Uint8Array(sub.getKey('p256dh')))).replace(/\+/g,'-').replace(/\//g,'_'),
+            auth: btoa(String.fromCharCode.apply(null, new Uint8Array(sub.getKey('auth')))).replace(/\+/g,'-').replace(/\//g,'_')
+          }
+        }
+      })
+    });
+    console.log('Push notifications enabled');
+  } catch(e) { console.warn('Push setup error:', e); }
+}
+
 /* ===== SHOW AUTH / PORTAL ===== */
 function showAuthPage() {
   document.getElementById('authPage').style.display = 'block';
@@ -1011,6 +1063,7 @@ function initPortal(user) {
     loadAlerts();
     loadDocHistory();
     loadProfile();
+    initPushNotifications();
   }
 
   // sidebar nav
