@@ -128,8 +128,9 @@ var allShowings=[],batches={},sortKey='created_at',sortDir=-1;
 async function loadShowings(){
   document.getElementById('showingsBody').innerHTML='<tr><td colspan="9" class="empty"><i class="fas fa-spinner fa-spin"></i><p>Loading...</p></td></tr>';
   try{
-    var res=await fetch(SB+'/rest/v1/showings?order=created_at.desc&limit=500',{headers:{'apikey':SK,'Authorization':'Bearer '+SK}});
-    allShowings=await res.json();
+    var res=await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_all_showings'})});
+    var result=await res.json();
+    allShowings=result.showings||[];
   }catch(e){allShowings=[];}
   batches={};
   allShowings.forEach(function(s){var k=s.batch_id||s.id;if(!batches[k])batches[k]={meta:s,items:[]};batches[k].items.push(s);});
@@ -203,7 +204,7 @@ function toggleExpand(bid){var row=document.getElementById('expand-'+bid);var ch
 
 async function updateStatus(bid,s){
   if(!s||!bid)return;
-  await fetch(SB+'/rest/v1/showings?batch_id=eq.'+bid,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':SK,'Authorization':'Bearer '+SK},body:JSON.stringify({status:s,updated_at:new Date().toISOString()})});
+  await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_showing_status',batch_id:bid,status:s})});
   if(batches[bid])batches[bid].meta.status=s;
   updateStats();renderTable();
 }

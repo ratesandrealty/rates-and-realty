@@ -1028,35 +1028,22 @@ function navigateSection(section) {
 /* ===== DASHBOARD STATS ===== */
 function loadDashboardStats() {
   var u = currentUser;
-  if (!u || !u.id) return;
-  var h = { 'apikey': SK, 'Authorization': 'Bearer ' + SK };
-
-  fetch(SB + '/rest/v1/saved_listings?portal_user_id=eq.' + u.id + '&select=id', { headers: h })
-    .then(function(r) { return r.json(); })
-    .then(function(d) { document.getElementById('statSaved').textContent = Array.isArray(d) ? d.length : 0; })
-    .catch(function() {});
-
-  fetch(SB + '/rest/v1/showings?or=(portal_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&select=id', { headers: h })
-    .then(function(r) { return r.json(); })
-    .then(function(d) { document.getElementById('statShowings').textContent = Array.isArray(d) ? d.length : 0; })
-    .catch(function() {});
-
-  fetch(SB + '/rest/v1/listing_alerts?portal_user_id=eq.' + u.id + '&is_active=eq.true&select=id', { headers: h })
-    .then(function(r) { return r.json(); })
-    .then(function(d) { document.getElementById('statAlerts').textContent = Array.isArray(d) ? d.length : 0; })
-    .catch(function() {});
-
-  fetch(SB + '/rest/v1/mortgage_applications?or=(borrower_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&order=created_at.desc&limit=1', { headers: h })
-    .then(function(r) { return r.json(); })
+  if (!u || !u.email) return;
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'get_dashboard_stats', portal_user_id: u.id || null, email: u.email, borrower_id: u.borrower_id || u.crm_id || null })
+  }).then(function(r) { return r.json(); })
     .then(function(d) {
-      if (Array.isArray(d) && d.length > 0) {
-        var s = d[0].status || d[0].application_status || 'draft';
+      if (d.saved_count != null) document.getElementById('statSaved').textContent = d.saved_count;
+      if (d.showings_count != null) document.getElementById('statShowings').textContent = d.showings_count;
+      if (d.alerts_count != null) document.getElementById('statAlerts').textContent = d.alerts_count;
+      if (d.app_status) {
+        var s = d.app_status;
         document.getElementById('statAppStatus').textContent = s.charAt(0).toUpperCase() + s.slice(1);
       } else {
         document.getElementById('statAppStatus').textContent = 'Not Started';
       }
-    })
-    .catch(function() {});
+    }).catch(function() {});
 }
 
 /* ===== APPLICATION ===== */
@@ -1087,14 +1074,14 @@ async function loadApplication() {
   if (emailEl && u.email) emailEl.value = u.email;
 
   var rows = [];
-  var email = encodeURIComponent(u.email);
-
-  // Try email first
-  try { rows = await fetch(SB + '/rest/v1/mortgage_applications?or=(email.eq.' + email + ',borrower_email.eq.' + email + ')&order=updated_at.desc&limit=1', { headers: sbH() }).then(function(r) { return r.json(); }); } catch(e) { rows = []; }
-  // Try borrower_id
-  if (!rows.length && u.borrower_id) { try { rows = await fetch(SB + '/rest/v1/mortgage_applications?borrower_id=eq.' + u.borrower_id + '&order=updated_at.desc&limit=1', { headers: sbH() }).then(function(r) { return r.json(); }); } catch(e) { rows = []; } }
-  // Try portal user ID
-  if (!rows.length && u.id) { try { rows = await fetch(SB + '/rest/v1/mortgage_applications?borrower_user_id=eq.' + u.id + '&order=updated_at.desc&limit=1', { headers: sbH() }).then(function(r) { return r.json(); }); } catch(e) { rows = []; } }
+  try {
+    var appRes = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_application', email: u.email, borrower_id: u.borrower_id || u.crm_id || null, portal_user_id: u.id || null })
+    });
+    var appResult = await appRes.json();
+    if (appResult.application) rows = [appResult.application];
+  } catch(e) { rows = []; }
 
   if (!rows.length || !rows[0]) {
     // pre-fill from user profile
@@ -1304,15 +1291,15 @@ async function saveApplication(silent) {
   };
 
   try {
-    var res = await fetch(SB + '/rest/v1/rpc/save_mortgage_application', {
+    var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SK, 'Authorization': 'Bearer ' + SK },
-      body: JSON.stringify({ p_email: u.email, p_borrower_id: u.borrower_id || u.crm_id || null, p_borrower_user_id: u.id || null, p_data: data })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_application', email: u.email, borrower_id: u.borrower_id || u.crm_id || null, portal_user_id: u.id || null, data: data })
     });
     var result = await res.json();
 
-    if (!res.ok || result.error) {
-      throw new Error(result.message || result.error || result.hint || JSON.stringify(result));
+    if (!res.ok || result.error || result.success === false) {
+      throw new Error(result.error || result.message || 'Save failed');
     }
 
     appDirty = false;
@@ -1340,10 +1327,12 @@ document.addEventListener('input', function(e) {
 /* ===== SAVED HOMES ===== */
 function loadSavedHomes() {
   var u = currentUser;
-  if (!u || !u.id) return;
-  fetch(SB + '/rest/v1/saved_listings?portal_user_id=eq.' + u.id + '&order=saved_at.desc', { headers: sbH() })
-    .then(function(r) { return r.json(); })
-    .then(function(d) { renderSavedHomes(Array.isArray(d) ? d : []); })
+  if (!u || !u.email) return;
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'get_saved_homes', portal_user_id: u.id || null, email: u.email })
+  }).then(function(r) { return r.json(); })
+    .then(function(d) { renderSavedHomes(Array.isArray(d.homes) ? d.homes : []); })
     .catch(function() { renderSavedHomes([]); });
 }
 
@@ -1380,8 +1369,10 @@ function viewListing(key, addr) {
 }
 
 function removeSaved(id) {
-  fetch(SB + '/rest/v1/saved_listings?id=eq.' + id, { method: 'DELETE', headers: sbH() })
-    .then(function() { showToast('Removed from saved', 'info'); loadSavedHomes(); loadDashboardStats(); })
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'remove_saved_home', id: id })
+  }).then(function() { showToast('Removed from saved', 'info'); loadSavedHomes(); loadDashboardStats(); })
     .catch(function() { showToast('Error removing', 'error'); });
 }
 
@@ -1472,10 +1463,12 @@ function submitShowings() {
 /* ===== SHOWINGS ===== */
 function loadShowings() {
   var u = currentUser;
-  if (!u || !u.id) return;
-  fetch(SB + '/rest/v1/showings?or=(portal_user_id.eq.' + u.id + ',email.eq.' + encodeURIComponent(u.email) + ')&order=created_at.desc', { headers: sbH() })
-    .then(function(r) { return r.json(); })
-    .then(function(d) { renderShowings(Array.isArray(d) ? d : []); })
+  if (!u || !u.email) return;
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'get_showings', portal_user_id: u.id || null, email: u.email, borrower_id: u.borrower_id || u.crm_id || null })
+  }).then(function(r) { return r.json(); })
+    .then(function(d) { renderShowings(Array.isArray(d.showings) ? d.showings : []); })
     .catch(function() { renderShowings([]); });
 }
 
