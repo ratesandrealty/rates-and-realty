@@ -656,7 +656,13 @@ html,body{overflow-x:hidden}
 
       <!-- SECTION: LISTING ALERTS -->
       <div class="portal-section" id="sec-alerts">
-        <div class="section-header"><h2>Listing Alerts</h2></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+          <div>
+            <h2 style="font-size:1.2rem;font-weight:700;color:#eee;margin:0 0 3px">Listing Alerts</h2>
+            <div style="font-size:.75rem;color:#555">Get notified when new listings match your criteria</div>
+          </div>
+          <button onclick="openAlertModal()" style="background:#C9A84C;color:#000;border:none;border-radius:8px;padding:9px 16px;font-weight:700;font-size:.82rem;cursor:pointer;display:flex;align-items:center;gap:6px"><i class="fas fa-plus"></i> Create New Alert</button>
+        </div>
         <div id="alertsContainer"></div>
       </div>
 
@@ -1026,6 +1032,7 @@ function navigateSection(section) {
   document.querySelectorAll('#sidebarNav a').forEach(function(a) {
     a.classList.toggle('active', a.getAttribute('data-section') === section);
   });
+  if (section === 'alerts') loadAlerts();
   if (section === 'application') {
     setTimeout(function() {
       if (window.google && window.google.maps && window.google.maps.places) initAddressAutocomplete();
@@ -1523,14 +1530,75 @@ function renderShowings(showings) {
 }
 
 /* ===== LISTING ALERTS ===== */
-function loadAlerts() {
-  if (typeof ListingAlerts !== 'undefined' && currentUser && currentUser.id) {
-    try {
-      ListingAlerts.renderAlertsList('alertsContainer', { portal_user_id: currentUser.id });
-    } catch(e) {
-      document.getElementById('alertsContainer').innerHTML = '<div class="empty-state"><i class="fas fa-bell"></i><h3>Listing Alerts</h3><p>Unable to load alerts module.</p></div>';
+var ALERT_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/listing-alert-actions';
+
+async function loadAlerts() {
+  var container = document.getElementById('alertsContainer');
+  if (!container) return;
+  var user = currentUser;
+  if (!user) return;
+  container.innerHTML = '<div style="text-align:center;padding:30px;color:#555"><i class="fas fa-spinner fa-spin"></i> Loading alerts...</div>';
+  try {
+    var res = await fetch(ALERT_FN, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'get_alerts',portal_user_id:user.id||null,borrower_id:user.borrower_id||user.crm_id||null}) });
+    var result = await res.json();
+    var alerts = result.alerts || [];
+    if (!alerts.length) {
+      container.innerHTML = '<div style="text-align:center;padding:50px 20px;background:#111;border:1px solid #1a1a1a;border-radius:12px"><i class="fas fa-bell-slash" style="font-size:2.5rem;color:#222;display:block;margin-bottom:14px"></i><div style="font-size:.92rem;font-weight:600;color:#444;margin-bottom:6px">No listing alerts yet</div><div style="font-size:.78rem;color:#333">Click "Create New Alert" to get started.</div></div>';
+      return;
     }
-  }
+    container.innerHTML = alerts.map(function(a) {
+      var filters = [];
+      if (a.counties && a.counties.length) filters.push(a.counties.slice(0,2).join(', ')+(a.counties.length>2?' +'+( a.counties.length-2):''));
+      if (a.cities && a.cities.length) filters.push(a.cities.slice(0,3).join(', ')+(a.cities.length>3?' +'+(a.cities.length-3)+' cities':''));
+      if (a.min_price||a.max_price) filters.push('$'+(a.min_price?Number(a.min_price).toLocaleString():'0')+' - $'+(a.max_price?Number(a.max_price).toLocaleString():'Any'));
+      if (a.min_beds) filters.push(a.min_beds+'+ beds');
+      if (a.property_types && a.property_types.length) filters.push(a.property_types.slice(0,2).join(', '));
+      if (a.has_pool) filters.push('Pool');
+      return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:12px;padding:16px 18px;margin-bottom:10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+        +'<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap"><span style="font-size:.9rem;font-weight:700;color:#eee">'+a.name+'</span><span style="background:'+(a.is_active?'rgba(34,197,94,.12)':'rgba(100,100,100,.1)')+';color:'+(a.is_active?'#22c55e':'#555')+';border-radius:12px;padding:2px 9px;font-size:.68rem;font-weight:700;text-transform:uppercase">'+(a.is_active?'Active':'Paused')+'</span><span style="font-size:.7rem;color:#555">'+(a.frequency||'Daily')+'</span></div>'
+        +'<div style="font-size:.75rem;color:#666;line-height:1.7">'+(filters.join(' &bull; ')||'All listings')+'</div>'
+        +(a.last_sent_at?'<div style="font-size:.68rem;color:#444;margin-top:4px">Last sent: '+new Date(a.last_sent_at).toLocaleDateString()+'</div>':'')
+        +'</div><div style="display:flex;gap:6px;flex-shrink:0">'
+        +'<button onclick="toggleAlert(\''+a.id+'\','+(!a.is_active)+')" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:5px 10px;font-size:.72rem;cursor:pointer">'+(a.is_active?'Pause':'Resume')+'</button>'
+        +'<button onclick="deleteAlert(\''+a.id+'\')" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:7px;padding:5px 10px;font-size:.72rem;cursor:pointer">Delete</button>'
+        +'</div></div>';
+    }).join('');
+  } catch(e) { container.innerHTML = '<p style="color:#ef4444;text-align:center;padding:20px">Error loading alerts.</p>'; }
+}
+
+async function toggleAlert(alertId,isActive) {
+  await fetch(ALERT_FN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'toggle_alert',alert_id:alertId,is_active:isActive})});
+  loadAlerts();
+}
+
+async function deleteAlert(alertId) {
+  if(!confirm('Delete this listing alert?'))return;
+  await fetch(ALERT_FN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete_alert',alert_id:alertId})});
+  loadAlerts();
+}
+
+var ALERT_COUNTIES={'Orange':['Anaheim','Brea','Buena Park','Costa Mesa','Cypress','Dana Point','Fountain Valley','Fullerton','Garden Grove','Huntington Beach','Irvine','La Habra','Laguna Beach','Laguna Niguel','Lake Forest','Mission Viejo','Newport Beach','Orange','Placentia','Santa Ana','Seal Beach','Tustin','Westminster','Yorba Linda'],'Los Angeles':['Alhambra','Burbank','Carson','Cerritos','Compton','Downey','El Monte','Glendale','Hawthorne','Inglewood','Lakewood','Long Beach','Los Angeles','Norwalk','Palmdale','Pasadena','Pomona','Redondo Beach','Santa Clarita','Santa Monica','Torrance','West Covina','Whittier'],'Riverside':['Beaumont','Corona','Hemet','Indio','Lake Elsinore','Menifee','Moreno Valley','Murrieta','Palm Springs','Riverside','Temecula'],'San Bernardino':['Chino Hills','Fontana','Ontario','Rancho Cucamonga','Redlands','Rialto','San Bernardino','Upland','Victorville'],'San Diego':['Carlsbad','Chula Vista','El Cajon','Escondido','Oceanside','San Diego','San Marcos','Vista'],'Ventura':['Camarillo','Oxnard','Simi Valley','Thousand Oaks','Ventura']};
+var alertListingType='buy';
+
+function setListingType(type){alertListingType=type;var b=document.getElementById('typeBuy');var r=document.getElementById('typeRent');if(type==='buy'){if(b){b.style.background='rgba(201,168,76,.15)';b.style.borderColor='#C9A84C';b.style.color='#C9A84C';}if(r){r.style.background='#1a1a1a';r.style.borderColor='#2a2a2a';r.style.color='#666';}}else{if(r){r.style.background='rgba(201,168,76,.15)';r.style.borderColor='#C9A84C';r.style.color='#C9A84C';}if(b){b.style.background='#1a1a1a';b.style.borderColor='#2a2a2a';b.style.color='#666';}}}
+
+function updateCityList(){var c=document.getElementById('al_cities');if(!c)return;var sel=Array.from(document.querySelectorAll('.al_county:checked')).map(function(e){return e.value;});var counties=sel.length?sel:Object.keys(ALERT_COUNTIES);var cities=[];counties.forEach(function(k){(ALERT_COUNTIES[k]||[]).forEach(function(city){if(!cities.includes(city))cities.push(city);});});cities.sort();var q=(document.getElementById('al_city_search')?.value||'').toLowerCase();var filtered=q?cities.filter(function(ci){return ci.toLowerCase().indexOf(q)>-1;}):cities;c.innerHTML=filtered.map(function(city){return'<label style="display:flex;align-items:center;gap:5px;padding:3px 5px;border-radius:5px;cursor:pointer;font-size:.75rem;color:#999;white-space:nowrap"><input type="checkbox" value="'+city+'" class="al_city" style="accent-color:#C9A84C;cursor:pointer;flex-shrink:0"> '+city+'</label>';}).join('');}
+function filterAlertCities(){updateCityList();}
+
+function openAlertModal(){var old=document.getElementById('alertModal');if(old)old.remove();var is='width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:9px 12px;color:#eee;font-size:.85rem;outline:none;box-sizing:border-box';var ls='font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px';var modal=document.createElement('div');modal.id='alertModal';modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';modal.onclick=function(e){if(e.target===modal)modal.remove();};modal.innerHTML='<div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;max-width:620px;width:100%;max-height:95vh;overflow-y:auto"><div style="padding:20px 24px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#111;z-index:2;border-radius:16px 16px 0 0"><div><div style="font-size:1rem;font-weight:800;color:#eee;display:flex;align-items:center;gap:8px"><i class="fas fa-bell" style="color:#C9A84C"></i> Create Listing Alert</div><div style="font-size:.73rem;color:#555;margin-top:2px">Get emailed when matching homes hit the market</div></div><button onclick="document.getElementById(\'alertModal\').remove()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:.82rem">✕</button></div><div style="padding:20px 24px;display:flex;flex-direction:column;gap:18px"><div style="display:grid;grid-template-columns:1fr 160px;gap:12px"><div><label style="'+ls+'">Alert Name *</label><input id="al_name" type="text" placeholder="e.g. 3BR in Westminster under 800k" style="'+is+'"></div><div><label style="'+ls+'">Frequency</label><select id="al_freq" style="'+is+';cursor:pointer"><option value="Instant">Instant</option><option value="Daily" selected>Daily</option><option value="Weekly">Weekly</option></select></div></div><div><label style="'+ls+'">Type</label><div style="display:flex;gap:8px"><button id="typeBuy" onclick="setListingType(\'buy\')" style="flex:1;padding:9px;background:rgba(201,168,76,.15);border:1px solid #C9A84C;color:#C9A84C;border-radius:8px;font-size:.82rem;font-weight:700;cursor:pointer">For Sale</button><button id="typeRent" onclick="setListingType(\'rent\')" style="flex:1;padding:9px;background:#1a1a1a;border:1px solid #2a2a2a;color:#666;border-radius:8px;font-size:.82rem;font-weight:700;cursor:pointer">For Rent</button></div></div><div><label style="'+ls+'">Counties</label><div style="display:flex;flex-wrap:wrap;gap:6px">'+Object.keys(ALERT_COUNTIES).map(function(k){return'<label style="display:flex;align-items:center;gap:6px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:6px 10px;cursor:pointer;font-size:.78rem;color:#aaa" onchange="updateCityList()"><input type="checkbox" value="'+k+'" class="al_county" style="accent-color:#C9A84C;cursor:pointer"> '+k+' County</label>';}).join('')+'</div></div><div><label style="'+ls+'">Cities <span style="font-weight:400;text-transform:none;color:#444">(leave blank for all)</span></label><input id="al_city_search" type="text" placeholder="Search cities..." oninput="filterAlertCities()" style="'+is+';margin-bottom:8px"><div id="al_cities" style="background:#1a1a1a;border:1px solid #1e1e1e;border-radius:8px;max-height:140px;overflow-y:auto;padding:8px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px"></div></div><div><label style="'+ls+'">Price Range</label><div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center"><input id="al_min_price" type="number" placeholder="Min $" style="'+is+'"><span style="color:#444;font-size:.8rem">to</span><input id="al_max_price" type="number" placeholder="Max $" style="'+is+'"></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><label style="'+ls+'">Min Beds</label><select id="al_beds" style="'+is+';cursor:pointer"><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option><option value="5">5+</option></select></div><div><label style="'+ls+'">Min Baths</label><select id="al_baths" style="'+is+';cursor:pointer"><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option></select></div></div><div><label style="'+ls+'">Property Type</label><div style="display:flex;flex-wrap:wrap;gap:6px">'+['Single Family','Condo','Townhouse','Multi-Family','Land'].map(function(t){return'<label style="display:flex;align-items:center;gap:6px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:6px 10px;cursor:pointer;font-size:.78rem;color:#aaa"><input type="checkbox" value="'+t+'" class="al_proptype" style="accent-color:#C9A84C;cursor:pointer"> '+t+'</label>';}).join('')+'</div></div><div><label style="'+ls+'">Features</label><div style="display:flex;flex-wrap:wrap;gap:6px"><label style="display:flex;align-items:center;gap:6px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:6px 10px;cursor:pointer;font-size:.78rem;color:#aaa"><input type="checkbox" id="al_pool" style="accent-color:#C9A84C;cursor:pointer"> Pool</label><label style="display:flex;align-items:center;gap:6px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:6px 10px;cursor:pointer;font-size:.78rem;color:#aaa"><input type="checkbox" id="al_garage" style="accent-color:#C9A84C;cursor:pointer"> Garage</label><label style="display:flex;align-items:center;gap:6px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:6px 10px;cursor:pointer;font-size:.78rem;color:#aaa"><input type="checkbox" id="al_new_construction" style="accent-color:#C9A84C;cursor:pointer"> New Construction</label></div></div><div><label style="'+ls+'">Keywords</label><input id="al_keywords" type="text" placeholder="e.g. ocean view, ADU, IUSD" style="'+is+'"></div><button onclick="submitAlert()" id="alertSubmitBtn" style="width:100%;background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#000;font-size:.95rem;font-weight:800;padding:14px;border-radius:10px;border:none;cursor:pointer;margin-top:4px"><i class="fas fa-bell"></i> Create Alert</button><div style="text-align:center;font-size:.7rem;color:#444">Confirmation email will be sent with your alert details.</div></div></div>';document.body.appendChild(modal);updateCityList();}
+
+async function submitAlert(){
+  var name=document.getElementById('al_name')?.value?.trim();if(!name){alert('Please enter an alert name.');return;}
+  var user=currentUser;if(!user){alert('Please sign in.');return;}
+  var btn=document.getElementById('alertSubmitBtn');if(btn){btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Creating...';}
+  var alertData={name:name,frequency:document.getElementById('al_freq')?.value||'Daily',listing_type:alertListingType,counties:Array.from(document.querySelectorAll('.al_county:checked')).map(function(e){return e.value;}),cities:Array.from(document.querySelectorAll('.al_city:checked')).map(function(e){return e.value;}),min_price:document.getElementById('al_min_price')?.value||null,max_price:document.getElementById('al_max_price')?.value||null,min_beds:document.getElementById('al_beds')?.value||null,min_baths:document.getElementById('al_baths')?.value||null,property_types:Array.from(document.querySelectorAll('.al_proptype:checked')).map(function(e){return e.value;}),has_pool:document.getElementById('al_pool')?.checked||false,has_garage:document.getElementById('al_garage')?.checked||false,new_construction_only:document.getElementById('al_new_construction')?.checked||false,keywords:document.getElementById('al_keywords')?.value?.trim()||null};
+  try{
+    var res=await fetch(ALERT_FN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_alert',portal_user_id:user.id||null,email:user.email||null,borrower_id:user.borrower_id||user.crm_id||null,alert:alertData,user_email:user.email})});
+    var result=await res.json();if(!res.ok||result.error)throw new Error(result.error||'Save failed');
+    document.getElementById('alertModal')?.remove();
+    showToast('Alert created!'+(result.emailed?' Confirmation email sent.':''));
+    loadAlerts();
+  }catch(e){if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-bell"></i> Create Alert';}showToast('Error: '+e.message,'error');}
 }
 
 /* ===== DOCUMENTS ===== */
