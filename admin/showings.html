@@ -186,31 +186,34 @@ function renderTable(){
       +'<td style="font-size:.78rem;color:#888">'+(m.preferred_time||'—')+'</td>'
       +'<td><span class="badge '+(sm[status]||'badge-pending')+'">'+status+'</span></td>'
       +'<td><button onclick="toggleExpand(\''+bid+'\')" style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.2);color:#C9A84C;border-radius:6px;padding:4px 9px;font-size:.72rem;cursor:pointer">'+b.items.length+' <i class="fas fa-chevron-down" id="chev-'+bid+'" style="font-size:.6rem"></i></button></td>'
-      +'<td><div style="display:flex;gap:4px"><button onclick="updateBatchStatus(\''+bid+'\',\'confirmed\')" style="background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:#22c55e;border-radius:6px;padding:5px 10px;font-size:.7rem;font-weight:700;cursor:pointer">✓</button><button onclick="updateBatchStatus(\''+bid+'\',\'pending\')" style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:#C9A84C;border-radius:6px;padding:5px 10px;font-size:.7rem;font-weight:700;cursor:pointer">⏳</button><button onclick="updateBatchStatus(\''+bid+'\',\'cancelled\')" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:6px;padding:5px 10px;font-size:.7rem;font-weight:700;cursor:pointer">✕</button></div></td>'
+      +'<td><div style="display:flex;gap:4px"><button onclick="confirmBatch(\''+bid+'\')" title="Confirm" style="width:32px;height:32px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:#22c55e;border-radius:7px;font-size:.85rem;cursor:pointer">✓</button><button onclick="updateBatchStatus(\''+bid+'\',\'pending\')" title="Pending" style="width:32px;height:32px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:#C9A84C;border-radius:7px;font-size:.85rem;cursor:pointer">⏳</button><button onclick="updateBatchStatus(\''+bid+'\',\'cancelled\')" title="Deny" style="width:32px;height:32px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:7px;font-size:.85rem;cursor:pointer">✕</button></div></td>'
       +'</tr>'
       +'<tr id="expand-'+bid+'" class="expand-row" style="display:none"><td colspan="9">'
-      +'<div style="padding:16px 24px 18px;border-top:1px solid #1a1a1a;background:#0d0d0d">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">'
-      +'<div style="font-size:.7rem;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em">'+b.items.length+' Propert'+(b.items.length!==1?'ies':'y')+' · '+(m.preferred_date||'TBD')+' '+(m.preferred_time||'')+'</div>'
-      +(buildMapsUrl(b.items)?'<a href="'+buildMapsUrl(b.items)+'" target="_blank" style="display:flex;align-items:center;gap:5px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:#C9A84C;text-decoration:none;border-radius:7px;padding:5px 12px;font-size:.72rem;font-weight:700">🗺 Route</a>':'')
-      +'</div>'
-      +(m.notes?'<div style="font-size:.74rem;color:#666;background:#111;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-style:italic">"'+m.notes+'"</div>':'')
-      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">'
+      +'<div style="padding:16px 24px 20px;border-top:1px solid #1a1a1a;background:#0a0a0a">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
+      +'<div style="font-size:.7rem;color:#555">'+b.items.length+' propert'+(b.items.length!==1?'ies':'y')+' &bull; Drag to reorder tour stops</div>'
+      +'<div style="display:flex;gap:7px;flex-wrap:wrap">'
+      +(buildMapsUrl(b.items)?'<a href="'+buildMapsUrl(b.items)+'" target="_blank" style="display:flex;align-items:center;gap:5px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:#C9A84C;text-decoration:none;border-radius:7px;padding:6px 12px;font-size:.75rem;font-weight:700">🗺 Route</a>':'')
+      +'<button id="emailBtn_'+bid+'" onclick="sendConfirmationEmail(\''+bid+'\')" style="display:flex;align-items:center;gap:5px;background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.25);color:#60a5fa;border-radius:7px;padding:6px 12px;font-size:.75rem;font-weight:700;cursor:pointer">✉ Email</button>'
+      +'</div></div>'
+      +(m.notes?'<div style="font-size:.75rem;color:#555;background:#111;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-style:italic">"'+m.notes+'"</div>':'')
+      +'<div id="cardsGrid_'+bid+'" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px" ondragover="event.preventDefault()" ondrop="dropCard(event,\''+bid+'\')">'
       +b.items.map(function(item,i){
-        return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;overflow:hidden;cursor:pointer;transition:border-color .2s" onmouseover="this.style.borderColor=\'#C9A84C33\'" onmouseout="this.style.borderColor=\'#1e1e1e\'" onclick="openHomeModal(\''+item.id+'\',\''+bid+'\')">'
+        return '<div draggable="true" id="card_'+item.id+'" data-id="'+item.id+'" data-batch="'+bid+'" ondragstart="dragCard(event)" ondragend="this.style.opacity=\'1\'" style="background:#111;border:1px solid #1e1e1e;border-radius:10px;overflow:hidden;cursor:grab;transition:all .2s" onmouseover="this.style.borderColor=\'rgba(201,168,76,.4)\'" onmouseout="this.style.borderColor=\'#1e1e1e\'">'
           +'<div style="position:relative">'
-          +(item.property_photo?'<img src="'+item.property_photo+'" style="width:100%;height:120px;object-fit:cover;display:block" onerror="this.style.display=\'none\'">':'<div style="width:100%;height:80px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:1.5rem">🏠</div>')
-          +'<div style="position:absolute;top:6px;left:6px;background:#000c;color:#C9A84C;font-size:.6rem;font-weight:800;padding:2px 7px;border-radius:10px">#'+(i+1)+'</div>'
-          +'<button onclick="event.stopPropagation();removeHomeFromBatch(\''+item.id+'\',\''+bid+'\')" style="position:absolute;top:6px;right:6px;background:#000c;border:1px solid #333;color:#ef4444;border-radius:5px;width:22px;height:22px;font-size:.65rem;cursor:pointer;display:flex;align-items:center;justify-content:center" title="Remove">✕</button>'
+          +(item.property_photo?'<img src="'+item.property_photo+'" style="width:100%;height:140px;object-fit:cover;display:block" onerror="this.style.display=\'none\'">':'<div style="width:100%;height:90px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:2rem">🏠</div>')
+          +'<div data-badge style="position:absolute;top:8px;left:8px;background:#C9A84C;color:#000;font-size:.65rem;font-weight:800;padding:3px 8px;border-radius:10px;z-index:2">#'+(i+1)+'</div>'
+          +'<div style="position:absolute;top:8px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.3);font-size:.7rem;letter-spacing:3px" title="Drag to reorder">⠿⠿</div>'
+          +'<button onclick="event.stopPropagation();trashHome(\''+item.id+'\',\''+bid+'\')" style="position:absolute;top:7px;right:7px;background:#000c;border:1px solid #444;color:#888;border-radius:6px;width:26px;height:26px;font-size:.72rem;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2" title="Remove">🗑</button>'
           +'</div>'
-          +'<div style="padding:10px 11px">'
-          +'<div style="font-size:.82rem;font-weight:700;color:#eee;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(item.property_address||'—')+'</div>'
-          +'<div style="font-size:.72rem;color:#666;margin-bottom:5px">'+(item.property_city||'')+'</div>'
-          +'<div style="display:flex;align-items:center;justify-content:space-between;gap:4px">'
-          +(item.property_price?'<span style="font-size:.85rem;font-weight:800;color:#C9A84C">$'+Number(item.property_price).toLocaleString()+'</span>':'')
-          +'<span style="font-size:.7rem;color:#555">'+(item.property_beds||'')+'bd · '+(item.property_baths||'')+'ba</span>'
+          +'<div style="padding:11px 12px;cursor:pointer" onclick="openHomeModal(\''+item.id+'\',\''+bid+'\')">'
+          +'<div style="font-size:.85rem;font-weight:700;color:#eee;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(item.property_address||'—')+'</div>'
+          +'<div style="font-size:.73rem;color:#555;margin-bottom:6px">'+(item.property_city||'')+', CA</div>'
+          +'<div style="display:flex;align-items:center;justify-content:space-between">'
+          +(item.property_price?'<span style="font-size:.9rem;font-weight:800;color:#C9A84C">$'+Number(item.property_price).toLocaleString()+'</span>':'<span></span>')
+          +'<span style="font-size:.7rem;color:#444">'+(item.property_beds||'?')+'bd · '+(item.property_baths||'?')+'ba</span>'
           +'</div>'
-          +(item.listing_agent_name?'<div style="font-size:.65rem;color:#444;margin-top:4px;padding-top:4px;border-top:1px solid #1a1a1a">'+item.listing_agent_name+(item.listing_agent_phone?' · '+item.listing_agent_phone:'')+'</div>':'')
+          +(item.listing_agent_name?'<div style="font-size:.65rem;color:#333;margin-top:5px;padding-top:5px;border-top:1px solid #1a1a1a">'+item.listing_agent_name+'</div>':'')
           +'</div></div>';
       }).join('')+'</div></div></td></tr>';
   }).join('');
@@ -218,19 +221,52 @@ function renderTable(){
 
 function toggleExpand(bid){var row=document.getElementById('expand-'+bid);var chev=document.getElementById('chev-'+bid);if(!row)return;var open=row.style.display!=='none';row.style.display=open?'none':'table-row';if(chev)chev.className=open?'fas fa-chevron-down':'fas fa-chevron-up';}
 
+async function confirmBatch(bid){
+  await updateBatchStatus(bid,'confirmed');
+  showToast('✓ Confirmed! Use ✉ Email Client to send tour details.');
+}
+
 async function updateBatchStatus(bid,s){
   if(!s||!bid)return;
   await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_showing_status',batch_id:bid,status:s})});
   if(batches[bid])batches[bid].meta.status=s;
   updateStats();renderTable();
-  showToast(s==='confirmed'?'✓ Confirmed! Borrower will be notified.':'Status updated to '+s);
 }
 
-async function removeHomeFromBatch(showingId,batchId){
-  if(!confirm('Remove this home from the showing batch?'))return;
+async function sendConfirmationEmail(bid){
+  var batch=batches[bid];if(!batch||!batch.meta.email){showToast('No email for this borrower','error');return;}
+  var btn=document.getElementById('emailBtn_'+bid);if(btn){btn.disabled=true;btn.innerHTML='⏳ Sending...';}
+  try{
+    var res=await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/showing-actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_confirmation_email',batch_id:bid})});
+    var result=await res.json();
+    if(result.emailed||result.success){showToast('✓ Email sent to '+batch.meta.email);if(btn){btn.innerHTML='✓ Sent';btn.style.color='#22c55e';btn.style.borderColor='rgba(34,197,94,.3)';}}
+    else{showToast('Email failed: '+(result.error||'Unknown'),'error');if(btn){btn.disabled=false;btn.innerHTML='✉ Email';}}
+  }catch(e){showToast('Error: '+e.message,'error');if(btn){btn.disabled=false;btn.innerHTML='✉ Email';}}
+}
+
+async function trashHome(showingId,batchId){
   await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'remove_showing',showing_id:showingId})});
   if(batches[batchId]){batches[batchId].items=batches[batchId].items.filter(function(i){return i.id!==showingId;});if(!batches[batchId].items.length)delete batches[batchId];}
   updateStats();renderTable();showToast('Home removed.');
+}
+
+var dragSrcId=null;
+function dragCard(e){dragSrcId=e.currentTarget.dataset.id;e.currentTarget.style.opacity='0.4';e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',dragSrcId);}
+function dropCard(e,batchId){
+  e.preventDefault();var target=e.target.closest('[draggable]');
+  if(!target||target.dataset.id===dragSrcId){document.querySelectorAll('[draggable]').forEach(function(el){el.style.opacity='1';});return;}
+  var grid=document.getElementById('cardsGrid_'+batchId);if(!grid)return;
+  var cards=Array.from(grid.querySelectorAll('[draggable]'));
+  var srcIdx=cards.findIndex(function(c){return c.dataset.id===dragSrcId;});
+  var tgtIdx=cards.findIndex(function(c){return c===target;});
+  if(srcIdx<0||tgtIdx<0)return;
+  var srcEl=cards[srcIdx];
+  if(srcIdx<tgtIdx)grid.insertBefore(srcEl,target.nextSibling);else grid.insertBefore(srcEl,target);
+  srcEl.style.opacity='1';
+  var newCards=Array.from(grid.querySelectorAll('[draggable]'));
+  newCards.forEach(function(card,i){var badge=card.querySelector('[data-badge]');if(badge)badge.textContent='#'+(i+1);});
+  if(batches[batchId]){var itemsMap={};batches[batchId].items.forEach(function(it){itemsMap[it.id]=it;});batches[batchId].items=newCards.map(function(c){return itemsMap[c.dataset.id];}).filter(Boolean);}
+  showToast('Order saved — #1 is first stop');
 }
 
 function buildMapsUrl(homes){
@@ -245,24 +281,26 @@ function buildMapsUrl(homes){
 function openHomeModal(showingId,batchId){
   var batch=batches[batchId];if(!batch)return;
   var item=batch.items.find(function(i){return i.id===showingId;});if(!item)return;
+  var stopNum=batch.items.indexOf(item)+1;
   var old=document.getElementById('homeModal');if(old)old.remove();
   var modal=document.createElement('div');modal.id='homeModal';
-  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
   modal.onclick=function(e){if(e.target===modal)modal.remove();};
   var mapsLink='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent((item.property_address||'')+' '+(item.property_city||'')+' CA');
-  modal.innerHTML='<div style="background:#111;border:1px solid #2a2a2a;border-radius:14px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto">'
-    +(item.property_photo?'<img src="'+item.property_photo+'" style="width:100%;height:220px;object-fit:cover;border-radius:14px 14px 0 0" onerror="this.style.display=\'none\'">':'')
-    +'<div style="padding:20px 22px">'
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px"><div><div style="font-size:1.05rem;font-weight:800;color:#eee">'+(item.property_address||'—')+'</div><div style="font-size:.8rem;color:#666;margin-top:3px">'+(item.property_city||'')+', CA</div></div><button onclick="document.getElementById(\'homeModal\').remove()" style="background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:5px 10px;cursor:pointer;font-size:.82rem">✕</button></div>'
-    +(item.property_price?'<div style="font-size:1.5rem;font-weight:800;color:#C9A84C;margin-bottom:12px">$'+Number(item.property_price).toLocaleString()+'</div>':'')
-    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">'
-    +(item.property_beds?'<div style="background:#1a1a1a;border-radius:8px;padding:10px;text-align:center"><div style="font-size:1.1rem;font-weight:700;color:#eee">'+item.property_beds+'</div><div style="font-size:.65rem;color:#555;margin-top:2px">Beds</div></div>':'')
-    +(item.property_baths?'<div style="background:#1a1a1a;border-radius:8px;padding:10px;text-align:center"><div style="font-size:1.1rem;font-weight:700;color:#eee">'+item.property_baths+'</div><div style="font-size:.65rem;color:#555;margin-top:2px">Baths</div></div>':'')
-    +(item.property_sqft?'<div style="background:#1a1a1a;border-radius:8px;padding:10px;text-align:center"><div style="font-size:1.1rem;font-weight:700;color:#eee">'+Number(item.property_sqft).toLocaleString()+'</div><div style="font-size:.65rem;color:#555;margin-top:2px">Sq Ft</div></div>':'')
+  var directionsLink='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent((item.property_address||'')+' '+(item.property_city||'')+' CA')+'&travelmode=driving';
+  var m=batch.meta;
+  modal.innerHTML='<div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;max-width:560px;width:100%;max-height:92vh;overflow-y:auto">'
+    +(item.property_photo?'<div style="position:relative"><img src="'+item.property_photo+'" style="width:100%;height:230px;object-fit:cover;border-radius:16px 16px 0 0;display:block" onerror="this.parentElement.style.display=\'none\'"><div style="position:absolute;top:12px;left:12px;background:#C9A84C;color:#000;font-size:.72rem;font-weight:800;padding:4px 11px;border-radius:12px">Stop #'+stopNum+'</div><button onclick="document.getElementById(\'homeModal\').remove()" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,.7);border:1px solid #444;color:#ccc;border-radius:8px;padding:5px 11px;cursor:pointer;font-size:.82rem">✕</button></div>':'<div style="padding:16px 22px;display:flex;justify-content:space-between"><div style="background:#1a1a1a;border-radius:8px;padding:6px 12px;font-size:.72rem;color:#C9A84C;font-weight:700">Stop #'+stopNum+'</div><button onclick="document.getElementById(\'homeModal\').remove()" style="background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:5px 11px;cursor:pointer">✕</button></div>')
+    +'<div style="padding:18px 22px">'
+    +'<div style="margin-bottom:14px"><h2 style="margin:0 0 4px;font-size:1.15rem;font-weight:800;color:#fff">'+(item.property_address||'—')+'</h2><div style="font-size:.82rem;color:#666">'+(item.property_city||'')+', CA</div>'+(item.property_price?'<div style="font-size:1.5rem;font-weight:800;color:#C9A84C;margin-top:8px">$'+Number(item.property_price).toLocaleString()+'</div>':'')+'</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">'
+    +(item.property_beds?'<div style="background:#1a1a1a;border-radius:8px;padding:10px 8px;text-align:center"><div style="font-size:1.1rem;font-weight:800;color:#eee">'+item.property_beds+'</div><div style="font-size:.62rem;color:#555;margin-top:2px;text-transform:uppercase">Beds</div></div>':'')
+    +(item.property_baths?'<div style="background:#1a1a1a;border-radius:8px;padding:10px 8px;text-align:center"><div style="font-size:1.1rem;font-weight:800;color:#eee">'+item.property_baths+'</div><div style="font-size:.62rem;color:#555;margin-top:2px;text-transform:uppercase">Baths</div></div>':'')
+    +(item.property_sqft?'<div style="background:#1a1a1a;border-radius:8px;padding:10px 8px;text-align:center"><div style="font-size:1rem;font-weight:800;color:#eee">'+Number(item.property_sqft).toLocaleString()+'</div><div style="font-size:.62rem;color:#555;margin-top:2px;text-transform:uppercase">Sq Ft</div></div>':'')
     +'</div>'
-    +(item.listing_agent_name?'<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:14px"><div style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Listing Agent</div><div style="font-size:.82rem;color:#ddd;font-weight:600">'+item.listing_agent_name+'</div>'+(item.listing_agent_phone?'<div style="font-size:.76rem;color:#C9A84C;margin-top:2px">'+item.listing_agent_phone+'</div>':'')+'</div>':'')
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap"><a href="'+mapsLink+'" target="_blank" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;text-decoration:none;border-radius:8px;padding:10px 14px;font-size:.8rem;font-weight:700">🗺 Maps</a>'
-    +'<button onclick="removeHomeFromBatch(\''+item.id+'\',\''+batchId+'\');document.getElementById(\'homeModal\').remove()" style="flex:1;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:8px;padding:10px 14px;font-size:.8rem;font-weight:700;cursor:pointer">✕ Remove</button></div>'
+    +(item.listing_agent_name?'<div style="background:#1a1a1a;border-radius:8px;padding:12px 14px;margin-bottom:12px"><div style="font-size:.65rem;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Listing Agent</div><div style="font-size:.88rem;font-weight:600;color:#ddd">'+item.listing_agent_name+'</div><div style="display:flex;gap:12px;margin-top:5px;flex-wrap:wrap">'+(item.listing_agent_phone?'<a href="tel:'+item.listing_agent_phone+'" style="font-size:.78rem;color:#C9A84C;text-decoration:none">📞 '+item.listing_agent_phone+'</a>':'')+(item.listing_agent_email?'<a href="mailto:'+item.listing_agent_email+'" style="font-size:.78rem;color:#C9A84C;text-decoration:none">✉ '+item.listing_agent_email+'</a>':'')+'</div></div>':'')
+    +'<div style="background:#1a1a1a;border-radius:8px;padding:12px 14px;margin-bottom:16px"><div style="font-size:.65rem;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Borrower</div><div style="font-size:.85rem;font-weight:600;color:#ddd">'+(m.name||'—')+'</div><div style="font-size:.76rem;color:#666;margin-top:2px">'+(m.email||'')+(m.phone?' · '+m.phone:'')+'</div>'+(m.borrower_id?'<div style="font-size:.7rem;color:#C9A84C;font-family:monospace;margin-top:3px">'+m.borrower_id+'</div>':'')+'</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap"><a href="'+mapsLink+'" target="_blank" style="flex:1;min-width:100px;display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;text-decoration:none;border-radius:8px;padding:11px 14px;font-size:.8rem;font-weight:700">📍 Maps</a><a href="'+directionsLink+'" target="_blank" style="flex:1;min-width:100px;display:flex;align-items:center;justify-content:center;gap:6px;background:#1a1a1a;border:1px solid #2a2a2a;color:#888;text-decoration:none;border-radius:8px;padding:11px 14px;font-size:.8rem;font-weight:700">🗺 Directions</a><button onclick="document.getElementById(\'homeModal\').remove();trashHome(\''+item.id+'\',\''+batchId+'\')" style="display:flex;align-items:center;justify-content:center;gap:5px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:8px;padding:11px 14px;font-size:.8rem;font-weight:700;cursor:pointer">🗑 Trash</button></div>'
     +'</div></div>';
   document.body.appendChild(modal);
 }
