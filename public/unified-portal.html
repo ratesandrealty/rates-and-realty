@@ -1591,14 +1591,27 @@ async function submitAlert(){
   var name=document.getElementById('al_name')?.value?.trim();if(!name){alert('Please enter an alert name.');return;}
   var user=currentUser;if(!user){alert('Please sign in.');return;}
   var btn=document.getElementById('alertSubmitBtn');if(btn){btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Creating...';}
-  var alertData={name:name,frequency:document.getElementById('al_freq')?.value||'Daily',listing_type:alertListingType,counties:Array.from(document.querySelectorAll('.al_county:checked')).map(function(e){return e.value;}),cities:Array.from(document.querySelectorAll('.al_city:checked')).map(function(e){return e.value;}),min_price:document.getElementById('al_min_price')?.value||null,max_price:document.getElementById('al_max_price')?.value||null,min_beds:document.getElementById('al_beds')?.value||null,min_baths:document.getElementById('al_baths')?.value||null,property_types:Array.from(document.querySelectorAll('.al_proptype:checked')).map(function(e){return e.value;}),has_pool:document.getElementById('al_pool')?.checked||false,has_garage:document.getElementById('al_garage')?.checked||false,new_construction_only:document.getElementById('al_new_construction')?.checked||false,keywords:document.getElementById('al_keywords')?.value?.trim()||null};
+  var selectedCounties=Array.from(document.querySelectorAll('.al_county:checked')).map(function(e){return e.value;});
+  var selectedCitiesAlert=Array.from(document.querySelectorAll('.al_city:checked')).map(function(e){return e.value;});
+  // Auto-derive counties from selected cities if none explicitly checked
+  if(!selectedCounties.length&&selectedCitiesAlert.length){
+    var derivedCounties=new Set();
+    Object.keys(ALERT_COUNTIES).forEach(function(county){ALERT_COUNTIES[county].forEach(function(city){if(selectedCitiesAlert.indexOf(city)>-1)derivedCounties.add(county);});});
+    selectedCounties=Array.from(derivedCounties);
+  }
+  var alertData={name:name,frequency:document.getElementById('al_freq')?.value||'Daily',listing_type:alertListingType,counties:selectedCounties,cities:selectedCitiesAlert,min_price:document.getElementById('al_min_price')?.value||null,max_price:document.getElementById('al_max_price')?.value||null,min_beds:document.getElementById('al_beds')?.value||null,min_baths:document.getElementById('al_baths')?.value||null,property_types:Array.from(document.querySelectorAll('.al_proptype:checked')).map(function(e){return e.value;}),has_pool:document.getElementById('al_pool')?.checked||false,has_garage:document.getElementById('al_garage')?.checked||false,new_construction_only:document.getElementById('al_new_construction')?.checked||false,keywords:document.getElementById('al_keywords')?.value?.trim()||null};
   try{
     var res=await fetch(ALERT_FN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_alert',portal_user_id:user.id||null,email:user.email||null,borrower_id:user.borrower_id||user.crm_id||null,alert:alertData,user_email:user.email})});
-    var result=await res.json();if(!res.ok||result.error)throw new Error(result.error||'Save failed');
+    var result=await res.json();
+    if(!res.ok){showToast('Error: '+(result.error||result.message||'Server error '+res.status),'error');if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-bell"></i> Create Alert';}return;}
+    if(result.error){showToast('Error: '+result.error,'error');if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-bell"></i> Create Alert';}return;}
     document.getElementById('alertModal')?.remove();
-    showToast('Alert created!'+(result.emailed?' Confirmation email sent.':''));
+    var msg='Alert created!';
+    if(result.emailed)msg+=' Confirmation email sent.';
+    else if(result.email_error)msg+=' (Email: '+result.email_error+')';
+    showToast(msg);
     loadAlerts();
-  }catch(e){if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-bell"></i> Create Alert';}showToast('Error: '+e.message,'error');}
+  }catch(e){if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-bell"></i> Create Alert';}showToast('Network error: '+e.message,'error');}
 }
 
 /* ===== DOCUMENTS ===== */
