@@ -4209,8 +4209,76 @@ function renderDocsGrid() {
             <option value="not_received" ${doc.status==='not_received'?'selected':''}>Missing</option>
           </select>
         </div>
+        ${ext === 'pdf' ? '<div style="margin-top:8px;text-align:center;"><span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;">PDF</span></div>' : `<div style="margin-top:8px;text-align:center;"><button id="convert-btn-${doc.id}" onclick="event.stopPropagation();convertDocToPdf(${JSON.stringify(doc).replace(/"/g,'&quot;')})" style="font-size:11px;font-weight:600;color:#000;background:var(--gold);border:none;border-radius:6px;padding:4px 12px;cursor:pointer;transition:opacity .2s;" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='1'">Convert to PDF</button></div>`}
       </div>`;
   }).join('');
+}
+
+function guessMimeFromName(name) {
+  const ext = (name || '').split('.').pop().toLowerCase();
+  const map = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp', bmp:'image/bmp', tiff:'image/tiff', tif:'image/tiff', txt:'text/plain' };
+  return map[ext] || 'application/octet-stream';
+}
+
+async function convertDocToPdf(doc) {
+  const btn = document.getElementById('convert-btn-' + doc.id);
+  if (btn) { btn.disabled = true; btn.textContent = 'Converting…'; btn.style.opacity = '0.6'; }
+  try {
+    const fileUrl = doc.file_url || `${window.APP_CONFIG.SUPABASE_URL}/storage/v1/object/public/borrower-documents/${doc.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    if (!fileRes.ok) throw new Error('Could not fetch file');
+    const blob = await fileRes.blob();
+    const mimeType = blob.type || guessMimeFromName(doc.file_name);
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    const convRes = await fetch(_CONVERT_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_base64: base64, mime_type: mimeType, file_name: doc.file_name })
+    });
+    if (convRes.status === 415) {
+      toast('This file type cannot be auto-converted.', true);
+      if (btn) { btn.disabled = false; btn.textContent = 'Convert to PDF'; btn.style.opacity = '1'; }
+      return;
+    }
+    const convData = await convRes.json();
+    if (!convRes.ok || !convData.success) throw new Error(convData.error || 'Conversion failed');
+    if (convData.already_pdf) { toast('Already a PDF'); loadDocumentsGrid(); return; }
+    const pdfPath = (doc.file_path || doc.storage_path || '').replace(/\.[^.]+$/, '') + '.pdf';
+    const uploadRes = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/google-drive-upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({
+        action: 'upload_to_storage',
+        file_base64: convData.pdf_base64,
+        file_name: convData.pdf_name,
+        file_type: 'application/pdf',
+        storage_path: pdfPath,
+        contact_id: doc.contact_id || contactId || null,
+        lead_id: doc.lead_id || leadId || null,
+        document_type: doc.document_type || doc.type || 'Other',
+        file_size: convData.pdf_size
+      })
+    });
+    const uploadData = await uploadRes.json();
+    if (uploadData.error) throw new Error(uploadData.error);
+    const newFileUrl = uploadData.file_url || `${window.APP_CONFIG.SUPABASE_URL}/storage/v1/object/public/borrower-documents/${pdfPath}`;
+    await sb.from('uploaded_documents').update({
+      file_name: convData.pdf_name,
+      file_url: newFileUrl,
+      file_path: pdfPath,
+      file_size: convData.pdf_size
+    }).eq('id', doc.id);
+    toast('Converted to PDF successfully');
+    loadDocumentsGrid();
+  } catch(e) {
+    toast('Convert failed: ' + e.message, true);
+    if (btn) { btn.disabled = false; btn.textContent = 'Convert to PDF'; btn.style.opacity = '1'; }
+  }
 }
 
 function openDocViewer(docId) {
