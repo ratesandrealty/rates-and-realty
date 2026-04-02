@@ -186,27 +186,92 @@ function renderTable(){
       +'<td style="font-size:.78rem;color:#888">'+(m.preferred_time||'—')+'</td>'
       +'<td><span class="badge '+(sm[status]||'badge-pending')+'">'+status+'</span></td>'
       +'<td><button onclick="toggleExpand(\''+bid+'\')" style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.2);color:#C9A84C;border-radius:6px;padding:4px 9px;font-size:.72rem;cursor:pointer">'+b.items.length+' <i class="fas fa-chevron-down" id="chev-'+bid+'" style="font-size:.6rem"></i></button></td>'
-      +'<td><select class="status-select" onchange="updateStatus(\''+bid+'\',this.value)"><option value="">Update...</option><option value="pending"'+(status==='pending'?' selected':'')+'>Pending</option><option value="confirmed"'+(status==='confirmed'?' selected':'')+'>Confirmed</option><option value="completed"'+(status==='completed'?' selected':'')+'>Completed</option><option value="cancelled"'+(status==='cancelled'?' selected':'')+'>Cancelled</option></select></td>'
+      +'<td><div style="display:flex;gap:4px"><button onclick="updateBatchStatus(\''+bid+'\',\'confirmed\')" style="background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:#22c55e;border-radius:6px;padding:5px 10px;font-size:.7rem;font-weight:700;cursor:pointer">✓</button><button onclick="updateBatchStatus(\''+bid+'\',\'pending\')" style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:#C9A84C;border-radius:6px;padding:5px 10px;font-size:.7rem;font-weight:700;cursor:pointer">⏳</button><button onclick="updateBatchStatus(\''+bid+'\',\'cancelled\')" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:6px;padding:5px 10px;font-size:.7rem;font-weight:700;cursor:pointer">✕</button></div></td>'
       +'</tr>'
-      +'<tr id="expand-'+bid+'" class="expand-row" style="display:none"><td colspan="9"><div class="expand-inner">'
-      +'<div style="font-size:.7rem;color:#555;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">'+b.items.length+' Propert'+(b.items.length!==1?'ies':'y')+' · '+(m.preferred_date||'TBD')+' '+(m.preferred_time||'')+(m.notes?' · Notes: "'+m.notes+'"':'')+'</div>'
-      +'<div class="home-cards">'+b.items.map(function(item){
-        return '<div class="home-card">'
-          +(item.property_photo?'<img src="'+item.property_photo+'" onerror="this.style.display=\'none\'">':'<div style="width:50px;height:40px;background:#1a1a1a;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="fas fa-home" style="color:#333"></i></div>')
-          +'<div><div class="home-card-price">'+(item.property_price?'$'+Number(item.property_price).toLocaleString():'—')+'</div>'
-          +'<div class="home-card-addr">'+(item.property_address||'—')+'</div>'
-          +'<div class="home-card-specs">'+(item.property_beds||'')+'bd · '+(item.property_baths||'')+'ba</div></div></div>';
+      +'<tr id="expand-'+bid+'" class="expand-row" style="display:none"><td colspan="9">'
+      +'<div style="padding:16px 24px 18px;border-top:1px solid #1a1a1a;background:#0d0d0d">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">'
+      +'<div style="font-size:.7rem;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em">'+b.items.length+' Propert'+(b.items.length!==1?'ies':'y')+' · '+(m.preferred_date||'TBD')+' '+(m.preferred_time||'')+'</div>'
+      +(buildMapsUrl(b.items)?'<a href="'+buildMapsUrl(b.items)+'" target="_blank" style="display:flex;align-items:center;gap:5px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:#C9A84C;text-decoration:none;border-radius:7px;padding:5px 12px;font-size:.72rem;font-weight:700">🗺 Route</a>':'')
+      +'</div>'
+      +(m.notes?'<div style="font-size:.74rem;color:#666;background:#111;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-style:italic">"'+m.notes+'"</div>':'')
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">'
+      +b.items.map(function(item,i){
+        return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;overflow:hidden;cursor:pointer;transition:border-color .2s" onmouseover="this.style.borderColor=\'#C9A84C33\'" onmouseout="this.style.borderColor=\'#1e1e1e\'" onclick="openHomeModal(\''+item.id+'\',\''+bid+'\')">'
+          +'<div style="position:relative">'
+          +(item.property_photo?'<img src="'+item.property_photo+'" style="width:100%;height:120px;object-fit:cover;display:block" onerror="this.style.display=\'none\'">':'<div style="width:100%;height:80px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:1.5rem">🏠</div>')
+          +'<div style="position:absolute;top:6px;left:6px;background:#000c;color:#C9A84C;font-size:.6rem;font-weight:800;padding:2px 7px;border-radius:10px">#'+(i+1)+'</div>'
+          +'<button onclick="event.stopPropagation();removeHomeFromBatch(\''+item.id+'\',\''+bid+'\')" style="position:absolute;top:6px;right:6px;background:#000c;border:1px solid #333;color:#ef4444;border-radius:5px;width:22px;height:22px;font-size:.65rem;cursor:pointer;display:flex;align-items:center;justify-content:center" title="Remove">✕</button>'
+          +'</div>'
+          +'<div style="padding:10px 11px">'
+          +'<div style="font-size:.82rem;font-weight:700;color:#eee;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(item.property_address||'—')+'</div>'
+          +'<div style="font-size:.72rem;color:#666;margin-bottom:5px">'+(item.property_city||'')+'</div>'
+          +'<div style="display:flex;align-items:center;justify-content:space-between;gap:4px">'
+          +(item.property_price?'<span style="font-size:.85rem;font-weight:800;color:#C9A84C">$'+Number(item.property_price).toLocaleString()+'</span>':'')
+          +'<span style="font-size:.7rem;color:#555">'+(item.property_beds||'')+'bd · '+(item.property_baths||'')+'ba</span>'
+          +'</div>'
+          +(item.listing_agent_name?'<div style="font-size:.65rem;color:#444;margin-top:4px;padding-top:4px;border-top:1px solid #1a1a1a">'+item.listing_agent_name+(item.listing_agent_phone?' · '+item.listing_agent_phone:'')+'</div>':'')
+          +'</div></div>';
       }).join('')+'</div></div></td></tr>';
   }).join('');
 }
 
 function toggleExpand(bid){var row=document.getElementById('expand-'+bid);var chev=document.getElementById('chev-'+bid);if(!row)return;var open=row.style.display!=='none';row.style.display=open?'none':'table-row';if(chev)chev.className=open?'fas fa-chevron-down':'fas fa-chevron-up';}
 
-async function updateStatus(bid,s){
+async function updateBatchStatus(bid,s){
   if(!s||!bid)return;
   await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_showing_status',batch_id:bid,status:s})});
   if(batches[bid])batches[bid].meta.status=s;
   updateStats();renderTable();
+  showToast(s==='confirmed'?'✓ Confirmed! Borrower will be notified.':'Status updated to '+s);
+}
+
+async function removeHomeFromBatch(showingId,batchId){
+  if(!confirm('Remove this home from the showing batch?'))return;
+  await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'remove_showing',showing_id:showingId})});
+  if(batches[batchId]){batches[batchId].items=batches[batchId].items.filter(function(i){return i.id!==showingId;});if(!batches[batchId].items.length)delete batches[batchId];}
+  updateStats();renderTable();showToast('Home removed.');
+}
+
+function buildMapsUrl(homes){
+  var addrs=homes.filter(function(h){return h.property_address;}).map(function(h){return encodeURIComponent((h.property_address+' '+(h.property_city||'')+' CA').trim());});
+  if(!addrs.length)return'';
+  if(addrs.length===1)return'https://www.google.com/maps/search/?api=1&query='+addrs[0];
+  var url='https://www.google.com/maps/dir/?api=1&origin='+addrs[0]+'&destination='+addrs[addrs.length-1];
+  if(addrs.length>2)url+='&waypoints='+addrs.slice(1,-1).join('|');
+  return url+'&travelmode=driving';
+}
+
+function openHomeModal(showingId,batchId){
+  var batch=batches[batchId];if(!batch)return;
+  var item=batch.items.find(function(i){return i.id===showingId;});if(!item)return;
+  var old=document.getElementById('homeModal');if(old)old.remove();
+  var modal=document.createElement('div');modal.id='homeModal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.onclick=function(e){if(e.target===modal)modal.remove();};
+  var mapsLink='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent((item.property_address||'')+' '+(item.property_city||'')+' CA');
+  modal.innerHTML='<div style="background:#111;border:1px solid #2a2a2a;border-radius:14px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto">'
+    +(item.property_photo?'<img src="'+item.property_photo+'" style="width:100%;height:220px;object-fit:cover;border-radius:14px 14px 0 0" onerror="this.style.display=\'none\'">':'')
+    +'<div style="padding:20px 22px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px"><div><div style="font-size:1.05rem;font-weight:800;color:#eee">'+(item.property_address||'—')+'</div><div style="font-size:.8rem;color:#666;margin-top:3px">'+(item.property_city||'')+', CA</div></div><button onclick="document.getElementById(\'homeModal\').remove()" style="background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:5px 10px;cursor:pointer;font-size:.82rem">✕</button></div>'
+    +(item.property_price?'<div style="font-size:1.5rem;font-weight:800;color:#C9A84C;margin-bottom:12px">$'+Number(item.property_price).toLocaleString()+'</div>':'')
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">'
+    +(item.property_beds?'<div style="background:#1a1a1a;border-radius:8px;padding:10px;text-align:center"><div style="font-size:1.1rem;font-weight:700;color:#eee">'+item.property_beds+'</div><div style="font-size:.65rem;color:#555;margin-top:2px">Beds</div></div>':'')
+    +(item.property_baths?'<div style="background:#1a1a1a;border-radius:8px;padding:10px;text-align:center"><div style="font-size:1.1rem;font-weight:700;color:#eee">'+item.property_baths+'</div><div style="font-size:.65rem;color:#555;margin-top:2px">Baths</div></div>':'')
+    +(item.property_sqft?'<div style="background:#1a1a1a;border-radius:8px;padding:10px;text-align:center"><div style="font-size:1.1rem;font-weight:700;color:#eee">'+Number(item.property_sqft).toLocaleString()+'</div><div style="font-size:.65rem;color:#555;margin-top:2px">Sq Ft</div></div>':'')
+    +'</div>'
+    +(item.listing_agent_name?'<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:14px"><div style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Listing Agent</div><div style="font-size:.82rem;color:#ddd;font-weight:600">'+item.listing_agent_name+'</div>'+(item.listing_agent_phone?'<div style="font-size:.76rem;color:#C9A84C;margin-top:2px">'+item.listing_agent_phone+'</div>':'')+'</div>':'')
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap"><a href="'+mapsLink+'" target="_blank" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;text-decoration:none;border-radius:8px;padding:10px 14px;font-size:.8rem;font-weight:700">🗺 Maps</a>'
+    +'<button onclick="removeHomeFromBatch(\''+item.id+'\',\''+batchId+'\');document.getElementById(\'homeModal\').remove()" style="flex:1;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:8px;padding:10px 14px;font-size:.8rem;font-weight:700;cursor:pointer">✕ Remove</button></div>'
+    +'</div></div>';
+  document.body.appendChild(modal);
+}
+
+function showToast(msg){
+  var old=document.getElementById('showToast');if(old)old.remove();
+  var t=document.createElement('div');t.id='showToast';
+  t.style.cssText='position:fixed;bottom:24px;right:24px;z-index:9999;background:#0a1a0a;border:1px solid rgba(34,197,94,.4);color:#22c55e;border-radius:10px;padding:12px 18px;font-size:.82rem;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.5);max-width:380px';
+  t.textContent=msg;document.body.appendChild(t);setTimeout(function(){t.remove();},4000);
 }
 
 function sortBy(key){sortDir=(sortKey===key)?-sortDir:-1;sortKey=key;renderTable();}
