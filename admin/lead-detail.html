@@ -10048,7 +10048,7 @@ async function saveSig() {
   showToast('Signature saved');
 }
 
-/* --- Canva Design Picker (Static Library) --- */
+/* --- Canva Design Picker — Static Library + Folder Nav + AI Create --- */
 var CANVA_DESIGNS = [
   {title:'Flyer - Grow Your Investor Client Base',cat:'Flyers',thumb:'https://design.canva.ai/9iV-RibV4BsJta0',url:'https://www.canva.com/d/OuxYpmC1y9UVYee'},
   {title:'Mortgage Loan Flyers',cat:'Flyers',thumb:'https://design.canva.ai/ERM0jgWobGgQGiw',url:'https://www.canva.com/d/xmvZg6VCBO04cWD'},
@@ -10081,16 +10081,24 @@ var CANVA_DESIGNS = [
   {title:'14 Day Pass $14',cat:'Social',thumb:'https://design.canva.ai/Zj21Og8An6ujBe_',url:'https://www.canva.com/d/LWJcqTnLdRwIiEn'},
   {title:'Business Card',cat:'Branding',thumb:'https://design.canva.ai/vLT08-W8Lq05jK-',url:'https://www.canva.com/d/_Zbxq4QA7vQNWNS'}
 ];
-var _canvaActiveFilter = 'All';
+
+var CANVA_FOLDERS = [
+  {id:'root',name:'All Designs',emoji:'\u2726'},
+  {id:'FAHF1C0UUf0',name:'Borrower Marketing',emoji:'\uD83C\uDFE0'},
+  {id:'FAHF1NA8s3A',name:'Realtor & Referral',emoji:'\uD83E\uDD1D'},
+  {id:'FAEsHYF3MdE',name:'Images',emoji:'\uD83D\uDDBC'}
+];
+var _canvaCurrentFolder = 'root';
+var _canvaDisplayDesigns = [];
 
 function openCanvaPicker() {
   var modal = document.getElementById('canvaPickerModal');
   if (!modal) return;
   modal.style.display = 'flex';
-  renderCanvaTabs();
-  renderCanvaGrid(CANVA_DESIGNS);
-  document.getElementById('canvaCount').textContent = CANVA_DESIGNS.length + ' designs';
   document.getElementById('canvaSearch').value = '';
+  _canvaCurrentFolder = 'root';
+  renderCanvaFolderNav();
+  loadCanvaFolder('root');
 }
 
 function closeCanvaPicker() {
@@ -10098,45 +10106,58 @@ function closeCanvaPicker() {
   if (m) m.style.display = 'none';
 }
 
-function renderCanvaTabs() {
-  var seen = {}; var cats = ['All'];
-  CANVA_DESIGNS.forEach(function(d) { if (!seen[d.cat]) { seen[d.cat] = true; cats.push(d.cat); } });
-  document.getElementById('canvaTabs').innerHTML = cats.map(function(c) {
-    var id = 'canvaTab_' + c.replace(/\s/g, '');
-    var isActive = c === _canvaActiveFilter;
-    return '<button type="button" onclick="setCanvaFilter(\'' + c + '\')" id="' + id + '" ' +
-      'style="padding:4px 12px;border-radius:20px;font-size:11px;font-family:inherit;cursor:pointer;' +
-      'border:1px solid rgba(201,168,76,0.2);background:' + (isActive ? 'rgba(201,168,76,0.15)' : 'transparent') + ';' +
-      'color:' + (isActive ? '#C9A84C' : '#666') + ';transition:all 0.12s;">' + c + '</button>';
+function renderCanvaFolderNav() {
+  var nav = document.getElementById('canvaTabs');
+  if (!nav) return;
+  nav.innerHTML = CANVA_FOLDERS.map(function(f) {
+    var active = f.id === _canvaCurrentFolder;
+    return '<button type="button" onclick="loadCanvaFolder(\'' + f.id + '\')" id="fnav_' + f.id + '" ' +
+      'style="padding:5px 12px;border-radius:20px;font-size:11.5px;border:1px solid rgba(201,168,76,0.2);' +
+      'background:' + (active ? 'rgba(201,168,76,0.15)' : 'transparent') + ';' +
+      'color:' + (active ? '#C9A84C' : '#666') + ';cursor:pointer;font-family:inherit;white-space:nowrap;" ' +
+      'onmouseover="this.style.color=\'#C9A84C\'" onmouseout="if(\'' + f.id + '\'!==_canvaCurrentFolder)this.style.color=\'#666\'">' +
+      f.emoji + ' ' + f.name + '</button>';
   }).join('');
 }
 
-function setCanvaFilter(cat) {
-  _canvaActiveFilter = cat;
-  document.querySelectorAll('[id^="canvaTab_"]').forEach(function(btn) {
-    var active = btn.id === 'canvaTab_' + cat.replace(/\s/g, '');
-    btn.style.background = active ? 'rgba(201,168,76,0.15)' : 'transparent';
-    btn.style.color = active ? '#C9A84C' : '#666';
-  });
-  filterCanva(document.getElementById('canvaSearch')?.value || '');
+function loadCanvaFolder(folderId) {
+  _canvaCurrentFolder = folderId;
+  renderCanvaFolderNav();
+  // Filter static designs by folder mapping
+  if (folderId === 'root') {
+    _canvaDisplayDesigns = CANVA_DESIGNS.slice();
+  } else if (folderId === 'FAHF1C0UUf0') {
+    _canvaDisplayDesigns = CANVA_DESIGNS.filter(function(d) { return ['Flyers','Documents','Social'].indexOf(d.cat) >= 0; });
+  } else if (folderId === 'FAHF1NA8s3A') {
+    _canvaDisplayDesigns = CANVA_DESIGNS.filter(function(d) { return d.title.toLowerCase().indexOf('realtor') >= 0 || d.title.toLowerCase().indexOf('referral') >= 0 || d.title.toLowerCase().indexOf('partner') >= 0; });
+  } else if (folderId === 'FAEsHYF3MdE') {
+    _canvaDisplayDesigns = CANVA_DESIGNS.filter(function(d) { return d.cat === 'Branding'; });
+  } else {
+    _canvaDisplayDesigns = CANVA_DESIGNS.slice();
+  }
+  renderCanvaGrid(_canvaDisplayDesigns);
+  updateCanvaFooter();
 }
 
 function filterCanva(q) {
-  var filtered = CANVA_DESIGNS;
-  if (_canvaActiveFilter !== 'All') filtered = filtered.filter(function(d) { return d.cat === _canvaActiveFilter; });
-  if (q) filtered = filtered.filter(function(d) { return d.title.toLowerCase().indexOf(q.toLowerCase()) >= 0; });
+  var base = _canvaCurrentFolder === 'root' ? CANVA_DESIGNS : _canvaDisplayDesigns;
+  var filtered = q ? base.filter(function(d) { return d.title.toLowerCase().indexOf(q.toLowerCase()) >= 0; }) : base;
   renderCanvaGrid(filtered);
   document.getElementById('canvaCount').textContent = filtered.length + ' designs';
+}
+
+function updateCanvaFooter() {
+  document.getElementById('canvaCount').textContent = _canvaDisplayDesigns.length + ' designs';
 }
 
 function renderCanvaGrid(designs) {
   var grid = document.getElementById('canvaGrid');
   if (!grid) return;
-  if (!designs.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#444;font-size:13px;">No designs match</div>'; return; }
+  if (!designs.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#444;font-size:13px;">No designs in this folder</div>'; return; }
   grid.innerHTML = designs.map(function(d) {
-    var t = d.thumb.replace(/'/g, "\\'");
-    var n = d.title.replace(/'/g, "\\'");
-    var u = d.url.replace(/'/g, "\\'");
+    var t = (d.thumb||'').replace(/'/g, "\\'");
+    var n = (d.title||'').replace(/'/g, "\\'");
+    var u = (d.url||'').replace(/'/g, "\\'");
     return '<div onclick="insertCanvaImage(\'' + t + '\',\'' + n + '\',\'' + u + '\')" ' +
       'style="cursor:pointer;border-radius:8px;overflow:hidden;border:1px solid rgba(201,168,76,0.1);background:#131315;transition:all 0.15s;display:flex;flex-direction:column;" ' +
       'onmouseover="this.style.borderColor=\'rgba(201,168,76,0.5)\';this.style.background=\'#1C1C1F\'" ' +
@@ -10144,9 +10165,8 @@ function renderCanvaGrid(designs) {
       '<img src="' + d.thumb + '" alt="' + d.title + '" style="width:100%;height:100px;object-fit:cover;display:block;" onerror="this.style.background=\'#1A1200\';this.alt=\'\';">' +
       '<div style="padding:7px 8px;">' +
         '<div style="font-size:11px;font-weight:500;color:#C8C5BC;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + d.title + '</div>' +
-        '<div style="font-size:10px;color:#555;margin-top:2px;">' + d.cat + '</div>' +
-      '</div>' +
-    '</div>';
+        '<div style="font-size:10px;color:#555;margin-top:2px;">' + (d.cat || '') + '</div>' +
+      '</div></div>';
   }).join('');
 }
 
@@ -10154,21 +10174,18 @@ function insertCanvaImage(thumbUrl, title, viewUrl) {
   var editor = document.getElementById('emailEditor');
   if (!editor) return;
   editor.focus();
-  var html = '<a href="' + viewUrl + '" target="_blank" style="display:inline-block;margin:10px 0;">' +
-    '<img src="' + thumbUrl + '" alt="' + title + '" ' +
-    'style="max-width:480px;width:100%;border-radius:8px;display:block;border:1px solid #2A1800;"></a><br>';
+  var html = '<table width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;"><tr><td style="text-align:center;">' +
+    '<a href="' + (viewUrl || '#') + '" target="_blank" style="display:inline-block;">' +
+    '<img src="' + thumbUrl + '" alt="' + title + '" width="500" style="max-width:100%;width:500px;border-radius:8px;display:block;border:1px solid #2A1800;"></a>' +
+    '</td></tr><tr><td style="text-align:center;padding-top:8px;">' +
+    '<a href="' + (viewUrl || '#') + '" target="_blank" style="font-size:12px;color:#C9A84C;text-decoration:none;">View full design \u2197</a>' +
+    '</td></tr></table>';
   document.execCommand('insertHTML', false, html);
   closeCanvaPicker();
-  showToast('Canva design inserted');
+  showToast('Flyer inserted into email');
 }
 
 /* --- Canva AI Create Tab --- */
-var CANVA_DESIGN_TYPES = [
-  {key:'flyer',label:'\uD83D\uDCC4 Flyer',desc:'Print-ready flyer'},
-  {key:'social',label:'\uD83D\uDCF1 Social Post',desc:'Instagram/Facebook'},
-  {key:'email',label:'\uD83D\uDCE7 Email Banner',desc:'600px email header'},
-  {key:'postcard',label:'\uD83D\uDCEC Postcard',desc:'Direct mail'}
-];
 var CANVA_QUICK_PROMPTS = [
   'Rate drop alert \u2014 rates fell, call me now for a free quote',
   'Get pre-approved in 24 hours \u2014 no obligation, no credit impact',
@@ -10178,6 +10195,12 @@ var CANVA_QUICK_PROMPTS = [
   'Referral program \u2014 earn $500 for every closed deal you send me',
   'FHA vs Conventional \u2014 which is right for you?',
   'Rate & term refinance \u2014 lower your payment starting next month'
+];
+var CANVA_DESIGN_TYPES = [
+  {key:'flyer',label:'\uD83D\uDCC4 Flyer',desc:'Print-ready flyer'},
+  {key:'social',label:'\uD83D\uDCF1 Social Post',desc:'Instagram/Facebook'},
+  {key:'email',label:'\uD83D\uDCE7 Email Banner',desc:'600px email header'},
+  {key:'postcard',label:'\uD83D\uDCEC Postcard',desc:'Direct mail'}
 ];
 var _selectedDesignType = 'flyer';
 
@@ -10207,15 +10230,13 @@ function initCreatePanel() {
       'background:' + (active ? 'rgba(201,168,76,0.15)' : 'transparent') + ';' +
       'color:' + (active ? '#C9A84C' : '#666') + ';text-align:left;">' +
       '<div style="font-weight:600;">' + t.label + '</div>' +
-      '<div style="font-size:10px;opacity:0.7;margin-top:1px;">' + t.desc + '</div>' +
-    '</button>';
+      '<div style="font-size:10px;opacity:0.7;margin-top:1px;">' + t.desc + '</div></button>';
   }).join('');
   document.getElementById('quickPrompts').innerHTML = CANVA_QUICK_PROMPTS.map(function(p) {
     return '<button type="button" onclick="useQuickPrompt(this)" data-p="' + p.replace(/"/g,'&quot;') + '" ' +
       'style="padding:5px 11px;border-radius:20px;font-size:11px;border:1px solid rgba(201,168,76,0.18);' +
-      'background:#131315;color:#888;cursor:pointer;font-family:inherit;text-align:left;" ' +
-      'onmouseover="this.style.color=\'#C9A84C\';this.style.borderColor=\'rgba(201,168,76,0.4)\'" ' +
-      'onmouseout="this.style.color=\'#888\';this.style.borderColor=\'rgba(201,168,76,0.18)\'">' +
+      'background:#131315;color:#888;cursor:pointer;font-family:inherit;" ' +
+      'onmouseover="this.style.color=\'#C9A84C\'" onmouseout="this.style.color=\'#888\'">' +
       (p.length > 50 ? p.substring(0,50) + '...' : p) + '</button>';
   }).join('');
 }
@@ -10228,7 +10249,6 @@ function selectDesignType(key) {
     var active = t.key === key;
     btn.style.background = active ? 'rgba(201,168,76,0.15)' : 'transparent';
     btn.style.color = active ? '#C9A84C' : '#666';
-    btn.style.borderColor = active ? 'rgba(201,168,76,0.35)' : 'rgba(201,168,76,0.2)';
   });
 }
 
@@ -10246,35 +10266,30 @@ async function generateCanvaDesign() {
   if (genBtn) { genBtn.disabled = true; genBtn.textContent = 'Generating...'; }
   try {
     var res = await fetch(
-      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/canva-generate',
+      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/email-service',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || '') },
-        body: JSON.stringify({ prompt: prompt, design_type: _selectedDesignType, contact: window._currentEmailContact || {} })
+        body: JSON.stringify({
+          action: 'ai_compose',
+          prompt: 'Generate a short, punchy Canva design description for a mortgage ' + _selectedDesignType + '. Return ONLY a 1-2 sentence visual brief with colors, mood, and key text. No code fences, no markdown. Brief for: ' + prompt
+        })
       }
     );
     var data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Generation failed');
-    var thumbSafe = (data.thumbnail || '').replace(/'/g, "\\'");
-    var titleSafe = (data.title || '').replace(/'/g, "\\'");
-    var viewSafe = (data.view_url || '').replace(/'/g, "\\'");
-    var editUrl = data.edit_url || '#';
+    var enhanced = stripMarkdownFences(data.html || data.content || prompt);
+    var encodedPrompt = encodeURIComponent(enhanced + ' Mortgage flyer for Rene Duarte, Rates & Realty, NMLS #1795044, 714-472-8508');
+    var canvaUrl = 'https://www.canva.com/design?query=' + encodedPrompt;
     result.innerHTML =
-      '<div style="border:1px solid rgba(201,168,76,0.25);border-radius:10px;overflow:hidden;">' +
-      (data.thumbnail
-        ? '<img src="' + data.thumbnail + '" style="width:100%;max-height:280px;object-fit:cover;display:block;">'
-        : '<div style="height:160px;background:#1A1200;display:flex;align-items:center;justify-content:center;color:#7A5020;">Design created \u2014 open in Canva to view</div>') +
-      '<div style="padding:14px 16px;background:#0C0C0E;">' +
-        '<div style="font-size:13px;font-weight:600;color:#E0DDD4;margin-bottom:8px;">' + (data.title || 'Untitled') + '</div>' +
-        '<div style="display:flex;gap:8px;">' +
-          (data.thumbnail ? '<button type="button" onclick="insertCanvaImage(\'' + thumbSafe + '\',\'' + titleSafe + '\',\'' + viewSafe + '\')" style="flex:1;height:34px;border-radius:7px;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;">Insert into Email</button>' : '') +
-          '<a href="' + editUrl + '" target="_blank" style="flex:1;height:34px;border-radius:7px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;text-decoration:none;">Edit in Canva \u2197</a>' +
-        '</div>' +
-      '</div></div>';
+      '<div style="background:#0C0C0E;border:1px solid rgba(201,168,76,0.2);border-radius:10px;padding:16px;">' +
+        '<div style="font-size:12px;color:#7A5820;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;margin-bottom:8px;">\u2726 Enhanced Design Brief</div>' +
+        '<div style="font-size:13px;color:#E0DDD4;line-height:1.6;margin-bottom:14px;">' + enhanced + '</div>' +
+        '<a href="' + canvaUrl + '" target="_blank" style="display:block;text-align:center;padding:10px;border-radius:8px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:13px;font-weight:700;text-decoration:none;">Open in Canva Magic Design \u2197</a>' +
+        '<div style="font-size:10.5px;color:#444;margin-top:8px;text-align:center;">Canva will open with your brief pre-filled. Save the design and it will appear in Browse Library.</div>' +
+      '</div>';
     result.style.display = 'block';
   } catch(err) {
-    result.innerHTML = '<div style="padding:16px;color:#E05252;font-size:13px;background:rgba(224,82,82,0.08);border-radius:8px;border:1px solid rgba(224,82,82,0.2);">' +
-      '\u26A0 ' + err.message + '<br><span style="font-size:11px;color:#666;margin-top:4px;display:block;">Make sure CANVA_ACCESS_TOKEN is set in Supabase secrets.</span></div>';
+    result.innerHTML = '<div style="color:#E05252;font-size:13px;">Error: ' + err.message + '</div>';
     result.style.display = 'block';
   }
   loading.style.display = 'none';
