@@ -1603,7 +1603,7 @@
                 <div class="score-big-label">out of 100</div>
               </div>
               <div>
-                <div class="score-tier-pill" id="sc-tier">—</div>
+                <div class="score-tier-pill" id="sc-tier" onclick="toggleScoreTempMenu()" style="cursor:pointer;">—</div>
               </div>
             </div>
             <div class="score-action-box" id="sc-action">Load a lead to calculate score.</div>
@@ -1630,15 +1630,15 @@
           </div>
           <div class="ld-field">
             <label class="ld-label">Status</label>
-            <select class="ld-select" id="f-status">
-              <option value="new">New Lead</option>
-              <option value="contacted">Contacted</option>
-              <option value="prequalified">Pre-Qualified</option>
-              <option value="preapproved">Pre-Approved</option>
-              <option value="in_process">In Process</option>
-              <option value="in_escrow">In Escrow</option>
-              <option value="closed">Closed</option>
-              <option value="lost">Lost</option>
+            <select class="ld-select" id="f-status" onchange="updatePipelineStage(this.value)">
+              <option value="New Lead">New Lead</option>
+              <option value="Contacted">Contacted</option>
+              <option value="Pre-Approved">Pre-Approved</option>
+              <option value="Under Contract">Under Contract</option>
+              <option value="Processing">Processing</option>
+              <option value="Clear to Close">Clear to Close</option>
+              <option value="Closed">Closed</option>
+              <option value="Lost">Lost</option>
             </select>
           </div>
           <div class="ld-field">
@@ -3420,8 +3420,11 @@ function populateUI() {
   // Top bar
   document.getElementById('topbar-name').textContent = name;
   setStatusBadge(leadData.status || 'new');
-  renderTimeline(contactData.pipeline_status || leadData.status || 'New Lead');
+  var _initStage = resolveStage(contactData.pipeline_status || leadData.status || 'New Lead');
+  renderTimeline(_initStage);
   renderTempBubble(contactData.temperature || 'Cold');
+  var _fStatus = document.getElementById('f-status');
+  if (_fStatus) _fStatus.value = _initStage;
 
   // Score card
   renderScoreCard(leadData, contactData);
@@ -3439,7 +3442,7 @@ function populateUI() {
 
   // Lead Details tab
   setVal('f-source', leadData.source || contactData.source);
-  setSelectVal('f-status', leadData.status || 'new');
+  // f-status is set by renderTimeline init above
   setSelectVal('f-priority', leadData.priority || 'normal');
   setVal('f-score', leadData.score || '');
   setVal('f-assigned', leadData.assigned_to || '');
@@ -5677,7 +5680,18 @@ function renderTempBubble(temp) {
 
 function toggleTempMenu() {
   var m = document.getElementById('tempMenu');
-  if (m) m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  if (m) { m.style.position = ''; m.style.top = ''; m.style.left = ''; m.style.display = m.style.display === 'none' ? 'block' : 'none'; }
+}
+
+function toggleScoreTempMenu() {
+  var menu = document.getElementById('tempMenu');
+  var badge = document.getElementById('sc-tier');
+  if (!menu || !badge) return;
+  var rect = badge.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.top = (rect.bottom + 6) + 'px';
+  menu.style.left = rect.left + 'px';
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
 }
 
 async function setTemperature(temp) {
@@ -5713,6 +5727,14 @@ async function updatePipelineStage(newStage) {
   if (!contactId) return;
   renderTimeline(newStage);
   var sm = document.getElementById('statusMenu'); if (sm) sm.style.display = 'none';
+  // Sync Lead Info select
+  var sel = document.getElementById('f-status');
+  if (sel && sel.value !== newStage) {
+    sel.value = newStage;
+    var stageDef = STAGES.find(function(s){return s.key===newStage;});
+    if (stageDef) { sel.style.borderColor = stageDef.color; sel.style.color = stageDef.color; }
+    setTimeout(function(){ sel.style.borderColor='rgba(201,168,76,0.2)'; sel.style.color='#E0DDD4'; }, 800);
+  }
   if (contactData) contactData.pipeline_status = newStage;
   if (leadData) leadData.status = newStage;
   try {
