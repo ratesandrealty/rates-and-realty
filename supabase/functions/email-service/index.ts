@@ -5,6 +5,14 @@ const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 const ANTHROPIC_KEY = Deno.env.get('ANTHROPIC_API_KEY');
 
+function stripMarkdownFences(text: string): string {
+  return (text || '')
+    .replace(/^```html\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+}
+
 // ── SEND EMAIL via MailerSend ────────────────────────────────────────────────
 async function sendEmail(p: {to:string;from?:string;subject:string;html:string;cc?:string;replyTo?:string}) {
   const MAILERSEND_KEY = Deno.env.get('MAILERSEND_API_KEY');
@@ -33,7 +41,7 @@ async function sendEmail(p: {to:string;from?:string;subject:string;html:string;c
 // ── AI COMPOSE EMAIL ─────────────────────────────────────────────────────────
 async function aiComposeEmail(prompt: string, contactName: string): Promise<string> {
   if (!ANTHROPIC_KEY) return '';
-  const system = 'You are Rene Duarte, a licensed mortgage loan officer at Rates & Realty (NMLS #1795044) in Huntington Beach, CA. Write a professional, warm email. Use proper HTML formatting with <p>, <br>, <strong>, <ul>, <li> tags as needed. Sign off with your full name and title. Return ONLY the HTML email body, no subject line, no explanation.';
+  const system = 'You are Rene Duarte, a licensed mortgage loan officer at Rates & Realty (NMLS #1795044) in Huntington Beach, CA. Write a professional, warm email. Use proper HTML formatting with <p>, <br>, <strong>, <ul>, <li> tags as needed. Sign off with your full name and title. Return ONLY the HTML email body — no subject line, no explanation, no markdown code fences, no backticks, no ```html wrappers. Start directly with HTML tags.';
   const user = (prompt || 'Write a professional follow-up email') + (contactName ? ` The recipient is ${contactName}.` : '');
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -41,7 +49,8 @@ async function aiComposeEmail(prompt: string, contactName: string): Promise<stri
     body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 800, messages: [{ role: 'user', content: system + '\n\n' + user }] })
   });
   const data = await res.json();
-  return data.content?.[0]?.text?.trim() || '';
+  const rawText = data.content?.[0]?.text?.trim() || '';
+  return stripMarkdownFences(rawText);
 }
 
 Deno.serve(async (req: Request) => {
@@ -55,7 +64,8 @@ Deno.serve(async (req: Request) => {
 
     // ── SEND ──────────────────────────────────────────────────────────────────
     if (action === 'send') {
-      const { to_email, subject, html, cc, contact_id, crm_id } = body;
+      const { to_email, subject, cc, contact_id, crm_id } = body;
+      const html = stripMarkdownFences(body.html || '');
       if (!to_email || !subject || !html) return err('to_email, subject, html required');
 
       const result = await sendEmail({ to: to_email, subject, html, cc });
@@ -101,7 +111,9 @@ Deno.serve(async (req: Request) => {
 
     // ── SAVE DRAFT / SCHEDULE ────────────────────────────────────────────────
     if (action === 'save_draft') {
-      const { contact_id, to, subject, body_html, body_text, scheduled_at, status } = body;
+      const { contact_id, to, subject, scheduled_at, status } = body;
+      const cleanHtml = stripMarkdownFences(body.body_html || '');
+      const cleanText = stripMarkdownFences(body.body_text || '');
 
       const toArray = Array.isArray(to) ? to : (to ? [to] : []);
       const insertData: Record<string, any> = {
@@ -111,8 +123,8 @@ Deno.serve(async (req: Request) => {
         to_email: toArray[0] || null,
         to_emails: toArray,
         subject: subject || '',
-        body_html: body_html || '',
-        body_text: body_text || '',
+        body_html: cleanHtml,
+        body_text: cleanText,
         status: status || 'draft',
         scheduled_at: scheduled_at || null,
         created_at: new Date().toISOString(),

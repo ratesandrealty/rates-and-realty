@@ -3,6 +3,14 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
+function stripMarkdownFences(text: string): string {
+  return (text || '')
+    .replace(/^```html\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -59,7 +67,7 @@ Deno.serve(async (req: Request) => {
             action: 'send',
             to_email: toEmail,
             subject: email.subject || '(no subject)',
-            html: email.body_html || `<p>${email.body_text || ''}</p>`,
+            html: stripMarkdownFences(email.body_html) || `<p>${stripMarkdownFences(email.body_text)}</p>`,
             contact_id: email.contact_id || null,
           })
         });
