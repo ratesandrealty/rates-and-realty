@@ -164,32 +164,39 @@
 const SUPABASE_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
 const SUPABASE_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
 
-const COLUMNS = [
-  { id: 'new_lead',        label: '\uD83C\uDF31 New Lead',       statuses: ['New Lead','new','new lead'],           color: '#6B6B7A' },
-  { id: 'contacted',       label: '\uD83D\uDCDE Contacted',      statuses: ['Contacted','contacted'],               color: '#5AA0E0' },
-  { id: 'pre_approved',    label: '\u2705 Pre-Approved',         statuses: ['Pre-Approved','pre-approved','pre-qualified','prequalified','qualified'], color: '#C9A84C' },
-  { id: 'under_contract',  label: '\uD83C\uDFE0 Under Contract', statuses: ['Under Contract','under contract','in_escrow'], color: '#AB7FE0' },
-  { id: 'processing',      label: '\u2699\uFE0F Processing',     statuses: ['Processing','processing','underwriting','submitted','application','applied','in_process'], color: '#E07F50' },
-  { id: 'clear_to_close',  label: '\uD83D\uDD11 Clear to Close', statuses: ['Clear to Close','clear to close'],   color: '#52C87A' },
-  { id: 'closed',          label: '\uD83C\uDF89 Closed',         statuses: ['Closed','closed','closed won','funded'], color: '#3AB06A' },
-  { id: 'lost',            label: '\u2715 Lost',                  statuses: ['Lost','lost','closed lost','dead','declined'], color: '#E05252' },
+const PIPELINE_STAGES = [
+  { key:'New Lead',       label:'\uD83C\uDF31 New Lead',       color:'#6B6B7A' },
+  { key:'Contacted',      label:'\uD83D\uDCDE Contacted',      color:'#5AA0E0' },
+  { key:'Pre-Approved',   label:'\u2705 Pre-Approved',         color:'#C9A84C' },
+  { key:'Under Contract', label:'\uD83C\uDFE0 Under Contract', color:'#AB7FE0' },
+  { key:'Processing',     label:'\u2699\uFE0F Processing',     color:'#E07F50' },
+  { key:'Clear to Close', label:'\uD83D\uDD11 Clear to Close', color:'#52C87A' },
+  { key:'Closed',         label:'\uD83C\uDF89 Closed',         color:'#3AB06A' },
+  { key:'Lost',           label:'\u2715 Lost',                  color:'#E05252' },
 ];
 
-let _allLeads = [];
-let _dragLeadId = null;
+let _allContacts = [];
+let _dragContactId = null;
 
 async function loadLeads() {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/leads?select=id,status,loan_type,loan_amount,score,score_tier,source,created_at,contact_id,contacts(first_name,last_name,email,phone)&order=created_at.desc&limit=200`,
+    `${SUPABASE_URL}/rest/v1/contacts?select=id,first_name,last_name,email,phone,pipeline_status,loan_type,source,lead_score,temperature,loan_amount,created_at&order=created_at.desc&limit=300`,
     { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
   );
-  _allLeads = await res.json();
+  _allContacts = await res.json();
+  if (!Array.isArray(_allContacts)) _allContacts = [];
   renderBoard();
 }
 
-function getColumn(status) {
-  const s = (status || '').toLowerCase().trim();
-  return COLUMNS.find(c => c.statuses.some(cs => cs.toLowerCase() === s)) || COLUMNS[0];
+function getContactName(c) {
+  var fn = (c.first_name || '').trim();
+  var ln = (c.last_name || '').trim();
+  var full = [fn, ln].filter(Boolean).join(' ');
+  return full || (c.email ? c.email.split('@')[0] : 'Unknown Borrower');
+}
+
+function getStage(c) {
+  return c.pipeline_status || 'New Lead';
 }
 
 function tagClass(loanType) {
@@ -221,79 +228,72 @@ function fmt(n) {
 }
 
 function renderBoard() {
-  const typeFilter = document.getElementById('filterType').value.toLowerCase();
-  const sourceFilter = document.getElementById('filterSource').value.toLowerCase();
+  var typeFilter = document.getElementById('filterType').value.toLowerCase();
+  var sourceFilter = document.getElementById('filterSource').value.toLowerCase();
 
-  let leads = _allLeads;
-  if (typeFilter) leads = leads.filter(l => (l.loan_type||'').toLowerCase().includes(typeFilter));
-  if (sourceFilter) leads = leads.filter(l => (l.source||'').toLowerCase().includes(sourceFilter));
+  var contacts = _allContacts;
+  if (typeFilter) contacts = contacts.filter(function(c) { return (c.loan_type||'').toLowerCase().indexOf(typeFilter) >= 0; });
+  if (sourceFilter) contacts = contacts.filter(function(c) { return (c.source||'').toLowerCase().indexOf(sourceFilter) >= 0; });
 
-  // Stats
-  const totalVol = leads.reduce((s, l) => s + (Number(l.loan_amount) || 0), 0);
-  document.getElementById('totalDeals').textContent = leads.length;
+  // Stats (exclude Lost)
+  var active = contacts.filter(function(c) { return c.pipeline_status !== 'Lost'; });
+  var totalVol = active.reduce(function(s, c) { return s + (Number(c.loan_amount) || 0); }, 0);
+  document.getElementById('totalDeals').textContent = active.length;
   document.getElementById('totalVolume').textContent = fmt(totalVol);
 
-  // Group by column
-  const groups = {};
-  COLUMNS.forEach(c => groups[c.id] = []);
-  leads.forEach(lead => {
-    const col = getColumn(lead.status);
-    groups[col.id].push(lead);
+  // Group by pipeline_status
+  var groups = {};
+  PIPELINE_STAGES.forEach(function(s) { groups[s.key] = []; });
+  contacts.forEach(function(c) {
+    var stage = c.pipeline_status || 'New Lead';
+    if (groups[stage]) groups[stage].push(c);
+    else groups['New Lead'].push(c);
   });
 
-  const board = document.getElementById('board');
-  board.innerHTML = COLUMNS.map(col => {
-    const colLeads = groups[col.id];
-    const colVol = colLeads.reduce((s, l) => s + (Number(l.loan_amount) || 0), 0);
+  var board = document.getElementById('board');
+  board.innerHTML = PIPELINE_STAGES.map(function(stage) {
+    var colContacts = groups[stage.key];
+    var colVol = colContacts.reduce(function(s, c) { return s + (Number(c.loan_amount) || 0); }, 0);
 
-    const cards = colLeads.length === 0
-      ? `<div class="col-empty">No deals</div>`
-      : colLeads.map(lead => {
-          const contact = lead.contacts;
-          const name = contact ? `${contact.first_name || ''} ${contact.last_name || ''}`.trim() : 'Unknown';
-          const scoreLabel = lead.score ? `${lead.score}` : '?';
-          return `
-            <div class="card" draggable="true"
-              data-id="${lead.id}" data-status="${lead.status || ''}"
-              onclick="openLead('${lead.id}','${lead.contact_id}')"
-              ondragstart="onDragStart(event,'${lead.id}')"
-              ondragend="onDragEnd(event)">
-              <div class="card-name" title="${name}">${name || 'Unnamed'}</div>
-              <div class="card-amount">${fmt(lead.loan_amount)}</div>
-              <div class="card-tags">
-                ${lead.loan_type ? `<span class="card-tag ${tagClass(lead.loan_type)}">${lead.loan_type}</span>` : ''}
-                ${lead.source ? `<span class="card-tag tag-other">${lead.source}</span>` : ''}
-              </div>
-              <div class="card-meta">
-                <span class="card-source">${contact?.email || ''}</span>
-                <span class="card-score ${scoreClass(lead.score)}">${scoreLabel}</span>
-              </div>
-              <div class="card-days">${daysSince(lead.created_at)}</div>
-            </div>`;
+    var cards = colContacts.length === 0
+      ? '<div class="col-empty">No deals</div>'
+      : colContacts.map(function(c) {
+          var name = getContactName(c);
+          var scoreLabel = c.lead_score ? String(c.lead_score) : '?';
+          return '<div class="card" draggable="true" data-id="' + c.id + '" ' +
+            'onclick="openLead(null,\'' + c.id + '\')" ' +
+            'ondragstart="onDragStart(event,\'' + c.id + '\')" ondragend="onDragEnd(event)">' +
+            '<div class="card-name" title="' + name + '">' + name + '</div>' +
+            '<div class="card-amount">' + fmt(c.loan_amount) + '</div>' +
+            '<div class="card-tags">' +
+              (c.loan_type ? '<span class="card-tag ' + tagClass(c.loan_type) + '">' + c.loan_type + '</span>' : '') +
+              (c.source ? '<span class="card-tag tag-other">' + c.source + '</span>' : '') +
+            '</div>' +
+            '<div class="card-meta">' +
+              '<span class="card-source">' + (c.email||'') + '</span>' +
+              '<span class="card-score ' + scoreClass(c.lead_score) + '">' + scoreLabel + '</span>' +
+            '</div>' +
+            '<div class="card-days">' + daysSince(c.created_at) + '</div>' +
+          '</div>';
         }).join('');
 
-    return `
-      <div class="column">
-        <div class="column-header">
-          <div class="column-title">
-            ${col.label}
-            <span class="column-count">${colLeads.length}</span>
-          </div>
-          ${colVol > 0 ? `<div class="column-amount">${fmt(colVol)}</div>` : ''}
-        </div>
-        <div class="column-body" id="col_${col.id}"
-          ondragover="onDragOver(event)"
-          ondragleave="onDragLeave(event)"
-          ondrop="onDrop(event,'${col.id}','${col.statuses[0]}')">
-          ${cards}
-        </div>
-      </div>`;
+    return '<div class="column">' +
+      '<div class="column-header">' +
+        '<div class="column-title">' + stage.label + ' <span class="column-count">' + colContacts.length + '</span></div>' +
+        (colVol > 0 ? '<div class="column-amount">' + fmt(colVol) + '</div>' : '') +
+      '</div>' +
+      '<div class="column-body" id="col_' + stage.key.replace(/\s/g,'_') + '" ' +
+        'ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ' +
+        'ondrop="onDrop(event,\'' + stage.key + '\')">' +
+        cards +
+      '</div>' +
+    '</div>';
   }).join('');
 }
 
 // Drag and drop
-function onDragStart(e, leadId) {
-  _dragLeadId = leadId;
+function onDragStart(e, contactId) {
+  _dragContactId = contactId;
   e.target.classList.add('dragging');
   e.dataTransfer.effectAllowed = 'move';
 }
@@ -301,54 +301,38 @@ function onDragEnd(e) { e.target.classList.remove('dragging'); }
 function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
 function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
 
-async function onDrop(e, colId, newStatus) {
+async function onDrop(e, newStage) {
   e.preventDefault();
   e.currentTarget.classList.remove('drag-over');
-  if (!_dragLeadId) return;
+  if (!_dragContactId) return;
 
-  const lead = _allLeads.find(l => l.id === _dragLeadId);
-  if (!lead || getColumn(lead.status).id === colId) return;
+  var contact = _allContacts.find(function(c) { return c.id === _dragContactId; });
+  if (!contact || contact.pipeline_status === newStage) { _dragContactId = null; return; }
 
-  const prevStatus = lead.status;
-  // Optimistic update
-  lead.status = newStatus;
+  var prevStage = contact.pipeline_status;
+  contact.pipeline_status = newStage;
   renderBoard();
 
-  // Save to Supabase — update lead status
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/leads?id=eq.${_dragLeadId}`, {
+  var res = await fetch(SUPABASE_URL + '/rest/v1/contacts?id=eq.' + _dragContactId, {
     method: 'PATCH',
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=minimal'
-    },
-    body: JSON.stringify({ status: newStatus, updated_at: new Date().toISOString() })
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+    body: JSON.stringify({ pipeline_status: newStage, updated_at: new Date().toISOString() })
   });
 
   if (res.ok) {
-    showToast('\u2713 Moved to ' + newStatus);
-    // Also update pipeline_status on contact
-    if (lead.contact_id) {
-      fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${lead.contact_id}`, {
-        method: 'PATCH',
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-        body: JSON.stringify({ pipeline_status: newStatus, updated_at: new Date().toISOString() })
-      }).catch(function(){});
-    }
+    showToast('\u2713 Moved to ' + newStage);
   } else {
-    showToast('\u26A0 Failed to update status');
-    lead.status = prevStatus;
+    showToast('\u26A0 Failed to update');
+    contact.pipeline_status = prevStage;
     renderBoard();
   }
-  _dragLeadId = null;
+  _dragContactId = null;
 }
 
 function openLead(leadId, contactId) {
-  if (contactId && contactId !== 'null' && contactId !== 'undefined') {
-    window.location.href = `lead-detail.html?contact_id=${contactId}&lead_id=${leadId}`;
-  } else {
-    window.location.href = `lead-detail.html?id=${leadId}`;
+  var cid = contactId || leadId;
+  if (cid && cid !== 'null' && cid !== 'undefined') {
+    window.location.href = 'lead-detail.html?contact_id=' + cid;
   }
 }
 
