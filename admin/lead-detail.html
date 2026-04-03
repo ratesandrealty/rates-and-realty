@@ -649,6 +649,8 @@
       cursor:pointer; white-space:nowrap; flex-shrink:0;
     }
     .cond-note-btn:hover { border-color:var(--gold); color:var(--gold); }
+    @keyframes condPulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .cond-loading { animation: condPulse 1.5s infinite; }
 
     /* ── TASKS ── */
     .task-row {
@@ -2846,15 +2848,22 @@
         <div class="ld-section-title" style="margin:0;border:none;padding:0;">Loan Conditions</div>
         <div class="cond-progress-bar-wrap"><div class="cond-progress-fill" id="conditions-progress-bar" style="width:0%"></div></div>
         <span class="cond-progress-text" id="conditions-progress-text">No conditions loaded</span>
-        <button class="cond-upload-btn" onclick="document.getElementById('cond-file-input').click()">
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          Upload Approval Letter
-        </button>
+      </div>
+      <!-- Drag & drop zone -->
+      <div id="conditions-dropzone"
+        ondrop="handleConditionDrop(event)"
+        ondragover="event.preventDefault();this.style.borderColor='#C9A84C';this.style.background='rgba(201,168,76,0.06)';"
+        ondragleave="this.style.borderColor='#C9A84C44';this.style.background='#0d0d0d';"
+        onclick="document.getElementById('cond-file-input').click()"
+        style="border:2px dashed #C9A84C44;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#0d0d0d;transition:all .25s;margin-bottom:16px;">
+        <div class="cond-dropzone-icon" style="font-size:2rem;margin-bottom:8px;">&#128196;</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">Drop approval letter here</div>
+        <div style="font-size:12px;color:var(--muted);">or click to browse &mdash; PDF, JPG, PNG supported</div>
         <input type="file" id="cond-file-input" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadApprovalLetter(this)">
       </div>
       <!-- Loading state -->
       <div class="cond-loading" id="conditions-loading">
-        <i class="fas fa-spinner fa-spin"></i>Extracting conditions from document…
+        <i class="fas fa-spinner fa-spin"></i>Extracting conditions from document&hellip;
       </div>
       <!-- Conditions list -->
       <div class="ld-section" style="padding:0;">
@@ -4863,40 +4872,43 @@ async function loadConditions() {
 }
 
 function renderConditions(conditions) {
-  const list = document.getElementById('conditions-list');
-  const progressText = document.getElementById('conditions-progress-text');
-  const progressBar = document.getElementById('conditions-progress-bar');
+  var list = document.getElementById('conditions-list');
+  var progressText = document.getElementById('conditions-progress-text');
+  var progressBar = document.getElementById('conditions-progress-bar');
+  var dropzone = document.getElementById('conditions-dropzone');
   if (!conditions.length) {
     list.innerHTML = '<div class="ld-empty" style="padding:48px;"><div class="ld-empty-icon"><i class="fas fa-clipboard-list" style="font-size:2rem;color:var(--gold);"></i></div><h4>No conditions yet</h4><p>Upload an approval letter to get started.</p></div>';
-    progressText.textContent = 'No conditions loaded';
-    progressBar.style.width = '0%';
+    if (progressText) progressText.textContent = 'No conditions loaded';
+    if (progressBar) progressBar.style.width = '0%';
+    if (dropzone) dropzone.style.display = 'block';
     return;
   }
-  const cleared = conditions.filter(c => c.status === 'cleared').length;
-  const total = conditions.length;
-  const pct = Math.round(cleared / total * 100);
-  progressText.textContent = cleared + ' of ' + total + ' conditions cleared (' + pct + '%)';
-  progressBar.style.width = pct + '%';
+  if (dropzone) dropzone.style.display = 'none';
+  var cleared = conditions.filter(function(c) { return c.status === 'cleared'; }).length;
+  var total = conditions.length;
+  var pct = Math.round(cleared / total * 100);
+  if (progressText) progressText.textContent = cleared + ' of ' + total + ' conditions cleared (' + pct + '%)';
+  if (progressBar) progressBar.style.width = pct + '%';
 
   // Group by category
-  const groups = {};
+  var groups = {};
   conditions.forEach(function(c) {
-    const cat = c.category || 'Other';
+    var cat = c.category || 'Other';
     if (!groups[cat]) groups[cat] = [];
     groups[cat].push(c);
   });
 
-  const categoryOrder = ['Income','Assets','Property','Credit','Insurance','Title','Appraisal','Legal','Other'];
-  let html = '';
+  var categoryOrder = ['Income','Assets','Property','Credit','Insurance','Title','Appraisal','Legal','Other'];
+  var html = '<div style="padding:8px 18px 4px;"><button onclick="clearAndReupload()" style="background:none;border:1px dashed rgba(255,255,255,0.15);border-radius:8px;color:var(--muted);font-size:11px;padding:5px 14px;cursor:pointer;">&#8634; Re-extract from new document</button></div>';
   categoryOrder.forEach(function(cat) {
     if (!groups[cat] || !groups[cat].length) return;
     html += '<div class="cond-cat-header">' + cat + ' (' + groups[cat].length + ')</div>';
     groups[cat].forEach(function(c) {
-      const isCleared = c.status === 'cleared';
-      const isWaived = c.status === 'waived';
-      const statusColor = isCleared ? '#4ade80' : isWaived ? '#a78bfa' : c.status === 'in_review' ? '#C9A84C' : '#f87171';
-      const statusBg = isCleared ? '#0a2a0a' : isWaived ? '#1a0a2a' : c.status === 'in_review' ? '#2a2000' : '#2a0a0a';
-      const checked = isCleared ? 'checked' : '';
+      var isCleared = c.status === 'cleared';
+      var isWaived = c.status === 'waived';
+      var statusColor = isCleared ? '#4ade80' : isWaived ? '#a78bfa' : c.status === 'in_review' ? '#C9A84C' : '#f87171';
+      var statusBg = isCleared ? '#0a2a0a' : isWaived ? '#1a0a2a' : c.status === 'in_review' ? '#2a2000' : '#2a0a0a';
+      var checked = isCleared ? 'checked' : '';
       html += '<div class="cond-row">'
         + '<input type="checkbox" class="cond-check" ' + checked + ' onchange="toggleCondition(\'' + c.id + '\', this.checked)">'
         + '<div class="cond-info">'
@@ -4931,41 +4943,77 @@ function openConditionNote(id, currentNote) {
   }).then(function() { loadConditions(); });
 }
 
-async function uploadApprovalLetter(input) {
-  const file = input.files[0];
+function handleConditionDrop(e) {
+  e.preventDefault();
+  var dz = document.getElementById('conditions-dropzone');
+  if (dz) { dz.style.borderColor = '#C9A84C44'; dz.style.background = '#0d0d0d'; }
+  var file = e.dataTransfer.files[0];
   if (!file) return;
-  const contactId = new URLSearchParams(window.location.search).get('contact_id');
-  if (!contactId) { showToast('No contact ID found', true); return; }
+  processConditionFile(file);
+}
 
+function uploadApprovalLetter(input) {
+  var file = input.files[0];
+  if (!file) return;
+  processConditionFile(file);
+  input.value = '';
+}
+
+async function processConditionFile(file) {
+  var contactId = new URLSearchParams(window.location.search).get('contact_id');
+  if (!contactId) { showToast('No contact ID', true); return; }
+
+  var allowed = ['application/pdf','image/jpeg','image/jpg','image/png'];
+  if (allowed.indexOf(file.type) < 0) { showToast('Please upload a PDF or image file', true); return; }
+
+  var dz = document.getElementById('conditions-dropzone');
+  if (dz) dz.style.display = 'none';
   document.getElementById('conditions-loading').style.display = 'block';
   document.getElementById('conditions-list').style.display = 'none';
 
   try {
-    const base64 = await new Promise(function(resolve, reject) {
-      const reader = new FileReader();
+    var base64 = await new Promise(function(resolve, reject) {
+      var reader = new FileReader();
       reader.onload = function() { resolve(reader.result.split(',')[1]); };
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
 
-    const res = await fetch(COND_FN, {
+    var res = await fetch(COND_FN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'extract', file_base64: base64, mime_type: file.type, file_name: file.name, contact_id: contactId })
     });
-    const data = await res.json();
 
-    if (!res.ok) throw new Error(data.error || 'Extraction failed');
+    var data = await res.json();
+    console.log('Extract response:', data);
+
+    if (!res.ok || data.error) throw new Error(data.error || 'Extraction failed');
+
     showToast(data.conditions_found + ' conditions extracted!');
     if (data.lender) showToast('Lender: ' + data.lender);
-    loadConditions();
+    if (data.borrower_name) showToast('Borrower: ' + data.borrower_name);
+
+    await loadConditions();
   } catch(e) {
+    console.error('Condition extraction error:', e);
     showToast('Error: ' + e.message, true);
   } finally {
+    if (dz) dz.style.display = 'block';
     document.getElementById('conditions-loading').style.display = 'none';
     document.getElementById('conditions-list').style.display = 'block';
-    input.value = '';
   }
+}
+
+async function clearAndReupload() {
+  if (!confirm('Clear all conditions and re-upload?')) return;
+  var contactId = new URLSearchParams(window.location.search).get('contact_id');
+  await fetch(COND_FN, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'clear_conditions', contact_id: contactId })
+  });
+  await loadConditions();
 }
 
 async function loadContactShowings() {
