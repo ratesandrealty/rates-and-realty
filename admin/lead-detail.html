@@ -9542,16 +9542,17 @@ function _buildEmailComposerHTML(contact) {
           /* Editor */
           '<div class="ec-editor-wrap">' +
             '<div class="ec-editor" id="emailEditor" contenteditable="true" data-placeholder="Compose your email..."></div>' +
-            '<div class="ec-signature">' +
-              '<div class="ec-sig-name">Rene Duarte</div>' +
-              '<div class="ec-sig-title">Loan Officer | Rates &amp; Realty</div>' +
-              '<div class="ec-sig-contact">rene@ratesandrealty.com</div>' +
+            '<div class="ec-signature" id="emailSigBlock">' +
+              '<div style="color:#C9A84C;font-size:13px;font-weight:600;">Rene Duarte</div>' +
+              '<div style="color:#666;font-size:11.5px;">Loan Officer | Rates &amp; Realty</div>' +
+              '<div style="color:#555;font-size:11.5px;margin-top:2px;">rene@ratesandrealty.com</div>' +
             '</div>' +
           '</div>' +
           /* Footer */
-          '<div class="ec-footer">' +
+          '<div class="ec-footer" style="position:relative;">' +
             '<div class="ec-footer-left">' +
               '<span>From: rene@ratesandrealty.com</span>' +
+              '<span onclick="openSigEditor()" style="font-size:11px;color:#7A5820;cursor:pointer;margin-left:12px;" onmouseover="this.style.color=\'#C9A84C\'" onmouseout="this.style.color=\'#7A5820\'">Edit Signature</span>' +
               '<span id="ecCharCount">0 chars</span>' +
               '<button type="button" class="ec-attach-btn" onclick="document.getElementById(\'emailFileInput\').click()">&#128206; Attach</button>' +
               '<input type="file" id="emailFileInput" multiple accept="*/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
@@ -9559,8 +9560,20 @@ function _buildEmailComposerHTML(contact) {
             '<div class="ec-footer-right">' +
               '<button type="button" class="ec-discard-btn" id="ecDiscardBtn">Discard</button>' +
               '<button type="button" class="ec-draft-btn" id="ecDraftBtn">Save Draft</button>' +
-              '<button type="button" class="ec-schedule-btn"><span class="ec-schedule-dot"></span> Schedule</button>' +
+              '<button type="button" class="ec-schedule-btn" onclick="toggleSchedulePicker()"><span class="ec-schedule-dot"></span> Schedule</button>' +
               '<button type="button" class="ec-send-btn" id="ecSendBtn">Send &#10148;</button>' +
+            '</div>' +
+            /* Schedule picker (hidden) */
+            '<div id="schedulePicker" style="display:none;position:absolute;bottom:58px;right:180px;width:280px;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;padding:16px;z-index:999;box-shadow:0 -8px 30px rgba(0,0,0,0.5);">' +
+              '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.07em;color:#7A5820;font-weight:600;margin-bottom:10px;">Schedule Send</div>' +
+              '<div style="display:flex;flex-direction:column;gap:8px;">' +
+                '<input type="date" id="scheduleDate" style="width:100%;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:13px;padding:0 10px;outline:none;box-sizing:border-box;">' +
+                '<input type="time" id="scheduleTime" value="09:00" style="width:100%;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:13px;padding:0 10px;outline:none;box-sizing:border-box;">' +
+              '</div>' +
+              '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                '<button type="button" onclick="cancelSchedule()" style="flex:1;height:30px;border-radius:6px;border:1px solid rgba(201,168,76,0.15);background:transparent;color:#666;font-size:12px;cursor:pointer;">Cancel</button>' +
+                '<button type="button" onclick="confirmSchedule()" style="flex:1;height:30px;border-radius:6px;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;">Schedule</button>' +
+              '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -9569,7 +9582,7 @@ function _buildEmailComposerHTML(contact) {
   '</div>';
 }
 
-function openEmailComposer() {
+async function openEmailComposer() {
   var contact = contactData || {};
   var email = contact.email || '';
   if (!email) { showToast('No email on file', true); return; }
@@ -9640,20 +9653,50 @@ function openEmailComposer() {
     this.value = '';
   });
 
-  // Close template dropdown on outside click
-  document.addEventListener('click', _closeTemplateDropdown);
+  // Close template dropdown + schedule picker on outside click
+  document.addEventListener('click', _closeDropdowns);
 
   // Load history
   loadEmailHistory(_emailContact.id);
+
+  // Load signature from email_settings
+  try {
+    var sigRes = await fetch(
+      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/email_settings?lo_id=eq.rene&limit=1',
+      { headers: { 'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY || '', 'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || '') } }
+    );
+    var sigRows = await sigRes.json();
+    var sig = Array.isArray(sigRows) && sigRows[0] ? sigRows[0] : null;
+    window._loadedSignature = sig || {};
+    if (sig) {
+      var sigBlock = document.getElementById('emailSigBlock');
+      if (sigBlock) {
+        sigBlock.innerHTML = sig.signature_custom_html || (
+          '<div style="color:#C9A84C;font-size:13px;font-weight:600;">' + (sig.signature_name || '') + '</div>' +
+          '<div style="color:#666;font-size:11.5px;">' + (sig.signature_title || '') + '</div>' +
+          '<div style="color:#555;font-size:11.5px;margin-top:2px;">' +
+            (sig.signature_phone ? '\uD83D\uDCDE ' + sig.signature_phone + '  \u00b7  ' : '') +
+            (sig.signature_email || '') +
+            (sig.signature_website ? '  \u00b7  ' + sig.signature_website : '') +
+          '</div>' +
+          (sig.signature_nmls || sig.signature_dre ? '<div style="color:#444;font-size:11px;margin-top:2px;">' + [sig.signature_nmls, sig.signature_dre].filter(Boolean).join(' | ') + '</div>' : '')
+        );
+      }
+    }
+  } catch(sigErr) { console.log('Signature load error:', sigErr); }
 
   // Focus subject
   setTimeout(function() { document.getElementById('subjectInput')?.focus(); }, 200);
 }
 
-function _closeTemplateDropdown(e) {
+function _closeDropdowns(e) {
   if (!e.target.closest('#templateDropdown') && !e.target.closest('[onclick*="openTemplates"]')) {
     var dd = document.getElementById('templateDropdown');
     if (dd) dd.style.display = 'none';
+  }
+  if (!e.target.closest('#schedulePicker') && !e.target.closest('[onclick*="toggleSchedule"]')) {
+    var sp = document.getElementById('schedulePicker');
+    if (sp) sp.style.display = 'none';
   }
 }
 
@@ -9663,7 +9706,7 @@ function closeEmailComposer() {
   overlay.classList.remove('open');
   setTimeout(function() { overlay.remove(); }, 300);
   document.body.style.overflow = '';
-  document.removeEventListener('click', _closeTemplateDropdown);
+  document.removeEventListener('click', _closeDropdowns);
 }
 
 /* --- Chip handling --- */
@@ -9810,6 +9853,132 @@ async function aiQuick(prompt) {
 function aiCustom() {
   var val = (document.getElementById('aiCustomPrompt')?.value || '').trim();
   if (val) aiQuick(val);
+}
+
+/* --- Schedule Send --- */
+function toggleSchedulePicker() {
+  var picker = document.getElementById('schedulePicker');
+  if (!picker) return;
+  var isOpen = picker.style.display !== 'none';
+  picker.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    document.getElementById('scheduleDate').value = new Date().toISOString().split('T')[0];
+  }
+}
+
+function cancelSchedule() {
+  var p = document.getElementById('schedulePicker');
+  if (p) p.style.display = 'none';
+}
+
+async function confirmSchedule() {
+  var date = document.getElementById('scheduleDate')?.value;
+  var time = document.getElementById('scheduleTime')?.value;
+  if (!date || !time) { alert('Pick a date and time.'); return; }
+
+  var scheduledAt = new Date(date + 'T' + time).toISOString();
+  var toEmails = getChipEmails('toChips');
+  var subject = (document.getElementById('subjectInput')?.value || '').trim();
+  var bodyHtml = document.getElementById('emailEditor')?.innerHTML || '';
+  var bodyText = document.getElementById('emailEditor')?.innerText || '';
+
+  if (!toEmails.length || !subject) { alert('Add recipient and subject before scheduling.'); return; }
+
+  try {
+    var res = await fetch(EMAIL_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || '') },
+      body: JSON.stringify({
+        action: 'save_draft',
+        contact_id: window._currentEmailContact?.id,
+        to: toEmails, subject: subject,
+        body_html: bodyHtml, body_text: bodyText,
+        scheduled_at: scheduledAt, status: 'scheduled'
+      })
+    });
+    document.getElementById('schedulePicker').style.display = 'none';
+    if (res.ok) {
+      showToast('Email scheduled for ' + new Date(scheduledAt).toLocaleString());
+      closeEmailComposer();
+    } else { alert('Schedule failed — check console.'); }
+  } catch(e) { alert('Schedule error: ' + e.message); }
+}
+
+/* --- Signature Editor --- */
+function openSigEditor() {
+  var existing = document.getElementById('sigEditorOverlay');
+  if (existing) existing.remove();
+
+  var sig = window._loadedSignature || {};
+  var fields = [
+    ['signature_name','Full Name'],['signature_title','Title'],['signature_phone','Phone'],
+    ['signature_email','Email'],['signature_nmls','NMLS #'],['signature_dre','DRE #'],['signature_website','Website']
+  ];
+  var fieldsHtml = fields.map(function(f) {
+    return '<div style="margin-bottom:10px;">' +
+      '<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">' + f[1] + '</div>' +
+      '<input id="sigField_' + f[0] + '" type="text" value="' + (sig[f[0]] || '').replace(/"/g,'&quot;') + '" ' +
+      'style="width:100%;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:13px;padding:0 10px;outline:none;box-sizing:border-box;">' +
+    '</div>';
+  }).join('');
+
+  var overlay = document.createElement('div');
+  overlay.id = 'sigEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:20000;display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = '<div style="width:460px;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,0.6);">' +
+    '<div style="font-size:14px;font-weight:600;color:#E0DDD4;margin-bottom:16px;">Edit Email Signature</div>' +
+    fieldsHtml +
+    '<div style="display:flex;gap:8px;margin-top:16px;">' +
+      '<button type="button" onclick="document.getElementById(\'sigEditorOverlay\').remove()" style="flex:1;height:34px;border-radius:7px;border:1px solid rgba(201,168,76,0.15);background:transparent;color:#666;font-size:13px;cursor:pointer;">Cancel</button>' +
+      '<button type="button" onclick="saveSig()" style="flex:1;height:34px;border-radius:7px;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:13px;font-weight:700;cursor:pointer;">Save Signature</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+}
+
+async function saveSig() {
+  var fields = ['signature_name','signature_title','signature_phone','signature_email','signature_nmls','signature_dre','signature_website'];
+  var payload = {};
+  fields.forEach(function(f) {
+    var el = document.getElementById('sigField_' + f);
+    if (el) payload[f] = el.value.trim();
+  });
+  payload.updated_at = new Date().toISOString();
+
+  try {
+    await fetch(
+      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/email_settings?lo_id=eq.rene',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY || '',
+          'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || ''),
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+  } catch(e) { console.error('Sig save error:', e); }
+
+  window._loadedSignature = Object.assign(window._loadedSignature || {}, payload);
+  var ed = document.getElementById('sigEditorOverlay');
+  if (ed) ed.remove();
+
+  var sigBlock = document.getElementById('emailSigBlock');
+  if (sigBlock) {
+    sigBlock.innerHTML =
+      '<div style="color:#C9A84C;font-size:13px;font-weight:600;">' + (payload.signature_name || '') + '</div>' +
+      '<div style="color:#666;font-size:11.5px;">' + (payload.signature_title || '') + '</div>' +
+      '<div style="color:#555;font-size:11.5px;margin-top:2px;">' +
+        (payload.signature_phone ? '\uD83D\uDCDE ' + payload.signature_phone + '  \u00b7  ' : '') +
+        (payload.signature_email || '') +
+        (payload.signature_website ? '  \u00b7  ' + payload.signature_website : '') +
+      '</div>' +
+      ((payload.signature_nmls || payload.signature_dre) ? '<div style="color:#444;font-size:11px;margin-top:2px;">' + [payload.signature_nmls, payload.signature_dre].filter(Boolean).join(' | ') + '</div>' : '');
+  }
+  showToast('Signature saved');
 }
 
 /* --- Email History --- */
