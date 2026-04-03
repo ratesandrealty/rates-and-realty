@@ -4993,41 +4993,94 @@ function renderConditions(conditions) {
   // Re-extract button
   html += '<div style="padding:8px 18px 4px;"><button onclick="clearAndReupload()" style="background:none;border:1px dashed rgba(255,255,255,0.15);border-radius:8px;color:var(--muted);font-size:11px;padding:5px 14px;cursor:pointer;">&#8634; Re-extract from new document</button></div>';
 
-  // Group by category
-  var groups = {};
+  // Group by stage
+  var stages = {
+    PTA:  { label:'Prior to Approval',     short:'PTA',  color:'rgba(224,82,82,0.15)',  border:'rgba(224,82,82,0.35)',  text:'#F07878' },
+    PTCD: { label:'Prior to Closing Docs', short:'PTCD', color:'rgba(186,117,23,0.12)', border:'rgba(186,117,23,0.35)', text:'#C9A84C' },
+    PTD:  { label:'Prior to Docs',         short:'PTD',  color:'rgba(90,160,224,0.12)', border:'rgba(90,160,224,0.3)',  text:'#7BBCE8' },
+    PTF:  { label:'Prior to Funding',      short:'PTF',  color:'rgba(82,200,122,0.12)', border:'rgba(82,200,122,0.3)', text:'#6FD98F' }
+  };
+  var grouped = { PTA:[], PTCD:[], PTD:[], PTF:[] };
   conditions.forEach(function(c) {
-    var cat = c.category || 'Other';
-    if (!groups[cat]) groups[cat] = [];
-    groups[cat].push(c);
+    var s = c.stage || 'PTA';
+    if (grouped[s]) grouped[s].push(c);
+    else grouped.PTA.push(c);
   });
 
-  var categoryOrder = ['Income','Assets','Property','Credit','Insurance','Title','Appraisal','Legal','Other'];
-  categoryOrder.forEach(function(cat) {
-    if (!groups[cat] || !groups[cat].length) return;
-    html += '<div class="cond-cat-header">' + cat + ' (' + groups[cat].length + ')</div>';
-    groups[cat].forEach(function(c) {
-      var isCleared = c.status === 'cleared';
-      var isWaived = c.status === 'waived';
-      var statusColor = isCleared ? '#4ade80' : isWaived ? '#a78bfa' : c.status === 'in_review' ? '#C9A84C' : '#f87171';
-      var statusBg = isCleared ? '#0a2a0a' : isWaived ? '#1a0a2a' : c.status === 'in_review' ? '#2a2000' : '#2a0a0a';
-      var checked = isCleared ? 'checked' : '';
-      html += '<div class="cond-row">'
-        + '<input type="checkbox" class="cond-check" ' + checked + ' onchange="toggleCondition(\'' + c.id + '\', this.checked)">'
-        + '<div class="cond-info">'
-        + '<div class="cond-text">' + (c.condition_text || '') + '</div>'
-        + (c.cleared_at ? '<div class="cond-cleared-date">Cleared ' + new Date(c.cleared_at).toLocaleDateString() + '</div>' : '')
-        + '</div>'
-        + '<span class="cond-status-badge" style="background:' + statusBg + ';color:' + statusColor + '">' + (c.status || 'pending').replace('_', ' ').toUpperCase() + '</span>'
-        + '<button class="cond-note-btn" data-note-id="' + c.id + '">Note</button>'
-        + '</div>'
-        + '<div id="np-' + c.id + '" style="display:none;padding:8px 18px 12px 54px;">'
-        + '<div id="nh-' + c.id + '" style="margin-bottom:8px;font-size:.78rem;color:var(--muted);">Loading notes...</div>'
-        + '<div style="display:flex;gap:6px;"><input type="text" id="ni-' + c.id + '" placeholder="Add a note..." style="flex:1;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.78rem;outline:none;">'
-        + '<button class="cond-save-btn" data-save-id="' + c.id + '" style="padding:5px 12px;background:var(--gold);border:none;border-radius:6px;color:#000;font-size:.72rem;font-weight:700;cursor:pointer;">Save</button></div>'
-        + '</div>';
-    });
+  ['PTA','PTCD','PTD','PTF'].forEach(function(key) {
+    var stage = stages[key];
+    var items = grouped[key];
+    var stageCleared = items.filter(function(c){return c.status==='cleared';}).length;
+
+    // Stage header
+    html += '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;margin:0 0 2px;background:' + stage.color + ';border-left:3px solid ' + stage.text + ';border-radius:0 6px 6px 0;">'
+      + '<span style="font-size:10px;font-weight:700;letter-spacing:0.1em;color:' + stage.text + ';text-transform:uppercase;">' + stage.short + ' — ' + stage.label + '</span>'
+      + '<span style="font-size:10px;color:' + stage.text + ';opacity:0.7;">(' + items.length + ' condition' + (items.length !== 1 ? 's' : '') + ')</span>'
+      + '<span style="font-size:10px;color:' + stage.text + ';opacity:0.6;margin-left:auto;">' + stageCleared + '/' + items.length + ' cleared</span>'
+      + '</div>';
+
+    if (!items.length) {
+      html += '<div style="padding:10px 20px;font-size:12px;color:#444;margin-bottom:8px;">No conditions in this stage</div>';
+    } else {
+      items.forEach(function(c) {
+        var isCleared = c.status === 'cleared';
+        var isWaived = c.status === 'waived';
+        var statusLabel = (c.status || 'pending').replace('_',' ').toUpperCase();
+        var statusColor = isCleared ? '#6FD98F' : isWaived ? '#a78bfa' : c.status === 'in_review' ? '#C9A84C' : '#F07878';
+        var statusBg = isCleared ? 'rgba(82,200,122,0.12)' : isWaived ? 'rgba(167,139,250,0.12)' : c.status === 'in_review' ? 'rgba(201,168,76,0.12)' : 'rgba(224,82,82,0.12)';
+        var statusBorder = isCleared ? 'rgba(82,200,122,0.25)' : isWaived ? 'rgba(167,139,250,0.25)' : c.status === 'in_review' ? 'rgba(201,168,76,0.25)' : 'rgba(224,82,82,0.25)';
+        var checked = isCleared ? 'checked' : '';
+
+        html += '<div class="cond-row" style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid rgba(201,168,76,0.06);" onmouseover="this.style.background=\'#161618\'" onmouseout="this.style.background=\'\'">'
+          + '<input type="checkbox" class="cond-check" ' + checked + ' onchange="toggleCondition(\'' + c.id + '\', this.checked)" style="margin-top:3px;accent-color:#C9A84C;flex-shrink:0;">'
+          + '<div style="flex:1;min-width:0;">'
+          + '<div style="font-size:13px;color:' + (isCleared ? '#555' : '#E0DDD4') + ';' + (isCleared ? 'text-decoration:line-through;' : '') + 'line-height:1.5;">' + (c.condition_text || '') + '</div>'
+          + '<div style="display:flex;align-items:center;gap:8px;margin-top:3px;">'
+          + '<span style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.05em;">' + (c.category || '') + '</span>'
+          + '<select onchange="updateConditionStage(\'' + c.id + '\',this.value)" style="font-size:10px;background:#131315;border:1px solid rgba(201,168,76,0.18);border-radius:4px;color:#C9A84C;padding:1px 4px;cursor:pointer;">'
+          + '<option value="PTA"' + (c.stage==='PTA'?' selected':'') + '>PTA</option>'
+          + '<option value="PTCD"' + (c.stage==='PTCD'?' selected':'') + '>PTCD</option>'
+          + '<option value="PTD"' + (c.stage==='PTD'?' selected':'') + '>PTD</option>'
+          + '<option value="PTF"' + (c.stage==='PTF'?' selected':'') + '>PTF</option>'
+          + '</select>'
+          + (c.cleared_at ? '<span style="font-size:10px;color:#555;">Cleared ' + new Date(c.cleared_at).toLocaleDateString() + '</span>' : '')
+          + '</div>'
+          + '</div>'
+          + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
+          + '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;background:' + statusBg + ';color:' + statusColor + ';border:1px solid ' + statusBorder + ';">' + statusLabel + '</span>'
+          + '<button class="cond-note-btn" data-note-id="' + c.id + '" style="font-size:11px;color:#666;background:transparent;border:1px solid #2A2A2E;border-radius:5px;padding:3px 10px;cursor:pointer;">Note</button>'
+          + '</div>'
+          + '</div>'
+          + '<div id="np-' + c.id + '" style="display:none;padding:8px 18px 12px 54px;">'
+          + '<div id="nh-' + c.id + '" style="margin-bottom:8px;font-size:.78rem;color:var(--muted);">Loading notes...</div>'
+          + '<div style="display:flex;gap:6px;"><input type="text" id="ni-' + c.id + '" placeholder="Add a note..." style="flex:1;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.78rem;outline:none;">'
+          + '<button class="cond-save-btn" data-save-id="' + c.id + '" style="padding:5px 12px;background:var(--gold);border:none;border-radius:6px;color:#000;font-size:.72rem;font-weight:700;cursor:pointer;">Save</button></div>'
+          + '</div>';
+      });
+    }
+
+    // Spacer between stages
+    html += '<div style="height:12px;"></div>';
   });
+
   list.innerHTML = html;
+}
+
+async function updateConditionStage(conditionId, stage) {
+  await fetch(
+    (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/loan_conditions?id=eq.' + conditionId,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY || '',
+        'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || ''),
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({ stage: stage })
+    }
+  );
+  loadConditions();
 }
 
 async function toggleCondition(id, checked) {
