@@ -59,4 +59,32 @@ resetButton?.addEventListener("click", () => {
   render(listings);
 });
 
-render(listings);
+// Pre-populate from URL params (listing alert deep links)
+const _urlParams = new URLSearchParams(window.location.search);
+if (_urlParams.toString()) {
+  const _city = _urlParams.get('cities') || _urlParams.get('city') || '';
+  const _minPrice = _urlParams.get('min_price') || '';
+  const _maxPrice = _urlParams.get('max_price') || '';
+  const _beds = _urlParams.get('min_beds') || _urlParams.get('beds') || '';
+  const _baths = _urlParams.get('min_baths') || _urlParams.get('baths') || '';
+  const _propType = _urlParams.get('property_types') || '';
+
+  const cityInput = form?.querySelector('[name="city"]');
+  const minPriceInput = form?.querySelector('[name="minPrice"]');
+  const maxPriceInput = form?.querySelector('[name="maxPrice"]');
+  const bedsSelect = form?.querySelector('[name="beds"]');
+  const bathsSelect = form?.querySelector('[name="baths"]');
+  const propTypeSelect = form?.querySelector('[name="propertyType"]');
+
+  if (cityInput && _city) cityInput.value = _city.split(',')[0];
+  if (minPriceInput && _minPrice) minPriceInput.value = _minPrice;
+  if (maxPriceInput && _maxPrice) maxPriceInput.value = _maxPrice;
+  if (bedsSelect && _beds) bedsSelect.value = _beds;
+  if (bathsSelect && _baths) bathsSelect.value = _baths;
+  if (propTypeSelect && _propType) propTypeSelect.value = _propType.split(',')[0];
+
+  // Auto-submit the search
+  setTimeout(() => { form?.dispatchEvent(new Event('submit', { cancelable: true })); }, 100);
+} else {
+  render(listings);
+}

@@ -197,75 +197,129 @@ const MOCK_LISTINGS: Listing[] = [
   },
 ];
 
+// ── Build search URL from alert criteria ──────────────────────
+function buildSearchUrl(alert: AlertRow): string {
+  const params = new URLSearchParams();
+  if (alert.cities?.length) params.set('cities', alert.cities.join(','));
+  if (alert.counties?.length) params.set('counties', alert.counties.join(','));
+  if (alert.min_price) params.set('min_price', String(alert.min_price));
+  if (alert.max_price) params.set('max_price', String(alert.max_price));
+  if (alert.min_beds) params.set('min_beds', String(alert.min_beds));
+  if (alert.min_baths) params.set('min_baths', String(alert.min_baths));
+  if (alert.property_types?.length) params.set('property_types', alert.property_types.join(','));
+  if (alert.listing_statuses?.length) params.set('statuses', alert.listing_statuses.join(','));
+  if (alert.min_sqft) params.set('min_sqft', String(alert.min_sqft));
+  if (alert.max_sqft) params.set('max_sqft', String(alert.max_sqft));
+  if (alert.has_pool) params.set('has_pool', 'true');
+  if (alert.max_hoa) params.set('max_hoa', String(alert.max_hoa));
+  if (alert.listing_type) params.set('listing_type', alert.listing_type);
+  params.set('alert_id', alert.id);
+  return `https://beta.ratesandrealty.com/public/search.html?${params.toString()}`;
+}
+
+// ── Build search criteria summary rows ────────────────────────
+function buildCriteriaRows(a: AlertRow): string {
+  const row = (label: string, value: string) =>
+    `<div style="margin-bottom:4px;"><span style="color:#7A5820;">${label}:</span> <span style="color:#F0EDE4;">${value}</span></div>`;
+  const rows: string[] = [];
+  if (a.cities?.length) rows.push(row('Cities', a.cities.join(', ')));
+  if (a.counties?.length) rows.push(row('Counties', a.counties.join(', ')));
+  if (a.min_price || a.max_price) {
+    const mn = a.min_price ? '$' + Number(a.min_price).toLocaleString() : 'Any';
+    const mx = a.max_price ? '$' + Number(a.max_price).toLocaleString() : 'Any';
+    rows.push(row('Price', `${mn} – ${mx}`));
+  }
+  if (a.min_beds) rows.push(row('Beds', `${a.min_beds}+`));
+  if (a.min_baths) rows.push(row('Baths', `${a.min_baths}+`));
+  if (a.property_types?.length) rows.push(row('Types', a.property_types.join(', ')));
+  if (a.listing_statuses?.length) rows.push(row('Status', a.listing_statuses.join(', ')));
+  if (a.min_sqft || a.max_sqft) {
+    const mn = a.min_sqft ? Number(a.min_sqft).toLocaleString() : '0';
+    const mx = a.max_sqft ? Number(a.max_sqft).toLocaleString() : 'Any';
+    rows.push(row('Sqft', `${mn} – ${mx} sqft`));
+  }
+  if (a.has_pool) rows.push(row('Pool', 'Yes'));
+  if (a.max_hoa) rows.push(row('Max HOA', `$${Number(a.max_hoa).toLocaleString()}/mo`));
+  if (a.frequency) rows.push(row('Frequency', a.frequency));
+  return rows.join('');
+}
+
 // ── Email HTML builder ────────────────────────────────────────
 function buildListingAlertEmail(
   firstName: string,
-  alertName: string,
-  listings: Listing[],
-  portalUrl: string
+  alert: AlertRow,
+  listings: Listing[]
 ): string {
-  const cards = listings
-    .map((l) => {
-      const photo =
-        l.Media?.[0]?.MediaURL ||
-        "https://placehold.co/560x300/1a1a1a/666?text=No+Photo";
-      const price = "$" + l.ListPrice.toLocaleString();
-      const details = [
-        l.BedroomsTotal ? `${l.BedroomsTotal} bed` : "",
-        l.BathroomsTotalInteger ? `${l.BathroomsTotalInteger} bath` : "",
-        l.LivingArea ? `${l.LivingArea.toLocaleString()} sqft` : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      const remarks = (l.PublicRemarks || "").substring(0, 120);
-      return `
-      <tr><td style="padding:0 0 16px">
-        <div style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden">
-          <img src="${photo}" alt="Listing" width="100%" style="display:block;max-height:200px;object-fit:cover">
-          <div style="padding:14px 18px">
-            <div style="font-size:1.2rem;font-weight:800;color:#C9A84C">${price}</div>
-            <div style="font-size:.82rem;color:#ccc;margin-top:2px">${details}</div>
-            <div style="font-size:.82rem;color:#999;margin-top:4px">${l.UnparsedAddress}</div>
-            ${remarks ? `<div style="font-size:.75rem;color:#666;margin-top:8px;line-height:1.5">${remarks}…</div>` : ""}
-          </div>
-        </div>
-      </td></tr>`;
-    })
-    .join("");
+  const searchUrl = buildSearchUrl(alert);
+  const shown = listings.slice(0, 5);
+  const overflow = listings.length - shown.length;
+
+  const cards = shown.map((l) => {
+    const photo = l.Media?.[0]?.MediaURL || '';
+    const photoCell = photo
+      ? `<a href="${searchUrl}"><img src="${photo}" width="130" height="100" style="display:block;object-fit:cover;border-radius:8px 0 0 8px;" alt="Property"></a>`
+      : `<div style="width:130px;height:100px;background:#2A1800;border-radius:8px 0 0 8px;display:flex;align-items:center;justify-content:center;"><span style="color:#5A4020;font-size:11px;">No Photo</span></div>`;
+    const price = '$' + l.ListPrice.toLocaleString();
+    const details = [
+      l.BedroomsTotal ? `${l.BedroomsTotal} bed` : '',
+      l.BathroomsTotalInteger ? `${l.BathroomsTotalInteger} bath` : '',
+      l.LivingArea ? `${l.LivingArea.toLocaleString()} sqft` : '',
+    ].filter(Boolean).join(' &middot; ');
+    const remarks = (l.PublicRemarks || '').substring(0, 80);
+    return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#1E1200;border:1px solid #3A2400;border-radius:8px;margin-bottom:10px;"><tr>
+<td width="130" style="padding:0;vertical-align:top;">${photoCell}</td>
+<td style="padding:10px 14px;vertical-align:top;">
+<div style="font-size:16px;font-weight:700;color:#C9A84C;">${price}</div>
+<div style="font-size:12px;color:#A09070;margin:2px 0 4px;">${details}</div>
+<div style="font-size:12px;color:#E0DDD4;margin-bottom:4px;">${l.UnparsedAddress}</div>
+${remarks ? `<div style="font-size:11px;color:#6A6050;line-height:1.4;">${remarks}…</div>` : ''}
+<a href="${searchUrl}" style="display:inline-block;margin-top:6px;padding:5px 14px;background:#C9A84C;color:#1A0E00;border-radius:5px;font-size:11px;font-weight:700;text-decoration:none;">View Listing →</a>
+</td></tr></table>`;
+  }).join('');
+
+  const criteriaHtml = buildCriteriaRows(alert);
+  const n = listings.length;
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#0a0a0a;font-family:'Segoe UI',Helvetica,Arial,sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a">
-<tr><td align="center" style="padding:32px 16px">
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px">
-  <tr><td style="background:linear-gradient(135deg,#1a1408,#2a1f0a);border-radius:14px 14px 0 0;padding:24px 32px;border-bottom:2px solid #C9A84C">
-    <table width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td><div style="font-size:1.2rem;font-weight:800;color:#C9A84C">Rates &amp; Realty</div>
-        <div style="font-size:.62rem;color:#666;text-transform:uppercase;letter-spacing:.14em;margin-top:2px">Listing Alert</div></td>
-      <td align="right"><div style="background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.4);color:#C9A84C;font-size:.68rem;font-weight:800;padding:5px 14px;border-radius:20px">${listings.length} New</div></td>
-    </tr></table>
-  </td></tr>
-  <tr><td style="background:#111;padding:28px 32px 12px">
-    <div style="font-size:.78rem;color:#C9A84C;font-weight:700;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">New Listings Found</div>
-    <h1 style="margin:0 0 6px;font-size:1.5rem;font-weight:800;color:#fff;line-height:1.2">${firstName}, ${listings.length} home${listings.length === 1 ? "" : "s"} match your alert!</h1>
-    <p style="margin:0 0 20px;font-size:.85rem;color:#888;line-height:1.6">Your <strong style="color:#eee">"${alertName}"</strong> alert found new listings.</p>
-  </td></tr>
-  <tr><td style="background:#111;padding:0 32px 28px">
-    <table width="100%" cellpadding="0" cellspacing="0">${cards}</table>
-    <a href="${portalUrl}" style="display:inline-block;background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#000;text-decoration:none;padding:13px 28px;border-radius:10px;font-weight:800;font-size:.88rem;margin-top:8px">View All Matches</a>
-  </td></tr>
-  <tr><td style="background:#0d0d0d;padding:18px 32px;border-top:1px solid #1a1a1a">
-    <table cellpadding="0" cellspacing="0"><tr>
-      <td style="padding-right:12px"><div style="width:40px;height:40px;background:linear-gradient(135deg,#C9A84C,#a87a30);border-radius:50%;text-align:center;line-height:40px;font-weight:800;color:#000;font-size:.82rem">RD</div></td>
-      <td><div style="font-size:.82rem;font-weight:700;color:#eee">Rene Duarte &bull; NMLS #1795044</div>
-        <div style="font-size:.7rem;color:#666"><a href="tel:7144728508" style="color:#C9A84C;text-decoration:none">(714) 472-8508</a> &bull; <a href="mailto:rene@ratesandrealty.com" style="color:#C9A84C;text-decoration:none">rene@ratesandrealty.com</a></div>
-      </td>
-    </tr></table>
-  </td></tr>
-  <tr><td style="background:#080808;padding:12px 32px;border-radius:0 0 14px 14px;border-top:1px solid #111">
-    <p style="margin:0;font-size:.62rem;color:#333;text-align:center">&copy; 2026 Rates &amp; Realty &bull; NMLS #1795044 &bull; Equal Housing Lender</p>
-  </td></tr>
-</table></td></tr></table></body></html>`;
+<body style="margin:0;padding:0;background:#1A1200;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#1A1200;">
+<tr><td align="center" style="padding:24px 12px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
+<!-- Header -->
+<tr><td style="background:#1A1200;padding:16px 24px;border-bottom:2px solid #C9A84C;">
+<table width="100%" cellpadding="0" cellspacing="0"><tr>
+<td><div style="font-size:18px;font-weight:800;color:#C9A84C;">Rates &amp; Realty</div><div style="font-size:10px;color:#5A4820;text-transform:uppercase;letter-spacing:.12em;margin-top:1px;">Listing Alert</div></td>
+<td align="right"><div style="background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.4);color:#C9A84C;font-size:11px;font-weight:800;padding:4px 12px;border-radius:20px;">${n} New</div></td>
+</tr></table>
+</td></tr>
+<!-- Subheader -->
+<tr><td style="background:#1A1200;padding:20px 24px 12px;">
+<div style="font-size:18px;font-weight:700;color:#F0EDE4;margin-bottom:4px;">${firstName}, ${n} home${n === 1 ? '' : 's'} match your &ldquo;${alert.name}&rdquo; alert!</div>
+</td></tr>
+<!-- Search Criteria -->
+<tr><td style="padding:0 24px 16px;">
+<div style="background:#261800;border:1px solid #4A3000;border-radius:8px;padding:12px 16px;font-size:13px;color:#C8A84A;">
+<div style="font-size:11px;font-weight:700;color:#7A5820;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Your Search</div>
+<div style="font-weight:600;color:#F0EDE4;margin-bottom:6px;">${alert.name}</div>
+${criteriaHtml}
+</div>
+</td></tr>
+<!-- Listing Cards -->
+<tr><td style="padding:0 24px;">
+${cards}
+${overflow > 0 ? `<div style="text-align:center;font-size:12px;color:#7A5820;padding:6px 0 10px;">…and ${overflow} more listing${overflow === 1 ? '' : 's'}</div>` : ''}
+</td></tr>
+<!-- CTA -->
+<tr><td style="padding:12px 24px 20px;" align="center">
+<a href="${searchUrl}" style="display:inline-block;background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#1A0E00;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:800;font-size:14px;">View All ${n} Matches →</a>
+</td></tr>
+<!-- Footer -->
+<tr><td style="padding:16px 24px;border-top:1px solid #2A1800;">
+<div style="font-size:11px;color:#4A4035;line-height:1.6;">Rene Duarte &middot; Rates &amp; Realty &middot; <a href="mailto:rene@ratesandrealty.com" style="color:#C9A84C;text-decoration:none;">rene@ratesandrealty.com</a> &middot; <a href="tel:7144728508" style="color:#C9A84C;text-decoration:none;">714-472-8508</a><br>NMLS #1795044 &middot; Equal Housing Lender</div>
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
 }
 
 // ── Send email via MailerSend ─────────────────────────────────
@@ -449,12 +503,7 @@ Deno.serve(async (_req: Request) => {
 
       // 6. Send email
       const subject = `🏡 ${newListings.length} New Listing${newListings.length === 1 ? "" : "s"} — ${alert.name}`;
-      const html = buildListingAlertEmail(
-        contactName,
-        alert.name,
-        newListings,
-        "https://beta.ratesandrealty.com/public/unified-portal.html#alerts"
-      );
+      const html = buildListingAlertEmail(contactName, alert, newListings);
       const emailResult = await sendEmail(contactEmail, contactName, subject, html);
       alog.email_sent = emailResult.sent;
       alog.email_error = emailResult.error || null;
