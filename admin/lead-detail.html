@@ -1207,53 +1207,32 @@
   <a href="email-marketing.html" class="ab-back" style="text-decoration:none;">📣 Marketing</a>
   <a href="referral-partners.html" class="ab-back" style="text-decoration:none;">🤝 Partners</a>
   <div class="ab-name" id="topbar-name">Loading…</div>
-  <span class="ld-status-badge sb-new" id="topbar-status">New Lead</span>
-  <span class="ld-score-tier-badge" id="topbar-score-tier" style="display:none;"></span>
-  <div id="pipelineStageBar" style="display:flex;align-items:center;gap:0;margin-left:4px;flex-wrap:nowrap;flex-shrink:0;"></div>
+
+  <!-- Status bubble (pipeline stage) -->
+  <div style="position:relative;display:inline-block;">
+    <span id="statusBubble" onclick="toggleStatusMenu()" style="padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:700;cursor:pointer;letter-spacing:0.05em;background:rgba(90,160,224,0.18);border:1px solid rgba(90,160,224,0.4);color:#7BBCE8;user-select:none;transition:all 0.15s;">NEW</span>
+    <div id="statusMenu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;z-index:999;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:160px;"></div>
+  </div>
+
+  <!-- Temperature bubble -->
+  <div style="position:relative;display:inline-block;">
+    <span id="tempBubble" onclick="toggleTempMenu()" style="padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:700;cursor:pointer;letter-spacing:0.05em;user-select:none;transition:all 0.15s;background:rgba(90,160,224,0.18);border:1px solid rgba(90,160,224,0.45);color:#7BBCE8;">&#129482; COLD</span>
+    <div id="tempMenu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;z-index:999;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:100px;">
+      <div onclick="setTemperature('Hot')" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#F07878;display:flex;align-items:center;gap:7px;" onmouseover="this.style.background='rgba(224,82,82,0.1)'" onmouseout="this.style.background=''">&#128293; Hot</div>
+      <div onclick="setTemperature('Warm')" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#E0A852;display:flex;align-items:center;gap:7px;" onmouseover="this.style.background='rgba(224,165,82,0.1)'" onmouseout="this.style.background=''">&#9728;&#65039; Warm</div>
+      <div onclick="setTemperature('Cold')" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#7BBCE8;display:flex;align-items:center;gap:7px;" onmouseover="this.style.background='rgba(90,160,224,0.1)'" onmouseout="this.style.background=''">&#129482; Cold</div>
+    </div>
+  </div>
+
+  <!-- Pipeline timeline -->
+  <div id="pipelineTimeline" style="display:flex;align-items:center;flex:1;background:rgba(0,0,0,0.25);border-radius:30px;padding:4px 6px;border:1px solid rgba(201,168,76,0.15);gap:0;overflow:hidden;margin:0 12px;"></div>
+
   <div class="ab-divider"></div>
   <div class="ab-controls">
-    <select class="ab-select" id="select-status" onchange="updateStatus(this.value)">
-      <optgroup label="Pipeline">
-        <option value="new">New Lead</option>
-        <option value="contacted">Contacted</option>
-        <option value="prequalified">Pre-Qualified</option>
-        <option value="preapproved">Pre-Approved</option>
-        <option value="in_process">In Process</option>
-        <option value="in_escrow">In Escrow</option>
-        <option value="closed">Closed</option>
-        <option value="lost">Lost</option>
-      </optgroup>
-      <optgroup label="Temperature">
-        <option value="hot">Hot</option>
-        <option value="warm">Warm</option>
-        <option value="cold">Cold</option>
-      </optgroup>
-    </select>
-    <select class="ab-select" id="select-source" onchange="updateSource(this.value)">
-      <optgroup label="Referrals">
-        <option value="">Source</option>
-        <option value="referral">Referral</option>
-        <option value="agent_referral">Agent Referral</option>
-        <option value="client_referral">Client Referral</option>
-      </optgroup>
-      <optgroup label="Digital">
-        <option value="website">Website</option>
-        <option value="zillow">Zillow</option>
-        <option value="realtor">Realtor.com</option>
-        <option value="social">Social Media</option>
-        <option value="google">Google Ads</option>
-      </optgroup>
-      <optgroup label="Other">
-        <option value="direct">Direct Mail</option>
-        <option value="event">Event</option>
-        <option value="other">Other</option>
-      </optgroup>
-    </select>
-    <label class="ab-lo-label" id="ab-lo-name">LO: Rene D.</label>
-    <button class="ab-btn ab-btn-ghost" onclick="toast('LOS integration coming soon')" title="Open in Loan Origination System">LOS ↗</button>
+    <span class="ld-score-tier-badge" id="topbar-score-tier" style="display:none;"></span>
     <button class="ab-btn ab-btn-primary" onclick="toast('Convert to application — coming soon')" title="Convert lead to mortgage application">Convert</button>
     <button class="ab-btn ab-btn-danger" onclick="adminLogout()">Logout</button>
-    <button class="ab-theme" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+    <button class="ab-theme" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">&#127769;</button>
   </div>
 </div>
 
@@ -3441,7 +3420,8 @@ function populateUI() {
   // Top bar
   document.getElementById('topbar-name').textContent = name;
   setStatusBadge(leadData.status || 'new');
-  renderPipelineStage(contactData.pipeline_status || leadData.status || 'New Lead');
+  renderTimeline(contactData.pipeline_status || leadData.status || 'New Lead');
+  renderTempBubble(contactData.temperature || 'Cold');
 
   // Score card
   renderScoreCard(leadData, contactData);
@@ -5608,6 +5588,7 @@ function emailContact() {
 /* ── STATUS BADGE ── */
 function setStatusBadge(status) {
   const el = document.getElementById('topbar-status');
+  if (!el) return;
   const labels = {
     new: 'New Lead', contacted: 'Contacted', prequalified: 'Pre-Qualified',
     preapproved: 'Pre-Approved', in_process: 'In Process', in_escrow: 'In Escrow',
@@ -5618,98 +5599,143 @@ function setStatusBadge(status) {
   setSelectVal('select-status', status);
 }
 
-/* ── PIPELINE STAGE INDICATOR ── */
-var PIPELINE_STAGES = [
-  {key:'New Lead',color:'#6B6B7A',label:'New Lead'},
-  {key:'Contacted',color:'#5AA0E0',label:'Contacted'},
-  {key:'Pre-Approved',color:'#C9A84C',label:'Pre-Approved'},
-  {key:'Under Contract',color:'#AB7FE0',label:'Under Contract'},
-  {key:'Processing',color:'#E07F50',label:'Processing'},
-  {key:'Clear to Close',color:'#52C87A',label:'Clear to Close'},
-  {key:'Closed',color:'#3AB06A',label:'Closed'},
-  {key:'Lost',color:'#E05252',label:'Lost'}
+/* ── PIPELINE STAGE + TEMPERATURE + STATUS BUBBLES ── */
+var STAGES = [
+  {key:'New Lead',short:'New',color:'#6B6B7A'},
+  {key:'Contacted',short:'Contact',color:'#5AA0E0'},
+  {key:'Pre-Approved',short:'Pre-App',color:'#C9A84C'},
+  {key:'Under Contract',short:'Contract',color:'#AB7FE0'},
+  {key:'Processing',short:'Process',color:'#E07F50'},
+  {key:'Clear to Close',short:'CTC',color:'#52C87A'},
+  {key:'Closed',short:'Closed',color:'#3AB06A'},
+  {key:'Lost',short:'Lost',color:'#E05252'}
 ];
 
-function renderPipelineStage(currentStatus) {
-  var bar = document.getElementById('pipelineStageBar');
-  if (!bar) return;
-  // Map old status values to new stage keys
-  var statusMap = {
-    'new':'New Lead','new lead':'New Lead','contacted':'Contacted',
-    'pre-qualified':'Pre-Approved','prequalified':'Pre-Approved','qualified':'Pre-Approved',
-    'pre-approved':'Pre-Approved','application':'Processing','applied':'Processing',
-    'processing':'Processing','underwriting':'Processing','submitted':'Processing',
-    'in_process':'Processing','in_escrow':'Under Contract',
-    'under contract':'Under Contract',
-    'clear to close':'Clear to Close',
-    'closed':'Closed','closed won':'Closed','funded':'Closed',
-    'lost':'Lost','dead':'Lost','declined':'Lost'
-  };
-  var active = statusMap[(currentStatus || '').toLowerCase().trim()] || currentStatus || 'New Lead';
-  // Verify it's a valid stage key
-  if (!PIPELINE_STAGES.find(function(s){return s.key===active;})) active = 'New Lead';
+var TEMP_STYLES = {
+  Hot:  {bg:'rgba(224,82,82,0.18)',border:'rgba(224,82,82,0.45)',text:'#F07878',icon:'\uD83D\uDD25',label:'HOT'},
+  Warm: {bg:'rgba(224,165,82,0.18)',border:'rgba(224,165,82,0.45)',text:'#E0A852',icon:'\u2600\uFE0F',label:'WARM'},
+  Cold: {bg:'rgba(90,160,224,0.18)',border:'rgba(90,160,224,0.45)',text:'#7BBCE8',icon:'\uD83E\uDDCA',label:'COLD'}
+};
 
-  bar.innerHTML = PIPELINE_STAGES.map(function(s) {
+var _stageStatusMap = {
+  'new':'New Lead','new lead':'New Lead','contacted':'Contacted',
+  'pre-qualified':'Pre-Approved','prequalified':'Pre-Approved','qualified':'Pre-Approved',
+  'pre-approved':'Pre-Approved','application':'Processing','applied':'Processing',
+  'processing':'Processing','underwriting':'Processing','submitted':'Processing',
+  'in_process':'Processing','in_escrow':'Under Contract','under contract':'Under Contract',
+  'clear to close':'Clear to Close','closed':'Closed','closed won':'Closed','funded':'Closed',
+  'lost':'Lost','dead':'Lost','declined':'Lost'
+};
+
+function resolveStage(raw) {
+  var mapped = _stageStatusMap[(raw || '').toLowerCase().trim()] || raw || 'New Lead';
+  return STAGES.find(function(s){return s.key===mapped;}) ? mapped : 'New Lead';
+}
+
+function renderTimeline(activeStage) {
+  var bar = document.getElementById('pipelineTimeline');
+  if (!bar) return;
+  var active = resolveStage(activeStage);
+  var activeIdx = STAGES.findIndex(function(s){return s.key===active;});
+  bar.innerHTML = STAGES.map(function(s,i) {
     var isActive = s.key === active;
+    var isPast = i < activeIdx;
     var isLost = s.key === 'Lost';
-    return '<span onclick="updatePipelineStage(\'' + s.key + '\')" ' +
-      'style="padding:4px 12px;border-radius:20px;font-size:11.5px;font-weight:' + (isActive?'700':'400') + ';' +
-      'cursor:pointer;transition:all 0.15s;white-space:nowrap;' +
-      'background:' + (isActive?s.color:'transparent') + ';' +
-      'color:' + (isActive?'#fff': isLost?'#E05252':'#888') + ';' +
-      'border:1px solid ' + (isActive?s.color: isLost?'rgba(224,82,82,0.25)':'transparent') + ';' +
-      (isLost?'margin-left:8px;':'') + '" ' +
-      'onmouseover="if(\'' + s.key + '\'!==\'' + active + '\')this.style.color=\'' + s.color + '\'" ' +
-      'onmouseout="if(\'' + s.key + '\'!==\'' + active + '\')this.style.color=\'' + (isLost?'#E05252':'#888') + '\'">' +
-      (isLost?'\u2715 ':'') + s.label + '</span>';
+    var bg = isActive ? s.color : isPast ? s.color+'55' : 'transparent';
+    var col = isActive ? '#fff' : isPast ? '#fff' : '#555';
+    var br = i===0 ? '20px 0 0 20px' : i===STAGES.length-1 ? '0 20px 20px 0' : '0';
+    return '<div onclick="updatePipelineStage(\'' + s.key + '\')" title="' + s.key + '" ' +
+      'style="flex:' + (isActive?'1.6':'1') + ';height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;' +
+      'background:' + bg + ';color:' + col + ';font-size:' + (isActive?'11px':'10px') + ';font-weight:' + (isActive?'700':'400') + ';' +
+      'transition:all 0.2s;border-radius:' + (isLost?'20px':br) + ';' + (isLost?'margin-left:6px;flex:0.8;':'') +
+      'white-space:nowrap;padding:0 6px;border-right:' + (!isLost&&i<STAGES.length-2?'1px solid rgba(255,255,255,0.06)':'none') + ';" ' +
+      'onmouseover="if(\'' + s.key + '\'!==\'' + active + '\'){this.style.background=\'' + s.color + '33\';this.style.color=\'' + s.color + '\'}" ' +
+      'onmouseout="if(\'' + s.key + '\'!==\'' + active + '\'){this.style.background=\'' + (isPast?s.color+'55':'transparent') + '\';this.style.color=\'' + (isPast?'#fff':'#555') + '\'}">' +
+      (isActive?'\u25CF ':isPast?'\u2713 ':'') + s.short + '</div>';
   }).join('');
+  // Sync status bubble
+  var stageDef = STAGES.find(function(s){return s.key===active;});
+  var bubble = document.getElementById('statusBubble');
+  if (bubble && stageDef) {
+    bubble.textContent = stageDef.short.toUpperCase();
+    bubble.style.background = stageDef.color + '22';
+    bubble.style.borderColor = stageDef.color + '66';
+    bubble.style.color = stageDef.color;
+  }
+}
+
+function renderTempBubble(temp) {
+  var t = temp ? (temp.charAt(0).toUpperCase() + temp.slice(1).toLowerCase()) : 'Cold';
+  var s = TEMP_STYLES[t] || TEMP_STYLES.Cold;
+  var bubble = document.getElementById('tempBubble');
+  if (!bubble) return;
+  bubble.textContent = s.icon + ' ' + s.label;
+  bubble.style.background = s.bg;
+  bubble.style.border = '1px solid ' + s.border;
+  bubble.style.color = s.text;
+}
+
+function toggleTempMenu() {
+  var m = document.getElementById('tempMenu');
+  if (m) m.style.display = m.style.display === 'none' ? 'block' : 'none';
+}
+
+async function setTemperature(temp) {
+  document.getElementById('tempMenu').style.display = 'none';
+  renderTempBubble(temp);
+  var contactId = new URLSearchParams(window.location.search).get('contact_id');
+  if (!contactId) return;
+  if (contactData) contactData.temperature = temp;
+  await fetch(
+    (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/contacts?id=eq.' + contactId,
+    { method:'PATCH', headers:{'Content-Type':'application/json','apikey':window.APP_CONFIG?.SUPABASE_ANON_KEY||'','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||''),'Prefer':'return=minimal'}, body:JSON.stringify({temperature:temp}) }
+  );
+  showToast('Temperature: ' + temp);
+}
+
+function renderStatusMenu() {
+  document.getElementById('statusMenu').innerHTML = STAGES.map(function(s) {
+    return '<div onclick="updatePipelineStage(\'' + s.key + '\')" ' +
+      'style="padding:8px 14px;cursor:pointer;font-size:12px;color:' + s.color + ';display:flex;align-items:center;gap:8px;" ' +
+      'onmouseover="this.style.background=\'' + s.color + '18\'" onmouseout="this.style.background=\'\'">' +
+      '<span style="width:8px;height:8px;border-radius:50%;background:' + s.color + ';display:inline-block;"></span>' + s.key + '</div>';
+  }).join('');
+}
+
+function toggleStatusMenu() {
+  var m = document.getElementById('statusMenu');
+  renderStatusMenu();
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
 }
 
 async function updatePipelineStage(newStage) {
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
-  if (!contactId) { console.error('No contact ID'); return; }
-
-  // Optimistic UI update
-  renderPipelineStage(newStage);
-
+  if (!contactId) return;
+  renderTimeline(newStage);
+  var sm = document.getElementById('statusMenu'); if (sm) sm.style.display = 'none';
+  if (contactData) contactData.pipeline_status = newStage;
+  if (leadData) leadData.status = newStage;
   try {
     var res = await fetch(
       (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/contacts?id=eq.' + contactId,
-      {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY || '',
-          'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || ''),
-          'Prefer': 'return=minimal'
-        },
-        body: JSON.stringify({ pipeline_status: newStage, updated_at: new Date().toISOString() })
-      }
+      { method:'PATCH', headers:{'Content-Type':'application/json','apikey':window.APP_CONFIG?.SUPABASE_ANON_KEY||'','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||''),'Prefer':'return=minimal'}, body:JSON.stringify({pipeline_status:newStage,updated_at:new Date().toISOString()}) }
     );
-
-    if (!res.ok) {
-      console.error('Pipeline update failed:', await res.text());
-      renderPipelineStage(contactData?.pipeline_status || leadData?.status || 'New Lead');
+    if (res.ok) {
+      showToast('Stage: ' + newStage);
+      fetch((window.APP_CONFIG?.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co')+'/functions/v1/activity-tracker',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'track_event',contact_id:contactId,type:'STAGE_CHANGE',description:'Stage \u2192 '+newStage,metadata:{stage:newStage}})}).catch(function(){});
+    } else {
+      var prev = contactData?.pipeline_status || 'New Lead';
+      renderTimeline(prev);
       showToast('Failed to update stage', true);
-      return;
     }
-
-    if (contactData) contactData.pipeline_status = newStage;
-    if (leadData) leadData.status = newStage;
-    showToast('Stage: ' + newStage);
-
-    // Log activity
-    fetch((window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/activity-tracker', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'track_event', contact_id: contactId, type: 'STAGE_CHANGE', title: 'Pipeline stage changed to: ' + newStage, status: 'completed', metadata: { stage: newStage } })
-    }).catch(function(){});
-
-  } catch(err) {
-    console.error('updatePipelineStage error:', err);
-    showToast('Update failed', true);
-  }
+  } catch(err) { renderTimeline(contactData?.pipeline_status||'New Lead'); showToast('Update failed',true); }
 }
+
+// Close menus on outside click
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#tempBubble') && !e.target.closest('#tempMenu')) { var m=document.getElementById('tempMenu'); if(m) m.style.display='none'; }
+  if (!e.target.closest('#statusBubble') && !e.target.closest('#statusMenu')) { var m=document.getElementById('statusMenu'); if(m) m.style.display='none'; }
+});
 
 /* ── HELPERS ── */
 function getVal(id) { return (document.getElementById(id)||{}).value || ''; }
