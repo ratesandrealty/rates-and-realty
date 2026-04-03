@@ -1211,13 +1211,13 @@
   <!-- Status bubble (pipeline stage) -->
   <div style="position:relative;display:inline-block;">
     <span id="statusBubble" onclick="toggleStatusMenu()" style="padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:700;cursor:pointer;letter-spacing:0.05em;background:rgba(90,160,224,0.18);border:1px solid rgba(90,160,224,0.4);color:#7BBCE8;user-select:none;transition:all 0.15s;">NEW</span>
-    <div id="statusMenu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;z-index:999;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:160px;"></div>
+    <div id="statusMenu" style="display:none;position:fixed;z-index:99999;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.8);min-width:160px;"></div>
   </div>
 
   <!-- Temperature bubble -->
   <div style="position:relative;display:inline-block;">
     <span id="tempBubble" onclick="toggleTempMenu(event)" style="padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:700;cursor:pointer;letter-spacing:0.05em;user-select:none;transition:all 0.15s;background:rgba(90,160,224,0.18);border:1px solid rgba(90,160,224,0.45);color:#7BBCE8;">&#129482; COLD</span>
-    <div id="tempMenu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;z-index:999;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:100px;">
+    <div id="tempMenu" style="display:none;position:fixed;z-index:99999;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.8);min-width:110px;">
       <div onclick="setTemperature('Hot')" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#F07878;display:flex;align-items:center;gap:7px;" onmouseover="this.style.background='rgba(224,82,82,0.1)'" onmouseout="this.style.background=''">&#128293; Hot</div>
       <div onclick="setTemperature('Warm')" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#E0A852;display:flex;align-items:center;gap:7px;" onmouseover="this.style.background='rgba(224,165,82,0.1)'" onmouseout="this.style.background=''">&#9728;&#65039; Warm</div>
       <div onclick="setTemperature('Cold')" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#7BBCE8;display:flex;align-items:center;gap:7px;" onmouseover="this.style.background='rgba(90,160,224,0.1)'" onmouseout="this.style.background=''">&#129482; Cold</div>
@@ -5742,9 +5742,17 @@ function renderStatusMenu() {
 }
 
 function toggleStatusMenu() {
-  var m = document.getElementById('statusMenu');
+  var menu = document.getElementById('statusMenu');
+  if (!menu) return;
+  if (menu.style.display !== 'none') { menu.style.display = 'none'; return; }
   renderStatusMenu();
-  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  var bubble = document.getElementById('statusBubble');
+  if (bubble) {
+    var rect = bubble.getBoundingClientRect();
+    menu.style.top = (rect.bottom + 4) + 'px';
+    menu.style.left = rect.left + 'px';
+  }
+  menu.style.display = 'block';
 }
 
 async function updatePipelineStage(newStage) {
@@ -5783,6 +5791,10 @@ document.addEventListener('click', function(e) {
   if (!e.target.closest('#tempBubble') && !e.target.closest('#sc-tier') && !e.target.closest('#tempMenu')) { var m=document.getElementById('tempMenu'); if(m) m.style.display='none'; }
   if (!e.target.closest('#statusBubble') && !e.target.closest('#statusMenu')) { var m=document.getElementById('statusMenu'); if(m) m.style.display='none'; }
 });
+// Close menus on scroll
+window.addEventListener('scroll', function() {
+  ['statusMenu','tempMenu'].forEach(function(id) { var m=document.getElementById(id); if(m) m.style.display='none'; });
+}, { passive: true });
 
 /* ── HELPERS ── */
 function getVal(id) { return (document.getElementById(id)||{}).value || ''; }
