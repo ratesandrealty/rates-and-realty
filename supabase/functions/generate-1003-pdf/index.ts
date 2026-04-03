@@ -3,6 +3,7 @@ import { PDFDocument, rgb, StandardFonts } from 'https://esm.sh/pdf-lib@1.17.1';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const TEMPLATE_URL = SUPABASE_URL + '/storage/v1/object/public/public-assets/templates/1003_template.pdf';
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST,OPTIONS',
@@ -10,6 +11,61 @@ const cors = {
   'Content-Type': 'application/json',
 };
 const hdrs = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` };
+
+// Try to fill official 1003 template PDF form fields
+async function tryTemplateFill(d: any): Promise<Uint8Array | null> {
+  try {
+    const templateRes = await fetch(TEMPLATE_URL);
+    if (!templateRes.ok) { console.log('[1003] Template not found, using custom draw'); return null; }
+    const templateBytes = await templateRes.arrayBuffer();
+    const pdfDoc = await PDFDocument.load(templateBytes);
+    const form = pdfDoc.getForm();
+    const fields = form.getFields();
+    if (fields.length === 0) { console.log('[1003] Template has no form fields'); return null; }
+    console.log('[1003] Template loaded with ' + fields.length + ' form fields');
+
+    // Helper: safely set text field
+    function setF(name: string, value: string) {
+      try { form.getTextField(name).setText(value || ''); } catch {}
+    }
+    function setC(name: string, checked: boolean) {
+      try { if (checked) form.getCheckBox(name).check(); else form.getCheckBox(name).uncheck(); } catch {}
+    }
+
+    // Map data to common 1003 field names (adjust after discovery)
+    setF('First Name', d.first_name); setF('Middle Name', d.middle_name);
+    setF('Last Name', d.last_name); setF('Suffix', d.suffix);
+    setF('Social Security Number', fmtSSN(d.ssn));
+    setF('Date of Birth', fmtDate(d.date_of_birth || d.dob));
+    setF('Marital Status', d.marital_status || d.marital);
+    setF('Number of Dependents', fmt(d.dependents_count || d.dep_count));
+    setF('Cell Phone', d.cell_phone); setF('Home Phone', d.home_phone);
+    setF('Work Phone', d.work_phone); setF('Email', d.email);
+    setC('US Citizen', d.citizenship === 'U.S. Citizen');
+    setC('Permanent Resident Alien', d.citizenship === 'Permanent Resident Alien');
+    setF('Current Address Street', d.cur_street); setF('Current Address Unit', d.cur_unit);
+    setF('Current Address City', d.cur_city); setF('Current Address State', d.cur_state);
+    setF('Current Address ZIP', d.cur_zip);
+    setF('Employer or Business Name', d.emp_name); setF('Employer Phone', d.emp_phone);
+    setF('Position or Title', d.emp_title);
+    setF('Base', fmtMoney(d.base_income)); setF('TOTAL', fmtMoney(d.total_income || d.total_inc));
+    setF('Loan Amount', fmtMoney(d.loan_amount));
+    setF('Property Address Street', d.prop_street); setF('Property Address City', d.prop_city);
+    setF('Property Address State', d.prop_state); setF('Property Address ZIP', d.prop_zip);
+    setF('County', d.prop_county); setF('Property Value', fmtMoney(d.prop_value));
+    setC('Purchase', (d.loan_purpose || '') === 'Purchase');
+    setC('Refinance', (d.loan_purpose || '') === 'Refinance');
+    setC('Primary Residence', (d.occupancy || '') === 'Primary Residence');
+    setF('Loan Originator Organization Name', 'E Mortgage Capital / Rates & Realty');
+    setF('Loan Originator Name', 'Rene Duarte');
+    setF('Loan Originator NMLSR ID', '1795044');
+
+    return new Uint8Array(await pdfDoc.save());
+  } catch (err: any) {
+    console.log('[1003] Template fill failed:', err.message);
+    return null;
+  }
+}
 
 const fmt = (v: any) => v == null ? '' : String(v);
 const fmtDate = (v: any) => { if (!v) return ''; try { return new Date(v).toLocaleDateString('en-US'); } catch { return fmt(v); } };
@@ -20,7 +76,20 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
   try {
-    const { contact_id } = await req.json();
+    const body = await req.json();
+    const { contact_id } = body;
+
+    // Discovery mode: list all form field names in the template
+    if (body.action === 'discover_fields') {
+      try {
+        const tRes = await fetch(TEMPLATE_URL);
+        if (!tRes.ok) return new Response(JSON.stringify({ error: 'Template not found at ' + TEMPLATE_URL }), { headers: cors });
+        const tBytes = await tRes.arrayBuffer();
+        const tDoc = await PDFDocument.load(tBytes);
+        const fields = tDoc.getForm().getFields().map((f: any) => ({ name: f.getName(), type: f.constructor.name }));
+        return new Response(JSON.stringify({ fields, count: fields.length }), { headers: cors });
+      } catch (e: any) { return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: cors }); }
+    }
     if (!contact_id) return new Response(JSON.stringify({ error: 'contact_id required' }), { status: 400, headers: cors });
 
     // Fetch data
@@ -72,7 +141,16 @@ Deno.serve(async (req: Request) => {
       ...app,
     };
 
-    // Build PDF
+    // Try official template fill first
+    const templatePdf = await tryTemplateFill(d);
+    if (templatePdf) {
+      const base64 = btoa(String.fromCharCode(...templatePdf));
+      const fileName = `1003_${(d.last_name || 'Borrower').replace(/\s/g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      return new Response(JSON.stringify({ pdf_base64: base64, file_name: fileName, source: 'template' }), { headers: cors });
+    }
+
+    // Fallback: build custom PDF from scratch
+    console.log('[1003] Using custom draw fallback');
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontB = await pdfDoc.embedFont(StandardFonts.HelveticaBold);

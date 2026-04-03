@@ -1853,7 +1853,7 @@
           </button>
           <span id="autoSaveIndicator" style="font-size:11px;color:rgba(255,255,255,0.4);opacity:0;transition:opacity 0.3s;margin-right:12px;"></span>
           <button class="ld-btn-save" onclick="save1003()">Save Application</button>
-          <button type="button" id="download1003Btn" onclick="download1003PDF()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:#C9A84C;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">&#11015; Download 1003 PDF</button>
+          <button type="button" id="download1003Btn" onclick="openForm1003Modal()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:#C9A84C;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">&#128065; View 1003 PDF</button>
           <button class="ld-btn-cancel" onclick="exportMISMO()" style="border-color:var(--gold-bdr);color:var(--gold);">Export MISMO 3.4</button>
         </div>
       </div>
@@ -7707,29 +7707,65 @@ async function exportMISMO() {
   await logActivity('document_uploaded', `MISMO 3.4 export: ${borrowerName}`).catch(()=>{});
 }
 
-/* ── DOWNLOAD 1003 PDF ── */
-async function download1003PDF() {
-  var btn = document.getElementById('download1003Btn');
-  var orig = btn ? btn.innerHTML : '';
-  if (btn) { btn.innerHTML = '\u23F3 Generating PDF...'; btn.disabled = true; }
+/* ── 1003 PDF VIEW + DOWNLOAD ── */
+var _form1003BlobUrl = null;
+var _form1003FileName = null;
+
+async function openForm1003Modal() {
+  var modal = document.getElementById('form1003Modal');
+  if (!modal) return;
+  var iframe = document.getElementById('form1003Iframe');
+  var loader = document.getElementById('form1003Loader');
+  var dlBtn = document.getElementById('form1003DownloadBtn');
+  var subtitle = document.getElementById('form1003ModalSubtitle');
+
+  iframe.style.display = 'none';
+  loader.style.display = 'flex';
+  loader.innerHTML = '<div style="width:36px;height:36px;border-radius:50%;border:3px solid rgba(201,168,76,0.2);border-top-color:#C9A84C;animation:spin 0.8s linear infinite;"></div><div style="font-size:13px;">Generating 1003 from CRM data...</div>';
+  if (dlBtn) { dlBtn.disabled = true; dlBtn.textContent = '\u23F3 Generating...'; }
+  modal.style.display = 'flex';
+  _form1003BlobUrl = null;
+  document.body.style.overflow = 'hidden';
+
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
+  var name = contactData ? ((contactData.first_name || '') + ' ' + (contactData.last_name || '')).trim() : 'Borrower';
+  if (subtitle) subtitle.textContent = name + ' \u00b7 ' + new Date().toLocaleDateString('en-US');
+
   try {
     var res = await fetch(
       (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/generate-1003-pdf',
       { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||'')}, body:JSON.stringify({contact_id:contactId}) }
     );
-    if (!res.ok) { var err = await res.json(); throw new Error(err.error || 'PDF generation failed'); }
+    if (!res.ok) { var err = await res.json(); throw new Error(err.error || 'Generation failed'); }
     var data = await res.json();
+    _form1003FileName = data.file_name;
     var binaryStr = atob(data.pdf_base64);
     var bytes = new Uint8Array(binaryStr.length);
     for (var i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
     var blob = new Blob([bytes], { type:'application/pdf' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a'); a.href = url; a.download = data.file_name || '1003.pdf';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    showToast('1003 PDF downloaded');
-  } catch(err) { showToast('PDF failed: ' + err.message, true); console.error('download1003PDF:', err); }
-  if (btn) { btn.innerHTML = orig; btn.disabled = false; }
+    _form1003BlobUrl = URL.createObjectURL(blob);
+    iframe.src = _form1003BlobUrl;
+    loader.style.display = 'none';
+    iframe.style.display = 'block';
+    if (dlBtn) { dlBtn.disabled = false; dlBtn.textContent = '\u2B07 Download PDF'; }
+  } catch(err) {
+    loader.innerHTML = '<div style="color:#E05252;font-size:13px;">\u26A0 ' + err.message + '</div>';
+    console.error('1003 generation error:', err);
+  }
+}
+
+function triggerForm1003Download() {
+  if (!_form1003BlobUrl) return;
+  var a = document.createElement('a');
+  a.href = _form1003BlobUrl; a.download = _form1003FileName || '1003.pdf';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('1003 PDF downloaded');
+}
+
+function closeForm1003Modal() {
+  var m = document.getElementById('form1003Modal');
+  if (m) m.style.display = 'none';
+  document.body.style.overflow = '';
 }
 
 /* ── MISMO IMPORT HISTORY ── */
@@ -10651,7 +10687,7 @@ function closePdfViewer() {
   document.body.style.overflow = '';
 }
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); closeDocViewer(); if (document.getElementById('ecOverlay')) { saveEmailDraft(); } }
+  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); closeDocViewer(); closeForm1003Modal(); if (document.getElementById('ecOverlay')) { saveEmailDraft(); } }
 });
 document.getElementById('pdf-viewer-modal')?.addEventListener('click', function(e) {
   if (e.target === this) closePdfViewer();
@@ -10972,6 +11008,30 @@ document.addEventListener('click', function(e) {
 <script>
 document.getElementById('canvaPickerModal')?.addEventListener('click', function(e) { if (e.target === this) closeCanvaPicker(); });
 </script>
+
+<!-- 1003 PDF Preview Modal -->
+<div id="form1003Modal" onclick="if(event.target===this)closeForm1003Modal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9998;flex-direction:column;align-items:center;justify-content:center;">
+  <div style="width:92vw;max-width:900px;height:92vh;background:#0F0F11;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(201,168,76,0.2);box-shadow:0 40px 100px rgba(0,0,0,0.95);">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid rgba(201,168,76,0.12);background:#0C0C0E;flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:16px;">&#128203;</span>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:#E0DDD4;">Uniform Residential Loan Application (1003)</div>
+          <div id="form1003ModalSubtitle" style="font-size:11px;color:#555;"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" id="form1003DownloadBtn" onclick="triggerForm1003Download()" style="padding:7px 16px;border-radius:7px;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;">&#11015; Download PDF</button>
+        <button type="button" onclick="closeForm1003Modal()" style="width:32px;height:32px;border-radius:7px;border:none;background:rgba(224,82,82,0.12);color:#E05252;cursor:pointer;font-size:16px;font-weight:600;">&#10005;</button>
+      </div>
+    </div>
+    <div style="flex:1;position:relative;background:#1A1A1D;">
+      <div id="form1003Loader" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#555;"></div>
+      <iframe id="form1003Iframe" style="width:100%;height:100%;border:none;display:none;"></iframe>
+    </div>
+  </div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg)}}</style>
 
 </body>
 </html>
