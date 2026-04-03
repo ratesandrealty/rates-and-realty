@@ -9207,7 +9207,7 @@ async function updateLenderStatus(lenderId, status) {
       </div>
       <div style="display:flex;gap:8px">
         <input id="ai-custom-prompt" type="text" placeholder="Or describe what you want to say..." style="flex:1;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 12px;color:#eee;font-size:12px;outline:none">
-        <button onclick="generateAiMessage()" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:12px;cursor:pointer">Generate</button>
+        <button id="ai-generate-btn" onclick="generateAiMessage()" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:12px;cursor:pointer">Generate</button>
       </div>
       <div id="ai-generating" style="display:none;font-size:11px;color:#666;margin-top:6px;font-style:italic">Generating message...</div>
     </div>
@@ -9368,22 +9368,32 @@ function removeMmsFile() {
 
 async function generateAiMessage() {
   var customPrompt = (document.getElementById('ai-custom-prompt')?.value || '').trim();
-  var contactName = smsContactData?.name || 'the borrower';
+  var contactName = smsContactData?.name || '';
   var gen = document.getElementById('ai-generating');
+  var btn = document.getElementById('ai-generate-btn');
   if (gen) gen.style.display = 'block';
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
   try {
-    var systemPrompt = 'You are Rene Duarte, a licensed mortgage loan officer at Rates & Realty (NMLS #1795044). Write a professional, warm, conversational SMS message. Never use asterisks or markdown. Keep it natural and human. Sign off as Rene.';
-    var userPrompt = (customPrompt || 'Write a friendly follow-up SMS') + ' The borrower name is ' + contactName + '. Return ONLY the SMS text, nothing else.';
-    var res = await fetch('https://api.anthropic.com/v1/messages', {
+    var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 200, messages: [{ role: 'user', content: systemPrompt + '\n\n' + userPrompt }] })
+      body: JSON.stringify({
+        trigger: 'ai_compose',
+        prompt: customPrompt || 'Write a friendly follow-up SMS to check in on their home buying progress. Keep it under 160 chars.',
+        contact_name: contactName
+      })
     });
     var data = await res.json();
-    var msg = data.content && data.content[0] ? data.content[0].text.trim() : '';
-    if (msg) { document.getElementById('sms-body').value = msg; updateSmsCharCount(); }
-  } catch(e) { console.error('AI error:', e); }
+    if (data.message) {
+      var ta = document.getElementById('sms-body');
+      if (ta) { ta.value = data.message; updateSmsCharCount(); }
+    } else {
+      console.error('AI compose error:', data.error);
+      if (typeof showToast === 'function') showToast('AI error: ' + (data.error || 'unknown'), true);
+    }
+  } catch(e) { console.error('AI generate error:', e); }
   if (gen) gen.style.display = 'none';
+  if (btn) { btn.disabled = false; btn.textContent = 'Generate'; }
 }
 
 async function loadSmsHistory() {
@@ -9437,7 +9447,11 @@ async function sendSmsFromModal() {
 // AI quick buttons + SMS modal backdrop
 document.addEventListener('click', function(e) {
   var aiBtn = e.target.closest('.ai-quick-btn');
-  if (aiBtn) { document.getElementById('ai-custom-prompt').value = aiBtn.getAttribute('data-ai-prompt'); generateAiMessage(); }
+  if (aiBtn) {
+    var inp = document.getElementById('ai-custom-prompt');
+    if (inp) inp.value = aiBtn.getAttribute('data-ai-prompt') || '';
+    generateAiMessage();
+  }
   if (e.target.id === 'sms-modal') closeSmsModal();
 });
 
