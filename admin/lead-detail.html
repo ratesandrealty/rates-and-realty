@@ -1293,14 +1293,14 @@
                    color:rgba(255,255,255,0.25); font-weight:600; flex-shrink:0;">
         Tags
       </span>
-      <div id="tag-pills-container" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;position:relative;"></div>
-      <div class="tag-dropdown" id="tag-dropdown" style="display:none;">
+      <div id="rrTagPills" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;"></div>
+      <button id="rrAddTagBtn" style="padding:3px 10px;border-radius:20px;background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);color:rgba(255,255,255,0.35);font-size:11px;cursor:pointer;white-space:nowrap;">+ Tag</button>
+      <div id="rrTagMenu" class="tag-dropdown" style="display:none;">
         <div style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);position:sticky;top:0;background:#1e1e1e;">
-          <input type="text" id="tag-search-input" placeholder="Search or create..."
-            oninput="renderTagDropdownList(this.value)"
+          <input type="text" id="rrTagSearch" placeholder="Search or create..."
             style="width:100%;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:12px;outline:none;box-sizing:border-box;">
         </div>
-        <div id="tag-dropdown-list"></div>
+        <div id="rrTagList"></div>
       </div>
     </div>
 
@@ -3416,7 +3416,7 @@ async function loadData() {
     liabilitiesData = Array.isArray(contactData.liabilities) ? [...contactData.liabilities] : [];
     populateUI();
     renderLiabilities();
-    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocumentsGrid(), loadCreditApps(), loadRelatedContacts(contactId), initTags()]);
+    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocumentsGrid(), loadCreditApps(), loadRelatedContacts(contactId)]);
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
@@ -7401,175 +7401,122 @@ if (localStorage.getItem('rr-theme') === 'light') {
   document.getElementById('theme-toggle').textContent = '🌙';
 }
 
-/* ── TAG SYSTEM ── */
-/* ═══ TAGS ═══ */
-var SB_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
-var ANON_KEY = window.APP_CONFIG.SUPABASE_ANON_KEY;
+/* ═══ TAGS (IIFE — self-contained, no globals) ═══ */
+(function() {
+  var _allTags = [], _contactTags = [], _menuOpen = false;
+  var SB = 'https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1';
+  function getKey() { return window.APP_CONFIG?.SUPABASE_ANON_KEY || ''; }
+  function getCid() { return new URLSearchParams(location.search).get('contact_id') || new URLSearchParams(location.search).get('id'); }
+  function hdr() { return { 'apikey': getKey(), 'Authorization': 'Bearer ' + getKey(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' }; }
 
-var allTags = [];
-var contactTags = [];
-var tagDropdownOpen = false;
+  async function rrLoadTags() {
+    var cid = getCid(); if (!cid) return;
+    var results = await Promise.all([
+      fetch(SB + '/tags?order=name', { headers: hdr() }).then(function(r) { return r.json(); }),
+      fetch(SB + '/contact_tags?contact_id=eq.' + cid + '&select=tag_id,tags(id,name,color)', { headers: hdr() }).then(function(r) { return r.json(); })
+    ]);
+    _allTags = Array.isArray(results[0]) ? results[0] : [];
+    _contactTags = Array.isArray(results[1]) ? results[1].map(function(x) { return x.tags; }).filter(Boolean) : [];
+    rrRenderPills();
+    rrRenderList('');
+  }
 
-async function loadAllTags() {
-  var res = await fetch(SB_URL + '/rest/v1/tags?order=name', {
-    headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY }
+  function rrRenderPills() {
+    var el = document.getElementById('rrTagPills'); if (!el) return;
+    el.innerHTML = _contactTags.map(function(t) {
+      return '<span class="tag-badge" style="background:' + (t.color||'#888') + '22;border-color:' + (t.color||'#888') + '66;color:' + (t.color||'#888') + ';">'
+        + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>' + t.name
+        + ' <span data-remove-tag="' + t.id + '" style="cursor:pointer;opacity:0.6;font-size:13px;margin-left:2px;">\u00d7</span></span>';
+    }).join('');
+  }
+
+  function rrRenderList(search) {
+    var el = document.getElementById('rrTagList'); if (!el) return;
+    var s = (search || '').toLowerCase();
+    var activeIds = _contactTags.map(function(t) { return t.id; });
+    var filtered = _allTags.filter(function(t) { return t.name.toLowerCase().indexOf(s) >= 0; });
+    var exact = filtered.find(function(t) { return t.name.toLowerCase() === s; });
+    var html = filtered.map(function(t) {
+      var on = activeIds.indexOf(t.id) >= 0;
+      return '<div class="tag-dropdown-item" data-toggle-tag="' + t.id + '">'
+        + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>'
+        + '<span style="flex:1;">' + t.name + '</span>'
+        + (on ? '<span style="font-size:11px;color:#c9a84c;">\u2713</span>' : '')
+        + '</div>';
+    }).join('');
+    if (search && search.trim() && !exact) {
+      html += '<div class="tag-create-row" data-create-tag="' + search.trim().replace(/"/g, '&quot;') + '">'
+        + '<span>\u2728</span><span>Create &quot;' + search.trim() + '&quot;</span></div>';
+    }
+    el.innerHTML = html || '<div style="padding:14px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px;">No tags found</div>';
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(rrLoadTags, 500);
+
+    document.addEventListener('click', async function(e) {
+      var addBtn = e.target.closest('#rrAddTagBtn');
+      var menu = document.getElementById('rrTagMenu');
+      var searchEl = document.getElementById('rrTagSearch');
+
+      if (addBtn) {
+        e.stopPropagation();
+        _menuOpen = !_menuOpen;
+        if (menu) menu.style.display = _menuOpen ? 'block' : 'none';
+        if (_menuOpen && searchEl) { searchEl.value = ''; searchEl.focus(); rrRenderList(''); }
+        return;
+      }
+
+      var toggle = e.target.closest('[data-toggle-tag]');
+      if (toggle) {
+        e.stopPropagation();
+        var tid = toggle.getAttribute('data-toggle-tag');
+        var cid = getCid();
+        var isActive = _contactTags.find(function(t) { return t.id === tid; });
+        if (isActive) {
+          await fetch(SB + '/contact_tags?contact_id=eq.' + cid + '&tag_id=eq.' + tid, { method: 'DELETE', headers: hdr() });
+        } else {
+          await fetch(SB + '/contact_tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ contact_id: cid, tag_id: tid }) });
+        }
+        await rrLoadTags();
+        return;
+      }
+
+      var removeBtn = e.target.closest('[data-remove-tag]');
+      if (removeBtn) {
+        e.stopPropagation();
+        var rtid = removeBtn.getAttribute('data-remove-tag');
+        await fetch(SB + '/contact_tags?contact_id=eq.' + getCid() + '&tag_id=eq.' + rtid, { method: 'DELETE', headers: hdr() });
+        await rrLoadTags();
+        return;
+      }
+
+      var createBtn = e.target.closest('[data-create-tag]');
+      if (createBtn) {
+        e.stopPropagation();
+        var name = createBtn.getAttribute('data-create-tag');
+        var colors = ['#C9A84C','#64B5F6','#81C784','#EF5350','#FFA726','#CE93D8','#26C6DA'];
+        var color = colors[Math.floor(Math.random() * colors.length)];
+        var res = await fetch(SB + '/tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ name: name, color: color }) });
+        var arr = await res.json();
+        if (arr && arr[0] && arr[0].id) {
+          await fetch(SB + '/contact_tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ contact_id: getCid(), tag_id: arr[0].id }) });
+        }
+        await rrLoadTags();
+        if (searchEl) { searchEl.value = ''; rrRenderList(''); }
+        return;
+      }
+
+      if (menu && !e.target.closest('#rrTagMenu') && !e.target.closest('#rrAddTagBtn')) {
+        menu.style.display = 'none';
+        _menuOpen = false;
+      }
+    });
+
+    var searchInput = document.getElementById('rrTagSearch');
+    if (searchInput) searchInput.addEventListener('input', function() { rrRenderList(this.value); });
   });
-  return await res.json();
-}
-
-async function loadContactTags(cid) {
-  var res = await fetch(SB_URL + '/rest/v1/contact_tags?contact_id=eq.' + cid + '&select=tag_id,tags(id,name,color)', {
-    headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY }
-  });
-  var data = await res.json();
-  return data.map(function(d) { return d.tags; }).filter(Boolean);
-}
-
-async function addTagToContact(cid, tagId) {
-  await fetch(SB_URL + '/rest/v1/contact_tags', {
-    method: 'POST',
-    headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-    body: JSON.stringify({ contact_id: cid, tag_id: tagId })
-  });
-}
-
-async function removeTagFromContact(cid, tagId) {
-  await fetch(SB_URL + '/rest/v1/contact_tags?contact_id=eq.' + cid + '&tag_id=eq.' + tagId, {
-    method: 'DELETE',
-    headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY }
-  });
-}
-
-async function createNewTag(name) {
-  var colors = ['#C9A84C','#64B5F6','#81C784','#EF5350','#FFA726','#CE93D8','#26C6DA','#FF8A65','#4CAF50','#E91E63'];
-  var color = colors[Math.floor(Math.random() * colors.length)];
-  var res = await fetch(SB_URL + '/rest/v1/tags', {
-    method: 'POST',
-    headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-    body: JSON.stringify({ name: name.trim(), color: color })
-  });
-  var data = await res.json();
-  return data[0];
-}
-
-async function initTags() {
-  console.log('initTags called, contactId:', contactId);
-  allTags = await loadAllTags();
-  contactTags = await loadContactTags(contactId);
-  console.log('initTags loaded', allTags.length, 'tags,', contactTags.length, 'contact tags');
-  renderTagPills();
-}
-
-function renderTagPills() {
-  var container = document.getElementById('tag-pills-container');
-  if (!container) return;
-  var html = contactTags.map(function(t) {
-    return '<span class="tag-badge" style="background:' + t.color + '22;border-color:' + t.color + '66;color:' + t.color + ';">'
-      + '<span class="tag-dot" style="background:' + t.color + ';"></span>' + t.name
-      + '<span class="tag-remove" onclick="event.stopPropagation();removeTag(\'' + t.id + '\')">×</span></span>';
-  }).join('');
-  html += '<button id="add-tag-btn" onclick="toggleTagDropdown()" style="padding:3px 10px;border-radius:20px;background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);color:rgba(255,255,255,0.35);font-size:11px;cursor:pointer;transition:all 0.2s;white-space:nowrap;" onmouseover="this.style.borderColor=\'rgba(201,168,76,0.4)\';this.style.color=\'#c9a84c\'" onmouseout="this.style.borderColor=\'rgba(255,255,255,0.15)\';this.style.color=\'rgba(255,255,255,0.35)\'">+ Tag</button>';
-  container.innerHTML = html;
-}
-
-function toggleTagDropdown() {
-  var dd = document.getElementById('tag-dropdown');
-  if (!dd) return;
-  tagDropdownOpen = !tagDropdownOpen;
-  dd.style.display = tagDropdownOpen ? 'block' : 'none';
-  if (tagDropdownOpen) {
-    var input = document.getElementById('tag-search-input');
-    if (input) { input.value = ''; input.focus(); }
-    renderTagDropdownList('');
-  }
-}
-
-function renderTagDropdownList(search) {
-  var list = document.getElementById('tag-dropdown-list');
-  if (!list) return;
-  var s = (search || '').toLowerCase();
-  var contactTagIds = (contactTags || []).map(function(t) { return t.id; });
-  var filtered = (allTags || []).filter(function(t) { return t.name.toLowerCase().indexOf(s) >= 0; });
-  var exactMatch = filtered.find(function(t) { return t.name.toLowerCase() === s; });
-
-  var html = filtered.map(function(t) {
-    var active = contactTagIds.indexOf(t.id) >= 0;
-    return '<div class="tag-dropdown-item" data-tag-id="' + t.id + '">'
-      + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>'
-      + '<span style="flex:1;">' + t.name + '</span>'
-      + (active ? '<span style="font-size:11px;color:#c9a84c;">\u2713</span>' : '')
-      + '</div>';
-  }).join('');
-
-  if (search && search.trim() && !exactMatch) {
-    html += '<div class="tag-create-row" data-create-tag="' + search.trim().replace(/"/g, '&quot;') + '">'
-      + '<span>\u2728</span><span>Create "' + search.trim() + '"</span></div>';
-  }
-
-  if (!html) html = '<div style="padding:14px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px;">No tags found</div>';
-  list.innerHTML = html;
-}
-
-async function toggleTag(tagId) {
-  console.log('toggleTag called', tagId, 'contactId:', contactId);
-  if (!contactId) { console.error('toggleTag: no contactId'); return; }
-  var contactTagIds = (contactTags || []).map(function(t) { return t.id; });
-  if (contactTagIds.indexOf(tagId) >= 0) {
-    await removeTagFromContact(contactId, tagId);
-  } else {
-    await addTagToContact(contactId, tagId);
-  }
-  contactTags = await loadContactTags(contactId);
-  renderTagPills();
-  renderTagDropdownList(document.getElementById('tag-search-input')?.value || '');
-}
-
-async function removeTag(tagId) {
-  if (!contactId) return;
-  await removeTagFromContact(contactId, tagId);
-  contactTags = await loadContactTags(contactId);
-  renderTagPills();
-}
-
-async function createAndAddTag(name) {
-  console.log('createAndAddTag called', name, 'contactId:', contactId);
-  if (!contactId) return;
-  var newTag = await createNewTag(name);
-  if (newTag) {
-    allTags.push(newTag);
-    await addTagToContact(contactId, newTag.id);
-    contactTags = await loadContactTags(contactId);
-    renderTagPills();
-    var input = document.getElementById('tag-search-input');
-    if (input) input.value = '';
-    renderTagDropdownList('');
-  }
-}
-
-document.addEventListener('click', function(e) {
-  var tagOption = e.target.closest('[data-tag-id]');
-  var createOption = e.target.closest('[data-create-tag]');
-
-  if (tagOption) {
-    e.stopPropagation();
-    var tagId = tagOption.getAttribute('data-tag-id');
-    toggleTag(tagId);
-    return;
-  }
-
-  if (createOption) {
-    e.stopPropagation();
-    var tagName = createOption.getAttribute('data-create-tag');
-    createAndAddTag(tagName);
-    return;
-  }
-
-  if (!e.target.closest('#tag-dropdown') && !e.target.closest('#add-tag-btn') && !e.target.closest('#tag-pills-container')) {
-    var dd = document.getElementById('tag-dropdown');
-    if (dd) dd.style.display = 'none';
-    tagDropdownOpen = false;
-  }
-});
+})();
 
 loadData().then(() => loadContactMeta());
 
