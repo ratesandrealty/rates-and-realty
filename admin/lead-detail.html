@@ -2780,7 +2780,7 @@
       </div>
 
       <!-- PDF Viewer Modal -->
-      <div id="doc-viewer-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9999; align-items:center; justify-content:center;">
+      <div id="doc-viewer-modal" onclick="if(event.target===this)closeDocViewer()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9999; align-items:center; justify-content:center;">
         <div style="background:#1a1a1a; border-radius:16px; width:90vw; max-width:900px; height:88vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(255,255,255,0.1);">
           <div style="padding:16px 20px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08);">
             <div>
@@ -2789,6 +2789,7 @@
             </div>
             <div style="display:flex; gap:10px; align-items:center;">
               <a id="doc-viewer-download" href="#" download style="padding:7px 14px; background:rgba(255,255,255,0.08); border-radius:8px; color:#fff; text-decoration:none; font-size:13px;">Download</a>
+              <a id="doc-viewer-open-tab" href="#" target="_blank" style="padding:7px 14px;background:rgba(255,255,255,0.08);border-radius:8px;color:#888;text-decoration:none;font-size:13px;">↗ Open</a>
               <div style="display:flex;gap:6px;align-items:center;">
                 <button onclick="docViewerZoom(-0.2)" style="padding:6px 10px;background:rgba(255,255,255,0.08);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;">−</button>
                 <span id="docZoomLevel" style="font-size:12px;color:rgba(255,255,255,0.5);min-width:36px;text-align:center;">100%</span>
@@ -4294,7 +4295,8 @@ function renderDocsGrid() {
     const size = doc.file_size ? (doc.file_size > 1048576 ? (doc.file_size/1048576).toFixed(1)+' MB' : (doc.file_size/1024).toFixed(0)+' KB') : '';
     const date = doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
     const statusColor = statusColors[doc.status] || statusColors.not_received;
-    const typeLabel = doc.document_type?.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) || 'Document';
+    const docTypeMap = {gov_id:'Government ID',w2:'W-2',tax_return:'Tax Return',tax_returns:'Tax Returns',bank_statement:'Bank Statement',bank_statements:'Bank Statements',pay_stub:'Pay Stub',pay_stubs:'Pay Stubs',approval_letter:'Approval Letter',purchase_contract:'Purchase Contract',other:'Document'};
+    const typeLabel = docTypeMap[doc.document_type] || (doc.document_type||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) || 'Document';
     return `
       <div onclick="openDocViewer('${doc.id}')" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
         onmouseenter="this.style.borderColor='rgba(201,168,76,0.35)';this.style.background='rgba(255,255,255,0.07)'"
@@ -4400,6 +4402,8 @@ function openDocViewer(docId) {
   if (zoomEl) zoomEl.textContent = '100%';
   document.getElementById('doc-viewer-download').href = fileUrl;
   document.getElementById('doc-viewer-download').download = doc.file_name;
+  var openTab = document.getElementById('doc-viewer-open-tab');
+  if (openTab) openTab.href = fileUrl;
   const body = document.getElementById('doc-viewer-body');
   const ext = (doc.file_name||'').split('.').pop().toLowerCase();
   if (['jpg','jpeg','png','gif','webp'].includes(ext)) {
@@ -4411,12 +4415,28 @@ function openDocViewer(docId) {
     body.style.overflow = 'hidden';
     body.style.display = 'block';
     body.innerHTML = `
-      <iframe
+      <iframe id="docViewerIframe"
         src="${fileUrl}#toolbar=1&navpanes=0&scrollbar=1&view=FitH&zoom=page-fit"
         style="width:100%;height:100%;border:none;display:block;"
+        onerror="this.src='https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true'"
       ></iframe>`;
+    // Fallback to Google Docs viewer if direct embed fails (cross-origin)
+    setTimeout(function() {
+      try {
+        var iframe = document.getElementById('docViewerIframe');
+        if (iframe) {
+          var iDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (!iDoc || !iDoc.body || iDoc.body.innerHTML === '') {
+            iframe.src = 'https://docs.google.com/viewer?url=' + encodeURIComponent(fileUrl) + '&embedded=true';
+          }
+        }
+      } catch(e) {
+        var iframe2 = document.getElementById('docViewerIframe');
+        if (iframe2) iframe2.src = 'https://docs.google.com/viewer?url=' + encodeURIComponent(fileUrl) + '&embedded=true';
+      }
+    }, 2000);
   } else {
-    body.innerHTML = `<div style="text-align:center;color:rgba(255,255,255,0.5);"><div style="font-size:64px;margin-bottom:16px;">📎</div><p>${doc.file_name}</p><a href="${fileUrl}" download="${doc.file_name}" style="color:var(--gold);">Download to view</a></div>`;
+    body.innerHTML = `<div style="text-align:center;color:rgba(255,255,255,0.5);padding:40px;"><div style="font-size:64px;margin-bottom:16px;">📎</div><p>${doc.file_name}</p><button onclick="downloadDocument('${fileUrl}','${doc.file_name}')" style="margin-top:12px;padding:8px 20px;border-radius:8px;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:13px;font-weight:700;cursor:pointer;">⬇ Download</button></div>`;
   }
 }
 
@@ -4472,6 +4492,20 @@ let _docViewerCurrentUrl = null;
 function closeDocViewer() {
   document.getElementById('doc-viewer-modal').style.display = 'none';
   document.getElementById('doc-viewer-body').innerHTML = '';
+}
+
+async function downloadDocument(fileUrl, fileName) {
+  if (!fileUrl) return;
+  try {
+    var response = await fetch(fileUrl);
+    var blob = await response.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = fileName || 'document';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Downloading ' + (fileName || 'document'));
+  } catch(err) { window.open(fileUrl, '_blank'); }
 }
 
 function docViewerZoom(delta) {
@@ -10609,7 +10643,7 @@ function closePdfViewer() {
   document.body.style.overflow = '';
 }
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); if (document.getElementById('ecOverlay')) { saveEmailDraft(); } }
+  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); closeDocViewer(); if (document.getElementById('ecOverlay')) { saveEmailDraft(); } }
 });
 document.getElementById('pdf-viewer-modal')?.addEventListener('click', function(e) {
   if (e.target === this) closePdfViewer();
