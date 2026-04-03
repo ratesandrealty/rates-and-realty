@@ -9359,6 +9359,9 @@ function _emailComposerCSS() {
   /* Variables */
   .ec-var-btn{display:inline-block;padding:3px 8px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;font-size:10px;cursor:pointer;margin:2px;transition:background .15s}
   .ec-var-btn:hover{background:#221c0e}
+  .ec-attach-pill{display:inline-flex;align-items:center;gap:4px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;padding:3px 8px;font-size:11px;color:#C9A84C}
+  .ec-attach-pill button{background:none;border:none;color:#666;font-size:13px;cursor:pointer;padding:0 2px;line-height:1}
+  .ec-attach-pill button:hover{color:#ff6b6b}
   @media(max-width:768px){.ec-right{display:none}.ec-container{max-width:100%;height:95vh}}
   `;
   document.head.appendChild(s);
@@ -9422,6 +9425,9 @@ function _buildEmailComposerHTML(contact) {
             '<button class="ec-tb-btn" title="Italic" onclick="document.execCommand(\'italic\')"><i>I</i></button>' +
             '<button class="ec-tb-btn" title="Underline" onclick="document.execCommand(\'underline\')"><u>U</u></button>' +
             '<div class="ec-tb-sep"></div>' +
+            '<button class="ec-tb-btn" id="undoBtn" title="Undo (Ctrl+Z)">&#8630;</button>' +
+            '<button class="ec-tb-btn" id="redoBtn" title="Redo (Ctrl+Y)">&#8631;</button>' +
+            '<div class="ec-tb-sep"></div>' +
             '<button class="ec-tb-btn" title="Bullet List" onclick="document.execCommand(\'insertUnorderedList\')">&#8226; List</button>' +
             '<button class="ec-tb-btn" title="Numbered List" onclick="document.execCommand(\'insertOrderedList\')">1. List</button>' +
             '<div class="ec-tb-sep"></div>' +
@@ -9439,6 +9445,8 @@ function _buildEmailComposerHTML(contact) {
             '<button class="ec-var-btn" onclick="insertVar(\'{{rate}}\')">Rate</button>' +
             '<button class="ec-var-btn" onclick="insertVar(\'{{property_address}}\')">Address</button>' +
           '</div>' +
+          /* Attachment pills */
+          '<div id="attachmentPills" style="display:none;flex-wrap:wrap;gap:6px;padding:6px 14px;border-bottom:1px solid rgba(201,168,76,0.15)"></div>' +
           /* Editor */
           '<div class="ec-editor-wrap">' +
             '<div class="ec-editor" id="emailEditor" contenteditable="true" data-placeholder="Compose your email..."></div>' +
@@ -9449,8 +9457,8 @@ function _buildEmailComposerHTML(contact) {
               '<select class="ec-from-select" id="fromSelect">' +
                 '<option value="rene@ratesandrealty.com">rene@ratesandrealty.com</option>' +
               '</select>' +
-              '<button class="ec-attach-btn" onclick="document.getElementById(\'ecFileInput\').click()">&#128206; Attach</button>' +
-              '<input type="file" id="ecFileInput" multiple style="display:none">' +
+              '<button class="ec-attach-btn" onclick="document.getElementById(\'emailAttachInput\').click()">&#128206; Attach</button>' +
+              '<input type="file" id="emailAttachInput" multiple accept="*/*" style="display:none">' +
             '</div>' +
             '<div class="ec-footer-right">' +
               '<button class="ec-discard-btn" id="ecDiscardBtn">Discard</button>' +
@@ -9537,6 +9545,30 @@ function openEmailComposer() {
   document.getElementById('ecDraftBtn').addEventListener('click', saveEmailDraft);
   document.getElementById('ecSendBtn').addEventListener('click', sendEmailFromComposer);
 
+  // Wire undo/redo buttons
+  var editorEl = document.getElementById('emailEditor');
+  document.getElementById('undoBtn').onclick = function() { editorEl.focus(); document.execCommand('undo'); };
+  document.getElementById('redoBtn').onclick = function() { editorEl.focus(); document.execCommand('redo'); };
+
+  // Editor keyboard shortcuts for undo/redo
+  editorEl.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault(); document.execCommand('undo');
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+      e.preventDefault(); document.execCommand('redo');
+    }
+  });
+
+  // Wire attachment file input
+  attachedFiles = [];
+  document.getElementById('emailAttachInput').addEventListener('change', function() {
+    var files = this.files;
+    for (var i = 0; i < files.length; i++) { attachedFiles.push(files[i]); }
+    renderAttachmentPills();
+    this.value = '';
+  });
+
   // Load history
   loadEmailHistory(_emailContact.id);
 
@@ -9592,11 +9624,41 @@ function toggleVarPicker() {
   if (p) p.style.display = p.style.display === 'none' ? 'flex' : 'none';
 }
 
-function insertVar(v) {
+function insertVar(token) {
   var editor = document.getElementById('emailEditor');
   if (!editor) return;
   editor.focus();
-  document.execCommand('insertText', false, v);
+  var sel = window.getSelection();
+  if (sel.rangeCount) {
+    var range = sel.getRangeAt(0);
+    range.deleteContents();
+    var textNode = document.createTextNode(token);
+    range.insertNode(textNode);
+    range.setStartAfter(textNode);
+    range.setEndAfter(textNode);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } else {
+    editor.innerText += token;
+  }
+}
+
+/* --- Attachments --- */
+var attachedFiles = [];
+
+function renderAttachmentPills() {
+  var container = document.getElementById('attachmentPills');
+  if (!container) return;
+  if (attachedFiles.length === 0) { container.style.display = 'none'; container.innerHTML = ''; return; }
+  container.style.display = 'flex';
+  container.innerHTML = attachedFiles.map(function(f, i) {
+    return '<span class="ec-attach-pill">\uD83D\uDCCE ' + f.name + '<button onclick="removeAttachment(' + i + ')">\u2715</button></span>';
+  }).join('');
+}
+
+function removeAttachment(index) {
+  attachedFiles.splice(index, 1);
+  renderAttachmentPills();
 }
 
 /* --- Panel switching --- */
@@ -9700,6 +9762,10 @@ async function sendEmailFromComposer() {
   var htmlBody = editor?.innerHTML?.trim() || '';
   var textBody = editor?.innerText?.trim() || '';
   var from = document.getElementById('fromSelect')?.value || 'rene@ratesandrealty.com';
+
+  if (attachedFiles.length) {
+    console.log('[Email Composer] Attachments:', attachedFiles.map(function(f){return f.name + ' (' + f.size + ' bytes)';}));
+  }
 
   if (!toEmails.length) { showToast('No recipient', true); return; }
   if (!subject) { showToast('Please add a subject', true); return; }
