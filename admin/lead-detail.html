@@ -4959,11 +4959,14 @@ function buildLoanInfoCard(doc) {
   if (!sections.length) return '';
   var lenderName = m(doc&&doc.lender, li.lender) || 'Lender';
   var fileName = (doc && doc.file_name) || '';
-  return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">'
+  var fileUrl = (doc && doc.file_url) || null;
+  return '<div data-file-name="' + (fileName||'approval.pdf').replace(/"/g,'&quot;') + '" style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">'
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
     + '<div style="width:36px;height:36px;border-radius:9px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.2);display:flex;align-items:center;justify-content:center;font-size:1rem;">&#128203;</div>'
-    + '<div><div style="font-size:.9rem;font-weight:700;color:var(--gold);">' + lenderName + ' &mdash; Conditional Approval</div>'
-    + '<div style="font-size:.7rem;color:var(--muted);">' + fileName + '</div></div></div>'
+    + '<div style="flex:1;"><div style="font-size:.9rem;font-weight:700;color:var(--gold);">' + lenderName + ' &mdash; Conditional Approval</div>'
+    + '<div style="font-size:.7rem;color:var(--muted);">' + fileName + '</div></div>'
+    + (fileUrl ? '<button class="view-pdf-btn" data-pdf-url="' + fileUrl.replace(/"/g,'&quot;') + '" style="display:flex;align-items:center;gap:5px;padding:6px 12px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.25);border-radius:8px;color:var(--gold);font-size:.75rem;font-weight:600;cursor:pointer;white-space:nowrap;">&#128196; View PDF</button>' : '')
+    + '</div>'
     + sections.map(function(s) {
       return '<div style="margin-bottom:12px;">'
         + '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;">' + s.title + '</div>'
@@ -5111,6 +5114,22 @@ function uploadApprovalLetter(input) {
   input.value = '';
 }
 
+async function uploadApprovalToStorage(file, contactId) {
+  var SB_ST = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var AK = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+  var safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  var path = contactId + '/' + Date.now() + '_' + safeName;
+  try {
+    var res = await fetch(SB_ST + '/storage/v1/object/approval-letters/' + path, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + AK, 'Content-Type': file.type, 'x-upsert': 'true' },
+      body: file
+    });
+    if (!res.ok) { console.warn('Storage upload failed:', await res.text()); return null; }
+    return { path: path, url: SB_ST + '/storage/v1/object/public/approval-letters/' + path };
+  } catch(e) { console.warn('Storage upload error:', e); return null; }
+}
+
 async function processConditionFile(file) {
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
   if (!contactId) { showToast('No contact ID', true); return; }
@@ -5130,6 +5149,9 @@ async function processConditionFile(file) {
       body: JSON.stringify({ action: 'clear_conditions', contact_id: contactId })
     });
 
+    // Upload to Supabase Storage
+    var storageResult = await uploadApprovalToStorage(file, contactId);
+
     var base64 = await new Promise(function(resolve, reject) {
       var reader = new FileReader();
       reader.onload = function() { resolve(reader.result.split(',')[1]); };
@@ -5140,7 +5162,11 @@ async function processConditionFile(file) {
     var res = await fetch(COND_FN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'extract', file_base64: base64, mime_type: file.type, file_name: file.name, contact_id: contactId })
+      body: JSON.stringify({
+        action: 'extract', file_base64: base64, mime_type: file.type, file_name: file.name, contact_id: contactId,
+        file_url: storageResult ? storageResult.url : null,
+        storage_path: storageResult ? storageResult.path : null
+      })
     });
 
     var data = await res.json();
@@ -9154,6 +9180,18 @@ async function updateLenderStatus(lenderId, status) {
   </div>
 </div>
 
+<!-- PDF Viewer Modal -->
+<div id="pdf-viewer-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.85);flex-direction:column;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:#111;border-bottom:1px solid #222;">
+    <span id="pdf-modal-title" style="font-size:.9rem;font-weight:700;color:var(--gold);">Conditional Approval</span>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <a id="pdf-download-link" href="#" download style="padding:5px 12px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.25);border-radius:6px;color:var(--gold);font-size:.72rem;font-weight:600;text-decoration:none;">&#11015; Download</a>
+      <button onclick="closePdfViewer()" style="width:28px;height:28px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#888;cursor:pointer;font-size:.85rem;">&times;</button>
+    </div>
+  </div>
+  <iframe id="pdf-viewer-frame" src="" style="flex:1;border:none;background:#222;"></iframe>
+</div>
+
 <!-- Tag system + action buttons — placed at end of body to guarantee DOM + APP_CONFIG ready -->
 <script>
 function handleCallClick() {
@@ -9177,6 +9215,42 @@ function handleTextClick() {
   }).catch(function(){});
   window.location.href = 'sms:+1' + phone;
 }
+
+/* ═══ PDF VIEWER ═══ */
+function openPdfViewer(url, fileName) {
+  var modal = document.getElementById('pdf-viewer-modal');
+  var frame = document.getElementById('pdf-viewer-frame');
+  var title = document.getElementById('pdf-modal-title');
+  var dlLink = document.getElementById('pdf-download-link');
+  if (!modal || !frame) return;
+  frame.src = url;
+  if (title) title.textContent = fileName || 'Conditional Approval';
+  if (dlLink) { dlLink.href = url; dlLink.download = fileName || 'approval.pdf'; }
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closePdfViewer() {
+  var modal = document.getElementById('pdf-viewer-modal');
+  var frame = document.getElementById('pdf-viewer-frame');
+  if (modal) modal.style.display = 'none';
+  if (frame) frame.src = '';
+  document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closePdfViewer(); });
+
+document.addEventListener('click', function(e) {
+  var pdfBtn = e.target.closest('.view-pdf-btn');
+  if (pdfBtn) {
+    var url = pdfBtn.getAttribute('data-pdf-url');
+    var card = pdfBtn.closest('[data-file-name]');
+    var fn = card ? card.getAttribute('data-file-name') : 'approval.pdf';
+    if (url) openPdfViewer(url, fn);
+  }
+  // Close modal on backdrop click
+  if (e.target.id === 'pdf-viewer-modal') closePdfViewer();
+});
 
 function handleEmailClick() {
   var email = contactData?.email || '';
