@@ -9872,17 +9872,18 @@ function cancelSchedule() {
 }
 
 async function confirmSchedule() {
-  var date = document.getElementById('scheduleDate')?.value;
-  var time = document.getElementById('scheduleTime')?.value;
-  if (!date || !time) { alert('Pick a date and time.'); return; }
+  var dateVal = document.getElementById('scheduleDate')?.value;
+  var timeVal = document.getElementById('scheduleTime')?.value;
+  if (!dateVal || !timeVal) { alert('Pick a date and time.'); return; }
 
-  var scheduledAt = new Date(date + 'T' + time).toISOString();
+  var scheduledAt = new Date(dateVal + 'T' + timeVal + ':00').toISOString();
   var toEmails = getChipEmails('toChips');
   var subject = (document.getElementById('subjectInput')?.value || '').trim();
   var bodyHtml = document.getElementById('emailEditor')?.innerHTML || '';
   var bodyText = document.getElementById('emailEditor')?.innerText || '';
 
-  if (!toEmails.length || !subject) { alert('Add recipient and subject before scheduling.'); return; }
+  if (!toEmails.length) { alert('Add at least one recipient.'); return; }
+  if (!subject) { alert('Add a subject line.'); return; }
 
   try {
     var res = await fetch(EMAIL_FN, {
@@ -9890,18 +9891,22 @@ async function confirmSchedule() {
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || '') },
       body: JSON.stringify({
         action: 'save_draft',
-        contact_id: window._currentEmailContact?.id,
+        contact_id: window._currentEmailContact?.id || null,
         to: toEmails, subject: subject,
         body_html: bodyHtml, body_text: bodyText,
         scheduled_at: scheduledAt, status: 'scheduled'
       })
     });
+    var data = await res.json();
+    if (!res.ok) { alert('Schedule failed: ' + (data.error || JSON.stringify(data))); return; }
     document.getElementById('schedulePicker').style.display = 'none';
-    if (res.ok) {
-      showToast('Email scheduled for ' + new Date(scheduledAt).toLocaleString());
-      closeEmailComposer();
-    } else { alert('Schedule failed — check console.'); }
-  } catch(e) { alert('Schedule error: ' + e.message); }
+    var friendlyTime = new Date(scheduledAt).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+    showToast('Scheduled for ' + friendlyTime);
+    closeEmailComposer();
+  } catch(e) {
+    alert('Schedule error: ' + e.message);
+    console.error('confirmSchedule error:', e);
+  }
 }
 
 /* --- Signature Editor --- */
