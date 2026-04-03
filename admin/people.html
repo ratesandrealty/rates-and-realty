@@ -447,7 +447,7 @@ function normStatus(s) {
 /* ====== DATA LOADING ====== */
 
 async function loadPeople() {
-  var cR = await fetch(SB_URL + '/rest/v1/contacts?select=*,contact_tags(tag_id,tags(id,name,color))&order=created_at.desc&limit=500', { headers: hdrs() });
+  var cR = await fetch(SB_URL + '/rest/v1/contacts?select=*,contact_tags(tag_id,tags(id,name,color)),mortgage_applications(loan_type)&order=created_at.desc&limit=500', { headers: hdrs() });
   var contacts = await cR.json();
 
   var lR = await fetch(SB_URL + '/rest/v1/leads?select=contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at&order=created_at.desc&limit=500', { headers: hdrs() });
@@ -457,10 +457,12 @@ async function loadPeople() {
 
   _allPeople = contacts.map(function(c) {
     var lead = leadMap[c.id] || {};
-    var effectiveScore = (c.lead_score && c.lead_score > 0) ? c.lead_score : (lead.score || 0);
+    var effectiveScore = parseInt(c.lead_score) || parseInt(lead.score) || 0;
     var effectiveTier = effectiveScore >= 80 ? 'Hot' : effectiveScore >= 50 ? 'Warm' : 'Cold';
     var ct = c.contact_tags || [];
     var tags = ct.map(function(ct) { return ct.tags; }).filter(Boolean);
+    var maLoanType = (c.mortgage_applications && c.mortgage_applications[0]) ? c.mortgage_applications[0].loan_type : null;
+    var mergedLoanType = c.loan_type || maLoanType || lead.loan_type || '';
     return {
       id: c.id,
       first_name: c.first_name,
@@ -471,7 +473,7 @@ async function loadPeople() {
       lead_score: effectiveScore,
       lead_temperature: c.lead_temperature || effectiveTier,
       contact_type: c.contact_type || '',
-      loan_type: c.loan_type || lead.loan_type || '',
+      loan_type: mergedLoanType,
       loan_amount: c.loan_amount || lead.loan_amount || 0,
       referred_by: c.referred_by || '',
       referral_partner_id: c.referral_partner_id || null,
@@ -488,7 +490,7 @@ async function loadPeople() {
       tag_ids: tags.map(function(t) { return t.id; }),
       effective_score: effectiveScore,
       effective_tier: effectiveTier,
-      effective_loan_type: c.loan_type || lead.loan_type || '',
+      effective_loan_type: mergedLoanType,
       has_lead: !!lead.contact_id
     };
   });
@@ -609,9 +611,14 @@ function applyFilters() {
       if (ct !== 'referral_partner' && !p.referral_partner_id) return false;
     }
 
-    // Advanced: Sources
+    // Advanced: Sources (case-insensitive)
     if (_filterSources.length > 0) {
-      if (_filterSources.indexOf(p.source) < 0) return false;
+      var srcLower = (p.source || '').toLowerCase();
+      var srcMatch = false;
+      for (var si = 0; si < _filterSources.length; si++) {
+        if (srcLower === _filterSources[si].toLowerCase()) { srcMatch = true; break; }
+      }
+      if (!srcMatch) return false;
     }
     // Advanced: Loan types
     if (_filterLoanTypes.length > 0) {
@@ -635,9 +642,10 @@ function applyFilters() {
     }
     // Advanced: Score range
     if (score < fpScoreMin || score > fpScoreMax) return false;
-    // Advanced: Temperature
+    // Advanced: Temperature (check lead_temperature field, fallback to effective_tier)
     if (_filterTemps.length > 0) {
-      if (_filterTemps.indexOf(p.effective_tier) < 0) return false;
+      var pTemp = p.lead_temperature || p.effective_tier || '';
+      if (_filterTemps.indexOf(pTemp) < 0) return false;
     }
     // Advanced: Portal
     if (_filterPortal === 'yes' && !p.portal_user_id) return false;

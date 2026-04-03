@@ -4603,6 +4603,14 @@ async function saveLoanProperty() {
       if (error) throw error;
     }
     Object.assign(leadData, lFields);
+    // Sync loan_type to contacts table
+    if (lFields.loan_type && contactId) {
+      fetch(window.APP_CONFIG.SUPABASE_URL + '/rest/v1/contacts?id=eq.' + contactId, {
+        method: 'PATCH',
+        headers: { 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loan_type: lFields.loan_type, updated_at: new Date().toISOString() })
+      });
+    }
     renderScoreCard(leadData, contactData);
     toast('✓ Loan & property saved');
   } catch (err) {
@@ -6351,6 +6359,15 @@ async function save1003() {
       console.error('Full save error:', JSON.stringify(error));
       toast('Error saving: ' + (error.message || error.details || JSON.stringify(error)), true);
       return;
+    }
+    // Sync loan_type to contacts table
+    var loanTypeVal = cleanData.loan_type;
+    if (loanTypeVal && cid) {
+      fetch(window.APP_CONFIG.SUPABASE_URL + '/rest/v1/contacts?id=eq.' + cid, {
+        method: 'PATCH',
+        headers: { 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loan_type: loanTypeVal, updated_at: new Date().toISOString() })
+      });
     }
     toast('Application saved!');
   } catch (err) {
