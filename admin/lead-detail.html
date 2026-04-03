@@ -689,6 +689,9 @@
     }
     .ld-add-task-btn:hover { background: rgba(201,168,76,0.14); }
 
+    /* ── EMAIL COMPOSER ── */
+    [data-placeholder]:empty:before { content: attr(data-placeholder); color: #444; pointer-events: none; }
+
     /* ── ACTIVITY FILTER TABS ── */
     .act-filter-tab {
       padding:4px 12px; border-radius:20px; font-size:11px; font-weight:600;
@@ -1335,7 +1338,7 @@
                      letter-spacing:0.5px;white-space:nowrap;">Call</span>
       </button>
 
-      <button id="emailBtn" onclick="handleEmailClick()" style="
+      <button id="emailBtn" onclick="openEmailComposer()" style="
         display:flex; flex-direction:column; align-items:center;
         justify-content:center; gap:5px; padding:12px 4px;
         background:rgba(255,255,255,0.04);
@@ -9238,6 +9241,51 @@ async function updateLenderStatus(lenderId, status) {
   </div>
 </div>
 
+<!-- Email Composer Modal -->
+<div id="email-modal" style="display:none;position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.85);align-items:center;justify-content:center">
+  <div style="width:95vw;max-width:680px;background:#111;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;max-height:90vh;box-shadow:0 20px 60px rgba(0,0,0,.8)">
+    <div style="display:flex;align-items:center;padding:14px 20px;background:#1a1a1a;border-bottom:1px solid #222">
+      <span style="font-size:14px;font-weight:700;color:#eee;flex:1">New Email</span>
+      <button onclick="closeEmailComposer()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div style="padding:0;flex:1;overflow-y:auto">
+      <div style="display:flex;align-items:center;padding:10px 20px;border-bottom:1px solid #1e1e1e;gap:8px">
+        <span style="font-size:11px;color:#666;width:36px">To:</span>
+        <input id="email-to" type="email" style="flex:1;background:transparent;border:none;color:#eee;font-size:13px;outline:none" readonly>
+      </div>
+      <div style="display:flex;align-items:center;padding:10px 20px;border-bottom:1px solid #1e1e1e;gap:8px">
+        <span style="font-size:11px;color:#666;width:36px">Subject:</span>
+        <input id="email-subject" type="text" placeholder="Subject line..." style="flex:1;background:transparent;border:none;color:#eee;font-size:13px;outline:none">
+      </div>
+      <div style="padding:8px 20px;border-bottom:1px solid #1e1e1e">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button data-email-tpl="follow_up" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Follow Up</button>
+          <button data-email-tpl="pre_approval" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Pre-Approval</button>
+          <button data-email-tpl="docs_needed" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Docs Needed</button>
+          <button data-email-tpl="approval_congrats" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Approval</button>
+          <button data-email-tpl="closing_update" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Closing Update</button>
+          <button data-email-tpl="custom" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#111;border:1px solid #333;border-radius:4px;color:#888;cursor:pointer">AI Custom...</button>
+        </div>
+        <div id="email-ai-custom-row" style="display:none;margin-top:8px;display:none">
+          <div style="display:flex;gap:8px">
+            <input id="email-ai-prompt" type="text" placeholder="Describe the email you want..." style="flex:1;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:12px;outline:none">
+            <button onclick="generateEmailFromPrompt()" id="email-ai-gen-btn" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:11px;cursor:pointer">Generate</button>
+          </div>
+        </div>
+        <div id="email-ai-loading" style="display:none;font-size:11px;color:#666;margin-top:6px;font-style:italic">Generating email...</div>
+      </div>
+      <div id="email-body" contenteditable="true" style="min-height:250px;padding:20px;color:#ddd;font-size:13px;line-height:1.7;outline:none;font-family:inherit" data-placeholder="Compose your email..."></div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:#1a1a1a;border-top:1px solid #222">
+      <div style="font-size:11px;color:#444">From: rene@ratesandrealty.com</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="closeEmailComposer()" style="padding:8px 16px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#888;font-size:12px;cursor:pointer">Discard</button>
+        <button onclick="sendEmailFromComposer()" id="email-send-btn" style="padding:8px 24px;background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#000;border:none;border-radius:6px;font-weight:800;font-size:12px;cursor:pointer">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- End-of-body scripts -->
 <script>
 /* ═══ ACTION BUTTONS ═══ */
@@ -9252,16 +9300,133 @@ function handleCallClick() {
   window.location.href = 'tel:+1' + phone;
 }
 
-function handleEmailClick() {
+/* ═══ EMAIL COMPOSER ═══ */
+var EMAIL_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/email-service';
+
+function openEmailComposer() {
   var email = contactData?.email || '';
   if (!email) { showToast('No email on file', true); return; }
-  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
-      type: 'email', channel: 'email', direction: 'outbound', title: 'Email opened by Rene', status: 'initiated', metadata: { email: email } })
-  }).catch(function(){});
-  window.location.href = 'mailto:' + email;
+  var modal = document.getElementById('email-modal');
+  if (!modal) return;
+  document.getElementById('email-to').value = email;
+  document.getElementById('email-subject').value = '';
+  document.getElementById('email-body').innerHTML = '';
+  var customRow = document.getElementById('email-ai-custom-row');
+  if (customRow) customRow.style.display = 'none';
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  setTimeout(function() { document.getElementById('email-subject')?.focus(); }, 100);
 }
+
+function closeEmailComposer() {
+  var modal = document.getElementById('email-modal');
+  if (modal) modal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+var EMAIL_TEMPLATES = {
+  follow_up: { subject: 'Checking in on your home buying journey', prompt: 'Write a friendly follow-up email checking in on their mortgage application progress. Ask if they have any questions.' },
+  pre_approval: { subject: 'Let\'s get you pre-approved!', prompt: 'Write an email inviting them to start the pre-approval process. Mention it takes about 15 minutes and explain the benefits.' },
+  docs_needed: { subject: 'Documents needed for your loan file', prompt: 'Write a professional email requesting missing documents needed to continue processing their mortgage application. Be specific but friendly.' },
+  approval_congrats: { subject: 'Congratulations - You\'re approved!', prompt: 'Write a congratulatory email for getting their mortgage approved. Mention next steps toward closing.' },
+  closing_update: { subject: 'Closing update on your loan', prompt: 'Write an email with a closing update. Mention the closing date is approaching and outline what to expect.' }
+};
+
+async function applyEmailTemplate(tplKey) {
+  if (tplKey === 'custom') {
+    var customRow = document.getElementById('email-ai-custom-row');
+    if (customRow) customRow.style.display = customRow.style.display === 'none' ? 'block' : 'none';
+    return;
+  }
+  var tpl = EMAIL_TEMPLATES[tplKey];
+  if (!tpl) return;
+  document.getElementById('email-subject').value = tpl.subject;
+  var contactName = ((contactData?.first_name || '') + ' ' + (contactData?.last_name || '')).trim() || '';
+  var loading = document.getElementById('email-ai-loading');
+  if (loading) loading.style.display = 'block';
+  try {
+    var res = await fetch(EMAIL_FN, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trigger: 'ai_compose', prompt: tpl.prompt, contact_name: contactName, subject: tpl.subject })
+    });
+    var data = await res.json();
+    if (data.html) { document.getElementById('email-body').innerHTML = data.html; }
+    else if (data.message) { document.getElementById('email-body').innerText = data.message; }
+  } catch(e) { console.error('Email template error:', e); }
+  if (loading) loading.style.display = 'none';
+}
+
+async function generateEmailFromPrompt() {
+  var prompt = (document.getElementById('email-ai-prompt')?.value || '').trim();
+  if (!prompt) return;
+  var contactName = ((contactData?.first_name || '') + ' ' + (contactData?.last_name || '')).trim() || '';
+  var btn = document.getElementById('email-ai-gen-btn');
+  var loading = document.getElementById('email-ai-loading');
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  if (loading) loading.style.display = 'block';
+  try {
+    var res = await fetch(EMAIL_FN, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trigger: 'ai_compose', prompt: prompt, contact_name: contactName })
+    });
+    var data = await res.json();
+    if (data.subject) document.getElementById('email-subject').value = data.subject;
+    if (data.html) { document.getElementById('email-body').innerHTML = data.html; }
+    else if (data.message) { document.getElementById('email-body').innerText = data.message; }
+  } catch(e) { console.error('Email AI error:', e); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Generate'; }
+  if (loading) loading.style.display = 'none';
+}
+
+async function sendEmailFromComposer() {
+  var to = document.getElementById('email-to')?.value;
+  var subject = document.getElementById('email-subject')?.value?.trim();
+  var bodyEl = document.getElementById('email-body');
+  var htmlBody = bodyEl?.innerHTML?.trim();
+  var textBody = bodyEl?.innerText?.trim();
+  if (!to) { showToast('No recipient', true); return; }
+  if (!subject) { showToast('Please add a subject', true); return; }
+  if (!textBody) { showToast('Please write a message', true); return; }
+  var btn = document.getElementById('email-send-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
+  try {
+    var cid = new URLSearchParams(location.search).get('contact_id');
+    var res = await fetch(EMAIL_FN, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        trigger: 'manual',
+        to_email: to,
+        subject: subject,
+        html_body: htmlBody,
+        text_body: textBody,
+        contact_id: cid,
+        direction: 'outbound',
+        from_name: 'Rene Duarte',
+        from_email: 'rene@ratesandrealty.com'
+      })
+    });
+    var data = await res.json();
+    if (data.success || data.id) {
+      showToast('Email sent!');
+      closeEmailComposer();
+    } else { showToast('Send failed: ' + (data.error || 'unknown'), true); }
+  } catch(e) { showToast('Error: ' + e.message, true); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+}
+
+// Template buttons delegated handler
+document.addEventListener('click', function(e) {
+  var tplBtn = e.target.closest('.email-tpl-btn');
+  if (tplBtn) {
+    var tpl = tplBtn.getAttribute('data-email-tpl');
+    if (tpl) applyEmailTemplate(tpl);
+  }
+  if (e.target.id === 'email-modal' || (e.target.closest && e.target === document.getElementById('email-modal'))) closeEmailComposer();
+});
+
+document.getElementById('email-modal')?.addEventListener('click', function(e) {
+  if (e.target === this) closeEmailComposer();
+});
 
 /* ═══ PDF VIEWER ═══ */
 function openPdfViewer(url, fileName) {
@@ -9284,7 +9449,7 @@ function closePdfViewer() {
   document.body.style.overflow = '';
 }
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); }
+  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); closeEmailComposer(); }
 });
 document.getElementById('pdf-viewer-modal')?.addEventListener('click', function(e) {
   if (e.target === this) closePdfViewer();
