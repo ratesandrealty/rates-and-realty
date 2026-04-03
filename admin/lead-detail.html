@@ -9563,6 +9563,7 @@ function _buildEmailComposerHTML(contact) {
             '<button type="button" class="ec-tb-btn" title="Link" onclick="insertLink()">&#128279;</button>' +
             '<button type="button" class="ec-tb-btn" title="Clear Formatting" onclick="tbCmd(\'removeFormat\')">&#10005; fmt</button>' +
             '<div style="flex:1"></div>' +
+            '<button type="button" class="ec-tb-ai" onclick="openCanvaPicker()" title="Insert from Canva" style="margin-right:6px;">&#10022; Canva</button>' +
             '<button type="button" class="ec-tb-ai" onclick="toggleEmailAiHelper()">+ AI Helper</button>' +
           '</div>' +
           /* AI Helper panel (hidden) */
@@ -10045,6 +10046,124 @@ async function saveSig() {
       ((payload.signature_nmls || payload.signature_dre) ? '<div style="color:#444;font-size:11px;margin-top:2px;">' + [payload.signature_nmls, payload.signature_dre].filter(Boolean).join(' | ') + '</div>' : '');
   }
   showToast('Signature saved');
+}
+
+/* --- Canva Design Picker --- */
+var _canvaDesigns = [];
+var _canvaContinuation = null;
+var _canvaLoaded = false;
+
+function openCanvaPicker() {
+  var existing = document.getElementById('canvaPickerOverlay');
+  if (existing) { existing.style.display = 'flex'; if (_canvaLoaded) return; }
+  else {
+    var overlay = document.createElement('div');
+    overlay.id = 'canvaPickerOverlay';
+    overlay.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:30000;align-items:center;justify-content:center;';
+    overlay.innerHTML =
+      '<div style="width:860px;max-width:96vw;max-height:88vh;background:#0F0F11;border:1px solid rgba(201,168,76,0.25);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 32px 80px rgba(0,0,0,0.7);">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid rgba(201,168,76,0.12);background:#0C0C0E;">' +
+          '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<span style="font-size:16px;">&#10022;</span>' +
+            '<span style="font-size:14px;font-weight:600;color:#E0DDD4;">Insert from Canva</span>' +
+            '<span style="font-size:11px;color:#555;">Click a design to insert</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;align-items:center;">' +
+            '<input id="canvaSearchInput" placeholder="Search designs..." oninput="filterCanvaDesigns(this.value)" style="height:30px;background:#131315;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 10px;outline:none;width:180px;">' +
+            '<button onclick="closeCanvaPicker()" type="button" style="width:28px;height:28px;border-radius:6px;border:1px solid rgba(201,168,76,0.15);background:transparent;color:#666;cursor:pointer;font-size:16px;">&#10005;</button>' +
+          '</div>' +
+        '</div>' +
+        '<div id="canvaGrid" style="flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;">' +
+          '<div id="canvaLoading" style="grid-column:1/-1;text-align:center;padding:40px;color:#555;font-size:13px;">Loading your Canva designs...</div>' +
+        '</div>' +
+        '<div style="padding:10px 20px;border-top:1px solid rgba(201,168,76,0.08);background:#0C0C0E;font-size:11px;color:#444;display:flex;align-items:center;justify-content:space-between;">' +
+          '<span id="canvaCount">Loading...</span>' +
+          '<button id="canvaLoadMore" onclick="loadMoreCanvaDesigns()" style="display:none;font-size:11px;padding:4px 12px;border-radius:5px;border:1px solid rgba(201,168,76,0.2);background:transparent;color:#C9A84C;cursor:pointer;">Load more</button>' +
+        '</div>' +
+      '</div>';
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) closeCanvaPicker(); });
+    document.body.appendChild(overlay);
+  }
+  if (!_canvaLoaded) loadCanvaDesigns();
+}
+
+function closeCanvaPicker() {
+  var o = document.getElementById('canvaPickerOverlay');
+  if (o) o.style.display = 'none';
+}
+
+async function loadCanvaDesigns(append) {
+  try {
+    var res = await fetch(
+      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/canva-proxy',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || '') },
+        body: JSON.stringify({ action: 'list_designs', continuation: _canvaContinuation || undefined })
+      }
+    );
+    var data = await res.json();
+    if (!append) _canvaDesigns = [];
+    _canvaDesigns = _canvaDesigns.concat(data.designs || []);
+    _canvaContinuation = data.continuation || null;
+    _canvaLoaded = true;
+    renderCanvaGrid(_canvaDesigns);
+    var loadMoreBtn = document.getElementById('canvaLoadMore');
+    if (loadMoreBtn) loadMoreBtn.style.display = _canvaContinuation ? 'block' : 'none';
+    var countEl = document.getElementById('canvaCount');
+    if (countEl) countEl.textContent = _canvaDesigns.length + ' designs' + (_canvaContinuation ? ' (more available)' : '');
+  } catch(err) {
+    var loading = document.getElementById('canvaLoading');
+    if (loading) loading.textContent = 'Failed to load Canva designs.';
+    console.error('Canva picker error:', err);
+  }
+}
+
+function loadMoreCanvaDesigns() { if (_canvaContinuation) loadCanvaDesigns(true); }
+
+function renderCanvaGrid(designs) {
+  var grid = document.getElementById('canvaGrid');
+  if (!grid) return;
+  if (!designs.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#555;">No designs found</div>'; return; }
+  grid.innerHTML = designs.map(function(d) {
+    var thumbSafe = (d.thumbnail || '').replace(/'/g, "\\'");
+    var titleSafe = (d.title || 'Untitled').replace(/'/g, "\\'");
+    var urlSafe = (d.view_url || '').replace(/'/g, "\\'");
+    return '<div onclick="insertCanvaDesign(\'' + thumbSafe + '\',\'' + titleSafe + '\',\'' + urlSafe + '\')" ' +
+      'style="cursor:pointer;border-radius:8px;overflow:hidden;border:1px solid rgba(201,168,76,0.1);background:#131315;transition:all 0.15s;" ' +
+      'onmouseover="this.style.borderColor=\'rgba(201,168,76,0.4)\';this.style.background=\'#1A1A1D\'" ' +
+      'onmouseout="this.style.borderColor=\'rgba(201,168,76,0.1)\';this.style.background=\'#131315\'">' +
+      (d.thumbnail
+        ? '<img src="' + d.thumbnail + '" style="width:100%;height:110px;object-fit:cover;display:block;" onerror="this.style.display=\'none\'">'
+        : '<div style="width:100%;height:110px;background:#1A1200;display:flex;align-items:center;justify-content:center;font-size:24px;">&#10022;</div>') +
+      '<div style="padding:8px;">' +
+        '<div style="font-size:11px;font-weight:500;color:#C8C5BC;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (d.title || 'Untitled') + '</div>' +
+        '<div style="font-size:10px;color:#444;margin-top:2px;">' + (d.page_count > 1 ? d.page_count + ' pages' : '1 page') + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function filterCanvaDesigns(q) {
+  var filtered = q
+    ? _canvaDesigns.filter(function(d) { return (d.title || '').toLowerCase().indexOf(q.toLowerCase()) >= 0; })
+    : _canvaDesigns;
+  renderCanvaGrid(filtered);
+}
+
+function insertCanvaDesign(thumbnailUrl, title, viewUrl) {
+  if (!thumbnailUrl) { showToast('No thumbnail available', true); return; }
+  var editor = document.getElementById('emailEditor');
+  if (!editor) return;
+  editor.focus();
+  var linkUrl = viewUrl || '#';
+  var imgHtml = '<a href="' + linkUrl + '" style="display:inline-block;margin:8px 0;">' +
+    '<img src="' + thumbnailUrl + '" alt="' + title + '" ' +
+    'style="max-width:500px;width:100%;border-radius:6px;display:block;" ' +
+    'title="' + title + '"></a>';
+  document.execCommand('insertHTML', false, imgHtml);
+  closeCanvaPicker();
+  showToast('Canva design inserted');
 }
 
 /* --- Email History --- */
