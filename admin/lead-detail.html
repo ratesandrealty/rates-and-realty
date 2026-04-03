@@ -1216,7 +1216,7 @@
 
   <!-- Temperature bubble -->
   <div style="position:relative;display:inline-block;">
-    <span id="tempBubble" onclick="toggleTempMenu()" style="padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:700;cursor:pointer;letter-spacing:0.05em;user-select:none;transition:all 0.15s;background:rgba(90,160,224,0.18);border:1px solid rgba(90,160,224,0.45);color:#7BBCE8;">&#129482; COLD</span>
+    <span id="tempBubble" onclick="toggleTempMenu(event)" style="padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:700;cursor:pointer;letter-spacing:0.05em;user-select:none;transition:all 0.15s;background:rgba(90,160,224,0.18);border:1px solid rgba(90,160,224,0.45);color:#7BBCE8;">&#129482; COLD</span>
     <div id="tempMenu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;z-index:999;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:100px;">
       <div onclick="setTemperature('Hot')" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#F07878;display:flex;align-items:center;gap:7px;" onmouseover="this.style.background='rgba(224,82,82,0.1)'" onmouseout="this.style.background=''">&#128293; Hot</div>
       <div onclick="setTemperature('Warm')" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#E0A852;display:flex;align-items:center;gap:7px;" onmouseover="this.style.background='rgba(224,165,82,0.1)'" onmouseout="this.style.background=''">&#9728;&#65039; Warm</div>
@@ -1229,7 +1229,6 @@
 
   <div class="ab-divider"></div>
   <div class="ab-controls">
-    <span class="ld-score-tier-badge" id="topbar-score-tier" style="display:none;"></span>
     <button class="ab-btn ab-btn-primary" onclick="toast('Convert to application — coming soon')" title="Convert lead to mortgage application">Convert</button>
     <button class="ab-btn ab-btn-danger" onclick="adminLogout()">Logout</button>
     <button class="ab-theme" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">&#127769;</button>
@@ -1603,7 +1602,7 @@
                 <div class="score-big-label">out of 100</div>
               </div>
               <div>
-                <div class="score-tier-pill" id="sc-tier" onclick="toggleScoreTempMenu()" style="cursor:pointer;">—</div>
+                <div class="score-tier-pill" id="sc-tier" onclick="toggleTempMenu(event)" style="cursor:pointer;">—</div>
               </div>
             </div>
             <div class="score-action-box" id="sc-action">Load a lead to calculate score.</div>
@@ -3425,6 +3424,12 @@ function populateUI() {
   renderTempBubble(contactData.temperature || 'Cold');
   var _fStatus = document.getElementById('f-status');
   if (_fStatus) _fStatus.value = _initStage;
+  // Sync score card temp badge
+  var _initTemp = contactData.temperature || 'Cold';
+  var _normTemp = _initTemp.charAt(0).toUpperCase() + _initTemp.slice(1).toLowerCase();
+  var _ts = TEMP_STYLES[_normTemp] || TEMP_STYLES.Cold;
+  var _scTier = document.getElementById('sc-tier');
+  if (_scTier) { _scTier.textContent = '\u25CF ' + _ts.label; _scTier.style.background = _ts.bg; _scTier.style.border = '1px solid ' + _ts.border; _scTier.style.color = _ts.text; }
 
   // Score card
   renderScoreCard(leadData, contactData);
@@ -5678,33 +5683,53 @@ function renderTempBubble(temp) {
   bubble.style.color = s.text;
 }
 
-function toggleTempMenu() {
-  var m = document.getElementById('tempMenu');
-  if (m) { m.style.position = ''; m.style.top = ''; m.style.left = ''; m.style.display = m.style.display === 'none' ? 'block' : 'none'; }
-}
-
-function toggleScoreTempMenu() {
+function toggleTempMenu(e) {
+  if (e) e.stopPropagation();
   var menu = document.getElementById('tempMenu');
-  var badge = document.getElementById('sc-tier');
-  if (!menu || !badge) return;
-  var rect = badge.getBoundingClientRect();
-  menu.style.position = 'fixed';
-  menu.style.top = (rect.bottom + 6) + 'px';
-  menu.style.left = rect.left + 'px';
-  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  if (!menu) return;
+  if (menu.style.display !== 'none') { menu.style.display = 'none'; return; }
+  if (e && e.currentTarget) {
+    var rect = e.currentTarget.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.top = (rect.bottom + 4) + 'px';
+    menu.style.left = rect.left + 'px';
+    menu.style.zIndex = '99999';
+  }
+  menu.style.display = 'block';
 }
 
 async function setTemperature(temp) {
-  document.getElementById('tempMenu').style.display = 'none';
-  renderTempBubble(temp);
+  var normalized = temp.charAt(0).toUpperCase() + temp.slice(1).toLowerCase();
+  var s = TEMP_STYLES[normalized] || TEMP_STYLES.Cold;
+
+  // Close temp menu
+  var tm = document.getElementById('tempMenu');
+  if (tm) tm.style.display = 'none';
+
+  // 1. Header left temp bubble
+  renderTempBubble(normalized);
+
+  // 2. Lead Score card tier pill
+  var tierEl = document.getElementById('sc-tier');
+  if (tierEl) {
+    tierEl.textContent = '\u25CF ' + s.label;
+    tierEl.style.background = s.bg;
+    tierEl.style.border = '1px solid ' + s.border;
+    tierEl.style.color = s.text;
+  }
+
+  // 3. Update local state
+  if (contactData) contactData.temperature = normalized;
+
+  // 4. PATCH DB
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
-  if (!contactId) return;
-  if (contactData) contactData.temperature = temp;
-  await fetch(
-    (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/contacts?id=eq.' + contactId,
-    { method:'PATCH', headers:{'Content-Type':'application/json','apikey':window.APP_CONFIG?.SUPABASE_ANON_KEY||'','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||''),'Prefer':'return=minimal'}, body:JSON.stringify({temperature:temp}) }
-  );
-  showToast('Temperature: ' + temp);
+  if (contactId) {
+    await fetch(
+      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/contacts?id=eq.' + contactId,
+      { method:'PATCH', headers:{'Content-Type':'application/json','apikey':window.APP_CONFIG?.SUPABASE_ANON_KEY||'','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||''),'Prefer':'return=minimal'}, body:JSON.stringify({temperature:normalized}) }
+    );
+  }
+  showToast('Temperature: ' + normalized);
 }
 
 function renderStatusMenu() {
@@ -5755,7 +5780,7 @@ async function updatePipelineStage(newStage) {
 
 // Close menus on outside click
 document.addEventListener('click', function(e) {
-  if (!e.target.closest('#tempBubble') && !e.target.closest('#tempMenu')) { var m=document.getElementById('tempMenu'); if(m) m.style.display='none'; }
+  if (!e.target.closest('#tempBubble') && !e.target.closest('#sc-tier') && !e.target.closest('#tempMenu')) { var m=document.getElementById('tempMenu'); if(m) m.style.display='none'; }
   if (!e.target.closest('#statusBubble') && !e.target.closest('#statusMenu')) { var m=document.getElementById('statusMenu'); if(m) m.style.display='none'; }
 });
 
