@@ -239,12 +239,9 @@
       flex-shrink: 0;
       background: var(--surface);
       border-right: 1px solid var(--border);
-      position: sticky;
-      top: var(--topbar-h);
       align-self: flex-start;
-      max-height: calc(100vh - var(--topbar-h));
-      overflow-y: auto;
-      overflow-x: visible;
+      height: auto;
+      overflow: visible;
       display: flex;
       flex-direction: column;
       padding: 24px 16px;
@@ -1267,10 +1264,8 @@
     <div class="ld-sidebar-email" id="sidebar-email">—</div>
 
     <!-- Borrower Portal Info -->
-    <div id="portalInfoCard" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:14px;margin:12px 16px">
-      <div style="font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:10px">
-        <i class="fas fa-user-circle" style="color:#C9A84C;margin-right:6px"></i>Borrower Portal
-      </div>
+    <div id="portalInfoCard" style="border-top:1px solid #1e1e1e;padding-top:12px;margin-top:12px">
+      <div style="font-size:10px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Borrower Portal</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
         <div>
           <div style="font-size:.68rem;color:#666;margin-bottom:3px">Unique ID</div>
@@ -1307,23 +1302,14 @@
       </div>
     </div>
 
-    <div id="contactTagsHeader" style="
-      padding: 12px 20px 4px;
-      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-      overflow: visible;
-    ">
-      <span style="font-size:10px; text-transform:uppercase; letter-spacing:0.5px;
-                   color:rgba(255,255,255,0.25); font-weight:600; flex-shrink:0;">
-        Tags
-      </span>
-      <div id="rrTagPills" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;"></div>
-      <button id="rrAddTagBtn" style="padding:3px 10px;border-radius:20px;background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);color:rgba(255,255,255,0.35);font-size:11px;cursor:pointer;white-space:nowrap;">+ Tag</button>
-      <div id="rrTagMenu" class="tag-dropdown" style="display:none;">
-        <div style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);position:sticky;top:0;background:#1e1e1e;">
-          <input type="text" id="rrTagSearch" placeholder="Search or create..."
-            style="width:100%;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:12px;outline:none;box-sizing:border-box;">
-        </div>
-        <div id="rrTagList"></div>
+    <div style="border-top:1px solid #1e1e1e;padding-top:12px;margin-top:12px">
+      <div style="font-size:10px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Tags</div>
+      <div id="rrPills" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+      <button id="rrAddBtn" style="font-size:11px;padding:3px 10px;background:transparent;border:1px dashed #333;color:#555;border-radius:10px;cursor:pointer">+ Add Tag</button>
+      <div id="rrMenu" style="display:none;position:absolute;z-index:9999;width:210px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:8px;margin-top:4px;box-shadow:0 8px 32px rgba(0,0,0,.7)">
+        <input id="rrSearch" type="text" placeholder="Search or create tag..." autocomplete="off"
+          style="width:100%;box-sizing:border-box;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:12px;margin-bottom:6px;outline:none">
+        <div id="rrList" style="max-height:220px;overflow-y:auto"></div>
       </div>
     </div>
 
@@ -1362,7 +1348,7 @@
                      letter-spacing:0.5px;white-space:nowrap;">Email</span>
       </button>
 
-      <button id="smsBtn" onclick="handleTextClick()" style="
+      <button id="smsBtn" onclick="openSmsComposer()" style="
         display:flex; flex-direction:column; align-items:center;
         justify-content:center; gap:5px; padding:12px 4px;
         background:rgba(255,255,255,0.04);
@@ -9192,8 +9178,68 @@ async function updateLenderStatus(lenderId, status) {
   <iframe id="pdf-viewer-frame" src="" style="flex:1;border:none;background:#222;"></iframe>
 </div>
 
-<!-- Tag system + action buttons — placed at end of body to guarantee DOM + APP_CONFIG ready -->
+<!-- SMS Composer Modal -->
+<div id="sms-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.85);align-items:flex-end;justify-content:center;padding:0">
+  <div style="width:100%;max-width:620px;background:#111;border-radius:16px 16px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.6);display:flex;flex-direction:column;max-height:85vh">
+    <div style="display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid #1e1e1e">
+      <div style="display:flex;align-items:center;gap:10px;flex:1">
+        <div id="sms-avatar" style="width:36px;height:36px;border-radius:50%;background:#C9A84C;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#000">RD</div>
+        <div><div id="sms-contact-name" style="font-size:13px;font-weight:600;color:#eee">Contact Name</div>
+        <div id="sms-contact-phone" style="font-size:11px;color:#666">No phone on file</div></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button onclick="toggleMms()" style="font-size:11px;padding:4px 10px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;cursor:pointer">MMS</button>
+        <button onclick="closeSmsModal()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+    </div>
+    <div id="sms-history" style="flex:1;overflow-y:auto;padding:16px 20px;min-height:80px;max-height:200px">
+      <div style="text-align:center;color:#333;font-size:12px;font-style:italic">Loading message history...</div>
+    </div>
+    <div id="ai-helper-panel" style="display:none;border-top:1px solid #1e1e1e;padding:12px 20px;background:#0d0d0d">
+      <div style="font-size:10px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">AI Message Helper</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button data-ai-prompt="Write a friendly follow-up SMS to check in on their home buying progress. Keep it under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Follow Up</button>
+        <button data-ai-prompt="Write a brief SMS confirming a showing appointment. Ask them to confirm. Under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Confirm Showing</button>
+        <button data-ai-prompt="Write a warm SMS introducing myself as their loan officer and inviting them to start the pre-approval process. Under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Intro / Pre-approval</button>
+        <button data-ai-prompt="Write a congratulatory SMS for getting approved. Upbeat and professional. Under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Approval Congrats</button>
+        <button data-ai-prompt="Write a brief SMS requesting missing documents needed for the loan file. Polite and clear. Under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Request Docs</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="ai-custom-prompt" type="text" placeholder="Or describe what you want to say..." style="flex:1;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 12px;color:#eee;font-size:12px;outline:none">
+        <button onclick="generateAiMessage()" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:12px;cursor:pointer">Generate</button>
+      </div>
+      <div id="ai-generating" style="display:none;font-size:11px;color:#666;margin-top:6px;font-style:italic">Generating message...</div>
+    </div>
+    <div id="mms-panel" style="display:none;border-top:1px solid #1e1e1e;padding:10px 20px;background:#0d0d0d">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button onclick="document.getElementById('mms-file-input').click()" style="font-size:12px;padding:6px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#aaa;cursor:pointer">Attach Image</button>
+        <span id="mms-file-name" style="font-size:11px;color:#666">No file selected</span>
+        <button id="mms-remove-btn" onclick="removeMmsFile()" style="display:none;font-size:11px;color:#f87171;background:none;border:none;cursor:pointer">Remove</button>
+        <input id="mms-file-input" type="file" accept="image/*" style="display:none" onchange="handleMmsFile(this)">
+      </div>
+      <div id="mms-preview" style="margin-top:8px"></div>
+    </div>
+    <div style="padding:16px 20px;border-top:1px solid #1e1e1e;background:#111">
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button onclick="toggleAiHelper()" style="font-size:11px;padding:5px 12px;background:#1a1408;border:1px solid #C9A84C44;border-radius:6px;color:#C9A84C;cursor:pointer;white-space:nowrap">AI Help</button>
+        <div style="font-size:10px;color:#444;align-self:center" id="sms-char-count">0 / 160 chars</div>
+      </div>
+      <textarea id="sms-body" placeholder="Type your message..." rows="3" oninput="updateSmsCharCount()"
+        style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:12px 14px;color:#eee;font-size:13px;line-height:1.5;resize:none;outline:none;font-family:inherit"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+        <div style="font-size:11px;color:#444">Sending from (714) 909-2526</div>
+        <button onclick="sendSmsFromModal()" id="sms-send-btn"
+          style="background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#000;border:none;border-radius:8px;padding:10px 28px;font-weight:800;font-size:13px;cursor:pointer">
+          Send SMS
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- End-of-body scripts -->
 <script>
+/* ═══ ACTION BUTTONS ═══ */
 function handleCallClick() {
   var phone = (contactData?.phone || contactData?.secondary_phone || '').replace(/\D/g, '');
   if (!phone) { showToast('No phone number on file', true); return; }
@@ -9205,15 +9251,15 @@ function handleCallClick() {
   window.location.href = 'tel:+1' + phone;
 }
 
-function handleTextClick() {
-  var phone = (contactData?.phone || contactData?.secondary_phone || '').replace(/\D/g, '');
-  if (!phone) { showToast('No phone number on file', true); return; }
+function handleEmailClick() {
+  var email = contactData?.email || '';
+  if (!email) { showToast('No email on file', true); return; }
   fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
-      type: 'sms', channel: 'sms', direction: 'outbound', title: 'SMS initiated by Rene', status: 'initiated', metadata: { phone: phone } })
+      type: 'email', channel: 'email', direction: 'outbound', title: 'Email opened by Rene', status: 'initiated', metadata: { email: email } })
   }).catch(function(){});
-  window.location.href = 'sms:+1' + phone;
+  window.location.href = 'mailto:' + email;
 }
 
 /* ═══ PDF VIEWER ═══ */
@@ -9229,7 +9275,6 @@ function openPdfViewer(url, fileName) {
   modal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
-
 function closePdfViewer() {
   var modal = document.getElementById('pdf-viewer-modal');
   var frame = document.getElementById('pdf-viewer-frame');
@@ -9237,146 +9282,266 @@ function closePdfViewer() {
   if (frame) frame.src = '';
   document.body.style.overflow = '';
 }
-
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closePdfViewer(); });
-
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); }
+});
 document.addEventListener('click', function(e) {
   var pdfBtn = e.target.closest('.view-pdf-btn');
-  if (pdfBtn) {
-    var url = pdfBtn.getAttribute('data-pdf-url');
-    var card = pdfBtn.closest('[data-file-name]');
-    var fn = card ? card.getAttribute('data-file-name') : 'approval.pdf';
-    if (url) openPdfViewer(url, fn);
-  }
-  // Close modal on backdrop click
+  if (pdfBtn) { var url = pdfBtn.getAttribute('data-pdf-url'); var card = pdfBtn.closest('[data-file-name]'); var fn = card ? card.getAttribute('data-file-name') : 'approval.pdf'; if (url) openPdfViewer(url, fn); }
   if (e.target.id === 'pdf-viewer-modal') closePdfViewer();
 });
 
-function handleEmailClick() {
-  var email = contactData?.email || '';
-  if (!email) { showToast('No email on file', true); return; }
-  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
-      type: 'email', channel: 'email', direction: 'outbound', title: 'Email opened by Rene', status: 'initiated', metadata: { email: email } })
-  }).catch(function(){});
-  window.location.href = 'mailto:' + email;
+/* ═══ SMS COMPOSER ═══ */
+var smsContactData = null;
+
+function openSmsComposer() {
+  var modal = document.getElementById('sms-modal');
+  if (!modal) return;
+  var name = ((contactData?.first_name || '') + ' ' + (contactData?.last_name || '')).trim() || 'Contact';
+  var phone = (contactData?.phone || contactData?.secondary_phone || '').replace(/\D/g,'');
+  var initials = name.split(' ').map(function(n){return n[0]||'';}).join('').substring(0,2).toUpperCase();
+  document.getElementById('sms-contact-name').textContent = name;
+  document.getElementById('sms-contact-phone').textContent = phone ? '(' + phone.slice(0,3) + ') ' + phone.slice(3,6) + '-' + phone.slice(6) : 'No phone on file';
+  document.getElementById('sms-avatar').textContent = initials || 'RD';
+  smsContactData = { name: name, phone: phone };
+  loadSmsHistory();
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  setTimeout(function() { var b = document.getElementById('sms-body'); if (b) b.focus(); }, 100);
+  // Log activity
+  if (phone) {
+    fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
+        type: 'sms', channel: 'sms', direction: 'outbound', title: 'SMS composer opened by Rene', status: 'initiated', metadata: { phone: phone } })
+    }).catch(function(){});
+  }
 }
 
-/* ═══ TAGS (IIFE — self-contained, runs after DOM is ready) ═══ */
-(function() {
-  var _allTags = [], _contactTags = [], _menuOpen = false;
-  var SB = 'https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1';
-  function getKey() { return window.APP_CONFIG?.SUPABASE_ANON_KEY || ''; }
-  function getCid() { return new URLSearchParams(location.search).get('contact_id') || new URLSearchParams(location.search).get('id'); }
-  function hdr() { return { 'apikey': getKey(), 'Authorization': 'Bearer ' + getKey(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' }; }
+function closeSmsModal() {
+  var modal = document.getElementById('sms-modal');
+  if (modal) modal.style.display = 'none';
+  document.body.style.overflow = '';
+  var body = document.getElementById('sms-body');
+  if (body) body.value = '';
+  var aip = document.getElementById('ai-helper-panel');
+  if (aip) aip.style.display = 'none';
+  var mms = document.getElementById('mms-panel');
+  if (mms) mms.style.display = 'none';
+  updateSmsCharCount();
+}
 
-  async function rrLoadTags() {
-    var cid = getCid(); if (!cid) return;
-    var results = await Promise.all([
-      fetch(SB + '/tags?order=name', { headers: hdr() }).then(function(r) { return r.json(); }),
-      fetch(SB + '/contact_tags?contact_id=eq.' + cid + '&select=tag_id,tags(id,name,color)', { headers: hdr() }).then(function(r) { return r.json(); })
-    ]);
-    _allTags = Array.isArray(results[0]) ? results[0] : [];
-    _contactTags = Array.isArray(results[1]) ? results[1].map(function(x) { return x.tags; }).filter(Boolean) : [];
-    rrRenderPills();
-    rrRenderList('');
-  }
+function toggleAiHelper() {
+  var p = document.getElementById('ai-helper-panel');
+  if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+function toggleMms() {
+  var p = document.getElementById('mms-panel');
+  if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
 
-  function rrRenderPills() {
-    var el = document.getElementById('rrTagPills'); if (!el) return;
-    el.innerHTML = _contactTags.map(function(t) {
-      return '<span class="tag-badge" style="background:' + (t.color||'#888') + '22;border-color:' + (t.color||'#888') + '66;color:' + (t.color||'#888') + ';">'
-        + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>' + t.name
-        + ' <span data-remove-tag="' + t.id + '" style="cursor:pointer;opacity:0.6;font-size:13px;margin-left:2px;">\u00d7</span></span>';
+function updateSmsCharCount() {
+  var body = document.getElementById('sms-body');
+  var count = document.getElementById('sms-char-count');
+  if (!count) return;
+  var len = body ? body.value.length : 0;
+  var segments = Math.ceil(len / 160) || 1;
+  count.textContent = len + ' chars' + (len > 160 ? ' (' + segments + ' messages)' : ' / 160');
+  count.style.color = len > 160 ? '#f87171' : '#444';
+}
+
+function handleMmsFile(input) {
+  var file = input.files[0]; if (!file) return;
+  document.getElementById('mms-file-name').textContent = file.name;
+  document.getElementById('mms-remove-btn').style.display = 'inline';
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('mms-preview').innerHTML = '<img src="' + e.target.result + '" style="max-height:80px;border-radius:6px;border:1px solid #2a2a2a">';
+  };
+  reader.readAsDataURL(file);
+}
+function removeMmsFile() {
+  document.getElementById('mms-file-input').value = '';
+  document.getElementById('mms-file-name').textContent = 'No file selected';
+  document.getElementById('mms-remove-btn').style.display = 'none';
+  document.getElementById('mms-preview').innerHTML = '';
+}
+
+async function generateAiMessage() {
+  var customPrompt = (document.getElementById('ai-custom-prompt')?.value || '').trim();
+  var contactName = smsContactData?.name || 'the borrower';
+  var gen = document.getElementById('ai-generating');
+  if (gen) gen.style.display = 'block';
+  try {
+    var systemPrompt = 'You are Rene Duarte, a licensed mortgage loan officer at Rates & Realty (NMLS #1795044). Write a professional, warm, conversational SMS message. Never use asterisks or markdown. Keep it natural and human. Sign off as Rene.';
+    var userPrompt = (customPrompt || 'Write a friendly follow-up SMS') + ' The borrower name is ' + contactName + '. Return ONLY the SMS text, nothing else.';
+    var res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 200, messages: [{ role: 'user', content: systemPrompt + '\n\n' + userPrompt }] })
+    });
+    var data = await res.json();
+    var msg = data.content && data.content[0] ? data.content[0].text.trim() : '';
+    if (msg) { document.getElementById('sms-body').value = msg; updateSmsCharCount(); }
+  } catch(e) { console.error('AI error:', e); }
+  if (gen) gen.style.display = 'none';
+}
+
+async function loadSmsHistory() {
+  var hist = document.getElementById('sms-history');
+  if (!hist) return;
+  var cid = new URLSearchParams(location.search).get('contact_id');
+  if (!cid) { hist.innerHTML = '<div style="text-align:center;color:#333;font-size:12px">No history</div>'; return; }
+  try {
+    var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1/activity_events?contact_id=eq.' + cid + '&type=eq.sms&order=created_at.desc&limit=20', {
+      headers: { 'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + window.APP_CONFIG?.SUPABASE_ANON_KEY }
+    });
+    var events = await res.json();
+    if (!events || !events.length) { hist.innerHTML = '<div style="text-align:center;color:#333;font-size:12px;padding:10px">No SMS history yet</div>'; return; }
+    hist.innerHTML = events.map(function(e) {
+      var isOut = e.direction !== 'inbound';
+      var time = new Date(e.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+      return '<div style="display:flex;justify-content:' + (isOut?'flex-end':'flex-start') + ';margin-bottom:8px">'
+        + '<div style="max-width:75%;background:' + (isOut?'#C9A84C22':'#1a1a1a') + ';border:1px solid ' + (isOut?'#C9A84C33':'#2a2a2a') + ';border-radius:' + (isOut?'12px 12px 4px 12px':'12px 12px 12px 4px') + ';padding:8px 12px">'
+        + '<div style="font-size:12px;color:' + (isOut?'#ddd':'#ccc') + ';line-height:1.4">' + (e.sms_body||e.description||'') + '</div>'
+        + '<div style="font-size:10px;color:#444;margin-top:3px;text-align:' + (isOut?'right':'left') + '">' + (isOut?'You':'Contact') + ' &middot; ' + time + '</div>'
+        + '</div></div>';
+    }).join('');
+    hist.scrollTop = hist.scrollHeight;
+  } catch(e) { hist.innerHTML = '<div style="text-align:center;color:#333;font-size:12px">Could not load history</div>'; }
+}
+
+async function sendSmsFromModal() {
+  var body = (document.getElementById('sms-body')?.value || '').trim();
+  var phone = smsContactData?.phone;
+  if (!body) { showToast('Please type a message', true); return; }
+  if (!phone) { showToast('No phone number on file', true); return; }
+  var btn = document.getElementById('sms-send-btn');
+  btn.disabled = true; btn.textContent = 'Sending...';
+  try {
+    var cid = new URLSearchParams(location.search).get('contact_id');
+    var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trigger: 'manual', to_phone: '+1' + phone, message: body, contact_id: cid, direction: 'outbound' })
+    });
+    var data = await res.json();
+    if (data.success || data.sid) {
+      showToast('SMS sent!');
+      document.getElementById('sms-body').value = '';
+      updateSmsCharCount();
+      await loadSmsHistory();
+    } else { showToast('Send failed: ' + (data.error || 'unknown error'), true); }
+  } catch(e) { showToast('Error: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = 'Send SMS';
+}
+
+// AI quick buttons + SMS modal backdrop
+document.addEventListener('click', function(e) {
+  var aiBtn = e.target.closest('.ai-quick-btn');
+  if (aiBtn) { document.getElementById('ai-custom-prompt').value = aiBtn.getAttribute('data-ai-prompt'); generateAiMessage(); }
+  if (e.target.id === 'sms-modal') closeSmsModal();
+});
+
+/* ═══ TAGS (IIFE) ═══ */
+(function(){
+  var SB='https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1';
+  function key(){return window.APP_CONFIG&&window.APP_CONFIG.SUPABASE_ANON_KEY||'';}
+  function cid(){return new URLSearchParams(location.search).get('contact_id');}
+  function hdr(){return{'apikey':key(),'Authorization':'Bearer '+key(),'Content-Type':'application/json','Prefer':'return=representation'};}
+  var allTags=[],ctTags=[],open=false;
+
+  function rPills(){
+    var el=document.getElementById('rrPills');if(!el)return;
+    el.innerHTML=ctTags.map(function(t){
+      return'<span data-rr-remove="'+t.id+'" style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px 2px 10px;border-radius:10px;font-size:11px;font-weight:600;cursor:default;background:'+t.color+'22;border:1px solid '+t.color+'44;color:'+t.color+'">'+t.name+'<span data-rr-x="'+t.id+'" style="cursor:pointer;font-size:14px;opacity:.6;margin-left:2px">&times;</span></span>';
     }).join('');
   }
 
-  function rrRenderList(search) {
-    var el = document.getElementById('rrTagList'); if (!el) return;
-    var s = (search || '').toLowerCase();
-    var activeIds = _contactTags.map(function(t) { return t.id; });
-    var filtered = _allTags.filter(function(t) { return t.name.toLowerCase().indexOf(s) >= 0; });
-    var exact = filtered.find(function(t) { return t.name.toLowerCase() === s; });
-    var html = filtered.map(function(t) {
-      var on = activeIds.indexOf(t.id) >= 0;
-      return '<div class="tag-dropdown-item" data-toggle-tag="' + t.id + '">'
-        + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>'
-        + '<span style="flex:1;">' + t.name + '</span>'
-        + (on ? '<span style="font-size:11px;color:#c9a84c;">\u2713</span>' : '')
-        + '</div>';
+  function rList(s){
+    var el=document.getElementById('rrList');if(!el)return;
+    s=(s||'').toLowerCase();
+    var f=allTags.filter(function(t){return t.name.toLowerCase().indexOf(s)>-1;});
+    var exact=allTags.find(function(t){return t.name.toLowerCase()===s;});
+    var ids=ctTags.map(function(t){return t.id;});
+    var h=f.map(function(t){
+      var on=ids.indexOf(t.id)>-1;
+      return'<div data-rr-tog="'+t.id+'" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;'+(on?'background:#222;':'')+'margin-bottom:1px">'
+        +'<span style="width:9px;height:9px;border-radius:50%;background:'+t.color+';flex-shrink:0"></span>'
+        +'<span style="font-size:13px;color:#ddd;flex:1">'+t.name+'</span>'
+        +(on?'<span style="color:#4ade80;font-size:15px">&#10003;</span>':'')
+        +'</div>';
     }).join('');
-    if (search && search.trim() && !exact) {
-      html += '<div class="tag-create-row" data-create-tag="' + search.trim().replace(/"/g, '&quot;') + '">'
-        + '<span>\u2728</span><span>Create &quot;' + search.trim() + '&quot;</span></div>';
-    }
-    el.innerHTML = html || '<div style="padding:14px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px;">No tags found</div>';
+    if(s&&!exact){h+='<div data-rr-create="'+s+'" style="padding:7px 10px;border-top:1px solid #222;margin-top:4px;color:#C9A84C;font-size:12px;cursor:pointer">+ Create &ldquo;'+s+'&rdquo;</div>';}
+    el.innerHTML=h||'<div style="padding:10px;color:#444;font-size:12px">No tags found</div>';
   }
 
-  // DOM is guaranteed ready since this script is at the end of body
-  setTimeout(rrLoadTags, 300);
+  async function load(){
+    if(!cid())return;
+    var r1=await fetch(SB+'/tags?order=name',{headers:hdr()});
+    var r2=await fetch(SB+'/contact_tags?contact_id=eq.'+cid()+'&select=tag_id,tags(id,name,color)',{headers:hdr()});
+    allTags=await r1.json();if(!Array.isArray(allTags))allTags=[];
+    var ct=await r2.json();if(!Array.isArray(ct))ct=[];
+    ctTags=ct.map(function(x){return x.tags;}).filter(Boolean);
+    rPills();rList('');
+  }
 
-  document.addEventListener('click', async function(e) {
-    var addBtn = e.target.closest('#rrAddTagBtn');
-    var menu = document.getElementById('rrTagMenu');
-    var searchEl = document.getElementById('rrTagSearch');
+  function showMenu(){
+    var btn=document.getElementById('rrAddBtn');
+    var menu=document.getElementById('rrMenu');
+    if(!btn||!menu)return;
+    var rect=btn.getBoundingClientRect();
+    menu.style.top=(rect.bottom+window.scrollY+4)+'px';
+    menu.style.left=rect.left+'px';
+    menu.style.position='absolute';
+    document.body.appendChild(menu);
+    menu.style.display='block';
+    open=true;
+    var si=document.getElementById('rrSearch');
+    if(si){si.value='';si.focus();rList('');}
+  }
+  function hideMenu(){
+    var menu=document.getElementById('rrMenu');
+    if(menu)menu.style.display='none';
+    open=false;
+  }
 
-    if (addBtn) {
+  setTimeout(load,600);
+  var addBtn=document.getElementById('rrAddBtn');
+  if(addBtn) addBtn.addEventListener('click',function(e){e.stopPropagation();open?hideMenu():showMenu();});
+  var searchEl=document.getElementById('rrSearch');
+  if(searchEl) searchEl.addEventListener('input',function(){rList(this.value);});
+
+  document.addEventListener('click',async function(e){
+    var tog=e.target.closest('[data-rr-tog]');
+    var rem=e.target.closest('[data-rr-x]');
+    var cre=e.target.closest('[data-rr-create]');
+    if(tog){
       e.stopPropagation();
-      _menuOpen = !_menuOpen;
-      if (menu) menu.style.display = _menuOpen ? 'block' : 'none';
-      if (_menuOpen && searchEl) { searchEl.value = ''; searchEl.focus(); rrRenderList(''); }
-      return;
+      var tid=tog.getAttribute('data-rr-tog');
+      var on=ctTags.find(function(t){return t.id===tid;});
+      if(on){await fetch(SB+'/contact_tags?contact_id=eq.'+cid()+'&tag_id=eq.'+tid,{method:'DELETE',headers:hdr()});}
+      else{await fetch(SB+'/contact_tags',{method:'POST',headers:hdr(),body:JSON.stringify({contact_id:cid(),tag_id:tid})});}
+      await load();rList(document.getElementById('rrSearch')&&document.getElementById('rrSearch').value||'');return;
     }
-
-    var toggle = e.target.closest('[data-toggle-tag]');
-    if (toggle) {
+    if(rem){
       e.stopPropagation();
-      var tid = toggle.getAttribute('data-toggle-tag');
-      var cid = getCid();
-      var isActive = _contactTags.find(function(t) { return t.id === tid; });
-      if (isActive) {
-        await fetch(SB + '/contact_tags?contact_id=eq.' + cid + '&tag_id=eq.' + tid, { method: 'DELETE', headers: hdr() });
-      } else {
-        await fetch(SB + '/contact_tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ contact_id: cid, tag_id: tid }) });
-      }
-      await rrLoadTags();
-      return;
+      var rtid=rem.getAttribute('data-rr-x');
+      await fetch(SB+'/contact_tags?contact_id=eq.'+cid()+'&tag_id=eq.'+rtid,{method:'DELETE',headers:hdr()});
+      await load();return;
     }
-
-    var removeBtn = e.target.closest('[data-remove-tag]');
-    if (removeBtn) {
+    if(cre){
       e.stopPropagation();
-      var rtid = removeBtn.getAttribute('data-remove-tag');
-      await fetch(SB + '/contact_tags?contact_id=eq.' + getCid() + '&tag_id=eq.' + rtid, { method: 'DELETE', headers: hdr() });
-      await rrLoadTags();
-      return;
+      var name=cre.getAttribute('data-rr-create');
+      var cols=['#C9A84C','#64B5F6','#81C784','#EF5350','#FFA726','#CE93D8','#26C6DA'];
+      var col=cols[Math.floor(Math.random()*cols.length)];
+      var nr=await fetch(SB+'/tags',{method:'POST',headers:hdr(),body:JSON.stringify({name:name,color:col})});
+      var na=await nr.json();
+      if(na&&na[0]&&na[0].id){await fetch(SB+'/contact_tags',{method:'POST',headers:hdr(),body:JSON.stringify({contact_id:cid(),tag_id:na[0].id})});}
+      await load();
+      var si=document.getElementById('rrSearch');if(si){si.value='';rList('');}return;
     }
-
-    var createBtn = e.target.closest('[data-create-tag]');
-    if (createBtn) {
-      e.stopPropagation();
-      var tagName = createBtn.getAttribute('data-create-tag');
-      var colors = ['#C9A84C','#64B5F6','#81C784','#EF5350','#FFA726','#CE93D8','#26C6DA'];
-      var tagColor = colors[Math.floor(Math.random() * colors.length)];
-      var res = await fetch(SB + '/tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ name: tagName, color: tagColor }) });
-      var arr = await res.json();
-      if (arr && arr[0] && arr[0].id) {
-        await fetch(SB + '/contact_tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ contact_id: getCid(), tag_id: arr[0].id }) });
-      }
-      await rrLoadTags();
-      if (searchEl) { searchEl.value = ''; rrRenderList(''); }
-      return;
-    }
-
-    if (menu && !e.target.closest('#rrTagMenu') && !e.target.closest('#rrAddTagBtn')) {
-      menu.style.display = 'none';
-      _menuOpen = false;
-    }
+    if(!e.target.closest('#rrMenu')&&!e.target.closest('#rrAddBtn'))hideMenu();
   });
-
-  var searchInput = document.getElementById('rrTagSearch');
-  if (searchInput) searchInput.addEventListener('input', function() { rrRenderList(this.value); });
 })();
 </script>
 
