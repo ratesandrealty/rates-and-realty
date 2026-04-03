@@ -7436,8 +7436,10 @@ async function createNewTag(name) {
 }
 
 async function initTags() {
+  console.log('initTags called, contactId:', contactId);
   allTags = await loadAllTags();
   contactTags = await loadContactTags(contactId);
+  console.log('initTags loaded', allTags.length, 'tags,', contactTags.length, 'contact tags');
   renderTagPills();
 }
 
@@ -7468,22 +7470,23 @@ function toggleTagDropdown() {
 function renderTagDropdownList(search) {
   var list = document.getElementById('tag-dropdown-list');
   if (!list) return;
-  var contactTagIds = contactTags.map(function(t) { return t.id; });
-  var filtered = allTags.filter(function(t) { return t.name.toLowerCase().indexOf(search.toLowerCase()) >= 0; });
-  var exactMatch = filtered.find(function(t) { return t.name.toLowerCase() === search.toLowerCase(); });
+  var s = (search || '').toLowerCase();
+  var contactTagIds = (contactTags || []).map(function(t) { return t.id; });
+  var filtered = (allTags || []).filter(function(t) { return t.name.toLowerCase().indexOf(s) >= 0; });
+  var exactMatch = filtered.find(function(t) { return t.name.toLowerCase() === s; });
 
   var html = filtered.map(function(t) {
     var active = contactTagIds.indexOf(t.id) >= 0;
-    return '<div class="tag-dropdown-item" onclick="toggleTag(\'' + t.id + '\')">'
-      + '<span class="tag-dot" style="background:' + t.color + ';"></span>'
+    return '<div class="tag-dropdown-item" data-tag-id="' + t.id + '">'
+      + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>'
       + '<span style="flex:1;">' + t.name + '</span>'
-      + (active ? '<span style="font-size:11px;color:#c9a84c;">✓</span>' : '')
+      + (active ? '<span style="font-size:11px;color:#c9a84c;">\u2713</span>' : '')
       + '</div>';
   }).join('');
 
-  if (search && !exactMatch) {
-    html += '<div class="tag-create-row" onclick="createAndAddTag(\'' + search.replace(/'/g, "\\'") + '\')">'
-      + '<span>✨</span><span>Create "' + search + '"</span></div>';
+  if (search && search.trim() && !exactMatch) {
+    html += '<div class="tag-create-row" data-create-tag="' + search.trim().replace(/"/g, '&quot;') + '">'
+      + '<span>\u2728</span><span>Create "' + search.trim() + '"</span></div>';
   }
 
   if (!html) html = '<div style="padding:14px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px;">No tags found</div>';
@@ -7491,7 +7494,9 @@ function renderTagDropdownList(search) {
 }
 
 async function toggleTag(tagId) {
-  var contactTagIds = contactTags.map(function(t) { return t.id; });
+  console.log('toggleTag called', tagId, 'contactId:', contactId);
+  if (!contactId) { console.error('toggleTag: no contactId'); return; }
+  var contactTagIds = (contactTags || []).map(function(t) { return t.id; });
   if (contactTagIds.indexOf(tagId) >= 0) {
     await removeTagFromContact(contactId, tagId);
   } else {
@@ -7503,12 +7508,15 @@ async function toggleTag(tagId) {
 }
 
 async function removeTag(tagId) {
+  if (!contactId) return;
   await removeTagFromContact(contactId, tagId);
   contactTags = await loadContactTags(contactId);
   renderTagPills();
 }
 
 async function createAndAddTag(name) {
+  console.log('createAndAddTag called', name, 'contactId:', contactId);
+  if (!contactId) return;
   var newTag = await createNewTag(name);
   if (newTag) {
     allTags.push(newTag);
@@ -7522,7 +7530,24 @@ async function createAndAddTag(name) {
 }
 
 document.addEventListener('click', function(e) {
-  if (!e.target.closest('#tag-dropdown') && !e.target.closest('#add-tag-btn')) {
+  var tagOption = e.target.closest('[data-tag-id]');
+  var createOption = e.target.closest('[data-create-tag]');
+
+  if (tagOption) {
+    e.stopPropagation();
+    var tagId = tagOption.getAttribute('data-tag-id');
+    toggleTag(tagId);
+    return;
+  }
+
+  if (createOption) {
+    e.stopPropagation();
+    var tagName = createOption.getAttribute('data-create-tag');
+    createAndAddTag(tagName);
+    return;
+  }
+
+  if (!e.target.closest('#tag-dropdown') && !e.target.closest('#add-tag-btn') && !e.target.closest('#tag-pills-container')) {
     var dd = document.getElementById('tag-dropdown');
     if (dd) dd.style.display = 'none';
     tagDropdownOpen = false;
