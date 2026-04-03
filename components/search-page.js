@@ -83,6 +83,11 @@ if (_urlParams.toString()) {
   if (bathsSelect && _baths) bathsSelect.value = _baths;
   if (propTypeSelect && _propType) propTypeSelect.value = _propType.split(',')[0];
 
+  // Store highlight key if provided
+  if (_urlParams.get('highlight')) {
+    window._highlightListingKey = _urlParams.get('highlight');
+  }
+
   // Auto-submit the search
   setTimeout(() => { form?.dispatchEvent(new Event('submit', { cancelable: true })); }, 100);
 } else {

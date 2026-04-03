@@ -181,7 +181,7 @@ const MOCK_LISTINGS: Listing[] = [
     City: "Huntington Beach",
     PublicRemarks:
       "Beautiful single family home in a quiet neighborhood. Updated kitchen with granite countertops.",
-    Media: [],
+    Media: [{ MediaURL: "https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=400&h=300&fit=crop" }],
   },
   {
     ListingKey: "MOCK-002",
@@ -192,13 +192,13 @@ const MOCK_LISTINGS: Listing[] = [
     UnparsedAddress: "456 Demo Ave, Irvine, CA 92620",
     City: "Irvine",
     PublicRemarks:
-      "Stunning remodeled home with open floor plan and large backyard.",
-    Media: [],
+      "Stunning remodeled home with open floor plan and chef kitchen.",
+    Media: [{ MediaURL: "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=400&h=300&fit=crop" }],
   },
 ];
 
 // ── Build search URL from alert criteria ──────────────────────
-function buildSearchUrl(alert: AlertRow): string {
+function buildSearchUrl(alert: AlertRow & { borrower_id?: string }, listingKey?: string): string {
   const params = new URLSearchParams();
   if (alert.cities?.length) params.set('cities', alert.cities.join(','));
   if (alert.counties?.length) params.set('counties', alert.counties.join(','));
@@ -214,6 +214,8 @@ function buildSearchUrl(alert: AlertRow): string {
   if (alert.max_hoa) params.set('max_hoa', String(alert.max_hoa));
   if (alert.listing_type) params.set('listing_type', alert.listing_type);
   params.set('alert_id', alert.id);
+  if (alert.borrower_id) params.set('borrower_id', alert.borrower_id);
+  if (listingKey) params.set('highlight', listingKey);
   return `https://beta.ratesandrealty.com/public/search.html?${params.toString()}`;
 }
 
@@ -250,15 +252,16 @@ function buildListingAlertEmail(
   alert: AlertRow,
   listings: Listing[]
 ): string {
-  const searchUrl = buildSearchUrl(alert);
+  const ctaUrl = buildSearchUrl(alert);
   const shown = listings.slice(0, 5);
   const overflow = listings.length - shown.length;
 
   const cards = shown.map((l) => {
-    const photo = l.Media?.[0]?.MediaURL || '';
-    const photoCell = photo
-      ? `<a href="${searchUrl}"><img src="${photo}" width="130" height="100" style="display:block;object-fit:cover;border-radius:8px 0 0 8px;" alt="Property"></a>`
-      : `<div style="width:130px;height:100px;background:#2A1800;border-radius:8px 0 0 8px;display:flex;align-items:center;justify-content:center;"><span style="color:#5A4020;font-size:11px;">No Photo</span></div>`;
+    const listingUrl = buildSearchUrl(alert, l.ListingKey);
+    const photoUrl = l.Media?.[0]?.MediaURL || (l as any).media?.[0]?.MediaURL || (l as any).photos?.[0] || null;
+    const photoCell = photoUrl
+      ? `<a href="${listingUrl}" style="display:block;"><img src="${photoUrl}" width="130" height="100" style="display:block;width:130px;height:100px;object-fit:cover;border-radius:8px 0 0 8px;" alt="Property photo"></a>`
+      : `<div style="width:130px;height:100px;background:#2A1800;border-radius:8px 0 0 8px;text-align:center;line-height:100px;"><span style="font-size:20px;">&#127968;</span></div>`;
     const price = '$' + l.ListPrice.toLocaleString();
     const details = [
       l.BedroomsTotal ? `${l.BedroomsTotal} bed` : '',
@@ -272,8 +275,8 @@ function buildListingAlertEmail(
 <div style="font-size:16px;font-weight:700;color:#C9A84C;">${price}</div>
 <div style="font-size:12px;color:#A09070;margin:2px 0 4px;">${details}</div>
 <div style="font-size:12px;color:#E0DDD4;margin-bottom:4px;">${l.UnparsedAddress}</div>
-${remarks ? `<div style="font-size:11px;color:#6A6050;line-height:1.4;">${remarks}…</div>` : ''}
-<a href="${searchUrl}" style="display:inline-block;margin-top:6px;padding:5px 14px;background:#C9A84C;color:#1A0E00;border-radius:5px;font-size:11px;font-weight:700;text-decoration:none;">View Listing →</a>
+${remarks ? `<div style="font-size:11px;color:#6A6050;line-height:1.4;">${remarks}&hellip;</div>` : ''}
+<a href="${listingUrl}" style="display:inline-block;margin-top:6px;padding:5px 14px;background:#C9A84C;color:#1A0E00;border-radius:5px;font-size:11px;font-weight:700;text-decoration:none;">View Listing &rarr;</a>
 </td></tr></table>`;
   }).join('');
 
@@ -311,7 +314,7 @@ ${overflow > 0 ? `<div style="text-align:center;font-size:12px;color:#7A5820;pad
 </td></tr>
 <!-- CTA -->
 <tr><td style="padding:12px 24px 20px;" align="center">
-<a href="${searchUrl}" style="display:inline-block;background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#1A0E00;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:800;font-size:14px;">View All ${n} Matches →</a>
+<a href="${ctaUrl}" style="display:inline-block;background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#1A0E00;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:800;font-size:14px;">View All ${n} Matches &rarr;</a>
 </td></tr>
 <!-- Footer -->
 <tr><td style="padding:16px 24px;border-top:1px solid #2A1800;">
