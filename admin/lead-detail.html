@@ -1844,6 +1844,7 @@
           </button>
           <span id="autoSaveIndicator" style="font-size:11px;color:rgba(255,255,255,0.4);opacity:0;transition:opacity 0.3s;margin-right:12px;"></span>
           <button class="ld-btn-save" onclick="save1003()">Save Application</button>
+          <button type="button" id="download1003Btn" onclick="download1003PDF()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:#C9A84C;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">&#11015; Download 1003 PDF</button>
           <button class="ld-btn-cancel" onclick="exportMISMO()" style="border-color:var(--gold-bdr);color:var(--gold);">Export MISMO 3.4</button>
         </div>
       </div>
@@ -7662,6 +7663,31 @@ async function exportMISMO() {
 
   toast('MISMO 3.4 XML exported');
   await logActivity('document_uploaded', `MISMO 3.4 export: ${borrowerName}`).catch(()=>{});
+}
+
+/* ── DOWNLOAD 1003 PDF ── */
+async function download1003PDF() {
+  var btn = document.getElementById('download1003Btn');
+  var orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.innerHTML = '\u23F3 Generating PDF...'; btn.disabled = true; }
+  var contactId = new URLSearchParams(window.location.search).get('contact_id');
+  try {
+    var res = await fetch(
+      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/generate-1003-pdf',
+      { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||'')}, body:JSON.stringify({contact_id:contactId}) }
+    );
+    if (!res.ok) { var err = await res.json(); throw new Error(err.error || 'PDF generation failed'); }
+    var data = await res.json();
+    var binaryStr = atob(data.pdf_base64);
+    var bytes = new Uint8Array(binaryStr.length);
+    for (var i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    var blob = new Blob([bytes], { type:'application/pdf' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a'); a.href = url; a.download = data.file_name || '1003.pdf';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    showToast('1003 PDF downloaded');
+  } catch(err) { showToast('PDF failed: ' + err.message, true); console.error('download1003PDF:', err); }
+  if (btn) { btn.innerHTML = orig; btn.disabled = false; }
 }
 
 /* ── MISMO IMPORT HISTORY ── */
