@@ -304,6 +304,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       <div class="fp-pills" id="fpPipelinePills"></div>
     </div>
     <div class="fp-section">
+      <div class="fp-section-title">Lead Temperature</div>
+      <div class="fp-pills" id="fpTempPills"></div>
+    </div>
+    <div class="fp-section">
+      <div class="fp-section-title">Referral Partner</div>
+      <div class="fp-pills" id="fpReferralPills"><span style="font-size:11px;color:#444;">Loading...</span></div>
+    </div>
+    <div class="fp-section">
       <div class="fp-section-title">Lead Score Range</div>
       <div class="fp-row">
         <input type="number" class="fp-input" id="fpScoreMin" placeholder="Min (0)" min="0" max="100" oninput="applyFilters()">
@@ -433,7 +441,8 @@ var _filterPortal = 'any';
 
 var SOURCE_OPTIONS = ['Facebook','Google','Website','Referral','MISMO Import','TikTok','Instagram','Cold Call','Other'];
 var LOAN_OPTIONS = ['Conventional','FHA','VA','DSCR','Jumbo','Non-QM','Refinance','Reverse','Other'];
-var PIPELINE_OPTIONS = ['New Lead','Contacted','Qualified','Application','Processing','Closed'];
+var PIPELINE_OPTIONS = ['New Lead','Contacted','Pre-Approved','Under Contract','Processing','Clear to Close','Closed','Lost'];
+var _filterReferralPartner = null;
 
 var AV_COLORS = ['#c9a84c40','#50c87840','#60a0ff40','#c084f040','#fb923c40','#f8717140'];
 var AV_TEXT = ['#c9a84c','#50c878','#60a0ff','#c084f0','#fb923c','#f87171'];
@@ -645,10 +654,18 @@ function applyFilters() {
     }
     // Advanced: Score range
     if (score < fpScoreMin || score > fpScoreMax) return false;
-    // Advanced: Temperature (check lead_temperature field, fallback to effective_tier)
+    // Advanced: Temperature (case-insensitive compare on contacts.temperature)
     if (_filterTemps.length > 0) {
-      var pTemp = p.lead_temperature || p.effective_tier || '';
-      if (_filterTemps.indexOf(pTemp) < 0) return false;
+      var pTemp = (p.temperature || p.lead_temperature || p.effective_tier || '').toLowerCase();
+      var tempMatch = false;
+      for (var ti = 0; ti < _filterTemps.length; ti++) {
+        if (pTemp === _filterTemps[ti].toLowerCase()) { tempMatch = true; break; }
+      }
+      if (!tempMatch) return false;
+    }
+    // Advanced: Referral partner
+    if (_filterReferralPartner) {
+      if (p.referral_partner_id !== _filterReferralPartner) return false;
     }
     // Advanced: Portal
     if (_filterPortal === 'yes' && !p.portal_user_id) return false;
@@ -809,6 +826,23 @@ function renderFilterPanelOptions() {
   renderPillGroup('fpSourcePills', SOURCE_OPTIONS, _filterSources, function(val) { toggleArrayFilter(_filterSources, val); applyFilters(); renderFilterPanelOptions(); });
   renderPillGroup('fpLoanPills', LOAN_OPTIONS, _filterLoanTypes, function(val) { toggleArrayFilter(_filterLoanTypes, val); applyFilters(); renderFilterPanelOptions(); });
   renderPillGroup('fpPipelinePills', PIPELINE_OPTIONS, _filterPipelines, function(val) { toggleArrayFilter(_filterPipelines, val); applyFilters(); renderFilterPanelOptions(); });
+  // Temperature pills
+  var tempContainer = document.getElementById('fpTempPills');
+  if (tempContainer) {
+    var tempOpts = [
+      {val:'Hot',icon:'\uD83D\uDD25',color:'#F07878',border:'rgba(224,82,82,0.3)'},
+      {val:'Warm',icon:'\u2600\uFE0F',color:'#E0A852',border:'rgba(224,165,82,0.3)'},
+      {val:'Cold',icon:'\uD83E\uDDCA',color:'#7BBCE8',border:'rgba(90,160,224,0.3)'}
+    ];
+    tempContainer.innerHTML = tempOpts.map(function(t) {
+      var sel = _filterTemps.indexOf(t.val) >= 0;
+      return '<div class="fp-pill' + (sel?' selected':'') + '" onclick="toggleTempFilter(\'' + t.val + '\')" ' +
+        'style="border-color:' + (sel?t.border:'rgba(255,255,255,0.1)') + ';color:' + (sel?t.color:'#888') + ';' +
+        (sel?'background:rgba(201,168,76,0.1);':'') + '">' + t.icon + ' ' + t.val + '</div>';
+    }).join('');
+  }
+  // Referral partner pills
+  renderReferralPartnerPills();
 }
 
 function renderFilterPanelTags() {
@@ -841,6 +875,39 @@ function toggleTagFilter(tagId) {
   toggleArrayFilter(_filterTagIds, tagId);
   applyFilters();
   renderFilterPanelTags();
+}
+
+function toggleTempFilter(val) {
+  toggleArrayFilter(_filterTemps, val);
+  applyFilters();
+  renderFilterPanelOptions();
+}
+
+var _referralPartners = [];
+async function loadReferralPartners() {
+  try {
+    var res = await fetch(SB_URL + '/rest/v1/referral_partners?select=id,first_name,last_name,company&order=first_name', { headers: { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY } });
+    _referralPartners = await res.json();
+  } catch(e) { _referralPartners = []; }
+}
+
+function renderReferralPartnerPills() {
+  var container = document.getElementById('fpReferralPills');
+  if (!container) return;
+  if (!_referralPartners.length) { container.innerHTML = '<span style="font-size:11px;color:#444;">No partners</span>'; return; }
+  container.innerHTML =
+    '<div class="fp-pill' + (!_filterReferralPartner ? ' selected' : '') + '" onclick="setReferralFilter(null)">Any</div>' +
+    _referralPartners.map(function(p) {
+      var sel = _filterReferralPartner === p.id;
+      return '<div class="fp-pill' + (sel ? ' selected' : '') + '" onclick="setReferralFilter(\'' + p.id + '\')">' +
+        p.first_name + ' ' + p.last_name + (p.company ? ' \u00b7 ' + p.company : '') + '</div>';
+    }).join('');
+}
+
+function setReferralFilter(partnerId) {
+  _filterReferralPartner = partnerId;
+  applyFilters();
+  renderReferralPartnerPills();
 }
 
 function toggleTemp(btn) {
@@ -906,7 +973,11 @@ function renderActiveFilters() {
     var tag = _allTags.find(function(t) { return t.id === id; });
     if (tag) pills.push({ label: 'Tag: ' + tag.name, clear: function() { toggleArrayFilter(_filterTagIds, id); applyFilters(); renderFilterPanelTags(); } });
   });
-  _filterTemps.forEach(function(t) { pills.push({ label: 'Temp: ' + t, clear: function() { toggleArrayFilter(_filterTemps, t); document.querySelectorAll('#fpTempToggles .fp-toggle').forEach(function(b) { if (b.getAttribute('data-val') === t) b.classList.remove('selected'); }); applyFilters(); } }); });
+  _filterTemps.forEach(function(t) { pills.push({ label: 'Temp: ' + t, clear: function() { toggleArrayFilter(_filterTemps, t); applyFilters(); renderFilterPanelOptions(); } }); });
+  if (_filterReferralPartner) {
+    var rp = _referralPartners.find(function(p) { return p.id === _filterReferralPartner; });
+    pills.push({ label: 'Partner: ' + (rp ? rp.first_name + ' ' + rp.last_name : _filterReferralPartner), clear: function() { setReferralFilter(null); } });
+  }
   if (_filterPortal !== 'any') pills.push({ label: 'Portal: ' + _filterPortal, clear: function() { _filterPortal = 'any'; applyFilters(); renderFilterPanelOptions(); } });
 
   if (!pills.length) { row.style.display = 'none'; return; }
@@ -926,6 +997,7 @@ function clearAllFilters() {
   _filterTagIds = [];
   _filterTemps = [];
   _filterPortal = 'any';
+  _filterReferralPartner = null;
   _currentTab = 'all';
   _currentType = 'all';
   _searchQ = '';
@@ -1225,7 +1297,7 @@ if (_rpFilterId && _rpFilterName) {
 }
 
 /* ====== BOOT ====== */
-Promise.all([loadPeople(), loadTags(), loadSavedViews()]).then(function() {
+Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners()]).then(function() {
   if (_rpFilterId) {
     _allPeople = _allPeople.filter(function(p) { return p.referral_partner_id === _rpFilterId; });
     updateTabCounts();
