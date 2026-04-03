@@ -9242,49 +9242,7 @@ async function updateLenderStatus(lenderId, status) {
 </div>
 
 <!-- Email Composer Modal -->
-<div id="email-modal" style="display:none;position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.85);align-items:center;justify-content:center">
-  <div style="width:95vw;max-width:680px;background:#111;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;max-height:90vh;box-shadow:0 20px 60px rgba(0,0,0,.8)">
-    <div style="display:flex;align-items:center;padding:14px 20px;background:#1a1a1a;border-bottom:1px solid #222">
-      <span style="font-size:14px;font-weight:700;color:#eee;flex:1">New Email</span>
-      <button onclick="closeEmailComposer()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;line-height:1">&times;</button>
-    </div>
-    <div style="padding:0;flex:1;overflow-y:auto">
-      <div style="display:flex;align-items:center;padding:10px 20px;border-bottom:1px solid #1e1e1e;gap:8px">
-        <span style="font-size:11px;color:#666;width:36px">To:</span>
-        <input id="email-to" type="email" style="flex:1;background:transparent;border:none;color:#eee;font-size:13px;outline:none" readonly>
-      </div>
-      <div style="display:flex;align-items:center;padding:10px 20px;border-bottom:1px solid #1e1e1e;gap:8px">
-        <span style="font-size:11px;color:#666;width:36px">Subject:</span>
-        <input id="email-subject" type="text" placeholder="Subject line..." style="flex:1;background:transparent;border:none;color:#eee;font-size:13px;outline:none">
-      </div>
-      <div style="padding:8px 20px;border-bottom:1px solid #1e1e1e">
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button data-email-tpl="follow_up" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Follow Up</button>
-          <button data-email-tpl="pre_approval" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Pre-Approval</button>
-          <button data-email-tpl="docs_needed" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Docs Needed</button>
-          <button data-email-tpl="approval_congrats" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Approval</button>
-          <button data-email-tpl="closing_update" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;cursor:pointer">Closing Update</button>
-          <button data-email-tpl="custom" class="email-tpl-btn" style="font-size:10px;padding:3px 10px;background:#111;border:1px solid #333;border-radius:4px;color:#888;cursor:pointer">AI Custom...</button>
-        </div>
-        <div id="email-ai-custom-row" style="display:none;margin-top:8px;display:none">
-          <div style="display:flex;gap:8px">
-            <input id="email-ai-prompt" type="text" placeholder="Describe the email you want..." style="flex:1;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:12px;outline:none">
-            <button onclick="generateEmailFromPrompt()" id="email-ai-gen-btn" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:11px;cursor:pointer">Generate</button>
-          </div>
-        </div>
-        <div id="email-ai-loading" style="display:none;font-size:11px;color:#666;margin-top:6px;font-style:italic">Generating email...</div>
-      </div>
-      <div id="email-body" contenteditable="true" style="min-height:250px;padding:20px;color:#ddd;font-size:13px;line-height:1.7;outline:none;font-family:inherit" data-placeholder="Compose your email..."></div>
-    </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:#1a1a1a;border-top:1px solid #222">
-      <div style="font-size:11px;color:#444">From: rene@ratesandrealty.com</div>
-      <div style="display:flex;gap:8px">
-        <button onclick="closeEmailComposer()" style="padding:8px 16px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#888;font-size:12px;cursor:pointer">Discard</button>
-        <button onclick="sendEmailFromComposer()" id="email-send-btn" style="padding:8px 24px;background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#000;border:none;border-radius:6px;font-weight:800;font-size:12px;cursor:pointer">Send</button>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- Two-Panel Email Composer (injected dynamically by openEmailComposer) -->
 
 <!-- End-of-body scripts -->
 <script>
@@ -9300,133 +9258,511 @@ function handleCallClick() {
   window.location.href = 'tel:+1' + phone;
 }
 
-/* ═══ EMAIL COMPOSER ═══ */
-var EMAIL_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/email-service';
+/* ═══ EMAIL COMPOSER (Two-Panel) ═══ */
+var EMAIL_FN = (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/email-service';
+var _emailContact = null;
+
+var EMAIL_TEMPLATES = {
+  follow_up: { subject: 'Checking in on your home buying journey', body: 'Hi {{first_name}},\n\nI wanted to check in and see how things are going with your home buying journey. Do you have any questions about the mortgage process or anything I can help with?\n\nLooking forward to hearing from you!\n\nBest,\nRene Duarte' },
+  pre_approval: { subject: "Let's get you pre-approved!", body: 'Hi {{first_name}},\n\nGreat news — getting pre-approved only takes about 15 minutes and gives you a huge advantage when making offers. It shows sellers you\'re serious and helps us lock in the best rate.\n\nWould you like to get started? I\'m here to walk you through every step.\n\nBest,\nRene Duarte' },
+  docs_needed: { subject: 'Documents needed for your loan file', body: 'Hi {{first_name}},\n\nTo keep your loan moving forward, I need a few documents from you:\n\n• Most recent 2 pay stubs\n• Last 2 years of W-2s\n• Last 2 months of bank statements\n\nPlease send them at your earliest convenience so we can stay on track.\n\nThank you!\nRene Duarte' },
+  approval_congrats: { subject: 'Congratulations — You\'re approved!', body: 'Hi {{first_name}},\n\nI\'m thrilled to let you know that your mortgage has been approved! 🎉\n\nHere\'s what happens next:\n1. We\'ll schedule your closing date\n2. You\'ll receive your closing disclosure for review\n3. Final walkthrough of the property\n\nCongratulations on this exciting milestone!\n\nBest,\nRene Duarte' },
+  closing_update: { subject: 'Closing update on your loan', body: 'Hi {{first_name}},\n\nYour closing date is approaching and I wanted to make sure you have everything you need.\n\nPlease remember to:\n• Bring a valid photo ID\n• Have a cashier\'s check ready for closing costs\n• Review your closing disclosure carefully\n\nLet me know if you have any questions!\n\nBest,\nRene Duarte' }
+};
+
+function _emailComposerCSS() {
+  if (document.getElementById('email-composer-styles')) return;
+  var s = document.createElement('style');
+  s.id = 'email-composer-styles';
+  s.textContent = `
+  .ec-overlay{position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,0);display:flex;align-items:center;justify-content:center;transition:background .3s}
+  .ec-overlay.open{background:rgba(0,0,0,.85)}
+  .ec-container{width:96vw;max-width:1100px;height:88vh;max-height:720px;background:#111;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.9);transform:scale(.95);opacity:0;transition:transform .25s ease,opacity .25s ease}
+  .ec-overlay.open .ec-container{transform:scale(1);opacity:1}
+  .ec-header{display:flex;align-items:center;padding:12px 20px;background:#161616;border-bottom:1px solid #222;gap:12px;min-height:56px}
+  .ec-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#C9A84C,#e8c96a);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#000;flex-shrink:0}
+  .ec-contact-info{flex:1;min-width:0}
+  .ec-contact-name{font-size:14px;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ec-contact-meta{font-size:11px;color:#666;display:flex;gap:10px;align-items:center;margin-top:1px}
+  .ec-temp-tag{font-size:9px;padding:1px 7px;border-radius:3px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+  .ec-temp-hot{background:#3d1515;color:#ff6b6b}.ec-temp-warm{background:#3d2e15;color:#ffa94d}.ec-temp-cold{background:#15293d;color:#74c0fc}
+  .ec-close{background:none;border:none;color:#555;font-size:24px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:color .15s,background .15s}
+  .ec-close:hover{color:#eee;background:#222}
+  .ec-body{display:flex;flex:1;overflow:hidden}
+  .ec-left{flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid #1e1e1e}
+  .ec-right{width:300px;display:flex;flex-direction:column;overflow:hidden;background:#0d0d0d}
+  .ec-field-row{display:flex;align-items:center;padding:8px 20px;border-bottom:1px solid #1a1a1a;gap:8px;min-height:38px;flex-wrap:wrap}
+  .ec-field-label{font-size:11px;color:#555;width:40px;flex-shrink:0;font-weight:600}
+  .ec-field-area{flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:0}
+  .ec-chip{display:inline-flex;align-items:center;gap:4px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:4px;padding:2px 8px 2px 10px;font-size:12px;color:#ccc;max-width:200px}
+  .ec-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ec-chip button{background:none;border:none;color:#555;font-size:14px;cursor:pointer;padding:0 2px;line-height:1}
+  .ec-chip button:hover{color:#ff6b6b}
+  .ec-chip-input{background:transparent;border:none;color:#eee;font-size:12px;outline:none;min-width:80px;flex:1}
+  .ec-toggle-cc{font-size:10px;color:#555;cursor:pointer;padding:2px 6px;border-radius:3px;transition:color .15s}
+  .ec-toggle-cc:hover{color:#C9A84C}
+  .ec-subject-input{flex:1;background:transparent;border:none;color:#eee;font-size:13px;outline:none;font-weight:600}
+  .ec-toolbar{display:flex;align-items:center;gap:2px;padding:6px 16px;border-bottom:1px solid #1a1a1a;background:#0f0f0f;flex-wrap:wrap}
+  .ec-tb-btn{background:none;border:none;color:#666;font-size:13px;cursor:pointer;padding:4px 7px;border-radius:4px;transition:color .15s,background .15s;font-family:Georgia,serif}
+  .ec-tb-btn:hover{color:#eee;background:#1a1a1a}
+  .ec-tb-btn.active{color:#C9A84C;background:#1a1408}
+  .ec-tb-sep{width:1px;height:16px;background:#222;margin:0 4px}
+  .ec-editor-wrap{flex:1;overflow-y:auto;position:relative}
+  .ec-editor{min-height:100%;padding:20px;color:#ddd;font-size:13px;line-height:1.7;outline:none;font-family:'Segoe UI',system-ui,sans-serif;white-space:pre-wrap}
+  .ec-editor:empty::before{content:attr(data-placeholder);color:#444;pointer-events:none}
+  .ec-footer{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#161616;border-top:1px solid #222;gap:8px}
+  .ec-footer-left{display:flex;align-items:center;gap:8px}
+  .ec-footer-right{display:flex;align-items:center;gap:8px}
+  .ec-from-select{background:#111;border:1px solid #2a2a2a;border-radius:6px;color:#999;font-size:11px;padding:5px 8px;outline:none;cursor:pointer}
+  .ec-attach-btn{background:none;border:1px solid #2a2a2a;border-radius:6px;color:#666;font-size:11px;padding:5px 10px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:color .15s,border-color .15s}
+  .ec-attach-btn:hover{color:#eee;border-color:#444}
+  .ec-discard-btn{padding:7px 16px;background:transparent;border:1px solid #333;border-radius:6px;color:#888;font-size:12px;cursor:pointer;transition:color .15s,border-color .15s}
+  .ec-discard-btn:hover{color:#ff6b6b;border-color:#ff6b6b44}
+  .ec-draft-btn{padding:7px 16px;background:transparent;border:1px solid #333;border-radius:6px;color:#888;font-size:12px;cursor:pointer;transition:color .15s,border-color .15s}
+  .ec-draft-btn:hover{color:#C9A84C;border-color:#C9A84C44}
+  .ec-send-btn{padding:7px 24px;background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#000;border:none;border-radius:6px;font-weight:800;font-size:12px;cursor:pointer;transition:filter .15s}
+  .ec-send-btn:hover{filter:brightness(1.1)}
+  .ec-send-btn:disabled{opacity:.5;cursor:not-allowed}
+  /* Right panel */
+  .ec-panel-tabs{display:flex;border-bottom:1px solid #1e1e1e}
+  .ec-panel-tab{flex:1;padding:10px 0;text-align:center;font-size:11px;font-weight:600;color:#555;cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+  .ec-panel-tab.active{color:#C9A84C;border-bottom-color:#C9A84C}
+  .ec-panel-tab:hover{color:#999}
+  .ec-panel-content{flex:1;overflow-y:auto;padding:12px}
+  .ec-panel-content::-webkit-scrollbar{width:4px}.ec-panel-content::-webkit-scrollbar-thumb{background:#222;border-radius:2px}
+  /* Templates */
+  .ec-tpl-card{padding:10px 12px;background:#111;border:1px solid #1e1e1e;border-radius:8px;cursor:pointer;margin-bottom:8px;transition:border-color .15s}
+  .ec-tpl-card:hover{border-color:#C9A84C44}
+  .ec-tpl-card h4{font-size:12px;color:#ccc;margin:0 0 3px;font-weight:600}
+  .ec-tpl-card p{font-size:10px;color:#555;margin:0;line-height:1.4}
+  /* AI Helper */
+  .ec-ai-section{margin-bottom:12px}
+  .ec-ai-label{font-size:10px;color:#555;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+  .ec-ai-btn{width:100%;padding:8px 12px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;font-size:11px;cursor:pointer;text-align:left;margin-bottom:6px;transition:background .15s,border-color .15s}
+  .ec-ai-btn:hover{background:#221c0e;border-color:#C9A84C66}
+  .ec-ai-btn:disabled{opacity:.5;cursor:wait}
+  .ec-ai-custom{display:flex;gap:6px;margin-top:8px}
+  .ec-ai-input{flex:1;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:11px;outline:none}
+  .ec-ai-input:focus{border-color:#C9A84C66}
+  .ec-ai-gen-btn{background:#C9A84C;color:#000;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:11px;cursor:pointer}
+  .ec-ai-gen-btn:disabled{opacity:.5;cursor:wait}
+  .ec-ai-status{font-size:10px;color:#666;font-style:italic;margin-top:4px}
+  /* History */
+  .ec-hist-item{padding:10px 12px;border-bottom:1px solid #1a1a1a;cursor:pointer;transition:background .15s}
+  .ec-hist-item:hover{background:#161616}
+  .ec-hist-dir{font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;letter-spacing:.3px;display:inline-block;margin-bottom:4px}
+  .ec-hist-sent{background:#0a2a0a;color:#4caf50}.ec-hist-recv{background:#1a1a2e;color:#7c8cf5}
+  .ec-hist-subject{font-size:12px;color:#ccc;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ec-hist-preview{font-size:10px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ec-hist-meta{font-size:9px;color:#444;margin-top:3px;display:flex;justify-content:space-between}
+  .ec-hist-empty{text-align:center;padding:40px 20px;color:#444;font-size:12px}
+  /* Variables */
+  .ec-var-btn{display:inline-block;padding:3px 8px;background:#1a1408;border:1px solid #C9A84C33;border-radius:4px;color:#C9A84C;font-size:10px;cursor:pointer;margin:2px;transition:background .15s}
+  .ec-var-btn:hover{background:#221c0e}
+  @media(max-width:768px){.ec-right{display:none}.ec-container{max-width:100%;height:95vh}}
+  `;
+  document.head.appendChild(s);
+}
+
+function _buildEmailComposerHTML(contact) {
+  var initials = (contact.full_name || '').split(' ').map(function(n){return(n[0]||'').toUpperCase();}).join('').substring(0,2) || '?';
+  var temp = (contact.temperature || '').toLowerCase();
+  var tempClass = temp === 'hot' ? 'ec-temp-hot' : temp === 'warm' ? 'ec-temp-warm' : temp === 'cold' ? 'ec-temp-cold' : '';
+  var tempLabel = temp === 'hot' ? 'Hot' : temp === 'warm' ? 'Warm' : temp === 'cold' ? 'Cold' : '';
+  var phone = (contact.phone || '').replace(/\D/g,'');
+  var phoneFormatted = phone ? '(' + phone.slice(0,3) + ') ' + phone.slice(3,6) + '-' + phone.slice(6) : '—';
+  var scoreText = (contact.lead_score != null ? contact.lead_score : '—') + ' / 100';
+
+  return '<div class="ec-overlay" id="ecOverlay">' +
+    '<div class="ec-container">' +
+      /* Header */
+      '<div class="ec-header">' +
+        '<div class="ec-avatar" id="avatarInitials">' + initials + '</div>' +
+        '<div class="ec-contact-info">' +
+          '<div class="ec-contact-name" id="contactName">' + (contact.full_name || 'Unknown') + '</div>' +
+          '<div class="ec-contact-meta">' +
+            '<span id="contactPhone">' + phoneFormatted + '</span>' +
+            '<span id="contactScore">Score: ' + scoreText + '</span>' +
+            (tempLabel ? '<span class="ec-temp-tag ' + tempClass + '">' + tempLabel + '</span>' : '') +
+          '</div>' +
+        '</div>' +
+        '<button class="ec-close" id="ecCloseBtn" title="Close">&times;</button>' +
+      '</div>' +
+      /* Body */
+      '<div class="ec-body">' +
+        /* Left: Compose */
+        '<div class="ec-left">' +
+          /* To */
+          '<div class="ec-field-row">' +
+            '<span class="ec-field-label">To</span>' +
+            '<div class="ec-field-area" id="toChips">' +
+              '<div class="ec-chip"><span>' + (contact.email || '') + '</span><button onclick="this.parentElement.remove()">&times;</button></div>' +
+              '<input class="ec-chip-input" id="toInput" placeholder="Add recipient..." onkeydown="handleChipKey(event,\'toChips\')">' +
+            '</div>' +
+            '<span class="ec-toggle-cc" id="toggleCcBcc" onclick="toggleCcBcc()">CC/BCC</span>' +
+          '</div>' +
+          /* CC */
+          '<div class="ec-field-row" id="ccRow" style="display:none">' +
+            '<span class="ec-field-label">CC</span>' +
+            '<div class="ec-field-area" id="ccChips"><input class="ec-chip-input" id="ccInput" placeholder="Add CC..." onkeydown="handleChipKey(event,\'ccChips\')"></div>' +
+          '</div>' +
+          /* BCC */
+          '<div class="ec-field-row" id="bccRow" style="display:none">' +
+            '<span class="ec-field-label">BCC</span>' +
+            '<div class="ec-field-area" id="bccChips"><input class="ec-chip-input" id="bccInput" placeholder="Add BCC..." onkeydown="handleChipKey(event,\'bccChips\')"></div>' +
+          '</div>' +
+          /* Subject */
+          '<div class="ec-field-row">' +
+            '<span class="ec-field-label">Subj</span>' +
+            '<input class="ec-subject-input" id="subjectInput" placeholder="Subject line...">' +
+          '</div>' +
+          /* Toolbar */
+          '<div class="ec-toolbar">' +
+            '<button class="ec-tb-btn" title="Bold" onclick="document.execCommand(\'bold\')"><b>B</b></button>' +
+            '<button class="ec-tb-btn" title="Italic" onclick="document.execCommand(\'italic\')"><i>I</i></button>' +
+            '<button class="ec-tb-btn" title="Underline" onclick="document.execCommand(\'underline\')"><u>U</u></button>' +
+            '<div class="ec-tb-sep"></div>' +
+            '<button class="ec-tb-btn" title="Bullet List" onclick="document.execCommand(\'insertUnorderedList\')">&#8226; List</button>' +
+            '<button class="ec-tb-btn" title="Numbered List" onclick="document.execCommand(\'insertOrderedList\')">1. List</button>' +
+            '<div class="ec-tb-sep"></div>' +
+            '<button class="ec-tb-btn" title="Link" onclick="emailInsertLink()">&#128279; Link</button>' +
+            '<div class="ec-tb-sep"></div>' +
+            '<button class="ec-tb-btn" title="Insert Variable" onclick="toggleVarPicker()" id="varPickerToggle">{ } Vars</button>' +
+          '</div>' +
+          /* Variable picker (hidden) */
+          '<div id="varPicker" style="display:none;padding:6px 16px;background:#0a0a0a;border-bottom:1px solid #1a1a1a;flex-wrap:wrap;gap:4px">' +
+            '<button class="ec-var-btn" onclick="insertVar(\'{{first_name}}\')">First Name</button>' +
+            '<button class="ec-var-btn" onclick="insertVar(\'{{last_name}}\')">Last Name</button>' +
+            '<button class="ec-var-btn" onclick="insertVar(\'{{email}}\')">Email</button>' +
+            '<button class="ec-var-btn" onclick="insertVar(\'{{phone}}\')">Phone</button>' +
+            '<button class="ec-var-btn" onclick="insertVar(\'{{loan_amount}}\')">Loan Amt</button>' +
+            '<button class="ec-var-btn" onclick="insertVar(\'{{rate}}\')">Rate</button>' +
+            '<button class="ec-var-btn" onclick="insertVar(\'{{property_address}}\')">Address</button>' +
+          '</div>' +
+          /* Editor */
+          '<div class="ec-editor-wrap">' +
+            '<div class="ec-editor" id="emailEditor" contenteditable="true" data-placeholder="Compose your email..."></div>' +
+          '</div>' +
+          /* Footer */
+          '<div class="ec-footer">' +
+            '<div class="ec-footer-left">' +
+              '<select class="ec-from-select" id="fromSelect">' +
+                '<option value="rene@ratesandrealty.com">rene@ratesandrealty.com</option>' +
+              '</select>' +
+              '<button class="ec-attach-btn" onclick="document.getElementById(\'ecFileInput\').click()">&#128206; Attach</button>' +
+              '<input type="file" id="ecFileInput" multiple style="display:none">' +
+            '</div>' +
+            '<div class="ec-footer-right">' +
+              '<button class="ec-discard-btn" id="ecDiscardBtn">Discard</button>' +
+              '<button class="ec-draft-btn" id="ecDraftBtn">Save Draft</button>' +
+              '<button class="ec-send-btn" id="ecSendBtn">Send</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        /* Right: Panel */
+        '<div class="ec-right">' +
+          '<div class="ec-panel-tabs">' +
+            '<div class="ec-panel-tab active" data-panel="templates" onclick="switchEmailPanel(\'templates\')">Templates</div>' +
+            '<div class="ec-panel-tab" data-panel="ai" onclick="switchEmailPanel(\'ai\')">AI Helper</div>' +
+            '<div class="ec-panel-tab" data-panel="history" onclick="switchEmailPanel(\'history\')">History</div>' +
+          '</div>' +
+          /* Templates panel */
+          '<div class="ec-panel-content" id="panelTemplates">' +
+            '<div class="ec-tpl-card" onclick="applyEmailTemplate(\'follow_up\')"><h4>Follow Up</h4><p>Friendly check-in on their home buying journey</p></div>' +
+            '<div class="ec-tpl-card" onclick="applyEmailTemplate(\'pre_approval\')"><h4>Pre-Approval Invite</h4><p>Invite to start the pre-approval process</p></div>' +
+            '<div class="ec-tpl-card" onclick="applyEmailTemplate(\'docs_needed\')"><h4>Documents Needed</h4><p>Request missing documents for the loan file</p></div>' +
+            '<div class="ec-tpl-card" onclick="applyEmailTemplate(\'approval_congrats\')"><h4>Approval Congrats</h4><p>Celebrate their mortgage approval</p></div>' +
+            '<div class="ec-tpl-card" onclick="applyEmailTemplate(\'closing_update\')"><h4>Closing Update</h4><p>Update on approaching closing date</p></div>' +
+          '</div>' +
+          /* AI panel */
+          '<div class="ec-panel-content" id="panelAi" style="display:none">' +
+            '<div class="ec-ai-section">' +
+              '<div class="ec-ai-label">Quick Compose</div>' +
+              '<button class="ec-ai-btn" onclick="aiCompose(\'Write a friendly follow-up email\')">&#9997; Follow-up</button>' +
+              '<button class="ec-ai-btn" onclick="aiCompose(\'Write a professional email requesting missing loan documents\')">&#128196; Request Docs</button>' +
+              '<button class="ec-ai-btn" onclick="aiCompose(\'Write a congratulatory email for loan approval\')">&#127881; Congrats</button>' +
+              '<button class="ec-ai-btn" onclick="aiCompose(\'Write a rate update email with current market conditions\')">&#128200; Rate Update</button>' +
+            '</div>' +
+            '<div class="ec-ai-section">' +
+              '<div class="ec-ai-label">Custom Prompt</div>' +
+              '<div class="ec-ai-custom">' +
+                '<input class="ec-ai-input" id="aiCustomPrompt" placeholder="Describe the email...">' +
+                '<button class="ec-ai-gen-btn" id="aiGenBtn" onclick="aiCompose()">Go</button>' +
+              '</div>' +
+              '<div class="ec-ai-status" id="aiStatus"></div>' +
+            '</div>' +
+          '</div>' +
+          /* History panel */
+          '<div class="ec-panel-content" id="panelHistory" style="display:none">' +
+            '<div id="historyList"><div class="ec-hist-empty">Loading history...</div></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
 
 function openEmailComposer() {
-  var email = contactData?.email || '';
+  var contact = contactData || {};
+  var email = contact.email || '';
   if (!email) { showToast('No email on file', true); return; }
-  var modal = document.getElementById('email-modal');
-  if (!modal) return;
-  document.getElementById('email-to').value = email;
-  document.getElementById('email-subject').value = '';
-  document.getElementById('email-body').innerHTML = '';
-  var customRow = document.getElementById('email-ai-custom-row');
-  if (customRow) customRow.style.display = 'none';
-  modal.style.display = 'flex';
+
+  // Build contact object with full_name
+  _emailContact = Object.assign({}, contact);
+  _emailContact.full_name = ((contact.first_name || '') + ' ' + (contact.last_name || '')).trim() || 'Unknown';
+
+  // Inject CSS
+  _emailComposerCSS();
+
+  // Remove any existing composer
+  var existing = document.getElementById('ecOverlay');
+  if (existing) existing.remove();
+
+  // Insert HTML
+  var wrapper = document.createElement('div');
+  wrapper.innerHTML = _buildEmailComposerHTML(_emailContact);
+  var overlay = wrapper.firstChild;
+  document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
-  setTimeout(function() { document.getElementById('email-subject')?.focus(); }, 100);
+
+  // Animate open
+  requestAnimationFrame(function() { overlay.classList.add('open'); });
+
+  // Wire close
+  document.getElementById('ecCloseBtn').addEventListener('click', closeEmailComposer);
+  document.getElementById('ecDiscardBtn').addEventListener('click', closeEmailComposer);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) closeEmailComposer(); });
+
+  // Wire draft + send
+  document.getElementById('ecDraftBtn').addEventListener('click', saveEmailDraft);
+  document.getElementById('ecSendBtn').addEventListener('click', sendEmailFromComposer);
+
+  // Load history
+  loadEmailHistory(_emailContact.id);
+
+  // Focus subject
+  setTimeout(function() { document.getElementById('subjectInput')?.focus(); }, 200);
 }
 
 function closeEmailComposer() {
-  var modal = document.getElementById('email-modal');
-  if (modal) modal.style.display = 'none';
+  var overlay = document.getElementById('ecOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  setTimeout(function() { overlay.remove(); }, 300);
   document.body.style.overflow = '';
 }
 
-var EMAIL_TEMPLATES = {
-  follow_up: { subject: 'Checking in on your home buying journey', prompt: 'Write a friendly follow-up email checking in on their mortgage application progress. Ask if they have any questions.' },
-  pre_approval: { subject: 'Let\'s get you pre-approved!', prompt: 'Write an email inviting them to start the pre-approval process. Mention it takes about 15 minutes and explain the benefits.' },
-  docs_needed: { subject: 'Documents needed for your loan file', prompt: 'Write a professional email requesting missing documents needed to continue processing their mortgage application. Be specific but friendly.' },
-  approval_congrats: { subject: 'Congratulations - You\'re approved!', prompt: 'Write a congratulatory email for getting their mortgage approved. Mention next steps toward closing.' },
-  closing_update: { subject: 'Closing update on your loan', prompt: 'Write an email with a closing update. Mention the closing date is approaching and outline what to expect.' }
-};
+/* --- Chip handling --- */
+function handleChipKey(e, containerId) {
+  if (e.key !== 'Enter' && e.key !== 'Tab' && e.key !== ',') return;
+  e.preventDefault();
+  var input = e.target;
+  var val = input.value.trim().replace(/,$/,'');
+  if (!val || !val.includes('@')) return;
+  var chip = document.createElement('div');
+  chip.className = 'ec-chip';
+  chip.innerHTML = '<span>' + val + '</span><button onclick="this.parentElement.remove()">&times;</button>';
+  input.parentElement.insertBefore(chip, input);
+  input.value = '';
+}
 
-async function applyEmailTemplate(tplKey) {
-  if (tplKey === 'custom') {
-    var customRow = document.getElementById('email-ai-custom-row');
-    if (customRow) customRow.style.display = customRow.style.display === 'none' ? 'block' : 'none';
-    return;
-  }
+function getChipEmails(containerId) {
+  var container = document.getElementById(containerId);
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('.ec-chip span')).map(function(s){return s.textContent.trim();}).filter(Boolean);
+}
+
+function toggleCcBcc() {
+  var cc = document.getElementById('ccRow');
+  var bcc = document.getElementById('bccRow');
+  if (!cc) return;
+  var show = cc.style.display === 'none';
+  cc.style.display = show ? 'flex' : 'none';
+  bcc.style.display = show ? 'flex' : 'none';
+}
+
+/* --- Toolbar --- */
+function emailInsertLink() {
+  var url = prompt('Enter URL:');
+  if (url) document.execCommand('createLink', false, url);
+}
+
+function toggleVarPicker() {
+  var p = document.getElementById('varPicker');
+  if (p) p.style.display = p.style.display === 'none' ? 'flex' : 'none';
+}
+
+function insertVar(v) {
+  var editor = document.getElementById('emailEditor');
+  if (!editor) return;
+  editor.focus();
+  document.execCommand('insertText', false, v);
+}
+
+/* --- Panel switching --- */
+function switchEmailPanel(name) {
+  ['templates','ai','history'].forEach(function(n) {
+    var el = document.getElementById('panel' + n.charAt(0).toUpperCase() + n.slice(1));
+    var tab = document.querySelector('.ec-panel-tab[data-panel="' + n + '"]');
+    if (el) el.style.display = n === name ? '' : 'none';
+    if (tab) tab.classList.toggle('active', n === name);
+  });
+}
+
+/* --- Template apply --- */
+function applyEmailTemplate(tplKey) {
   var tpl = EMAIL_TEMPLATES[tplKey];
   if (!tpl) return;
-  document.getElementById('email-subject').value = tpl.subject;
-  var contactName = ((contactData?.first_name || '') + ' ' + (contactData?.last_name || '')).trim() || '';
-  var loading = document.getElementById('email-ai-loading');
-  if (loading) loading.style.display = 'block';
-  try {
-    var res = await fetch(EMAIL_FN, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trigger: 'ai_compose', prompt: tpl.prompt, contact_name: contactName, subject: tpl.subject })
-    });
-    var data = await res.json();
-    if (data.html) { document.getElementById('email-body').innerHTML = data.html; }
-    else if (data.message) { document.getElementById('email-body').innerText = data.message; }
-  } catch(e) { console.error('Email template error:', e); }
-  if (loading) loading.style.display = 'none';
+  var subject = tpl.subject;
+  var body = tpl.body;
+  // Replace variables
+  var c = _emailContact || {};
+  var mortgage = c.mortgage_application || {};
+  body = body.replace(/\{\{first_name\}\}/g, c.first_name || '{{first_name}}');
+  body = body.replace(/\{\{last_name\}\}/g, c.last_name || '{{last_name}}');
+  body = body.replace(/\{\{loan_amount\}\}/g, mortgage.loan_amount ? '$' + Number(mortgage.loan_amount).toLocaleString() : '{{loan_amount}}');
+  body = body.replace(/\{\{rate\}\}/g, mortgage.rate || '{{rate}}');
+
+  document.getElementById('subjectInput').value = subject;
+  document.getElementById('emailEditor').innerText = body;
 }
 
-async function generateEmailFromPrompt() {
-  var prompt = (document.getElementById('email-ai-prompt')?.value || '').trim();
+/* --- AI Compose --- */
+async function aiCompose(quickPrompt) {
+  var prompt = quickPrompt || (document.getElementById('aiCustomPrompt')?.value || '').trim();
   if (!prompt) return;
-  var contactName = ((contactData?.first_name || '') + ' ' + (contactData?.last_name || '')).trim() || '';
-  var btn = document.getElementById('email-ai-gen-btn');
-  var loading = document.getElementById('email-ai-loading');
-  if (btn) { btn.disabled = true; btn.textContent = '...'; }
-  if (loading) loading.style.display = 'block';
+  var status = document.getElementById('aiStatus');
+  var genBtn = document.getElementById('aiGenBtn');
+  var aiBtns = document.querySelectorAll('.ec-ai-btn');
+  if (status) status.textContent = 'Generating...';
+  if (genBtn) genBtn.disabled = true;
+  aiBtns.forEach(function(b){b.disabled=true;});
   try {
     var res = await fetch(EMAIL_FN, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trigger: 'ai_compose', prompt: prompt, contact_name: contactName })
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || '') },
+      body: JSON.stringify({ action: 'ai_compose', prompt: prompt, contact_id: _emailContact?.id || '' })
     });
     var data = await res.json();
-    if (data.subject) document.getElementById('email-subject').value = data.subject;
-    if (data.html) { document.getElementById('email-body').innerHTML = data.html; }
-    else if (data.message) { document.getElementById('email-body').innerText = data.message; }
-  } catch(e) { console.error('Email AI error:', e); }
-  if (btn) { btn.disabled = false; btn.textContent = 'Generate'; }
-  if (loading) loading.style.display = 'none';
+    if (data.subject) document.getElementById('subjectInput').value = data.subject;
+    if (data.html) { document.getElementById('emailEditor').innerHTML = data.html; }
+    else if (data.message) { document.getElementById('emailEditor').innerText = data.message; }
+    if (status) status.textContent = 'Done!';
+    setTimeout(function(){ if (status) status.textContent = ''; }, 2000);
+  } catch(e) {
+    console.error('AI compose error:', e);
+    if (status) status.textContent = 'Error: ' + e.message;
+  }
+  if (genBtn) genBtn.disabled = false;
+  aiBtns.forEach(function(b){b.disabled=false;});
 }
 
+/* --- Email History --- */
+async function loadEmailHistory(contactId) {
+  var list = document.getElementById('historyList');
+  if (!list || !contactId) { if (list) list.innerHTML = '<div class="ec-hist-empty">No history available</div>'; return; }
+  try {
+    var sbUrl = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    var sbKey = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+    var res = await fetch(sbUrl + '/rest/v1/email_log?contact_id=eq.' + contactId + '&order=created_at.desc&limit=20', {
+      headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey }
+    });
+    var records = await res.json();
+    if (!Array.isArray(records) || records.length === 0) {
+      list.innerHTML = '<div class="ec-hist-empty">No email history yet</div>';
+      return;
+    }
+    list.innerHTML = records.map(function(r) {
+      var dir = (r.direction || 'outbound').toLowerCase();
+      var isSent = dir === 'outbound' || dir === 'sent';
+      var badge = isSent ? '<span class="ec-hist-dir ec-hist-sent">SENT</span>' : '<span class="ec-hist-dir ec-hist-recv">RECV</span>';
+      var preview = (r.body_text || r.text_body || '').substring(0, 60);
+      var date = r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : '';
+      var from = r.from_name || r.from_email || '';
+      return '<div class="ec-hist-item">' + badge +
+        '<div class="ec-hist-subject">' + (r.subject || '(no subject)') + '</div>' +
+        '<div class="ec-hist-preview">' + preview + '</div>' +
+        '<div class="ec-hist-meta"><span>' + from + '</span><span>' + date + '</span></div></div>';
+    }).join('');
+  } catch(e) {
+    console.error('Email history error:', e);
+    list.innerHTML = '<div class="ec-hist-empty">Failed to load history</div>';
+  }
+}
+
+/* --- Send --- */
 async function sendEmailFromComposer() {
-  var to = document.getElementById('email-to')?.value;
-  var subject = document.getElementById('email-subject')?.value?.trim();
-  var bodyEl = document.getElementById('email-body');
-  var htmlBody = bodyEl?.innerHTML?.trim();
-  var textBody = bodyEl?.innerText?.trim();
-  if (!to) { showToast('No recipient', true); return; }
+  var toEmails = getChipEmails('toChips');
+  var ccEmails = getChipEmails('ccChips');
+  var bccEmails = getChipEmails('bccChips');
+  var subject = (document.getElementById('subjectInput')?.value || '').trim();
+  var editor = document.getElementById('emailEditor');
+  var htmlBody = editor?.innerHTML?.trim() || '';
+  var textBody = editor?.innerText?.trim() || '';
+  var from = document.getElementById('fromSelect')?.value || 'rene@ratesandrealty.com';
+
+  if (!toEmails.length) { showToast('No recipient', true); return; }
   if (!subject) { showToast('Please add a subject', true); return; }
   if (!textBody) { showToast('Please write a message', true); return; }
-  var btn = document.getElementById('email-send-btn');
+
+  var btn = document.getElementById('ecSendBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
   try {
-    var cid = new URLSearchParams(location.search).get('contact_id');
+    var cid = _emailContact?.id || new URLSearchParams(location.search).get('contact_id');
     var res = await fetch(EMAIL_FN, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || '') },
       body: JSON.stringify({
-        trigger: 'manual',
-        to_email: to,
-        subject: subject,
-        html_body: htmlBody,
-        text_body: textBody,
+        action: 'send',
         contact_id: cid,
-        direction: 'outbound',
-        from_name: 'Rene Duarte',
-        from_email: 'rene@ratesandrealty.com'
+        to: toEmails,
+        cc: ccEmails,
+        bcc: bccEmails,
+        from: from,
+        subject: subject,
+        body_html: htmlBody,
+        body_text: textBody
       })
     });
     var data = await res.json();
     if (data.success || data.id) {
-      showToast('Email sent!');
+      showToast('Email sent');
       closeEmailComposer();
+      // Log activity
+      fetch((window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/activity-tracker', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'track_event', contact_id: cid, type: 'EMAIL', channel: 'email', direction: 'outbound', title: 'Email sent: ' + subject, status: 'completed', metadata: { to: toEmails, subject: subject } })
+      }).catch(function(){});
     } else { showToast('Send failed: ' + (data.error || 'unknown'), true); }
   } catch(e) { showToast('Error: ' + e.message, true); }
   if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
 }
 
-// Template buttons delegated handler
-document.addEventListener('click', function(e) {
-  var tplBtn = e.target.closest('.email-tpl-btn');
-  if (tplBtn) {
-    var tpl = tplBtn.getAttribute('data-email-tpl');
-    if (tpl) applyEmailTemplate(tpl);
-  }
-  if (e.target.id === 'email-modal' || (e.target.closest && e.target === document.getElementById('email-modal'))) closeEmailComposer();
-});
-
-document.getElementById('email-modal')?.addEventListener('click', function(e) {
-  if (e.target === this) closeEmailComposer();
-});
+/* --- Save Draft --- */
+async function saveEmailDraft() {
+  var subject = (document.getElementById('subjectInput')?.value || '').trim();
+  var editor = document.getElementById('emailEditor');
+  var htmlBody = editor?.innerHTML?.trim() || '';
+  var textBody = editor?.innerText?.trim() || '';
+  if (!textBody && !subject) { closeEmailComposer(); return; }
+  try {
+    var cid = _emailContact?.id || new URLSearchParams(location.search).get('contact_id');
+    await fetch(EMAIL_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || '') },
+      body: JSON.stringify({
+        action: 'save_draft',
+        contact_id: cid,
+        to: getChipEmails('toChips'),
+        subject: subject,
+        body_html: htmlBody,
+        body_text: textBody
+      })
+    });
+    showToast('Draft saved');
+  } catch(e) { console.error('Draft save error:', e); }
+  closeEmailComposer();
+}
 
 /* ═══ PDF VIEWER ═══ */
 function openPdfViewer(url, fileName) {
@@ -9449,7 +9785,7 @@ function closePdfViewer() {
   document.body.style.overflow = '';
 }
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); closeEmailComposer(); }
+  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); if (document.getElementById('ecOverlay')) { saveEmailDraft(); } }
 });
 document.getElementById('pdf-viewer-modal')?.addEventListener('click', function(e) {
   if (e.target === this) closePdfViewer();
