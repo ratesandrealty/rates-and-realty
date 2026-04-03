@@ -107,9 +107,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .people-table th .sort-arrow{margin-left:4px;opacity:0.5}
 .people-table th.sorted .sort-arrow{opacity:1;color:var(--gold)}
 .people-table td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.03);vertical-align:middle;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
-.people-table tr{transition:all .1s;cursor:pointer}
+.people-table tr{transition:background .12s,border-color .12s;cursor:pointer;border-left:3px solid transparent}
 .people-table tr:hover td{background:rgba(255,255,255,0.03)}
-.people-table tr:hover{border-left:3px solid rgba(201,168,76,0.5)}
+.people-table tr:hover{border-left-color:rgba(201,168,76,0.5)}
 .people-table tr.selected td{background:rgba(201,168,76,0.05)}
 
 .cb-col{width:36px;text-align:center}
@@ -149,7 +149,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding:16px;overflow-y:auto}
 .person-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s}
-.person-card:hover{border-color:rgba(201,168,76,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.3);transform:translateY(-1px)}
+.person-card:hover{border-color:rgba(201,168,76,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.3)}
 .card-av{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;margin-bottom:10px}
 .card-name{font-size:14px;font-weight:700;margin-bottom:2px}
 .card-email{font-size:11px;color:var(--muted);margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -354,6 +354,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <button class="btn btn-ghost btn-sm" onclick="bulkEnrollCampaign()">Add to Campaign</button>
   <button class="btn btn-ghost btn-sm" onclick="bulkSendEmail()">Email All</button>
   <button class="btn btn-ghost btn-sm" onclick="bulkUpdateStatus()">Update Stage</button>
+  <button class="btn btn-sm" onclick="confirmBulkDelete()" style="background:rgba(224,82,82,0.12);color:#E05252;border:1px solid rgba(224,82,82,0.3);">&#128465; Delete Selected</button>
   <button class="btn btn-red btn-sm" onclick="clearSelection()">Clear</button>
 </div>
 
@@ -758,7 +759,7 @@ function renderTable() {
       + '<td style="color:var(--muted);font-size:11px">' + (p.effective_loan_type||'-') + '</td>'
       + '<td><div class="tag-cell">' + renderTagMini(p.tags) + '</div></td>'
       + '<td><div class="last-touch">' + getTimeAgo(p.created_at) + '</div></td>'
-      + '<td onclick="event.stopPropagation()"><div class="row-actions"><button class="row-action-btn" title="Call" onclick="callPerson(\'' + (p.phone||'') + '\')">&#128222;</button><button class="row-action-btn" title="Email" onclick="emailPerson(\'' + (p.email||'') + '\')">&#9993;</button><button class="row-action-btn" title="View" onclick="openPerson(\'' + p.id + '\')">&rarr;</button></div></td>'
+      + '<td onclick="event.stopPropagation()"><div class="row-actions"><button class="row-action-btn" title="Call" onclick="callPerson(\'' + (p.phone||'') + '\')">&#128222;</button><button class="row-action-btn" title="Email" onclick="emailPerson(\'' + (p.email||'') + '\')">&#9993;</button><button class="row-action-btn" title="View" onclick="openPerson(\'' + p.id + '\')">&rarr;</button><button class="row-action-btn" title="Delete" onclick="confirmDeleteContact(\'' + p.id + '\',\'' + name.replace(/'/g,"\\'") + '\')" style="color:#E05252;border:1px solid rgba(224,82,82,0.25);">&#128465;</button></div></td>'
       + '</tr>';
   }).join('');
 }
@@ -1091,6 +1092,40 @@ async function bulkUpdateStatus() {
   await loadPeople();
   clearSelection();
   showToast('Updated ' + ids.length + ' people to ' + status);
+}
+
+function confirmDeleteContact(id, name) {
+  if (!confirm('Delete ' + name + '?\n\nThis cannot be undone. All associated data will be removed.')) return;
+  deleteContacts([id]);
+}
+
+function confirmBulkDelete() {
+  var ids = Array.from(_selected);
+  if (!ids.length) return;
+  if (!confirm('Delete ' + ids.length + ' contact' + (ids.length > 1 ? 's' : '') + '?\n\nThis cannot be undone.')) return;
+  deleteContacts(ids);
+}
+
+async function deleteContacts(ids) {
+  if (!ids.length) return;
+  showToast('Deleting ' + ids.length + ' contact' + (ids.length > 1 ? 's' : '') + '...');
+  try {
+    var res = await fetch(SB_URL + '/functions/v1/delete-contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SB_KEY },
+      body: JSON.stringify({ contact_ids: ids })
+    });
+    if (!res.ok) { var err = await res.json(); throw new Error(err.error || 'Delete failed'); }
+    showToast('Deleted ' + ids.length + ' contact' + (ids.length > 1 ? 's' : ''));
+    // Remove from local data and re-render
+    _allPeople = _allPeople.filter(function(p) { return ids.indexOf(p.id) === -1; });
+    ids.forEach(function(id) { _selected.delete(id); });
+    applyFilters();
+    updateBulkBar();
+  } catch(err) {
+    showToast('Delete failed: ' + err.message);
+    console.error('deleteContacts error:', err);
+  }
 }
 
 function openNewModal() { document.getElementById('newModal').classList.add('open'); setTimeout(function() { document.getElementById('nf_first').focus(); }, 50); }
