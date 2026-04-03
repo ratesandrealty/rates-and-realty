@@ -691,6 +691,26 @@
     }
     .ld-add-task-btn:hover { background: rgba(201,168,76,0.14); }
 
+    /* ── ACTIVITY FILTER TABS ── */
+    .act-filter-tab {
+      padding:4px 12px; border-radius:20px; font-size:11px; font-weight:600;
+      cursor:pointer; border:1px solid rgba(255,255,255,0.1);
+      background:transparent; color:var(--muted); transition:all .15s;
+    }
+    .act-filter-tab:hover { border-color:rgba(201,168,76,0.3); color:#fff; }
+    .act-filter-tab.active { background:rgba(201,168,76,0.12); border-color:rgba(201,168,76,0.35); color:var(--gold); }
+    .act-item { display:flex; gap:0; position:relative; cursor:pointer; }
+    .act-item:hover { background:rgba(255,255,255,0.015); }
+    .act-icon-col { display:flex; flex-direction:column; align-items:center; flex-shrink:0; width:44px; padding-top:14px; }
+    .act-icon { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:.9rem; flex-shrink:0; z-index:1; }
+    .act-line { width:1px; flex:1; background:#1a1a1a; min-height:20px; margin-top:4px; }
+    .act-body { flex:1; padding:10px 0 16px 12px; min-width:0; }
+    .act-title { font-size:.84rem; font-weight:600; color:#eee; margin-bottom:2px; }
+    .act-time { font-size:.73rem; color:#555; }
+    .act-dir { padding:2px 8px; border-radius:12px; font-size:.6rem; font-weight:700; margin-left:6px; }
+    .act-preview { font-size:.78rem; color:#888; line-height:1.5; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:500px; }
+    .act-expanded { display:none; margin-top:8px; background:#0d0d0d; border:1px solid #1a1a1a; border-radius:8px; padding:12px; font-size:.78rem; color:#999; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+
     /* ── TIMELINE (Contact Log + Activity) ── */
     .timeline { padding: 4px 0; }
     .tl-item {
@@ -2946,36 +2966,27 @@
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-activity">
       <div style="padding:20px 24px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
           <div>
-            <h3 style="font-size:1rem;font-weight:700;color:#eee;margin:0 0 4px">Activity &amp; Communications</h3>
-            <div style="font-size:.75rem;color:#555">All emails, logins, showings, alerts, and form submissions</div>
+            <h3 style="font-size:1rem;font-weight:700;color:#eee;margin:0 0 4px">Activity Timeline</h3>
+            <div style="font-size:.75rem;color:#555">All communications, events, and system actions</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <select id="activityFilter" onchange="loadActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:6px 10px;font-size:.75rem;outline:none;cursor:pointer">
-              <option value="">All Channels</option>
-              <option value="email">📧 Email</option>
-              <option value="sms">💬 SMS</option>
-              <option value="portal">👤 Portal</option>
-              <option value="showing">🏠 Showings</option>
-              <option value="alert">🔔 Alerts</option>
-              <option value="form">📋 Forms</option>
-              <option value="system">⚙️ System</option>
-              <option value="chat">🤖 AI Chat</option>
-            </select>
-            <button onclick="loadActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:6px 10px;font-size:.75rem;cursor:pointer;display:flex;align-items:center;gap:5px">
-              <i class="fas fa-sync-alt"></i> Refresh
-            </button>
-            <button onclick="logManualNote()" style="background:#C9A84C;color:#000;border:none;border-radius:7px;padding:6px 12px;font-size:.75rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px">
-              <i class="fas fa-plus"></i> Add Note
-            </button>
+            <button onclick="loadActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:6px 10px;font-size:.75rem;cursor:pointer">Refresh</button>
+            <button onclick="logManualNote()" style="background:#C9A84C;color:#000;border:none;border-radius:7px;padding:6px 12px;font-size:.75rem;font-weight:700;cursor:pointer">+ Add Note</button>
           </div>
         </div>
+        <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap" id="activityFilterTabs">
+          <button class="act-filter-tab active" data-filter="" onclick="setActivityFilter('',this)">All</button>
+          <button class="act-filter-tab" data-filter="sms" onclick="setActivityFilter('sms',this)">SMS</button>
+          <button class="act-filter-tab" data-filter="email" onclick="setActivityFilter('email',this)">Email</button>
+          <button class="act-filter-tab" data-filter="call" onclick="setActivityFilter('call',this)">Call</button>
+          <button class="act-filter-tab" data-filter="portal" onclick="setActivityFilter('portal',this)">Portal</button>
+          <button class="act-filter-tab" data-filter="document" onclick="setActivityFilter('document',this)">Documents</button>
+          <button class="act-filter-tab" data-filter="system" onclick="setActivityFilter('system',this)">System</button>
+        </div>
         <div id="activity-timeline" style="display:flex;flex-direction:column;gap:0">
-          <div style="text-align:center;padding:40px;color:#444">
-            <i class="fas fa-bolt" style="font-size:2rem;display:block;margin-bottom:10px;color:#2a2a2a"></i>
-            <div style="font-size:.85rem">Loading activity...</div>
-          </div>
+          <div style="text-align:center;padding:40px;color:#444">Loading...</div>
         </div>
         <div id="activityLoadMore" style="display:none;text-align:center;margin-top:16px">
           <button onclick="loadMoreActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:8px 20px;font-size:.78rem;cursor:pointer">Load More</button>
@@ -3452,12 +3463,41 @@ function populateUI() {
   document.getElementById('sidebar-avatar').textContent = initials;
   document.getElementById('sidebar-name').textContent = name;
   document.getElementById('sidebar-email').textContent = contactData.email || '—';
-  const callBtn = document.getElementById('callBtn');
-  const emailBtn = document.getElementById('emailBtn');
-  const smsBtn = document.getElementById('smsBtn');
-  if (callBtn && contactData.phone) callBtn.href = 'tel:' + contactData.phone.replace(/\D/g,'');
-  if (emailBtn && contactData.email) emailBtn.href = 'mailto:' + contactData.email;
-  if (smsBtn && contactData.phone) smsBtn.href = 'sms:' + contactData.phone.replace(/\D/g,'');
+  var TRACKER_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker';
+  var callBtn = document.getElementById('callBtn');
+  var emailBtn = document.getElementById('emailBtn');
+  var smsBtn = document.getElementById('smsBtn');
+  var cleanPhone = (contactData.phone || contactData.secondary_phone || '').replace(/\D/g,'');
+  if (callBtn && cleanPhone) {
+    callBtn.href = '#';
+    callBtn.onclick = function(e) {
+      e.preventDefault();
+      window.open('tel:+1' + cleanPhone);
+      fetch(TRACKER_FN, { method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ action:'track_event', contact_id:contactId, type:'call', channel:'phone', direction:'outbound', title:'Call initiated by Rene', status:'initiated', metadata:{ phone:cleanPhone } })
+      });
+    };
+  }
+  if (emailBtn && contactData.email) {
+    emailBtn.href = '#';
+    emailBtn.onclick = function(e) {
+      e.preventDefault();
+      window.open('mailto:' + contactData.email);
+      fetch(TRACKER_FN, { method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ action:'track_event', contact_id:contactId, type:'email', channel:'email', direction:'outbound', title:'Email opened by Rene', status:'initiated', metadata:{ email:contactData.email } })
+      });
+    };
+  }
+  if (smsBtn && cleanPhone) {
+    smsBtn.href = '#';
+    smsBtn.onclick = function(e) {
+      e.preventDefault();
+      window.open('sms:+1' + cleanPhone, '_self');
+      fetch(TRACKER_FN, { method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ action:'track_event', contact_id:contactId, type:'sms', channel:'sms', direction:'outbound', title:'SMS initiated by Rene', status:'initiated', metadata:{ phone:cleanPhone } })
+      });
+    };
+  }
 
   // Load portal info
   if (contactData.email) loadPortalInfo(contactData.email, contactData.crm_id);
@@ -3728,72 +3768,120 @@ const STATUS_CONFIG = {
   received:{color:'#06b6d4',label:'Received'}
 };
 
+var _activityFilter = '';
+function setActivityFilter(filter, btn) {
+  _activityFilter = filter;
+  document.querySelectorAll('.act-filter-tab').forEach(function(b) { b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  loadActivity();
+}
+
+var ACT_ICONS = { sms:'\uD83D\uDCAC', email:'\u2709\uFE0F', call:'\uD83D\uDCDE', portal:'\uD83C\uDFE0', showing:'\uD83C\uDFE1', page_view:'\uD83D\uDC41', chat:'\uD83E\uDD16', document:'\uD83D\uDCC4', task:'\u2705', note:'\uD83D\uDCDD', import:'\uD83D\uDCE5', status_changed:'\uD83D\uDD04' };
+var ACT_COLORS = { sms:'#25D366', email:'#C9A84C', call:'#60a5fa', portal:'#a78bfa', showing:'#f97316', page_view:'#94a3b8', chat:'#06b6d4', document:'#f59e0b', task:'#4ade80', note:'#e2e8f0' };
+
+function actIcon(type) { return ACT_ICONS[type] || '\u26A1'; }
+function actColor(type) { return ACT_COLORS[type] || '#666'; }
+
+function relativeTime(dateStr) {
+  if (!dateStr) return '';
+  var now = Date.now(), d = new Date(dateStr).getTime();
+  var diff = Math.floor((now - d) / 1000);
+  if (diff < 60) return 'Just now';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  if (diff < 172800) return 'Yesterday ' + new Date(dateStr).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  if (diff < 604800) return Math.floor(diff/86400) + 'd ago';
+  return new Date(dateStr).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
+
+function dirBadge(dir) {
+  if (dir === 'inbound') return '<span class="act-dir" style="background:rgba(74,222,128,0.12);color:#4ade80;">\u2190 In</span>';
+  if (dir === 'outbound') return '<span class="act-dir" style="background:rgba(201,168,76,0.12);color:#C9A84C;">\u2192 Out</span>';
+  return '<span class="act-dir" style="background:rgba(255,255,255,0.06);color:#666;">\u2699 System</span>';
+}
+
+function actExpandedContent(e) {
+  if (e.email_html) {
+    var stripped = e.email_html.replace(/<[^>]*>/g,'').substring(0,300);
+    return (e.email_subject ? 'Subject: ' + esc(e.email_subject) + '\n' : '') + (e.email_to ? 'To: ' + esc(e.email_to) + '\n\n' : '') + esc(stripped);
+  }
+  if (e.sms_body) return (e.metadata?.from ? 'From: ' + e.metadata.from + '\n' : '') + (e.metadata?.to ? 'To: ' + e.metadata.to + '\n\n' : '') + esc(e.sms_body);
+  if (e.channel === 'chat' && e.metadata?.messages) {
+    var msgs = e.metadata.messages.slice(0,3);
+    return msgs.map(function(m) { return (m.role||'user') + ': ' + (m.content||'').substring(0,100); }).join('\n') + (e.metadata.messages.length > 3 ? '\n\n... ' + (e.metadata.messages.length - 3) + ' more messages' : '');
+  }
+  if (e.metadata && typeof e.metadata === 'object') {
+    var keys = Object.keys(e.metadata);
+    if (keys.length) return keys.map(function(k) { return k + ': ' + JSON.stringify(e.metadata[k]); }).join('\n');
+  }
+  return e.description || '';
+}
+
 async function loadActivity(reset) {
   if (reset === undefined) reset = true;
   if (!leadId && !contactId) return;
   if (reset) activityOffset = 0;
-  const el = document.getElementById('activity-timeline');
+  var el = document.getElementById('activity-timeline');
   if (reset) el.innerHTML = '<div style="text-align:center;padding:30px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.2rem"></i></div>';
 
-  const channel = document.getElementById('activityFilter')?.value || '';
   try {
-    // Query by lead_id or contact_id
-    let query = sb.from('activity_events').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(activityOffset, activityOffset + ACTIVITY_PAGE - 1);
+    var query = sb.from('activity_events').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(activityOffset, activityOffset + ACTIVITY_PAGE - 1);
     if (leadId) query = query.eq('lead_id', leadId);
     else if (contactId) query = query.eq('contact_id', contactId);
-    if (channel) query = query.eq('channel', channel);
+    if (_activityFilter) query = query.or('channel.eq.' + _activityFilter + ',type.eq.' + _activityFilter);
 
-    const { data: events, count } = await query;
+    var result = await query;
+    var events = result.data;
+    var count = result.count;
     if ((!events || !events.length) && reset) {
-      el.innerHTML = '<div style="text-align:center;padding:48px 20px;color:#333"><i class="fas fa-bolt" style="font-size:2.5rem;display:block;margin-bottom:12px;color:#1e1e1e"></i><div style="font-size:.88rem;color:#555">No activity yet.</div><div style="font-size:.75rem;color:#333;margin-top:4px">Activity will appear here as emails, logins, and showings happen.</div></div>';
+      el.innerHTML = '<div style="text-align:center;padding:48px 20px;color:#333"><div style="font-size:2rem;margin-bottom:12px;">\u26A1</div><div style="font-size:.88rem;color:#555">No activity yet.</div><div style="font-size:.75rem;color:#333;margin-top:4px">Activity will appear here as events happen.</div></div>';
       return;
     }
-    const html = (events || []).map(function(e, idx) { return renderActivityItem(e, idx); }).join('');
+    var html = (events || []).map(function(e) { return renderActivityItem(e); }).join('');
     if (reset) el.innerHTML = html; else el.insertAdjacentHTML('beforeend', html);
     activityOffset += (events || []).length;
-    const loadMoreEl = document.getElementById('activityLoadMore');
+    var loadMoreEl = document.getElementById('activityLoadMore');
     if (loadMoreEl) loadMoreEl.style.display = activityOffset < (count || 0) ? 'block' : 'none';
   } catch(err) {
     if (reset) el.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Error loading activity: ' + err.message + '</div>';
   }
 }
 
-function renderActivityItem(e, idx) {
-  const cfg = CHANNEL_CONFIG[e.channel] || CHANNEL_CONFIG[e.type] || CHANNEL_CONFIG.system;
-  const sCfg = STATUS_CONFIG[e.status] || { color: '#6b7280', label: e.status || '' };
-  const d = new Date(e.created_at);
-  const ds = d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-  const ts = d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
-  const hasEmail = !!e.email_html;
-  const hasSms = !!e.sms_body;
-  const hasMeta = e.metadata && typeof e.metadata === 'object' && Object.keys(e.metadata).length > 0;
-  const hasChat = e.channel === 'chat' && e.metadata?.session_id;
-  const isExp = hasEmail || hasSms || hasMeta || hasChat;
-  const title = e.title || activityTitle(e.type);
-  return '<div style="display:flex;gap:0;position:relative">'
-    + '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;width:44px;padding-top:14px">'
-    + '<div style="width:32px;height:32px;background:'+cfg.bg+';border:1px solid '+cfg.color+'33;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.9rem;flex-shrink:0;z-index:1">'+cfg.icon+'</div>'
-    + '<div style="width:1px;flex:1;background:#1a1a1a;min-height:20px;margin-top:4px"></div></div>'
-    + '<div style="flex:1;padding:10px 0 16px 12px;min-width:0">'
-    + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap">'
-    + '<div style="flex:1;min-width:0"><div style="font-size:.84rem;font-weight:600;color:#eee;margin-bottom:2px">'+esc(title)+'</div>'
-    + '<div style="font-size:.73rem;color:#555;margin-bottom:5px">'+ds+' at '+ts+'</div>'
-    + (e.description ? '<div style="font-size:.78rem;color:#888;line-height:1.5">'+esc(e.description)+'</div>' : '')
+function renderActivityItem(e) {
+  var type = e.type || e.channel || 'system';
+  var color = actColor(type);
+  var icon = actIcon(type);
+  var title = e.title || activityTitle(type);
+  var dir = e.direction || (e.channel === 'system' ? 'internal' : '');
+  var preview = e.description ? esc(e.description).substring(0,120) : '';
+  var expanded = actExpandedContent(e);
+  var hasEmail = !!e.email_html;
+  var hasChat = e.channel === 'chat' && e.metadata?.session_id;
+
+  return '<div class="act-item" onclick="toggleActivity(this)">'
+    + '<div class="act-icon-col">'
+    + '<div class="act-icon" style="background:' + color + '15;border:1px solid ' + color + '33;">' + icon + '</div>'
+    + '<div class="act-line"></div></div>'
+    + '<div class="act-body">'
+    + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+    + '<span class="act-title">' + esc(title) + '</span>'
+    + dirBadge(dir)
+    + '<span class="act-time">' + relativeTime(e.created_at) + '</span>'
     + '</div>'
-    + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">'
-    + '<span style="background:'+cfg.bg+';color:'+cfg.color+';border:1px solid '+cfg.color+'33;border-radius:12px;padding:2px 8px;font-size:.65rem;font-weight:600">'+cfg.label+'</span>'
-    + (sCfg.label ? '<span style="background:'+sCfg.color+'15;color:'+sCfg.color+';border-radius:12px;padding:2px 7px;font-size:.63rem;font-weight:600">'+sCfg.label+'</span>' : '')
-    + '</div></div>'
-    + (isExp ? '<div style="margin-top:8px;display:flex;gap:7px;flex-wrap:wrap">'
-      + (hasEmail ? '<button onclick="previewEmail(\''+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#3b82f6;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-eye"></i> Preview Email</button>' : '')
-      + (hasSms ? '<button onclick="toggleEl(\'sms-'+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#10b981;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-comment-alt"></i> View SMS</button>' : '')
-      + (hasMeta ? '<button onclick="toggleEl(\'meta-'+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#6b7280;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-code"></i> Details</button>' : '')
-      + (hasChat ? '<button onclick="loadChatConversation(\''+e.metadata.session_id+'\',\''+e.id+'\')" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#a78bfa;border-radius:6px;padding:5px 10px;font-size:.72rem;cursor:pointer"><i class="fas fa-comments"></i> View Conversation</button>' : '')
-      + '</div>'
-      + (hasSms ? '<div id="sms-'+e.id+'" style="display:none;margin-top:8px;background:#0d1f1a;border:1px solid #10b98133;border-radius:8px;padding:12px"><div style="font-size:.68rem;color:#10b981;font-weight:600;margin-bottom:5px">💬 SMS</div><div style="font-size:.82rem;color:#ccc;line-height:1.6;white-space:pre-wrap">'+esc(e.sms_body)+'</div></div>' : '')
-      + (hasMeta ? '<div id="meta-'+e.id+'" style="display:none;margin-top:8px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:12px"><div style="font-size:.68rem;color:#6b7280;font-weight:600;margin-bottom:6px">⚙️ DETAILS</div><div style="font-size:.72rem;font-family:monospace;color:#888;line-height:1.8;white-space:pre-wrap">'+esc(JSON.stringify(e.metadata,null,2))+'</div></div>' : '')
-      : '')
+    + (preview ? '<div class="act-preview">' + preview + '</div>' : '')
+    + (expanded ? '<div class="act-expanded">' + esc(expanded) + '</div>' : '')
+    + (hasEmail ? '<div style="margin-top:6px"><button onclick="event.stopPropagation();previewEmail(\'' + e.id + '\')" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#3b82f6;border-radius:6px;padding:4px 10px;font-size:.7rem;cursor:pointer">Preview Email</button></div>' : '')
+    + (hasChat ? '<div style="margin-top:6px"><button onclick="event.stopPropagation();loadChatConversation(\'' + e.metadata.session_id + '\',\'' + e.id + '\')" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#a78bfa;border-radius:6px;padding:4px 10px;font-size:.7rem;cursor:pointer">View Conversation</button></div>' : '')
     + '</div></div>';
+}
+
+function toggleActivity(el) {
+  var expanded = el.querySelector('.act-expanded');
+  var preview = el.querySelector('.act-preview');
+  if (!expanded) return;
+  var isOpen = expanded.style.display !== 'none' && expanded.style.display !== '';
+  expanded.style.display = isOpen ? 'none' : 'block';
+  if (preview) preview.style.display = isOpen ? 'block' : 'none';
 }
 
 function toggleEl(id) { var el = document.getElementById(id); if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none'; }

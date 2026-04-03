@@ -1064,6 +1064,8 @@ function initPortal(user) {
     loadDocHistory();
     loadProfile();
     initPushNotifications();
+    trackPageView();
+    window.addEventListener('hashchange', trackPageView);
   }
 
   // sidebar nav
@@ -1514,6 +1516,7 @@ function submitShowings() {
       loadShowings();
       loadDashboardStats();
       showToast('Showings requested! Rene will confirm shortly.', 'success');
+      trackPortalAction('showing', 'Showing Request Submitted', { homes_count: homes.length, preferred_date: date });
     })
     .catch(function(e) { showToast('Error: ' + (e.message||'Call (714) 472-8508'), 'error'); });
 }
@@ -1787,6 +1790,7 @@ function uploadFiles() {
       var msg = fileQueue.length + ' file(s) uploaded successfully!';
       if (convertedCount) msg += ' (' + convertedCount + ' converted to PDF)';
       showToast(msg, 'success');
+      trackPortalAction('document_uploaded', 'Document Uploaded', { file_count: fileQueue.length });
       fileQueue = [];
       renderFileQueue();
       loadDocHistory();
@@ -1888,6 +1892,7 @@ function saveProfile(e) {
     msg.className = 'form-msg success';
     msg.textContent = 'Profile updated!';
     showToast('Profile saved', 'success');
+    trackPortalAction('profile_update', 'Profile Updated', { name: name });
     setTimeout(function() { msg.className = 'form-msg'; msg.textContent = ''; }, 3000);
   }).catch(function(err) {
     var msg = document.getElementById('profileMsg');
@@ -1994,6 +1999,46 @@ function attachDynamicPlaces(type, idx) {
 }
 
 function initPortalMap() { initAddressAutocomplete(); }
+
+/* ═══ ACTIVITY TRACKING ═══ */
+var TRACKER_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker';
+
+function trackPageView() {
+  if (!currentUser) return;
+  var sessionId = localStorage.getItem('rr_session');
+  if (!sessionId) { sessionId = Math.random().toString(36).slice(2); localStorage.setItem('rr_session', sessionId); }
+  fetch(TRACKER_FN, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'page_view',
+      portal_user_id: currentUser.id || null,
+      contact_id: currentUser.contact_id || null,
+      page_url: window.location.href,
+      page_title: document.title,
+      referrer: document.referrer,
+      session_id: sessionId,
+      device_type: /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'mobile' : 'desktop'
+    })
+  }).catch(function() {});
+}
+
+function trackPortalAction(type, title, meta) {
+  if (!currentUser) return;
+  fetch(TRACKER_FN, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'track_event',
+      portal_user_id: currentUser.id || null,
+      contact_id: currentUser.contact_id || null,
+      type: type,
+      channel: 'portal',
+      direction: 'inbound',
+      title: title,
+      status: 'completed',
+      metadata: meta || {}
+    })
+  }).catch(function() {});
+}
 </script>
 <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBQDh0BqE9vtyBCLyDoFTMJwVV2iFYyDZQ&libraries=places&callback=initPortalMap"></script>
 <script src="/public/components/footer.js" defer></script>
