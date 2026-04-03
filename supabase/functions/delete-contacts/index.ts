@@ -10,18 +10,19 @@ const cors = {
   'Content-Type': 'application/json',
 };
 
-const headers = {
+const dbHeaders = {
   'apikey': SERVICE_KEY,
   'Authorization': `Bearer ${SERVICE_KEY}`,
   'Content-Type': 'application/json',
   'Prefer': 'return=minimal',
 };
 
-// Tables that may have a contact_id FK
 const RELATED_TABLES = [
-  'activity_events', 'email_log', 'sms_log', 'loan_conditions',
-  'condition_documents', 'condition_notes', 'listing_alerts',
-  'alert_sent_listings', 'leads', 'portal_users',
+  'activity_events', 'email_log', 'sms_log', 'twilio_inbound',
+  'loan_conditions', 'condition_documents', 'condition_notes',
+  'listing_alerts', 'alert_sent_listings', 'saved_listings',
+  'credit_applications', 'contact_tags', 'page_views',
+  'leads', 'portal_users',
 ];
 
 Deno.serve(async (req: Request) => {
@@ -38,16 +39,14 @@ Deno.serve(async (req: Request) => {
 
     for (const id of contact_ids) {
       try {
-        // Delete related records first (ignore errors for tables without FK)
         for (const table of RELATED_TABLES) {
           await fetch(`${SUPABASE_URL}/rest/v1/${table}?contact_id=eq.${id}`, {
-            method: 'DELETE', headers,
+            method: 'DELETE', headers: dbHeaders,
           }).catch(() => {});
         }
 
-        // Delete the contact
         const res = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}`, {
-          method: 'DELETE', headers,
+          method: 'DELETE', headers: dbHeaders,
         });
 
         results.push({ id, success: res.ok });
@@ -60,7 +59,6 @@ Deno.serve(async (req: Request) => {
 
     const deleted = results.filter(r => r.success).length;
     return new Response(JSON.stringify({ deleted, total: contact_ids.length, results }), { headers: cors });
-
   } catch (err: any) {
     console.error('[delete-contacts] Fatal error:', err);
     return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: cors });
