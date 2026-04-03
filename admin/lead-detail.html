@@ -3441,7 +3441,7 @@ function populateUI() {
   // Top bar
   document.getElementById('topbar-name').textContent = name;
   setStatusBadge(leadData.status || 'new');
-  renderPipelineStage(leadData.status || 'new');
+  renderPipelineStage(contactData.pipeline_status || leadData.status || 'New Lead');
 
   // Score card
   renderScoreCard(leadData, contactData);
@@ -5619,40 +5619,96 @@ function setStatusBadge(status) {
 }
 
 /* ── PIPELINE STAGE INDICATOR ── */
+var PIPELINE_STAGES = [
+  {key:'New Lead',color:'#6B6B7A',label:'New Lead'},
+  {key:'Contacted',color:'#5AA0E0',label:'Contacted'},
+  {key:'Pre-Approved',color:'#C9A84C',label:'Pre-Approved'},
+  {key:'Under Contract',color:'#AB7FE0',label:'Under Contract'},
+  {key:'Processing',color:'#E07F50',label:'Processing'},
+  {key:'Clear to Close',color:'#52C87A',label:'Clear to Close'},
+  {key:'Closed',color:'#3AB06A',label:'Closed'},
+  {key:'Lost',color:'#E05252',label:'Lost'}
+];
+
 function renderPipelineStage(currentStatus) {
-  const bar = document.getElementById('pipelineStageBar');
+  var bar = document.getElementById('pipelineStageBar');
   if (!bar) return;
+  // Map old status values to new stage keys
+  var statusMap = {
+    'new':'New Lead','new lead':'New Lead','contacted':'Contacted',
+    'pre-qualified':'Pre-Approved','prequalified':'Pre-Approved','qualified':'Pre-Approved',
+    'pre-approved':'Pre-Approved','application':'Processing','applied':'Processing',
+    'processing':'Processing','underwriting':'Processing','submitted':'Processing',
+    'in_process':'Processing','in_escrow':'Under Contract',
+    'under contract':'Under Contract',
+    'clear to close':'Clear to Close',
+    'closed':'Closed','closed won':'Closed','funded':'Closed',
+    'lost':'Lost','dead':'Lost','declined':'Lost'
+  };
+  var active = statusMap[(currentStatus || '').toLowerCase().trim()] || currentStatus || 'New Lead';
+  // Verify it's a valid stage key
+  if (!PIPELINE_STAGES.find(function(s){return s.key===active;})) active = 'New Lead';
 
-  const stages = [
-    { id: 'new', label: 'New', statuses: ['new','new lead'] },
-    { id: 'contacted', label: 'Contacted', statuses: ['contacted'] },
-    { id: 'qualified', label: 'Qualified', statuses: ['qualified','pre-qualified','prequalified'] },
-    { id: 'application', label: 'Application', statuses: ['application','applied'] },
-    { id: 'processing', label: 'Processing', statuses: ['processing','underwriting','submitted','in_process','in_escrow'] },
-    { id: 'closed', label: 'Closed', statuses: ['closed','closed won','funded'] },
-  ];
-
-  const current = (currentStatus || '').toLowerCase().trim();
-  let activeIdx = stages.findIndex(s => s.statuses.includes(current));
-  if (activeIdx === -1) activeIdx = 0;
-
-  bar.innerHTML = stages.map((stage, idx) => {
-    const isPast = idx < activeIdx;
-    const isActive = idx === activeIdx;
-    const bg = isActive ? 'rgba(201,168,76,0.9)' : isPast ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.05)';
-    const color = isActive ? '#000' : isPast ? 'rgba(201,168,76,0.8)' : 'rgba(255,255,255,0.25)';
-    const fw = isActive ? '700' : '500';
-    const borderR = idx === stages.length - 1 ? '20px' : '0';
-    const borderL = idx === 0 ? '20px' : '0';
-    return `<a href="pipeline.html" title="View Pipeline" style="
-      padding:4px 10px; background:${bg}; color:${color};
-      font-size:10px; font-weight:${fw}; text-decoration:none;
-      border-radius:${borderL} ${borderR} ${borderR} ${borderL};
-      border-right:${idx < stages.length-1 ? '1px solid rgba(0,0,0,0.2)' : 'none'};
-      white-space:nowrap; transition:all .15s;
-      display:flex;align-items:center;gap:4px;
-    ">${isActive ? '● ' : ''}${stage.label}</a>`;
+  bar.innerHTML = PIPELINE_STAGES.map(function(s) {
+    var isActive = s.key === active;
+    var isLost = s.key === 'Lost';
+    return '<span onclick="updatePipelineStage(\'' + s.key + '\')" ' +
+      'style="padding:4px 12px;border-radius:20px;font-size:11.5px;font-weight:' + (isActive?'700':'400') + ';' +
+      'cursor:pointer;transition:all 0.15s;white-space:nowrap;' +
+      'background:' + (isActive?s.color:'transparent') + ';' +
+      'color:' + (isActive?'#fff': isLost?'#E05252':'#888') + ';' +
+      'border:1px solid ' + (isActive?s.color: isLost?'rgba(224,82,82,0.25)':'transparent') + ';' +
+      (isLost?'margin-left:8px;':'') + '" ' +
+      'onmouseover="if(\'' + s.key + '\'!==\'' + active + '\')this.style.color=\'' + s.color + '\'" ' +
+      'onmouseout="if(\'' + s.key + '\'!==\'' + active + '\')this.style.color=\'' + (isLost?'#E05252':'#888') + '\'">' +
+      (isLost?'\u2715 ':'') + s.label + '</span>';
   }).join('');
+}
+
+async function updatePipelineStage(newStage) {
+  var contactId = new URLSearchParams(window.location.search).get('contact_id');
+  if (!contactId) { console.error('No contact ID'); return; }
+
+  // Optimistic UI update
+  renderPipelineStage(newStage);
+
+  try {
+    var res = await fetch(
+      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/contacts?id=eq.' + contactId,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY || '',
+          'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || ''),
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ pipeline_status: newStage, updated_at: new Date().toISOString() })
+      }
+    );
+
+    if (!res.ok) {
+      console.error('Pipeline update failed:', await res.text());
+      renderPipelineStage(contactData?.pipeline_status || leadData?.status || 'New Lead');
+      showToast('Failed to update stage', true);
+      return;
+    }
+
+    if (contactData) contactData.pipeline_status = newStage;
+    if (leadData) leadData.status = newStage;
+    showToast('Stage: ' + newStage);
+
+    // Log activity
+    fetch((window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/activity-tracker', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'track_event', contact_id: contactId, type: 'STAGE_CHANGE', title: 'Pipeline stage changed to: ' + newStage, status: 'completed', metadata: { stage: newStage } })
+    }).catch(function(){});
+
+  } catch(err) {
+    console.error('updatePipelineStage error:', err);
+    showToast('Update failed', true);
+  }
 }
 
 /* ── HELPERS ── */

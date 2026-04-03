@@ -165,13 +165,14 @@ const SUPABASE_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnss
 const SUPABASE_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
 
 const COLUMNS = [
-  { id: 'new',         label: '🆕 New Lead',      statuses: ['new','New Lead','new lead'] },
-  { id: 'contacted',   label: '📞 Contacted',      statuses: ['contacted','Contacted'] },
-  { id: 'qualified',   label: '✅ Qualified',       statuses: ['qualified','Qualified','pre-qualified','Pre-Qualified','prequalified'] },
-  { id: 'application', label: '📋 Application',    statuses: ['application','Application','applied'] },
-  { id: 'processing',  label: '⚙️ Processing',     statuses: ['processing','Processing','underwriting','Underwriting','submitted'] },
-  { id: 'closed_won',  label: '🏆 Closed Won',     statuses: ['closed','Closed','closed won','Closed Won','funded','Funded'] },
-  { id: 'closed_lost', label: '❌ Closed Lost',    statuses: ['lost','Lost','closed lost','Closed Lost','dead','Dead','declined'] },
+  { id: 'new_lead',        label: '\uD83C\uDF31 New Lead',       statuses: ['New Lead','new','new lead'],           color: '#6B6B7A' },
+  { id: 'contacted',       label: '\uD83D\uDCDE Contacted',      statuses: ['Contacted','contacted'],               color: '#5AA0E0' },
+  { id: 'pre_approved',    label: '\u2705 Pre-Approved',         statuses: ['Pre-Approved','pre-approved','pre-qualified','prequalified','qualified'], color: '#C9A84C' },
+  { id: 'under_contract',  label: '\uD83C\uDFE0 Under Contract', statuses: ['Under Contract','under contract','in_escrow'], color: '#AB7FE0' },
+  { id: 'processing',      label: '\u2699\uFE0F Processing',     statuses: ['Processing','processing','underwriting','submitted','application','applied','in_process'], color: '#E07F50' },
+  { id: 'clear_to_close',  label: '\uD83D\uDD11 Clear to Close', statuses: ['Clear to Close','clear to close'],   color: '#52C87A' },
+  { id: 'closed',          label: '\uD83C\uDF89 Closed',         statuses: ['Closed','closed','closed won','funded'], color: '#3AB06A' },
+  { id: 'lost',            label: '\u2715 Lost',                  statuses: ['Lost','lost','closed lost','dead','declined'], color: '#E05252' },
 ];
 
 let _allLeads = [];
@@ -313,7 +314,7 @@ async function onDrop(e, colId, newStatus) {
   lead.status = newStatus;
   renderBoard();
 
-  // Save to Supabase
+  // Save to Supabase — update lead status
   const res = await fetch(`${SUPABASE_URL}/rest/v1/leads?id=eq.${_dragLeadId}`, {
     method: 'PATCH',
     headers: {
@@ -326,9 +327,17 @@ async function onDrop(e, colId, newStatus) {
   });
 
   if (res.ok) {
-    showToast(`✓ Moved to ${colId.replace('_',' ')} — ${newStatus}`);
+    showToast('\u2713 Moved to ' + newStatus);
+    // Also update pipeline_status on contact
+    if (lead.contact_id) {
+      fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${lead.contact_id}`, {
+        method: 'PATCH',
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ pipeline_status: newStatus, updated_at: new Date().toISOString() })
+      }).catch(function(){});
+    }
   } else {
-    showToast('⚠️ Failed to update status');
+    showToast('\u26A0 Failed to update status');
     lead.status = prevStatus;
     renderBoard();
   }
