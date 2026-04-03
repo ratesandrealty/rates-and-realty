@@ -241,9 +241,10 @@
       border-right: 1px solid var(--border);
       position: sticky;
       top: var(--topbar-h);
-      height: calc(100vh - var(--topbar-h));
+      align-self: flex-start;
+      max-height: calc(100vh - var(--topbar-h));
       overflow-y: auto;
-      overflow-x: hidden;
+      overflow-x: visible;
       display: flex;
       flex-direction: column;
       padding: 24px 16px;
@@ -1335,44 +1336,44 @@
       width: 100%;
       box-sizing: border-box;
     ">
-      <a id="callBtn" href="tel:" style="
+      <button id="callBtn" onclick="handleCallClick()" style="
         display:flex; flex-direction:column; align-items:center;
         justify-content:center; gap:5px; padding:12px 4px;
         background:rgba(255,255,255,0.04);
         border:1px solid rgba(255,255,255,0.1);
-        border-radius:12px; text-decoration:none;
-        color:rgba(255,255,255,0.7); transition:all 0.2s;
+        border-radius:12px; cursor:pointer; transition:all 0.2s;
+        color:rgba(255,255,255,0.7); width:100%;
         min-width:0; overflow:hidden;">
-        <span style="font-size:18px;">📞</span>
+        <span style="font-size:18px;">&#128222;</span>
         <span style="font-size:10px;font-weight:700;text-transform:uppercase;
                      letter-spacing:0.5px;white-space:nowrap;">Call</span>
-      </a>
+      </button>
 
-      <a id="emailBtn" href="mailto:" style="
+      <button id="emailBtn" onclick="handleEmailClick()" style="
         display:flex; flex-direction:column; align-items:center;
         justify-content:center; gap:5px; padding:12px 4px;
         background:rgba(255,255,255,0.04);
         border:1px solid rgba(255,255,255,0.1);
-        border-radius:12px; text-decoration:none;
-        color:rgba(255,255,255,0.7); transition:all 0.2s;
+        border-radius:12px; cursor:pointer; transition:all 0.2s;
+        color:rgba(255,255,255,0.7); width:100%;
         min-width:0; overflow:hidden;">
-        <span style="font-size:18px;">✉️</span>
+        <span style="font-size:18px;">&#9993;&#65039;</span>
         <span style="font-size:10px;font-weight:700;text-transform:uppercase;
                      letter-spacing:0.5px;white-space:nowrap;">Email</span>
-      </a>
+      </button>
 
-      <a id="smsBtn" href="sms:" style="
+      <button id="smsBtn" onclick="handleTextClick()" style="
         display:flex; flex-direction:column; align-items:center;
         justify-content:center; gap:5px; padding:12px 4px;
         background:rgba(255,255,255,0.04);
         border:1px solid rgba(255,255,255,0.1);
-        border-radius:12px; text-decoration:none;
-        color:rgba(255,255,255,0.7); transition:all 0.2s;
+        border-radius:12px; cursor:pointer; transition:all 0.2s;
+        color:rgba(255,255,255,0.7); width:100%;
         min-width:0; overflow:hidden;">
-        <span style="font-size:18px;">💬</span>
+        <span style="font-size:18px;">&#128172;</span>
         <span style="font-size:10px;font-weight:700;text-transform:uppercase;
                      letter-spacing:0.5px;white-space:nowrap;">Text</span>
-      </a>
+      </button>
 
       <button onclick="openTaskForm()"
         style="
@@ -3463,41 +3464,6 @@ function populateUI() {
   document.getElementById('sidebar-avatar').textContent = initials;
   document.getElementById('sidebar-name').textContent = name;
   document.getElementById('sidebar-email').textContent = contactData.email || '—';
-  var TRACKER_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker';
-  var callBtn = document.getElementById('callBtn');
-  var emailBtn = document.getElementById('emailBtn');
-  var smsBtn = document.getElementById('smsBtn');
-  var cleanPhone = (contactData.phone || contactData.secondary_phone || '').replace(/\D/g,'');
-  if (callBtn && cleanPhone) {
-    callBtn.href = '#';
-    callBtn.onclick = function(e) {
-      e.preventDefault();
-      window.open('tel:+1' + cleanPhone);
-      fetch(TRACKER_FN, { method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ action:'track_event', contact_id:contactId, type:'call', channel:'phone', direction:'outbound', title:'Call initiated by Rene', status:'initiated', metadata:{ phone:cleanPhone } })
-      });
-    };
-  }
-  if (emailBtn && contactData.email) {
-    emailBtn.href = '#';
-    emailBtn.onclick = function(e) {
-      e.preventDefault();
-      window.open('mailto:' + contactData.email);
-      fetch(TRACKER_FN, { method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ action:'track_event', contact_id:contactId, type:'email', channel:'email', direction:'outbound', title:'Email opened by Rene', status:'initiated', metadata:{ email:contactData.email } })
-      });
-    };
-  }
-  if (smsBtn && cleanPhone) {
-    smsBtn.href = '#';
-    smsBtn.onclick = function(e) {
-      e.preventDefault();
-      window.open('sms:+1' + cleanPhone, '_self');
-      fetch(TRACKER_FN, { method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ action:'track_event', contact_id:contactId, type:'sms', channel:'sms', direction:'outbound', title:'SMS initiated by Rene', status:'initiated', metadata:{ phone:cleanPhone } })
-      });
-    };
-  }
 
   // Load portal info
   if (contactData.email) loadPortalInfo(contactData.email, contactData.crm_id);
@@ -7537,123 +7503,6 @@ if (localStorage.getItem('rr-theme') === 'light') {
   document.getElementById('theme-toggle').textContent = '🌙';
 }
 
-/* ═══ TAGS (IIFE — self-contained, no globals) ═══ */
-(function() {
-  var _allTags = [], _contactTags = [], _menuOpen = false;
-  var SB = 'https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1';
-  function getKey() { return window.APP_CONFIG?.SUPABASE_ANON_KEY || ''; }
-  function getCid() { return new URLSearchParams(location.search).get('contact_id') || new URLSearchParams(location.search).get('id'); }
-  function hdr() { return { 'apikey': getKey(), 'Authorization': 'Bearer ' + getKey(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' }; }
-
-  async function rrLoadTags() {
-    var cid = getCid(); if (!cid) return;
-    var results = await Promise.all([
-      fetch(SB + '/tags?order=name', { headers: hdr() }).then(function(r) { return r.json(); }),
-      fetch(SB + '/contact_tags?contact_id=eq.' + cid + '&select=tag_id,tags(id,name,color)', { headers: hdr() }).then(function(r) { return r.json(); })
-    ]);
-    _allTags = Array.isArray(results[0]) ? results[0] : [];
-    _contactTags = Array.isArray(results[1]) ? results[1].map(function(x) { return x.tags; }).filter(Boolean) : [];
-    rrRenderPills();
-    rrRenderList('');
-  }
-
-  function rrRenderPills() {
-    var el = document.getElementById('rrTagPills'); if (!el) return;
-    el.innerHTML = _contactTags.map(function(t) {
-      return '<span class="tag-badge" style="background:' + (t.color||'#888') + '22;border-color:' + (t.color||'#888') + '66;color:' + (t.color||'#888') + ';">'
-        + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>' + t.name
-        + ' <span data-remove-tag="' + t.id + '" style="cursor:pointer;opacity:0.6;font-size:13px;margin-left:2px;">\u00d7</span></span>';
-    }).join('');
-  }
-
-  function rrRenderList(search) {
-    var el = document.getElementById('rrTagList'); if (!el) return;
-    var s = (search || '').toLowerCase();
-    var activeIds = _contactTags.map(function(t) { return t.id; });
-    var filtered = _allTags.filter(function(t) { return t.name.toLowerCase().indexOf(s) >= 0; });
-    var exact = filtered.find(function(t) { return t.name.toLowerCase() === s; });
-    var html = filtered.map(function(t) {
-      var on = activeIds.indexOf(t.id) >= 0;
-      return '<div class="tag-dropdown-item" data-toggle-tag="' + t.id + '">'
-        + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>'
-        + '<span style="flex:1;">' + t.name + '</span>'
-        + (on ? '<span style="font-size:11px;color:#c9a84c;">\u2713</span>' : '')
-        + '</div>';
-    }).join('');
-    if (search && search.trim() && !exact) {
-      html += '<div class="tag-create-row" data-create-tag="' + search.trim().replace(/"/g, '&quot;') + '">'
-        + '<span>\u2728</span><span>Create &quot;' + search.trim() + '&quot;</span></div>';
-    }
-    el.innerHTML = html || '<div style="padding:14px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px;">No tags found</div>';
-  }
-
-  document.addEventListener('DOMContentLoaded', function() {
-    setTimeout(rrLoadTags, 500);
-
-    document.addEventListener('click', async function(e) {
-      var addBtn = e.target.closest('#rrAddTagBtn');
-      var menu = document.getElementById('rrTagMenu');
-      var searchEl = document.getElementById('rrTagSearch');
-
-      if (addBtn) {
-        e.stopPropagation();
-        _menuOpen = !_menuOpen;
-        if (menu) menu.style.display = _menuOpen ? 'block' : 'none';
-        if (_menuOpen && searchEl) { searchEl.value = ''; searchEl.focus(); rrRenderList(''); }
-        return;
-      }
-
-      var toggle = e.target.closest('[data-toggle-tag]');
-      if (toggle) {
-        e.stopPropagation();
-        var tid = toggle.getAttribute('data-toggle-tag');
-        var cid = getCid();
-        var isActive = _contactTags.find(function(t) { return t.id === tid; });
-        if (isActive) {
-          await fetch(SB + '/contact_tags?contact_id=eq.' + cid + '&tag_id=eq.' + tid, { method: 'DELETE', headers: hdr() });
-        } else {
-          await fetch(SB + '/contact_tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ contact_id: cid, tag_id: tid }) });
-        }
-        await rrLoadTags();
-        return;
-      }
-
-      var removeBtn = e.target.closest('[data-remove-tag]');
-      if (removeBtn) {
-        e.stopPropagation();
-        var rtid = removeBtn.getAttribute('data-remove-tag');
-        await fetch(SB + '/contact_tags?contact_id=eq.' + getCid() + '&tag_id=eq.' + rtid, { method: 'DELETE', headers: hdr() });
-        await rrLoadTags();
-        return;
-      }
-
-      var createBtn = e.target.closest('[data-create-tag]');
-      if (createBtn) {
-        e.stopPropagation();
-        var name = createBtn.getAttribute('data-create-tag');
-        var colors = ['#C9A84C','#64B5F6','#81C784','#EF5350','#FFA726','#CE93D8','#26C6DA'];
-        var color = colors[Math.floor(Math.random() * colors.length)];
-        var res = await fetch(SB + '/tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ name: name, color: color }) });
-        var arr = await res.json();
-        if (arr && arr[0] && arr[0].id) {
-          await fetch(SB + '/contact_tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ contact_id: getCid(), tag_id: arr[0].id }) });
-        }
-        await rrLoadTags();
-        if (searchEl) { searchEl.value = ''; rrRenderList(''); }
-        return;
-      }
-
-      if (menu && !e.target.closest('#rrTagMenu') && !e.target.closest('#rrAddTagBtn')) {
-        menu.style.display = 'none';
-        _menuOpen = false;
-      }
-    });
-
-    var searchInput = document.getElementById('rrTagSearch');
-    if (searchInput) searchInput.addEventListener('input', function() { rrRenderList(this.value); });
-  });
-})();
-
 loadData().then(() => loadContactMeta());
 
 /* ===== BORROWER PORTAL INFO ===== */
@@ -9200,6 +9049,158 @@ async function updateLenderStatus(lenderId, status) {
     </div>
   </div>
 </div>
+
+<!-- Tag system + action buttons — placed at end of body to guarantee DOM + APP_CONFIG ready -->
+<script>
+function handleCallClick() {
+  var phone = (contactData?.phone || contactData?.secondary_phone || '').replace(/\D/g, '');
+  if (!phone) { showToast('No phone number on file', true); return; }
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
+      type: 'call', channel: 'phone', direction: 'outbound', title: 'Call initiated by Rene', status: 'initiated', metadata: { phone: phone } })
+  }).catch(function(){});
+  window.location.href = 'tel:+1' + phone;
+}
+
+function handleTextClick() {
+  var phone = (contactData?.phone || contactData?.secondary_phone || '').replace(/\D/g, '');
+  if (!phone) { showToast('No phone number on file', true); return; }
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
+      type: 'sms', channel: 'sms', direction: 'outbound', title: 'SMS initiated by Rene', status: 'initiated', metadata: { phone: phone } })
+  }).catch(function(){});
+  window.location.href = 'sms:+1' + phone;
+}
+
+function handleEmailClick() {
+  var email = contactData?.email || '';
+  if (!email) { showToast('No email on file', true); return; }
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
+      type: 'email', channel: 'email', direction: 'outbound', title: 'Email opened by Rene', status: 'initiated', metadata: { email: email } })
+  }).catch(function(){});
+  window.location.href = 'mailto:' + email;
+}
+
+/* ═══ TAGS (IIFE — self-contained, runs after DOM is ready) ═══ */
+(function() {
+  var _allTags = [], _contactTags = [], _menuOpen = false;
+  var SB = 'https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1';
+  function getKey() { return window.APP_CONFIG?.SUPABASE_ANON_KEY || ''; }
+  function getCid() { return new URLSearchParams(location.search).get('contact_id') || new URLSearchParams(location.search).get('id'); }
+  function hdr() { return { 'apikey': getKey(), 'Authorization': 'Bearer ' + getKey(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' }; }
+
+  async function rrLoadTags() {
+    var cid = getCid(); if (!cid) return;
+    var results = await Promise.all([
+      fetch(SB + '/tags?order=name', { headers: hdr() }).then(function(r) { return r.json(); }),
+      fetch(SB + '/contact_tags?contact_id=eq.' + cid + '&select=tag_id,tags(id,name,color)', { headers: hdr() }).then(function(r) { return r.json(); })
+    ]);
+    _allTags = Array.isArray(results[0]) ? results[0] : [];
+    _contactTags = Array.isArray(results[1]) ? results[1].map(function(x) { return x.tags; }).filter(Boolean) : [];
+    rrRenderPills();
+    rrRenderList('');
+  }
+
+  function rrRenderPills() {
+    var el = document.getElementById('rrTagPills'); if (!el) return;
+    el.innerHTML = _contactTags.map(function(t) {
+      return '<span class="tag-badge" style="background:' + (t.color||'#888') + '22;border-color:' + (t.color||'#888') + '66;color:' + (t.color||'#888') + ';">'
+        + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>' + t.name
+        + ' <span data-remove-tag="' + t.id + '" style="cursor:pointer;opacity:0.6;font-size:13px;margin-left:2px;">\u00d7</span></span>';
+    }).join('');
+  }
+
+  function rrRenderList(search) {
+    var el = document.getElementById('rrTagList'); if (!el) return;
+    var s = (search || '').toLowerCase();
+    var activeIds = _contactTags.map(function(t) { return t.id; });
+    var filtered = _allTags.filter(function(t) { return t.name.toLowerCase().indexOf(s) >= 0; });
+    var exact = filtered.find(function(t) { return t.name.toLowerCase() === s; });
+    var html = filtered.map(function(t) {
+      var on = activeIds.indexOf(t.id) >= 0;
+      return '<div class="tag-dropdown-item" data-toggle-tag="' + t.id + '">'
+        + '<span class="tag-dot" style="background:' + (t.color||'#888') + ';"></span>'
+        + '<span style="flex:1;">' + t.name + '</span>'
+        + (on ? '<span style="font-size:11px;color:#c9a84c;">\u2713</span>' : '')
+        + '</div>';
+    }).join('');
+    if (search && search.trim() && !exact) {
+      html += '<div class="tag-create-row" data-create-tag="' + search.trim().replace(/"/g, '&quot;') + '">'
+        + '<span>\u2728</span><span>Create &quot;' + search.trim() + '&quot;</span></div>';
+    }
+    el.innerHTML = html || '<div style="padding:14px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px;">No tags found</div>';
+  }
+
+  // DOM is guaranteed ready since this script is at the end of body
+  setTimeout(rrLoadTags, 300);
+
+  document.addEventListener('click', async function(e) {
+    var addBtn = e.target.closest('#rrAddTagBtn');
+    var menu = document.getElementById('rrTagMenu');
+    var searchEl = document.getElementById('rrTagSearch');
+
+    if (addBtn) {
+      e.stopPropagation();
+      _menuOpen = !_menuOpen;
+      if (menu) menu.style.display = _menuOpen ? 'block' : 'none';
+      if (_menuOpen && searchEl) { searchEl.value = ''; searchEl.focus(); rrRenderList(''); }
+      return;
+    }
+
+    var toggle = e.target.closest('[data-toggle-tag]');
+    if (toggle) {
+      e.stopPropagation();
+      var tid = toggle.getAttribute('data-toggle-tag');
+      var cid = getCid();
+      var isActive = _contactTags.find(function(t) { return t.id === tid; });
+      if (isActive) {
+        await fetch(SB + '/contact_tags?contact_id=eq.' + cid + '&tag_id=eq.' + tid, { method: 'DELETE', headers: hdr() });
+      } else {
+        await fetch(SB + '/contact_tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ contact_id: cid, tag_id: tid }) });
+      }
+      await rrLoadTags();
+      return;
+    }
+
+    var removeBtn = e.target.closest('[data-remove-tag]');
+    if (removeBtn) {
+      e.stopPropagation();
+      var rtid = removeBtn.getAttribute('data-remove-tag');
+      await fetch(SB + '/contact_tags?contact_id=eq.' + getCid() + '&tag_id=eq.' + rtid, { method: 'DELETE', headers: hdr() });
+      await rrLoadTags();
+      return;
+    }
+
+    var createBtn = e.target.closest('[data-create-tag]');
+    if (createBtn) {
+      e.stopPropagation();
+      var tagName = createBtn.getAttribute('data-create-tag');
+      var colors = ['#C9A84C','#64B5F6','#81C784','#EF5350','#FFA726','#CE93D8','#26C6DA'];
+      var tagColor = colors[Math.floor(Math.random() * colors.length)];
+      var res = await fetch(SB + '/tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ name: tagName, color: tagColor }) });
+      var arr = await res.json();
+      if (arr && arr[0] && arr[0].id) {
+        await fetch(SB + '/contact_tags', { method: 'POST', headers: hdr(), body: JSON.stringify({ contact_id: getCid(), tag_id: arr[0].id }) });
+      }
+      await rrLoadTags();
+      if (searchEl) { searchEl.value = ''; rrRenderList(''); }
+      return;
+    }
+
+    if (menu && !e.target.closest('#rrTagMenu') && !e.target.closest('#rrAddTagBtn')) {
+      menu.style.display = 'none';
+      _menuOpen = false;
+    }
+  });
+
+  var searchInput = document.getElementById('rrTagSearch');
+  if (searchInput) searchInput.addEventListener('input', function() { rrRenderList(this.value); });
+})();
+</script>
 
 </body>
 </html>
