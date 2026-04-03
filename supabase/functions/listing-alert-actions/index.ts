@@ -3,22 +3,22 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization,apikey,x-client-info' };
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-const ML_KEY = Deno.env.get('MAILERLITE_API_KEY') || Deno.env.get('MAILER_LITE_API_KEY') || Deno.env.get('ML_API_KEY');
+const MS_KEY = Deno.env.get('MAILERSEND_API_KEY');
 const SMS_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service';
 const PUSH_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/send-push';
 
-console.log('listing-alert-actions started, ML_KEY present:', !!ML_KEY);
+console.log('listing-alert-actions started, MS_KEY present:', !!MS_KEY);
 
 async function sendEmail(to: string, toName: string, subject: string, html: string) {
-  if (!ML_KEY) return { sent: false, error: 'MAILERLITE_API_KEY not set' };
+  if (!MS_KEY) return { sent: false, error: 'MAILERSEND_API_KEY not set' };
   try {
-    const res = await fetch('https://connect.mailerlite.com/api/messages/email', {
+    const res = await fetch('https://api.mailersend.com/v1/email', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${ML_KEY}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${MS_KEY}`, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       body: JSON.stringify({ from: { email: 'rene@ratesandrealty.com', name: 'Rene Duarte | Rates & Realty' }, to: [{ email: to, name: toName }], subject, html })
     });
     const txt = await res.text();
-    console.log('MailerLite response:', res.status, txt.substring(0,100));
+    console.log('MailerSend response:', res.status, txt.substring(0,200));
     return { sent: res.ok, error: res.ok ? undefined : txt };
   } catch(e: any) { return { sent: false, error: e.message }; }
 }
@@ -157,7 +157,7 @@ Deno.serve(async (req: Request) => {
               description: `Alert for ${(alert.counties||[]).join(', ')||'all counties'} - ${(alert.cities||[]).length} cities, freq: ${alert.frequency}`,
               status: emailResult.sent ? 'sent' : 'failed',
               email_subject: subject, email_to: toEmail, email_from: 'rene@ratesandrealty.com',
-              metadata: JSON.stringify({ alert_id: newAlert.id, ml_key_present: !!ML_KEY, email_error: emailResult.error }),
+              metadata: JSON.stringify({ alert_id: newAlert.id, ms_key_present: !!MS_KEY, email_error: emailResult.error }),
               created_at: new Date().toISOString()
             });
           } catch(logErr) { console.error('Activity log error:', logErr); }
@@ -196,7 +196,7 @@ Deno.serve(async (req: Request) => {
         } catch(pushErr) { console.warn('Push notification error:', pushErr); }
       }
 
-      return ok({ success: true, alert: newAlert, emailed: emailResult.sent, sms_queued: !!userPhone, email_error: emailResult.error, ml_key_present: !!ML_KEY });
+      return ok({ success: true, alert: newAlert, emailed: emailResult.sent, sms_queued: !!userPhone, email_error: emailResult.error, ms_key_present: !!MS_KEY });
     }
 
     if (action === 'get_alerts') {
@@ -230,7 +230,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'debug_env') {
-      return ok({ ml_key_present: !!ML_KEY, ml_key_length: ML_KEY?.length || 0, ml_key_prefix: ML_KEY?.substring(0,8)||'none' });
+      return ok({ ms_key_present: !!MS_KEY, ml_key_length: ML_KEY?.length || 0, ml_key_prefix: ML_KEY?.substring(0,8)||'none' });
     }
 
     return err('Unknown action: ' + action);
