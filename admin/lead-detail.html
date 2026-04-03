@@ -4925,6 +4925,56 @@ async function loadConditions() {
   renderConditions(data.conditions || []);
 }
 
+function buildLoanInfoCard(doc) {
+  var li = (doc && doc.loan_info) ? doc.loan_info : {};
+  function m(a, b) { return a || b || null; }
+  var sections = [
+    { title: 'Loan Details', fields: [
+      { label:'Lender', value: m(doc&&doc.lender, li.lender) }, { label:'Loan #', value: m(doc&&doc.loan_number, li.loan_number) },
+      { label:'Case #', value: li.case_number }, { label:'Loan Program', value: li.loan_program },
+      { label:'Loan Type', value: m(doc&&doc.loan_type, li.loan_type) }, { label:'Purpose', value: li.loan_purpose },
+      { label:'Loan Amount', value: m(doc&&doc.loan_amount, li.loan_amount) }, { label:'Total Loan', value: li.total_loan_amount },
+      { label:'Purchase Price', value: li.purchase_price }, { label:'Appraised Value', value: li.appraised_value },
+      { label:'Rate', value: m(doc&&doc.interest_rate, li.interest_rate) }, { label:'Qualifying Rate', value: li.qualifying_rate },
+      { label:'LTV/CLTV', value: li.ltv && li.cltv ? li.ltv + ' / ' + li.cltv : (li.ltv || li.cltv || null) },
+      { label:'DTI', value: li.dti }, { label:'Credit Score', value: li.credit_score }, { label:'Occupancy', value: li.occupancy }
+    ].filter(function(f){return f.value;}) },
+    { title: 'Borrower & Property', fields: [
+      { label:'Borrower', value: m(doc&&doc.borrower_name, li.borrower_name) }, { label:'Co-Borrower', value: li.co_borrower_name },
+      { label:'Property', value: m(doc&&doc.property_address, li.property_address) }, { label:'Property Type', value: li.property_type },
+      { label:'Total Income', value: li.total_income }, { label:'Verified Assets', value: li.verified_assets }, { label:'Reserves', value: li.calculated_reserves }
+    ].filter(function(f){return f.value;}) },
+    { title: 'Key Dates', fields: [
+      { label:'Approved', value: m(doc&&doc.approval_date, li.approval_date) }, { label:'Est. Close', value: li.est_closing_date },
+      { label:'Approval Exp.', value: m(doc&&doc.expiration_date, li.expiration_date) }, { label:'Lock Exp.', value: li.lock_expiration },
+      { label:'Credit Exp.', value: li.credit_expiration }, { label:'Income Exp.', value: li.income_expiration },
+      { label:'Asset Exp.', value: li.asset_expiration }, { label:'Lock Status', value: li.lock_status }
+    ].filter(function(f){return f.value;}) },
+    { title: 'Contacts', fields: [
+      { label:'Underwriter', value: li.underwriter }, { label:'UW Phone', value: li.underwriter_phone }, { label:'UW Email', value: li.underwriter_email },
+      { label:'Processor', value: m(doc&&doc.processor, li.processor) }, { label:'Rep / AM', value: li.rep_name },
+      { label:'Rep Phone', value: li.rep_phone }, { label:'Rep Email', value: li.rep_email }, { label:'Originator', value: li.originator }
+    ].filter(function(f){return f.value;}) }
+  ].filter(function(s){return s.fields.length > 0;});
+  if (!sections.length) return '';
+  var lenderName = m(doc&&doc.lender, li.lender) || 'Lender';
+  var fileName = (doc && doc.file_name) || '';
+  return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
+    + '<div style="width:36px;height:36px;border-radius:9px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.2);display:flex;align-items:center;justify-content:center;font-size:1rem;">&#128203;</div>'
+    + '<div><div style="font-size:.9rem;font-weight:700;color:var(--gold);">' + lenderName + ' &mdash; Conditional Approval</div>'
+    + '<div style="font-size:.7rem;color:var(--muted);">' + fileName + '</div></div></div>'
+    + sections.map(function(s) {
+      return '<div style="margin-bottom:12px;">'
+        + '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;">' + s.title + '</div>'
+        + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px 16px;">'
+        + s.fields.map(function(f) {
+          return '<div><div style="font-size:10px;color:var(--muted);">' + f.label + '</div>'
+            + '<div style="font-size:12px;color:var(--text);font-weight:600;">' + f.value + '</div></div>';
+        }).join('') + '</div></div>';
+    }).join('') + '</div>';
+}
+
 function renderConditions(conditions) {
   var list = document.getElementById('conditions-list');
   var progressText = document.getElementById('conditions-progress-text');
@@ -4944,6 +4994,13 @@ function renderConditions(conditions) {
   if (progressText) progressText.textContent = cleared + ' of ' + total + ' conditions cleared (' + pct + '%)';
   if (progressBar) progressBar.style.width = pct + '%';
 
+  // Loan info header card
+  var doc = conditions[0] && conditions[0].condition_documents ? conditions[0].condition_documents : null;
+  var html = buildLoanInfoCard(doc);
+
+  // Re-extract button
+  html += '<div style="padding:8px 18px 4px;"><button onclick="clearAndReupload()" style="background:none;border:1px dashed rgba(255,255,255,0.15);border-radius:8px;color:var(--muted);font-size:11px;padding:5px 14px;cursor:pointer;">&#8634; Re-extract from new document</button></div>';
+
   // Group by category
   var groups = {};
   conditions.forEach(function(c) {
@@ -4953,7 +5010,6 @@ function renderConditions(conditions) {
   });
 
   var categoryOrder = ['Income','Assets','Property','Credit','Insurance','Title','Appraisal','Legal','Other'];
-  var html = '<div style="padding:8px 18px 4px;"><button onclick="clearAndReupload()" style="background:none;border:1px dashed rgba(255,255,255,0.15);border-radius:8px;color:var(--muted);font-size:11px;padding:5px 14px;cursor:pointer;">&#8634; Re-extract from new document</button></div>';
   categoryOrder.forEach(function(cat) {
     if (!groups[cat] || !groups[cat].length) return;
     html += '<div class="cond-cat-header">' + cat + ' (' + groups[cat].length + ')</div>';
@@ -4967,11 +5023,15 @@ function renderConditions(conditions) {
         + '<input type="checkbox" class="cond-check" ' + checked + ' onchange="toggleCondition(\'' + c.id + '\', this.checked)">'
         + '<div class="cond-info">'
         + '<div class="cond-text">' + (c.condition_text || '') + '</div>'
-        + (c.notes ? '<div class="cond-note-preview">Note: ' + c.notes + '</div>' : '')
         + (c.cleared_at ? '<div class="cond-cleared-date">Cleared ' + new Date(c.cleared_at).toLocaleDateString() + '</div>' : '')
         + '</div>'
         + '<span class="cond-status-badge" style="background:' + statusBg + ';color:' + statusColor + '">' + (c.status || 'pending').replace('_', ' ').toUpperCase() + '</span>'
-        + '<button class="cond-note-btn" onclick="openConditionNote(\'' + c.id + '\', ' + JSON.stringify(c.notes || '').replace(/'/g, "\\'") + ')">Note</button>'
+        + '<button class="cond-note-btn" data-note-id="' + c.id + '">Note</button>'
+        + '</div>'
+        + '<div id="np-' + c.id + '" style="display:none;padding:8px 18px 12px 54px;">'
+        + '<div id="nh-' + c.id + '" style="margin-bottom:8px;font-size:.78rem;color:var(--muted);">Loading notes...</div>'
+        + '<div style="display:flex;gap:6px;"><input type="text" id="ni-' + c.id + '" placeholder="Add a note..." style="flex:1;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.78rem;outline:none;">'
+        + '<button class="cond-save-btn" data-save-id="' + c.id + '" style="padding:5px 12px;background:var(--gold);border:none;border-radius:6px;color:#000;font-size:.72rem;font-weight:700;cursor:pointer;">Save</button></div>'
         + '</div>';
     });
   });
@@ -4987,15 +5047,53 @@ async function toggleCondition(id, checked) {
   loadConditions();
 }
 
-function openConditionNote(id, currentNote) {
-  const note = prompt('Add a note for this condition:', currentNote || '');
-  if (note === null) return;
-  fetch(COND_FN, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'update_condition', condition_id: id, notes: note })
-  }).then(function() { loadConditions(); });
+async function loadCondNotes(conditionId) {
+  var el = document.getElementById('nh-' + conditionId);
+  if (!el) return;
+  try {
+    var res = await fetch(COND_FN, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_notes', condition_id: conditionId })
+    });
+    var data = await res.json();
+    var notes = data.notes || [];
+    if (!notes.length) { el.innerHTML = '<div style="font-size:.75rem;color:var(--muted);font-style:italic;">No notes yet</div>'; return; }
+    el.innerHTML = notes.map(function(n) {
+      return '<div style="padding:4px 0;border-bottom:1px solid var(--border);">'
+        + '<div style="font-size:.78rem;color:var(--text);">' + (n.note_text||'') + '</div>'
+        + '<div style="font-size:.65rem;color:var(--muted);">' + (n.created_by||'') + ' &middot; '
+        + new Date(n.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}) + '</div></div>';
+    }).join('');
+  } catch(e) { el.innerHTML = '<div style="color:var(--muted);font-size:.75rem;">Error loading notes</div>'; }
 }
+
+document.addEventListener('click', async function(e) {
+  var noteBtn = e.target.closest('.cond-note-btn');
+  var saveBtn = e.target.closest('.cond-save-btn');
+  if (noteBtn) {
+    var cid = noteBtn.getAttribute('data-note-id');
+    var panel = document.getElementById('np-' + cid);
+    if (!panel) return;
+    var isOpen = panel.style.display !== 'none';
+    panel.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) await loadCondNotes(cid);
+  }
+  if (saveBtn) {
+    var sid = saveBtn.getAttribute('data-save-id');
+    var input = document.getElementById('ni-' + sid);
+    var text = input && input.value ? input.value.trim() : '';
+    if (!text) return;
+    saveBtn.disabled = true; saveBtn.textContent = '...';
+    var contactId = new URLSearchParams(location.search).get('contact_id');
+    await fetch(COND_FN, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add_note', condition_id: sid, contact_id: contactId, note_text: text, created_by: 'Rene' })
+    });
+    input.value = '';
+    saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    await loadCondNotes(sid);
+  }
+});
 
 function handleConditionDrop(e) {
   e.preventDefault();
@@ -5026,6 +5124,12 @@ async function processConditionFile(file) {
   document.getElementById('conditions-list').style.display = 'none';
 
   try {
+    // Clear old conditions before re-extracting
+    await fetch(COND_FN, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear_conditions', contact_id: contactId })
+    });
+
     var base64 = await new Promise(function(resolve, reject) {
       var reader = new FileReader();
       reader.onload = function() { resolve(reader.result.split(',')[1]); };
