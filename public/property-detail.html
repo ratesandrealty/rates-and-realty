@@ -618,13 +618,34 @@ let nearbyMapRef = null;
 let fullMapRef = null;
 
 /* ===== INIT ===== */
-function initPage() {
-  const raw = sessionStorage.getItem('selected_listing');
-  if (!raw) { window.location.href = '/public/search-homes.html'; return; }
-  listing = JSON.parse(raw);
-  populateListing();
-  // Fetch full photo set (search page only sends 1 photo)
-  fetchFullPhotos(listing.ListingKey);
+async function initPage() {
+  // Try sessionStorage first (coming from search page)
+  var raw = sessionStorage.getItem('selected_listing');
+  if (raw) {
+    listing = JSON.parse(raw);
+    populateListing();
+    fetchFullPhotos(listing.ListingKey);
+    return;
+  }
+  // Try URL param (from similar homes <a href> or shared link)
+  var urlKey = new URLSearchParams(window.location.search).get('listing_key')
+    || new URLSearchParams(window.location.search).get('listing_id');
+  if (urlKey) {
+    try {
+      var rf = "$filter=ListingKey eq '"+urlKey+"'&$top=1&$expand=Media($top=5;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,CountyOrParish,PostalCode,Media,DaysOnMarket,StandardStatus,LotSizeAcres,YearBuilt,PublicRemarks";
+      var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rf})});
+      var data = await res.json();
+      if (data.value && data.value[0]) {
+        listing = data.value[0];
+        sessionStorage.setItem('selected_listing', JSON.stringify(listing));
+        populateListing();
+        fetchFullPhotos(listing.ListingKey);
+        return;
+      }
+    } catch(e) { console.error('[initPage] Fetch by listing_key failed:', e); }
+  }
+  // No listing found — redirect to search
+  window.location.href = '/public/search-homes.html';
 }
 
 async function fetchFullPhotos(listingKey) {
@@ -892,10 +913,14 @@ async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
       console.log('[similar] Attempt '+(a+1)+'/'+attempts.length+':', attempts[a].substring(0,80));
       var rawFilter = "$filter=" + encodeURIComponent(attempts[a]) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Media,PropertyType,PropertySubType";
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
-      if (!res.ok) { console.warn('[similar] HTTP '+res.status+' on attempt '+a); continue; }
+      if (!res.ok) {
+        var errBody = ''; try { errBody = await res.text(); } catch(x){}
+        console.warn('[similar] HTTP '+res.status+' on attempt '+(a+1)+':', errBody.substring(0,200));
+        continue;
+      }
       var data = await res.json();
       var raw = data.value || [];
-      console.log('[similar] Attempt '+(a+1)+' returned '+raw.length+' results');
+      console.log('[similar] Attempt '+(a+1)+' returned '+raw.length+' results'+(data.error?' (error: '+data.error+')':''));
       // Client-side filter: exclude self, rentals (price < $50K), and lease types
       list = raw.filter(function(l){
         if (l.ListingKey===excludeKey) return false;
@@ -966,10 +991,14 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
       console.log('[nearby] Attempt '+(a+1)+'/'+attempts.length+':', attempts[a].substring(0,80));
       var rawFilter = "$filter=" + encodeURIComponent(attempts[a]) + "&$top=12&$orderby=ListingContractDate desc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Latitude,Longitude,Media,PropertyType,PropertySubType";
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
-      if (!res.ok) { console.warn('[nearby] HTTP '+res.status+' on attempt '+a); continue; }
+      if (!res.ok) {
+        var errBody2 = ''; try { errBody2 = await res.text(); } catch(x){}
+        console.warn('[nearby] HTTP '+res.status+' on attempt '+(a+1)+':', errBody2.substring(0,200));
+        continue;
+      }
       var data = await res.json();
       var raw = data.value || [];
-      console.log('[nearby] Attempt '+(a+1)+' returned '+raw.length+' results');
+      console.log('[nearby] Attempt '+(a+1)+' returned '+raw.length+' results'+(data.error?' (error: '+data.error+')':''));
       nearby = raw.filter(function(l){
         if (l.ListingKey===excludeKey) return false;
         if (!l.Latitude || !l.Longitude) return false;

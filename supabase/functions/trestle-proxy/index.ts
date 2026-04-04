@@ -80,6 +80,8 @@ Deno.serve(async (req: Request) => {
     }
     const url = `${TRESTLE_API_BASE}/${endpoint}${queryString}`;
 
+    console.log("[trestle-proxy] Trestle URL:", url.substring(0, 300));
+
     const mlsRes = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -87,8 +89,11 @@ Deno.serve(async (req: Request) => {
       },
     });
 
+    console.log("[trestle-proxy] Trestle status:", mlsRes.status);
+
     if (!mlsRes.ok) {
       const errText = await mlsRes.text();
+      console.log("[trestle-proxy] Trestle error:", errText.substring(0, 300));
       return new Response(
         JSON.stringify({ error: `Trestle API error: ${mlsRes.status}`, detail: errText }),
         {
@@ -99,6 +104,8 @@ Deno.serve(async (req: Request) => {
     }
 
     const mlsData = await mlsRes.json();
+    const resultCount = mlsData?.value?.length || mlsData?.['@odata.count'] || 'unknown';
+    console.log("[trestle-proxy] Result count:", resultCount);
     return new Response(JSON.stringify(mlsData), {
       headers: {
         ...corsHeaders,
