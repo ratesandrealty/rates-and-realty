@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Communications — Rates & Realty CRM</title>
+<script src="/api/env.js?v=2026033003"></script>
+<style>
+:root{--gold:#c9a84c;--gold2:#e4b84e;--bg:#0a0a0a;--surface:#111;--surface2:#181818;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#fff;--muted:rgba(255,255,255,0.38)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+.topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;position:sticky;top:0;z-index:100}
+.topbar-brand{font-weight:800;font-size:14px;color:var(--gold)}
+.topbar a{color:var(--muted);text-decoration:none;font-size:12px;font-weight:600;padding:6px 10px;border-radius:6px;transition:all .15s}
+.topbar a:hover{color:#fff;background:rgba(255,255,255,0.05)}
+.topbar a.active{color:var(--gold);background:rgba(201,168,76,0.1)}
+.main{max-width:960px;margin:0 auto;padding:24px 20px}
+.comm-stat{flex:1;padding:14px 16px;border-radius:10px;background:#131315;border:1px solid rgba(255,255,255,0.05)}
+.stat-num{font-size:24px;font-weight:700;color:var(--gold);margin-bottom:2px}
+.stat-label{font-size:11px;color:#555}
+.comm-tab{padding:5px 14px;border-radius:20px;font-size:12px;border:none;background:transparent;color:#666;cursor:pointer;font-family:inherit;transition:all .15s}
+.comm-tab.active{background:rgba(201,168,76,0.15);color:var(--gold);font-weight:600}
+.comm-item{display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:10px;cursor:pointer;transition:all .15s;margin-bottom:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <span class="topbar-brand">Rates & Realty</span>
+  <div style="width:1px;height:18px;background:var(--border2);margin:0 4px"></div>
+  <a href="people.html">People</a>
+  <a href="pipeline.html">Pipeline</a>
+  <a href="communications.html" class="active">Communications</a>
+  <a href="lead-detail.html">Leads</a>
+  <div style="flex:1"></div>
+  <a href="../dashboard/admin.html">Dashboard</a>
+</div>
+
+<div class="main">
+
+  <!-- Header -->
+  <div style="margin-bottom:24px;">
+    <div style="font-size:11px;color:#7A5820;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin-bottom:4px;">COMMUNICATION CENTER</div>
+    <div style="font-size:28px;font-weight:700;color:#E0DDD4;margin-bottom:16px;">Communications</div>
+    <div style="display:flex;gap:12px;margin-bottom:20px;">
+      <div id="statEmails" class="comm-stat"><div class="stat-num">&mdash;</div><div class="stat-label">&#128231; Emails</div></div>
+      <div id="statSMS" class="comm-stat"><div class="stat-num">&mdash;</div><div class="stat-label">&#128172; SMS</div></div>
+      <div id="statCalls" class="comm-stat"><div class="stat-num">&mdash;</div><div class="stat-label">&#128222; Calls</div></div>
+      <div id="statToday" class="comm-stat"><div class="stat-num">&mdash;</div><div class="stat-label">&#9889; Today</div></div>
+    </div>
+  </div>
+
+  <!-- Filters + actions -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+    <div style="display:flex;gap:4px;background:#131315;border-radius:24px;padding:3px;border:1px solid rgba(255,255,255,0.05);">
+      <button type="button" onclick="setCommFilter('all')" id="filterAll" class="comm-tab active">All</button>
+      <button type="button" onclick="setCommFilter('email')" id="filterEmail" class="comm-tab">&#128231; Email</button>
+      <button type="button" onclick="setCommFilter('sms')" id="filterSMS" class="comm-tab">&#128172; SMS</button>
+      <button type="button" onclick="setCommFilter('call')" id="filterCall" class="comm-tab">&#128222; Calls</button>
+    </div>
+    <input id="commSearch" type="text" placeholder="Search by name, subject, phone..." oninput="filterComms()" style="flex:1;min-width:200px;height:36px;padding:0 12px;border-radius:20px;border:1px solid rgba(255,255,255,0.08);background:#131315;color:#E0DDD4;font-size:12.5px;outline:none;">
+    <button type="button" onclick="openLogCallModal()" style="padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;border:1px solid rgba(82,200,122,0.3);background:rgba(82,200,122,0.08);color:#52C87A;cursor:pointer;font-family:inherit;">+ Log Call</button>
+  </div>
+
+  <!-- Feed -->
+  <div id="commFeed"></div>
+  <div id="commLoading" style="text-align:center;padding:40px;color:#555;font-size:13px;">Loading communications...</div>
+  <div id="commEmpty" style="display:none;text-align:center;padding:60px;color:#444;font-size:14px;"><div style="font-size:36px;margin-bottom:12px;">&#128237;</div>No communications found</div>
+
+</div>
+
+<!-- Log Call Modal -->
+<div id="logCallModal" onclick="if(event.target===this)this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;">
+  <div style="width:480px;max-width:95vw;background:#0F0F11;border-radius:14px;padding:24px;border:1px solid rgba(82,200,122,0.2);box-shadow:0 32px 80px rgba(0,0,0,0.9);">
+    <div style="font-size:16px;font-weight:700;color:#E0DDD4;margin-bottom:16px;">&#128222; Log a Call</div>
+    <div style="margin-bottom:12px;">
+      <label style="font-size:10.5px;color:#555;text-transform:uppercase;letter-spacing:0.07em;display:block;margin-bottom:5px;">Contact</label>
+      <input id="callSearch" type="text" placeholder="Search contact..." oninput="searchCallContact(this.value)" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:#1A1A1D;color:#E0DDD4;font-size:13px;outline:none;box-sizing:border-box;">
+      <div id="callResults" style="display:none;background:#131315;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-top:4px;max-height:150px;overflow-y:auto;"></div>
+      <input type="hidden" id="callContactId">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div><label style="font-size:10.5px;color:#555;text-transform:uppercase;display:block;margin-bottom:5px;">Direction</label><select id="callDirection" style="width:100%;padding:9px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:#1A1A1D;color:#E0DDD4;font-size:13px;outline:none;"><option value="outbound">Outbound</option><option value="inbound">Inbound</option></select></div>
+      <div><label style="font-size:10.5px;color:#555;text-transform:uppercase;display:block;margin-bottom:5px;">Outcome</label><select id="callStatus" style="width:100%;padding:9px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:#1A1A1D;color:#E0DDD4;font-size:13px;outline:none;"><option value="completed">Completed</option><option value="missed">Missed</option><option value="voicemail">Voicemail</option><option value="no-answer">No Answer</option></select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div><label style="font-size:10.5px;color:#555;text-transform:uppercase;display:block;margin-bottom:5px;">Phone</label><input id="callPhone" type="tel" placeholder="(714) 000-0000" style="width:100%;padding:9px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:#1A1A1D;color:#E0DDD4;font-size:13px;outline:none;box-sizing:border-box;"></div>
+      <div><label style="font-size:10.5px;color:#555;text-transform:uppercase;display:block;margin-bottom:5px;">Duration (min)</label><input id="callDuration" type="number" min="0" placeholder="0" style="width:100%;padding:9px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:#1A1A1D;color:#E0DDD4;font-size:13px;outline:none;box-sizing:border-box;"></div>
+    </div>
+    <div style="margin-bottom:16px;"><label style="font-size:10.5px;color:#555;text-transform:uppercase;display:block;margin-bottom:5px;">Notes</label><textarea id="callNotes" rows="3" placeholder="What was discussed..." style="width:100%;padding:9px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:#1A1A1D;color:#E0DDD4;font-size:13px;outline:none;resize:vertical;font-family:inherit;box-sizing:border-box;"></textarea></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button onclick="document.getElementById('logCallModal').style.display='none'" type="button" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:#888;cursor:pointer;font-family:inherit;">Cancel</button>
+      <button onclick="saveCallLog()" type="button" style="padding:8px 20px;border-radius:8px;border:none;background:linear-gradient(135deg,#2A6A3A,#52C87A);color:#fff;font-weight:700;cursor:pointer;font-family:inherit;">&#128222; Save Call</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+var SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+var H = { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY };
+
+var _allComms = [];
+var _commFilter = 'all';
+
+function showToast(msg) { alert(msg); }
+
+async function loadCommunications() {
+  document.getElementById('commLoading').style.display = 'block';
+  document.getElementById('commEmpty').style.display = 'none';
+  document.getElementById('commFeed').innerHTML = '';
+
+  var [emailRes, smsRes, callRes] = await Promise.all([
+    fetch(SB_URL+'/rest/v1/email_log?select=id,subject,to_email,direction,status,created_at,contact_id&order=created_at.desc&limit=100',{headers:H}),
+    fetch(SB_URL+'/rest/v1/sms_log?select=id,body,to_phone,to_name,direction,status,trigger_type,contact_id,created_at&order=created_at.desc&limit=100',{headers:H}),
+    fetch(SB_URL+'/rest/v1/call_log?select=id,direction,to_phone,from_phone,duration_seconds,status,notes,contact_id,created_at&order=created_at.desc&limit=100',{headers:H}),
+  ]);
+  var emails = await emailRes.json().catch(function(){return[];});
+  var sms = await smsRes.json().catch(function(){return[];});
+  var calls = await callRes.json().catch(function(){return[];});
+  if (!Array.isArray(emails)) emails = [];
+  if (!Array.isArray(sms)) sms = [];
+  if (!Array.isArray(calls)) calls = [];
+
+  // Fetch contact names
+  var cids = [].concat(emails.map(function(e){return e.contact_id;}),sms.map(function(s){return s.contact_id;}),calls.map(function(c){return c.contact_id;})).filter(Boolean);
+  cids = cids.filter(function(v,i,a){return a.indexOf(v)===i;});
+  var cMap = {};
+  if (cids.length) {
+    var cRes = await fetch(SB_URL+'/rest/v1/contacts?id=in.('+cids.join(',')+')&select=id,first_name,last_name',{headers:H});
+    (await cRes.json()).forEach(function(c){cMap[c.id]=(c.first_name+' '+c.last_name).trim();});
+  }
+
+  function fmt(ts){return ts?new Date(ts).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'\u2014';}
+
+  _allComms = [].concat(
+    emails.map(function(e){return{id:e.id,type:'email',title:e.subject||'(no subject)',recipient:e.to_email,status:e.status||'sent',direction:e.direction||'outbound',contact_id:e.contact_id,name:cMap[e.contact_id]||'',dateStr:fmt(e.created_at),ts:new Date(e.created_at).getTime()};}),
+    sms.map(function(s){return{id:s.id,type:'sms',title:(s.body||'').substring(0,60),phone:s.to_phone,recipient:s.to_phone,status:s.status||'sent',direction:s.direction||'outbound',contact_id:s.contact_id,name:s.to_name||cMap[s.contact_id]||'',dateStr:fmt(s.created_at),ts:new Date(s.created_at).getTime()};}),
+    calls.map(function(c){return{id:c.id,type:'call',title:c.notes||(c.direction==='inbound'?'Incoming call':'Outgoing call'),phone:c.to_phone||c.from_phone,recipient:c.to_phone||c.from_phone,status:c.status||'completed',direction:c.direction||'outbound',duration:c.duration_seconds,contact_id:c.contact_id,name:cMap[c.contact_id]||'',dateStr:fmt(c.created_at),ts:new Date(c.created_at).getTime()};})
+  ).sort(function(a,b){return b.ts-a.ts;});
+
+  document.getElementById('statEmails').querySelector('.stat-num').textContent = emails.length;
+  document.getElementById('statSMS').querySelector('.stat-num').textContent = sms.length;
+  document.getElementById('statCalls').querySelector('.stat-num').textContent = calls.length;
+  var today = new Date().toDateString();
+  document.getElementById('statToday').querySelector('.stat-num').textContent = _allComms.filter(function(c){return new Date(c.ts).toDateString()===today;}).length;
+
+  document.getElementById('commLoading').style.display = 'none';
+  renderCommFeed();
+}
+
+function setCommFilter(type) {
+  _commFilter = type;
+  document.querySelectorAll('.comm-tab').forEach(function(b){b.classList.remove('active');});
+  var id = 'filter' + type.charAt(0).toUpperCase() + type.slice(1);
+  var el = document.getElementById(id); if (el) el.classList.add('active');
+  renderCommFeed();
+}
+
+function filterComms() { renderCommFeed(); }
+
+function renderCommFeed() {
+  var q = (document.getElementById('commSearch')?.value||'').toLowerCase();
+  var filtered = _allComms.filter(function(item) {
+    if (_commFilter!=='all' && item.type!==_commFilter) return false;
+    if (q && (item.name||'').toLowerCase().indexOf(q)<0 && (item.title||'').toLowerCase().indexOf(q)<0 && (item.recipient||'').toLowerCase().indexOf(q)<0) return false;
+    return true;
+  });
+  var feed = document.getElementById('commFeed');
+  if (!filtered.length) { feed.innerHTML=''; document.getElementById('commEmpty').style.display='block'; return; }
+  document.getElementById('commEmpty').style.display='none';
+  feed.innerHTML = filtered.map(renderCommItem).join('');
+}
+
+function renderCommItem(item) {
+  var icons={email:'\uD83D\uDCE7',sms:'\uD83D\uDCAC',call:'\uD83D\uDCDE'};
+  var colors={email:{bg:'rgba(201,168,76,0.08)',border:'rgba(201,168,76,0.15)',text:'#C9A84C'},sms:{bg:'rgba(90,160,224,0.08)',border:'rgba(90,160,224,0.15)',text:'#7BBCE8'},call:{bg:'rgba(82,200,122,0.08)',border:'rgba(82,200,122,0.15)',text:'#52C87A'}};
+  var c = colors[item.type]||colors.email;
+  var sc={sent:'#52C87A',delivered:'#52C87A',failed:'#E05252',missed:'#E05252',voicemail:'#AB7FE0',completed:'#52C87A','no-answer':'#E07F50'};
+  var statusCol = sc[item.status]||'#888';
+  return '<div class="comm-item" style="border:1px solid '+c.border+';background:'+c.bg+';" '+
+    (item.contact_id?'onclick="window.location.href=\'lead-detail.html?contact_id='+item.contact_id+'\'"':'')+
+    ' onmouseover="this.style.borderColor=\''+c.text+'55\'" onmouseout="this.style.borderColor=\''+c.border+'\'">' +
+    '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;background:'+c.bg+';border:1px solid '+c.border+';display:flex;align-items:center;justify-content:center;font-size:18px;">'+icons[item.type]+'</div>' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">' +
+        '<span style="font-size:13px;font-weight:600;color:#E0DDD4;">'+(item.name||item.recipient||item.phone||'Unknown')+'</span>' +
+        '<span style="font-size:10px;padding:2px 7px;border-radius:10px;color:'+statusCol+';background:'+statusCol+'22;border:1px solid '+statusCol+'44;">'+(item.status||'\u2014').toUpperCase()+'</span>' +
+        (item.direction==='inbound'?'<span style="font-size:10px;color:#AB7FE0;">\u2190 INBOUND</span>':'') +
+      '</div>' +
+      '<div style="font-size:12px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+(item.title||'(no content)')+'</div>' +
+      (item.recipient?'<div style="font-size:11px;color:#555;margin-top:2px;">'+item.recipient+'</div>':'') +
+    '</div>' +
+    '<div style="text-align:right;flex-shrink:0;">' +
+      '<div style="font-size:11px;color:#555;">'+item.dateStr+'</div>' +
+      (item.type==='call'&&item.duration?'<div style="font-size:11px;color:#52C87A;margin-top:2px;">\u23F1 '+Math.floor(item.duration/60)+'m '+item.duration%60+'s</div>':'') +
+      (item.contact_id?'<div style="font-size:11px;color:#C9A84C;margin-top:2px;">View Lead \u2192</div>':'') +
+    '</div></div>';
+}
+
+function openLogCallModal() {
+  document.getElementById('callSearch').value='';
+  document.getElementById('callContactId').value='';
+  document.getElementById('callPhone').value='';
+  document.getElementById('callDuration').value='';
+  document.getElementById('callNotes').value='';
+  document.getElementById('callDirection').value='outbound';
+  document.getElementById('callStatus').value='completed';
+  document.getElementById('logCallModal').style.display='flex';
+}
+
+async function searchCallContact(q) {
+  if (!q||q.length<2){document.getElementById('callResults').style.display='none';return;}
+  var res = await fetch(SB_URL+'/rest/v1/contacts?select=id,first_name,last_name,phone&or=(first_name.ilike.*'+q+'*,last_name.ilike.*'+q+'*,phone.ilike.*'+q+'*)&limit=8',{headers:H});
+  var contacts = await res.json();
+  var el = document.getElementById('callResults');
+  if (!contacts.length){el.style.display='none';return;}
+  el.style.display='block';
+  el.innerHTML = contacts.map(function(c){return '<div onclick="selectCallContact(\''+c.id+'\',\''+c.first_name+' '+c.last_name+'\',\''+(c.phone||'')+'\')" style="padding:8px 12px;cursor:pointer;font-size:12.5px;color:#C8C5BC;" onmouseover="this.style.background=\'rgba(201,168,76,0.08)\'" onmouseout="this.style.background=\'\'">'+c.first_name+' '+c.last_name+' <span style="color:#555;margin-left:6px;">'+(c.phone||'')+'</span></div>';}).join('');
+}
+
+function selectCallContact(id,name,phone) {
+  document.getElementById('callContactId').value=id;
+  document.getElementById('callSearch').value=name;
+  document.getElementById('callResults').style.display='none';
+  if (phone && !document.getElementById('callPhone').value) document.getElementById('callPhone').value=phone;
+}
+
+async function saveCallLog() {
+  var cid=document.getElementById('callContactId').value||null;
+  var dir=document.getElementById('callDirection').value;
+  var status=document.getElementById('callStatus').value;
+  var phone=document.getElementById('callPhone').value;
+  var dur=parseFloat(document.getElementById('callDuration').value)||0;
+  var notes=document.getElementById('callNotes').value.trim();
+  var res=await fetch(SB_URL+'/rest/v1/call_log',{method:'POST',headers:Object.assign({'Content-Type':'application/json','Prefer':'return=minimal'},H),body:JSON.stringify({contact_id:cid,direction:dir,status:status,to_phone:dir==='outbound'?phone:null,from_phone:dir==='inbound'?phone:null,duration_seconds:Math.round(dur*60),notes:notes||null})});
+  if (!res.ok){showToast('Save failed');return;}
+  if (cid){fetch(SB_URL+'/functions/v1/activity-tracker',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},H),body:JSON.stringify({action:'track_event',contact_id:cid,type:'CALL',description:dir+' call \u2014 '+status+(notes?': '+notes.slice(0,100):''),metadata:{direction:dir,status:status,duration_seconds:Math.round(dur*60)}})}).catch(function(){});}
+  document.getElementById('logCallModal').style.display='none';
+  showToast('Call logged \u2713');
+  loadCommunications();
+}
+
+loadCommunications();
+</script>
+</body>
+</html>
