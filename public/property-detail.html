@@ -874,11 +874,14 @@ function calcMortgage() {
 
 /* ===== SIMILAR HOMES ===== */
 async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
-  var typeFilter = isLand ? "PropertyType eq 'Land'" : "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse'";
+  var typeFilter = isLand ? "PropertyType eq 'Land'" : "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse')";
+  // Minimum price of $50,000 excludes rental/lease listings (which show as $500-$5000/mo)
+  var minSalePrice = Math.max(50000, Math.round((price||0)*0.65));
+  var maxSalePrice = Math.round((price||0)*1.35);
   var attempts = [
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.round((price||0)*0.65)+" and ListPrice le "+Math.round((price||0)*1.35)+" and ("+typeFilter+")",
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ("+typeFilter+")",
-    "City eq '"+city+"' and StandardStatus eq 'Active'"
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+minSalePrice+" and ListPrice le "+maxSalePrice+" and "+typeFilter,
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter,
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000"
   ];
   var list = [];
   for (var a = 0; a < attempts.length; a++) {
@@ -886,7 +889,15 @@ async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
       var rawFilter = "$filter=" + encodeURIComponent(attempts[a]) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Media,PropertyType,PropertySubType";
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
       var data = await res.json();
-      list = (data.value||[]).filter(function(l){return l.ListingKey!==excludeKey;}).slice(0,6);
+      // Client-side filter: exclude self, rentals (price < $50K), and lease types
+      list = (data.value||[]).filter(function(l){
+        if (l.ListingKey===excludeKey) return false;
+        var p = l.ListPrice||0;
+        if (p < 50000) return false;
+        var pt = (l.PropertySubType||'').toLowerCase();
+        if (pt.indexOf('lease')>=0 || pt.indexOf('rental')>=0) return false;
+        return true;
+      }).slice(0,6);
       if (list.length >= 3) break;
     } catch(e) { console.warn('similar attempt '+a+' failed',e); }
   }
@@ -928,11 +939,13 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
     return;
   }
 
-  var typeFilter = isLand ? "PropertyType eq 'Land'" : "PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse' or PropertyType eq 'ResidentialIncome'";
+  var typeFilter = isLand ? "PropertyType eq 'Land'" : "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse' or PropertyType eq 'ResidentialIncome')";
+  var minNearbyPrice = Math.max(50000, Math.round((price||0)*0.6));
+  var maxNearbyPrice = Math.round((price||0)*1.4);
   var attempts = [
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.round((price||0)*0.6)+" and ListPrice le "+Math.round((price||0)*1.4)+" and ("+typeFilter+")",
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ("+typeFilter+")",
-    "City eq '"+city+"' and StandardStatus eq 'Active'"
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+minNearbyPrice+" and ListPrice le "+maxNearbyPrice+" and "+typeFilter,
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter,
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000"
   ];
   var nearby = [];
   for (var a = 0; a < attempts.length; a++) {
@@ -941,7 +954,14 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
 
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
       var data = await res.json();
-      nearby = (data.value||[]).filter(function(l){return l.ListingKey!==excludeKey&&l.Latitude&&l.Longitude;}).slice(0,10);
+      nearby = (data.value||[]).filter(function(l){
+        if (l.ListingKey===excludeKey) return false;
+        if (!l.Latitude || !l.Longitude) return false;
+        if ((l.ListPrice||0) < 50000) return false;
+        var pt = (l.PropertySubType||'').toLowerCase();
+        if (pt.indexOf('lease')>=0 || pt.indexOf('rental')>=0) return false;
+        return true;
+      }).slice(0,10);
       if (nearby.length >= 3) break;
     } catch(e) { console.warn('nearby attempt '+a+' failed',e); }
   }
