@@ -803,7 +803,7 @@ function populateListing() {
   }
 
   // Init map
-  initDetailMap(l.Latitude, l.Longitude, l.UnparsedAddress);
+  initDetailMap(l.Latitude, l.Longitude, l.UnparsedAddress, l.ListPrice);
 
   // Load similar homes and nearby homes map
   loadSimilarHomes(city, price, l.ListingKey, isLand, l.PropertyType);
@@ -832,7 +832,14 @@ function makePricePin(price) {
   wrapper.appendChild(inner);
   return wrapper;
 }
-function initDetailMap(lat, lng, addr) {
+// Build a non-interactive subject-property gold price pill (slightly larger, higher z).
+function makeSubjectPricePill(price) {
+  var el = document.createElement('div');
+  el.style.cssText = 'background:#C9A84C;color:#111;font-weight:700;font-size:12px;font-family:sans-serif;padding:5px 10px;border-radius:20px;border:2px solid #fff;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.5);cursor:default;pointer-events:none;line-height:1';
+  el.textContent = formatPricePin(price) || '\u2022';
+  return el;
+}
+function initDetailMap(lat, lng, addr, price) {
   if (!lat || !lng) {
     document.getElementById('detailMap').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.85rem">Map not available - no coordinates</div>';
     return;
@@ -845,7 +852,7 @@ function initDetailMap(lat, lng, addr) {
     attributionControl: false
   });
   detailMapRef.addControl(new mapboxgl.NavigationControl({showCompass:false}), 'top-right');
-  new mapboxgl.Marker({ element: makeGoldDot(18) })
+  new mapboxgl.Marker({ element: makeSubjectPricePill(price), anchor: 'bottom' })
     .setLngLat([lng, lat])
     .setPopup(new mapboxgl.Popup({offset:20}).setHTML('<div style="color:#000;font-size:12px;padding:2px">'+(addr||'')+'</div>'))
     .addTo(detailMapRef);
@@ -995,82 +1002,64 @@ function goToSimilar(listingKey) {
   }
 }
 
-/* ===== NEARBY HOMES MAP ===== */
-async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, subjectLat, subjectLng) {
-  if (!subjectLat || !subjectLng) {
-    document.getElementById('nearbyHomesMap').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.85rem">Map not available</div>';
-    return;
-  }
+/* ===== NEARBY HOMES MAP — dynamic viewport refetch ===== */
+var nearbyMarkers = [];
+var nearbyExcludeKey = null;
+var nearbyFetchTimer = null;
+var nearbyFetchSeq = 0;
 
-  // Don't filter by PropertyType/PropertySubType — CRMLS rejects most enum values.
-  // Rentals filtered client-side via ListPrice ge 50000.
-  var attempts = [];
-  if (city && price > 0) {
-    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round(price*0.75))+" and ListPrice le "+Math.round(price*1.25));
-    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000");
-  }
-  if (city) {
-    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active'");
-  }
-  attempts.push("StandardStatus eq 'Active' and ListPrice ge 50000");
-  var nearby = [];
-  for (var a = 0; a < attempts.length; a++) {
-    try {
-      console.log('[nearby] Attempt '+(a+1)+'/'+attempts.length+':', attempts[a].substring(0,80));
-      var rawFilter = "$filter=" + encodeURIComponent(attempts[a]) + "&$top=12&$orderby=ListingContractDate desc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Latitude,Longitude,Media,PropertyType,PropertySubType";
-      var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
-      if (!res.ok) {
-        var errBody2 = ''; try { errBody2 = await res.text(); } catch(x){}
-        console.warn('[nearby] HTTP '+res.status+' on attempt '+(a+1)+':', errBody2.substring(0,200));
-        continue;
-      }
-      var data = await res.json();
-      var raw = data.value || [];
-      console.log('[nearby] Attempt '+(a+1)+' returned '+raw.length+' results'+(data.error?' (error: '+data.error+')':''));
-      nearby = raw.filter(function(l){
-        if (l.ListingKey===excludeKey) return false;
-        if (!l.Latitude || !l.Longitude) return false;
-        if ((l.ListPrice||0) < 50000) return false;
-        var pt = (l.PropertySubType||'').toLowerCase();
-        if (pt.indexOf('lease')>=0 || pt.indexOf('rental')>=0) return false;
-        return true;
-      }).slice(0,10);
-      if (nearby.length >= 1) { console.log('[nearby] \u2713 Using attempt '+(a+1)+' with '+nearby.length+' results'); break; }
-    } catch(e) { console.warn('[nearby] attempt '+a+' failed',e); }
-  }
+async function fetchAndRenderNearby() {
+  if (!nearbyMapRef) return;
+  var seq = ++nearbyFetchSeq; // prevent race between overlapping fetches
+  var bounds = nearbyMapRef.getBounds();
+  var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+  var odata = "Latitude ge " + sw.lat + " and Latitude le " + ne.lat +
+              " and Longitude ge " + sw.lng + " and Longitude le " + ne.lng +
+              " and StandardStatus eq 'Active' and ListPrice ge 50000";
+  var rawFilter = "$filter=" + encodeURIComponent(odata) +
+                  "&$top=50&$orderby=ListPrice desc" +
+                  "&$expand=Media($top=1;$select=MediaURL)" +
+                  "&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Latitude,Longitude,Media,PropertyType,PropertySubType";
+  var listings = [];
+  try {
+    var res = await fetch(SB_URL+'/functions/v1/trestle-proxy', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SB_KEY},
+      body: JSON.stringify({ endpoint:'Property', rawFilter: rawFilter })
+    });
+    if (!res.ok) { console.warn('[nearby] HTTP '+res.status); return; }
+    var data = await res.json();
+    listings = (data.value || []).filter(function(l){
+      if (l.ListingKey === nearbyExcludeKey) return false;
+      if (!l.Latitude || !l.Longitude) return false;
+      if ((l.ListPrice||0) < 50000) return false;
+      var sub = (l.PropertySubType||'').toLowerCase();
+      if (sub.indexOf('lease')>=0 || sub.indexOf('rental')>=0) return false;
+      return true;
+    });
+  } catch(e) { console.warn('[nearby] fetch error:', e.message); return; }
 
-  // Merge into session storage for navigation
-  var existing = JSON.parse(sessionStorage.getItem('all_similar_listings')||'[]');
-  nearby.forEach(function(n){if(!existing.find(function(m){return m.ListingKey===n.ListingKey;}))existing.push(n);});
-  sessionStorage.setItem('all_similar_listings',JSON.stringify(existing));
+  if (seq !== nearbyFetchSeq) return; // newer fetch already in flight
+  console.log('[nearby] viewport fetch: ' + listings.length + ' listings in bounds');
 
-  // Create Mapbox map
-  nearbyMapRef = new mapboxgl.Map({
-    container: 'nearbyHomesMap',
-    style: MAPBOX_DARK_STYLE,
-    center: [subjectLng, subjectLat],
-    zoom: 14,
-    attributionControl: false
-  });
-  nearbyMapRef.addControl(new mapboxgl.NavigationControl({showCompass:false}), 'top-right');
-  new mapboxgl.Marker({ element: makeGoldDot(18) })
-    .setLngLat([subjectLng, subjectLat])
-    .setPopup(new mapboxgl.Popup({offset:20}).setHTML('<div style="color:#000;font-size:12px;padding:2px"><strong>\uD83D\uDCCD This Property</strong><br>'+(listing.UnparsedAddress||'')+'</div>'))
-    .addTo(nearbyMapRef);
-  if (nearby[0]) console.log('[nearby] first listing fields:', { ListingKey: nearby[0].ListingKey, Latitude: nearby[0].Latitude, Longitude: nearby[0].Longitude, ListPrice: nearby[0].ListPrice });
-  console.log('[nearby] rendering ' + nearby.length + ' price-pin markers');
-  nearby.forEach(function(l){
-    var lat = parseFloat(l.Latitude);
-    var lng = parseFloat(l.Longitude);
-    if (!lat || !lng) return; // guard against missing coords
+  // Clear existing nearby markers (subject stays)
+  nearbyMarkers.forEach(function(m){ m.remove(); });
+  nearbyMarkers = [];
+
+  listings.forEach(function(l){
+    var lat = parseFloat(l.Latitude), lng = parseFloat(l.Longitude);
+    if (!lat || !lng) return;
     var el = makePricePin(l.ListPrice || 0);
     var inner = el.firstElementChild;
-    var popupHtml = '<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5;font-family:system-ui,sans-serif"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br>'+((l.BedroomsTotal||'')+' bd \u00b7 '+(l.BathroomsTotalInteger||'')+' ba')+'<br><a href="property-detail.html?listing_key='+encodeURIComponent(l.ListingKey)+'" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a></div>';
-    new mapboxgl.Marker({ element: el })
-      .setLngLat([lng, lat])
-      .setPopup(new mapboxgl.Popup({offset:16,closeButton:false,maxWidth:'220px'}).setHTML(popupHtml))
-      .addTo(nearbyMapRef);
-    // Hover: scale/invert the inner child only — never touch the wrapper's transform
+    var popupHtml = '<div style="color:#000;font-size:13px;max-width:220px;line-height:1.5;font-family:system-ui,sans-serif">'+
+      '<strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+
+      (l.UnparsedAddress||'')+'<br>'+
+      ((l.BedroomsTotal||'\u2014')+' bd \u00b7 '+(l.BathroomsTotalInteger||'\u2014')+' ba'+(l.LivingArea?' \u00b7 '+l.LivingArea.toLocaleString()+' sqft':''))+
+      '<br><a href="property-detail.html?listing_key='+encodeURIComponent(l.ListingKey)+'" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a>'+
+    '</div>';
+    el.addEventListener('click', function(){
+      window.location.href = 'property-detail.html?listing_key=' + encodeURIComponent(l.ListingKey);
+    });
     el.addEventListener('mouseover', function(){
       inner.style.transform = 'scale(1.12)';
       inner.style.background = '#fff';
@@ -1087,18 +1076,67 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
       var item = document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');
       if (item) { item.style.background=''; item.style.borderColor=''; }
     });
+    var m = new mapboxgl.Marker({ element: el })
+      .setLngLat([lng, lat])
+      .setPopup(new mapboxgl.Popup({offset:16,closeButton:false,maxWidth:'240px'}).setHTML(popupHtml))
+      .addTo(nearbyMapRef);
+    nearbyMarkers.push(m);
   });
+
+  // Merge into session storage for navigation
+  var existing = JSON.parse(sessionStorage.getItem('all_similar_listings')||'[]');
+  listings.forEach(function(n){ if(!existing.find(function(m){return m.ListingKey===n.ListingKey;})) existing.push(n); });
+  sessionStorage.setItem('all_similar_listings', JSON.stringify(existing));
+
+  renderNearbyCards(listings);
+}
+
+function renderNearbyCards(listings) {
   var listEl = document.getElementById('nearbyHomesList');
-  var listItems = nearby.slice(0,5);
-  if (!listItems.length) { listEl.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No nearby listings found.</p>'; return; }
-  listEl.innerHTML = listItems.map(function(l){
+  if (!listEl) return;
+  var items = listings.slice(0,5);
+  if (!items.length) { listEl.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No nearby listings in view. Zoom out to expand your search.</p>'; return; }
+  listEl.innerHTML = items.map(function(l){
     var photo=(l.Media&&l.Media[0])?l.Media[0].MediaURL:'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60';
     var lid = l.ListingKey || l.ListingId || '';
     var isL=l.PropertyType==='Land';var st='';
     if(!isL&&l.BedroomsTotal!=null)st+=l.BedroomsTotal+' bd';if(!isL&&l.BathroomsTotalInteger!=null)st+=(st?' \u00b7 ':'')+l.BathroomsTotalInteger+' ba';if(l.LivingArea)st+=(st?' \u00b7 ':'')+l.LivingArea.toLocaleString()+' sf';
     var detailUrl = 'property-detail.html?listing_key='+encodeURIComponent(lid);
-    return'<a href="'+detailUrl+'" data-nearby-id="'+lid+'" class="nearby-listing" style="text-decoration:none;transition:all .15s;display:flex;" onmouseover="this.style.background=\'rgba(90,160,224,0.06)\';this.style.borderColor=\'rgba(90,160,224,0.4)\';this.style.transform=\'translateX(2px)\'" onmouseout="this.style.background=\'\';this.style.borderColor=\'\';this.style.transform=\'\'"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60\'"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div><div style="color:#3A3A45;font-size:20px;flex-shrink:0;">\u203A</div></a>';
+    return '<a href="'+detailUrl+'" data-nearby-id="'+lid+'" class="nearby-listing" style="text-decoration:none;transition:all .15s;display:flex;" onmouseover="this.style.background=\'rgba(201,168,76,0.06)\';this.style.borderColor=\'rgba(201,168,76,0.4)\';this.style.transform=\'translateX(2px)\'" onmouseout="this.style.background=\'\';this.style.borderColor=\'\';this.style.transform=\'\'"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60\'"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div><div style="color:#3A3A45;font-size:20px;flex-shrink:0;">\u203A</div></a>';
   }).join('');
+}
+
+function debouncedNearbyFetch() {
+  clearTimeout(nearbyFetchTimer);
+  nearbyFetchTimer = setTimeout(fetchAndRenderNearby, 600);
+}
+
+async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, subjectLat, subjectLng) {
+  if (!subjectLat || !subjectLng) {
+    document.getElementById('nearbyHomesMap').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.85rem">Map not available</div>';
+    return;
+  }
+  nearbyExcludeKey = excludeKey;
+
+  nearbyMapRef = new mapboxgl.Map({
+    container: 'nearbyHomesMap',
+    style: MAPBOX_DARK_STYLE,
+    center: [subjectLng, subjectLat],
+    zoom: 14,
+    attributionControl: false
+  });
+  nearbyMapRef.addControl(new mapboxgl.NavigationControl({showCompass:false}), 'top-right');
+
+  // Subject marker — always pinned at subject coords, never cleared on re-fetch
+  new mapboxgl.Marker({ element: makeSubjectPricePill(price), anchor: 'bottom' })
+    .setLngLat([subjectLng, subjectLat])
+    .setPopup(new mapboxgl.Popup({offset:20}).setHTML('<div style="color:#000;font-size:12px;padding:2px"><strong>\uD83D\uDCCD This Property</strong><br>'+(listing.UnparsedAddress||'')+'</div>'))
+    .addTo(nearbyMapRef);
+
+  // Initial fetch on load + refetch on any pan/zoom (debounced)
+  nearbyMapRef.on('load', fetchAndRenderNearby);
+  nearbyMapRef.on('moveend', debouncedNearbyFetch);
+  nearbyMapRef.on('zoomend', debouncedNearbyFetch);
 }
 
 /* ===== LIGHTBOX ===== */
