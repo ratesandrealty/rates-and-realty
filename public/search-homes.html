@@ -677,6 +677,34 @@ let filters = {
 };
 
 /* ===== INIT ===== */
+// Apply filter params from an incoming search link (shared from CRM Search Link Builder)
+// URL format: ?county=Orange&city=Westminster,Garden+Grove&min_price=400000&max_price=850000&beds=3&baths=2&type=SFR&sort=price_asc
+function _applyIncomingSearchParams() {
+  try {
+    var p = new URLSearchParams(location.search);
+    if (![...p.keys()].length) return;
+    console.log('[search-homes] applying incoming filter params:', Object.fromEntries(p));
+    var cityParam = p.get('city');
+    if (cityParam) { selectedCities = cityParam.split(',').map(function(s){return s.trim();}).filter(Boolean); }
+    var countyParam = p.get('county');
+    if (countyParam) {
+      selectedCounties.clear();
+      countyParam.split(',').forEach(function(c){ selectedCounties.add(c.trim() + (c.indexOf('County')<0?' County':'')); });
+    }
+    var setVal = function(id, v) { var el = document.getElementById(id); if (el && v) el.value = v; };
+    setVal('minPriceInput', p.get('min_price'));
+    setVal('maxPriceInput', p.get('max_price'));
+    setVal('minBedsInput', p.get('beds'));
+    setVal('minBathsInput', p.get('baths'));
+    var sortMap = { price_asc:'ListPrice asc', price_desc:'ListPrice desc', newest:'ListingContractDate desc', dom:'DaysOnMarket desc' };
+    var sp = p.get('sort'); if (sp && sortMap[sp]) { var s = document.getElementById('sortSelect'); if (s) s.value = sortMap[sp]; }
+    // Update dropdown labels
+    if (typeof updateCountyDropdownLabel === 'function') updateCountyDropdownLabel();
+    if (typeof updateCityDropdownLabel === 'function') updateCityDropdownLabel();
+    if (typeof renderLocationChips === 'function') renderLocationChips();
+  } catch(e) { console.warn('[search-homes] param apply error:', e); }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   // Load cart from localStorage
   try { var saved = JSON.parse(localStorage.getItem('showingCart')||'[]'); if (Array.isArray(saved)) showingCart = saved; } catch(e) {}
@@ -686,6 +714,7 @@ document.addEventListener('DOMContentLoaded', function() {
   initFilterModalTabs();
   initToggleGroups();
   initTypeGrid();
+  _applyIncomingSearchParams();
   fetchListings();
   updateSearchCartBadge();
   // Set cart date min to today
