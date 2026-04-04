@@ -1172,20 +1172,8 @@
       }
     }
   </style>
-  <script>
-    function loadGooglePlaces() {
-      if (typeof google !== 'undefined' && google.maps) {
-        initAddressAutocomplete();
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyACmn2j8wwVNO53MLWGPFFsImjEUxe4D50&libraries=places&callback=initAddressAutocomplete&loading=async';
-      script.async = true;
-      script.defer = true;
-      document.head.appendChild(script);
-    }
-    window.addEventListener('load', loadGooglePlaces);
-  </script>
+  <!-- Google Maps Places autocomplete removed (API key retired); address input uses plain text -->
+
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
 <body class="admin-page">
@@ -4585,11 +4573,12 @@ async function loadCreditApps() {
   const cc = document.getElementById('credit-app-content');
   if (!contactId) return;
   try {
-    const { data } = await sb.from('credit_applications')
+    const r = await sb.from('credit_applications')
       .select('*')
       .eq('contact_id', contactId)
       .order('created_at', { ascending: false });
-    const apps = data || [];
+    if (r.error) { console.warn('[credit_applications] unavailable:', r.error.message); return; }
+    const apps = r.data || [];
 
     const score = contactData.credit_score || 0;
     cc.innerHTML = `
@@ -10756,8 +10745,7 @@ async function sendEmailFromComposer() {
         subject: subject,
         body_html: htmlBody,
         body_text: textBody
-      }, ccEmails.length ? {cc: ccEmails} : {}, bccEmails.length ? {bcc: bccEmails} : {})
-      })
+      }, ccEmails.length ? {cc: ccEmails} : {}, bccEmails.length ? {bcc: bccEmails} : {}))
     });
     var data = await res.json();
     if (data.success || data.id) {
