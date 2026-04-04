@@ -64,18 +64,23 @@ Deno.serve(async (req: Request) => {
 
     // ── SEND ──────────────────────────────────────────────────────────────────
     if (action === 'send') {
-      const { to_email, subject, cc, contact_id, crm_id } = body;
-      const html = stripMarkdownFences(body.html || '');
-      if (!to_email || !subject || !html) return err('to_email, subject, html required');
+      const { subject, cc, contact_id, crm_id } = body;
+      // Accept multiple field name variants from different callers
+      const toEmail = body.to_email || (Array.isArray(body.to) ? body.to[0] : body.to) || (Array.isArray(body.to_emails) ? body.to_emails[0] : null);
+      const html = stripMarkdownFences(body.html || body.body_html || '');
+      if (!toEmail || !subject || !html) {
+        console.error('[email-service] Missing fields:', { to_email: !!toEmail, subject: !!subject, html_len: html?.length, body_keys: Object.keys(body) });
+        return err('to_email, subject, html required (got: to_email=' + !!toEmail + ', subject=' + !!subject + ', html=' + !!html + ')');
+      }
 
-      const result = await sendEmail({ to: to_email, subject, html, cc });
+      const result = await sendEmail({ to: toEmail, subject, html, cc });
 
       // Log to email_log
       const { data: emailLog } = await sb.from('email_log').insert({
         contact_id: contact_id || null,
         direction: 'outbound',
-        from_email: 'rene@ratesandrealty.com',
-        to_email,
+        from_email: body.from_email || body.from || 'rene@ratesandrealty.com',
+        to_email: toEmail,
         cc_email: cc || null,
         subject,
         body_html: html,
@@ -94,7 +99,7 @@ Deno.serve(async (req: Request) => {
           title: `Email sent: ${subject}`,
           description: html.replace(/<[^>]*>/g,'').substring(0, 200),
           email_subject: subject,
-          email_to: to_email,
+          email_to: toEmail,
           email_from: 'rene@ratesandrealty.com',
           email_html: html,
           email_cc: cc || null,
