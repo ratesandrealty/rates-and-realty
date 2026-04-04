@@ -201,14 +201,24 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'get_alerts') {
       const { portal_user_id, contact_id, borrower_id } = body;
-      let q = sb.from('listing_alerts').select('*').order('created_at', { ascending: false });
-      if (portal_user_id) q = q.eq('portal_user_id', portal_user_id);
-      else if (contact_id) q = q.eq('contact_id', contact_id);
-      else if (borrower_id) q = q.eq('borrower_id', borrower_id);
-      else return err('portal_user_id, contact_id, or borrower_id required');
-      const { data, error } = await q;
+      // OR across all provided identifiers — alerts may be linked via any of them
+      const orParts: string[] = [];
+      if (contact_id) orParts.push(`contact_id.eq.${contact_id}`);
+      if (portal_user_id) orParts.push(`portal_user_id.eq.${portal_user_id}`);
+      if (borrower_id) orParts.push(`borrower_id.eq.${borrower_id}`);
+      if (!orParts.length) return err('portal_user_id, contact_id, or borrower_id required');
+      const { data, error } = await sb.from('listing_alerts')
+        .select('*')
+        .or(orParts.join(','))
+        .order('created_at', { ascending: false });
       if (error) return err(error.message, 500);
-      return ok({ alerts: data || [] });
+      // De-dupe in case the same alert matches multiple ID fields
+      const seen = new Set();
+      const unique = (data || []).filter((a: any) => {
+        if (seen.has(a.id)) return false;
+        seen.add(a.id); return true;
+      });
+      return ok({ alerts: unique });
     }
 
     if (action === 'toggle_alert') {
