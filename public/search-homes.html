@@ -302,6 +302,9 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 <script src="/api/env.js"></script>
 <link href='https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css' rel='stylesheet'>
 <script src='https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js'></script>
+<link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.3/mapbox-gl-draw.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.3/mapbox-gl-draw.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
 <script src="/public/js/map-controls.js" defer></script>
 </head>
 <body>
@@ -874,12 +877,18 @@ function buildODataFilter(bounds) {
   var parts = [];
 
   if (bounds) {
-    // Map viewport bounding box — overrides city/county selectors
+    // Map viewport bounding box — overrides city/county selectors.
+    // Clamp to reasonable CA-ish range; Trestle rejects tiny/negative values
+    // and prefers 4 decimal places.
     var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
-    parts.push('Latitude ge ' + sw.lat.toFixed(6));
-    parts.push('Latitude le ' + ne.lat.toFixed(6));
-    parts.push('Longitude ge ' + sw.lng.toFixed(6));
-    parts.push('Longitude le ' + ne.lng.toFixed(6));
+    var swLat = Math.max(sw.lat, 25), swLng = Math.max(sw.lng, -125);
+    var neLat = Math.min(ne.lat, 49), neLng = Math.min(ne.lng, -114);
+    console.log('[bounds-search] raw:', { sw_lat:sw.lat, sw_lng:sw.lng, ne_lat:ne.lat, ne_lng:ne.lng });
+    console.log('[bounds-search] clamped:', { swLat:swLat, swLng:swLng, neLat:neLat, neLng:neLng });
+    parts.push('Latitude ge ' + swLat.toFixed(4));
+    parts.push('Latitude le ' + neLat.toFixed(4));
+    parts.push('Longitude ge ' + swLng.toFixed(4));
+    parts.push('Longitude le ' + neLng.toFixed(4));
   } else if (selectedCities.length > 0) {
     // Location — cities take priority, then counties, then all CA
     var cityList = selectedCities.slice(0, 12);
@@ -984,15 +993,21 @@ async function fetchListings(page, append, boundsOverride) {
   var effectiveBounds = boundsOverride || (_boundsFetchActive ? _searchAreaBounds : null);
 
   var sort = document.getElementById('sortSelect').value || 'ListPrice desc';
-  var skip = (page - 1) * PAGE_SIZE;
+  // Zoom-based page size for bounds searches — more results when zoomed in
+  var pageSize = PAGE_SIZE;
+  if (effectiveBounds && map && typeof map.getZoom === 'function') {
+    var zm = map.getZoom();
+    pageSize = zm < 11 ? 50 : (zm < 13 ? 100 : 200);
+  }
+  var skip = (page - 1) * pageSize;
   var filterParts = buildODataFilter(effectiveBounds);
   // filterParts is a full rawFilter string starting with $filter=...
   // We need to replace $top and add $skip
-  var base = filterParts.replace(/\$top=\d+/, '$top=' + PAGE_SIZE);
+  var base = filterParts.replace(/\$top=\d+/, '$top=' + pageSize);
   if (base.indexOf('$skip') === -1) base += '&$skip=' + skip;
   else base = base.replace(/\$skip=\d+/, '$skip=' + skip);
 
-  console.log('[Trestle] page:', page, 'skip:', skip);
+  console.log('[Trestle] page:', page, 'skip:', skip, 'top:', pageSize, 'bounds:', !!effectiveBounds);
   console.log('RAW:', base);
 
   try {
@@ -1004,6 +1019,7 @@ async function fetchListings(page, append, boundsOverride) {
     var data = await res.json();
     var listings = data.value || [];
 
+    console.log('[Trestle] returned ' + listings.length + ' listings (count: ' + (data['@odata.count']||'?') + ')');
     if (append) { allListings = allListings.concat(listings); }
     else { allListings = listings; totalCount = data['@odata.count'] || 0; }
 
@@ -1035,7 +1051,14 @@ function applyClientFilters(page, append) {
     });
   }
 
-  // Shape filter — disabled after Mapbox migration (drawing tools TBD)
+  // Polygon filter — applies when user has drawn a shape via MapboxDraw
+  if (_drawPolygon && typeof turf !== 'undefined') {
+    items = items.filter(function(l) {
+      if (!l.Latitude || !l.Longitude) return false;
+      var pt = turf.point([l.Longitude, l.Latitude]);
+      return turf.booleanPointInPolygon(pt, _drawPolygon);
+    });
+  }
 
   filteredListings = items;
   renderListings(page, append);
@@ -1723,12 +1746,72 @@ function fitMarkers() {
   map.fitBounds(bounds, { padding: 40, maxZoom: 15 });
 }
 
-// Drawing tools disabled during Mapbox migration — TODO: re-add via @mapbox/mapbox-gl-draw
+// Draw-to-filter via @mapbox/mapbox-gl-draw + turf
+var _drawCtl = null;
+var _drawPolygon = null; // active GeoJSON polygon filter
+function _initDrawControl() {
+  if (_drawCtl || !map || typeof MapboxDraw === 'undefined') return;
+  _drawCtl = new MapboxDraw({
+    displayControlsDefault: false,
+    styles: [
+      { id:'gl-draw-polygon-fill', type:'fill', filter:['all',['==','active','true'],['==','$type','Polygon']],
+        paint:{ 'fill-color':'#C9A84C','fill-opacity':0.15 } },
+      { id:'gl-draw-polygon-stroke-active', type:'line', filter:['all',['==','active','true'],['==','$type','Polygon']],
+        paint:{ 'line-color':'#C9A84C','line-width':2 } },
+      { id:'gl-draw-polygon-fill-inactive', type:'fill', filter:['all',['==','active','false'],['==','$type','Polygon']],
+        paint:{ 'fill-color':'#C9A84C','fill-opacity':0.10 } },
+      { id:'gl-draw-polygon-stroke-inactive', type:'line', filter:['all',['==','active','false'],['==','$type','Polygon']],
+        paint:{ 'line-color':'#C9A84C','line-width':1.5 } },
+      { id:'gl-draw-polygon-midpoint', type:'circle', filter:['all',['==','meta','midpoint'],['==','$type','Point']],
+        paint:{ 'circle-radius':3,'circle-color':'#C9A84C' } },
+      { id:'gl-draw-polygon-point', type:'circle', filter:['all',['==','meta','vertex'],['==','$type','Point']],
+        paint:{ 'circle-radius':5,'circle-color':'#C9A84C','circle-stroke-width':2,'circle-stroke-color':'#fff' } }
+    ]
+  });
+  map.addControl(_drawCtl);
+  map.on('draw.create', _onDrawDone);
+  map.on('draw.update', _onDrawDone);
+  map.on('draw.delete', _onDrawDeleted);
+}
+function _onDrawDone(e) {
+  var feat = e.features && e.features[0];
+  if (!feat || typeof turf === 'undefined') return;
+  _drawPolygon = feat;
+  var c = document.getElementById('drawCircleBtn'); if (c) c.classList.remove('active');
+  var r = document.getElementById('drawRectBtn'); if (r) r.classList.remove('active');
+  // Filter existing fetched listings to those inside the polygon
+  var inside = filteredListings.filter(function(l) {
+    if (!l.Latitude || !l.Longitude) return false;
+    var pt = turf.point([l.Longitude, l.Latitude]);
+    return turf.booleanPointInPolygon(pt, feat);
+  });
+  filteredListings = inside;
+  renderListings(1, false);
+  renderMarkers();
+  document.getElementById('listingCount').textContent = inside.length + ' home' + (inside.length !== 1 ? 's' : '') + ' in drawn area';
+  showToast(inside.length + ' homes in your drawn area');
+}
+function _onDrawDeleted() {
+  _drawPolygon = null;
+  applyClientFilters();
+}
 function startDraw(type) {
-  showToast('Draw-to-filter temporarily unavailable');
+  _initDrawControl();
+  if (!_drawCtl) { showToast('Draw tool loading…'); return; }
+  _drawCtl.deleteAll();
+  _drawPolygon = null;
+  _drawCtl.changeMode('draw_polygon');
+  var c = document.getElementById('drawCircleBtn');
+  var r = document.getElementById('drawRectBtn');
+  if (c) c.classList.remove('active');
+  if (r) r.classList.remove('active');
+  var active = (type === 'circle' ? c : r);
+  if (active) active.classList.add('active');
+  showToast(type === 'circle' ? 'Click to place points around the area; double-click to finish' : 'Click corners to draw; double-click to finish');
 }
 function clearDraw() {
-  currentShape = null;
+  if (_drawCtl) _drawCtl.deleteAll();
+  _drawPolygon = null;
   var c = document.getElementById('drawCircleBtn'); if (c) c.classList.remove('active');
   var r = document.getElementById('drawRectBtn'); if (r) r.classList.remove('active');
   applyClientFilters();
