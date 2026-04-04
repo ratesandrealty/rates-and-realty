@@ -10534,13 +10534,15 @@ async function generateCanvaDesign() {
 }
 
 /* --- Email History --- */
+var _emailCache = {};
+
 async function loadEmailHistory(contactId) {
   var list = document.getElementById('historyList');
   if (!list || !contactId) { if (list) list.innerHTML = '<div class="ec-hist-empty">No history available</div>'; return; }
   try {
     var sbUrl = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
     var sbKey = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
-    var res = await fetch(sbUrl + '/rest/v1/email_log?contact_id=eq.' + contactId + '&order=created_at.desc&limit=20', {
+    var res = await fetch(sbUrl + '/rest/v1/email_log?contact_id=eq.' + contactId + '&select=id,subject,body_html,body_text,from_email,to_email,to_emails,direction,status,created_at,sent_at&order=created_at.desc&limit=20', {
       headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey }
     });
     var records = await res.json();
@@ -10551,14 +10553,16 @@ async function loadEmailHistory(contactId) {
       return;
     }
     if (countBadge) countBadge.textContent = records.length;
+    // Cache all records
+    records.forEach(function(r) { _emailCache[r.id] = r; });
     list.innerHTML = records.map(function(r) {
       var dir = (r.direction || 'outbound').toLowerCase();
       var isSent = dir === 'outbound' || dir === 'sent';
       var badge = isSent ? '<span class="ec-hist-dir ec-hist-sent">SENT</span>' : '<span class="ec-hist-dir ec-hist-recv">RECV</span>';
-      var preview = (r.body_text || r.text_body || '').substring(0, 60);
+      var preview = (r.body_text || '').substring(0, 60);
       var date = r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : '';
-      var from = r.from_name || r.from_email || '';
-      return '<div class="ec-hist-item">' + badge +
+      var from = r.from_email || '';
+      return '<div class="ec-hist-item" onclick="previewPriorEmail(\'' + r.id + '\')">' + badge +
         '<div class="ec-hist-subject">' + (r.subject || '(no subject)') + '</div>' +
         '<div class="ec-hist-preview">' + preview + '</div>' +
         '<div class="ec-hist-meta"><span>' + from + '</span><span>' + date + '</span></div></div>';
@@ -10566,6 +10570,85 @@ async function loadEmailHistory(contactId) {
   } catch(e) {
     console.error('Email history error:', e);
     list.innerHTML = '<div class="ec-hist-empty">Failed to load history</div>';
+  }
+}
+
+/* --- Prior Email Preview --- */
+var _previewCurrentEmail = null;
+
+function previewPriorEmail(emailId) {
+  var email = _emailCache[emailId];
+  if (!email) return;
+  _previewCurrentEmail = email;
+
+  var modal = document.getElementById('emailPreviewPanel');
+  if (!modal) return;
+
+  // Subject
+  document.getElementById('prevSubject').textContent = email.subject || '(No subject)';
+
+  // Meta
+  var date = email.sent_at || email.created_at;
+  var dateStr = date ? new Date(date).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+  var dir = (email.direction === 'inbound' || email.direction === 'received') ? 'Received' : 'Sent';
+  document.getElementById('prevMeta').textContent = dir + ' \u00b7 ' + dateStr;
+
+  // Meta strip
+  var toStr = Array.isArray(email.to_emails) ? email.to_emails.join(', ') : (email.to_email || '');
+  document.getElementById('prevMetaStrip').innerHTML =
+    '<div><strong style="color:#888;">From:</strong> <span style="color:#C8C5BC;">' + (email.from_email || '\u2014') + '</span></div>' +
+    '<div><strong style="color:#888;">To:</strong> <span style="color:#C8C5BC;">' + (toStr || '\u2014') + '</span></div>' +
+    '<div><strong style="color:#888;">Status:</strong> <span style="color:' + (email.status === 'sent' ? '#52C87A' : '#888') + ';">' + (email.status || 'unknown').toUpperCase() + '</span></div>';
+
+  // Body in iframe
+  var iframe = document.getElementById('prevIframe');
+  var body = email.body_html || (email.body_text ? '<pre style="font-family:sans-serif;padding:20px;font-size:14px;color:#333;">' + email.body_text + '</pre>' : '<p style="padding:20px;color:#999;">No content</p>');
+  var iDoc = iframe.contentDocument || iframe.contentWindow.document;
+  iDoc.open();
+  iDoc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;padding:20px;font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a;background:#fff;line-height:1.6;}img{max-width:100%;height:auto;}a{color:#C9A84C;}</style></head><body>' + body + '</body></html>');
+  iDoc.close();
+
+  modal.style.display = 'flex';
+}
+
+function closeEmailPreviewPanel() {
+  var m = document.getElementById('emailPreviewPanel');
+  if (m) m.style.display = 'none';
+  var iframe = document.getElementById('prevIframe');
+  if (iframe) { var d = iframe.contentDocument || iframe.contentWindow.document; d.open(); d.write(''); d.close(); }
+  _previewCurrentEmail = null;
+}
+
+function replyToPreviewEmail() {
+  if (!_previewCurrentEmail) return;
+  closeEmailPreviewPanel();
+  var replyTo = _previewCurrentEmail.from_email || (_previewCurrentEmail.to_emails && _previewCurrentEmail.to_emails[0]) || _previewCurrentEmail.to_email || '';
+  var replySubject = (_previewCurrentEmail.subject || '').indexOf('Re:') === 0 ? _previewCurrentEmail.subject : 'Re: ' + (_previewCurrentEmail.subject || '');
+  // Add chip for reply-to address
+  var toChips = document.getElementById('toChips');
+  if (toChips && replyTo) {
+    var chip = document.createElement('div');
+    chip.className = 'ec-chip';
+    chip.innerHTML = '<span>' + replyTo + '</span><button onclick="this.parentElement.remove()">&times;</button>';
+    var input = toChips.querySelector('input');
+    if (input) toChips.insertBefore(chip, input);
+  }
+  var subj = document.getElementById('subjectInput');
+  if (subj) subj.value = replySubject;
+  document.getElementById('emailEditor')?.focus();
+}
+
+function forwardPreviewEmail() {
+  if (!_previewCurrentEmail) return;
+  closeEmailPreviewPanel();
+  var fwdSubject = (_previewCurrentEmail.subject || '').indexOf('Fwd:') === 0 ? _previewCurrentEmail.subject : 'Fwd: ' + (_previewCurrentEmail.subject || '');
+  var subj = document.getElementById('subjectInput');
+  if (subj) subj.value = fwdSubject;
+  var editor = document.getElementById('emailEditor');
+  if (editor && _previewCurrentEmail.body_html) {
+    editor.focus();
+    var fwdHtml = '<br><hr><div style="color:#888;font-size:12px;margin-bottom:8px;">---------- Forwarded message ----------<br>From: ' + (_previewCurrentEmail.from_email || '') + '<br>Subject: ' + (_previewCurrentEmail.subject || '') + '</div>' + _previewCurrentEmail.body_html;
+    document.execCommand('insertHTML', false, fwdHtml);
   }
 }
 
@@ -10668,7 +10751,7 @@ function closePdfViewer() {
   document.body.style.overflow = '';
 }
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); closeDocViewer(); closeForm1003Modal(); if (document.getElementById('ecOverlay')) { saveEmailDraft(); } }
+  if (e.key === 'Escape') { closePdfViewer(); closeSmsModal(); closeDocViewer(); closeForm1003Modal(); closeEmailPreviewPanel(); if (document.getElementById('ecOverlay')) { saveEmailDraft(); } }
 });
 document.getElementById('pdf-viewer-modal')?.addEventListener('click', function(e) {
   if (e.target === this) closePdfViewer();
@@ -10989,6 +11072,30 @@ document.addEventListener('click', function(e) {
 <script>
 document.getElementById('canvaPickerModal')?.addEventListener('click', function(e) { if (e.target === this) closeCanvaPicker(); });
 </script>
+
+<!-- Email Preview Panel -->
+<div id="emailPreviewPanel" onclick="if(event.target===this)closeEmailPreviewPanel()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:60000;align-items:center;justify-content:center;">
+  <div style="width:min(700px,95vw);height:min(85vh,700px);background:#0A0A0C;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(201,168,76,0.2);box-shadow:0 32px 80px rgba(0,0,0,0.9);">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(201,168,76,0.12);background:#0C0C0E;flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+        <button type="button" onclick="closeEmailPreviewPanel()" style="width:28px;height:28px;border-radius:6px;border:none;background:rgba(255,255,255,0.05);color:#888;cursor:pointer;font-size:14px;flex-shrink:0;">&larr;</button>
+        <div style="min-width:0;">
+          <div id="prevSubject" style="font-size:13px;font-weight:600;color:#E0DDD4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:400px;"></div>
+          <div id="prevMeta" style="font-size:10.5px;color:#555;margin-top:1px;"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button type="button" onclick="replyToPreviewEmail()" style="padding:5px 12px;border-radius:6px;font-size:11.5px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;cursor:pointer;">&#8617; Reply</button>
+        <button type="button" onclick="forwardPreviewEmail()" style="padding:5px 12px;border-radius:6px;font-size:11.5px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:#666;cursor:pointer;">&rarr; Forward</button>
+        <button type="button" onclick="closeEmailPreviewPanel()" style="width:28px;height:28px;border-radius:6px;border:none;background:rgba(224,82,82,0.12);color:#E05252;cursor:pointer;font-size:14px;">&#10005;</button>
+      </div>
+    </div>
+    <div id="prevMetaStrip" style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.04);background:#0E0E10;font-size:11px;color:#555;flex-shrink:0;"></div>
+    <div style="flex:1;overflow:hidden;background:#fff;">
+      <iframe id="prevIframe" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin"></iframe>
+    </div>
+  </div>
+</div>
 
 <!-- 1003 PDF Preview Modal -->
 <div id="form1003Modal" onclick="if(event.target===this)closeForm1003Modal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9998;flex-direction:column;align-items:center;justify-content:center;">
