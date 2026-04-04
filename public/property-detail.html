@@ -894,23 +894,30 @@ async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
   var grid = document.getElementById('similarGrid');
   if (!list.length) { grid.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No similar homes found nearby.</p>'; return; }
   grid.innerHTML = list.map(function(l) {
-    var photo = (l.Media&&l.Media[0]) ? l.Media[0].MediaURL : '';
+    var photo = (l.Media&&l.Media[0]) ? l.Media[0].MediaURL : 'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=400&q=80';
     var isL = l.PropertyType==='Land';
     var st = '';
     if (!isL&&l.BedroomsTotal!=null) st += l.BedroomsTotal+' bd';
-    if (!isL&&l.BathroomsTotalInteger!=null) st += (st?' · ':'')+l.BathroomsTotalInteger+' ba';
-    if (l.LivingArea) st += (st?' · ':'')+l.LivingArea.toLocaleString()+' sf';
-    return '<div class="sim-card" onclick="goToSimilar(\''+l.ListingKey+'\')"><img src="'+(photo||'https://placehold.co/300x140/1a1a1a/444?text=No+Photo')+'" loading="lazy"><div class="sim-card-body"><div class="sim-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="sim-addr">'+((l.UnparsedAddress||'').split(',')[0])+'</div><div class="sim-stats">'+st+'</div></div></div>';
+    if (!isL&&l.BathroomsTotalInteger!=null) st += (st?' \u00b7 ':'')+l.BathroomsTotalInteger+' ba';
+    if (l.LivingArea) st += (st?' \u00b7 ':'')+l.LivingArea.toLocaleString()+' sf';
+    return '<div class="sim-card" onclick="goToSimilar(\''+l.ListingKey+'\')" style="transition:transform .18s,box-shadow .18s;" onmouseover="this.style.transform=\'translateY(-3px)\';this.style.boxShadow=\'0 8px 24px rgba(0,0,0,0.4)\'" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'">'
+      +'<div style="position:relative;overflow:hidden;"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=400&q=80\'" style="transition:transform .3s;" onmouseover="this.style.transform=\'scale(1.05)\'" onmouseout="this.style.transform=\'\'">'
+      +'<div style="position:absolute;top:8px;left:8px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(82,200,122,0.8);color:#fff;">Active</div>'
+      +'</div>'
+      +'<div class="sim-card-body"><div class="sim-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="sim-addr">'+((l.UnparsedAddress||'').split(',')[0])+'</div><div class="sim-stats">'+st+'</div></div></div>';
   }).join('');
 }
 
 function goToSimilar(listingKey) {
-  const all = JSON.parse(sessionStorage.getItem('all_similar_listings') || '[]');
-  const found = all.find(function(l) { return l.ListingKey === listingKey; });
+  var all = JSON.parse(sessionStorage.getItem('all_similar_listings') || '[]');
+  var found = all.find(function(l) { return l.ListingKey === listingKey; });
   if (found) {
     sessionStorage.setItem('selected_listing', JSON.stringify(found));
     window.scrollTo(0, 0);
-    location.reload();
+    // Use proper navigation instead of just reload
+    var url = new URL(window.location.href);
+    url.searchParams.set('listing_key', listingKey);
+    window.location.href = url.toString();
   }
 }
 
@@ -951,16 +958,18 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
   var iw = new google.maps.InfoWindow();
   nearby.forEach(function(l){
     var m = new google.maps.Marker({position:{lat:l.Latitude,lng:l.Longitude},map:nearbyMapRef,icon:{path:google.maps.SymbolPath.CIRCLE,scale:8,fillColor:'#3c78ff',fillOpacity:1,strokeColor:'#000',strokeWeight:1.5},title:l.UnparsedAddress});
-    m.addListener('click',function(){iw.setContent('<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br><a href="#" onclick="goToSimilar(\''+l.ListingKey+'\');return false;" style="color:#C9A84C;font-weight:700;font-size:12px">View →</a></div>');iw.open(nearbyMapRef,m);});
+    m.addListener('click',function(){iw.setContent('<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br>'+((l.BedroomsTotal||'')+' bd \u00b7 '+(l.BathroomsTotalInteger||'')+' ba')+'<br><a href="#" onclick="goToSimilar(\''+l.ListingKey+'\');return false;" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a></div>');iw.open(nearbyMapRef,m);});
+    m.addListener('mouseover',function(){var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');if(item){item.style.background='rgba(90,160,224,0.06)';item.style.borderColor='rgba(90,160,224,0.4)';}});
+    m.addListener('mouseout',function(){var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');if(item){item.style.background='';item.style.borderColor='';}});
   });
   var listEl = document.getElementById('nearbyHomesList');
   var listItems = nearby.slice(0,5);
   if (!listItems.length) { listEl.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No nearby listings found.</p>'; return; }
   listEl.innerHTML = listItems.map(function(l){
-    var photo=(l.Media&&l.Media[0])?l.Media[0].MediaURL:'';
+    var photo=(l.Media&&l.Media[0])?l.Media[0].MediaURL:'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60';
     var isL=l.PropertyType==='Land';var st='';
-    if(!isL&&l.BedroomsTotal!=null)st+=l.BedroomsTotal+' bd';if(!isL&&l.BathroomsTotalInteger!=null)st+=(st?' · ':'')+l.BathroomsTotalInteger+' ba';if(l.LivingArea)st+=(st?' · ':'')+l.LivingArea.toLocaleString()+' sf';
-    return'<div class="nearby-listing" onclick="goToSimilar(\''+l.ListingKey+'\')"><img src="'+(photo||'https://placehold.co/80x60/1a1a1a/444?text=No+Photo')+'" loading="lazy"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div></div>';
+    if(!isL&&l.BedroomsTotal!=null)st+=l.BedroomsTotal+' bd';if(!isL&&l.BathroomsTotalInteger!=null)st+=(st?' \u00b7 ':'')+l.BathroomsTotalInteger+' ba';if(l.LivingArea)st+=(st?' \u00b7 ':'')+l.LivingArea.toLocaleString()+' sf';
+    return'<div data-nearby-id="'+l.ListingKey+'" class="nearby-listing" onclick="goToSimilar(\''+l.ListingKey+'\')" style="transition:all .15s;" onmouseover="this.style.background=\'rgba(90,160,224,0.06)\';this.style.borderColor=\'rgba(90,160,224,0.4)\'" onmouseout="this.style.background=\'\';this.style.borderColor=\'\'"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60\'"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div><div style="color:#444;font-size:16px;flex-shrink:0;">\u203A</div></div>';
   }).join('');
 }
 
