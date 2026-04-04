@@ -200,6 +200,8 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <div class="topbar-right">
     <a href="../dashboard/admin.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">Dashboard</a>
     <button class="btn btn-ghost btn-sm" onclick="loadPeople()" title="Refresh">&#x21bb; Refresh</button>
+    <input type="file" id="mismoFileInput" accept=".xml" style="display:none;" onchange="handleMismoUpload(event)">
+    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('mismoFileInput').click()" style="border-color:rgba(201,168,76,0.35);color:#C9A84C;">&#11014; MISMO Import</button>
     <button class="btn btn-gold btn-sm" onclick="openNewModal()">+ Add Person</button>
   </div>
 </div>
@@ -1304,6 +1306,135 @@ Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners()]
     applyFilters();
   }
 });
+
+/* ====== MISMO 3.4 IMPORT ====== */
+var _mismoData = null, _mismoRawXml = '', _mismoFileName = '';
+
+async function handleMismoUpload(event) {
+  var file = event.target.files[0]; if (!file) return;
+  event.target.value = '';
+  _mismoFileName = file.name;
+  document.getElementById('mismoFileName').textContent = file.name;
+  document.getElementById('mismoLoading').style.display = 'block';
+  document.getElementById('mismoReview').style.display = 'none';
+  document.getElementById('mismoFooter').style.display = 'none';
+  document.getElementById('mismoModal').style.display = 'flex';
+  try {
+    _mismoRawXml = await file.text();
+    _mismoData = parseMismoXml(_mismoRawXml);
+    renderMismoReview(_mismoData);
+    document.getElementById('mismoLoading').style.display = 'none';
+    document.getElementById('mismoReview').style.display = 'block';
+    document.getElementById('mismoFooter').style.display = 'flex';
+  } catch(err) {
+    document.getElementById('mismoLoading').innerHTML = '<div style="color:#E05252;">\u26A0 Parse error: ' + err.message + '</div>';
+  }
+}
+
+function parseMismoXml(xml) {
+  var doc = new DOMParser().parseFromString(xml, 'text/xml');
+  function get(tag) {
+    var el = doc.getElementsByTagName(tag)[0] || doc.querySelector(tag);
+    return el ? (el.textContent || '').trim() : '';
+  }
+  var bn = doc.querySelectorAll('BORROWER, Borrower');
+  function bd(node) {
+    if (!node) return null;
+    function g(t) { var e = node.querySelector(t) || node.getElementsByTagName(t)[0]; return e ? (e.textContent||'').trim() : get(t); }
+    return {
+      firstName: g('FirstName') || g('FIRST_NAME'), middleName: g('MiddleName') || g('MIDDLE_NAME'),
+      lastName: g('LastName') || g('LAST_NAME'), suffix: g('SuffixName') || '',
+      ssn: g('TaxpayerIdentifierValue') || g('SSN'), dob: g('BirthDate') || g('BIRTH_DATE'),
+      marital: g('MaritalStatusType') || '', citizenship: g('CitizenshipResidencyType') || 'U.S. Citizen',
+      phone: g('ContactPointTelephoneValue') || '', email: g('ContactPointEmailValue') || '',
+      street: g('AddressLineText') || '', city: g('CityName') || '', state: g('StateCode') || '', zip: g('PostalCode') || '',
+      empName: g('EmployerName') || g('FullName') || '', empTitle: g('EmploymentPositionDescription') || '',
+      baseIncome: g('BasePayAmount') || '', totalIncome: g('TotalIncomeAmount') || ''
+    };
+  }
+  return {
+    borrower: bd(bn[0]), coBorrower: bn[1] ? bd(bn[1]) : null,
+    loan: {
+      loanAmount: get('LoanAmount') || get('LOAN_AMOUNT'), loanPurpose: get('LoanPurposeType') || get('LOAN_PURPOSE_TYPE'),
+      loanType: get('MortgageType') || get('MORTGAGE_TYPE'), propStreet: get('SubjectPropertyAddressLineText') || get('PropertyAddressLineText'),
+      propCity: get('SubjectPropertyCityName') || get('PropertyCityName'), propState: get('SubjectPropertyStateCode') || get('PropertyStateCode'),
+      propZip: get('SubjectPropertyPostalCode') || get('PropertyPostalCode'), propValue: get('PropertyAppraisedValueAmount'),
+      propCounty: get('SubjectPropertyCountyName') || get('PropertyCountyName'), occupancy: get('LoanApplicationOccupancyType'),
+      noteRate: get('NoteRatePercent') || get('InterestRatePercent')
+    },
+    decl: { primary: get('IntendToOccupyIndicator')==='true', judgments: get('OutstandingJudgmentsIndicator')==='true',
+      delinquent: get('PresentlyDelinquentIndicator')==='true', foreclosure: get('ForeclosureStatusIndicator')==='true',
+      bankruptcy: get('BankruptcyIndicator')==='true' },
+    military: get('VeteranIndicator')==='true' || get('MilitaryStatusType')!==''
+  };
+}
+
+function renderMismoReview(data) {
+  var b = data.borrower || {}, l = data.loan || {}, cb = data.coBorrower;
+  function f(label, val) { return val ? '<div><div style="font-size:10px;color:#555;margin-bottom:2px;">' + label + '</div><div style="font-size:12.5px;color:#C8C5BC;font-weight:500;">' + val + '</div></div>' : ''; }
+  document.getElementById('mismoRevBorrower').innerHTML =
+    f('First Name',b.firstName)+f('Last Name',b.lastName)+f('SSN',b.ssn?'***-**-'+b.ssn.slice(-4):'')+f('DOB',b.dob)+f('Phone',b.phone)+f('Email',b.email)+f('Address',b.street)+f('City',b.city)+f('State',b.state)+f('ZIP',b.zip);
+  document.getElementById('mismoRevLoan').innerHTML =
+    f('Loan Amount',l.loanAmount?'$'+Number(l.loanAmount).toLocaleString():'')+f('Purpose',l.loanPurpose)+f('Type',l.loanType)+f('Property',l.propStreet)+f('City',l.propCity)+f('State',l.propState)+f('Value',l.propValue?'$'+Number(l.propValue).toLocaleString():'')+f('Rate',l.noteRate?l.noteRate+'%':'');
+  document.getElementById('mismoRevEmp').innerHTML =
+    f('Employer',b.empName)+f('Title',b.empTitle)+f('Base Income',b.baseIncome?'$'+Number(b.baseIncome).toLocaleString():'')+f('Total Income',b.totalIncome?'$'+Number(b.totalIncome).toLocaleString():'');
+  var cbSec = document.getElementById('mismoCoBSec');
+  if (cb && (cb.firstName || cb.lastName)) {
+    cbSec.style.display = 'block';
+    document.getElementById('mismoRevCB').innerHTML = f('Name',cb.firstName+' '+cb.lastName)+f('Email',cb.email)+f('Phone',cb.phone);
+  } else cbSec.style.display = 'none';
+}
+
+async function saveMismoImport() {
+  var btn = document.getElementById('mismoSaveBtn'); btn.disabled = true; btn.textContent = '\u23F3 Saving...';
+  try {
+    var b = _mismoData.borrower || {}, l = _mismoData.loan || {}, cb = _mismoData.coBorrower, d = _mismoData.decl || {};
+    // Create contact
+    var cRes = await fetch(SB_URL+'/rest/v1/contacts', {
+      method:'POST', headers:Object.assign({},hdrs(),{'Prefer':'return=representation'}),
+      body:JSON.stringify({first_name:b.firstName,last_name:b.lastName,middle_name:b.middleName,email:b.email,phone:b.phone,address:b.street,city:b.city,state:b.state,zip:b.zip,date_of_birth:b.dob||null,loan_amount:l.loanAmount?parseFloat(l.loanAmount):null,loan_type:l.loanType||null,source:'MISMO Import',pipeline_status:'New Lead',contact_type:'borrower',temperature:'Cold',lead_temperature:'Cold'})
+    });
+    if (!cRes.ok) throw new Error('Failed to create contact');
+    var nc = (await cRes.json())[0]; var cid = nc.id;
+    // Create mortgage application
+    await fetch(SB_URL+'/rest/v1/mortgage_applications', {
+      method:'POST', headers:hdrs(),
+      body:JSON.stringify({contact_id:cid,first_name:b.firstName,middle_name:b.middleName,last_name:b.lastName,suffix:b.suffix,ssn:b.ssn,date_of_birth:b.dob||null,marital_status:b.marital,citizenship:b.citizenship,cell_phone:b.phone,email:b.email,current_address_street:b.street,current_address_city:b.city,current_address_state:b.state,current_address_zip:b.zip,employer_name:b.empName,position_title:b.empTitle,base_income:b.baseIncome?parseFloat(b.baseIncome):null,total_monthly_income:b.totalIncome?parseFloat(b.totalIncome):null,loan_amount:l.loanAmount?parseFloat(l.loanAmount):null,loan_purpose:l.loanPurpose,loan_type:l.loanType,property_address_street:l.propStreet,property_address_city:l.propCity,property_address_state:l.propState,property_address_zip:l.propZip,property_address_county:l.propCounty,property_value:l.propValue?parseFloat(l.propValue):null,occupancy_type:l.occupancy,declaration_primary_residence:d.primary,declaration_judgments:d.judgments,declaration_delinquent:d.delinquent,declaration_foreclosure:d.foreclosure,declaration_bankruptcy:d.bankruptcy,military_service:_mismoData.military,co_borrower_first_name:cb?.firstName||null,co_borrower_last_name:cb?.lastName||null,co_borrower_ssn:cb?.ssn||null,co_borrower_email:cb?.email||null,mismo_raw_xml:_mismoRawXml,mismo_file_name:_mismoFileName,mismo_imported_at:new Date().toISOString(),lo_name:'Rene Duarte',lo_nmls:'1795044',lo_email:'rene@ratesandrealty.com',lo_phone:'714-472-8508'})
+    });
+    closeMismoModal();
+    showToast('\u2713 Contact created from MISMO import');
+    setTimeout(function(){ window.location.href='lead-detail.html?contact_id='+cid; }, 1200);
+  } catch(err) {
+    btn.disabled = false; btn.textContent = '\u2713 Create Contact & Import';
+    showToast('Import failed: '+err.message);
+  }
+}
+
+function closeMismoModal() { document.getElementById('mismoModal').style.display='none'; _mismoData=null; _mismoRawXml=''; }
 </script>
+
+<!-- MISMO Import Modal -->
+<div id="mismoModal" onclick="if(event.target===this)closeMismoModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:9999;align-items:center;justify-content:center;">
+  <div style="width:680px;max-width:95vw;max-height:88vh;background:#0F0F11;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(201,168,76,0.2);box-shadow:0 32px 80px rgba(0,0,0,0.9);">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid rgba(201,168,76,0.12);background:#0C0C0E;flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">&#128203;</span><div><div style="font-size:14px;font-weight:700;color:#E0DDD4;">MISMO 3.4 Import</div><div id="mismoFileName" style="font-size:11px;color:#555;"></div></div></div>
+      <button onclick="closeMismoModal()" type="button" style="width:30px;height:30px;border-radius:6px;border:none;background:rgba(224,82,82,0.12);color:#E05252;cursor:pointer;font-size:15px;">&#10005;</button>
+    </div>
+    <div id="mismoLoading" style="padding:40px;text-align:center;color:#555;font-size:13px;"><div style="width:36px;height:36px;border-radius:50%;border:3px solid rgba(201,168,76,0.2);border-top-color:#C9A84C;animation:spin 0.8s linear infinite;margin:0 auto 12px;"></div>Parsing MISMO XML...</div>
+    <div id="mismoReview" style="display:none;flex:1;overflow-y:auto;padding:20px;">
+      <div style="background:#131315;border-radius:10px;padding:16px;margin-bottom:12px;border:1px solid rgba(255,255,255,0.04);"><div style="font-size:11px;color:#C9A84C;font-weight:600;margin-bottom:10px;text-transform:uppercase;">&#128100; Borrower</div><div id="mismoRevBorrower" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div></div>
+      <div style="background:#131315;border-radius:10px;padding:16px;margin-bottom:12px;border:1px solid rgba(255,255,255,0.04);"><div style="font-size:11px;color:#C9A84C;font-weight:600;margin-bottom:10px;text-transform:uppercase;">&#127968; Loan &amp; Property</div><div id="mismoRevLoan" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div></div>
+      <div style="background:#131315;border-radius:10px;padding:16px;margin-bottom:12px;border:1px solid rgba(255,255,255,0.04);"><div style="font-size:11px;color:#C9A84C;font-weight:600;margin-bottom:10px;text-transform:uppercase;">&#128188; Employment</div><div id="mismoRevEmp" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div></div>
+      <div id="mismoCoBSec" style="display:none;background:#131315;border-radius:10px;padding:16px;margin-bottom:12px;border:1px solid rgba(255,255,255,0.04);"><div style="font-size:11px;color:#AB7FE0;font-weight:600;margin-bottom:10px;text-transform:uppercase;">&#128101; Co-Borrower</div><div id="mismoRevCB" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div></div>
+      <div style="font-size:11px;color:#555;">A new contact will be created with all data populated in Lead Information and 1003 Application.</div>
+    </div>
+    <div id="mismoFooter" style="display:none;padding:14px 20px;border-top:1px solid rgba(201,168,76,0.08);background:#0C0C0E;justify-content:flex-end;gap:8px;flex-shrink:0;">
+      <button onclick="closeMismoModal()" type="button" style="padding:8px 18px;border-radius:8px;font-size:13px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:#888;cursor:pointer;">Cancel</button>
+      <button onclick="saveMismoImport()" type="button" id="mismoSaveBtn" style="padding:8px 22px;border-radius:8px;font-size:13px;font-weight:700;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;">&#10003; Create Contact &amp; Import</button>
+    </div>
+  </div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
 </body>
 </html>
