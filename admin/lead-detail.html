@@ -5750,7 +5750,7 @@ async function setTemperature(temp) {
   if (contactId) {
     await fetch(
       (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/contacts?id=eq.' + contactId,
-      { method:'PATCH', headers:{'Content-Type':'application/json','apikey':window.APP_CONFIG?.SUPABASE_ANON_KEY||'','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||''),'Prefer':'return=minimal'}, body:JSON.stringify({temperature:normalized}) }
+      { method:'PATCH', headers:{'Content-Type':'application/json','apikey':window.APP_CONFIG?.SUPABASE_ANON_KEY||'','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||''),'Prefer':'return=minimal'}, body:JSON.stringify({temperature:normalized,lead_temperature:normalized}) }
     );
   }
   showToast('Temperature: ' + normalized);
@@ -7838,11 +7838,13 @@ function renderScoreCard(lead, contact) {
   // Score number
   const numEl = document.getElementById('sc-num');
   if (numEl) numEl.textContent = score;
-  // Tier pill
+  // Tier pill — use contacts.temperature if set, else calculated tier
   const tierEl = document.getElementById('sc-tier');
   if (tierEl) {
-    const tierLabel = { hot: '🔴 HOT', warm: '🟡 WARM', cold: '🔵 COLD' }[tier];
-    const tierCls   = { hot: 'stp-hot', warm: 'stp-warm', cold: 'stp-cold' }[tier];
+    var manualTemp = (contact.temperature || '').toLowerCase();
+    var displayTier = (manualTemp === 'hot' || manualTemp === 'warm' || manualTemp === 'cold') ? manualTemp : tier;
+    const tierLabel = { hot: '🔴 HOT', warm: '🟡 WARM', cold: '🔵 COLD' }[displayTier];
+    const tierCls   = { hot: 'stp-hot', warm: 'stp-warm', cold: 'stp-cold' }[displayTier];
     tierEl.textContent = tierLabel;
     tierEl.className = `score-tier-pill ${tierCls}`;
   }
