@@ -1133,20 +1133,23 @@ function panTo(i) {
 
 function highlightMarker(i) {
   var m = markers[i]; if (!m) return;
-  var el = m.getElement(); if (!el) return;
-  el.style.transform = 'scale(1.5)';
-  el.style.background = '#fff';
-  el.style.borderColor = '#C9A84C';
-  el.style.zIndex = '10';
+  var root = m.getElement(); if (!root) return;
+  // NEVER touch root's transform — Mapbox uses it for positioning.
+  var inner = root.firstElementChild; if (!inner) return;
+  inner.style.transform = 'scale(1.15)';
+  inner.style.background = '#fff';
+  inner.style.color = '#C9A84C';
+  root.style.zIndex = '10';
 }
 
 function unhighlightMarker(i) {
   var m = markers[i]; if (!m) return;
-  var el = m.getElement(); if (!el) return;
-  el.style.transform = '';
-  el.style.background = '#C9A84C';
-  el.style.borderColor = '#000';
-  el.style.zIndex = '';
+  var root = m.getElement(); if (!root) return;
+  var inner = root.firstElementChild; if (!inner) return;
+  inner.style.transform = '';
+  inner.style.background = '#C9A84C';
+  inner.style.color = '#1A0E00';
+  root.style.zIndex = '';
 }
 
 /* ===== SHOWING CART ===== */
@@ -1619,8 +1622,17 @@ function renderMarkers() {
       hasPoints = true;
       bounds.extend([l.Longitude, l.Latitude]);
 
+      // Mapbox applies transform to `el` for positioning — never touch el's transform.
+      // Styling/scale goes on the inner child instead.
       var el = document.createElement('div');
-      el.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#C9A84C;border:1px solid #000;box-shadow:0 1px 3px rgba(0,0,0,0.6);cursor:pointer;transition:transform .15s;';
+      var inner = document.createElement('div');
+      var price = Number(l.ListPrice || 0);
+      var label = price >= 1000000
+        ? '$' + (price / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
+        : '$' + Math.round(price / 1000) + 'K';
+      inner.textContent = label;
+      inner.style.cssText = 'background:#C9A84C;color:#1A0E00;padding:5px 10px;border-radius:20px;font-size:12px;font-weight:700;font-family:sans-serif;cursor:pointer;white-space:nowrap;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35);transition:transform .15s,background .15s,color .15s;line-height:1;user-select:none;';
+      el.appendChild(inner);
       el.title = l.UnparsedAddress || '';
 
       var isLand = l.PropertySubType === 'Land';
