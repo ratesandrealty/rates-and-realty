@@ -164,7 +164,14 @@ input,select{font-family:inherit}
 .map-legend{display:flex;gap:16px;margin-top:10px;font-size:.78rem;color:var(--muted)}
 .map-legend-item{display:flex;align-items:center;gap:6px}
 .legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-.nearby-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.nearby-list{display:flex;flex-direction:column;gap:10px;margin-top:14px;max-height:480px;overflow-y:auto;scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:#C9A84C #1a1a1a;padding-right:4px}
+.nearby-list::-webkit-scrollbar{width:8px}
+.nearby-list::-webkit-scrollbar-track{background:#1a1a1a;border-radius:4px}
+.nearby-list::-webkit-scrollbar-thumb{background:#C9A84C;border-radius:4px}
+.nearby-list::-webkit-scrollbar-thumb:hover{background:#e0bf5f}
+.nearby-list-header{display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding:0 2px}
+.nearby-list-header h3{font-size:.85rem;font-weight:700;color:var(--text);margin:0}
+.nearby-list-count{font-size:.72rem;color:var(--muted);background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.25);padding:3px 9px;border-radius:12px;font-weight:600}
 .nearby-listing{display:flex;gap:12px;padding:10px;background:#1a1a1a;border-radius:10px;cursor:pointer;transition:border-color .2s;border:1px solid transparent}
 .nearby-listing:hover{border-color:var(--gold)}
 .nearby-listing img{width:80px;height:60px;object-fit:cover;border-radius:6px;flex-shrink:0}
@@ -490,6 +497,10 @@ input,select{font-family:inherit}
       <div class="map-legend">
         <div class="map-legend-item"><div class="legend-dot" style="background:var(--gold)"></div> This Property</div>
         <div class="map-legend-item"><div class="legend-dot" style="background:#C9A84C;border:2px solid #fff;width:18px;height:10px;border-radius:10px"></div> Nearby Active</div>
+      </div>
+      <div class="nearby-list-header">
+        <h3>Nearby Active Listings</h3>
+        <span id="nearbyCount" class="nearby-list-count">0 homes</span>
       </div>
       <div class="nearby-list" id="nearbyHomesList"></div>
     </div>
@@ -1007,9 +1018,27 @@ function goToSimilar(listingKey) {
 
 /* ===== NEARBY HOMES MAP — dynamic viewport refetch ===== */
 var nearbyMarkers = [];
+var nearbyMarkerMap = {}; // { ListingKey: pinRootEl } for card→pin hover sync
 var nearbyExcludeKey = null;
 var nearbyFetchTimer = null;
 var nearbyFetchSeq = 0;
+
+window.highlightNearbyPin = function(key) {
+  var el = nearbyMarkerMap[key]; if (!el) return;
+  var inner = el.firstElementChild; if (!inner) return;
+  inner.style.transform = 'scale(1.25)';
+  inner.style.background = '#fff';
+  inner.style.color = '#C9A84C';
+  el.style.zIndex = '999';
+};
+window.resetNearbyPin = function(key) {
+  var el = nearbyMarkerMap[key]; if (!el) return;
+  var inner = el.firstElementChild; if (!inner) return;
+  inner.style.transform = '';
+  inner.style.background = '#C9A84C';
+  inner.style.color = '#1A0E00';
+  el.style.zIndex = '';
+};
 
 async function fetchAndRenderNearby() {
   if (!nearbyMapRef) return;
@@ -1048,6 +1077,7 @@ async function fetchAndRenderNearby() {
   // Clear existing nearby markers (subject stays)
   nearbyMarkers.forEach(function(m){ m.remove(); });
   nearbyMarkers = [];
+  nearbyMarkerMap = {};
 
   listings.forEach(function(l){
     var lat = parseFloat(l.Latitude), lng = parseFloat(l.Longitude);
@@ -1084,6 +1114,7 @@ async function fetchAndRenderNearby() {
       .setPopup(new mapboxgl.Popup({offset:16,closeButton:false,maxWidth:'240px'}).setHTML(popupHtml))
       .addTo(nearbyMapRef);
     nearbyMarkers.push(m);
+    nearbyMarkerMap[l.ListingKey] = el;
   });
 
   // Merge into session storage for navigation
@@ -1096,16 +1127,23 @@ async function fetchAndRenderNearby() {
 
 function renderNearbyCards(listings) {
   var listEl = document.getElementById('nearbyHomesList');
+  var countEl = document.getElementById('nearbyCount');
   if (!listEl) return;
-  var items = listings.slice(0,5);
-  if (!items.length) { listEl.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No nearby listings in view. Zoom out to expand your search.</p>'; return; }
+  // Filter out subject + no-coord rows, sort by price ascending (cheapest first)
+  var items = (listings || [])
+    .filter(function(l){ return l.ListingKey !== nearbyExcludeKey && l.Latitude && l.Longitude; })
+    .slice()
+    .sort(function(a,b){ return (a.ListPrice||0) - (b.ListPrice||0); });
+  if (countEl) countEl.textContent = items.length + ' home' + (items.length !== 1 ? 's' : '');
+  if (!items.length) { listEl.innerHTML = '<p style="color:var(--muted);font-size:.85rem;padding:16px 2px">No active listings in this area. Zoom out to expand your search.</p>'; return; }
   listEl.innerHTML = items.map(function(l){
     var photo=(l.Media&&l.Media[0])?l.Media[0].MediaURL:'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60';
     var lid = l.ListingKey || l.ListingId || '';
     var isL=l.PropertyType==='Land';var st='';
     if(!isL&&l.BedroomsTotal!=null)st+=l.BedroomsTotal+' bd';if(!isL&&l.BathroomsTotalInteger!=null)st+=(st?' \u00b7 ':'')+l.BathroomsTotalInteger+' ba';if(l.LivingArea)st+=(st?' \u00b7 ':'')+l.LivingArea.toLocaleString()+' sf';
     var detailUrl = 'property-detail.html?listing_key='+encodeURIComponent(lid);
-    return '<a href="'+detailUrl+'" data-nearby-id="'+lid+'" class="nearby-listing" style="text-decoration:none;transition:all .15s;display:flex;" onmouseover="this.style.background=\'rgba(201,168,76,0.06)\';this.style.borderColor=\'rgba(201,168,76,0.4)\';this.style.transform=\'translateX(2px)\'" onmouseout="this.style.background=\'\';this.style.borderColor=\'\';this.style.transform=\'\'"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60\'"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div><div style="color:#3A3A45;font-size:20px;flex-shrink:0;">\u203A</div></a>';
+    var escKey = lid.replace(/"/g,'&quot;').replace(/'/g,'\\\'');
+    return '<a href="'+detailUrl+'" data-nearby-id="'+lid+'" class="nearby-listing" style="text-decoration:none;transition:all .15s;display:flex;" onmouseenter="highlightNearbyPin(\''+escKey+'\');this.style.background=\'rgba(201,168,76,0.08)\';this.style.borderColor=\'rgba(201,168,76,0.4)\';this.style.transform=\'translateX(2px)\'" onmouseleave="resetNearbyPin(\''+escKey+'\');this.style.background=\'\';this.style.borderColor=\'\';this.style.transform=\'\'"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60\'"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div><div style="color:#3A3A45;font-size:20px;flex-shrink:0;">\u203A</div></a>';
   }).join('');
 }
 
