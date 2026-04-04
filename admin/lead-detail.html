@@ -3445,7 +3445,7 @@ function populateUI() {
   document.getElementById('sidebar-email').textContent = contactData.email || '—';
 
   // Load portal info
-  if (contactData.email) loadPortalInfo(contactData.email, contactData.crm_id);
+  if (contactData.email) loadPortalInfo(contactData.email, contactData.borrower_id || contactData.crm_id);
 
   // Lead Details tab
   setVal('f-source', leadData.source || contactData.source);
@@ -7982,7 +7982,8 @@ async function loadPortalInfo(contactEmail, contactCrmId) {
   const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
 
   try {
-    const res = await fetch(`${SB_P}/rest/v1/portal_users?email=eq.${encodeURIComponent(contactEmail)}&select=id,email,first_name,last_name,borrower_id,temp_password_plain,temp_password,last_login,created_at`, {
+    // Use ilike (case-insensitive) — contacts.email can differ in case from portal_users.email
+    const res = await fetch(`${SB_P}/rest/v1/portal_users?email=ilike.${encodeURIComponent(contactEmail)}&select=id,email,first_name,last_name,borrower_id,temp_password_plain,temp_password,last_login,created_at`, {
       headers: { 'apikey': SK_P, 'Authorization': 'Bearer ' + SK_P }
     });
     const users = await res.json();
