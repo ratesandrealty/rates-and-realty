@@ -875,35 +875,45 @@ function calcMortgage() {
 /* ===== SIMILAR HOMES ===== */
 async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
   var typeFilter = isLand ? "PropertyType eq 'Land'" : "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse')";
-  // Tight price range ±20% for true comps, minimum $50K excludes rentals
-  var minSalePrice = Math.max(50000, Math.round((price||0)*0.80));
-  var maxSalePrice = Math.round((price||0)*1.20);
-  var attempts = [
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+minSalePrice+" and ListPrice le "+maxSalePrice+" and "+typeFilter,
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round((price||0)*0.70))+" and ListPrice le "+Math.round((price||0)*1.30)+" and "+typeFilter,
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter
-  ];
+  // Progressive fallback: city+price → city+wider → city only → StandardStatus only
+  var attempts = [];
+  if (city && price > 0) {
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round(price*0.75))+" and ListPrice le "+Math.round(price*1.25)+" and "+typeFilter);
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter);
+  }
+  if (city) {
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active'");
+  }
+  // Absolute fallback — just get any active residential listings
+  attempts.push("StandardStatus eq 'Active' and "+typeFilter);
   var list = [];
   for (var a = 0; a < attempts.length; a++) {
     try {
+      console.log('[similar] Attempt '+(a+1)+'/'+attempts.length+':', attempts[a].substring(0,80));
       var rawFilter = "$filter=" + encodeURIComponent(attempts[a]) + "&$top=10&$orderby=ListPrice asc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Media,PropertyType,PropertySubType";
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
+      if (!res.ok) { console.warn('[similar] HTTP '+res.status+' on attempt '+a); continue; }
       var data = await res.json();
+      var raw = data.value || [];
+      console.log('[similar] Attempt '+(a+1)+' returned '+raw.length+' results');
       // Client-side filter: exclude self, rentals (price < $50K), and lease types
-      list = (data.value||[]).filter(function(l){
+      list = raw.filter(function(l){
         if (l.ListingKey===excludeKey) return false;
         var p = l.ListPrice||0;
         if (p < 50000) return false;
         var pt = (l.PropertySubType||'').toLowerCase();
         if (pt.indexOf('lease')>=0 || pt.indexOf('rental')>=0) return false;
         return true;
-      }).slice(0,6);
-      if (list.length >= 3) break;
-    } catch(e) { console.warn('similar attempt '+a+' failed',e); }
+      });
+      // Sort by price similarity to subject
+      if (price > 0) list.sort(function(a,b){return Math.abs((a.ListPrice||0)-price)-Math.abs((b.ListPrice||0)-price);});
+      list = list.slice(0,6);
+      if (list.length >= 1) { console.log('[similar] \u2713 Using attempt '+(a+1)+' with '+list.length+' results'); break; }
+    } catch(e) { console.warn('[similar] attempt '+a+' failed',e); }
   }
   sessionStorage.setItem('all_similar_listings', JSON.stringify(list));
   var grid = document.getElementById('similarGrid');
-  if (!list.length) { grid.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No similar homes found nearby.</p>'; return; }
+  if (!list.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#555"><div style="font-size:28px;margin-bottom:8px;">\uD83C\uDFE0</div>No active listings found in this area right now.<br><a href="search.html" style="color:#C9A84C;margin-top:8px;display:inline-block;">Browse all listings \u2192</a></div>'; return; }
   grid.innerHTML = list.map(function(l) {
     var photo = (l.Media&&l.Media[0]) ? l.Media[0].MediaURL : 'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=400&q=80';
     var isL = l.PropertyType==='Land';
@@ -940,24 +950,27 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
   }
 
   var typeFilter = isLand ? "PropertyType eq 'Land'" : "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse' or PropertyType eq 'ResidentialIncome')";
-  var minNearbyPrice = Math.max(50000, Math.round((price||0)*0.80));
-  var maxNearbyPrice = Math.round((price||0)*1.20);
-  // Get beds from subject property for tighter comparables
-  var subBeds = listing ? (listing.BedroomsTotal||0) : 0;
-  var bedFilter = subBeds > 0 ? " and BedroomsTotal ge "+(Math.max(1,subBeds-1))+" and BedroomsTotal le "+(subBeds+1) : '';
-  var attempts = [
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+minNearbyPrice+" and ListPrice le "+maxNearbyPrice+bedFilter+" and "+typeFilter,
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round((price||0)*0.70))+" and ListPrice le "+Math.round((price||0)*1.30)+" and "+typeFilter,
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter
-  ];
+  // Progressive fallback for nearby: city+price → city only → any active
+  var attempts = [];
+  if (city && price > 0) {
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round(price*0.75))+" and ListPrice le "+Math.round(price*1.25)+" and "+typeFilter);
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter);
+  }
+  if (city) {
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active'");
+  }
+  attempts.push("StandardStatus eq 'Active' and "+typeFilter);
   var nearby = [];
   for (var a = 0; a < attempts.length; a++) {
     try {
+      console.log('[nearby] Attempt '+(a+1)+'/'+attempts.length+':', attempts[a].substring(0,80));
       var rawFilter = "$filter=" + encodeURIComponent(attempts[a]) + "&$top=12&$orderby=ListingContractDate desc&$expand=Media($top=1;$select=MediaURL)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,Latitude,Longitude,Media,PropertyType,PropertySubType";
-
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rawFilter})});
+      if (!res.ok) { console.warn('[nearby] HTTP '+res.status+' on attempt '+a); continue; }
       var data = await res.json();
-      nearby = (data.value||[]).filter(function(l){
+      var raw = data.value || [];
+      console.log('[nearby] Attempt '+(a+1)+' returned '+raw.length+' results');
+      nearby = raw.filter(function(l){
         if (l.ListingKey===excludeKey) return false;
         if (!l.Latitude || !l.Longitude) return false;
         if ((l.ListPrice||0) < 50000) return false;
@@ -965,8 +978,8 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
         if (pt.indexOf('lease')>=0 || pt.indexOf('rental')>=0) return false;
         return true;
       }).slice(0,10);
-      if (nearby.length >= 3) break;
-    } catch(e) { console.warn('nearby attempt '+a+' failed',e); }
+      if (nearby.length >= 1) { console.log('[nearby] \u2713 Using attempt '+(a+1)+' with '+nearby.length+' results'); break; }
+    } catch(e) { console.warn('[nearby] attempt '+a+' failed',e); }
   }
 
   // Merge into session storage for navigation
