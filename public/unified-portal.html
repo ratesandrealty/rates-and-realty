@@ -456,7 +456,7 @@ html,body{overflow-x:hidden}
             <div class="qc-label">Call Rene</div>
             <div class="qc-sub">(714) 472-8508</div>
           </div>
-          <div class="quick-card" onclick="window.open('/public/admin-chat.html','_blank')">
+          <div class="quick-card" onclick="openBorrowerChat()">
             <div class="qc-icon">🤖</div>
             <div class="qc-label">AI Assistant</div>
             <div class="qc-sub">Get answers fast</div>
@@ -2042,5 +2042,51 @@ function trackPortalAction(type, title, meta) {
 </script>
 <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBQDh0BqE9vtyBCLyDoFTMJwVV2iFYyDZQ&libraries=places&callback=initPortalMap"></script>
 <script src="/public/components/footer.js" defer></script>
+
+<!-- Borrower AI Chat Modal -->
+<div id="borrowerChatModal" onclick="if(event.target===this)this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;">
+  <div style="width:min(480px,95vw);height:min(600px,90vh);background:#0F0F11;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(201,168,76,0.2);box-shadow:0 32px 80px rgba(0,0,0,0.9);">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:#0C0C0E;border-bottom:1px solid rgba(201,168,76,0.12);flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:22px;">&#129302;</span><div><div style="font-size:14px;font-weight:700;color:#E0DDD4;">AI Mortgage Assistant</div><div style="font-size:11px;color:#555;">Rates &amp; Realty &middot; Powered by Claude</div></div></div>
+      <button onclick="document.getElementById('borrowerChatModal').style.display='none'" type="button" style="width:30px;height:30px;border-radius:6px;border:none;background:rgba(224,82,82,0.1);color:#E05252;cursor:pointer;font-size:15px;">&#10005;</button>
+    </div>
+    <div id="bcMessages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;">
+      <div style="background:rgba(201,168,76,0.08);border-radius:4px 12px 12px 12px;padding:12px 14px;font-size:13px;color:#C8C5BC;max-width:85%;line-height:1.5;">&#128075; Hi! I'm your AI mortgage assistant from Rates &amp; Realty. I can help you understand loan programs, check your application status, answer mortgage questions, and more. How can I help you today?</div>
+    </div>
+    <div style="padding:12px;border-top:1px solid rgba(255,255,255,0.05);flex-shrink:0;background:#0C0C0E;">
+      <div style="display:flex;gap:8px;">
+        <input id="bcInput" type="text" placeholder="Ask me anything about mortgages..." onkeydown="if(event.key==='Enter')sendBcMsg()" style="flex:1;padding:10px 14px;border-radius:24px;border:1px solid rgba(201,168,76,0.2);background:#131315;color:#E0DDD4;font-size:13px;outline:none;font-family:inherit;">
+        <button onclick="sendBcMsg()" type="button" style="width:40px;height:40px;border-radius:50%;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:16px;cursor:pointer;flex-shrink:0;">&#10148;</button>
+      </div>
+      <div style="font-size:10px;color:#333;text-align:center;margin-top:6px;">AI responses are informational only. Consult Rene Duarte NMLS #1795044 for advice.</div>
+    </div>
+  </div>
+</div>
+<script>
+var _bcHistory = [{role:'assistant',content:'Hi! I\'m your AI mortgage assistant.'}];
+function openBorrowerChat() { document.getElementById('borrowerChatModal').style.display='flex'; }
+async function sendBcMsg() {
+  var input = document.getElementById('bcInput');
+  var msg = input.value.trim(); if (!msg) return; input.value = '';
+  var msgs = document.getElementById('bcMessages');
+  msgs.innerHTML += '<div style="align-self:flex-end;background:rgba(201,168,76,0.15);border-radius:12px 4px 12px 12px;padding:10px 14px;font-size:13px;color:#E0DDD4;max-width:85%;line-height:1.5;">'+msg+'</div>';
+  msgs.scrollTop = msgs.scrollHeight;
+  _bcHistory.push({role:'user',content:msg});
+  var tid = 'typ_'+Date.now();
+  msgs.innerHTML += '<div id="'+tid+'" style="background:rgba(255,255,255,0.04);border-radius:4px 12px 12px 12px;padding:10px 14px;font-size:13px;color:#555;max-width:85%;">&#10022; Thinking...</div>';
+  msgs.scrollTop = msgs.scrollHeight;
+  try {
+    var SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    var SK = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+    var res = await fetch(SB+'/functions/v1/email-service',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+SK},body:JSON.stringify({action:'ai_compose',prompt:'You are an AI mortgage assistant for Rates & Realty (Rene Duarte, NMLS #1795044, 714-472-8508). Answer this borrower question helpfully and concisely in 2-3 sentences. No HTML, plain text only. Question: '+msg})});
+    var data = await res.json();
+    var reply = (data.html||data.content||data.message||'Sorry, I had trouble responding.').replace(/<[^>]*>/g,'').trim();
+    document.getElementById(tid)?.remove();
+    msgs.innerHTML += '<div style="background:rgba(201,168,76,0.06);border-radius:4px 12px 12px 12px;padding:12px 14px;font-size:13px;color:#C8C5BC;max-width:85%;line-height:1.6;">'+reply+'</div>';
+    msgs.scrollTop = msgs.scrollHeight;
+    _bcHistory.push({role:'assistant',content:reply});
+  } catch(e) { document.getElementById(tid)?.remove(); msgs.innerHTML += '<div style="color:#E05252;font-size:12px;padding:8px;">Connection error. Try again.</div>'; }
+}
+</script>
 </body>
 </html>
