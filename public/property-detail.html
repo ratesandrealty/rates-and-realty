@@ -875,13 +875,13 @@ function calcMortgage() {
 /* ===== SIMILAR HOMES ===== */
 async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
   var typeFilter = isLand ? "PropertyType eq 'Land'" : "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse')";
-  // Minimum price of $50,000 excludes rental/lease listings (which show as $500-$5000/mo)
-  var minSalePrice = Math.max(50000, Math.round((price||0)*0.65));
-  var maxSalePrice = Math.round((price||0)*1.35);
+  // Tight price range ±20% for true comps, minimum $50K excludes rentals
+  var minSalePrice = Math.max(50000, Math.round((price||0)*0.80));
+  var maxSalePrice = Math.round((price||0)*1.20);
   var attempts = [
     "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+minSalePrice+" and ListPrice le "+maxSalePrice+" and "+typeFilter,
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter,
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000"
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round((price||0)*0.70))+" and ListPrice le "+Math.round((price||0)*1.30)+" and "+typeFilter,
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter
   ];
   var list = [];
   for (var a = 0; a < attempts.length; a++) {
@@ -911,11 +911,11 @@ async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
     if (!isL&&l.BedroomsTotal!=null) st += l.BedroomsTotal+' bd';
     if (!isL&&l.BathroomsTotalInteger!=null) st += (st?' \u00b7 ':'')+l.BathroomsTotalInteger+' ba';
     if (l.LivingArea) st += (st?' \u00b7 ':'')+l.LivingArea.toLocaleString()+' sf';
-    return '<div class="sim-card" onclick="goToSimilar(\''+l.ListingKey+'\')" style="transition:transform .18s,box-shadow .18s;" onmouseover="this.style.transform=\'translateY(-3px)\';this.style.boxShadow=\'0 8px 24px rgba(0,0,0,0.4)\'" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'">'
+    return '<a href="property-detail.html?listing_key='+encodeURIComponent(l.ListingKey)+'" class="sim-card" style="text-decoration:none;display:block;transition:transform .18s,box-shadow .18s;" onmouseover="this.style.transform=\'translateY(-3px)\';this.style.boxShadow=\'0 8px 24px rgba(0,0,0,0.4)\'" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'">'
       +'<div style="position:relative;overflow:hidden;"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=400&q=80\'" style="transition:transform .3s;" onmouseover="this.style.transform=\'scale(1.05)\'" onmouseout="this.style.transform=\'\'">'
       +'<div style="position:absolute;top:8px;left:8px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(82,200,122,0.8);color:#fff;">Active</div>'
       +'</div>'
-      +'<div class="sim-card-body"><div class="sim-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="sim-addr">'+((l.UnparsedAddress||'').split(',')[0])+'</div><div class="sim-stats">'+st+'</div></div></div>';
+      +'<div class="sim-card-body"><div class="sim-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="sim-addr">'+((l.UnparsedAddress||'').split(',')[0])+'</div><div class="sim-stats">'+st+'</div></div></a>';
   }).join('');
 }
 
@@ -940,12 +940,15 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
   }
 
   var typeFilter = isLand ? "PropertyType eq 'Land'" : "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse' or PropertyType eq 'ResidentialIncome')";
-  var minNearbyPrice = Math.max(50000, Math.round((price||0)*0.6));
-  var maxNearbyPrice = Math.round((price||0)*1.4);
+  var minNearbyPrice = Math.max(50000, Math.round((price||0)*0.80));
+  var maxNearbyPrice = Math.round((price||0)*1.20);
+  // Get beds from subject property for tighter comparables
+  var subBeds = listing ? (listing.BedroomsTotal||0) : 0;
+  var bedFilter = subBeds > 0 ? " and BedroomsTotal ge "+(Math.max(1,subBeds-1))+" and BedroomsTotal le "+(subBeds+1) : '';
   var attempts = [
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+minNearbyPrice+" and ListPrice le "+maxNearbyPrice+" and "+typeFilter,
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter,
-    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000"
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+minNearbyPrice+" and ListPrice le "+maxNearbyPrice+bedFilter+" and "+typeFilter,
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round((price||0)*0.70))+" and ListPrice le "+Math.round((price||0)*1.30)+" and "+typeFilter,
+    "City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter
   ];
   var nearby = [];
   for (var a = 0; a < attempts.length; a++) {
@@ -978,7 +981,7 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
   var iw = new google.maps.InfoWindow();
   nearby.forEach(function(l){
     var m = new google.maps.Marker({position:{lat:l.Latitude,lng:l.Longitude},map:nearbyMapRef,icon:{path:google.maps.SymbolPath.CIRCLE,scale:8,fillColor:'#3c78ff',fillOpacity:1,strokeColor:'#000',strokeWeight:1.5},title:l.UnparsedAddress});
-    m.addListener('click',function(){iw.setContent('<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br>'+((l.BedroomsTotal||'')+' bd \u00b7 '+(l.BathroomsTotalInteger||'')+' ba')+'<br><a href="#" onclick="goToSimilar(\''+l.ListingKey+'\');return false;" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a></div>');iw.open(nearbyMapRef,m);});
+    m.addListener('click',function(){iw.setContent('<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br>'+((l.BedroomsTotal||'')+' bd \u00b7 '+(l.BathroomsTotalInteger||'')+' ba')+'<br><a href="property-detail.html?listing_key='+encodeURIComponent(l.ListingKey)+'" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a></div>');iw.open(nearbyMapRef,m);});
     m.addListener('mouseover',function(){var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');if(item){item.style.background='rgba(90,160,224,0.06)';item.style.borderColor='rgba(90,160,224,0.4)';}});
     m.addListener('mouseout',function(){var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');if(item){item.style.background='';item.style.borderColor='';}});
   });
@@ -987,9 +990,11 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
   if (!listItems.length) { listEl.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No nearby listings found.</p>'; return; }
   listEl.innerHTML = listItems.map(function(l){
     var photo=(l.Media&&l.Media[0])?l.Media[0].MediaURL:'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60';
+    var lid = l.ListingKey || l.ListingId || '';
     var isL=l.PropertyType==='Land';var st='';
     if(!isL&&l.BedroomsTotal!=null)st+=l.BedroomsTotal+' bd';if(!isL&&l.BathroomsTotalInteger!=null)st+=(st?' \u00b7 ':'')+l.BathroomsTotalInteger+' ba';if(l.LivingArea)st+=(st?' \u00b7 ':'')+l.LivingArea.toLocaleString()+' sf';
-    return'<div data-nearby-id="'+l.ListingKey+'" class="nearby-listing" onclick="goToSimilar(\''+l.ListingKey+'\')" style="transition:all .15s;" onmouseover="this.style.background=\'rgba(90,160,224,0.06)\';this.style.borderColor=\'rgba(90,160,224,0.4)\'" onmouseout="this.style.background=\'\';this.style.borderColor=\'\'"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60\'"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div><div style="color:#444;font-size:16px;flex-shrink:0;">\u203A</div></div>';
+    var detailUrl = 'property-detail.html?listing_key='+encodeURIComponent(lid);
+    return'<a href="'+detailUrl+'" data-nearby-id="'+lid+'" class="nearby-listing" style="text-decoration:none;transition:all .15s;display:flex;" onmouseover="this.style.background=\'rgba(90,160,224,0.06)\';this.style.borderColor=\'rgba(90,160,224,0.4)\';this.style.transform=\'translateX(2px)\'" onmouseout="this.style.background=\'\';this.style.borderColor=\'\';this.style.transform=\'\'"><img src="'+photo+'" loading="lazy" onerror="this.src=\'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=200&q=60\'"><div class="nl-info"><div class="nl-price">$'+(l.ListPrice||0).toLocaleString()+'</div><div class="nl-addr">'+(l.UnparsedAddress||'')+'</div><div class="nl-stats">'+st+'</div></div><div style="color:#3A3A45;font-size:20px;flex-shrink:0;">\u203A</div></a>';
   }).join('');
 }
 
