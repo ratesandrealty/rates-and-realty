@@ -1593,22 +1593,40 @@ async function loadAlerts() {
       container.innerHTML = '<div style="text-align:center;padding:50px 20px;background:#111;border:1px solid #1a1a1a;border-radius:12px"><i class="fas fa-bell-slash" style="font-size:2.5rem;color:#222;display:block;margin-bottom:14px"></i><div style="font-size:.92rem;font-weight:600;color:#444;margin-bottom:6px">No listing alerts yet</div><div style="font-size:.78rem;color:#333">Click "Create New Alert" to get started.</div></div>';
       return;
     }
+    window._alertsCache = alerts;
     container.innerHTML = alerts.map(function(a) {
-      var filters = [];
-      if (a.counties && a.counties.length) filters.push(a.counties.slice(0,2).join(', ')+(a.counties.length>2?' +'+( a.counties.length-2):''));
-      if (a.cities && a.cities.length) filters.push(a.cities.slice(0,3).join(', ')+(a.cities.length>3?' +'+(a.cities.length-3)+' cities':''));
-      if (a.min_price||a.max_price) filters.push('$'+(a.min_price?Number(a.min_price).toLocaleString():'0')+' - $'+(a.max_price?Number(a.max_price).toLocaleString():'Any'));
-      if (a.min_beds) filters.push(a.min_beds+'+ beds');
-      if (a.property_types && a.property_types.length) filters.push(a.property_types.slice(0,2).join(', '));
-      if (a.has_pool) filters.push('Pool');
-      return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:12px;padding:16px 18px;margin-bottom:10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">'
-        +'<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap"><span style="font-size:.9rem;font-weight:700;color:#eee">'+a.name+'</span><span style="background:'+(a.is_active?'rgba(34,197,94,.12)':'rgba(100,100,100,.1)')+';color:'+(a.is_active?'#22c55e':'#555')+';border-radius:12px;padding:2px 9px;font-size:.68rem;font-weight:700;text-transform:uppercase">'+(a.is_active?'Active':'Paused')+'</span><span style="font-size:.7rem;color:#555">'+(a.frequency||'Daily')+'</span></div>'
-        +'<div style="font-size:.75rem;color:#666;line-height:1.7">'+(filters.join(' &bull; ')||'All listings')+'</div>'
-        +(a.last_sent_at?'<div style="font-size:.68rem;color:#444;margin-top:4px">Last sent: '+new Date(a.last_sent_at).toLocaleDateString()+'</div>':'')
-        +'</div><div style="display:flex;gap:6px;flex-shrink:0">'
-        +'<button onclick="toggleAlert(\''+a.id+'\','+(!a.is_active)+')" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:5px 10px;font-size:.72rem;cursor:pointer">'+(a.is_active?'Pause':'Resume')+'</button>'
-        +'<button onclick="deleteAlert(\''+a.id+'\')" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:7px;padding:5px 10px;font-size:.72rem;cursor:pointer">Delete</button>'
-        +'</div></div>';
+      var cities = (a.cities||[]).join(', ') || a.county || '\u2014';
+      var types = (a.property_types||[]).join(', ') || 'All Types';
+      var price = fmtPriceRange(a.min_price, a.max_price);
+      var beds = a.min_beds ? a.min_beds+'+ beds' : '';
+      var baths = a.min_baths ? a.min_baths+'+ baths' : '';
+      var lastSent = a.last_sent_at ? new Date(a.last_sent_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : 'Never';
+      var fc = {Instant:{bg:'rgba(82,200,122,0.12)',text:'#52C87A'},Daily:{bg:'rgba(201,168,76,0.12)',text:'#C9A84C'},Weekly:{bg:'rgba(90,160,224,0.12)',text:'#7BBCE8'}};
+      var f = fc[a.frequency] || fc.Daily;
+      return '<div onclick="openAlertDetail(\''+a.id+'\')" style="background:#111113;border-radius:14px;border:1px solid rgba(255,255,255,0.07);cursor:pointer;transition:all .18s;overflow:hidden;margin-bottom:10px;" onmouseover="this.style.borderColor=\'rgba(201,168,76,0.35)\'" onmouseout="this.style.borderColor=\'rgba(255,255,255,0.07)\'">'
+        +'<div style="height:3px;background:'+(a.is_active?'linear-gradient(90deg,#C9A84C,#7A5020)':'rgba(255,255,255,0.1)')+'"></div>'
+        +'<div style="padding:16px 18px">'
+        +'<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">'
+        +'<div style="flex:1"><div style="font-size:15px;font-weight:700;color:#E0DDD4;margin-bottom:5px">\uD83D\uDD14 '+a.name+'</div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:5px">'
+        +'<span style="padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:600;background:'+(a.is_active?'rgba(82,200,122,0.15)':'rgba(100,100,100,0.15)')+';color:'+(a.is_active?'#52C87A':'#666')+'">'+(a.is_active?'\u25CF ACTIVE':'\u23F8 PAUSED')+'</span>'
+        +'<span style="padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:600;background:'+f.bg+';color:'+f.text+';">\u26A1 '+(a.frequency||'Daily')+'</span>'
+        +'</div></div>'
+        +'<div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px" onclick="event.stopPropagation()">'
+        +'<button onclick="toggleAlert(\''+a.id+'\','+(!a.is_active)+')" style="padding:5px 10px;border-radius:7px;font-size:11px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:#888;cursor:pointer">'+(a.is_active?'\u23F8':'\u25B6')+'</button>'
+        +'<button onclick="deleteAlert(\''+a.id+'\')" style="padding:5px 10px;border-radius:7px;font-size:11px;border:1px solid rgba(224,82,82,0.2);background:transparent;color:#E05252;cursor:pointer">\uD83D\uDDD1</button>'
+        +'</div></div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;font-size:12px;color:#888;">'
+        +'<span>\uD83D\uDCCD '+cities.substring(0,40)+'</span> \u00b7 <span>\uD83D\uDCB0 '+price+'</span>'
+        +(beds?' \u00b7 <span>\uD83D\uDECF '+beds+(baths?' \u00b7 '+baths:'')+'</span>':'')
+        +' \u00b7 <span>\uD83C\uDFE0 '+types.substring(0,30)+'</span>'
+        +'</div>'
+        +'<div style="display:flex;gap:16px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.04);font-size:11px;color:#555">'
+        +'<span>\uD83D\uDCEC '+(a.total_sent||0)+' sent</span>'
+        +'<span>\uD83D\uDCC5 Last: '+lastSent+'</span>'
+        +'<span style="flex:1"></span>'
+        +'<span style="color:#C9A84C">Details \u2192</span>'
+        +'</div></div></div>';
     }).join('');
   } catch(e) { container.innerHTML = '<p style="color:#ef4444;text-align:center;padding:20px">Error loading alerts.</p>'; }
 }
@@ -1621,7 +1639,90 @@ async function toggleAlert(alertId,isActive) {
 async function deleteAlert(alertId) {
   if(!confirm('Delete this listing alert?'))return;
   await fetch(ALERT_FN,{method:'POST',headers:ALERT_HEADERS,body:JSON.stringify({action:'delete_alert',alert_id:alertId})});
+  var dm = document.getElementById('alertDetailModal'); if (dm) dm.style.display = 'none';
   loadAlerts();
+}
+
+function fmtPriceRange(min, max) {
+  function f(n){if(!n)return null;n=Number(n);return n>=1000000?'$'+(n/1000000).toFixed(1)+'M':'$'+(n/1000).toFixed(0)+'K';}
+  if(f(min)&&f(max))return f(min)+' \u2013 '+f(max);
+  if(f(max))return 'Up to '+f(max);
+  if(f(min))return f(min)+'+';
+  return 'Any price';
+}
+
+function openAlertDetail(alertId) {
+  var a = (window._alertsCache||[]).find(function(x){return x.id===alertId;});
+  if (!a) return;
+  window._currentDetailAlert = a;
+  var modal = document.getElementById('alertDetailModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'alertDetailModal';
+    modal.onclick = function(e){if(e.target===modal){modal.style.display='none';document.body.style.overflow='';}};
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:9999;align-items:center;justify-content:center;';
+    modal.innerHTML = '<div style="width:min(660px,95vw);max-height:90vh;overflow-y:auto;background:#0F0F11;border-radius:16px;border:1px solid rgba(201,168,76,0.2);box-shadow:0 32px 80px rgba(0,0,0,0.9);">'
+      +'<div style="padding:18px 22px;border-bottom:1px solid rgba(201,168,76,0.1);background:#0C0C0E;border-radius:16px 16px 0 0;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10;">'
+      +'<div><div id="dAlertName" style="font-size:18px;font-weight:700;color:#E0DDD4;margin-bottom:4px;"></div><div id="dAlertBadges" style="display:flex;gap:6px;"></div></div>'
+      +'<button onclick="document.getElementById(\'alertDetailModal\').style.display=\'none\';document.body.style.overflow=\'\'" type="button" style="width:32px;height:32px;border-radius:8px;border:none;background:rgba(224,82,82,0.1);color:#E05252;cursor:pointer;font-size:16px;">\u2715</button>'
+      +'</div>'
+      +'<div style="padding:14px 22px;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;gap:8px;flex-wrap:wrap;">'
+      +'<button onclick="launchSearch()" style="padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;">\uD83D\uDD0D Search Listings</button>'
+      +'<button onclick="toggleCurrentAlert()" id="dToggleBtn" style="padding:9px 16px;border-radius:8px;font-size:13px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#888;cursor:pointer;">\u23F8 Pause</button>'
+      +'<button onclick="deleteAlert(window._currentDetailAlert?.id)" style="padding:9px 16px;border-radius:8px;font-size:13px;border:1px solid rgba(224,82,82,0.25);background:transparent;color:#E05252;cursor:pointer;margin-left:auto;">\uD83D\uDDD1 Delete</button>'
+      +'</div>'
+      +'<div style="padding:20px 22px;"><div style="font-size:11px;color:#7A5820;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;margin-bottom:12px;">Search Criteria</div><div id="dCriteria" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;"></div>'
+      +'<div style="font-size:11px;color:#7A5820;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;margin-bottom:12px;">Statistics</div><div id="dStats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"></div></div></div>';
+    document.body.appendChild(modal);
+  }
+  document.getElementById('dAlertName').textContent = '\uD83D\uDD14 ' + a.name;
+  document.getElementById('dAlertBadges').innerHTML =
+    '<span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:'+(a.is_active?'rgba(82,200,122,0.15)':'rgba(100,100,100,0.15)')+';color:'+(a.is_active?'#52C87A':'#666')+'">'+(a.is_active?'\u25CF ACTIVE':'\u23F8 PAUSED')+'</span>'
+    +'<span style="padding:3px 10px;border-radius:20px;font-size:11px;background:rgba(201,168,76,0.1);color:#C9A84C;">\u26A1 '+a.frequency+'</span>';
+  document.getElementById('dToggleBtn').textContent = a.is_active ? '\u23F8 Pause Alert' : '\u25B6 Activate';
+  var crit = [
+    ['\uD83D\uDCCD Location',(a.cities||[]).join(', ')||a.county],
+    ['\uD83D\uDCB0 Price',fmtPriceRange(a.min_price,a.max_price)],
+    ['\uD83C\uDFE0 Types',(a.property_types||[]).join(', ')],
+    ['\uD83D\uDECF Beds',a.min_beds?a.min_beds+'+':null],
+    ['\uD83D\uDEBF Baths',a.min_baths?a.min_baths+'+':null],
+    ['\uD83D\uDCD0 Sq Ft',a.min_sqft?a.min_sqft.toLocaleString()+'+':null],
+    ['\uD83C\uDFCA Pool',a.has_pool?'\u2713 Required':null],
+    ['\uD83D\uDE97 Garage',a.has_garage?'\u2713 Required':null],
+    ['\uD83D\uDD11 Keywords',a.keywords],
+    ['\uD83C\uDFD7 New Const.',a.new_construction_only?'Only':null],
+  ].filter(function(c){return c[1];});
+  document.getElementById('dCriteria').innerHTML = crit.map(function(c){return '<div style="background:#131315;border-radius:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.04);"><div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;margin-bottom:3px;">'+c[0]+'</div><div style="font-size:13px;color:#C8C5BC;font-weight:500;">'+c[1]+'</div></div>';}).join('');
+  var ls = a.last_sent_at ? new Date(a.last_sent_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'Never';
+  document.getElementById('dStats').innerHTML = [
+    [a.total_sent||0,'Emails Sent','#C9A84C'],
+    [ls,'Last Sent','#E0DDD4'],
+    [(a.last_listing_count||0)+' listings','Last Match','#52C87A']
+  ].map(function(s){return '<div style="background:#131315;border-radius:8px;padding:12px;border:1px solid rgba(255,255,255,0.04);text-align:center;"><div style="font-size:16px;font-weight:700;color:'+s[2]+';margin-bottom:3px;">'+s[0]+'</div><div style="font-size:10px;color:#555;text-transform:uppercase;">'+s[1]+'</div></div>';}).join('');
+  modal.style.display = 'flex'; document.body.style.overflow = 'hidden';
+}
+
+async function toggleCurrentAlert() {
+  var a = window._currentDetailAlert; if(!a) return;
+  await toggleAlert(a.id, !a.is_active);
+  document.getElementById('alertDetailModal').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function launchSearch() {
+  var a = window._currentDetailAlert; if(!a) return;
+  var p = new URLSearchParams();
+  if(a.cities?.length)p.set('cities',a.cities.join(','));
+  if(a.counties?.length)p.set('counties',a.counties.join(','));
+  if(a.min_price)p.set('min_price',a.min_price);
+  if(a.max_price)p.set('max_price',a.max_price);
+  if(a.min_beds)p.set('min_beds',a.min_beds);
+  if(a.min_baths)p.set('min_baths',a.min_baths);
+  if(a.property_types?.length)p.set('property_types',a.property_types.join(','));
+  p.set('from_alert',a.name);
+  document.getElementById('alertDetailModal').style.display='none';
+  document.body.style.overflow='';
+  window.location.href='/public/search.html?'+p.toString();
 }
 
 var ALERT_COUNTIES={'Orange':['Anaheim','Brea','Buena Park','Costa Mesa','Cypress','Dana Point','Fountain Valley','Fullerton','Garden Grove','Huntington Beach','Irvine','La Habra','Laguna Beach','Laguna Niguel','Lake Forest','Mission Viejo','Newport Beach','Orange','Placentia','Santa Ana','Seal Beach','Tustin','Westminster','Yorba Linda'],'Los Angeles':['Alhambra','Burbank','Carson','Cerritos','Compton','Downey','El Monte','Glendale','Hawthorne','Inglewood','Lakewood','Long Beach','Los Angeles','Norwalk','Palmdale','Pasadena','Pomona','Redondo Beach','Santa Clarita','Santa Monica','Torrance','West Covina','Whittier'],'Riverside':['Beaumont','Corona','Hemet','Indio','Lake Elsinore','Menifee','Moreno Valley','Murrieta','Palm Springs','Riverside','Temecula'],'San Bernardino':['Chino Hills','Fontana','Ontario','Rancho Cucamonga','Redlands','Rialto','San Bernardino','Upland','Victorville'],'San Diego':['Carlsbad','Chula Vista','El Cajon','Escondido','Oceanside','San Diego','San Marcos','Vista'],'Ventura':['Camarillo','Oxnard','Simi Valley','Thousand Oaks','Ventura']};
