@@ -2952,6 +2952,14 @@
           <button onclick="loadMoreActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:8px 20px;font-size:.78rem;cursor:pointer">Load More</button>
         </div>
       </div>
+      <!-- Portal Activity sub-section -->
+      <div style="margin-top:24px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.06);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div style="font-size:14px;font-weight:600;color:#E0DDD4;">&#128065; Portal Activity</div>
+          <button onclick="loadPortalActivity()" type="button" style="font-size:11px;color:#C9A84C;background:transparent;border:none;cursor:pointer;">&#8635; Refresh</button>
+        </div>
+        <div id="portalActivityFeed"><div style="text-align:center;padding:20px;color:#555;">Loading portal activity...</div></div>
+      </div>
     </div><!-- /tab-activity -->
 
     <!-- Email Preview Modal -->
@@ -3750,6 +3758,58 @@ function actExpandedContent(e) {
     if (keys.length) return keys.map(function(k) { return k + ': ' + JSON.stringify(e.metadata[k]); }).join('\n');
   }
   return e.description || '';
+}
+
+/* ── PORTAL ACTIVITY ── */
+async function loadPortalActivity() {
+  var cid = new URLSearchParams(window.location.search).get('contact_id');
+  var feed = document.getElementById('portalActivityFeed');
+  if (!cid || !feed) return;
+  try {
+    var sbUrl = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    var sbKey = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+    var res = await fetch(sbUrl+'/rest/v1/portal_page_views?contact_id=eq.'+cid+'&order=created_at.desc&limit=50&select=*',{headers:{apikey:sbKey,Authorization:'Bearer '+sbKey}});
+    var views = await res.json();
+    if (!Array.isArray(views) || !views.length) {
+      feed.innerHTML = '<div style="text-align:center;padding:30px;color:#555;"><div style="font-size:24px;margin-bottom:8px;">&#128065;</div>No portal activity recorded yet.</div>';
+      return;
+    }
+    // Group by session
+    var sessions = {};
+    views.forEach(function(v) {
+      var sid = v.session_id || 'unknown';
+      if (!sessions[sid]) sessions[sid] = { views:[], firstAt:v.created_at };
+      sessions[sid].views.push(v);
+    });
+    var pageLabels = {'search':'\uD83D\uDD0D Search','property-detail':'\uD83C\uDFE1 Property','listing-alerts':'\uD83D\uDD14 Alerts','portal':'\uD83C\uDFE0 Dashboard','documents':'\uD83D\uDCC1 Documents','application':'\uD83D\uDCCB 1003 App','showings':'\uD83D\uDCC5 Showings','saved':'\u2764 Saved'};
+    function getLabel(page) {
+      for (var k in pageLabels) if (page.indexOf(k) >= 0) return pageLabels[k];
+      return '\uD83D\uDCC4 ' + page.split('/').pop().replace('.html','').replace(/-/g,' ');
+    }
+    var entries = Object.entries(sessions).sort(function(a,b) { return new Date(b[1].firstAt) - new Date(a[1].firstAt); });
+    feed.innerHTML = entries.map(function(e) {
+      var session = e[1];
+      var totalTime = session.views.reduce(function(s,v){return s+(v.duration_seconds||0);},0);
+      var dateStr = new Date(session.firstAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+      var device = session.views[0]?.device_type === 'mobile' ? '\uD83D\uDCF1' : '\uD83D\uDCBB';
+      return '<div style="background:#111113;border-radius:12px;padding:14px;margin-bottom:10px;border:1px solid rgba(255,255,255,0.06);">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
+        +'<div style="display:flex;align-items:center;gap:8px;"><div style="width:8px;height:8px;border-radius:50%;background:#52C87A;"></div><span style="font-size:12px;font-weight:600;color:#E0DDD4;">'+dateStr+'</span><span style="font-size:11px;">'+device+'</span></div>'
+        +'<div style="font-size:11px;color:#555;">'+session.views.length+' page'+(session.views.length!==1?'s':'')+' \u00b7 '+(totalTime>60?Math.round(totalTime/60)+'m':''+totalTime+'s')+'</div></div>'
+        +'<div style="display:flex;flex-direction:column;gap:4px;">'
+        +session.views.map(function(v) {
+          return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.02);">'
+            +'<span style="font-size:12px;flex:1;color:#C8C5BC;">'+getLabel(v.page)
+            +(v.listing_address?' <span style="font-size:11px;color:#7A5820;">'+v.listing_address+'</span>':'')
+            +'</span>'
+            +'<span style="font-size:11px;color:#555;">'
+            +(v.duration_seconds?'\u23F1 '+v.duration_seconds+'s ':'')
+            +(v.scroll_depth?'\u2195 '+v.scroll_depth+'% ':'')
+            +'</span></div>';
+        }).join('')
+        +'</div></div>';
+    }).join('');
+  } catch(e) { feed.innerHTML = '<div style="color:#555;padding:20px;">Failed to load portal activity.</div>'; }
 }
 
 async function loadActivity(reset) {
@@ -4908,7 +4968,7 @@ function switchTab(name, btn) {
   if (name === 'conditions') loadConditions();
   if (name === 'mismo') loadMISMOHistory();
   if (name === 'alerts') loadContactAlerts();
-  if (name === 'activity') loadActivity();
+  if (name === 'activity') { loadActivity(); loadPortalActivity(); }
   if (name === 'showings') loadContactShowings();
 }
 
