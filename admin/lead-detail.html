@@ -5362,14 +5362,20 @@ async function updateShowingBatchStatus(batchId, newStatus) {
 async function loadContactAlerts() {
   var container = document.getElementById('crmAlertsContainer');
   var badge = document.getElementById('alertsCountBadge');
-  if (!container) return;
+  if (!container) { console.error('[alerts] crmAlertsContainer not found'); return; }
+  // contact_id comes from the URL (?contact_id=... or ?id=...)
+  var params = new URLSearchParams(location.search);
+  var cid = params.get('contact_id') || params.get('id') || contactId;
+  console.log('[alerts] loadContactAlerts contact_id:', cid);
+  if (!cid) { console.warn('[alerts] no contact_id'); container.innerHTML = '<div style="padding:20px;color:#666">No contact selected</div>'; return; }
   try {
-    var _anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
     var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/listing-alert-actions', {
-      method: 'POST', headers: {'Content-Type':'application/json', 'Authorization': 'Bearer ' + _anon, 'apikey': _anon},
-      body: JSON.stringify({ action:'get_alerts', contact_id: contactId||null, portal_user_id: contactData?.portal_user_id||null, borrower_id: contactData?.crm_id||contactData?.borrower_id||null })
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'get_alerts', contact_id: cid })
     });
+    if (!res.ok) { console.error('[alerts] HTTP', res.status, await res.text()); return; }
     var result = await res.json();
+    console.log('[alerts] fetched', (result.alerts||[]).length, 'alerts for contact_id:', cid);
     var alerts = result.alerts || [];
     if (badge) badge.textContent = alerts.length + ' alert' + (alerts.length !== 1 ? 's' : '');
     if (!alerts.length) {
