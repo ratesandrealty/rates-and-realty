@@ -3406,7 +3406,7 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="/api/env.js?v=2026033003"></script>
+<!-- env.js already loaded in <head> above; second load removed to stop duplicate VM script entries -->
 <script src="/public/listing-alerts.js"></script>
 <script>
 // v2026033003
@@ -4679,6 +4679,7 @@ async function loadCreditApps() {
       .order('created_at', { ascending: false });
     if (r.error) { console.warn('[credit_applications] unavailable:', r.error.message); return; }
     const apps = r.data || [];
+    console.log('[credit_applications] loaded ' + apps.length + ' apps for contact:', contactId);
 
     const score = contactData.credit_score || 0;
     cc.innerHTML = `
@@ -5478,29 +5479,42 @@ async function loadContactAlerts() {
     console.log('[alerts] fetched', (result.alerts||[]).length, 'alerts for contact_id:', cid);
     var alerts = result.alerts || [];
     if (badge) badge.textContent = alerts.length + ' alert' + (alerts.length !== 1 ? 's' : '');
+    console.log('[alerts] container state:', { offsetHeight: container.offsetHeight, display: getComputedStyle(container).display, parentDisplay: getComputedStyle(container.parentElement).display });
     if (!alerts.length) {
       container.innerHTML = '<div style="text-align:center;padding:40px;background:#1a1a1a;border:1px solid #222;border-radius:10px;color:#444"><i class="fas fa-bell-slash" style="font-size:2rem;display:block;margin-bottom:10px;color:#1e1e1e"></i><div style="font-size:.85rem">No listing alerts yet.</div><div style="font-size:.75rem;color:#333;margin-top:4px">Borrower can create alerts in their portal.</div></div>';
       return;
     }
-    var sc = { true: '#22c55e', false: '#555' };
-    container.innerHTML = alerts.map(function(a) {
-      var filters = [];
-      if (a.counties && a.counties.length) filters.push(a.counties.join(', '));
-      if (a.cities && a.cities.length) filters.push(a.cities.slice(0,3).join(', ') + (a.cities.length>3?' +'+(a.cities.length-3):''));
-      if (a.min_price||a.max_price) filters.push('$'+(a.min_price?Number(a.min_price).toLocaleString():'0')+' - $'+(a.max_price?Number(a.max_price).toLocaleString():'Any'));
-      if (a.min_beds) filters.push(a.min_beds+'+ beds');
-      if (a.property_types&&a.property_types.length) filters.push(a.property_types.slice(0,2).join(', '));
-      if (a.has_pool) filters.push('Pool');
-      return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px">'
-        +'<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:7px;margin-bottom:5px;flex-wrap:wrap"><span style="font-size:.88rem;font-weight:700;color:#eee">'+a.name+'</span><span style="background:'+(a.is_active?'rgba(34,197,94,.12)':'rgba(100,100,100,.1)')+';color:'+sc[a.is_active]+';border-radius:10px;padding:2px 8px;font-size:.67rem;font-weight:700;text-transform:uppercase">'+(a.is_active?'Active':'Paused')+'</span><span style="font-size:.7rem;color:#444">'+(a.frequency||'Daily')+'</span></div>'
-        +'<div style="font-size:.75rem;color:#666;line-height:1.6">'+(filters.join(' &bull; ')||'All listings')+'</div>'
-        +(a.last_sent_at?'<div style="font-size:.68rem;color:#444;margin-top:4px">Last sent: '+new Date(a.last_sent_at).toLocaleDateString()+'</div>':'')
-        +'</div><div style="display:flex;gap:5px;flex-shrink:0">'
-        +'<button onclick="toggleContactAlert(\''+a.id+'\','+(!a.is_active)+')" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:6px;padding:4px 9px;font-size:.7rem;cursor:pointer">'+(a.is_active?'Pause':'Resume')+'</button>'
-        +'<button onclick="deleteContactAlert(\''+a.id+'\')" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:6px;padding:4px 9px;font-size:.7rem;cursor:pointer">Del</button>'
-        +'</div></div>';
-    }).join('');
-  } catch(e) { container.innerHTML = '<p style="color:#ef4444;padding:20px;text-align:center">Error loading alerts</p>'; }
+    try {
+      var html = alerts.map(function(a) {
+        var statusBg = a.is_active ? 'rgba(34,197,94,.12)' : 'rgba(100,100,100,.1)';
+        var statusColor = a.is_active ? '#22c55e' : '#555';
+        var filters = [];
+        if (a.counties && a.counties.length) filters.push(a.counties.join(', '));
+        if (a.cities && a.cities.length) filters.push(a.cities.slice(0,3).join(', ') + (a.cities.length>3?' +'+(a.cities.length-3):''));
+        if (a.min_price||a.max_price) filters.push('$'+(a.min_price?Number(a.min_price).toLocaleString():'0')+' - $'+(a.max_price?Number(a.max_price).toLocaleString():'Any'));
+        if (a.min_beds) filters.push(a.min_beds+'+ beds');
+        if (a.property_types&&a.property_types.length) filters.push(a.property_types.slice(0,2).join(', '));
+        if (a.has_pool) filters.push('Pool');
+        var name = (a.name||'Untitled').toString().replace(/</g,'&lt;');
+        return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px">'
+          +'<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:7px;margin-bottom:5px;flex-wrap:wrap"><span style="font-size:.88rem;font-weight:700;color:#eee">'+name+'</span><span style="background:'+statusBg+';color:'+statusColor+';border-radius:10px;padding:2px 8px;font-size:.67rem;font-weight:700;text-transform:uppercase">'+(a.is_active?'Active':'Paused')+'</span><span style="font-size:.7rem;color:#444">'+(a.frequency||'Daily')+'</span></div>'
+          +'<div style="font-size:.75rem;color:#666;line-height:1.6">'+(filters.join(' &bull; ')||'All listings')+'</div>'
+          +(a.last_sent_at?'<div style="font-size:.68rem;color:#444;margin-top:4px">Last sent: '+new Date(a.last_sent_at).toLocaleDateString()+'</div>':'')
+          +'</div><div style="display:flex;gap:5px;flex-shrink:0">'
+          +'<button onclick="toggleContactAlert(\''+a.id+'\','+(!a.is_active)+')" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:6px;padding:4px 9px;font-size:.7rem;cursor:pointer">'+(a.is_active?'Pause':'Resume')+'</button>'
+          +'<button onclick="deleteContactAlert(\''+a.id+'\')" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444;border-radius:6px;padding:4px 9px;font-size:.7rem;cursor:pointer">Del</button>'
+          +'</div></div>';
+      }).join('');
+      container.innerHTML = html;
+      console.log('[alerts] rendered ' + alerts.length + ' cards, innerHTML length:', container.innerHTML.length);
+    } catch(renderErr) {
+      console.error('[alerts] render exception:', renderErr);
+      container.innerHTML = '<p style="color:#ef4444;padding:20px;text-align:center">Render error: ' + (renderErr.message||'unknown') + '</p>';
+    }
+  } catch(e) {
+    console.error('[alerts] fetch exception:', e);
+    container.innerHTML = '<p style="color:#ef4444;padding:20px;text-align:center">Error loading alerts: ' + (e.message||'unknown') + '</p>';
+  }
 }
 
 async function toggleContactAlert(alertId, isActive) {
