@@ -1183,17 +1183,28 @@ function confirmBulkDelete() {
 async function deleteContacts(ids) {
   if (!ids.length) return;
   showToast('Deleting ' + ids.length + ' contact' + (ids.length > 1 ? 's' : '') + '...');
+  console.log('[deleteContacts] Deleting IDs:', ids);
   try {
     var res = await fetch(SB_URL + '/functions/v1/delete-contacts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ANON_KEY },
       body: JSON.stringify({ contact_ids: ids })
     });
-    if (!res.ok) { var err = await res.json(); throw new Error(err.error || 'Delete failed'); }
-    showToast('Deleted ' + ids.length + ' contact' + (ids.length > 1 ? 's' : ''));
-    // Remove from local data and re-render
-    _allPeople = _allPeople.filter(function(p) { return ids.indexOf(p.id) === -1; });
-    ids.forEach(function(id) { _selected.delete(id); });
+    var data = await res.json();
+    console.log('[deleteContacts] Response:', data);
+    if (!res.ok || data.error) throw new Error(data.error || 'Delete failed');
+    var deleted = data.deleted || 0;
+    if (deleted === 0) {
+      // All failed — show the first row's error for diagnostics (usually FK violation)
+      var firstFail = (data.results || []).find(function(r){return !r.success;});
+      var detail = firstFail && firstFail.error ? firstFail.error.substring(0, 180) : 'unknown error';
+      throw new Error('0 of ' + ids.length + ' deleted. ' + detail);
+    }
+    showToast('Deleted ' + deleted + ' contact' + (deleted > 1 ? 's' : ''));
+    // Remove from local data and re-render — only the ones actually deleted
+    var deletedIds = (data.results || []).filter(function(r){return r.success;}).map(function(r){return r.id;});
+    _allPeople = _allPeople.filter(function(p) { return deletedIds.indexOf(p.id) === -1; });
+    deletedIds.forEach(function(id) { _selected.delete(id); });
     applyFilters();
     updateBulkBar();
   } catch(err) {

@@ -22,8 +22,12 @@ const RELATED_TABLES = [
   'loan_conditions', 'condition_documents', 'condition_notes',
   'listing_alerts', 'alert_sent_listings', 'saved_listings',
   'credit_applications', 'contact_tags', 'page_views',
+  'portal_page_views', 'mortgage_applications', 'liabilities',
+  'scheduled_emails', 'documents', 'tasks', 'notes',
   'leads', 'portal_users',
 ];
+// Tables that reference contacts via a different FK column name
+const RELATED_VIA_RELATED = ['contact_relationships']; // has related_contact_id too
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -44,13 +48,28 @@ Deno.serve(async (req: Request) => {
             method: 'DELETE', headers: dbHeaders,
           }).catch(() => {});
         }
+        // Also delete rows where this contact is referenced as related_contact_id
+        for (const table of RELATED_VIA_RELATED) {
+          await fetch(`${SUPABASE_URL}/rest/v1/${table}?contact_id=eq.${id}`, {
+            method: 'DELETE', headers: dbHeaders,
+          }).catch(() => {});
+          await fetch(`${SUPABASE_URL}/rest/v1/${table}?related_contact_id=eq.${id}`, {
+            method: 'DELETE', headers: dbHeaders,
+          }).catch(() => {});
+        }
 
         const res = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}`, {
           method: 'DELETE', headers: dbHeaders,
         });
 
-        results.push({ id, success: res.ok });
-        console.log(`[delete-contacts] ${id}: ${res.ok ? 'deleted' : 'failed ' + res.status}`);
+        let errDetail = '';
+        if (!res.ok) {
+          try { errDetail = await res.text(); } catch(_) {}
+          console.error(`[delete-contacts] ${id} FAILED ${res.status}: ${errDetail}`);
+        } else {
+          console.log(`[delete-contacts] ${id}: deleted`);
+        }
+        results.push({ id, success: res.ok, status: res.status, error: res.ok ? undefined : errDetail });
       } catch (err: any) {
         console.error(`[delete-contacts] Error deleting ${id}:`, err.message);
         results.push({ id, success: false, error: err.message });
