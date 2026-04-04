@@ -488,7 +488,7 @@ input,select{font-family:inherit}
       <div class="nearby-map" id="nearbyHomesMap"></div>
       <div class="map-legend">
         <div class="map-legend-item"><div class="legend-dot" style="background:var(--gold)"></div> This Property</div>
-        <div class="map-legend-item"><div class="legend-dot" style="background:#3c78ff"></div> Nearby Active</div>
+        <div class="map-legend-item"><div class="legend-dot" style="background:#C9A84C;border:2px solid #fff;width:18px;height:10px;border-radius:10px"></div> Nearby Active</div>
       </div>
       <div class="nearby-list" id="nearbyHomesList"></div>
     </div>
@@ -816,12 +816,21 @@ function makeGoldDot(size) {
   el.style.cssText = 'width:'+size+'px;height:'+size+'px;border-radius:50%;background:#C9A84C;border:3px solid #000;box-shadow:0 2px 8px rgba(0,0,0,0.6);cursor:pointer';
   return el;
 }
-function makeBlueDot() {
-  var el = document.createElement('div');
-  el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#3c78ff;border:2px solid #000;box-shadow:0 2px 6px rgba(0,0,0,0.4);cursor:pointer;transition:transform .15s';
-  el.onmouseover = function(){ el.style.transform='scale(1.4)'; };
-  el.onmouseout  = function(){ el.style.transform='scale(1)'; };
-  return el;
+function formatPricePin(p) {
+  if (!p) return '';
+  if (p >= 1000000) return '$' + (p / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (p >= 1000) return '$' + Math.round(p / 1000) + 'K';
+  return '$' + p;
+}
+// Returns a wrapper element whose INNER child carries all visual styling.
+// Mapbox sets transform on the wrapper for positioning — never touch the wrapper's transform.
+function makePricePin(price) {
+  var wrapper = document.createElement('div');
+  var inner = document.createElement('div');
+  inner.textContent = formatPricePin(price);
+  inner.style.cssText = 'background:#C9A84C;color:#1A0E00;font-weight:700;font-size:11px;font-family:sans-serif;padding:4px 9px;border-radius:20px;border:2px solid #fff;cursor:pointer;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.4);transition:transform .15s,background .15s,color .15s;line-height:1;user-select:none;';
+  wrapper.appendChild(inner);
+  return wrapper;
 }
 function initDetailMap(lat, lng, addr) {
   if (!lat || !lng) {
@@ -1048,15 +1057,36 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
     .setLngLat([subjectLng, subjectLat])
     .setPopup(new mapboxgl.Popup({offset:20}).setHTML('<div style="color:#000;font-size:12px;padding:2px"><strong>\uD83D\uDCCD This Property</strong><br>'+(listing.UnparsedAddress||'')+'</div>'))
     .addTo(nearbyMapRef);
+  if (nearby[0]) console.log('[nearby] first listing fields:', { ListingKey: nearby[0].ListingKey, Latitude: nearby[0].Latitude, Longitude: nearby[0].Longitude, ListPrice: nearby[0].ListPrice });
+  console.log('[nearby] rendering ' + nearby.length + ' price-pin markers');
   nearby.forEach(function(l){
-    var el = makeBlueDot();
+    var lat = parseFloat(l.Latitude);
+    var lng = parseFloat(l.Longitude);
+    if (!lat || !lng) return; // guard against missing coords
+    var el = makePricePin(l.ListPrice || 0);
+    var inner = el.firstElementChild;
     var popupHtml = '<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5;font-family:system-ui,sans-serif"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br>'+((l.BedroomsTotal||'')+' bd \u00b7 '+(l.BathroomsTotalInteger||'')+' ba')+'<br><a href="property-detail.html?listing_key='+encodeURIComponent(l.ListingKey)+'" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a></div>';
-    var marker = new mapboxgl.Marker({ element: el })
-      .setLngLat([l.Longitude, l.Latitude])
-      .setPopup(new mapboxgl.Popup({offset:18}).setHTML(popupHtml))
+    new mapboxgl.Marker({ element: el })
+      .setLngLat([lng, lat])
+      .setPopup(new mapboxgl.Popup({offset:16,closeButton:false,maxWidth:'220px'}).setHTML(popupHtml))
       .addTo(nearbyMapRef);
-    el.addEventListener('mouseover', function(){ var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]'); if(item){item.style.background='rgba(90,160,224,0.06)';item.style.borderColor='rgba(90,160,224,0.4)';} });
-    el.addEventListener('mouseout', function(){ var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]'); if(item){item.style.background='';item.style.borderColor='';} });
+    // Hover: scale/invert the inner child only — never touch the wrapper's transform
+    el.addEventListener('mouseover', function(){
+      inner.style.transform = 'scale(1.12)';
+      inner.style.background = '#fff';
+      inner.style.color = '#C9A84C';
+      el.style.zIndex = '10';
+      var item = document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');
+      if (item) { item.style.background='rgba(201,168,76,0.08)'; item.style.borderColor='rgba(201,168,76,0.4)'; }
+    });
+    el.addEventListener('mouseout', function(){
+      inner.style.transform = '';
+      inner.style.background = '#C9A84C';
+      inner.style.color = '#1A0E00';
+      el.style.zIndex = '';
+      var item = document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');
+      if (item) { item.style.background=''; item.style.borderColor=''; }
+    });
   });
   var listEl = document.getElementById('nearbyHomesList');
   var listItems = nearby.slice(0,5);
