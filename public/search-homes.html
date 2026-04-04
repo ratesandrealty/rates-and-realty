@@ -867,11 +867,21 @@ function initStatusTabs() {
 }
 
 /* ===== ODATA FILTER BUILDER ===== */
-function buildODataFilter() {
+// When `bounds` is provided (mapboxgl LngLatBounds), the city/county/state
+// location filter is replaced with a Lat/Lng bounding box — this is used by
+// the "Search this area" button and zoom auto-search.
+function buildODataFilter(bounds) {
   var parts = [];
 
-  // Location — cities take priority, then counties, then all CA
-  if (selectedCities.length > 0) {
+  if (bounds) {
+    // Map viewport bounding box — overrides city/county selectors
+    var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+    parts.push('Latitude ge ' + sw.lat.toFixed(6));
+    parts.push('Latitude le ' + ne.lat.toFixed(6));
+    parts.push('Longitude ge ' + sw.lng.toFixed(6));
+    parts.push('Longitude le ' + ne.lng.toFixed(6));
+  } else if (selectedCities.length > 0) {
+    // Location — cities take priority, then counties, then all CA
     var cityList = selectedCities.slice(0, 12);
     if (cityList.length === 1) parts.push("City eq '" + cityList[0] + "'");
     else parts.push("(" + cityList.map(function(c){return "City eq '" + c + "'";}).join(' or ') + ")");
@@ -954,7 +964,10 @@ function buildODataFilter() {
 }
 
 /* ===== FETCH LISTINGS ===== */
-async function fetchListings(page, append) {
+// boundsOverride: optional mapboxgl LngLatBounds — when provided, fetches by
+// viewport instead of city/county. All other filter UI values (price, beds,
+// types, etc.) still apply.
+async function fetchListings(page, append, boundsOverride) {
   if (isLoading) return;
   isLoading = true;
   page = page || 1;
@@ -967,9 +980,12 @@ async function fetchListings(page, append) {
     allListings = [];
   }
 
+  // If a viewport search is active, persist bounds across pagination
+  var effectiveBounds = boundsOverride || (_boundsFetchActive ? _searchAreaBounds : null);
+
   var sort = document.getElementById('sortSelect').value || 'ListPrice desc';
   var skip = (page - 1) * PAGE_SIZE;
-  var filterParts = buildODataFilter();
+  var filterParts = buildODataFilter(effectiveBounds);
   // filterParts is a full rawFilter string starting with $filter=...
   // We need to replace $top and add $skip
   var base = filterParts.replace(/\$top=\d+/, '$top=' + PAGE_SIZE);
@@ -1595,6 +1611,10 @@ window.submitCheckoutFlow=async function(userId,userEmail){userId=decodeURICompo
 /* ===== MAPBOX MAP ===== */
 var MAPBOX_TOKEN = window.APP_CONFIG?.MAPBOX_TOKEN || '';
 var satelliteOn = false;
+var _searchAreaBounds = null;   // bounds captured when user pans/zooms
+var _mapZoomDebounce = null;
+var _lastMapZoom = null;
+var _boundsFetchActive = false; // true once the user has initiated a viewport search
 function initMap() {
   if (typeof mapboxgl === 'undefined') return;
   mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -1607,6 +1627,40 @@ function initMap() {
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
   if (window.addAllMapControls) addAllMapControls(map);
+
+  // "Search this area" button (Zillow-style) — injected once into map container
+  var btn = document.createElement('button');
+  btn.id = 'searchAreaBtn';
+  btn.type = 'button';
+  btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Search this area';
+  btn.style.cssText = 'position:absolute;top:16px;left:50%;transform:translateX(-50%);padding:9px 18px;background:#C9A84C;color:#111;border:none;border-radius:22px;font-weight:700;font-size:.8rem;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.5);z-index:20;display:none;font-family:inherit;white-space:nowrap';
+  btn.onclick = function() {
+    _searchAreaBounds = map.getBounds();
+    _boundsFetchActive = true;
+    btn.style.display = 'none';
+    fetchListings(1, false, _searchAreaBounds);
+  };
+  map.getContainer().appendChild(btn);
+
+  _lastMapZoom = map.getZoom();
+  map.on('moveend', function() {
+    var newZoom = map.getZoom();
+    var zoomDelta = Math.abs(newZoom - (_lastMapZoom || newZoom));
+    _lastMapZoom = newZoom;
+    if (zoomDelta > 0.5) {
+      // Significant zoom change — auto-search (debounced)
+      clearTimeout(_mapZoomDebounce);
+      _mapZoomDebounce = setTimeout(function() {
+        _searchAreaBounds = map.getBounds();
+        _boundsFetchActive = true;
+        btn.style.display = 'none';
+        fetchListings(1, false, _searchAreaBounds);
+      }, 700);
+    } else if (_boundsFetchActive) {
+      // User panned — prompt them to search the new area
+      btn.style.display = 'block';
+    }
+  });
 }
 
 function renderMarkers() {
