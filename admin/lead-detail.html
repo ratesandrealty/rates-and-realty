@@ -9518,64 +9518,80 @@ async function updateLenderStatus(lenderId, status) {
   </div>
 </div>
 
-<!-- SMS Composer Modal -->
-<div id="sms-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.85);align-items:flex-end;justify-content:center;padding:0">
-  <div style="width:100%;max-width:620px;background:#111;border-radius:16px 16px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.6);display:flex;flex-direction:column;max-height:85vh">
-    <div style="display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid #1e1e1e">
-      <div style="display:flex;align-items:center;gap:10px;flex:1">
-        <div id="sms-avatar" style="width:36px;height:36px;border-radius:50%;background:#C9A84C;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#000">RD</div>
-        <div><div id="sms-contact-name" style="font-size:13px;font-weight:600;color:#eee">Contact Name</div>
-        <div id="sms-contact-phone" style="font-size:11px;color:#666">No phone on file</div></div>
+<!-- SMS Composer Modal (rebuilt) -->
+<div id="sms-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.85);align-items:center;justify-content:center;padding:20px">
+  <div class="sms-card" style="width:100%;max-width:580px;background:#1a1a1a;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;max-height:80vh;overflow:hidden">
+    <!-- HEADER -->
+    <div style="display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid #262626;background:#111">
+      <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
+        <div id="sms-avatar" style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#C9A84C,#a87a30);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#111;flex-shrink:0">RD</div>
+        <div style="min-width:0">
+          <div id="sms-contact-name" style="font-size:14px;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Contact</div>
+          <div id="sms-contact-phone" style="font-size:11px;color:#777">No phone on file</div>
+        </div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button onclick="toggleMms()" style="font-size:11px;padding:4px 10px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;cursor:pointer">MMS</button>
-        <button onclick="closeSmsModal()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;line-height:1">&times;</button>
+      <button onclick="closeSmsModal()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;line-height:1;padding:4px 8px">&times;</button>
+    </div>
+
+    <!-- TOOLBAR -->
+    <div style="padding:10px 18px;border-bottom:1px solid #262626;background:#141414">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div style="position:relative">
+          <button id="sms-ai-btn" type="button" onclick="toggleAiDropdown()" style="font-size:11px;padding:6px 12px;background:transparent;border:1px solid #C9A84C55;border-radius:18px;color:#C9A84C;cursor:pointer;font-weight:600;display:flex;align-items:center;gap:4px">&#10024; AI Write <span style="font-size:9px">&#9662;</span></button>
+          <div id="sms-ai-dropdown" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1e1e1e;border:1px solid #333;border-radius:8px;padding:6px;min-width:200px;z-index:10;box-shadow:0 8px 24px rgba(0,0,0,.5)">
+            <button type="button" onclick="smsAiWriteFor()" style="display:block;width:100%;text-align:left;padding:8px 10px;background:none;border:none;color:#ccc;font-size:12px;cursor:pointer;border-radius:6px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='none'">&#10024; Write for me</button>
+            <button type="button" onclick="smsAiSuggest3()" style="display:block;width:100%;text-align:left;padding:8px 10px;background:none;border:none;color:#ccc;font-size:12px;cursor:pointer;border-radius:6px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='none'">&#128161; Suggest 3 options</button>
+          </div>
+        </div>
+        <button type="button" onclick="document.getElementById('sms-file-input').click()" style="font-size:11px;padding:6px 12px;background:transparent;border:1px solid #333;border-radius:18px;color:#aaa;cursor:pointer">&#128206; Attach</button>
+        <button type="button" onclick="smsOpenCanva()" style="font-size:11px;padding:6px 12px;background:transparent;border:1px solid #333;border-radius:18px;color:#aaa;cursor:pointer">&#127912; Canva</button>
+        <input id="sms-file-input" type="file" accept="image/*,video/*" style="display:none" onchange="smsHandleFile(this)">
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button type="button" class="sms-tone-pill" data-tone="Professional" onclick="smsSelectTone(this)" style="font-size:10px;padding:4px 10px;border-radius:14px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-family:inherit">Professional</button>
+        <button type="button" class="sms-tone-pill" data-tone="Friendly" onclick="smsSelectTone(this)" style="font-size:10px;padding:4px 10px;border-radius:14px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-family:inherit">Friendly</button>
+        <button type="button" class="sms-tone-pill" data-tone="Urgent" onclick="smsSelectTone(this)" style="font-size:10px;padding:4px 10px;border-radius:14px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-family:inherit">Urgent</button>
+        <button type="button" class="sms-tone-pill" data-tone="Follow-Up" onclick="smsSelectTone(this)" style="font-size:10px;padding:4px 10px;border-radius:14px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-family:inherit">Follow-Up</button>
+      </div>
+      <div id="sms-ai-prompt-row" style="display:none;margin-top:8px;gap:6px">
+        <input id="sms-ai-prompt" type="text" placeholder="What should we say? (Enter to generate)" style="flex:1;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:12px;outline:none;font-family:inherit" onkeydown="if(event.key==='Enter'){event.preventDefault();smsRunAiCompose();}">
+        <button type="button" onclick="smsRunAiCompose()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:11px;cursor:pointer">Go</button>
       </div>
     </div>
-    <div id="sms-history" style="flex:1;overflow-y:auto;padding:16px 20px;min-height:80px;max-height:200px">
-      <div style="text-align:center;color:#333;font-size:12px;font-style:italic">Loading message history...</div>
+
+    <!-- CHAT HISTORY -->
+    <div id="sms-history" style="flex:1;overflow-y:auto;padding:16px 18px;min-height:140px;display:flex;flex-direction:column;gap:10px;background:#1a1a1a">
+      <div style="text-align:center;color:#444;font-size:11px;font-style:italic">Loading&hellip;</div>
     </div>
-    <div id="ai-helper-panel" style="display:none;border-top:1px solid #1e1e1e;padding:12px 20px;background:#0d0d0d">
-      <div style="font-size:10px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">AI Message Helper</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-        <button data-ai-prompt="Write a friendly follow-up SMS to check in on their home buying progress. Keep it under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Follow Up</button>
-        <button data-ai-prompt="Write a brief SMS confirming a showing appointment. Ask them to confirm. Under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Confirm Showing</button>
-        <button data-ai-prompt="Write a warm SMS introducing myself as their loan officer and inviting them to start the pre-approval process. Under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Intro / Pre-approval</button>
-        <button data-ai-prompt="Write a congratulatory SMS for getting approved. Upbeat and professional. Under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Approval Congrats</button>
-        <button data-ai-prompt="Write a brief SMS requesting missing documents needed for the loan file. Polite and clear. Under 160 chars." class="ai-quick-btn" style="font-size:11px;padding:4px 10px;background:#1a1408;border:1px solid #C9A84C33;border-radius:6px;color:#C9A84C;cursor:pointer">Request Docs</button>
+
+    <!-- MMS PREVIEW BAR -->
+    <div id="sms-mms-preview" style="display:none;padding:8px 18px;border-top:1px solid #262626;background:#141414;align-items:center;gap:10px"></div>
+
+    <!-- AI SUGGESTIONS STRIP -->
+    <div id="sms-suggestions" style="display:none;padding:8px 18px;border-top:1px solid #262626;background:#141414;flex-direction:column;gap:6px"></div>
+
+    <!-- COMPOSE -->
+    <div style="padding:12px 18px;border-top:1px solid #262626;background:#141414">
+      <textarea id="sms-body" placeholder="Type a message..." rows="3" oninput="smsUpdateCharCount()"
+        style="width:100%;box-sizing:border-box;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;color:#eee;font-size:13px;line-height:1.5;resize:none;outline:none;font-family:inherit"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:10px;color:#555">
+        <span>Sending from (714) 909-2526</span>
+        <span id="sms-char-count">0/160 chars &middot; 1 segment</span>
       </div>
-      <div style="display:flex;gap:8px">
-        <input id="ai-custom-prompt" type="text" placeholder="Or describe what you want to say..." style="flex:1;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 12px;color:#eee;font-size:12px;outline:none">
-        <button id="ai-generate-btn" onclick="generateAiMessage()" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:12px;cursor:pointer">Generate</button>
-      </div>
-      <div id="ai-generating" style="display:none;font-size:11px;color:#666;margin-top:6px;font-style:italic">Generating message...</div>
     </div>
-    <div id="mms-panel" style="display:none;border-top:1px solid #1e1e1e;padding:10px 20px;background:#0d0d0d">
-      <div style="display:flex;align-items:center;gap:10px">
-        <button onclick="document.getElementById('mms-file-input').click()" style="font-size:12px;padding:6px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#aaa;cursor:pointer">Attach Image</button>
-        <span id="mms-file-name" style="font-size:11px;color:#666">No file selected</span>
-        <button id="mms-remove-btn" onclick="removeMmsFile()" style="display:none;font-size:11px;color:#f87171;background:none;border:none;cursor:pointer">Remove</button>
-        <input id="mms-file-input" type="file" accept="image/*" style="display:none" onchange="handleMmsFile(this)">
-      </div>
-      <div id="mms-preview" style="margin-top:8px"></div>
-    </div>
-    <div style="padding:16px 20px;border-top:1px solid #1e1e1e;background:#111">
-      <div style="display:flex;gap:8px;margin-bottom:10px">
-        <button onclick="toggleAiHelper()" style="font-size:11px;padding:5px 12px;background:#1a1408;border:1px solid #C9A84C44;border-radius:6px;color:#C9A84C;cursor:pointer;white-space:nowrap">AI Help</button>
-        <div style="font-size:10px;color:#444;align-self:center" id="sms-char-count">0 / 160 chars</div>
-      </div>
-      <textarea id="sms-body" placeholder="Type your message..." rows="3" oninput="updateSmsCharCount()"
-        style="width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:12px 14px;color:#eee;font-size:13px;line-height:1.5;resize:none;outline:none;font-family:inherit"></textarea>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-        <div style="font-size:11px;color:#444">Sending from (714) 909-2526</div>
-        <button onclick="sendSmsFromModal()" id="sms-send-btn"
-          style="background:linear-gradient(135deg,#C9A84C,#e8c96a);color:#000;border:none;border-radius:8px;padding:10px 28px;font-weight:800;font-size:13px;cursor:pointer">
-          Send SMS
-        </button>
-      </div>
+
+    <!-- FOOTER -->
+    <div style="padding:12px 18px;border-top:1px solid #262626;background:#111;display:flex;justify-content:flex-end;align-items:center">
+      <button onclick="sendSmsFromModal()" id="sms-send-btn" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:10px 24px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">Send SMS</button>
     </div>
   </div>
 </div>
+<style>
+.sms-tone-pill.active{border-color:#C9A84C !important;color:#C9A84C !important;background:rgba(201,168,76,0.08) !important}
+.sms-tone-pill:hover{border-color:#666;color:#ccc}
+.sms-suggest-pill{padding:8px 12px;border-radius:8px;border:1px solid #2a2a2a;background:#0e0e0e;color:#ccc;font-size:12px;text-align:left;cursor:pointer;font-family:inherit;line-height:1.4;transition:all .15s}
+.sms-suggest-pill:hover{border-color:#C9A84C55;color:#eee;background:#131313}
+</style>
 
 <!-- Email Composer Modal -->
 <!-- Two-Panel Email Composer (injected dynamically by openEmailComposer) -->
@@ -10814,169 +10830,325 @@ document.getElementById('pdf-viewer-modal')?.addEventListener('click', function(
   if (e.target === this) closePdfViewer();
 });
 
-/* ═══ SMS COMPOSER ═══ */
+/* ═══ SMS COMPOSER (rebuilt) ═══ */
+var SMS_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service';
+var SMS_STORAGE = 'https://ljywhvbmsibwnssxpesh.supabase.co/storage/v1/object';
 var smsContactData = null;
+var smsTone = 'Friendly';
+var smsMediaUrl = null;
 
 function openSmsComposer() {
   var modal = document.getElementById('sms-modal');
   if (!modal) return;
   var name = ((contactData?.first_name || '') + ' ' + (contactData?.last_name || '')).trim() || 'Contact';
   var phone = (contactData?.phone || contactData?.secondary_phone || '').replace(/\D/g,'');
-  var initials = name.split(' ').map(function(n){return n[0]||'';}).join('').substring(0,2).toUpperCase();
+  var initials = name.split(' ').map(function(n){return (n[0]||'').toUpperCase();}).join('').substring(0,2) || 'C';
+  var portalUserId = contactData?.portal_user_id || null;
   document.getElementById('sms-contact-name').textContent = name;
   document.getElementById('sms-contact-phone').textContent = phone ? '(' + phone.slice(0,3) + ') ' + phone.slice(3,6) + '-' + phone.slice(6) : 'No phone on file';
-  document.getElementById('sms-avatar').textContent = initials || 'RD';
-  smsContactData = { name: name, phone: phone };
+  document.getElementById('sms-avatar').textContent = initials;
+  smsContactData = { name: name, firstName: contactData?.first_name || name.split(' ')[0] || 'there', phone: phone, portalUserId: portalUserId };
+  // Default tone
+  smsTone = 'Friendly';
+  document.querySelectorAll('.sms-tone-pill').forEach(function(p){ p.classList.toggle('active', p.dataset.tone === smsTone); });
+  // Reset state
+  smsMediaUrl = null;
+  smsClearAttachment();
+  document.getElementById('sms-suggestions').style.display = 'none';
+  document.getElementById('sms-ai-prompt-row').style.display = 'none';
+  document.getElementById('sms-ai-dropdown').style.display = 'none';
+  var body = document.getElementById('sms-body'); if (body) body.value = '';
+  smsUpdateCharCount();
   loadSmsHistory();
   modal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
-  setTimeout(function() { var b = document.getElementById('sms-body'); if (b) b.focus(); }, 100);
-  // Log activity
-  if (phone) {
-    fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
-        type: 'sms', channel: 'sms', direction: 'outbound', title: 'SMS composer opened by Rene', status: 'initiated', metadata: { phone: phone } })
-    }).catch(function(){});
-  }
+  setTimeout(function(){ if (body) body.focus(); }, 100);
 }
 
 function closeSmsModal() {
   var modal = document.getElementById('sms-modal');
   if (modal) modal.style.display = 'none';
   document.body.style.overflow = '';
-  var body = document.getElementById('sms-body');
-  if (body) body.value = '';
-  var aip = document.getElementById('ai-helper-panel');
-  if (aip) aip.style.display = 'none';
-  var mms = document.getElementById('mms-panel');
-  if (mms) mms.style.display = 'none';
-  updateSmsCharCount();
+  var body = document.getElementById('sms-body'); if (body) body.value = '';
+  smsMediaUrl = null;
+  smsClearAttachment();
+  document.getElementById('sms-suggestions').style.display = 'none';
+  document.getElementById('sms-ai-prompt-row').style.display = 'none';
+  document.getElementById('sms-ai-dropdown').style.display = 'none';
+  smsUpdateCharCount();
 }
 
-function toggleAiHelper() {
-  var p = document.getElementById('ai-helper-panel');
-  if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
-}
-function toggleMms() {
-  var p = document.getElementById('mms-panel');
-  if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
+function smsSelectTone(btn) {
+  smsTone = btn.dataset.tone;
+  document.querySelectorAll('.sms-tone-pill').forEach(function(p){ p.classList.toggle('active', p === btn); });
 }
 
-function updateSmsCharCount() {
+function smsUpdateCharCount() {
   var body = document.getElementById('sms-body');
   var count = document.getElementById('sms-char-count');
   if (!count) return;
   var len = body ? body.value.length : 0;
-  var segments = Math.ceil(len / 160) || 1;
-  count.textContent = len + ' chars' + (len > 160 ? ' (' + segments + ' messages)' : ' / 160');
-  count.style.color = len > 160 ? '#f87171' : '#444';
+  // SMS segmentation: 1 seg = 160 chars, 2+ segs = 153 chars each
+  var segments;
+  if (len === 0) segments = 1;
+  else if (len <= 160) segments = 1;
+  else segments = Math.ceil(len / 153);
+  var color = len > 160 ? '#f87171' : (len > 140 ? '#C9A84C' : '#555');
+  count.textContent = len + '/160 chars \u00b7 ' + segments + ' segment' + (segments !== 1 ? 's' : '');
+  count.style.color = color;
 }
 
-function handleMmsFile(input) {
-  var file = input.files[0]; if (!file) return;
-  document.getElementById('mms-file-name').textContent = file.name;
-  document.getElementById('mms-remove-btn').style.display = 'inline';
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    document.getElementById('mms-preview').innerHTML = '<img src="' + e.target.result + '" style="max-height:80px;border-radius:6px;border:1px solid #2a2a2a">';
-  };
-  reader.readAsDataURL(file);
-}
-function removeMmsFile() {
-  document.getElementById('mms-file-input').value = '';
-  document.getElementById('mms-file-name').textContent = 'No file selected';
-  document.getElementById('mms-remove-btn').style.display = 'none';
-  document.getElementById('mms-preview').innerHTML = '';
+function toggleAiDropdown() {
+  var dd = document.getElementById('sms-ai-dropdown');
+  dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
 }
 
-async function generateAiMessage() {
-  var customPrompt = (document.getElementById('ai-custom-prompt')?.value || '').trim();
-  var contactName = smsContactData?.name || '';
-  var gen = document.getElementById('ai-generating');
-  var btn = document.getElementById('ai-generate-btn');
-  if (gen) gen.style.display = 'block';
-  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+function smsAiWriteFor() {
+  document.getElementById('sms-ai-dropdown').style.display = 'none';
+  var row = document.getElementById('sms-ai-prompt-row');
+  row.style.display = 'flex';
+  var inp = document.getElementById('sms-ai-prompt');
+  inp.value = '';
+  setTimeout(function(){ inp.focus(); }, 50);
+}
+
+async function smsRunAiCompose() {
+  var inp = document.getElementById('sms-ai-prompt');
+  var userPrompt = (inp.value || '').trim();
+  if (!userPrompt) { showToast('Type what you want to say', true); return; }
+  var btn = inp.nextElementSibling;
+  var origTxt = btn.textContent; btn.disabled = true; btn.textContent = '...';
   try {
-    var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        trigger: 'ai_compose',
-        prompt: customPrompt || 'Write a friendly follow-up SMS to check in on their home buying progress. Keep it under 160 chars.',
-        contact_name: contactName
-      })
+    var res = await fetch(SMS_FN, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ trigger:'ai_compose', prompt: userPrompt, contact_name: smsContactData?.firstName || '', tone: smsTone })
     });
     var data = await res.json();
     if (data.message) {
       var ta = document.getElementById('sms-body');
-      if (ta) { ta.value = data.message; updateSmsCharCount(); }
+      ta.value = data.message;
+      smsUpdateCharCount();
+      document.getElementById('sms-ai-prompt-row').style.display = 'none';
     } else {
-      console.error('AI compose error:', data.error);
-      if (typeof showToast === 'function') showToast('AI error: ' + (data.error || 'unknown'), true);
+      showToast('AI error: ' + (data.error || 'no message'), true);
     }
-  } catch(e) { console.error('AI generate error:', e); }
-  if (gen) gen.style.display = 'none';
-  if (btn) { btn.disabled = false; btn.textContent = 'Generate'; }
+  } catch(e) { showToast('AI error: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = origTxt;
+}
+
+async function smsAiSuggest3() {
+  document.getElementById('sms-ai-dropdown').style.display = 'none';
+  var strip = document.getElementById('sms-suggestions');
+  strip.style.display = 'flex';
+  strip.innerHTML = '<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px">Tap a suggestion to insert</div><div style="color:#666;font-size:11px;font-style:italic">Generating 3 options&hellip;</div>';
+  var textVal = (document.getElementById('sms-body').value || '').trim();
+  var situation = textVal || 'general follow-up';
+  // No dedicated ai_suggest trigger — run ai_compose 3 times with variation prompts
+  var variations = [
+    'Rewrite this SMS with a direct, professional tone. Situation: ' + situation,
+    'Rewrite this SMS with a warm, friendly tone. Situation: ' + situation,
+    'Rewrite this SMS with a brief, action-oriented tone. Situation: ' + situation
+  ];
+  var promises = variations.map(function(p) {
+    return fetch(SMS_FN, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ trigger:'ai_compose', prompt: p, contact_name: smsContactData?.firstName || '', tone: smsTone })
+    }).then(function(r){ return r.json(); }).catch(function(){ return {}; });
+  });
+  try {
+    var results = await Promise.all(promises);
+    var msgs = results.map(function(r){ return r.message; }).filter(Boolean);
+    if (!msgs.length) { strip.innerHTML = '<div style="color:#f87171;font-size:11px;padding:4px">Could not generate suggestions</div>'; return; }
+    strip.innerHTML = '<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Tap a suggestion to insert &nbsp; <button onclick="document.getElementById(\'sms-suggestions\').style.display=\'none\'" style="background:none;border:none;color:#555;cursor:pointer;font-size:10px;float:right">dismiss</button></div>' +
+      msgs.map(function(m, i){
+        var escaped = m.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        return '<button type="button" class="sms-suggest-pill" onclick="smsInsertSuggestion(this)" data-msg="' + escaped + '">' + m.replace(/</g,'&lt;') + '</button>';
+      }).join('');
+  } catch(e) { strip.innerHTML = '<div style="color:#f87171;font-size:11px;padding:4px">Error: ' + e.message + '</div>'; }
+}
+
+function smsInsertSuggestion(btn) {
+  var msg = btn.dataset.msg || btn.textContent;
+  document.getElementById('sms-body').value = msg;
+  smsUpdateCharCount();
+  document.getElementById('sms-suggestions').style.display = 'none';
+}
+
+function smsOpenCanva() {
+  // Prompt for pasted URL in-place
+  var row = document.getElementById('sms-suggestions');
+  row.style.display = 'flex';
+  row.innerHTML = '<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Paste a Canva image URL (then Enter)</div>' +
+    '<div style="display:flex;gap:6px;align-items:center">' +
+    '<input id="sms-canva-url" type="url" placeholder="https://www.canva.com/..." style="flex:1;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:12px;outline:none;font-family:inherit" onkeydown="if(event.key===\'Enter\'){event.preventDefault();smsAcceptCanvaUrl();}">' +
+    '<button type="button" onclick="smsAcceptCanvaUrl()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:11px;cursor:pointer">Attach</button>' +
+    '<a href="https://www.canva.com/design/DANew/new?category=social-posts" target="_blank" rel="noopener" style="font-size:11px;color:#C9A84C;text-decoration:none;white-space:nowrap">open Canva &#8599;</a>' +
+    '</div>';
+  setTimeout(function(){ document.getElementById('sms-canva-url').focus(); }, 50);
+}
+
+function smsAcceptCanvaUrl() {
+  var url = (document.getElementById('sms-canva-url')?.value || '').trim();
+  if (!url) { showToast('Paste an image URL', true); return; }
+  smsMediaUrl = url;
+  var bar = document.getElementById('sms-mms-preview');
+  bar.style.display = 'flex';
+  bar.innerHTML = '<img src="' + url.replace(/"/g,'&quot;') + '" style="width:42px;height:42px;object-fit:cover;border-radius:6px;border:1px solid #333" onerror="this.style.opacity=0.3"><div style="flex:1;min-width:0;font-size:11px;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + url.replace(/</g,'&lt;') + '</div><button type="button" onclick="smsClearAttachment()" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:16px;line-height:1;padding:4px 8px">&times;</button>';
+  document.getElementById('sms-suggestions').style.display = 'none';
+}
+
+async function smsHandleFile(input) {
+  var file = input.files[0]; if (!file) return;
+  var bar = document.getElementById('sms-mms-preview');
+  bar.style.display = 'flex';
+  bar.innerHTML = '<div style="font-size:11px;color:#aaa">Uploading ' + file.name.replace(/</g,'&lt;') + '&hellip;</div>';
+  try {
+    var filename = Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+    var anon = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+    var upRes = await fetch(SMS_STORAGE + '/sms-media/' + filename, {
+      method:'POST',
+      headers:{ 'apikey': anon, 'Authorization':'Bearer ' + anon, 'Content-Type': file.type || 'application/octet-stream', 'x-upsert':'true' },
+      body: file
+    });
+    if (!upRes.ok) {
+      var errTxt = await upRes.text();
+      throw new Error('Upload failed (' + upRes.status + '): ' + errTxt.substring(0,100));
+    }
+    var publicUrl = SMS_STORAGE + '/public/sms-media/' + filename;
+    smsMediaUrl = publicUrl;
+    // Preview thumbnail (use object URL for speed)
+    var thumbSrc = URL.createObjectURL(file);
+    bar.innerHTML = '<img src="' + thumbSrc + '" style="width:42px;height:42px;object-fit:cover;border-radius:6px;border:1px solid #333"><div style="flex:1;min-width:0;font-size:11px;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + file.name.replace(/</g,'&lt;') + '</div><button type="button" onclick="smsClearAttachment()" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:16px;line-height:1;padding:4px 8px">&times;</button>';
+  } catch(e) {
+    showToast('Attach failed: ' + e.message, true);
+    smsMediaUrl = null;
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    input.value = '';
+  }
+}
+
+function smsClearAttachment() {
+  smsMediaUrl = null;
+  var bar = document.getElementById('sms-mms-preview');
+  if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; }
+  var input = document.getElementById('sms-file-input');
+  if (input) input.value = '';
+}
+
+function smsFormatTimestamp(iso) {
+  var d = new Date(iso);
+  var now = new Date();
+  var sameDay = d.toDateString() === now.toDateString();
+  var time = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+  if (sameDay) return 'Today \u00b7 ' + time;
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' \u00b7 ' + time;
+}
+
+function smsEscape(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function smsRenderHistory(events) {
+  var hist = document.getElementById('sms-history');
+  if (!events || !events.length) {
+    hist.innerHTML = '<div style="text-align:center;color:#444;font-size:11px;font-style:italic;padding:20px">No messages yet &mdash; send the first one below</div>';
+    return;
+  }
+  // Chronological ascending for chat display
+  var sorted = events.slice().sort(function(a,b){ return new Date(a.created_at) - new Date(b.created_at); });
+  hist.innerHTML = sorted.map(function(e) {
+    var isOut = e.direction !== 'inbound';
+    var msg = e.sms_body || e.body || e.description || '';
+    var media = e.media_url || e.mms_url || '';
+    var time = smsFormatTimestamp(e.created_at);
+    var align = isOut ? 'flex-end' : 'flex-start';
+    var bubbleBg = isOut ? 'rgba(201,168,76,0.18)' : '#262626';
+    var bubbleBorder = isOut ? 'rgba(201,168,76,0.35)' : '#333';
+    var txtColor = isOut ? '#f3e9d0' : '#ddd';
+    var radius = isOut ? '18px 18px 4px 18px' : '18px 18px 18px 4px';
+    var mediaHtml = media ? '<img src="' + smsEscape(media) + '" style="max-width:200px;max-height:140px;border-radius:10px;margin-bottom:6px;display:block" onerror="this.style.display=\'none\'">' : '';
+    return '<div style="display:flex;justify-content:' + align + '">' +
+      '<div style="max-width:78%;display:flex;flex-direction:column;align-items:' + (isOut?'flex-end':'flex-start') + ';gap:3px">' +
+        '<div style="background:' + bubbleBg + ';border:1px solid ' + bubbleBorder + ';border-radius:' + radius + ';padding:9px 13px;color:' + txtColor + ';font-size:13px;line-height:1.4;word-wrap:break-word">' +
+          mediaHtml + smsEscape(msg) +
+        '</div>' +
+        '<div style="font-size:10px;color:#555;padding:0 4px">' + time + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+  hist.scrollTop = hist.scrollHeight;
 }
 
 async function loadSmsHistory() {
   var hist = document.getElementById('sms-history');
   if (!hist) return;
   var cid = new URLSearchParams(location.search).get('contact_id');
-  if (!cid) { hist.innerHTML = '<div style="text-align:center;color:#333;font-size:12px">No history</div>'; return; }
+  if (!cid) { hist.innerHTML = '<div style="text-align:center;color:#444;font-size:11px;padding:20px">No contact selected</div>'; return; }
+  // Try get_log trigger first
   try {
-    var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1/activity_events?contact_id=eq.' + cid + '&type=eq.sms&order=created_at.desc&limit=20', {
-      headers: { 'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + window.APP_CONFIG?.SUPABASE_ANON_KEY }
+    var res = await fetch(SMS_FN, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ trigger:'get_log', contact_id: cid, portal_user_id: smsContactData?.portalUserId || null })
     });
-    var events = await res.json();
-    if (!events || !events.length) { hist.innerHTML = '<div style="text-align:center;color:#333;font-size:12px;padding:10px">No SMS history yet</div>'; return; }
-    hist.innerHTML = events.map(function(e) {
-      var isOut = e.direction !== 'inbound';
-      var time = new Date(e.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-      return '<div style="display:flex;justify-content:' + (isOut?'flex-end':'flex-start') + ';margin-bottom:8px">'
-        + '<div style="max-width:75%;background:' + (isOut?'#C9A84C22':'#1a1a1a') + ';border:1px solid ' + (isOut?'#C9A84C33':'#2a2a2a') + ';border-radius:' + (isOut?'12px 12px 4px 12px':'12px 12px 12px 4px') + ';padding:8px 12px">'
-        + '<div style="font-size:12px;color:' + (isOut?'#ddd':'#ccc') + ';line-height:1.4">' + (e.sms_body||e.description||'') + '</div>'
-        + '<div style="font-size:10px;color:#444;margin-top:3px;text-align:' + (isOut?'right':'left') + '">' + (isOut?'You':'Contact') + ' &middot; ' + time + '</div>'
-        + '</div></div>';
-    }).join('');
-    hist.scrollTop = hist.scrollHeight;
-  } catch(e) { hist.innerHTML = '<div style="text-align:center;color:#333;font-size:12px">Could not load history</div>'; }
+    var data = await res.json();
+    var events = data.log || data.messages || data.events || null;
+    if (Array.isArray(events)) { smsRenderHistory(events); return; }
+  } catch(e) { /* fall through */ }
+  // Fallback: query activity_events directly
+  try {
+    var anon = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+    var r = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1/activity_events?contact_id=eq.' + cid + '&type=eq.sms&order=created_at.desc&limit=50', {
+      headers:{ 'apikey': anon, 'Authorization':'Bearer ' + anon }
+    });
+    var evs = await r.json();
+    smsRenderHistory(Array.isArray(evs) ? evs : []);
+  } catch(e) { hist.innerHTML = '<div style="text-align:center;color:#f87171;font-size:11px;padding:12px">Could not load history</div>'; }
 }
 
 async function sendSmsFromModal() {
   var body = (document.getElementById('sms-body')?.value || '').trim();
   var phone = smsContactData?.phone;
-  if (!body) { showToast('Please type a message', true); return; }
+  if (!body && !smsMediaUrl) { showToast('Type a message or attach media', true); return; }
   if (!phone) { showToast('No phone number on file', true); return; }
   var btn = document.getElementById('sms-send-btn');
   btn.disabled = true; btn.textContent = 'Sending...';
   try {
     var cid = new URLSearchParams(location.search).get('contact_id');
-    var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trigger: 'manual', to_phone: '+1' + phone, message: body, contact_id: cid, direction: 'outbound' })
+    var payload = {
+      trigger: 'manual',
+      to_phone: '+1' + phone,
+      params: { message: body },
+      contact_id: cid,
+      portal_user_id: smsContactData?.portalUserId || null,
+      direction: 'outbound'
+    };
+    if (smsMediaUrl) payload.media_url = smsMediaUrl;
+    var res = await fetch(SMS_FN, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
     });
     var data = await res.json();
     if (data.success || data.sid) {
-      showToast('SMS sent!');
+      showToast('Sent \u2713');
       document.getElementById('sms-body').value = '';
-      updateSmsCharCount();
+      smsMediaUrl = null;
+      smsClearAttachment();
+      smsUpdateCharCount();
       await loadSmsHistory();
     } else { showToast('Send failed: ' + (data.error || 'unknown error'), true); }
   } catch(e) { showToast('Error: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Send SMS';
 }
 
-// AI quick buttons + SMS modal backdrop
+// Close modal on backdrop click + close AI dropdown on outside click
 document.addEventListener('click', function(e) {
-  var aiBtn = e.target.closest('.ai-quick-btn');
-  if (aiBtn) {
-    var inp = document.getElementById('ai-custom-prompt');
-    if (inp) inp.value = aiBtn.getAttribute('data-ai-prompt') || '';
-    generateAiMessage();
-  }
   if (e.target.id === 'sms-modal') closeSmsModal();
+  var aiBtn = document.getElementById('sms-ai-btn');
+  var dd = document.getElementById('sms-ai-dropdown');
+  if (dd && dd.style.display === 'block' && !dd.contains(e.target) && e.target !== aiBtn && !aiBtn.contains(e.target)) {
+    dd.style.display = 'none';
+  }
 });
 
 /* ═══ TAGS (IIFE) ═══ */
