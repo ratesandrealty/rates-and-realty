@@ -13,19 +13,37 @@ function stripMarkdownFences(text: string): string {
     .trim();
 }
 
+// Parse cc/bcc into valid MailerSend format or undefined (omit)
+function parseEmailList(raw: any): Array<{email: string}> | undefined {
+  if (!raw) return undefined;
+  let list: string[] = [];
+  if (Array.isArray(raw)) { list = raw; }
+  else if (typeof raw === 'string') {
+    try { const p = JSON.parse(raw); list = Array.isArray(p) ? p : [p]; }
+    catch { list = raw.split(',').map((e: string) => e.trim()); }
+  }
+  const valid = list.map((e: any) => typeof e === 'object' && e?.email ? e.email : String(e)).filter((e: string) => e && e.includes('@') && e.length > 3);
+  return valid.length > 0 ? valid.map((e: string) => ({ email: e.trim() })) : undefined;
+}
+
 // ── SEND EMAIL via MailerSend ────────────────────────────────────────────────
-async function sendEmail(p: {to:string;from?:string;subject:string;html:string;cc?:string;replyTo?:string}) {
+async function sendEmail(p: {to:string;from?:string;subject:string;html:string;cc?:any;bcc?:any;replyTo?:string}) {
   const MAILERSEND_KEY = Deno.env.get('MAILERSEND_API_KEY');
   if (!MAILERSEND_KEY) return { sent: false, error: 'MAILERSEND_API_KEY not set' };
-  const body: any = {
+  const payload: any = {
     from: { email: p.from || 'rene@ratesandrealty.com', name: 'Rene Duarte' },
     to: [{ email: p.to }],
     subject: p.subject,
     html: p.html,
     text: p.html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g,' ').trim()
   };
-  if (p.cc) body.cc = [{ email: p.cc }];
-  if (p.replyTo) body.reply_to = { email: p.replyTo };
+  // Only include cc/bcc if they have valid email addresses — NEVER send empty arrays
+  const ccList = parseEmailList(p.cc);
+  const bccList = parseEmailList(p.bcc);
+  if (ccList) payload.cc = ccList;
+  if (bccList) payload.bcc = bccList;
+  if (p.replyTo && p.replyTo.includes('@')) payload.reply_to = { email: p.replyTo };
+  const body = payload;
   try {
     const res = await fetch('https://api.mailersend.com/v1/email', {
       method: 'POST',
@@ -64,7 +82,9 @@ Deno.serve(async (req: Request) => {
 
     // ── SEND ──────────────────────────────────────────────────────────────────
     if (action === 'send') {
-      const { subject, cc, contact_id, crm_id } = body;
+      const { subject, contact_id, crm_id } = body;
+      const ccRaw = body.cc_email || body.cc;
+      const bccRaw = body.bcc_email || body.bcc;
       // Accept multiple field name variants from different callers
       const toEmail = body.to_email || (Array.isArray(body.to) ? body.to[0] : body.to) || (Array.isArray(body.to_emails) ? body.to_emails[0] : null);
       const html = stripMarkdownFences(body.html || body.body_html || '');
@@ -73,7 +93,11 @@ Deno.serve(async (req: Request) => {
         return err('to_email, subject, html required (got: to_email=' + !!toEmail + ', subject=' + !!subject + ', html=' + !!html + ')');
       }
 
-      const result = await sendEmail({ to: toEmail, subject, html, cc });
+      const result = await sendEmail({ to: toEmail, subject, html, cc: ccRaw, bcc: bccRaw });
+
+      // Store validated cc as string or null — NEVER store "[]"
+      const ccParsed = parseEmailList(ccRaw);
+      const ccForDb = ccParsed ? ccParsed.map(c => c.email).join(',') : null;
 
       // Log to email_log
       const { data: emailLog } = await sb.from('email_log').insert({
@@ -81,7 +105,7 @@ Deno.serve(async (req: Request) => {
         direction: 'outbound',
         from_email: body.from_email || body.from || 'rene@ratesandrealty.com',
         to_email: toEmail,
-        cc_email: cc || null,
+        cc_email: ccForDb,
         subject,
         body_html: html,
         status: result.sent ? 'sent' : 'failed',
