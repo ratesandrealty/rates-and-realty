@@ -299,6 +299,8 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
+<link href='https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css' rel='stylesheet'>
+<script src='https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js'></script>
 </head>
 <body>
 
@@ -673,6 +675,7 @@ let filters = {
 document.addEventListener('DOMContentLoaded', function() {
   // Load cart from localStorage
   try { var saved = JSON.parse(localStorage.getItem('showingCart')||'[]'); if (Array.isArray(saved)) showingCart = saved; } catch(e) {}
+  initMap();
   initCountyDropdown();
   initStatusTabs();
   initFilterModalTabs();
@@ -1014,18 +1017,7 @@ function applyClientFilters(page, append) {
     });
   }
 
-  // Shape filter
-  if (currentShape && typeof google !== 'undefined') {
-    items = items.filter(function(l) {
-      if (!l.Latitude || !l.Longitude) return false;
-      var pt = new google.maps.LatLng(l.Latitude, l.Longitude);
-      if (currentShape.type === 'circle') {
-        return google.maps.geometry.spherical.computeDistanceBetween(pt, currentShape.overlay.getCenter()) <= currentShape.overlay.getRadius();
-      } else {
-        return currentShape.overlay.getBounds().contains(pt);
-      }
-    });
-  }
+  // Shape filter — disabled after Mapbox migration (drawing tools TBD)
 
   filteredListings = items;
   renderListings(page, append);
@@ -1133,30 +1125,27 @@ function toggleShowing(i) {
 function panTo(i) {
   var l = filteredListings[i];
   if (l.Latitude && l.Longitude && map) {
-    map.panTo({ lat: l.Latitude, lng: l.Longitude });
-    map.setZoom(16);
-    if (markers[i]) {
-      google.maps.event.trigger(markers[i], 'click');
-    }
+    map.flyTo({ center: [l.Longitude, l.Latitude], zoom: 16 });
+    if (markers[i] && markers[i].togglePopup) { try { markers[i].togglePopup(); } catch(e){} }
   }
 }
 
 function highlightMarker(i) {
-  if (markers[i]) {
-    markers[i].setIcon({
-      path: google.maps.SymbolPath.CIRCLE, scale: 12,
-      fillColor: '#C9A84C', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2
-    });
-  }
+  var m = markers[i]; if (!m) return;
+  var el = m.getElement(); if (!el) return;
+  el.style.transform = 'scale(1.5)';
+  el.style.background = '#fff';
+  el.style.borderColor = '#C9A84C';
+  el.style.zIndex = '10';
 }
 
 function unhighlightMarker(i) {
-  if (markers[i]) {
-    markers[i].setIcon({
-      path: google.maps.SymbolPath.CIRCLE, scale: 8,
-      fillColor: '#C9A84C', fillOpacity: 0.9, strokeColor: '#000', strokeWeight: 1
-    });
-  }
+  var m = markers[i]; if (!m) return;
+  var el = m.getElement(); if (!el) return;
+  el.style.transform = '';
+  el.style.background = '#C9A84C';
+  el.style.borderColor = '#000';
+  el.style.zIndex = '';
 }
 
 /* ===== SHOWING CART ===== */
@@ -1523,7 +1512,7 @@ function toggleMap() {
     btn.classList.remove('active');
     grid.style.gridTemplateColumns = '1fr 1fr';
     setTimeout(function() {
-      if (map) google.maps.event.trigger(map, 'resize');
+      if (map) map.resize();
       fitMarkers();
     }, 350);
   }
@@ -1598,70 +1587,28 @@ function searchCartCheckout(){closeSearchCart();var user=getPortalUser();if(!use
 function openCheckoutFlow(user){var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');if(!cart.length){showToast('Cart is empty');return;}document.getElementById('checkoutFlowModal')?.remove();var m=document.createElement('div');m.id='checkoutFlowModal';m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:800;display:flex;align-items:center;justify-content:center;padding:20px;isolation:isolate';m.innerHTML='<div style="background:#151515;border:1px solid #2a2a2a;border-radius:16px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto"><div style="padding:18px 22px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center"><div><h2 style="font-size:1rem;font-weight:700;color:#eee"><i class="fas fa-calendar-check" style="color:#C9A84C;margin-right:8px"></i>Schedule Showings</h2><div style="font-size:.73rem;color:#666;margin-top:2px">'+cart.length+' home'+(cart.length>1?'s':'')+' selected</div></div><button onclick="document.getElementById(\'checkoutFlowModal\').remove()" style="background:#1a1a1a;border:1px solid #333;border-radius:50%;width:30px;height:30px;color:#888;cursor:pointer">✕</button></div><div style="padding:14px 22px;border-bottom:1px solid #1a1a1a;max-height:180px;overflow-y:auto">'+cart.map(function(item){return'<div style="display:flex;gap:9px;align-items:center;background:#1a1a1a;border-radius:8px;padding:8px 10px;margin-bottom:6px">'+(item.photo?'<img src="'+item.photo+'" style="width:48px;height:38px;object-fit:cover;border-radius:5px;flex-shrink:0">':'')+'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:.82rem;color:#C9A84C">$'+(item.price||0).toLocaleString()+'</div><div style="font-size:.73rem;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(item.address||'')+'</div></div></div>';}).join('')+'</div><div style="padding:18px 22px;display:flex;flex-direction:column;gap:11px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label style="font-size:.72rem;color:#888;display:block;margin-bottom:4px">Date *</label><input type="date" id="cfDate" min="'+new Date().toISOString().split('T')[0]+'" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;color:#eee;font-size:.85rem;outline:none"></div><div><label style="font-size:.72rem;color:#888;display:block;margin-bottom:4px">Time *</label><select id="cfTime" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;color:#eee;font-size:.85rem;outline:none"><option value="">Select...</option><option>Morning (9-12)</option><option>Afternoon (12-4)</option><option>Evening (4-7)</option><option>Flexible</option></select></div></div><div><label style="font-size:.72rem;color:#888;display:block;margin-bottom:4px">Phone *</label><input type="tel" id="cfPhone" value="'+(user.phone||'')+'" placeholder="(714) 555-0000" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;color:#eee;font-size:.85rem;outline:none"></div><div><label style="font-size:.72rem;color:#888;display:block;margin-bottom:4px">Notes</label><textarea id="cfNotes" rows="2" placeholder="Questions or requests..." style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;color:#eee;font-size:.83rem;outline:none;resize:none"></textarea></div><div style="background:#1a1a1a;border-radius:8px;padding:10px 12px;font-size:.76rem;color:#888"><i class="fas fa-user-check" style="color:#C9A84C;margin-right:6px"></i>Booking as <strong style="color:#eee">'+(user.first_name||'')+' '+(user.last_name||'')+'</strong> · '+(user.email||'')+'</div><button id="cfSubmitBtn" onclick="submitCheckoutFlow(\''+encodeURIComponent(user.id||'')+'\',\''+encodeURIComponent(user.email||'')+'\')" style="width:100%;background:#C9A84C;color:#000;border:none;border-radius:10px;padding:14px;font-weight:700;font-size:.92rem;cursor:pointer"><i class="fas fa-paper-plane"></i> Submit Request'+(cart.length>1?'s':'')+'</button><div style="text-align:center;font-size:.7rem;color:#444">Rene confirms within a few hours</div></div></div>';document.body.appendChild(m);m.addEventListener('click',function(e){if(e.target===m)m.remove();});}
 window.submitCheckoutFlow=async function(userId,userEmail){userId=decodeURIComponent(userId);userEmail=decodeURIComponent(userEmail);var date=document.getElementById('cfDate')?.value;var time=document.getElementById('cfTime')?.value;var phone=document.getElementById('cfPhone')?.value?.trim();var notes=document.getElementById('cfNotes')?.value;var user=getPortalUser();if(!date||!time||!phone){showToast('Fill in date, time, and phone');return;}var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');if(!cart.length){showToast('Cart empty');return;}var btn=document.getElementById('cfSubmitBtn');if(btn){btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Submitting...';}var homes=cart.map(function(item){return{listingKey:String(item.listingKey||''),address:String(item.address||''),city:String(item.city||''),price:String(item.price||''),photo:String(item.photo||''),beds:String(item.beds||''),baths:String(item.baths||''),sqft:String(item.sqft||''),agentName:String(item.listing_agent_name||''),agentPhone:String(item.listing_agent_phone||''),agentEmail:String(item.listing_agent_email||'')};});try{var res=await fetch(SUPABASE_URL+'/functions/v1/submit-showing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:userEmail||null,name:user?((user.first_name||'')+' '+(user.last_name||'')).trim():'',phone:phone,portal_user_id:userId||null,borrower_id:user?.borrower_id||user?.crm_id||null,preferred_date:date,preferred_time:time,notes:notes||null,homes:homes})});var result=await res.json();if(!res.ok||result.error)throw new Error(result.error||result.message||JSON.stringify(result));localStorage.removeItem('showingCart');updateSearchCartBadge();document.getElementById('checkoutFlowModal').querySelector('div').innerHTML='<div style="padding:48px 32px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px"><div style="width:68px;height:68px;background:rgba(0,160,80,.15);border-radius:50%;display:flex;align-items:center;justify-content:center"><i class="fas fa-check" style="font-size:2rem;color:#3cb43c"></i></div><div style="font-size:1.2rem;font-weight:700;color:#eee">All Set! 🎉</div><div style="font-size:.85rem;color:#888;line-height:1.7">Rene will confirm your '+homes.length+' showing'+(homes.length>1?'s':'')+' shortly.<br>You\'ll get a call at <strong style="color:#eee">'+phone+'</strong>.</div><a href="/public/unified-portal.html" style="display:block;width:100%;text-align:center;background:#C9A84C;color:#000;text-decoration:none;padding:13px;border-radius:10px;font-weight:700;font-size:.9rem">View in My Portal →</a><button onclick="document.getElementById(\'checkoutFlowModal\').remove()" style="background:none;border:none;color:#555;cursor:pointer;font-size:.82rem">Close</button></div>';}catch(e){console.error('Checkout error:',e);if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-paper-plane"></i> Submit';}showToast('Error: '+e.message+'. Call (714) 472-8508');}};
 
-/* ===== GOOGLE MAP ===== */
+/* ===== MAPBOX MAP ===== */
+var MAPBOX_TOKEN = window.APP_CONFIG?.MAPBOX_TOKEN || '';
+var satelliteOn = false;
 function initMap() {
-  var darkStyle = [
-    { elementType: 'geometry', stylers: [{ color: '#212121' }] },
-    { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#212121' }] },
-    { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#757575' }] },
-    { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#181818' }] },
-    { featureType: 'road', elementType: 'geometry.fill', stylers: [{ color: '#2c2c2c' }] },
-    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#212121' }] },
-    { featureType: 'road.highway', elementType: 'geometry.fill', stylers: [{ color: '#3c3c3c' }] },
-    { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2f2f2f' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#000000' }] }
-  ];
-
-  map = new google.maps.Map(document.getElementById('map'), {
-    center: { lat: 33.75, lng: -117.99 },
+  if (typeof mapboxgl === 'undefined') return;
+  mapboxgl.accessToken = MAPBOX_TOKEN;
+  map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/dark-v11',
+    center: [-117.99, 33.75],
     zoom: 13,
-    styles: darkStyle,
-    disableDefaultUI: true,
-    gestureHandling: 'greedy'
+    attributionControl: false
   });
-
-  infoWindow = new google.maps.InfoWindow();
-
-  drawingManager = new google.maps.drawing.DrawingManager({
-    drawingMode: null,
-    drawingControl: false,
-    circleOptions: {
-      fillColor: '#C9A84C', fillOpacity: 0.12,
-      strokeColor: '#C9A84C', strokeWeight: 2,
-      editable: true, zIndex: 1
-    },
-    rectangleOptions: {
-      fillColor: '#C9A84C', fillOpacity: 0.12,
-      strokeColor: '#C9A84C', strokeWeight: 2,
-      editable: true, zIndex: 1
-    }
-  });
-  drawingManager.setMap(map);
-
-  google.maps.event.addListener(drawingManager, 'overlaycomplete', function(e) {
-    if (currentShape) currentShape.overlay.setMap(null);
-    currentShape = { type: e.type === 'circle' ? 'circle' : 'rect', overlay: e.overlay };
-    drawingManager.setDrawingMode(null);
-    document.getElementById('drawCircleBtn').classList.remove('active');
-    document.getElementById('drawRectBtn').classList.remove('active');
-    applyClientFilters();
-    if (e.type === 'circle') {
-      google.maps.event.addListener(e.overlay, 'radius_changed', function() { applyClientFilters(); });
-      google.maps.event.addListener(e.overlay, 'center_changed', function() { applyClientFilters(); });
-    } else {
-      google.maps.event.addListener(e.overlay, 'bounds_changed', function() { applyClientFilters(); });
-    }
-  });
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
 }
 
 function renderMarkers() {
-  markers.forEach(function(m) { m.setMap(null); });
+  markers.forEach(function(m) { m.remove(); });
   markers = [];
   if (!map) return;
 
-  var bounds = new google.maps.LatLngBounds();
+  var bounds = new mapboxgl.LngLatBounds();
   var hasPoints = false;
 
   for (var i = 0; i < filteredListings.length; i++) {
@@ -1669,82 +1616,64 @@ function renderMarkers() {
       var l = filteredListings[idx];
       if (!l.Latitude || !l.Longitude) return;
       hasPoints = true;
-      var pos = { lat: l.Latitude, lng: l.Longitude };
-      bounds.extend(pos);
+      bounds.extend([l.Longitude, l.Latitude]);
 
-      var marker = new google.maps.Marker({
-        position: pos,
-        map: map,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE, scale: 8,
-          fillColor: '#C9A84C', fillOpacity: 0.9,
-          strokeColor: '#000', strokeWeight: 1
-        },
-        title: l.UnparsedAddress || ''
-      });
+      var el = document.createElement('div');
+      el.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#C9A84C;border:1px solid #000;box-shadow:0 1px 3px rgba(0,0,0,0.6);cursor:pointer;transition:transform .15s;';
+      el.title = l.UnparsedAddress || '';
 
-      marker.addListener('click', function() {
-        var isLand = l.PropertySubType === 'Land';
-        var content = '<div style="background:#1a1a1a;color:#eee;padding:12px;border-radius:8px;min-width:220px;font-family:sans-serif;">'
-          + '<div style="font-size:18px;font-weight:700;color:#C9A84C;">$' + Number(l.ListPrice || 0).toLocaleString() + '</div>'
-          + '<div style="font-size:13px;margin:4px 0;">' + (l.UnparsedAddress || '') + '</div>'
-          + '<div style="font-size:12px;color:#888;">' + (l.City || '') + ', ' + (l.StateOrProvince || 'CA') + ' ' + (l.PostalCode || '') + '</div>'
-          + '<div style="font-size:12px;color:#888;margin-top:4px;">'
-          + (!isLand ? (l.BedroomsTotal || '-') + ' bd | ' + (l.BathroomsTotalInteger || '-') + ' ba | ' : '')
-          + (l.LivingArea ? Number(l.LivingArea).toLocaleString() : '-') + ' sqft'
-          + '</div>'
-          + '<button onclick="goDetail(' + idx + ')" style="margin-top:8px;background:#C9A84C;color:#000;border:none;padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:12px;">View Details</button>'
-          + '</div>';
-        infoWindow.setContent(content);
-        infoWindow.open(map, marker);
-      });
+      var isLand = l.PropertySubType === 'Land';
+      var content = '<div style="background:#1a1a1a;color:#eee;padding:12px;border-radius:8px;min-width:220px;font-family:sans-serif;">'
+        + '<div style="font-size:18px;font-weight:700;color:#C9A84C;">$' + Number(l.ListPrice || 0).toLocaleString() + '</div>'
+        + '<div style="font-size:13px;margin:4px 0;">' + (l.UnparsedAddress || '') + '</div>'
+        + '<div style="font-size:12px;color:#888;">' + (l.City || '') + ', ' + (l.StateOrProvince || 'CA') + ' ' + (l.PostalCode || '') + '</div>'
+        + '<div style="font-size:12px;color:#888;margin-top:4px;">'
+        + (!isLand ? (l.BedroomsTotal || '-') + ' bd | ' + (l.BathroomsTotalInteger || '-') + ' ba | ' : '')
+        + (l.LivingArea ? Number(l.LivingArea).toLocaleString() : '-') + ' sqft'
+        + '</div>'
+        + '<button onclick="goDetail(' + idx + ')" style="margin-top:8px;background:#C9A84C;color:#000;border:none;padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:12px;">View Details</button>'
+        + '</div>';
+
+      var popup = new mapboxgl.Popup({ offset: 14, closeButton: false, maxWidth: '260px' }).setHTML(content);
+      var marker = new mapboxgl.Marker({ element: el })
+        .setLngLat([l.Longitude, l.Latitude])
+        .setPopup(popup)
+        .addTo(map);
 
       markers.push(marker);
     })(i);
   }
 
-  if (hasPoints) map.fitBounds(bounds);
+  if (hasPoints) map.fitBounds(bounds, { padding: 40, maxZoom: 15, duration: 0 });
 }
 
 function fitMarkers() {
   if (!map || markers.length === 0) return;
-  var bounds = new google.maps.LatLngBounds();
-  markers.forEach(function(m) { bounds.extend(m.getPosition()); });
-  map.fitBounds(bounds);
+  var bounds = new mapboxgl.LngLatBounds();
+  markers.forEach(function(m) { bounds.extend(m.getLngLat()); });
+  map.fitBounds(bounds, { padding: 40, maxZoom: 15 });
 }
 
+// Drawing tools disabled during Mapbox migration — TODO: re-add via @mapbox/mapbox-gl-draw
 function startDraw(type) {
-  if (currentShape) { currentShape.overlay.setMap(null); currentShape = null; }
-  if (type === 'circle') {
-    drawingManager.setDrawingMode(google.maps.drawing.OverlayType.CIRCLE);
-    document.getElementById('drawCircleBtn').classList.add('active');
-    document.getElementById('drawRectBtn').classList.remove('active');
-  } else {
-    drawingManager.setDrawingMode(google.maps.drawing.OverlayType.RECTANGLE);
-    document.getElementById('drawRectBtn').classList.add('active');
-    document.getElementById('drawCircleBtn').classList.remove('active');
-  }
+  showToast('Draw-to-filter temporarily unavailable');
 }
-
 function clearDraw() {
-  if (currentShape) { currentShape.overlay.setMap(null); currentShape = null; }
-  drawingManager.setDrawingMode(null);
-  document.getElementById('drawCircleBtn').classList.remove('active');
-  document.getElementById('drawRectBtn').classList.remove('active');
+  currentShape = null;
+  var c = document.getElementById('drawCircleBtn'); if (c) c.classList.remove('active');
+  var r = document.getElementById('drawRectBtn'); if (r) r.classList.remove('active');
   applyClientFilters();
 }
 
 function toggleSat() {
+  if (!map) return;
   var btn = document.getElementById('satBtn');
-  if (map.getMapTypeId() === 'roadmap') {
-    map.setMapTypeId('satellite');
-    btn.classList.add('active');
-  } else {
-    map.setMapTypeId('roadmap');
-    btn.classList.remove('active');
-  }
+  satelliteOn = !satelliteOn;
+  map.setStyle(satelliteOn ? 'mapbox://styles/mapbox/satellite-streets-v12' : 'mapbox://styles/mapbox/dark-v11');
+  if (btn) btn.classList.toggle('active', satelliteOn);
+  // Re-add markers after style swap
+  map.once('styledata', function() { renderMarkers(); });
 }
 </script>
-<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBQDh0BqE9vtyBCLyDoFTMJwVV2iFYyDZQ&libraries=drawing,geometry,places&callback=initMap"></script>
 </body>
 </html>

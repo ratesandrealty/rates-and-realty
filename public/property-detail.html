@@ -11,6 +11,8 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="/assets/images/favicon.png"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet"/>
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
 <script src="/public/auth-persist.js"></script>
 <script src="/public/portal-auth-modal.js"></script>
 <script src="/public/js/portal-tracker.js" defer></script>
@@ -530,7 +532,6 @@ input,select{font-family:inherit}
 /* ===== CONFIG ===== */
 const SB_URL='https://ljywhvbmsibwnssxpesh.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
-const GMAP_KEY='AIzaSyBQDh0BqE9vtyBCLyDoFTMJwVV2iFYyDZQ';
 
 /* ===== DATA ===== */
 const SCHOOLS = {
@@ -598,16 +599,10 @@ const NEARBY_PLACES = {
   ]
 };
 
-const DARK_MAP_STYLES = [
-  {elementType:'geometry',stylers:[{color:'#1a1a1a'}]},
-  {elementType:'labels.text.fill',stylers:[{color:'#888'}]},
-  {elementType:'labels.text.stroke',stylers:[{color:'#0a0a0a'}]},
-  {featureType:'road',elementType:'geometry',stylers:[{color:'#2a2a2a'}]},
-  {featureType:'road',elementType:'geometry.stroke',stylers:[{color:'#333'}]},
-  {featureType:'water',elementType:'geometry',stylers:[{color:'#0d1b2a'}]},
-  {featureType:'poi',stylers:[{visibility:'off'}]},
-  {featureType:'transit',stylers:[{visibility:'off'}]}
-];
+// Mapbox public token loaded from window.APP_CONFIG (api/env.js)
+const MAPBOX_TOKEN = window.APP_CONFIG?.MAPBOX_TOKEN || '';
+const MAPBOX_DARK_STYLE = 'mapbox://styles/mapbox/dark-v11';
+mapboxgl.accessToken = MAPBOX_TOKEN;
 
 /* ===== STATE ===== */
 let listing = null;
@@ -620,17 +615,26 @@ let fullMapRef = null;
 
 /* ===== INIT ===== */
 async function initPage() {
-  // Try sessionStorage first (coming from search page)
-  var raw = sessionStorage.getItem('selected_listing');
-  if (raw) {
-    listing = JSON.parse(raw);
-    populateListing();
-    fetchFullPhotos(listing.ListingKey);
-    return;
-  }
-  // Try URL param (from similar homes <a href> or shared link)
+  // URL param takes precedence — a user clicking a similar-home link or
+  // opening a shared URL must NOT get stale data from sessionStorage.
   var urlKey = new URLSearchParams(window.location.search).get('listing_key')
     || new URLSearchParams(window.location.search).get('listing_id');
+  var raw = sessionStorage.getItem('selected_listing');
+  // Use sessionStorage only if URL has no key, OR the cached listing matches the URL key
+  if (raw) {
+    try {
+      var cached = JSON.parse(raw);
+      if (!urlKey || String(cached.ListingKey) === String(urlKey)) {
+        listing = cached;
+        console.log('[initPage] Using cached listing:', listing.ListingKey, listing.City, listing.ListPrice);
+        populateListing();
+        fetchFullPhotos(listing.ListingKey);
+        return;
+      } else {
+        console.log('[initPage] URL key', urlKey, 'differs from cached', cached.ListingKey, '- fetching fresh');
+      }
+    } catch(e) { console.warn('[initPage] cache parse failed', e); }
+  }
   if (urlKey) {
     try {
       var rf = "$filter=ListingKey eq '"+urlKey+"'&$top=1&$expand=Media($top=5;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,CountyOrParish,PostalCode,Media,DaysOnMarket,StandardStatus,LotSizeAcres,YearBuilt,PublicRemarks";
@@ -805,24 +809,36 @@ function populateListing() {
   loadNearbyHomesMap(city, price, l.ListingKey, isLand, l.PropertyType, l.Latitude, l.Longitude);
 }
 
-/* ===== DETAIL MAP ===== */
+/* ===== DETAIL MAP (Mapbox) ===== */
+function makeGoldDot(size) {
+  var el = document.createElement('div');
+  el.style.cssText = 'width:'+size+'px;height:'+size+'px;border-radius:50%;background:#C9A84C;border:3px solid #000;box-shadow:0 2px 8px rgba(0,0,0,0.6);cursor:pointer';
+  return el;
+}
+function makeBlueDot() {
+  var el = document.createElement('div');
+  el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#3c78ff;border:2px solid #000;box-shadow:0 2px 6px rgba(0,0,0,0.4);cursor:pointer;transition:transform .15s';
+  el.onmouseover = function(){ el.style.transform='scale(1.4)'; };
+  el.onmouseout  = function(){ el.style.transform='scale(1)'; };
+  return el;
+}
 function initDetailMap(lat, lng, addr) {
   if (!lat || !lng) {
     document.getElementById('detailMap').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.85rem">Map not available - no coordinates</div>';
     return;
   }
-  const mapEl = document.getElementById('detailMap');
-  detailMapRef = new google.maps.Map(mapEl, {
-    center: { lat, lng }, zoom: 15,
-    styles: DARK_MAP_STYLES,
-    disableDefaultUI: true,
-    zoomControl: true
+  detailMapRef = new mapboxgl.Map({
+    container: 'detailMap',
+    style: MAPBOX_DARK_STYLE,
+    center: [lng, lat],
+    zoom: 15,
+    attributionControl: false
   });
-  new google.maps.Marker({
-    position: { lat, lng }, map: detailMapRef,
-    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 12, fillColor: '#C9A84C', fillOpacity: 1, strokeColor: '#000', strokeWeight: 2 },
-    title: addr
-  });
+  detailMapRef.addControl(new mapboxgl.NavigationControl({showCompass:false}), 'top-right');
+  new mapboxgl.Marker({ element: makeGoldDot(18) })
+    .setLngLat([lng, lat])
+    .setPopup(new mapboxgl.Popup({offset:20}).setHTML('<div style="color:#000;font-size:12px;padding:2px">'+(addr||'')+'</div>'))
+    .addTo(detailMapRef);
 }
 
 /* ===== FULL SCREEN MAP ===== */
@@ -833,18 +849,17 @@ function openFullMap() {
   document.getElementById('fullMapTitle').textContent = listing.UnparsedAddress || 'Map';
   document.body.style.overflow = 'hidden';
   setTimeout(function() {
-    fullMapRef = new google.maps.Map(document.getElementById('fullMapBody'), {
-      center: { lat: listing.Latitude, lng: listing.Longitude }, zoom: 16,
-      styles: DARK_MAP_STYLES,
-      zoomControl: true,
-      streetViewControl: true,
-      fullscreenControl: false
+    fullMapRef = new mapboxgl.Map({
+      container: 'fullMapBody',
+      style: MAPBOX_DARK_STYLE,
+      center: [listing.Longitude, listing.Latitude],
+      zoom: 16,
+      attributionControl: false
     });
-    new google.maps.Marker({
-      position: { lat: listing.Latitude, lng: listing.Longitude }, map: fullMapRef,
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 14, fillColor: '#C9A84C', fillOpacity: 1, strokeColor: '#000', strokeWeight: 2 },
-      title: listing.UnparsedAddress
-    });
+    fullMapRef.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    new mapboxgl.Marker({ element: makeGoldDot(20) })
+      .setLngLat([listing.Longitude, listing.Latitude])
+      .addTo(fullMapRef);
   }, 100);
 }
 function closeFullMap() {
@@ -896,18 +911,20 @@ function calcMortgage() {
 
 /* ===== SIMILAR HOMES ===== */
 async function loadSimilarHomes(city, price, excludeKey, isLand, propType) {
-  var typeFilter = isLand ? "PropertyType eq 'Land'" : "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse')";
-  // Progressive fallback: city+price → city+wider → city only → StandardStatus only
+  console.log('[similar] Inputs:', { city: city, price: price, excludeKey: excludeKey, isLand: isLand, propType: propType });
+  // Don't filter by PropertyType/PropertySubType — CRMLS rejects most enum values
+  // with "not a valid enumeration type constant". Use only StandardStatus/City/ListPrice.
+  // Rentals and land are filtered client-side below via ListPrice ge 50000 + SubType check.
   var attempts = [];
   if (city && price > 0) {
-    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round(price*0.75))+" and ListPrice le "+Math.round(price*1.25)+" and "+typeFilter);
-    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter);
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round(price*0.75))+" and ListPrice le "+Math.round(price*1.25));
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000");
   }
   if (city) {
     attempts.push("City eq '"+city+"' and StandardStatus eq 'Active'");
   }
-  // Absolute fallback — just get any active residential listings
-  attempts.push("StandardStatus eq 'Active' and "+typeFilter);
+  // Absolute fallback
+  attempts.push("StandardStatus eq 'Active' and ListPrice ge 50000");
   var list = [];
   for (var a = 0; a < attempts.length; a++) {
     try {
@@ -975,17 +992,17 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
     return;
   }
 
-  var typeFilter = isLand ? "PropertyType eq 'Land'" : "(PropertyType eq 'Residential' or PropertyType eq 'Condominium' or PropertyType eq 'Townhouse' or PropertyType eq 'ResidentialIncome')";
-  // Progressive fallback for nearby: city+price → city only → any active
+  // Don't filter by PropertyType/PropertySubType — CRMLS rejects most enum values.
+  // Rentals filtered client-side via ListPrice ge 50000.
   var attempts = [];
   if (city && price > 0) {
-    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round(price*0.75))+" and ListPrice le "+Math.round(price*1.25)+" and "+typeFilter);
-    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000 and "+typeFilter);
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge "+Math.max(50000,Math.round(price*0.75))+" and ListPrice le "+Math.round(price*1.25));
+    attempts.push("City eq '"+city+"' and StandardStatus eq 'Active' and ListPrice ge 50000");
   }
   if (city) {
     attempts.push("City eq '"+city+"' and StandardStatus eq 'Active'");
   }
-  attempts.push("StandardStatus eq 'Active' and "+typeFilter);
+  attempts.push("StandardStatus eq 'Active' and ListPrice ge 50000");
   var nearby = [];
   for (var a = 0; a < attempts.length; a++) {
     try {
@@ -1017,16 +1034,28 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
   nearby.forEach(function(n){if(!existing.find(function(m){return m.ListingKey===n.ListingKey;}))existing.push(n);});
   sessionStorage.setItem('all_similar_listings',JSON.stringify(existing));
 
-  // Create map
-  var mapEl = document.getElementById('nearbyHomesMap');
-  nearbyMapRef = new google.maps.Map(mapEl,{center:{lat:subjectLat,lng:subjectLng},zoom:14,styles:DARK_MAP_STYLES,disableDefaultUI:true,zoomControl:true});
-  new google.maps.Marker({position:{lat:subjectLat,lng:subjectLng},map:nearbyMapRef,icon:{path:google.maps.SymbolPath.CIRCLE,scale:12,fillColor:'#C9A84C',fillOpacity:1,strokeColor:'#000',strokeWeight:2},title:listing.UnparsedAddress,zIndex:10});
-  var iw = new google.maps.InfoWindow();
+  // Create Mapbox map
+  nearbyMapRef = new mapboxgl.Map({
+    container: 'nearbyHomesMap',
+    style: MAPBOX_DARK_STYLE,
+    center: [subjectLng, subjectLat],
+    zoom: 14,
+    attributionControl: false
+  });
+  nearbyMapRef.addControl(new mapboxgl.NavigationControl({showCompass:false}), 'top-right');
+  new mapboxgl.Marker({ element: makeGoldDot(18) })
+    .setLngLat([subjectLng, subjectLat])
+    .setPopup(new mapboxgl.Popup({offset:20}).setHTML('<div style="color:#000;font-size:12px;padding:2px"><strong>\uD83D\uDCCD This Property</strong><br>'+(listing.UnparsedAddress||'')+'</div>'))
+    .addTo(nearbyMapRef);
   nearby.forEach(function(l){
-    var m = new google.maps.Marker({position:{lat:l.Latitude,lng:l.Longitude},map:nearbyMapRef,icon:{path:google.maps.SymbolPath.CIRCLE,scale:8,fillColor:'#3c78ff',fillOpacity:1,strokeColor:'#000',strokeWeight:1.5},title:l.UnparsedAddress});
-    m.addListener('click',function(){iw.setContent('<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br>'+((l.BedroomsTotal||'')+' bd \u00b7 '+(l.BathroomsTotalInteger||'')+' ba')+'<br><a href="property-detail.html?listing_key='+encodeURIComponent(l.ListingKey)+'" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a></div>');iw.open(nearbyMapRef,m);});
-    m.addListener('mouseover',function(){var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');if(item){item.style.background='rgba(90,160,224,0.06)';item.style.borderColor='rgba(90,160,224,0.4)';}});
-    m.addListener('mouseout',function(){var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');if(item){item.style.background='';item.style.borderColor='';}});
+    var el = makeBlueDot();
+    var popupHtml = '<div style="color:#000;font-size:13px;max-width:200px;line-height:1.5;font-family:system-ui,sans-serif"><strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+(l.UnparsedAddress||'')+'<br>'+((l.BedroomsTotal||'')+' bd \u00b7 '+(l.BathroomsTotalInteger||'')+' ba')+'<br><a href="property-detail.html?listing_key='+encodeURIComponent(l.ListingKey)+'" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a></div>';
+    var marker = new mapboxgl.Marker({ element: el })
+      .setLngLat([l.Longitude, l.Latitude])
+      .setPopup(new mapboxgl.Popup({offset:18}).setHTML(popupHtml))
+      .addTo(nearbyMapRef);
+    el.addEventListener('mouseover', function(){ var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]'); if(item){item.style.background='rgba(90,160,224,0.06)';item.style.borderColor='rgba(90,160,224,0.4)';} });
+    el.addEventListener('mouseout', function(){ var item=document.querySelector('[data-nearby-id="'+l.ListingKey+'"]'); if(item){item.style.background='';item.style.borderColor='';} });
   });
   var listEl = document.getElementById('nearbyHomesList');
   var listItems = nearby.slice(0,5);
@@ -1163,7 +1192,14 @@ function initMap() {
   if (user && link) { link.style.display = 'inline'; link.textContent = '\uD83D\uDC64 ' + user.first_name; }
 }
 </script>
-<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBQDh0BqE9vtyBCLyDoFTMJwVV2iFYyDZQ&callback=initMap"></script>
+<script>
+  // Initialize page on DOM ready (Mapbox loads synchronously via stylesheet+script in <head>)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initMap);
+  } else {
+    initMap();
+  }
+</script>
 <script src="/public/components/footer.js" defer></script>
 </body>
 </html>
