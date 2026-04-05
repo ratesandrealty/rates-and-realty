@@ -789,6 +789,9 @@ function onCityChange(cb) {
   else { selectedCities = selectedCities.filter(function(c) { return c !== cb.value; }); }
   updateLocationChips();
   updateCityBtnLabel();
+  // Exit viewport-bounds mode — city selection is a fresh location scope
+  _boundsFetchActive = false; _searchAreaBounds = null;
+  var sab = document.getElementById('searchAreaBtn'); if (sab) sab.style.display = 'none';
   fetchListings();
 }
 
@@ -796,6 +799,8 @@ function selectAllCities() {
   document.querySelectorAll('.city-cb').forEach(function(cb) { cb.checked = true; if (selectedCities.indexOf(cb.value) === -1) selectedCities.push(cb.value); });
   updateLocationChips();
   updateCityBtnLabel();
+  _boundsFetchActive = false; _searchAreaBounds = null;
+  var sab = document.getElementById('searchAreaBtn'); if (sab) sab.style.display = 'none';
   fetchListings();
 }
 
@@ -805,6 +810,8 @@ function clearCounties() {
   updateCityDropdown();
   updateLocationChips();
   updateCountyBtnLabel();
+  _boundsFetchActive = false; _searchAreaBounds = null;
+  var sab = document.getElementById('searchAreaBtn'); if (sab) sab.style.display = 'none';
   fetchListings();
 }
 
@@ -813,6 +820,8 @@ function clearCities() {
   document.querySelectorAll('.city-cb').forEach(function(cb) { cb.checked = false; });
   updateLocationChips();
   updateCityBtnLabel();
+  _boundsFetchActive = false; _searchAreaBounds = null;
+  var sab = document.getElementById('searchAreaBtn'); if (sab) sab.style.display = 'none';
   fetchListings();
 }
 
@@ -905,10 +914,8 @@ function initStatusTabs() {
 function buildODataFilter(bounds) {
   var parts = [];
 
+  // Bounds (if provided) — bounding box constraints always apply on top of location filter
   if (bounds) {
-    // Map viewport bounding box — overrides city/county selectors.
-    // Clamp to reasonable CA-ish range; Trestle rejects tiny/negative values
-    // and prefers 4 decimal places.
     var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
     var swLat = Math.max(sw.lat, 25), swLng = Math.max(sw.lng, -125);
     var neLat = Math.min(ne.lat, 49), neLng = Math.min(ne.lng, -114);
@@ -918,15 +925,22 @@ function buildODataFilter(bounds) {
     parts.push('Latitude le ' + neLat.toFixed(4));
     parts.push('Longitude ge ' + swLng.toFixed(4));
     parts.push('Longitude le ' + neLng.toFixed(4));
-  } else if (selectedCities.length > 0) {
-    // Location — cities take priority, then counties, then all CA
-    var cityList = selectedCities.slice(0, 12);
-    if (cityList.length === 1) parts.push("City eq '" + cityList[0] + "'");
-    else parts.push("(" + cityList.map(function(c){return "City eq '" + c + "'";}).join(' or ') + ")");
-  } else if (selectedCounties.size > 0) {
+  }
+
+  // City filter — ALWAYS applies when cities are selected (independent of bounds)
+  if (selectedCities.length > 0) {
+    var cityList = selectedCities.slice(0, 20);
+    var cityClause = cityList.length === 1
+      ? "City eq '" + cityList[0].replace(/'/g,"''") + "'"
+      : '(' + cityList.map(function(c){return "City eq '" + c.replace(/'/g,"''") + "'";}).join(' or ') + ')';
+    parts.push(cityClause);
+    console.log('[trestle filter] city clause:', cityClause);
+  } else if (!bounds && selectedCounties.size > 0) {
+    // County fallback — only when no cities AND no bounds
     var countyFilters = Array.from(selectedCounties).map(function(k) { return "CountyOrParish eq '" + k + "'"; });
-    parts.push("(" + countyFilters.join(' or ') + ")");
-  } else {
+    parts.push('(' + countyFilters.join(' or ') + ')');
+  } else if (!bounds) {
+    // State fallback — only when no bounds, no cities, no counties
     parts.push("StateOrProvince eq 'CA'");
   }
 
