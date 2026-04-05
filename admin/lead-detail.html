@@ -8761,23 +8761,29 @@ async function lsGenerate1003() {
       body: JSON.stringify(payload)
     });
     var nameStr = ((app.first_name||'')+' '+(app.last_name||'')).trim() || 'Borrower';
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch(e) {
+      throw new Error('Server returned invalid response: ' + text.slice(0,120));
+    }
     if (!data.success || !data.pdf) {
       alert('Error generating 1003: ' + (data.error || 'Unknown error'));
       return;
     }
 
-    // Convert base64 to blob URL
-    const byteChars = atob(data.pdf);
-    const byteNums = new Array(byteChars.length);
-    for (let i = 0; i < byteChars.length; i++) {
-      byteNums[i] = byteChars.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNums);
-    const blob = new Blob([byteArray], { type: 'application/pdf' });
+    // Convert base64 → Uint8Array → Blob → URL
+    const binary = atob(data.pdf);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/pdf' });
     const blobUrl = URL.createObjectURL(blob);
 
-    const title = '1003 Application — ' + (nameStr || 'Borrower');
+    // Store globals for download button
+    window._currentBorrowerName = nameStr;
+    window._pdf1003BlobUrl = blobUrl;
+    window._pdf1003FileName = '1003-' + nameStr.replace(/\s+/g,'-') + '.pdf';
+
+    const title = '1003 Application — ' + nameStr;
     PDF._pdfBlobUrl = blobUrl;
     PDF._htmlSource = null;
     openPDFUrl(blobUrl, title, 'URLA Form 1003');
@@ -15306,46 +15312,35 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
     }
   }
 
-  async function pdfDownload() {
-    const title = PDF.title || 'document';
-    const fname = title.replace(/[^a-z0-9\-_\. ]/gi, '_');
+  function pdfDownload() {
+    // Prefer explicit 1003 blob URL → PDF.url (set by openPDFUrl) → PDF._pdfBlobUrl
+    const url = window._pdf1003BlobUrl || PDF.url || PDF._pdfBlobUrl;
+    const title = PDF.title || window._currentBorrowerName || 'document';
+    const fname = (window._pdf1003FileName || title).replace(/[^a-z0-9\-_\. ]/gi, '_');
 
-    const downloadUrl = PDF.url || PDF._pdfBlobUrl;
-    if (downloadUrl) {
-      try {
-        const resp = await fetch(downloadUrl);
-        const blob = await resp.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = fname + '.pdf';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      } catch(e) {
-        window.open(downloadUrl, '_blank');
-      }
-    } else {
-      const frame = document.getElementById('pdfViewerFrame');
-      const htmlContent = PDF._htmlSource || (frame ? frame.srcdoc : '') || '';
-      if (!htmlContent) { pdfPrint(); return; }
-
-      const inject = '';
-      const printHtml = htmlContent.indexOf('') !== -1
-        ? htmlContent.replace('', inject)
-        : htmlContent;
-
-      const blob = new Blob([printHtml], { type: 'text/html;charset=utf-8' });
-      const blobUrl = URL.createObjectURL(blob);
+    if (url) {
       const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = fname + '.html';
+      a.href = url;
+      a.download = fname.toLowerCase().endsWith('.pdf') ? fname : fname + '.pdf';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      return;
     }
+
+    // HTML doc fallback (pre-approval via openPDFViewer srcdoc)
+    const frame = document.getElementById('pdfViewerFrame');
+    const htmlContent = PDF._htmlSource || (frame ? frame.srcdoc : '') || '';
+    if (!htmlContent) { alert('No PDF to download'); return; }
+    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fname + '.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   }
 
   function pdfOpenNew() { if (PDF.url) window.open(PDF.url, '_blank'); }
