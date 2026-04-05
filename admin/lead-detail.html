@@ -3350,6 +3350,8 @@
           <div style="display:flex;gap:10px;">
             <button class="ld-btn-cancel" onclick="clearMISMOParse()">Clear</button>
             <button class="ld-btn-save" onclick="applyMISMOData()">Apply to Application Tab</button>
+            <button type="button" onclick="importMismoToDB()" style="padding:8px 16px;background:#C9A84C;color:#111;border:none;border-radius:8px;font-weight:700;font-size:.78rem;cursor:pointer;font-family:inherit;margin-left:6px" title="Parse + write to DB via edge function (updates contacts, mortgage_applications, liabilities, income)">📥 Import to DB</button>
+            <button type="button" id="mismoReparseBtn" onclick="reparseMismoXml()" style="display:none;padding:8px 16px;background:rgba(201,168,76,0.08);color:#C9A84C;border:1px solid #C9A84C55;border-radius:8px;font-weight:600;font-size:.78rem;cursor:pointer;font-family:inherit;margin-left:6px">🔄 Re-parse Stored XML</button>
           </div>
         </div>
         <div class="mismo-field-grid" id="mismo-preview-fields"></div>
@@ -7212,16 +7214,127 @@ function handleMISMOFile(file) {
   reader.onload = (ev) => {
     try {
       mismoData = parseMISMO(ev.target.result, file.name);
+      mismoData._rawXml = ev.target.result;
+      mismoData._fileName = file.name;
       showMISMOPreview(mismoData);
       document.getElementById('mismo-drop-zone').classList.add('parsed');
       document.getElementById('mismo-drop-zone').querySelector('.mismo-drop-title').textContent = '✓ ' + file.name;
-      toast('✓ MISMO file parsed');
+      toast('✓ MISMO file parsed — click "Import to DB" to save');
     } catch (err) {
       toast('Parse error: ' + err.message, true);
     }
   };
   reader.readAsText(file);
 }
+
+/* ═══ MISMO: IMPORT TO DATABASE via edge function ═══ */
+async function importMismoToDB() {
+  if (!mismoData || !mismoData._rawXml) { toast('No MISMO file loaded', true); return; }
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+  toast('Importing to database…');
+  try {
+    const res = await fetch(SB_URL + '/functions/v1/mismo-import', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+ANON, 'apikey':ANON },
+      body: JSON.stringify({ xml: mismoData._rawXml, file_name: mismoData._fileName || 'import.xml' })
+    });
+    const result = await res.json();
+    if (!res.ok || !result.success) throw new Error(result.error || ('HTTP '+res.status));
+    await handleMismoImportSuccess(result);
+  } catch(e) {
+    console.error('[mismo-import]', e);
+    toast('Import failed: ' + e.message, true);
+  }
+}
+
+async function handleMismoImportSuccess(result) {
+  if (!result || !result.success) return;
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+  const hdr = { 'Authorization':'Bearer '+ANON, 'apikey':ANON };
+  const jsonHdr = Object.assign({}, hdr, {'Content-Type':'application/json','Prefer':'return=minimal'});
+  const primaryCid = result.primary_contact_id || result.contact_id;
+  if (!primaryCid) { toast('Import succeeded but no contact id returned'); return; }
+
+  // Fetch the freshly-written application
+  try {
+    const appRes = await fetch(SB_URL+'/rest/v1/mortgage_applications?contact_id=eq.'+primaryCid+'&order=created_at.desc&limit=1', { headers: hdr });
+    const apps = appRes.ok ? (await appRes.json() || []) : [];
+    const app = apps[0];
+    if (app) {
+      // Sync key fields to contacts table (what the Lead Details form reads)
+      const patch = { source: 'MISMO Import', updated_at: new Date().toISOString() };
+      if (app.first_name) patch.first_name = app.first_name;
+      if (app.last_name) patch.last_name = app.last_name;
+      const em = app.email || app.borrower_email;
+      if (em) patch.email = em;
+      if (app.cell_phone) patch.phone = app.cell_phone;
+      if (app.current_address_street) patch.address = app.current_address_street;
+      if (app.current_address_city) patch.city = app.current_address_city;
+      if (app.current_address_state) patch.state = app.current_address_state;
+      if (app.current_address_zip) patch.zip = app.current_address_zip;
+      if (app.loan_type) patch.loan_type = app.loan_type;
+      await fetch(SB_URL+'/rest/v1/contacts?id=eq.'+primaryCid, {
+        method:'PATCH', headers: jsonHdr, body: JSON.stringify(patch)
+      });
+    }
+  } catch(e) { console.warn('[mismo-import] contact sync:', e); }
+
+  var bcount = result.borrower_count || (result.borrowers ? result.borrowers.length : 1);
+  toast('✓ Imported — ' + bcount + ' borrower' + (bcount===1?'':'s') + ' · reloading…');
+  // Reload page to show all freshly-synced data, or nav to primary borrower's page if different
+  const urlCid = new URLSearchParams(location.search).get('contact_id');
+  if (urlCid === primaryCid) {
+    setTimeout(() => location.reload(), 1200);
+  } else {
+    setTimeout(() => { location.href = '/admin/lead-detail.html?contact_id=' + primaryCid; }, 1200);
+  }
+}
+
+async function reparseMismoXml() {
+  const cid = new URLSearchParams(location.search).get('contact_id') || (typeof contactId !== 'undefined' ? contactId : '');
+  if (!cid) { toast('No contact_id', true); return; }
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+  const hdr = { 'Authorization':'Bearer '+ANON, 'apikey':ANON };
+  try {
+    const appRes = await fetch(SB_URL+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&select=id,mismo_raw_xml,mismo_file_name&order=created_at.desc&limit=1', { headers: hdr });
+    const apps = appRes.ok ? (await appRes.json() || []) : [];
+    const app = apps[0];
+    if (!app || !app.mismo_raw_xml) { toast('No MISMO XML on file for this contact', true); return; }
+    toast('Re-parsing stored XML…');
+    const res = await fetch(SB_URL+'/functions/v1/mismo-import', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+ANON, 'apikey':ANON },
+      body: JSON.stringify({ xml: app.mismo_raw_xml, file_name: app.mismo_file_name || 'reparse.xml' })
+    });
+    const result = await res.json();
+    if (!res.ok || !result.success) throw new Error(result.error || ('HTTP '+res.status));
+    await handleMismoImportSuccess(result);
+  } catch(e) {
+    console.error('[mismo-reparse]', e);
+    toast('Re-parse failed: ' + e.message, true);
+  }
+}
+
+// Show Re-parse button on tab open if stored XML exists
+async function _checkMismoReparseAvailable() {
+  const cid = new URLSearchParams(location.search).get('contact_id') || (typeof contactId !== 'undefined' ? contactId : '');
+  if (!cid) return;
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+  try {
+    const r = await fetch(SB_URL+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&select=mismo_raw_xml&order=created_at.desc&limit=1', { headers:{'Authorization':'Bearer '+ANON,'apikey':ANON} });
+    const rows = r.ok ? await r.json() : [];
+    if (rows && rows[0] && rows[0].mismo_raw_xml) {
+      const btn = document.getElementById('mismoReparseBtn');
+      if (btn) btn.style.display = 'inline-block';
+    }
+  } catch(e) {}
+}
+// Run the check when page loads
+if (typeof window !== 'undefined') setTimeout(_checkMismoReparseAvailable, 1500);
 
 function parseMISMO(xmlStr, filename) {
   const parser = new DOMParser();
