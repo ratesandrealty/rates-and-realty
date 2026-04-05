@@ -1853,7 +1853,10 @@
       <div id="loanSummaryPanel" style="padding:18px 22px;border-bottom:1px solid rgba(201,168,76,0.2);background:linear-gradient(180deg,rgba(201,168,76,0.04),transparent 100%)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
           <div style="font-size:.72rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Loan Summary &middot; DTI / LTV / Cash-to-Close</div>
-          <span id="lsSaveIndicator" style="font-size:.68rem;color:#666;opacity:0;transition:opacity .3s">Saved &check;</span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <button type="button" id="lsPreApprovalBtn" onclick="lsGeneratePreApproval()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 12px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit">&#128196; Generate Pre-Approval</button>
+            <span id="lsSaveIndicator" style="font-size:.68rem;color:#666;opacity:0;transition:opacity .3s">Saved &check;</span>
+          </div>
         </div>
         <!-- Live status bar -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
@@ -1873,14 +1876,28 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
               <div><label class="ls-sub">Loan Amount</label><input id="ls_loan_amount" type="number" class="ls-input" placeholder="660000"></div>
               <div><label class="ls-sub">Purchase/Appraised</label><input id="ls_appraised_value" type="number" class="ls-input" placeholder="900000"></div>
+              <div><label class="ls-sub">LTV % (edit to set loan)</label><input id="ls_ltv_input" type="number" step="0.01" class="ls-input" placeholder="73.33" oninput="lsOnLTVInput(this.value)"></div>
               <div><label class="ls-sub">Rate %</label><input id="ls_interest_rate" type="number" step="0.001" class="ls-input" placeholder="5.990"></div>
               <div><label class="ls-sub">Term (months)</label><input id="ls_loan_term_months" type="number" class="ls-input" placeholder="360" value="360"></div>
+              <div><label class="ls-sub">Credit Score</label><input id="ls_credit_score" type="number" class="ls-input" placeholder="720"></div>
+              <div><label class="ls-sub">Loan Type</label><select id="ls_loan_type" class="ls-input"><option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option><option>Jumbo</option><option>Non-QM</option></select></div>
+              <div><label class="ls-sub">Loan Program</label><select id="ls_loan_program" class="ls-input"><option>30-Year Fixed</option><option>15-Year Fixed</option><option>20-Year Fixed</option><option>10-Year Fixed</option><option>5/1 ARM</option><option>7/1 ARM</option><option>10/1 ARM</option></select></div>
             </div>
             <div class="ls-card-label" style="margin-top:10px">Housing Expense (PITIA)</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
               <div><label class="ls-sub">P&amp;I (auto)</label><input id="ls_pi_payment" type="number" class="ls-input" readonly style="color:#C9A84C;font-weight:700"></div>
               <div><label class="ls-sub">MI / mo (auto)</label><input id="ls_mi_monthly" type="number" class="ls-input" readonly style="color:#C9A84C"></div>
-              <div><label class="ls-sub">Taxes / mo</label><input id="ls_property_taxes_monthly" type="number" class="ls-input" placeholder="850"></div>
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+                  <label class="ls-sub" style="margin-bottom:0">Taxes / mo</label>
+                  <div style="display:flex;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden">
+                    <button type="button" id="lsTaxModeFixed" onclick="lsSetTaxMode('fixed')" style="padding:1px 7px;border:none;background:#C9A84C;color:#111;font-size:.55rem;font-weight:700;cursor:pointer;font-family:inherit">$</button>
+                    <button type="button" id="lsTaxModePct" onclick="lsSetTaxMode('pct')" style="padding:1px 7px;border:none;background:transparent;color:#555;font-size:.55rem;font-weight:700;cursor:pointer;font-family:inherit">%</button>
+                  </div>
+                </div>
+                <input id="ls_property_taxes_monthly" type="number" class="ls-input" placeholder="850">
+                <div id="lsTaxPctWrap" style="display:none"><input id="ls_tax_rate_pct" type="number" step="0.01" class="ls-input" placeholder="1.25" oninput="lsCalcTaxFromPct()" style="margin-top:3px"><div id="lsTaxPctResult" style="font-size:.58rem;color:#C9A84C;margin-top:2px;font-weight:600">$0/mo · CA 1.25% · TX 2.10% · FL 0.89%</div></div>
+              </div>
               <div><label class="ls-sub">Insurance / mo</label><input id="ls_insurance_monthly" type="number" class="ls-input" placeholder="150"></div>
               <div><label class="ls-sub">HOA / mo</label><input id="ls_hoa_monthly" type="number" class="ls-input" placeholder="0"></div>
               <div><label class="ls-sub">Other / mo</label><input id="ls_other_monthly" type="number" class="ls-input" placeholder="0"></div>
@@ -8199,7 +8216,14 @@ function lsRecalc() {
     mi = loanAmt * miRate / 12;
   }
   _lsSetNum('ls_mi_monthly', mi);
-  // PITIA
+  // PITIA — if tax mode is %, recompute taxes from value × rate/100/12
+  if (_lsTaxMode === 'pct') {
+    var taxRate = _lsNum('ls_tax_rate_pct');
+    var taxMonthly = apprV ? Math.round(apprV * (taxRate/100) / 12 * 100) / 100 : 0;
+    document.getElementById('ls_property_taxes_monthly').value = taxMonthly;
+    var taxRes = document.getElementById('lsTaxPctResult');
+    if (taxRes) taxRes.textContent = '$'+taxMonthly.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'/mo · CA 1.25% · TX 2.10% · FL 0.89%';
+  }
   var taxes = _lsNum('ls_property_taxes_monthly'),
       ins = _lsNum('ls_insurance_monthly'),
       hoa = _lsNum('ls_hoa_monthly'),
@@ -8228,8 +8252,10 @@ function lsRecalc() {
     statusLines.push(backDTI <= 41 ? '<span style="color:#22c55e">\u2713 VA OK (\u226441%)</span>' : '<span style="color:#ef4444">\u2717 Exceeds VA (\u226441%)</span>');
   }
   document.getElementById('ls_dti_status').innerHTML = statusLines.length ? statusLines.join(' &nbsp;\u00b7&nbsp; ') : 'Enter income + debt to see guideline check';
-  // LTV display
+  // LTV display + bidirectional sync: update input if user is not editing it
   document.getElementById('ls_ltv_display').textContent = ltv ? ltv.toFixed(2) + '%' : '—%';
+  var ltvIn = document.getElementById('ls_ltv_input');
+  if (ltvIn && document.activeElement !== ltvIn) ltvIn.value = ltv ? ltv.toFixed(2) : '';
   document.getElementById('ls_ltv_bar').style.width = Math.min(ltv, 100) + '%';
   document.getElementById('ls_ltv_bar').style.background = ltv > 97 ? '#ef4444' : ltv > 80 ? '#f97316' : '#22c55e';
   document.getElementById('ls_mi_note').textContent = ltv > 80 ? ('MI applies at ' + ltv.toFixed(1) + '% LTV — ' + _lsFmt(mi) + '/mo') : 'No MI (LTV \u2264 80%)';
@@ -8291,6 +8317,115 @@ function _lsAutoSave(updates) {
       if (indicator) { indicator.textContent = 'Save failed'; indicator.style.color = '#ef4444'; }
     }
   }, 800);
+}
+
+// LTV bidirectional: user types LTV → back-calc loan amount
+function lsOnLTVInput(val) {
+  var ltv = parseFloat(val);
+  if (isNaN(ltv) || ltv <= 0 || ltv > 100) return;
+  var value = _lsNum('ls_appraised_value');
+  if (!value) { showToast('Enter Purchase/Appraised Value first'); return; }
+  var newLoan = Math.round(value * (ltv / 100));
+  var loanEl = document.getElementById('ls_loan_amount');
+  loanEl.value = newLoan;
+  var dpEl = document.getElementById('ls_down_payment');
+  if (dpEl) dpEl.value = value - newLoan;
+  lsRecalc();
+}
+
+// Tax mode: fixed $ vs % of value
+var _lsTaxMode = 'fixed';
+function lsSetTaxMode(mode) {
+  _lsTaxMode = mode;
+  document.getElementById('lsTaxModeFixed').style.background = mode==='fixed'?'#C9A84C':'transparent';
+  document.getElementById('lsTaxModeFixed').style.color = mode==='fixed'?'#111':'#555';
+  document.getElementById('lsTaxModePct').style.background = mode==='pct'?'#C9A84C':'transparent';
+  document.getElementById('lsTaxModePct').style.color = mode==='pct'?'#555':'#555';
+  document.getElementById('lsTaxModePct').style.color = mode==='pct'?'#111':'#555';
+  document.getElementById('ls_property_taxes_monthly').style.display = mode==='fixed'?'block':'none';
+  document.getElementById('lsTaxPctWrap').style.display = mode==='pct'?'block':'none';
+  if (mode === 'pct') lsCalcTaxFromPct();
+}
+function lsCalcTaxFromPct() {
+  var rate = _lsNum('ls_tax_rate_pct');
+  var value = _lsNum('ls_appraised_value');
+  var monthly = value ? Math.round(value * (rate/100) / 12 * 100) / 100 : 0;
+  document.getElementById('ls_property_taxes_monthly').value = monthly;
+  var res = document.getElementById('lsTaxPctResult');
+  if (res) res.textContent = '$'+monthly.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'/mo · CA 1.25% · TX 2.10% · FL 0.89%';
+  lsRecalc();
+}
+
+// Pre-approval letter generator
+async function lsGeneratePreApproval() {
+  var btn = document.getElementById('lsPreApprovalBtn');
+  var origTxt = btn.textContent; btn.textContent = '⏳ Generating...'; btn.disabled = true;
+  try {
+    var loanAmount = _lsNum('ls_loan_amount'), value = _lsNum('ls_appraised_value'),
+        rate = _lsNum('ls_interest_rate'), term = _lsNum('ls_loan_term_months')||360,
+        taxes = _lsNum('ls_property_taxes_monthly'), ins = _lsNum('ls_insurance_monthly'),
+        hoa = _lsNum('ls_hoa_monthly'), mi = _lsNum('ls_mi_monthly'), other = _lsNum('ls_other_monthly'),
+        down = _lsNum('ls_down_payment'), closing = _lsNum('ls_closing_costs'),
+        prepaid = _lsNum('ls_prepaids'), credits = _lsNum('ls_credits');
+    var pi = 0;
+    if (loanAmount && rate && term) { var r = rate/100/12; pi = loanAmount*r*Math.pow(1+r,term)/(Math.pow(1+r,term)-1); }
+    var pitia = pi + taxes + ins + hoa + mi + other;
+    var ltv = value ? (loanAmount/value*100) : 0;
+    var totalIncome = (typeof losIncome !== 'undefined')
+      ? losIncome.filter(function(i){return i.is_active !== false;}).reduce(function(s,i){return s+(parseFloat(i.monthly_amount)||0);}, 0)
+      : _lsNum('ls_total_monthly_income');
+    var totalDebt = (typeof losLiabilities !== 'undefined')
+      ? losLiabilities.filter(function(l){return !l.is_omitted && !l.is_payoff;}).reduce(function(s,l){return s+(parseFloat(l.monthly_payment)||0);}, 0)
+      : _lsNum('ls_total_monthly_debt');
+    var frontDTI = totalIncome ? (pitia/totalIncome*100) : 0;
+    var backDTI = totalIncome ? ((pitia+totalDebt)/totalIncome*100) : 0;
+    // Get borrower info
+    var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
+    var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+    var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    var app = {};
+    try {
+      var ar = await fetch(base+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&select=first_name,last_name,co_borrower_first_name,co_borrower_last_name,credit_score,property_address_street,property_address_city,property_address_state,property_address_zip,occupancy_type,loan_purpose&order=created_at.desc&limit=1', {
+        headers:{'Authorization':'Bearer '+anon,'apikey':anon}
+      });
+      var rows = await ar.json(); if (rows && rows[0]) app = rows[0];
+    } catch(e) {}
+    var payload = {
+      borrower_name: ((app.first_name||'')+' '+(app.last_name||'')).trim(),
+      co_borrower_name: app.co_borrower_first_name ? ((app.co_borrower_first_name||'')+' '+(app.co_borrower_last_name||'')).trim() : '',
+      loan_amount:loanAmount, purchase_price:value, appraised_value:value,
+      loan_type: document.getElementById('ls_loan_type').value || 'Conventional',
+      loan_program: document.getElementById('ls_loan_program').value || '30-Year Fixed',
+      interest_rate:rate, loan_term_months:term, ltv:ltv, cltv:ltv,
+      pi_payment:pi, taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa, mi_monthly:mi, total_pitia:pitia,
+      front_dti:frontDTI, back_dti:backDTI,
+      credit_score: _lsNum('ls_credit_score') || app.credit_score || 0,
+      total_income:totalIncome, total_debt:totalDebt,
+      down_payment:down, closing_costs:closing, prepaids:prepaid,
+      cash_to_close: down + closing + prepaid - credits,
+      property_address:app.property_address_street, property_city:app.property_address_city,
+      property_state:app.property_address_state, property_zip:app.property_address_zip,
+      occupancy_type: app.occupancy_type || 'Primary Residence',
+      loan_purpose: app.loan_purpose || 'Purchase',
+      lo_name:'Rene Duarte', lo_nmls:'1795044', lo_phone:'(714) 472-8508', lo_email:'rene@ratesandrealty.com',
+      company_name:'Rates & Realty', company_nmls:'1416824', valid_days:90
+    };
+    var res = await fetch(base+'/functions/v1/generate-preapproval', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+    // Open in new tab for print/save
+    var w = window.open('', '_blank');
+    if (w) { w.document.write(data.html || ''); w.document.close(); w.focus(); }
+    else { showToast('Pop-up blocked — allow pop-ups and retry'); }
+    showToast('Pre-Approval letter generated \u2713');
+  } catch(e) {
+    console.error('[pre-approval]', e);
+    showToast('Generation failed: ' + e.message);
+  }
+  btn.textContent = origTxt; btn.disabled = false;
 }
 
 async function initLoanSummary() {
