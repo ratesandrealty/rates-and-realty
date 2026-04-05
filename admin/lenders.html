@@ -573,7 +573,8 @@ function renderLenderList(lenders) {
             ${progs.map(p => `<span class="tag-pill" style="background:${PROGRAM_COLORS[p]||'#888'}22;color:${PROGRAM_COLORS[p]||'#888'};border:1px solid ${PROGRAM_COLORS[p]||'#888'}44;">${p}</span>`).join('')}
           </div>
         </div>
-        <div class="lender-priority" style="color:${l.priority==='high'?'#ff9966':l.priority==='low'?'rgba(255,255,255,0.2)':'var(--muted)'};">
+        <div class="lender-priority" style="color:${l.priority==='high'?'#ff9966':l.priority==='low'?'rgba(255,255,255,0.2)':'var(--muted)'};display:flex;align-items:center;gap:6px;">
+          ${l.form_token ? `<span onclick="event.stopPropagation();copyLenderRowLink('${l.form_token}')" title="Copy form link" style="cursor:pointer;color:#C9A84C;font-size:12px;">🔗</span>` : ''}
           ${l.priority==='high'?'★':''}
         </div>
       </div>`;
@@ -662,6 +663,14 @@ function showLenderDetail(lender) {
       <a href="${lender.clickup_url||'#'}" target="_blank" class="clickup-link">
         View in ClickUp
       </a>
+    </div>
+
+    <div id="lenderFormLinkRow" style="display:flex;align-items:center;gap:8px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:8px 12px;margin-bottom:12px;">
+      <svg width="14" height="14" fill="#C9A84C" viewBox="0 0 24 24" style="flex-shrink:0"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+      <span style="font-size:11px;color:#666;flex-shrink:0;">Lender Form Link:</span>
+      <span id="lenderFormLinkText" style="font-size:11px;color:#C9A84C;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;"></span>
+      <button onclick="copyLenderFormLink()" style="background:#C9A84C;color:#000;border:none;border-radius:4px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;font-family:inherit">Copy</button>
+      <button onclick="regenerateLenderToken()" title="Generate new link" style="background:#1a1a1a;color:#666;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:11px;cursor:pointer;flex-shrink:0;font-family:inherit">↻ New Link</button>
     </div>
 
     <div class="detail-header">
@@ -753,6 +762,84 @@ function showLenderDetail(lender) {
   else if (typeof rawTypes === 'string' && rawTypes) activeTypes = rawTypes.split(',').map(x => x.trim()).filter(Boolean);
   window._editLoanTypes = activeTypes.slice();
   renderLoanTypeChips();
+
+  // Form link row
+  window.ldCurrentLenderId = lender.id;
+  if (lender.form_token) {
+    const url = 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + lender.form_token;
+    window._currentLenderFormUrl = url;
+    document.getElementById('lenderFormLinkText').textContent = url;
+  } else {
+    window._currentLenderFormUrl = null;
+    document.getElementById('lenderFormLinkText').textContent = 'Generating link…';
+    generateTokenForCurrent(lender.id);
+  }
+}
+
+async function generateTokenForCurrent(lenderId) {
+  try {
+    const res = await fetch(`${SB_URL}/functions/v1/lender-portal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY },
+      body: JSON.stringify({ action: 'generate_token', id: lenderId })
+    });
+    const data = await res.json();
+    const token = data.form_token || data.token || (data.lender && data.lender.form_token);
+    const url = data.form_url || (token ? 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + token : null);
+    if (url) {
+      window._currentLenderFormUrl = url;
+      const el = document.getElementById('lenderFormLinkText');
+      if (el) el.textContent = url;
+      const idx = allLenders.findIndex(l => l.id === lenderId);
+      if (idx >= 0 && token) allLenders[idx].form_token = token;
+      renderLenderList(filteredLenders);
+    } else {
+      document.getElementById('lenderFormLinkText').textContent = 'Unable to generate link';
+    }
+  } catch(e) {
+    document.getElementById('lenderFormLinkText').textContent = 'Error: ' + e.message;
+  }
+}
+
+function copyLenderRowLink(token) {
+  const url = 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + token;
+  navigator.clipboard.writeText(url).then(() => showToast('Link copied!'));
+}
+
+function copyLenderFormLink() {
+  const url = window._currentLenderFormUrl;
+  if (!url) { showToast('No link yet'); return; }
+  navigator.clipboard.writeText(url).then(() => showToast('✅ Link copied to clipboard!'));
+}
+
+async function regenerateLenderToken() {
+  if (!confirm('Generate a new link? The old link will stop working.')) return;
+  const lenderId = window.ldCurrentLenderId;
+  if (!lenderId) return;
+  document.getElementById('lenderFormLinkText').textContent = 'Generating…';
+  try {
+    const res = await fetch(`${SB_URL}/functions/v1/lender-portal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY },
+      body: JSON.stringify({ action: 'generate_token', id: lenderId, regenerate: true })
+    });
+    const data = await res.json();
+    const token = data.form_token || data.token || (data.lender && data.lender.form_token);
+    const url = data.form_url || (token ? 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + token : null);
+    if (url) {
+      window._currentLenderFormUrl = url;
+      document.getElementById('lenderFormLinkText').textContent = url;
+      const idx = allLenders.findIndex(l => l.id === lenderId);
+      if (idx >= 0 && token) allLenders[idx].form_token = token;
+      renderLenderList(filteredLenders);
+      showToast('✅ New link generated');
+    } else {
+      document.getElementById('lenderFormLinkText').textContent = 'Failed';
+      showToast('Failed to generate new link');
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message);
+  }
 }
 
 const LOAN_TYPES = ['Conventional','FHA','VA','USDA','Jumbo','Non-QM','DSCR','Bank Statement','Commercial','Hard Money','Bridge','CalHFA','DPA','ITIN','Construction'];
@@ -1114,7 +1201,22 @@ function showToast(msg) {
 }
 
 // ── INIT ─────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', loadLenders);
+async function ensureLenderTokens() {
+  try {
+    const res = await fetch(`${SB_URL}/functions/v1/lender-portal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY },
+      body: JSON.stringify({ action: 'ensure_tokens' })
+    });
+    const data = await res.json();
+    console.log(`[tokens] Generated ${data.generated||0} new tokens for ${data.total||0} lenders`);
+  } catch(e) { console.warn('Token backfill failed:', e); }
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  loadLenders();
+  ensureLenderTokens();
+});
 document.getElementById('leftPanel').style.display = 'flex';
 </script>
 </body>
