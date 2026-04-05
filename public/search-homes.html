@@ -747,38 +747,93 @@ async function addToExistingBatch(l) {
   } catch(e) { showToast('Error: ' + e.message); }
 }
 
-// Apply filter params from an incoming search link (shared from CRM Search Link Builder)
-// URL format: ?county=Orange&city=Westminster,Garden+Grove&min_price=400000&max_price=850000&beds=3&baths=2&type=SFR&sort=price_asc
+// Apply filter params from an incoming search link (shared from CRM Search Link Builder).
+// URL format: ?county=Orange&city=Westminster,Garden+Grove&min_price=400000&max_price=850000&beds=3&baths=2&type=SFR&sort=price_asc&min_sqft=1200&max_sqft=3000&min_year=1990&max_dom=60&pool=1&new=1
+// This function must write to BOTH:
+//   (a) the `filters` object (drives buildODataFilter() / the Trestle query)
+//   (b) the real DOM elements (so filter chips/modal reflect the state)
+// Plus selectedCities / selectedCounties for the location-filter branch.
 function _applyIncomingSearchParams() {
   try {
     var p = new URLSearchParams(location.search);
     if (![...p.keys()].length) return;
-    console.log('[search-homes] applying incoming filter params:', Object.fromEntries(p));
-    var cityParam = p.get('city');
-    if (cityParam) { selectedCities = cityParam.split(',').map(function(s){return s.trim();}).filter(Boolean); }
+    console.log('[URL params]', Object.fromEntries(p));
+
+    // --- Location: county / cities ---
     var countyParam = p.get('county');
     if (countyParam) {
       selectedCounties.clear();
-      countyParam.split(',').forEach(function(c){ selectedCounties.add(c.trim() + (c.indexOf('County')<0?' County':'')); });
+      countyParam.split(',').forEach(function(c){
+        var name = c.trim();
+        selectedCounties.add(name.indexOf('County') < 0 ? name + ' County' : name);
+      });
+      document.querySelectorAll('.county-cb').forEach(function(cb){ cb.checked = selectedCounties.has(cb.value); });
     }
-    var setVal = function(id, v) { var el = document.getElementById(id); if (el && v) el.value = v; };
-    setVal('minPriceInput', p.get('min_price'));
-    setVal('maxPriceInput', p.get('max_price'));
-    setVal('minBedsInput', p.get('beds'));
-    setVal('minBathsInput', p.get('baths'));
-    var sortMap = { price_asc:'ListPrice asc', price_desc:'ListPrice desc', newest:'ListingContractDate desc', dom:'DaysOnMarket desc' };
-    var sp = p.get('sort'); if (sp && sortMap[sp]) { var s = document.getElementById('sortSelect'); if (s) s.value = sortMap[sp]; }
-    // Type param → activate matching .type-card
-    var URL_TYPE_MAP = { 'SFR':'Residential', 'Condo':'Condominium', 'Townhouse':'Townhouse', 'Multi':'Residential Income', 'Land':'Land' };
+    var cityParam = p.get('cities') || p.get('city');
+    if (cityParam) {
+      selectedCities = cityParam.split(',').map(function(s){return s.trim();}).filter(Boolean);
+      // Update city checkboxes if the dropdown has already been populated
+      document.querySelectorAll('.city-cb').forEach(function(cb){ cb.checked = selectedCities.indexOf(cb.value) >= 0; });
+    }
+
+    // --- Price: write to filters object AND the real DOM input IDs (#fMinPrice/#fMaxPrice) ---
+    var minP = p.get('min_price'), maxP = p.get('max_price');
+    if (minP) { filters.minPrice = minP; var mi = document.getElementById('fMinPrice'); if (mi) mi.value = minP; }
+    if (maxP) { filters.maxPrice = maxP; var ma = document.getElementById('fMaxPrice'); if (ma) ma.value = maxP; }
+
+    // --- Beds: activate matching toggle button + set filters.beds ---
+    var bedsParam = p.get('beds');
+    if (bedsParam) {
+      filters.beds = bedsParam;
+      document.querySelectorAll('#bedToggles .toggle-btn').forEach(function(btn){
+        btn.classList.toggle('active', btn.dataset.val === bedsParam);
+      });
+    }
+    // --- Baths: activate matching toggle button + set filters.baths ---
+    var bathsParam = p.get('baths');
+    if (bathsParam) {
+      filters.baths = bathsParam;
+      document.querySelectorAll('#bathToggles .toggle-btn').forEach(function(btn){
+        btn.classList.toggle('active', btn.dataset.val === bathsParam);
+      });
+    }
+
+    // --- Property type: activate type-card + set filters.types ---
+    // URL tokens (from slbGenerate): SFR / Condo / Townhouse / Multi / Land / SingleFamilyResidence / Condominium / MultiFamily
+    var URL_TYPE_MAP = {
+      'SFR':'Residential', 'SingleFamilyResidence':'Residential',
+      'Condo':'Condominium', 'Condominium':'Condominium',
+      'Townhouse':'Townhouse',
+      'Multi':'Residential Income', 'MultiFamily':'Residential Income', 'Multi-Family':'Residential Income',
+      'Land':'Land'
+    };
     var typeParam = p.get('type');
     if (typeParam) {
       var targetType = URL_TYPE_MAP[typeParam] || typeParam;
+      filters.types = [targetType];
       document.querySelectorAll('.type-card').forEach(function(c){ c.classList.toggle('active', c.dataset.type === targetType); });
     }
-    // Update dropdown labels
-    if (typeof updateCountyDropdownLabel === 'function') updateCountyDropdownLabel();
-    if (typeof updateCityDropdownLabel === 'function') updateCityDropdownLabel();
-    if (typeof renderLocationChips === 'function') renderLocationChips();
+
+    // --- Sort ---
+    var sortMap = { price_asc:'ListPrice asc', price_desc:'ListPrice desc', newest:'ListingContractDate desc', dom:'DaysOnMarket desc' };
+    var sp = p.get('sort'); if (sp && sortMap[sp]) { var ss = document.getElementById('sortSelect'); if (ss) ss.value = sortMap[sp]; }
+
+    // --- Advanced filters ---
+    var sqMin = p.get('min_sqft'); if (sqMin) { filters.minSqft = sqMin; }
+    var yrMin = p.get('min_year'); if (yrMin) { filters.minYear = yrMin; }
+    var domMx = p.get('max_dom'); if (domMx) { filters.maxDOM = domMx; var d = document.getElementById('fDOM'); if (d) d.value = domMx; }
+    if (p.get('pool') === '1') { filters.pool = true; var pl = document.getElementById('fPool'); if (pl) pl.checked = true; }
+    if (p.get('new') === '1') { var nc = document.getElementById('fNewConstruction'); if (nc) nc.checked = true; }
+
+    // Refresh UI labels / chips
+    if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
+    if (typeof updateCityBtnLabel === 'function') updateCityBtnLabel();
+    if (typeof updateLocationChips === 'function') updateLocationChips();
+    // Mark price chip as having a value so the UI shows the filter is active
+    if ((filters.minPrice || filters.maxPrice) && document.querySelector('.chip[data-chip="price"]')) document.querySelector('.chip[data-chip="price"]').classList.add('has-value');
+    if ((filters.beds || filters.baths) && document.querySelector('.chip[data-chip="beds"]')) document.querySelector('.chip[data-chip="beds"]').classList.add('has-value');
+
+    console.log('[URL params] → filters object:', { cities: selectedCities, minPrice: filters.minPrice, maxPrice: filters.maxPrice, beds: filters.beds, baths: filters.baths, types: filters.types });
   } catch(e) { console.warn('[search-homes] param apply error:', e); }
 }
 
