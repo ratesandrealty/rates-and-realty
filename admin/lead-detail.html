@@ -3072,7 +3072,7 @@
             <h3 style="font-size:1rem;font-weight:700;color:#eee;margin:0;display:flex;align-items:center;gap:8px"><i class="fas fa-bell" style="color:#C9A84C"></i>Listing Alerts <span id="alertsCountBadge" style="background:rgba(201,168,76,.1);color:#C9A84C;border-radius:12px;padding:3px 10px;font-size:.68rem;font-weight:700"></span></h3>
           </div>
         </div>
-        <div id="crmAlertsContainer" style="max-height:400px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#C9A84C #1a1a1a">
+        <div id="crmAlertsContainer" style="min-height:60px;max-height:400px;height:auto;overflow-y:auto;overflow-x:hidden;display:block;scrollbar-width:thin;scrollbar-color:#C9A84C #1a1a1a">
           <div style="text-align:center;padding:24px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.3rem"></i></div>
         </div>
 
@@ -5506,7 +5506,26 @@ async function loadContactAlerts() {
           +'</div></div>';
       }).join('');
       container.innerHTML = html;
-      console.log('[alerts] rendered ' + alerts.length + ' cards, innerHTML length:', container.innerHTML.length);
+      // Force reflow + report scroll vs offset height
+      void container.offsetHeight;
+      console.log('[alerts] rendered ' + alerts.length + ' cards, innerHTML length:', container.innerHTML.length,
+        '| offsetHeight:', container.offsetHeight,
+        '| scrollHeight:', container.scrollHeight,
+        '| clientHeight:', container.clientHeight);
+      // If container collapsed despite content, log the entire ancestor chain
+      if (container.scrollHeight > 0 && container.offsetHeight === 0) {
+        console.warn('[alerts] CONTAINER CLIPPED — walking ancestors:');
+        var p = container.parentElement, depth = 0;
+        while (p && depth < 10) {
+          var cs = getComputedStyle(p);
+          console.warn('  [' + depth + ']', (p.id||p.className||p.tagName), '{ display:'+cs.display+', height:'+cs.height+', maxHeight:'+cs.maxHeight+', overflow:'+cs.overflow+', offsetHeight:'+p.offsetHeight+' }');
+          p = p.parentElement; depth++;
+        }
+      }
+      // Force min-height safety net in case CSS cascade collapses the container
+      if (container.offsetHeight < 60 && alerts.length > 0) {
+        container.style.minHeight = Math.min(alerts.length * 90, 400) + 'px';
+      }
     } catch(renderErr) {
       console.error('[alerts] render exception:', renderErr);
       container.innerHTML = '<p style="color:#ef4444;padding:20px;text-align:center">Render error: ' + (renderErr.message||'unknown') + '</p>';
