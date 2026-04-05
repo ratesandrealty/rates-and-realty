@@ -3127,16 +3127,20 @@
               <button type="button" id="slbToggleMonthly" onclick="slbSetPriceMode('monthly')" style="padding:4px 12px;border:none;border-radius:18px;background:transparent;color:#666;font-size:.68rem;font-weight:700;cursor:pointer;font-family:inherit">Monthly Payment</button>
             </div>
           </div>
-          <!-- Dual-handle slider -->
-          <div style="position:relative;height:44px;padding:18px 0">
-            <div style="position:absolute;top:50%;left:0;right:0;height:4px;background:#2a2a2a;border-radius:2px;transform:translateY(-50%)"></div>
-            <div id="slbFill" style="position:absolute;top:50%;height:4px;background:#C9A84C;border-radius:2px;transform:translateY(-50%);left:0;right:0"></div>
-            <input id="slbMinSlider" type="range" min="0" max="100" value="0" step="1" oninput="slbUpdateSlider('min', this.value)" style="position:absolute;top:0;left:0;right:0;width:100%;height:44px;-webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;outline:none;margin:0;z-index:3">
-            <input id="slbMaxSlider" type="range" min="0" max="100" value="100" step="1" oninput="slbUpdateSlider('max', this.value)" style="position:absolute;top:0;left:0;right:0;width:100%;height:44px;-webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;outline:none;margin:0;z-index:4">
-            <div id="slbThumbMin" style="position:absolute;top:50%;width:18px;height:18px;background:#C9A84C;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;left:0;box-shadow:0 2px 6px rgba(0,0,0,0.4)"></div>
-            <div id="slbThumbMax" style="position:absolute;top:50%;width:18px;height:18px;background:#C9A84C;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;left:100%;box-shadow:0 2px 6px rgba(0,0,0,0.4)"></div>
+          <!-- Manual min/max inputs -->
+          <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:end;margin-bottom:14px">
+            <div><label style="font-size:.62rem;color:#666;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px;font-weight:600">Min Price</label><input type="text" id="slbMinInput" placeholder="No min" oninput="slbOnInputChange('min')" onblur="slbOnInputBlur()" style="width:100%;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:8px;padding:8px 10px;color:#eee;font-size:.82rem;outline:none;font-family:inherit;box-sizing:border-box"></div>
+            <div style="padding-bottom:9px;color:#555;font-size:.82rem">—</div>
+            <div><label style="font-size:.62rem;color:#666;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px;font-weight:600">Max Price</label><input type="text" id="slbMaxInput" placeholder="No max" oninput="slbOnInputChange('max')" onblur="slbOnInputBlur()" style="width:100%;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:8px;padding:8px 10px;color:#eee;font-size:.82rem;outline:none;font-family:inherit;box-sizing:border-box"></div>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:.78rem;color:#eee;font-weight:600;margin-bottom:8px">
+          <!-- Custom drag slider (no overlapping range inputs) -->
+          <div id="slbTrack" style="position:relative;height:40px;cursor:pointer;touch-action:none;user-select:none">
+            <div style="position:absolute;top:50%;left:8px;right:8px;height:4px;background:#2a2a2a;border-radius:2px;transform:translateY(-50%)"></div>
+            <div id="slbFill" style="position:absolute;top:50%;height:4px;background:#C9A84C;border-radius:2px;transform:translateY(-50%);left:8px;right:8px"></div>
+            <div id="slbThumbMin" style="position:absolute;top:50%;width:20px;height:20px;background:#C9A84C;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);left:8px;box-shadow:0 2px 8px rgba(0,0,0,0.5);cursor:grab;touch-action:none;z-index:2"></div>
+            <div id="slbThumbMax" style="position:absolute;top:50%;width:20px;height:20px;background:#C9A84C;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);left:calc(100% - 8px);box-shadow:0 2px 8px rgba(0,0,0,0.5);cursor:grab;touch-action:none;z-index:2"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:.76rem;color:#aaa;margin-top:6px;margin-bottom:10px">
             <span id="slbMinLabel">No min</span>
             <span id="slbMaxLabel">No max</span>
           </div>
@@ -3152,10 +3156,8 @@
           <div id="slbMonthlyNote" style="display:none;font-size:.66rem;color:#666;font-style:italic;margin-top:6px">Based on 20% down, 6.875% rate, 30yr fixed</div>
         </div>
         <style>
-          #slbMinSlider::-webkit-slider-thumb,#slbMaxSlider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;border-radius:50%;background:transparent;cursor:pointer;pointer-events:auto}
-          #slbMinSlider::-moz-range-thumb,#slbMaxSlider::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:transparent;cursor:pointer;border:none;pointer-events:auto}
-          #slbMinSlider::-webkit-slider-runnable-track,#slbMaxSlider::-webkit-slider-runnable-track{background:transparent;height:44px}
-          #slbMinSlider::-moz-range-track,#slbMaxSlider::-moz-range-track{background:transparent;height:44px;border:none}
+          #slbThumbMin:active,#slbThumbMax:active{cursor:grabbing;transform:translate(-50%,-50%) scale(1.2)}
+          #slbThumbMin.dragging,#slbThumbMax.dragging{cursor:grabbing;transform:translate(-50%,-50%) scale(1.2)}
         </style>
 
         <!-- BEDS & BATHS card -->
@@ -5145,7 +5147,7 @@ function switchTab(name, btn) {
   if (name === 'documents') loadDocumentsGrid();
   if (name === 'conditions') loadConditions();
   if (name === 'mismo') loadMISMOHistory();
-  if (name === 'alerts') { loadContactAlerts(); _slbInitPills(); loadSavedSearches(); setTimeout(slbRenderSlider, 0); }
+  if (name === 'alerts') { loadContactAlerts(); _slbInitPills(); loadSavedSearches(); setTimeout(function(){ _slbInstallDragHandlers(); slbRenderSlider(); }, 0); }
   if (name === 'activity') { loadActivity(); loadPortalActivity(); }
   if (name === 'showings') loadContactShowings();
 }
@@ -5816,26 +5818,12 @@ function slbFormatPrice(val) {
   if (val >= 1000000) return '$' + (val/1000000).toFixed(val%1000000===0?0:1) + 'M';
   return '$' + Math.round(val/1000) + 'K';
 }
-function slbUpdateSlider(handle, pct) {
-  var total = SLB_PRICE_STEPS.length - 1;
-  var idx = Math.round(pct / 100 * total);
-  if (handle === 'min') {
-    slbMinIdx = Math.min(idx, slbMaxIdx - 1);
-    document.getElementById('slbMinSlider').value = slbMinIdx / total * 100;
-  } else {
-    slbMaxIdx = Math.max(idx, slbMinIdx + 1);
-    document.getElementById('slbMaxSlider').value = slbMaxIdx / total * 100;
-  }
-  slbRenderSlider();
-}
 function slbSetQuickPrice(min, max) {
   var total = SLB_PRICE_STEPS.length - 1;
   slbMinIdx = min ? SLB_PRICE_STEPS.indexOf(min) : 0;
   slbMaxIdx = max ? SLB_PRICE_STEPS.indexOf(max) : total;
   if (slbMinIdx < 0) slbMinIdx = 0;
   if (slbMaxIdx < 0) slbMaxIdx = total;
-  document.getElementById('slbMinSlider').value = slbMinIdx / total * 100;
-  document.getElementById('slbMaxSlider').value = slbMaxIdx / total * 100;
   document.querySelectorAll('.slb-qp').forEach(function(b){b.classList.remove('active');});
   if (event && event.target) event.target.classList.add('active');
   slbRenderSlider();
@@ -5845,14 +5833,146 @@ function slbRenderSlider() {
   var minPct = slbMinIdx / total * 100;
   var maxPct = slbMaxIdx / total * 100;
   var fill = document.getElementById('slbFill'); if (!fill) return;
-  fill.style.left = minPct + '%';
-  fill.style.right = (100 - maxPct) + '%';
-  document.getElementById('slbThumbMin').style.left = minPct + '%';
-  document.getElementById('slbThumbMax').style.left = maxPct + '%';
+  // Inset 8px on each side so thumbs don't clip past the track edges
+  fill.style.left = 'calc(' + minPct + '% + ' + (8 - minPct*0.16) + 'px)';
+  fill.style.right = 'calc(' + (100 - maxPct) + '% + ' + (8 - (100-maxPct)*0.16) + 'px)';
+  document.getElementById('slbThumbMin').style.left = 'calc(' + minPct + '% + ' + (8 - minPct*0.16) + 'px)';
+  document.getElementById('slbThumbMax').style.left = 'calc(' + maxPct + '% + ' + (8 - maxPct*0.16) + 'px)';
   var minVal = SLB_PRICE_STEPS[slbMinIdx];
   var maxVal = SLB_PRICE_STEPS[slbMaxIdx];
   document.getElementById('slbMinLabel').textContent = minVal ? slbFormatPrice(minVal) : 'No min';
   document.getElementById('slbMaxLabel').textContent = maxVal === SLB_PRICE_STEPS[total] ? 'No max' : slbFormatPrice(maxVal);
+  // Sync the manual inputs (without triggering their own re-render)
+  var minEl = document.getElementById('slbMinInput'), maxEl = document.getElementById('slbMaxInput');
+  if (minEl && document.activeElement !== minEl) minEl.value = minVal ? minVal.toLocaleString() : '';
+  if (maxEl && document.activeElement !== maxEl && maxVal !== SLB_PRICE_STEPS[total]) maxEl.value = maxVal ? maxVal.toLocaleString() : '';
+  else if (maxEl && document.activeElement !== maxEl) maxEl.value = '';
+}
+
+// Snap a dollar value to the nearest SLB_PRICE_STEPS index
+function _slbSnapToIndex(val) {
+  if (!val || val <= 0) return 0;
+  var nearest = 0, bestDiff = Infinity;
+  for (var i = 0; i < SLB_PRICE_STEPS.length; i++) {
+    var d = Math.abs(SLB_PRICE_STEPS[i] - val);
+    if (d < bestDiff) { bestDiff = d; nearest = i; }
+  }
+  return nearest;
+}
+
+// User typed in the min/max input — parse, snap, update slider
+function slbOnInputChange(which) {
+  var el = document.getElementById(which === 'min' ? 'slbMinInput' : 'slbMaxInput');
+  var raw = (el.value || '').replace(/[^0-9]/g, '');
+  if (!raw) {
+    if (which === 'min') slbMinIdx = 0;
+    else slbMaxIdx = SLB_PRICE_STEPS.length - 1;
+  } else {
+    var val = parseInt(raw, 10);
+    var idx = _slbSnapToIndex(val);
+    if (which === 'min') { slbMinIdx = Math.min(idx, slbMaxIdx - 1); if (slbMinIdx < 0) slbMinIdx = 0; }
+    else { slbMaxIdx = Math.max(idx, slbMinIdx + 1); }
+  }
+  // Render but don't rewrite the active input's text (let user finish typing)
+  slbRenderSlider();
+}
+
+// On blur, reformat the input with commas
+function slbOnInputBlur() {
+  var total = SLB_PRICE_STEPS.length - 1;
+  var minVal = SLB_PRICE_STEPS[slbMinIdx];
+  var maxVal = SLB_PRICE_STEPS[slbMaxIdx];
+  document.getElementById('slbMinInput').value = minVal ? minVal.toLocaleString() : '';
+  document.getElementById('slbMaxInput').value = (maxVal && maxVal !== SLB_PRICE_STEPS[total]) ? maxVal.toLocaleString() : '';
+}
+
+// ── CUSTOM DRAG-BASED DUAL SLIDER (no overlapping range inputs) ──
+// Installed once via setTimeout after DOM is ready; uses pointer events for
+// mouse + touch, eliminating the sticky z-index war of the old approach.
+var _slbDragHandle = null;
+var _slbDragInstalled = false;
+function _slbInstallDragHandlers() {
+  if (_slbDragInstalled) return;
+  var track = document.getElementById('slbTrack');
+  var thumbMin = document.getElementById('slbThumbMin');
+  var thumbMax = document.getElementById('slbThumbMax');
+  if (!track || !thumbMin || !thumbMax) return;
+  _slbDragInstalled = true;
+
+  function clientXFromEvent(e) {
+    if (e.touches && e.touches[0]) return e.touches[0].clientX;
+    if (e.changedTouches && e.changedTouches[0]) return e.changedTouches[0].clientX;
+    return e.clientX;
+  }
+  function pctFromEvent(e) {
+    var rect = track.getBoundingClientRect();
+    var x = clientXFromEvent(e) - rect.left - 8; // account for 8px thumb inset
+    var w = rect.width - 16;
+    return Math.max(0, Math.min(100, x / w * 100));
+  }
+  function nearestHandle(pct) {
+    var total = SLB_PRICE_STEPS.length - 1;
+    var minPct = slbMinIdx / total * 100;
+    var maxPct = slbMaxIdx / total * 100;
+    return Math.abs(pct - minPct) <= Math.abs(pct - maxPct) ? 'min' : 'max';
+  }
+  function snapTo(handle, pct) {
+    var total = SLB_PRICE_STEPS.length - 1;
+    var idx = Math.round(pct / 100 * total);
+    if (handle === 'min') slbMinIdx = Math.min(idx, slbMaxIdx - 1);
+    else slbMaxIdx = Math.max(idx, slbMinIdx + 1);
+    if (slbMinIdx < 0) slbMinIdx = 0;
+    if (slbMaxIdx > total) slbMaxIdx = total;
+    slbRenderSlider();
+  }
+
+  function onPointerMove(e) {
+    if (!_slbDragHandle) return;
+    e.preventDefault();
+    snapTo(_slbDragHandle, pctFromEvent(e));
+  }
+  function onPointerUp() {
+    if (!_slbDragHandle) return;
+    var el = document.getElementById(_slbDragHandle === 'min' ? 'slbThumbMin' : 'slbThumbMax');
+    if (el) el.classList.remove('dragging');
+    _slbDragHandle = null;
+    document.removeEventListener('mousemove', onPointerMove);
+    document.removeEventListener('mouseup', onPointerUp);
+    document.removeEventListener('touchmove', onPointerMove);
+    document.removeEventListener('touchend', onPointerUp);
+    document.removeEventListener('touchcancel', onPointerUp);
+  }
+  function startDrag(handle, e) {
+    e.preventDefault();
+    _slbDragHandle = handle;
+    var el = document.getElementById(handle === 'min' ? 'slbThumbMin' : 'slbThumbMax');
+    if (el) el.classList.add('dragging');
+    document.addEventListener('mousemove', onPointerMove);
+    document.addEventListener('mouseup', onPointerUp);
+    document.addEventListener('touchmove', onPointerMove, { passive: false });
+    document.addEventListener('touchend', onPointerUp);
+    document.addEventListener('touchcancel', onPointerUp);
+  }
+
+  thumbMin.addEventListener('mousedown', function(e){ startDrag('min', e); });
+  thumbMin.addEventListener('touchstart', function(e){ startDrag('min', e); }, { passive: false });
+  thumbMax.addEventListener('mousedown', function(e){ startDrag('max', e); });
+  thumbMax.addEventListener('touchstart', function(e){ startDrag('max', e); }, { passive: false });
+  // Click on track (not a thumb) snaps nearest handle
+  track.addEventListener('mousedown', function(e) {
+    if (e.target === thumbMin || e.target === thumbMax) return;
+    var pct = pctFromEvent(e);
+    var handle = nearestHandle(pct);
+    snapTo(handle, pct);
+    startDrag(handle, e);
+  });
+  track.addEventListener('touchstart', function(e) {
+    if (e.target === thumbMin || e.target === thumbMax) return;
+    var pct = pctFromEvent(e);
+    var handle = nearestHandle(pct);
+    snapTo(handle, pct);
+    startDrag(handle, e);
+  }, { passive: false });
 }
 function slbSetPriceMode(mode) {
   slbPriceMode = mode;
