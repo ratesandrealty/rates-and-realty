@@ -8564,13 +8564,31 @@ async function lsGenerate1003() {
       method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
       body: JSON.stringify(payload)
     });
-    var data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-    // Open in in-page modal viewer
     var nameStr = ((app.first_name||'')+' '+(app.last_name||'')).trim() || 'Borrower';
-    openPDFViewer(data.html || '', '1003 Application — ' + nameStr + '.pdf', 'Form 1003 · ' + nameStr);
-    PDF._htmlSource = data.html;
-    showToast('1003 ready — click Print / Save PDF to export \u2713');
+    const data = await res.json();
+    if (!data.success || !data.pdf) {
+      alert('Error generating 1003: ' + (data.error || 'Unknown error'));
+      return;
+    }
+
+    // Convert base64 to blob URL
+    const byteChars = atob(data.pdf);
+    const byteNums = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+      byteNums[i] = byteChars.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNums);
+    const blob = new Blob([byteArray], { type: 'application/pdf' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const title = '1003 Application — ' + (nameStr || 'Borrower');
+    PDF._pdfBlobUrl = blobUrl;
+    PDF._htmlSource = null;
+    openPDFUrl(blobUrl, title, 'URLA Form 1003');
+
+    // Revoke after 10 minutes to free memory
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 600000);
+    showToast('1003 ready \u2713');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
@@ -14795,7 +14813,7 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
 </div>
 <style>@keyframes pdfSpin{to{transform:rotate(360deg)}}</style>
 <script>
-  const PDF = { url: null, title: null, isHtml: false, zoom: 100, rotation: 0 };
+  const PDF = { url: null, title: null, isHtml: false, zoom: 100, rotation: 0, _htmlSource: null, _pdfBlobUrl: null };
 
   function pdfShow() {
     const m = document.getElementById('pdfViewerModal');
@@ -14882,9 +14900,10 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
     const title = PDF.title || 'document';
     const fname = title.replace(/[^a-z0-9\-_\. ]/gi, '_');
 
-    if (PDF.url) {
+    const downloadUrl = PDF.url || PDF._pdfBlobUrl;
+    if (downloadUrl) {
       try {
-        const resp = await fetch(PDF.url);
+        const resp = await fetch(downloadUrl);
         const blob = await resp.blob();
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -14895,7 +14914,7 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
       } catch(e) {
-        window.open(PDF.url, '_blank');
+        window.open(downloadUrl, '_blank');
       }
     } else {
       const frame = document.getElementById('pdfViewerFrame');
