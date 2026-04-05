@@ -910,7 +910,21 @@ async function syncFromClickUp() {
 async function uploadGuidelinePDFs(files) {
   if (!files || files.length === 0) return;
 
+  // Gate: no lender context here — redirect to per-lender flow
+  showToast('⚠️ To upload guidelines, open a lender from the Lender Database tab and use the Docs tab inside the lender modal.');
+  // Reset the file input so re-selecting the same file fires onchange again
+  const inputs = document.querySelectorAll('input[type="file"][accept=".pdf"]');
+  inputs.forEach(function(i){ try { i.value = ''; } catch(e){} });
+  return;
+
+  // eslint-disable-next-line no-unreachable
   for (const file of Array.from(files)) {
+    // File size check — base64 adds ~33% overhead, Supabase edge body limit ~6MB
+    if (file.size > 4 * 1024 * 1024) {
+      showToast(file.name + ' too large (max 4MB). Please compress first.');
+      continue;
+    }
+
     showToast('Uploading ' + file.name + '...');
 
     const base64 = await new Promise((res, rej) => {
@@ -933,10 +947,14 @@ async function uploadGuidelinePDFs(files) {
 
     try {
       const ocrRes = await fetch(
-        '${SB_URL}/functions/v1/textract-ocr',
+        `${SB_URL}/functions/v1/textract-ocr`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SB_KEY}`,
+            'apikey': SB_KEY
+          },
           body: JSON.stringify({
             action: 'start',
             file_base64: base64,
@@ -945,7 +963,15 @@ async function uploadGuidelinePDFs(files) {
           })
         }
       );
-      const ocrData = await ocrRes.json();
+      let ocrData;
+      try {
+        const text = await ocrRes.text();
+        if (!text) throw new Error('Empty response from server (HTTP ' + ocrRes.status + ')');
+        ocrData = JSON.parse(text);
+      } catch(e) {
+        showToast('Upload error: ' + e.message);
+        continue;
+      }
 
       if (ocrData.success) {
         showToast(file.name + ' uploaded — OCR scanning...');
@@ -956,14 +982,27 @@ async function uploadGuidelinePDFs(files) {
           if (polls > 20) { clearInterval(pollInterval); return; }
 
           const r = await fetch(
-            '${SB_URL}/functions/v1/textract-ocr',
+            `${SB_URL}/functions/v1/textract-ocr`,
             {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${SB_KEY}`,
+                'apikey': SB_KEY
+              },
               body: JSON.stringify({ action: 'result', job_id: ocrData.job_id })
             }
           );
-          const result = await r.json();
+          let result;
+          try {
+            const text = await r.text();
+            if (!text) throw new Error('Empty response');
+            result = JSON.parse(text);
+          } catch(e) {
+            clearInterval(pollInterval);
+            showToast('OCR poll error: ' + e.message);
+            return;
+          }
 
           if (result.status === 'completed') {
             clearInterval(pollInterval);
