@@ -1877,6 +1877,7 @@
           <div style="font-size:.72rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Loan Summary &middot; DTI / LTV / Cash-to-Close</div>
           <div style="display:flex;align-items:center;gap:10px">
             <button type="button" id="lsPreApprovalBtn" onclick="lsGeneratePreApproval()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 12px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit">&#128196; Generate Pre-Approval</button>
+            <button type="button" id="ls1003PdfBtn" onclick="lsGenerate1003()" style="background:rgba(201,168,76,0.1);color:#C9A84C;border:1px solid #C9A84C55;border-radius:6px;padding:6px 12px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit">&#128203; Export 1003</button>
             <span id="lsSaveIndicator" style="font-size:.68rem;color:#666;opacity:0;transition:opacity .3s">Saved &check;</span>
           </div>
         </div>
@@ -1908,7 +1909,19 @@
             <div class="ls-card-label" style="margin-top:10px">Housing Expense (PITIA)</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
               <div><label class="ls-sub">P&amp;I (auto)</label><input id="ls_pi_payment" type="number" class="ls-input" readonly style="color:#C9A84C;font-weight:700"></div>
-              <div><label class="ls-sub">MI / mo (auto)</label><input id="ls_mi_monthly" type="number" class="ls-input" readonly style="color:#C9A84C"></div>
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+                  <label class="ls-sub" style="margin-bottom:0">MI / mo</label>
+                  <div style="display:flex;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden">
+                    <button type="button" id="lsMIModeAuto" onclick="lsSetMIMode('auto')" style="padding:1px 6px;border:none;background:#C9A84C;color:#111;font-size:.52rem;font-weight:700;cursor:pointer;font-family:inherit">Auto</button>
+                    <button type="button" id="lsMIModePct" onclick="lsSetMIMode('pct')" style="padding:1px 6px;border:none;background:transparent;color:#555;font-size:.52rem;font-weight:700;cursor:pointer;font-family:inherit">%/yr</button>
+                    <button type="button" id="lsMIModeFixed" onclick="lsSetMIMode('fixed')" style="padding:1px 6px;border:none;background:transparent;color:#555;font-size:.52rem;font-weight:700;cursor:pointer;font-family:inherit">$</button>
+                  </div>
+                </div>
+                <input id="ls_mi_monthly" type="number" class="ls-input" readonly style="color:#C9A84C">
+                <div id="lsMIPctWrap" style="display:none"><input id="ls_mi_rate_pct" type="number" step="0.001" class="ls-input" placeholder="0.85" oninput="lsCalcMIFromPct()" style="margin-top:3px"><div style="font-size:.58rem;color:#666;margin-top:2px">Annual % of loan amount</div></div>
+                <div id="lsMIFixedWrap" style="display:none"><input id="ls_mi_fixed" type="number" step="0.01" class="ls-input" placeholder="250.00" oninput="lsRecalc()" style="margin-top:3px"></div>
+              </div>
               <div>
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
                   <label class="ls-sub" style="margin-bottom:0">Taxes / mo</label>
@@ -8233,11 +8246,18 @@ function lsRecalc() {
   _lsSetNum('ls_pi_payment', pi);
   // LTV
   var ltv = apprV ? (loanAmt / apprV * 100) : 0;
-  // MI
+  // MI — mode-driven (auto / % of loan / fixed $)
   var mi = 0;
-  if (ltv > 80) {
-    var miRate = ltv <= 85 ? 0.0052 : ltv <= 90 ? 0.0068 : ltv <= 95 ? 0.0085 : 0.0102;
-    mi = loanAmt * miRate / 12;
+  if (_lsMIMode === 'auto') {
+    if (ltv > 80) {
+      var miRate = ltv <= 85 ? 0.0052 : ltv <= 90 ? 0.0068 : ltv <= 95 ? 0.0085 : 0.0102;
+      mi = loanAmt * miRate / 12;
+    }
+  } else if (_lsMIMode === 'pct') {
+    var pctRate = _lsNum('ls_mi_rate_pct');
+    mi = loanAmt && pctRate ? loanAmt * (pctRate/100) / 12 : 0;
+  } else if (_lsMIMode === 'fixed') {
+    mi = _lsNum('ls_mi_fixed');
   }
   _lsSetNum('ls_mi_monthly', mi);
   // PITIA — if tax mode is %, recompute taxes from value × rate/100/12
@@ -8271,9 +8291,12 @@ function lsRecalc() {
   // Guideline status
   var statusLines = [];
   if (backDTI > 0) {
-    statusLines.push(backDTI <= 45 ? '<span style="color:#22c55e">\u2713 Conventional OK (\u226445%)</span>' : '<span style="color:#ef4444">\u2717 Exceeds Conventional (\u226445%)</span>');
-    statusLines.push(backDTI <= 57 ? '<span style="color:#22c55e">\u2713 FHA OK (\u226457%)</span>' : '<span style="color:#ef4444">\u2717 Exceeds FHA (\u226457%)</span>');
-    statusLines.push(backDTI <= 41 ? '<span style="color:#22c55e">\u2713 VA OK (\u226441%)</span>' : '<span style="color:#ef4444">\u2717 Exceeds VA (\u226441%)</span>');
+    var convOK = backDTI <= 50;
+    var fhaOK = frontDTI <= 46.9 && backDTI <= 57;
+    var vaOK = backDTI <= 55;
+    statusLines.push(convOK ? '<span style="color:#22c55e">\u2713 Conventional OK (\u226450% back)</span>' : '<span style="color:#ef4444">\u2717 Exceeds Conventional (\u226450% back)</span>');
+    statusLines.push(fhaOK ? '<span style="color:#22c55e">\u2713 FHA OK (Front \u226446.9% / Back \u226457%)</span>' : '<span style="color:#ef4444">\u2717 Exceeds FHA (Front \u226446.9% / Back \u226457%)</span>');
+    statusLines.push(vaOK ? '<span style="color:#22c55e">\u2713 VA OK (\u226455% back)</span>' : '<span style="color:#ef4444">\u2717 Exceeds VA (\u226455% back)</span>');
   }
   document.getElementById('ls_dti_status').innerHTML = statusLines.length ? statusLines.join(' &nbsp;\u00b7&nbsp; ') : 'Enter income + debt to see guideline check';
   // LTV display + bidirectional sync: update input if user is not editing it
@@ -8342,6 +8365,78 @@ function _lsAutoSave(updates) {
     }
   }, 800);
 }
+
+// Generate standard URLA 1003 PDF via generate-preapproval?action=1003_pdf
+async function lsGenerate1003() {
+  var btn = document.getElementById('ls1003PdfBtn');
+  var origTxt = btn ? btn.textContent : ''; if (btn) { btn.textContent = '\u23F3 Generating...'; btn.disabled = true; }
+  try {
+    var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
+    var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+    var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    var hdrs = {'Authorization':'Bearer '+anon,'apikey':anon};
+    // Load full mortgage_application row
+    var appRes = await fetch(base+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&order=created_at.desc&limit=1', { headers: hdrs });
+    var apps = await appRes.json();
+    var app = (apps && apps[0]) || {};
+    // Load normalized tables
+    var liabRes = await fetch(base+'/rest/v1/loan_liabilities?contact_id=eq.'+cid+'&is_omitted=eq.false&order=sort_order.asc', { headers: hdrs });
+    var liabs = liabRes.ok ? (await liabRes.json() || []) : [];
+    var assetRes = await fetch(base+'/rest/v1/loan_assets?contact_id=eq.'+cid+'&order=sort_order.asc', { headers: hdrs });
+    var assets = assetRes.ok ? (await assetRes.json() || []) : [];
+    var reoRes = await fetch(base+'/rest/v1/loan_reo?contact_id=eq.'+cid+'&order=sort_order.asc', { headers: hdrs });
+    var reos = reoRes.ok ? (await reoRes.json() || []) : [];
+    // Load primary scenario
+    var sr = await fetch(base+'/rest/v1/loan_scenarios?contact_id=eq.'+cid+'&is_primary=eq.true&limit=1', { headers: hdrs });
+    var scens = sr.ok ? (await sr.json() || []) : [];
+    var scenario = scens[0] || {};
+    // Build 1003 payload
+    var payload = Object.assign({}, app, {
+      action: '1003_pdf',
+      loan_amount: scenario.loan_amount || app.loan_amount || app.requested_loan_amount,
+      interest_rate: scenario.interest_rate || 0,
+      loan_term_months: scenario.loan_term_months || 360,
+      liabilities_list: JSON.stringify(liabs),
+      assets: JSON.stringify(assets),
+      reo_list: JSON.stringify(reos),
+      lo_name: 'Rene Duarte', lo_nmls: '1795044', lo_phone: '(714) 472-8508', lo_email: 'rene@ratesandrealty.com',
+      company_name: 'E Mortgage Capital', company_nmls: '1416824',
+      loan_number: app.borrower_id || ''
+    });
+    var res = await fetch(base+'/functions/v1/generate-preapproval', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+    var w = window.open('', '_blank');
+    if (w) {
+      w.document.write(data.html || '');
+      w.document.close();
+      setTimeout(function(){ try { w.focus(); w.print(); } catch(e){} }, 600);
+    } else { showToast('Pop-up blocked — allow pop-ups and retry'); }
+    showToast('1003 ready — use Print \u2192 Save as PDF \u2713');
+  } catch(e) {
+    console.error('[1003]', e);
+    showToast('1003 failed: ' + e.message);
+  }
+  if (btn) { btn.textContent = origTxt; btn.disabled = false; }
+}
+
+// MI mode toggle: auto (LTV-based), % of loan/yr, fixed $/mo
+var _lsMIMode = 'auto';
+function lsSetMIMode(mode) {
+  _lsMIMode = mode;
+  ['Auto','Pct','Fixed'].forEach(function(k){
+    var btn = document.getElementById('lsMIMode'+k);
+    var m = k.toLowerCase();
+    if (btn) { btn.style.background = m===mode?'#C9A84C':'transparent'; btn.style.color = m===mode?'#111':'#555'; }
+  });
+  document.getElementById('lsMIPctWrap').style.display = mode==='pct'?'block':'none';
+  document.getElementById('lsMIFixedWrap').style.display = mode==='fixed'?'block':'none';
+  lsRecalc();
+}
+function lsCalcMIFromPct() { lsRecalc(); }
 
 // LTV bidirectional: user types LTV → back-calc loan amount
 function lsOnLTVInput(val) {
@@ -8434,17 +8529,21 @@ async function lsGeneratePreApproval() {
       lo_name:'Rene Duarte', lo_nmls:'1795044', lo_phone:'(714) 472-8508', lo_email:'rene@ratesandrealty.com',
       company_name:'Rates & Realty', company_nmls:'1416824', valid_days:90
     };
+    payload.action = 'preapproval';
     var res = await fetch(base+'/functions/v1/generate-preapproval', {
       method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
       body: JSON.stringify(payload)
     });
     var data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-    // Open in new tab for print/save
+    // Open in new tab and auto-trigger browser print dialog (Save as PDF)
     var w = window.open('', '_blank');
-    if (w) { w.document.write(data.html || ''); w.document.close(); w.focus(); }
-    else { showToast('Pop-up blocked — allow pop-ups and retry'); }
-    showToast('Pre-Approval letter generated \u2713');
+    if (w) {
+      w.document.write(data.html || '');
+      w.document.close();
+      setTimeout(function(){ try { w.focus(); w.print(); } catch(e){} }, 600);
+    } else { showToast('Pop-up blocked — allow pop-ups and retry'); }
+    showToast('Pre-Approval letter ready — use Print \u2192 Save as PDF \u2713');
   } catch(e) {
     console.error('[pre-approval]', e);
     showToast('Generation failed: ' + e.message);
