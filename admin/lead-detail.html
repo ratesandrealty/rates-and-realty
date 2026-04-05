@@ -1442,14 +1442,22 @@
       </div>
     </div>
 
-    <!-- Texts panel (placeholder) -->
+    <!-- Texts panel — live SMS history from sms_log -->
     <div class="ld-notes-panel" id="sidebar-texts-panel" style="display:none;">
-      <div class="ld-empty" style="padding:24px 0;">
-        <div class="ld-empty-icon">💬</div>
-        <h4>No texts yet</h4>
-        <p>SMS integration coming soon</p>
+      <div id="smsHistoryContainer" style="flex:1;max-height:400px;overflow-y:auto;padding:12px 14px;scrollbar-width:thin;scrollbar-color:#C9A84C #1a1a1a">
+        <div class="ld-empty" style="padding:24px 0;"><div class="ld-empty-icon">⏳</div><p style="font-size:.78rem;color:#555">Loading messages…</p></div>
+      </div>
+      <!-- Quick-send bar -->
+      <div style="border-top:1px solid #1e1e1e;padding:10px 12px;background:#0e0e0e;display:flex;gap:6px;align-items:flex-end">
+        <textarea id="quickSmsInput" rows="1" placeholder="Quick message…" oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,80)+'px'" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();quickSendSms();}" style="flex:1;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:8px 10px;color:#eee;font-size:.78rem;outline:none;resize:none;font-family:inherit;line-height:1.4;max-height:80px;box-sizing:border-box"></textarea>
+        <button type="button" id="quickSmsBtn" onclick="quickSendSms()" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:.72rem;cursor:pointer;font-family:inherit;flex-shrink:0">Send</button>
       </div>
     </div>
+    <style>
+      #smsHistoryContainer::-webkit-scrollbar{width:6px}
+      #smsHistoryContainer::-webkit-scrollbar-thumb{background:#C9A84C;border-radius:3px}
+      #smsHistoryContainer::-webkit-scrollbar-track{background:#1a1a1a}
+    </style>
 
     <!-- Checklist panel -->
     <div class="ld-notes-panel" id="sidebar-checklist-panel" style="display:none;">
@@ -6084,6 +6092,93 @@ function setSidebarTab(name, btn) {
   const panel = document.getElementById('sidebar-' + name + '-panel');
   if (panel) panel.style.display = 'flex', panel.style.flexDirection = 'column', panel.style.flex = '1';
   if (btn) btn.classList.add('active');
+  if (name === 'texts') loadSidebarSmsHistory();
+}
+
+/* ── SIDEBAR SMS HISTORY ── */
+async function loadSidebarSmsHistory() {
+  var container = document.getElementById('smsHistoryContainer');
+  if (!container) return;
+  var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
+  if (!cid) { container.innerHTML = '<div class="ld-empty" style="padding:24px 0;"><div class="ld-empty-icon">\uD83D\uDCAC</div><p style="font-size:.78rem;color:#555">No contact loaded</p></div>'; return; }
+  var SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  try {
+    var r = await fetch(SB + '/rest/v1/sms_log?contact_id=eq.' + cid + '&order=created_at.asc&limit=100', {
+      headers: { 'Authorization': 'Bearer ' + anon, 'apikey': anon }
+    });
+    if (!r.ok) { console.warn('[sms-history] HTTP', r.status, await r.text()); container.innerHTML = '<div style="padding:20px;color:#666;font-size:.76rem">Could not load messages</div>'; return; }
+    var msgs = await r.json();
+    renderSidebarSmsHistory(Array.isArray(msgs) ? msgs : []);
+  } catch(e) {
+    console.error('[sms-history] fetch error:', e);
+    container.innerHTML = '<div style="padding:20px;color:#ef4444;font-size:.76rem">Error: ' + e.message + '</div>';
+  }
+}
+
+function renderSidebarSmsHistory(messages) {
+  var container = document.getElementById('smsHistoryContainer');
+  if (!container) return;
+  if (!messages.length) {
+    container.innerHTML = '<div class="ld-empty" style="padding:24px 0;"><div class="ld-empty-icon">\uD83D\uDCAC</div><h4>No messages yet</h4><p style="font-size:.72rem;color:#555">Send an SMS via the TEXT button above</p></div>';
+    return;
+  }
+  var esc = function(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  container.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px">' + messages.map(function(m) {
+    var isOut = m.direction !== 'inbound';
+    var time = new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+    var statusDot = m.status === 'sent' ? '\u2713' : m.status === 'delivered' ? '\u2713\u2713' : m.status === 'failed' ? '\u2717' : '\u2026';
+    var statusColor = m.status === 'failed' ? '#ef4444' : m.status === 'delivered' ? '#22c55e' : m.status === 'sent' ? '#9ca3af' : '#666';
+    var align = isOut ? 'flex-end' : 'flex-start';
+    var bubbleBg = isOut ? 'rgba(201,168,76,0.15)' : '#1e1e1e';
+    var bubbleBorder = isOut ? 'rgba(201,168,76,0.3)' : '#2a2a2a';
+    var textColor = isOut ? '#f3e9d0' : '#ddd';
+    var radius = isOut ? '14px 14px 3px 14px' : '14px 14px 14px 3px';
+    var mediaHtml = m.media_url ? '<img src="'+esc(m.media_url)+'" style="max-width:100%;max-height:120px;border-radius:8px;display:block;margin-bottom:4px" onerror="this.style.display=\'none\'">' : '';
+    var triggerLabel = (m.trigger_type && m.trigger_type !== 'custom' && m.trigger_type !== 'manual')
+      ? ' \u00b7 ' + m.trigger_type.replace(/_/g,' ')
+      : '';
+    return '<div style="display:flex;justify-content:'+align+'">' +
+      '<div style="max-width:85%;display:flex;flex-direction:column;align-items:'+(isOut?'flex-end':'flex-start')+';gap:2px">' +
+        '<div style="background:'+bubbleBg+';border:1px solid '+bubbleBorder+';border-radius:'+radius+';padding:7px 10px;color:'+textColor+';font-size:.78rem;line-height:1.4;word-wrap:break-word">' +
+          mediaHtml + esc(m.body || '') +
+        '</div>' +
+        '<div style="font-size:.62rem;color:#555;padding:0 3px">' +
+          time +
+          (isOut ? ' <span style="color:'+statusColor+';margin-left:3px">'+statusDot+'</span>' : '') +
+          triggerLabel +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('') + '</div>';
+  container.scrollTop = container.scrollHeight;
+}
+
+async function quickSendSms() {
+  var input = document.getElementById('quickSmsInput');
+  var text = (input.value || '').trim();
+  if (!text) return;
+  var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
+  var phone = (contactData && (contactData.phone || contactData.secondary_phone) || '').replace(/\D/g,'');
+  if (!phone) { showToast('No phone number on file'); return; }
+  var btn = document.getElementById('quickSmsBtn');
+  var origTxt = btn.textContent; btn.textContent = '…'; btn.disabled = true;
+  try {
+    var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trigger: 'manual', to_phone: '+1' + phone, params: { message: text }, contact_id: cid, direction: 'outbound' })
+    });
+    var data = await res.json();
+    if (data.success || data.sid || data.sent) {
+      input.value = '';
+      input.style.height = 'auto';
+      await loadSidebarSmsHistory();
+      showToast('Sent \u2713');
+    } else {
+      showToast('Failed: ' + (data.error || 'unknown'));
+    }
+  } catch(e) { showToast('Error: ' + e.message); }
+  btn.textContent = origTxt; btn.disabled = false;
 }
 
 /* ── CHECKLIST SYSTEM ── */
