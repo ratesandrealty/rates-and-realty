@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>Lender Partner Portal | Rates & Realty</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="/assets/images/favicon.png">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#eee;min-height:100vh;padding:0}
+  .header{background:linear-gradient(135deg,#1a1408,#2a1f0a);border-bottom:2px solid #C9A84C;padding:18px 20px;display:flex;align-items:center;justify-content:space-between}
+  .header h1{font-size:1.2rem;font-weight:800;color:#C9A84C;letter-spacing:.02em}
+  .header .subtitle{font-size:.64rem;color:#999;text-transform:uppercase;letter-spacing:.14em;font-weight:700;margin-top:1px}
+  .container{max-width:780px;margin:0 auto;padding:24px 20px 60px}
+  .loading{display:flex;flex-direction:column;align-items:center;gap:14px;padding:80px 20px;color:#666}
+  .spinner{width:40px;height:40px;border:3px solid #1a1a1a;border-top-color:#C9A84C;border-radius:50%;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .error-state{display:none;text-align:center;padding:60px 20px;background:#111;border:1px solid #1e1e1e;border-radius:12px;margin-top:20px}
+  .error-state.active{display:block}
+  .error-icon{font-size:3rem;margin-bottom:14px}
+  .error-state h2{color:#ef4444;font-size:1.2rem;margin-bottom:8px}
+  .error-state p{color:#888;font-size:.88rem;line-height:1.6}
+  .error-state a{color:#C9A84C;text-decoration:none}
+  .success-state{display:none;text-align:center;padding:60px 20px;background:#111;border:1px solid rgba(34,197,94,0.25);border-radius:12px;margin-top:20px}
+  .success-state.active{display:block}
+  .success-icon{font-size:3rem;margin-bottom:14px;color:#22c55e}
+  .success-state h2{color:#22c55e;font-size:1.2rem;margin-bottom:8px}
+  .success-state p{color:#aaa;font-size:.88rem;line-height:1.6}
+  .form-wrap{display:none}
+  .form-wrap.active{display:block}
+  .intro{background:#111;border:1px solid #1e1e1e;border-left:3px solid #C9A84C;border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:.82rem;color:#aaa;line-height:1.55}
+  .intro strong{color:#eee}
+  .card{background:#111;border:1px solid #1e1e1e;border-radius:12px;padding:20px;margin-bottom:16px}
+  .card-title{font-size:.7rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #1e1e1e}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row.full{grid-template-columns:1fr}
+  .row.three{grid-template-columns:1fr 1fr 1fr}
+  @media (max-width:640px){.row,.row.three{grid-template-columns:1fr}}
+  .field{display:flex;flex-direction:column;gap:4px}
+  label{font-size:.64rem;color:#888;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  input,select,textarea{background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;padding:9px 12px;color:#eee;font-size:.88rem;font-family:inherit;outline:none;width:100%}
+  input:focus,select:focus,textarea:focus{border-color:#C9A84C}
+  input[readonly]{background:#070707;color:#888;cursor:default}
+  textarea{resize:vertical;min-height:70px;line-height:1.5}
+  .multi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px 12px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 12px;max-height:180px;overflow-y:auto}
+  .multi-grid label{display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 0;text-transform:none;letter-spacing:0;font-size:.78rem;color:#ccc;font-weight:500}
+  .multi-grid input[type="checkbox"]{accent-color:#C9A84C;width:15px;height:15px;margin:0;flex-shrink:0}
+  .hint{font-size:.66rem;color:#666;margin-top:3px}
+  .footer-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:6px}
+  button[type="submit"]{background:#C9A84C;color:#111;border:none;border-radius:8px;padding:12px 28px;font-weight:800;font-size:.9rem;cursor:pointer;font-family:inherit;letter-spacing:.02em;transition:filter .15s}
+  button[type="submit"]:hover:not(:disabled){filter:brightness(1.08)}
+  button[type="submit"]:disabled{opacity:.6;cursor:wait}
+  .toast{position:fixed;bottom:20px;right:20px;background:#111;border:1px solid #C9A84C;border-radius:8px;padding:12px 18px;color:#C9A84C;font-size:.82rem;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.5);display:none;z-index:1000}
+  .toast.show{display:block}
+  .toast.error{border-color:#ef4444;color:#ef4444}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>Rates &amp; Realty</h1>
+    <div class="subtitle">Lender Partner Portal</div>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Loading state -->
+  <div id="loadingState" class="loading">
+    <div class="spinner"></div>
+    <div>Loading your information…</div>
+  </div>
+
+  <!-- Error state -->
+  <div id="errorState" class="error-state">
+    <div class="error-icon">⚠️</div>
+    <h2>Invalid or expired link</h2>
+    <p>This link is unique to each lender and may have expired.<br>
+    Please contact Rene at <a href="mailto:rene@ratesandrealty.com">rene@ratesandrealty.com</a> for a new link.</p>
+  </div>
+
+  <!-- Success state -->
+  <div id="successState" class="success-state">
+    <div class="success-icon">✓</div>
+    <h2>Thanks — your info is saved!</h2>
+    <p>We'll use this information to match the right loan scenarios to your guidelines.<br>
+    You can close this tab or update again using the same link.</p>
+    <button type="button" onclick="document.getElementById('successState').classList.remove('active');document.getElementById('formWrap').classList.add('active');" style="margin-top:14px;background:transparent;border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:7px 16px;font-size:.78rem;cursor:pointer;font-family:inherit;font-weight:600">Edit Again</button>
+  </div>
+
+  <!-- Form -->
+  <div id="formWrap" class="form-wrap">
+    <div class="intro">
+      <strong>Hi <span id="repGreeting">there</span>,</strong> please review and update your company's lending guidelines below.
+      This helps us match the right scenarios to your strike zone. Changes save when you hit <strong>Save Changes</strong>.
+    </div>
+
+    <form id="lenderForm" onsubmit="submitForm(event)">
+      <!-- Company -->
+      <div class="card">
+        <div class="card-title">Company Information</div>
+        <div class="row">
+          <div class="field"><label for="f_name">Company Name</label><input id="f_name" type="text" required></div>
+          <div class="field"><label for="f_channel">Channel</label>
+            <select id="f_channel">
+              <option value="">—</option><option>Wholesale</option><option>Correspondent</option><option>Retail</option><option>Wholesale, Correspondent</option>
+            </select>
+          </div>
+          <div class="field"><label for="f_website">Website</label><input id="f_website" type="url" placeholder="https://"></div>
+          <div class="field"><label for="f_lender_portal">Lender / Broker Portal URL</label><input id="f_lender_portal" type="url" placeholder="https://"></div>
+        </div>
+      </div>
+
+      <!-- AE Contact -->
+      <div class="card">
+        <div class="card-title">Your Contact Info (AE)</div>
+        <div class="row">
+          <div class="field"><label for="f_rep_name">Name</label><input id="f_rep_name" type="text"></div>
+          <div class="field"><label for="f_rep_title">Title</label><input id="f_rep_title" type="text" placeholder="Account Executive"></div>
+          <div class="field"><label for="f_rep_email">Email</label><input id="f_rep_email" type="email"></div>
+          <div class="field"><label for="f_rep_phone">Phone</label><input id="f_rep_phone" type="tel"></div>
+        </div>
+      </div>
+
+      <!-- Loan Products -->
+      <div class="card">
+        <div class="card-title">Loan Products</div>
+        <div class="field" style="margin-bottom:12px">
+          <label>Loan Types</label>
+          <div id="loanTypesGrid" class="multi-grid"></div>
+          <div class="hint">Check all product types your company offers</div>
+        </div>
+        <div class="field">
+          <label>Loan Programs</label>
+          <div id="loanProgramsGrid" class="multi-grid"></div>
+          <div class="hint">Specific programs/terms available</div>
+        </div>
+      </div>
+
+      <!-- Guidelines -->
+      <div class="card">
+        <div class="card-title">Guidelines &amp; Criteria</div>
+        <div class="row three">
+          <div class="field"><label for="f_min_credit">Min Credit Score</label><input id="f_min_credit" type="number" min="0" max="850" placeholder="620"></div>
+          <div class="field"><label for="f_min_loan_amount">Min Loan Amount ($)</label><input id="f_min_loan_amount" type="number" min="0" placeholder="100000"></div>
+          <div class="field"><label for="f_max_loan_amount">Max Loan Amount ($)</label><input id="f_max_loan_amount" type="number" min="0" placeholder="5000000"></div>
+          <div class="field"><label for="f_max_ltv">Max LTV (%)</label><input id="f_max_ltv" type="number" min="0" max="100" step="0.01" placeholder="95"></div>
+          <div class="field"><label for="f_max_dti">Max DTI (%)</label><input id="f_max_dti" type="number" min="0" max="100" step="0.01" placeholder="50"></div>
+          <div class="field"><label for="f_avg_app_to_fund">Avg App-to-Fund (days)</label><input id="f_avg_app_to_fund" type="number" min="0" placeholder="21"></div>
+        </div>
+        <div class="row full" style="margin-top:12px">
+          <div class="field"><label for="f_states">States Licensed</label><input id="f_states" type="text" placeholder="CA, TX, FL, AZ, NV (comma-separated)"></div>
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <div class="card">
+        <div class="card-title">Notes / Sweet Spot</div>
+        <div class="field">
+          <label for="f_notes">Tell us what makes you unique</label>
+          <textarea id="f_notes" rows="4" placeholder="e.g. We love first-time homebuyers · down to 580 FICO on FHA · strong on self-employed bank statements · 14-day close on purchases..."></textarea>
+        </div>
+      </div>
+
+      <div class="footer-actions">
+        <button type="submit" id="submitBtn">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+  var TOKEN = new URLSearchParams(location.search).get('token') || '';
+  var SB_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var EDGE_FN = SB_URL + '/functions/v1/lender-portal';
+  var _lenderId = null;
+
+  var LOAN_TYPES = ['Conventional','FHA','VA','USDA','Jumbo','Non-QM','DSCR','Bank Statement','Asset Depletion','HELOC','Reverse','Commercial','Construction','Bridge'];
+  var LOAN_PROGRAMS = ['30-Year Fixed','20-Year Fixed','15-Year Fixed','10-Year Fixed','5/1 ARM','7/1 ARM','10/1 ARM','Interest Only','Investor DSCR','Foreign National','ITIN'];
+
+  function showToast(msg, isError) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (isError ? ' error' : '');
+    setTimeout(function(){ t.className = 'toast'; }, 3500);
+  }
+
+  function showState(which) {
+    ['loadingState','errorState','successState','formWrap'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (id === 'loadingState') el.style.display = which === 'loading' ? 'flex' : 'none';
+      else el.classList.toggle('active', id === which + 'State' || id === which + 'Wrap');
+    });
+  }
+
+  function buildMultiGrid(containerId, items, checkedList) {
+    var checked = new Set((checkedList || []).map(function(x){return String(x).trim();}));
+    var el = document.getElementById(containerId);
+    el.innerHTML = items.map(function(item, i) {
+      var id = containerId + '-' + i;
+      var isChecked = checked.has(item);
+      return '<label><input type="checkbox" id="'+id+'" value="'+item.replace(/"/g,'&quot;')+'"'+(isChecked?' checked':'')+'>'+item+'</label>';
+    }).join('');
+  }
+
+  function getCheckedValues(containerId) {
+    var boxes = document.querySelectorAll('#'+containerId+' input[type="checkbox"]:checked');
+    return Array.from(boxes).map(function(b){return b.value;});
+  }
+
+  function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = v == null ? '' : v; }
+  function getVal(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+  function getNum(id) { var v = getVal(id); return v === '' ? null : (parseFloat(v) || null); }
+
+  async function loadLender() {
+    if (!TOKEN) { showState('error'); return; }
+    try {
+      var res = await fetch(EDGE_FN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get', token: TOKEN })
+      });
+      if (!res.ok) { showState('error'); return; }
+      var data = await res.json();
+      if (!data.success || !data.lender) { showState('error'); return; }
+      var l = data.lender;
+      _lenderId = l.id;
+      // Hydrate
+      var repName = l.rep_name || l.contact_name || '';
+      document.getElementById('repGreeting').textContent = (repName.split(/\s+/)[0]) || 'there';
+      setVal('f_name', l.name);
+      setVal('f_channel', l.channel);
+      setVal('f_website', l.website);
+      setVal('f_lender_portal', l.lender_portal);
+      setVal('f_rep_name', repName);
+      setVal('f_rep_title', l.rep_title || l.contact_title);
+      setVal('f_rep_email', l.rep_email || l.contact_email);
+      setVal('f_rep_phone', l.rep_phone || l.contact_phone);
+      setVal('f_min_credit', l.min_credit);
+      setVal('f_min_loan_amount', l.min_loan_amount);
+      setVal('f_max_loan_amount', l.max_loan_amount);
+      setVal('f_max_ltv', l.max_ltv);
+      setVal('f_max_dti', l.max_dti);
+      setVal('f_avg_app_to_fund', l.avg_app_to_fund);
+      setVal('f_states', Array.isArray(l.states_licensed) ? l.states_licensed.join(', ') : (l.states_licensed || ''));
+      setVal('f_notes', l.notes);
+      buildMultiGrid('loanTypesGrid', LOAN_TYPES, l.loan_types || []);
+      buildMultiGrid('loanProgramsGrid', LOAN_PROGRAMS, l.loan_programs || l.programs || []);
+      showState('form');
+    } catch (e) {
+      console.error('[lender-form] load:', e);
+      showState('error');
+    }
+  }
+
+  async function submitForm(e) {
+    e.preventDefault();
+    var btn = document.getElementById('submitBtn');
+    btn.disabled = true; var origTxt = btn.textContent; btn.textContent = 'Saving…';
+    try {
+      var statesRaw = getVal('f_states');
+      var states = statesRaw ? statesRaw.split(',').map(function(s){return s.trim();}).filter(Boolean) : [];
+      var updates = {
+        name: getVal('f_name'),
+        channel: getVal('f_channel'),
+        website: getVal('f_website'),
+        lender_portal: getVal('f_lender_portal'),
+        rep_name: getVal('f_rep_name'),
+        rep_title: getVal('f_rep_title'),
+        rep_email: getVal('f_rep_email'),
+        rep_phone: getVal('f_rep_phone'),
+        contact_name: getVal('f_rep_name'),
+        contact_title: getVal('f_rep_title'),
+        contact_email: getVal('f_rep_email'),
+        contact_phone: getVal('f_rep_phone'),
+        min_credit: getNum('f_min_credit'),
+        min_loan_amount: getNum('f_min_loan_amount'),
+        max_loan_amount: getNum('f_max_loan_amount'),
+        max_ltv: getNum('f_max_ltv'),
+        max_dti: getNum('f_max_dti'),
+        avg_app_to_fund: getNum('f_avg_app_to_fund'),
+        states_licensed: states,
+        notes: getVal('f_notes'),
+        loan_types: getCheckedValues('loanTypesGrid'),
+        loan_programs: getCheckedValues('loanProgramsGrid')
+      };
+      var res = await fetch(EDGE_FN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update', token: TOKEN, updates: updates })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+      showState('success');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      console.error('[lender-form] submit:', err);
+      showToast('Save failed: ' + err.message, true);
+    }
+    btn.disabled = false; btn.textContent = origTxt;
+  }
+
+  loadLender();
+</script>
+
+</body>
+</html>
