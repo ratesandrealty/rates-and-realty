@@ -8060,8 +8060,8 @@ async function save1003() {
 }
 
 /* ── 1003 — LOAD FROM SUPABASE ── */
-async function load1003() {
-  const cid = getContactId();
+async function load1003(overrideCid) {
+  const cid = overrideCid || getContactId();
   if (!cid) return;
 
   try {
@@ -8069,7 +8069,9 @@ async function load1003() {
       .from('mortgage_applications')
       .select('*')
       .eq('contact_id', cid)
-      .single();
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
     if (!data) return;
 
     const sv = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
@@ -8716,7 +8718,7 @@ function losCalcLiabTotal() {
 }
 
 async function losAddLiability() {
-  var cid = losCid(); if (!cid) return;
+  var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
     var r = await fetch(losBase()+'/rest/v1/loan_liabilities', {
       method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
@@ -8860,7 +8862,7 @@ async function losToggleIncome(id, active) {
 }
 
 async function losAddIncome() {
-  var cid = losCid(); if (!cid) return;
+  var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
     var r = await fetch(losBase()+'/rest/v1/loan_income', {
       method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
@@ -8889,8 +8891,8 @@ var losAssets = [];
 var ASSET_TYPES = ['Checking','Savings','Money Market','CD','Stocks/Bonds','401k/Retirement','Business Account','Gift Funds','Bridge Loan Proceeds','Sale of Asset','Other'];
 var ASSET_OWNERS = ['Borrower','CoBorrower','Joint'];
 
-async function losLoadAssets() {
-  var cid = losCid(); if (!cid) return;
+async function losLoadAssets(overrideCid) {
+  var cid = overrideCid || losCid(); if (!cid) return;
   try {
     var r = await fetch(losBase()+'/rest/v1/loan_assets?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
     losAssets = r.ok ? (await r.json() || []) : [];
@@ -8934,7 +8936,7 @@ async function losUpdateAsset(id, field, value) {
 async function losUpdateAssetAndRecalc(id, field, value) { await losUpdateAsset(id, field, value); losCalcAssetsTotal(); }
 
 async function losAddAsset() {
-  var cid = losCid(); if (!cid) return;
+  var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
     var r = await fetch(losBase()+'/rest/v1/loan_assets', {
       method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
@@ -8962,8 +8964,8 @@ var losReo = [];
 var REO_USAGES = ['Primary Residence','Second Home','Investment','Rental','Vacation'];
 var REO_DISPOSITIONS = ['Retain','Pending Sale','Sold'];
 
-async function losLoadREO() {
-  var cid = losCid(); if (!cid) return;
+async function losLoadREO(overrideCid) {
+  var cid = overrideCid || losCid(); if (!cid) return;
   try {
     var r = await fetch(losBase()+'/rest/v1/loan_reo?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
     losReo = r.ok ? (await r.json() || []) : [];
@@ -9014,7 +9016,7 @@ async function losUpdateREO(id, field, value) {
 async function losUpdateREOAndRecalc(id, field, value) { await losUpdateREO(id, field, value); losCalcReoEquity(); }
 
 async function losAddREO() {
-  var cid = losCid(); if (!cid) return;
+  var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
     var r = await fetch(losBase()+'/rest/v1/loan_reo', {
       method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
@@ -9117,14 +9119,74 @@ function renderBorrowerTabs() {
     ? '<button type="button" class="borr-tab'+(combinedActive?' active':'')+'" onclick="losSwitchBorrower(-1)" style="border-style:dashed"><div class="borr-avatar">\u2295</div><span>Combined View</span></button>'
     : '';
   bar.innerHTML = tabs + combinedTab;
+  losRenderBorrowerBanner();
+}
+
+// Returns the contact_id of the currently-viewed borrower (or primary in combined mode)
+function losGetActiveContactId() {
+  if (losViewMode === 'combined' || !losBorrowers.length) {
+    var b0 = losBorrowers[0];
+    return (b0 && b0.contact_id) || losCid();
+  }
+  var b = losBorrowers[losActiveBorrowerIdx];
+  return (b && b.contact_id) || losCid();
+}
+
+function losRenderBorrowerBanner() {
+  var panel = document.getElementById('tab-application');
+  if (!panel) return;
+  var banner = document.getElementById('losBorrowerBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'losBorrowerBanner';
+    banner.style.cssText = 'padding:10px 22px;border-bottom:1px solid #1e1e1e;background:#0f0f0f';
+    var bar = document.getElementById('los1003BorrowerBar');
+    if (bar && bar.parentNode) bar.parentNode.insertBefore(banner, bar.nextSibling);
+    else panel.insertBefore(banner, panel.firstChild);
+  }
+  if (losBorrowers.length <= 1) { banner.style.display = 'none'; banner.innerHTML = ''; return; }
+  banner.style.display = 'block';
+  if (losViewMode === 'combined') {
+    banner.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><div style="width:26px;height:26px;border-radius:50%;background:rgba(201,168,76,0.15);border:1px solid #C9A84C;display:flex;align-items:center;justify-content:center;font-size:.78rem;color:#C9A84C;font-weight:700">\u2295</div>'+
+      '<div style="font-size:.76rem;color:#C9A84C;font-weight:700">Combined View</div>'+
+      '<div style="font-size:.68rem;color:#888">Income and liabilities from all '+losBorrowers.length+' borrowers included in DTI. Borrower Info / Employment / Declarations show primary borrower.</div></div>';
+  } else {
+    var b = losBorrowers[losActiveBorrowerIdx];
+    var name = _borrName(b||{}, losActiveBorrowerIdx);
+    var role = _borrRoleLabel(b||{}, losActiveBorrowerIdx);
+    var linkUrl = b && b.contact_id ? '/admin/lead-detail.html?contact_id='+b.contact_id : null;
+    banner.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><div style="width:26px;height:26px;border-radius:50%;background:#C9A84C;color:#111;display:flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:700">'+_borrInitials(name)+'</div>'+
+      '<div style="flex:1"><div style="font-size:.78rem;color:#eee;font-weight:700">'+name.replace(/</g,'&lt;')+' <span style="color:#C9A84C;font-size:.66rem;margin-left:6px">'+role+'</span></div>'+
+      '<div style="font-size:.66rem;color:#666">Editing this borrower\'s 1003 data</div></div>'+
+      (linkUrl ? '<a href="'+linkUrl+'" style="background:rgba(255,255,255,0.04);border:1px solid #333;border-radius:6px;padding:4px 10px;color:#C9A84C;text-decoration:none;font-size:.66rem;font-weight:600">Open Lead \u2197</a>' : '')+
+    '</div>';
+  }
 }
 
 async function losSwitchBorrower(idx) {
   if (idx === -1) losViewMode = 'combined';
   else { losViewMode = 'individual'; losActiveBorrowerIdx = idx; }
   renderBorrowerTabs();
-  await losLoadBorrowerData();
-  await renderBorrowerIncomeDebtCards();
+  losRenderBorrowerBanner();
+
+  var activeCid = losGetActiveContactId();
+  var panel = document.getElementById('tab-application');
+  // Dim panel during reload
+  if (panel) { panel.style.opacity = '0.6'; panel.style.pointerEvents = 'none'; }
+  try {
+    // Reload EVERY 1003 section for the newly active borrower.
+    // In combined mode, income/liabilities come from losLoadBorrowerData (union);
+    // everything else (form fields, assets, REO) tracks the primary borrower.
+    var formCid = (losViewMode === 'combined' && losBorrowers[0] && losBorrowers[0].contact_id) ? losBorrowers[0].contact_id : activeCid;
+    await Promise.all([
+      load1003(formCid),          // full 1003 form (f_* fields) via sb client
+      losLoadBorrowerData(),       // income + liabilities (handles combined vs individual internally)
+      losLoadAssets(formCid),      // Assets table
+      losLoadREO(formCid)          // REO table
+    ]);
+    renderBorrowerIncomeDebtCards();
+  } catch(e) { console.warn('[switch] reload error:', e); }
+  if (panel) { panel.style.opacity = '1'; panel.style.pointerEvents = ''; }
 }
 
 async function losLoadBorrowerData() {
