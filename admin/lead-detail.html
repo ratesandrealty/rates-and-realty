@@ -1201,14 +1201,11 @@
   <a href="people.html" class="ab-back" style="text-decoration:none;flex-shrink:0;">&#128101;</a>
   <a href="pipeline.html" class="ab-back" style="text-decoration:none;flex-shrink:0;">&#127937;</a>
   <div class="ab-name" id="topbar-name" style="flex-shrink:0;">Loading&#8230;</div>
-  <!-- Drive folder button -->
-  <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-    <button type="button" id="borrowerDriveBtn" class="drive-btn" onclick="borrowerDriveOpen()" title="Open Google Drive folder">
-      <span id="borrowerDriveBtnText">📁 Drive</span>
-    </button>
-    <span id="borrowerDriveStatus" style="font-size:9.5px;color:#888;white-space:nowrap;"></span>
-    <span onclick="borrowerDriveLinkManual(new URLSearchParams(location.search).get('contact_id'))" title="Link existing Drive folder" style="cursor:pointer;color:#666;font-size:11px;user-select:none;" onmouseover="this.style.color='#C9A84C'" onmouseout="this.style.color='#666'">🔗</span>
-  </div>
+  <!-- Drive folder status pill -->
+  <button id="driveFolderBtn" onclick="handleDriveFolderBtn()" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;font-size:12px;cursor:pointer;border:1px solid #444;background:#1a1a1a;color:#aaa;transition:all 0.2s;flex-shrink:0;font-family:inherit;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>
+    <span id="driveFolderBtnLabel">no folder yet</span>
+  </button>
   <!-- Status bubble -->
   <div style="position:relative;flex-shrink:0;">
     <span id="statusBubble" onclick="toggleStatusMenu()" style="padding:2px 8px;border-radius:20px;font-size:9.5px;font-weight:700;cursor:pointer;background:rgba(90,160,224,0.18);border:1px solid rgba(90,160,224,0.4);color:#7BBCE8;user-select:none;transition:all 0.15s;white-space:nowrap;">NEW</span>
@@ -3947,96 +3944,185 @@ async function loadData() {
   }
 }
 
-/* ── BORROWER DRIVE FOLDER ── */
-async function borrowerDriveInit(contactId, firstName, lastName) {
-  const btn = document.getElementById('borrowerDriveBtn');
-  const txt = document.getElementById('borrowerDriveBtnText');
-  const status = document.getElementById('borrowerDriveStatus');
-  if (!btn) return;
+/* ── DRIVE FOLDER STATUS PILL + SMART MATCH MODAL ── */
+window._leadDriveFolderId = null;
+window._leadDriveFolderUrl = null;
 
-  btn.className = 'drive-btn loading';
-  txt.textContent = 'Drive...';
-
-  try {
-    const cfg = window.APP_CONFIG || {};
-    const resp = await fetch(`${cfg.SUPABASE_URL}/functions/v1/borrower-drive`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({
-        action: 'find_or_create_borrower_folder',
-        contact_id: contactId,
-        first_name: firstName,
-        last_name: lastName,
-        auto_save: true
-      })
-    });
-    const data = await resp.json();
-
-    if (data.found && data.folder_url) {
-      btn.className = 'drive-btn found';
-      btn.onclick = () => window.open(data.folder_url, '_blank');
-      txt.textContent = '📁 Drive Folder';
-      status.textContent = data.already_linked ? 'linked' : 'found & linked';
-      status.style.color = '#4ade80';
-      window._borrowerDriveUrl = data.folder_url;
-      window._borrowerDriveFolderId = data.folder_id;
-    } else {
-      btn.className = 'drive-btn not-found';
-      const parentUrl = data.parent_folder_url || 'https://drive.google.com/drive/folders/11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6';
-      const suggestedName = data.suggested_folder_name || (firstName + ' ' + lastName).trim();
-      btn.onclick = () => borrowerDriveCreate(contactId, suggestedName, parentUrl);
-      txt.textContent = '+ Create Drive Folder';
-      status.textContent = 'no folder yet';
-      status.style.color = '#f59e0b';
-      window._borrowerDriveUrl = null;
-    }
-  } catch(e) {
-    btn.className = 'drive-btn not-found';
-    txt.textContent = '📁 Drive';
-    if (status) status.textContent = '';
-  }
-}
-
-function borrowerDriveOpen() {
-  if (window._borrowerDriveUrl) {
-    window.open(window._borrowerDriveUrl, '_blank');
-  } else {
-    window.open('https://drive.google.com/drive/folders/11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6', '_blank');
-  }
-}
-
-async function borrowerDriveCreate(contactId, folderName, parentUrl) {
-  const toast = document.createElement('div');
-  toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1a73e8;color:#fff;padding:14px 20px;border-radius:10px;font-size:13px;z-index:99999;max-width:320px;box-shadow:0 4px 20px rgba(0,0,0,0.4)';
-  toast.innerHTML = '<div style="font-weight:700;margin-bottom:6px">Create Drive Folder</div>' +
-    '<div style="font-size:12px;line-height:1.5">Go to the Borrowers folder and create a new folder named:</div>' +
-    '<div style="font-family:ui-monospace,Menlo,monospace;background:rgba(0,0,0,0.25);padding:6px 10px;border-radius:6px;margin:8px 0;font-size:12px">' + folderName + '</div>' +
-    '<div style="font-size:11px;opacity:0.9">Then paste the folder link back in the CRM to link it.</div>';
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 8000);
-  window.open(parentUrl, '_blank');
-}
-
-async function borrowerDriveLinkManual(contactId) {
-  const url = prompt('Paste the Google Drive folder URL for this borrower:');
-  if (!url) return;
-  const match = url.match(/folders\/([a-zA-Z0-9_-]+)/);
-  if (!match) { alert('Invalid Drive URL. Please paste a folder link.'); return; }
-  const folderId = match[1];
+async function callBorrowerDrive(payload) {
   const cfg = window.APP_CONFIG || {};
-  await fetch(`${cfg.SUPABASE_URL}/functions/v1/borrower-drive`, {
+  const res = await fetch(`${cfg.SUPABASE_URL}/functions/v1/borrower-drive`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}` },
-    body: JSON.stringify({ action: 'link_folder_to_contact', contact_id: contactId, folder_id: folderId, folder_url: url })
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}`,
+      'apikey': cfg.SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify(payload)
   });
-  window._borrowerDriveUrl = url;
-  window._borrowerDriveFolderId = folderId;
-  const btn = document.getElementById('borrowerDriveBtn');
-  const txt = document.getElementById('borrowerDriveBtnText');
-  const status = document.getElementById('borrowerDriveStatus');
-  if (btn) { btn.className = 'drive-btn found'; btn.onclick = () => window.open(url, '_blank'); }
-  if (txt) txt.textContent = '📁 Drive Folder';
-  if (status) { status.textContent = 'linked'; status.style.color = '#4ade80'; }
+  const text = await res.text();
+  try { return JSON.parse(text); } catch(e) { return { error: 'Invalid response: ' + text.slice(0,200) }; }
+}
+
+function updateDriveFolderBtn() {
+  const btn = document.getElementById('driveFolderBtn');
+  const label = document.getElementById('driveFolderBtnLabel');
+  if (!btn || !label) return;
+  if (window._leadDriveFolderId) {
+    btn.style.borderColor = '#C9A84C';
+    btn.style.color = '#C9A84C';
+    label.textContent = '📁 View Drive Folder';
+  } else {
+    btn.style.borderColor = '#444';
+    btn.style.color = '#aaa';
+    label.textContent = 'no folder yet';
+  }
+}
+
+async function handleDriveFolderBtn() {
+  if (window._leadDriveFolderUrl) {
+    window.open(window._leadDriveFolderUrl, '_blank');
+    return;
+  }
+  showDriveMatchModal();
+}
+
+async function showDriveMatchModal() {
+  const modal = document.getElementById('driveMatchModal');
+  const body = document.getElementById('driveMatchModalBody');
+  if (!modal || !body) return;
+  modal.style.display = 'flex';
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:#888"><div style="display:inline-block;width:28px;height:28px;border:3px solid #333;border-top-color:#C9A84C;border-radius:50%;animation:pdfSpin .8s linear infinite"></div><div style="margin-top:12px;font-size:12px">Searching Drive for existing folder…</div></div>';
+
+  const first = contactData.first_name || '';
+  const last = contactData.last_name || '';
+  const data = await callBorrowerDrive({
+    action: 'find_or_create_borrower_folder',
+    contact_id: contactId,
+    first_name: first,
+    last_name: last,
+    auto_save: false
+  });
+
+  if (data.error) {
+    body.innerHTML = '<div style="padding:24px;color:#e05252;font-size:12px">Error: '+_driveEsc(data.error)+'</div>';
+    return;
+  }
+
+  if (data.found && data.folder_id) {
+    _driveRenderFound(body, data);
+  } else {
+    _driveRenderNotFound(body, data);
+  }
+}
+
+function _driveEsc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+function _driveRenderFound(body, data) {
+  body.innerHTML =
+    '<div style="padding:20px">' +
+      '<div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.3);border-radius:10px;padding:16px;margin-bottom:16px">' +
+        '<div style="font-size:14px;font-weight:700;color:#4ade80;margin-bottom:8px">✅ Existing Drive folder found!</div>' +
+        '<div style="font-size:11px;color:#888;margin-bottom:4px">Folder name</div>' +
+        '<div style="font-size:13px;color:#e8e8e8;font-weight:600">'+_driveEsc(data.folder_name||'—')+'</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button type="button" onclick="driveModalClose()" style="background:transparent;border:1px solid #333;color:#888;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;font-family:inherit">Cancel</button>' +
+        '<button type="button" onclick="driveLinkFound(\''+_driveEsc(data.folder_id)+'\',\''+_driveEsc(data.folder_url||'')+'\')" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">Link this folder</button>' +
+      '</div>' +
+    '</div>';
+}
+
+function _driveRenderNotFound(body, data) {
+  const suggested = data.suggested_folder_name || ((contactData.first_name||'')+' '+(contactData.last_name||'')).trim();
+  const parentUrl = data.parent_folder_url || 'https://drive.google.com/drive/folders/11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6';
+  const known = Array.isArray(data.all_known_folders) ? data.all_known_folders : [];
+  window._driveKnownFolders = known;
+
+  let html = '<div style="padding:20px">';
+  html += '<div style="font-size:12px;color:#888;margin-bottom:14px">No matching folder found. Choose an option:</div>';
+
+  // Option A: match existing
+  html += '<div style="background:#0f0f0f;border:1px solid #222;border-radius:10px;padding:14px;margin-bottom:12px">';
+  html += '<div style="font-size:12px;font-weight:700;color:#C9A84C;margin-bottom:10px">🔗 Match an existing folder</div>';
+  if (known.length) {
+    html += '<select id="driveKnownFoldersSelect" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:8px 10px;color:#e8e8e8;font-size:12px;outline:none;font-family:inherit;margin-bottom:8px">';
+    html += '<option value="">-- pick a folder --</option>';
+    known.forEach(function(f,i){
+      html += '<option value="'+i+'">'+_driveEsc(f.name||f.folder_name||'(unnamed)')+'</option>';
+    });
+    html += '</select>';
+    html += '<button type="button" onclick="driveLinkKnownSelected()" style="background:rgba(201,168,76,0.12);border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Link selected</button>';
+  } else {
+    html += '<div style="font-size:11px;color:#666;font-style:italic">No known folders returned by server.</div>';
+  }
+  html += '</div>';
+
+  // Option B: create new
+  html += '<div style="background:#0f0f0f;border:1px solid #222;border-radius:10px;padding:14px">';
+  html += '<div style="font-size:12px;font-weight:700;color:#C9A84C;margin-bottom:10px">📁 Create new folder</div>';
+  html += '<div style="font-size:11px;color:#888;line-height:1.5;margin-bottom:10px">A new folder will be linked once created in Drive.</div>';
+  html += '<div style="font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em;font-weight:700">Suggested name</div>';
+  html += '<input id="driveSuggestedName" value="'+_driveEsc(suggested)+'" readonly onclick="this.select()" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:8px 10px;color:#C9A84C;font-size:12px;outline:none;font-family:ui-monospace,Menlo,monospace;margin-bottom:10px;cursor:pointer">';
+  html += '<a href="'+_driveEsc(parentUrl)+'" target="_blank" rel="noopener" style="display:inline-block;background:#1a73e8;color:#fff;border-radius:6px;padding:7px 12px;font-size:11px;font-weight:600;text-decoration:none;margin-bottom:12px">Open Borrowers Drive →</a>';
+  html += '<div style="font-size:10px;color:#666;margin:12px 0 4px;text-transform:uppercase;letter-spacing:.05em;font-weight:700">Then paste new folder URL or ID</div>';
+  html += '<input id="newFolderIdInput" placeholder="Paste Google Drive folder URL or ID..." style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:8px 10px;color:#e8e8e8;font-size:12px;outline:none;font-family:inherit;margin-bottom:8px;box-sizing:border-box">';
+  html += '<button type="button" onclick="driveLinkPasted()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:7px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Link This Folder</button>';
+  html += '</div>';
+
+  html += '<div style="display:flex;justify-content:flex-end;margin-top:14px">';
+  html += '<button type="button" onclick="driveModalClose()" style="background:transparent;border:1px solid #333;color:#888;border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit">Cancel</button>';
+  html += '</div>';
+
+  html += '</div>';
+  body.innerHTML = html;
+}
+
+function driveModalClose() {
+  const m = document.getElementById('driveMatchModal');
+  if (m) m.style.display = 'none';
+}
+
+async function _driveDoLink(folderId, folderUrl) {
+  const url = folderUrl || ('https://drive.google.com/drive/folders/' + folderId);
+  const resp = await callBorrowerDrive({
+    action: 'link_folder_to_contact',
+    contact_id: contactId,
+    folder_id: folderId,
+    folder_url: url
+  });
+  if (resp.error) { alert('Link failed: ' + resp.error); return false; }
+  window._leadDriveFolderId = folderId;
+  window._leadDriveFolderUrl = url;
+  updateDriveFolderBtn();
+  driveModalClose();
+  if (typeof showToast === 'function') showToast('Drive folder linked ✓');
+  return true;
+}
+
+async function driveLinkFound(folderId, folderUrl) {
+  await _driveDoLink(folderId, folderUrl);
+}
+
+async function driveLinkKnownSelected() {
+  const sel = document.getElementById('driveKnownFoldersSelect');
+  const idx = sel ? parseInt(sel.value) : NaN;
+  const list = window._driveKnownFolders || [];
+  if (isNaN(idx) || !list[idx]) { alert('Please select a folder from the list.'); return; }
+  const f = list[idx];
+  const fid = f.id || f.folder_id;
+  const furl = f.url || f.folder_url || ('https://drive.google.com/drive/folders/' + fid);
+  await _driveDoLink(fid, furl);
+}
+
+async function driveLinkPasted() {
+  const inp = document.getElementById('newFolderIdInput');
+  const raw = inp ? inp.value.trim() : '';
+  if (!raw) { alert('Paste a Drive folder URL or ID first.'); return; }
+  const m = raw.match(/folders\/([a-zA-Z0-9_-]+)/);
+  const fid = m ? m[1] : raw;
+  if (!/^[a-zA-Z0-9_-]{10,}$/.test(fid)) { alert('That does not look like a valid Drive folder ID.'); return; }
+  const furl = m ? raw : ('https://drive.google.com/drive/folders/' + fid);
+  await _driveDoLink(fid, furl);
 }
 
 /* ── POPULATE UI ── */
@@ -4046,10 +4132,11 @@ function populateUI() {
 
   // Top bar
   document.getElementById('topbar-name').textContent = name;
-  // Initialize Drive folder for this borrower
-  if (contactData.id && (contactData.first_name || contactData.last_name)) {
-    borrowerDriveInit(contactData.id, contactData.first_name || '', contactData.last_name || '');
-  }
+  // Initialize Drive folder status pill from loaded contact data
+  window._leadDriveFolderId = contactData.gdrive_folder_id || null;
+  window._leadDriveFolderUrl = contactData.gdrive_folder_url ||
+    (contactData.gdrive_folder_id ? 'https://drive.google.com/drive/folders/' + contactData.gdrive_folder_id : null);
+  updateDriveFolderBtn();
   setStatusBadge(leadData.status || 'new');
   var _initStage = resolveStage(contactData.pipeline_status || leadData.status || 'New Lead');
   renderTimeline(_initStage);
@@ -15327,6 +15414,20 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
     }
   });
 </script>
+
+<!-- Drive Match Modal -->
+<div id="driveMatchModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:100000;align-items:flex-start;justify-content:center;padding-top:10vh">
+  <div style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;width:100%;max-width:480px;max-height:80vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,0.6)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2a2a2a">
+      <div style="display:flex;align-items:center;gap:10px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="#C9A84C"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>
+        <span style="font-size:14px;font-weight:700;color:#e8e8e8">Link Drive Folder</span>
+      </div>
+      <button type="button" onclick="driveModalClose()" style="background:transparent;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;padding:0 4px">&times;</button>
+    </div>
+    <div id="driveMatchModalBody"></div>
+  </div>
+</div>
 
 </body>
 </html>
