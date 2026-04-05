@@ -11521,8 +11521,8 @@ function renderLenderGridNew() {
     var favColor = l.is_favorite ? '#ef4444' : '#444';
     return '<div class="lender-card '+(qualifies?'qualifies':'fails')+'" data-lender-id="'+l.id+'">'+
       '<div style="display:flex;gap:10px;align-items:start">'+
-        '<div class="lender-logo">'+logoHtml+'</div>'+
-        '<div style="flex:1;min-width:0">'+
+        '<div class="lender-logo" onclick="openLenderDetail(\''+l.id+'\')" style="cursor:pointer">'+logoHtml+'</div>'+
+        '<div style="flex:1;min-width:0;cursor:pointer" onclick="openLenderDetail(\''+l.id+'\')">'+
           '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><div style="font-size:.8rem;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+name+'</div>'+
           (l.is_preferred?'<span style="background:rgba(201,168,76,0.15);color:#C9A84C;border-radius:8px;padding:1px 6px;font-size:.54rem;font-weight:700;letter-spacing:.04em">PREFERRED</span>':'')+'</div>'+
           '<div style="font-size:.66rem;color:'+(qualifies?'#22c55e':'#ef4444')+';margin-top:2px;font-weight:600">'+(qualifies?'\u2713 Qualifies':'\u2717 Does not qualify')+'</div>'+
@@ -11563,7 +11563,7 @@ function renderLenderTableNew() {
     items.map(function(l) {
       var q = lenderQualifies(l);
       return '<tr style="border-bottom:1px solid #1a1a1a">'+
-        '<td style="padding:6px 8px;color:#eee;font-weight:600">'+_lhEsc(l.name)+'</td>'+
+        '<td style="padding:6px 8px;color:#eee;font-weight:600;cursor:pointer" onclick="openLenderDetail(\''+l.id+'\')">'+_lhEsc(l.name)+'</td>'+
         '<td style="padding:6px 8px;color:#aaa">'+_lhEsc((l.loan_types||[]).slice(0,3).join(', '))+'</td>'+
         '<td style="padding:6px 8px;color:#888;text-align:center">'+_lhEsc(l.channel||'—')+'</td>'+
         '<td style="padding:6px 8px;color:#ccc;text-align:right">'+(l.min_credit||'—')+'</td>'+
@@ -11651,6 +11651,205 @@ function sendScenarioEmail(lenderId) {
     })
   }).catch(function(e){ console.warn('[lender] submission log:', e); });
 }
+
+/* ═══ LENDER DETAIL MODAL ═══ */
+var _currentLenderId = null, _currentLenderData = null;
+
+function closeLenderDetail() {
+  var m = document.getElementById('lenderDetailModal');
+  if (m) m.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function ldShowTab(tabId, btn) {
+  document.querySelectorAll('#lenderDetailModal .ld-tab-body').forEach(function(t){ t.style.display = 'none'; });
+  document.querySelectorAll('#lenderDetailModal .ld-tab').forEach(function(b){ b.classList.remove('active'); });
+  var panel = document.getElementById('ldTab-' + tabId);
+  if (panel) panel.style.display = 'block';
+  if (btn) btn.classList.add('active');
+}
+
+async function openLenderDetail(lenderId) {
+  _currentLenderId = lenderId;
+  var modal = document.getElementById('lenderDetailModal');
+  if (modal) modal.style.display = 'block';
+  document.body.style.overflow = 'hidden';
+  ldShowTab('overview', document.querySelector('#lenderDetailModal .ld-tab'));
+
+  // Fallback: use cached card data if edge function fails
+  var cached = (window._allLenders||[]).find(function(x){return x.id===lenderId;}) || {};
+  var l = cached, submissions = [];
+  try {
+    var r = await fetch(_lhBase()+'/functions/v1/lender-portal?id='+lenderId, { headers: _lhHdr() });
+    if (r.ok) {
+      var j = await r.json();
+      if (j && j.lender) l = Object.assign({}, cached, j.lender);
+      if (j && Array.isArray(j.submissions)) submissions = j.submissions;
+    }
+  } catch(e) { console.warn('[lender-detail] fetch:', e); }
+  _currentLenderData = l;
+
+  var val = function(v, f){ return v != null && v !== '' ? v : (f || '—'); };
+  var link = function(url, text){ return url ? '<a href="'+_lhEsc(url)+'" target="_blank" rel="noopener">'+_lhEsc(text||url)+'</a>' : 'Not set'; };
+  var boolIco = function(v){ return v ? '<span style="color:#22c55e">✓ Yes</span>' : '<span style="color:#666">— No</span>'; };
+  var usd = function(n){ return n ? '$'+Number(n).toLocaleString() : '—'; };
+  var pills = function(arr){ return (arr||[]).length ? arr.map(function(t){return '<span class="ld-type-pill">'+_lhEsc(t)+'</span>';}).join('') : '<span style="color:#666">None listed</span>'; };
+
+  // Header
+  document.getElementById('ldName').textContent = l.name || '—';
+  document.getElementById('ldLogo').textContent = (l.name||'L').replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase();
+  document.getElementById('ldMeta').textContent = [l.lender_type, l.channel, l.nmlsr_id ? 'NMLS #'+l.nmlsr_id : null].filter(Boolean).join(' · ');
+  document.getElementById('ldPreferredBadge').style.display = l.is_preferred ? 'inline-block' : 'none';
+
+  // Stats
+  document.getElementById('ldStatCredit').textContent = l.min_credit || '—';
+  document.getElementById('ldStatLTV').textContent = l.max_ltv ? l.max_ltv+'%' : '—';
+  document.getElementById('ldStatFund').textContent = l.avg_app_to_fund ? l.avg_app_to_fund+' days' : '—';
+  document.getElementById('ldStatSubs').textContent = l.submission_count || submissions.length || 0;
+  document.getElementById('ldStatRating').textContent = l.rating ? Number(l.rating).toFixed(1)+'★' : '—';
+
+  // Overview
+  document.getElementById('ldLoanTypes').innerHTML = pills(l.loan_types);
+  document.getElementById('ldLoanPrograms').innerHTML = pills([].concat(l.loan_programs||[], l.programs||[]));
+  document.getElementById('ldChannel').textContent = val(l.channel);
+  document.getElementById('ldStates').textContent = (l.states_licensed||[]).join(', ') || 'Not specified';
+  document.getElementById('ldLoanRange').textContent = (l.min_loan_amount || l.max_loan_amount) ? (usd(l.min_loan_amount)+' – '+usd(l.max_loan_amount)) : '—';
+  document.getElementById('ldSpecialtyNotes').textContent = l.specialty_notes || 'No specialty notes added yet.';
+
+  // Features
+  var features = [
+    ['Non-Warrantable Condo', l.non_warrantable_condo],
+    ['Manufactured Home', l.manufactured_home],
+    ['Rural Properties', l.rural_properties],
+    ['Down to 500 Credit', l.down_to_500_credit],
+    ['Recent BK OK', l.recent_bk_ok],
+    ['Recent Foreclosure OK', l.recent_foreclosure_ok],
+    ['ITIN OK', l.itin_ok],
+    ['Close in LLC/DBA', l.dba_ok],
+    ['Escrow Waiver', l.escrow_waiver_allowed],
+    ['Desk Review Appraisal', l.appraisal_desk_review]
+  ];
+  document.getElementById('ldFeatures').innerHTML = features.map(function(p){ return '<div class="ld-feature-item"><div class="ld-feature-label">'+p[0]+'</div><div class="ld-feature-val">'+boolIco(p[1])+'</div></div>'; }).join('');
+
+  // Rating stars
+  var rating = parseFloat(l.rating)||0;
+  document.getElementById('ldRatingStars').innerHTML = [1,2,3,4,5].map(function(n){
+    return '<span class="ld-rating-star" onclick="ldRateLender('+n+')" style="color:'+(n<=rating?'#C9A84C':'#333')+'">★</span>';
+  }).join('') + (rating ? '<span style="margin-left:8px;font-size:.76rem;color:#C9A84C;font-weight:700">'+rating.toFixed(1)+'</span>' : '');
+
+  document.getElementById('ldScenarioNotes').value = l.scenario_notes || '';
+
+  // Contacts
+  document.getElementById('ldAEName').textContent = val(l.contact_name || l.rep_name);
+  var aeEm = l.contact_email || l.rep_email; document.getElementById('ldAEEmail').innerHTML = aeEm ? link('mailto:'+aeEm, aeEm) : 'Not set';
+  var aePh = l.contact_phone || l.rep_phone; document.getElementById('ldAEPhone').innerHTML = aePh ? '<a href="tel:'+_lhEsc(aePh)+'" style="color:#C9A84C">'+_lhEsc(aePh)+'</a>' : 'Not set';
+  document.getElementById('ldNMLSR').textContent = val(l.nmlsr_id);
+  document.getElementById('ldPSName').textContent = val(l.product_specialist_name);
+  document.getElementById('ldPSEmail').innerHTML = l.product_specialist_email ? link('mailto:'+l.product_specialist_email, l.product_specialist_email) : 'Not set';
+  document.getElementById('ldPSPhone').textContent = val(l.product_specialist_phone);
+  var lockHtml = [l.lock_desk_email ? link('mailto:'+l.lock_desk_email, l.lock_desk_email) : '', l.lock_desk_phone || ''].filter(Boolean).join('<br>');
+  document.getElementById('ldLockDesk').innerHTML = lockHtml || '—';
+  document.getElementById('ldSubmissionEmail').innerHTML = l.submission_email ? link('mailto:'+l.submission_email, l.submission_email) : '—';
+  document.getElementById('ldConditionsEmail').innerHTML = l.conditions_email ? link('mailto:'+l.conditions_email, l.conditions_email) : '—';
+  document.getElementById('ldUWEmail').innerHTML = l.underwriting_email ? link('mailto:'+l.underwriting_email, l.underwriting_email) : '—';
+  document.getElementById('ldClosingEmail').innerHTML = l.closing_email ? link('mailto:'+l.closing_email, l.closing_email) : '—';
+  document.getElementById('ldFundingEmail').innerHTML = l.funding_email ? link('mailto:'+l.funding_email, l.funding_email) : '—';
+  document.getElementById('ldWebsite').innerHTML = l.website ? link(l.website, l.website) : '—';
+  document.getElementById('ldPortal').innerHTML = l.lender_portal ? link(l.lender_portal, l.lender_portal) : '—';
+  document.getElementById('ldAddress').textContent = [l.physical_address, l.physical_city, l.physical_state, l.physical_zip].filter(Boolean).join(', ') || '—';
+  document.getElementById('ldGuidelinesUrl').innerHTML = l.guidelines_url ? link(l.guidelines_url, 'View Guidelines') : '—';
+
+  // Guidelines
+  document.getElementById('ldMinCredit2').textContent = l.min_credit || '—';
+  document.getElementById('ldMaxLTV2').textContent = l.max_ltv ? l.max_ltv+'%' : '—';
+  document.getElementById('ldLoanRange2').textContent = (l.min_loan_amount || l.max_loan_amount) ? (usd(l.min_loan_amount)+' – '+usd(l.max_loan_amount)) : '—';
+  document.getElementById('ldUWTurn').textContent = val(l.underwriting_turn_time);
+  document.getElementById('ldFundTime').textContent = l.avg_app_to_fund ? l.avg_app_to_fund+' days' : '—';
+  document.getElementById('ldDaysClose').textContent = (l.min_days_to_close || l.max_days_to_close) ? ((l.min_days_to_close||'?')+' – '+(l.max_days_to_close||'?')+' days') : '—';
+  document.getElementById('ldKeyOverlays').textContent = l.key_overlays || 'No overlays noted.';
+  document.getElementById('ldAMC').textContent = val(l.appraisal_management);
+  document.getElementById('ldDeskReview').innerHTML = boolIco(l.appraisal_desk_review);
+  document.getElementById('ldEscrowWaiver').innerHTML = boolIco(l.escrow_waiver_allowed);
+  document.getElementById('ldNonWarr').innerHTML = boolIco(l.non_warrantable_condo);
+  document.getElementById('ldExceptionProcess').textContent = l.exception_process || 'Not documented.';
+  document.getElementById('ldSubmissionChecklist').textContent = l.submission_checklist || 'Not documented.';
+
+  // Compensation
+  document.getElementById('ldCompType').textContent = val(l.compensation_type);
+  document.getElementById('ldCompBPS').textContent = l.compensation_bps ? l.compensation_bps+'bps' : '—';
+  document.getElementById('ldCompMin').textContent = l.compensation_min ? usd(l.compensation_min) : '—';
+  document.getElementById('ldCompMax').textContent = l.compensation_max ? usd(l.compensation_max) : '—';
+  document.getElementById('ldRevenueNotes').textContent = l.revenue_notes || '—';
+  document.getElementById('ldFeeNotes').textContent = l.fee_notes || '—';
+  document.getElementById('ldEPO').textContent = l.epo_policy || '—';
+  document.getElementById('ldBrokerIdInput').value = l.broker_id || '';
+
+  // Clauses
+  document.getElementById('ldCPLClause').textContent = l.cpl_clause || 'Not on file — ask your AE';
+  document.getElementById('ldMortgageeClause').textContent = l.mortgagee_clause || 'Not on file — ask your AE';
+  document.getElementById('ldPhysicalAddress').textContent = [l.physical_address, l.physical_city, l.physical_state, l.physical_zip].filter(Boolean).join('\n') || '—';
+
+  // History
+  var subsEl = document.getElementById('ldSubmissions');
+  if (submissions.length) {
+    subsEl.innerHTML = submissions.map(function(s){
+      return '<div style="background:#0a0a0a;border:1px solid #1e1e1e;border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;gap:10px;align-items:flex-start">'+
+        '<div style="flex:1;min-width:0"><div style="font-size:.78rem;font-weight:700;color:#eee">'+_lhEsc(s.borrower_name||'Unknown borrower')+'</div>'+
+        '<div style="font-size:.66rem;color:#888;margin-top:2px">'+new Date(s.submitted_at || s.created_at).toLocaleDateString()+
+        (s.loan_amount?' · $'+Number(s.loan_amount).toLocaleString():'')+(s.loan_type?' · '+_lhEsc(s.loan_type):'')+'</div>'+
+        (s.scenario_notes?'<div style="font-size:.68rem;color:#aaa;margin-top:4px;font-style:italic">'+_lhEsc(s.scenario_notes)+'</div>':'')+
+        '</div><span style="background:rgba(201,168,76,0.1);color:#C9A84C;border-radius:4px;padding:2px 8px;font-size:.58rem;font-weight:700;letter-spacing:.04em">'+String(s.status||'SENT').toUpperCase()+'</span></div>';
+    }).join('');
+  } else {
+    subsEl.innerHTML = '<div style="padding:24px;text-align:center;color:#555;font-size:.78rem">No submissions yet</div>';
+  }
+
+  // Notes
+  document.getElementById('ldLastSubNotes').value = l.last_submission_notes || '';
+  document.getElementById('ldPriceSheetNotes').textContent = l.price_sheet_notes || '—';
+  document.getElementById('ldClickUpNotes').textContent = l.clickup_notes || l.notes || '—';
+  var cuLink = document.getElementById('ldClickUpLink');
+  if (cuLink) { cuLink.href = l.clickup_url || '#'; cuLink.style.display = l.clickup_url ? 'inline-block' : 'none'; }
+}
+
+async function ldSaveField(field, value) {
+  if (!_currentLenderId) return;
+  try {
+    await fetch(_lhBase()+'/functions/v1/lender-portal', {
+      method:'POST', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json'}),
+      body: JSON.stringify({ action: 'update', id: _currentLenderId, updates: { [field]: value } })
+    });
+    if (_currentLenderData) _currentLenderData[field] = value;
+    if (typeof showToast === 'function') showToast('Saved ✓');
+  } catch(e) { console.warn('[lender-detail] save:', e); if (typeof showToast === 'function') showToast('Save failed', 'error'); }
+}
+
+async function ldRateLender(stars) {
+  await ldSaveField('rating', stars);
+  document.querySelectorAll('#ldRatingStars .ld-rating-star').forEach(function(s, i){ s.style.color = i < stars ? '#C9A84C' : '#333'; });
+  var l = (window._allLenders||[]).find(function(x){return x.id===_currentLenderId;});
+  if (l) { l.rating = stars; if (typeof filterLenders === 'function') filterLenders(); }
+}
+
+function ldCopyFormLink() {
+  if (!_currentLenderData || !_currentLenderData.form_token) { showToast('No form token'); return; }
+  var url = 'https://beta.ratesandrealty.com/public/lender-form.html?token='+_currentLenderData.form_token;
+  if (navigator.clipboard) navigator.clipboard.writeText(url).then(function(){ showToast('Form link copied — share with AE ✓'); });
+}
+
+function ldSendScenario() {
+  if (!_currentLenderData) return;
+  sendScenarioEmail(_currentLenderId);
+  closeLenderDetail();
+}
+
+// Close modal on backdrop click + Escape
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape') {
+    var m = document.getElementById('lenderDetailModal');
+    if (m && m.style.display === 'block') closeLenderDetail();
+  }
+});
 
 function renderLenderGrid(lenders) {
   const grid = document.getElementById('lender-matches-grid');
@@ -13870,6 +14069,171 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
   </div>
 </div>
 <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
+<!-- ═══ LENDER DETAIL MODAL ═══ -->
+<div id="lenderDetailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:99998;overflow-y:auto">
+  <div style="max-width:1100px;margin:24px auto;background:#111;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden">
+    <!-- Header -->
+    <div style="padding:18px 22px;border-bottom:1px solid #1e1e1e;background:linear-gradient(135deg,#1a1408,#111);display:flex;align-items:center;gap:14px">
+      <div id="ldLogo" style="width:52px;height:52px;border-radius:10px;background:#2a2a2a;border:1px solid #3a3a3a;display:flex;align-items:center;justify-content:center;font-weight:800;color:#C9A84C;font-size:.9rem;flex-shrink:0">—</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <h2 id="ldName" style="font-size:1.1rem;color:#eee;margin:0;font-weight:700">Loading…</h2>
+          <span id="ldPreferredBadge" style="display:none;background:rgba(201,168,76,0.15);color:#C9A84C;border-radius:10px;padding:2px 8px;font-size:.58rem;font-weight:700;letter-spacing:.04em">⭐ PREFERRED</span>
+        </div>
+        <div id="ldMeta" style="font-size:.72rem;color:#888;margin-top:3px"></div>
+      </div>
+      <button onclick="closeLenderDetail()" style="background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:8px;padding:8px 14px;font-size:.74rem;cursor:pointer;font-family:inherit;font-weight:600">Close ✕</button>
+    </div>
+    <!-- Stats strip -->
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid #1e1e1e;background:#0f0f0f">
+      <div class="ld-stat"><div class="ld-stat-label">Min Credit</div><div id="ldStatCredit" class="ld-stat-val">—</div></div>
+      <div class="ld-stat"><div class="ld-stat-label">Max LTV</div><div id="ldStatLTV" class="ld-stat-val">—</div></div>
+      <div class="ld-stat"><div class="ld-stat-label">Avg Fund</div><div id="ldStatFund" class="ld-stat-val">—</div></div>
+      <div class="ld-stat"><div class="ld-stat-label">Submissions</div><div id="ldStatSubs" class="ld-stat-val">—</div></div>
+      <div class="ld-stat"><div class="ld-stat-label">Rating</div><div id="ldStatRating" class="ld-stat-val">—</div></div>
+    </div>
+    <!-- Tab nav -->
+    <div style="display:flex;gap:0;border-bottom:1px solid #1e1e1e;background:#0a0a0a;overflow-x:auto">
+      <button class="ld-tab active" onclick="ldShowTab('overview',this)">Overview</button>
+      <button class="ld-tab" onclick="ldShowTab('contacts',this)">Contacts</button>
+      <button class="ld-tab" onclick="ldShowTab('guidelines',this)">Guidelines</button>
+      <button class="ld-tab" onclick="ldShowTab('compensation',this)">Compensation</button>
+      <button class="ld-tab" onclick="ldShowTab('clauses',this)">Clauses</button>
+      <button class="ld-tab" onclick="ldShowTab('history',this)">History</button>
+      <button class="ld-tab" onclick="ldShowTab('notes',this)">Notes</button>
+      <div style="margin-left:auto;display:flex;gap:6px;padding:8px 14px">
+        <button onclick="ldSendScenario()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 14px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit">✉ Send Scenario</button>
+        <button onclick="ldCopyFormLink()" style="background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit">🔗 Copy Form Link</button>
+      </div>
+    </div>
+    <!-- Tab panels -->
+    <div style="padding:18px 22px;max-height:calc(100vh - 260px);overflow-y:auto">
+      <!-- OVERVIEW -->
+      <div id="ldTab-overview" class="ld-tab-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+          <div class="ld-info-card"><div class="ld-info-label">Loan Types</div><div id="ldLoanTypes" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Loan Programs</div><div id="ldLoanPrograms" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Channel</div><div id="ldChannel" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">States Licensed</div><div id="ldStates" class="ld-info-val">—</div></div>
+          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Loan Range</div><div id="ldLoanRange" class="ld-info-val">—</div></div>
+          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Specialty Notes</div><div id="ldSpecialtyNotes" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        </div>
+        <div class="ld-info-card" style="margin-bottom:14px">
+          <div class="ld-info-label" style="margin-bottom:8px">Features</div>
+          <div id="ldFeatures" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px"></div>
+        </div>
+        <div class="ld-info-card" style="margin-bottom:14px">
+          <div class="ld-info-label" style="margin-bottom:8px">Your Rating</div>
+          <div id="ldRatingStars" style="display:flex;gap:4px;align-items:center"></div>
+        </div>
+        <div class="ld-info-card">
+          <div class="ld-info-label" style="margin-bottom:8px">Scenario Notes (internal)</div>
+          <textarea id="ldScenarioNotes" rows="3" onblur="ldSaveField('scenario_notes',this.value)" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;padding:9px 12px;color:#eee;font-size:.78rem;font-family:inherit;outline:none;resize:vertical;box-sizing:border-box"></textarea>
+        </div>
+      </div>
+      <!-- CONTACTS -->
+      <div id="ldTab-contacts" class="ld-tab-body" style="display:none">
+        <div class="ld-info-label" style="margin-bottom:10px">Primary AE</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+          <div class="ld-info-card"><div class="ld-info-label">Name</div><div id="ldAEName" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Email</div><div id="ldAEEmail" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Phone</div><div id="ldAEPhone" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">NMLS ID</div><div id="ldNMLSR" class="ld-info-val">—</div></div>
+        </div>
+        <div class="ld-info-label" style="margin-bottom:10px">Product Specialist</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+          <div class="ld-info-card"><div class="ld-info-label">Name</div><div id="ldPSName" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Email</div><div id="ldPSEmail" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Phone</div><div id="ldPSPhone" class="ld-info-val">—</div></div>
+        </div>
+        <div class="ld-info-label" style="margin-bottom:10px">Departments</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+          <div class="ld-info-card"><div class="ld-info-label">Lock Desk</div><div id="ldLockDesk" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Submissions</div><div id="ldSubmissionEmail" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Conditions</div><div id="ldConditionsEmail" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Underwriting</div><div id="ldUWEmail" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Closing</div><div id="ldClosingEmail" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Funding</div><div id="ldFundingEmail" class="ld-info-val">—</div></div>
+        </div>
+        <div class="ld-info-label" style="margin-bottom:10px">Links</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div class="ld-info-card"><div class="ld-info-label">Website</div><div id="ldWebsite" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Lender Portal</div><div id="ldPortal" class="ld-info-val">—</div></div>
+          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Physical Address</div><div id="ldAddress" class="ld-info-val">—</div></div>
+          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Guidelines Doc</div><div id="ldGuidelinesUrl" class="ld-info-val">—</div></div>
+        </div>
+      </div>
+      <!-- GUIDELINES -->
+      <div id="ldTab-guidelines" class="ld-tab-body" style="display:none">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+          <div class="ld-info-card"><div class="ld-info-label">Min Credit</div><div id="ldMinCredit2" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Max LTV</div><div id="ldMaxLTV2" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Loan Range</div><div id="ldLoanRange2" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">UW Turn</div><div id="ldUWTurn" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Avg Fund</div><div id="ldFundTime" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Days to Close</div><div id="ldDaysClose" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">AMC</div><div id="ldAMC" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Desk Review</div><div id="ldDeskReview" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Escrow Waiver</div><div id="ldEscrowWaiver" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Non-Warrantable</div><div id="ldNonWarr" class="ld-info-val">—</div></div>
+        </div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Key Overlays</div><div id="ldKeyOverlays" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Exception Process</div><div id="ldExceptionProcess" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card"><div class="ld-info-label">Submission Checklist</div><div id="ldSubmissionChecklist" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+      </div>
+      <!-- COMPENSATION -->
+      <div id="ldTab-compensation" class="ld-tab-body" style="display:none">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
+          <div class="ld-info-card"><div class="ld-info-label">Comp Type</div><div id="ldCompType" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">BPS</div><div id="ldCompBPS" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Min</div><div id="ldCompMin" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Max</div><div id="ldCompMax" class="ld-info-val">—</div></div>
+        </div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Revenue Notes</div><div id="ldRevenueNotes" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Fee Notes</div><div id="ldFeeNotes" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">EPO Policy</div><div id="ldEPO" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card"><div class="ld-info-label">Broker ID (our account)</div><input id="ldBrokerIdInput" type="text" onblur="ldSaveField('broker_id',this.value)" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:.78rem;font-family:inherit;outline:none;margin-top:6px;box-sizing:border-box"></div>
+      </div>
+      <!-- CLAUSES -->
+      <div id="ldTab-clauses" class="ld-tab-body" style="display:none">
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">CPL Clause</div><div id="ldCPLClause" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Mortgagee Clause</div><div id="ldMortgageeClause" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card"><div class="ld-info-label">Physical Address</div><div id="ldPhysicalAddress" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+      </div>
+      <!-- HISTORY -->
+      <div id="ldTab-history" class="ld-tab-body" style="display:none">
+        <div class="ld-info-label" style="margin-bottom:10px">Scenario Submissions</div>
+        <div id="ldSubmissions"><div style="padding:24px;text-align:center;color:#555;font-size:.78rem">No submissions yet</div></div>
+      </div>
+      <!-- NOTES -->
+      <div id="ldTab-notes" class="ld-tab-body" style="display:none">
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label" style="margin-bottom:6px">Last Submission Notes (internal)</div><textarea id="ldLastSubNotes" rows="3" onblur="ldSaveField('last_submission_notes',this.value)" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:.78rem;font-family:inherit;outline:none;resize:vertical;box-sizing:border-box"></textarea></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Price Sheet Notes</div><div id="ldPriceSheetNotes" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card"><div class="ld-info-label" style="margin-bottom:6px">ClickUp Notes</div><div id="ldClickUpNotes" class="ld-info-val" style="white-space:pre-wrap">—</div><a id="ldClickUpLink" href="#" target="_blank" rel="noopener" style="display:none;color:#C9A84C;font-size:.7rem;text-decoration:none;margin-top:6px">Open in ClickUp ↗</a></div>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+  .ld-stat{padding:12px 14px;border-right:1px solid #1e1e1e;text-align:center}
+  .ld-stat:last-child{border-right:none}
+  .ld-stat-label{font-size:.56rem;color:#666;text-transform:uppercase;letter-spacing:.08em;font-weight:700}
+  .ld-stat-val{font-size:1rem;color:#C9A84C;font-weight:800;margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  #lenderDetailModal .ld-tab{background:none;border:none;color:#888;border-bottom:2px solid transparent;padding:11px 18px;font-size:.74rem;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;letter-spacing:.02em}
+  #lenderDetailModal .ld-tab:hover{color:#ccc}
+  #lenderDetailModal .ld-tab.active{color:#C9A84C;border-bottom-color:#C9A84C}
+  .ld-info-card{background:#0a0a0a;border:1px solid #1e1e1e;border-radius:8px;padding:10px 12px}
+  .ld-info-label{font-size:.56rem;color:#666;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:4px}
+  .ld-info-val{font-size:.78rem;color:#ccc;line-height:1.5;word-break:break-word}
+  .ld-info-val a{color:#C9A84C;text-decoration:none}
+  .ld-feature-item{background:#111;border:1px solid #1e1e1e;border-radius:6px;padding:6px 10px}
+  .ld-feature-label{font-size:.6rem;color:#888;font-weight:600}
+  .ld-feature-val{font-size:.72rem;color:#C9A84C;font-weight:700;margin-top:2px}
+  .ld-type-pill{background:rgba(201,168,76,0.08);border:1px solid #C9A84C33;color:#C9A84C;border-radius:8px;padding:2px 7px;font-size:.62rem;font-weight:600;display:inline-block;margin:2px}
+  .ld-rating-star{font-size:1.1rem;color:#333;cursor:pointer;transition:color .1s}
+  .ld-rating-star:hover{color:#C9A84C88}
+</style>
 
 <!-- ═══ IN-PAGE PDF VIEWER MODAL ═══ -->
 <div id="pdfViewerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:99999;align-items:center;justify-content:center;padding:24px">
