@@ -1935,6 +1935,39 @@
           </div>
         </div>
       </div>
+      <!-- ═══ LIABILITIES TABLE (editable, auto-syncs DTI) ═══ -->
+      <div id="liabilitiesPanel" style="padding:18px 22px;border-bottom:1px solid rgba(201,168,76,0.2);background:#0a0a0a">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:.72rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Liabilities</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span id="losLiabOmittedNote" style="font-size:.66rem;color:#888"></span>
+            <span style="font-size:.64rem;color:#666;text-transform:uppercase;letter-spacing:.05em;font-weight:600">Total Monthly</span>
+            <span id="losLiabTotal" style="font-size:1rem;color:#C9A84C;font-weight:800;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">$0.00</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto;border:1px solid #1e1e1e;border-radius:8px;background:#0f0f0f">
+          <table style="width:100%;border-collapse:collapse;font-size:.72rem">
+            <thead>
+              <tr style="background:#141414;border-bottom:1px solid #1e1e1e;color:#666;text-transform:uppercase;letter-spacing:.04em;font-weight:700;font-size:.6rem">
+                <th style="padding:7px 6px;text-align:left;width:32px">#</th>
+                <th style="padding:7px 6px;text-align:left">Owner</th>
+                <th style="padding:7px 6px;text-align:left">Creditor</th>
+                <th style="padding:7px 6px;text-align:left">Type</th>
+                <th style="padding:7px 6px;text-align:left">Account #</th>
+                <th style="padding:7px 6px;text-align:right">Balance</th>
+                <th style="padding:7px 6px;text-align:right">Monthly</th>
+                <th style="padding:7px 6px;text-align:center;width:40px">Omit</th>
+                <th style="padding:7px 6px;text-align:center;width:52px">Payoff</th>
+                <th style="padding:7px 6px;text-align:center;width:32px"></th>
+              </tr>
+            </thead>
+            <tbody id="losLiabBody">
+              <tr><td colspan="10" style="padding:18px;text-align:center;color:#555;font-style:italic">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <button type="button" onclick="losAddLiability()" style="margin-top:8px;background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit"><i class="fas fa-plus" style="margin-right:4px"></i>Add Liability</button>
+      </div>
       <style>
         .ls-badge{background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;padding:4px 10px;border-radius:14px;font-size:.68rem;font-weight:700;white-space:nowrap}
         .ls-card-label{font-size:.62rem;color:#666;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:8px}
@@ -1942,6 +1975,17 @@
         .ls-input{width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:6px 9px;color:#eee;font-size:.76rem;outline:none;font-family:inherit;box-sizing:border-box}
         .ls-input:focus:not([readonly]){border-color:#C9A84C}
         .ls-input[readonly]{background:#0f0f0f;cursor:default}
+        #losLiabBody tr{border-bottom:1px solid #1a1a1a;transition:background .1s}
+        #losLiabBody tr:hover{background:#141414}
+        #losLiabBody tr.omitted td{opacity:.45;text-decoration:line-through}
+        #losLiabBody tr.omitted td:nth-child(8),#losLiabBody tr.omitted td:nth-child(10){opacity:1;text-decoration:none}
+        #losLiabBody td{padding:4px 4px}
+        #losLiabBody input,#losLiabBody select{width:100%;background:#0a0a0a;border:1px solid #262626;border-radius:4px;padding:4px 6px;color:#eee;font-size:.7rem;outline:none;font-family:inherit;box-sizing:border-box}
+        #losLiabBody input:focus,#losLiabBody select:focus{border-color:#C9A84C}
+        #losLiabBody input[type="number"]{text-align:right}
+        #losLiabBody input[type="checkbox"]{width:14px;height:14px;accent-color:#C9A84C;cursor:pointer}
+        #losLiabBody .liab-del{background:none;border:none;color:#666;cursor:pointer;font-size:.9rem;padding:2px 6px}
+        #losLiabBody .liab-del:hover{color:#ef4444}
       </style>
 
       <!-- TOP ACTION BUTTONS -->
@@ -8259,6 +8303,132 @@ async function initLoanSummary() {
     if (el && !el._lsWired) { el._lsWired = true; el.addEventListener('input', lsRecalc); }
   });
   lsRecalc();
+  losLoadLiabilities();
+}
+
+/* ═══ LIABILITIES TABLE (editable, auto-sync to DTI calculator) ═══ */
+var losLiabilities = [];
+var LIAB_TYPES = ['Revolving','Installment','Mortgage Loan','Auto','Student Loan','HELOC','Child Support','Alimony','Tax Lien','Other'];
+var LIAB_OWNERS = ['Borrower','CoBorrower','Joint'];
+function losHeaders() {
+  var k = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  return { 'Authorization':'Bearer '+k, 'apikey':k, 'Content-Type':'application/json' };
+}
+function losBase() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co'; }
+function losCid() { return new URLSearchParams(location.search).get('contact_id') || contactId; }
+function losEscape(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+async function losLoadLiabilities() {
+  var cid = losCid(); if (!cid) return;
+  try {
+    var r = await fetch(losBase()+'/rest/v1/loan_liabilities?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
+    if (!r.ok) { console.warn('[liab] HTTP', r.status); losLiabilities = []; }
+    else losLiabilities = await r.json() || [];
+  } catch(e) { console.warn('[liab] load:', e); losLiabilities = []; }
+  losRenderLiabilities();
+}
+
+function losRenderLiabilities() {
+  var body = document.getElementById('losLiabBody'); if (!body) return;
+  if (!losLiabilities.length) {
+    body.innerHTML = '<tr><td colspan="10" style="padding:18px;text-align:center;color:#555;font-style:italic">No liabilities yet &mdash; click "Add Liability" below</td></tr>';
+    losCalcLiabTotal();
+    return;
+  }
+  body.innerHTML = losLiabilities.map(function(l, i) {
+    var ownerOpts = LIAB_OWNERS.map(function(o){ return '<option'+(l.account_owner===o?' selected':'')+'>'+o+'</option>'; }).join('');
+    var typeOpts = LIAB_TYPES.map(function(t){ return '<option'+(l.liability_type===t?' selected':'')+'>'+t+'</option>'; }).join('');
+    return '<tr id="liab-row-'+l.id+'"'+(l.is_omitted?' class="omitted"':'')+'>'+
+      '<td style="text-align:center;color:#555;font-size:.66rem">'+(i+1)+'</td>'+
+      '<td><select onchange="losUpdateLiab(\''+l.id+'\',\'account_owner\',this.value)">'+ownerOpts+'</select></td>'+
+      '<td><input type="text" value="'+losEscape(l.creditor_name)+'" placeholder="Chase" onchange="losUpdateLiab(\''+l.id+'\',\'creditor_name\',this.value)"></td>'+
+      '<td><select onchange="losUpdateLiab(\''+l.id+'\',\'liability_type\',this.value)">'+typeOpts+'</select></td>'+
+      '<td><input type="text" value="'+losEscape(l.account_number)+'" placeholder="****1234" onchange="losUpdateLiab(\''+l.id+'\',\'account_number\',this.value)"></td>'+
+      '<td><input type="number" step="0.01" value="'+(l.balance||0)+'" onchange="losUpdateLiabAndRecalc(\''+l.id+'\',\'balance\',parseFloat(this.value)||0)"></td>'+
+      '<td><input type="number" step="0.01" value="'+(l.monthly_payment||0)+'" onchange="losUpdateLiabAndRecalc(\''+l.id+'\',\'monthly_payment\',parseFloat(this.value)||0)"></td>'+
+      '<td style="text-align:center"><input type="checkbox"'+(l.is_omitted?' checked':'')+' onchange="losToggleLiabOmit(\''+l.id+'\',this.checked)"></td>'+
+      '<td style="text-align:center"><input type="checkbox"'+(l.is_payoff?' checked':'')+' onchange="losToggleLiabPayoff(\''+l.id+'\',this.checked)"></td>'+
+      '<td style="text-align:center"><button class="liab-del" onclick="losDeleteLiab(\''+l.id+'\')" title="Delete">&times;</button></td>'+
+    '</tr>';
+  }).join('');
+  losCalcLiabTotal();
+}
+
+function losCalcLiabTotal() {
+  var included = losLiabilities.filter(function(l){ return !l.is_omitted && !l.is_payoff; });
+  var omitted = losLiabilities.filter(function(l){ return l.is_omitted; });
+  var payoffs = losLiabilities.filter(function(l){ return l.is_payoff; });
+  var total = included.reduce(function(s,l){ return s + (parseFloat(l.monthly_payment)||0); }, 0);
+  var payoffTotal = payoffs.reduce(function(s,l){ return s + (parseFloat(l.balance)||0); }, 0);
+  var el = document.getElementById('losLiabTotal');
+  if (el) el.textContent = '$' + total.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  var note = document.getElementById('losLiabOmittedNote');
+  if (note) {
+    var parts = [];
+    if (omitted.length) parts.push(omitted.length + ' omitted');
+    if (payoffs.length) parts.push(payoffs.length + ' payoff');
+    note.textContent = parts.length ? '('+parts.join(' · ')+')' : '';
+  }
+  // Sync to DTI calculator (auto-fills Total Monthly Debt + Payoffs)
+  var debtInput = document.getElementById('ls_total_monthly_debt');
+  var payoffInput = document.getElementById('ls_payoffs');
+  if (debtInput) { debtInput.value = total.toFixed(2); }
+  if (payoffInput) { payoffInput.value = payoffTotal.toFixed(2); }
+  if (typeof lsRecalc === 'function') lsRecalc();
+}
+
+async function losAddLiability() {
+  var cid = losCid(); if (!cid) return;
+  try {
+    var r = await fetch(losBase()+'/rest/v1/loan_liabilities', {
+      method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
+      body: JSON.stringify({ contact_id: cid, account_owner:'Borrower', liability_type:'Revolving',
+        creditor_name:'', account_number:'', balance:0, monthly_payment:0,
+        is_omitted:false, is_payoff:false, sort_order: losLiabilities.length,
+        created_at:new Date().toISOString(), updated_at:new Date().toISOString() })
+    });
+    if (!r.ok) { showToast('Add failed: ' + r.status); return; }
+    var rows = await r.json();
+    if (rows && rows[0]) losLiabilities.push(rows[0]);
+    losRenderLiabilities();
+  } catch(e) { showToast('Error: '+e.message); }
+}
+
+async function losUpdateLiab(id, field, value) {
+  losLiabilities = losLiabilities.map(function(l){ return l.id === id ? Object.assign({}, l, {[field]:value}) : l; });
+  try {
+    var body = {}; body[field] = value; body.updated_at = new Date().toISOString();
+    await fetch(losBase()+'/rest/v1/loan_liabilities?id=eq.'+id, {
+      method:'PATCH', headers:Object.assign({},losHeaders(),{'Prefer':'return=minimal'}),
+      body: JSON.stringify(body)
+    });
+  } catch(e) { console.warn('[liab] patch', field, e); }
+}
+
+async function losUpdateLiabAndRecalc(id, field, value) {
+  await losUpdateLiab(id, field, value);
+  losCalcLiabTotal();
+}
+
+async function losToggleLiabOmit(id, isOmitted) {
+  await losUpdateLiab(id, 'is_omitted', isOmitted);
+  var row = document.getElementById('liab-row-'+id);
+  if (row) row.classList.toggle('omitted', isOmitted);
+  losCalcLiabTotal();
+}
+
+async function losToggleLiabPayoff(id, isPayoff) {
+  await losUpdateLiab(id, 'is_payoff', isPayoff);
+  losCalcLiabTotal();
+}
+
+async function losDeleteLiab(id) {
+  if (!confirm('Delete this liability?')) return;
+  try {
+    await fetch(losBase()+'/rest/v1/loan_liabilities?id=eq.'+id, { method:'DELETE', headers: losHeaders() });
+    losLiabilities = losLiabilities.filter(function(l){ return l.id !== id; });
+    losRenderLiabilities();
+  } catch(e) { showToast('Delete failed: '+e.message); }
 }
 
 /* ── GOOGLE MAPS ADDRESS AUTOCOMPLETE ── */
