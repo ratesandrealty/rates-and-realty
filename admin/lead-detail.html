@@ -11794,6 +11794,7 @@ function ldShowTab(tabId, btn) {
   var panel = document.getElementById('ldTab-' + tabId);
   if (panel) panel.style.display = 'block';
   if (btn) btn.classList.add('active');
+  if (tabId === 'docs') ldLoadGuidelines();
 }
 
 async function openLenderDetail(lenderId) {
@@ -11957,6 +11958,151 @@ async function openLenderDetail(lenderId) {
   document.getElementById('ldClickUpNotes').textContent = l.clickup_notes || l.notes || '—';
   var cuLink = document.getElementById('ldClickUpLink');
   if (cuLink) { cuLink.href = l.clickup_url || '#'; cuLink.style.display = l.clickup_url ? 'inline-block' : 'none'; }
+}
+
+/* ═══ LENDER GUIDELINES LIBRARY ═══ */
+var GL_COLORS = {'Conventional':'#3b82f6','FHA':'#f59e0b','VA':'#22c55e','USDA':'#84cc16','DSCR':'#8b5cf6','Non-QM':'#ec4899','Bank Statement':'#f97316','ITIN':'#06b6d4','DPA':'#14b8a6','Jumbo':'#6366f1','Commercial':'#ef4444','SBA':'#d946ef','Hard Money':'#f43f5e','203K':'#fb923c','Reverse':'#94a3b8','General':'#C9A84C'};
+var _ldGuidelineType = 'file';
+var _ldAllGuidelines = [];
+
+function ldShowAddGuideline(type) {
+  _ldGuidelineType = type;
+  document.getElementById('ldAddGuidelineForm').style.display = 'block';
+  document.getElementById('ldGlFileArea').style.display = type === 'file' ? 'block' : 'none';
+  document.getElementById('ldGlUrlArea').style.display = type === 'link' ? 'block' : 'none';
+  var titles = { file:'⬆️ Upload Document', link:'🔗 Add External Link', note:'📝 Add Note' };
+  document.getElementById('ldAddGuidelineTitle').textContent = titles[type] || 'Add';
+  var t = document.getElementById('ldGlTitle'); if (t) t.focus();
+}
+
+async function ldLoadGuidelines() {
+  if (!_currentLenderId) return;
+  try {
+    var r = await fetch(_lhBase()+'/functions/v1/lender-guidelines?lender_id='+_currentLenderId, { headers: _lhHdr() });
+    var data = r.ok ? (await r.json()) : { guidelines: [] };
+    _ldAllGuidelines = data.guidelines || [];
+  } catch(e) { console.warn('[lender-guidelines] load:', e); _ldAllGuidelines = []; }
+  ldRenderGuidelines(_ldAllGuidelines);
+}
+
+function ldFilterGuidelines() {
+  var cat = document.getElementById('ldGuideFilter') ? document.getElementById('ldGuideFilter').value : '';
+  var list = cat ? _ldAllGuidelines.filter(function(g){return g.category === cat;}) : _ldAllGuidelines;
+  ldRenderGuidelines(list);
+}
+
+function _ldGlCard(g) {
+  var color = GL_COLORS[g.category] || '#C9A84C';
+  var icon = g.file_type === 'pdf' ? '📄' : g.file_type === 'url' ? '🔗' : g.file_type === 'note' ? '📝' : (g.file_type === 'docx' || g.file_type === 'doc') ? '📝' : (g.file_type === 'xlsx' || g.file_type === 'xls') ? '📊' : '📄';
+  var sz = g.file_size ? ' · ' + (g.file_size/1024/1024).toFixed(1) + 'MB' : '';
+  var ver = g.version ? 'v'+_lhEsc(g.version) : '';
+  var eff = g.effective_date ? ' · Effective '+_lhEsc(g.effective_date) : '';
+  var name = g.file_name ? ' · '+_lhEsc(g.file_name) : '';
+  var openBtn = g.file_url
+    ? '<button onclick="ldOpenGuideline(\''+_lhEsc(g.file_url)+'\',\''+_lhEsc(g.title||'Document')+'\',\''+(g.file_type||'')+'\')" class="lender-action-btn">'+(g.file_type==='pdf'?'👁 View':'⬇️ Download')+'</button>'
+    : '';
+  var linkBtn = g.external_url
+    ? '<a href="'+_lhEsc(g.external_url)+'" target="_blank" rel="noopener" class="lender-action-btn" style="text-decoration:none">🔗 Open</a>'
+    : '';
+  return '<div style="background:#0f0f0f;border:1px solid #1e1e1e;border-left:3px solid '+color+';border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start">'+
+    '<div style="font-size:1.3rem;flex-shrink:0">'+icon+'</div>'+
+    '<div style="flex:1;min-width:0">'+
+      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
+        '<span style="font-size:.8rem;font-weight:700;color:#eee">'+_lhEsc(g.title||'Untitled')+'</span>'+
+        '<span style="background:'+color+'22;color:'+color+';border-radius:8px;padding:1px 7px;font-size:.58rem;font-weight:700">'+_lhEsc(g.category||'General')+'</span>'+
+      '</div>'+
+      '<div style="font-size:.64rem;color:#666">'+ver+eff+name+sz+'</div>'+
+      (g.content_notes ? '<div style="font-size:.68rem;color:#aaa;margin-top:4px;line-height:1.5;white-space:pre-wrap">'+_lhEsc(g.content_notes)+'</div>' : '')+
+    '</div>'+
+    '<div style="display:flex;gap:4px;flex-shrink:0">'+openBtn+linkBtn+
+      '<button onclick="ldDeleteGuideline(\''+g.id+'\')" class="lender-action-btn" style="color:#ef4444;border-color:rgba(239,68,68,0.3)">🗑</button>'+
+    '</div>'+
+  '</div>';
+}
+
+function ldRenderGuidelines(list) {
+  var container = document.getElementById('ldGuidelinesList'); if (!container) return;
+  if (!list.length) { container.innerHTML = '<div style="padding:32px;text-align:center;color:#555;font-size:.78rem">No guidelines uploaded yet. Use the buttons above to add documents, links, or notes.</div>'; return; }
+  var groups = {};
+  list.forEach(function(g){ var c = g.category || 'General'; if (!groups[c]) groups[c] = []; groups[c].push(g); });
+  var html = '';
+  Object.keys(groups).sort().forEach(function(cat) {
+    var items = groups[cat];
+    var color = GL_COLORS[cat] || '#C9A84C';
+    html += '<div style="font-size:.62rem;color:'+color+';text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin:14px 0 8px;padding-bottom:6px;border-bottom:1px solid '+color+'33">'+_lhEsc(cat)+' ('+items.length+')</div>';
+    html += items.map(_ldGlCard).join('');
+  });
+  container.innerHTML = html;
+}
+
+async function ldSaveGuideline() {
+  if (!_currentLenderId) return;
+  var btn = document.getElementById('ldSaveGlBtn');
+  var origTxt = btn ? btn.textContent : 'Save';
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+  var title = (document.getElementById('ldGlTitle')?.value || '').trim();
+  var category = document.getElementById('ldGlCategory')?.value || 'General';
+  var version = (document.getElementById('ldGlVersion')?.value || '').trim() || null;
+  var effective_date = document.getElementById('ldGlDate')?.value || null;
+  var content_notes = (document.getElementById('ldGlNotes')?.value || '').trim() || null;
+  var hdrJson = Object.assign({}, _lhHdr(), {'Content-Type':'application/json'});
+  try {
+    var payload, resp;
+    if (_ldGuidelineType === 'file') {
+      var fileInput = document.getElementById('ldGlFile');
+      var file = fileInput && fileInput.files ? fileInput.files[0] : null;
+      if (!file) { showToast('Please select a file'); if(btn){btn.textContent=origTxt;btn.disabled=false;} return; }
+      if (file.size > 20 * 1024 * 1024) { showToast('File must be under 20MB'); if(btn){btn.textContent=origTxt;btn.disabled=false;} return; }
+      showToast('Uploading…');
+      var base64 = await new Promise(function(res, rej){ var r=new FileReader(); r.onload=function(){res(r.result.split(',')[1]);}; r.onerror=rej; r.readAsDataURL(file); });
+      payload = { action:'upload', lender_id:_currentLenderId, file_base64:base64, file_name:file.name, file_mime:file.type, file_size:file.size, title: title || file.name.replace(/\.[^/.]+$/,''), category, version, effective_date, content_notes };
+    } else if (_ldGuidelineType === 'link') {
+      var url = (document.getElementById('ldGlUrl')?.value || '').trim();
+      if (!url) { showToast('Please enter a URL'); if(btn){btn.textContent=origTxt;btn.disabled=false;} return; }
+      payload = { action:'add_link', lender_id:_currentLenderId, title: title || url, category, external_url: url, version, effective_date, content_notes };
+    } else {
+      if (!title && !content_notes) { showToast('Please enter a title or note'); if(btn){btn.textContent=origTxt;btn.disabled=false;} return; }
+      payload = { action:'add_note', lender_id:_currentLenderId, title: title || 'Note', category, content_notes, version, effective_date };
+    }
+    resp = await fetch(_lhBase()+'/functions/v1/lender-guidelines', { method:'POST', headers: hdrJson, body: JSON.stringify(payload) });
+    var data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'HTTP '+resp.status);
+    ['ldGlTitle','ldGlVersion','ldGlNotes','ldGlUrl','ldGlDate'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+    var fe = document.getElementById('ldGlFile'); if (fe) fe.value = '';
+    document.getElementById('ldAddGuidelineForm').style.display = 'none';
+    showToast('Guideline saved ✓');
+    await ldLoadGuidelines();
+  } catch(e) { showToast('Save failed: ' + e.message); }
+  if (btn) { btn.textContent = origTxt; btn.disabled = false; }
+}
+
+function ldOpenGuideline(url, title, fileType) {
+  if (fileType === 'pdf') {
+    var modal = document.getElementById('pdfViewerModal');
+    var frame = document.getElementById('pdfViewerFrame');
+    var titleEl = document.getElementById('pdfViewerTitle');
+    if (modal && frame) {
+      if (titleEl) titleEl.textContent = title || 'Document';
+      frame.removeAttribute('srcdoc');
+      frame.src = url;
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+    }
+  } else {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
+async function ldDeleteGuideline(guidelineId) {
+  if (!confirm('Delete this guideline?')) return;
+  try {
+    await fetch(_lhBase()+'/functions/v1/lender-guidelines', {
+      method:'POST', headers: Object.assign({}, _lhHdr(), {'Content-Type':'application/json'}),
+      body: JSON.stringify({ action:'delete', guideline_id: guidelineId })
+    });
+    showToast('Deleted ✓');
+    await ldLoadGuidelines();
+  } catch(e) { showToast('Delete failed: '+e.message); }
 }
 
 async function ldSaveField(field, value) {
@@ -14330,7 +14476,8 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
     <div style="display:flex;gap:0;border-bottom:1px solid #1e1e1e;background:#0a0a0a;overflow-x:auto">
       <button class="ld-tab active" onclick="ldShowTab('overview',this)">Overview</button>
       <button class="ld-tab" onclick="ldShowTab('contacts',this)">Contacts</button>
-      <button class="ld-tab" onclick="ldShowTab('guidelines',this)">Guidelines</button>
+      <button class="ld-tab" onclick="ldShowTab('docs',this)">📚 Docs</button>
+      <button class="ld-tab" onclick="ldShowTab('guidelines',this)">Underwriting</button>
       <button class="ld-tab" onclick="ldShowTab('compensation',this)">Compensation</button>
       <button class="ld-tab" onclick="ldShowTab('clauses',this)">Clauses</button>
       <button class="ld-tab" onclick="ldShowTab('history',this)">History</button>
@@ -14407,7 +14554,43 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
           <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Guidelines Doc URL</div><input id="ldGuidelinesUrl" type="url" class="ld-edit-input" onblur="ldSaveField('guidelines_url',this.value)"></div>
         </div>
       </div>
-      <!-- GUIDELINES -->
+      <!-- DOCS (Guidelines Library) -->
+      <div id="ldTab-docs" class="ld-tab-body" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button onclick="ldShowAddGuideline('file')" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:7px 12px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit">⬆️ Upload</button>
+            <button onclick="ldShowAddGuideline('link')" style="background:rgba(255,255,255,0.05);border:1px solid #333;color:#ccc;border-radius:6px;padding:7px 12px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit">🔗 Link</button>
+            <button onclick="ldShowAddGuideline('note')" style="background:rgba(255,255,255,0.05);border:1px solid #333;color:#ccc;border-radius:6px;padding:7px 12px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit">📝 Note</button>
+          </div>
+          <select id="ldGuideFilter" onchange="ldFilterGuidelines()" class="ld-edit-input" style="width:auto;padding:6px 10px;margin:0">
+            <option value="">All Categories</option>
+            <option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option>
+            <option>DSCR</option><option>Non-QM</option><option>Bank Statement</option><option>ITIN</option>
+            <option>DPA</option><option>Jumbo</option><option>Commercial</option><option>SBA</option>
+            <option>Hard Money</option><option>203K</option><option>Reverse</option><option>General</option>
+          </select>
+        </div>
+        <!-- Add form (hidden by default) -->
+        <div id="ldAddGuidelineForm" style="display:none;background:#0f0f0f;border:1px solid #C9A84C55;border-radius:8px;padding:14px;margin-bottom:12px">
+          <div id="ldAddGuidelineTitle" style="font-size:.74rem;color:#C9A84C;font-weight:700;margin-bottom:10px">Add Guideline</div>
+          <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+            <input id="ldGlTitle" type="text" class="ld-edit-input" placeholder="Title" style="margin:0">
+            <select id="ldGlCategory" class="ld-edit-input" style="margin:0"><option>General</option><option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option><option>DSCR</option><option>Non-QM</option><option>Bank Statement</option><option>ITIN</option><option>DPA</option><option>Jumbo</option><option>Commercial</option><option>SBA</option><option>Hard Money</option><option>203K</option><option>Reverse</option></select>
+            <input id="ldGlVersion" type="text" class="ld-edit-input" placeholder="Version (v2.1)" style="margin:0">
+            <input id="ldGlDate" type="date" class="ld-edit-input" style="margin:0">
+          </div>
+          <div id="ldGlFileArea" style="display:block;margin-bottom:8px"><input id="ldGlFile" type="file" accept=".pdf,.docx,.xlsx,.doc,.xls,.txt" class="ld-edit-input" style="margin:0"></div>
+          <div id="ldGlUrlArea" style="display:none;margin-bottom:8px"><input id="ldGlUrl" type="url" class="ld-edit-input" placeholder="https://guidelines.example.com/..." style="margin:0"></div>
+          <textarea id="ldGlNotes" rows="2" class="ld-edit-textarea" placeholder="Notes / summary (optional)" style="margin-bottom:8px"></textarea>
+          <div style="display:flex;gap:6px;justify-content:flex-end">
+            <button onclick="document.getElementById('ldAddGuidelineForm').style.display='none'" style="background:transparent;border:1px solid #333;color:#888;border-radius:6px;padding:6px 14px;font-size:.7rem;cursor:pointer;font-family:inherit">Cancel</button>
+            <button id="ldSaveGlBtn" onclick="ldSaveGuideline()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 18px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit">Save</button>
+          </div>
+        </div>
+        <div id="ldGuidelinesList"><div style="padding:24px;text-align:center;color:#555;font-size:.78rem">Loading…</div></div>
+      </div>
+
+      <!-- GUIDELINES (Underwriting tab - renamed) -->
       <div id="ldTab-guidelines" class="ld-tab-body" style="display:none">
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
           <div class="ld-info-card"><div class="ld-info-label">Min Credit</div><input id="ldMinCredit2" type="number" class="ld-edit-input" onblur="ldSaveField('min_credit',parseInt(this.value)||null)"></div>
@@ -14524,7 +14707,7 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
     var modal = document.getElementById('pdfViewerModal');
     var frame = document.getElementById('pdfViewerFrame');
     if (modal) modal.style.display = 'none';
-    if (frame) frame.srcdoc = '';
+    if (frame) { frame.srcdoc = ''; frame.removeAttribute('src'); }
     document.body.style.overflow = '';
   }
   function pdfViewerPrint() {
