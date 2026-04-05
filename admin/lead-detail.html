@@ -1849,6 +1849,101 @@
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-application">
 
+      <!-- ═══ LOAN SUMMARY / DTI CALCULATOR (keystone section) ═══ -->
+      <div id="loanSummaryPanel" style="padding:18px 22px;border-bottom:1px solid rgba(201,168,76,0.2);background:linear-gradient(180deg,rgba(201,168,76,0.04),transparent 100%)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div style="font-size:.72rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Loan Summary &middot; DTI / LTV / Cash-to-Close</div>
+          <span id="lsSaveIndicator" style="font-size:.68rem;color:#666;opacity:0;transition:opacity .3s">Saved &check;</span>
+        </div>
+        <!-- Live status bar -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+          <span class="ls-badge" id="lsBadgeLoan">Loan: —</span>
+          <span class="ls-badge" id="lsBadgePI">P&amp;I: —</span>
+          <span class="ls-badge" id="lsBadgePITIA">PITIA: —</span>
+          <span class="ls-badge" id="lsBadgeLTV">LTV: —</span>
+          <span class="ls-badge" id="lsBadgeFrontDTI">Front DTI: —</span>
+          <span class="ls-badge" id="lsBadgeBackDTI">Back DTI: —</span>
+          <span class="ls-badge" id="lsBadgeCTC">Cash to Close: —</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <!-- LOAN + PITIA -->
+          <div style="background:#0f0f0f;border:1px solid #1e1e1e;border-radius:10px;padding:14px">
+            <div class="ls-card-label">Loan Terms</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+              <div><label class="ls-sub">Loan Amount</label><input id="ls_loan_amount" type="number" class="ls-input" placeholder="660000"></div>
+              <div><label class="ls-sub">Purchase/Appraised</label><input id="ls_appraised_value" type="number" class="ls-input" placeholder="900000"></div>
+              <div><label class="ls-sub">Rate %</label><input id="ls_interest_rate" type="number" step="0.001" class="ls-input" placeholder="5.990"></div>
+              <div><label class="ls-sub">Term (months)</label><input id="ls_loan_term_months" type="number" class="ls-input" placeholder="360" value="360"></div>
+            </div>
+            <div class="ls-card-label" style="margin-top:10px">Housing Expense (PITIA)</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div><label class="ls-sub">P&amp;I (auto)</label><input id="ls_pi_payment" type="number" class="ls-input" readonly style="color:#C9A84C;font-weight:700"></div>
+              <div><label class="ls-sub">MI / mo (auto)</label><input id="ls_mi_monthly" type="number" class="ls-input" readonly style="color:#C9A84C"></div>
+              <div><label class="ls-sub">Taxes / mo</label><input id="ls_property_taxes_monthly" type="number" class="ls-input" placeholder="850"></div>
+              <div><label class="ls-sub">Insurance / mo</label><input id="ls_insurance_monthly" type="number" class="ls-input" placeholder="150"></div>
+              <div><label class="ls-sub">HOA / mo</label><input id="ls_hoa_monthly" type="number" class="ls-input" placeholder="0"></div>
+              <div><label class="ls-sub">Other / mo</label><input id="ls_other_monthly" type="number" class="ls-input" placeholder="0"></div>
+            </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1e1e1e;display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.06em;font-weight:700">Total PITIA</span>
+              <span id="ls_total_housing" style="font-size:1rem;color:#C9A84C;font-weight:800">$0</span>
+            </div>
+          </div>
+
+          <!-- INCOME + LIAB + DTI -->
+          <div style="background:#0f0f0f;border:1px solid #1e1e1e;border-radius:10px;padding:14px">
+            <div class="ls-card-label">Income &amp; Debt</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+              <div><label class="ls-sub">Total Monthly Income</label><input id="ls_total_monthly_income" type="number" class="ls-input" placeholder="13700"></div>
+              <div><label class="ls-sub">Total Monthly Debt</label><input id="ls_total_monthly_debt" type="number" class="ls-input" placeholder="3201"></div>
+            </div>
+            <!-- DTI cards -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+              <div style="background:#1a1a1a;border-radius:8px;padding:10px;text-align:center">
+                <div style="font-size:.58rem;color:#666;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:4px">Front DTI</div>
+                <div id="ls_front_dti_display" style="font-size:1.4rem;font-weight:800;color:#eee">—%</div>
+                <div style="background:#0a0a0a;border-radius:4px;height:4px;margin-top:6px;overflow:hidden"><div id="ls_front_dti_bar" style="height:100%;width:0%;background:#C9A84C;transition:width .3s,background .3s"></div></div>
+              </div>
+              <div style="background:#1a1a1a;border-radius:8px;padding:10px;text-align:center">
+                <div style="font-size:.58rem;color:#666;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:4px">Back DTI</div>
+                <div id="ls_back_dti_display" style="font-size:1.4rem;font-weight:800;color:#eee">—%</div>
+                <div style="background:#0a0a0a;border-radius:4px;height:4px;margin-top:6px;overflow:hidden"><div id="ls_back_dti_bar" style="height:100%;width:0%;background:#C9A84C;transition:width .3s,background .3s"></div></div>
+              </div>
+            </div>
+            <div id="ls_dti_status" style="font-size:.7rem;color:#888;padding:8px 10px;background:#1a1a1a;border-radius:6px;line-height:1.5">Enter income + debt to see guideline check</div>
+            <div class="ls-card-label" style="margin-top:12px">LTV Analysis</div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span id="ls_ltv_display" style="font-size:1.1rem;font-weight:800;color:#C9A84C;min-width:68px">—%</span>
+              <div style="flex:1;background:#0a0a0a;border-radius:4px;height:6px;overflow:hidden"><div id="ls_ltv_bar" style="height:100%;width:0%;background:#C9A84C;transition:width .3s,background .3s"></div></div>
+            </div>
+            <div id="ls_mi_note" style="font-size:.66rem;color:#666;margin-top:6px">MI required when LTV &gt; 80%</div>
+          </div>
+
+          <!-- CASH TO CLOSE -->
+          <div style="grid-column:1/-1;background:#0f0f0f;border:1px solid #1e1e1e;border-radius:10px;padding:14px">
+            <div class="ls-card-label">Cash to Close</div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+              <div><label class="ls-sub">Purchase Price</label><input id="ls_purchase_price" type="number" class="ls-input"></div>
+              <div><label class="ls-sub">Down Payment</label><input id="ls_down_payment" type="number" class="ls-input"></div>
+              <div><label class="ls-sub">Est. Closing Costs</label><input id="ls_closing_costs" type="number" class="ls-input" placeholder="8000"></div>
+              <div><label class="ls-sub">Prepaids</label><input id="ls_prepaids" type="number" class="ls-input" placeholder="2000"></div>
+              <div><label class="ls-sub">Payoffs (from liabilities)</label><input id="ls_payoffs" type="number" class="ls-input" readonly style="color:#888"></div>
+              <div><label class="ls-sub">Credits</label><input id="ls_credits" type="number" class="ls-input" placeholder="0"></div>
+              <div style="grid-column:3/span 2;align-self:end"><div style="display:flex;justify-content:space-between;padding:9px 12px;background:rgba(201,168,76,0.08);border:1px solid #C9A84C55;border-radius:8px"><span style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.06em;font-weight:700">Est. Cash to Close</span><span id="ls_cash_to_close_display" style="font-size:1rem;color:#C9A84C;font-weight:800">$0</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <style>
+        .ls-badge{background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;padding:4px 10px;border-radius:14px;font-size:.68rem;font-weight:700;white-space:nowrap}
+        .ls-card-label{font-size:.62rem;color:#666;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:8px}
+        .ls-sub{font-size:.58rem;color:#666;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px;font-weight:600}
+        .ls-input{width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:6px 9px;color:#eee;font-size:.76rem;outline:none;font-family:inherit;box-sizing:border-box}
+        .ls-input:focus:not([readonly]){border-color:#C9A84C}
+        .ls-input[readonly]{background:#0f0f0f;cursor:default}
+      </style>
+
       <!-- TOP ACTION BUTTONS -->
       <div style="display:flex; justify-content:space-between; align-items:center; padding:20px; border-bottom:1px solid rgba(201,168,76,0.15);">
         <h2 style="color:var(--gold); font-size:18px; margin:0; font-family:'Cormorant Garamond',serif;">
@@ -7931,9 +8026,219 @@ async function load1003() {
 
     // Attach auto-save after fields are populated
     attachAutoSave();
+    // Hydrate the Loan Summary panel + compute initial DTI/LTV
+    initLoanSummary();
   } catch (err) {
     console.warn('load1003:', err.message);
   }
+}
+
+/* ═══ LOAN SUMMARY / DTI CALCULATOR ═══ */
+var _lsScenarioId = null, _lsSaveTimer = null;
+function _lsNum(id) { var el = document.getElementById(id); var v = el && el.value ? parseFloat(el.value) : 0; return isNaN(v) ? 0 : v; }
+function _lsSetNum(id, v) { var el = document.getElementById(id); if (el) el.value = (v != null && !isNaN(v)) ? Math.round(v * 100) / 100 : ''; }
+function _lsFmt(v) { return '$' + Math.round(v || 0).toLocaleString(); }
+function _lsDtiColor(pct) { return pct < 36 ? '#22c55e' : pct < 45 ? '#eab308' : pct < 50 ? '#f97316' : '#ef4444'; }
+
+function lsRecalc() {
+  var loanAmt = _lsNum('ls_loan_amount');
+  var rate = _lsNum('ls_interest_rate');
+  var term = _lsNum('ls_loan_term_months') || 360;
+  var apprV = _lsNum('ls_appraised_value');
+  // P&I
+  var pi = 0;
+  if (loanAmt && rate && term) {
+    var r = rate / 100 / 12;
+    pi = r === 0 ? loanAmt / term : loanAmt * r * Math.pow(1+r,term) / (Math.pow(1+r,term)-1);
+  }
+  _lsSetNum('ls_pi_payment', pi);
+  // LTV
+  var ltv = apprV ? (loanAmt / apprV * 100) : 0;
+  // MI
+  var mi = 0;
+  if (ltv > 80) {
+    var miRate = ltv <= 85 ? 0.0052 : ltv <= 90 ? 0.0068 : ltv <= 95 ? 0.0085 : 0.0102;
+    mi = loanAmt * miRate / 12;
+  }
+  _lsSetNum('ls_mi_monthly', mi);
+  // PITIA
+  var taxes = _lsNum('ls_property_taxes_monthly'),
+      ins = _lsNum('ls_insurance_monthly'),
+      hoa = _lsNum('ls_hoa_monthly'),
+      other = _lsNum('ls_other_monthly');
+  var pitia = pi + mi + taxes + ins + hoa + other;
+  document.getElementById('ls_total_housing').textContent = _lsFmt(pitia);
+  // Income + debt
+  var income = _lsNum('ls_total_monthly_income');
+  var debt = _lsNum('ls_total_monthly_debt');
+  // DTI
+  var frontDTI = income ? (pitia / income * 100) : 0;
+  var backDTI = income ? ((pitia + debt) / income * 100) : 0;
+  document.getElementById('ls_front_dti_display').textContent = frontDTI.toFixed(2) + '%';
+  document.getElementById('ls_back_dti_display').textContent = backDTI.toFixed(2) + '%';
+  document.getElementById('ls_front_dti_display').style.color = _lsDtiColor(frontDTI);
+  document.getElementById('ls_back_dti_display').style.color = _lsDtiColor(backDTI);
+  document.getElementById('ls_front_dti_bar').style.width = Math.min(frontDTI, 100) + '%';
+  document.getElementById('ls_back_dti_bar').style.width = Math.min(backDTI, 100) + '%';
+  document.getElementById('ls_front_dti_bar').style.background = _lsDtiColor(frontDTI);
+  document.getElementById('ls_back_dti_bar').style.background = _lsDtiColor(backDTI);
+  // Guideline status
+  var statusLines = [];
+  if (backDTI > 0) {
+    statusLines.push(backDTI <= 45 ? '<span style="color:#22c55e">\u2713 Conventional OK (\u226445%)</span>' : '<span style="color:#ef4444">\u2717 Exceeds Conventional (\u226445%)</span>');
+    statusLines.push(backDTI <= 57 ? '<span style="color:#22c55e">\u2713 FHA OK (\u226457%)</span>' : '<span style="color:#ef4444">\u2717 Exceeds FHA (\u226457%)</span>');
+    statusLines.push(backDTI <= 41 ? '<span style="color:#22c55e">\u2713 VA OK (\u226441%)</span>' : '<span style="color:#ef4444">\u2717 Exceeds VA (\u226441%)</span>');
+  }
+  document.getElementById('ls_dti_status').innerHTML = statusLines.length ? statusLines.join(' &nbsp;\u00b7&nbsp; ') : 'Enter income + debt to see guideline check';
+  // LTV display
+  document.getElementById('ls_ltv_display').textContent = ltv ? ltv.toFixed(2) + '%' : '—%';
+  document.getElementById('ls_ltv_bar').style.width = Math.min(ltv, 100) + '%';
+  document.getElementById('ls_ltv_bar').style.background = ltv > 97 ? '#ef4444' : ltv > 80 ? '#f97316' : '#22c55e';
+  document.getElementById('ls_mi_note').textContent = ltv > 80 ? ('MI applies at ' + ltv.toFixed(1) + '% LTV — ' + _lsFmt(mi) + '/mo') : 'No MI (LTV \u2264 80%)';
+  // Cash to close
+  var price = _lsNum('ls_purchase_price'), down = _lsNum('ls_down_payment'),
+      closing = _lsNum('ls_closing_costs'), prepaid = _lsNum('ls_prepaids'),
+      payoffs = _lsNum('ls_payoffs'), credits = _lsNum('ls_credits');
+  var ctc = down + closing + prepaid + payoffs - credits;
+  document.getElementById('ls_cash_to_close_display').textContent = _lsFmt(ctc);
+  // Status badges
+  document.getElementById('lsBadgeLoan').textContent = 'Loan: ' + _lsFmt(loanAmt);
+  document.getElementById('lsBadgePI').textContent = 'P&I: ' + _lsFmt(pi);
+  document.getElementById('lsBadgePITIA').textContent = 'PITIA: ' + _lsFmt(pitia);
+  document.getElementById('lsBadgeLTV').textContent = 'LTV: ' + (ltv ? ltv.toFixed(1)+'%' : '—');
+  document.getElementById('lsBadgeFrontDTI').textContent = 'Front: ' + frontDTI.toFixed(1) + '%';
+  document.getElementById('lsBadgeBackDTI').textContent = 'Back: ' + backDTI.toFixed(1) + '%';
+  document.getElementById('lsBadgeCTC').textContent = 'CTC: ' + _lsFmt(ctc);
+  // Auto-save (debounced)
+  _lsAutoSave({ loan_amount:loanAmt, appraised_value:apprV, interest_rate:rate, loan_term_months:term, purchase_price:price, down_payment:down,
+    pi_payment:pi, mi_monthly:mi, property_taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa, total_housing_payment:pitia,
+    total_monthly_income:income, total_monthly_debt:debt, front_end_dti:frontDTI, back_end_dti:backDTI, ltv:ltv, cash_to_close:ctc });
+}
+
+function _lsAutoSave(updates) {
+  clearTimeout(_lsSaveTimer);
+  _lsSaveTimer = setTimeout(async function() {
+    var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
+    if (!cid) return;
+    var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+    var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    var indicator = document.getElementById('lsSaveIndicator');
+    if (indicator) { indicator.textContent = 'Saving…'; indicator.style.opacity = '1'; indicator.style.color = '#888'; }
+    updates.contact_id = cid;
+    updates.updated_at = new Date().toISOString();
+    try {
+      var r;
+      if (_lsScenarioId) {
+        r = await fetch(base + '/rest/v1/loan_scenarios?id=eq.' + _lsScenarioId, {
+          method:'PATCH', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon,'Prefer':'return=minimal'},
+          body: JSON.stringify(updates)
+        });
+      } else {
+        updates.scenario_name = 'Primary Scenario';
+        updates.is_primary = true;
+        updates.created_at = new Date().toISOString();
+        r = await fetch(base + '/rest/v1/loan_scenarios', {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon,'Prefer':'return=representation'},
+          body: JSON.stringify(updates)
+        });
+        if (r.ok) { var rows = await r.json(); if (rows && rows[0]) _lsScenarioId = rows[0].id; }
+      }
+      if (indicator) {
+        if (r && r.ok) { indicator.textContent = 'Saved \u2713'; indicator.style.color = '#22c55e'; }
+        else { indicator.textContent = 'Save failed'; indicator.style.color = '#ef4444'; }
+        setTimeout(function(){ indicator.style.opacity = '0'; }, 1500);
+      }
+    } catch(e) {
+      console.warn('[loan-summary] save error:', e);
+      if (indicator) { indicator.textContent = 'Save failed'; indicator.style.color = '#ef4444'; }
+    }
+  }, 800);
+}
+
+async function initLoanSummary() {
+  var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
+  if (!cid) return;
+  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var hdrs = { 'Authorization':'Bearer '+anon, 'apikey':anon };
+
+  // Seed from mortgage_applications (loan amount, rate, etc.)
+  try {
+    var mar = await fetch(base + '/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&order=created_at.desc&limit=1', { headers: hdrs });
+    if (mar.ok) {
+      var apps = await mar.json();
+      if (apps && apps[0]) {
+        var a = apps[0];
+        if (!document.getElementById('ls_loan_amount').value) _lsSetNum('ls_loan_amount', a.loan_amount);
+        if (!document.getElementById('ls_appraised_value').value) _lsSetNum('ls_appraised_value', a.appraised_value || a.purchase_price || a.property_value);
+        if (!document.getElementById('ls_interest_rate').value) _lsSetNum('ls_interest_rate', a.note_rate || a.interest_rate);
+        if (!document.getElementById('ls_purchase_price').value) _lsSetNum('ls_purchase_price', a.purchase_price);
+        if (!document.getElementById('ls_total_monthly_income').value) _lsSetNum('ls_total_monthly_income', a.total_monthly_income);
+      }
+    }
+  } catch(e) { console.warn('[loan-summary] app load:', e); }
+
+  // Load existing primary scenario
+  try {
+    var sr = await fetch(base + '/rest/v1/loan_scenarios?contact_id=eq.'+cid+'&is_primary=eq.true&limit=1', { headers: hdrs });
+    if (sr.ok) {
+      var scens = await sr.json();
+      if (scens && scens[0]) {
+        var s = scens[0];
+        _lsScenarioId = s.id;
+        // Overlay any saved values
+        if (s.loan_amount) _lsSetNum('ls_loan_amount', s.loan_amount);
+        if (s.appraised_value) _lsSetNum('ls_appraised_value', s.appraised_value);
+        if (s.interest_rate) _lsSetNum('ls_interest_rate', s.interest_rate);
+        if (s.loan_term_months) _lsSetNum('ls_loan_term_months', s.loan_term_months);
+        if (s.property_taxes_monthly) _lsSetNum('ls_property_taxes_monthly', s.property_taxes_monthly);
+        if (s.insurance_monthly) _lsSetNum('ls_insurance_monthly', s.insurance_monthly);
+        if (s.hoa_monthly) _lsSetNum('ls_hoa_monthly', s.hoa_monthly);
+        if (s.total_monthly_income) _lsSetNum('ls_total_monthly_income', s.total_monthly_income);
+        if (s.total_monthly_debt) _lsSetNum('ls_total_monthly_debt', s.total_monthly_debt);
+        if (s.purchase_price) _lsSetNum('ls_purchase_price', s.purchase_price);
+        if (s.down_payment) _lsSetNum('ls_down_payment', s.down_payment);
+      }
+    }
+  } catch(e) { console.warn('[loan-summary] scenario load:', e); }
+
+  // Pull total debt from loan_liabilities (non-omitted)
+  try {
+    var lr = await fetch(base + "/rest/v1/loan_liabilities?contact_id=eq."+cid+"&is_omitted=eq.false&select=monthly_payment,is_payoff,balance", { headers: hdrs });
+    if (lr.ok) {
+      var liabs = await lr.json();
+      var totalDebt = 0, totalPayoffs = 0;
+      (liabs||[]).forEach(function(l){
+        var pmt = parseFloat(l.monthly_payment) || 0;
+        var bal = parseFloat(l.balance) || 0;
+        if (l.is_payoff) totalPayoffs += bal;
+        else totalDebt += pmt;
+      });
+      if (totalDebt && !document.getElementById('ls_total_monthly_debt').value) _lsSetNum('ls_total_monthly_debt', totalDebt);
+      if (totalPayoffs) _lsSetNum('ls_payoffs', totalPayoffs);
+    }
+  } catch(e) { console.warn('[loan-summary] liabilities load:', e); }
+
+  // Pull total income from loan_income (active)
+  try {
+    var ir = await fetch(base + "/rest/v1/loan_income?contact_id=eq."+cid+"&is_active=eq.true&select=monthly_amount", { headers: hdrs });
+    if (ir.ok) {
+      var incRows = await ir.json();
+      var totalInc = (incRows||[]).reduce(function(s,r){ return s + (parseFloat(r.monthly_amount)||0); }, 0);
+      if (totalInc && !document.getElementById('ls_total_monthly_income').value) _lsSetNum('ls_total_monthly_income', totalInc);
+    }
+  } catch(e) { console.warn('[loan-summary] income load:', e); }
+
+  // Wire all inputs to recalc on input
+  var ids = ['ls_loan_amount','ls_interest_rate','ls_loan_term_months','ls_appraised_value',
+             'ls_property_taxes_monthly','ls_insurance_monthly','ls_hoa_monthly','ls_other_monthly',
+             'ls_total_monthly_income','ls_total_monthly_debt',
+             'ls_purchase_price','ls_down_payment','ls_closing_costs','ls_prepaids','ls_credits'];
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el && !el._lsWired) { el._lsWired = true; el.addEventListener('input', lsRecalc); }
+  });
+  lsRecalc();
 }
 
 /* ── GOOGLE MAPS ADDRESS AUTOCOMPLETE ── */
