@@ -703,10 +703,6 @@ function showLenderDetail(lender) {
         <div class="detail-card-label">Loan Types</div>
         <div id="loanTypeChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;"></div>
       </div>
-      <div class="detail-card" style="grid-column:span 2;">
-        <div class="detail-card-label">Specialty Programs / Niches</div>
-        <textarea id="lenderLoanPrograms" rows="3" placeholder="e.g. DSCR investor, Bank Statement self-employed, Non-QM, Jumbo, CalHFA, DPA, ITIN..." style="width:100%;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:10px;font-size:13px;margin-top:6px;box-sizing:border-box;resize:vertical;font-family:inherit;">${Array.isArray(lender.loan_programs) ? lender.loan_programs.join(', ') : (lender.loan_programs || (progs||[]).join(', ') || '')}</textarea>
-      </div>
     </div>
 
     <!-- Editable fields -->
@@ -721,13 +717,9 @@ function showLenderDetail(lender) {
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Phone</label>
           <input type="text" class="detail-input" id="edit_phone" value="${lender.contact_phone||''}" placeholder="(714) 000-0000">
         </div>
-        <div>
+        <div style="grid-column:span 2;">
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Email</label>
           <input type="email" class="detail-input" id="edit_email" value="${lender.contact_email||''}" placeholder="rep@lender.com">
-        </div>
-        <div>
-          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Website</label>
-          <input type="text" class="detail-input" id="edit_website" value="${lender.website||''}" placeholder="https://lender.com">
         </div>
         <div>
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Min Credit Score</label>
@@ -737,6 +729,31 @@ function showLenderDetail(lender) {
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Max LTV %</label>
           <input type="number" class="detail-input" id="edit_ltv" value="${lender.max_ltv||''}" placeholder="97">
         </div>
+        <!-- SECTION A — LENDER LINKS -->
+        <div style="grid-column:span 2;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+              <label style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600;">Lender Website</label>
+              <div style="display:flex;align-items:center;gap:4px;margin-top:4px;">
+                <input type="url" id="lenderWebsite" value="${lender.website||''}" placeholder="https://lender.com" oninput="document.getElementById('lenderWebsiteOpen').style.display=this.value?'inline':'none'" style="flex:1;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">
+                <button type="button" id="lenderWebsiteOpen" onclick="window.open(document.getElementById('lenderWebsite').value,'_blank')" title="Open link" style="background:none;border:none;color:#C9A84C;cursor:pointer;padding:0 6px;font-size:16px;display:${lender.website?'inline':'none'};">↗</button>
+              </div>
+            </div>
+            <div>
+              <label style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600;">Lender Portal / Login</label>
+              <div style="display:flex;align-items:center;gap:4px;margin-top:4px;">
+                <input type="url" id="lenderPortalUrl" value="${lender.lender_portal||''}" placeholder="https://portal.lender.com" oninput="document.getElementById('lenderPortalOpen').style.display=this.value?'inline':'none'" style="flex:1;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">
+                <button type="button" id="lenderPortalOpen" onclick="window.open(document.getElementById('lenderPortalUrl').value,'_blank')" title="Open link" style="background:none;border:none;color:#C9A84C;cursor:pointer;padding:0 6px;font-size:16px;display:${lender.lender_portal?'inline':'none'};">↗</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- SECTION B — LOAN PROGRAMS CHECKLIST -->
+        <div style="grid-column:span 2;">
+          <label style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600;">Loan Programs</label>
+          <div id="loanProgramsGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px 12px;margin-top:8px;"></div>
+        </div>
+        <!-- Key Overlays / Specialty Notes -->
         <div style="grid-column:span 2;">
           <div class="lender-notes-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
             <div>
@@ -746,6 +763,36 @@ function showLenderDetail(lender) {
             <div>
               <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Specialty Notes</label>
               <textarea class="detail-textarea" id="lenderSpecialtyNotes" rows="3" placeholder="e.g. Best for self-employed, Non-QM, bank statement. Strong on jumbo...">${lender.specialty_notes || lender.notes || ''}</textarea>
+            </div>
+          </div>
+        </div>
+        <!-- SECTION C — SUBMISSION & OPERATIONS CONTACTS -->
+        <div style="grid-column:span 2;">
+          <label style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600;">Submission & Operations Contacts</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;">
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Submission Email</label>
+              <input type="email" id="lenderSubmissionEmail" value="${lender.submission_email||''}" placeholder="submit@lender.com" style="width:100%;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;margin-top:4px;">
+            </div>
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Conditions Email</label>
+              <input type="email" id="lenderConditionsEmail" value="${lender.conditions_email||''}" placeholder="conditions@lender.com" style="width:100%;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;margin-top:4px;">
+            </div>
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Lock Desk Email</label>
+              <input type="email" id="lenderLockDeskEmail" value="${lender.lock_desk_email||''}" placeholder="lockdesk@lender.com" style="width:100%;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;margin-top:4px;">
+            </div>
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Underwriting Email</label>
+              <input type="email" id="lenderUnderwritingEmail" value="${lender.underwriting_email||''}" placeholder="uw@lender.com" style="width:100%;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;margin-top:4px;">
+            </div>
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Closing Email</label>
+              <input type="email" id="lenderClosingEmail" value="${lender.closing_email||''}" placeholder="closing@lender.com" style="width:100%;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;margin-top:4px;">
+            </div>
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Funding Email</label>
+              <input type="email" id="lenderFundingEmail" value="${lender.funding_email||''}" placeholder="funding@lender.com" style="width:100%;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;margin-top:4px;">
             </div>
           </div>
         </div>
@@ -762,6 +809,9 @@ function showLenderDetail(lender) {
   else if (typeof rawTypes === 'string' && rawTypes) activeTypes = rawTypes.split(',').map(x => x.trim()).filter(Boolean);
   window._editLoanTypes = activeTypes.slice();
   renderLoanTypeChips();
+
+  // Loan programs checklist
+  renderLoanProgramsChecklist(lender.loan_programs);
 
   // Form link row
   window.ldCurrentLenderId = lender.id;
@@ -844,6 +894,32 @@ async function regenerateLenderToken() {
 
 const LOAN_TYPES = ['Conventional','FHA','VA','USDA','Jumbo','Non-QM','DSCR','Bank Statement','Commercial','Hard Money','Bridge','CalHFA','DPA','ITIN','Construction'];
 
+const LOAN_PROGRAMS_LIST = [
+  'HomeReady','Home Possible','97% LTV','FHA 203k','FHA Streamline',
+  'VA IRRRL','USDA Rural','Jumbo (Non-Agency)','Super Jumbo',
+  'Non-QM','DSCR Investor','Bank Statement 12mo','Bank Statement 24mo',
+  'Asset Depletion','1099 Only','P&L Only','Foreign National',
+  'ITIN Loans','Interest Only','40-Year Fixed','ARM 5/1','ARM 7/1',
+  'CalHFA MyHome','CalHFA Zero Interest','GSFA Platinum','GSFA OpenDoors',
+  'Chenoa Fund','Down Payment Assistance','2-1 Buydown','Construction Perm',
+  'Fix & Flip','Bridge Loan','Multifamily 5+','Commercial RE','SBA'
+];
+
+function renderLoanProgramsChecklist(rawPrograms) {
+  const wrap = document.getElementById('loanProgramsGrid');
+  if (!wrap) return;
+  let active = [];
+  if (Array.isArray(rawPrograms)) active = rawPrograms.map(x => String(x).trim());
+  else if (typeof rawPrograms === 'string' && rawPrograms) active = rawPrograms.split(',').map(x => x.trim()).filter(Boolean);
+  const activeLC = active.map(x => x.toLowerCase());
+  wrap.innerHTML = LOAN_PROGRAMS_LIST.map(function(p){
+    const safe = p.replace(/"/g,'&quot;');
+    const isChecked = activeLC.indexOf(p.toLowerCase()) >= 0 ? ' checked' : '';
+    return '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;"><input type="checkbox" value="'+safe+'" style="accent-color:#C9A84C;"'+isChecked+'>'+p+'</label>';
+  }).join('');
+  window._editLoanProgramsList = active.filter(a => LOAN_PROGRAMS_LIST.some(p => p.toLowerCase() === a.toLowerCase()));
+}
+
 function renderLoanTypeChips() {
   const wrap = document.getElementById('loanTypeChips');
   if (!wrap) return;
@@ -866,17 +942,29 @@ function toggleLoanTypeChip(t) {
 }
 
 async function saveLenderDetails(lenderId, clickupId) {
+  // Snapshot checked loan programs from checklist
+  window._editLoanProgramsList = Array.from(
+    document.querySelectorAll('#loanProgramsGrid input[type=checkbox]:checked')
+  ).map(cb => cb.value);
+
   const updates = {
     contact_name: document.getElementById('edit_contact_name').value,
     contact_phone: document.getElementById('edit_phone').value,
     contact_email: document.getElementById('edit_email').value,
-    website: document.getElementById('edit_website').value,
+    website: document.getElementById('lenderWebsite')?.value || '',
+    lender_portal: document.getElementById('lenderPortalUrl')?.value || '',
     min_credit_score: parseInt(document.getElementById('edit_credit').value) || null,
     max_ltv: parseFloat(document.getElementById('edit_ltv').value) || null,
     loan_types: (window._editLoanTypes || []).slice(),
-    loan_programs: document.getElementById('lenderLoanPrograms')?.value || '',
+    loan_programs: window._editLoanProgramsList,
     key_overlays: document.getElementById('lenderKeyOverlays')?.value || '',
     specialty_notes: document.getElementById('lenderSpecialtyNotes')?.value || '',
+    submission_email: document.getElementById('lenderSubmissionEmail')?.value || '',
+    conditions_email: document.getElementById('lenderConditionsEmail')?.value || '',
+    lock_desk_email: document.getElementById('lenderLockDeskEmail')?.value || '',
+    underwriting_email: document.getElementById('lenderUnderwritingEmail')?.value || '',
+    closing_email: document.getElementById('lenderClosingEmail')?.value || '',
+    funding_email: document.getElementById('lenderFundingEmail')?.value || '',
     updated_at: new Date().toISOString(),
   };
 
