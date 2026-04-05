@@ -3711,42 +3711,84 @@
          TAB: LENDERS
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-lenders">
-      <!-- Header -->
-      <div style="padding:20px 0 16px; display:flex; justify-content:space-between; align-items:center;">
+      <!-- Header bar -->
+      <div style="padding:18px 20px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="lender-search" oninput="filterLenders()" placeholder="Search lenders, AE, loan types..." style="flex:1;min-width:220px;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:8px;color:#eee;padding:8px 12px;font-size:.8rem;outline:none;font-family:inherit">
+        <button onclick="lenderBCCEmail()" class="lender-hdr-btn" title="Copy BCC emails for visible lenders"><i class="fas fa-envelope" style="margin-right:4px"></i>BCC All</button>
+        <button onclick="syncLendersFromClickUp()" class="lender-hdr-btn" title="Sync from ClickUp"><i class="fas fa-bolt" style="margin-right:4px"></i>Sync ClickUp</button>
+        <div style="display:flex;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden">
+          <button id="viewGrid" onclick="setLenderView('grid')" style="background:#C9A84C;color:#111;border:none;padding:8px 10px;cursor:pointer;font-family:inherit" title="Grid view"><i class="fas fa-th"></i></button>
+          <button id="viewTable" onclick="setLenderView('table')" style="background:#1a1a1a;color:#aaa;border:none;padding:8px 10px;cursor:pointer;font-family:inherit" title="Table view"><i class="fas fa-list"></i></button>
+        </div>
+      </div>
+      <!-- Filter pills -->
+      <div style="padding:0 20px 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button class="lender-pill active" data-pill="all" onclick="setLenderPill('all',this)">All <span id="pillAllCount" style="opacity:.6"></span></button>
+        <button class="lender-pill" data-pill="preferred" onclick="setLenderPill('preferred',this)">&#11088; Preferred</button>
+        <button class="lender-pill" data-pill="favorites" onclick="setLenderPill('favorites',this)">&#10084;&#65039; Favorites</button>
+        <button class="lender-pill" data-pill="qualifying" onclick="setLenderPill('qualifying',this)">&#10003; Qualifying</button>
+      </div>
+      <!-- Split layout -->
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:14px;padding:0 20px 20px">
+        <!-- Sidebar filters -->
+        <aside style="background:#0f0f0f;border:1px solid #1e1e1e;border-radius:10px;padding:12px;max-height:calc(100vh - 260px);overflow-y:auto">
+          <div class="lender-filter-group">
+            <div class="lender-filter-label">Loan Types</div>
+            <div id="lenderTypeFilters"></div>
+          </div>
+          <div class="lender-filter-group">
+            <div class="lender-filter-label">Loan Programs</div>
+            <div id="lenderProgramFilters"></div>
+          </div>
+          <div class="lender-filter-group">
+            <div class="lender-filter-label">Min Credit Score <span id="creditFilterVal" style="color:#C9A84C;font-weight:700;margin-left:4px">—</span></div>
+            <input type="range" id="lenderCreditSlider" min="0" max="850" step="20" value="0" oninput="setMinCreditFilter(this.value)" style="width:100%;accent-color:#C9A84C">
+          </div>
+          <div class="lender-filter-group">
+            <div class="lender-filter-label">Channel</div>
+            <div id="lenderChannelFilters"></div>
+          </div>
+          <div class="lender-filter-group">
+            <div class="lender-filter-label">Min Rating</div>
+            <div id="ratingFilter" style="display:flex;gap:2px">
+              <span onclick="setRatingFilter(0)" style="cursor:pointer;color:#333;font-size:.84rem">&#9733;</span>
+              <span onclick="setRatingFilter(1)" style="cursor:pointer;color:#333;font-size:.84rem">&#9733;</span>
+              <span onclick="setRatingFilter(2)" style="cursor:pointer;color:#333;font-size:.84rem">&#9733;</span>
+              <span onclick="setRatingFilter(3)" style="cursor:pointer;color:#333;font-size:.84rem">&#9733;</span>
+              <span onclick="setRatingFilter(4)" style="cursor:pointer;color:#333;font-size:.84rem">&#9733;</span>
+              <span onclick="setRatingFilter(5)" style="cursor:pointer;color:#333;font-size:.84rem">&#9733;</span>
+            </div>
+          </div>
+        </aside>
+        <!-- Content -->
         <div>
-          <div style="font-size:16px;font-weight:700;">Lender Matching</div>
-          <div id="lender-match-sub" style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;">Loading matches based on borrower profile…</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <input type="text" id="lender-search" oninput="searchLenders(this.value)" placeholder="🔍 Search lenders…" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;padding:8px 14px;font-size:13px;width:220px;outline:none;">
-          <select id="lender-type-filter" onchange="filterLenders()" style="background:#1a1a1a;border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;padding:8px 12px;font-size:13px;cursor:pointer;">
-            <option value="">All Types</option>
-            <option value="conventional">Conventional</option>
-            <option value="government">FHA/VA/USDA</option>
-            <option value="non_qm">Non-QM</option>
-            <option value="commercial">Commercial</option>
-          </select>
-          <button onclick="loadLenderMatches()" style="padding:9px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:13px;cursor:pointer;">🔄 Refresh</button>
-          <button onclick="syncLendersFromClickUp()" style="padding:9px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:var(--gold);font-size:13px;cursor:pointer;">⚡ Sync ClickUp</button>
+          <div id="lenderMatchCount" style="font-size:.7rem;color:#888;margin-bottom:10px;font-weight:600">Loading...</div>
+          <div id="lenderGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px"></div>
+          <div id="lenderTable" style="display:none;overflow-x:auto"></div>
         </div>
       </div>
-
-      <!-- Borrower profile summary bar -->
-      <div id="lender-borrower-bar" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 20px;margin-bottom:16px;display:flex;gap:24px;flex-wrap:wrap;">
-        <div><div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;">Credit Score</div><div id="lb-credit" style="font-size:15px;font-weight:700;margin-top:2px;">—</div></div>
-        <div><div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;">Loan Amount</div><div id="lb-amount" style="font-size:15px;font-weight:700;margin-top:2px;">—</div></div>
-        <div><div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;">Loan Type</div><div id="lb-type" style="font-size:15px;font-weight:700;margin-top:2px;">—</div></div>
-        <div><div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;">LTV</div><div id="lb-ltv" style="font-size:15px;font-weight:700;margin-top:2px;">—</div></div>
-        <div style="margin-left:auto;display:flex;align-items:center;"><span id="lb-match-count" style="background:rgba(201,168,76,0.15);color:var(--gold);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;"></span></div>
-      </div>
-
-      <!-- Lender cards grid -->
-      <div id="lender-matches-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;">
-        <div style="grid-column:1/-1;text-align:center;padding:48px;color:rgba(255,255,255,0.3);">
-          <div style="font-size:40px;margin-bottom:8px;">🏦</div>
-          <div>Loading lenders…</div>
-        </div>
-      </div>
+      <style>
+        .lender-hdr-btn{background:rgba(255,255,255,0.04);border:1px solid #2a2a2a;color:#ccc;border-radius:8px;padding:8px 12px;font-size:.76rem;cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap}
+        .lender-hdr-btn:hover{border-color:#C9A84C55;color:#C9A84C}
+        .lender-pill{background:transparent;border:1px solid #2a2a2a;color:#888;border-radius:18px;padding:5px 12px;font-size:.72rem;cursor:pointer;font-family:inherit;transition:all .15s}
+        .lender-pill:hover{border-color:#444;color:#ccc}
+        .lender-pill.active{background:rgba(201,168,76,0.12);border-color:#C9A84C;color:#C9A84C;font-weight:700}
+        .lender-filter-group{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #1a1a1a}
+        .lender-filter-group:last-child{border-bottom:none}
+        .lender-filter-label{font-size:.6rem;color:#666;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:7px}
+        .lender-filter-group label{display:block;font-size:.72rem;color:#bbb;padding:3px 0;cursor:pointer}
+        .lender-filter-group input[type="checkbox"]{accent-color:#C9A84C;margin-right:6px;vertical-align:middle}
+        .lender-card{background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;transition:all .15s;position:relative}
+        .lender-card:hover{border-color:#C9A84C55;transform:translateY(-2px)}
+        .lender-card.qualifies{border-color:rgba(34,197,94,0.25)}
+        .lender-card.fails{opacity:.55}
+        .lender-logo{width:40px;height:40px;border-radius:8px;background:#1a1a1a;border:1px solid #2a2a2a;display:flex;align-items:center;justify-content:center;font-weight:800;color:#C9A84C;font-size:.72rem;flex-shrink:0;overflow:hidden}
+        .lender-logo img{width:100%;height:100%;object-fit:contain}
+        .lender-type-pill{background:rgba(201,168,76,0.08);border:1px solid #C9A84C33;color:#C9A84C;border-radius:10px;padding:1px 7px;font-size:.58rem;font-weight:600}
+        .lender-action-btn{background:rgba(255,255,255,0.04);border:1px solid #2a2a2a;color:#aaa;border-radius:6px;padding:4px 7px;font-size:.66rem;cursor:pointer;font-family:inherit}
+        .lender-action-btn:hover{border-color:#C9A84C55;color:#C9A84C}
+        .lender-card-stars span{cursor:pointer;font-size:.72rem;transition:color .1s}
+      </style>
     </div><!-- /tab-lenders -->
 
   </main>
@@ -11354,11 +11396,260 @@ async function syncLendersFromClickUp() {
     const data = await resp.json();
     if (data.error) throw new Error(data.error);
     if (typeof toast === 'function') toast(`ClickUp sync complete — ${data.synced || 0} lenders updated`);
-    await loadLenderMatches();
+    await loadLenders();
   } catch(e) {
     console.error('Sync error:', e);
     if (typeof toast === 'function') toast('Sync failed: ' + e.message, true);
   }
+}
+
+/* ═══ NEW LENDERS TAB — split layout, filters, qualifying check ═══ */
+var _lenderPill = 'all', _lenderView = 'grid', _lenderRatingMin = 0;
+var _selLenderTypes = new Set(), _selLenderProgs = new Set(), _selLenderChans = new Set();
+function _lhBase(){ return window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co'; }
+function _lhHdr(){ var k = window.APP_CONFIG?.SUPABASE_ANON_KEY || ''; return {'Authorization':'Bearer '+k,'apikey':k}; }
+function _lhEsc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+async function loadLenders() {
+  var grid = document.getElementById('lenderGrid');
+  if (grid) grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#555">Loading lenders…</div>';
+  try {
+    var r = await fetch(_lhBase()+'/rest/v1/lenders?is_active=eq.true&order=is_preferred.desc,name.asc&limit=500', { headers: _lhHdr() });
+    window._allLenders = r.ok ? (await r.json() || []) : [];
+  } catch(e) { console.warn('[lenders] load:', e); window._allLenders = []; }
+  buildLenderSidebarFilters();
+  filterLenders();
+}
+// Backwards-compat alias for existing callers
+window.loadLenderMatches = loadLenders;
+
+function buildLenderSidebarFilters() {
+  var types = new Set(), progs = new Set(), chans = new Set();
+  (window._allLenders||[]).forEach(function(l){
+    (l.loan_types||[]).forEach(function(t){ if(t) types.add(t); });
+    ([].concat(l.loan_programs||[], l.programs||[])).forEach(function(p){ if(p) progs.add(p); });
+    if (l.channel) String(l.channel).split(',').forEach(function(c){ c=c.trim(); if(c) chans.add(c); });
+  });
+  var make = function(containerId, items, selSet, fnName) {
+    var el = document.getElementById(containerId); if (!el) return;
+    var arr = Array.from(items).sort();
+    if (!arr.length) { el.innerHTML = '<div style="font-size:.66rem;color:#444;font-style:italic">None</div>'; return; }
+    el.innerHTML = arr.map(function(it) {
+      var esc = _lhEsc(it); var ck = selSet.has(it) ? ' checked' : '';
+      return '<label><input type="checkbox" value="'+esc+'" onchange="'+fnName+'(this.value,this.checked)"'+ck+'>'+_lhEsc(it)+'</label>';
+    }).join('');
+  };
+  make('lenderTypeFilters', types, _selLenderTypes, 'toggleLenderTypeFilter');
+  make('lenderProgramFilters', progs, _selLenderProgs, 'toggleLenderProgFilter');
+  make('lenderChannelFilters', chans, _selLenderChans, 'toggleLenderChanFilter');
+}
+
+function toggleLenderTypeFilter(v,c){ c ? _selLenderTypes.add(v) : _selLenderTypes.delete(v); filterLenders(); }
+function toggleLenderProgFilter(v,c){ c ? _selLenderProgs.add(v) : _selLenderProgs.delete(v); filterLenders(); }
+function toggleLenderChanFilter(v,c){ c ? _selLenderChans.add(v) : _selLenderChans.delete(v); filterLenders(); }
+function setMinCreditFilter(v){ document.getElementById('creditFilterVal').textContent = v==='0' || v===0 ? '—' : v; filterLenders(); }
+function setRatingFilter(n){ _lenderRatingMin = n; document.querySelectorAll('#ratingFilter span').forEach(function(s,i){ s.style.color = i<n ? '#C9A84C' : '#333'; }); filterLenders(); }
+function setLenderPill(pill, btn){ _lenderPill = pill; document.querySelectorAll('.lender-pill').forEach(function(b){b.classList.remove('active');}); if(btn) btn.classList.add('active'); filterLenders(); }
+function setLenderView(view){
+  _lenderView = view;
+  document.getElementById('lenderGrid').style.display = view==='grid' ? 'grid' : 'none';
+  document.getElementById('lenderTable').style.display = view==='table' ? 'block' : 'none';
+  ['viewGrid','viewTable'].forEach(function(id){
+    var b = document.getElementById(id), active = id==='viewGrid'?'grid':'table';
+    b.style.background = active===view?'#C9A84C':'#1a1a1a'; b.style.color = active===view?'#111':'#aaa';
+  });
+  filterLenders();
+}
+
+// Qualifying check — pulls from the live DTI calculator + mortgage_applications
+function lenderQualifies(lender) {
+  var app = window._currentApp || {};
+  var creditScore = parseInt(app.credit_score) || parseInt(document.getElementById('ls_credit_score')?.value||'0') || 0;
+  var loanAmt = parseFloat(document.getElementById('ls_loan_amount')?.value||'0') || parseFloat(app.loan_amount||'0') || 0;
+  var loanType = document.getElementById('ls_loan_type')?.value || app.loan_type || '';
+  var minCredit = parseInt(lender.min_credit) || 0;
+  var minLoan = parseFloat(lender.min_loan_amount) || 0;
+  var maxLoan = parseFloat(lender.max_loan_amount) || 99999999;
+  var lenderTypes = (lender.loan_types||[]).map(function(t){return String(t).toLowerCase();});
+  if (creditScore > 0 && minCredit > 0 && creditScore < minCredit) return false;
+  if (loanAmt > 0 && loanAmt < minLoan) return false;
+  if (loanAmt > 0 && loanAmt > maxLoan) return false;
+  if (loanType && lenderTypes.length > 0 && !lenderTypes.includes(String(loanType).toLowerCase())) return false;
+  return true;
+}
+
+function filterLenders() {
+  var q = (document.getElementById('lender-search')?.value || '').toLowerCase().trim();
+  var minCredit = parseInt(document.getElementById('lenderCreditSlider')?.value||'0')||0;
+  window._filteredLenders = (window._allLenders||[]).filter(function(l) {
+    if (_lenderPill === 'preferred' && !l.is_preferred) return false;
+    if (_lenderPill === 'favorites' && !l.is_favorite) return false;
+    if (_lenderPill === 'qualifying' && !lenderQualifies(l)) return false;
+    if (q) {
+      var hay = (l.name||'') + ' ' + (l.contact_name||'') + ' ' + (l.rep_name||'') + ' ' + (l.loan_types||[]).join(' ');
+      if (hay.toLowerCase().indexOf(q) < 0) return false;
+    }
+    if (_selLenderTypes.size > 0 && !(l.loan_types||[]).some(function(t){return _selLenderTypes.has(t);})) return false;
+    if (_selLenderProgs.size > 0 && ![].concat(l.loan_programs||[],l.programs||[]).some(function(p){return _selLenderProgs.has(p);})) return false;
+    if (_selLenderChans.size > 0 && !String(l.channel||'').split(',').some(function(c){return _selLenderChans.has(c.trim());})) return false;
+    if (minCredit > 0 && (parseInt(l.min_credit)||0) > minCredit) return false;
+    if (_lenderRatingMin > 0 && (parseFloat(l.rating)||0) < _lenderRatingMin) return false;
+    return true;
+  });
+  var countEl = document.getElementById('lenderMatchCount');
+  if (countEl) countEl.textContent = window._filteredLenders.length + ' of ' + (window._allLenders||[]).length + ' lenders';
+  if (_lenderView === 'grid') renderLenderGridNew(); else renderLenderTableNew();
+}
+
+function renderLenderGridNew() {
+  var grid = document.getElementById('lenderGrid'); if (!grid) return;
+  var items = window._filteredLenders || [];
+  if (!items.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#555">No lenders match your filters.</div>'; return; }
+  grid.innerHTML = items.map(function(l) {
+    var qualifies = lenderQualifies(l);
+    var name = _lhEsc(l.name);
+    var initials = (l.name||'L').replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase();
+    var logoHtml = l.logo_url ? '<img src="'+_lhEsc(l.logo_url)+'" onerror="this.outerHTML=\'<div class=\\\'lender-logo\\\'>'+initials+'</div>\'">' : initials;
+    var typesHtml = (l.loan_types||[]).slice(0,4).map(function(t){return '<span class="lender-type-pill">'+_lhEsc(t)+'</span>';}).join(' ');
+    var contactName = _lhEsc(l.contact_name || l.rep_name || '');
+    var contactEmail = _lhEsc(l.contact_email || l.rep_email || '');
+    var contactPhone = _lhEsc(l.contact_phone || l.rep_phone || '');
+    var stars = [1,2,3,4,5].map(function(n){
+      var filled = (parseFloat(l.rating)||0) >= n;
+      return '<span onclick="rateLender(\''+l.id+'\','+n+')" style="color:'+(filled?'#C9A84C':'#333')+'">\u2605</span>';
+    }).join('');
+    var favColor = l.is_favorite ? '#ef4444' : '#444';
+    return '<div class="lender-card '+(qualifies?'qualifies':'fails')+'" data-lender-id="'+l.id+'">'+
+      '<div style="display:flex;gap:10px;align-items:start">'+
+        '<div class="lender-logo">'+logoHtml+'</div>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><div style="font-size:.8rem;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+name+'</div>'+
+          (l.is_preferred?'<span style="background:rgba(201,168,76,0.15);color:#C9A84C;border-radius:8px;padding:1px 6px;font-size:.54rem;font-weight:700;letter-spacing:.04em">PREFERRED</span>':'')+'</div>'+
+          '<div style="font-size:.66rem;color:'+(qualifies?'#22c55e':'#ef4444')+';margin-top:2px;font-weight:600">'+(qualifies?'\u2713 Qualifies':'\u2717 Does not qualify')+'</div>'+
+        '</div>'+
+        '<button class="lender-action-btn" onclick="toggleLenderFavorite(\''+l.id+'\','+(!l.is_favorite)+',this)" style="color:'+favColor+';border:none;background:none" title="Favorite">\u2665</button>'+
+      '</div>'+
+      (typesHtml ? '<div style="display:flex;gap:4px;flex-wrap:wrap">'+typesHtml+'</div>' : '')+
+      '<div style="font-size:.66rem;color:#888">'+
+        (l.min_credit?'Min Credit: <span style="color:#ccc;font-weight:600">'+l.min_credit+'</span>':'')+
+        (l.channel?' \u00b7 '+_lhEsc(l.channel):'')+
+        (l.avg_app_to_fund?' \u00b7 '+l.avg_app_to_fund+'d fund':'')+
+      '</div>'+
+      (contactName ? '<div style="padding-top:7px;border-top:1px solid #1a1a1a;font-size:.66rem">'+
+        '<div style="color:#ccc;font-weight:600">'+contactName+'</div>'+
+        (contactEmail ? '<div><a href="mailto:'+contactEmail+'" style="color:#C9A84C;text-decoration:none">'+contactEmail+'</a></div>' : '')+
+        (contactPhone ? '<div style="color:#888">'+contactPhone+'</div>' : '')+
+      '</div>' : '')+
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding-top:7px;border-top:1px solid #1a1a1a">'+
+        '<div class="lender-card-stars">'+stars+'</div>'+
+        '<div style="display:flex;gap:4px">'+
+          '<button class="lender-action-btn" onclick="sendScenarioEmail(\''+l.id+'\')" title="Email scenario">\u2709</button>'+
+          '<button class="lender-action-btn" onclick="copyLenderFormLink(\''+l.id+'\',\''+(l.form_token||'')+'\')" title="Copy form link">\uD83D\uDD17</button>'+
+          (l.website ? '<a class="lender-action-btn" href="'+_lhEsc(l.website)+'" target="_blank" rel="noopener" title="Website" style="text-decoration:none">\uD83C\uDF10</a>' : '')+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+function renderLenderTableNew() {
+  var tbl = document.getElementById('lenderTable'); if (!tbl) return;
+  var items = window._filteredLenders || [];
+  if (!items.length) { tbl.innerHTML = '<div style="text-align:center;padding:40px;color:#555">No lenders match.</div>'; return; }
+  tbl.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:.72rem">'+
+    '<thead><tr style="background:#141414;color:#666;text-transform:uppercase;letter-spacing:.04em;font-size:.58rem">'+
+    '<th style="padding:8px;text-align:left">Lender</th><th style="padding:8px;text-align:left">Types</th><th style="padding:8px">Channel</th><th style="padding:8px;text-align:right">Min Credit</th><th style="padding:8px;text-align:left">AE</th><th style="padding:8px;text-align:center">Pref</th><th style="padding:8px;text-align:center">Qualifies</th><th style="padding:8px;text-align:center">Rating</th><th style="padding:8px"></th>'+
+    '</tr></thead><tbody>'+
+    items.map(function(l) {
+      var q = lenderQualifies(l);
+      return '<tr style="border-bottom:1px solid #1a1a1a">'+
+        '<td style="padding:6px 8px;color:#eee;font-weight:600">'+_lhEsc(l.name)+'</td>'+
+        '<td style="padding:6px 8px;color:#aaa">'+_lhEsc((l.loan_types||[]).slice(0,3).join(', '))+'</td>'+
+        '<td style="padding:6px 8px;color:#888;text-align:center">'+_lhEsc(l.channel||'—')+'</td>'+
+        '<td style="padding:6px 8px;color:#ccc;text-align:right">'+(l.min_credit||'—')+'</td>'+
+        '<td style="padding:6px 8px;color:#aaa">'+_lhEsc(l.contact_name||l.rep_name||'—')+'</td>'+
+        '<td style="padding:6px 8px;text-align:center">'+(l.is_preferred?'<span style="color:#C9A84C">\u2605</span>':'')+'</td>'+
+        '<td style="padding:6px 8px;text-align:center">'+(q?'<span style="color:#22c55e">\u2713</span>':'<span style="color:#ef4444">\u2717</span>')+'</td>'+
+        '<td style="padding:6px 8px;text-align:center;color:#C9A84C">'+(l.rating?Number(l.rating).toFixed(1):'—')+'</td>'+
+        '<td style="padding:6px 8px;text-align:right"><button class="lender-action-btn" onclick="sendScenarioEmail(\''+l.id+'\')">\u2709</button></td>'+
+      '</tr>';
+    }).join('') + '</tbody></table>';
+}
+
+// Rate / favorite actions
+async function rateLender(lenderId, stars) {
+  try {
+    await fetch(_lhBase()+'/rest/v1/lenders?id=eq.'+lenderId, {
+      method:'PATCH', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json','Prefer':'return=minimal'}),
+      body: JSON.stringify({ rating: stars, updated_at: new Date().toISOString() })
+    });
+    var l = (window._allLenders||[]).find(function(x){return x.id===lenderId;});
+    if (l) { l.rating = stars; filterLenders(); }
+    if (typeof showToast==='function') showToast('Rated '+stars+' \u2605');
+  } catch(e) { console.warn('[lender] rate:', e); }
+}
+
+async function toggleLenderFavorite(lenderId, isFav, btn) {
+  try {
+    await fetch(_lhBase()+'/rest/v1/lenders?id=eq.'+lenderId, {
+      method:'PATCH', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json','Prefer':'return=minimal'}),
+      body: JSON.stringify({ is_favorite: isFav, updated_at: new Date().toISOString() })
+    });
+    var l = (window._allLenders||[]).find(function(x){return x.id===lenderId;});
+    if (l) { l.is_favorite = isFav; }
+    if (btn) btn.style.color = isFav ? '#ef4444' : '#444';
+  } catch(e) { console.warn('[lender] fav:', e); }
+}
+
+function lenderBCCEmail() {
+  var emails = (window._filteredLenders||[]).map(function(l){return l.contact_email || l.rep_email;}).filter(Boolean);
+  if (!emails.length) { if (typeof showToast==='function') showToast('No email addresses for visible lenders'); return; }
+  var bcc = emails.join(', ');
+  if (navigator.clipboard) navigator.clipboard.writeText(bcc).then(function(){ showToast(emails.length+' BCC addresses copied to clipboard'); });
+  else { window._emailBCC = bcc; if (typeof showToast==='function') showToast(emails.length+' emails ready for BCC'); }
+}
+
+function copyLenderFormLink(lenderId, token) {
+  if (!token) { if (typeof showToast==='function') showToast('No form token for this lender'); return; }
+  var url = 'https://beta.ratesandrealty.com/public/lender-form.html?token='+token;
+  if (navigator.clipboard) navigator.clipboard.writeText(url).then(function(){ showToast('Lender form link copied \u2713'); });
+}
+
+function sendScenarioEmail(lenderId) {
+  var lender = (window._allLenders||[]).find(function(x){return x.id===lenderId;});
+  if (!lender) return;
+  var app = window._currentApp || {};
+  var loanAmt = document.getElementById('ls_loan_amount')?.value || '';
+  var rate = document.getElementById('ls_interest_rate')?.value || '';
+  var ltv = document.getElementById('ls_ltv_input')?.value || '';
+  var creditScore = app.credit_score || document.getElementById('ls_credit_score')?.value || '';
+  var borrowerName = ((app.first_name||'')+' '+(app.last_name||'')).trim();
+  var toEmail = lender.contact_email || lender.rep_email || '';
+  var aeName = lender.contact_name || lender.rep_name || 'Team';
+  var subject = 'Scenario Request \u2014 ' + (borrowerName || 'Borrower');
+  var body = 'Hi '+aeName+',\n\nI have a scenario I\'d like to run by you:\n\n' +
+    'Borrower: '+borrowerName+'\n' +
+    'Loan Amount: '+(loanAmt?'$'+Number(loanAmt).toLocaleString():'TBD')+'\n' +
+    'LTV: '+(ltv?ltv+'%':'TBD')+'\n' +
+    'Credit Score: '+(creditScore||'TBD')+'\n' +
+    'Rate: '+(rate?rate+'%':'TBD')+'\n\n' +
+    'Please let me know your best pricing. Thank you!\n\nBest,\nRene Duarte\nNMLS #1795044\n(714) 472-8508';
+  window._emailTo = toEmail; window._emailSubject = subject; window._emailBody = body;
+  // Open native mailto as fallback — no dependency on email composer modal
+  if (toEmail) window.location.href = 'mailto:'+toEmail+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+  // Log the submission
+  fetch(_lhBase()+'/rest/v1/lender_submissions', {
+    method:'POST', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json','Prefer':'return=minimal'}),
+    body: JSON.stringify({
+      lender_id: lenderId,
+      contact_id: new URLSearchParams(location.search).get('contact_id'),
+      borrower_name: borrowerName,
+      loan_amount: parseFloat(loanAmt) || null,
+      scenario_notes: 'LTV: '+ltv+'% | Credit: '+creditScore+' | Rate: '+rate+'%',
+      status: 'sent',
+      created_at: new Date().toISOString()
+    })
+  }).catch(function(e){ console.warn('[lender] submission log:', e); });
 }
 
 function renderLenderGrid(lenders) {
