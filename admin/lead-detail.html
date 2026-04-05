@@ -8411,13 +8411,10 @@ async function lsGenerate1003() {
     });
     var data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-    var w = window.open('', '_blank');
-    if (w) {
-      w.document.write(data.html || '');
-      w.document.close();
-      setTimeout(function(){ try { w.focus(); w.print(); } catch(e){} }, 600);
-    } else { showToast('Pop-up blocked — allow pop-ups and retry'); }
-    showToast('1003 ready — use Print \u2192 Save as PDF \u2713');
+    // Open in in-page modal viewer
+    var nameStr = ((app.first_name||'')+' '+(app.last_name||'')).trim() || 'Borrower';
+    openPDFViewer(data.html || '', '1003 Application — ' + nameStr);
+    showToast('1003 ready — click Print / Save PDF to export \u2713');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
@@ -8538,14 +8535,9 @@ async function lsGeneratePreApproval() {
     });
     var data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-    // Open in new tab and auto-trigger browser print dialog (Save as PDF)
-    var w = window.open('', '_blank');
-    if (w) {
-      w.document.write(data.html || '');
-      w.document.close();
-      setTimeout(function(){ try { w.focus(); w.print(); } catch(e){} }, 600);
-    } else { showToast('Pop-up blocked — allow pop-ups and retry'); }
-    showToast('Pre-Approval letter ready — use Print \u2192 Save as PDF \u2713');
+    // Open in in-page modal viewer (no new tab, no about:blank)
+    openPDFViewer(data.html || '', 'Pre-Approval — ' + (payload.borrower_name || 'Borrower'));
+    showToast('Pre-Approval ready — click Print / Save PDF to export \u2713');
   } catch(e) {
     console.error('[pre-approval]', e);
     showToast('Generation failed: ' + e.message);
@@ -9178,12 +9170,21 @@ async function losSwitchBorrower(idx) {
     // In combined mode, income/liabilities come from losLoadBorrowerData (union);
     // everything else (form fields, assets, REO) tracks the primary borrower.
     var formCid = (losViewMode === 'combined' && losBorrowers[0] && losBorrowers[0].contact_id) ? losBorrowers[0].contact_id : activeCid;
+    console.log('[borrower-switch] idx=' + idx + ' mode=' + losViewMode + ' formCid=' + formCid + ' (reloading load1003 + income + liabilities + assets + REO)');
+    // Clear f_* form fields first so stale values from the previous borrower
+    // can't leak through if the new borrower has null values for some columns
+    var appPanel = document.getElementById('tab-application');
+    if (appPanel) {
+      appPanel.querySelectorAll('input[id^="f_"]').forEach(function(el){ if (el.type !== 'checkbox' && el.type !== 'radio') el.value = ''; });
+      appPanel.querySelectorAll('input[type="checkbox"][id^="f_"], input[type="radio"][name^="decl_"]').forEach(function(el){ el.checked = false; });
+    }
     await Promise.all([
       load1003(formCid),          // full 1003 form (f_* fields) via sb client
       losLoadBorrowerData(),       // income + liabilities (handles combined vs individual internally)
       losLoadAssets(formCid),      // Assets table
       losLoadREO(formCid)          // REO table
     ]);
+    console.log('[borrower-switch] reload complete for ' + formCid);
     renderBorrowerIncomeDebtCards();
   } catch(e) { console.warn('[switch] reload error:', e); }
   if (panel) { panel.style.opacity = '1'; panel.style.pointerEvents = ''; }
@@ -13578,6 +13579,55 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
   </div>
 </div>
 <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
+<!-- ═══ IN-PAGE PDF VIEWER MODAL ═══ -->
+<div id="pdfViewerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:99999;align-items:center;justify-content:center;padding:24px">
+  <div style="width:100%;max-width:900px;height:100%;max-height:92vh;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #2a2a2a;background:#111">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        <i class="fas fa-file-pdf" style="color:#C9A84C"></i>
+        <span id="pdfViewerTitle" style="font-size:.84rem;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Document Preview</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button type="button" onclick="pdfViewerPrint()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 14px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit"><i class="fas fa-print" style="margin-right:5px"></i>Print / Save PDF</button>
+        <button type="button" onclick="pdfViewerClose()" style="background:#2a2a2a;border:1px solid #333;color:#ccc;border-radius:6px;padding:6px 12px;font-size:.72rem;cursor:pointer;font-family:inherit">Close</button>
+      </div>
+    </div>
+    <iframe id="pdfViewerFrame" style="flex:1;width:100%;border:none;background:#fff"></iframe>
+  </div>
+</div>
+<script>
+  function openPDFViewer(html, title) {
+    var modal = document.getElementById('pdfViewerModal');
+    var frame = document.getElementById('pdfViewerFrame');
+    var titleEl = document.getElementById('pdfViewerTitle');
+    if (!modal || !frame) return;
+    if (titleEl) titleEl.textContent = title || 'Document Preview';
+    frame.srcdoc = html || '';
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+  function pdfViewerClose() {
+    var modal = document.getElementById('pdfViewerModal');
+    var frame = document.getElementById('pdfViewerFrame');
+    if (modal) modal.style.display = 'none';
+    if (frame) frame.srcdoc = '';
+    document.body.style.overflow = '';
+  }
+  function pdfViewerPrint() {
+    var frame = document.getElementById('pdfViewerFrame');
+    if (frame && frame.contentWindow) { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch(e){} }
+  }
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') {
+      var m = document.getElementById('pdfViewerModal');
+      if (m && m.style.display !== 'none') pdfViewerClose();
+    }
+  });
+  // Click backdrop to close
+  var _pdfM = document.getElementById('pdfViewerModal');
+  if (_pdfM) _pdfM.addEventListener('click', function(e){ if (e.target === this) pdfViewerClose(); });
+</script>
 
 </body>
 </html>
