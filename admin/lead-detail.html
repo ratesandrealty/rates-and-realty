@@ -1849,6 +1849,28 @@
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-application">
 
+      <!-- ═══ BORROWER SWITCHER (multi-borrower tabs) ═══ -->
+      <div id="los1003BorrowerBar" style="display:none;border-bottom:1px solid #222;background:#0f0f0f;padding:8px 22px;gap:6px;overflow-x:auto;align-items:center;flex-wrap:nowrap"></div>
+      <style>
+        .borr-tab{display:inline-flex;align-items:center;gap:8px;padding:7px 12px 7px 9px;border:1px solid #2a2a2a;border-radius:24px;background:#151515;color:#888;cursor:pointer;font-size:.72rem;font-weight:600;font-family:inherit;white-space:nowrap;transition:all .15s;flex-shrink:0}
+        .borr-tab:hover{border-color:#C9A84C55;color:#ccc}
+        .borr-tab.active{border-color:#C9A84C;background:rgba(201,168,76,0.12);color:#C9A84C}
+        .borr-tab .borr-avatar{width:24px;height:24px;border-radius:50%;background:#2a2a2a;display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:700;color:#aaa;flex-shrink:0}
+        .borr-tab.active .borr-avatar{background:#C9A84C;color:#111}
+        .borr-tab .borr-role{font-size:.56rem;color:#555;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-left:4px}
+        .borr-tab.active .borr-role{color:#C9A84C99}
+        .borr-link-btn{background:rgba(255,255,255,0.04);border:1px solid #333;border-radius:50%;width:18px;height:18px;color:#666;cursor:pointer;font-size:.62rem;padding:0;margin-left:4px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+        .borr-link-btn:hover{color:#C9A84C;border-color:#C9A84C55}
+        .borr-card{background:#0f0f0f;border:1px solid #1e1e1e;border-radius:8px;padding:8px 10px;min-width:160px;flex-shrink:0}
+        .borr-card.combined{background:rgba(201,168,76,0.06);border-color:#C9A84C55}
+        .borr-card-head{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+        .borr-card-head .borr-avatar{width:20px;height:20px;font-size:.56rem}
+        .borr-card-name{font-size:.7rem;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+        .borr-card-metrics{display:flex;gap:10px}
+        .borr-card-metric-label{font-size:.54rem;color:#555;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:1px}
+        .borr-card-metric-val{font-size:.8rem;color:#C9A84C;font-weight:800;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+      </style>
+
       <!-- ═══ LOAN SUMMARY / DTI CALCULATOR (keystone section) ═══ -->
       <div id="loanSummaryPanel" style="padding:18px 22px;border-bottom:1px solid rgba(201,168,76,0.2);background:linear-gradient(180deg,rgba(201,168,76,0.04),transparent 100%)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -1911,6 +1933,8 @@
           <!-- INCOME + LIAB + DTI -->
           <div style="background:#0f0f0f;border:1px solid #1e1e1e;border-radius:10px;padding:14px">
             <div class="ls-card-label">Income &amp; Debt</div>
+            <div id="losBorrowerCards" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
+            <div id="losDTIModeNote" style="font-size:.6rem;color:#C9A84C;margin-bottom:6px;font-weight:600"></div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
               <div><label class="ls-sub">Total Monthly Income</label><input id="ls_total_monthly_income" type="number" class="ls-input" placeholder="13700"></div>
               <div><label class="ls-sub">Total Monthly Debt</label><input id="ls_total_monthly_debt" type="number" class="ls-input" placeholder="3201"></div>
@@ -8512,7 +8536,13 @@ async function initLoanSummary() {
     if (el && !el._lsWired) { el._lsWired = true; el.addEventListener('input', lsRecalc); }
   });
   lsRecalc();
-  Promise.all([losLoadLiabilities(), losLoadIncome(), losLoadAssets(), losLoadREO()]);
+  // Load borrowers first (populates tab bar), then borrower-scoped data, then static tables
+  losLoadBorrowers().then(function(){
+    losLoadBorrowerData().then(function(){
+      renderBorrowerIncomeDebtCards();
+    });
+  });
+  Promise.all([losLoadAssets(), losLoadREO()]);
 }
 
 /* ═══ LIABILITIES TABLE (editable, auto-sync to DTI calculator) ═══ */
@@ -8527,8 +8557,8 @@ function losBase() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL
 function losCid() { return new URLSearchParams(location.search).get('contact_id') || contactId; }
 function losEscape(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
 
-async function losLoadLiabilities() {
-  var cid = losCid(); if (!cid) return;
+async function losLoadLiabilities(overrideCid) {
+  var cid = overrideCid || losCid(); if (!cid) return;
   try {
     var r = await fetch(losBase()+'/rest/v1/loan_liabilities?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
     if (!r.ok) { console.warn('[liab] HTTP', r.status); losLiabilities = []; }
@@ -8646,8 +8676,8 @@ var INCOME_TYPES = ['Base Salary','Overtime','Bonus','Commission','Self-Employed
 var INCOME_OWNERS = ['Borrower','CoBorrower','Joint'];
 var _incSaveTimers = {};
 
-async function losLoadIncome() {
-  var cid = losCid(); if (!cid) return;
+async function losLoadIncome(overrideCid) {
+  var cid = overrideCid || losCid(); if (!cid) return;
   try {
     var r = await fetch(losBase()+'/rest/v1/loan_income?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
     losIncome = r.ok ? (await r.json() || []) : [];
@@ -8906,6 +8936,169 @@ async function losDeleteREO(id) {
     losReo = losReo.filter(function(p){ return p.id !== id; });
     losRenderREO();
   } catch(e) { showToast('Delete failed: '+e.message); }
+}
+
+/* ═══ MULTI-BORROWER SUPPORT ═══ */
+var losBorrowers = [];
+var losActiveBorrowerIdx = 0;
+var losViewMode = 'individual'; // 'individual' | 'combined'
+
+function _borrInitials(name) { return (name||'').split(/\s+/).filter(Boolean).map(function(w){return w[0];}).join('').toUpperCase().slice(0,2) || '?'; }
+function _borrName(b, idx) { var parts = [b.contact && b.contact.first_name, b.contact && b.contact.last_name].filter(Boolean); return parts.join(' ') || ('Borrower ' + (idx+1)); }
+function _borrRoleLabel(b, idx) {
+  if (b.borrower_role === 'Borrower' || idx === 0) return 'Primary';
+  if (b.borrower_order === 2 || idx === 1) return 'Co-Borrower';
+  return 'Co-Borrower ' + (b.borrower_order || (idx+1)-1);
+}
+
+async function losLoadBorrowers() {
+  var cid = losCid(); if (!cid) { losBorrowers = []; return; }
+  var base = losBase(), hdrs = losHeaders();
+  try {
+    var appRes = await fetch(base+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&select=id,co_borrower_contact_id,co_borrower_first_name,co_borrower_last_name&order=created_at.desc&limit=1', { headers: hdrs });
+    var apps = appRes.ok ? await appRes.json() : [];
+    var app = apps && apps[0];
+    if (!app) { losBorrowers = []; return; }
+    // Try loan_borrowers table first
+    var lbRes = await fetch(base+'/rest/v1/loan_borrowers?application_id=eq.'+app.id+'&order=borrower_order.asc', { headers: hdrs });
+    var lbRows = lbRes.ok ? (await lbRes.json() || []) : [];
+    if (lbRows.length > 0) {
+      var ids = lbRows.map(function(r){return r.contact_id;}).filter(Boolean);
+      var cRes = await fetch(base+'/rest/v1/contacts?id=in.('+ids.join(',')+')&select=id,first_name,last_name,email,phone', { headers: hdrs });
+      var contacts = cRes.ok ? (await cRes.json() || []) : [];
+      losBorrowers = lbRows.map(function(lb) {
+        return Object.assign({}, lb, { contact: contacts.find(function(c){return c.id===lb.contact_id;}) || { first_name:'', last_name:'', id:lb.contact_id } });
+      });
+    } else {
+      // Fallback: primary (from URL contact) + co-borrower from mortgage_applications
+      var cRes2 = await fetch(base+'/rest/v1/contacts?id=eq.'+cid+'&select=id,first_name,last_name,email&limit=1', { headers: hdrs });
+      var primaryC = cRes2.ok ? (await cRes2.json() || [])[0] : null;
+      losBorrowers = [{
+        contact_id: cid, application_id: app.id,
+        borrower_role: 'Borrower', borrower_order: 1, is_primary: true,
+        contact: primaryC || { first_name:'', last_name:'', id: cid }
+      }];
+      if (app.co_borrower_contact_id) {
+        var coRes = await fetch(base+'/rest/v1/contacts?id=eq.'+app.co_borrower_contact_id+'&select=id,first_name,last_name,email&limit=1', { headers: hdrs });
+        var coC = coRes.ok ? (await coRes.json() || [])[0] : null;
+        if (coC) losBorrowers.push({
+          contact_id: app.co_borrower_contact_id, application_id: app.id,
+          borrower_role: 'CoBorrower', borrower_order: 2, is_primary: false, contact: coC
+        });
+      } else if (app.co_borrower_first_name) {
+        losBorrowers.push({
+          contact_id: null, application_id: app.id,
+          borrower_role: 'CoBorrower', borrower_order: 2, is_primary: false,
+          contact: { first_name: app.co_borrower_first_name, last_name: app.co_borrower_last_name || '', id: null }
+        });
+      }
+    }
+  } catch(e) { console.warn('[borrowers] load:', e); losBorrowers = []; }
+  renderBorrowerTabs();
+}
+
+function renderBorrowerTabs() {
+  var bar = document.getElementById('los1003BorrowerBar');
+  if (!bar) return;
+  if (losBorrowers.length <= 1) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  var tabs = losBorrowers.map(function(b, i) {
+    var name = _borrName(b, i);
+    var role = _borrRoleLabel(b, i);
+    var isActive = losViewMode === 'individual' && i === losActiveBorrowerIdx;
+    var linkBtn = b.contact_id ? '<a href="/admin/lead-detail.html?contact_id='+b.contact_id+'" class="borr-link-btn" title="Open this borrower\'s record" onclick="event.stopPropagation()">\u2197</a>' : '';
+    return '<button type="button" class="borr-tab'+(isActive?' active':'')+'" onclick="losSwitchBorrower('+i+')">'+
+      '<div class="borr-avatar">'+_borrInitials(name)+'</div>'+
+      '<span>'+name.replace(/</g,'&lt;')+'</span>'+
+      '<span class="borr-role">'+role+'</span>'+linkBtn+
+    '</button>';
+  }).join('');
+  var combinedActive = losViewMode === 'combined';
+  var combinedTab = losBorrowers.length > 1
+    ? '<button type="button" class="borr-tab'+(combinedActive?' active':'')+'" onclick="losSwitchBorrower(-1)" style="border-style:dashed"><div class="borr-avatar">\u2295</div><span>Combined View</span></button>'
+    : '';
+  bar.innerHTML = tabs + combinedTab;
+}
+
+async function losSwitchBorrower(idx) {
+  if (idx === -1) losViewMode = 'combined';
+  else { losViewMode = 'individual'; losActiveBorrowerIdx = idx; }
+  renderBorrowerTabs();
+  await losLoadBorrowerData();
+  await renderBorrowerIncomeDebtCards();
+}
+
+async function losLoadBorrowerData() {
+  var base = losBase(), hdrs = losHeaders();
+  if (losViewMode === 'combined') {
+    var ids = losBorrowers.map(function(b){return b.contact_id;}).filter(Boolean);
+    if (!ids.length) return;
+    try {
+      var incRes = await fetch(base+'/rest/v1/loan_income?contact_id=in.('+ids.join(',')+')&order=sort_order.asc', { headers: hdrs });
+      losIncome = incRes.ok ? (await incRes.json() || []) : [];
+      var liabRes = await fetch(base+'/rest/v1/loan_liabilities?contact_id=in.('+ids.join(',')+')&order=sort_order.asc', { headers: hdrs });
+      losLiabilities = liabRes.ok ? (await liabRes.json() || []) : [];
+    } catch(e) { console.warn('[borrowers] combined load:', e); }
+    losRenderIncome();
+    losRenderLiabilities();
+  } else {
+    var b = losBorrowers[losActiveBorrowerIdx];
+    var cid = (b && b.contact_id) || losCid();
+    if (!cid) return;
+    await Promise.all([losLoadIncome(cid), losLoadLiabilities(cid)]);
+  }
+}
+
+async function renderBorrowerIncomeDebtCards() {
+  var el = document.getElementById('losBorrowerCards'); if (!el) return;
+  if (losBorrowers.length <= 1) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+  var base = losBase(), hdrs = losHeaders();
+  var cardData = await Promise.all(losBorrowers.map(async function(b, i) {
+    if (!b.contact_id) return { name: _borrName(b, i), income: 0, debt: 0, role: _borrRoleLabel(b, i) };
+    try {
+      var incRes = await fetch(base+'/rest/v1/loan_income?contact_id=eq.'+b.contact_id+'&is_active=eq.true', { headers: hdrs });
+      var liabRes = await fetch(base+'/rest/v1/loan_liabilities?contact_id=eq.'+b.contact_id+'&is_omitted=eq.false', { headers: hdrs });
+      var incRows = incRes.ok ? (await incRes.json() || []) : [];
+      var liabRows = liabRes.ok ? (await liabRes.json() || []) : [];
+      var income = incRows.reduce(function(s,r){return s+(parseFloat(r.monthly_amount)||0);}, 0);
+      var debt = liabRows.filter(function(l){return !l.is_payoff;}).reduce(function(s,l){return s+(parseFloat(l.monthly_payment)||0);}, 0);
+      return { name: _borrName(b, i), income: income, debt: debt, role: _borrRoleLabel(b, i) };
+    } catch(e) { return { name: _borrName(b, i), income: 0, debt: 0, role: _borrRoleLabel(b, i) }; }
+  }));
+  var fmt = function(n){ return '$'+Math.round(n||0).toLocaleString(); };
+  var combinedInc = cardData.reduce(function(s,d){return s+d.income;}, 0);
+  var combinedDebt = cardData.reduce(function(s,d){return s+d.debt;}, 0);
+  el.innerHTML = cardData.map(function(d) {
+    return '<div class="borr-card">'+
+      '<div class="borr-card-head"><div class="borr-avatar">'+_borrInitials(d.name)+'</div><div class="borr-card-name">'+d.name.replace(/</g,'&lt;')+'</div></div>'+
+      '<div class="borr-card-metrics">'+
+        '<div><div class="borr-card-metric-label">Income</div><div class="borr-card-metric-val">'+fmt(d.income)+'</div></div>'+
+        '<div><div class="borr-card-metric-label">Debt</div><div class="borr-card-metric-val" style="color:#ef6666">'+fmt(d.debt)+'</div></div>'+
+      '</div>'+
+    '</div>';
+  }).join('') + '<div class="borr-card combined">'+
+    '<div class="borr-card-head"><div class="borr-avatar" style="background:#C9A84C;color:#111">\u2295</div><div class="borr-card-name" style="color:#C9A84C">Combined</div></div>'+
+    '<div class="borr-card-metrics">'+
+      '<div><div class="borr-card-metric-label">Income</div><div class="borr-card-metric-val">'+fmt(combinedInc)+'</div></div>'+
+      '<div><div class="borr-card-metric-label">Debt</div><div class="borr-card-metric-val">'+fmt(combinedDebt)+'</div></div>'+
+    '</div>'+
+  '</div>';
+  // In combined view, push totals into the DTI calculator inputs
+  if (losViewMode === 'combined') {
+    var incInput = document.getElementById('ls_total_monthly_income');
+    var debtInput = document.getElementById('ls_total_monthly_debt');
+    if (incInput) incInput.value = combinedInc.toFixed(2);
+    if (debtInput) debtInput.value = combinedDebt.toFixed(2);
+    if (typeof lsRecalc === 'function') lsRecalc();
+  }
+  // Update DTI mode note
+  var note = document.getElementById('losDTIModeNote');
+  if (note) {
+    note.textContent = losViewMode === 'combined'
+      ? '\u2295 Combined view: ' + losBorrowers.length + ' borrowers'
+      : 'Viewing: ' + _borrName(losBorrowers[losActiveBorrowerIdx]||{}, losActiveBorrowerIdx) + ' only';
+  }
 }
 
 /* ── GOOGLE MAPS ADDRESS AUTOCOMPLETE ── */
