@@ -1535,46 +1535,209 @@ function loadShowings() {
     .catch(function() { renderShowings([]); });
 }
 
+var _showingsBatches = {};
+
 function renderShowings(showings) {
   var list = document.getElementById('showingsList');
   var empty = document.getElementById('showingsEmpty');
-  if (!showings.length) {
+  // Filter out individually-deleted showings
+  var active = showings.filter(function(s){ return !s.deleted_at || s.status === 'cancelled'; });
+  if (!active.length) {
     list.innerHTML = '';
     empty.style.display = 'block';
     return;
   }
   empty.style.display = 'none';
 
-  // group by batch_id
+  // Group by batch_id, separate live vs cancelled items per batch
   var batches = {};
-  showings.forEach(function(s) {
+  active.forEach(function(s) {
     var k = s.batch_id || s.id;
-    if (!batches[k]) batches[k] = [];
-    batches[k].push(s);
+    if (!batches[k]) batches[k] = { live: [], all: [] };
+    batches[k].all.push(s);
+    if (!s.deleted_at) batches[k].live.push(s);
   });
 
-  list.innerHTML = Object.values(batches).map(function(batch) {
-    var f = batch[0];
-    var statusClass = f.status === 'confirmed' ? 'status-confirmed' : f.status === 'cancelled' ? 'status-cancelled' : 'status-pending';
-    var statusLabel = f.status === 'confirmed' ? 'Confirmed' : f.status === 'cancelled' ? 'Cancelled' : 'Pending';
-    var dateStr = f.preferred_date ? new Date(f.preferred_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Date TBD';
+  _showingsBatches = {};
+  // Sort batches: pending → confirmed → cancelled
+  var statusOrder = { pending: 0, confirmed: 1, cancelled: 2 };
+  var batchArr = Object.keys(batches).map(function(k){
+    var b = batches[k];
+    var first = b.live[0] || b.all[0];
+    _showingsBatches[k] = first;
+    return { key: k, batch: b, first: first };
+  }).sort(function(a,b){
+    var sa = statusOrder[a.first.status] != null ? statusOrder[a.first.status] : 0;
+    var sb = statusOrder[b.first.status] != null ? statusOrder[b.first.status] : 0;
+    if (sa !== sb) return sa - sb;
+    // within same status, newest first by created_at
+    return new Date(b.first.created_at) - new Date(a.first.created_at);
+  });
 
-    return '<div class="showing-batch">'
+  list.innerHTML = batchArr.map(function(x){
+    var key = x.key, b = x.batch, f = x.first;
+    var isCancelled = f.status === 'cancelled';
+    var isConfirmed = f.status === 'confirmed';
+    var statusClass = isConfirmed ? 'status-confirmed' : isCancelled ? 'status-cancelled' : 'status-pending';
+    var statusLabel = isConfirmed ? 'Confirmed' : isCancelled ? 'Cancelled' : 'Pending';
+    var dateStr = f.preferred_date ? new Date(f.preferred_date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) : 'Date TBD';
+    var liveCount = b.live.length;
+
+    // Cancelled: collapsed, grayed, Restore button
+    if (isCancelled) {
+      return '<div class="showing-batch" style="opacity:0.55;background:rgba(50,50,50,0.15)">'
+        + '<div class="showing-batch-header" style="margin-bottom:0">'
+        + '<div><div style="font-size:.82rem;font-weight:700;text-decoration:line-through;color:#777">' + b.all.length + ' Home' + (b.all.length>1?'s':'') + ' \u00b7 ' + dateStr + '</div>'
+        + '<div style="font-size:.7rem;color:#555">Cancelled ' + (f.updated_at ? new Date(f.updated_at).toLocaleDateString() : '') + '</div></div>'
+        + '<div style="display:flex;gap:8px;align-items:center"><span class="status-badge ' + statusClass + '">' + statusLabel + '</span>'
+        + '<button onclick="restoreBatch(\'' + key + '\')" style="background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:4px 10px;font-size:.7rem;cursor:pointer;font-family:inherit">Restore</button></div>'
+        + '</div></div>';
+    }
+
+    var editFormId = 'editForm-' + key;
+    var confirmedNote = isConfirmed ? '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:.72rem;color:#7cd49a">\u2713 This tour is confirmed \u2014 changes will notify Rene.</div>' : '';
+
+    return '<div class="showing-batch" data-batch-id="' + key + '">'
       + '<div class="showing-batch-header">'
-      + '<div><div style="font-size:.88rem;font-weight:700">' + batch.length + ' Home' + (batch.length > 1 ? 's' : '') + ' &middot; ' + dateStr + '</div>'
-      + '<div style="font-size:.75rem;color:var(--muted)">' + (f.preferred_time || '') + ' &middot; Submitted ' + new Date(f.created_at).toLocaleDateString() + '</div></div>'
+      + '<div><div style="font-size:.88rem;font-weight:700">' + liveCount + ' Home' + (liveCount>1?'s':'') + ' \u00b7 <span id="dateLabel-'+key+'">' + dateStr + '</span></div>'
+      + '<div style="font-size:.75rem;color:var(--muted)"><span id="timeLabel-'+key+'">' + (f.preferred_time || '') + '</span> \u00b7 Submitted ' + new Date(f.created_at).toLocaleDateString() + '</div></div>'
       + '<span class="status-badge ' + statusClass + '">' + statusLabel + '</span>'
       + '</div>'
-      + batch.map(function(s) {
-        return '<div class="showing-item">'
-          + (s.property_photo ? '<img src="' + s.property_photo + '" onerror="this.style.display=\'none\'"/>' : '')
-          + '<div class="showing-item-info">'
-          + '<div class="showing-item-addr">' + (s.property_address || '') + '</div>'
-          + (s.property_price ? '<div class="showing-item-price">$' + s.property_price.toLocaleString() + '</div>' : '')
-          + '</div></div>';
-      }).join('')
+      + confirmedNote
+      // Inline edit date/time form (hidden by default)
+      + '<div id="' + editFormId + '" style="display:none;background:#0e0e0e;border:1px solid #C9A84C33;border-radius:8px;padding:12px;margin-bottom:10px">'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'
+        + '<div><label style="font-size:.66rem;color:#888;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Date</label><input type="date" id="newDate-' + key + '" value="' + (f.preferred_date||'') + '" min="' + new Date().toISOString().split('T')[0] + '" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:.78rem;outline:none;font-family:inherit;box-sizing:border-box"></div>'
+        + '<div><label style="font-size:.66rem;color:#888;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Time</label><select id="newTime-' + key + '" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:.78rem;outline:none;font-family:inherit;box-sizing:border-box">'
+          + ['Morning (9-12)','Afternoon (12-4)','Evening (4-7)','Flexible'].map(function(t){return '<option'+(f.preferred_time===t?' selected':'')+'>'+t+'</option>';}).join('')
+        + '</select></div></div>'
+        + '<div style="display:flex;gap:6px"><button onclick="saveEditDate(\'' + key + '\')" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:7px 14px;font-weight:700;font-size:.74rem;cursor:pointer;font-family:inherit">Save</button><button onclick="toggleEditDate(\'' + key + '\')" style="background:transparent;border:1px solid #333;color:#888;border-radius:6px;padding:7px 12px;font-size:.74rem;cursor:pointer;font-family:inherit">Cancel</button></div>'
+      + '</div>'
+      // Property rows with remove buttons
+      + b.live.map(function(s){
+          var photo = s.property_photo ? '<img src="'+s.property_photo+'" onerror="this.style.display=\'none\'"/>' : '';
+          var stats = [];
+          if (s.property_beds) stats.push(s.property_beds + ' bd');
+          if (s.property_baths) stats.push(s.property_baths + ' ba');
+          if (s.property_sqft) stats.push(Number(s.property_sqft).toLocaleString() + ' sf');
+          return '<div class="showing-item" style="gap:10px">'
+            + photo
+            + '<div class="showing-item-info">'
+              + '<div class="showing-item-addr">' + (s.property_address||'') + '</div>'
+              + (s.property_price ? '<div class="showing-item-price">$' + Number(s.property_price).toLocaleString() + (stats.length ? ' \u00b7 <span style="color:var(--muted)">'+stats.join(' \u00b7 ')+'</span>' : '') + '</div>' : '')
+            + '</div>'
+            + '<button onclick="removeShowingProperty(\'' + s.id + '\',\'' + key + '\')" title="Remove" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);color:#ef4444;border-radius:6px;padding:4px 9px;font-size:.68rem;cursor:pointer;font-family:inherit;flex-shrink:0">\u2715</button>'
+          + '</div>';
+        }).join('')
+      // Action buttons row
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.05)">'
+        + '<button onclick="addMoreHomes(\'' + key + '\')" style="background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit"><i class="fas fa-plus" style="margin-right:4px"></i>Add Homes</button>'
+        + '<button onclick="toggleEditDate(\'' + key + '\')" style="background:transparent;border:1px solid #333;color:#aaa;border-radius:6px;padding:6px 12px;font-size:.72rem;cursor:pointer;font-family:inherit"><i class="fas fa-edit" style="margin-right:4px"></i>Edit Date/Time</button>'
+        + '<button onclick="cancelBatch(\'' + key + '\')" style="background:'+(isConfirmed?'rgba(239,68,68,.1)':'transparent')+';border:1px solid '+(isConfirmed?'rgba(239,68,68,.4)':'#333')+';color:'+(isConfirmed?'#ef4444':'#888')+';border-radius:6px;padding:6px 12px;font-size:.72rem;cursor:pointer;font-family:inherit;'+(isConfirmed?'font-weight:600;':'')+'"><i class="fas fa-trash" style="margin-right:4px"></i>'+(isConfirmed?'Cancel Confirmed Tour':'Cancel Tour')+'</button>'
+      + '</div>'
       + '</div>';
   }).join('');
+}
+
+/* ═══ SHOWINGS BATCH ACTIONS ═══ */
+function _shSb() { return window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co'; }
+function _shAnon() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || ''; }
+function _shHdrs() { var k = _shAnon(); return {'Content-Type':'application/json','Authorization':'Bearer '+k,'apikey':k}; }
+
+async function removeShowingProperty(showingId, batchId) {
+  if (!confirm('Remove this home from your tour?')) return;
+  try {
+    var r = await fetch(_shSb() + '/rest/v1/showings?id=eq.' + showingId, {
+      method:'PATCH', headers: _shHdrs(),
+      body: JSON.stringify({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    // Check remaining
+    var chk = await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId + '&deleted_at=is.null&select=id', { headers: _shHdrs() });
+    var remaining = await chk.json();
+    if (!remaining || remaining.length === 0) {
+      await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId, {
+        method:'PATCH', headers: _shHdrs(),
+        body: JSON.stringify({ status:'cancelled', updated_at: new Date().toISOString() })
+      });
+      showToast('Last home removed \u2014 tour cancelled');
+    } else {
+      showToast('Home removed from your tour');
+    }
+    loadShowings();
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+function toggleEditDate(batchId) {
+  var form = document.getElementById('editForm-' + batchId);
+  if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+async function saveEditDate(batchId) {
+  var newDate = document.getElementById('newDate-' + batchId).value;
+  var newTime = document.getElementById('newTime-' + batchId).value;
+  if (!newDate) { showToast('Please pick a date'); return; }
+  try {
+    var r = await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId + '&deleted_at=is.null', {
+      method:'PATCH', headers: _shHdrs(),
+      body: JSON.stringify({ preferred_date:newDate, preferred_time:newTime, status:'pending', updated_at: new Date().toISOString() })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    // Notify Rene via SMS
+    var first = (currentUser && currentUser.first_name) || 'Borrower';
+    fetch(_shSb() + '/functions/v1/sms-service', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        trigger:'manual', to_phone:'+17144728508',
+        params:{ message:'Tour update: '+first+' changed their showing to '+newDate+' '+newTime+'. Batch '+batchId.slice(0,8)+'. Check CRM.' }
+      })
+    }).catch(function(){});
+    showToast('Date updated! Rene has been notified.');
+    loadShowings();
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+async function cancelBatch(batchId) {
+  var f = _showingsBatches[batchId];
+  var isConfirmed = f && f.status === 'confirmed';
+  var msg = isConfirmed ? '\u26a0 This tour is confirmed. Cancel anyway? Rene will be notified.' : 'Cancel this showing request?';
+  if (!confirm(msg)) return;
+  try {
+    var r = await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId, {
+      method:'PATCH', headers: _shHdrs(),
+      body: JSON.stringify({ status:'cancelled', deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (isConfirmed) {
+      var first = (currentUser && currentUser.first_name) || 'Borrower';
+      fetch(_shSb() + '/functions/v1/sms-service', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          trigger:'manual', to_phone:'+17144728508',
+          params:{ message:'\u26a0 Tour CANCELLED: '+first+' cancelled their CONFIRMED showing for batch '+batchId.slice(0,8)+'. Check CRM.' }
+        })
+      }).catch(function(){});
+    }
+    showToast('Tour cancelled');
+    loadShowings();
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+async function restoreBatch(batchId) {
+  try {
+    var r = await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId, {
+      method:'PATCH', headers: _shHdrs(),
+      body: JSON.stringify({ status:'pending', deleted_at: null, updated_at: new Date().toISOString() })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    showToast('Tour restored');
+    loadShowings();
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+function addMoreHomes(batchId) {
+  sessionStorage.setItem('activeBatchId', batchId);
+  window.location.href = '/public/search-homes.html?addToBatch=' + encodeURIComponent(batchId);
 }
 
 /* ===== LISTING ALERTS ===== */

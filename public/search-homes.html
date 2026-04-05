@@ -677,6 +677,76 @@ let filters = {
 };
 
 /* ===== INIT ===== */
+// "Add homes to existing tour" mode — triggered by ?addToBatch=<id> from portal
+async function initAddToBatchBanner() {
+  var bid = new URLSearchParams(location.search).get('addToBatch');
+  if (!bid) return;
+  _addToBatchId = bid;
+  var SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anon = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+  // Load batch context (date/time/ids) from first row
+  try {
+    var r = await fetch(SB + '/rest/v1/showings?batch_id=eq.' + bid + '&deleted_at=is.null&limit=1', {
+      headers: { 'Authorization':'Bearer '+anon, 'apikey':anon }
+    });
+    var rows = await r.json();
+    _addToBatchContext = (rows && rows[0]) || null;
+  } catch(e) { console.warn('[addToBatch] context fetch failed:', e); }
+  if (!_addToBatchContext) { showToast && showToast('Tour not found'); return; }
+  var dateLabel = _addToBatchContext.preferred_date
+    ? new Date(_addToBatchContext.preferred_date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})
+    : 'your tour';
+  var banner = document.createElement('div');
+  banner.id = 'addToBatchBanner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#C9A84C;color:#111;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;box-shadow:0 2px 10px rgba(0,0,0,0.5);font-family:inherit';
+  banner.innerHTML = '<div><i class="fa-solid fa-pen" style="margin-right:8px"></i>Adding homes to your <u>'+dateLabel+'</u> tour &middot; Click \u201c+ Showing\u201d on any listing <span id="addBatchCount" style="background:rgba(0,0,0,0.15);padding:2px 8px;border-radius:10px;margin-left:8px;font-size:11px">0 added</span></div>' +
+    '<div style="display:flex;gap:8px"><button onclick="doneAddToBatch()" style="background:#111;color:#C9A84C;border:none;border-radius:6px;padding:6px 14px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit">&check; Done</button></div>';
+  document.body.appendChild(banner);
+  document.body.style.paddingTop = '44px';
+}
+
+function doneAddToBatch() {
+  window.location.href = '/public/unified-portal.html#showings';
+}
+
+async function addToExistingBatch(l) {
+  if (!_addToBatchContext) { showToast('Tour not loaded'); return; }
+  if (_addToBatchAdded.has(l.ListingKey)) { showToast('Already added'); return; }
+  var SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anon = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+  var ctx = _addToBatchContext;
+  var payload = {
+    batch_id: _addToBatchId,
+    portal_user_id: ctx.portal_user_id || null,
+    contact_id: ctx.contact_id || null,
+    preferred_date: ctx.preferred_date,
+    preferred_time: ctx.preferred_time,
+    status: ctx.status === 'confirmed' ? 'pending' : (ctx.status || 'pending'),
+    listing_key: l.ListingKey,
+    property_address: l.UnparsedAddress || '',
+    property_price: l.ListPrice || null,
+    property_city: l.City || '',
+    property_beds: l.BedroomsTotal || null,
+    property_baths: l.BathroomsTotalInteger || null,
+    property_sqft: l.LivingArea || null,
+    property_photo: (l.Media && l.Media[0]) ? l.Media[0].MediaURL : null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  try {
+    var r = await fetch(SB + '/rest/v1/showings', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon,'Prefer':'return=representation'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _addToBatchAdded.add(l.ListingKey);
+    var cnt = document.getElementById('addBatchCount');
+    if (cnt) cnt.textContent = _addToBatchAdded.size + ' added';
+    showToast('Added \u2713');
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
 // Apply filter params from an incoming search link (shared from CRM Search Link Builder)
 // URL format: ?county=Orange&city=Westminster,Garden+Grove&min_price=400000&max_price=850000&beds=3&baths=2&type=SFR&sort=price_asc
 function _applyIncomingSearchParams() {
@@ -714,6 +784,7 @@ document.addEventListener('DOMContentLoaded', function() {
   initFilterModalTabs();
   initToggleGroups();
   initTypeGrid();
+  initAddToBatchBanner();
   _applyIncomingSearchParams();
   fetchListings();
   updateSearchCartBadge();
@@ -1183,8 +1254,14 @@ function toggleHeart(i) {
   toggleShowing(i);
 }
 
+var _addToBatchId = null;
+var _addToBatchContext = null; // { portal_user_id, contact_id, preferred_date, preferred_time, status }
+var _addToBatchAdded = new Set();
+
 function toggleShowing(i) {
   var l = filteredListings[i];
+  // If the user arrived via "Add more homes" from the portal, route directly to the existing batch
+  if (_addToBatchId) { addToExistingBatch(l); return; }
   var idx = showingCart.findIndex(function(c) { return c.listingKey === l.ListingKey; });
   if (idx >= 0) {
     showingCart.splice(idx, 1);
