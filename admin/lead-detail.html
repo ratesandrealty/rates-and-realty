@@ -8806,12 +8806,26 @@ async function lsGenerate1003() {
     var sr = await fetch(base+'/rest/v1/loan_scenarios?contact_id=eq.'+cid+'&is_primary=eq.true&limit=1', { headers: hdrs });
     var scens = sr.ok ? (await sr.json() || []) : [];
     var scenario = scens[0] || {};
-    // Build 1003 payload
+    // Build 1003 payload — strip $ and commas so edge function gets raw numbers
+    const cleanNum = (v) => parseFloat(String(v||'').replace(/[$,]/g,'')) || 0;
     var payload = Object.assign({}, app, {
       action: '1003_pdf',
-      loan_amount: scenario.loan_amount || app.loan_amount || app.requested_loan_amount,
-      interest_rate: scenario.interest_rate || 0,
-      loan_term_months: scenario.loan_term_months || 360,
+      loan_amount: cleanNum(scenario.loan_amount || app.loan_amount || app.requested_loan_amount),
+      interest_rate: cleanNum(scenario.interest_rate || app.current_interest_rate || 0),
+      current_interest_rate: cleanNum(scenario.interest_rate || app.current_interest_rate || 0),
+      loan_term_months: parseInt(scenario.loan_term_months || app.loan_term_months || 360),
+      // Clean borrower income fields (stored as strings in some cases)
+      base_income: cleanNum(app.base_income),
+      overtime_income: cleanNum(app.overtime_income),
+      bonus_income: cleanNum(app.bonus_income),
+      commission_income: cleanNum(app.commission_income),
+      other_income: cleanNum(app.other_income),
+      // Clean co-borrower income fields
+      co_borrower_base_income: cleanNum(app.co_borrower_base_income),
+      co_borrower_overtime_income: cleanNum(app.co_borrower_overtime_income),
+      co_borrower_bonus_income: cleanNum(app.co_borrower_bonus_income),
+      co_borrower_commission_income: cleanNum(app.co_borrower_commission_income),
+      co_borrower_other_income: cleanNum(app.co_borrower_other_income),
       liabilities_list: JSON.stringify(liabs),
       assets: JSON.stringify(assets),
       reo_list: JSON.stringify(reos),
@@ -15314,9 +15328,15 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
     if (el) el.textContent = msg || 'Ready';
   }
 
-  // For HTML-generated docs (pre-approval, 1003)
+  // For HTML-generated docs (pre-approval)
   function openPDFViewer(html, title, meta) {
     PDF.isHtml = true; PDF.url = null; PDF.zoom = 100; PDF.rotation = 0;
+    // Flags for pdfDownload/pdfPrint
+    window._preApprovalHtml = html;
+    window._currentPDFIsHTML = true;
+    window._pdf1003BlobUrl = null;
+    window._currentPDFUrl = null;
+    window._currentPDFTitle = title;
     document.getElementById('pdfTitle').textContent = title || 'Document';
     document.getElementById('pdfMeta').textContent = meta || 'PDF Document';
     PDF.title = title;
@@ -15337,9 +15357,14 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
     pdfShow();
   }
 
-  // For real PDF URLs (guidelines, uploaded docs)
+  // For real PDF URLs (1003, guidelines, uploaded docs)
   function openPDFUrl(url, title, meta) {
     PDF.isHtml = false; PDF.url = url; PDF.zoom = 100; PDF.rotation = 0;
+    // Flags for pdfDownload/pdfPrint
+    window._currentPDFIsHTML = false;
+    window._preApprovalHtml = null;
+    window._currentPDFUrl = url;
+    window._currentPDFTitle = title;
     document.getElementById('pdfTitle').textContent = title || 'Document';
     document.getElementById('pdfMeta').textContent = meta || 'PDF';
     PDF.title = title;
@@ -15366,6 +15391,16 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
   function pdfViewerPrint() { pdfPrint(); }
 
   function pdfPrint() {
+    // HTML doc: open new window with HTML and trigger print (user saves as PDF)
+    if (window._currentPDFIsHTML && window._preApprovalHtml) {
+      const printWin = window.open('', '_blank', 'width=900,height=700');
+      if (!printWin) { showToast('Please allow popups to print', true); return; }
+      printWin.document.write(window._preApprovalHtml);
+      printWin.document.close();
+      setTimeout(() => { printWin.focus(); printWin.print(); }, 500);
+      return;
+    }
+    // PDF blob/url: print via iframe contentWindow or new window
     if (PDF.isHtml) {
       const f = document.getElementById('pdfViewerFrame');
       if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); }
@@ -15376,10 +15411,34 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
   }
 
   function pdfDownload() {
-    // Prefer explicit 1003 blob URL → PDF.url (set by openPDFUrl) → PDF._pdfBlobUrl
-    const url = window._pdf1003BlobUrl || PDF.url || PDF._pdfBlobUrl;
+    // CASE 1: Real PDF blob (1003, conditions, etc.)
+    if (window._pdf1003BlobUrl || (window._currentPDFUrl && window._currentPDFUrl.startsWith('blob:'))) {
+      const url = window._pdf1003BlobUrl || window._currentPDFUrl;
+      const rawName = window._pdf1003FileName || window._currentPDFTitle || PDF.title || 'document';
+      const name = rawName.replace(/[^a-z0-9\-_\. ]/gi,'_').replace(/\.(html?|pdf)$/i,'') + '.pdf';
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+    }
+
+    // CASE 2: Pre-approval HTML document — print to PDF via browser
+    if (window._currentPDFIsHTML && window._preApprovalHtml) {
+      const printWin = window.open('', '_blank', 'width=900,height=700');
+      if (!printWin) { showToast('Please allow popups to download as PDF', true); return; }
+      printWin.document.write(window._preApprovalHtml);
+      printWin.document.close();
+      setTimeout(() => { printWin.focus(); printWin.print(); }, 500);
+      return;
+    }
+
+    // CASE 3: Any other URL (http PDF, etc.) → direct link click
+    const url = PDF.url || PDF._pdfBlobUrl;
     const title = PDF.title || window._currentBorrowerName || 'document';
-    const fname = (window._pdf1003FileName || title).replace(/[^a-z0-9\-_\. ]/gi, '_');
+    const fname = title.replace(/[^a-z0-9\-_\. ]/gi, '_');
 
     if (url) {
       const a = document.createElement('a');
@@ -15391,19 +15450,7 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
       return;
     }
 
-    // HTML doc fallback (pre-approval via openPDFViewer srcdoc)
-    const frame = document.getElementById('pdfViewerFrame');
-    const htmlContent = PDF._htmlSource || (frame ? frame.srcdoc : '') || '';
-    if (!htmlContent) { alert('No PDF to download'); return; }
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = fname + '.html';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    showToast('No document to download', true);
   }
 
   function pdfOpenNew() { if (PDF.url) window.open(PDF.url, '_blank'); }
