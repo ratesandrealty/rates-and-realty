@@ -8568,7 +8568,8 @@ async function lsGenerate1003() {
     if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
     // Open in in-page modal viewer
     var nameStr = ((app.first_name||'')+' '+(app.last_name||'')).trim() || 'Borrower';
-    openPDFViewer(data.html || '', '1003 Application — ' + nameStr);
+    openPDFViewer(data.html || '', '1003 Application — ' + nameStr + '.pdf', 'Form 1003 · ' + nameStr);
+    PDF._htmlSource = data.html;
     showToast('1003 ready — click Print / Save PDF to export \u2713');
   } catch(e) {
     console.error('[1003]', e);
@@ -8691,7 +8692,8 @@ async function lsGeneratePreApproval() {
     var data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
     // Open in in-page modal viewer (no new tab, no about:blank)
-    openPDFViewer(data.html || '', 'Pre-Approval — ' + (payload.borrower_name || 'Borrower'));
+    openPDFViewer(data.html || '', 'Pre-Approval — ' + (payload.borrower_name || 'Borrower') + '.pdf', 'Pre-Approval Letter · ' + (payload.borrower_name || 'Borrower'));
+    PDF._htmlSource = data.html;
     showToast('Pre-Approval ready — click Print / Save PDF to export \u2713');
   } catch(e) {
     console.error('[pre-approval]', e);
@@ -11797,6 +11799,29 @@ function ldShowTab(tabId, btn) {
   if (tabId === 'docs') ldLoadGuidelines();
 }
 
+var LD_LOAN_TYPES = ['Conventional','FHA','VA','USDA','Jumbo','Non-QM','Heloan','HELOC','Reverse','Commercial','Hard Money','Bridge Loan','SBA','Construction'];
+var LD_LOAN_PROGRAMS = ['DSCR','Bank Statement (12 mo)','Bank Statement (24 mo)','Asset Depletion','ITIN','Foreign National','DPA','CalHFA','GSFA','Bond Programs','Fix & Flip','Construction','Bridge Loan','Hard Money','Commercial','SBA 7(a)','SBA 504','Commercial DSCR','203K','Fannie Mae HomeStyle','CHOICERenovation','Reverse (HECM)','USDA Direct','Native American (Section 184)','Close in LLC','DACA','Doctor Loans','Church Loans','Manufactured Home','Modular Home','Condo','Non-Warrantable Condo','W-2 Only','P&L Statement','WVOE','40 Year Terms','Interest Only','Buydown (2-1)','Buydown (3-2-1)','30-Year Fixed','20-Year Fixed','15-Year Fixed','10-Year Fixed','5/1 ARM','7/1 ARM','10/1 ARM','Portfolio','EBO/EPO Friendly'];
+
+function ldBuildMultiGrid(containerId, items, checkedList, fieldName) {
+  var checked = new Set((checkedList||[]).map(function(x){return String(x).trim();}));
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = items.map(function(item, i){
+    var id = containerId+'-'+i;
+    var safe = String(item).replace(/"/g,'&quot;');
+    return '<label><input type="checkbox" id="'+id+'" value="'+safe+'"'+(checked.has(item)?' checked':'')+' onchange="ldSaveMulti(\''+containerId+'\',\''+fieldName+'\')">'+safe+'</label>';
+  }).join('');
+}
+function ldSaveMulti(containerId, fieldName) {
+  var boxes = document.querySelectorAll('#'+containerId+' input[type="checkbox"]:checked');
+  var vals = Array.from(boxes).map(function(b){return b.value;});
+  ldSaveField(fieldName, vals);
+}
+function ldSaveStates(raw) {
+  var arr = (raw||'').split(',').map(function(s){return s.trim();}).filter(Boolean);
+  ldSaveField('states_licensed', arr);
+}
+
 async function openLenderDetail(lenderId) {
   _currentLenderId = lenderId;
   var modal = document.getElementById('lenderDetailModal');
@@ -11845,28 +11870,29 @@ async function openLenderDetail(lenderId) {
   document.getElementById('ldStatSubs').textContent = l.submission_count || submissions.length || 0;
   document.getElementById('ldStatRating').textContent = l.rating ? Number(l.rating).toFixed(1)+'★' : '—';
 
-  // Overview
-  document.getElementById('ldLoanTypes').innerHTML = pills(l.loan_types);
-  document.getElementById('ldLoanPrograms').innerHTML = pills([].concat(l.loan_programs||[], l.programs||[]));
-  document.getElementById('ldChannel').textContent = val(l.channel);
-  document.getElementById('ldStates').textContent = (l.states_licensed||[]).join(', ') || 'Not specified';
-  document.getElementById('ldLoanRange').textContent = (l.min_loan_amount || l.max_loan_amount) ? (usd(l.min_loan_amount)+' – '+usd(l.max_loan_amount)) : '—';
+  // Overview — editable
+  ldBuildMultiGrid('ldOvLoanTypesGrid', LD_LOAN_TYPES, l.loan_types || [], 'loan_types');
+  ldBuildMultiGrid('ldOvLoanProgramsGrid', LD_LOAN_PROGRAMS, [].concat(l.loan_programs||[], l.programs||[]), 'loan_programs');
+  var setInp0 = function(id, v){ var e=document.getElementById(id); if(e) e.value = v==null?'':v; };
+  var setChk0 = function(id, v){ var e=document.getElementById(id); if(e) e.checked = !!v; };
+  setInp0('ldOvChannel', l.channel);
+  setInp0('ldOvMinCredit', l.min_credit);
+  setInp0('ldOvMaxLTV', l.max_ltv);
+  setInp0('ldOvMinLoan', l.min_loan_amount);
+  setInp0('ldOvMaxLoan', l.max_loan_amount);
+  setInp0('ldOvAvgFund', l.avg_app_to_fund);
+  setInp0('ldOvStates', Array.isArray(l.states_licensed) ? l.states_licensed.join(', ') : (l.states_licensed||''));
+  setChk0('ldOvNonWarr', l.non_warrantable_condo);
+  setChk0('ldOvManufactured', l.manufactured_home);
+  setChk0('ldOvRural', l.rural_properties);
+  setChk0('ldOv500', l.down_to_500_credit);
+  setChk0('ldOvBK', l.recent_bk_ok);
+  setChk0('ldOvFC', l.recent_foreclosure_ok);
+  setChk0('ldOvITIN', l.itin_ok);
+  setChk0('ldOvDBA', l.dba_ok);
+  setChk0('ldOvEscrow', l.escrow_waiver_allowed);
+  setChk0('ldOvDeskReview', l.appraisal_desk_review);
   var spec = document.getElementById('ldSpecialtyNotesInput'); if (spec) spec.value = l.specialty_notes || '';
-
-  // Features
-  var features = [
-    ['Non-Warrantable Condo', l.non_warrantable_condo],
-    ['Manufactured Home', l.manufactured_home],
-    ['Rural Properties', l.rural_properties],
-    ['Down to 500 Credit', l.down_to_500_credit],
-    ['Recent BK OK', l.recent_bk_ok],
-    ['Recent Foreclosure OK', l.recent_foreclosure_ok],
-    ['ITIN OK', l.itin_ok],
-    ['Close in LLC/DBA', l.dba_ok],
-    ['Escrow Waiver', l.escrow_waiver_allowed],
-    ['Desk Review Appraisal', l.appraisal_desk_review]
-  ];
-  document.getElementById('ldFeatures').innerHTML = features.map(function(p){ return '<div class="ld-feature-item"><div class="ld-feature-label">'+p[0]+'</div><div class="ld-feature-val">'+boolIco(p[1])+'</div></div>'; }).join('');
 
   // Rating stars
   var rating = parseFloat(l.rating)||0;
@@ -12074,23 +12100,6 @@ async function ldSaveGuideline() {
     await ldLoadGuidelines();
   } catch(e) { showToast('Save failed: ' + e.message); }
   if (btn) { btn.textContent = origTxt; btn.disabled = false; }
-}
-
-function ldOpenGuideline(url, title, fileType) {
-  if (fileType === 'pdf') {
-    var modal = document.getElementById('pdfViewerModal');
-    var frame = document.getElementById('pdfViewerFrame');
-    var titleEl = document.getElementById('pdfViewerTitle');
-    if (modal && frame) {
-      if (titleEl) titleEl.textContent = title || 'Document';
-      frame.removeAttribute('srcdoc');
-      frame.src = url;
-      modal.style.display = 'flex';
-      document.body.style.overflow = 'hidden';
-    }
-  } else {
-    window.open(url, '_blank', 'noopener');
-  }
 }
 
 async function ldDeleteGuideline(guidelineId) {
@@ -14498,27 +14507,70 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
         .ld-checkbox-row:hover{border-color:#C9A84C55}
         .ld-checkbox-row input{accent-color:#C9A84C;width:15px;height:15px;cursor:pointer;margin:0}
         .ld-checkbox-row label{font-size:.7rem;color:#ccc;font-weight:500;cursor:pointer;flex:1}
+        .ld-multi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 12px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 12px;max-height:160px;overflow-y:auto}
+        .ld-multi-grid label{display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0;font-size:.72rem;color:#ccc;font-weight:500}
+        .ld-multi-grid input[type="checkbox"]{accent-color:#C9A84C;width:14px;height:14px;margin:0;flex-shrink:0;cursor:pointer}
       </style>
-      <!-- OVERVIEW -->
+      <!-- OVERVIEW (fully editable) -->
       <div id="ldTab-overview" class="ld-tab-body">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-          <div class="ld-info-card"><div class="ld-info-label">Loan Types</div><div id="ldLoanTypes" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Loan Programs</div><div id="ldLoanPrograms" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Channel</div><div id="ldChannel" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">States Licensed</div><div id="ldStates" class="ld-info-val">—</div></div>
-          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Loan Range</div><div id="ldLoanRange" class="ld-info-val">—</div></div>
-          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Specialty Notes</div><textarea id="ldSpecialtyNotesInput" rows="3" class="ld-edit-textarea" onblur="ldSaveField('specialty_notes',this.value)" placeholder="What makes this lender unique"></textarea></div>
+        <!-- Loan Types -->
+        <div class="ld-info-card" style="margin-bottom:12px">
+          <div class="ld-info-label" style="margin-bottom:8px">Loan Types</div>
+          <div id="ldOvLoanTypesGrid" class="ld-multi-grid"></div>
         </div>
-        <div class="ld-info-card" style="margin-bottom:14px">
-          <div class="ld-info-label" style="margin-bottom:8px">Features</div>
-          <div id="ldFeatures" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px"></div>
+        <!-- Loan Programs -->
+        <div class="ld-info-card" style="margin-bottom:12px">
+          <div class="ld-info-label" style="margin-bottom:8px">Loan Programs / Specialties</div>
+          <div id="ldOvLoanProgramsGrid" class="ld-multi-grid"></div>
         </div>
-        <div class="ld-info-card" style="margin-bottom:14px">
+        <!-- Lender Info -->
+        <div class="ld-info-card" style="margin-bottom:12px">
+          <div class="ld-info-label" style="margin-bottom:8px">Lender Info</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+            <div><div class="ld-info-label">Channel</div>
+              <select id="ldOvChannel" class="ld-edit-input" onchange="ldSaveField('channel',this.value)">
+                <option value="">Select...</option>
+                <option>Wholesale</option><option>Correspondent</option>
+                <option>Wholesale, Correspondent</option><option>Retail</option><option>Direct</option>
+              </select>
+            </div>
+            <div><div class="ld-info-label">Min Credit Score</div><input id="ldOvMinCredit" type="number" class="ld-edit-input" onblur="ldSaveField('min_credit',parseInt(this.value)||null)"></div>
+            <div><div class="ld-info-label">Max LTV (%)</div><input id="ldOvMaxLTV" type="number" step="0.01" class="ld-edit-input" onblur="ldSaveField('max_ltv',parseFloat(this.value)||null)"></div>
+            <div><div class="ld-info-label">Min Loan Amount</div><input id="ldOvMinLoan" type="number" class="ld-edit-input" onblur="ldSaveField('min_loan_amount',parseFloat(this.value)||null)"></div>
+            <div><div class="ld-info-label">Max Loan Amount</div><input id="ldOvMaxLoan" type="number" class="ld-edit-input" onblur="ldSaveField('max_loan_amount',parseFloat(this.value)||null)"></div>
+            <div><div class="ld-info-label">Avg App to Fund (days)</div><input id="ldOvAvgFund" type="number" class="ld-edit-input" onblur="ldSaveField('avg_app_to_fund',parseInt(this.value)||null)"></div>
+          </div>
+          <div style="margin-top:10px"><div class="ld-info-label">States Licensed</div><input id="ldOvStates" class="ld-edit-input" placeholder="CA, TX, FL (comma-separated)" onblur="ldSaveStates(this.value)"></div>
+        </div>
+        <!-- Features -->
+        <div class="ld-info-card" style="margin-bottom:12px">
+          <div class="ld-info-label" style="margin-bottom:8px">Features &amp; Specialty Programs</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvNonWarr" onchange="ldSaveField('non_warrantable_condo',this.checked)"><label for="ldOvNonWarr">Non-Warrantable Condo</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvManufactured" onchange="ldSaveField('manufactured_home',this.checked)"><label for="ldOvManufactured">Manufactured Home</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvRural" onchange="ldSaveField('rural_properties',this.checked)"><label for="ldOvRural">Rural Properties</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOv500" onchange="ldSaveField('down_to_500_credit',this.checked)"><label for="ldOv500">Down to 500 Credit</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvBK" onchange="ldSaveField('recent_bk_ok',this.checked)"><label for="ldOvBK">Recent BK OK</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvFC" onchange="ldSaveField('recent_foreclosure_ok',this.checked)"><label for="ldOvFC">Recent Foreclosure OK</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvITIN" onchange="ldSaveField('itin_ok',this.checked)"><label for="ldOvITIN">ITIN OK</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvDBA" onchange="ldSaveField('dba_ok',this.checked)"><label for="ldOvDBA">Close in LLC/DBA</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvEscrow" onchange="ldSaveField('escrow_waiver_allowed',this.checked)"><label for="ldOvEscrow">Escrow Waiver</label></div>
+            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvDeskReview" onchange="ldSaveField('appraisal_desk_review',this.checked)"><label for="ldOvDeskReview">Desk Review Appraisal</label></div>
+          </div>
+        </div>
+        <!-- Specialty Notes -->
+        <div class="ld-info-card" style="margin-bottom:12px">
+          <div class="ld-info-label" style="margin-bottom:8px">Specialty Notes</div>
+          <textarea id="ldSpecialtyNotesInput" rows="3" class="ld-edit-textarea" onblur="ldSaveField('specialty_notes',this.value)" placeholder="What makes this lender unique"></textarea>
+        </div>
+        <!-- Rating -->
+        <div class="ld-info-card" style="margin-bottom:12px">
           <div class="ld-info-label" style="margin-bottom:8px">Your Rating</div>
           <div id="ldRatingStars" style="display:flex;gap:4px;align-items:center"></div>
         </div>
+        <!-- Scenario Notes -->
         <div class="ld-info-card">
-          <div class="ld-info-label" style="margin-bottom:8px">Scenario Notes (internal)</div>
+          <div class="ld-info-label" style="margin-bottom:8px">Scenario Notes (Internal)</div>
           <textarea id="ldScenarioNotes" rows="3" onblur="ldSaveField('scenario_notes',this.value)" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;padding:9px 12px;color:#eee;font-size:.78rem;font-family:inherit;outline:none;resize:vertical;box-sizing:border-box"></textarea>
         </div>
       </div>
@@ -14676,53 +14728,262 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
   .ld-rating-star:hover{color:#C9A84C88}
 </style>
 
-<!-- ═══ IN-PAGE PDF VIEWER MODAL ═══ -->
-<div id="pdfViewerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:99999;align-items:center;justify-content:center;padding:24px">
-  <div style="width:100%;max-width:900px;height:100%;max-height:92vh;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6)">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #2a2a2a;background:#111">
-      <div style="display:flex;align-items:center;gap:10px;min-width:0">
-        <i class="fas fa-file-pdf" style="color:#C9A84C"></i>
-        <span id="pdfViewerTitle" style="font-size:.84rem;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Document Preview</span>
-      </div>
-      <div style="display:flex;gap:8px;flex-shrink:0">
-        <button type="button" onclick="pdfViewerPrint()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 14px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit"><i class="fas fa-print" style="margin-right:5px"></i>Print / Save PDF</button>
-        <button type="button" onclick="pdfViewerClose()" style="background:#2a2a2a;border:1px solid #333;color:#ccc;border-radius:6px;padding:6px 12px;font-size:.72rem;cursor:pointer;font-family:inherit">Close</button>
+<!-- ═══ ADOBE ACROBAT-STYLE PDF VIEWER MODAL ═══ -->
+<div id="pdfViewerModal" style="display:none;position:fixed;inset:0;background:#323639;z-index:99999;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <!-- Top bar: document title + primary actions -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:#2a2d30;border-bottom:1px solid #1a1c1e;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,0.5)">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+      <i class="fas fa-file-pdf" style="color:#e04141;font-size:1.05rem;flex-shrink:0"></i>
+      <div style="min-width:0;display:flex;flex-direction:column;line-height:1.2">
+        <span id="pdfTitle" style="font-size:.82rem;font-weight:600;color:#f0f0f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55vw">Document</span>
+        <span id="pdfMeta" style="font-size:.6rem;color:#9a9a9a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">PDF Document</span>
       </div>
     </div>
-    <iframe id="pdfViewerFrame" style="flex:1;width:100%;border:none;background:#fff"></iframe>
+    <div style="display:flex;gap:6px;flex-shrink:0;align-items:center">
+      <button type="button" onclick="pdfDownload()" title="Download" style="background:#3a3d41;color:#e8e8e8;border:1px solid #484b4f;border-radius:4px;padding:6px 11px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px"><i class="fas fa-download"></i>Download</button>
+      <button type="button" id="pdfOpenNewBtn" onclick="pdfOpenNew()" title="Open in new tab" style="display:none;background:#3a3d41;color:#e8e8e8;border:1px solid #484b4f;border-radius:4px;padding:6px 11px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;align-items:center;gap:5px"><i class="fas fa-external-link-alt"></i>Open</button>
+      <button type="button" onclick="pdfPrint()" title="Print" style="background:#3a3d41;color:#e8e8e8;border:1px solid #484b4f;border-radius:4px;padding:6px 11px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px"><i class="fas fa-print"></i>Print</button>
+      <button type="button" onclick="pdfClose()" title="Close (Esc)" style="background:transparent;color:#c0c0c0;border:1px solid #484b4f;border-radius:4px;width:30px;height:30px;font-size:.95rem;cursor:pointer;font-family:inherit;margin-left:8px;display:inline-flex;align-items:center;justify-content:center"><i class="fas fa-times"></i></button>
+    </div>
+  </div>
+  <!-- Acrobat-style toolbar: page nav + zoom + rotate -->
+  <div style="display:flex;align-items:center;justify-content:center;gap:18px;padding:7px 16px;background:#383b3e;border-bottom:1px solid #1a1c1e;flex-shrink:0">
+    <!-- Page nav -->
+    <div style="display:flex;align-items:center;gap:6px">
+      <button type="button" onclick="pdfPrevPage()" title="Previous page" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;width:26px;height:26px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center"><i class="fas fa-chevron-up" style="font-size:.65rem"></i></button>
+      <button type="button" onclick="pdfNextPage()" title="Next page" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;width:26px;height:26px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center"><i class="fas fa-chevron-down" style="font-size:.65rem"></i></button>
+      <input id="pdfPageInput" type="number" min="1" value="1" onchange="pdfGoToPage(this.value)" style="background:#2a2d30;color:#e8e8e8;border:1px solid #4a4d51;border-radius:3px;width:42px;height:26px;text-align:center;font-size:.72rem;font-family:inherit;outline:none">
+      <span style="color:#9a9a9a;font-size:.72rem">/</span>
+      <span id="pdfPageTotal" style="color:#c0c0c0;font-size:.72rem;font-weight:600;min-width:14px">1</span>
+    </div>
+    <div style="width:1px;height:22px;background:#4a4d51"></div>
+    <!-- Zoom -->
+    <div style="display:flex;align-items:center;gap:6px">
+      <button type="button" onclick="pdfZoomOut()" title="Zoom out" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;width:26px;height:26px;font-size:.95rem;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center">−</button>
+      <select id="pdfZoomSelect" onchange="pdfSetZoom(this.value)" style="background:#2a2d30;color:#e8e8e8;border:1px solid #4a4d51;border-radius:3px;height:26px;padding:0 6px;font-size:.72rem;font-family:inherit;outline:none;cursor:pointer">
+        <option value="50">50%</option>
+        <option value="75">75%</option>
+        <option value="100" selected>100%</option>
+        <option value="125">125%</option>
+        <option value="150">150%</option>
+        <option value="175">175%</option>
+        <option value="200">200%</option>
+      </select>
+      <button type="button" onclick="pdfZoomIn()" title="Zoom in" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;width:26px;height:26px;font-size:.95rem;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center">+</button>
+    </div>
+    <div style="width:1px;height:22px;background:#4a4d51"></div>
+    <!-- Rotate -->
+    <button type="button" onclick="pdfRotate()" title="Rotate clockwise" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;height:26px;padding:0 10px;font-size:.7rem;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px"><i class="fas fa-redo" style="font-size:.7rem"></i>Rotate</button>
+  </div>
+  <!-- Main viewer area -->
+  <div id="pdfScrollArea" style="flex:1;overflow:auto;background:#525659;display:flex;align-items:flex-start;justify-content:center;padding:24px;position:relative">
+    <!-- Loading overlay -->
+    <div id="pdfLoading" style="display:none;position:absolute;inset:0;background:rgba(50,54,57,0.85);align-items:center;justify-content:center;flex-direction:column;gap:12px;z-index:10">
+      <div style="width:38px;height:38px;border:3px solid #484b4f;border-top-color:#C9A84C;border-radius:50%;animation:pdfSpin 0.8s linear infinite"></div>
+      <div style="color:#c0c0c0;font-size:.72rem;font-weight:600">Loading document…</div>
+    </div>
+    <!-- Iframe (primary) -->
+    <iframe id="pdfViewerFrame" style="width:100%;max-width:900px;height:100%;min-height:1100px;border:none;background:#fff;box-shadow:0 4px 24px rgba(0,0,0,0.6);transform-origin:top center;transition:transform .15s ease"></iframe>
+    <!-- Canvas container (reserved for future PDF.js rendering) -->
+    <div id="pdfCanvasContainer" style="display:none;max-width:900px;width:100%"></div>
+  </div>
+  <!-- Status bar -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 14px;background:#2a2d30;border-top:1px solid #1a1c1e;flex-shrink:0;font-size:.62rem;color:#8a8a8a">
+    <span id="pdfStatusText">Ready</span>
+    <span style="color:#6a6a6a">Press Esc to close</span>
   </div>
 </div>
+<style>@keyframes pdfSpin{to{transform:rotate(360deg)}}</style>
 <script>
-  function openPDFViewer(html, title) {
-    var modal = document.getElementById('pdfViewerModal');
-    var frame = document.getElementById('pdfViewerFrame');
-    var titleEl = document.getElementById('pdfViewerTitle');
-    if (!modal || !frame) return;
-    if (titleEl) titleEl.textContent = title || 'Document Preview';
-    frame.srcdoc = html || '';
-    modal.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
+  const PDF = { url: null, title: null, isHtml: false, zoom: 100, rotation: 0 };
+
+  function pdfShow() {
+    const m = document.getElementById('pdfViewerModal');
+    if (m) { m.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
   }
-  function pdfViewerClose() {
-    var modal = document.getElementById('pdfViewerModal');
-    var frame = document.getElementById('pdfViewerFrame');
-    if (modal) modal.style.display = 'none';
-    if (frame) { frame.srcdoc = ''; frame.removeAttribute('src'); }
-    document.body.style.overflow = '';
+
+  function pdfClose() {
+    const m = document.getElementById('pdfViewerModal');
+    if (m) { m.style.display = 'none'; document.body.style.overflow = ''; }
+    setTimeout(() => {
+      const f = document.getElementById('pdfViewerFrame');
+      if (f) { f.removeAttribute('src'); f.removeAttribute('srcdoc'); }
+    }, 300);
+    PDF.url = null;
   }
-  function pdfViewerPrint() {
-    var frame = document.getElementById('pdfViewerFrame');
-    if (frame && frame.contentWindow) { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch(e){} }
+
+  function pdfSetStatus(msg) {
+    const el = document.getElementById('pdfStatusText');
+    if (el) el.textContent = msg || 'Ready';
   }
-  document.addEventListener('keydown', function(e){
+
+  // For HTML-generated docs (pre-approval, 1003)
+  function openPDFViewer(html, title, meta) {
+    PDF.isHtml = true; PDF.url = null; PDF.zoom = 100; PDF.rotation = 0;
+    document.getElementById('pdfTitle').textContent = title || 'Document';
+    document.getElementById('pdfMeta').textContent = meta || 'PDF Document';
+    PDF.title = title;
+    pdfSetStatus('Rendering...');
+    const frame = document.getElementById('pdfViewerFrame');
+    frame.style.display = 'block';
+    frame.style.transform = 'scale(1)';
+    frame.removeAttribute('src');
+    document.getElementById('pdfCanvasContainer').style.display = 'none';
+    document.getElementById('pdfLoading').style.display = 'none';
+    const openBtn = document.getElementById('pdfOpenNewBtn');
+    if (openBtn) openBtn.style.display = 'none';
+    frame.srcdoc = html;
+    frame.onload = () => pdfSetStatus('Ready');
+    document.getElementById('pdfZoomSelect').value = '100';
+    document.getElementById('pdfPageInput').value = 1;
+    document.getElementById('pdfPageTotal').textContent = '1';
+    pdfShow();
+  }
+
+  // For real PDF URLs (guidelines, uploaded docs)
+  function openPDFUrl(url, title, meta) {
+    PDF.isHtml = false; PDF.url = url; PDF.zoom = 100; PDF.rotation = 0;
+    document.getElementById('pdfTitle').textContent = title || 'Document';
+    document.getElementById('pdfMeta').textContent = meta || 'PDF';
+    PDF.title = title;
+    pdfSetStatus('Loading...');
+    document.getElementById('pdfLoading').style.display = 'flex';
+    document.getElementById('pdfCanvasContainer').style.display = 'none';
+    const openBtn = document.getElementById('pdfOpenNewBtn');
+    if (openBtn) openBtn.style.display = 'flex';
+    document.getElementById('pdfZoomSelect').value = '100';
+    pdfShow();
+    const frame = document.getElementById('pdfViewerFrame');
+    frame.style.display = 'block';
+    frame.style.transform = 'scale(1)';
+    frame.removeAttribute('srcdoc');
+    frame.src = url;
+    frame.onload = () => {
+      document.getElementById('pdfLoading').style.display = 'none';
+      pdfSetStatus('Ready');
+    };
+  }
+
+  // Aliases for backward compat
+  function pdfViewerClose() { pdfClose(); }
+  function pdfViewerPrint() { pdfPrint(); }
+
+  function pdfPrint() {
+    if (PDF.isHtml) {
+      const f = document.getElementById('pdfViewerFrame');
+      if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); }
+    } else if (PDF.url) {
+      const w = window.open(PDF.url, '_blank');
+      if (w) setTimeout(() => w.print(), 800);
+    }
+  }
+
+  async function pdfDownload() {
+    const title = PDF.title || 'document';
+    const fname = title.replace(/[^a-z0-9\-_\. ]/gi, '_');
+
+    if (PDF.url) {
+      try {
+        const resp = await fetch(PDF.url);
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fname + '.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      } catch(e) {
+        window.open(PDF.url, '_blank');
+      }
+    } else {
+      const frame = document.getElementById('pdfViewerFrame');
+      const htmlContent = PDF._htmlSource || (frame ? frame.srcdoc : '') || '';
+      if (!htmlContent) { pdfPrint(); return; }
+
+      const inject = '';
+      const printHtml = htmlContent.indexOf('') !== -1
+        ? htmlContent.replace('', inject)
+        : htmlContent;
+
+      const blob = new Blob([printHtml], { type: 'text/html;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fname + '.html';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    }
+  }
+
+  function pdfOpenNew() { if (PDF.url) window.open(PDF.url, '_blank'); }
+
+  function pdfZoomIn() {
+    const levels = [50,75,100,125,150,175,200];
+    const cur = parseInt(document.getElementById('pdfZoomSelect').value) || 100;
+    const next = levels.find(l => l > cur) || 200;
+    pdfSetZoom(next);
+    document.getElementById('pdfZoomSelect').value = next;
+  }
+
+  function pdfZoomOut() {
+    const levels = [50,75,100,125,150,175,200];
+    const cur = parseInt(document.getElementById('pdfZoomSelect').value) || 100;
+    const prev = [...levels].reverse().find(l => l < cur) || 50;
+    pdfSetZoom(prev);
+    document.getElementById('pdfZoomSelect').value = prev;
+  }
+
+  function pdfSetZoom(val) {
+    PDF.zoom = parseInt(val) || 100;
+    const frame = document.getElementById('pdfViewerFrame');
+    if (frame) {
+      frame.style.transform = `scale(${PDF.zoom/100}) rotate(${PDF.rotation}deg)`;
+      frame.style.transformOrigin = 'top center';
+    }
+  }
+
+  function pdfRotate() {
+    PDF.rotation = (PDF.rotation + 90) % 360;
+    const frame = document.getElementById('pdfViewerFrame');
+    if (frame) frame.style.transform = `scale(${PDF.zoom/100}) rotate(${PDF.rotation}deg)`;
+  }
+
+  function pdfPrevPage() {
+    const inp = document.getElementById('pdfPageInput');
+    if (inp && parseInt(inp.value) > 1) { inp.value = parseInt(inp.value) - 1; }
+  }
+
+  function pdfNextPage() {
+    const inp = document.getElementById('pdfPageInput');
+    const tot = document.getElementById('pdfPageTotal');
+    if (inp && tot && parseInt(inp.value) < parseInt(tot.textContent||'1')) {
+      inp.value = parseInt(inp.value) + 1;
+    }
+  }
+
+  function pdfGoToPage(n) {
+    const inp = document.getElementById('pdfPageInput');
+    if (inp) inp.value = Math.max(1, parseInt(n)||1);
+  }
+
+  function ldOpenGuideline(url, title, fileType) {
+    if (fileType === 'pdf' || fileType === 'docx' || fileType === 'xlsx') {
+      openPDFUrl(url, title, fileType.toUpperCase() + ' Document');
+    } else {
+      window.open(url, '_blank');
+    }
+  }
+
+  document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-      var m = document.getElementById('pdfViewerModal');
-      if (m && m.style.display !== 'none') pdfViewerClose();
+      const m = document.getElementById('pdfViewerModal');
+      if (m && m.style.display !== 'none') pdfClose();
     }
   });
-  // Click backdrop to close
-  var _pdfM = document.getElementById('pdfViewerModal');
-  if (_pdfM) _pdfM.addEventListener('click', function(e){ if (e.target === this) pdfViewerClose(); });
 </script>
 
 </body>
