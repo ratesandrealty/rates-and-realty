@@ -7839,12 +7839,32 @@ async function save1003() {
   console.log('Saving 1003 with fields:', Object.keys(cleanData));
 
   try {
-    const { data: upsertResult, error } = await sb
+    // Check-then-update pattern. Upsert with onConflict:'contact_id' fails without a
+    // matching UNIQUE constraint on mortgage_applications(contact_id) — a contact can
+    // legitimately have multiple applications, so we manually look up + update.
+    const { data: existingApps } = await sb
       .from('mortgage_applications')
-      .upsert([cleanData], { onConflict: 'contact_id' })
-      .select();
+      .select('id')
+      .eq('contact_id', cid)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const existingAppId = existingApps && existingApps[0] ? existingApps[0].id : null;
 
-    console.log('Upsert result:', upsertResult, 'Error:', error);
+    let upsertResult, error;
+    if (existingAppId) {
+      cleanData.updated_at = new Date().toISOString();
+      delete cleanData.contact_id; // don't re-write immutable FK
+      const r = await sb.from('mortgage_applications').update(cleanData).eq('id', existingAppId).select();
+      upsertResult = r.data; error = r.error;
+    } else {
+      cleanData.contact_id = cid;
+      cleanData.created_at = new Date().toISOString();
+      cleanData.updated_at = new Date().toISOString();
+      const r = await sb.from('mortgage_applications').insert([cleanData]).select();
+      upsertResult = r.data; error = r.error;
+    }
+
+    console.log('Save result:', upsertResult, 'Error:', error);
 
     if (error) {
       console.error('Full save error:', JSON.stringify(error));
