@@ -11496,19 +11496,33 @@ function filterLenders() {
 }
 
 async function syncLendersFromClickUp() {
-  if (typeof toast === 'function') toast('Syncing lenders from ClickUp…');
+  if (typeof toast === 'function') toast('Syncing all lenders from ClickUp…');
   try {
-    const resp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/clickup-sync`, {
+    // New endpoint — bidirectional, pulls ClickUp → Supabase (fills empty fields only)
+    const resp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/clickup-lender-sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
       },
-      body: JSON.stringify({ action: 'sync_lenders' })
+      body: JSON.stringify({ action: 'pull_all' })
     });
-    const data = await resp.json();
-    if (data.error) throw new Error(data.error);
-    if (typeof toast === 'function') toast(`ClickUp sync complete — ${data.synced || 0} lenders updated`);
+    let data;
+    try { data = await resp.json(); } catch(e) { data = { error: 'Non-JSON response' }; }
+    if (!resp.ok || data.error) {
+      // Fallback to legacy endpoint
+      console.warn('[clickup-lender-sync] falling back to legacy:', data.error);
+      const legacy = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/clickup-sync`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
+        body: JSON.stringify({ action: 'sync_lenders' })
+      });
+      const legacyData = await legacy.json();
+      if (legacyData.error) throw new Error(legacyData.error);
+      if (typeof toast === 'function') toast(`ClickUp sync complete — ${legacyData.synced || 0} lenders updated`);
+    } else {
+      if (typeof toast === 'function') toast(`Synced ${data.total||0} lenders — ${data.fields_updated||0} fields updated`);
+    }
     await loadLenders();
   } catch(e) {
     console.error('Sync error:', e);
@@ -11810,7 +11824,16 @@ async function openLenderDetail(lenderId) {
 
   // Header
   document.getElementById('ldName').textContent = l.name || '—';
-  document.getElementById('ldLogo').textContent = (l.name||'L').replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase();
+  var initialsEl = document.getElementById('ldLogoInitials');
+  var logoImg = document.getElementById('ldLogoImg');
+  if (l.logo_url && logoImg) {
+    logoImg.src = l.logo_url + (l.logo_url.indexOf('?')<0?'?t='+Date.now():'');
+    logoImg.style.display = 'block';
+    if (initialsEl) initialsEl.style.display = 'none';
+  } else {
+    if (logoImg) logoImg.style.display = 'none';
+    if (initialsEl) { initialsEl.style.display = 'flex'; initialsEl.textContent = (l.name||'L').replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase(); }
+  }
   document.getElementById('ldMeta').textContent = [l.lender_type, l.channel, l.nmlsr_id ? 'NMLS #'+l.nmlsr_id : null].filter(Boolean).join(' · ');
   document.getElementById('ldPreferredBadge').style.display = l.is_preferred ? 'inline-block' : 'none';
 
@@ -11827,7 +11850,7 @@ async function openLenderDetail(lenderId) {
   document.getElementById('ldChannel').textContent = val(l.channel);
   document.getElementById('ldStates').textContent = (l.states_licensed||[]).join(', ') || 'Not specified';
   document.getElementById('ldLoanRange').textContent = (l.min_loan_amount || l.max_loan_amount) ? (usd(l.min_loan_amount)+' – '+usd(l.max_loan_amount)) : '—';
-  document.getElementById('ldSpecialtyNotes').textContent = l.specialty_notes || 'No specialty notes added yet.';
+  var spec = document.getElementById('ldSpecialtyNotesInput'); if (spec) spec.value = l.specialty_notes || '';
 
   // Features
   var features = [
@@ -11852,55 +11875,66 @@ async function openLenderDetail(lenderId) {
 
   document.getElementById('ldScenarioNotes').value = l.scenario_notes || '';
 
-  // Contacts
-  document.getElementById('ldAEName').textContent = val(l.contact_name || l.rep_name);
-  var aeEm = l.contact_email || l.rep_email; document.getElementById('ldAEEmail').innerHTML = aeEm ? link('mailto:'+aeEm, aeEm) : 'Not set';
-  var aePh = l.contact_phone || l.rep_phone; document.getElementById('ldAEPhone').innerHTML = aePh ? '<a href="tel:'+_lhEsc(aePh)+'" style="color:#C9A84C">'+_lhEsc(aePh)+'</a>' : 'Not set';
-  document.getElementById('ldNMLSR').textContent = val(l.nmlsr_id);
-  document.getElementById('ldPSName').textContent = val(l.product_specialist_name);
-  document.getElementById('ldPSEmail').innerHTML = l.product_specialist_email ? link('mailto:'+l.product_specialist_email, l.product_specialist_email) : 'Not set';
-  document.getElementById('ldPSPhone').textContent = val(l.product_specialist_phone);
-  var lockHtml = [l.lock_desk_email ? link('mailto:'+l.lock_desk_email, l.lock_desk_email) : '', l.lock_desk_phone || ''].filter(Boolean).join('<br>');
-  document.getElementById('ldLockDesk').innerHTML = lockHtml || '—';
-  document.getElementById('ldSubmissionEmail').innerHTML = l.submission_email ? link('mailto:'+l.submission_email, l.submission_email) : '—';
-  document.getElementById('ldConditionsEmail').innerHTML = l.conditions_email ? link('mailto:'+l.conditions_email, l.conditions_email) : '—';
-  document.getElementById('ldUWEmail').innerHTML = l.underwriting_email ? link('mailto:'+l.underwriting_email, l.underwriting_email) : '—';
-  document.getElementById('ldClosingEmail').innerHTML = l.closing_email ? link('mailto:'+l.closing_email, l.closing_email) : '—';
-  document.getElementById('ldFundingEmail').innerHTML = l.funding_email ? link('mailto:'+l.funding_email, l.funding_email) : '—';
-  document.getElementById('ldWebsite').innerHTML = l.website ? link(l.website, l.website) : '—';
-  document.getElementById('ldPortal').innerHTML = l.lender_portal ? link(l.lender_portal, l.lender_portal) : '—';
-  document.getElementById('ldAddress').textContent = [l.physical_address, l.physical_city, l.physical_state, l.physical_zip].filter(Boolean).join(', ') || '—';
-  document.getElementById('ldGuidelinesUrl').innerHTML = l.guidelines_url ? link(l.guidelines_url, 'View Guidelines') : '—';
+  // Contacts — all editable inputs
+  var setInp = function(id, v){ var e=document.getElementById(id); if(e) e.value = v||''; };
+  var setChk = function(id, v){ var e=document.getElementById(id); if(e) e.checked = !!v; };
+  setInp('ldAEName', l.contact_name || l.rep_name);
+  setInp('ldAEEmail', l.contact_email || l.rep_email);
+  setInp('ldAEPhone', l.contact_phone || l.rep_phone);
+  setInp('ldNMLSR', l.nmlsr_id);
+  setInp('ldPSName', l.product_specialist_name);
+  setInp('ldPSEmail', l.product_specialist_email);
+  setInp('ldPSPhone', l.product_specialist_phone);
+  setInp('ldLockDeskEmail', l.lock_desk_email);
+  setInp('ldLockDeskPhone', l.lock_desk_phone);
+  setInp('ldSubmissionEmail', l.submission_email);
+  setInp('ldConditionsEmail', l.conditions_email);
+  setInp('ldUWEmail', l.underwriting_email);
+  setInp('ldClosingEmail', l.closing_email);
+  setInp('ldFundingEmail', l.funding_email);
+  setInp('ldWebsite', l.website);
+  setInp('ldPortal', l.lender_portal);
+  setInp('ldGuidelinesUrl', l.guidelines_url);
 
-  // Guidelines
-  document.getElementById('ldMinCredit2').textContent = l.min_credit || '—';
-  document.getElementById('ldMaxLTV2').textContent = l.max_ltv ? l.max_ltv+'%' : '—';
-  document.getElementById('ldLoanRange2').textContent = (l.min_loan_amount || l.max_loan_amount) ? (usd(l.min_loan_amount)+' – '+usd(l.max_loan_amount)) : '—';
-  document.getElementById('ldUWTurn').textContent = val(l.underwriting_turn_time);
-  document.getElementById('ldFundTime').textContent = l.avg_app_to_fund ? l.avg_app_to_fund+' days' : '—';
-  document.getElementById('ldDaysClose').textContent = (l.min_days_to_close || l.max_days_to_close) ? ((l.min_days_to_close||'?')+' – '+(l.max_days_to_close||'?')+' days') : '—';
-  document.getElementById('ldKeyOverlays').textContent = l.key_overlays || 'No overlays noted.';
-  document.getElementById('ldAMC').textContent = val(l.appraisal_management);
-  document.getElementById('ldDeskReview').innerHTML = boolIco(l.appraisal_desk_review);
-  document.getElementById('ldEscrowWaiver').innerHTML = boolIco(l.escrow_waiver_allowed);
-  document.getElementById('ldNonWarr').innerHTML = boolIco(l.non_warrantable_condo);
-  document.getElementById('ldExceptionProcess').textContent = l.exception_process || 'Not documented.';
-  document.getElementById('ldSubmissionChecklist').textContent = l.submission_checklist || 'Not documented.';
+  // Guidelines — editable
+  setInp('ldMinCredit2', l.min_credit);
+  setInp('ldMaxLTV2', l.max_ltv);
+  setInp('ldUWTurn', l.underwriting_turn_time);
+  setInp('ldFundTime', l.avg_app_to_fund);
+  setInp('ldMinDaysClose', l.min_days_to_close);
+  setInp('ldMaxDaysClose', l.max_days_to_close);
+  setInp('ldAMC', l.appraisal_management);
+  setInp('ldKeyOverlays', l.key_overlays);
+  setInp('ldExceptionProcess', l.exception_process);
+  setInp('ldSubmissionChecklist', l.submission_checklist);
+  setChk('ldDeskReviewCheck', l.appraisal_desk_review);
+  setChk('ldEscrowCheck', l.escrow_waiver_allowed);
+  setChk('ldNonWarrCheck', l.non_warrantable_condo);
+  setChk('ldManufacturedCheck', l.manufactured_home);
+  setChk('ldRuralCheck', l.rural_properties);
+  setChk('ld500CreditCheck', l.down_to_500_credit);
+  setChk('ldBKCheck', l.recent_bk_ok);
+  setChk('ldForeclosureCheck', l.recent_foreclosure_ok);
+  setChk('ldITINCheck', l.itin_ok);
+  setChk('ldDBACheck', l.dba_ok);
 
-  // Compensation
-  document.getElementById('ldCompType').textContent = val(l.compensation_type);
-  document.getElementById('ldCompBPS').textContent = l.compensation_bps ? l.compensation_bps+'bps' : '—';
-  document.getElementById('ldCompMin').textContent = l.compensation_min ? usd(l.compensation_min) : '—';
-  document.getElementById('ldCompMax').textContent = l.compensation_max ? usd(l.compensation_max) : '—';
-  document.getElementById('ldRevenueNotes').textContent = l.revenue_notes || '—';
-  document.getElementById('ldFeeNotes').textContent = l.fee_notes || '—';
-  document.getElementById('ldEPO').textContent = l.epo_policy || '—';
-  document.getElementById('ldBrokerIdInput').value = l.broker_id || '';
+  // Compensation — editable
+  setInp('ldCompType', l.compensation_type);
+  setInp('ldCompBPS', l.compensation_bps);
+  setInp('ldCompMin', l.compensation_min);
+  setInp('ldCompMax', l.compensation_max);
+  setInp('ldRevenueNotesInput', l.revenue_notes);
+  setInp('ldFeeNotesInput', l.fee_notes);
+  setInp('ldEPOInput', l.epo_policy);
+  setInp('ldBrokerIdInput', l.broker_id);
 
-  // Clauses
-  document.getElementById('ldCPLClause').textContent = l.cpl_clause || 'Not on file — ask your AE';
-  document.getElementById('ldMortgageeClause').textContent = l.mortgagee_clause || 'Not on file — ask your AE';
-  document.getElementById('ldPhysicalAddress').textContent = [l.physical_address, l.physical_city, l.physical_state, l.physical_zip].filter(Boolean).join('\n') || '—';
+  // Clauses — editable
+  setInp('ldCPLInput', l.cpl_clause);
+  setInp('ldMortgageeInput', l.mortgagee_clause);
+  setInp('ldPhysStreet', l.physical_address);
+  setInp('ldPhysCity', l.physical_city);
+  setInp('ldPhysState', l.physical_state);
+  setInp('ldPhysZip', l.physical_zip);
 
   // History
   var subsEl = document.getElementById('ldSubmissions');
@@ -11927,14 +11961,93 @@ async function openLenderDetail(lenderId) {
 
 async function ldSaveField(field, value) {
   if (!_currentLenderId) return;
+  var ind = document.getElementById('ldSaveIndicator');
+  if (ind) { ind.textContent = 'Saving…'; ind.style.color = '#888'; ind.style.opacity = '1'; }
   try {
     await fetch(_lhBase()+'/functions/v1/lender-portal', {
       method:'POST', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json'}),
-      body: JSON.stringify({ action: 'update', id: _currentLenderId, updates: { [field]: value } })
+      body: JSON.stringify({ action: 'update', id: _currentLenderId, [field]: value })
     });
     if (_currentLenderData) _currentLenderData[field] = value;
-    if (typeof showToast === 'function') showToast('Saved ✓');
-  } catch(e) { console.warn('[lender-detail] save:', e); if (typeof showToast === 'function') showToast('Save failed', 'error'); }
+    // Sync to in-memory list so the grid reflects changes without reload
+    var l = (window._allLenders||[]).find(function(x){return x.id===_currentLenderId;});
+    if (l) l[field] = value;
+    if (ind) { ind.textContent = '✓ Saved'; ind.style.color = '#22c55e'; setTimeout(function(){ ind.style.opacity='0'; }, 1500); }
+  } catch(e) {
+    console.warn('[lender-detail] save:', e);
+    if (ind) { ind.textContent = '✗ Save failed'; ind.style.color = '#ef4444'; }
+  }
+}
+
+// Logo upload — base64 → edge function → Supabase Storage
+async function uploadLenderLogo(input) {
+  var file = input.files && input.files[0];
+  if (!file || !_currentLenderId) return;
+  if (file.size > 5 * 1024 * 1024) { showToast('Image must be under 5MB'); input.value=''; return; }
+  var container = document.getElementById('ldLogoContainer');
+  if (container) container.style.opacity = '0.5';
+  showToast('Uploading logo…');
+  try {
+    var base64 = await new Promise(function(res, rej) {
+      var reader = new FileReader();
+      reader.onload = function(){ res(reader.result.split(',')[1]); };
+      reader.onerror = rej;
+      reader.readAsDataURL(file);
+    });
+    var ext = (file.name.split('.').pop() || 'png').toLowerCase();
+    var mime = file.type || 'image/png';
+    var r = await fetch(_lhBase()+'/functions/v1/lender-portal', {
+      method:'POST', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json'}),
+      body: JSON.stringify({ action:'upload_logo', id: _currentLenderId, logo_base64: base64, logo_mime: mime, logo_ext: ext })
+    });
+    var data = await r.json();
+    if (data && data.success && data.logo_url) {
+      var busted = data.logo_url + (data.logo_url.indexOf('?')<0?'?t='+Date.now():'');
+      var img = document.getElementById('ldLogoImg');
+      var initials = document.getElementById('ldLogoInitials');
+      if (img) { img.src = busted; img.style.display = 'block'; }
+      if (initials) initials.style.display = 'none';
+      if (_currentLenderData) _currentLenderData.logo_url = data.logo_url;
+      var ll = (window._allLenders||[]).find(function(x){return x.id===_currentLenderId;});
+      if (ll) ll.logo_url = data.logo_url;
+      if (typeof filterLenders === 'function') filterLenders();
+      showToast('Logo updated ✓');
+    } else {
+      showToast('Upload failed: ' + (data.error || 'unknown'));
+    }
+  } catch(e) { showToast('Upload error: ' + e.message); }
+  if (container) container.style.opacity = '1';
+  input.value = '';
+}
+
+// Single-lender ClickUp sync (both directions)
+async function ldSyncClickUp() {
+  if (!_currentLenderId) return;
+  var btn = document.getElementById('ldClickUpSyncBtn');
+  var orig = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = '⏳ Syncing…'; btn.disabled = true; }
+  try {
+    var r = await fetch(_lhBase()+'/functions/v1/clickup-lender-sync', {
+      method:'POST', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json'}),
+      body: JSON.stringify({ action:'sync_one', lender_id: _currentLenderId })
+    });
+    var data = await r.json();
+    if (data && data.success) {
+      var pulled = (data.pull && data.pull.updated && data.pull.updated.length) || 0;
+      showToast('ClickUp synced — ' + pulled + ' field' + (pulled===1?'':'s') + ' pulled');
+      if (pulled) {
+        // Reload this lender's data into modal
+        var reRes = await fetch(_lhBase()+'/functions/v1/lender-portal?id='+_currentLenderId, { headers: _lhHdr() });
+        if (reRes.ok) {
+          var re = await reRes.json();
+          if (re && re.lender) { _currentLenderData = re.lender; openLenderDetail(_currentLenderId); }
+        }
+      }
+    } else {
+      showToast('Sync failed: ' + (data.error || 'check ClickUp API token'));
+    }
+  } catch(e) { showToast('Sync error: ' + e.message); }
+  if (btn) { btn.textContent = orig || '⚡ Sync ClickUp'; btn.disabled = false; }
 }
 
 async function ldRateLender(stars) {
@@ -14188,14 +14301,21 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
   <div style="max-width:1100px;margin:24px auto;background:#111;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden">
     <!-- Header -->
     <div style="padding:18px 22px;border-bottom:1px solid #1e1e1e;background:linear-gradient(135deg,#1a1408,#111);display:flex;align-items:center;gap:14px">
-      <div id="ldLogo" style="width:52px;height:52px;border-radius:10px;background:#2a2a2a;border:1px solid #3a3a3a;display:flex;align-items:center;justify-content:center;font-weight:800;color:#C9A84C;font-size:.9rem;flex-shrink:0">—</div>
+      <div id="ldLogoContainer" style="position:relative;width:52px;height:52px;flex-shrink:0;cursor:pointer" onclick="document.getElementById('ldLogoInput').click()" title="Click to upload logo">
+        <img id="ldLogoImg" style="display:none;width:100%;height:100%;border-radius:10px;object-fit:contain;background:#2a2a2a;border:1px solid #3a3a3a">
+        <div id="ldLogoInitials" style="width:100%;height:100%;border-radius:10px;background:#2a2a2a;border:1px solid #3a3a3a;display:flex;align-items:center;justify-content:center;font-weight:800;color:#C9A84C;font-size:.9rem">—</div>
+        <div style="position:absolute;inset:0;border-radius:10px;background:rgba(0,0,0,0.6);color:#C9A84C;font-size:.52rem;font-weight:700;display:none;align-items:center;justify-content:center;pointer-events:none" onmouseover="this.style.display='flex'" class="ld-logo-hover">📷</div>
+        <input id="ldLogoInput" type="file" accept="image/*" style="display:none" onchange="uploadLenderLogo(this)">
+      </div>
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <h2 id="ldName" style="font-size:1.1rem;color:#eee;margin:0;font-weight:700">Loading…</h2>
           <span id="ldPreferredBadge" style="display:none;background:rgba(201,168,76,0.15);color:#C9A84C;border-radius:10px;padding:2px 8px;font-size:.58rem;font-weight:700;letter-spacing:.04em">⭐ PREFERRED</span>
+          <span id="ldSaveIndicator" style="font-size:.64rem;color:#666;opacity:0;transition:opacity .3s">Saved ✓</span>
         </div>
         <div id="ldMeta" style="font-size:.72rem;color:#888;margin-top:3px"></div>
       </div>
+      <button id="ldClickUpSyncBtn" onclick="ldSyncClickUp()" style="background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:8px;padding:8px 14px;font-size:.72rem;cursor:pointer;font-family:inherit;font-weight:600">⚡ Sync ClickUp</button>
       <button onclick="closeLenderDetail()" style="background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:8px;padding:8px 14px;font-size:.74rem;cursor:pointer;font-family:inherit;font-weight:600">Close ✕</button>
     </div>
     <!-- Stats strip -->
@@ -14222,6 +14342,16 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
     </div>
     <!-- Tab panels -->
     <div style="padding:18px 22px;max-height:calc(100vh - 260px);overflow-y:auto">
+      <style>
+        .ld-edit-input{width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:6px 9px;color:#eee;font-size:.76rem;font-family:inherit;outline:none;box-sizing:border-box;margin-top:3px}
+        .ld-edit-input:focus{border-color:#C9A84C}
+        .ld-edit-textarea{width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:.76rem;font-family:inherit;outline:none;box-sizing:border-box;margin-top:3px;resize:vertical;line-height:1.5;min-height:56px}
+        .ld-edit-textarea:focus{border-color:#C9A84C}
+        .ld-checkbox-row{display:flex;align-items:center;gap:7px;background:#111;border:1px solid #1e1e1e;border-radius:6px;padding:7px 10px;cursor:pointer}
+        .ld-checkbox-row:hover{border-color:#C9A84C55}
+        .ld-checkbox-row input{accent-color:#C9A84C;width:15px;height:15px;cursor:pointer;margin:0}
+        .ld-checkbox-row label{font-size:.7rem;color:#ccc;font-weight:500;cursor:pointer;flex:1}
+      </style>
       <!-- OVERVIEW -->
       <div id="ldTab-overview" class="ld-tab-body">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
@@ -14230,7 +14360,7 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
           <div class="ld-info-card"><div class="ld-info-label">Channel</div><div id="ldChannel" class="ld-info-val">—</div></div>
           <div class="ld-info-card"><div class="ld-info-label">States Licensed</div><div id="ldStates" class="ld-info-val">—</div></div>
           <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Loan Range</div><div id="ldLoanRange" class="ld-info-val">—</div></div>
-          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Specialty Notes</div><div id="ldSpecialtyNotes" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Specialty Notes</div><textarea id="ldSpecialtyNotesInput" rows="3" class="ld-edit-textarea" onblur="ldSaveField('specialty_notes',this.value)" placeholder="What makes this lender unique"></textarea></div>
         </div>
         <div class="ld-info-card" style="margin-bottom:14px">
           <div class="ld-info-label" style="margin-bottom:8px">Features</div>
@@ -14249,70 +14379,85 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
       <div id="ldTab-contacts" class="ld-tab-body" style="display:none">
         <div class="ld-info-label" style="margin-bottom:10px">Primary AE</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
-          <div class="ld-info-card"><div class="ld-info-label">Name</div><div id="ldAEName" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Email</div><div id="ldAEEmail" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Phone</div><div id="ldAEPhone" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">NMLS ID</div><div id="ldNMLSR" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Name</div><input id="ldAEName" class="ld-edit-input" onblur="ldSaveField('contact_name',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Email</div><input id="ldAEEmail" type="email" class="ld-edit-input" onblur="ldSaveField('contact_email',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Phone</div><input id="ldAEPhone" class="ld-edit-input" onblur="ldSaveField('contact_phone',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">NMLS ID</div><input id="ldNMLSR" class="ld-edit-input" onblur="ldSaveField('nmlsr_id',this.value)"></div>
         </div>
         <div class="ld-info-label" style="margin-bottom:10px">Product Specialist</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-          <div class="ld-info-card"><div class="ld-info-label">Name</div><div id="ldPSName" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Email</div><div id="ldPSEmail" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Phone</div><div id="ldPSPhone" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Name</div><input id="ldPSName" class="ld-edit-input" onblur="ldSaveField('product_specialist_name',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Email</div><input id="ldPSEmail" type="email" class="ld-edit-input" onblur="ldSaveField('product_specialist_email',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Phone</div><input id="ldPSPhone" class="ld-edit-input" onblur="ldSaveField('product_specialist_phone',this.value)"></div>
         </div>
         <div class="ld-info-label" style="margin-bottom:10px">Departments</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
-          <div class="ld-info-card"><div class="ld-info-label">Lock Desk</div><div id="ldLockDesk" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Submissions</div><div id="ldSubmissionEmail" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Conditions</div><div id="ldConditionsEmail" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Underwriting</div><div id="ldUWEmail" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Closing</div><div id="ldClosingEmail" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Funding</div><div id="ldFundingEmail" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Lock Desk Email</div><input id="ldLockDeskEmail" type="email" class="ld-edit-input" onblur="ldSaveField('lock_desk_email',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Lock Desk Phone</div><input id="ldLockDeskPhone" class="ld-edit-input" onblur="ldSaveField('lock_desk_phone',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Submissions</div><input id="ldSubmissionEmail" type="email" class="ld-edit-input" onblur="ldSaveField('submission_email',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Conditions</div><input id="ldConditionsEmail" type="email" class="ld-edit-input" onblur="ldSaveField('conditions_email',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Underwriting</div><input id="ldUWEmail" type="email" class="ld-edit-input" onblur="ldSaveField('underwriting_email',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Closing</div><input id="ldClosingEmail" type="email" class="ld-edit-input" onblur="ldSaveField('closing_email',this.value)"></div>
+          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Funding</div><input id="ldFundingEmail" type="email" class="ld-edit-input" onblur="ldSaveField('funding_email',this.value)"></div>
         </div>
         <div class="ld-info-label" style="margin-bottom:10px">Links</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-          <div class="ld-info-card"><div class="ld-info-label">Website</div><div id="ldWebsite" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Lender Portal</div><div id="ldPortal" class="ld-info-val">—</div></div>
-          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Physical Address</div><div id="ldAddress" class="ld-info-val">—</div></div>
-          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Guidelines Doc</div><div id="ldGuidelinesUrl" class="ld-info-val">—</div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="ld-info-card"><div class="ld-info-label">Website</div><input id="ldWebsite" type="url" class="ld-edit-input" onblur="ldSaveField('website',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Lender Portal</div><input id="ldPortal" type="url" class="ld-edit-input" onblur="ldSaveField('lender_portal',this.value)"></div>
+          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Guidelines Doc URL</div><input id="ldGuidelinesUrl" type="url" class="ld-edit-input" onblur="ldSaveField('guidelines_url',this.value)"></div>
         </div>
       </div>
       <!-- GUIDELINES -->
       <div id="ldTab-guidelines" class="ld-tab-body" style="display:none">
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
-          <div class="ld-info-card"><div class="ld-info-label">Min Credit</div><div id="ldMinCredit2" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Max LTV</div><div id="ldMaxLTV2" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Loan Range</div><div id="ldLoanRange2" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">UW Turn</div><div id="ldUWTurn" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Avg Fund</div><div id="ldFundTime" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Days to Close</div><div id="ldDaysClose" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">AMC</div><div id="ldAMC" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Desk Review</div><div id="ldDeskReview" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Escrow Waiver</div><div id="ldEscrowWaiver" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Non-Warrantable</div><div id="ldNonWarr" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Min Credit</div><input id="ldMinCredit2" type="number" class="ld-edit-input" onblur="ldSaveField('min_credit',parseInt(this.value)||null)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Max LTV (%)</div><input id="ldMaxLTV2" type="number" step="0.01" class="ld-edit-input" onblur="ldSaveField('max_ltv',parseFloat(this.value)||null)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Avg Fund (days)</div><input id="ldFundTime" type="number" class="ld-edit-input" onblur="ldSaveField('avg_app_to_fund',parseInt(this.value)||null)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">UW Turn</div><input id="ldUWTurn" class="ld-edit-input" onblur="ldSaveField('underwriting_turn_time',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Min Days Close</div><input id="ldMinDaysClose" type="number" class="ld-edit-input" onblur="ldSaveField('min_days_to_close',parseInt(this.value)||null)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Max Days Close</div><input id="ldMaxDaysClose" type="number" class="ld-edit-input" onblur="ldSaveField('max_days_to_close',parseInt(this.value)||null)"></div>
+          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">AMC / Appraisal Management</div><input id="ldAMC" class="ld-edit-input" onblur="ldSaveField('appraisal_management',this.value)"></div>
         </div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Key Overlays</div><div id="ldKeyOverlays" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Exception Process</div><div id="ldExceptionProcess" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
-        <div class="ld-info-card"><div class="ld-info-label">Submission Checklist</div><div id="ldSubmissionChecklist" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-label" style="margin-bottom:8px">Features</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;margin-bottom:14px">
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldDeskReviewCheck" onchange="ldSaveField('appraisal_desk_review',this.checked)"><label for="ldDeskReviewCheck">Desk Review Appraisal</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldEscrowCheck" onchange="ldSaveField('escrow_waiver_allowed',this.checked)"><label for="ldEscrowCheck">Escrow Waiver</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldNonWarrCheck" onchange="ldSaveField('non_warrantable_condo',this.checked)"><label for="ldNonWarrCheck">Non-Warrantable Condo</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldManufacturedCheck" onchange="ldSaveField('manufactured_home',this.checked)"><label for="ldManufacturedCheck">Manufactured Home</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldRuralCheck" onchange="ldSaveField('rural_properties',this.checked)"><label for="ldRuralCheck">Rural Properties</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ld500CreditCheck" onchange="ldSaveField('down_to_500_credit',this.checked)"><label for="ld500CreditCheck">Down to 500 Credit</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldBKCheck" onchange="ldSaveField('recent_bk_ok',this.checked)"><label for="ldBKCheck">Recent BK OK</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldForeclosureCheck" onchange="ldSaveField('recent_foreclosure_ok',this.checked)"><label for="ldForeclosureCheck">Recent Foreclosure OK</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldITINCheck" onchange="ldSaveField('itin_ok',this.checked)"><label for="ldITINCheck">ITIN OK</label></div>
+          <div class="ld-checkbox-row"><input type="checkbox" id="ldDBACheck" onchange="ldSaveField('dba_ok',this.checked)"><label for="ldDBACheck">Close in LLC/DBA</label></div>
+        </div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Key Overlays</div><textarea id="ldKeyOverlays" rows="3" class="ld-edit-textarea" onblur="ldSaveField('key_overlays',this.value)"></textarea></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Exception Process</div><textarea id="ldExceptionProcess" rows="2" class="ld-edit-textarea" onblur="ldSaveField('exception_process',this.value)"></textarea></div>
+        <div class="ld-info-card"><div class="ld-info-label">Submission Checklist</div><textarea id="ldSubmissionChecklist" rows="3" class="ld-edit-textarea" onblur="ldSaveField('submission_checklist',this.value)"></textarea></div>
       </div>
       <!-- COMPENSATION -->
       <div id="ldTab-compensation" class="ld-tab-body" style="display:none">
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
-          <div class="ld-info-card"><div class="ld-info-label">Comp Type</div><div id="ldCompType" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">BPS</div><div id="ldCompBPS" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Min</div><div id="ldCompMin" class="ld-info-val">—</div></div>
-          <div class="ld-info-card"><div class="ld-info-label">Max</div><div id="ldCompMax" class="ld-info-val">—</div></div>
+          <div class="ld-info-card"><div class="ld-info-label">Comp Type</div><select id="ldCompType" class="ld-edit-input" onchange="ldSaveField('compensation_type',this.value)"><option value="">—</option><option>LPC (Lender Paid)</option><option>BPC (Borrower Paid)</option><option>Both LPC &amp; BPC</option></select></div>
+          <div class="ld-info-card"><div class="ld-info-label">BPS</div><input id="ldCompBPS" type="number" step="0.01" class="ld-edit-input" onblur="ldSaveField('compensation_bps',parseFloat(this.value)||null)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Min ($)</div><input id="ldCompMin" type="number" class="ld-edit-input" onblur="ldSaveField('compensation_min',parseFloat(this.value)||null)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">Max ($)</div><input id="ldCompMax" type="number" class="ld-edit-input" onblur="ldSaveField('compensation_max',parseFloat(this.value)||null)"></div>
         </div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Revenue Notes</div><div id="ldRevenueNotes" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Fee Notes</div><div id="ldFeeNotes" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">EPO Policy</div><div id="ldEPO" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
-        <div class="ld-info-card"><div class="ld-info-label">Broker ID (our account)</div><input id="ldBrokerIdInput" type="text" onblur="ldSaveField('broker_id',this.value)" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:.78rem;font-family:inherit;outline:none;margin-top:6px;box-sizing:border-box"></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Revenue Notes</div><textarea id="ldRevenueNotesInput" rows="2" class="ld-edit-textarea" onblur="ldSaveField('revenue_notes',this.value)"></textarea></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Fee Notes</div><textarea id="ldFeeNotesInput" rows="2" class="ld-edit-textarea" onblur="ldSaveField('fee_notes',this.value)"></textarea></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">EPO Policy</div><textarea id="ldEPOInput" rows="2" class="ld-edit-textarea" onblur="ldSaveField('epo_policy',this.value)"></textarea></div>
+        <div class="ld-info-card"><div class="ld-info-label">Broker ID (our account)</div><input id="ldBrokerIdInput" type="text" class="ld-edit-input" onblur="ldSaveField('broker_id',this.value)"></div>
       </div>
       <!-- CLAUSES -->
       <div id="ldTab-clauses" class="ld-tab-body" style="display:none">
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">CPL Clause</div><div id="ldCPLClause" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Mortgagee Clause</div><div id="ldMortgageeClause" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
-        <div class="ld-info-card"><div class="ld-info-label">Physical Address</div><div id="ldPhysicalAddress" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">CPL Clause</div><textarea id="ldCPLInput" rows="2" class="ld-edit-textarea" onblur="ldSaveField('cpl_clause',this.value)"></textarea></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Mortgagee Clause</div><textarea id="ldMortgageeInput" rows="3" class="ld-edit-textarea" onblur="ldSaveField('mortgagee_clause',this.value)"></textarea></div>
+        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Physical Street Address</div><input id="ldPhysStreet" class="ld-edit-input" onblur="ldSaveField('physical_address',this.value)"></div>
+        <div style="display:grid;grid-template-columns:1fr 120px 140px;gap:10px">
+          <div class="ld-info-card"><div class="ld-info-label">City</div><input id="ldPhysCity" class="ld-edit-input" onblur="ldSaveField('physical_city',this.value)"></div>
+          <div class="ld-info-card"><div class="ld-info-label">State</div><input id="ldPhysState" maxlength="2" class="ld-edit-input" style="text-transform:uppercase" onblur="ldSaveField('physical_state',this.value.toUpperCase())"></div>
+          <div class="ld-info-card"><div class="ld-info-label">ZIP</div><input id="ldPhysZip" maxlength="10" class="ld-edit-input" onblur="ldSaveField('physical_zip',this.value)"></div>
+        </div>
       </div>
       <!-- HISTORY -->
       <div id="ldTab-history" class="ld-tab-body" style="display:none">
