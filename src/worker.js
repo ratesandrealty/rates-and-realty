@@ -62,6 +62,32 @@ export default {
       );
     }
 
+    // Short-link redirect: /s/<slug> → looks up destination via Supabase edge function
+    if (path.startsWith('/s/') && path.length > 3) {
+      const slug = path.slice(3).replace(/\/$/, '');
+      if (slug && /^[a-z0-9]+$/i.test(slug)) {
+        try {
+          const res = await fetch(`${env.SUPABASE_URL}/functions/v1/short-link`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'resolve', slug })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.destination_url) {
+              return Response.redirect(data.destination_url, 302);
+            }
+          }
+        } catch (e) {
+          console.error('Short link resolve error:', e);
+        }
+        return new Response(
+          '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Link not found</title><style>body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}h1{color:#C9A84C;margin:0 0 10px;font-size:1.4rem}p{color:#888;font-size:.9rem;margin:0 0 20px}a{color:#C9A84C;text-decoration:none;font-size:.85rem}</style></head><body><div><h1>Rates &amp; Realty</h1><p>This link has expired or doesn\'t exist.</p><a href="/">&larr; Go to homepage</a></div></body></html>',
+          { status: 404, headers: { 'content-type': 'text/html; charset=utf-8' } }
+        );
+      }
+    }
+
     return env.ASSETS.fetch(request);
   }
 };
