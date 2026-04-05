@@ -67,6 +67,9 @@
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
+    @media (max-width: 600px) {
+      .lender-notes-grid { grid-template-columns: 1fr !important; }
+    }
     .search-box {
       display: flex; align-items: center; gap: 8px;
       background: rgba(255,255,255,0.05);
@@ -346,6 +349,9 @@
         <input type="text" id="lenderSearch" placeholder="Search lenders..."
           oninput="filterLenders(this.value)">
       </div>
+      <div style="padding:4px 12px 2px;font-size:11px;color:#666;display:flex;justify-content:space-between;">
+        <span id="lenderCountLabel">— lenders</span>
+      </div>
       <div class="filter-row">
         <div class="filter-chip active" onclick="setFilter('all', this)">All</div>
         <div class="filter-chip" onclick="setFilter('conventional', this)">Conv</div>
@@ -524,6 +530,7 @@ async function loadLenders() {
     filteredLenders = [...allLenders];
     const countEl = document.getElementById('lenderCount');
     if (countEl) countEl.textContent = allLenders.length + ' lenders synced from ClickUp';
+    updateLenderCountBadge();
     renderLenderList(filteredLenders);
     renderLendersTable(filteredLenders);
   } catch(e) {
@@ -615,7 +622,16 @@ function filterLenders(query) {
     const matchFilter = selectedFilter === 'all' || (l.programs || []).includes(selectedFilter);
     return matchQuery && matchFilter;
   });
+  updateLenderCountBadge();
   renderLenderList(filteredLenders);
+}
+
+function updateLenderCountBadge() {
+  const el = document.getElementById('lenderCountLabel');
+  if (!el) return;
+  const total = (allLenders||[]).length;
+  const shown = (filteredLenders||[]).length;
+  el.textContent = (shown === total) ? (total + ' lenders') : (shown + ' of ' + total + ' lenders');
 }
 
 // ── SELECT LENDER ────────────────────────────────
@@ -675,10 +691,12 @@ function showLenderDetail(lender) {
         </div>
       </div>
       <div class="detail-card" style="grid-column:span 2;">
-        <div class="detail-card-label">Loan Programs</div>
-        <div class="program-grid" style="margin-top:6px;">
-          ${progs.map(p => `<span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;background:${PROGRAM_COLORS[p]||'#888'}22;color:${PROGRAM_COLORS[p]||'#888'};border:1px solid ${PROGRAM_COLORS[p]||'#888'}44;">${p}</span>`).join('')}
-        </div>
+        <div class="detail-card-label">Loan Types</div>
+        <div id="loanTypeChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;"></div>
+      </div>
+      <div class="detail-card" style="grid-column:span 2;">
+        <div class="detail-card-label">Specialty Programs / Niches</div>
+        <textarea id="lenderLoanPrograms" rows="3" placeholder="e.g. DSCR investor, Bank Statement self-employed, Non-QM, Jumbo, CalHFA, DPA, ITIN..." style="width:100%;background:#111;border:1px solid #333;color:#eee;border-radius:6px;padding:10px;font-size:13px;margin-top:6px;box-sizing:border-box;resize:vertical;font-family:inherit;">${Array.isArray(lender.loan_programs) ? lender.loan_programs.join(', ') : (lender.loan_programs || (progs||[]).join(', ') || '')}</textarea>
       </div>
     </div>
 
@@ -711,8 +729,16 @@ function showLenderDetail(lender) {
           <input type="number" class="detail-input" id="edit_ltv" value="${lender.max_ltv||''}" placeholder="97">
         </div>
         <div style="grid-column:span 2;">
-          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Notes / Overlays / Niches</label>
-          <textarea class="detail-textarea" id="edit_notes" placeholder="Lender overlays, special programs, niche products...">${lender.notes||''}</textarea>
+          <div class="lender-notes-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Key Overlays</label>
+              <textarea class="detail-textarea" id="lenderKeyOverlays" rows="3" placeholder="e.g. No gift funds on investment, max 4 financed props, must be primary residence...">${lender.key_overlays||''}</textarea>
+            </div>
+            <div>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Specialty Notes</label>
+              <textarea class="detail-textarea" id="lenderSpecialtyNotes" rows="3" placeholder="e.g. Best for self-employed, Non-QM, bank statement. Strong on jumbo...">${lender.specialty_notes || lender.notes || ''}</textarea>
+            </div>
+          </div>
         </div>
       </div>
       <button class="save-btn" onclick="saveLenderDetails('${lender.id}', '${lender.clickup_task_id||''}')">
@@ -720,6 +746,36 @@ function showLenderDetail(lender) {
       </button>
     </div>
   `;
+  // Initialize loan type chips from lender.loan_types
+  const rawTypes = lender.loan_types;
+  let activeTypes = [];
+  if (Array.isArray(rawTypes)) activeTypes = rawTypes.map(x => String(x).trim()).filter(Boolean);
+  else if (typeof rawTypes === 'string' && rawTypes) activeTypes = rawTypes.split(',').map(x => x.trim()).filter(Boolean);
+  window._editLoanTypes = activeTypes.slice();
+  renderLoanTypeChips();
+}
+
+const LOAN_TYPES = ['Conventional','FHA','VA','USDA','Jumbo','Non-QM','DSCR','Bank Statement','Commercial','Hard Money','Bridge','CalHFA','DPA','ITIN','Construction'];
+
+function renderLoanTypeChips() {
+  const wrap = document.getElementById('loanTypeChips');
+  if (!wrap) return;
+  const active = window._editLoanTypes || [];
+  wrap.innerHTML = LOAN_TYPES.map(function(t){
+    const isActive = active.indexOf(t) >= 0;
+    const style = isActive
+      ? 'background:rgba(201,168,76,0.12);border:1px solid #C9A84C;color:#C9A84C;'
+      : 'background:#111;border:1px solid #333;color:#666;';
+    return '<span onclick="toggleLoanTypeChip(\''+t.replace(/\'/g,"\\\'")+'\')" style="'+style+'border-radius:16px;padding:4px 10px;font-size:12px;cursor:pointer;user-select:none;transition:all .15s;font-weight:600">'+t+'</span>';
+  }).join('');
+}
+
+function toggleLoanTypeChip(t) {
+  window._editLoanTypes = window._editLoanTypes || [];
+  const i = window._editLoanTypes.indexOf(t);
+  if (i >= 0) window._editLoanTypes.splice(i, 1);
+  else window._editLoanTypes.push(t);
+  renderLoanTypeChips();
 }
 
 async function saveLenderDetails(lenderId, clickupId) {
@@ -730,7 +786,10 @@ async function saveLenderDetails(lenderId, clickupId) {
     website: document.getElementById('edit_website').value,
     min_credit_score: parseInt(document.getElementById('edit_credit').value) || null,
     max_ltv: parseFloat(document.getElementById('edit_ltv').value) || null,
-    notes: document.getElementById('edit_notes').value,
+    loan_types: (window._editLoanTypes || []).slice(),
+    loan_programs: document.getElementById('lenderLoanPrograms')?.value || '',
+    key_overlays: document.getElementById('lenderKeyOverlays')?.value || '',
+    specialty_notes: document.getElementById('lenderSpecialtyNotes')?.value || '',
     updated_at: new Date().toISOString(),
   };
 
@@ -741,20 +800,25 @@ async function saveLenderDetails(lenderId, clickupId) {
     body: JSON.stringify(updates)
   });
 
-  if (clickupId && updates.notes) {
-    await fetch(`${SB_URL}/functions/v1/clickup-sync`, {
+  // Push to ClickUp via clickup-lender-sync (FIELD_MAP already maps these fields)
+  let synced = false;
+  try {
+    const pushRes = await fetch(`${SB_URL}/functions/v1/clickup-lender-sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'update_lender', task_id: clickupId, notes: updates.notes,
-        contact_name: updates.contact_name, contact_email: updates.contact_email,
-        contact_phone: updates.contact_phone, website: updates.website })
-    }).catch(() => {});
-  }
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SB_KEY}`,
+        'apikey': SB_KEY
+      },
+      body: JSON.stringify({ action: 'push_one', lender_id: lenderId })
+    });
+    synced = pushRes.ok;
+  } catch(e) { /* non-fatal */ }
 
   const idx = allLenders.findIndex(l => l.id === lenderId);
   if (idx >= 0) Object.assign(allLenders[idx], updates);
 
-  showToast('Lender saved');
+  showToast(synced ? '✅ Saved & synced to ClickUp' : 'Lender saved (ClickUp sync failed)');
 }
 
 function showDBTab() {
