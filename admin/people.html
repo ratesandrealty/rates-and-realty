@@ -1345,43 +1345,218 @@ async function handleMismoUpload(event) {
   }
 }
 
+// MISMO 3.4 parser — namespace-aware, element-scoped.
+// Previous parser used doc-wide getElementsByTagName which returned the FIRST match
+// anywhere, meaning borrower's AddressLineText got overwritten by employer's or
+// property's. Now every lookup is scoped to its parent element.
 function parseMismoXml(xml) {
   var doc = new DOMParser().parseFromString(xml, 'text/xml');
-  function get(tag) {
-    var el = doc.getElementsByTagName(tag)[0] || doc.querySelector(tag);
+  var perr = doc.querySelector('parsererror');
+  if (perr) { console.error('[mismo] parse error:', perr.textContent); return null; }
+
+  // Match by localName (strips namespace prefix) — MISMO 3.4 uses MISMO: / ULAD: prefixes
+  function findOne(localName, root) {
+    root = root || doc;
+    var all = root.getElementsByTagName('*');
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].localName === localName) return all[i];
+    }
+    return null;
+  }
+  function findAll(localName, root) {
+    root = root || doc;
+    var all = root.getElementsByTagName('*');
+    var out = [];
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].localName === localName) out.push(all[i]);
+    }
+    return out;
+  }
+  function txt(localName, root) {
+    var el = findOne(localName, root);
     return el ? (el.textContent || '').trim() : '';
   }
-  var bn = doc.querySelectorAll('BORROWER, Borrower');
-  function bd(node) {
-    if (!node) return null;
-    function g(t) { var e = node.querySelector(t) || node.getElementsByTagName(t)[0]; return e ? (e.textContent||'').trim() : get(t); }
+  function boolTxt(v) { v = (v || '').toLowerCase(); return v === 'true' || v === 'y' || v === '1'; }
+
+  // ── BORROWERS ──────────────────────────────────────────────────────
+  var borrowerEls = findAll('BORROWER');
+  // Sort so primary borrower (BorrowerClassificationType=Borrower or position 0) is first
+  var primaryBorr = borrowerEls.find(function(b) {
+    var t = b.getAttribute('BorrowerClassificationType') || txt('BorrowerClassificationType', b);
+    return t === 'Borrower' || t === '';
+  }) || borrowerEls[0];
+  var coBorrEl = borrowerEls.find(function(b) {
+    var t = b.getAttribute('BorrowerClassificationType') || txt('BorrowerClassificationType', b);
+    return t === 'CoBorrower';
+  }) || (borrowerEls.length > 1 ? borrowerEls[1] : null);
+
+  function bd(borrowerEl) {
+    if (!borrowerEl) return null;
+    // Contact points — scoped to this borrower
+    var contacts = findAll('CONTACT_POINT', borrowerEl);
+    var phone = '', email = '';
+    contacts.forEach(function(cp) {
+      var role = (txt('ContactPointRoleType', cp) || cp.getAttribute('ContactPointRoleType') || '').toLowerCase();
+      var tel = txt('ContactPointTelephoneValue', cp);
+      var eml = txt('ContactPointEmailValue', cp);
+      if (tel && !phone) phone = tel;
+      if (eml && !email) email = eml;
+      if (role.indexOf('mobile') >= 0 || role.indexOf('cell') >= 0) phone = tel || phone;
+    });
+    if (!email) email = txt('ContactPointEmailValue', borrowerEl);
+    if (!phone) phone = txt('ContactPointTelephoneValue', borrowerEl);
+
+    // Current residence — the one marked 'Current' or first
+    var residences = findAll('RESIDENCE', borrowerEl);
+    var curRes = residences.find(function(r) {
+      return (r.getAttribute('BorrowerResidencyType') || '') === 'Current';
+    }) || residences[0];
+    var street = curRes ? txt('AddressLineText', curRes) : '';
+    var city   = curRes ? txt('CityName', curRes) : '';
+    var state  = curRes ? txt('StateCode', curRes) : '';
+    var zip    = curRes ? txt('PostalCode', curRes) : '';
+
+    // Employment — scoped to this borrower
+    var employers = findAll('EMPLOYER', borrowerEl);
+    var curEmp = employers.find(function(e) {
+      return (e.getAttribute('EmploymentStatusType') || '') === 'Current';
+    }) || employers[0];
+    var empName = curEmp ? (txt('FullName', curEmp) || txt('EmployerName', curEmp)) : '';
+    var empTitle = curEmp ? (txt('EmploymentPositionDescription', curEmp) || txt('PositionDescription', curEmp)) : '';
+
+    // Income — scoped
+    var baseIncome = curEmp ? txt('BasePayAmount', curEmp) : '';
+    if (!baseIncome) baseIncome = txt('CurrentEmploymentMonthlyBasePayAmount', borrowerEl);
+    var totalIncome = txt('TotalIncomeAmount', borrowerEl) || txt('BorrowerTotalMonthlyIncomeAmount', borrowerEl);
+
     return {
-      firstName: g('FirstName') || g('FIRST_NAME'), middleName: g('MiddleName') || g('MIDDLE_NAME'),
-      lastName: g('LastName') || g('LAST_NAME'), suffix: g('SuffixName') || '',
-      ssn: g('TaxpayerIdentifierValue') || g('SSN'), dob: g('BirthDate') || g('BIRTH_DATE'),
-      marital: g('MaritalStatusType') || '', citizenship: g('CitizenshipResidencyType') || 'U.S. Citizen',
-      phone: g('ContactPointTelephoneValue') || '', email: g('ContactPointEmailValue') || '',
-      street: g('AddressLineText') || '', city: g('CityName') || '', state: g('StateCode') || '', zip: g('PostalCode') || '',
-      empName: g('EmployerName') || g('FullName') || '', empTitle: g('EmploymentPositionDescription') || '',
-      baseIncome: g('BasePayAmount') || '', totalIncome: g('TotalIncomeAmount') || ''
+      firstName: txt('FirstName', borrowerEl),
+      middleName: txt('MiddleName', borrowerEl),
+      lastName: txt('LastName', borrowerEl),
+      suffix: txt('SuffixName', borrowerEl),
+      ssn: txt('TaxpayerIdentifierValue', borrowerEl) || txt('BorrowerTaxIdentificationIdentifier', borrowerEl),
+      dob: txt('BirthDate', borrowerEl),
+      marital: txt('MaritalStatusType', borrowerEl),
+      citizenship: txt('CitizenshipResidencyType', borrowerEl) || 'U.S. Citizen',
+      phone: phone,
+      email: email,
+      street: street, city: city, state: state, zip: zip,
+      empName: empName, empTitle: empTitle,
+      baseIncome: baseIncome, totalIncome: totalIncome
     };
   }
+
+  // ── PROPERTY ───────────────────────────────────────────────────────
+  // MISMO 3.4: SUBJECT_PROPERTY > ADDRESS > AddressLineText (scoped)
+  var subjectProp = findOne('SUBJECT_PROPERTY') || findOne('PROPERTY');
+  var propStreet = '', propCity = '', propState = '', propZip = '', propCounty = '', propValue = '';
+  if (subjectProp) {
+    var propAddr = findOne('ADDRESS', subjectProp);
+    propStreet = propAddr ? txt('AddressLineText', propAddr) : '';
+    propCity   = propAddr ? txt('CityName', propAddr) : '';
+    propState  = propAddr ? txt('StateCode', propAddr) : '';
+    propZip    = propAddr ? txt('PostalCode', propAddr) : '';
+    propCounty = propAddr ? txt('CountyName', propAddr) : '';
+    propValue  = txt('PropertyAppraisedValueAmount', subjectProp) || txt('PropertyEstimatedValueAmount', subjectProp);
+  }
+  // Fallbacks if not scoped as expected
+  if (!propStreet) propStreet = txt('PropertyAddressLineText');
+  if (!propCity) propCity = txt('PropertyCityName');
+  if (!propState) propState = txt('PropertyStateCode');
+  if (!propZip) propZip = txt('PropertyPostalCode');
+  if (!propValue) propValue = txt('PropertyAppraisedValueAmount');
+
+  // ── LOAN ───────────────────────────────────────────────────────────
+  var loanDetail = findOne('LOAN_DETAIL') || doc;
+  var loanTerms = findOne('LOAN_TERMS') || doc;
+  var loanAmount = txt('LoanAmount', loanTerms) || txt('BaseLoanAmount', loanTerms) || txt('LoanAmount');
+  var noteRate = txt('NoteRatePercent', loanTerms) || txt('NoteRatePercent') || txt('InterestRatePercent');
+
+  // ── DECLARATIONS ───────────────────────────────────────────────────
+  var declRoot = findOne('DECLARATION') || findOne('DECLARATIONS') || findOne('BORROWER_DECLARATIONS') || doc;
+
   return {
-    borrower: bd(bn[0]), coBorrower: bn[1] ? bd(bn[1]) : null,
+    borrower: bd(primaryBorr),
+    coBorrower: coBorrEl ? bd(coBorrEl) : null,
     loan: {
-      loanAmount: get('LoanAmount') || get('LOAN_AMOUNT'), loanPurpose: get('LoanPurposeType') || get('LOAN_PURPOSE_TYPE'),
-      loanType: get('MortgageType') || get('MORTGAGE_TYPE'), propStreet: get('SubjectPropertyAddressLineText') || get('PropertyAddressLineText'),
-      propCity: get('SubjectPropertyCityName') || get('PropertyCityName'), propState: get('SubjectPropertyStateCode') || get('PropertyStateCode'),
-      propZip: get('SubjectPropertyPostalCode') || get('PropertyPostalCode'), propValue: get('PropertyAppraisedValueAmount'),
-      propCounty: get('SubjectPropertyCountyName') || get('PropertyCountyName'), occupancy: get('LoanApplicationOccupancyType'),
-      noteRate: get('NoteRatePercent') || get('InterestRatePercent')
+      loanAmount: loanAmount,
+      loanPurpose: txt('LoanPurposeType'),
+      loanType: txt('MortgageType') || txt('LoanType'),
+      propStreet: propStreet, propCity: propCity, propState: propState, propZip: propZip, propCounty: propCounty,
+      propValue: propValue,
+      occupancy: txt('PropertyUsageType') || txt('LoanApplicationOccupancyType') || txt('OccupancyType'),
+      noteRate: noteRate
     },
-    decl: { primary: get('IntendToOccupyIndicator')==='true', judgments: get('OutstandingJudgmentsIndicator')==='true',
-      delinquent: get('PresentlyDelinquentIndicator')==='true', foreclosure: get('ForeclosureStatusIndicator')==='true',
-      bankruptcy: get('BankruptcyIndicator')==='true' },
-    military: get('VeteranIndicator')==='true' || get('MilitaryStatusType')!==''
+    decl: {
+      primary:    boolTxt(txt('IntentToOccupyIndicator', declRoot) || txt('IntendToOccupyIndicator', declRoot)),
+      judgments:  boolTxt(txt('OutstandingJudgmentsIndicator', declRoot)),
+      delinquent: boolTxt(txt('DelinquentFederalDebtIndicator', declRoot) || txt('PresentlyDelinquentIndicator', declRoot)),
+      foreclosure:boolTxt(txt('PropertyForeclosureWithinPastSevenYearsIndicator', declRoot) || txt('ForeclosureStatusIndicator', declRoot)),
+      bankruptcy: boolTxt(txt('BankruptcyIndicator', declRoot))
+    },
+    military: boolTxt(txt('SelfDeclaredMilitaryServiceIndicator') || txt('MilitaryServiceIndicator') || txt('VeteranIndicator')) || (txt('MilitaryStatusType') !== '')
   };
 }
+
+// Re-parse existing MISMO-imported records that have null borrower fields.
+// Safe because the filter first_name=is.null excludes any record the user manually fixed.
+// Runs once per session via sessionStorage flag.
+async function repairMismoImports() {
+  if (sessionStorage.getItem('mismo_repair_done')) return;
+  sessionStorage.setItem('mismo_repair_done','1');
+  try {
+    var res = await fetch(SB_URL + '/rest/v1/mortgage_applications?first_name=is.null&mismo_raw_xml=not.is.null&select=id,mismo_raw_xml', { headers: hdrs() });
+    if (!res.ok) return;
+    var records = await res.json();
+    if (!records || !records.length) return;
+    console.log('[mismo-repair] re-parsing', records.length, 'records with null first_name');
+    for (var i = 0; i < records.length; i++) {
+      var rec = records[i];
+      try {
+        var parsed = parseMismoXml(rec.mismo_raw_xml);
+        if (!parsed || !parsed.borrower) continue;
+        var b = parsed.borrower, l = parsed.loan || {}, d = parsed.decl || {}, cb = parsed.coBorrower;
+        var update = {
+          first_name: b.firstName, middle_name: b.middleName, last_name: b.lastName, suffix: b.suffix,
+          email: b.email, cell_phone: b.phone, ssn: b.ssn, date_of_birth: b.dob || null,
+          marital_status: b.marital, citizenship: b.citizenship,
+          current_address_street: b.street, current_address_city: b.city,
+          current_address_state: b.state, current_address_zip: b.zip,
+          employer_name: b.empName, position_title: b.empTitle,
+          base_income: b.baseIncome ? parseFloat(b.baseIncome) : null,
+          total_monthly_income: b.totalIncome ? parseFloat(b.totalIncome) : null,
+          loan_amount: l.loanAmount ? parseFloat(l.loanAmount) : null,
+          loan_purpose: l.loanPurpose, loan_type: l.loanType,
+          property_address_street: l.propStreet, property_address_city: l.propCity,
+          property_address_state: l.propState, property_address_zip: l.propZip,
+          property_address_county: l.propCounty,
+          property_value: l.propValue ? parseFloat(l.propValue) : null,
+          occupancy_type: l.occupancy,
+          declaration_primary_residence: d.primary, declaration_judgments: d.judgments,
+          declaration_delinquent: d.delinquent, declaration_foreclosure: d.foreclosure,
+          declaration_bankruptcy: d.bankruptcy,
+          military_service: parsed.military,
+          co_borrower_first_name: (cb && cb.firstName) || null,
+          co_borrower_last_name: (cb && cb.lastName) || null,
+          co_borrower_ssn: (cb && cb.ssn) || null,
+          co_borrower_email: (cb && cb.email) || null,
+          updated_at: new Date().toISOString()
+        };
+        Object.keys(update).forEach(function(k){ if (update[k] === '' || update[k] == null) delete update[k]; });
+        if (Object.keys(update).length <= 1) { console.warn('[mismo-repair] no fields extracted for', rec.id); continue; }
+        var r = await fetch(SB_URL + '/rest/v1/mortgage_applications?id=eq.' + rec.id, {
+          method:'PATCH',
+          headers: Object.assign({}, hdrs(), {'Prefer':'return=minimal'}),
+          body: JSON.stringify(update)
+        });
+        if (r.ok) console.log('[mismo-repair] fixed', rec.id, b.firstName, b.lastName, '('+Object.keys(update).length+' fields)');
+        else console.warn('[mismo-repair] PATCH', r.status, 'for', rec.id);
+      } catch(e) { console.warn('[mismo-repair] failed for', rec.id, e.message); }
+    }
+  } catch(e) { console.warn('[mismo-repair] fetch error:', e); }
+}
+// Kick off auto-repair on page load
+if (typeof window !== 'undefined') setTimeout(repairMismoImports, 2000);
 
 function renderMismoReview(data) {
   var b = data.borrower || {}, l = data.loan || {}, cb = data.coBorrower;
