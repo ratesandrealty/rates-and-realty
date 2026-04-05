@@ -1293,274 +1293,38 @@ function handleMismoFiles(files) {
 
 async function importMismoFiles() {
   if (!_mismoFiles.length) return;
-  const btn = document.getElementById('mismoImportBtn');
-  btn.textContent = '⏳ Importing...'; btn.disabled = true;
-  const results = document.getElementById('mismoResults'); results.innerHTML = '';
-  let ok = 0;
-  const SB_URL = window.APP_CONFIG?.SUPABASE_URL;
-  const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
-
-  if (!SB_URL || !SB_KEY) {
-    console.error('APP_CONFIG missing:', window.APP_CONFIG);
-    alert('Configuration not loaded yet. Please refresh the page and try again.');
-    btn.textContent = '📤 Import All'; btn.disabled = false;
-    return;
-  }
-  console.log('MISMO import starting, SB_URL:', SB_URL?.substring(0, 30), 'files:', _mismoFiles.length);
-
-  const hdrs = {
-    'apikey': SB_KEY,
-    'Authorization': `Bearer ${SB_KEY}`,
-    'Content-Type': 'application/json',
-    'Prefer': 'return=representation'
-  };
-
-  for (const file of _mismoFiles) {
+  var btn = document.getElementById("mismoImportBtn");
+  btn.textContent = "⏳ Importing..."; btn.disabled = true;
+  var results = document.getElementById("mismoResults"); results.innerHTML = "";
+  var SB_URL = window.APP_CONFIG?.SUPABASE_URL;
+  var SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+  if (!SB_URL || !SB_KEY) { alert("Config not loaded — refresh and retry"); btn.textContent = "📤 Import All"; btn.disabled = false; return; }
+  var ok = 0;
+  for (var i = 0; i < _mismoFiles.length; i++) {
+    var file = _mismoFiles[i];
     try {
-      const xml = await file.text();
-      const doc = new DOMParser().parseFromString(xml, 'application/xml');
-      const g = (sel) => doc.querySelector(sel)?.textContent?.trim() || '';
-      const gAttr = (sel, attr) => doc.querySelector(sel)?.getAttribute(attr) || '';
-      const bool = (sel) => { const v = g(sel).toLowerCase(); return v === 'true' || v === 'yes'; };
-
-      // ── BORROWER PERSONAL ──
-      const firstName = g('BORROWER INDIVIDUAL NAME FirstName') || g('FirstName') || 'Unknown';
-      const lastName = g('BORROWER INDIVIDUAL NAME LastName') || g('LastName') || '';
-      const middleName = g('BORROWER INDIVIDUAL NAME MiddleName') || '';
-      const suffix = g('BORROWER INDIVIDUAL NAME SuffixName') || '';
-      const email = g('CONTACT_POINT_EMAIL ContactPointEmailValue') || g('EmailAddressText') || null;
-      const cellPhone = g('CONTACT_POINT_TELEPHONE ContactPointTelephoneValue') || g('TelephoneNumberValue') || null;
-      const dob = g('BorrowerBirthDate') || g('BirthDate') || null;
-      const maritalStatus = g('MaritalStatusType') || null;
-      const dependentsCount = parseInt(g('DependentCount')) || 0;
-      const citizenship = g('CitizenshipResidencyType') || null;
-      const ssn = g('TaxpayerIdentifierValue') || null;
-
-      // ── ADDRESSES ──
-      const residences = doc.querySelectorAll('RESIDENCE, BORROWER_RESIDENCE');
-      let curAddr = {}, fmrAddr = {};
-      residences.forEach(r => {
-        const type = (r.querySelector('BorrowerResidencyType')?.textContent || '').toLowerCase();
-        const addr = {
-          street: r.querySelector('AddressLineText')?.textContent?.trim() || '',
-          unit: r.querySelector('AddressUnitIdentifier')?.textContent?.trim() || '',
-          city: r.querySelector('CityName')?.textContent?.trim() || '',
-          state: r.querySelector('StateCode')?.textContent?.trim() || '',
-          zip: (r.querySelector('PostalCode')?.textContent?.trim() || '').substring(0,5),
-          months: parseInt(r.querySelector('BorrowerResidencyDurationMonthsCount')?.textContent) || 0,
-          housing: r.querySelector('BorrowerResidencyBasisType')?.textContent?.trim() || ''
-        };
-        if (type.includes('current') || type === '' && !curAddr.street) curAddr = addr;
-        else if (type.includes('prior')) fmrAddr = addr;
+      var xml = await file.text();
+      if (!xml.includes("MISMO") && !xml.includes("mismo") && !xml.includes("MESSAGE")) throw new Error("Not a valid MISMO XML");
+      var res = await fetch(SB_URL + "/functions/v1/mismo-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SB_KEY, "apikey": SB_KEY },
+        body: JSON.stringify({ action: "import", xml: xml, file_name: file.name })
       });
-      // Fallback for current address from first AddressLineText
-      if (!curAddr.street) {
-        curAddr.street = g('AddressLineText') || '';
-        curAddr.city = g('CityName') || '';
-        curAddr.state = g('StateCode') || '';
-        curAddr.zip = (g('PostalCode') || '').substring(0,5);
-      }
-
-      // ── EMPLOYMENT ──
-      const empNode = doc.querySelector('EMPLOYER, EMPLOYMENT');
-      const employerName = empNode?.querySelector('LEGAL_ENTITY_DETAIL FullName')?.textContent?.trim()
-        || empNode?.querySelector('FullName')?.textContent?.trim()
-        || g('EmployerName') || '';
-      const positionTitle = empNode?.querySelector('EmploymentPositionDescription')?.textContent?.trim()
-        || g('EmploymentPositionDescription') || '';
-      const empStartDate = empNode?.querySelector('EmploymentStartDate')?.textContent?.trim()
-        || g('EmploymentStartDate') || null;
-      const isSelfEmployed = bool('EmploymentBorrowerSelfEmployedIndicator');
-      const empStreet = empNode?.querySelector('ADDRESS AddressLineText')?.textContent?.trim() || empNode?.querySelector('AddressLineText')?.textContent?.trim() || '';
-      const empCity = empNode?.querySelector('ADDRESS CityName')?.textContent?.trim() || empNode?.querySelector('CityName')?.textContent?.trim() || '';
-      const empState = empNode?.querySelector('ADDRESS StateCode')?.textContent?.trim() || empNode?.querySelector('StateCode')?.textContent?.trim() || '';
-      const empZip = empNode?.querySelector('ADDRESS PostalCode')?.textContent?.trim() || empNode?.querySelector('PostalCode')?.textContent?.trim() || '';
-
-      // ── INCOME ──
-      const incomeEl = doc.querySelector('CURRENT_INCOME_ITEM CURRENT_INCOME_ITEM_DETAIL');
-      const baseIncome = incomeEl
-        ? parseFloat(incomeEl.querySelector('CurrentIncomeMonthlyTotalAmount')?.textContent || '0')
-        : parseFloat(g('CurrentIncomeMonthlyTotalAmount') || g('EmploymentMonthlyIncomeAmount')) || 0;
-
-      // ── LOAN DETAILS ──
-      const loanPurpose = g('LoanPurposeType') || null;
-      const loanType = g('MortgageType') || g('LoanProgramIdentifier') || null;
-      const loanAmount = parseFloat(g('BaseLoanAmount') || g('NoteAmount')) || null;
-      const interestRate = parseFloat(g('NoteRatePercent')) || null;
-
-      // ── PROPERTY ──
-      const propNode = doc.querySelector('SUBJECT_PROPERTY, COLLATERAL');
-      const propStreet = propNode?.querySelector('AddressLineText')?.textContent?.trim() || g('SubjectPropertyAddress AddressLineText') || '';
-      const propCity = propNode?.querySelector('CityName')?.textContent?.trim() || '';
-      const propState = propNode?.querySelector('StateCode')?.textContent?.trim() || '';
-      const propZip = (propNode?.querySelector('PostalCode')?.textContent?.trim() || '').substring(0,5);
-      const propCounty = propNode?.querySelector('CountyName')?.textContent?.trim() || g('CountyName') || '';
-      const propValue = parseFloat(g('PropertyEstimatedValueAmount') || g('PropertyAppraisedValueAmount')) || null;
-      const purchasePrice = parseFloat(g('SalesContractAmount') || g('PurchasePriceAmount')) || null;
-      const occupancy = g('PropertyUsageType') || null;
-      const numUnits = parseInt(g('FinancedUnitCount')) || 1;
-
-      // ── DECLARATIONS ──
-      const declBankruptcy = bool('BankruptcyIndicator');
-      const declJudgments = bool('OutstandingJudgmentsIndicator');
-      const declDelinquent = bool('PresentlyDelinquentIndicator');
-      const declForeclosure = bool('PriorPropertyForeclosureCompletedIndicator');
-      const declShortSale = bool('PriorPropertyShortSaleCompletedIndicator');
-      const declDeedInLieu = bool('PriorPropertyDeedInLieuConveyedIndicator');
-      const declOtherMortgage = bool('UndisclosedMortgageApplicationIndicator');
-      const declBorrowedFunds = bool('UndisclosedBorrowedFundsIndicator');
-      const declCosigner = bool('UndisclosedComakerOfNoteIndicator');
-
-      // ── LIABILITIES ──
-      const liabilityNodes = doc.querySelectorAll('LIABILITY');
-      const liabilities = [];
-      liabilityNodes.forEach(ln => {
-        const creditor = ln.querySelector('FullName')?.textContent?.trim() || ln.querySelector('LiabilityHolderName')?.textContent?.trim() || '';
-        const monthly = parseFloat(ln.querySelector('LiabilityMonthlyPaymentAmount')?.textContent) || 0;
-        const balance = parseFloat(ln.querySelector('LiabilityUnpaidBalanceAmount')?.textContent) || 0;
-        const ltype = ln.querySelector('LiabilityType')?.textContent?.trim() || '';
-        if (creditor || monthly > 0) liabilities.push({ creditor_name: creditor, monthly_payment: monthly, balance, liability_type: ltype });
-      });
-
-      const name = `${firstName} ${lastName}`.trim();
-
-      // ── MATCH EXISTING CONTACT OR CREATE ──
-      let contactId = null;
-      if (email) {
-        const matchRes = await fetch(`${SB_URL}/rest/v1/contacts?email=eq.${encodeURIComponent(email)}&limit=1`, { headers: hdrs });
-        const matches = await matchRes.json();
-        if (Array.isArray(matches) && matches.length) contactId = matches[0].id;
-      }
-      if (!contactId && cellPhone) {
-        const cleanPhone = cellPhone.replace(/\D/g, '');
-        if (cleanPhone.length >= 10) {
-          const matchRes = await fetch(`${SB_URL}/rest/v1/contacts?phone=like.*${cleanPhone.slice(-10)}&limit=1`, { headers: hdrs });
-          const matches = await matchRes.json();
-          if (Array.isArray(matches) && matches.length) contactId = matches[0].id;
-        }
-      }
-
-      const contactPayload = {
-        first_name: firstName, last_name: lastName, middle_name: middleName || null,
-        email: email, phone: cellPhone, ssn_last4: ssn ? ssn.slice(-4) : null,
-        date_of_birth: dob, address: curAddr.street || null, city: curAddr.city || null,
-        state: curAddr.state || null, zip: curAddr.zip || null,
-        employer_name: employerName || null, job_title: positionTitle || null,
-        monthly_income: baseIncome || null, credit_score: null,
-        source: 'MISMO Import', contact_type: 'borrower', pipeline_status: 'Application',
-        updated_at: new Date().toISOString()
-      };
-
-      if (contactId) {
-        console.log('MISMO: Updating existing contact:', contactId);
-        const patchRes = await fetch(`${SB_URL}/rest/v1/contacts?id=eq.${contactId}`, { method: 'PATCH', headers: hdrs, body: JSON.stringify(contactPayload) });
-        console.log('MISMO: Contact PATCH status:', patchRes.status);
-        if (!patchRes.ok) console.error('MISMO: Contact PATCH failed:', await patchRes.text());
-      } else {
-        contactPayload.created_at = new Date().toISOString();
-        console.log('MISMO: Creating new contact for:', firstName, lastName, email);
-        const createRes = await fetch(`${SB_URL}/rest/v1/contacts`, { method: 'POST', headers: hdrs, body: JSON.stringify(contactPayload) });
-        const newContactRes = await createRes.json();
-        console.log('MISMO: Contact POST status:', createRes.status, 'response:', JSON.stringify(newContactRes).substring(0,200));
-        if (!createRes.ok) console.error('MISMO: Contact POST failed:', JSON.stringify(newContactRes));
-        const newContact = Array.isArray(newContactRes) ? newContactRes[0] : newContactRes;
-        contactId = newContact?.id;
-        if (!contactId) console.error('MISMO: Failed to get contactId from response');
-      }
-      console.log('MISMO: Contact ID resolved:', contactId);
-
-      if (contactId) {
-        // ── UPSERT APPLICATION ──
-        const appPayload = {
-          contact_id: contactId, first_name: firstName, middle_name: middleName || null, last_name: lastName, suffix: suffix || null,
-          email, cell_phone: cellPhone, date_of_birth: dob, marital_status: maritalStatus, dependents_count: dependentsCount,
-          citizenship, ssn,
-          current_address_street: curAddr.street || null, current_address_city: curAddr.city || null,
-          current_address_state: curAddr.state || null, current_address_zip: curAddr.zip || null,
-          current_address_months: curAddr.months || 0, current_housing_type: curAddr.housing || null,
-          former_address_street: fmrAddr.street || null, former_address_city: fmrAddr.city || null,
-          former_address_state: fmrAddr.state || null, former_address_zip: fmrAddr.zip || null,
-          former_address_months: fmrAddr.months || 0,
-          employer_name: employerName || null, employer_street: empStreet || null,
-          employer_city: empCity || null, employer_state: empState || null, employer_zip: empZip || null,
-          position_title: positionTitle || null, employment_start_date: empStartDate,
-          is_self_employed: isSelfEmployed, base_income: baseIncome || null, total_monthly_income: baseIncome || null,
-          loan_purpose: loanPurpose, loan_type: loanType, loan_amount: loanAmount,
-          requested_loan_amount: loanAmount, current_interest_rate: interestRate,
-          property_address_street: propStreet || null, property_address_city: propCity || null,
-          property_address_state: propState || null, property_address_zip: propZip || null,
-          property_address_county: propCounty || null, property_value: propValue,
-          purchase_price: purchasePrice, occupancy_type: occupancy, number_of_units: numUnits,
-          decl_bankruptcy: declBankruptcy, decl_outstanding_judgments: declJudgments,
-          decl_delinquent_federal: declDelinquent, decl_foreclosure: declForeclosure,
-          decl_short_sale: declShortSale, decl_deed_in_lieu: declDeedInLieu,
-          decl_applying_other_mortgage: declOtherMortgage, decl_borrowed_funds: declBorrowedFunds,
-          decl_cosigner: declCosigner,
-          mismo_file_name: file.name, mismo_imported_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-
-        console.log('MISMO: Saving application for contact:', contactId, 'loan:', loanAmount, loanType);
-        const appRes = await fetch(`${SB_URL}/rest/v1/mortgage_applications`, {
-          method: 'POST',
-          headers: { ...hdrs, Prefer: 'return=representation' },
-          body: JSON.stringify(appPayload)
-        });
-
-        if (!appRes.ok) {
-          const errText = await appRes.text();
-          console.error('MISMO: Application save failed:', appRes.status, errText);
-          throw new Error(`App save failed: ${appRes.status} ${errText}`);
-        }
-
-        const appResData = await appRes.json();
-        console.log('MISMO: Application saved successfully:', Array.isArray(appResData) ? appResData[0]?.id : appResData?.id);
-        const app = Array.isArray(appResData) ? appResData[0] : appResData;
-
-        // ── SAVE LIABILITIES ──
-        if (app?.id && liabilities.length) {
-          let liabOk = 0;
-          for (const li of liabilities) {
-            const liRes = await fetch(`${SB_URL}/rest/v1/liabilities`, {
-              method: 'POST', headers: { ...hdrs, Prefer: 'return=minimal' },
-              body: JSON.stringify({ application_id: app.id, contact_id: contactId, ...li, created_at: new Date().toISOString() })
-            });
-            if (liRes.ok) liabOk++; else console.error('MISMO: Liability save failed:', liRes.status, await liRes.text());
-          }
-          console.log('MISMO: Liabilities saved:', liabOk, '/', liabilities.length);
-        }
-
-        // Also save liabilities to contact JSON field
-        if (liabilities.length) {
-          await fetch(`${SB_URL}/rest/v1/contacts?id=eq.${contactId}`, {
-            method: 'PATCH', headers: hdrs,
-            body: JSON.stringify({ liabilities: liabilities })
-          });
-        }
-
-        // ── CREATE OR UPDATE LEAD ──
-        const existingLeadRes = await fetch(`${SB_URL}/rest/v1/leads?contact_id=eq.${contactId}&limit=1`, { headers: hdrs });
-        const existingLeads = await existingLeadRes.json();
-        if (Array.isArray(existingLeads) && existingLeads.length) {
-          await fetch(`${SB_URL}/rest/v1/leads?id=eq.${existingLeads[0].id}`, { method: 'PATCH', headers: hdrs,
-            body: JSON.stringify({ status: 'application', loan_type: loanType, loan_amount: loanAmount, updated_at: new Date().toISOString() })
-          });
-        } else {
-          await fetch(`${SB_URL}/rest/v1/leads`, { method: 'POST', headers: { ...hdrs, Prefer: 'return=minimal' },
-            body: JSON.stringify({ contact_id: contactId, status: 'application', source: 'MISMO Import', loan_type: loanType, loan_amount: loanAmount, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          });
-        }
-
-        ok++;
-        const liabCount = liabilities.length;
-        results.innerHTML += `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(80,200,120,0.08);border:1px solid rgba(80,200,120,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;"><span style="color:#50c878;">✓</span><div style="flex:1"><strong>${name}</strong> · ${file.name}${liabCount ? ` · ${liabCount} liabilities` : ''}</div><a href="/admin/lead-detail.html?contact_id=${contactId}" style="color:#c9a84c;font-size:11px;text-decoration:none;">View →</a></div>`;
-      }
+      var data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "Import failed (HTTP " + res.status + ")");
+      console.log("[MISMO Import] Success:", data);
+      ok++;
+      var name = data.borrower_name || "Borrower";
+      var prop = data.property_address ? " · " + data.property_address : "";
+      var fieldCount = data.fields_extracted ? " · " + data.fields_extracted + " fields" : "";
+      var cid = data.contact_id || "";
+      results.innerHTML += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(80,200,120,0.08);border:1px solid rgba(80,200,120,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;"><span style="color:#50c878;">✓</span><div style="flex:1"><strong>' + name + '</strong>' + prop + fieldCount + ' · ' + file.name + '</div>' + (cid ? '<a href="/admin/lead-detail.html?contact_id=' + cid + '" style="color:#c9a84c;font-size:11px;text-decoration:none;">View →</a>' : '') + '</div>';
     } catch(e) {
-      console.error('MISMO: Import failed for', file.name, ':', e);
-      results.innerHTML += `<div style="padding:8px 12px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;color:#f87171;">⚠️ ${file.name}: ${e.message}</div>`;
+      console.error("[MISMO Import] Failed for", file.name, ":", e);
+      results.innerHTML += '<div style="padding:8px 12px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);border-radius:8px;margin-bottom:6px;font-size:12px;color:#f87171;">⚠️ ' + file.name + ': ' + e.message + '</div>';
     }
   }
-  btn.textContent = `✓ Done — ${ok} imported`; btn.disabled = false; btn.onclick = closeMismoModal;
+  btn.textContent = "✓ Done — " + ok + " imported"; btn.disabled = false; btn.onclick = closeMismoModal;
 }
 
 /* ── SHOWINGS WIDGET ── */
