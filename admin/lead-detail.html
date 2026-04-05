@@ -3067,6 +3067,7 @@
           <button class="doc-filter-btn" onclick="filterDocs('gov_id',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Gov ID</button>
           <button class="doc-filter-btn" onclick="filterDocs('tax_returns',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Tax Returns</button>
           <button class="doc-filter-btn" onclick="filterDocs('other',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Other</button>
+          <button id="syncToGdriveBtn" onclick="syncAllDocsToDrive()" style="margin-left:auto;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">↑ Sync to Drive</button>
         </div>
 
         <!-- Documents grid -->
@@ -4997,6 +4998,27 @@ async function confirmDocUpload() {
           const result = await uploadResp.json();
           console.log('Edge upload result:', result);
           if (result.error) throw new Error(result.error);
+
+          // Auto-sync to Google Drive (fire and forget — don't block UX)
+          const docId = result.document_id || result.id;
+          if (docId) {
+            const cfg = window.APP_CONFIG || {};
+            fetch(`${cfg.SUPABASE_URL}/functions/v1/gdrive-sync`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'apikey': cfg.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + cfg.SUPABASE_ANON_KEY },
+              body: JSON.stringify({
+                action: 'sync_document',
+                document_id: docId,
+                contact_id: contactId,
+                storage_path: result.storage_path || path,
+                file_name: finalFile.name,
+                file_type: (finalFile.name.split('.').pop() || '').toLowerCase()
+              })
+            }).then(r => r.json()).then(d => {
+              if (d.success && d.gdrive_file_id) toast('📁 Synced to Google Drive');
+              else if (d.skipped) console.log('[gdrive] Skipped:', d.reason);
+            }).catch(e => console.warn('[gdrive-sync] failed:', e));
+          }
         }
     } catch(err) {
       console.error('Upload error for', file.name, ':', err);
@@ -5011,6 +5033,26 @@ async function confirmDocUpload() {
   const msg = _pendingDocFiles.length + ' document(s) uploaded' + (convertedCount ? ` (${convertedCount} converted to PDF)` : '');
   toast(msg);
   loadDocumentsGrid();
+}
+
+async function syncAllDocsToDrive() {
+  const btn = document.getElementById('syncToGdriveBtn');
+  if (btn) { btn.textContent = 'Syncing...'; btn.disabled = true; }
+  const cfg = window.APP_CONFIG || {};
+  try {
+    const res = await fetch(`${cfg.SUPABASE_URL}/functions/v1/gdrive-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': cfg.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + cfg.SUPABASE_ANON_KEY },
+      body: JSON.stringify({ action: 'sync_all_pending', contact_id: contactId })
+    });
+    const data = await res.json();
+    if (data.success) toast('✅ Synced ' + (data.synced||0) + ' docs to Drive' + (data.skipped ? ' (' + data.skipped + ' skipped)' : ''));
+    else toast('⚠️ ' + (data.reason || data.error || 'Sync failed'));
+    loadDocumentsGrid();
+  } catch(e) {
+    toast('Sync failed: ' + e.message);
+  }
+  if (btn) { btn.textContent = '↑ Sync to Drive'; btn.disabled = false; }
 }
 
 async function loadDocumentsGrid() {
@@ -5084,6 +5126,7 @@ function renderDocsGrid() {
           </select>
         </div>
         ${ext === 'pdf' ? '<div style="margin-top:8px;text-align:center;"><span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;">PDF</span></div>' : `<div style="margin-top:8px;text-align:center;"><button id="convert-btn-${doc.id}" onclick="event.stopPropagation();convertDocToPdf(${JSON.stringify(doc).replace(/"/g,'&quot;')})" style="font-size:11px;font-weight:600;color:#000;background:var(--gold);border:none;border-radius:6px;padding:4px 12px;cursor:pointer;transition:opacity .2s;" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='1'">Convert to PDF</button></div>`}
+        ${doc.gdrive_file_url ? `<div style="margin-top:6px;text-align:center;"><a href="${doc.gdrive_file_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10px;color:#C9A84C;text-decoration:none;">📁 Drive</a></div>` : ''}
       </div>`;
   }).join('');
 }
