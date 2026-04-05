@@ -3067,7 +3067,7 @@
           <button class="doc-filter-btn" onclick="filterDocs('gov_id',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Gov ID</button>
           <button class="doc-filter-btn" onclick="filterDocs('tax_returns',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Tax Returns</button>
           <button class="doc-filter-btn" onclick="filterDocs('other',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Other</button>
-          <button id="syncToGdriveBtn" onclick="syncAllDocsToDrive()" style="margin-left:auto;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">↑ Sync to Drive</button>
+          <button id="syncToGdriveBtn" onclick="syncAllDocsToDrive()" title="Files are stored in Supabase. Drive sync resumes after Google Cloud reinstatement." style="margin-left:auto;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">↑ Sync to Drive</button>
         </div>
 
         <!-- Documents grid -->
@@ -5038,21 +5038,41 @@ async function confirmDocUpload() {
 async function syncAllDocsToDrive() {
   const btn = document.getElementById('syncToGdriveBtn');
   if (btn) { btn.textContent = 'Syncing...'; btn.disabled = true; }
-  const cfg = window.APP_CONFIG || {};
+
   try {
+    const cfg = window.APP_CONFIG || {};
     const res = await fetch(`${cfg.SUPABASE_URL}/functions/v1/gdrive-sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': cfg.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + cfg.SUPABASE_ANON_KEY },
-      body: JSON.stringify({ action: 'sync_all_pending', contact_id: contactId })
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}`,
+        'apikey': cfg.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        action: 'sync_all_pending',
+        contact_id: contactId
+      })
     });
+
     const data = await res.json();
-    if (data.success) toast('✅ Synced ' + (data.synced||0) + ' docs to Drive' + (data.skipped ? ' (' + data.skipped + ' skipped)' : ''));
-    else toast('⚠️ ' + (data.reason || data.error || 'Sync failed'));
+
+    if (data.success && data.synced > 0) {
+      showToast(`✅ Synced ${data.synced} file(s) to Google Drive`);
+    } else if (data.skipped && data.reason) {
+      // Google Cloud suspended — show informational message, not error
+      showToast(`📁 Files saved in Supabase (${data.docs_in_supabase || 0} docs). Drive sync resumes after Google Cloud reinstatement.`);
+    } else if (data.synced === 0) {
+      showToast('✅ All docs already synced to Drive');
+    } else {
+      showToast('⚠️ ' + (data.reason || data.error || 'Sync issue'), true);
+    }
     loadDocumentsGrid();
   } catch(e) {
-    toast('Sync failed: ' + e.message);
+    console.error('sync error:', e);
+    showToast('⚠️ Could not reach sync service. Try again.', true);
+  } finally {
+    if (btn) { btn.textContent = '↑ Sync to Drive'; btn.disabled = false; }
   }
-  if (btn) { btn.textContent = '↑ Sync to Drive'; btn.disabled = false; }
 }
 
 async function loadDocumentsGrid() {
