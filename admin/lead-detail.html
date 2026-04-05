@@ -11679,25 +11679,63 @@ async function loadLenders() {
 // Backwards-compat alias for existing callers
 window.loadLenderMatches = loadLenders;
 
+// Curated loan type/program lists (static — do NOT derive from DB values)
+var LENDER_LOAN_TYPES_CURATED = [
+  'Conventional','FHA','VA','USDA','Jumbo','Non-QM','Commercial','Hard Money','HELOC','Reverse','SBA'
+];
+var LENDER_LOAN_PROGRAMS_CURATED = [
+  'DSCR','Bank Statement','Asset Depletion','Fix & Flip','Bridge','Construction',
+  'ITIN','Foreign National','CalHFA','Downpayment Assistance','P&L','ARM'
+];
+var LENDER_LOAN_TYPES_LABELS = {
+  'Reverse':'Reverse / HECM'
+};
+var LENDER_LOAN_PROGRAMS_LABELS = {
+  'CalHFA':'CalHFA / DPA',
+  'Downpayment Assistance':'Down Payment Assistance',
+  'P&L':'P&L Statement'
+};
+
 function buildLenderSidebarFilters() {
-  var types = new Set(), progs = new Set(), chans = new Set();
+  var chans = new Set();
   (window._allLenders||[]).forEach(function(l){
-    (l.loan_types||[]).forEach(function(t){ if(t) types.add(t); });
-    ([].concat(l.loan_programs||[], l.programs||[])).forEach(function(p){ if(p) progs.add(p); });
     if (l.channel) String(l.channel).split(',').forEach(function(c){ c=c.trim(); if(c) chans.add(c); });
   });
-  var make = function(containerId, items, selSet, fnName) {
+  var makeStatic = function(containerId, items, labels, selSet, fnName) {
     var el = document.getElementById(containerId); if (!el) return;
-    var arr = Array.from(items).sort();
-    if (!arr.length) { el.innerHTML = '<div style="font-size:.66rem;color:#444;font-style:italic">None</div>'; return; }
-    el.innerHTML = arr.map(function(it) {
-      var esc = _lhEsc(it); var ck = selSet.has(it) ? ' checked' : '';
-      return '<label><input type="checkbox" value="'+esc+'" onchange="'+fnName+'(this.value,this.checked)"'+ck+'>'+_lhEsc(it)+'</label>';
+    el.innerHTML = items.map(function(it){
+      var esc = _lhEsc(it); var lbl = _lhEsc(labels[it] || it); var ck = selSet.has(it) ? ' checked' : '';
+      return '<label><input type="checkbox" value="'+esc+'" onchange="'+fnName+'(this.value,this.checked)"'+ck+'>'+lbl+'</label>';
     }).join('');
   };
-  make('lenderTypeFilters', types, _selLenderTypes, 'toggleLenderTypeFilter');
-  make('lenderProgramFilters', progs, _selLenderProgs, 'toggleLenderProgFilter');
-  make('lenderChannelFilters', chans, _selLenderChans, 'toggleLenderChanFilter');
+  makeStatic('lenderTypeFilters', LENDER_LOAN_TYPES_CURATED, LENDER_LOAN_TYPES_LABELS, _selLenderTypes, 'toggleLenderTypeFilter');
+  makeStatic('lenderProgramFilters', LENDER_LOAN_PROGRAMS_CURATED, LENDER_LOAN_PROGRAMS_LABELS, _selLenderProgs, 'toggleLenderProgFilter');
+  // Channel stays dynamic
+  var chEl = document.getElementById('lenderChannelFilters');
+  if (chEl) {
+    var arr = Array.from(chans).sort();
+    if (!arr.length) { chEl.innerHTML = '<div style="font-size:.66rem;color:#444;font-style:italic">None</div>'; }
+    else chEl.innerHTML = arr.map(function(it){
+      var esc = _lhEsc(it); var ck = _selLenderChans.has(it) ? ' checked' : '';
+      return '<label><input type="checkbox" value="'+esc+'" onchange="toggleLenderChanFilter(this.value,this.checked)"'+ck+'>'+_lhEsc(it)+'</label>';
+    }).join('');
+  }
+}
+
+// Fuzzy match: search loan_types, loan_programs, specialty_notes, key_overlays, channel
+function lenderMatchesProgram(lender, value) {
+  var v = String(value||'').toLowerCase();
+  if (!v) return true;
+  var types = (lender.loan_types||[]).map(function(x){return String(x).toLowerCase();});
+  var programs = [].concat(lender.loan_programs||[], lender.programs||[]).map(function(x){return String(x).toLowerCase();});
+  var notes = String(lender.specialty_notes||'').toLowerCase();
+  var overlays = String(lender.key_overlays||'').toLowerCase();
+  var channel = String(lender.channel||'').toLowerCase();
+  return types.some(function(t){return t.includes(v)||v.includes(t);})
+    || programs.some(function(p){return p.includes(v)||v.includes(p);})
+    || notes.includes(v)
+    || overlays.includes(v)
+    || channel.includes(v);
 }
 
 function toggleLenderTypeFilter(v,c){ c ? _selLenderTypes.add(v) : _selLenderTypes.delete(v); filterLenders(); }
@@ -11745,8 +11783,9 @@ function filterLenders() {
       var hay = (l.name||'') + ' ' + (l.contact_name||'') + ' ' + (l.rep_name||'') + ' ' + (l.loan_types||[]).join(' ');
       if (hay.toLowerCase().indexOf(q) < 0) return false;
     }
-    if (_selLenderTypes.size > 0 && !(l.loan_types||[]).some(function(t){return _selLenderTypes.has(t);})) return false;
-    if (_selLenderProgs.size > 0 && ![].concat(l.loan_programs||[],l.programs||[]).some(function(p){return _selLenderProgs.has(p);})) return false;
+    // OR within each group, searching loan_types + loan_programs + specialty_notes + key_overlays + channel
+    if (_selLenderTypes.size > 0 && ![..._selLenderTypes].some(function(v){return lenderMatchesProgram(l,v);})) return false;
+    if (_selLenderProgs.size > 0 && ![..._selLenderProgs].some(function(v){return lenderMatchesProgram(l,v);})) return false;
     if (_selLenderChans.size > 0 && !String(l.channel||'').split(',').some(function(c){return _selLenderChans.has(c.trim());})) return false;
     if (minCredit > 0 && (parseInt(l.min_credit)||0) > minCredit) return false;
     if (_lenderRatingMin > 0 && (parseFloat(l.rating)||0) < _lenderRatingMin) return false;
