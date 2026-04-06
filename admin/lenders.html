@@ -648,7 +648,7 @@ function renderLenderList(lenders) {
           </div>
         </div>
         <div class="lender-priority" style="color:${l.priority==='high'?'#ff9966':l.priority==='low'?'rgba(255,255,255,0.2)':'var(--muted)'};display:flex;align-items:center;gap:6px;">
-          ${l.form_token ? `<span onclick="event.stopPropagation();copyLenderRowLink('${l.form_token}')" title="Copy form link" style="cursor:pointer;color:#C9A84C;font-size:12px;">🔗</span>` : ''}
+          <span onclick="event.stopPropagation();copyLenderRowLink('${l.id}','${l.form_token||''}')" title="Copy form link" style="cursor:pointer;color:${l.form_token?'#C9A84C':'#444'};font-size:12px;">🔗</span>
           ${l.priority==='high'?'★':''}
         </div>
       </div>`;
@@ -934,18 +934,33 @@ function copyToClipboard(text) {
 function fallbackCopy(text) {
   var ta = document.createElement('textarea');
   ta.value = text;
-  ta.style.cssText = 'position:fixed;top:-999px;left:-999px;opacity:0';
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
   document.body.appendChild(ta);
   ta.focus();
   ta.select();
-  document.execCommand('copy');
-  ta.remove();
+  try {
+    document.execCommand('copy');
+    if (typeof showToast === 'function') showToast('✅ Form link copied!', 'success');
+  } catch(e) {
+    prompt('Copy this link:', text);
+  }
+  document.body.removeChild(ta);
 }
 
-function copyLenderRowLink(token) {
-  var url = 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + token;
+function copyLenderRowLink(lenderId, token) {
+  // If token not passed directly, look it up from cached lender data
+  if (!token) {
+    const lender = (window.allLenders || []).find(l => l.id === lenderId);
+    token = lender?.form_token;
+  }
+  if (!token) {
+    if (typeof showToast === 'function') showToast('No form link for this lender', 'error');
+    else alert('No form link for this lender');
+    return;
+  }
+  const url = 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + token;
   copyToClipboard(url);
-  showToast('✅ Link copied!');
+  showToast('✅ Form link copied!');
 }
 
 function copyLenderFormLink() {
