@@ -298,21 +298,72 @@ function renderLenderList() {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">No lenders found</div>';
     return;
   }
-  list.innerHTML = filteredLenders.map(function(l) {
+  list.innerHTML = '';
+  filteredLenders.forEach(function(l) {
     var color = getAvatarColor(l.name);
     var initials = getInitials(l.name);
     var sel = window._currentLenderId === l.id;
-    return '<div class="lender-row ' + (sel ? 'selected' : '') + '" onclick="selectLender(\'' + l.id + '\')">' +
+
+    var row = document.createElement('div');
+    row.className = 'lender-row' + (sel ? ' selected' : '');
+    row.innerHTML =
       '<div class="lender-avatar" style="background:'+color+'22;border:1px solid '+color+'44;color:'+color+';">' + initials + '</div>' +
       '<div class="lender-info"><div class="lender-name">' + l.name + '</div>' +
-      '<div style="margin-top:3px;line-height:1.6;">' + loanTypeChipsHtml((l.loan_types||[]).slice(0,4)) + '</div></div></div>';
-  }).join('');
+      '<div style="margin-top:3px;line-height:1.6;">' + loanTypeChipsHtml((l.loan_types||[]).slice(0,4)) + '</div></div>' +
+      '<span class="lender-link-icon" data-id="' + l.id + '" title="Copy form link" style="color:#444;font-size:14px;cursor:pointer;flex-shrink:0;padding:2px 4px;">🔗</span>';
+
+    // Click on row -> open lender info popup
+    row.addEventListener('click', function(e) {
+      if (e.target.closest('.lender-link-icon')) return;
+      window._currentLenderId = l.id;
+      renderLenderList();
+      showLenderInfoPopup(l);
+    });
+
+    // Click on 🔗 -> copy form link
+    var linkIcon = row.querySelector('.lender-link-icon');
+    if (linkIcon) {
+      linkIcon.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var token = l.form_token;
+        if (token) {
+          var url = 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + token;
+          copyTextToClipboard(url);
+          linkIcon.textContent = '✅';
+          setTimeout(function() { linkIcon.textContent = '🔗'; }, 2000);
+          showToast('✅ Form link copied!');
+        } else {
+          linkIcon.textContent = '⏳';
+          fetch(SB_URL + '/functions/v1/lender-portal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY },
+            body: JSON.stringify({ action: 'generate_token', id: l.id })
+          }).then(function(r) { return r.json(); }).then(function(d) {
+            var t = d.form_token || d.token || (d.lender && d.lender.form_token);
+            if (t) {
+              l.form_token = t;
+              var url = 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + t;
+              copyTextToClipboard(url);
+              linkIcon.textContent = '✅';
+              setTimeout(function() { linkIcon.textContent = '🔗'; }, 2000);
+              showToast('✅ Form link copied!');
+            } else {
+              linkIcon.textContent = '🔗';
+              showToast('Could not generate link');
+            }
+          }).catch(function() { linkIcon.textContent = '🔗'; });
+        }
+      });
+    }
+
+    list.appendChild(row);
+  });
 }
 
 function selectLender(id) {
   window._currentLenderId = id;
-  renderLenderList();
   var lender = allLenders.find(function(l) { return l.id === id; });
+  renderLenderList();
   if (lender) showLenderInfoPopup(lender);
 }
 
