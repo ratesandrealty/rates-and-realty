@@ -349,8 +349,9 @@
         <input type="text" id="lenderSearch" placeholder="Search lenders..."
           oninput="filterLenders(this.value)">
       </div>
-      <div style="padding:4px 12px 2px;font-size:11px;color:#666;display:flex;justify-content:space-between;">
+      <div style="padding:4px 12px 2px;font-size:11px;color:#666;display:flex;justify-content:space-between;align-items:center;">
         <span id="lenderCountLabel">— lenders</span>
+        <button onclick="showAddLenderModal()" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">+ Add</button>
       </div>
       <div class="filter-row">
         <div class="filter-chip active" onclick="setFilter('all', this)">All</div>
@@ -1353,6 +1354,168 @@ function showToast(msg) {
     box-shadow:0 8px 24px rgba(0,0,0,0.4);`;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3000);
+}
+
+// ── ADD LENDER MODAL ────────────────────────────
+function showAddLenderModal() {
+  document.getElementById('addLenderModal')?.remove();
+  var loanTypeOptions = ['Conventional','FHA','VA','USDA','Jumbo','Non-QM','DSCR','Hard Money','Heloc','Heloan','Reverse','Commercial'];
+  var chipsHtml = loanTypeOptions.map(function(t) {
+    return '<span data-type="'+t+'" onclick="toggleNewLenderType(this)" style="padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;background:#1a1a1a;border:1px solid #333;color:#666;transition:all 0.15s;">'+t+'</span>';
+  }).join('');
+
+  var modal = document.createElement('div');
+  modal.id = 'addLenderModal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;width:100%;max-width:680px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.6);">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;padding:20px 24px;border-bottom:1px solid #1e1e1e;">' +
+      '<div><h2 style="margin:0;font-size:18px;color:#fff;">Add New Lender</h2><div style="font-size:12px;color:#555;margin-top:3px;">Manually add a lender to the database</div></div>' +
+      '<button onclick="document.getElementById(\'addLenderModal\').remove()" style="background:none;border:none;color:#555;font-size:24px;cursor:pointer;padding:4px;">×</button>' +
+    '</div>' +
+    '<div style="padding:24px;">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Lender Name *</label>' +
+        '<input id="newLenderName" placeholder="e.g. Acme Mortgage LLC" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Lender Type</label>' +
+        '<select id="newLenderType" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;">' +
+          '<option value="conventional">Conventional</option><option value="non_qm">Non-QM</option><option value="government">Government (FHA/VA/USDA)</option><option value="jumbo">Jumbo</option><option value="hard_money">Hard Money</option><option value="commercial">Commercial</option><option value="heloc">HELOC</option><option value="reverse">Reverse</option></select></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Channel</label>' +
+        '<select id="newLenderChannel" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;">' +
+          '<option value="Wholesale">Wholesale</option><option value="Correspondent">Correspondent</option><option value="Correspondent, Wholesale">Correspondent &amp; Wholesale</option></select></div>' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">NMLS ID</label>' +
+        '<input id="newLenderNMLS" placeholder="e.g. 123456" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+      '</div>' +
+      '<div style="margin-bottom:16px;"><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Loan Types</label>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;" id="newLenderLoanTypeChips">' + chipsHtml + '</div></div>' +
+      '<div style="border-top:1px solid #1e1e1e;margin:20px 0;"></div>' +
+      '<div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px;">Account Executive</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">AE Name</label>' +
+        '<input id="newLenderAEName" placeholder="First Last" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">AE Phone</label>' +
+        '<input id="newLenderAEPhone" placeholder="(949) 555-0000" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+      '</div>' +
+      '<div style="margin-bottom:16px;"><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">AE Email</label>' +
+        '<input id="newLenderAEEmail" type="email" placeholder="ae@lender.com" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+      '<div style="border-top:1px solid #1e1e1e;margin:20px 0;"></div>' +
+      '<div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px;">URLs &amp; Compensation</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Lender Website</label>' +
+        '<input id="newLenderWebsite" placeholder="https://lender.com" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Lender Portal / Login</label>' +
+        '<input id="newLenderPortal" placeholder="https://portal.lender.com" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Compensation (Revenue Notes)</label>' +
+        '<input id="newLenderRevenue" placeholder="e.g. LPC/BPC: 2.25% (1K Min, 30K Max)" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Min Credit Score</label>' +
+        '<input id="newLenderMinCredit" type="number" placeholder="580" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+      '</div>' +
+      '<div style="margin-bottom:16px;"><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Fee Notes</label>' +
+        '<input id="newLenderFees" placeholder="e.g. UW: $1095 / Tax: $75 / Flood: $12" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+      '<div style="margin-bottom:24px;"><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Specialty Notes / Programs</label>' +
+        '<textarea id="newLenderSpecialty" placeholder="e.g. 40yr, Bank Stmt, DSCR, ITIN, Foreign National..." rows="2" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;resize:vertical;font-family:inherit;"></textarea></div>' +
+      '<div id="addLenderError" style="display:none;background:#2a1111;border:1px solid #5a2222;border-radius:8px;padding:10px 14px;color:#E74C3C;font-size:13px;margin-bottom:16px;"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
+        '<button onclick="document.getElementById(\'addLenderModal\').remove()" style="padding:10px 20px;background:transparent;border:1px solid #333;border-radius:8px;color:#888;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>' +
+        '<button onclick="submitNewLender()" id="addLenderSubmitBtn" style="padding:10px 24px;background:#C9A84C;border:none;border-radius:8px;color:#000;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">+ Add Lender</button>' +
+      '</div>' +
+    '</div></div>';
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+  document.getElementById('newLenderName').focus();
+}
+
+function toggleNewLenderType(chip) {
+  var isActive = chip.classList.contains('active');
+  if (isActive) {
+    chip.classList.remove('active');
+    chip.style.background = '#1a1a1a';
+    chip.style.borderColor = '#333';
+    chip.style.color = '#666';
+  } else {
+    chip.classList.add('active');
+    chip.style.background = '#C9A84C22';
+    chip.style.borderColor = '#C9A84C';
+    chip.style.color = '#C9A84C';
+  }
+}
+
+async function submitNewLender() {
+  var name = document.getElementById('newLenderName').value.trim();
+  if (!name) {
+    var err = document.getElementById('addLenderError');
+    err.textContent = 'Lender name is required.';
+    err.style.display = 'block';
+    document.getElementById('newLenderName').focus();
+    return;
+  }
+  var btn = document.getElementById('addLenderSubmitBtn');
+  btn.textContent = 'Adding...';
+  btn.disabled = true;
+
+  var loanTypes = Array.from(document.querySelectorAll('#newLenderLoanTypeChips span.active')).map(function(el) { return el.dataset.type; });
+
+  var payload = {
+    name: name,
+    lender_type: document.getElementById('newLenderType').value,
+    channel: document.getElementById('newLenderChannel').value,
+    nmls: document.getElementById('newLenderNMLS').value.trim() || null,
+    contact_name: document.getElementById('newLenderAEName').value.trim() || null,
+    contact_phone: document.getElementById('newLenderAEPhone').value.trim() || null,
+    contact_email: document.getElementById('newLenderAEEmail').value.trim() || null,
+    website: document.getElementById('newLenderWebsite').value.trim() || null,
+    lender_portal: document.getElementById('newLenderPortal').value.trim() || null,
+    revenue_notes: document.getElementById('newLenderRevenue').value.trim() || null,
+    fee_notes: document.getElementById('newLenderFees').value.trim() || null,
+    min_credit_score: parseInt(document.getElementById('newLenderMinCredit').value) || null,
+    specialty_notes: document.getElementById('newLenderSpecialty').value.trim() || null,
+    loan_types: loanTypes.length > 0 ? loanTypes : null,
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  try {
+    var res = await fetch(SB_URL + '/rest/v1/lenders', {
+      method: 'POST',
+      headers: {
+        'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
+        'Content-Type': 'application/json', 'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      var errData = await res.json().catch(function() { return {}; });
+      throw new Error(errData.message || errData.error || 'HTTP ' + res.status);
+    }
+    var data = await res.json();
+    var newLender = Array.isArray(data) ? data[0] : data;
+
+    // Auto-generate form token
+    fetch(SB_URL + '/functions/v1/lender-portal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY },
+      body: JSON.stringify({ action: 'generate_token', id: newLender.id })
+    }).catch(function() {});
+
+    document.getElementById('addLenderModal').remove();
+    showToast('✅ ' + name + ' added to lender database!');
+    await loadLenders();
+
+    // Broadcast to other tabs
+    localStorage.setItem('lender_updated', JSON.stringify({ id: newLender.id, ts: Date.now() }));
+  } catch(e) {
+    console.error('Add lender error:', e);
+    var errEl = document.getElementById('addLenderError');
+    errEl.textContent = e.message || 'Failed to add lender.';
+    errEl.style.display = 'block';
+    btn.textContent = '+ Add Lender';
+    btn.disabled = false;
+  }
 }
 
 // ── INIT ─────────────────────────────────────────
