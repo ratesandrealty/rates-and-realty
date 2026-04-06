@@ -1127,9 +1127,13 @@ function switchMainTab(tab) {
   mainTabs.forEach(function(t) {
     t.classList.toggle('active', t.dataset.tab === tab);
   });
-  // If switching main tabs, exit commercial mode
+  // If switching main tabs, exit commercial mode (without recursion)
   if (window._lenderMode === 'commercial') {
-    switchLenderMode('residential');
+    window._lenderMode = 'residential';
+    var resBtn2 = document.getElementById('modeResBtn');
+    var comBtn2 = document.getElementById('modeComBtn');
+    if (comBtn2) { comBtn2.style.background = 'transparent'; comBtn2.style.color = 'var(--muted)'; }
+    if (resBtn2) { resBtn2.style.background = 'rgba(201,168,76,0.12)'; resBtn2.style.color = '#C9A84C'; }
   }
   document.getElementById('aiTabContent').style.display = tab==='ai' ? 'flex' : 'none';
   document.getElementById('dbTabContent').style.display = tab==='database' ? 'block' : 'none';
@@ -1442,8 +1446,17 @@ function switchLenderMode(mode) {
     comBtn.style.background = 'transparent'; comBtn.style.color = 'var(--muted)';
     resBtn.style.background = 'rgba(201,168,76,0.12)'; resBtn.style.color = '#C9A84C';
     comPortal.style.display = 'none';
-    // Restore the current main tab
-    switchMainTab(currentMainTab);
+    // Restore the current main tab directly (no recursion)
+    if (currentMainTab === 'ai') {
+      if (aiTab) aiTab.style.display = 'flex';
+      if (leftPanel) leftPanel.style.display = 'flex';
+    } else {
+      if (dbTab) dbTab.style.display = 'block';
+    }
+    // Re-activate correct main tab button
+    document.querySelectorAll('.nav-tab.main-tab').forEach(function(t) {
+      t.classList.toggle('active', t.dataset.tab === currentMainTab);
+    });
   }
 }
 
