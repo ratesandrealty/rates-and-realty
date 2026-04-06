@@ -3658,6 +3658,7 @@
           <button onclick="generateCommercialPreApproval()" style="padding:7px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">📄 Pre-Approval</button>
           <button onclick="generateLetterOfIntent()" style="padding:7px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">✉ LOI</button>
           <button onclick="openCommercialLenderForm()" style="padding:7px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#888;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">📋 Lender Form</button>
+          <button onclick="showCREView('saved')" id="tabSavedDeals" style="padding:7px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#888;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">📁 Saved Deals</button>
         </div>
         <div style="display:flex;flex:1;overflow:hidden;">
           <div style="width:300px;min-width:300px;background:#0d0d0d;border-right:1px solid #1a1a1a;padding:20px;overflow-y:auto;">
@@ -3692,6 +3693,17 @@
             </div>
           </div>
         </div>
+      </div>
+      <!-- Saved Deals View (hidden by default) -->
+      <div id="creSavedDealsView" style="display:none;flex:1;overflow-y:auto;padding:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <div style="font-size:14px;font-weight:700;color:#fff;">📁 Saved Deals</div>
+          <div style="display:flex;gap:8px;">
+            <button onclick="loadSavedDeals()" style="padding:5px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#666;font-size:11px;cursor:pointer;font-family:inherit;">↻ Refresh</button>
+            <button onclick="showCREView('matcher')" style="padding:5px 12px;background:#C9A84C22;border:1px solid #C9A84C44;border-radius:6px;color:#C9A84C;font-size:11px;cursor:pointer;font-family:inherit;">← Back to Matcher</button>
+          </div>
+        </div>
+        <div id="savedDealsList"><div style="color:#555;font-size:13px;text-align:center;padding:40px;">Loading saved deals...</div></div>
       </div>
     </div><!-- /tab-commercial -->
 
@@ -7568,7 +7580,97 @@ function openCommercialLenderForm() {
 }
 
 function showCommercialDealMatcher() { document.getElementById('cre_loan_amount')?.focus(); }
-function saveCREDeal() { if (typeof showToast === 'function') showToast('Deal saved to contact record'); }
+
+function showCREView(view) {
+  var matcherView = document.querySelector('#tab-commercial > div:first-child > div:nth-child(2)');
+  var savedView = document.getElementById('creSavedDealsView');
+  if (view === 'saved') {
+    if (matcherView) matcherView.style.display = 'none';
+    if (savedView) savedView.style.display = 'block';
+    loadSavedDeals();
+  } else {
+    if (matcherView) matcherView.style.display = 'flex';
+    if (savedView) savedView.style.display = 'none';
+  }
+}
+
+async function saveCREDeal() {
+  var cfg = window.APP_CONFIG || {};
+  var cid = contactId || new URLSearchParams(window.location.search).get('contact_id') || null;
+  var dealData = {
+    contact_id: cid,
+    loan_amount: parseFloat((document.getElementById('cre_loan_amount')?.value || '').replace(/,/g, '')) || null,
+    purchase_price: parseFloat((document.getElementById('cre_property_value')?.value || '').replace(/,/g, '')) || null,
+    ltv: parseFloat(document.getElementById('cre_ltv')?.value) || null,
+    dscr: parseFloat(document.getElementById('cre_dscr')?.value) || null,
+    noi: parseFloat((document.getElementById('cre_noi')?.value || '').replace(/,/g, '')) || null,
+    credit_score: parseInt(document.getElementById('cre_credit')?.value) || null,
+    property_address: document.getElementById('cre_address')?.value || null,
+    property_state: (document.getElementById('cre_state')?.value || '').toUpperCase() || null,
+    max_closing_days: parseInt(document.getElementById('cre_max_days')?.value) || null,
+    recourse_preference: document.getElementById('cre_recourse')?.value || null,
+    deal_notes: document.getElementById('cre_notes')?.value || null,
+    property_type_id: document.getElementById('cre_property_type')?.value || null,
+    loan_product_id: document.getElementById('cre_loan_product')?.value || null,
+    status: 'active',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  Object.keys(dealData).forEach(function(k) { if (dealData[k] === null || dealData[k] === '') delete dealData[k]; });
+  try {
+    var res = await fetch((cfg.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/commercial_deals', {
+      method: 'POST',
+      headers: { 'apikey': cfg.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+      body: JSON.stringify(dealData)
+    });
+    if (res.ok) { if (typeof showToast === 'function') showToast('✅ Deal saved!'); }
+    else { var err = await res.json(); throw new Error(err.message || err.error || 'Save failed'); }
+  } catch(e) { console.error('Save deal:', e); if (typeof showToast === 'function') showToast('Save failed: ' + e.message, true); }
+}
+
+async function loadSavedDeals() {
+  var cfg = window.APP_CONFIG || {};
+  var cid = contactId || new URLSearchParams(window.location.search).get('contact_id') || null;
+  var container = document.getElementById('savedDealsList');
+  if (!container) return;
+  container.innerHTML = '<div style="color:#555;font-size:13px;text-align:center;padding:40px;">Loading...</div>';
+  try {
+    var url = (cfg.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/commercial_deals?select=*&order=created_at.desc&limit=20';
+    if (cid) url += '&contact_id=eq.' + cid;
+    var res = await fetch(url, { headers: { 'apikey': cfg.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + cfg.SUPABASE_ANON_KEY } });
+    var deals = await res.json();
+    if (!Array.isArray(deals) || !deals.length) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:#555;"><div style="font-size:32px;margin-bottom:12px;">📁</div><div style="font-size:13px;">No saved deals yet. Use the Deal Matcher and click Save Deal.</div></div>';
+      return;
+    }
+    container.innerHTML = deals.map(function(d) {
+      var loanFmt = d.loan_amount ? '$' + Number(d.loan_amount).toLocaleString() : '—';
+      var date = new Date(d.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      var statusColor = { 'active': '#27AE60', 'closed': '#C9A84C', 'dead': '#E74C3C' }[d.status] || '#666';
+      return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:16px;margin-bottom:10px;cursor:pointer;" onclick="loadDealIntoMatcher(\'' + d.id + '\')">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">' +
+          '<div><div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:4px;">' + (d.property_address || 'Commercial Deal') + ' — ' + loanFmt + '</div>' +
+          '<div style="font-size:11px;color:#555;">' + date + '</div></div>' +
+          '<span style="font-size:10px;padding:3px 8px;border-radius:10px;background:' + statusColor + '22;border:1px solid ' + statusColor + '44;color:' + statusColor + ';font-weight:600;">' + (d.status || 'active') + '</span>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">' +
+          '<div style="background:#0d0d0d;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:11px;color:#C9A84C;font-weight:600;">' + loanFmt + '</div><div style="font-size:9px;color:#444;margin-top:1px;">Loan</div></div>' +
+          '<div style="background:#0d0d0d;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:11px;color:#C9A84C;font-weight:600;">' + (d.dscr || '—') + '</div><div style="font-size:9px;color:#444;margin-top:1px;">DSCR</div></div>' +
+          '<div style="background:#0d0d0d;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:11px;color:#C9A84C;font-weight:600;">' + (d.ltv ? d.ltv + '%' : '—') + '</div><div style="font-size:9px;color:#444;margin-top:1px;">LTV</div></div>' +
+          '<div style="background:#0d0d0d;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:11px;color:#C9A84C;font-weight:600;">' + (d.credit_score || '—') + '</div><div style="font-size:9px;color:#444;margin-top:1px;">FICO</div></div>' +
+        '</div>' +
+        (d.property_address ? '<div style="font-size:11px;color:#555;margin-top:8px;">📍 ' + d.property_address + (d.property_state ? ', ' + d.property_state : '') + '</div>' : '') +
+        (d.deal_notes ? '<div style="font-size:11px;color:#666;margin-top:6px;padding-top:6px;border-top:1px solid #1a1a1a;">' + d.deal_notes.substring(0, 100) + (d.deal_notes.length > 100 ? '...' : '') + '</div>' : '') +
+        '<div style="font-size:10px;color:#444;margin-top:8px;">Click to reload into Deal Matcher ↗</div></div>';
+    }).join('');
+  } catch(e) { container.innerHTML = '<div style="color:#E74C3C;padding:20px;text-align:center;">Error: ' + e.message + '</div>'; }
+}
+
+function loadDealIntoMatcher(dealId) {
+  showCREView('matcher');
+  if (typeof showToast === 'function') showToast('Deal loaded into matcher');
+}
+
 function clearCREForm() {
   ['cre_loan_amount','cre_property_value','cre_noi','cre_address','cre_credit','cre_state','cre_max_days','cre_notes','cre_ltv','cre_dscr'].forEach(function(id) { var el = document.getElementById(id); if (el) el.value = ''; });
   ['cre_property_type','cre_loan_product','cre_recourse'].forEach(function(id) { var el = document.getElementById(id); if (el) el.selectedIndex = 0; });
