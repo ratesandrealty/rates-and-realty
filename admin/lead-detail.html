@@ -1241,8 +1241,12 @@
     <div class="ld-sidebar-email" id="sidebar-email">—</div>
 
     <!-- Borrower Portal Info -->
-    <div id="portalInfoCard" style="border-top:1px solid #1e1e1e;padding-top:12px;margin-top:12px">
-      <div style="font-size:10px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Borrower Portal</div>
+    <div id="leadRightSidebar" style="border-top:1px solid #1e1e1e;padding-top:12px;margin-top:12px;position:relative;overflow:hidden;transition:max-height 0.3s ease,opacity 0.2s ease">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:10px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.08em">Borrower Portal</div>
+        <button id="portalToggleBtn" onclick="togglePortalPanel()" style="background:none;border:1px solid #333;border-radius:4px;color:#555;font-size:10px;cursor:pointer;padding:2px 6px;line-height:1;font-family:inherit" title="Collapse/expand">▾</button>
+      </div>
+      <div id="portalInfoContent">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
         <div>
           <div style="font-size:.68rem;color:#666;margin-bottom:3px">Unique ID</div>
@@ -1276,6 +1280,7 @@
         <button onclick="adminViewPortal()" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:7px 12px;font-size:.75rem;cursor:pointer;text-decoration:none">
           <i class="fas fa-external-link-alt"></i> View Portal
         </button>
+      </div>
       </div>
     </div>
 
@@ -5814,6 +5819,21 @@ function toggleLeadSidebar() {
     panel.style.padding = panel._op || '';
     panel.style.opacity = '1';
     if (btn) btn.innerHTML = '&#8249;';
+  }
+}
+
+var _portalCollapsed = false;
+function togglePortalPanel() {
+  _portalCollapsed = !_portalCollapsed;
+  var content = document.getElementById('portalInfoContent');
+  var btn = document.getElementById('portalToggleBtn');
+  if (!content) return;
+  if (_portalCollapsed) {
+    content.style.display = 'none';
+    if (btn) btn.textContent = '▸';
+  } else {
+    content.style.display = '';
+    if (btn) btn.textContent = '▾';
   }
 }
 
@@ -15733,281 +15753,116 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
 </style>
 
 <!-- ═══ ADOBE ACROBAT-STYLE PDF VIEWER MODAL ═══ -->
-<div id="pdfViewerModal" style="display:none;position:fixed;inset:0;background:#323639;z-index:99999;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
-  <!-- Top bar: document title + primary actions -->
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:#2a2d30;border-bottom:1px solid #1a1c1e;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,0.5)">
-    <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
-      <i class="fas fa-file-pdf" style="color:#e04141;font-size:1.05rem;flex-shrink:0"></i>
-      <div style="min-width:0;display:flex;flex-direction:column;line-height:1.2">
-        <span id="pdfTitle" style="font-size:.82rem;font-weight:600;color:#f0f0f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55vw">Document</span>
-        <span id="pdfMeta" style="font-size:.6rem;color:#9a9a9a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">PDF Document</span>
+<div id="pdfViewerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;align-items:center;justify-content:center" onclick="if(event.target===this)pdfClose()">
+  <div style="width:92vw;height:92vh;display:flex;flex-direction:column;background:#1a1a1a;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.8)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#111;border-bottom:1px solid #2a2a2a;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">📄</span>
+        <span id="pdfTitle" style="font-size:13px;font-weight:600;color:#fff;max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Document</span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <a id="pdfOpenNewBtn" href="#" target="_blank" style="padding:6px 14px;background:#C9A84C;border-radius:6px;color:#000;font-size:11px;font-weight:700;text-decoration:none">↗ Open in Tab</a>
+        <a id="pdfDownloadBtn" href="#" download style="padding:6px 14px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#888;font-size:11px;font-weight:600;text-decoration:none">⬇ Download</a>
+        <button onclick="pdfClose()" style="padding:6px 14px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#888;font-size:11px;cursor:pointer;font-family:inherit">✕ Close</button>
       </div>
     </div>
-    <div style="display:flex;gap:6px;flex-shrink:0;align-items:center">
-      <button type="button" onclick="pdfDownload()" title="Download" style="background:#3a3d41;color:#e8e8e8;border:1px solid #484b4f;border-radius:4px;padding:6px 11px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px"><i class="fas fa-download"></i>Download</button>
-      <button type="button" id="pdfOpenNewBtn" onclick="pdfOpenNew()" title="Open in new tab" style="display:none;background:#3a3d41;color:#e8e8e8;border:1px solid #484b4f;border-radius:4px;padding:6px 11px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;align-items:center;gap:5px"><i class="fas fa-external-link-alt"></i>Open</button>
-      <button type="button" onclick="pdfPrint()" title="Print" style="background:#3a3d41;color:#e8e8e8;border:1px solid #484b4f;border-radius:4px;padding:6px 11px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px"><i class="fas fa-print"></i>Print</button>
-      <button type="button" onclick="pdfClose()" title="Close (Esc)" style="background:transparent;color:#c0c0c0;border:1px solid #484b4f;border-radius:4px;width:30px;height:30px;font-size:.95rem;cursor:pointer;font-family:inherit;margin-left:8px;display:inline-flex;align-items:center;justify-content:center"><i class="fas fa-times"></i></button>
-    </div>
-  </div>
-  <!-- Acrobat-style toolbar: page nav + zoom + rotate -->
-  <div style="display:flex;align-items:center;justify-content:center;gap:18px;padding:7px 16px;background:#383b3e;border-bottom:1px solid #1a1c1e;flex-shrink:0">
-    <!-- Page nav -->
-    <div style="display:flex;align-items:center;gap:6px">
-      <button type="button" onclick="pdfPrevPage()" title="Previous page" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;width:26px;height:26px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center"><i class="fas fa-chevron-up" style="font-size:.65rem"></i></button>
-      <button type="button" onclick="pdfNextPage()" title="Next page" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;width:26px;height:26px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center"><i class="fas fa-chevron-down" style="font-size:.65rem"></i></button>
-      <input id="pdfPageInput" type="number" min="1" value="1" onchange="pdfGoToPage(this.value)" style="background:#2a2d30;color:#e8e8e8;border:1px solid #4a4d51;border-radius:3px;width:42px;height:26px;text-align:center;font-size:.72rem;font-family:inherit;outline:none">
-      <span style="color:#9a9a9a;font-size:.72rem">/</span>
-      <span id="pdfPageTotal" style="color:#c0c0c0;font-size:.72rem;font-weight:600;min-width:14px">1</span>
-    </div>
-    <div style="width:1px;height:22px;background:#4a4d51"></div>
-    <!-- Zoom -->
-    <div style="display:flex;align-items:center;gap:6px">
-      <button type="button" onclick="pdfZoomOut()" title="Zoom out" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;width:26px;height:26px;font-size:.95rem;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center">−</button>
-      <select id="pdfZoomSelect" onchange="pdfSetZoom(this.value)" style="background:#2a2d30;color:#e8e8e8;border:1px solid #4a4d51;border-radius:3px;height:26px;padding:0 6px;font-size:.72rem;font-family:inherit;outline:none;cursor:pointer">
-        <option value="50">50%</option>
-        <option value="75">75%</option>
-        <option value="100" selected>100%</option>
-        <option value="125">125%</option>
-        <option value="150">150%</option>
-        <option value="175">175%</option>
-        <option value="200">200%</option>
-      </select>
-      <button type="button" onclick="pdfZoomIn()" title="Zoom in" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;width:26px;height:26px;font-size:.95rem;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center">+</button>
-    </div>
-    <div style="width:1px;height:22px;background:#4a4d51"></div>
-    <!-- Rotate -->
-    <button type="button" onclick="pdfRotate()" title="Rotate clockwise" style="background:#2f3235;color:#e0e0e0;border:1px solid #4a4d51;border-radius:3px;height:26px;padding:0 10px;font-size:.7rem;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px"><i class="fas fa-redo" style="font-size:.7rem"></i>Rotate</button>
-  </div>
-  <!-- Main viewer area -->
-  <div id="pdfScrollArea" style="flex:1;overflow:auto;background:#525659;display:flex;align-items:flex-start;justify-content:center;padding:24px;position:relative">
-    <!-- Loading overlay -->
-    <div id="pdfLoading" style="display:none;position:absolute;inset:0;background:rgba(50,54,57,0.85);align-items:center;justify-content:center;flex-direction:column;gap:12px;z-index:10">
-      <div style="width:38px;height:38px;border:3px solid #484b4f;border-top-color:#C9A84C;border-radius:50%;animation:pdfSpin 0.8s linear infinite"></div>
-      <div style="color:#c0c0c0;font-size:.72rem;font-weight:600">Loading document…</div>
-    </div>
-    <!-- Iframe (primary) -->
-    <iframe id="pdfViewerFrame" style="width:100%;max-width:900px;height:100%;min-height:1100px;border:none;background:#fff;box-shadow:0 4px 24px rgba(0,0,0,0.6);transform-origin:top center;transition:transform .15s ease"></iframe>
-    <!-- Canvas container (reserved for future PDF.js rendering) -->
-    <div id="pdfCanvasContainer" style="display:none;max-width:900px;width:100%"></div>
-  </div>
-  <!-- Status bar -->
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 14px;background:#2a2d30;border-top:1px solid #1a1c1e;flex-shrink:0;font-size:.62rem;color:#8a8a8a">
-    <span id="pdfStatusText">Ready</span>
-    <span style="color:#6a6a6a">Press Esc to close</span>
+    <iframe id="pdfViewerFrame" src="" style="flex:1;width:100%;border:none;background:#fff" title="Document"></iframe>
   </div>
 </div>
-<style>@keyframes pdfSpin{to{transform:rotate(360deg)}}</style>
 <script>
-  const PDF = { url: null, title: null, isHtml: false, zoom: 100, rotation: 0, _htmlSource: null, _pdfBlobUrl: null };
-
   function pdfShow() {
-    const m = document.getElementById('pdfViewerModal');
+    var m = document.getElementById('pdfViewerModal');
     if (m) { m.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
   }
 
   function pdfClose() {
-    const m = document.getElementById('pdfViewerModal');
-    if (m) { m.style.display = 'none'; document.body.style.overflow = ''; }
-    setTimeout(() => {
-      const f = document.getElementById('pdfViewerFrame');
-      if (f) { f.removeAttribute('src'); f.removeAttribute('srcdoc'); }
-    }, 300);
-    PDF.url = null;
+    var m = document.getElementById('pdfViewerModal');
+    if (m) m.style.display = 'none';
+    document.body.style.overflow = '';
+    var f = document.getElementById('pdfViewerFrame');
+    if (f) { f.removeAttribute('src'); f.removeAttribute('srcdoc'); }
   }
 
-  function pdfSetStatus(msg) {
-    const el = document.getElementById('pdfStatusText');
-    if (el) el.textContent = msg || 'Ready';
-  }
-
-  // For HTML-generated docs (pre-approval)
-  function openPDFViewer(html, title, meta) {
-    PDF.isHtml = true; PDF.url = null; PDF.zoom = 100; PDF.rotation = 0;
-    // Flags for pdfDownload/pdfPrint
+  function openPDFViewer(html, title) {
+    document.getElementById('pdfTitle').textContent = title || 'Document';
+    var openBtn = document.getElementById('pdfOpenNewBtn');
+    if (openBtn) openBtn.style.display = 'none';
+    var dlBtn = document.getElementById('pdfDownloadBtn');
+    if (dlBtn) dlBtn.style.display = 'none';
     window._preApprovalHtml = html;
     window._currentPDFIsHTML = true;
-    window._pdf1003BlobUrl = null;
     window._currentPDFUrl = null;
     window._currentPDFTitle = title;
-    document.getElementById('pdfTitle').textContent = title || 'Document';
-    document.getElementById('pdfMeta').textContent = meta || 'PDF Document';
-    PDF.title = title;
-    pdfSetStatus('Rendering...');
-    const frame = document.getElementById('pdfViewerFrame');
-    frame.style.display = 'block';
-    frame.style.transform = 'scale(1)';
+    var frame = document.getElementById('pdfViewerFrame');
     frame.removeAttribute('src');
-    document.getElementById('pdfCanvasContainer').style.display = 'none';
-    document.getElementById('pdfLoading').style.display = 'none';
-    const openBtn = document.getElementById('pdfOpenNewBtn');
-    if (openBtn) openBtn.style.display = 'none';
     frame.srcdoc = html;
-    frame.onload = () => pdfSetStatus('Ready');
-    document.getElementById('pdfZoomSelect').value = '100';
-    document.getElementById('pdfPageInput').value = 1;
-    document.getElementById('pdfPageTotal').textContent = '1';
     pdfShow();
   }
 
-  // For real PDF URLs (1003, guidelines, uploaded docs)
-  function openPDFUrl(url, title, meta) {
-    PDF.isHtml = false; PDF.url = url; PDF.zoom = 100; PDF.rotation = 0;
-    // Flags for pdfDownload/pdfPrint
+  function openPDFUrl(url, title) {
+    document.getElementById('pdfTitle').textContent = title || 'Document';
+    var openBtn = document.getElementById('pdfOpenNewBtn');
+    if (openBtn) { openBtn.href = url; openBtn.style.display = ''; }
+    var dlBtn = document.getElementById('pdfDownloadBtn');
+    if (dlBtn) { dlBtn.href = url; dlBtn.style.display = ''; }
     window._currentPDFIsHTML = false;
     window._preApprovalHtml = null;
     window._currentPDFUrl = url;
     window._currentPDFTitle = title;
-    document.getElementById('pdfTitle').textContent = title || 'Document';
-    document.getElementById('pdfMeta').textContent = meta || 'PDF';
-    PDF.title = title;
-    pdfSetStatus('Loading...');
-    document.getElementById('pdfLoading').style.display = 'flex';
-    document.getElementById('pdfCanvasContainer').style.display = 'none';
-    const openBtn = document.getElementById('pdfOpenNewBtn');
-    if (openBtn) openBtn.style.display = 'flex';
-    document.getElementById('pdfZoomSelect').value = '100';
-    pdfShow();
-    const frame = document.getElementById('pdfViewerFrame');
-    frame.style.display = 'block';
-    frame.style.transform = 'scale(1)';
+    var frame = document.getElementById('pdfViewerFrame');
     frame.removeAttribute('srcdoc');
     frame.src = url;
-    frame.onload = () => {
-      document.getElementById('pdfLoading').style.display = 'none';
-      pdfSetStatus('Ready');
-    };
+    pdfShow();
   }
 
-  // Aliases for backward compat
+  // Backward compat aliases
   function pdfViewerClose() { pdfClose(); }
-  function pdfViewerPrint() { pdfPrint(); }
-
-  function pdfPrint() {
-    // HTML doc: open new window with HTML and trigger print (user saves as PDF)
-    if (window._currentPDFIsHTML && window._preApprovalHtml) {
-      const printWin = window.open('', '_blank', 'width=900,height=700');
-      if (!printWin) { showToast('Please allow popups to print', true); return; }
-      printWin.document.write(window._preApprovalHtml);
-      printWin.document.close();
-      setTimeout(() => { printWin.focus(); printWin.print(); }, 500);
-      return;
-    }
-    // PDF blob/url: print via iframe contentWindow or new window
-    if (PDF.isHtml) {
-      const f = document.getElementById('pdfViewerFrame');
-      if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); }
-    } else if (PDF.url) {
-      const w = window.open(PDF.url, '_blank');
-      if (w) setTimeout(() => w.print(), 800);
-    }
-  }
+  function pdfOpenNew() { if (window._currentPDFUrl) window.open(window._currentPDFUrl, '_blank'); }
 
   function pdfDownload() {
-    // CASE 1: Real PDF blob (1003, conditions, etc.)
     if (window._pdf1003BlobUrl || (window._currentPDFUrl && window._currentPDFUrl.startsWith('blob:'))) {
-      const url = window._pdf1003BlobUrl || window._currentPDFUrl;
-      const rawName = window._pdf1003FileName || window._currentPDFTitle || PDF.title || 'document';
-      const name = rawName.replace(/[^a-z0-9\-_\. ]/gi,'_').replace(/\.(html?|pdf)$/i,'') + '.pdf';
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      var url = window._pdf1003BlobUrl || window._currentPDFUrl;
+      var name = (window._pdf1003FileName || window._currentPDFTitle || 'document').replace(/[^a-z0-9\-_\. ]/gi,'_');
+      if (!name.toLowerCase().endsWith('.pdf')) name += '.pdf';
+      var a = document.createElement('a'); a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
       return;
     }
-
-    // CASE 2: Pre-approval HTML document — print to PDF via browser
     if (window._currentPDFIsHTML && window._preApprovalHtml) {
-      const printWin = window.open('', '_blank', 'width=900,height=700');
-      if (!printWin) { showToast('Please allow popups to download as PDF', true); return; }
-      printWin.document.write(window._preApprovalHtml);
-      printWin.document.close();
-      setTimeout(() => { printWin.focus(); printWin.print(); }, 500);
+      var pw = window.open('', '_blank', 'width=900,height=700');
+      if (!pw) { showToast('Please allow popups', true); return; }
+      pw.document.write(window._preApprovalHtml); pw.document.close();
+      setTimeout(function(){ pw.focus(); pw.print(); }, 500);
       return;
     }
+    if (window._currentPDFUrl) {
+      var a2 = document.createElement('a'); a2.href = window._currentPDFUrl;
+      a2.download = (window._currentPDFTitle||'document').replace(/[^a-z0-9\-_\. ]/gi,'_') + '.pdf';
+      document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
+    }
+  }
 
-    // CASE 3: Any other URL (http PDF, etc.) → direct link click
-    const url = PDF.url || PDF._pdfBlobUrl;
-    const title = PDF.title || window._currentBorrowerName || 'document';
-    const fname = title.replace(/[^a-z0-9\-_\. ]/gi, '_');
-
-    if (url) {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fname.toLowerCase().endsWith('.pdf') ? fname : fname + '.pdf';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+  function pdfPrint() {
+    if (window._currentPDFIsHTML && window._preApprovalHtml) {
+      var pw = window.open('', '_blank', 'width=900,height=700');
+      if (pw) { pw.document.write(window._preApprovalHtml); pw.document.close(); setTimeout(function(){ pw.focus(); pw.print(); }, 500); }
       return;
     }
-
-    showToast('No document to download', true);
+    if (window._currentPDFUrl) { var w = window.open(window._currentPDFUrl, '_blank'); if (w) setTimeout(function(){ w.print(); }, 800); }
   }
-
-  function pdfOpenNew() { if (PDF.url) window.open(PDF.url, '_blank'); }
-
-  function pdfZoomIn() {
-    const levels = [50,75,100,125,150,175,200];
-    const cur = parseInt(document.getElementById('pdfZoomSelect').value) || 100;
-    const next = levels.find(l => l > cur) || 200;
-    pdfSetZoom(next);
-    document.getElementById('pdfZoomSelect').value = next;
-  }
-
-  function pdfZoomOut() {
-    const levels = [50,75,100,125,150,175,200];
-    const cur = parseInt(document.getElementById('pdfZoomSelect').value) || 100;
-    const prev = [...levels].reverse().find(l => l < cur) || 50;
-    pdfSetZoom(prev);
-    document.getElementById('pdfZoomSelect').value = prev;
-  }
-
-  function pdfSetZoom(val) {
-    PDF.zoom = parseInt(val) || 100;
-    const frame = document.getElementById('pdfViewerFrame');
-    if (frame) {
-      frame.style.transform = `scale(${PDF.zoom/100}) rotate(${PDF.rotation}deg)`;
-      frame.style.transformOrigin = 'top center';
-    }
-  }
-
-  function pdfRotate() {
-    PDF.rotation = (PDF.rotation + 90) % 360;
-    const frame = document.getElementById('pdfViewerFrame');
-    if (frame) frame.style.transform = `scale(${PDF.zoom/100}) rotate(${PDF.rotation}deg)`;
-  }
-
-  function pdfPrevPage() {
-    const inp = document.getElementById('pdfPageInput');
-    if (inp && parseInt(inp.value) > 1) { inp.value = parseInt(inp.value) - 1; }
-  }
-
-  function pdfNextPage() {
-    const inp = document.getElementById('pdfPageInput');
-    const tot = document.getElementById('pdfPageTotal');
-    if (inp && tot && parseInt(inp.value) < parseInt(tot.textContent||'1')) {
-      inp.value = parseInt(inp.value) + 1;
-    }
-  }
-
-  function pdfGoToPage(n) {
-    const inp = document.getElementById('pdfPageInput');
-    if (inp) inp.value = Math.max(1, parseInt(n)||1);
-  }
+  function pdfViewerPrint() { pdfPrint(); }
 
   function ldOpenGuideline(url, title, fileType) {
     if (fileType === 'pdf' || fileType === 'docx' || fileType === 'xlsx') {
-      openPDFUrl(url, title, fileType.toUpperCase() + ' Document');
+      openPDFUrl(url, title);
     } else {
       window.open(url, '_blank');
     }
   }
 
-  document.addEventListener('keydown', e => {
+  document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
-      const m = document.getElementById('pdfViewerModal');
+      var m = document.getElementById('pdfViewerModal');
       if (m && m.style.display !== 'none') pdfClose();
     }
   });
