@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
   <title>Guideline AI — Rates & Realty CRM</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -76,9 +77,7 @@
     .msg.user .msg-av { background: rgba(201,168,76,0.15); color: var(--gold); }
     .msg.ai .msg-av { background: rgba(255,255,255,0.06); }
     .msg-body { flex: 1; min-width: 0; }
-    .msg-bubble {
-      padding: 14px 18px; border-radius: 12px; font-size: 14px; line-height: 1.65;
-    }
+    .msg-bubble { padding: 14px 18px; border-radius: 12px; font-size: 14px; line-height: 1.65; }
     .msg.user .msg-bubble { background: rgba(201,168,76,0.08); border: 1px solid rgba(201,168,76,0.15); }
     .msg.ai .msg-bubble { background: rgba(255,255,255,0.03); border: 1px solid var(--border); }
     .msg-sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -123,22 +122,35 @@
     }
     .chat-input-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* RIGHT: Lender info panel */
+    /* RIGHT: Reference library panel */
     .right-panel {
       width: 320px; flex-shrink: 0; border-left: 1px solid var(--border);
-      background: #111; overflow-y: auto; display: none;
+      background: #111; overflow-y: auto;
     }
-    .right-panel.visible { display: block; }
-    .info-section { padding: 20px; border-bottom: 1px solid var(--border); }
-    .info-section-title {
+    .ref-section { padding: 16px; border-bottom: 1px solid var(--border); }
+    .ref-title {
       font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
-      color: var(--muted); font-weight: 600; margin-bottom: 10px;
+      color: var(--muted); font-weight: 600; margin-bottom: 12px;
     }
-    .info-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
-    .info-label { color: var(--muted); }
-    .info-value { color: var(--text); font-weight: 500; text-align: right; max-width: 180px; word-break: break-all; }
-    .info-value a { color: var(--gold); text-decoration: none; }
-    .info-value a:hover { text-decoration: underline; }
+    .agency-card {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      margin-bottom: 8px; transition: border-color 0.15s;
+    }
+    .agency-card:hover { border-color: rgba(255,255,255,0.15); }
+    .agency-icon {
+      width: 36px; height: 36px; border-radius: 8px; display: flex;
+      align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0;
+    }
+    .agency-info { flex: 1; min-width: 0; }
+    .agency-name { font-size: 13px; font-weight: 600; }
+    .agency-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .agency-count { font-size: 10px; color: #555; margin-top: 2px; }
+    .agency-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .agency-btn {
+      padding: 4px 8px; border-radius: 5px; font-size: 10px; font-weight: 600;
+      cursor: pointer; border: 1px solid; background: transparent;
+    }
   </style>
 </head>
 <body>
@@ -170,7 +182,7 @@
         <div class="empty-chat" id="emptyChatState">
           <div style="font-size:48px;margin-bottom:16px;">📋</div>
           <h3>Guideline AI</h3>
-          <p>Ask about any lending guideline. Select a lender on the left to scope your search, or ask across all guidelines.</p>
+          <p>Ask about any lending guideline. Click a lender on the left to view details and scope your search.</p>
           <div>
             <button class="qp-btn" onclick="askQuestion('What is the minimum credit score for FHA vs Conventional?')">Min credit FHA vs Conv?</button>
             <button class="qp-btn" onclick="askQuestion('What are the DSCR requirements for investor loans?')">DSCR investor requirements?</button>
@@ -187,9 +199,18 @@
       </div>
     </div>
 
-    <!-- RIGHT: Lender info sidebar -->
-    <div class="right-panel" id="lenderInfoPanel">
-      <div id="lenderInfoContent"></div>
+    <!-- RIGHT: Reference Library -->
+    <div class="right-panel" id="rightPanel">
+      <div class="ref-section">
+        <div class="ref-title">Reference Library</div>
+        <div id="agencyCards"></div>
+      </div>
+      <div class="ref-section">
+        <div class="ref-title">Lender-Specific Guidelines</div>
+        <div style="color:#555;font-size:12px;text-align:center;padding:8px;">
+          Click a lender on the left to view & upload their guidelines
+        </div>
+      </div>
     </div>
   </div>
 
@@ -197,6 +218,7 @@
 <script>
 const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
 const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+window._supabase = supabase.createClient(SB_URL, SB_KEY);
 
 const LOAN_TYPE_COLORS = {
   'Conventional': '#4A90E2', 'FHA': '#E67E22', 'VA': '#27AE60',
@@ -210,10 +232,23 @@ const LOAN_TYPE_COLORS = {
 function loanTypeChipsHtml(loanTypes) {
   if (!loanTypes || !Array.isArray(loanTypes) || loanTypes.length === 0) return '';
   return loanTypes.map(function(type) {
-    var color = LOAN_TYPE_COLORS[type] || '#555';
-    return '<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;margin:1px 2px;background:'+color+'22;border:1px solid '+color+'55;color:'+color+';white-space:nowrap;">'+type+'</span>';
+    var c = LOAN_TYPE_COLORS[type] || '#555';
+    return '<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;margin:1px 2px;background:'+c+'22;border:1px solid '+c+'55;color:'+c+';white-space:nowrap;">'+type+'</span>';
   }).join('');
 }
+
+const GLOBAL_AGENCY_LINKS = [
+  { label: 'Fannie Mae', subtitle: 'Selling Guide', icon: '🏛️', color: '#003087',
+    url: 'https://selling-guide.fanniemae.com', source_type: 'fnma' },
+  { label: 'Freddie Mac', subtitle: 'Seller/Servicer Guide', icon: '🏛️', color: '#003366',
+    url: 'https://guide.freddiemac.com', source_type: 'fhlmc' },
+  { label: 'FHA Handbook', subtitle: 'HUD Handbook 4000.1', icon: '🏠', color: '#004B87',
+    url: 'https://www.hud.gov/program_offices/housing/sfh/handbook_4000-1', source_type: 'fha' },
+  { label: 'VA Lenders Handbook', subtitle: 'VA Pamphlet 26-7', icon: '🎖️', color: '#003F72',
+    url: 'https://www.benefits.va.gov/warms/pam26_7.asp', source_type: 'va' },
+  { label: 'USDA Single Family', subtitle: 'HB-1-3555', icon: '🌾', color: '#2E7D32',
+    url: 'https://www.rd.usda.gov/publications/regulations-guidelines/handbooks', source_type: 'usda' },
+];
 
 let allLenders = [];
 let filteredLenders = [];
@@ -223,25 +258,23 @@ window._currentLenderId = null;
 function getAvatarColor(name) {
   let hash = 0;
   for (let i = 0; i < (name||'').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 50%, 55%)`;
+  return 'hsl(' + (Math.abs(hash) % 360) + ', 50%, 55%)';
 }
 function getInitials(name) {
-  return (name||'?').split(/[\s&]+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  return (name||'?').split(/[\s&]+/).slice(0, 2).map(function(w){ return w[0]; }).join('').toUpperCase();
 }
 
+// ── LOAD LENDERS ────────────────────────────────
 async function loadLenders() {
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/lenders?order=name&limit=200`, {
-      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' }
+    var res = await fetch(SB_URL + '/rest/v1/lenders?order=name&limit=200', {
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' }
     });
     allLenders = await res.json();
     if (!Array.isArray(allLenders)) allLenders = [];
-    filteredLenders = [...allLenders];
+    filteredLenders = allLenders.slice();
     renderLenderList();
-  } catch(e) {
-    console.error('Load error:', e);
-  }
+  } catch(e) { console.error('Load error:', e); }
 }
 
 function filterLenders(query) {
@@ -252,110 +285,307 @@ function filterLenders(query) {
 }
 
 function renderLenderList() {
-  const list = document.getElementById('lenderList');
+  var list = document.getElementById('lenderList');
   if (!filteredLenders.length) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">No lenders found</div>';
     return;
   }
   list.innerHTML = filteredLenders.map(function(l) {
-    const color = getAvatarColor(l.name);
-    const initials = getInitials(l.name);
-    const isSelected = window._currentLenderId === l.id;
-    return `
-      <div class="lender-row ${isSelected ? 'selected' : ''}" onclick="selectLender('${l.id}')">
-        <div class="lender-avatar" style="background:${color}22;border:1px solid ${color}44;color:${color};">
-          ${initials}
-        </div>
-        <div class="lender-info">
-          <div class="lender-name">${l.name}</div>
-          <div style="margin-top:3px;line-height:1.6;">
-            ${loanTypeChipsHtml((l.loan_types||[]).slice(0,4))}
-          </div>
-        </div>
-      </div>`;
+    var color = getAvatarColor(l.name);
+    var initials = getInitials(l.name);
+    var sel = window._currentLenderId === l.id;
+    return '<div class="lender-row ' + (sel ? 'selected' : '') + '" onclick="selectLender(\'' + l.id + '\')">' +
+      '<div class="lender-avatar" style="background:'+color+'22;border:1px solid '+color+'44;color:'+color+';">' + initials + '</div>' +
+      '<div class="lender-info"><div class="lender-name">' + l.name + '</div>' +
+      '<div style="margin-top:3px;line-height:1.6;">' + loanTypeChipsHtml((l.loan_types||[]).slice(0,4)) + '</div></div></div>';
   }).join('');
 }
 
 function selectLender(id) {
   window._currentLenderId = id;
   renderLenderList();
-  const lender = allLenders.find(function(l) { return l.id === id; });
-  if (lender) showLenderInfo(lender);
+  var lender = allLenders.find(function(l) { return l.id === id; });
+  if (lender) showLenderInfoPopup(lender);
 }
 
-function loadLenderById(id) {
-  const lender = allLenders.find(function(l) { return l.id === id; });
-  if (!lender) { loadLenders(); return; }
-  showLenderInfo(lender);
+// ── LENDER INFO POPUP (SLIDE-IN) ────────────────
+function showLenderInfoPopup(lender) {
+  if (!lender.contact_email && !lender.revenue_notes) {
+    fetch(SB_URL + '/rest/v1/lenders?id=eq.' + lender.id + '&limit=1', {
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+    }).then(function(r){ return r.json(); }).then(function(d) {
+      if (d && d[0]) {
+        Object.assign(lender, d[0]);
+        var idx = allLenders.findIndex(function(x){ return x.id === lender.id; });
+        if (idx >= 0) Object.assign(allLenders[idx], d[0]);
+      }
+      renderLenderPopup(lender);
+    }).catch(function() { renderLenderPopup(lender); });
+  } else {
+    renderLenderPopup(lender);
+  }
 }
 
-function showLenderInfo(lender) {
-  const panel = document.getElementById('lenderInfoPanel');
-  panel.classList.add('visible');
+function renderLenderPopup(lender) {
+  document.getElementById('lenderInfoPopup')?.remove();
 
-  const portalLink = lender.lender_portal
-    ? `<a href="${lender.lender_portal}" target="_blank">${new URL(lender.lender_portal).hostname}</a>`
-    : '<span style="color:#555;">—</span>';
+  var chips = loanTypeChipsHtml(lender.loan_types);
+  var safeNameAttr = (lender.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+  var color = getAvatarColor(lender.name);
 
-  const websiteLink = lender.website
-    ? `<a href="${lender.website}" target="_blank">${new URL(lender.website).hostname}</a>`
-    : '';
+  var popup = document.createElement('div');
+  popup.id = 'lenderInfoPopup';
+  popup.style.cssText = 'position:fixed;top:0;right:0;width:420px;height:100vh;background:#111;border-left:1px solid #2a2a2a;z-index:9000;overflow-y:auto;box-shadow:-4px 0 20px rgba(0,0,0,0.5);transform:translateX(100%);transition:transform 0.25s ease;';
 
-  document.getElementById('lenderInfoContent').innerHTML = `
-    <div class="info-section">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-        <div style="width:40px;height:40px;border-radius:10px;background:${getAvatarColor(lender.name)}22;
-          border:1px solid ${getAvatarColor(lender.name)}44;color:${getAvatarColor(lender.name)};
-          display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;">
-          ${getInitials(lender.name)}
-        </div>
-        <div>
-          <div style="font-size:15px;font-weight:700;">${lender.name}</div>
-          ${lender.nmls ? `<div style="font-size:11px;color:var(--muted);">NMLS# ${lender.nmls}</div>` : ''}
-        </div>
-      </div>
-      <div style="line-height:1.8;">${loanTypeChipsHtml(lender.loan_types)}</div>
-    </div>
+  popup.innerHTML = '<div style="padding:20px;">' +
+    // Header
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #222;">' +
+      '<div style="width:48px;height:48px;border-radius:10px;background:'+color+'22;border:1px solid '+color+'44;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:'+color+';flex-shrink:0;">' +
+        (lender.logo_url ? '<img src="'+lender.logo_url+'" style="width:100%;height:100%;object-fit:contain;border-radius:8px;">' : getInitials(lender.name)) +
+      '</div>' +
+      '<div style="flex:1;">' +
+        '<div style="font-size:15px;font-weight:700;color:#fff;">' + lender.name + '</div>' +
+        '<div style="font-size:11px;color:#666;margin-top:2px;">' + (lender.channel || 'Wholesale') + (lender.nmls ? ' · NMLS #' + lender.nmls : '') + '</div>' +
+      '</div>' +
+      '<button onclick="closeLenderPopup()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;padding:4px;">×</button>' +
+    '</div>' +
 
-    <div class="info-section">
-      <div class="info-section-title">Primary Account Executive</div>
-      <div class="info-row"><span class="info-label">Name</span><span class="info-value">${lender.contact_name || '—'}</span></div>
-      <div class="info-row"><span class="info-label">Email</span><span class="info-value">${lender.contact_email ? `<a href="mailto:${lender.contact_email}">${lender.contact_email}</a>` : '—'}</span></div>
-      <div class="info-row"><span class="info-label">Phone</span><span class="info-value">${lender.contact_phone ? `<a href="tel:${lender.contact_phone}">${lender.contact_phone}</a>` : '—'}</span></div>
-    </div>
+    // Loan Types
+    (chips ? '<div style="margin-bottom:16px;"><div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Loan Types</div><div>' + chips + '</div></div>' : '') +
 
-    <div class="info-section">
-      <div class="info-section-title">Underwriting</div>
-      <div class="info-row"><span class="info-label">Min Credit</span><span class="info-value">${lender.min_credit_score || '—'}</span></div>
-      <div class="info-row"><span class="info-label">Max LTV</span><span class="info-value">${lender.max_ltv ? lender.max_ltv + '%' : '—'}</span></div>
-      <div class="info-row"><span class="info-label">Channel</span><span class="info-value">${lender.channel || '—'}</span></div>
-      <div class="info-row"><span class="info-label">Avg Days to Fund</span><span class="info-value">${lender.avg_app_to_fund || '—'}</span></div>
-    </div>
+    // AE Contact
+    (lender.contact_name ? '<div style="background:#161616;border:1px solid #222;border-radius:10px;padding:14px;margin-bottom:12px;">' +
+      '<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Primary AE</div>' +
+      '<div style="font-weight:600;color:#fff;margin-bottom:6px;">' + lender.contact_name + '</div>' +
+      (lender.contact_email ? '<a href="mailto:' + lender.contact_email + '" style="display:block;color:#C9A84C;font-size:13px;text-decoration:none;margin-bottom:4px;">✉ ' + lender.contact_email + '</a>' : '') +
+      (lender.contact_phone ? '<a href="tel:' + lender.contact_phone + '" style="display:block;color:#4A90E2;font-size:13px;text-decoration:none;">📞 ' + lender.contact_phone + '</a>' : '') +
+    '</div>' : '') +
 
-    <div class="info-section">
-      <div class="info-section-title">Compensation</div>
-      <div class="info-row"><span class="info-label">Revenue</span><span class="info-value" style="white-space:normal;text-align:right;">${lender.revenue_notes || '—'}</span></div>
-      <div class="info-row"><span class="info-label">Fees</span><span class="info-value" style="white-space:normal;text-align:right;">${lender.fee_notes || '—'}</span></div>
-    </div>
+    // Quick Actions
+    '<div style="display:flex;gap:8px;margin-bottom:16px;">' +
+      (lender.lender_portal ? '<a href="' + lender.lender_portal + '" target="_blank" style="flex:1;text-align:center;padding:10px;background:#C9A84C22;border:1px solid #C9A84C44;border-radius:8px;color:#C9A84C;font-size:12px;font-weight:600;text-decoration:none;">🔗 Open Portal</a>' : '') +
+      (lender.contact_email ? '<a href="mailto:' + lender.contact_email + '" style="flex:1;text-align:center;padding:10px;background:#4A90E222;border:1px solid #4A90E244;border-radius:8px;color:#4A90E2;font-size:12px;font-weight:600;text-decoration:none;">✉ Email AE</a>' : '') +
+    '</div>' +
 
-    <div class="info-section">
-      <div class="info-section-title">Links</div>
-      <div class="info-row"><span class="info-label">Portal</span><span class="info-value">${portalLink}</span></div>
-      ${websiteLink ? `<div class="info-row"><span class="info-label">Website</span><span class="info-value">${websiteLink}</span></div>` : ''}
-    </div>
+    // Stats Row
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;">' +
+      '<div style="background:#161616;border:1px solid #222;border-radius:8px;padding:10px;text-align:center;">' +
+        '<div style="font-size:18px;font-weight:700;color:#C9A84C;">' + (lender.min_credit_score || '—') + '</div>' +
+        '<div style="font-size:10px;color:#666;margin-top:2px;">Min FICO</div></div>' +
+      '<div style="background:#161616;border:1px solid #222;border-radius:8px;padding:10px;text-align:center;">' +
+        '<div style="font-size:18px;font-weight:700;color:#C9A84C;">' + (lender.rating ? parseFloat(lender.rating).toFixed(1) : '—') + '</div>' +
+        '<div style="font-size:10px;color:#666;margin-top:2px;">Rating</div></div>' +
+      '<div style="background:#161616;border:1px solid #222;border-radius:8px;padding:10px;text-align:center;">' +
+        '<div style="font-size:14px;font-weight:700;color:#C9A84C;">' + (lender.avg_app_to_fund || '—') + '</div>' +
+        '<div style="font-size:10px;color:#666;margin-top:2px;">Avg Fund</div></div>' +
+    '</div>' +
 
-    ${(lender.loan_programs && lender.loan_programs.length) ? `
-    <div class="info-section">
-      <div class="info-section-title">Loan Programs (${lender.loan_programs.length})</div>
-      <div style="line-height:1.8;">
-        ${lender.loan_programs.map(function(p) { return '<span style="display:inline-block;padding:2px 7px;border-radius:8px;font-size:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--text);margin:2px;">'+p+'</span>'; }).join('')}
-      </div>
-    </div>
-    ` : ''}
-  `;
+    // Comp & Fees
+    (lender.revenue_notes ? '<div style="background:#161616;border:1px solid #222;border-radius:10px;padding:14px;margin-bottom:12px;">' +
+      '<div style="font-size:10px;color:#27AE60;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">💰 Compensation</div>' +
+      '<div style="color:#fff;font-size:13px;">' + lender.revenue_notes + '</div>' +
+      (lender.fee_notes ? '<div style="color:#888;font-size:12px;margin-top:6px;border-top:1px solid #222;padding-top:6px;">Fees: ' + lender.fee_notes + '</div>' : '') +
+    '</div>' : '') +
+
+    // Specialty
+    (lender.specialty_notes ? '<div style="background:#161616;border:1px solid #222;border-radius:10px;padding:14px;margin-bottom:12px;">' +
+      '<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Specialty Programs</div>' +
+      '<div style="color:#bbb;font-size:12px;line-height:1.6;">' + lender.specialty_notes + '</div></div>' : '') +
+
+    // Key Overlays
+    (lender.key_overlays ? '<div style="background:#1a1010;border:1px solid #3a2222;border-radius:10px;padding:14px;margin-bottom:12px;">' +
+      '<div style="font-size:10px;color:#E74C3C;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">⚠️ Key Overlays</div>' +
+      '<div style="color:#bbb;font-size:12px;line-height:1.6;">' + lender.key_overlays + '</div></div>' : '') +
+
+    // Loan Programs
+    ((lender.loan_programs && lender.loan_programs.length) ? '<div style="margin-bottom:16px;">' +
+      '<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Loan Programs (' + lender.loan_programs.length + ')</div>' +
+      '<div style="line-height:1.8;">' + lender.loan_programs.map(function(p) {
+        return '<span style="display:inline-block;padding:2px 7px;border-radius:8px;font-size:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--text);margin:2px;">' + p + '</span>';
+      }).join('') + '</div></div>' : '') +
+
+    // Guidelines
+    '<div style="border-top:1px solid #222;padding-top:16px;margin-top:4px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+        '<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;">Guidelines</div>' +
+        '<button onclick="triggerLenderGuidelineUpload(\'' + lender.id + '\', \'' + safeNameAttr + '\', this)" style="background:#C9A84C22;border:1px solid #C9A84C44;color:#C9A84C;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;font-family:inherit;">+ Upload PDF</button>' +
+      '</div>' +
+      '<div id="lenderGuidelinesList_' + lender.id + '" style="min-height:40px;"><div style="color:#555;font-size:12px;text-align:center;padding:12px;">Loading...</div></div>' +
+    '</div>' +
+  '</div>';
+
+  document.body.appendChild(popup);
+  setTimeout(function() { popup.style.transform = 'translateX(0)'; }, 10);
+
+  // Close on outside click (but not on sidebar clicks)
+  function closeOnOutside(e) {
+    if (!popup.contains(e.target) && !e.target.closest('.lender-row')) {
+      closeLenderPopup();
+      document.removeEventListener('click', closeOnOutside);
+    }
+  }
+  setTimeout(function() { document.addEventListener('click', closeOnOutside); }, 50);
+
+  loadLenderGuidelinesList(lender.id);
 }
 
-// ── CHAT ──────────────────────────────────────────
+function closeLenderPopup() {
+  var popup = document.getElementById('lenderInfoPopup');
+  if (popup) {
+    popup.style.transform = 'translateX(100%)';
+    setTimeout(function() { popup.remove(); }, 250);
+  }
+}
+
+// ── LENDER GUIDELINES LIST ──────────────────────
+async function loadLenderGuidelinesList(lenderId) {
+  var container = document.getElementById('lenderGuidelinesList_' + lenderId);
+  if (!container) return;
+  try {
+    var result = await window._supabase
+      .from('lender_guidelines')
+      .select('id, title, file_name, file_url, category, created_at, ocr_status')
+      .eq('lender_id', lenderId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    var data = result.data;
+    if (!data || data.length === 0) {
+      container.innerHTML = '<div style="color:#444;font-size:12px;text-align:center;padding:12px;">No guidelines uploaded yet</div>';
+      return;
+    }
+    container.innerHTML = data.map(function(g) {
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px;background:#161616;border:1px solid #222;border-radius:6px;margin-bottom:6px;">' +
+        '<span style="font-size:18px;">📄</span>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (g.title || g.file_name) + '</div>' +
+          '<div style="font-size:10px;color:#555;margin-top:1px;">' + (g.category || 'General') + ' · ' + (g.ocr_status === 'completed' ? '✅ Indexed' : '⏳ Processing') + '</div>' +
+        '</div>' +
+        (g.file_url ? '<a href="' + g.file_url + '" target="_blank" style="color:#C9A84C;font-size:11px;text-decoration:none;flex-shrink:0;">View</a>' : '') +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    container.innerHTML = '<div style="color:#555;font-size:12px;">Could not load guidelines</div>';
+  }
+}
+
+// ── LENDER GUIDELINE UPLOAD ─────────────────────
+function triggerLenderGuidelineUpload(lenderId, lenderName, buttonEl) {
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.pdf';
+  input.onchange = async function(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var origText = buttonEl.textContent;
+    buttonEl.textContent = 'Uploading...';
+    buttonEl.disabled = true;
+    try {
+      var fileName = lenderId + '/' + Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      var uploadResult = await window._supabase.storage.from('lender-guidelines').upload(fileName, file, { contentType: 'application/pdf', upsert: false });
+      if (uploadResult.error) throw uploadResult.error;
+      var urlData = window._supabase.storage.from('lender-guidelines').getPublicUrl(fileName);
+      var publicUrl = urlData.data.publicUrl;
+      var dbResult = await window._supabase.from('lender_guidelines').insert({
+        lender_id: lenderId, title: file.name.replace('.pdf', ''),
+        file_name: file.name, file_url: publicUrl, file_size: file.size,
+        file_type: 'application/pdf', category: 'General Guidelines',
+        is_active: true, upload_source: 'crm_manual', source_type: 'lender',
+        ocr_status: 'pending', created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+      });
+      if (dbResult.error) throw dbResult.error;
+      buttonEl.textContent = '✅ Uploaded!';
+      loadLenderGuidelinesList(lenderId);
+      fetch(SB_URL + '/functions/v1/textract-ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+        body: JSON.stringify({ file_url: publicUrl, lender_id: lenderId, file_name: file.name })
+      }).catch(function() {});
+      setTimeout(function() { buttonEl.textContent = origText; buttonEl.disabled = false; }, 3000);
+    } catch(err) {
+      console.error('Upload failed:', err);
+      buttonEl.textContent = '❌ Failed';
+      setTimeout(function() { buttonEl.textContent = origText; buttonEl.disabled = false; }, 3000);
+    }
+  };
+  input.click();
+}
+
+// ── GLOBAL REFERENCE LIBRARY ────────────────────
+function renderAgencyCards() {
+  var container = document.getElementById('agencyCards');
+  container.innerHTML = GLOBAL_AGENCY_LINKS.map(function(a) {
+    return '<div class="agency-card">' +
+      '<div class="agency-icon" style="background:' + a.color + '22;color:' + a.color + ';">' + a.icon + '</div>' +
+      '<div class="agency-info">' +
+        '<div class="agency-name">' + a.label + '</div>' +
+        '<div class="agency-sub">' + a.subtitle + '</div>' +
+        '<div class="agency-count" id="globalCount_' + a.source_type + '">—</div>' +
+      '</div>' +
+      '<div class="agency-actions">' +
+        '<a href="' + a.url + '" target="_blank" class="agency-btn" style="color:#4A90E2;border-color:#4A90E244;">↗</a>' +
+        '<button class="agency-btn" style="color:#C9A84C;border-color:#C9A84C44;" onclick="uploadGlobalGuideline(\'' + a.source_type + '\', \'' + a.label + '\', this)">+</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+async function loadGlobalGuidelineCounts() {
+  try {
+    var result = await window._supabase
+      .from('lender_guidelines')
+      .select('source_type')
+      .is('lender_id', null)
+      .eq('is_active', true);
+    var counts = {};
+    (result.data || []).forEach(function(r) { counts[r.source_type] = (counts[r.source_type] || 0) + 1; });
+    GLOBAL_AGENCY_LINKS.forEach(function(a) {
+      var el = document.getElementById('globalCount_' + a.source_type);
+      if (el) el.textContent = counts[a.source_type] ? counts[a.source_type] + ' docs indexed' : 'No docs yet';
+    });
+  } catch(e) { /* non-fatal */ }
+}
+
+function uploadGlobalGuideline(sourceType, sourceName, buttonEl) {
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.pdf';
+  input.onchange = async function(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var origText = buttonEl.textContent;
+    buttonEl.textContent = '...';
+    buttonEl.disabled = true;
+    try {
+      var fileName = 'global/' + sourceType + '/' + Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      var uploadResult = await window._supabase.storage.from('lender-guidelines').upload(fileName, file, { contentType: 'application/pdf', upsert: false });
+      if (uploadResult.error) throw uploadResult.error;
+      var urlData = window._supabase.storage.from('lender-guidelines').getPublicUrl(fileName);
+      var publicUrl = urlData.data.publicUrl;
+      await window._supabase.from('lender_guidelines').insert({
+        lender_id: null, title: file.name.replace('.pdf', ''),
+        file_name: file.name, file_url: publicUrl, file_size: file.size,
+        file_type: 'application/pdf', category: sourceName,
+        source_type: sourceType, is_active: true, upload_source: 'crm_manual',
+        ocr_status: 'pending', created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+      });
+      showToast('✅ ' + file.name + ' uploaded to ' + sourceName);
+      loadGlobalGuidelineCounts();
+      fetch(SB_URL + '/functions/v1/textract-ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+        body: JSON.stringify({ file_url: publicUrl, source_type: sourceType, file_name: file.name })
+      }).catch(function() {});
+    } catch(err) {
+      showToast('❌ Upload failed: ' + err.message);
+    }
+    buttonEl.textContent = origText;
+    buttonEl.disabled = false;
+  };
+  input.click();
+}
+
+// ── CHAT ────────────────────────────────────────
 function askQuestion(q) {
   document.getElementById('aiInput').value = q;
   sendQuestion();
@@ -399,7 +629,6 @@ async function sendQuestion() {
   var btn = document.getElementById('aiSendBtn');
   var q = input.value.trim();
   if (!q) return;
-
   input.value = '';
   input.style.height = 'auto';
   appendMsg(q, true);
@@ -416,7 +645,7 @@ async function sendQuestion() {
 
   try {
     var lenders = window._currentLenderId
-      ? [allLenders.find(function(l){ return l.id === window._currentLenderId; })?.name].filter(Boolean)
+      ? [allLenders.find(function(l){ return l.id === window._currentLenderId; })].filter(Boolean).map(function(l){ return l.name; })
       : [];
     var res = await fetch(SB_URL + '/functions/v1/guideline-ai', {
       method: 'POST',
@@ -444,7 +673,8 @@ window.addEventListener('storage', function(e) {
       var info = JSON.parse(e.newValue);
       loadLenders().then(function() {
         if (info.id === window._currentLenderId) {
-          loadLenderById(info.id);
+          var lender = allLenders.find(function(l) { return l.id === info.id; });
+          if (lender) showLenderInfoPopup(lender);
         }
       });
     } catch(err) { /* ignore */ }
@@ -459,7 +689,11 @@ function showToast(msg) {
   setTimeout(function() { t.remove(); }, 3000);
 }
 
-document.addEventListener('DOMContentLoaded', function() { loadLenders(); });
+document.addEventListener('DOMContentLoaded', function() {
+  loadLenders();
+  renderAgencyCards();
+  loadGlobalGuidelineCounts();
+});
 </script>
 </body>
 </html>
