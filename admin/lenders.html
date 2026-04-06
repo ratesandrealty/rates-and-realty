@@ -507,6 +507,21 @@ const PROGRAM_COLORS = {
   'heloan': '#99ccff', 'reverse': '#cc99ff', 'sba': '#ffaa44',
   'hard-money': '#ff8888', 'arm': '#aaaaff',
 };
+const LOAN_TYPE_COLORS = {
+  'Conventional': '#4A90E2', 'FHA': '#E67E22', 'VA': '#27AE60',
+  'USDA': '#8E44AD', 'Jumbo': '#C0392B', 'Non-QM': '#16A085',
+  'DSCR': '#2980B9', 'Bank Statement': '#D35400', 'Commercial': '#7F8C8D',
+  'Hard Money': '#BDC3C7', 'Bridge': '#95A5A6', 'Heloc': '#1ABC9C',
+  'Heloan': '#3498DB', 'Reverse': '#9B59B6', 'ITIN': '#E74C3C',
+  'CalHFA': '#F39C12', 'DPA': '#27AE60', 'Commercial - Residential': '#7F8C8D',
+};
+function loanTypeChipsHtml(loanTypes) {
+  if (!loanTypes || !Array.isArray(loanTypes) || loanTypes.length === 0) return '';
+  return loanTypes.map(function(type) {
+    var color = LOAN_TYPE_COLORS[type] || '#555';
+    return '<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;margin:1px 2px;background:'+color+'22;border:1px solid '+color+'55;color:'+color+';white-space:nowrap;">'+type+'</span>';
+  }).join('');
+}
 
 // ── LOAD LENDERS ─────────────────────────────────
 async function loadLenders() {
@@ -560,7 +575,6 @@ function renderLenderList(lenders) {
   list.innerHTML = lenders.map(l => {
     const color = getAvatarColor(l.name);
     const initials = getInitials(l.name);
-    const progs = (l.programs || []).slice(0, 3);
     const isSelected = selectedLender?.id === l.id;
     return `
       <div class="lender-row ${isSelected ? 'selected' : ''}" onclick="selectLender('${l.id}')">
@@ -569,8 +583,8 @@ function renderLenderList(lenders) {
         </div>
         <div class="lender-info">
           <div class="lender-name">${l.name}</div>
-          <div class="lender-tags">
-            ${progs.map(p => `<span class="tag-pill" style="background:${PROGRAM_COLORS[p]||'#888'}22;color:${PROGRAM_COLORS[p]||'#888'};border:1px solid ${PROGRAM_COLORS[p]||'#888'}44;">${p}</span>`).join('')}
+          <div style="margin-top:3px;line-height:1.6;">
+            ${loanTypeChipsHtml(l.loan_types)}
           </div>
         </div>
         <div class="lender-priority" style="color:${l.priority==='high'?'#ff9966':l.priority==='low'?'rgba(255,255,255,0.2)':'var(--muted)'};display:flex;align-items:center;gap:6px;">
@@ -586,7 +600,6 @@ function renderLendersTable(lenders) {
   if (!tbody) return;
   tbody.innerHTML = lenders.map(l => {
     const color = getAvatarColor(l.name);
-    const progs = (l.programs || []).slice(0, 4);
     const typeLabel = { conventional: 'Conventional', government: 'Government', non_qm: 'Non-QM', commercial: 'Commercial' }[l.lender_type] || l.lender_type || '-';
     return `
       <tr onclick="selectLenderAndShow('${l.id}')">
@@ -602,7 +615,7 @@ function renderLendersTable(lenders) {
         <td><span style="font-size:11px;padding:3px 8px;border-radius:8px;
           background:${TYPE_COLORS[l.lender_type]?.bg||'rgba(255,255,255,0.06)'};
           color:${TYPE_COLORS[l.lender_type]?.color||'rgba(255,255,255,0.5)'};">${typeLabel}</span></td>
-        <td>${progs.map(p=>`<span style="font-size:10px;padding:2px 7px;border-radius:8px;margin-right:3px;background:${PROGRAM_COLORS[p]||'#888'}22;color:${PROGRAM_COLORS[p]||'#888'};">${p}</span>`).join('')}</td>
+        <td>${loanTypeChipsHtml((l.loan_types||[]).slice(0,4))}</td>
         <td><span style="color:${l.priority==='high'?'#ff9966':l.priority==='low'?'rgba(255,255,255,0.3)':'var(--text)'};">${l.priority||'normal'}</span></td>
         <td>${l.clickup_task_id ? `<a href="${l.clickup_url}" target="_blank" onclick="event.stopPropagation()" style="color:#a78bfa;font-size:12px;text-decoration:none;">Open</a>` : '-'}</td>
       </tr>`;
@@ -620,7 +633,7 @@ function setFilter(tag, el) {
 function filterLenders(query) {
   filteredLenders = allLenders.filter(l => {
     const matchQuery = !query || l.name.toLowerCase().includes(query.toLowerCase());
-    const matchFilter = selectedFilter === 'all' || (l.programs || []).includes(selectedFilter);
+    const matchFilter = selectedFilter === 'all' || (l.loan_types && l.loan_types.some(t => t.toLowerCase().replace(/[\s-]+/g, '-') === selectedFilter || t.toLowerCase().startsWith(selectedFilter)));
     return matchQuery && matchFilter;
   });
   updateLenderCountBadge();
@@ -686,11 +699,8 @@ function showLenderDetail(lender) {
     <div class="detail-grid">
       <div class="detail-card">
         <div class="detail-card-label">Lender Type</div>
-        <div class="detail-card-value">
-          <span style="padding:4px 10px;border-radius:8px;font-size:13px;
-            background:${typeC.bg};color:${typeC.color};">
-            ${lender.lender_type || 'conventional'}
-          </span>
+        <div class="detail-card-value" style="display:flex;flex-wrap:wrap;gap:4px;">
+          ${loanTypeChipsHtml(lender.loan_types) || `<span style="padding:4px 10px;border-radius:8px;font-size:13px;background:${typeC.bg};color:${typeC.color};">${lender.lender_type || 'conventional'}</span>`}
         </div>
       </div>
       <div class="detail-card">
