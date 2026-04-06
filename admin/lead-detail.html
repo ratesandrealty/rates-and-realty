@@ -1608,8 +1608,6 @@
       <button class="ld-tab-btn" onclick="switchTab('tasks', this)">Tasks</button>
       <button class="ld-tab-btn" onclick="switchTab('contact-log', this)">Contact Log</button>
       <button class="ld-tab-btn" onclick="switchTab('activity', this)">Activity</button>
-      <button class="ld-tab-btn" onclick="switchTab('credit', this)">Credit</button>
-      <button class="ld-tab-btn" onclick="switchTab('mismo', this)">MISMO / Loan File</button>
       <button class="ld-tab-btn" onclick="switchTab('alerts', this)"><i class="fas fa-bell" style="margin-right:4px"></i>Alerts</button>
       <button class="ld-tab-btn" onclick="switchTab('showings', this)"><i class="fas fa-home" style="margin-right:4px"></i>Showings</button>
     </nav>
@@ -1885,6 +1883,8 @@
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
           <div style="font-size:.72rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Loan Summary &middot; DTI / LTV / Cash-to-Close</div>
           <div style="display:flex;align-items:center;gap:10px">
+            <button type="button" onclick="triggerMISMOImport()" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:6px 12px;font-size:.7rem;font-weight:600;cursor:pointer;color:#888;font-family:inherit;display:flex;align-items:center;gap:4px;">📥 MISMO Import</button>
+            <button type="button" onclick="exportMISMO()" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:6px 12px;font-size:.7rem;font-weight:600;cursor:pointer;color:#888;font-family:inherit;display:flex;align-items:center;gap:4px;">📤 MISMO Export</button>
             <button type="button" id="lsPreApprovalBtn" onclick="lsGeneratePreApproval()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 12px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit">&#128196; Generate Pre-Approval</button>
             <button type="button" id="ls1003PdfBtn" onclick="lsGenerate1003()" style="background:rgba(201,168,76,0.1);color:#C9A84C;border:1px solid #C9A84C55;border-radius:6px;padding:6px 12px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit">&#128203; Export 1003</button>
             <span id="lsSaveIndicator" style="font-size:.68rem;color:#666;opacity:0;transition:opacity .3s">Saved &check;</span>
@@ -3288,100 +3288,21 @@
     </div>
 
 
-    <!-- ═══════════════════════════════════════════
-         TAB 7: CREDIT
-    ═══════════════════════════════════════════ -->
-    <div class="ld-tab-panel" id="tab-credit">
-      <div class="ld-section">
-        <div class="ld-section-title">Credit Overview</div>
-        <div id="credit-app-content">
-          <div class="ld-empty">
-            <div class="ld-empty-icon">📊</div>
-            <p>Loading credit data…</p>
-          </div>
-        </div>
-        <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap;">
-          <a href="/public/credit-optimization.html" target="_blank" class="ld-btn-save" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;">
-            Open Credit Optimization ↗
-          </a>
+
+    <!-- Hidden MISMO file input (preserved from removed MISMO tab) -->
+    <input type="file" id="mismo-file-input" accept=".xml" style="display:none;" onchange="handleMISMOFile(this.files[0])">
+    <!-- MISMO parse result (hidden, used by import/export functions) -->
+    <div class="mismo-parse-result" id="mismo-parse-result" style="display:none;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
+        <div style="font-size:0.88rem;font-weight:700;color:#4ade80;">✓ File Parsed Successfully</div>
+        <div style="display:flex;gap:10px;">
+          <button class="ld-btn-cancel" onclick="clearMISMOParse()">Clear</button>
+          <button class="ld-btn-save" onclick="applyMISMOData()">Apply to Application Tab</button>
+          <button type="button" onclick="importMismoToDB()" style="padding:8px 16px;background:#C9A84C;color:#111;border:none;border-radius:8px;font-weight:700;font-size:.78rem;cursor:pointer;font-family:inherit;margin-left:6px">📥 Import to DB</button>
         </div>
       </div>
-      <div class="ld-section">
-        <div class="ld-section-title">Credit Applications</div>
-        <div id="credit-apps-list">
-          <div class="ld-empty">
-            <div class="ld-empty-icon">📋</div>
-            <h4>No applications yet</h4>
-            <p>Credit optimization applications for this contact will appear here.</p>
-          </div>
-        </div>
-      </div>
-    </div><!-- /tab-credit -->
-
-    <!-- ═══════════════════════════════════════════
-         TAB 8: MISMO / LOAN FILE
-    ═══════════════════════════════════════════ -->
-    <div class="ld-tab-panel" id="tab-mismo">
-
-      <!-- Export & Import buttons -->
-      <div class="mismo-btn-row">
-        <button class="mismo-btn-export" onclick="exportMISMO()">
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
-            <path d="M10 3v10M6 9l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M3 17h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-          Export MISMO 3.4 XML
-        </button>
-        <label class="mismo-btn-export" style="cursor:pointer;">
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
-            <path d="M10 17V7M6 11l4-4 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M3 3h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-          Import XML File
-          <input type="file" id="mismo-file-input" accept=".xml" style="display:none;" onchange="handleMISMOFile(this.files[0])">
-        </label>
-      </div>
-
-      <!-- Drag & Drop Zone -->
-      <div class="mismo-drop-zone" id="mismo-drop-zone"
-           onclick="document.getElementById('mismo-file-input').click()"
-           ondragover="mismoOnDragOver(event)"
-           ondragleave="mismoOnDragLeave(event)"
-           ondrop="mismoOnDrop(event)">
-        <div class="mismo-drop-icon">📂</div>
-        <div class="mismo-drop-title">Drop MISMO 3.4 XML here</div>
-        <div class="mismo-drop-sub">or click to browse — supports FNMA 3.4 / ULAD format</div>
-      </div>
-
-      <!-- Parse result preview -->
-      <div class="mismo-parse-result" id="mismo-parse-result">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
-          <div style="font-size:0.88rem;font-weight:700;color:#4ade80;">✓ File Parsed Successfully</div>
-          <div style="display:flex;gap:10px;">
-            <button class="ld-btn-cancel" onclick="clearMISMOParse()">Clear</button>
-            <button class="ld-btn-save" onclick="applyMISMOData()">Apply to Application Tab</button>
-            <button type="button" onclick="importMismoToDB()" style="padding:8px 16px;background:#C9A84C;color:#111;border:none;border-radius:8px;font-weight:700;font-size:.78rem;cursor:pointer;font-family:inherit;margin-left:6px" title="Parse + write to DB via edge function (updates contacts, mortgage_applications, liabilities, income)">📥 Import to DB</button>
-            <button type="button" id="mismoReparseBtn" onclick="reparseMismoXml()" style="display:none;padding:8px 16px;background:rgba(201,168,76,0.08);color:#C9A84C;border:1px solid #C9A84C55;border-radius:8px;font-weight:600;font-size:.78rem;cursor:pointer;font-family:inherit;margin-left:6px">🔄 Re-parse Stored XML</button>
-          </div>
-        </div>
-        <div class="mismo-field-grid" id="mismo-preview-fields"></div>
-      </div>
-
-      <!-- Import History -->
-      <div class="ld-section" style="padding:0;">
-        <div style="padding:22px 24px 16px;display:flex;align-items:center;justify-content:space-between;">
-          <div class="ld-section-title" style="margin:0;border:none;padding:0;">Import History</div>
-        </div>
-        <div id="mismo-import-history">
-          <div class="ld-empty" style="padding:40px;">
-            <div class="ld-empty-icon">📋</div>
-            <h4>No imports yet</h4>
-            <p>Import a MISMO XML file to begin.</p>
-          </div>
-        </div>
-      </div>
-
-    </div><!-- /tab-mismo -->
+      <div class="mismo-field-grid" id="mismo-preview-fields"></div>
+    </div>
 
     <!-- TAB: LISTING ALERTS & SEARCH LINK BUILDER -->
     <div class="ld-tab-panel" id="tab-alerts">
@@ -7412,6 +7333,11 @@ function mismoOnDrop(e) {
   document.getElementById('mismo-drop-zone').classList.remove('drag-over');
   const file = e.dataTransfer.files[0];
   if (file) handleMISMOFile(file);
+}
+
+function triggerMISMOImport() {
+  var input = document.getElementById('mismo-file-input');
+  if (input) input.click();
 }
 
 function handleMISMOFile(file) {
