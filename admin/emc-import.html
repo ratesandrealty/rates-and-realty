@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EMC Lender Import — Rates & Realty CRM</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #c9a84c; --dark: #0a0a0a; --card: #161616;
+      --card2: #1e1e1e; --border: rgba(255,255,255,0.08);
+      --text: rgba(255,255,255,0.85); --muted: rgba(255,255,255,0.4);
+    }
+    html, body { height: 100%; background: var(--dark); color: var(--text); font-family: 'Inter', sans-serif; }
+
+    .topnav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px; background: #111;
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .brand-logo { width: 32px; height: 32px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--gold), #a07830);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Cormorant Garamond', serif; font-size: 12px; font-weight: 700; color: #1a1a1a; }
+    .brand-name { font-family: 'Cormorant Garamond', serif; font-size: 16px; color: #fff; font-weight: 600; }
+    .btn-back {
+      padding: 7px 14px; background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border); border-radius: 8px;
+      color: var(--muted); font-size: 12px; text-decoration: none;
+    }
+
+    .container { max-width: 720px; margin: 40px auto; padding: 0 20px; }
+    .import-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 16px; padding: 32px; margin-bottom: 24px;
+    }
+    h1 { font-family: 'Cormorant Garamond', serif; font-size: 28px; font-weight: 700; margin-bottom: 6px; }
+    .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+    .count-badge {
+      display: inline-block; background: rgba(201,168,76,0.12); color: var(--gold);
+      padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600;
+      margin-left: 8px;
+    }
+
+    .option-row {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 24px; font-size: 14px;
+    }
+    .option-row input[type="checkbox"] {
+      width: 18px; height: 18px; accent-color: var(--gold); cursor: pointer;
+    }
+    .option-row label { cursor: pointer; color: var(--text); }
+    .option-hint { color: var(--muted); font-size: 12px; margin-left: 28px; margin-top: -18px; margin-bottom: 20px; }
+
+    .btn-import {
+      padding: 12px 28px; background: linear-gradient(135deg, var(--gold), #a07830);
+      border: none; border-radius: 10px; color: #1a1a1a;
+      font-size: 15px; font-weight: 700; cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn-import:hover { opacity: 0.9; }
+    .btn-import:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .progress-section { margin-top: 28px; display: none; }
+    .progress-bar-bg {
+      width: 100%; height: 10px; background: rgba(255,255,255,0.06);
+      border-radius: 6px; overflow: hidden; margin-bottom: 8px;
+    }
+    .progress-bar-fill {
+      height: 100%; width: 0%; border-radius: 6px;
+      background: linear-gradient(90deg, var(--gold), #d4b85c);
+      transition: width 0.4s ease;
+    }
+    .progress-text { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+
+    .log-area {
+      background: #0d0d0d; border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px; max-height: 320px;
+      overflow-y: auto; font-family: 'Courier New', monospace; font-size: 13px;
+      line-height: 1.7;
+    }
+    .log-area::-webkit-scrollbar { width: 6px; }
+    .log-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    .log-line { margin-bottom: 2px; }
+    .log-ok { color: #4ade80; }
+    .log-err { color: #f87171; }
+    .log-info { color: var(--gold); }
+
+    .summary-card {
+      display: none; margin-top: 24px; background: var(--card2);
+      border: 1px solid rgba(201,168,76,0.2); border-radius: 12px; padding: 24px;
+    }
+    .summary-title { font-family: 'Cormorant Garamond', serif; font-size: 20px; font-weight: 700; margin-bottom: 16px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .summary-stat { text-align: center; }
+    .summary-stat .num { font-size: 32px; font-weight: 700; color: var(--gold); }
+    .summary-stat .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <a href="/admin/lenders.html" class="nav-brand">
+      <div class="brand-logo">R&R</div>
+      <span class="brand-name">Rates & Realty</span>
+    </a>
+    <a href="/admin/lenders.html" class="btn-back">← Back to Lenders</a>
+  </nav>
+
+  <div class="container">
+    <div class="import-card">
+      <h1>🏦 EMC Lender Data Import</h1>
+      <p class="subtitle">One-time import from EMC Flow data <span class="count-badge" id="lenderCount"></span></p>
+
+      <div class="option-row">
+        <input type="checkbox" id="syncClickup">
+        <label for="syncClickup">✅ Also sync to ClickUp</label>
+      </div>
+      <p class="option-hint">ClickUp sync takes longer — imports lender tasks to your workspace</p>
+
+      <button class="btn-import" id="btnImport" onclick="runImport()">🚀 Start Import</button>
+
+      <div class="progress-section" id="progressSection">
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBar"></div></div>
+        <div class="progress-text" id="progressText">Preparing...</div>
+        <div class="log-area" id="logArea"></div>
+      </div>
+
+      <div class="summary-card" id="summaryCard">
+        <div class="summary-title">Import Complete</div>
+        <div class="summary-grid">
+          <div class="summary-stat"><div class="num" id="sumUpdated">0</div><div class="label">Updated</div></div>
+          <div class="summary-stat"><div class="num" id="sumInserted">0</div><div class="label">Inserted</div></div>
+          <div class="summary-stat"><div class="num" id="sumClickup">0</div><div class="label">ClickUp Synced</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/api/env.js"></script>
+  <script>
+    const cfg = window.APP_CONFIG || {};
+
+    const EMC_DATA = [
+      {"Name":"Click n' Close, Inc","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA","Channel__c":"Correspondent;Wholesale","Preferred_Lender__c":true,"Rating__c":3.75,"Lender_Portal__c":"https://auth.mmachine.net/realms/clicknclose/protocol/openid-connect/auth","Loan_Programs_Offered__c":"203K;Construction;DACA;DPA;FHA Spot Appls;Leasehold;Manufactured;NO FICO;Renovation;Texas 50(a)(6)","NMLS__c":"150009","Min_Score__c":580,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"$995","App_to_Funded__c":39,"Count_App_to_Funded__c":19,"Primary_Account_Executive__r":{"Name":"Jon Eldridge","Email":"jon.eldridge@clicknclose.com","OfficePhone__c":"704-960-9765"}},
+      {"Name":"Figure Lending LLC","Loan_Types_Offered__c":"Heloc","Channel__c":"Wholesale","Preferred_Lender__c":true,"Rating__c":4.71,"Lender_Portal__c":"https://www.figure.com/leadportal","NMLS__c":"1717824","Min_Score__c":600,"Revenue_Notes__c":"LPC: 2.0%","App_to_Funded__c":20,"Count_App_to_Funded__c":86,"Primary_Account_Executive__r":{"Name":"Brian Rowley","Email":"browley@emortgagecapital.com","OfficePhone__c":"(855) 569-3700"}},
+      {"Name":"Forward Lending","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloan;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":true,"Rating__c":4.32,"Lender_Portal__c":"https://track.forwardlendingmtg.com/","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;FHA Spot Appls;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"2125","Min_Score__c":550,"Revenue_Notes__c":"2.25% (1K Min, 30K Max), BPC only on Non-QM loans","Fee_Notes__c":"$595 - $1995","App_to_Funded__c":50,"Count_App_to_Funded__c":61,"Primary_Account_Executive__r":{"Name":"Allen Samuel","Email":"aws@forwardlendingmtg.com","OfficePhone__c":"562-225-4144"}},
+      {"Name":"Kind Lending, LLC","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloc;Heloan;Non-QM;Jumbo","Channel__c":"Correspondent;Wholesale","Preferred_Lender__c":true,"Rating__c":4.62,"Lender_Portal__c":"https://kwikie.kindlending.com/login","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;FHA Spot Appls;I/O;Investor;Manufactured;NO FICO;Piggy Back;Texas 50(a)(6)","NMLS__c":"3925","Min_Score__c":580,"Revenue_Notes__c":"2.25% (1K Min, 30K Max)","Fee_Notes__c":"$1075","App_to_Funded__c":33,"Count_App_to_Funded__c":94,"Primary_Account_Executive__r":{"Name":"Darcy Madrid","Email":"dmadrid@kindlending.com","OfficePhone__c":"949-371-3203"}},
+      {"Name":"LoanUnited.com, LLC","Loan_Types_Offered__c":"FHA;VA","Channel__c":"Correspondent;Wholesale","Preferred_Lender__c":true,"Rating__c":4.33,"Lender_Portal__c":"https://6304555103.encompasstpoconnect.com","Loan_Programs_Offered__c":"Manufactured;NO FICO;Texas 50(a)(6)","NMLS__c":"1767490","Min_Score__c":500,"Revenue_Notes__c":"LPC/BPC: 2.25% (20K Max)","Fee_Notes__c":"$795 UW FEE: VA IRRRL / $995 UW FEE: FHA, VA, Conv Full Doc","App_to_Funded__c":42,"Count_App_to_Funded__c":67,"Primary_Account_Executive__r":{"Name":"William Matiz","Email":"wmatiz@loanunited.com","OfficePhone__c":"404-760-8434"}},
+      {"Name":"NewRez LLC","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Non-QM;Jumbo","Channel__c":"Correspondent;Wholesale","Preferred_Lender__c":true,"Rating__c":4.52,"Lender_Portal__c":"https://blueprint.newrezwholesale.com","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;FHA Spot Appls;Foreign Nat;Hobby Farm;I/O;Investor;ITIN;Leasehold;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Renovation;Texas 50(a)(6)","NMLS__c":"3013","Min_Score__c":580,"Revenue_Notes__c":"2.25% (1K Min, 30K Max)","Fee_Notes__c":"$995","App_to_Funded__c":46,"Count_App_to_Funded__c":69,"Primary_Account_Executive__r":{"Name":"Maureen Reynosa","Email":"maureen.reynosa@newrez.com","OfficePhone__c":"(949) 836-9006"}},
+      {"Name":"PennyMac TPO","Loan_Types_Offered__c":"Conventional;FHA;VA;Heloan;Jumbo","Channel__c":"Correspondent;Wholesale","Preferred_Lender__c":true,"Rating__c":3.92,"Lender_Portal__c":"https://power.pennymac.com/","Loan_Programs_Offered__c":"Asset Depletion;DACA;Investor;Leasehold;Manufactured;Mixed Use;Texas 50(a)(6)","NMLS__c":"35953","Min_Score__c":580,"Revenue_Notes__c":"LPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"Admin Fee $1014 agency/$1095 jumbo","App_to_Funded__c":40,"Count_App_to_Funded__c":96,"Primary_Account_Executive__r":{"Name":"EMC Team Support","Email":"teamemc@pennymac.com","OfficePhone__c":"833-769-3710"}},
+      {"Name":"Spring EQ","Loan_Types_Offered__c":"Heloc;Heloan","Channel__c":"Wholesale","Preferred_Lender__c":true,"Rating__c":4.65,"Lender_Portal__c":"https://broker.springeq.com/portal/#/login","Loan_Programs_Offered__c":"I/O;Investor;Non-Warr Condo;Piggy Back;Texas 50(a)(6)","NMLS__c":"1464945","Min_Score__c":640,"Revenue_Notes__c":"Max LPC is 2%.","Fee_Notes__c":"HELOAN Admin Fee: $799 / HELOC Admin Fee: $295","App_to_Funded__c":28,"Count_App_to_Funded__c":116,"Primary_Account_Executive__r":{"Name":"Lauri Preedge","Email":"lpreedge@springeq.com","OfficePhone__c":"949-610-3379"}},
+      {"Name":"Sun West Mortgage Company, Inc","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Non-QM","Channel__c":"Correspondent;Wholesale","Preferred_Lender__c":true,"Rating__c":4.46,"Lender_Portal__c":"https://www.swmc.com/login","Loan_Programs_Offered__c":"203K;40 year terms;Asset Depletion;Bank Statement/Non QM;DACA;DPA;FHA Spot Appls;Fix N Flip;Foreign Nat;ITIN;Leasehold;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Piggy Back;Renovation;Texas 50(a)(6)","NMLS__c":"3277","Min_Score__c":500,"Revenue_Notes__c":"LPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"Streamlines: $475 UW + $60 Tax Service / Regular: $1195 UW + $60 Tax Service","App_to_Funded__c":44,"Count_App_to_Funded__c":66,"Primary_Account_Executive__r":{"Name":"Suresh Choudhary","Email":"sureshc@swmc.com","OfficePhone__c":"562-741-6922"}},
+      {"Name":"The Loan Store, Inc.","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloc;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":true,"Rating__c":4.21,"Lender_Portal__c":"https://theloanstore.encompasstpoconnect.com/#/content/idplogin","Loan_Programs_Offered__c":"Asset Depletion;Bank Statement/Non QM;Bridge Loan;DSCR;Fix N Flip;Investor;Leasehold;Manufactured;Mixed Use;Texas 50(a)(6)","NMLS__c":"1121650","Min_Score__c":580,"Revenue_Notes__c":"2.25% (1K Min, 30K Max)","Fee_Notes__c":"Lender Fee: $1,050 / Tax Service: $75 / Flood Cert: $14","App_to_Funded__c":26,"Count_App_to_Funded__c":120,"Primary_Account_Executive__r":{"Name":"Victoria Abercrombie","Email":"vabercrombie@theloanstore.com","OfficePhone__c":"949-230-1566"}},
+      {"Name":"UWM","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloc;Non-QM;Jumbo","Channel__c":"Correspondent;Wholesale","Preferred_Lender__c":true,"Rating__c":4.73,"Lender_Portal__c":"https://www.uwm.com/login","Loan_Programs_Offered__c":"Asset Depletion;Bank Statement/Non QM;Close in LLC;Construction;DACA;DSCR;FHA Spot Appls;I/O;Investor;Leasehold;Manufactured;Mixed Use;Piggy Back;Texas 50(a)(6)","NMLS__c":"3038","Min_Score__c":580,"Revenue_Notes__c":"LPC/BPC: -2.25% (30k Max)","Fee_Notes__c":"$1350","App_to_Funded__c":28,"Count_App_to_Funded__c":1988,"Primary_Account_Executive__r":{"Name":"Joe Pietrobono","Email":"jpietrobono@uwm.com","OfficePhone__c":"800-981-8898 ext. 5686"}},
+      {"Name":"11 Mortgage","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://elevenmortgage.com/","Loan_Programs_Offered__c":"Asset Depletion;Bank Statement/Non QM;Bridge Loan;Close in LLC;DPA;DSCR;FHA Spot Appls;I/O;Investor;Leasehold;Manufactured;Non-Warr Condo","NMLS__c":"2143","Min_Score__c":580,"Revenue_Notes__c":"LPC 2.25% ($20k max)","Fee_Notes__c":"Agency $1295 / Streamlines $595 / Non-QM $1495","App_to_Funded__c":36,"Count_App_to_Funded__c":8,"Primary_Account_Executive__r":{"Name":"Susan Blake","Email":"susan.blake@elevenmortgage.com","OfficePhone__c":"7026300770"}},
+      {"Name":"5th Street Capital","Loan_Types_Offered__c":"Non-QM;Hard Money;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://login.mortgagebotlos.com","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;Foreign Nat;Hobby Farm;I/O;Investor;ITIN;Leasehold;NO FICO;Non-Warr Condo","NMLS__c":"1436495","Min_Score__c":620,"Revenue_Notes__c":"LPC: 1% or BPC up to 2% on business purpose","Fee_Notes__c":"$1425 Lender Fee","App_to_Funded__c":63,"Count_App_to_Funded__c":1,"Primary_Account_Executive__r":{"Name":"Todd Geritz","Email":"todd.geritz@5thstcap.com","OfficePhone__c":"(818) 430-5429"}},
+      {"Name":"A Mortgage Boutique","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloan;Non-QM","Channel__c":"Wholesale","Preferred_Lender__c":false,"Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;Doctors Loans;DPA;DSCR;FHA Spot Appls;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;Mixed Use;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"629700","Min_Score__c":580,"Revenue_Notes__c":"2.50%","Fee_Notes__c":"$1195 Standard / $1495 Non-QM / No FEE on streamlines","Primary_Account_Executive__r":{"Name":"Marissa Michaels","Email":"marissa.michaels@amortgageboutique.com"}},
+      {"Name":"A&D Mortgage LLC","Loan_Types_Offered__c":"Conventional;FHA;Heloan;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.60,"Lender_Portal__c":"https://aim.admortgage.com/login","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DSCR;Foreign Nat;I/O;Investor;ITIN;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Piggy Back;Texas 50(a)(6)","NMLS__c":"958660","Min_Score__c":620,"Revenue_Notes__c":"LPC: 2.25% (30K Max)","Fee_Notes__c":"$1495 UW","App_to_Funded__c":34,"Count_App_to_Funded__c":28,"Primary_Account_Executive__r":{"Name":"Nadia Smocvin","Email":"emortgage@admortgage.com","OfficePhone__c":"786-214-7200"}},
+      {"Name":"A&D Mortgage — Non-QM/DSCR","Loan_Types_Offered__c":"Non-QM;DSCR","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://aim.admortgage.com/login","NMLS__c":"958660","Min_Score__c":620,"Revenue_Notes__c":"LPC: 2.25% (30K Max)","Fee_Notes__c":"$1495 UW","Primary_Account_Executive__r":{"Name":"Nadia Smocvin","Email":"emortgage@admortgage.com","OfficePhone__c":"786-214-7200"}},
+      {"Name":"AAA Lendings","Loan_Types_Offered__c":"Conventional;FHA;VA;Heloc;Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://main.aaacapitalinvestment.com/#/login","Loan_Programs_Offered__c":"Asset Depletion;Bank Statement/Non QM;Bridge Loan;Close in LLC;Construction;DACA;DSCR;Fix N Flip;Foreign Nat;Hobby Farm;I/O;ITIN;NO FICO;Non-Warr Condo;Piggy Back;Renovation;Stated Loan","NMLS__c":"295075","Min_Score__c":580,"Revenue_Notes__c":"LPC: 2.25% (30K Max)","Fee_Notes__c":"Agency $1050 / Non QM $1495 / No Job No Income: $1790","App_to_Funded__c":43,"Count_App_to_Funded__c":2,"Primary_Account_Executive__r":{"Name":"Freda Zhou","Email":"freda@aaalendings.com","OfficePhone__c":"8777898816"}},
+      {"Name":"Acra Lending","Loan_Types_Offered__c":"Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.54,"Lender_Portal__c":"https://alglide.com","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Bridge Loan;Close in LLC;DSCR;Foreign Nat;Hobby Farm;I/O;Investor;ITIN;Manufactured;Non-Warr Condo;Renovation;Texas 50(a)(6)","NMLS__c":"144549","Min_Score__c":575,"Revenue_Notes__c":"LPC/BPC 2.25% - No Min/Max","Fee_Notes__c":"$1295 Admin","App_to_Funded__c":57,"Count_App_to_Funded__c":6,"Primary_Account_Executive__r":{"Name":"Holly Sedgwick","Email":"holly.sedgwick@acralending.com","OfficePhone__c":"503-708-9461"}},
+      {"Name":"AHL Funding","Loan_Types_Offered__c":"Conventional;FHA;Heloan;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://ahlfunding.com/","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Bridge Loan;Close in LLC;DSCR;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Renovation;Texas 50(a)(6)","NMLS__c":"1370963","Min_Score__c":620,"Revenue_Notes__c":"LPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"$1480","App_to_Funded__c":46,"Count_App_to_Funded__c":4,"Primary_Account_Executive__r":{"Name":"Peter Jordan","Email":"peter.jordan@ahlfunding.com","OfficePhone__c":"646-334-1535"}},
+      {"Name":"AmWest Funding Corporation","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloc;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.33,"Lender_Portal__c":"https://pipeline.amwestwholesale.com/Account/SignIn","Loan_Programs_Offered__c":"Bank Statement/Non QM;Close in LLC;DACA;DSCR;Foreign Nat;I/O;Investor;ITIN;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"167441","Min_Score__c":620,"Revenue_Notes__c":"LPC/BPC: 2.25% (30K Max)","Fee_Notes__c":"$1295","App_to_Funded__c":47,"Count_App_to_Funded__c":33,"Primary_Account_Executive__r":{"Name":"Steven Lee","Email":"steve.lee@amwestfunding.com","OfficePhone__c":"310-908-5233"}},
+      {"Name":"Angel Oak Mortgage Solutions","Loan_Types_Offered__c":"Conventional;USDA;Heloc;Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.85,"Lender_Portal__c":"https://connect.angeloakms.com/#/content/login","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DSCR;Foreign Nat;I/O;Investor;ITIN;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"1160240","Min_Score__c":640,"Revenue_Notes__c":"LPC/BPC: 2.25% (30K Max)","Fee_Notes__c":"$1795","App_to_Funded__c":43,"Count_App_to_Funded__c":13,"Primary_Account_Executive__r":{"Name":"Brian Head","Email":"brian.head@angeloakms.com","OfficePhone__c":"949-306-3556"}},
+      {"Name":"Carrington Mortgage Services, LLC","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":2.70,"Lender_Portal__c":"https://brokeriq.carringtonwholesale.com/login/login.php","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;FHA Spot Appls;Hobby Farm;I/O;Investor;ITIN;Leasehold;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"2600","Min_Score__c":500,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"Government: $995 / Non-QM: $1695","App_to_Funded__c":80,"Count_App_to_Funded__c":6,"Primary_Account_Executive__r":{"Name":"Allyson Ebert","Email":"allyson.ebert@carringtonms.com","OfficePhone__c":"949-517-5968"}},
+      {"Name":"Change Wholesale","Loan_Types_Offered__c":"Conventional;FHA;VA;Non-QM","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.49,"Lender_Portal__c":"https://portal.changelendingllc.com/","Loan_Programs_Offered__c":"Asset Depletion;Bank Statement/Non QM;Close in LLC;DSCR;Hobby Farm;I/O;Investor;Mixed Use;NO FICO;Non-Warr Condo;Stated Loan","NMLS__c":"1839","Min_Score__c":550,"Revenue_Notes__c":"LPC/BPC: 2.25% (30K Max)","App_to_Funded__c":47,"Count_App_to_Funded__c":26,"Primary_Account_Executive__r":{"Name":"Tan Karim","Email":"tan.karim@changewholesale.com","OfficePhone__c":"(949) 302-4328"}},
+      {"Name":"CMG Financial","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.80,"Lender_Portal__c":"https://www.cmgclear.com/wholesale/","Loan_Programs_Offered__c":"Asset Depletion;DACA;FHA Spot Appls;I/O;Investor;Leasehold;Manufactured;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"1820","Min_Score__c":600,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"$1095","App_to_Funded__c":48,"Count_App_to_Funded__c":1,"Primary_Account_Executive__r":{"Name":"Ian Potter","Email":"ipotter@cmgfi.com","OfficePhone__c":"949-683-0808"}},
+      {"Name":"Equity Prime Mortgage LLC","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.85,"Lender_Portal__c":"https://epmcore.com/login","Loan_Programs_Offered__c":"203K;Asset Depletion;Bank Statement/Non QM;DACA;DPA;DSCR;FHA Spot Appls;I/O;Investor;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Renovation;Texas 50(a)(6)","NMLS__c":"21116","Min_Score__c":500,"Revenue_Notes__c":"LPC/BPC: 2.25%","Fee_Notes__c":"$1195","App_to_Funded__c":43,"Count_App_to_Funded__c":35,"Primary_Account_Executive__r":{"Name":"Angela Delgado","Email":"angela.delgado@epm.net","OfficePhone__c":"714-612-8350"}},
+      {"Name":"FBC Mortgage Inc.","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://6857121617.encompasstpoconnect.com/#/content/vanillalogin","Loan_Programs_Offered__c":"203K;Asset Depletion;Close in LLC;DACA;Farm/Ranch;FHA Spot Appls;Foreign Nat;Hobby Farm;I/O;Investor;ITIN;Manufactured;NO FICO;Non-Warr Condo;Piggy Back;Renovation","NMLS__c":"152859","Min_Score__c":600,"Revenue_Notes__c":"LPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"Admin Fee: $1095","App_to_Funded__c":41,"Count_App_to_Funded__c":7,"Primary_Account_Executive__r":{"Name":"Nora Chavez","Email":"nchavez@fbctpo.com","OfficePhone__c":"805-506-1051"}},
+      {"Name":"Freedom Mortgage Corporation","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.20,"Lender_Portal__c":"https://identity.freedomwholesale.com","Loan_Programs_Offered__c":"FHA Spot Appls;Investor;Manufactured;Mixed Use;NO FICO;Texas 50(a)(6)","NMLS__c":"2767","Min_Score__c":580,"Revenue_Notes__c":"2.25% (1K Min, 30K Max)","Fee_Notes__c":"CA: $995","App_to_Funded__c":35,"Count_App_to_Funded__c":32,"Primary_Account_Executive__r":{"Name":"Joseph Rizzo","Email":"joseph.rizzo@freedommortgage.com","OfficePhone__c":"317-537-3086"}},
+      {"Name":"HomeBridge Financial Services, Inc.","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloc;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":5.00,"Lender_Portal__c":"https://portalpath.homebridgewholesale.com/portal/#/login","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;Foreign Nat;I/O;Investor;Manufactured;NO FICO;Non-Warr Condo;Piggy Back;Renovation","NMLS__c":"6521","Min_Score__c":580,"Revenue_Notes__c":"LPC/BPC: 2.25% (20K Max)","Fee_Notes__c":"QM: $1,025 / Non-QM: $1495","App_to_Funded__c":18,"Count_App_to_Funded__c":32,"Primary_Account_Executive__r":{"Name":"Peggy Douglas","Email":"pdouglas@homebridge.com","OfficePhone__c":"562-233-1933"}},
+      {"Name":"JMAC Lending","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloan;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.30,"Lender_Portal__c":"https://2097894541.encompasstpoconnect.com/#/content/idplogin","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Stated Loan;Texas 50(a)(6)","NMLS__c":"53112","Min_Score__c":500,"Revenue_Notes__c":"2.25% (1K Min, 30K Max)","Fee_Notes__c":"$695 / $1145 / $1496","App_to_Funded__c":40,"Count_App_to_Funded__c":11,"Primary_Account_Executive__r":{"Name":"Bridgette Klein","Email":"bridgette.klein@jmaclending.com","OfficePhone__c":"949-981-6993"}},
+      {"Name":"loanDepot Wholesale","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://mello.ldwholesale.com/","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;DSCR;I/O;Investor;Non-Warr Condo","NMLS__c":"174457","Min_Score__c":520,"Revenue_Notes__c":"LPC/BPC: 2.250% max $25k","Fee_Notes__c":"$995 UW","App_to_Funded__c":39,"Count_App_to_Funded__c":3,"Primary_Account_Executive__r":{"Name":"Thomas DeStefano","Email":"tdestefano@loandepot.com","OfficePhone__c":"(949) 290-5969"}},
+      {"Name":"LoanStream Wholesale Lending","Loan_Types_Offered__c":"FHA;VA;USDA;Heloan;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.40,"Lender_Portal__c":"https://www.lsmlounge.com","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;FHA Spot Appls;Foreign Nat;I/O;Investor;ITIN;Mixed Use;NO FICO;Non-Warr Condo;Piggy Back;Stated Loan;Texas 50(a)(6)","NMLS__c":"2125","Min_Score__c":550,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max) BPC only on Non-QM","Fee_Notes__c":"NonQM: $195 / Regular: $995 / UW Fee: $1595","App_to_Funded__c":42,"Count_App_to_Funded__c":11,"Primary_Account_Executive__r":{"Name":"Jaye Craft","Email":"jcraft@lsmortgage.com","OfficePhone__c":"714-309-2697"}},
+      {"Name":"Newfi Wholesale","Loan_Types_Offered__c":"VA;Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":5.00,"Lender_Portal__c":"https://broker.newfiwholesale.com/#/login","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DSCR;I/O;Investor;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"1231327","Min_Score__c":660,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","App_to_Funded__c":49,"Count_App_to_Funded__c":11,"Primary_Account_Executive__r":{"Name":"Nancy Aplin","Email":"nancy@newfi.com","OfficePhone__c":"626-388-5452"}},
+      {"Name":"NexBank","Loan_Types_Offered__c":"Conventional;FHA;VA;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.02,"Lender_Portal__c":"https://mortgage.nexbank.com","Loan_Programs_Offered__c":"Bank Statement/Non QM;DACA;DSCR;I/O;Investor","NMLS__c":"672886","Min_Score__c":620,"Revenue_Notes__c":"2.25% ($1K Min, $20K Max)","Fee_Notes__c":"LPC/BPC: - 2.250% (MAX $20K)","App_to_Funded__c":44,"Count_App_to_Funded__c":21,"Primary_Account_Executive__r":{"Name":"Lyndsey Madsen","Email":"lyndsey.madsen@nexbank.com","OfficePhone__c":"925-324-5511"}},
+      {"Name":"Oaktree Funding Corp","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloc;Heloan;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.89,"Lender_Portal__c":"https://www.ez-submit.com/","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Bridge Loan;Close in LLC;DSCR;I/O;Investor;Mixed Use;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"71640","Min_Score__c":600,"Revenue_Notes__c":"LPC/BPC: 2.25% (30K Max)","Fee_Notes__c":"$1790","App_to_Funded__c":41,"Count_App_to_Funded__c":7,"Primary_Account_Executive__r":{"Name":"Owen Wakeman","Email":"owakeman@oaktreefunding.com","OfficePhone__c":"480-801-6822"}},
+      {"Name":"Orion Lending","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":5.00,"Lender_Portal__c":"https://star.orionlending.com","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;FHA Spot Appls;Foreign Nat;I/O;Investor;Leasehold;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"237341","Min_Score__c":550,"Revenue_Notes__c":"2.250% ($1k Min $30k Max)","Fee_Notes__c":"$595 IRRLS - $895 to $1295","App_to_Funded__c":49,"Count_App_to_Funded__c":8,"Primary_Account_Executive__r":{"Name":"Jason Twiford","Email":"jtwiford@orionlending.com","OfficePhone__c":"714-240-5412"}},
+      {"Name":"Paramount Residential Mortgage Group, Inc","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloan;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.84,"Lender_Portal__c":"https://tpo.prmg.net/#/content/idplogin","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;DACA;DPA;DSCR;FHA Spot Appls;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;NO FICO;Non-Warr Condo;Piggy Back","NMLS__c":"75243","Min_Score__c":580,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"$990","App_to_Funded__c":49,"Count_App_to_Funded__c":8,"Primary_Account_Executive__r":{"Name":"Jim Martin","Email":"jimm@prmg.net","OfficePhone__c":"714-349-1722"}},
+      {"Name":"Plaza Home Mortgage, Inc","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloan;Non-QM;Reverse;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.99,"Lender_Portal__c":"https://breeze.plazahomemortgage.com/epicportal/Default.aspx","Loan_Programs_Offered__c":"203K;40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;FHA Spot Appls;I/O;Investor;Leasehold;Manufactured;Mixed Use;Non-Warr Condo;Piggy Back;Renovation;Texas 50(a)(6)","NMLS__c":"2113","Min_Score__c":550,"Revenue_Notes__c":"LPC 2.25% (1K Min, 30K Max)","Fee_Notes__c":"Lender Fee: $1175 / Non-QM $1475","App_to_Funded__c":51,"Count_App_to_Funded__c":10,"Primary_Account_Executive__r":{"Name":"Melinda Fortier-Marin","Email":"melinda.marin@plazahomemortgage.com","OfficePhone__c":"310-218-6085"}},
+      {"Name":"REMN Wholesale","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloc;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.61,"Lender_Portal__c":"https://hub.remnwholesale.com","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;FHA Spot Appls;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;NO FICO;Non-Warr Condo;Piggy Back;Texas 50(a)(6)","NMLS__c":"6521","Min_Score__c":550,"Revenue_Notes__c":"2.25% (20K Max)","Fee_Notes__c":"UW Fee: $1095","App_to_Funded__c":19,"Count_App_to_Funded__c":44,"Primary_Account_Executive__r":{"Name":"Joshua Hartwell","Email":"joshua.hartwell@remn.com","OfficePhone__c":"866-933-6342"}},
+      {"Name":"theLender","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloc;Heloan;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://6335822308.encompasstpoconnect.com/#/content/idplogin","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Bridge Loan;Close in LLC;DACA;DPA;DSCR;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;Mixed Use;Non-Warr Condo;Piggy Back;Texas 50(a)(6)","NMLS__c":"133519","Min_Score__c":550,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"$1195 Agency / $1995 Non-QM","App_to_Funded__c":52,"Count_App_to_Funded__c":9,"Primary_Account_Executive__r":{"Name":"Allen Galang","Email":"agalang@thelender.com","OfficePhone__c":"949-245-2347"}},
+      {"Name":"Advancial Mortgage","Loan_Types_Offered__c":"Conventional;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.40,"Lender_Portal__c":"https://www.advancial.org/wholesale","NMLS__c":"469500","Min_Score__c":600,"Revenue_Notes__c":"LPC ONLY: 2%","Fee_Notes__c":"Underwriting $1295, Doc Prep $225","App_to_Funded__c":44,"Count_App_to_Funded__c":1,"Primary_Account_Executive__r":{"Name":"Jason Mills","Email":"jmills@advancialmortgage.com","OfficePhone__c":"972.201.1639"}},
+      {"Name":"All Western Mortgage","Loan_Types_Offered__c":"Conventional;USDA;Hard Money;Reverse;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Lender_Portal__c":"https://allwestern.encompasstpoconnect.com/#/content/vanillalogin","Loan_Programs_Offered__c":"Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;ITIN;Manufactured;Mixed Use;Non-Warr Condo;Renovation","NMLS__c":"14210","Min_Score__c":500,"Revenue_Notes__c":"LPC/BPC: 2.250% ($1k Min $30k Max)","Fee_Notes__c":"$1895","App_to_Funded__c":37,"Count_App_to_Funded__c":1,"Primary_Account_Executive__r":{"Name":"Harold Phillips","Email":"harold@mailoans.com","OfficePhone__c":"425-563-3994"}},
+      {"Name":"Anchor Loans","Loan_Types_Offered__c":"Non-QM;Hard Money;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":5.00,"Lender_Portal__c":"https://app.anchorloans.com/#/login","Loan_Programs_Offered__c":"Bridge Loan;Close in LLC;Construction;DSCR;Fix N Flip;Foreign Nat;I/O;Investor;Land/Lot Loan;Manufactured;Mixed Use;Renovation","NMLS__c":"2289894","Min_Score__c":620,"Revenue_Notes__c":"Commercial Compensation - Contact AE","Fee_Notes__c":"$1,000","App_to_Funded__c":18,"Count_App_to_Funded__c":1,"Primary_Account_Executive__r":{"Name":"Mike Urban","Email":"mikeu@anchorloans.com","OfficePhone__c":"949-441-2200"}},
+      {"Name":"ARC Home LLC","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":2.20,"Lender_Portal__c":"https://sparc.archome.com/tpo/#/login","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DSCR;Foreign Nat;I/O;Investor;Leasehold;Mixed Use;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"81386","Min_Score__c":580,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"$1,150 Conv & Gov / $1,275 Jumbo / $1495 NQM","App_to_Funded__c":52,"Count_App_to_Funded__c":3,"Primary_Account_Executive__r":{"Name":"Leah Rodriguez","Email":"lrodriguez@archome.com","OfficePhone__c":"949-424-9434"}},
+      {"Name":"BluePoint Mortgage","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.72,"Lender_Portal__c":"https://origination.mortgage.meridianlink.com/simple_login.aspx?lenderpmlsiteid=7b437bf6-215a-40d6-a310-4b2338ff0507","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;FHA Spot Appls;Foreign Nat;I/O;Investor;ITIN;Manufactured;NO FICO;Non-Warr Condo;Stated Loan","NMLS__c":"320004","Min_Score__c":550,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"CA: $1295 / All Other States: $995 / Non-QM: $1995","App_to_Funded__c":35,"Count_App_to_Funded__c":3,"Primary_Account_Executive__r":{"Name":"Rebecca Raff","Email":"rraff@bluepointmtg.com","OfficePhone__c":"949-690-9520"}},
+      {"Name":"Champions Funding, LLC","Loan_Types_Offered__c":"Conventional;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.58,"Lender_Portal__c":"https://hero.champstpo.com","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DSCR;Foreign Nat;I/O;Investor;ITIN;NO FICO;Non-Warr Condo;Stated Loan","NMLS__c":"2254210","Min_Score__c":620,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"Underwriting Fee: $1495","App_to_Funded__c":37,"Count_App_to_Funded__c":28,"Primary_Account_Executive__r":{"Name":"Robert Kocovski","Email":"robert.kocovski@champstpo.com","OfficePhone__c":"602-610-8849"}},
+      {"Name":"FundLoans Capital","Loan_Types_Offered__c":"Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.58,"Lender_Portal__c":"https://tpo.fundloans.com/","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DSCR;Foreign Nat;I/O;Investor;Leasehold;NO FICO;Non-Warr Condo;Piggy Back","NMLS__c":"1202262","Min_Score__c":620,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"Underwriting Fee: $1,395","App_to_Funded__c":46,"Count_App_to_Funded__c":9,"Primary_Account_Executive__r":{"Name":"Mitchell Dempster","Email":"mdempster@fundloans.com","OfficePhone__c":"858-275-6456"}},
+      {"Name":"GIANT Lending","Loan_Types_Offered__c":"Conventional;FHA;VA;Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.20,"Lender_Portal__c":"https://runway.thegiantlending.com/","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;FHA Spot Appls;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;Mixed Use;NO FICO;Non-Warr Condo;Piggy Back;Texas 50(a)(6)","NMLS__c":"2125","Min_Score__c":580,"Revenue_Notes__c":"2.25% (1K Min, 30K Max) BPC only on Non-QM","Fee_Notes__c":"UW Fee: $995-$1995","App_to_Funded__c":37,"Count_App_to_Funded__c":11,"Primary_Account_Executive__r":{"Name":"Kaila Scirghio","Email":"kaila@thegiantlending.com","OfficePhone__c":"480-444-9778"}},
+      {"Name":"HomeXpress Mortgage","Loan_Types_Offered__c":"Conventional;FHA;VA;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.73,"Lender_Portal__c":"https://xconnect-x1.homexmortgage.com/login","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DSCR;Foreign Nat;I/O;Investor;ITIN;Leasehold;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"1446044","Min_Score__c":500,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"UW: $1595","App_to_Funded__c":30,"Count_App_to_Funded__c":8,"Primary_Account_Executive__r":{"Name":"Heather Fox","Email":"teamx@homexmortgage.com","OfficePhone__c":"714-270-4883"}},
+      {"Name":"Jet Mortgage","Loan_Types_Offered__c":"FHA;VA;Heloan;Non-QM","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.33,"Lender_Portal__c":"https://jetmortgage.com/broker-login/","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DPA;DSCR;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;Non-Warr Condo;Piggy Back;Stated Loan;Texas 50(a)(6)","NMLS__c":"1165808","Min_Score__c":580,"Revenue_Notes__c":"LPC/BPC: 2.25% (1K Min, 30K Max)","App_to_Funded__c":46,"Count_App_to_Funded__c":10,"Primary_Account_Executive__r":{"Name":"Jack Rezk","Email":"jack.rezk@jetmortgage.com","OfficePhone__c":"714-213-5605"}},
+      {"Name":"LendSure Mortgage Corporation","Loan_Types_Offered__c":"Conventional;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.80,"Lender_Portal__c":"https://www.lendsureportal.com/#/content/idplogin","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Bridge Loan;Close in LLC;Construction;DSCR;Fix N Flip;Foreign Nat;I/O;Investor;ITIN;Leasehold;Mixed Use;NO FICO;Non-Warr Condo;Renovation;Texas 50(a)(6)","NMLS__c":"1326437","Min_Score__c":640,"Revenue_Notes__c":"BPC ONLY: 2.250%","Fee_Notes__c":"1595 Full Doc, 1895 Bk Stmt","App_to_Funded__c":31,"Count_App_to_Funded__c":4,"Primary_Account_Executive__r":{"Name":"Erika Wedemeyer","Email":"ewedemeyer@lendsure.com","OfficePhone__c":"858-433-6307"}},
+      {"Name":"Logan Finance","Loan_Types_Offered__c":"Conventional;USDA;Non-QM;Jumbo;Commercial - Residential","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.20,"Lender_Portal__c":"https://partners.lfctpo.com/lender/wholesale-login/FCS2XL3T","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;Foreign Nat;I/O;Investor;NO FICO;Non-Warr Condo","NMLS__c":"127722","Min_Score__c":660,"Revenue_Notes__c":"LPC/BPC: 2.25% (30K Max)","Fee_Notes__c":"$1295 All-In","App_to_Funded__c":43,"Count_App_to_Funded__c":6,"Primary_Account_Executive__r":{"Name":"Erica Garcia","Email":"egarcia@loganfinance.com","OfficePhone__c":"7146001255"}},
+      {"Name":"New Wave Lending Group Inc","Loan_Types_Offered__c":"Conventional;FHA;Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":5.00,"Lender_Portal__c":"https://partner.newwavelending.com/sign-in","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;Foreign Nat;I/O;Leasehold;Manufactured;Mixed Use;Non-Warr Condo;Stated Loan","NMLS__c":"1649874","Min_Score__c":580,"Revenue_Notes__c":"LPC/BPC: 2.25% (30K Max)","App_to_Funded__c":30,"Count_App_to_Funded__c":4,"Primary_Account_Executive__r":{"Name":"Kelly Zuo","Email":"kelly.zuo@newwavelending.com","OfficePhone__c":"626-780-7979"}},
+      {"Name":"NQM Funding, LLC","Loan_Types_Offered__c":"Conventional;Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.53,"Lender_Portal__c":"https://www.npinonqm.com/#/content/vanillalogin","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;Foreign Nat;I/O;Investor;ITIN;Leasehold;Mixed Use;Non-Warr Condo","NMLS__c":"75597","Min_Score__c":660,"Revenue_Notes__c":"LPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"Lender Fee: $1,695","App_to_Funded__c":48,"Count_App_to_Funded__c":1,"Primary_Account_Executive__r":{"Name":"Chris Farruggio","Email":"cfarruggio@nqmf.com","OfficePhone__c":"602-301-3529"}},
+      {"Name":"STG Mortgage Inc DBA AT Lending","Loan_Types_Offered__c":"Conventional;FHA;VA;USDA;Heloan;Non-QM;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":3.86,"Lender_Portal__c":"https://stgmortgage.com","Loan_Programs_Offered__c":"40 year terms;Asset Depletion;Bank Statement/Non QM;Close in LLC;DACA;DSCR;Foreign Nat;I/O;Investor;ITIN;Leasehold;Manufactured;Non-Warr Condo;Texas 50(a)(6)","NMLS__c":"2091912","Min_Score__c":580,"Revenue_Notes__c":"LPC: 2.25% (1K Min, 30K Max)","Fee_Notes__c":"$1295","App_to_Funded__c":37,"Count_App_to_Funded__c":19,"Primary_Account_Executive__r":{"Name":"Joseph Mastrogiovanni","Email":"joseph@stgmortgage.com","OfficePhone__c":"707-580-8356"}},
+      {"Name":"Velocity Mortgage Capital","Loan_Types_Offered__c":"Conventional;Non-QM;Commercial;Jumbo","Channel__c":"Wholesale","Preferred_Lender__c":false,"Rating__c":4.66,"Lender_Portal__c":"https://www.generatevelocity.com/#/SignIn","Loan_Programs_Offered__c":"Bridge Loan;Close in LLC;DSCR;Fix N Flip;Foreign Nat;I/O;Investor;ITIN;Mixed Use;Renovation;Stated Loan","NMLS__c":"1717954","Min_Score__c":500,"Revenue_Notes__c":"Private Money","App_to_Funded__c":39,"Count_App_to_Funded__c":21,"Primary_Account_Executive__r":{"Name":"Shane Pew","Email":"spew@velocitymortgage.com","OfficePhone__c":"818-723-1342"}}
+    ];
+
+    document.getElementById('lenderCount').textContent = EMC_DATA.length + ' lenders ready';
+
+    function log(msg, cls = '') {
+      const el = document.getElementById('logArea');
+      const line = document.createElement('div');
+      line.className = 'log-line ' + cls;
+      line.textContent = msg;
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    async function runImport() {
+      const btn = document.getElementById('btnImport');
+      const section = document.getElementById('progressSection');
+      const bar = document.getElementById('progressBar');
+      const pText = document.getElementById('progressText');
+      const syncClickup = document.getElementById('syncClickup').checked;
+
+      btn.disabled = true;
+      btn.textContent = 'Importing...';
+      section.style.display = 'block';
+
+      const batchSize = 20;
+      const totalBatches = Math.ceil(EMC_DATA.length / batchSize);
+      let totalUpdated = 0, totalInserted = 0, totalClickup = 0, totalErrors = 0;
+
+      log(`Starting import of ${EMC_DATA.length} lenders in ${totalBatches} batches...`, 'log-info');
+      if (syncClickup) log('ClickUp sync enabled', 'log-info');
+
+      for (let i = 0; i < totalBatches; i++) {
+        const batch = EMC_DATA.slice(i * batchSize, (i + 1) * batchSize);
+        const batchNum = i + 1;
+        pText.textContent = `Batch ${batchNum}/${totalBatches} (${batch.length} lenders)...`;
+        bar.style.width = ((batchNum - 0.5) / totalBatches * 100) + '%';
+
+        try {
+          const res = await fetch(`${cfg.SUPABASE_URL}/functions/v1/emc-lender-import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}` },
+            body: JSON.stringify({ action: 'import_emc', emc_data: batch, sync_clickup: syncClickup, batch_size: 20 })
+          });
+          const data = await res.json();
+
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+          const u = data.updated || 0;
+          const ins = data.inserted || 0;
+          const ck = data.clickup_synced || 0;
+          totalUpdated += u;
+          totalInserted += ins;
+          totalClickup += ck;
+
+          let msg = `Batch ${batchNum}/${totalBatches}: ${u} updated, ${ins} inserted`;
+          if (syncClickup) msg += `, ${ck} ClickUp synced`;
+          log('\u2705 ' + msg, 'log-ok');
+        } catch (err) {
+          totalErrors++;
+          log(`\u274C Batch ${batchNum}/${totalBatches}: ${err.message}`, 'log-err');
+        }
+
+        bar.style.width = (batchNum / totalBatches * 100) + '%';
+      }
+
+      pText.textContent = 'Import complete!';
+      btn.textContent = totalErrors ? '\u26A0\uFE0F Import finished with errors' : '\u2705 Import Complete';
+
+      if (totalErrors) {
+        log(`Finished with ${totalErrors} batch error(s)`, 'log-err');
+      } else {
+        log('All batches completed successfully!', 'log-ok');
+      }
+
+      const summary = document.getElementById('summaryCard');
+      document.getElementById('sumUpdated').textContent = totalUpdated;
+      document.getElementById('sumInserted').textContent = totalInserted;
+      document.getElementById('sumClickup').textContent = totalClickup;
+      summary.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
