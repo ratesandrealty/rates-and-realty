@@ -183,6 +183,14 @@
           <div style="font-size:48px;margin-bottom:16px;">📋</div>
           <h3>Guideline AI</h3>
           <p>Ask about any lending guideline. Click a lender on the left to view details and scope your search.</p>
+
+          <!-- REFERENCE LIBRARY -->
+          <div style="margin:28px auto 28px;max-width:560px;text-align:left;">
+            <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:4px;">📚 Reference Library</div>
+            <div style="font-size:12px;color:#555;margin-bottom:16px;">Upload agency guidelines or link to official sources</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;" id="referenceLibraryGrid"></div>
+          </div>
+
           <div>
             <button class="qp-btn" onclick="askQuestion('What is the minimum credit score for FHA vs Conventional?')">Min credit FHA vs Conv?</button>
             <button class="qp-btn" onclick="askQuestion('What are the DSCR requirements for investor loans?')">DSCR investor requirements?</button>
@@ -365,6 +373,7 @@ function renderLenderPopup(lender) {
     '<div style="display:flex;gap:8px;margin-bottom:16px;">' +
       (lender.lender_portal ? '<a href="' + lender.lender_portal + '" target="_blank" style="flex:1;text-align:center;padding:10px;background:#C9A84C22;border:1px solid #C9A84C44;border-radius:8px;color:#C9A84C;font-size:12px;font-weight:600;text-decoration:none;">🔗 Open Portal</a>' : '') +
       (lender.contact_email ? '<a href="mailto:' + lender.contact_email + '" style="flex:1;text-align:center;padding:10px;background:#4A90E222;border:1px solid #4A90E244;border-radius:8px;color:#4A90E2;font-size:12px;font-weight:600;text-decoration:none;">✉ Email AE</a>' : '') +
+      '<button onclick="copyLenderFormLink(\'' + lender.id + '\')" style="flex:1;text-align:center;padding:10px;background:#27AE6022;border:1px solid #27AE6044;border-radius:8px;color:#27AE60;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">📋 Copy Form</button>' +
     '</div>' +
 
     // Stats Row
@@ -511,7 +520,117 @@ function triggerLenderGuidelineUpload(lenderId, lenderName, buttonEl) {
   input.click();
 }
 
-// ── GLOBAL REFERENCE LIBRARY ────────────────────
+// ── CLIPBOARD HELPERS ───────────────────────────
+function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(function() { _fallbackCopy(text); });
+  } else {
+    _fallbackCopy(text);
+  }
+}
+function _fallbackCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try { document.execCommand('copy'); } catch(e) {}
+  ta.remove();
+}
+
+function copyLenderFormLink(lenderId) {
+  var lender = allLenders.find(function(l) { return l.id === lenderId; });
+  if (!lender) return;
+  var token = lender.form_token;
+  if (!token) {
+    fetch(SB_URL + '/functions/v1/lender-portal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY },
+      body: JSON.stringify({ action: 'generate_token', id: lender.id })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      var t = d.form_token || d.token || (d.lender && d.lender.form_token);
+      if (t) {
+        lender.form_token = t;
+        var url = 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + t;
+        copyTextToClipboard(url);
+        showToast('✅ Form link copied!');
+      } else {
+        showToast('Could not generate form link');
+      }
+    }).catch(function() { showToast('Error generating link'); });
+    return;
+  }
+  var url = 'https://beta.ratesandrealty.com/public/lender-form.html?token=' + token;
+  copyTextToClipboard(url);
+  showToast('✅ Form link copied!');
+}
+
+// ── REFERENCE LIBRARY (CENTER PANEL) ────────────
+var REFERENCE_SOURCES = [
+  { key:'fnma',  label:'Fannie Mae',  subtitle:'Selling Guide', icon:'🏛️', color:'#003087', url:'https://selling-guide.fanniemae.com' },
+  { key:'fhlmc', label:'Freddie Mac', subtitle:'Seller/Servicer Guide', icon:'🏛️', color:'#004B87', url:'https://guide.freddiemac.com' },
+  { key:'fha',   label:'FHA / HUD',  subtitle:'HUD Handbook 4000.1', icon:'🏠', color:'#1565C0', url:'https://www.hud.gov/program_offices/housing/sfh/handbook_4000-1' },
+  { key:'va',    label:'VA',         subtitle:'Lenders Handbook 26-7', icon:'🎖️', color:'#1A237E', url:'https://www.benefits.va.gov/warms/pam26_7.asp' },
+  { key:'usda',  label:'USDA',       subtitle:'HB-1-3555', icon:'🌾', color:'#1B5E20', url:'https://www.rd.usda.gov/publications/regulations-guidelines/handbooks' },
+  { key:'global',label:'Other / Overlay', subtitle:'Custom guidelines', icon:'📋', color:'#4A148C', url:null },
+];
+
+async function renderReferenceLibrary() {
+  var grid = document.getElementById('referenceLibraryGrid');
+  if (!grid) return;
+  var counts = {};
+  try {
+    var res = await fetch(SB_URL + '/rest/v1/lender_guidelines?lender_id=is.null&is_active=eq.true&select=source_type', {
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+    });
+    var rows = await res.json();
+    (rows || []).forEach(function(r) { counts[r.source_type] = (counts[r.source_type] || 0) + 1; });
+  } catch(e) {}
+  grid.innerHTML = REFERENCE_SOURCES.map(function(src) {
+    var c = counts[src.key] || 0;
+    return '<div style="background:#161616;border:1px solid #222;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;">' +
+        '<span style="font-size:20px;">' + src.icon + '</span>' +
+        '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#fff;">' + src.label + '</div>' +
+        '<div style="font-size:10px;color:#555;">' + src.subtitle + '</div></div></div>' +
+      '<div style="font-size:11px;color:#C9A84C;">' + (c ? c + ' doc' + (c > 1 ? 's' : '') + ' uploaded' : 'No docs yet') + '</div>' +
+      '<div style="display:flex;gap:6px;">' +
+        (src.url ? '<a href="' + src.url + '" target="_blank" style="flex:1;text-align:center;padding:6px 4px;background:#ffffff0d;border:1px solid #333;border-radius:6px;color:#888;font-size:11px;text-decoration:none;">🔗 Official Guide</a>' : '') +
+        '<button onclick="uploadGlobalGuideline(\'' + src.key + '\',\'' + src.label + '\',this)" style="flex:1;padding:6px 4px;background:#C9A84C22;border:1px solid #C9A84C44;border-radius:6px;color:#C9A84C;font-size:11px;cursor:pointer;text-align:center;font-family:inherit;">+ Upload PDF</button>' +
+      '</div>' +
+      (c ? '<button onclick="showGlobalGuidelinesList(\'' + src.key + '\',\'' + src.label + '\')" style="padding:5px;background:none;border:1px solid #2a2a2a;border-radius:6px;color:#555;font-size:10px;cursor:pointer;font-family:inherit;">View uploaded docs ↓</button>' : '') +
+    '</div>';
+  }).join('');
+}
+
+async function showGlobalGuidelinesList(sourceType, sourceName) {
+  try {
+    var res = await fetch(SB_URL + '/rest/v1/lender_guidelines?lender_id=is.null&source_type=eq.' + sourceType + '&is_active=eq.true&order=created_at.desc&select=id,title,file_name,file_url,ocr_status', {
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+    });
+    var docs = await res.json();
+    var list = (docs || []).map(function(d) {
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px;background:#0d0d0d;border-radius:6px;margin-bottom:4px;">' +
+        '<span>📄</span>' +
+        '<div style="flex:1;min-width:0;font-size:12px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (d.title || d.file_name) + '</div>' +
+        (d.file_url ? '<a href="' + d.file_url + '" target="_blank" style="color:#C9A84C;font-size:11px;text-decoration:none;">View</a>' : '') +
+      '</div>';
+    }).join('') || '<div style="color:#444;font-size:12px;padding:8px;">No docs yet</div>';
+    var m = document.createElement('div');
+    m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    m.innerHTML = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:12px;padding:20px;width:420px;max-height:60vh;overflow-y:auto;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+        '<div style="font-size:14px;font-weight:700;color:#fff;">' + sourceName + ' Guidelines</div>' +
+        '<button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:none;border:none;color:#555;font-size:20px;cursor:pointer;">×</button>' +
+      '</div>' + list + '</div>';
+    m.addEventListener('click', function(e) { if (e.target === m) m.remove(); });
+    document.body.appendChild(m);
+  } catch(e) {
+    showToast('Error loading guidelines');
+  }
+}
+
+// ── GLOBAL REFERENCE LIBRARY (RIGHT PANEL) ──────
 function renderAgencyCards() {
   var container = document.getElementById('agencyCards');
   container.innerHTML = GLOBAL_AGENCY_LINKS.map(function(a) {
@@ -693,6 +812,7 @@ document.addEventListener('DOMContentLoaded', function() {
   loadLenders();
   renderAgencyCards();
   loadGlobalGuidelineCounts();
+  renderReferenceLibrary();
 });
 </script>
 </body>
