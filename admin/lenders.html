@@ -323,8 +323,8 @@
     <div class="brand-name">Rates & Realty</div>
   </a>
   <div class="nav-tabs">
-    <button class="nav-tab active" onclick="switchMainTab('ai')">Guideline AI</button>
-    <button class="nav-tab" onclick="switchMainTab('database')">Lender Database</button>
+    <button class="nav-tab main-tab active" data-tab="ai" onclick="switchMainTab('ai')">Guideline AI</button>
+    <button class="nav-tab main-tab" data-tab="database" onclick="switchMainTab('database')">Lender Database</button>
     <span style="width:1px;height:20px;background:#2a2a2a;margin:0 4px;"></span>
     <button class="nav-tab" id="modeResBtn" onclick="switchLenderMode('residential')" style="background:rgba(201,168,76,0.12);color:#C9A84C;">🏠 Residential</button>
     <button class="nav-tab" id="modeComBtn" onclick="switchLenderMode('commercial')">🏢 Commercial</button>
@@ -480,8 +480,8 @@
     </div>
 
     <!-- ── COMMERCIAL PORTAL ── -->
-    <div id="commercialPortal" style="display:none;flex:1;overflow:hidden;">
-      <div style="display:flex;height:100%;">
+    <div id="commercialPortal" style="display:none;flex:1;overflow:hidden;flex-direction:row;">
+      <div style="display:flex;height:100%;flex:1;">
         <!-- LEFT: Deal Input -->
         <div style="width:280px;flex-shrink:0;border-right:1px solid var(--border);background:#111;overflow-y:auto;padding:20px;">
           <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;">🏢 Deal Matcher</div>
@@ -1122,12 +1122,19 @@ function showDBTab() {
 // ── MAIN TABS ────────────────────────────────────
 function switchMainTab(tab) {
   currentMainTab = tab;
-  document.querySelectorAll('.nav-tab').forEach((t,i) => {
-    t.classList.toggle('active', (i===0&&tab==='ai')||(i===1&&tab==='database'));
+  // Only toggle active on the first two nav-tab buttons (AI, Database) — skip mode toggles
+  var mainTabs = document.querySelectorAll('.nav-tab.main-tab');
+  mainTabs.forEach(function(t) {
+    t.classList.toggle('active', t.dataset.tab === tab);
   });
+  // If switching main tabs, exit commercial mode
+  if (window._lenderMode === 'commercial') {
+    switchLenderMode('residential');
+  }
   document.getElementById('aiTabContent').style.display = tab==='ai' ? 'flex' : 'none';
   document.getElementById('dbTabContent').style.display = tab==='database' ? 'block' : 'none';
   document.getElementById('lenderDetailPanel').style.display = 'none';
+  document.getElementById('commercialPortal').style.display = 'none';
   document.getElementById('leftPanel').style.display = tab==='ai' ? 'flex' : 'none';
   if (tab==='database') renderLendersTable(filteredLenders);
 }
@@ -1423,6 +1430,8 @@ function switchLenderMode(mode) {
   if (mode === 'commercial') {
     resBtn.style.background = 'transparent'; resBtn.style.color = 'var(--muted)';
     comBtn.style.background = 'rgba(201,168,76,0.12)'; comBtn.style.color = '#C9A84C';
+    // Deactivate main tabs
+    document.querySelectorAll('.nav-tab.main-tab').forEach(function(t) { t.classList.remove('active'); });
     if (aiTab) aiTab.style.display = 'none';
     if (dbTab) dbTab.style.display = 'none';
     if (detailPanel) detailPanel.style.display = 'none';
@@ -1433,8 +1442,8 @@ function switchLenderMode(mode) {
     comBtn.style.background = 'transparent'; comBtn.style.color = 'var(--muted)';
     resBtn.style.background = 'rgba(201,168,76,0.12)'; resBtn.style.color = '#C9A84C';
     comPortal.style.display = 'none';
-    if (currentMainTab === 'ai') { if (aiTab) aiTab.style.display = 'flex'; if (leftPanel) leftPanel.style.display = 'flex'; }
-    else { if (dbTab) dbTab.style.display = 'block'; }
+    // Restore the current main tab
+    switchMainTab(currentMainTab);
   }
 }
 
