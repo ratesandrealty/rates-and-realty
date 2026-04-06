@@ -1603,6 +1603,7 @@
       <button class="ld-tab-btn active" onclick="switchTab('lead-details', this)">Lead Details</button>
       <button class="ld-tab-btn" onclick="switchTab('application', this)" id="tab-btn-application">1003 Application</button>
       <button class="ld-tab-btn" onclick="switchTab('lenders', this)">Lenders</button>
+      <button class="ld-tab-btn" onclick="switchTab('commercial', this)">🏢 Commercial</button>
       <button class="ld-tab-btn" onclick="switchTab('documents', this)">Documents</button>
       <button class="ld-tab-btn" onclick="switchTab('conditions', this)">Conditions</button>
       <button class="ld-tab-btn" onclick="switchTab('tasks', this)">Tasks</button>
@@ -3645,6 +3646,55 @@
       </style>
     </div><!-- /tab-lenders -->
 
+    <!-- ═══════════════════════════════════════════
+         TAB: COMMERCIAL
+    ═══════════════════════════════════════════ -->
+    <div class="ld-tab-panel" id="tab-commercial">
+      <div style="display:flex;flex-direction:column;gap:0;height:calc(100vh - 120px);">
+        <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #1a1a1a;background:#0a0a0a;flex-shrink:0;flex-wrap:wrap;">
+          <div style="font-size:14px;font-weight:700;color:#fff;">🏢 Commercial</div>
+          <div style="flex:1;"></div>
+          <button onclick="showCommercialDealMatcher()" style="padding:7px 14px;background:#C9A84C;border:none;border-radius:7px;color:#000;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🔍 Deal Matcher</button>
+          <button onclick="generateCommercialPreApproval()" style="padding:7px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">📄 Pre-Approval</button>
+          <button onclick="generateLetterOfIntent()" style="padding:7px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">✉ LOI</button>
+          <button onclick="openCommercialLenderForm()" style="padding:7px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#888;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">📋 Lender Form</button>
+        </div>
+        <div style="display:flex;flex:1;overflow:hidden;">
+          <div style="width:300px;min-width:300px;background:#0d0d0d;border-right:1px solid #1a1a1a;padding:20px;overflow-y:auto;">
+            <div style="font-size:12px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px;">Deal Parameters</div>
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Property Type</label><select id="cre_property_type" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"><option value="">Select property type...</option></select></div>
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Loan Product</label><select id="cre_loan_product" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"><option value="">Select loan product...</option></select></div>
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Loan Amount *</label><input id="cre_loan_amount" type="text" placeholder="e.g. 3,500,000" oninput="this.value=this.value.replace(/[^0-9,]/g,'');calcCommercialMetrics()" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div>
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Purchase Price / Value</label><input id="cre_property_value" type="text" placeholder="e.g. 5,000,000" oninput="this.value=this.value.replace(/[^0-9,]/g,'');calcCommercialMetrics()" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div>
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">LTV % (auto)</label><input id="cre_ltv" type="number" readonly style="width:100%;padding:9px 12px;background:#111;border:1px solid #1a1a1a;border-radius:8px;color:#C9A84C;font-size:12px;box-sizing:border-box;cursor:default;font-family:inherit;"></div>
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Annual NOI</label><input id="cre_noi" type="text" placeholder="e.g. 280,000" oninput="this.value=this.value.replace(/[^0-9,]/g,'');calcCommercialMetrics()" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div>
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">DSCR (auto)</label><input id="cre_dscr" type="number" step="0.01" readonly style="width:100%;padding:9px 12px;background:#111;border:1px solid #1a1a1a;border-radius:8px;color:#C9A84C;font-size:12px;box-sizing:border-box;cursor:default;font-family:inherit;"></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Est. Rate %</label><input id="cre_rate" type="number" placeholder="7.5" step="0.1" value="7.5" oninput="calcCommercialMetrics()" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Amort (yrs)</label><input id="cre_amort" type="number" placeholder="30" value="30" oninput="calcCommercialMetrics()" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Credit Score</label><input id="cre_credit" type="number" placeholder="720" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">State</label><input id="cre_state" type="text" maxlength="2" placeholder="CA" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;text-transform:uppercase;font-family:inherit;"></div></div>
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Property Address</label><input id="cre_address" type="text" placeholder="123 Main St, City, CA" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Max Close Days</label><input id="cre_max_days" type="number" placeholder="45" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Recourse</label><select id="cre_recourse" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"><option value="">Any</option><option>Full Recourse</option><option>Non-Recourse</option></select></div></div>
+              <div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Deal Notes</label><textarea id="cre_notes" rows="3" placeholder="Additional deal details..." style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:12px;box-sizing:border-box;resize:vertical;font-family:inherit;line-height:1.5;"></textarea></div>
+              <button onclick="runCREDealMatcher()" style="width:100%;padding:11px;background:#C9A84C;border:none;border-radius:8px;color:#000;font-weight:700;font-size:13px;cursor:pointer;margin-top:4px;font-family:inherit;">🔍 Match Lenders</button>
+              <button onclick="saveCREDeal()" style="width:100%;padding:9px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#888;font-size:12px;cursor:pointer;font-family:inherit;">💾 Save Deal</button>
+              <button onclick="clearCREForm()" style="width:100%;padding:9px;background:transparent;border:1px solid #1a1a1a;border-radius:8px;color:#444;font-size:11px;cursor:pointer;font-family:inherit;">Clear</button>
+            </div>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:20px;background:#080808;">
+            <div id="cre_stats_row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;">
+              <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;text-align:center;"><div id="cre_stat_ltv" style="font-size:20px;font-weight:800;color:#C9A84C;">—</div><div style="font-size:10px;color:#555;margin-top:3px;">LTV</div></div>
+              <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;text-align:center;"><div id="cre_stat_dscr" style="font-size:20px;font-weight:800;color:#C9A84C;">—</div><div style="font-size:10px;color:#555;margin-top:3px;">DSCR</div></div>
+              <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;text-align:center;"><div id="cre_stat_payment" style="font-size:20px;font-weight:800;color:#C9A84C;">—</div><div style="font-size:10px;color:#555;margin-top:3px;">Est. Payment</div></div>
+              <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;text-align:center;"><div id="cre_stat_matches" style="font-size:20px;font-weight:800;color:#C9A84C;">—</div><div style="font-size:10px;color:#555;margin-top:3px;">Lender Matches</div></div>
+            </div>
+            <div id="cre_results">
+              <div style="text-align:center;padding:40px;color:#333;"><div style="font-size:36px;margin-bottom:12px;">🏢</div><div style="font-size:13px;font-weight:600;color:#555;">Commercial Deal Analyzer</div><div style="font-size:11px;color:#333;margin-top:8px;line-height:1.7;max-width:400px;margin:8px auto 0;">Fill in deal parameters on the left and click <strong style="color:#C9A84C;">Match Lenders</strong> to see matched commercial lenders.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /tab-commercial -->
+
   </main>
 </div><!-- /ld-body -->
 
@@ -5619,6 +5669,7 @@ function switchTab(name, btn) {
   if (name === 'documents') loadDocumentsGrid();
   if (name === 'conditions') loadConditions();
   if (name === 'mismo') loadMISMOHistory();
+  if (name === 'commercial') onCommercialTabOpen();
   if (name === 'alerts') { loadContactAlerts(); _slbInitPills(); loadSavedSearches(); setTimeout(function(){ _slbInstallDragHandlers(); slbRenderSlider(); }, 0); }
   if (name === 'activity') { loadActivity(); loadPortalActivity(); }
   if (name === 'showings') loadContactShowings();
@@ -7333,6 +7384,196 @@ function mismoOnDrop(e) {
   document.getElementById('mismo-drop-zone').classList.remove('drag-over');
   const file = e.dataTransfer.files[0];
   if (file) handleMISMOFile(file);
+}
+
+// ── COMMERCIAL TAB ──────────────────────────────────
+var _creFiltersLoaded = false;
+
+function onCommercialTabOpen() {
+  if (!_creFiltersLoaded) { _creFiltersLoaded = true; loadCREFilters(); }
+}
+
+async function loadCREFilters() {
+  var cfg = window.APP_CONFIG || {};
+  try {
+    var res = await fetch((cfg.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/commercial-match?action=filters', { headers: { 'apikey': cfg.SUPABASE_ANON_KEY } });
+    var data = await res.json();
+    var ptSel = document.getElementById('cre_property_type');
+    if (ptSel && data.property_types) {
+      var groups = {};
+      data.property_types.forEach(function(pt) { if (!groups[pt.category]) groups[pt.category] = []; groups[pt.category].push(pt); });
+      ptSel.innerHTML = '<option value="">Select property type...</option>';
+      Object.entries(groups).forEach(function(e) { var og = document.createElement('optgroup'); og.label = e[0]; e[1].forEach(function(pt) { var o = document.createElement('option'); o.value = pt.id; o.textContent = pt.name; og.appendChild(o); }); ptSel.appendChild(og); });
+    }
+    var lpSel = document.getElementById('cre_loan_product');
+    if (lpSel && data.loan_products) {
+      var groups2 = {};
+      data.loan_products.forEach(function(lp) { if (!groups2[lp.category]) groups2[lp.category] = []; groups2[lp.category].push(lp); });
+      lpSel.innerHTML = '<option value="">Select loan product...</option>';
+      Object.entries(groups2).forEach(function(e) { var og = document.createElement('optgroup'); og.label = e[0]; e[1].forEach(function(lp) { var o = document.createElement('option'); o.value = lp.id; o.textContent = lp.name; og.appendChild(o); }); lpSel.appendChild(og); });
+    }
+  } catch(e) { console.error('loadCREFilters:', e); }
+}
+
+function calcCommercialMetrics() {
+  var loan = parseFloat((document.getElementById('cre_loan_amount')?.value || '').replace(/,/g, '')) || 0;
+  var value = parseFloat((document.getElementById('cre_property_value')?.value || '').replace(/,/g, '')) || 0;
+  var noi = parseFloat((document.getElementById('cre_noi')?.value || '').replace(/,/g, '')) || 0;
+  var rate = parseFloat(document.getElementById('cre_rate')?.value || '7.5') / 100;
+  var amort = parseInt(document.getElementById('cre_amort')?.value || '30');
+  var ltv = value > 0 ? Math.round((loan / value) * 100) : 0;
+  var ltvEl = document.getElementById('cre_ltv'); if (ltvEl) ltvEl.value = ltv || '';
+  var ltvStat = document.getElementById('cre_stat_ltv'); if (ltvStat) ltvStat.textContent = ltv ? ltv + '%' : '—';
+  var monthlyPayment = 0;
+  if (loan > 0 && rate > 0 && amort > 0) { var r = rate / 12; var n = amort * 12; monthlyPayment = loan * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1); }
+  var annualDS = monthlyPayment * 12;
+  var dscr = annualDS > 0 ? (noi / annualDS).toFixed(2) : 0;
+  var dscrEl = document.getElementById('cre_dscr'); if (dscrEl) dscrEl.value = dscr || '';
+  var dscrStat = document.getElementById('cre_stat_dscr');
+  if (dscrStat) { dscrStat.textContent = dscr ? parseFloat(dscr).toFixed(2) : '—'; dscrStat.style.color = parseFloat(dscr) >= 1.25 ? '#27AE60' : parseFloat(dscr) >= 1.0 ? '#E67E22' : '#E74C3C'; }
+  var pmtStat = document.getElementById('cre_stat_payment'); if (pmtStat) pmtStat.textContent = monthlyPayment > 0 ? '$' + Math.round(monthlyPayment).toLocaleString() : '—';
+}
+
+function calcCommercialDSCR() { calcCommercialMetrics(); }
+
+async function runCREDealMatcher() {
+  var cfg = window.APP_CONFIG || {};
+  var btn = document.querySelector('[onclick="runCREDealMatcher()"]');
+  var loan = parseFloat((document.getElementById('cre_loan_amount')?.value || '').replace(/,/g, ''));
+  if (!loan) { if (typeof showToast === 'function') showToast('Enter a loan amount first', true); return; }
+  if (btn) { btn.textContent = 'Matching...'; btn.disabled = true; }
+  var deal = { loan_amount: loan, property_type_id: document.getElementById('cre_property_type')?.value || undefined, loan_product_id: document.getElementById('cre_loan_product')?.value || undefined, dscr: parseFloat(document.getElementById('cre_dscr')?.value) || undefined, ltv: parseFloat(document.getElementById('cre_ltv')?.value) || undefined, credit_score: parseInt(document.getElementById('cre_credit')?.value) || undefined, state: (document.getElementById('cre_state')?.value || '').toUpperCase() || undefined, max_closing_days: parseInt(document.getElementById('cre_max_days')?.value) || undefined, limit: 30 };
+  Object.keys(deal).forEach(function(k) { if (!deal[k]) delete deal[k]; });
+  try {
+    var res = await fetch((cfg.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/commercial-match', { method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': cfg.SUPABASE_ANON_KEY }, body: JSON.stringify({ action: 'match', deal: deal }) });
+    var data = await res.json();
+    var matches = data.matches || [];
+    var mStat = document.getElementById('cre_stat_matches'); if (mStat) mStat.textContent = matches.length;
+    renderCREMatches(matches);
+  } catch(e) { if (typeof showToast === 'function') showToast('Match error: ' + e.message, true); }
+  if (btn) { btn.textContent = '🔍 Match Lenders'; btn.disabled = false; }
+}
+
+function renderCREMatches(matches) {
+  var container = document.getElementById('cre_results'); if (!container) return;
+  if (!matches.length) { container.innerHTML = '<div style="text-align:center;padding:40px;color:#555;"><div style="font-size:28px;margin-bottom:10px;">🔍</div><div style="color:#888;">No lenders matched. Try adjusting parameters.</div></div>'; return; }
+  var TIER = { 'Agency': '#27AE60', 'Life Co': '#8E44AD', 'Bank': '#2980B9', 'Debt Fund': '#E67E22', 'Bridge': '#C0392B', 'Hard Money': '#7F8C8D' };
+  var avg = Math.round(matches.reduce(function(s, m) { return s + m.fit_pct; }, 0) / matches.length);
+  container.innerHTML = '<div style="font-size:12px;color:#555;margin-bottom:12px;"><span style="color:#C9A84C;font-weight:700;">' + matches.length + '</span> matched · Avg fit: <span style="color:#C9A84C;font-weight:700;">' + avg + '%</span></div>' +
+    matches.map(function(m) {
+      var fc = m.fit_pct >= 80 ? '#27AE60' : m.fit_pct >= 60 ? '#E67E22' : '#E74C3C';
+      var tc = TIER[m.rate_tier] || '#555';
+      var minL = m.min_loan_amount ? '$' + (m.min_loan_amount / 1e6).toFixed(1) + 'M' : '—';
+      var maxL = m.max_loan_amount ? '$' + (m.max_loan_amount / 1e6).toFixed(1) + 'M' : '—';
+      return '<div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;margin-bottom:8px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+          '<div style="width:36px;height:36px;border-radius:7px;background:#1a1a1a;border:1px solid #2a2a2a;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#C9A84C;flex-shrink:0;">' + m.lender_name.substring(0, 2).toUpperCase() + '</div>' +
+          '<div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:700;color:#fff;">' + m.lender_name + (m.is_preferred ? ' <span style="font-size:9px;color:#C9A84C;">⭐</span>' : '') + '</div>' +
+          '<div style="display:flex;gap:4px;margin-top:3px;flex-wrap:wrap;">' +
+            (m.rate_tier ? '<span style="font-size:9px;padding:1px 7px;border-radius:8px;background:' + tc + '22;border:1px solid ' + tc + '44;color:' + tc + ';">' + m.rate_tier + '</span>' : '') +
+            (m.recourse_type ? '<span style="font-size:9px;padding:1px 7px;border-radius:8px;background:#1a1a1a;color:#555;">' + m.recourse_type + '</span>' : '') +
+            (m.speed_days ? '<span style="font-size:9px;padding:1px 7px;border-radius:8px;background:#1a1a1a;color:#555;">⏱ ' + m.speed_days + 'd</span>' : '') +
+          '</div></div>' +
+          '<div style="text-align:center;flex-shrink:0;"><div style="font-size:18px;font-weight:800;color:' + fc + ';">' + m.fit_pct + '%</div><div style="font-size:9px;color:#444;">Fit</div></div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px;">' +
+          '<div style="background:#080808;border-radius:5px;padding:6px;text-align:center;"><div style="font-size:10px;color:#C9A84C;font-weight:600;">' + minL + '–' + maxL + '</div><div style="font-size:8px;color:#444;margin-top:1px;">Range</div></div>' +
+          '<div style="background:#080808;border-radius:5px;padding:6px;text-align:center;"><div style="font-size:10px;color:#C9A84C;font-weight:600;">' + (m.min_dscr || '—') + '</div><div style="font-size:8px;color:#444;margin-top:1px;">Min DSCR</div></div>' +
+          '<div style="background:#080808;border-radius:5px;padding:6px;text-align:center;"><div style="font-size:10px;color:#C9A84C;font-weight:600;">' + (m.max_ltv ? m.max_ltv + '%' : '—') + '</div><div style="font-size:8px;color:#444;margin-top:1px;">Max LTV</div></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+          (m.contact_email ? '<a href="mailto:' + m.contact_email + '" style="padding:4px 10px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:5px;color:#888;font-size:10px;text-decoration:none;">✉ ' + (m.contact_name || 'Email AE') + '</a>' : '') +
+          (m.lender_portal ? '<a href="' + m.lender_portal + '" target="_blank" style="padding:4px 10px;background:#C9A84C22;border:1px solid #C9A84C44;border-radius:5px;color:#C9A84C;font-size:10px;text-decoration:none;">🔗 Portal</a>' : '') +
+        '</div></div>';
+    }).join('');
+}
+
+function generateCommercialPreApproval(lenderName) {
+  var loan = document.getElementById('cre_loan_amount')?.value || '';
+  if (!loan) { if (typeof showToast === 'function') showToast('Enter loan amount first', true); return; }
+  var contactName = window._currentContactName || document.querySelector('.ld-name')?.textContent || 'Borrower';
+  var propType = document.getElementById('cre_property_type')?.selectedOptions?.[0]?.text || '';
+  var address = document.getElementById('cre_address')?.value || '';
+  var ltv = document.getElementById('cre_ltv')?.value || '';
+  var dscr = document.getElementById('cre_dscr')?.value || '';
+  var m = document.createElement('div');
+  m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  m.innerHTML = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;padding:32px;width:700px;max-height:80vh;overflow-y:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;"><div style="font-size:15px;font-weight:700;color:#fff;">📄 Commercial Pre-Approval Letter</div><button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;">×</button></div><div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:20px;font-size:13px;color:#ccc;line-height:1.8;">' +
+    '<p style="margin-bottom:12px;">' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
+    '<p style="margin-bottom:12px;">To Whom It May Concern,</p>' +
+    '<p style="margin-bottom:12px;">This letter is to confirm that <strong style="color:#fff;">' + contactName + '</strong> has been pre-approved for a commercial mortgage loan in the amount of <strong style="color:#C9A84C;">$' + loan + '</strong>' + (propType ? ' for a <strong style="color:#fff;">' + propType + '</strong> property' : '') + (address ? ' located at ' + address : '') + '.</p>' +
+    '<p style="margin-bottom:12px;">Key metrics: LTV ' + (ltv || '—') + '% · DSCR ' + (dscr || '—') + '</p>' +
+    '<p style="margin-bottom:12px;">This pre-approval is subject to satisfactory appraisal, title, environmental review, and final underwriting. This letter does not constitute a commitment to lend.</p>' +
+    '<p style="margin-bottom:4px;">Sincerely,</p><p><strong style="color:#C9A84C;">Rene Duarte</strong><br>Commercial Mortgage Advisor<br>Rates & Realty / RFD Group LLC<br>NMLS #1795044</p>' +
+  '</div><div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;"><button onclick="window.print()" style="padding:8px 16px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#888;font-size:12px;cursor:pointer;font-family:inherit;">🖨 Print</button></div></div>';
+  document.body.appendChild(m);
+  m.addEventListener('click', function(e) { if (e.target === m) m.remove(); });
+}
+
+function generateLetterOfIntent() {
+  var loan = document.getElementById('cre_loan_amount')?.value || '';
+  if (!loan) { if (typeof showToast === 'function') showToast('Enter loan amount first', true); return; }
+  var contactName = window._currentContactName || document.querySelector('.ld-name')?.textContent || 'Borrower';
+  var propType = document.getElementById('cre_property_type')?.selectedOptions?.[0]?.text || '';
+  var address = document.getElementById('cre_address')?.value || 'TBD';
+  var value = document.getElementById('cre_property_value')?.value || '';
+  var ltv = document.getElementById('cre_ltv')?.value || '';
+  var dscr = document.getElementById('cre_dscr')?.value || '';
+  var rate = document.getElementById('cre_rate')?.value || '7.5';
+  var amort = document.getElementById('cre_amort')?.value || '30';
+  var m = document.createElement('div');
+  m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  m.innerHTML = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;padding:32px;width:700px;max-height:80vh;overflow-y:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;"><div style="font-size:15px;font-weight:700;color:#fff;">✉ Letter of Intent</div><button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;">×</button></div><div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:20px;font-size:13px;color:#ccc;line-height:1.8;">' +
+    '<p style="margin-bottom:12px;">' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
+    '<p style="font-weight:700;color:#fff;margin-bottom:12px;">NON-BINDING LETTER OF INTENT</p>' +
+    '<p style="margin-bottom:12px;">Borrower: <strong style="color:#fff;">' + contactName + '</strong></p>' +
+    '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;"><tr><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#888;font-size:11px;">Loan Amount</td><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#fff;font-size:11px;">$' + loan + '</td></tr>' +
+    '<tr><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#888;font-size:11px;">Property</td><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#fff;font-size:11px;">' + propType + ' — ' + address + '</td></tr>' +
+    '<tr><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#888;font-size:11px;">Value</td><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#fff;font-size:11px;">$' + value + '</td></tr>' +
+    '<tr><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#888;font-size:11px;">LTV</td><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#fff;font-size:11px;">' + ltv + '%</td></tr>' +
+    '<tr><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#888;font-size:11px;">DSCR</td><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#fff;font-size:11px;">' + dscr + '</td></tr>' +
+    '<tr><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#888;font-size:11px;">Est. Rate</td><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#fff;font-size:11px;">' + rate + '%</td></tr>' +
+    '<tr><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#888;font-size:11px;">Amortization</td><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#fff;font-size:11px;">' + amort + ' years</td></tr></table>' +
+    '<p style="font-size:11px;color:#666;">This LOI is non-binding and subject to due diligence, appraisal, environmental review, and final credit approval.</p>' +
+    '<p style="margin-top:16px;margin-bottom:4px;">Sincerely,</p><p><strong style="color:#C9A84C;">Rene Duarte</strong><br>Rates & Realty / RFD Group LLC · NMLS #1795044</p>' +
+  '</div><div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;"><button onclick="window.print()" style="padding:8px 16px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#888;font-size:12px;cursor:pointer;font-family:inherit;">🖨 Print</button></div></div>';
+  document.body.appendChild(m);
+  m.addEventListener('click', function(e) { if (e.target === m) m.remove(); });
+}
+
+function openCommercialLenderForm() {
+  var contactName = window._currentContactName || document.querySelector('.ld-name')?.textContent || '';
+  var loan = document.getElementById('cre_loan_amount')?.value || '';
+  var propType = document.getElementById('cre_property_type')?.selectedOptions?.[0]?.text || '';
+  var address = document.getElementById('cre_address')?.value || '';
+  var value = document.getElementById('cre_property_value')?.value || '';
+  var ltv = document.getElementById('cre_ltv')?.value || '';
+  var dscr = document.getElementById('cre_dscr')?.value || '';
+  var noi = document.getElementById('cre_noi')?.value || '';
+  var credit = document.getElementById('cre_credit')?.value || '';
+  var state = document.getElementById('cre_state')?.value || '';
+  var notes = document.getElementById('cre_notes')?.value || '';
+  var m = document.createElement('div');
+  m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  m.innerHTML = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;padding:28px;width:100%;max-width:600px;max-height:85vh;overflow-y:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;"><div style="font-size:15px;font-weight:700;color:#fff;">📋 Commercial Lender Submission</div><button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;">×</button></div>' +
+    '<div style="display:flex;flex-direction:column;gap:14px;">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Borrower</label><input value="' + contactName + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Credit</label><input value="' + credit + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div></div>' +
+    '<div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Address</label><input value="' + address + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;"><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Type</label><input value="' + propType + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">State</label><input value="' + state + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Value</label><input value="$' + value + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;"><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Loan</label><input value="$' + loan + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">LTV</label><input value="' + ltv + '%" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">DSCR</label><input value="' + dscr + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div><div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">NOI</label><input value="$' + noi + '" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;"></div></div>' +
+    '<div><label style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Notes</label><textarea rows="3" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#fff;font-size:12px;box-sizing:border-box;font-family:inherit;resize:vertical;">' + notes + '</textarea></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;"><button onclick="this.closest(\'[style*=fixed]\').remove()" style="padding:9px 18px;background:transparent;border:1px solid #2a2a2a;border-radius:7px;color:#888;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button><button onclick="window.print()" style="padding:9px 18px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;color:#888;font-size:12px;cursor:pointer;font-family:inherit;">🖨 Print</button></div></div></div>';
+  document.body.appendChild(m);
+  m.addEventListener('click', function(e) { if (e.target === m) m.remove(); });
+}
+
+function showCommercialDealMatcher() { document.getElementById('cre_loan_amount')?.focus(); }
+function saveCREDeal() { if (typeof showToast === 'function') showToast('Deal saved to contact record'); }
+function clearCREForm() {
+  ['cre_loan_amount','cre_property_value','cre_noi','cre_address','cre_credit','cre_state','cre_max_days','cre_notes','cre_ltv','cre_dscr'].forEach(function(id) { var el = document.getElementById(id); if (el) el.value = ''; });
+  ['cre_property_type','cre_loan_product','cre_recourse'].forEach(function(id) { var el = document.getElementById(id); if (el) el.selectedIndex = 0; });
+  ['cre_stat_ltv','cre_stat_dscr','cre_stat_payment','cre_stat_matches'].forEach(function(id) { var el = document.getElementById(id); if (el) el.textContent = '—'; });
+  var r = document.getElementById('cre_results'); if (r) r.innerHTML = '<div style="text-align:center;padding:40px;color:#333;"><div style="font-size:36px;">🏢</div><div style="margin-top:12px;color:#555;">Enter deal parameters and click Match Lenders</div></div>';
 }
 
 function triggerMISMOImport() {
