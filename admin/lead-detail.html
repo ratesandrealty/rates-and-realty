@@ -3779,7 +3779,7 @@ async function loadData() {
     liabilitiesData = Array.isArray(contactData.liabilities) ? [...contactData.liabilities] : [];
     populateUI();
     renderLiabilities();
-    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocumentsGrid(), loadCreditApps(), loadRelatedContacts(contactId)]);
+    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocumentsGrid(), loadCreditApps().catch(function(e){ console.warn('Credit apps skipped:', e.message); }), loadRelatedContacts(contactId)]);
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
@@ -5231,7 +5231,7 @@ function docViewerRotate() {
 async function loadCreditApps() {
   const el = document.getElementById('credit-apps-list');
   const cc = document.getElementById('credit-app-content');
-  if (!contactId) return;
+  if (!contactId || (!el && !cc)) return;
   try {
     const r = await sb.from('credit_applications')
       .select('*')
