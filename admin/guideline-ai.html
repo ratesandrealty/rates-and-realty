@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <title>Guideline AI — Rates & Realty CRM</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #c9a84c; --dark: #0d0d0d; --card: #161616;
+      --card2: #1e1e1e; --border: rgba(255,255,255,0.08);
+      --text: rgba(255,255,255,0.85); --muted: rgba(255,255,255,0.4);
+    }
+    html, body { height: 100%; background: var(--dark); color: var(--text); font-family: 'Inter', sans-serif; }
+
+    .topnav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px; background: #111;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .brand-logo { width: 32px; height: 32px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--gold), #a07830);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Cormorant Garamond', serif; font-size: 12px; font-weight: 700; color: #1a1a1a; }
+    .brand-name { font-family: 'Cormorant Garamond', serif; font-size: 16px; color: #fff; font-weight: 600; }
+    .btn-back {
+      padding: 7px 14px; background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border); border-radius: 8px;
+      color: var(--muted); font-size: 12px; text-decoration: none;
+    }
+
+    .page { display: flex; height: calc(100vh - 57px); overflow: hidden; }
+
+    /* LEFT: Lender list */
+    .left-panel {
+      width: 300px; flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; background: #111;
+    }
+    .panel-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .search-box {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 9px; padding: 8px 12px;
+    }
+    .search-box input {
+      flex: 1; background: transparent; border: none; outline: none;
+      color: var(--text); font-size: 13px; font-family: inherit;
+    }
+    .lender-list { flex: 1; overflow-y: auto; }
+    .lender-row {
+      display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+      border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s;
+    }
+    .lender-row:hover { background: rgba(255,255,255,0.04); }
+    .lender-row.selected { background: rgba(201,168,76,0.07); border-left: 3px solid var(--gold); }
+    .lender-avatar {
+      width: 34px; height: 34px; border-radius: 8px; display: flex;
+      align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0;
+    }
+    .lender-info { flex: 1; min-width: 0; }
+    .lender-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* CENTER: Chat */
+    .center-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .chat-messages { flex: 1; overflow-y: auto; padding: 24px; }
+    .msg { display: flex; gap: 12px; margin-bottom: 20px; }
+    .msg-av {
+      width: 32px; height: 32px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; flex-shrink: 0;
+    }
+    .msg.user .msg-av { background: rgba(201,168,76,0.15); color: var(--gold); }
+    .msg.ai .msg-av { background: rgba(255,255,255,0.06); }
+    .msg-body { flex: 1; min-width: 0; }
+    .msg-bubble {
+      padding: 14px 18px; border-radius: 12px; font-size: 14px; line-height: 1.65;
+    }
+    .msg.user .msg-bubble { background: rgba(201,168,76,0.08); border: 1px solid rgba(201,168,76,0.15); }
+    .msg.ai .msg-bubble { background: rgba(255,255,255,0.03); border: 1px solid var(--border); }
+    .msg-sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .src-badge {
+      padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600;
+      background: rgba(201,168,76,0.1); color: var(--gold); border: 1px solid rgba(201,168,76,0.2);
+    }
+    .empty-chat { text-align: center; padding: 60px 24px; color: var(--muted); }
+    .empty-chat h3 { color: var(--text); margin-bottom: 8px; font-family: 'Cormorant Garamond', serif; font-size: 22px; }
+    .empty-chat p { font-size: 13px; max-width: 500px; margin: 0 auto 24px; line-height: 1.6; }
+    .qp-btn {
+      display: inline-block; padding: 8px 14px; margin: 4px; border-radius: 8px;
+      font-size: 12px; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+      color: var(--text); cursor: pointer; font-family: inherit;
+    }
+    .qp-btn:hover { border-color: var(--gold); color: var(--gold); }
+    .thinking-bubble {
+      padding: 14px 18px; border-radius: 12px; background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border); display: flex; align-items: center; gap: 12px;
+      font-size: 13px; color: var(--muted);
+    }
+    .dots span {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--gold); animation: blink 1.4s infinite;
+    }
+    .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%,80%,100% { opacity: 0.2; } 40% { opacity: 1; } }
+
+    .chat-input-bar {
+      padding: 16px 24px; border-top: 1px solid var(--border); background: #111;
+      display: flex; gap: 10px; align-items: flex-end;
+    }
+    .chat-input-bar textarea {
+      flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px; padding: 12px 16px; color: var(--text); font-size: 14px;
+      font-family: inherit; resize: none; outline: none; min-height: 44px; max-height: 120px;
+    }
+    .chat-input-bar button {
+      padding: 10px 20px; background: var(--gold); border: none; border-radius: 10px;
+      color: #1a1a1a; font-weight: 700; font-size: 14px; cursor: pointer; font-family: inherit;
+    }
+    .chat-input-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* RIGHT: Lender info panel */
+    .right-panel {
+      width: 320px; flex-shrink: 0; border-left: 1px solid var(--border);
+      background: #111; overflow-y: auto; display: none;
+    }
+    .right-panel.visible { display: block; }
+    .info-section { padding: 20px; border-bottom: 1px solid var(--border); }
+    .info-section-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+      color: var(--muted); font-weight: 600; margin-bottom: 10px;
+    }
+    .info-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+    .info-label { color: var(--muted); }
+    .info-value { color: var(--text); font-weight: 500; text-align: right; max-width: 180px; word-break: break-all; }
+    .info-value a { color: var(--gold); text-decoration: none; }
+    .info-value a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <a href="/admin/lenders.html" class="nav-brand">
+      <div class="brand-logo">R&R</div>
+      <span class="brand-name">Rates & Realty</span>
+    </a>
+    <a href="/admin/lenders.html" class="btn-back">← Lender Database</a>
+  </nav>
+
+  <div class="page">
+    <!-- LEFT: Lender list -->
+    <div class="left-panel">
+      <div class="panel-header">
+        <div class="search-box">
+          <span style="font-size:14px;color:var(--muted);">🔍</span>
+          <input type="text" id="lenderSearch" placeholder="Search lenders..." oninput="filterLenders(this.value)">
+        </div>
+      </div>
+      <div class="lender-list" id="lenderList">
+        <div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">Loading lenders...</div>
+      </div>
+    </div>
+
+    <!-- CENTER: Chat -->
+    <div class="center-panel">
+      <div class="chat-messages" id="chatMessages">
+        <div class="empty-chat" id="emptyChatState">
+          <div style="font-size:48px;margin-bottom:16px;">📋</div>
+          <h3>Guideline AI</h3>
+          <p>Ask about any lending guideline. Select a lender on the left to scope your search, or ask across all guidelines.</p>
+          <div>
+            <button class="qp-btn" onclick="askQuestion('What is the minimum credit score for FHA vs Conventional?')">Min credit FHA vs Conv?</button>
+            <button class="qp-btn" onclick="askQuestion('What are the DSCR requirements for investor loans?')">DSCR investor requirements?</button>
+            <button class="qp-btn" onclick="askQuestion('What DTI is allowed for VA loans?')">Max DTI for VA?</button>
+            <button class="qp-btn" onclick="askQuestion('Bank statement loan qualifying?')">Bank statement qualifying?</button>
+          </div>
+        </div>
+      </div>
+      <div class="chat-input-bar">
+        <textarea id="aiInput" rows="1" placeholder="Ask a guideline question..."
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQuestion();}"
+          oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';"></textarea>
+        <button id="aiSendBtn" onclick="sendQuestion()">Ask</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: Lender info sidebar -->
+    <div class="right-panel" id="lenderInfoPanel">
+      <div id="lenderInfoContent"></div>
+    </div>
+  </div>
+
+<script src="/api/env.js?v=2026033003"></script>
+<script>
+const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+
+const LOAN_TYPE_COLORS = {
+  'Conventional': '#4A90E2', 'FHA': '#E67E22', 'VA': '#27AE60',
+  'USDA': '#8E44AD', 'Jumbo': '#C0392B', 'Non-QM': '#16A085',
+  'DSCR': '#2980B9', 'Bank Statement': '#D35400', 'Commercial': '#7F8C8D',
+  'Hard Money': '#BDC3C7', 'Bridge': '#95A5A6', 'Heloc': '#1ABC9C',
+  'Heloan': '#3498DB', 'Reverse': '#9B59B6', 'ITIN': '#E74C3C',
+  'CalHFA': '#F39C12', 'DPA': '#27AE60', 'Commercial - Residential': '#7F8C8D',
+};
+
+function loanTypeChipsHtml(loanTypes) {
+  if (!loanTypes || !Array.isArray(loanTypes) || loanTypes.length === 0) return '';
+  return loanTypes.map(function(type) {
+    var color = LOAN_TYPE_COLORS[type] || '#555';
+    return '<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;margin:1px 2px;background:'+color+'22;border:1px solid '+color+'55;color:'+color+';white-space:nowrap;">'+type+'</span>';
+  }).join('');
+}
+
+let allLenders = [];
+let filteredLenders = [];
+let chatHistory = [];
+window._currentLenderId = null;
+
+function getAvatarColor(name) {
+  let hash = 0;
+  for (let i = 0; i < (name||'').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 50%, 55%)`;
+}
+function getInitials(name) {
+  return (name||'?').split(/[\s&]+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+}
+
+async function loadLenders() {
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/lenders?order=name&limit=200`, {
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' }
+    });
+    allLenders = await res.json();
+    if (!Array.isArray(allLenders)) allLenders = [];
+    filteredLenders = [...allLenders];
+    renderLenderList();
+  } catch(e) {
+    console.error('Load error:', e);
+  }
+}
+
+function filterLenders(query) {
+  filteredLenders = allLenders.filter(function(l) {
+    return !query || l.name.toLowerCase().includes(query.toLowerCase());
+  });
+  renderLenderList();
+}
+
+function renderLenderList() {
+  const list = document.getElementById('lenderList');
+  if (!filteredLenders.length) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">No lenders found</div>';
+    return;
+  }
+  list.innerHTML = filteredLenders.map(function(l) {
+    const color = getAvatarColor(l.name);
+    const initials = getInitials(l.name);
+    const isSelected = window._currentLenderId === l.id;
+    return `
+      <div class="lender-row ${isSelected ? 'selected' : ''}" onclick="selectLender('${l.id}')">
+        <div class="lender-avatar" style="background:${color}22;border:1px solid ${color}44;color:${color};">
+          ${initials}
+        </div>
+        <div class="lender-info">
+          <div class="lender-name">${l.name}</div>
+          <div style="margin-top:3px;line-height:1.6;">
+            ${loanTypeChipsHtml((l.loan_types||[]).slice(0,4))}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function selectLender(id) {
+  window._currentLenderId = id;
+  renderLenderList();
+  const lender = allLenders.find(function(l) { return l.id === id; });
+  if (lender) showLenderInfo(lender);
+}
+
+function loadLenderById(id) {
+  const lender = allLenders.find(function(l) { return l.id === id; });
+  if (!lender) { loadLenders(); return; }
+  showLenderInfo(lender);
+}
+
+function showLenderInfo(lender) {
+  const panel = document.getElementById('lenderInfoPanel');
+  panel.classList.add('visible');
+
+  const portalLink = lender.lender_portal
+    ? `<a href="${lender.lender_portal}" target="_blank">${new URL(lender.lender_portal).hostname}</a>`
+    : '<span style="color:#555;">—</span>';
+
+  const websiteLink = lender.website
+    ? `<a href="${lender.website}" target="_blank">${new URL(lender.website).hostname}</a>`
+    : '';
+
+  document.getElementById('lenderInfoContent').innerHTML = `
+    <div class="info-section">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+        <div style="width:40px;height:40px;border-radius:10px;background:${getAvatarColor(lender.name)}22;
+          border:1px solid ${getAvatarColor(lender.name)}44;color:${getAvatarColor(lender.name)};
+          display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;">
+          ${getInitials(lender.name)}
+        </div>
+        <div>
+          <div style="font-size:15px;font-weight:700;">${lender.name}</div>
+          ${lender.nmls ? `<div style="font-size:11px;color:var(--muted);">NMLS# ${lender.nmls}</div>` : ''}
+        </div>
+      </div>
+      <div style="line-height:1.8;">${loanTypeChipsHtml(lender.loan_types)}</div>
+    </div>
+
+    <div class="info-section">
+      <div class="info-section-title">Primary Account Executive</div>
+      <div class="info-row"><span class="info-label">Name</span><span class="info-value">${lender.contact_name || '—'}</span></div>
+      <div class="info-row"><span class="info-label">Email</span><span class="info-value">${lender.contact_email ? `<a href="mailto:${lender.contact_email}">${lender.contact_email}</a>` : '—'}</span></div>
+      <div class="info-row"><span class="info-label">Phone</span><span class="info-value">${lender.contact_phone ? `<a href="tel:${lender.contact_phone}">${lender.contact_phone}</a>` : '—'}</span></div>
+    </div>
+
+    <div class="info-section">
+      <div class="info-section-title">Underwriting</div>
+      <div class="info-row"><span class="info-label">Min Credit</span><span class="info-value">${lender.min_credit_score || '—'}</span></div>
+      <div class="info-row"><span class="info-label">Max LTV</span><span class="info-value">${lender.max_ltv ? lender.max_ltv + '%' : '—'}</span></div>
+      <div class="info-row"><span class="info-label">Channel</span><span class="info-value">${lender.channel || '—'}</span></div>
+      <div class="info-row"><span class="info-label">Avg Days to Fund</span><span class="info-value">${lender.avg_app_to_fund || '—'}</span></div>
+    </div>
+
+    <div class="info-section">
+      <div class="info-section-title">Compensation</div>
+      <div class="info-row"><span class="info-label">Revenue</span><span class="info-value" style="white-space:normal;text-align:right;">${lender.revenue_notes || '—'}</span></div>
+      <div class="info-row"><span class="info-label">Fees</span><span class="info-value" style="white-space:normal;text-align:right;">${lender.fee_notes || '—'}</span></div>
+    </div>
+
+    <div class="info-section">
+      <div class="info-section-title">Links</div>
+      <div class="info-row"><span class="info-label">Portal</span><span class="info-value">${portalLink}</span></div>
+      ${websiteLink ? `<div class="info-row"><span class="info-label">Website</span><span class="info-value">${websiteLink}</span></div>` : ''}
+    </div>
+
+    ${(lender.loan_programs && lender.loan_programs.length) ? `
+    <div class="info-section">
+      <div class="info-section-title">Loan Programs (${lender.loan_programs.length})</div>
+      <div style="line-height:1.8;">
+        ${lender.loan_programs.map(function(p) { return '<span style="display:inline-block;padding:2px 7px;border-radius:8px;font-size:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--text);margin:2px;">'+p+'</span>'; }).join('')}
+      </div>
+    </div>
+    ` : ''}
+  `;
+}
+
+// ── CHAT ──────────────────────────────────────────
+function askQuestion(q) {
+  document.getElementById('aiInput').value = q;
+  sendQuestion();
+}
+
+function appendMsg(text, isUser) {
+  var empty = document.getElementById('emptyChatState');
+  if (empty) empty.remove();
+  var container = document.getElementById('chatMessages');
+  var div = document.createElement('div');
+  div.className = 'msg ' + (isUser ? 'user' : 'ai');
+  var av = document.createElement('div');
+  av.className = 'msg-av';
+  av.textContent = isUser ? 'R' : '📋';
+  var body = document.createElement('div');
+  body.className = 'msg-body';
+  var bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.+)$/gm, '<li style="list-style:none;padding-left:14px;position:relative;"><span style="position:absolute;left:0;color:var(--gold);">•</span>$1</li>')
+    .replace(/\n/g, '<br>');
+  body.appendChild(bubble);
+  div.appendChild(av);
+  div.appendChild(body);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return body;
+}
+
+function showSources(body, sources) {
+  if (!sources || sources.length === 0) return;
+  var srcDiv = document.createElement('div');
+  srcDiv.className = 'msg-sources';
+  srcDiv.innerHTML = sources.map(function(s) { return '<span class="src-badge">'+s+'</span>'; }).join('');
+  body.appendChild(srcDiv);
+}
+
+async function sendQuestion() {
+  var input = document.getElementById('aiInput');
+  var btn = document.getElementById('aiSendBtn');
+  var q = input.value.trim();
+  if (!q) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  appendMsg(q, true);
+  chatHistory.push({ role: 'user', content: q });
+  btn.disabled = true;
+
+  var container = document.getElementById('chatMessages');
+  var thinkDiv = document.createElement('div');
+  thinkDiv.id = 'thinking';
+  thinkDiv.className = 'msg ai';
+  thinkDiv.innerHTML = '<div class="msg-av">📋</div><div class="thinking-bubble"><div class="dots"><span></span><span></span><span></span></div>Searching guidelines...</div>';
+  container.appendChild(thinkDiv);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    var lenders = window._currentLenderId
+      ? [allLenders.find(function(l){ return l.id === window._currentLenderId; })?.name].filter(Boolean)
+      : [];
+    var res = await fetch(SB_URL + '/functions/v1/guideline-ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, lenders: lenders, history: chatHistory.slice(-8) })
+    });
+    var data = await res.json();
+    var el = document.getElementById('thinking');
+    if (el) el.remove();
+    var body = appendMsg(data.reply || 'No response', false);
+    showSources(body, data.sources);
+    chatHistory.push({ role: 'assistant', content: data.reply });
+  } catch(e) {
+    var el2 = document.getElementById('thinking');
+    if (el2) el2.remove();
+    appendMsg('Connection error. Please try again.', false);
+  }
+  btn.disabled = false;
+}
+
+// ── CROSS-TAB SYNC ──────────────────────────────
+window.addEventListener('storage', function(e) {
+  if (e.key === 'lender_updated' && e.newValue) {
+    try {
+      var info = JSON.parse(e.newValue);
+      loadLenders().then(function() {
+        if (info.id === window._currentLenderId) {
+          loadLenderById(info.id);
+        }
+      });
+    } catch(err) { /* ignore */ }
+  }
+});
+
+function showToast(msg) {
+  var t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;background:#c9a84c;color:#1a1a1a;padding:12px 20px;border-radius:10px;font-weight:700;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+  document.body.appendChild(t);
+  setTimeout(function() { t.remove(); }, 3000);
+}
+
+document.addEventListener('DOMContentLoaded', function() { loadLenders(); });
+</script>
+</body>
+</html>

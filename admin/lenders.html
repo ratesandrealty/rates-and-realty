@@ -1003,6 +1003,9 @@ async function saveLenderDetails(lenderId, clickupId) {
   const idx = allLenders.findIndex(l => l.id === lenderId);
   if (idx >= 0) Object.assign(allLenders[idx], updates);
 
+  // Broadcast update to other tabs (guideline-ai, etc.)
+  localStorage.setItem('lender_updated', JSON.stringify({ id: lenderId, ts: Date.now() }));
+
   showToast(synced ? '✅ Saved & synced to ClickUp' : 'Lender saved (ClickUp sync failed)');
 }
 
@@ -1310,6 +1313,26 @@ async function ensureLenderTokens() {
     console.log(`[tokens] Generated ${data.generated||0} new tokens for ${data.total||0} lenders`);
   } catch(e) { console.warn('Token backfill failed:', e); }
 }
+
+// Listen for lender updates from other tabs (guideline-ai, etc.)
+window.addEventListener('storage', function(e) {
+  if (e.key === 'lender_updated' && e.newValue) {
+    try {
+      const { id } = JSON.parse(e.newValue);
+      // Reload lender list to pick up changes
+      loadLenders().then(function() {
+        // If the updated lender is currently open in the detail panel, refresh it
+        if (selectedLender && selectedLender.id === id) {
+          const updated = allLenders.find(function(l) { return l.id === id; });
+          if (updated) {
+            selectedLender = updated;
+            showLenderDetail(updated);
+          }
+        }
+      });
+    } catch(err) { /* ignore parse errors */ }
+  }
+});
 
 document.addEventListener('DOMContentLoaded', function(){
   loadLenders();
