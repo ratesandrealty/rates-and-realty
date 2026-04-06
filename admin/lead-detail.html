@@ -3067,7 +3067,7 @@
           <button class="doc-filter-btn" onclick="filterDocs('gov_id',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Gov ID</button>
           <button class="doc-filter-btn" onclick="filterDocs('tax_returns',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Tax Returns</button>
           <button class="doc-filter-btn" onclick="filterDocs('other',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Other</button>
-          <button id="syncToGdriveBtn" onclick="syncAllDocsToDrive()" title="Files are stored in Supabase. Drive sync resumes after Google Cloud reinstatement." style="margin-left:auto;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">↑ Sync to Drive</button>
+          <button id="syncToGdriveBtn" onclick="syncAllDocsToDrive()" title="Open Drive folder + download links for manual upload (auto-sync when Google Cloud reinstated)" style="margin-left:auto;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">📁 Open in Drive</button>
         </div>
 
         <!-- Documents grid -->
@@ -5036,43 +5036,69 @@ async function confirmDocUpload() {
 }
 
 async function syncAllDocsToDrive() {
-  const btn = document.getElementById('syncToGdriveBtn');
-  if (btn) { btn.textContent = 'Syncing...'; btn.disabled = true; }
+  const folderId = window._leadDriveFolderId;
+  const folderUrl = window._leadDriveFolderUrl;
 
-  try {
-    const cfg = window.APP_CONFIG || {};
-    const res = await fetch(`${cfg.SUPABASE_URL}/functions/v1/gdrive-sync`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}`,
-        'apikey': cfg.SUPABASE_ANON_KEY
-      },
-      body: JSON.stringify({
-        action: 'sync_all_pending',
-        contact_id: contactId
-      })
-    });
-
-    const data = await res.json();
-
-    if (data.success && data.synced > 0) {
-      showToast(`✅ Synced ${data.synced} file(s) to Google Drive`);
-    } else if (data.skipped && data.reason) {
-      // Google Cloud suspended — show informational message, not error
-      showToast(`📁 Files saved in Supabase (${data.docs_in_supabase || 0} docs). Drive sync resumes after Google Cloud reinstatement.`);
-    } else if (data.synced === 0) {
-      showToast('✅ All docs already synced to Drive');
-    } else {
-      showToast('⚠️ ' + (data.reason || data.error || 'Sync issue'), true);
-    }
-    loadDocumentsGrid();
-  } catch(e) {
-    console.error('sync error:', e);
-    showToast('⚠️ Could not reach sync service. Try again.', true);
-  } finally {
-    if (btn) { btn.textContent = '↑ Sync to Drive'; btn.disabled = false; }
+  if (!folderId && !folderUrl) {
+    showToast('⚠️ No Drive folder linked to this contact. Use "View Drive Folder" to link one first.', 'warning');
+    return;
   }
+
+  window.open(folderUrl, '_blank');
+  showDriveUploadHelper();
+}
+
+function showDriveUploadHelper() {
+  const docs = window._currentContactDocs || [];
+
+  let linksHtml = '';
+  if (docs.length > 0) {
+    linksHtml = docs.map(doc => {
+      const url = doc.file_url || doc.public_url;
+      const name = doc.file_name || doc.title || 'document';
+      if (!url) return '';
+      return `<a href="${url}" download="${name}" target="_blank" style="
+        display:flex; align-items:center; gap:8px;
+        padding:8px 12px; background:#111; border:1px solid #333;
+        border-radius:6px; color:#C9A84C; text-decoration:none;
+        font-size:12px; margin-bottom:6px;
+      ">
+        📄 ${name}
+        <span style="margin-left:auto; font-size:10px; color:#666;">↓ Download</span>
+      </a>`;
+    }).filter(Boolean).join('');
+  }
+
+  const modal = document.createElement('div');
+  modal.id = 'driveHelperModal';
+  modal.style.cssText = `
+    position:fixed; top:0; left:0; right:0; bottom:0;
+    background:rgba(0,0,0,0.8); z-index:9999;
+    display:flex; align-items:center; justify-content:center;
+  `;
+  modal.innerHTML = `
+    <div style="background:#1a1a1a; border:1px solid #333; border-radius:12px; padding:24px; max-width:500px; width:90%;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="color:#C9A84C; margin:0; font-size:16px;">📁 Upload to Google Drive</h3>
+        <button onclick="document.getElementById('driveHelperModal').remove()" style="background:none;border:none;color:#666;font-size:20px;cursor:pointer;">×</button>
+      </div>
+      <p style="color:#888; font-size:13px; margin-bottom:16px;">
+        Your Google Drive folder has been opened in a new tab.<br>
+        Download the files below and drag them into the Drive folder.
+      </p>
+      ${docs.length > 0 ? `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:11px; color:#666; text-transform:uppercase; margin-bottom:8px; letter-spacing:1px;">Documents to upload (${docs.length})</div>
+          ${linksHtml}
+        </div>
+      ` : '<p style="color:#555; font-size:12px;">No documents found for this contact.</p>'}
+      <div style="background:#0d0d0d; border:1px solid #222; border-radius:8px; padding:12px; font-size:11px; color:#666;">
+        💡 <strong style="color:#C9A84C;">Tip:</strong> Google Drive sync will work automatically once Google Cloud is reinstated (appeal submitted Apr 1, 2026).
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
 }
 
 async function loadDocumentsGrid() {
@@ -5091,6 +5117,7 @@ async function loadDocumentsGrid() {
     });
     const result = await res.json();
     _allDocs = result.documents || [];
+    window._currentContactDocs = _allDocs;
   } catch(e) {
     console.error('loadDocumentsGrid error:', e);
     _allDocs = [];
