@@ -249,6 +249,7 @@
       display: flex;
       flex-direction: column;
       padding: 24px 16px;
+      transition: width 0.25s ease, min-width 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
       gap: 0;
       transition: width 0.25s ease, min-width 0.25s ease, padding 0.25s ease, opacity 0.2s ease;
     }
@@ -1234,8 +1235,7 @@
 <div class="ld-body">
 
   <!-- ── LEFT SIDEBAR ── -->
-  <aside class="ld-sidebar" id="leadSidebar">
-    <button id="sidebarToggleBtn" onclick="toggleLeadSidebar()" style="position:absolute;right:-14px;top:50%;transform:translateY(-50%);width:28px;height:28px;border-radius:50%;background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;font-size:12px;cursor:pointer;z-index:100;display:flex;align-items:center;justify-content:center;box-shadow:2px 0 8px rgba(0,0,0,0.4);">‹</button>
+  <aside class="ld-sidebar" id="leadLeftSidebar">
     <div class="ld-avatar" id="sidebar-avatar">??</div>
     <div class="ld-sidebar-name" id="sidebar-name">Loading…</div>
     <div class="ld-sidebar-email" id="sidebar-email">—</div>
@@ -1595,6 +1595,7 @@
         </div>
       </div>
     </div>
+    <button id="sidebarToggleBtn" onclick="toggleLeadSidebar()" style="position:absolute;right:-13px;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#C9A84C;font-size:14px;cursor:pointer;z-index:9999;display:flex;align-items:center;justify-content:center;box-shadow:2px 0 10px rgba(0,0,0,0.6);padding:0;line-height:1;" title="Collapse sidebar">‹</button>
   </aside>
 
   <!-- ── MAIN CONTENT ── -->
@@ -4149,10 +4150,19 @@ function populateUI() {
 
   // Lead Details tab
   setVal('f-source', leadData.source || contactData.source);
+  if (contactData.source) {
+    const srcEl = document.getElementById('f-source');
+    if (srcEl) srcEl.value = contactData.source;
+  }
   // f-status is set by renderTimeline init above
-  setSelectVal('f-priority', leadData.priority || 'normal');
-  setVal('f-score', leadData.score || '');
-  setVal('f-assigned', leadData.assigned_to || '');
+  setSelectVal('f-priority', contactData.temperature || leadData.priority || 'normal');
+  // Sync lead score: use contact.lead_score as source of truth, fall back to leadData.score
+  const _syncScore = contactData.lead_score != null ? contactData.lead_score : (leadData.score || '');
+  setVal('f-score', _syncScore);
+  // Also sync the big score display number
+  const _scNumSync = document.getElementById('sc-num');
+  if (_scNumSync && _syncScore !== '') _scNumSync.textContent = _syncScore;
+  setVal('f-assigned', leadData.assigned_to || contactData.assigned_to || '');
 
   // Earnings
   if (document.getElementById('estimatedEarnings')) document.getElementById('estimatedEarnings').value = leadData.estimated_earnings || '';
@@ -4221,6 +4231,70 @@ function populateUI() {
     setVal('fi-start-date', estStart.toISOString().split('T')[0]);
   }
   calcDTI();
+
+  // Wire auto-save for lead info fields
+  wireLeadInfoAutoSave(contactId);
+}
+
+function wireLeadInfoAutoSave(cId) {
+  if (!cId) return;
+  const cfg = window.APP_CONFIG;
+  if (!cfg || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) return;
+
+  const fieldMap = [
+    { elId: 'f-source',   col: 'source' },
+    { elId: 'f-status',   col: 'pipeline_status' },
+    { elId: 'f-priority', col: 'temperature' },
+    { elId: 'f-score',    col: 'lead_score' },
+    { elId: 'f-assigned', col: 'assigned_to' },
+    { elId: 'referralPartnerSearch', col: 'referred_by' },
+  ];
+
+  fieldMap.forEach(({ elId, col }) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    // Avoid double-wiring
+    if (el._autoSaveWired) return;
+    el._autoSaveWired = true;
+
+    const saveField = async () => {
+      const val = el.value?.trim() || null;
+      try {
+        const res = await fetch(
+          `${cfg.SUPABASE_URL}/rest/v1/contacts?id=eq.${cId}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'apikey': cfg.SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ [col]: val })
+          }
+        );
+        if (res.ok) {
+          el.style.borderColor = '#27AE60';
+          setTimeout(() => el.style.borderColor = '', 1000);
+          if (typeof showToast === 'function') showToast('Saved', 'success');
+          // Sync score display if lead_score changed
+          if (col === 'lead_score') {
+            const scNum = document.getElementById('sc-num');
+            if (scNum) scNum.textContent = val || '0';
+          }
+        }
+      } catch(e) {
+        console.error('Auto-save failed:', e);
+      }
+    };
+
+    if (el.tagName === 'SELECT') {
+      el.addEventListener('change', saveField);
+    } else {
+      el.addEventListener('blur', saveField);
+      el.addEventListener('change', saveField);
+    }
+  });
 }
 
 /* ── NOTES ── */
@@ -5749,18 +5823,28 @@ async function logActivity(type, description) {
 }
 
 /* ── TAB SWITCHING ── */
-var _sidebarCollapsed = false;
+let _sidebarCollapsed = false;
+
 function toggleLeadSidebar() {
   _sidebarCollapsed = !_sidebarCollapsed;
-  var panel = document.getElementById('leadSidebar');
-  var btn = document.getElementById('sidebarToggleBtn');
-  if (!panel) return;
+  const panel = document.getElementById('leadLeftSidebar');
+  const btn   = document.getElementById('sidebarToggleBtn');
+  if (!panel) { console.warn('leadLeftSidebar not found'); return; }
+
   if (_sidebarCollapsed) {
-    panel.style.width = '0px'; panel.style.minWidth = '0px'; panel.style.overflow = 'hidden'; panel.style.paddingLeft = '0'; panel.style.paddingRight = '0'; panel.style.opacity = '0';
-    if (btn) { btn.textContent = '›'; btn.title = 'Expand sidebar'; }
+    panel._origWidth   = panel.offsetWidth;
+    panel._origPadding = panel.style.padding || window.getComputedStyle(panel).padding;
+    panel.style.width    = '0px';
+    panel.style.minWidth = '0px';
+    panel.style.padding  = '0';
+    panel.style.opacity  = '0';
+    if (btn) btn.textContent = '›';
   } else {
-    panel.style.width = ''; panel.style.minWidth = ''; panel.style.overflow = ''; panel.style.paddingLeft = ''; panel.style.paddingRight = ''; panel.style.opacity = '1';
-    if (btn) { btn.textContent = '‹'; btn.title = 'Collapse sidebar'; }
+    panel.style.width    = (panel._origWidth || 220) + 'px';
+    panel.style.minWidth = (panel._origWidth || 220) + 'px';
+    panel.style.padding  = panel._origPadding || '';
+    panel.style.opacity  = '1';
+    if (btn) btn.textContent = '‹';
   }
 }
 
