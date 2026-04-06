@@ -5360,49 +5360,12 @@ function openDocViewer(docId) {
   }
 }
 
-async function renderViewerPDF(url) {
-  if (!window.pdfjsLib) {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-    script.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; doRenderViewerPDF(url); };
-    document.head.appendChild(script);
-  } else { doRenderViewerPDF(url); }
-}
-
-async function doRenderViewerPDF(url) {
-  try {
-    // Try fetching with auth header first
-    let buffer;
-    try {
-      const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${window.APP_CONFIG?.SUPABASE_ANON_KEY || ''}` } });
-      if (resp.ok) { buffer = await resp.arrayBuffer(); }
-    } catch(e) {}
-    // Fallback: try without auth
-    if (!buffer) {
-      const resp2 = await fetch(url);
-      if (!resp2.ok) throw new Error('HTTP ' + resp2.status);
-      buffer = await resp2.arrayBuffer();
-    }
-    const pdf = await pdfjsLib.getDocument(new Uint8Array(buffer)).promise;
-    const body = document.getElementById('doc-viewer-body');
-    body.style.overflowY = 'auto';
-    body.style.padding = '16px';
-    body.innerHTML = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const vp = page.getViewport({ scale: 1.4 * _docViewerScale, rotation: _docViewerRotation });
-      const canvas = document.createElement('canvas');
-      canvas.width = vp.width; canvas.height = vp.height;
-      canvas.style.cssText = 'width:100%;display:block;margin-bottom:12px;border-radius:6px;image-rendering:crisp-edges;';
-      body.appendChild(canvas);
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-    }
-    // Add page count header
-    const pageInfo = document.createElement('div');
-    pageInfo.style.cssText = 'text-align:center;color:rgba(255,255,255,0.4);font-size:12px;padding:8px 0 16px;';
-    pageInfo.textContent = `${pdf.numPages} page${pdf.numPages>1?'s':''}`;
-    body.insertBefore(pageInfo, body.firstChild);
-  } catch(e) { document.getElementById('doc-viewer-body').innerHTML = '<div style="color:rgba(255,255,255,0.4);text-align:center;">Failed to render PDF</div>'; }
+function renderViewerPDF(url) {
+  var body = document.getElementById('doc-viewer-body');
+  if (!body) return;
+  body.style.overflowY = 'hidden';
+  body.style.padding = '0';
+  body.innerHTML = '<iframe src="' + url + '" style="width:100%;height:100%;border:none;background:#fff;border-radius:6px;" title="PDF Document"></iframe>';
 }
 
 let _docViewerScale = 1.0;
@@ -11503,29 +11466,7 @@ function handleOCRDrop(e) {
   if (file) previewOCRFile(file);
 }
 
-function renderPDFPreview(file) {
-  const reader = new FileReader();
-  reader.onload = async function(e) {
-    try {
-      const typedArray = new Uint8Array(e.target.result);
-      const pdf = await pdfjsLib.getDocument(typedArray).promise;
-      const totalPages = pdf.numPages;
-      const page = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 1.5 });
-      const canvas = document.getElementById('ocrPDFCanvas');
-      const ctx = canvas.getContext('2d');
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      const info = document.getElementById('ocrPDFPageInfo');
-      if (info) info.textContent = `Page 1 of ${totalPages} — ${(file.size/1024).toFixed(0)} KB PDF`;
-    } catch(err) {
-      console.error('PDF render error:', err);
-      document.getElementById('ocrPDFPreview').innerHTML = '<div style="font-size:48px;">📄</div><div style="color:rgba(255,255,255,0.5);font-size:13px;">Preview unavailable</div>';
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
+// renderPDFPreview removed — using native iframe instead
 
 function previewOCRFile(file) {
   if (!file) return;
@@ -11563,22 +11504,13 @@ function previewOCRFile(file) {
     reader.readAsDataURL(file);
   } else if (file.type === 'application/pdf') {
     document.getElementById('ocrPreviewImg').style.display = 'none';
-    let pdfContainer = document.getElementById('ocrPDFPreview');
+    var pdfContainer = document.getElementById('ocrPDFPreview');
     pdfContainer.style.display = 'block';
-    pdfContainer.innerHTML = '<canvas id="ocrPDFCanvas" style="width:100%;border-radius:8px;"></canvas><div id="ocrPDFPageInfo" style="text-align:center;color:rgba(255,255,255,0.4);font-size:12px;margin-top:6px;"></div>';
-
-    // Load PDF.js from CDN if not already loaded
-    if (!window.pdfjsLib) {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      script.onload = () => {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        renderPDFPreview(file);
-      };
-      document.head.appendChild(script);
-    } else {
-      renderPDFPreview(file);
-    }
+    var objectUrl = URL.createObjectURL(file);
+    pdfContainer.innerHTML =
+      '<iframe src="' + objectUrl + '" style="width:100%;height:280px;border:none;border-radius:8px;background:#fff;" title="PDF Preview"></iframe>' +
+      '<div style="text-align:center;color:rgba(255,255,255,0.4);font-size:11px;margin-top:6px;">' +
+      (file.size/1024).toFixed(0) + ' KB PDF</div>';
   } else {
     document.getElementById('ocrPreviewImg').style.display = 'none';
     const pdfPrev = document.getElementById('ocrPDFPreview');
