@@ -126,7 +126,7 @@ Deno.serve(async (req: Request) => {
           email_to: toEmail,
           email_from: 'rene@ratesandrealty.com',
           email_html: html,
-          email_cc: cc || null,
+          email_cc: ccForDb || null,
           status: result.sent ? 'sent' : 'failed',
           metadata: JSON.stringify({ message_id: result.message_id, error: result.error }),
           created_at: new Date().toISOString()
