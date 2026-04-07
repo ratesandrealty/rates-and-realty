@@ -216,7 +216,7 @@ function buildSearchUrl(alert: AlertRow & { borrower_id?: string }, listingKey?:
   params.set('alert_id', alert.id);
   if (alert.borrower_id) params.set('borrower_id', alert.borrower_id);
   if (listingKey) params.set('highlight', listingKey);
-  return `https://beta.ratesandrealty.com/public/search.html?${params.toString()}`;
+  return `https://beta.ratesandrealty.com/public/search-homes.html?${params.toString()}`;
 }
 
 // ── Build search criteria summary rows ────────────────────────
