@@ -4796,33 +4796,46 @@ async function loadChatConversation(sessionId, eventId) {
 
 /* ── COMMUNICATIONS ── */
 async function loadCommunications() {
-  if (!leadId) return;
+  const cid = contactId || leadId;
+  if (!cid) return;
   const el = document.getElementById('comms-timeline');
   try {
-    const { data } = await sb.from('communications')
-      .select('*')
-      .eq('lead_id', leadId)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    const comms = data || [];
+    const [smsRes, emailRes, callRes] = await Promise.all([
+      sb.from('sms_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50),
+      sb.from('email_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50),
+      sb.from('call_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50)
+    ]);
+    const smsList = (smsRes.data || []).map(r => ({ ...r, _type: 'sms' }));
+    const emailList = (emailRes.data || []).map(r => ({ ...r, _type: 'email' }));
+    const callList = (callRes.data || []).map(r => ({ ...r, _type: 'call' }));
+    const comms = [...smsList, ...emailList, ...callList]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 100);
     if (!comms.length) {
-      el.innerHTML = `<div class="ld-empty"><div class="ld-empty-icon">📞</div><h4>No communications yet</h4></div>`;
+      el.innerHTML = `<div class="ld-empty"><div class="ld-empty-icon">📞</div><h4>No communications yet</h4><p>Calls, emails, texts will appear here.</p></div>`;
       return;
     }
-    el.innerHTML = comms.map(c => `
-      <div class="tl-item">
-        <div class="tl-icon">${commIcon(c.type)}</div>
+    el.innerHTML = comms.map(c => {
+      const icon = c._type === 'sms' ? '📱' : c._type === 'email' ? '📧' : '📞';
+      const label = c._type === 'sms' ? 'SMS' : c._type === 'email' ? 'Email' : 'Call';
+      const dir = c.direction || 'outbound';
+      const body = esc(c._type === 'email' ? (c.subject || c.body || '') : (c.body || c.notes || ''));
+      const detail = c._type === 'call' && c.duration ? ` · ${c.duration}s` : '';
+      return `<div class="tl-item">
+        <div class="tl-icon">${icon}</div>
         <div class="tl-content">
           <div class="tl-title" style="display:flex;align-items:center;gap:8px;">
-            <span>${commTypeLabel(c.type)}</span>
-            <span class="tl-direction dir-${c.direction||'outbound'}">${c.direction||'outbound'}</span>
+            <span>${label}</span>
+            <span class="tl-direction dir-${dir}">${dir}${detail}</span>
           </div>
-          <div class="tl-desc">${esc(c.body || c.notes || '')}</div>
+          <div class="tl-desc">${body}</div>
           <div class="tl-meta">${fmtDateTime(c.created_at)}</div>
         </div>
-      </div>`).join('');
-  } catch (_) {
-    el.innerHTML = `<div class="ld-empty"><div class="ld-empty-icon">📞</div><p>No communications to show.</p></div>`;
+      </div>`;
+    }).join('');
+  } catch (err) {
+    console.warn('loadCommunications error:', err);
+    el.innerHTML = `<div class="ld-empty"><div class="ld-empty-icon">📞</div><p>Error loading communications.</p></div>`;
   }
 }
 
