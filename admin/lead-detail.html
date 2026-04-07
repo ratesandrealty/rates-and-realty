@@ -9484,10 +9484,33 @@ async function lsGenerate1003() {
     window._pdf1003BlobUrl = blobUrl;
     window._pdf1003FileName = '1003-' + nameStr.replace(/\s+/g,'-') + '.pdf';
 
-    const title = '1003 Application — ' + nameStr;
-    PDF._pdfBlobUrl = blobUrl;
-    PDF._htmlSource = null;
-    openPDFUrl(blobUrl, title, 'URLA Form 1003');
+    // Open in popup viewer
+    const popup = window.open('', '_blank', 'width=1000,height=800,scrollbars=yes,resizable=yes');
+    if (popup) {
+      popup.document.write(`<!DOCTYPE html>
+<html><head><title>1003 Application - ${esc(nameStr)}</title>
+<style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#404040;display:flex;flex-direction:column;height:100vh;}
+.toolbar{background:#323639;padding:10px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #555;}
+.toolbar button{background:#C9A84C;color:#111;border:none;padding:8px 18px;border-radius:6px;font-weight:700;cursor:pointer;font-size:14px;}
+.toolbar button:hover{background:#e8c96a;}
+h1{color:#eee;font-size:14px;font-family:sans-serif;}
+iframe{flex:1;width:100%;border:none;}</style></head>
+<body>
+<div class="toolbar">
+  <h1>📄 1003 Uniform Residential Loan Application — ${esc(nameStr)}</h1>
+  <button onclick="document.getElementById('pdfFrame').contentWindow.print()">🖨️ Print</button>
+  <button onclick="downloadPDF()">⬇️ Download PDF</button>
+</div>
+<iframe id="pdfFrame" src="${blobUrl}#toolbar=1&navpanes=0&view=FitH" type="application/pdf"></iframe>
+<script>function downloadPDF(){var a=document.createElement('a');a.href='${blobUrl}';a.download='1003-${nameStr.replace(/\s+/g,'-')}.pdf';a.click();}</script>
+</body></html>`);
+      popup.document.close();
+    } else {
+      // Fallback: direct download if popup blocked
+      const a = document.createElement('a');
+      a.href = blobUrl; a.download = '1003-' + nameStr.replace(/\s+/g,'-') + '.pdf';
+      a.click();
+    }
 
     // Revoke after 10 minutes to free memory
     setTimeout(() => URL.revokeObjectURL(blobUrl), 600000);
@@ -9614,7 +9637,6 @@ async function lsGeneratePreApproval() {
     if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
     // Open in in-page modal viewer (no new tab, no about:blank)
     openPDFViewer(data.html || '', 'Pre-Approval — ' + (payload.borrower_name || 'Borrower') + '.pdf', 'Pre-Approval Letter · ' + (payload.borrower_name || 'Borrower'));
-    PDF._htmlSource = data.html;
     showToast('Pre-Approval ready — click Print / Save PDF to export \u2713');
   } catch(e) {
     console.error('[pre-approval]', e);
