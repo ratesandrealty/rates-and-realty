@@ -111,7 +111,7 @@ function renderActiveTab() {
   switch (activeTab) {
     case "overview": renderOverview(); break;
     case "leads": renderLeadsTable(dashboardData.leads); break;
-    case "pipeline": renderKanban(dashboardData.leads); break;
+    case "pipeline": if (typeof window.loadPipelineBoard === 'function') window.loadPipelineBoard(); break;
     case "contacts": renderContacts(dashboardData.contacts); break;
     case "calendar": renderCalendar(); break;
     case "tasks": renderAllTasksTable(allTasks); break;

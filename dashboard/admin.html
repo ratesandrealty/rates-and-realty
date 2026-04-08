@@ -56,10 +56,10 @@
           <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><rect x="2" y="2" width="7" height="7" rx="1.5" fill="currentColor" opacity=".7"/><rect x="11" y="2" width="7" height="7" rx="1.5" fill="currentColor" opacity=".4"/><rect x="2" y="11" width="7" height="7" rx="1.5" fill="currentColor" opacity=".4"/><rect x="11" y="11" width="7" height="7" rx="1.5" fill="currentColor" opacity=".7"/></svg>
           Overview
         </button>
-        <a class="crm-nav-link" href="/admin/pipeline.html">
+        <button class="crm-nav-link" data-crm-nav="pipeline">
           <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><rect x="1" y="5" width="4" height="10" rx="1" fill="currentColor" opacity=".5"/><rect x="7" y="3" width="4" height="14" rx="1" fill="currentColor" opacity=".7"/><rect x="13" y="7" width="4" height="8" rx="1" fill="currentColor" opacity=".5"/></svg>
           Pipeline Board
-        </a>
+        </button>
         <a class="crm-nav-link" href="/admin/people.html">
           <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><circle cx="7" cy="7" r="3.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 17c0-2.761 2.686-5 6-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="14" cy="9" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M11 17c0-2.209 1.791-4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           People
@@ -330,12 +330,34 @@
 
       <!-- ── PIPELINE / KANBAN TAB ─────────────────── -->
       <section id="tab-pipeline" class="crm-tab-panel">
-        <div style="display:flex;align-items:center;justify-content:center;height:400px;flex-direction:column;gap:16px;">
-          <div style="font-size:48px;">📋</div>
-          <div style="color:#C9A84C;font-size:18px;font-weight:700;">Pipeline Board has moved</div>
-          <a href="/admin/pipeline.html" style="background:#C9A84C;color:#111;padding:12px 28px;border-radius:8px;font-weight:800;text-decoration:none;font-size:15px;">Open Pipeline Board →</a>
+        <div class="crm-page-header">
+          <div class="crm-page-title">
+            <p class="kicker" style="margin-bottom:4px;">Pipeline</p>
+            <h2>Pipeline Board</h2>
+          </div>
+          <div class="flex-gap">
+            <button class="btn btn-secondary btn-sm" id="pipeline-refresh-btn" onclick="loadPipelineBoard(true)">↺ Refresh</button>
+            <a class="btn btn-ghost btn-sm" href="/admin/pipeline.html">Open Full Board →</a>
+          </div>
+        </div>
+        <div id="pipeline-kanban" style="display:flex;gap:12px;overflow-x:auto;padding-bottom:16px;min-height:400px;">
+          <div style="color:var(--muted,#666);padding:40px;text-align:center;width:100%;">Loading pipeline...</div>
         </div>
       </section>
+      <style>
+        .pk-col{min-width:200px;max-width:240px;flex:1;background:var(--surface,rgba(255,255,255,0.03));border:1px solid var(--border,rgba(255,255,255,0.07));border-radius:12px;display:flex;flex-direction:column;max-height:calc(100vh - 180px);}
+        .pk-col-header{padding:12px 14px;border-bottom:1px solid var(--border,rgba(255,255,255,0.07));display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+        .pk-col-name{font-size:.82rem;font-weight:700;color:var(--text,#eee);}
+        .pk-col-count{background:rgba(201,168,76,0.12);color:var(--gold,#C9A84C);border-radius:10px;padding:2px 8px;font-size:.7rem;font-weight:700;}
+        .pk-cards{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:var(--gold,#C9A84C) transparent;}
+        .pk-card{background:var(--surface,rgba(255,255,255,0.04));border:1px solid var(--border,rgba(255,255,255,0.08));border-radius:10px;padding:12px 14px;cursor:pointer;transition:border-color .2s,transform .15s;}
+        .pk-card:hover{border-color:rgba(201,168,76,0.4);transform:translateY(-1px);}
+        .pk-card-name{font-size:.85rem;font-weight:700;color:#eee;margin-bottom:4px;}
+        .pk-card-loan{font-size:.78rem;color:var(--gold,#C9A84C);font-weight:600;margin-bottom:3px;}
+        .pk-card-badge{display:inline-block;background:rgba(201,168,76,0.1);color:var(--gold,#C9A84C);border-radius:6px;padding:1px 7px;font-size:.65rem;font-weight:600;margin-bottom:4px;}
+        .pk-card-meta{font-size:.72rem;color:rgba(255,255,255,0.35);line-height:1.5;}
+        .pk-empty{text-align:center;padding:20px 8px;color:rgba(255,255,255,0.2);font-size:.75rem;font-style:italic;}
+      </style>
 
       <!-- ── CONTACTS TAB ──────────────────────────── -->
       <section id="tab-contacts" class="crm-tab-panel">
@@ -1371,6 +1393,115 @@ async function loadShowingsWidget() {
 }
 // Load widget on page init
 document.addEventListener('DOMContentLoaded', loadShowingsWidget);
+</script>
+<script type="module">
+import { supabase } from "/api/supabase-client.js";
+
+const PK_STAGES = [
+  { key: 'New Lead', label: 'New Lead' },
+  { key: 'Contacted', label: 'Contacted' },
+  { key: 'Pre-Qualified', label: 'Pre-Qualified' },
+  { key: 'Pre-Approved', label: 'Pre-Approved' },
+  { key: 'Under Contract', label: 'Under Contract' },
+  { key: 'Processing', label: 'Processing' },
+  { key: 'Closed', label: 'Closed' },
+  { key: 'On Hold', label: 'On Hold' }
+];
+
+let _pipelineLoaded = false;
+
+window.loadPipelineBoard = async function(force) {
+  if (_pipelineLoaded && !force) return;
+  const board = document.getElementById('pipeline-kanban');
+  if (!board) return;
+
+  board.innerHTML = '<div style="color:var(--muted,#666);padding:40px;text-align:center;width:100%;">Loading pipeline...</div>';
+
+  try {
+    const { data: contacts, error } = await supabase
+      .from('contacts')
+      .select('id, first_name, last_name, email, phone, status, loan_amount, loan_type, source, created_at, last_activity_at')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Normalize status → stage mapping
+    function mapStatus(s) {
+      if (!s) return 'New Lead';
+      var lower = s.toLowerCase().replace(/[_-]/g, ' ').trim();
+      var map = {
+        'new': 'New Lead', 'new lead': 'New Lead',
+        'contacted': 'Contacted',
+        'pre qualified': 'Pre-Qualified', 'prequalified': 'Pre-Qualified',
+        'pre approved': 'Pre-Approved', 'preapproved': 'Pre-Approved',
+        'under contract': 'Under Contract', 'in escrow': 'Under Contract',
+        'processing': 'Processing', 'in process': 'Processing',
+        'closed': 'Closed',
+        'on hold': 'On Hold', 'lost': 'On Hold'
+      };
+      return map[lower] || 'New Lead';
+    }
+
+    // Group contacts by stage
+    var grouped = {};
+    PK_STAGES.forEach(function(st) { grouped[st.key] = []; });
+    (contacts || []).forEach(function(c) {
+      var stage = mapStatus(c.status);
+      if (grouped[stage]) grouped[stage].push(c);
+      else grouped['New Lead'].push(c);
+    });
+
+    function fmtCurrency(n) {
+      if (!n) return '';
+      return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    }
+
+    function daysSince(dateStr) {
+      if (!dateStr) return '';
+      var d = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+      return d === 0 ? 'Today' : d === 1 ? '1 day ago' : d + ' days ago';
+    }
+
+    function esc(s) { return (s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+
+    board.innerHTML = PK_STAGES.map(function(stage) {
+      var items = grouped[stage.key];
+      var cards = items.length ? items.map(function(c) {
+        var name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || 'Unknown';
+        var loanAmt = c.loan_amount ? fmtCurrency(c.loan_amount) : '';
+        var loanBadge = c.loan_type ? '<span class="pk-card-badge">' + esc(c.loan_type) + '</span>' : '';
+        var meta = [c.email, c.phone].filter(Boolean).map(esc).join(' &middot; ');
+        var age = daysSince(c.created_at);
+        return '<div class="pk-card" onclick="window.location.href=\'/admin/lead-detail.html?contact_id=' + c.id + '\'">'
+          + '<div class="pk-card-name">' + esc(name) + '</div>'
+          + (loanAmt ? '<div class="pk-card-loan">' + loanAmt + '</div>' : '')
+          + loanBadge
+          + (meta ? '<div class="pk-card-meta">' + meta + '</div>' : '')
+          + (age ? '<div class="pk-card-meta">' + age + '</div>' : '')
+          + '</div>';
+      }).join('') : '<div class="pk-empty">No contacts</div>';
+
+      return '<div class="pk-col">'
+        + '<div class="pk-col-header"><span class="pk-col-name">' + stage.label + '</span><span class="pk-col-count">' + items.length + '</span></div>'
+        + '<div class="pk-cards">' + cards + '</div>'
+        + '</div>';
+    }).join('');
+
+    _pipelineLoaded = true;
+  } catch(e) {
+    console.error('[pipeline-board]', e);
+    board.innerHTML = '<div style="color:#ef4444;padding:40px;text-align:center;width:100%;">Failed to load pipeline: ' + (e.message || 'Unknown error') + '</div>';
+  }
+};
+
+// Auto-load if hash is #pipeline on page load
+document.addEventListener('DOMContentLoaded', function() {
+  if (window.location.hash === '#pipeline') {
+    // navigateTo is called by admin-dashboard.js from hash, which triggers renderActiveTab → loadPipelineBoard
+    // But as a safety net, also try loading after a short delay
+    setTimeout(function() { window.loadPipelineBoard(); }, 500);
+  }
+});
 </script>
 </body>
 </html>
