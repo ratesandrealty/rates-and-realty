@@ -6470,32 +6470,54 @@ async function deleteContactAlert(alertId) {
   loadContactAlerts();
 }
 
-/* ═══ ALERT INLINE EDIT ═══ */
+/* ═══ ALERT EDIT MODAL ═══ */
+function closeAlertEditModal() {
+  var backdrop = document.getElementById('ae-modal-backdrop');
+  var modal = document.getElementById('ae-modal');
+  if (backdrop) backdrop.remove();
+  if (modal) modal.remove();
+}
+
 function openAlertEdit(alertId) {
   var alerts = window._cachedAlerts || [];
   var a = alerts.find(function(x){return x.id===alertId;});
   if (!a) return;
-  var slot = document.getElementById('alert-edit-'+alertId);
-  if (!slot) return;
-  if (slot.style.display === 'block') { slot.style.display = 'none'; slot.innerHTML = ''; return; }
+
+  // Remove any existing modal
+  closeAlertEditModal();
+
   // Build county options
   var countyOpts = ['Orange','Los Angeles','Riverside','San Bernardino','San Diego'].map(function(c){
-    var sel = (a.counties && a.counties[0]===c) ? ' selected' : '';
-    return '<option'+sel+'>'+c+'</option>';
+    var sel = (a.counties && a.counties.indexOf(c) !== -1) ? ' selected' : '';
+    return '<option value="'+c+'"'+sel+'>'+c+'</option>';
   }).join('');
   var currentCounty = (a.counties && a.counties[0]) || '';
   var cityList = COUNTY_CITIES[currentCounty] || [];
   var citySelected = new Set(a.cities||[]);
   var citiesHtml = cityList.length ? cityList.map(function(c){
     var ch = citySelected.has(c) ? ' checked' : '';
-    return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 0;font-size:.72rem;color:#aaa"><input type="checkbox" value="'+c.replace(/"/g,'&quot;')+'"'+ch+' style="accent-color:#C9A84C;margin:0">'+c+'</label>';
-  }).join('') : '<div style="grid-column:1/-1;color:#555;font-style:italic;font-size:.72rem">Select county to see cities</div>';
-  var freqs = ['Instant','Daily','Weekly'];
-  var freqHtml = freqs.map(function(f){
-    var ch = ((a.frequency||'Daily')===f) ? ' checked' : '';
-    return '<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin-right:12px;font-size:.76rem;color:#ccc"><input type="radio" name="ae-freq-'+alertId+'" value="'+f+'"'+ch+' style="accent-color:#C9A84C">'+f+'</label>';
-  }).join('');
+    return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 0;font-size:.78rem;color:#aaa"><input type="checkbox" value="'+c.replace(/"/g,'&amp;quot;')+'"'+ch+' style="accent-color:#C9A84C;margin:0">'+c+'</label>';
+  }).join('') : '<div style="grid-column:1/-1;color:#555;font-style:italic;font-size:.78rem">Select county to see cities</div>';
+
+  var freqVal = a.frequency || 'Daily';
   var bedsVal = a.min_beds || '', bathsVal = a.min_baths || '';
+
+  // Property types
+  var propTypes = ['Single Family','Condo','Townhouse','Multi-Family','Land'];
+  var currentPropTypes = new Set(a.property_types || []);
+  var propTypesHtml = propTypes.map(function(pt){
+    var ch = currentPropTypes.has(pt) ? ' checked' : '';
+    return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.8rem;color:#ccc;white-space:nowrap"><input type="checkbox" class="ae-proptype" value="'+pt+'"'+ch+' style="accent-color:#C9A84C;margin:0">'+pt+'</label>';
+  }).join('');
+
+  // Listing statuses
+  var statuses = ['Active','Coming Soon'];
+  var currentStatuses = new Set(a.listing_statuses || a.statuses || []);
+  var statusHtml = statuses.map(function(s){
+    var ch = currentStatuses.has(s) ? ' checked' : '';
+    return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.8rem;color:#ccc;white-space:nowrap"><input type="checkbox" class="ae-status" value="'+s+'"'+ch+' style="accent-color:#C9A84C;margin:0">'+s+'</label>';
+  }).join('');
+
   var pillRow = function(grp, vals, cur) {
     return vals.map(function(v){
       var label = v === '' ? 'Any' : v+'+';
@@ -6503,27 +6525,88 @@ function openAlertEdit(alertId) {
       return '<button type="button" class="ae-'+grp+'-pill" data-val="'+v+'" onclick="_aePick(this,\''+alertId+'\',\''+grp+'\')"'+active+'>'+label+'</button>';
     }).join('');
   };
-  slot.style.display = 'block';
-  slot.className = 'alert-edit-panel';
-  slot.innerHTML =
-    '<div style="font-size:.66rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:10px">Edit Alert</div>' +
-    '<div style="display:grid;gap:10px">' +
-      '<div><label class="slb-sub">Name</label><input id="ae-name-'+alertId+'" type="text" value="'+(a.name||'').replace(/"/g,'&quot;')+'" class="slb-input"></div>' +
-      '<div><label class="slb-sub">Frequency</label><div>'+freqHtml+'</div></div>' +
-      '<div style="display:grid;grid-template-columns:160px 1fr;gap:10px"><div><label class="slb-sub">County</label><select id="ae-county-'+alertId+'" onchange="_aeCountyChange(\''+alertId+'\')" class="slb-input" style="padding:7px 10px"><option value="">Any</option>'+countyOpts+'</select></div>' +
-      '<div><label class="slb-sub">Cities</label><div id="ae-cities-'+alertId+'" style="display:grid;grid-template-columns:repeat(3,1fr);gap:2px 10px;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:8px;padding:8px 10px;max-height:110px;overflow-y:auto">'+citiesHtml+'</div></div></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label class="slb-sub">Min Price</label><input id="ae-min-price-'+alertId+'" type="number" value="'+(a.min_price||'')+'" class="slb-input"></div><div><label class="slb-sub">Max Price</label><input id="ae-max-price-'+alertId+'" type="number" value="'+(a.max_price||'')+'" class="slb-input"></div></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label class="slb-sub">Min Beds</label><div id="ae-beds-'+alertId+'" style="display:flex;gap:4px;flex-wrap:wrap">'+pillRow('beds',['','1','2','3','4','5'],bedsVal)+'</div></div>' +
-      '<div><label class="slb-sub">Min Baths</label><div id="ae-baths-'+alertId+'" style="display:flex;gap:4px;flex-wrap:wrap">'+pillRow('baths',['','1','2','3'],bathsVal)+'</div></div></div>' +
-      '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:.76rem;color:#ccc"><label style="cursor:pointer"><input type="checkbox" id="ae-pool-'+alertId+'"'+(a.has_pool?' checked':'')+' style="margin-right:6px;accent-color:#C9A84C">Pool</label>' +
-      '<label style="cursor:pointer"><input type="checkbox" id="ae-new-'+alertId+'"'+(a.new_construction_only?' checked':'')+' style="margin-right:6px;accent-color:#C9A84C">New Construction</label>' +
-      '<label style="cursor:pointer"><input type="checkbox" id="ae-open-'+alertId+'"'+(a.open_houses_only?' checked':'')+' style="margin-right:6px;accent-color:#C9A84C">Open Houses</label></div>' +
-      '<div style="display:flex;gap:8px;margin-top:6px"><button type="button" onclick="saveAlertEdit(\''+alertId+'\')" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:.76rem;cursor:pointer;font-family:inherit">Save Changes</button>' +
-      '<button type="button" onclick="openAlertEdit(\''+alertId+'\')" style="background:transparent;border:1px solid #333;color:#888;border-radius:8px;padding:8px 14px;font-size:.76rem;cursor:pointer;font-family:inherit">Cancel</button></div>' +
+
+  // Build modal
+  var backdrop = document.createElement('div');
+  backdrop.id = 'ae-modal-backdrop';
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9998';
+  backdrop.onclick = closeAlertEditModal;
+
+  var modal = document.createElement('div');
+  modal.id = 'ae-modal';
+  modal.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:860px;max-width:95vw;max-height:90vh;overflow-y:auto;background:#141414;border:1px solid #2a2a2a;border-radius:14px;padding:28px 32px;z-index:9999;box-shadow:0 24px 80px rgba(0,0,0,0.8);scrollbar-width:thin;scrollbar-color:#C9A84C #1a1a1a';
+  modal.onclick = function(e){ e.stopPropagation(); };
+
+  var alertName = (a.name||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  modal.innerHTML =
+    /* Header */
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid #2a2a2a">' +
+      '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-bell" style="color:#C9A84C;font-size:1.1rem"></i><span style="font-size:1.15rem;font-weight:700;color:#eee">Edit Alert</span></div>' +
+      '<button onclick="closeAlertEditModal()" style="background:none;border:none;color:#666;font-size:1.4rem;cursor:pointer;padding:4px 8px;line-height:1" title="Close">&times;</button>' +
+    '</div>' +
+
+    /* Body — 2-column grid */
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px 24px">' +
+
+      /* Alert Name — full width */
+      '<div style="grid-column:1/-1"><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Alert Name</label><input id="ae-name-'+alertId+'" type="text" value="'+alertName+'" class="slb-input" style="width:100%;padding:10px 14px;font-size:.88rem"></div>' +
+
+      /* Frequency — dropdown */
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Frequency</label>' +
+        '<select id="ae-freq-'+alertId+'" class="slb-input" style="width:100%;padding:10px 14px">' +
+          '<option value="Daily"'+(freqVal==='Daily'?' selected':'')+'>Daily</option>' +
+          '<option value="Instant"'+(freqVal==='Instant'?' selected':'')+'>Instant</option>' +
+          '<option value="Weekly"'+(freqVal==='Weekly'?' selected':'')+'>Weekly</option>' +
+        '</select></div>' +
+
+      /* Counties */
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Counties</label>' +
+        '<select id="ae-county-'+alertId+'" onchange="_aeCountyChange(\''+alertId+'\')" class="slb-input" style="width:100%;padding:10px 14px"><option value="">Any</option>'+countyOpts+'</select></div>' +
+
+      /* Cities — full width */
+      '<div style="grid-column:1/-1"><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Cities</label>' +
+        '<div id="ae-cities-'+alertId+'" style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px 12px;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:12px 14px;max-height:150px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#C9A84C #1a1a1a">'+citiesHtml+'</div></div>' +
+
+      /* Min Price / Max Price */
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Min Price</label><input id="ae-min-price-'+alertId+'" type="number" value="'+(a.min_price||'')+'" placeholder="No min" class="slb-input" style="width:100%;padding:10px 14px"></div>' +
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Max Price</label><input id="ae-max-price-'+alertId+'" type="number" value="'+(a.max_price||'')+'" placeholder="No max" class="slb-input" style="width:100%;padding:10px 14px"></div>' +
+
+      /* Min Beds / Min Baths */
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Min Beds</label><div id="ae-beds-'+alertId+'" style="display:flex;gap:5px;flex-wrap:wrap">'+pillRow('beds',['','1','2','3','4','5'],bedsVal)+'</div></div>' +
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Min Baths</label><div id="ae-baths-'+alertId+'" style="display:flex;gap:5px;flex-wrap:wrap">'+pillRow('baths',['','1','2','3'],bathsVal)+'</div></div>' +
+
+      /* Property Types — full width */
+      '<div style="grid-column:1/-1"><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Property Types</label>' +
+        '<div style="display:flex;gap:16px;flex-wrap:wrap">'+propTypesHtml+'</div></div>' +
+
+      /* Listing Statuses — full width */
+      '<div style="grid-column:1/-1"><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Listing Statuses</label>' +
+        '<div style="display:flex;gap:16px;flex-wrap:wrap">'+statusHtml+'</div></div>' +
+
+      /* Min Sqft / Max Sqft */
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Min Sqft</label><input id="ae-min-sqft-'+alertId+'" type="number" value="'+(a.min_sqft||'')+'" placeholder="No min" class="slb-input" style="width:100%;padding:10px 14px"></div>' +
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Max Sqft</label><input id="ae-max-sqft-'+alertId+'" type="number" value="'+(a.max_sqft||'')+'" placeholder="No max" class="slb-input" style="width:100%;padding:10px 14px"></div>' +
+
+      /* Has Pool / Max HOA */
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Pool</label>' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.82rem;color:#ccc;margin-top:4px"><input type="checkbox" id="ae-pool-'+alertId+'"'+(a.has_pool?' checked':'')+' style="accent-color:#C9A84C;width:18px;height:18px">Has Pool</label></div>' +
+      '<div><label class="slb-sub" style="font-size:.72rem;margin-bottom:5px;display:block">Max HOA ($/mo)</label><input id="ae-max-hoa-'+alertId+'" type="number" value="'+(a.max_hoa||'')+'" placeholder="No max" class="slb-input" style="width:100%;padding:10px 14px"></div>' +
+
+    '</div>' +
+
+    /* Footer */
+    '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px;padding-top:18px;border-top:1px solid #2a2a2a">' +
+      '<button type="button" onclick="closeAlertEditModal()" style="background:#2a2a2a;color:#999;border:none;border-radius:8px;padding:10px 22px;font-size:.82rem;font-weight:600;cursor:pointer;font-family:inherit">Cancel</button>' +
+      '<button type="button" onclick="saveAlertEdit(\''+alertId+'\')" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:10px 22px;font-size:.82rem;font-weight:700;cursor:pointer;font-family:inherit">Save Changes</button>' +
     '</div>';
-  // Cache edit state container
+
+  document.body.appendChild(backdrop);
+  document.body.appendChild(modal);
+
+  // Cache edit state
   if (!window._aeState) window._aeState = {};
   window._aeState[alertId] = { beds: bedsVal, baths: bathsVal };
+  window._aeCurrentAlertId = alertId;
 }
 
 function _aePick(btn, alertId, grp) {
@@ -6546,15 +6629,16 @@ function _aeCountyChange(alertId) {
 }
 
 async function saveAlertEdit(alertId) {
-  var g = function(id){ return document.getElementById(id).value; };
-  var c = function(id){ return document.getElementById(id).checked; };
+  var g = function(id){ var el = document.getElementById(id); return el ? el.value : ''; };
+  var c = function(id){ var el = document.getElementById(id); return el ? el.checked : false; };
   var state = (window._aeState||{})[alertId] || {};
   var county = g('ae-county-'+alertId);
   var cities = Array.from(document.querySelectorAll('#ae-cities-'+alertId+' input[type="checkbox"]:checked')).map(function(cb){return cb.value;});
-  var freqEl = document.querySelector('input[name="ae-freq-'+alertId+'"]:checked');
+  var propTypes = Array.from(document.querySelectorAll('#ae-modal .ae-proptype:checked')).map(function(cb){return cb.value;});
+  var listingStatuses = Array.from(document.querySelectorAll('#ae-modal .ae-status:checked')).map(function(cb){return cb.value;});
   var updates = {
     name: g('ae-name-'+alertId),
-    frequency: freqEl ? freqEl.value : 'Daily',
+    frequency: g('ae-freq-'+alertId) || 'Daily',
     counties: county ? [county] : [],
     county: county || null,
     cities: cities,
@@ -6562,9 +6646,12 @@ async function saveAlertEdit(alertId) {
     max_price: g('ae-max-price-'+alertId) ? Number(g('ae-max-price-'+alertId)) : null,
     min_beds: state.beds ? Number(state.beds) : null,
     min_baths: state.baths ? Number(state.baths) : null,
+    property_types: propTypes.length ? propTypes : null,
+    listing_statuses: listingStatuses.length ? listingStatuses : null,
+    min_sqft: g('ae-min-sqft-'+alertId) ? Number(g('ae-min-sqft-'+alertId)) : null,
+    max_sqft: g('ae-max-sqft-'+alertId) ? Number(g('ae-max-sqft-'+alertId)) : null,
     has_pool: c('ae-pool-'+alertId),
-    new_construction_only: c('ae-new-'+alertId),
-    open_houses_only: c('ae-open-'+alertId),
+    max_hoa: g('ae-max-hoa-'+alertId) ? Number(g('ae-max-hoa-'+alertId)) : null,
     updated_at: new Date().toISOString()
   };
   try {
@@ -6573,6 +6660,7 @@ async function saveAlertEdit(alertId) {
       body: JSON.stringify({ action:'update_alert', alert_id: alertId, updates: updates })
     });
     if (!res.ok) { var txt = await res.text(); console.error('[alert-edit] save HTTP', res.status, txt); showToast('Save failed: ' + res.status); return; }
+    closeAlertEditModal();
     showToast('Alert updated \u2713');
     // Notify borrower via SMS if phone on file
     var phone = (contactData && (contactData.phone || contactData.secondary_phone) || '').replace(/\D/g,'');
