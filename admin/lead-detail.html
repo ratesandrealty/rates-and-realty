@@ -9735,9 +9735,18 @@ async function lsGeneratePreApproval() {
       body: JSON.stringify(payload)
     });
     var data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-    // Open in Adobe Acrobat Embed viewer
-    openAdobePdfViewer(data.pdf, 'Pre-Approval — ' + (payload.borrower_name || 'Borrower') + '.pdf');
+    if (!data.success || !data.html) throw new Error(data.error || 'Generation failed');
+    var contactName = payload.borrower_name || 'Borrower';
+    var blob = new Blob([data.html], { type: 'text/html' });
+    var blobUrl = URL.createObjectURL(blob);
+    var popup = window.open(blobUrl, '_blank', 'width=1000,height=850,scrollbars=yes,resizable=yes');
+    if (!popup) {
+      var a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = 'Pre-Approval-' + contactName + '.html';
+      a.click();
+    }
+    setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 600000);
     showToast('Pre-Approval ready ✓');
   } catch(e) {
     console.error('[pre-approval]', e);
