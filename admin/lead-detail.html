@@ -9678,8 +9678,12 @@ function lsCalcTaxFromPct() {
 // Pre-approval letter generator
 async function lsGeneratePreApproval() {
   var btn = document.getElementById('lsPreApprovalBtn');
-  var origTxt = btn.textContent; btn.textContent = '⏳ Generating...'; btn.disabled = true;
+  var origTxt = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating\u2026'; }
   try {
+    showToast('Generating Pre-Approval PDF\u2026');
+
+    // Collect loan summary fields
     var loanAmount = _lsNum('ls_loan_amount'), value = _lsNum('ls_appraised_value'),
         rate = _lsNum('ls_interest_rate'), term = _lsNum('ls_loan_term_months')||360,
         taxes = _lsNum('ls_property_taxes_monthly'), ins = _lsNum('ls_insurance_monthly'),
@@ -9734,57 +9738,66 @@ async function lsGeneratePreApproval() {
       method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
       body: JSON.stringify(payload)
     });
-    var data = await res.json();
-    if (!data.success || !data.html) throw new Error(data.error || 'Generation failed');
-    var contactName = payload.borrower_name || 'Borrower';
-    var blob = new Blob([data.html], { type: 'text/html' });
+
+    var result = await res.json();
+    if (!result.success || !result.pdf) throw new Error(result.error || 'PDF generation failed');
+
+    // Decode base64 PDF → blob
+    var byteChars = atob(result.pdf);
+    var byteArray = new Uint8Array(byteChars.length);
+    for (var i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+    var blob = new Blob([byteArray], { type: 'application/pdf' });
     var blobUrl = URL.createObjectURL(blob);
-    var popup = window.open('', '_blank', 'width=1050,height=900,scrollbars=no,resizable=yes');
-    if (!popup) { showToast('Allow popups for this site', true); return; }
-    var safeName = contactName.replace(/[^a-z0-9]/gi, '-');
+
+    var contactName = payload.borrower_name || 'Borrower';
+    var fileName = 'Pre-Approval \u2014 ' + contactName + '.pdf';
+
+    // Open PDF viewer popup with toolbar
+    var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
+    if (!popup) {
+      // Fallback: direct download
+      var a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fileName;
+      a.click();
+      showToast('Pre-Approval PDF downloaded \u2713');
+      return;
+    }
+
     popup.document.write(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Pre-Approval — ${contactName}</title>
+  <title>${fileName}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; background: #1a1a1a; font-family: -apple-system, sans-serif; display: flex; flex-direction: column; }
+    html, body { height: 100%; background: #404040; font-family: sans-serif; display: flex; flex-direction: column; }
     .toolbar { background: #111; border-bottom: 2px solid #C9A84C; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-    .toolbar-left { display: flex; align-items: center; gap: 12px; }
-    .toolbar-title { color: #C9A84C; font-weight: 700; font-size: 14px; }
-    .toolbar-sub { color: #888; font-size: 12px; }
-    .toolbar-right { display: flex; gap: 10px; }
+    .title { color: #C9A84C; font-weight: 700; font-size: 14px; }
+    .sub { color: #888; font-size: 12px; margin-top: 2px; }
+    .btns { display: flex; gap: 10px; }
     .btn { padding: 8px 18px; border-radius: 6px; border: none; font-weight: 700; font-size: 13px; cursor: pointer; }
     .btn-print { background: #2a2a2a; color: #eee; border: 1px solid #444; }
-    .btn-print:hover { background: #333; }
-    .btn-download { background: #C9A84C; color: #111; }
-    .btn-download:hover { background: #e8c96a; }
+    .btn-dl { background: #C9A84C; color: #111; }
     .btn-close { background: transparent; color: #888; border: 1px solid #444; }
-    .btn-close:hover { color: #eee; border-color: #666; }
-    iframe { flex: 1; border: none; width: 100%; background: #f7f5f0; }
+    iframe { flex: 1; border: none; width: 100%; }
   </style>
 </head>
 <body>
   <div class="toolbar">
-    <div class="toolbar-left">
-      <div>
-        <div class="toolbar-title">\uD83D\uDCC4 Pre-Approval Letter</div>
-        <div class="toolbar-sub">${contactName} — ${new Date().toLocaleDateString()}</div>
-      </div>
-    </div>
-    <div class="toolbar-right">
+    <div><div class="title">\uD83D\uDCC4 Pre-Approval Letter \u2014 ${contactName}</div><div class="sub">${new Date().toLocaleDateString()}</div></div>
+    <div class="btns">
       <button class="btn btn-print" onclick="document.getElementById('pf').contentWindow.print()">\uD83D\uDDA8\uFE0F Print</button>
-      <button class="btn btn-download" onclick="downloadDoc()">\u2B07\uFE0F Download</button>
+      <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download PDF</button>
       <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
     </div>
   </div>
-  <iframe id="pf" src="${blobUrl}"></iframe>
+  <iframe id="pf" src="${blobUrl}" type="application/pdf"></iframe>
   <script>
-    function downloadDoc() {
+    function dl() {
       var a = document.createElement('a');
       a.href = '${blobUrl}';
-      a.download = 'Pre-Approval-${safeName}.html';
+      a.download = '${fileName}';
       a.click();
     }
   <\/script>
@@ -9792,12 +9805,14 @@ async function lsGeneratePreApproval() {
 </html>`);
     popup.document.close();
     setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 600000);
-    showToast('Pre-Approval ready ✓');
+    showToast('Pre-Approval PDF ready \u2713');
+
   } catch(e) {
-    console.error('[pre-approval]', e);
-    showToast('Generation failed: ' + e.message);
+    console.error('[PreApproval]', e);
+    showToast('Generation failed: ' + e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origTxt; }
   }
-  btn.textContent = origTxt; btn.disabled = false;
 }
 
 async function initLoanSummary() {
