@@ -9406,6 +9406,59 @@ function _lsAutoSave(updates) {
   }, 800);
 }
 
+// ── Adobe Acrobat Embed PDF Viewer (shared) ──
+function openAdobePdfViewer(base64Pdf, fileName) {
+  const byteChars = atob(base64Pdf);
+  const byteArray = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([byteArray], { type: 'application/pdf' });
+  const blobUrl = URL.createObjectURL(blob);
+
+  const popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
+  if (!popup) { alert('Please allow popups for this site'); return; }
+
+  popup.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${fileName}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #404040; font-family: sans-serif; }
+    #adobe-dc-view { width: 100%; height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="adobe-dc-view"></div>
+  <script src="https://acrobatservices.adobe.com/view-sdk/viewer.js"><\/script>
+  <script>
+    document.addEventListener("adobe_dc_view_sdk.ready", function() {
+      var adobeDCView = new AdobeDC.View({
+        clientId: "3215e43eb6224c5cb510503632f40fca",
+        divId: "adobe-dc-view"
+      });
+      adobeDCView.previewFile({
+        content: { location: { url: "${blobUrl}" } },
+        metaData: { fileName: "${fileName}" }
+      }, {
+        embedMode: "FULL_WINDOW",
+        defaultViewMode: "FIT_PAGE",
+        showAnnotationTools: true,
+        showLeftHandPanel: true,
+        showPageControls: true,
+        showDownloadPDF: true,
+        showPrintPDF: true
+      });
+    });
+  <\/script>
+</body>
+</html>`);
+  popup.document.close();
+
+  // Revoke blob after 10 minutes
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 600000);
+}
+
 // Generate standard URLA 1003 PDF via generate-preapproval?action=1003_pdf
 async function lsGenerate1003() {
   var btn = document.getElementById('ls1003PdfBtn');
@@ -9472,48 +9525,8 @@ async function lsGenerate1003() {
       return;
     }
 
-    // Convert base64 → Uint8Array → Blob → URL
-    const binary = atob(data.pdf);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'application/pdf' });
-    const blobUrl = URL.createObjectURL(blob);
-
-    // Store globals for download button
-    window._currentBorrowerName = nameStr;
-    window._pdf1003BlobUrl = blobUrl;
-    window._pdf1003FileName = '1003-' + nameStr.replace(/\s+/g,'-') + '.pdf';
-
-    // Open in popup viewer
-    const popup = window.open('', '_blank', 'width=1000,height=800,scrollbars=yes,resizable=yes');
-    if (popup) {
-      popup.document.write(`<!DOCTYPE html>
-<html><head><title>1003 Application - ${esc(nameStr)}</title>
-<style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#404040;display:flex;flex-direction:column;height:100vh;}
-.toolbar{background:#323639;padding:10px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #555;}
-.toolbar button{background:#C9A84C;color:#111;border:none;padding:8px 18px;border-radius:6px;font-weight:700;cursor:pointer;font-size:14px;}
-.toolbar button:hover{background:#e8c96a;}
-h1{color:#eee;font-size:14px;font-family:sans-serif;}
-iframe{flex:1;width:100%;border:none;}</style></head>
-<body>
-<div class="toolbar">
-  <h1>📄 1003 Uniform Residential Loan Application — ${esc(nameStr)}</h1>
-  <button onclick="document.getElementById('pdfFrame').contentWindow.print()">🖨️ Print</button>
-  <button onclick="downloadPDF()">⬇️ Download PDF</button>
-</div>
-<iframe id="pdfFrame" src="${blobUrl}#toolbar=1&navpanes=0&view=FitH" type="application/pdf"></iframe>
-<script>function downloadPDF(){var a=document.createElement('a');a.href='${blobUrl}';a.download='1003-${nameStr.replace(/\s+/g,'-')}.pdf';a.click();}<\/script>
-</body></html>`);
-      popup.document.close();
-    } else {
-      // Fallback: direct download if popup blocked
-      const a = document.createElement('a');
-      a.href = blobUrl; a.download = '1003-' + nameStr.replace(/\s+/g,'-') + '.pdf';
-      a.click();
-    }
-
-    // Revoke after 10 minutes to free memory
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 600000);
+    // Open in Adobe Acrobat Embed viewer
+    openAdobePdfViewer(data.pdf, '1003_Application — ' + (nameStr || 'Borrower') + '.pdf');
     showToast('1003 ready \u2713');
   } catch(e) {
     console.error('[1003]', e);
@@ -9635,9 +9648,9 @@ async function lsGeneratePreApproval() {
     });
     var data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-    // Open in in-page modal viewer (no new tab, no about:blank)
-    openPDFViewer(data.html || '', 'Pre-Approval — ' + (payload.borrower_name || 'Borrower') + '.pdf', 'Pre-Approval Letter · ' + (payload.borrower_name || 'Borrower'));
-    showToast('Pre-Approval ready — click Print / Save PDF to export \u2713');
+    // Open in Adobe Acrobat Embed viewer
+    openAdobePdfViewer(data.pdf, 'Pre-Approval — ' + (payload.borrower_name || 'Borrower') + '.pdf');
+    showToast('Pre-Approval ready ✓');
   } catch(e) {
     console.error('[pre-approval]', e);
     showToast('Generation failed: ' + e.message);
