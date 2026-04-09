@@ -357,6 +357,9 @@
         .pk-card-badge{display:inline-block;background:rgba(201,168,76,0.1);color:var(--gold,#C9A84C);border-radius:6px;padding:1px 7px;font-size:.65rem;font-weight:600;margin-bottom:4px;}
         .pk-card-meta{font-size:.72rem;color:rgba(255,255,255,0.35);line-height:1.5;}
         .pk-empty{text-align:center;padding:20px 8px;color:rgba(255,255,255,0.2);font-size:.75rem;font-style:italic;}
+        .pipeline-column-body.drag-over{background:rgba(201,168,76,0.08);border:1px dashed rgba(201,168,76,0.5);border-radius:8px;}
+        .pipeline-card{cursor:grab;}
+        .pipeline-card:active{cursor:grabbing;}
       </style>
 
       <!-- ── CONTACTS TAB ──────────────────────────── -->
@@ -1396,6 +1399,7 @@ document.addEventListener('DOMContentLoaded', loadShowingsWidget);
 </script>
 <script type="module">
 import { supabase } from "/api/supabase-client.js";
+window._pipelineSupabase = supabase;
 
 const PK_STAGES = [
   { key: 'New Lead', label: 'New Lead' },
@@ -1475,7 +1479,8 @@ window.loadPipelineBoard = async function(force) {
         var temp = c.lead_temperature || c.temperature || '';
         var tempColors = { 'hot': '#ef4444', 'warm': '#f59e0b', 'cold': '#3b82f6' };
         var tempBadge = temp ? '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:' + (tempColors[temp.toLowerCase()] || '#666') + '22;color:' + (tempColors[temp.toLowerCase()] || '#666') + ';">' + esc(temp) + '</span>' : '';
-        return '<div class="pk-card" onclick="window.location.href=\'/admin/lead-detail.html?contact_id=' + c.id + '\'">'
+        var mappedStage = mapStatus(c.pipeline_status);
+        return '<div class="pk-card pipeline-card" draggable="true" data-contact-id="' + c.id + '" data-current-stage="' + esc(mappedStage) + '" onclick="if(!window._pipelineDragging)window.location.href=\'/admin/lead-detail.html?contact_id=' + c.id + '\'">'
           + '<div class="pk-card-name">' + esc(name) + '</div>'
           + (loanAmt ? '<div class="pk-card-loan">' + loanAmt + '</div>' : '')
           + loanBadge
@@ -1485,9 +1490,9 @@ window.loadPipelineBoard = async function(force) {
           + '</div>';
       }).join('') : '<div class="pk-empty">No contacts</div>';
 
-      return '<div class="pk-col">'
-        + '<div class="pk-col-header"><span class="pk-col-name">' + stage.label + '</span><span class="pk-col-count">' + items.length + '</span></div>'
-        + '<div class="pk-cards">' + cards + '</div>'
+      return '<div class="pk-col pipeline-column">'
+        + '<div class="pk-col-header"><span class="pk-col-name">' + stage.label + '</span><span class="pk-col-count pipeline-col-count">' + items.length + '</span></div>'
+        + '<div class="pk-cards pipeline-column-body" data-stage="' + esc(stage.key) + '" ondragover="event.preventDefault();this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')" ondrop="handlePipelineDrop(event,\'' + stage.key.replace(/'/g, "\\'") + '\')">' + cards + '</div>'
         + '</div>';
     }).join('');
 
@@ -1506,6 +1511,73 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(function() { window.loadPipelineBoard(); }, 500);
   }
 });
+</script>
+<script>
+// Pipeline drag and drop
+var draggedContactId = null;
+var draggedCurrentStage = null;
+window._pipelineDragging = false;
+
+document.addEventListener('dragstart', function(e) {
+  var card = e.target.closest('.pipeline-card');
+  if (!card) return;
+  window._pipelineDragging = true;
+  draggedContactId = card.dataset.contactId;
+  draggedCurrentStage = card.dataset.currentStage;
+  card.style.opacity = '0.5';
+  e.dataTransfer.effectAllowed = 'move';
+});
+
+document.addEventListener('dragend', function(e) {
+  var card = e.target.closest('.pipeline-card');
+  if (card) card.style.opacity = '1';
+  document.querySelectorAll('.pipeline-column-body').forEach(function(col) { col.classList.remove('drag-over'); });
+  setTimeout(function() { window._pipelineDragging = false; }, 50);
+});
+
+async function handlePipelineDrop(event, newStage) {
+  event.preventDefault();
+  var col = event.currentTarget;
+  col.classList.remove('drag-over');
+
+  if (!draggedContactId || draggedCurrentStage === newStage) return;
+
+  try {
+    var supabase = window._pipelineSupabase;
+    var resp = await supabase
+      .from('contacts')
+      .update({ pipeline_status: newStage, updated_at: new Date().toISOString() })
+      .eq('id', draggedContactId);
+    if (resp.error) throw resp.error;
+
+    // Move card in DOM immediately without full reload
+    var card = document.querySelector('.pipeline-card[data-contact-id="' + draggedContactId + '"]');
+    if (card) {
+      card.dataset.currentStage = newStage;
+      col.appendChild(card);
+    }
+
+    // Update column counts
+    updatePipelineCounts();
+
+    console.log('Moved contact ' + draggedContactId + ' from ' + draggedCurrentStage + ' to ' + newStage);
+  } catch(e) {
+    console.error('Pipeline drop error:', e);
+    if (typeof showToast === 'function') showToast('Failed to update pipeline stage', true);
+  }
+
+  draggedContactId = null;
+  draggedCurrentStage = null;
+}
+
+function updatePipelineCounts() {
+  document.querySelectorAll('.pipeline-column-body').forEach(function(col) {
+    var count = col.querySelectorAll('.pipeline-card').length;
+    var header = col.closest('.pipeline-column');
+    var countEl = header ? header.querySelector('.pipeline-col-count') : null;
+    if (countEl) countEl.textContent = count;
+  });
+}
 </script>
 </body>
 </html>
