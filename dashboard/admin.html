@@ -178,7 +178,7 @@
           <div class="drag-handle" title="Drag to reorder">⠿</div>
           <div class="crm-section-title">
             <div><p class="kicker">Pipeline</p><h3 style="margin:0;font-size:1.1rem;">Lead Stages</h3></div>
-            <a class="btn btn-ghost btn-sm" href="/admin/pipeline.html">View Board →</a>
+            <a class="btn btn-ghost btn-sm" href="#pipeline" onclick="event.preventDefault();navigateTo('pipeline');">View Board →</a>
           </div>
           <div id="lead-pipeline" class="pipeline-grid"></div>
         </div>
@@ -1227,29 +1227,45 @@ async function loadDealsTable() {
   const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
   const tbody = document.getElementById('dealsTableBody');
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/leads?select=id,contact_id,loan_type,loan_amount,actual_earnings,estimated_earnings,deal_outcome,closed_date,lost_reason,created_at,contacts(first_name,last_name)&deal_outcome=eq.${_dealsTab}&order=closed_date.desc&limit=10`, {
-      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
-    });
-    const deals = await res.json();
-    if (!deals.length) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">No ${_dealsTab} deals yet</td></tr>`; return; }
-    tbody.innerHTML = deals.map(d => {
-      const c = d.contacts;
-      const name = c ? `${c.first_name||''} ${c.last_name||''}`.trim() : 'Unknown';
-      const earn = _dealsTab === 'won' ? (d.actual_earnings||0) : (d.estimated_earnings||0);
-      const earnColor = _dealsTab === 'won' ? '#50c878' : '#f87171';
-      const earnPrefix = _dealsTab === 'won' ? '+$' : '$';
-      const dateStr = d.closed_date ? new Date(d.closed_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
-      const badge = _dealsTab === 'won'
-        ? '<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(80,200,120,0.12);color:#50c878;">Won</span>'
-        : '<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(248,113,113,0.12);color:#f87171;">Lost</span>';
-      return `<tr onclick="window.location.href='/admin/lead-detail.html?contact_id=${d.contact_id}'" style="cursor:pointer;">
-        <td style="font-weight:600;">${name}</td>
-        <td style="color:rgba(255,255,255,0.5);font-size:11px;">${d.loan_type||'—'}</td>
-        <td style="color:rgba(255,255,255,0.4);font-size:11px;">${dateStr}</td>
-        <td style="font-weight:700;color:${earnColor};">${earnPrefix}${earn.toLocaleString()}</td>
-        <td>${badge}</td>
-      </tr>`;
-    }).join('');
+    if (_dealsTab === 'won') {
+      const res = await fetch(`${SB_URL}/rest/v1/closed_deals?select=*,contacts(first_name,last_name,loan_type)&order=close_date.desc&limit=20`, {
+        headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+      });
+      const wonDeals = await res.json();
+      if (!wonDeals.length) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">No won deals yet</td></tr>`; return; }
+      tbody.innerHTML = wonDeals.map(d => {
+        const c = d.contacts;
+        const name = c ? `${c.first_name||''} ${c.last_name||''}`.trim() : 'Unknown';
+        const loanType = c?.loan_type || d.loan_type || '—';
+        const dateStr = d.close_date ? new Date(d.close_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+        const commission = d.commission_earned || 0;
+        return `<tr onclick="window.location.href='/admin/lead-detail.html?contact_id=${d.contact_id}'" style="cursor:pointer;">
+          <td style="font-weight:600;">${name}</td>
+          <td style="color:rgba(255,255,255,0.5);font-size:11px;">${loanType}</td>
+          <td style="color:rgba(255,255,255,0.4);font-size:11px;">${dateStr}</td>
+          <td style="font-weight:700;color:#50c878;">+$${Number(commission).toLocaleString()}</td>
+          <td><span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(80,200,120,0.12);color:#50c878;">Won</span></td>
+        </tr>`;
+      }).join('');
+    } else {
+      const res = await fetch(`${SB_URL}/rest/v1/contacts?select=id,first_name,last_name,loan_type,loan_amount,updated_at&pipeline_status=eq.Lost&order=updated_at.desc&limit=20`, {
+        headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+      });
+      const lostContacts = await res.json();
+      if (!lostContacts.length) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">No lost deals yet</td></tr>`; return; }
+      tbody.innerHTML = lostContacts.map(c => {
+        const name = `${c.first_name||''} ${c.last_name||''}`.trim() || 'Unknown';
+        const dateStr = c.updated_at ? new Date(c.updated_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+        const loanAmt = c.loan_amount ? Number(c.loan_amount).toLocaleString() : '0';
+        return `<tr onclick="window.location.href='/admin/lead-detail.html?contact_id=${c.id}'" style="cursor:pointer;">
+          <td style="font-weight:600;">${name}</td>
+          <td style="color:rgba(255,255,255,0.5);font-size:11px;">${c.loan_type||'—'}</td>
+          <td style="color:rgba(255,255,255,0.4);font-size:11px;">${dateStr}</td>
+          <td style="font-weight:700;color:#f87171;">$${loanAmt}</td>
+          <td><span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(248,113,113,0.12);color:#f87171;">Lost</span></td>
+        </tr>`;
+      }).join('');
+    }
   } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Error loading deals</td></tr>`; }
 }
 

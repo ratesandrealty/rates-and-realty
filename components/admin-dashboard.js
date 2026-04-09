@@ -172,20 +172,31 @@ async function renderOverview() {
   // Pipeline stage strip
   const pipelineRoot = document.getElementById("lead-pipeline");
   if (pipelineRoot) {
-    const stages = [
-      { key: "new", label: "New" },
-      { key: "contacted", label: "Contacted" },
-      { key: "prequalified", label: "Prequalified" },
-      { key: "preapproved", label: "Preapproved" },
-      { key: "in_process", label: "In Process" },
-      { key: "in_escrow", label: "In Escrow" },
-      { key: "closed", label: "Closed" },
-      { key: "lost", label: "Lost" }
+    const { supabase } = await import("/api/supabase-client.js");
+    const OVERVIEW_STAGES = [
+      { key: 'New Lead',       label: 'NEW',           color: '#6B6B7A' },
+      { key: 'Contacted',      label: 'CONTACTED',     color: '#5AA0E0' },
+      { key: 'Pre-Approved',   label: 'PRE-APPROVED',  color: '#C9A84C' },
+      { key: 'Under Contract', label: 'UNDER CONTRACT',color: '#AB7FE0' },
+      { key: 'Processing',     label: 'PROCESSING',    color: '#E07F50' },
+      { key: 'Clear to Close', label: 'CLEAR TO CLOSE',color: '#52C87A' },
+      { key: 'Closed',         label: 'CLOSED',        color: '#3AB06A' },
+      { key: 'Lost',           label: 'LOST',          color: '#E05252' },
     ];
-    pipelineRoot.innerHTML = stages.map((s) => `
-      <div class="pipeline-column" onclick="window.crmNavigateTo('pipeline')" style="cursor:pointer;">
-        <p class="kicker" style="font-size:0.65rem;">${s.label}</p>
-        <div class="pipeline-count">${leads.filter((l) => (l.status || "new") === s.key).length}</div>
+    const { data: pipelineContacts } = await supabase
+      .from('contacts')
+      .select('pipeline_status');
+    const countByStage = {};
+    OVERVIEW_STAGES.forEach(s => countByStage[s.key] = 0);
+    (pipelineContacts || []).forEach(c => {
+      const key = c.pipeline_status || 'New Lead';
+      if (countByStage[key] !== undefined) countByStage[key]++;
+      else countByStage['New Lead']++;
+    });
+    pipelineRoot.innerHTML = OVERVIEW_STAGES.map((s) => `
+      <div class="pipeline-column" onclick="navigateTo('pipeline')" style="cursor:pointer;">
+        <p class="kicker" style="font-size:0.65rem;color:${s.color};">${s.label}</p>
+        <div class="pipeline-count">${countByStage[s.key]}</div>
       </div>
     `).join("");
   }
