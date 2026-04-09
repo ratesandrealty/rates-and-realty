@@ -350,16 +350,15 @@
         .pk-col-name{font-size:.82rem;font-weight:700;color:var(--text,#eee);}
         .pk-col-count{background:rgba(201,168,76,0.12);color:var(--gold,#C9A84C);border-radius:10px;padding:2px 8px;font-size:.7rem;font-weight:700;}
         .pk-cards{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:var(--gold,#C9A84C) transparent;}
-        .pk-card{background:var(--surface,rgba(255,255,255,0.04));border:1px solid var(--border,rgba(255,255,255,0.08));border-radius:10px;padding:12px 14px;cursor:pointer;transition:border-color .2s,transform .15s;}
+        .pk-card{background:var(--surface,rgba(255,255,255,0.04));border:1px solid var(--border,rgba(255,255,255,0.08));border-radius:10px;padding:12px 14px;cursor:grab;user-select:none;transition:border-color .2s,transform .15s;}
+        .pk-card:active{cursor:grabbing;}
         .pk-card:hover{border-color:rgba(201,168,76,0.4);transform:translateY(-1px);}
         .pk-card-name{font-size:.85rem;font-weight:700;color:#eee;margin-bottom:4px;}
         .pk-card-loan{font-size:.78rem;color:var(--gold,#C9A84C);font-weight:600;margin-bottom:3px;}
         .pk-card-badge{display:inline-block;background:rgba(201,168,76,0.1);color:var(--gold,#C9A84C);border-radius:6px;padding:1px 7px;font-size:.65rem;font-weight:600;margin-bottom:4px;}
         .pk-card-meta{font-size:.72rem;color:rgba(255,255,255,0.35);line-height:1.5;}
         .pk-empty{text-align:center;padding:20px 8px;color:rgba(255,255,255,0.2);font-size:.75rem;font-style:italic;}
-        .pipeline-column-body.drag-over{background:rgba(201,168,76,0.08);border:1px dashed rgba(201,168,76,0.5);border-radius:8px;}
-        .pipeline-card{cursor:grab;}
-        .pipeline-card:active{cursor:grabbing;}
+        .pk-cards.pk-drag-over{background:rgba(201,168,76,0.08);outline:1px dashed rgba(201,168,76,0.5);border-radius:8px;}
       </style>
 
       <!-- ── CONTACTS TAB ──────────────────────────── -->
@@ -1401,183 +1400,145 @@ document.addEventListener('DOMContentLoaded', loadShowingsWidget);
 import { supabase } from "/api/supabase-client.js";
 window._pipelineSupabase = supabase;
 
-const PK_STAGES = [
-  { key: 'New Lead', label: 'New Lead' },
-  { key: 'Contacted', label: 'Contacted' },
-  { key: 'Pre-Qualified', label: 'Pre-Qualified' },
-  { key: 'Pre-Approved', label: 'Pre-Approved' },
-  { key: 'Under Contract', label: 'Under Contract' },
-  { key: 'Processing', label: 'Processing' },
-  { key: 'Closed', label: 'Closed' },
-  { key: 'On Hold', label: 'On Hold' }
-];
+const PIPELINE_STAGES = ['New Lead','Contacted','Pre-Qualified','Pre-Approved','Under Contract','Processing','Closed','On Hold'];
+let _dragContactId = null;
 
-let _pipelineLoaded = false;
+async function loadPipelineBoard(forceRefresh) {
+  const kanban = document.getElementById('pipeline-kanban');
+  if (!kanban) return;
+  kanban.innerHTML = '<div style="color:#666;padding:40px;text-align:center;width:100%;">Loading...</div>';
 
-window.loadPipelineBoard = async function(force) {
-  if (_pipelineLoaded && !force) return;
-  const board = document.getElementById('pipeline-kanban');
-  if (!board) return;
+  const { data: contacts, error } = await supabase
+    .from('contacts')
+    .select('id,first_name,last_name,email,phone,pipeline_status,loan_amount,loan_type,source,created_at,last_contact_date,lead_temperature,temperature,credit_score')
+    .order('created_at', { ascending: false });
 
-  board.innerHTML = '<div style="color:var(--muted,#666);padding:40px;text-align:center;width:100%;">Loading pipeline...</div>';
+  if (error) { kanban.innerHTML = `<div style="color:#e55;padding:40px;width:100%;">Failed: ${error.message}</div>`; return; }
 
-  try {
-    const { data: contacts, error } = await supabase
-      .from('contacts')
-      .select('id, first_name, last_name, email, phone, pipeline_status, loan_amount, loan_type, source, created_at, last_contact_date, credit_score, lead_temperature, temperature')
-      .order('created_at', { ascending: false });
+  // Group by stage
+  const byStage = {};
+  PIPELINE_STAGES.forEach(s => byStage[s] = []);
+  (contacts || []).forEach(c => {
+    const s = c.pipeline_status || 'New Lead';
+    if (byStage[s]) byStage[s].push(c); else byStage['New Lead'].push(c);
+  });
 
-    if (error) throw error;
+  // Render columns
+  kanban.innerHTML = PIPELINE_STAGES.map(stage => {
+    const cards = byStage[stage];
+    const cardHtml = cards.length === 0
+      ? '<div class="pk-empty">No contacts</div>'
+      : cards.map(c => {
+          const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unknown';
+          const loan = c.loan_amount ? '$' + Number(c.loan_amount).toLocaleString() : '';
+          const type = c.loan_type || '';
+          const temp = c.lead_temperature || c.temperature || '';
+          const tempColor = temp==='Hot'?'#e55':temp==='Warm'?'#f59e0b':'#6b7280';
+          const days = c.created_at ? Math.floor((Date.now()-new Date(c.created_at).getTime())/86400000) : null;
+          const ago = days===0?'Today':days===1?'Yesterday':days!=null?`${days}d ago`:'';
+          return `<div class="pk-card" draggable="true" data-id="${c.id}"
+            onclick="window.location='/admin/lead-detail.html?contact_id=${c.id}'"
+            ondragstart="pipelineDragStart(event,'${c.id}')"
+            ondragend="pipelineDragEnd(event)">
+            <div class="pk-card-name">${name}</div>
+            ${loan ? `<div class="pk-card-loan">${loan}</div>` : ''}
+            <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px;">
+              ${type ? `<span class="pk-card-badge">${type}</span>` : ''}
+              ${temp ? `<span class="pk-card-badge" style="background:${tempColor}22;color:${tempColor};">${temp}</span>` : ''}
+            </div>
+            <div class="pk-card-meta">${[c.email, c.phone].filter(Boolean).join(' · ')}</div>
+            ${ago ? `<div class="pk-card-meta">${ago}</div>` : ''}
+          </div>`;
+        }).join('');
 
-    // Normalize status → stage mapping
-    function mapStatus(s) {
-      if (!s) return 'New Lead';
-      var lower = s.toLowerCase().replace(/[_-]/g, ' ').trim();
-      var map = {
-        'new': 'New Lead', 'new lead': 'New Lead',
-        'contacted': 'Contacted',
-        'pre qualified': 'Pre-Qualified', 'prequalified': 'Pre-Qualified',
-        'pre approved': 'Pre-Approved', 'preapproved': 'Pre-Approved',
-        'under contract': 'Under Contract', 'in escrow': 'Under Contract',
-        'processing': 'Processing', 'in process': 'Processing',
-        'closed': 'Closed',
-        'on hold': 'On Hold', 'lost': 'On Hold'
-      };
-      return map[lower] || 'New Lead';
-    }
+    return `<div class="pk-col">
+      <div class="pk-col-header">
+        <span class="pk-col-name">${stage}</span>
+        <span class="pk-col-count">${cards.length}</span>
+      </div>
+      <div class="pk-cards" data-stage="${stage}"
+        ondragover="event.preventDefault();event.currentTarget.classList.add('pk-drag-over')"
+        ondragleave="event.currentTarget.classList.remove('pk-drag-over')"
+        ondrop="pipelineDrop(event,'${stage}')">
+        ${cardHtml}
+      </div>
+    </div>`;
+  }).join('');
+}
 
-    // Group contacts by stage
-    var grouped = {};
-    PK_STAGES.forEach(function(st) { grouped[st.key] = []; });
-    (contacts || []).forEach(function(c) {
-      var stage = mapStatus(c.pipeline_status);
-      if (grouped[stage]) grouped[stage].push(c);
-      else grouped['New Lead'].push(c);
-    });
+window.loadPipelineBoard = loadPipelineBoard;
 
-    function fmtCurrency(n) {
-      if (!n) return '';
-      return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    }
+function pipelineDragStart(event, contactId) {
+  _dragContactId = contactId;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', contactId);
+  event.currentTarget.style.opacity = '0.45';
+}
+window.pipelineDragStart = pipelineDragStart;
 
-    function daysSince(dateStr) {
-      if (!dateStr) return '';
-      var d = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
-      return d === 0 ? 'Today' : d === 1 ? '1 day ago' : d + ' days ago';
-    }
+function pipelineDragEnd(event) {
+  event.currentTarget.style.opacity = '1';
+  document.querySelectorAll('.pk-drag-over').forEach(el => el.classList.remove('pk-drag-over'));
+}
+window.pipelineDragEnd = pipelineDragEnd;
 
-    function esc(s) { return (s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+async function pipelineDrop(event, newStage) {
+  event.preventDefault();
+  event.currentTarget.classList.remove('pk-drag-over');
+  const contactId = _dragContactId || event.dataTransfer.getData('text/plain');
+  if (!contactId) return;
+  _dragContactId = null;
 
-    board.innerHTML = PK_STAGES.map(function(stage) {
-      var items = grouped[stage.key];
-      var cards = items.length ? items.map(function(c) {
-        var name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || 'Unknown';
-        var loanAmt = c.loan_amount ? fmtCurrency(c.loan_amount) : '';
-        var loanBadge = c.loan_type ? '<span class="pk-card-badge">' + esc(c.loan_type) + '</span>' : '';
-        var meta = [c.email, c.phone].filter(Boolean).map(esc).join(' &middot; ');
-        var lastActivity = daysSince(c.last_contact_date);
-        var temp = c.lead_temperature || c.temperature || '';
-        var tempColors = { 'hot': '#ef4444', 'warm': '#f59e0b', 'cold': '#3b82f6' };
-        var tempBadge = temp ? '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:' + (tempColors[temp.toLowerCase()] || '#666') + '22;color:' + (tempColors[temp.toLowerCase()] || '#666') + ';">' + esc(temp) + '</span>' : '';
-        var mappedStage = mapStatus(c.pipeline_status);
-        return '<div class="pk-card pipeline-card" draggable="true" data-contact-id="' + c.id + '" data-current-stage="' + esc(mappedStage) + '" onclick="if(!window._pipelineDragging)window.location.href=\'/admin/lead-detail.html?contact_id=' + c.id + '\'">'
-          + '<div class="pk-card-name">' + esc(name) + '</div>'
-          + (loanAmt ? '<div class="pk-card-loan">' + loanAmt + '</div>' : '')
-          + loanBadge
-          + tempBadge
-          + (meta ? '<div class="pk-card-meta">' + meta + '</div>' : '')
-          + (lastActivity ? '<div class="pk-card-meta">' + lastActivity + '</div>' : '')
-          + '</div>';
-      }).join('') : '<div class="pk-empty">No contacts</div>';
-
-      return '<div class="pk-col pipeline-column">'
-        + '<div class="pk-col-header"><span class="pk-col-name">' + stage.label + '</span><span class="pk-col-count pipeline-col-count">' + items.length + '</span></div>'
-        + '<div class="pk-cards pipeline-column-body" data-stage="' + esc(stage.key) + '" ondragover="event.preventDefault();this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')" ondrop="handlePipelineDrop(event,\'' + stage.key.replace(/'/g, "\\'") + '\')">' + cards + '</div>'
-        + '</div>';
-    }).join('');
-
-    _pipelineLoaded = true;
-  } catch(e) {
-    console.error('[pipeline-board]', e);
-    board.innerHTML = '<div style="color:#ef4444;padding:40px;text-align:center;width:100%;">Failed to load pipeline: ' + (e.message || 'Unknown error') + '</div>';
+  // Move card in DOM immediately
+  const card = document.querySelector(`.pk-card[data-id="${contactId}"]`);
+  const targetCol = event.currentTarget;
+  if (card) {
+    // Remove empty state if present
+    const empty = targetCol.querySelector('.pk-empty');
+    if (empty) empty.remove();
+    targetCol.appendChild(card);
   }
-};
+
+  // Update counts
+  document.querySelectorAll('.pk-col').forEach(col => {
+    const body = col.querySelector('.pk-cards');
+    const count = col.querySelector('.pk-col-count');
+    if (body && count) {
+      const n = body.querySelectorAll('.pk-card').length;
+      count.textContent = n;
+      // Show/hide empty state
+      let empty = body.querySelector('.pk-empty');
+      if (n === 0 && !empty) {
+        empty = document.createElement('div');
+        empty.className = 'pk-empty';
+        empty.textContent = 'No contacts';
+        body.appendChild(empty);
+      } else if (n > 0 && empty) {
+        empty.remove();
+      }
+    }
+  });
+
+  // Save to Supabase
+  const { error } = await supabase
+    .from('contacts')
+    .update({ pipeline_status: newStage, updated_at: new Date().toISOString() })
+    .eq('id', contactId);
+
+  if (error) {
+    console.error('Pipeline update failed:', error.message);
+    // Reload on error to restore correct state
+    loadPipelineBoard(true);
+  }
+}
+window.pipelineDrop = pipelineDrop;
 
 // Auto-load if hash is #pipeline on page load
 document.addEventListener('DOMContentLoaded', function() {
   if (window.location.hash === '#pipeline') {
-    // navigateTo is called by admin-dashboard.js from hash, which triggers renderActiveTab → loadPipelineBoard
-    // But as a safety net, also try loading after a short delay
     setTimeout(function() { window.loadPipelineBoard(); }, 500);
   }
 });
-</script>
-<script>
-// Pipeline drag and drop
-var draggedContactId = null;
-var draggedCurrentStage = null;
-window._pipelineDragging = false;
-
-document.addEventListener('dragstart', function(e) {
-  var card = e.target.closest('.pipeline-card');
-  if (!card) return;
-  window._pipelineDragging = true;
-  draggedContactId = card.dataset.contactId;
-  draggedCurrentStage = card.dataset.currentStage;
-  card.style.opacity = '0.5';
-  e.dataTransfer.effectAllowed = 'move';
-});
-
-document.addEventListener('dragend', function(e) {
-  var card = e.target.closest('.pipeline-card');
-  if (card) card.style.opacity = '1';
-  document.querySelectorAll('.pipeline-column-body').forEach(function(col) { col.classList.remove('drag-over'); });
-  setTimeout(function() { window._pipelineDragging = false; }, 50);
-});
-
-async function handlePipelineDrop(event, newStage) {
-  event.preventDefault();
-  var col = event.currentTarget;
-  col.classList.remove('drag-over');
-
-  if (!draggedContactId || draggedCurrentStage === newStage) return;
-
-  try {
-    var supabase = window._pipelineSupabase;
-    var resp = await supabase
-      .from('contacts')
-      .update({ pipeline_status: newStage, updated_at: new Date().toISOString() })
-      .eq('id', draggedContactId);
-    if (resp.error) throw resp.error;
-
-    // Move card in DOM immediately without full reload
-    var card = document.querySelector('.pipeline-card[data-contact-id="' + draggedContactId + '"]');
-    if (card) {
-      card.dataset.currentStage = newStage;
-      col.appendChild(card);
-    }
-
-    // Update column counts
-    updatePipelineCounts();
-
-    console.log('Moved contact ' + draggedContactId + ' from ' + draggedCurrentStage + ' to ' + newStage);
-  } catch(e) {
-    console.error('Pipeline drop error:', e);
-    if (typeof showToast === 'function') showToast('Failed to update pipeline stage', true);
-  }
-
-  draggedContactId = null;
-  draggedCurrentStage = null;
-}
-
-function updatePipelineCounts() {
-  document.querySelectorAll('.pipeline-column-body').forEach(function(col) {
-    var count = col.querySelectorAll('.pipeline-card').length;
-    var header = col.closest('.pipeline-column');
-    var countEl = header ? header.querySelector('.pipeline-col-count') : null;
-    if (countEl) countEl.textContent = count;
-  });
-}
 </script>
 </body>
 </html>
