@@ -1400,7 +1400,16 @@ document.addEventListener('DOMContentLoaded', loadShowingsWidget);
 import { supabase } from "/api/supabase-client.js";
 window._pipelineSupabase = supabase;
 
-const PIPELINE_STAGES = ['New Lead','Contacted','Pre-Qualified','Pre-Approved','Under Contract','Processing','Closed','On Hold'];
+const PIPELINE_STAGES = [
+  { key: 'New Lead',       label: '🌱 New Lead',       color: '#6B6B7A' },
+  { key: 'Contacted',      label: '📞 Contacted',      color: '#5AA0E0' },
+  { key: 'Pre-Approved',   label: '✅ Pre-Approved',   color: '#C9A84C' },
+  { key: 'Under Contract', label: '🏠 Under Contract', color: '#AB7FE0' },
+  { key: 'Processing',     label: '⚙️ Processing',     color: '#E07F50' },
+  { key: 'Clear to Close', label: '🔑 Clear to Close', color: '#52C87A' },
+  { key: 'Closed',         label: '🎉 Closed',         color: '#3AB06A' },
+  { key: 'Lost',           label: '✕ Lost',            color: '#E05252' },
+];
 let _dragContactId = null;
 
 async function loadPipelineBoard(forceRefresh) {
@@ -1417,15 +1426,16 @@ async function loadPipelineBoard(forceRefresh) {
 
   // Group by stage
   const byStage = {};
-  PIPELINE_STAGES.forEach(s => byStage[s] = []);
+  PIPELINE_STAGES.forEach(s => byStage[s.key] = []);
   (contacts || []).forEach(c => {
-    const s = c.pipeline_status || 'New Lead';
-    if (byStage[s]) byStage[s].push(c); else byStage['New Lead'].push(c);
+    const key = c.pipeline_status || 'New Lead';
+    if (byStage[key] !== undefined) byStage[key].push(c);
+    else byStage['New Lead'].push(c);
   });
 
   // Render columns
   kanban.innerHTML = PIPELINE_STAGES.map(stage => {
-    const cards = byStage[stage];
+    const cards = byStage[stage.key];
     const cardHtml = cards.length === 0
       ? '<div class="pk-empty">No contacts</div>'
       : cards.map(c => {
@@ -1453,13 +1463,14 @@ async function loadPipelineBoard(forceRefresh) {
 
     return `<div class="pk-col">
       <div class="pk-col-header">
-        <span class="pk-col-name">${stage}</span>
+        <div style="width:3px;height:16px;background:${stage.color};border-radius:2px;margin-right:8px;"></div>
+        <span class="pk-col-name">${stage.label}</span>
         <span class="pk-col-count">${cards.length}</span>
       </div>
-      <div class="pk-cards" data-stage="${stage}"
+      <div class="pk-cards" data-stage="${stage.key}"
         ondragover="event.preventDefault();event.currentTarget.classList.add('pk-drag-over')"
         ondragleave="event.currentTarget.classList.remove('pk-drag-over')"
-        ondrop="pipelineDrop(event,'${stage}')">
+        ondrop="pipelineDrop(event,'${stage.key}')">
         ${cardHtml}
       </div>
     </div>`;
