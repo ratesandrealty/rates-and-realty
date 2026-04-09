@@ -227,14 +227,26 @@
               <div><p class="kicker">Earnings</p><h3 style="margin:0;font-size:1.1rem;">Recent Deals</h3></div>
               <a href="/admin/earnings-dashboard.html" style="font-size:11px;color:rgba(201,168,76,0.7);text-decoration:none;">View All →</a>
             </div>
+            <div style="display:flex;gap:6px;align-items:center;padding:12px 20px 0;">
+              <span id="earnings-total" style="font-size:1.1rem;font-weight:700;color:#C9A84C;">$0.00</span>
+              <span style="font-size:10px;color:rgba(255,255,255,0.3);margin:0 4px;">|</span>
+              <span style="font-size:10px;color:rgba(255,255,255,0.4);">Volume:</span>
+              <span id="earnings-volume" style="font-size:11px;font-weight:600;color:#eee;">$0</span>
+            </div>
             <div style="display:flex;gap:4px;padding:10px 20px 0;">
               <button id="dealsTabWon" onclick="switchDealsTab('won')" style="padding:4px 12px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;background:rgba(80,200,120,0.15);color:#50c878;">Won</button>
               <button id="dealsTabLost" onclick="switchDealsTab('lost')" style="padding:4px 12px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.4);">Lost</button>
             </div>
-            <div style="overflow-x:auto;">
+            <div id="deals-won-panel" style="overflow-x:auto;">
               <table class="leads-table" style="width:100%;">
-                <thead><tr><th>Borrower</th><th>Loan Type</th><th>Closed</th><th>Earnings</th><th></th></tr></thead>
-                <tbody id="dealsTableBody"><tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Loading deals...</td></tr></tbody>
+                <thead><tr><th>Borrower</th><th>Loan Type</th><th>Closed Date</th><th>Earnings</th></tr></thead>
+                <tbody id="won-deals-tbody"><tr><td colspan="4" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Loading...</td></tr></tbody>
+              </table>
+            </div>
+            <div id="deals-lost-panel" style="overflow-x:auto;display:none;">
+              <table class="leads-table" style="width:100%;">
+                <thead><tr><th>Borrower</th><th>Loan Type</th><th>Date Lost</th><th>Loan Amount</th></tr></thead>
+                <tbody id="lost-deals-tbody"><tr><td colspan="4" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Loading...</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -1219,54 +1231,74 @@ function switchDealsTab(tab) {
   _dealsTab = tab;
   document.getElementById('dealsTabWon').style.cssText = 'padding:4px 12px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;' + (tab==='won' ? 'background:rgba(80,200,120,0.15);color:#50c878;' : 'background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.4);');
   document.getElementById('dealsTabLost').style.cssText = 'padding:4px 12px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;' + (tab==='lost' ? 'background:rgba(248,113,113,0.15);color:#f87171;' : 'background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.4);');
-  loadDealsTable();
+  document.getElementById('deals-won-panel').style.display = tab === 'won' ? '' : 'none';
+  document.getElementById('deals-lost-panel').style.display = tab === 'lost' ? '' : 'none';
 }
 
-async function loadDealsTable() {
+async function loadEarnings() {
   const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
-  const tbody = document.getElementById('dealsTableBody');
   try {
-    if (_dealsTab === 'won') {
-      const res = await fetch(`${SB_URL}/rest/v1/closed_deals?select=*,contacts(first_name,last_name,loan_type)&order=close_date.desc&limit=20`, {
-        headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
-      });
-      const wonDeals = await res.json();
-      if (!wonDeals.length) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">No won deals yet</td></tr>`; return; }
-      tbody.innerHTML = wonDeals.map(d => {
-        const c = d.contacts;
-        const name = c ? `${c.first_name||''} ${c.last_name||''}`.trim() : 'Unknown';
-        const loanType = c?.loan_type || d.loan_type || '—';
-        const dateStr = d.close_date ? new Date(d.close_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
-        const commission = d.commission_earned || 0;
-        return `<tr onclick="window.location.href='/admin/lead-detail.html?contact_id=${d.contact_id}'" style="cursor:pointer;">
-          <td style="font-weight:600;">${name}</td>
-          <td style="color:rgba(255,255,255,0.5);font-size:11px;">${loanType}</td>
-          <td style="color:rgba(255,255,255,0.4);font-size:11px;">${dateStr}</td>
-          <td style="font-weight:700;color:#50c878;">+$${Number(commission).toLocaleString()}</td>
-          <td><span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(80,200,120,0.12);color:#50c878;">Won</span></td>
-        </tr>`;
-      }).join('');
-    } else {
-      const res = await fetch(`${SB_URL}/rest/v1/contacts?select=id,first_name,last_name,loan_type,loan_amount,updated_at&pipeline_status=eq.Lost&order=updated_at.desc&limit=20`, {
-        headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
-      });
-      const lostContacts = await res.json();
-      if (!lostContacts.length) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">No lost deals yet</td></tr>`; return; }
-      tbody.innerHTML = lostContacts.map(c => {
-        const name = `${c.first_name||''} ${c.last_name||''}`.trim() || 'Unknown';
-        const dateStr = c.updated_at ? new Date(c.updated_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
-        const loanAmt = c.loan_amount ? Number(c.loan_amount).toLocaleString() : '0';
-        return `<tr onclick="window.location.href='/admin/lead-detail.html?contact_id=${c.id}'" style="cursor:pointer;">
-          <td style="font-weight:600;">${name}</td>
-          <td style="color:rgba(255,255,255,0.5);font-size:11px;">${c.loan_type||'—'}</td>
-          <td style="color:rgba(255,255,255,0.4);font-size:11px;">${dateStr}</td>
-          <td style="font-weight:700;color:#f87171;">$${loanAmt}</td>
-          <td><span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(248,113,113,0.12);color:#f87171;">Lost</span></td>
-        </tr>`;
-      }).join('');
+    const res = await fetch(`${SB_URL}/rest/v1/closed_deals?select=id,outcome,loan_amount,loan_type,commission_earned,commission_rate,close_date,lost_reason,notes,created_at,contacts(id,first_name,last_name,email,phone)&order=close_date.desc&limit=50`, {
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+    });
+    const deals = await res.json();
+    if (!Array.isArray(deals)) { console.error('Earnings load error:', deals); return; }
+
+    const wonDeals  = deals.filter(d => d.outcome === 'closed');
+    const lostDeals = deals.filter(d => d.outcome === 'lost');
+
+    // Total stats
+    const totalRevenue = wonDeals.reduce((s, d) => s + (parseFloat(d.commission_earned) || 0), 0);
+    const totalVolume  = wonDeals.reduce((s, d) => s + (parseFloat(d.loan_amount) || 0), 0);
+
+    const revenueEl = document.getElementById('earnings-total');
+    const volumeEl  = document.getElementById('earnings-volume');
+    if (revenueEl) revenueEl.textContent = '$' + totalRevenue.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    if (volumeEl)  volumeEl.textContent  = '$' + totalVolume.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+
+    // Render Won tab
+    const wonTbody = document.getElementById('won-deals-tbody');
+    if (wonTbody) {
+      wonTbody.innerHTML = wonDeals.length === 0
+        ? '<tr><td colspan="4" style="text-align:center;padding:24px;color:#666;">No closed deals yet — move a lead to Closed on the pipeline board</td></tr>'
+        : wonDeals.map(d => {
+            const name = d.contacts ? `${d.contacts.first_name || ''} ${d.contacts.last_name || ''}`.trim() : 'Unknown';
+            const date = d.close_date ? new Date(d.close_date).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'}) : '—';
+            const earnings = '$' + (parseFloat(d.commission_earned)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+            return `<tr onclick="window.location='/admin/lead-detail.html?contact_id=${d.contacts?.id}'" style="cursor:pointer;">
+              <td style="padding:10px 12px;color:#eee;font-weight:600;">${name}</td>
+              <td style="padding:10px 12px;color:#aaa;">${d.loan_type || '—'}</td>
+              <td style="padding:10px 12px;color:#aaa;">${date}</td>
+              <td style="padding:10px 12px;color:#C9A84C;font-weight:700;">${earnings}</td>
+            </tr>`;
+          }).join('');
     }
-  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Error loading deals</td></tr>`; }
+
+    // Render Lost tab
+    const lostTbody = document.getElementById('lost-deals-tbody');
+    if (lostTbody) {
+      lostTbody.innerHTML = lostDeals.length === 0
+        ? '<tr><td colspan="4" style="text-align:center;padding:24px;color:#666;">No lost deals yet</td></tr>'
+        : lostDeals.map(d => {
+            const name = d.contacts ? `${d.contacts.first_name || ''} ${d.contacts.last_name || ''}`.trim() : 'Unknown';
+            const date = d.close_date ? new Date(d.close_date).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'}) : '—';
+            const volume = '$' + (parseFloat(d.loan_amount)||0).toLocaleString();
+            return `<tr onclick="window.location='/admin/lead-detail.html?contact_id=${d.contacts?.id}'" style="cursor:pointer;">
+              <td style="padding:10px 12px;color:#eee;font-weight:600;">${name}</td>
+              <td style="padding:10px 12px;color:#aaa;">${d.loan_type || '—'}</td>
+              <td style="padding:10px 12px;color:#aaa;">${date}</td>
+              <td style="padding:10px 12px;color:#e55;font-weight:600;">${volume} lost</td>
+            </tr>`;
+          }).join('');
+    }
+  } catch(e) {
+    console.error('Earnings load error:', e);
+    const wonTbody = document.getElementById('won-deals-tbody');
+    const lostTbody = document.getElementById('lost-deals-tbody');
+    if (wonTbody) wonTbody.innerHTML = '<tr><td colspan="4" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Error loading deals</td></tr>';
+    if (lostTbody) lostTbody.innerHTML = '<tr><td colspan="4" style="color:rgba(255,255,255,0.3);padding:24px;text-align:center;">Error loading deals</td></tr>';
+  }
 }
 
 // ── Referral Activity Table ──────────────────────────────
@@ -1300,7 +1332,7 @@ async function loadReferralTable() {
 }
 
 // Load both tables on page init
-setTimeout(() => { loadDealsTable(); loadReferralTable(); }, 500);
+setTimeout(() => { loadEarnings(); loadReferralTable(); }, 500);
 
 let _mismoFiles = [];
 function openMismoModal() { document.getElementById('mismoModal').style.display = 'flex'; _mismoFiles = []; document.getElementById('mismoFileList').innerHTML = ''; document.getElementById('mismoResults').innerHTML = ''; document.getElementById('mismoImportBtn').style.display = 'none'; }
