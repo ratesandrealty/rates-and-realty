@@ -50,6 +50,114 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .tf-btn.active{background:rgba(255,255,255,0.1);color:#fff}
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
 #toast.show{opacity:1}
+/* ── PIPELINE PENDING WIDGET ── */
+.pending-widget {
+  background: var(--surface);
+  border: 1px solid rgba(251,146,60,0.2);
+  border-radius: 14px;
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.pending-widget::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #fb923c, rgba(251,146,60,0.2));
+}
+.pending-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.pending-hdr h3 { font-size: 14px; font-weight: 700; color: #fb923c; display: flex; align-items: center; gap: 8px; }
+.pending-hdr-meta { display: flex; align-items: center; gap: 12px; }
+.pending-count-badge {
+  background: rgba(251,146,60,0.12);
+  color: #fb923c;
+  border: 1px solid rgba(251,146,60,0.25);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.pending-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+.pending-card {
+  background: rgba(251,146,60,0.05);
+  border: 1px solid rgba(251,146,60,0.12);
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.18s;
+  text-decoration: none;
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+.pending-card:hover {
+  background: rgba(251,146,60,0.1);
+  border-color: rgba(251,146,60,0.35);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(251,146,60,0.15);
+}
+.pending-card-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f0ebe0;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pending-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+}
+.status-new-lead       { background: rgba(148,163,184,0.1); color: #94a3b8; }
+.status-pre-approved   { background: rgba(99,102,241,0.12); color: #818cf8; }
+.status-processing     { background: rgba(251,146,60,0.12); color: #fb923c; }
+.status-under-contract { background: rgba(34,197,94,0.1);  color: #4ade80; }
+.status-ctc            { background: rgba(201,168,76,0.12); color: #c9a84c; }
+.pending-card-loan {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pending-card-arrow {
+  position: absolute;
+  right: 12px; top: 50%;
+  transform: translateY(-50%);
+  color: rgba(251,146,60,0.3);
+  font-size: 14px;
+  transition: all 0.18s;
+}
+.pending-card:hover .pending-card-arrow {
+  color: #fb923c;
+  right: 9px;
+}
+.pending-empty {
+  text-align: center;
+  padding: 24px;
+  color: rgba(255,255,255,0.25);
+  font-size: 13px;
+}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
@@ -89,6 +197,20 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
   </div>
 
+  <!-- ── PIPELINE PENDING WIDGET ── -->
+  <div class="pending-widget">
+    <div class="pending-hdr">
+      <h3>⏳ In Pipeline</h3>
+      <div class="pending-hdr-meta">
+        <span id="pendingCountBadge" class="pending-count-badge">0 contacts</span>
+        <a href="lead-detail.html" style="font-size:11px;color:rgba(255,255,255,0.3);text-decoration:none;transition:color 0.15s;" onmouseover="this.style.color='#c9a84c'" onmouseout="this.style.color='rgba(255,255,255,0.3)'">View All →</a>
+      </div>
+    </div>
+    <div class="pending-grid" id="pendingGrid">
+      <div class="pending-empty">Loading...</div>
+    </div>
+  </div>
+
   <div class="tables-row">
     <div class="table-card">
       <div class="table-hdr"><h3 style="color:var(--green)">🏆 Won Deals</h3><span id="wonCount" style="font-size:11px;color:var(--muted)"></span></div>
@@ -118,6 +240,55 @@ let _earningsChart = null, _outcomeChart = null;
 
 function fmt$(n) { if(!n) return '$0'; if(n>=1000000) return '$'+(n/1000000).toFixed(1)+'M'; if(n>=1000) return '$'+(n/1000).toFixed(0)+'K'; return '$'+Math.round(n); }
 function getTimeAgo(d) { const diff=Math.floor((Date.now()-new Date(d))/86400000); return diff===0?'Today':diff===1?'1d ago':diff<30?diff+'d ago':Math.floor(diff/30)+'mo ago'; }
+
+const PIPELINE_STATUSES = ['New Lead','Pre-Approved','Processing','Under Contract','Clear to Close','CTC','Submitted','Conditional Approval'];
+
+function statusClass(s) {
+  if (!s) return 'status-new-lead';
+  const sl = s.toLowerCase().replace(/\s+/g, '-');
+  if (sl.includes('pre-approv')) return 'status-pre-approved';
+  if (sl.includes('process'))   return 'status-processing';
+  if (sl.includes('contract'))  return 'status-under-contract';
+  if (sl.includes('clear') || sl.includes('ctc')) return 'status-ctc';
+  return 'status-new-lead';
+}
+
+async function loadPipelineContacts() {
+  try {
+    const res = await fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,pipeline_status,loan_amount,loan_type&pipeline_status=not.eq.Closed&pipeline_status=not.eq.Lost&pipeline_status=not.is.null&order=created_at.desc`, { headers: H });
+    const contacts = await res.json();
+    buildPendingWidget(contacts || []);
+  } catch(e) {
+    document.getElementById('pendingGrid').innerHTML = '<div class="pending-empty">Failed to load pipeline</div>';
+  }
+}
+
+function buildPendingWidget(contacts) {
+  // Filter out truly closed/lost/no status
+  const active = contacts.filter(c => {
+    const s = (c.pipeline_status || '').toLowerCase();
+    return s && s !== 'closed' && s !== 'lost';
+  });
+  document.getElementById('pendingCountBadge').textContent = active.length + (active.length === 1 ? ' contact' : ' contacts');
+  const grid = document.getElementById('pendingGrid');
+  if (!active.length) {
+    grid.innerHTML = '<div class="pending-empty">No active pipeline contacts</div>';
+    return;
+  }
+  grid.innerHTML = active.map(c => {
+    const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unknown';
+    const status = c.pipeline_status || 'New Lead';
+    const loanStr = c.loan_amount ? ('$' + (c.loan_amount >= 1000000 ? (c.loan_amount/1000000).toFixed(1)+'M' : Math.round(c.loan_amount/1000)+'K')) : '';
+    const loanType = c.loan_type ? c.loan_type.replace(/_/g,' ') : '';
+    const loanMeta = [loanStr, loanType].filter(Boolean).join(' · ') || 'No loan info';
+    return `<a class="pending-card" href="lead-detail.html?contact_id=${c.id}">
+      <div class="pending-card-name">${name}</div>
+      <div class="pending-card-status ${statusClass(status)}">${status}</div>
+      <div class="pending-card-loan">${loanMeta}</div>
+      <span class="pending-card-arrow">›</span>
+    </a>`;
+  }).join('');
+}
 
 async function loadData() {
   const [contactsRes, partnersRes] = await Promise.all([
@@ -278,6 +449,7 @@ function exportEarnings() {
 }
 
 loadData();
+loadPipelineContacts();
 </script>
 </body>
 </html>
