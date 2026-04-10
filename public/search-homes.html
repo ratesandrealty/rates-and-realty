@@ -821,6 +821,34 @@ function _applyIncomingSearchParams() {
       document.querySelectorAll('.city-cb').forEach(function(cb){ cb.checked = selectedCities.indexOf(cb.value) >= 0; });
     }
 
+    // --- Homepage widget aliases: q, minBeds, maxPrice ---
+    var qParam = p.get('q');
+    if (qParam) {
+      var si = document.getElementById('searchInput');
+      if (si) si.value = qParam;
+      // Try to match as a city via SOCAL_PLACES (populated later) — best-effort
+      setTimeout(function(){
+        if (typeof SOCAL_PLACES !== 'undefined' && typeof addCityFilter === 'function') {
+          var match = SOCAL_PLACES.find(function(pl){ return pl.name.toLowerCase() === qParam.toLowerCase() && pl.type === 'city'; })
+                   || SOCAL_PLACES.find(function(pl){ return pl.name.toLowerCase().includes(qParam.toLowerCase()) && pl.type === 'city'; });
+          if (match) addCityFilter(match.name);
+        }
+      }, 600);
+    }
+    var minBedsParam = p.get('minBeds');
+    if (minBedsParam) {
+      filters.beds = minBedsParam;
+      document.querySelectorAll('#bedToggles .toggle-btn').forEach(function(btn){
+        btn.classList.toggle('active', btn.dataset.val === minBedsParam);
+      });
+    }
+    var maxPriceParam = p.get('maxPrice');
+    if (maxPriceParam) {
+      filters.maxPrice = maxPriceParam;
+      var maEl = document.getElementById('fMaxPrice');
+      if (maEl) maEl.value = maxPriceParam;
+    }
+
     // --- Price: write to filters object AND the real DOM input IDs (#fMinPrice/#fMaxPrice) ---
     var minP = p.get('min_price'), maxP = p.get('max_price');
     if (minP) { filters.minPrice = minP; var mi = document.getElementById('fMinPrice'); if (mi) mi.value = minP; }
