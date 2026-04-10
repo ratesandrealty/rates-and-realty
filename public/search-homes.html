@@ -936,6 +936,26 @@ function _applyIncomingSearchParams() {
     if (![...p.keys()].length) return;
     console.log('[URL params]', Object.fromEntries(p));
 
+    // --- Status tab from homepage widget (status=rent or status=sold) ---
+    var statusParam = p.get('status');
+    if (statusParam === 'rent') {
+      activeStatus = 'Active';
+      currentLease = true;
+      // Activate the For Rent tab
+      document.querySelectorAll('.status-tab').forEach(function(t) {
+        t.classList.remove('active');
+        if (t.dataset.lease === 'true') t.classList.add('active');
+      });
+    } else if (statusParam === 'sold') {
+      activeStatus = 'Closed';
+      currentLease = false;
+      // Activate the Sold tab
+      document.querySelectorAll('.status-tab').forEach(function(t) {
+        t.classList.remove('active');
+        if (t.dataset.status === 'Closed') t.classList.add('active');
+      });
+    }
+
     // --- Location: county / cities ---
     var countyParam = p.get('county');
     if (countyParam) {
@@ -1317,12 +1337,13 @@ function buildODataFilter(bounds) {
   }
   // For Rent: Active leases in Trestle
   if (currentLease) {
-    parts.push("(StandardStatus eq 'Active' or StandardStatus eq 'Active Under Contract')");
+    parts.push("StandardStatus eq 'Active'");
   }
 
   // Property types — skip for Sold/Closed and For Rent
   if (currentLease) {
-    parts.push("(PropertyType eq 'ResidentialLease' or PropertyType eq 'CommercialLease')");
+    // Trestle RESO: rentals are PropertyType ResidentialLease, status Active
+    parts.push("PropertyType eq 'ResidentialLease'");
   } else if (activeStatus !== 'Closed') {
     var TYPE_MAP = {
       'Residential':        ["(PropertyType eq 'Residential' and PropertySubType eq 'Single Family Residence')"],
