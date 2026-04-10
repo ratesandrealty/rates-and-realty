@@ -3910,8 +3910,9 @@ let _autoSaveTimer = null;
 
 /* ── URL PARAMS ── */
 const params = new URLSearchParams(location.search);
-leadId = params.get('lead_id') || params.get('id') || null;
-contactId = params.get('contact_id') || params.get('contact') || params.get('id') || leadId;
+// leads is now a VIEW over contacts — contact_id = lead_id = contacts.id
+contactId = params.get('contact_id') || params.get('lead_id') || params.get('id') || null;
+leadId = contactId; // same thing — no separate leads table exists anymore
 
 /* ── LOAD ── */
 async function loadData() {
@@ -3942,19 +3943,7 @@ async function loadData() {
       if (error) throw error;
       contactData = data || {};
 
-      // Find associated lead
-      if (!leadId) {
-        const { data: leads } = await sb
-          .from('leads')
-          .select('*')
-          .eq('contact_id', contactId)
-          .order('created_at', { ascending: false })
-          .limit(1);
-        if (leads && leads.length) {
-          leadData = leads[0];
-          leadId = leads[0].id;
-        }
-      }
+      // leadId === contactId now (leads is a view over contacts)
     }
 
     if (leadId && !Object.keys(leadData).length) {
