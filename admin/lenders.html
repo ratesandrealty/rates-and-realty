@@ -313,6 +313,14 @@
       .left-panel { display: none; }
       .right-panel { width: 100%; }
     }
+  #docDropZone:hover {
+    border-color: rgba(201,168,76,0.7) !important;
+    background: rgba(201,168,76,0.06) !important;
+  }
+  #docDropZone.drag-active {
+    border-color: #C9A84C !important;
+    background: rgba(201,168,76,0.1) !important;
+  }
   </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
@@ -870,6 +878,67 @@ function showLenderDetail(lender) {
       <button class="save-btn" onclick="saveLenderDetails('${lender.id}', '${lender.clickup_task_id||''}')">
         Save & Sync to ClickUp
       </button>
+    </div>
+
+    <!-- DRAG & DROP UPLOAD ZONE -->
+    <div id="docUploadSection" style="background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:14px;">📁 Upload Documents</div>
+
+      <!-- Drop Zone -->
+      <div id="docDropZone"
+        style="border:2px dashed rgba(201,168,76,0.35);border-radius:12px;padding:32px 20px;text-align:center;cursor:pointer;transition:all 0.2s;background:rgba(201,168,76,0.03);margin-bottom:16px;position:relative;"
+        ondragover="docDragOver(event)"
+        ondragleave="docDragLeave(event)"
+        ondrop="docDrop(event)"
+        onclick="document.getElementById('docFileInput').click()">
+        <div style="font-size:36px;margin-bottom:10px;">📄</div>
+        <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px;">Drag & drop PDFs here</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:14px;">or click to browse — multiple files supported</div>
+        <div style="display:inline-block;padding:8px 20px;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.4);border-radius:8px;color:#C9A84C;font-size:12px;font-weight:700;">Choose PDFs</div>
+        <input type="file" id="docFileInput" accept=".pdf" multiple style="display:none" onchange="docFilesSelected(this.files)">
+      </div>
+
+      <!-- Queued files list -->
+      <div id="docFileQueue" style="display:none;margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Files to upload</div>
+        <div id="docFileList"></div>
+      </div>
+
+      <!-- Shared metadata (applies to all files in batch) -->
+      <div id="docMetaFields" style="display:none;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+          <div>
+            <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px;">Category</label>
+            <select id="docCategoryBatch" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;font-size:13px;font-family:inherit;">
+              <option value="General">General</option>
+              <option value="Guidelines">Guidelines</option>
+              <option value="Rate Sheet">Rate Sheet</option>
+              <option value="Underwriting">Underwriting</option>
+              <option value="Compensation">Compensation</option>
+              <option value="Product Matrix">Product Matrix</option>
+              <option value="Flyer">Flyer</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px;">Version (optional)</label>
+            <input type="text" id="docVersionBatch" placeholder="e.g. v2.1" style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;font-size:13px;font-family:inherit;">
+          </div>
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px;">Notes (optional — applies to all)</label>
+          <textarea id="docNotesBatch" rows="2" placeholder="Notes / summary..." style="width:100%;padding:9px 12px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#fff;font-size:13px;font-family:inherit;resize:vertical;"></textarea>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button onclick="docCancelUpload()" style="padding:9px 20px;background:transparent;border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:rgba(255,255,255,0.5);font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>
+          <button onclick="docUploadAll()" id="docUploadBtn" style="padding:9px 22px;background:#C9A84C;border:none;border-radius:8px;color:#1a0e00;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">⬆ Upload All</button>
+        </div>
+      </div>
+
+      <!-- Progress area -->
+      <div id="docUploadProgress" style="display:none;">
+        <div id="docProgressList"></div>
+      </div>
     </div>
   `;
   // Initialize loan type chips from lender.loan_types
@@ -1437,6 +1506,182 @@ function showToast(msg) {
     box-shadow:0 8px 24px rgba(0,0,0,0.4);`;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3000);
+}
+
+// ── DRAG & DROP MULTI-PDF UPLOADER ──────────────────────────────────
+let _docPendingFiles = [];
+
+function docDragOver(e) {
+  e.preventDefault();
+  const zone = document.getElementById('docDropZone');
+  zone.style.borderColor = '#C9A84C';
+  zone.style.background = 'rgba(201,168,76,0.08)';
+}
+
+function docDragLeave(e) {
+  const zone = document.getElementById('docDropZone');
+  zone.style.borderColor = 'rgba(201,168,76,0.35)';
+  zone.style.background = 'rgba(201,168,76,0.03)';
+}
+
+function docDrop(e) {
+  e.preventDefault();
+  docDragLeave(e);
+  const files = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  if (!files.length) { showToast('Please drop PDF files only'); return; }
+  docFilesSelected(files);
+}
+
+function docFilesSelected(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+
+  // Add to queue (avoid duplicates by name)
+  files.forEach(f => {
+    if (!_docPendingFiles.find(p => p.name === f.name && p.size === f.size)) {
+      _docPendingFiles.push(f);
+    }
+  });
+
+  docRenderQueue();
+  document.getElementById('docFileQueue').style.display = 'block';
+  document.getElementById('docMetaFields').style.display = 'block';
+}
+
+function docRenderQueue() {
+  const list = document.getElementById('docFileList');
+  if (!_docPendingFiles.length) {
+    document.getElementById('docFileQueue').style.display = 'none';
+    document.getElementById('docMetaFields').style.display = 'none';
+    return;
+  }
+  list.innerHTML = _docPendingFiles.map((f, i) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-bottom:6px;">
+      <span style="font-size:18px;">📄</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.name}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35);">${(f.size/1024/1024).toFixed(2)} MB${f.size > 4*1024*1024 ? ' <span style="color:#e55;">⚠ Too large (max 4MB)</span>' : ''}</div>
+      </div>
+      <button onclick="docRemoveFile(${i})" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;transition:color 0.2s;" onmouseover="this.style.color='#e55'" onmouseout="this.style.color='rgba(255,255,255,0.3)'">✕</button>
+    </div>
+  `).join('');
+}
+
+function docRemoveFile(i) {
+  _docPendingFiles.splice(i, 1);
+  docRenderQueue();
+}
+
+function docCancelUpload() {
+  _docPendingFiles = [];
+  document.getElementById('docFileQueue').style.display = 'none';
+  document.getElementById('docMetaFields').style.display = 'none';
+  document.getElementById('docUploadProgress').style.display = 'none';
+  document.getElementById('docFileInput').value = '';
+}
+
+async function docUploadAll() {
+  if (!_docPendingFiles.length) return;
+
+  // Check sizes
+  const oversized = _docPendingFiles.filter(f => f.size > 4 * 1024 * 1024);
+  if (oversized.length) {
+    showToast(`${oversized.map(f=>f.name).join(', ')} exceed 4MB — please compress first`);
+    return;
+  }
+
+  const category = document.getElementById('docCategoryBatch').value;
+  const version  = document.getElementById('docVersionBatch').value.trim();
+  const notes    = document.getElementById('docNotesBatch').value.trim();
+  const btn      = document.getElementById('docUploadBtn');
+
+  btn.disabled = true;
+  btn.textContent = 'Uploading...';
+
+  document.getElementById('docUploadProgress').style.display = 'block';
+  document.getElementById('docMetaFields').style.display = 'none';
+  document.getElementById('docFileQueue').style.display = 'none';
+
+  const progressList = document.getElementById('docProgressList');
+  progressList.innerHTML = _docPendingFiles.map((f, i) => `
+    <div id="prog_${i}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-bottom:6px;">
+      <span id="prog_icon_${i}" style="font-size:16px;">⏳</span>
+      <div style="flex:1;">
+        <div style="font-size:13px;color:#fff;font-weight:600;">${f.name}</div>
+        <div id="prog_status_${i}" style="font-size:11px;color:rgba(255,255,255,0.4);">Waiting...</div>
+      </div>
+    </div>
+  `).join('');
+
+  let successCount = 0;
+  const filesToUpload = [..._docPendingFiles];
+
+  for (let i = 0; i < filesToUpload.length; i++) {
+    const file = filesToUpload[i];
+    document.getElementById(`prog_status_${i}`).textContent = 'Reading file...';
+
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(',')[1]);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+
+      document.getElementById(`prog_status_${i}`).textContent = 'Uploading & scanning...';
+      document.getElementById(`prog_icon_${i}`).textContent = '📤';
+
+      // Use the existing upload function if it exists for per-lender upload
+      // Falls back to textract-ocr endpoint
+      const uploadFn = typeof uploadLenderDoc === 'function' ? uploadLenderDoc : null;
+
+      let result;
+      if (uploadFn) {
+        result = await uploadFn(file, base64, { category, version, notes, title: file.name.replace(/\.pdf$/i,'') });
+      } else {
+        // Direct call to textract-ocr
+        const res = await fetch(`${SB_URL}/functions/v1/textract-ocr`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}`, 'apikey': SB_KEY },
+          body: JSON.stringify({
+            action: 'start',
+            file_base64: base64,
+            file_name: file.name,
+            file_type: 'application/pdf',
+            lender_id: window.ldCurrentLenderId || null,
+            category, version, notes,
+            title: file.name.replace(/\.pdf$/i,'')
+          })
+        });
+        result = await res.json();
+      }
+
+      if (result && result.success) {
+        document.getElementById(`prog_icon_${i}`).textContent = '✅';
+        document.getElementById(`prog_status_${i}`).textContent = 'Uploaded — OCR processing in background';
+        document.getElementById(`prog_status_${i}`).style.color = '#4ade80';
+        successCount++;
+      } else {
+        throw new Error(result?.error || 'Upload failed');
+      }
+    } catch(err) {
+      document.getElementById(`prog_icon_${i}`).textContent = '❌';
+      document.getElementById(`prog_status_${i}`).textContent = `Error: ${err.message}`;
+      document.getElementById(`prog_status_${i}`).style.color = '#f87171';
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = '⬆ Upload All';
+
+  showToast(`${successCount} of ${filesToUpload.length} file${filesToUpload.length>1?'s':''} uploaded successfully!`);
+  _docPendingFiles = [];
+
+  // Reload docs list after a short delay
+  setTimeout(() => {
+    document.getElementById('docUploadProgress').style.display = 'none';
+    if (typeof loadLenderDocs === 'function') loadLenderDocs(window.ldCurrentLenderId);
+  }, 2000);
 }
 
 // ── COMMERCIAL MODE ─────────────────────────────
