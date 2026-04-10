@@ -1156,7 +1156,7 @@
               <circle cx="10" cy="10" r="6.5" stroke="#C9A84C" stroke-width="1.8"/>
               <path d="M15 15L20 20" stroke="#C9A84C" stroke-width="1.8" stroke-linecap="round"/>
             </svg>
-            <input type="text" id="hswInput" class="hsw-input"
+            <input type="text" id="hswSearchInput" class="hsw-input"
               placeholder="City, zip code, address, or neighborhood..."
               onkeydown="if(event.key==='Enter')hswGo()">
           </div>
@@ -2024,86 +2024,105 @@
   </script>
   <script src="public/js/chat-widget.js"></script>
   <script>
-    // ── Homepage search widget — tab + filter state ──────────────────
-    var _hsStatus = 'buy';
-    var _hsBeds   = 'any';
-    var _hsPrice  = 'any';
-
-    document.addEventListener('DOMContentLoaded', function() {
-      // Wire tab buttons by id
-      ['buy','rent','sold'].forEach(function(s) {
-        var btn = document.getElementById('hsTab_' + s);
-        if (!btn) return;
-        btn.addEventListener('click', function() {
-          _hsStatus = s;
-          ['buy','rent','sold'].forEach(function(x) {
-            var b = document.getElementById('hsTab_' + x);
-            if (b) b.classList.remove('active');
-          });
-          btn.classList.add('active');
-          // Clear city input when switching to rent or sold
-          if (s === 'rent' || s === 'sold') {
-            var inp = document.querySelector('#heroSearch, #hero-search-input, .search-input, input[type="text"]');
-            if (inp) inp.value = '';
-          }
-          console.log('[tab] status set to:', _hsStatus);
-        });
-      });
-
-      // Wire Beds buttons
-      document.querySelectorAll('#hswBeds .hsw-chip, #bedToggles .toggle-btn, .beds-btn, [data-beds]').forEach(function(btn) {
-        btn.addEventListener('click', function() {
-          // Visual active-state toggle for hsw-chip rows
-          var row = btn.closest('.hsw-chip-row');
-          if (row) row.querySelectorAll('.hsw-chip').forEach(function(c){ c.classList.remove('active'); });
-          btn.classList.add('active');
-          var v = btn.dataset.val || btn.dataset.beds || btn.textContent.replace('+','').trim();
-          _hsBeds = (v === '' || btn.textContent.trim() === 'Any') ? 'any' : v;
-          console.log('[tab] beds set to:', _hsBeds);
-        });
-      });
-
-      // Wire Price buttons
-      document.querySelectorAll('#hswPrice .hsw-chip, .price-btn, [data-price], [data-max-price]').forEach(function(btn) {
-        btn.addEventListener('click', function() {
-          var row = btn.closest('.hsw-chip-row');
-          if (row) row.querySelectorAll('.hsw-chip').forEach(function(c){ c.classList.remove('active'); });
-          btn.classList.add('active');
-          var v = btn.dataset.val || btn.dataset.price || btn.dataset.value || btn.dataset.maxPrice || '';
-          _hsPrice = (v === '' || btn.textContent.trim() === 'Any') ? 'any' : v;
-          console.log('[tab] price set to:', _hsPrice);
-        });
-      });
-    });
-
     function hswGo() {
-      // Read status directly from DOM — no variables, no timing issues
       var activeTab = document.querySelector('.hsw-tab.active');
       var status = activeTab ? (activeTab.dataset.status || 'buy') : 'buy';
 
-      var inp = document.querySelector('#heroSearch, #hero-search-input, input.hsw-input, .hsw-body input[type="text"]');
-      var query = inp ? inp.value.trim() : '';
+      var activeBed = document.querySelector('.hsw-chip-row .hsw-chip.active[data-val], #hswBeds .hsw-chip.active');
+      var beds = activeBed ? activeBed.dataset.val : '';
+
+      var activePrice = document.querySelector('.hsw-chip-row .hsw-chip.active[data-price], #hswPrice .hsw-chip.active[data-price]');
+      var price = activePrice ? (activePrice.dataset.price || activePrice.dataset.val || '') : '';
+
+      var inp = document.querySelector('input.hsw-input, .hsw-body input[type="text"], #heroSearch');
+      var query = (inp && status === 'buy') ? inp.value.trim() : '';
 
       var params = new URLSearchParams();
       params.set('status', status);
-      if (query && status === 'buy') params.set('cities', query);
+      if (beds && beds !== 'any' && beds !== '') params.set('beds', beds);
+      if (price && price !== 'any' && price !== '') params.set('maxPrice', price);
+      if (query) params.set('cities', query);
 
       var url = '/public/search-homes.html?' + params.toString();
-      console.log('[hswGo] status=' + status + ' url=' + url);
+      console.log('[hswGo] navigating:', url);
       window.location.href = url;
     }
 
-    // Also wire the Search button directly by every possible selector
     (function() {
-      var searchBtns = document.querySelectorAll(
-        '#heroSearchBtn, .search-btn, .hsw-search, [onclick*="hswGo"], button.search'
-      );
-      searchBtns.forEach(function(btn) {
-        btn.removeAttribute('onclick');
-        btn.addEventListener('click', hswGo);
+      var CA_PLACES = [
+        'Los Angeles','San Diego','San Jose','San Francisco','Fresno','Sacramento',
+        'Long Beach','Oakland','Bakersfield','Anaheim','Santa Ana','Riverside',
+        'Irvine','Stockton','Chula Vista','Fremont','San Bernardino','Modesto',
+        'Fontana','Moreno Valley','Glendale','Huntington Beach','Santa Clarita',
+        'Garden Grove','Oceanside','Rancho Cucamonga','Santa Rosa','Ontario',
+        'Lancaster','Elk Grove','Palmdale','Corona','Salinas','Pomona',
+        'Torrance','Escondido','Sunnyvale','Pasadena','Hayward','Lakewood',
+        'Fullerton','Visalia','Thousand Oaks','Simi Valley','Concord',
+        'Roseville','Victorville','Surprise','Santa Clara','Costa Mesa',
+        'Vallejo','Downey','Inglewood','West Covina','Berkeley',
+        'Norwalk','Burbank','El Monte','Murrieta','Antioch','Temecula',
+        'Orange','Daly City','Santa Maria','Rialto','Compton','Vista',
+        'Mission Viejo','Jurupa Valley','South Gate','Clovis','Carlsbad',
+        'El Cajon','Westminster','Ventura','Fairfield','Richmond',
+        'San Buenaventura','Alhambra','Beaumont',
+        'Newport Beach','Laguna Beach','San Clemente','Dana Point',
+        'Redondo Beach','Manhattan Beach','Hermosa Beach','El Segundo',
+        'Culver City','Santa Monica','Venice','Malibu','Calabasas',
+        'Agoura Hills','Westlake Village','Newbury Park','Camarillo',
+        'Oxnard','Port Hueneme','Moorpark','Fillmore','Santa Paula',
+        'Hemet','San Jacinto','Perris','Menifee','Lake Elsinore',
+        'Canyon Lake','Wildomar','Indio','Palm Desert','Palm Springs',
+        'Cathedral City','Rancho Mirage','Desert Hot Springs','Coachella',
+        'Blythe','Barstow','Apple Valley','Hesperia',
+        'Adelanto','Redlands','Loma Linda','Highland','Colton',
+        'Grand Terrace','Yucaipa','Calimesa','Chino','Chino Hills',
+        'Upland','Montclair','Claremont','San Dimas','Glendora','Azusa',
+        'Duarte','Monrovia','Arcadia','Temple City','Baldwin Park',
+        'Covina','La Puente','Industry','Rowland Heights',
+        'Diamond Bar','Walnut','La Habra','Brea','Placentia','Yorba Linda',
+        'Anaheim Hills','Orange County','Los Angeles County','San Diego County',
+        'Riverside County','San Bernardino County','Ventura County',
+        'Fresno County','San Luis Obispo County','Santa Barbara County',
+        'Monterey County','Santa Cruz County','San Mateo County',
+        'Santa Clara County','Alameda County','Contra Costa County'
+      ];
+
+      var inp = document.querySelector('input.hsw-input, .hsw-body input[type="text"], #hswSearchInput');
+      if (!inp) return;
+
+      var box = document.createElement('div');
+      box.id = 'hswAutocomplete';
+      box.style.cssText = 'position:absolute;z-index:9999;background:#1a1a1a;border:1px solid rgba(201,168,76,0.4);border-radius:8px;width:100%;max-height:220px;overflow-y:auto;display:none;';
+      inp.parentElement.style.position = 'relative';
+      inp.parentElement.appendChild(box);
+
+      inp.addEventListener('input', function() {
+        var val = inp.value.trim().toLowerCase();
+        box.innerHTML = '';
+        if (val.length < 2) { box.style.display = 'none'; return; }
+        var matches = CA_PLACES.filter(function(p){ return p.toLowerCase().startsWith(val); }).slice(0, 8);
+        if (!matches.length) { box.style.display = 'none'; return; }
+        matches.forEach(function(place) {
+          var item = document.createElement('div');
+          item.textContent = place;
+          item.style.cssText = 'padding:9px 14px;cursor:pointer;font-size:13px;color:#e5e5e5;';
+          item.addEventListener('mouseenter', function(){ item.style.background = 'rgba(201,168,76,0.15)'; });
+          item.addEventListener('mouseleave', function(){ item.style.background = ''; });
+          item.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            inp.value = place;
+            box.style.display = 'none';
+          });
+          box.appendChild(item);
+        });
+        box.style.display = 'block';
+      });
+
+      inp.addEventListener('blur', function(){ setTimeout(function(){ box.style.display = 'none'; }, 150); });
+      inp.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') box.style.display = 'none';
       });
     })();
-    // ─────────────────────────────────────────────────────────────────
 
     // County click — maps directly to the county tab keys used in search-homes.html
     function hswCounty(county) {
