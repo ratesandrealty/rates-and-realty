@@ -3910,8 +3910,8 @@ let _autoSaveTimer = null;
 
 /* ── URL PARAMS ── */
 const params = new URLSearchParams(location.search);
-contactId = params.get('id') || params.get('contact_id') || params.get('contact');
-leadId = params.get('lead_id');
+leadId = params.get('lead_id') || params.get('id') || null;
+contactId = params.get('contact_id') || params.get('contact') || params.get('id') || leadId;
 
 /* ── LOAD ── */
 async function loadData() {
@@ -4223,6 +4223,22 @@ function populateUI() {
   if (document.getElementById('actualEarnings')) document.getElementById('actualEarnings').value = leadData.actual_earnings || '';
   if (leadData.deal_outcome) setOutcome(leadData.deal_outcome);
   if (leadData.lost_reason && document.getElementById('lostReason')) document.getElementById('lostReason').value = leadData.lost_reason;
+
+  // Pull fresh earnings from contacts (single source of truth)
+  if (contactId) {
+    const { data: cData } = await sb.from('contacts')
+      .select('actual_earnings, estimated_earnings, deal_outcome, closed_date, lost_reason')
+      .eq('id', contactId).single();
+    if (cData) {
+      if (document.getElementById('estimatedEarnings'))
+        document.getElementById('estimatedEarnings').value = cData.estimated_earnings || '';
+      if (document.getElementById('actualEarnings'))
+        document.getElementById('actualEarnings').value = cData.actual_earnings || '';
+      if (cData.deal_outcome) setOutcome(cData.deal_outcome);
+      if (cData.lost_reason && document.getElementById('lostReason'))
+        document.getElementById('lostReason').value = cData.lost_reason;
+    }
+  }
   setVal('f-created', leadData.created_at ? fmtDate(leadData.created_at) : '');
 
   // Referral partner pre-populate
@@ -8826,52 +8842,52 @@ function setOutcome(outcome) {
 function saveEarnings() {
   clearTimeout(_earningsSaveTimer);
   _earningsSaveTimer = setTimeout(async () => {
-    const payload = {
-      estimated_earnings: parseFloat(document.getElementById('estimatedEarnings')?.value) || 0,
-      actual_earnings: parseFloat(document.getElementById('actualEarnings')?.value) || 0,
-      deal_outcome: _currentOutcome,
-      lost_reason: document.getElementById('lostReason')?.value || null,
-      closed_date: _currentOutcome === 'won' ? new Date().toISOString().split('T')[0] : null,
-      updated_at: new Date().toISOString()
-    };
+    // Always save to contacts directly using contactId
+    // (leads is now a view over contacts — contact_id IS the id)
+    const targetId = contactId || leadId;
+    if (!targetId) return;
 
-    if (leadId) {
-      // Update existing leads row
-      await sb.from('leads').update(payload).eq('id', leadId);
-    } else if (contactId) {
-      // No leads row yet — create one from contact data
-      const { data: newLead } = await sb.from('leads').insert({
-        ...payload,
-        contact_id: contactId,
-        loan_amount: parseFloat(document.getElementById('f-loan-amount')?.value?.replace(/[$,]/g,'')) || null,
-        loan_type: document.getElementById('f-loan-type')?.value || null,
-        property_address: document.getElementById('f-property')?.value || null,
-        status: 'closed',
-        source: 'CRM',
-        created_at: new Date().toISOString()
-      }).select('id').single();
-      if (newLead) {
-        leadId = newLead.id;
-        console.log('[saveEarnings] Created new leads row:', leadId);
-      }
-    }
+    const estVal = parseFloat(document.getElementById('estimatedEarnings')?.value) || 0;
+    const actVal = parseFloat(document.getElementById('actualEarnings')?.value) || 0;
+    const outcome = _currentOutcome;
+    const lostReason = document.getElementById('lostReason')?.value || null;
+    const closedDate = outcome === 'won' ? new Date().toISOString().split('T')[0] : null;
 
-    // Also sync to closed_deals table for cross-reference
-    if (contactId && (_currentOutcome === 'won' || _currentOutcome === 'lost')) {
-      const loanAmt = parseFloat(document.getElementById('f-loan-amount')?.value?.replace(/[$,]/g,'')) || null;
+    // Save directly to contacts table (single source of truth)
+    const { error } = await sb.from('contacts').update({
+      estimated_earnings: estVal,
+      actual_earnings:    actVal,
+      deal_outcome:       outcome,
+      lost_reason:        lostReason,
+      closed_date:        closedDate,
+      updated_at:         new Date().toISOString()
+    }).eq('id', targetId);
+
+    if (error) console.error('[saveEarnings] error:', error.message);
+
+    // Also keep closed_deals in sync
+    if (outcome === 'won' || outcome === 'lost') {
+      const loanAmt = parseFloat(
+        (document.getElementById('f-loan-amount')?.value || '').replace(/[$,]/g, '')
+      ) || null;
       await sb.from('closed_deals').upsert({
-        contact_id: contactId,
-        loan_amount: loanAmt,
-        commission_earned: payload.actual_earnings,
-        outcome: _currentOutcome === 'won' ? 'closed' : 'lost',
-        lost_reason: payload.lost_reason,
-        close_date: payload.closed_date || new Date().toISOString().split('T')[0],
-        updated_at: new Date().toISOString()
+        contact_id:       targetId,
+        loan_amount:      loanAmt,
+        commission_earned: actVal,
+        outcome:          outcome === 'won' ? 'closed' : 'lost',
+        lost_reason:      lostReason,
+        close_date:       closedDate || new Date().toISOString().split('T')[0],
+        updated_at:       new Date().toISOString()
       }, { onConflict: 'contact_id' }).catch(() => {});
     }
 
     const ind = document.getElementById('autoSaveIndicator');
-    if (ind) { ind.textContent = '✓ Saved'; ind.style.opacity = '1'; ind.style.color = 'rgba(80,200,120,0.8)'; setTimeout(() => ind.style.opacity = '0', 1500); }
+    if (ind) {
+      ind.textContent = '✓ Saved';
+      ind.style.opacity = '1';
+      ind.style.color = 'rgba(80,200,120,0.8)';
+      setTimeout(() => ind.style.opacity = '0', 1500);
+    }
   }, 800);
 }
 
