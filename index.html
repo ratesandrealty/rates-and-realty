@@ -2022,9 +2022,12 @@
   <script src="public/js/chat-widget.js"></script>
   <script>
     // ── HOME SEARCH WIDGET ──
+    let homepageStatus = 'buy';
+
     function hswTab(el, type) {
       document.querySelectorAll('.hsw-tab').forEach(t => t.classList.remove('active'));
       el.classList.add('active');
+      homepageStatus = type;
       window._hswType = type;
     }
 
@@ -2038,18 +2041,16 @@
     });
 
     function hswGo() {
-      var type  = window._hswType || 'buy';
-      var q     = (document.getElementById('hswInput').value || '').trim();
-      var beds  = (document.querySelector('#hswBeds .hsw-chip.active')?.dataset.val) || '';
-      var price = (document.querySelector('#hswPrice .hsw-chip.active')?.dataset.val) || '';
-      var url   = '/public/search-homes.html?';
-      // Pass the tab type so search-homes.html activates the right status tab
-      if (type === 'rent')  url += 'status=rent&';
-      if (type === 'sold')  url += 'status=sold&';
-      if (q)     url += 'q='        + encodeURIComponent(q) + '&';
-      if (beds)  url += 'minBeds='  + beds  + '&';
-      if (price) url += 'maxPrice=' + price + '&';
-      window.location.href = url;
+      var selectedCity  = (document.getElementById('hswInput').value || '').trim();
+      var selectedBeds  = (document.querySelector('#hswBeds .hsw-chip.active')?.dataset.val) || '';
+      var selectedPrice = (document.querySelector('#hswPrice .hsw-chip.active')?.dataset.val) || '';
+
+      const params = new URLSearchParams();
+      params.set('status', homepageStatus);
+      if (selectedCity) params.set('cities', selectedCity);
+      if (selectedBeds && selectedBeds !== 'any') params.set('beds', selectedBeds);
+      if (selectedPrice && selectedPrice !== 'any') params.set('maxPrice', selectedPrice);
+      window.location.href = '/public/search-homes.html?' + params.toString();
     }
 
     // County click — maps directly to the county tab keys used in search-homes.html

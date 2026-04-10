@@ -937,15 +937,13 @@ function _applyIncomingSearchParams() {
     console.log('[URL params]', Object.fromEntries(p));
 
     // --- Status tab from homepage widget (status=rent or status=sold) ---
-    var statusParam = p.get('status');
+    const statusParam = new URLSearchParams(window.location.search).get('status');
+
     if (statusParam === 'rent') {
       activeStatus = 'Active';
       currentLease = true;
-      // Clear city/county filter — lease listings in Trestle don't always
-      // match city fields the same way as for-sale, so search statewide
       selectedCities = [];
       selectedCounties.clear();
-      // Activate the For Rent tab
       document.querySelectorAll('.status-tab').forEach(function(t) {
         t.classList.remove('active');
         if (t.dataset.lease === 'true') t.classList.add('active');
@@ -953,14 +951,15 @@ function _applyIncomingSearchParams() {
     } else if (statusParam === 'sold') {
       activeStatus = 'Closed';
       currentLease = false;
-      // Clear city/county so sold search returns results statewide
       selectedCities = [];
       selectedCounties.clear();
-      // Activate the Sold tab
       document.querySelectorAll('.status-tab').forEach(function(t) {
         t.classList.remove('active');
         if (t.dataset.status === 'Closed') t.classList.add('active');
       });
+    } else {
+      activeStatus = 'Active';
+      currentLease = false;
     }
 
     // --- Location: county / cities ---
