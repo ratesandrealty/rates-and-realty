@@ -109,7 +109,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .dom-badge{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.7);color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;}
 .card-body{padding:10px;}
 .card-price{font-size:18px;font-weight:700;color:var(--text);}
-.card-address{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+.card-address { font-size:12px; color:#aaa; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:3px; display:block; }
 .card-city{font-size:11px;color:var(--muted);margin-top:1px;}
 .card-stats{display:flex;gap:8px;margin-top:6px;font-size:11px;color:var(--muted);flex-wrap:wrap;}
 .card-stats span{display:flex;align-items:center;gap:3px;}
@@ -2249,7 +2249,7 @@ const SOCAL_PLACES = [
 let _acSelectedIndex = -1;
 
 function initSearchAutocomplete() {
-  const input = document.querySelector('.search-row input[type=text]');
+  const input = document.getElementById('searchInput');
   if (!input) return;
 
   // Wrap input in a positioned container for the dropdown
@@ -2359,52 +2359,85 @@ function acApplyFreeText(text) {
 }
 
 function addCityFilter(cityName) {
-  // Directly add just this one city — never touch county checkboxes
-  if (typeof selectedCities !== 'undefined') {
-    // Clear all currently selected cities and replace with just this one
-    // (or append — depending on UX preference, this replaces for clean search)
-    selectedCities.length = 0;
-    selectedCities.push(cityName);
+  // Close the autocomplete dropdown
+  var ac = document.getElementById('searchAutocomplete');
+  if (ac) ac.style.display = 'none';
+  var inp = document.getElementById('searchInput');
+  if (inp) inp.value = '';
 
-    // Clear any county selections so they don't override the city filter
-    if (typeof selectedCounties !== 'undefined') {
-      selectedCounties.clear();
-      // Uncheck all county checkboxes visually
-      document.querySelectorAll('.county-cb').forEach(function(cb) { cb.checked = false; });
-    }
+  // Clear ALL county and city selections first for a clean city search
+  if (typeof selectedCounties !== 'undefined') selectedCounties.clear();
+  if (typeof selectedCities !== 'undefined') selectedCities.length = 0;
 
-    // Update city pills display if that function exists
-    if (typeof updateCityPills === 'function') updateCityPills();
-    if (typeof renderCityPills === 'function') renderCityPills();
-    if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
-    if (typeof updateCityDropdown === 'function') updateCityDropdown();
+  // Uncheck all county checkboxes
+  document.querySelectorAll('.county-cb').forEach(function(cb) { cb.checked = false; });
 
-    // Fetch listings with just this city
-    fetchListings();
-    return;
+  // Find the right county for this city from our SOCAL_PLACES data
+  var place = (typeof SOCAL_PLACES !== 'undefined')
+    ? SOCAL_PLACES.find(function(p) { return p.name === cityName && p.type === 'city'; })
+    : null;
+  var countyForCity = place ? (place.county + ' County') : null;
+
+  // If we know the county, enable it so the city dropdown populates
+  if (countyForCity && typeof selectedCounties !== 'undefined') {
+    selectedCounties.add(countyForCity);
+    var countyCb = document.querySelector('.county-cb[value="' + countyForCity + '"]');
+    if (countyCb) countyCb.checked = true;
+  } else {
+    // Enable all counties so the city can be found in any of them
+    document.querySelectorAll('.county-cb').forEach(function(cb) {
+      cb.checked = true;
+      if (typeof selectedCounties !== 'undefined') selectedCounties.add(cb.value);
+    });
   }
-  // URL fallback
-  const url = new URL(window.location);
-  url.searchParams.set('cities', cityName);
-  url.searchParams.delete('counties');
-  window.history.pushState({}, '', url);
+
+  // Rebuild city dropdown with the new county selection
+  if (typeof updateCityDropdown === 'function') updateCityDropdown();
+  if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
+
+  // Now tick just this one city checkbox
+  // The city checkboxes are in #cityCheckboxList — find and check just this city
+  var cityCb = document.querySelector('#cityCheckboxList input[value="' + cityName + '"]');
+  if (cityCb) {
+    cityCb.checked = true;
+    if (typeof selectedCities !== 'undefined' && selectedCities.indexOf(cityName) === -1) {
+      selectedCities.push(cityName);
+    }
+    if (typeof updateCityBtnLabel === 'function') updateCityBtnLabel();
+  } else {
+    // City checkbox not found — add directly to selectedCities
+    if (typeof selectedCities !== 'undefined') selectedCities.push(cityName);
+  }
+
+  // Update city tag chips display
+  if (typeof renderCityTags === 'function') renderCityTags();
+  if (typeof updateCityBtnLabel === 'function') updateCityBtnLabel();
+
+  // Fetch with the new city filter
   fetchListings();
 }
 
 function addCountyFilter(countyName) {
-  const countyKey = countyName.includes('County') ? countyName : countyName + ' County';
-  // Clear cities first
+  var ac = document.getElementById('searchAutocomplete');
+  if (ac) ac.style.display = 'none';
+  var inp = document.getElementById('searchInput');
+  if (inp) inp.value = '';
+
+  var countyKey = countyName.includes('County') ? countyName : countyName + ' County';
+
+  // Clear existing, select only this county
+  if (typeof selectedCounties !== 'undefined') selectedCounties.clear();
   if (typeof selectedCities !== 'undefined') selectedCities.length = 0;
-  if (typeof selectedCounties !== 'undefined') {
-    selectedCounties.clear();
-    selectedCounties.add(countyKey);
-    // Uncheck all, then check the right one
-    document.querySelectorAll('.county-cb').forEach(function(cb) {
-      cb.checked = cb.value === countyKey;
-    });
-    if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
-    if (typeof updateCityDropdown === 'function') updateCityDropdown();
-  }
+  document.querySelectorAll('.county-cb').forEach(function(cb) { cb.checked = false; });
+  document.querySelectorAll('#cityCheckboxList input[type=checkbox]').forEach(function(cb) { cb.checked = false; });
+
+  if (typeof selectedCounties !== 'undefined') selectedCounties.add(countyKey);
+  var countyCb = document.querySelector('.county-cb[value="' + countyKey + '"]');
+  if (countyCb) countyCb.checked = true;
+
+  if (typeof updateCityDropdown === 'function') updateCityDropdown();
+  if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
+  if (typeof updateCityBtnLabel === 'function') updateCityBtnLabel();
   fetchListings();
 }
 
