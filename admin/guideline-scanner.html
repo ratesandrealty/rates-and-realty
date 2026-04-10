@@ -799,11 +799,28 @@
       };
       if (selectedLender) body.lender_id = selectedLender.id;
 
-      const r = await fetch(EDGE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SB_ANON },
-        body: JSON.stringify(body)
-      });
+      // 60s timeout — Claude calls through guidelines-ai can take 15-30s
+      // for long scenarios, and the default browser fetch timeout was
+      // killing the request before the model finished streaming its answer.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+      let r;
+      try {
+        r = await fetch(EDGE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SB_ANON },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!r.ok) {
+        const errText = await r.text().catch(() => '');
+        throw new Error('HTTP ' + r.status + (errText ? ': ' + errText.slice(0, 200) : ''));
+      }
       const data = await r.json();
       removeTyping(typingId);
 
@@ -812,7 +829,10 @@
       addBubble('ai', data.answer, data.sources);
     } catch(e) {
       removeTyping(typingId);
-      addBubble('ai', '⚠️ Error contacting guideline AI: ' + e.message);
+      const msg = e.name === 'AbortError'
+        ? '⚠️ Request timed out after 60s. The guideline AI took too long — try a shorter question or fewer sources.'
+        : '⚠️ Error contacting guideline AI: ' + e.message;
+      addBubble('ai', msg);
     } finally {
       setLoading(false);
     }
@@ -851,7 +871,7 @@
     const div = document.createElement('div');
     div.id = id;
     div.className = 'msg ai';
-    div.innerHTML = '<div class="msg-avatar ai">G</div><div class="msg-body"><div class="msg-bubble" style="padding:10px 16px"><div class="typing"><span></span><span></span><span></span></div></div></div>';
+    div.innerHTML = '<div class="msg-avatar ai">G</div><div class="msg-body"><div class="msg-bubble" style="padding:10px 16px;display:flex;align-items:center;gap:10px"><div class="typing"><span></span><span></span><span></span></div><span style="font-size:11px;color:rgba(255,255,255,0.45);font-style:italic;">Thinking — scanning guidelines…</span></div></div>';
     msgs.appendChild(div);
     msgs.scrollTop = msgs.scrollHeight;
   }
