@@ -940,19 +940,39 @@ function _applyIncomingSearchParams() {
     var countyParam = p.get('county');
     if (countyParam) {
       selectedCounties.clear();
+      selectedCities = []; // reset cities first
       countyParam.split(',').forEach(function(c){
         var name = c.trim();
-        // Normalize: homepage sends "Los Angeles", page uses "Los Angeles County"
-        selectedCounties.add(name.indexOf('County') < 0 ? name + ' County' : name);
+        // Normalize: "Los Angeles" → "Los Angeles County", "South Bay" stays "South Bay"
+        var key = (name.indexOf('County') < 0 && COUNTIES[name + ' County']) ? name + ' County' : name;
+        // Also try exact match first
+        if (!COUNTIES[key]) {
+          // Try case-insensitive match
+          var allKeys = Object.keys(COUNTIES);
+          var found = allKeys.find(function(k){ return k.toLowerCase() === name.toLowerCase(); })
+                   || allKeys.find(function(k){ return k.toLowerCase() === (name + ' county').toLowerCase(); });
+          if (found) key = found;
+        }
+        selectedCounties.add(key);
+        // AUTO-SELECT ALL CITIES in this county — this is what actually drives the API query
+        var cities = (COUNTIES[key] && COUNTIES[key].cities) || [];
+        cities.forEach(function(city){
+          if (selectedCities.indexOf(city) === -1) selectedCities.push(city);
+        });
       });
-      // Tick the county checkboxes (initCountyDropdown must have run first)
+      // Tick the county checkboxes
       document.querySelectorAll('.county-cb').forEach(function(cb){
         cb.checked = selectedCounties.has(cb.value);
       });
-      // Update city dropdown to show only cities in selected county
+      // Update city dropdown
       if (typeof updateCityDropdown === 'function') updateCityDropdown();
-      // Update the county button label
       if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
+      if (typeof updateLocationChips === 'function') updateLocationChips();
+      // Set sort to newest first when coming from county button
+      var sortEl = document.getElementById('sortSelect');
+      if (sortEl && !p.get('sort')) {
+        sortEl.value = 'ListingContractDate desc';
+      }
     }
     var cityParam = p.get('cities') || p.get('city');
     if (cityParam) {
@@ -1276,7 +1296,7 @@ function buildODataFilter(bounds) {
 
   // City filter — ALWAYS applies when cities are selected (independent of bounds)
   if (selectedCities.length > 0) {
-    var cityList = selectedCities.slice(0, 20);
+    var cityList = selectedCities.slice(0, 60);
     var cityClause = cityList.length === 1
       ? "City eq '" + cityList[0].replace(/'/g,"''") + "'"
       : '(' + cityList.map(function(c){return "City eq '" + c.replace(/'/g,"''") + "'";}).join(' or ') + ')';
@@ -1384,7 +1404,7 @@ async function fetchListings(page, append, boundsOverride) {
   // If a viewport search is active, persist bounds across pagination
   var effectiveBounds = boundsOverride || (_boundsFetchActive ? _searchAreaBounds : null);
 
-  var sort = document.getElementById('sortSelect').value || 'ModificationTimestamp desc';
+  var sort = document.getElementById('sortSelect').value || 'ListingContractDate desc';
   // Zoom-based page size for bounds searches — more results when zoomed in
   var pageSize = PAGE_SIZE;
   if (effectiveBounds && map && typeof map.getZoom === 'function') {
