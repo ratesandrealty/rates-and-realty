@@ -1807,7 +1807,7 @@
           </div>
           <div class="ld-field span-3">
             <label class="ld-label">Property Address</label>
-            <input class="ld-input" type="text" id="f-property" placeholder="123 Main St, City, State ZIP">
+            <input class="ld-input" type="text" id="f-property" placeholder="123 Main St, City, State ZIP" autocomplete="off" oninput="addressAutocomplete(this)">
           </div>
         </div>
       </div>
@@ -2899,7 +2899,7 @@
           <div class="ld-form-grid cols-3">
             <div class="ld-field span-3">
               <label class="ld-label">Property Address</label>
-              <input class="ld-input" type="text" id="lp-prop-addr" placeholder="123 Main St, City, State ZIP">
+              <input class="ld-input" type="text" id="lp-prop-addr" placeholder="123 Main St, City, State ZIP" autocomplete="off" oninput="addressAutocomplete(this)">
             </div>
             <div class="ld-field">
               <label class="ld-label">Property Value</label>
@@ -8826,7 +8826,6 @@ function setOutcome(outcome) {
 function saveEarnings() {
   clearTimeout(_earningsSaveTimer);
   _earningsSaveTimer = setTimeout(async () => {
-    if (!leadId) return;
     const payload = {
       estimated_earnings: parseFloat(document.getElementById('estimatedEarnings')?.value) || 0,
       actual_earnings: parseFloat(document.getElementById('actualEarnings')?.value) || 0,
@@ -8835,10 +8834,120 @@ function saveEarnings() {
       closed_date: _currentOutcome === 'won' ? new Date().toISOString().split('T')[0] : null,
       updated_at: new Date().toISOString()
     };
-    await sb.from('leads').update(payload).eq('id', leadId);
+
+    if (leadId) {
+      // Update existing leads row
+      await sb.from('leads').update(payload).eq('id', leadId);
+    } else if (contactId) {
+      // No leads row yet — create one from contact data
+      const { data: newLead } = await sb.from('leads').insert({
+        ...payload,
+        contact_id: contactId,
+        loan_amount: parseFloat(document.getElementById('f-loan-amount')?.value?.replace(/[$,]/g,'')) || null,
+        loan_type: document.getElementById('f-loan-type')?.value || null,
+        property_address: document.getElementById('f-property')?.value || null,
+        status: 'closed',
+        source: 'CRM',
+        created_at: new Date().toISOString()
+      }).select('id').single();
+      if (newLead) {
+        leadId = newLead.id;
+        console.log('[saveEarnings] Created new leads row:', leadId);
+      }
+    }
+
+    // Also sync to closed_deals table for cross-reference
+    if (contactId && (_currentOutcome === 'won' || _currentOutcome === 'lost')) {
+      const loanAmt = parseFloat(document.getElementById('f-loan-amount')?.value?.replace(/[$,]/g,'')) || null;
+      await sb.from('closed_deals').upsert({
+        contact_id: contactId,
+        loan_amount: loanAmt,
+        commission_earned: payload.actual_earnings,
+        outcome: _currentOutcome === 'won' ? 'closed' : 'lost',
+        lost_reason: payload.lost_reason,
+        close_date: payload.closed_date || new Date().toISOString().split('T')[0],
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'contact_id' }).catch(() => {});
+    }
+
     const ind = document.getElementById('autoSaveIndicator');
     if (ind) { ind.textContent = '✓ Saved'; ind.style.opacity = '1'; ind.style.color = 'rgba(80,200,120,0.8)'; setTimeout(() => ind.style.opacity = '0', 1500); }
   }, 800);
+}
+
+// ── PROPERTY ADDRESS AUTOCOMPLETE ──────────────────────────────
+let _addrTimer = null;
+let _activeAddrInput = null;
+
+function addressAutocomplete(inp) {
+  clearTimeout(_addrTimer);
+  const val = inp.value.trim();
+  removeAddrDropdown();
+  if (val.length < 3) return;
+  _activeAddrInput = inp;
+  _addrTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&countrycodes=us&q=${encodeURIComponent(val)}`,
+        { headers: { 'Accept-Language': 'en-US,en' } }
+      );
+      const results = await res.json();
+      if (!results.length) return;
+      showAddrDropdown(inp, results);
+    } catch(e) { console.warn('address autocomplete error:', e); }
+  }, 350);
+}
+
+function showAddrDropdown(inp, results) {
+  removeAddrDropdown();
+  const rect = inp.getBoundingClientRect();
+  const drop = document.createElement('div');
+  drop.id = '_addrDrop';
+  drop.style.cssText = `
+    position:fixed;
+    top:${rect.bottom + 2}px;
+    left:${rect.left}px;
+    width:${rect.width}px;
+    background:#1a1a1a;
+    border:1px solid rgba(201,168,76,0.4);
+    border-radius:8px;
+    z-index:99999;
+    box-shadow:0 8px 24px rgba(0,0,0,0.7);
+    max-height:220px;
+    overflow-y:auto;
+    font-size:12px;
+  `;
+  results.forEach(r => {
+    const label = r.display_name;
+    // Build clean address: street + city + state + zip
+    const a = r.address || {};
+    const street = [a.house_number, a.road].filter(Boolean).join(' ');
+    const city = a.city || a.town || a.village || a.county || '';
+    const state = a.state || '';
+    const zip = a.postcode || '';
+    const clean = [street, city, state, zip].filter(Boolean).join(', ') || label.split(',').slice(0,3).join(',').trim();
+
+    const item = document.createElement('div');
+    item.style.cssText = 'padding:9px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.06);color:#eee;line-height:1.4;';
+    item.innerHTML = `<div style="font-weight:600;font-size:12px;">${clean}</div><div style="font-size:10px;color:#666;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${label}</div>`;
+    item.onmouseover = () => item.style.background = 'rgba(201,168,76,0.1)';
+    item.onmouseout = () => item.style.background = '';
+    item.onclick = () => {
+      if (_activeAddrInput) _activeAddrInput.value = clean;
+      removeAddrDropdown();
+      // Trigger save
+      const ev = new Event('input', { bubbles: true });
+      if (_activeAddrInput) _activeAddrInput.dispatchEvent(ev);
+    };
+    drop.appendChild(item);
+  });
+  document.body.appendChild(drop);
+  document.addEventListener('click', removeAddrDropdown, { once: true });
+}
+
+function removeAddrDropdown() {
+  const d = document.getElementById('_addrDrop');
+  if (d) d.remove();
 }
 
 /* ── CONNECTED PEOPLE / FAMILY MEMBERS ── */
