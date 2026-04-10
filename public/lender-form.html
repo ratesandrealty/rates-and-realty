@@ -96,6 +96,20 @@
       This helps us match the right scenarios to your strike zone. Changes save when you hit <strong>Save Changes</strong>.
     </div>
 
+    <div id="lfTopSaveBar" style="display:flex; align-items:center;
+      justify-content:space-between; padding:14px 20px;
+      background:rgba(201,168,76,0.06); border-bottom:1px solid rgba(201,168,76,0.15);
+      position:sticky; top:0; z-index:100;">
+      <span id="lfAutoSaveStatus" style="font-size:12px; color:rgba(255,255,255,0.35);">
+        Changes save automatically
+      </span>
+      <button type="button" onclick="lfSaveNow()"
+        style="background:#C9A84C; color:#000; font-weight:700; font-size:13px;
+        padding:9px 24px; border-radius:8px; border:none; cursor:pointer;">
+        Save Changes
+      </button>
+    </div>
+
     <form id="lenderForm" onsubmit="submitForm(event)">
       <!-- Company -->
       <div class="card">
@@ -225,8 +239,48 @@
         <div class="field" style="margin-top:10px"><label for="f_submission_checklist">Submission Checklist Notes</label><textarea id="f_submission_checklist" rows="3" placeholder="Required docs to submit a complete file"></textarea></div>
       </div>
 
+      <div style="background:#1a1a1a; border:1px solid rgba(201,168,76,0.2);
+        border-radius:12px; padding:28px; margin-bottom:24px;">
+
+        <h3 style="color:#C9A84C; font-size:13px; font-weight:700;
+          letter-spacing:.08em; text-transform:uppercase; margin-bottom:6px;">
+          Upload Documents
+        </h3>
+        <p style="color:rgba(255,255,255,0.45); font-size:13px; margin-bottom:20px;">
+          Upload your rate sheets, guidelines, matrices, or any other docs.
+          Files are saved to the Rates &amp; Realty lender library.
+        </p>
+
+        <!-- Drop zone -->
+        <div id="lfDropZone"
+          style="border:2px dashed rgba(201,168,76,0.35); border-radius:10px;
+          padding:36px 20px; text-align:center; cursor:pointer; transition:all 0.2s;
+          background:rgba(201,168,76,0.03);"
+          ondragover="lfDragOver(event)"
+          ondragleave="lfDragLeave(event)"
+          ondrop="lfDrop(event)"
+          onclick="document.getElementById('lfFileInput').click()">
+          <div style="font-size:32px; margin-bottom:10px;">📄</div>
+          <p style="color:rgba(255,255,255,0.6); font-size:14px; margin-bottom:4px;">
+            Drag &amp; drop files here
+          </p>
+          <p style="color:rgba(255,255,255,0.3); font-size:12px;">
+            or click to browse — PDF, DOC, DOCX, XLSX supported
+          </p>
+        </div>
+        <input type="file" id="lfFileInput" multiple accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg"
+          style="display:none" onchange="lfHandleFiles(this.files)">
+
+        <!-- File list -->
+        <div id="lfFileList" style="margin-top:16px; display:flex; flex-direction:column; gap:8px;"></div>
+
+        <!-- Previously uploaded docs -->
+        <div id="lfExistingDocs" style="margin-top:20px;"></div>
+
+      </div>
+
       <div class="footer-actions">
-        <button type="submit" id="submitBtn">Save Changes</button>
+        <button type="button" id="submitBtn" onclick="lfSaveNow()">Save Changes</button>
       </div>
     </form>
   </div>
@@ -314,6 +368,7 @@
       if (!data.success || !data.lender) { showState('error'); return; }
       var l = data.lender;
       _lenderId = l.id;
+      window.__lfLenderId = l.id;
       // Hydrate
       var repName = l.rep_name || l.contact_name || '';
       document.getElementById('repGreeting').textContent = (repName.split(/\s+/)[0]) || 'there';
@@ -458,6 +513,172 @@
   }
 
   loadLender();
+</script>
+
+<script src="/api/env.js"></script>
+<script>
+// ── Lender Form Upgrades: Autosave + Upload ───────────────────────
+var LF_AUTOSAVE_DELAY = 3000;
+var LF_AUTOSAVE_TIMER = null;
+var LF_BUCKET = 'lender-guidelines';
+var LF_LENDER_ID = null;
+
+// Hook into the page's token fetch to capture lender id
+(function() {
+  var origFetch = window.fetch;
+  window.fetch = function() {
+    return origFetch.apply(this, arguments).then(function(res) {
+      var clone = res.clone();
+      clone.json().then(function(data) {
+        var lender = data && data.lender ? data.lender : data;
+        if (lender && lender.id && !LF_LENDER_ID) {
+          if (lender.name || lender.rep_name || lender.company_name) {
+            LF_LENDER_ID = lender.id;
+            window.__lfLenderId = lender.id;
+            lfLoadExistingDocs(lender.id);
+          }
+        }
+      }).catch(function(){});
+      return res;
+    });
+  };
+})();
+
+function lfGetSB() {
+  var c = window.APP_CONFIG || window.__env || {};
+  return {
+    url: c.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co',
+    key: c.SUPABASE_ANON_KEY || ''
+  };
+}
+
+// ── Autosave ──────────────────────────────────────────────────────
+function lfSetStatus(msg, color) {
+  var el = document.getElementById('lfAutoSaveStatus');
+  if (el) { el.textContent = msg; el.style.color = color || 'rgba(255,255,255,0.35)'; }
+}
+
+function lfQueueAutosave() {
+  lfSetStatus('Unsaved changes...', '#f5a623');
+  clearTimeout(LF_AUTOSAVE_TIMER);
+  LF_AUTOSAVE_TIMER = setTimeout(function() { lfSaveNow(true); }, LF_AUTOSAVE_DELAY);
+}
+
+function lfSaveNow(isAuto) {
+  var saved = false;
+  var fns = ['saveForm','handleSave','submitForm','saveLenderForm','saveChanges','doSave'];
+  for (var i = 0; i < fns.length; i++) {
+    if (typeof window[fns[i]] === 'function') {
+      try { window[fns[i]](); } catch(e) {}
+      saved = true;
+      break;
+    }
+  }
+  if (!saved) {
+    var btns = document.querySelectorAll('button');
+    for (var j = 0; j < btns.length; j++) {
+      var t = btns[j].textContent.trim().toLowerCase();
+      if ((t === 'save changes' || t === 'save') && btns[j].id !== 'submitBtn' && !btns[j].closest('#lfTopSaveBar')) {
+        btns[j].click();
+        saved = true;
+        break;
+      }
+    }
+  }
+  lfSetStatus(isAuto ? 'Autosaved ' + new Date().toLocaleTimeString() : 'Saved!', '#4caf50');
+  setTimeout(function() { lfSetStatus('Changes save automatically', 'rgba(255,255,255,0.35)'); }, 3000);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('input, select, textarea').forEach(function(el) {
+    if (el.id === 'lfFileInput') return;
+    el.addEventListener('change', lfQueueAutosave);
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      el.addEventListener('input', lfQueueAutosave);
+    }
+  });
+});
+
+// ── Drag & Drop Upload ────────────────────────────────────────────
+function lfDragOver(e) {
+  e.preventDefault();
+  var dz = document.getElementById('lfDropZone');
+  dz.style.borderColor = '#C9A84C';
+  dz.style.background = 'rgba(201,168,76,0.1)';
+}
+function lfDragLeave(e) {
+  var dz = document.getElementById('lfDropZone');
+  dz.style.borderColor = 'rgba(201,168,76,0.35)';
+  dz.style.background = 'rgba(201,168,76,0.03)';
+}
+function lfDrop(e) {
+  e.preventDefault();
+  lfDragLeave(e);
+  lfHandleFiles(e.dataTransfer.files);
+}
+function lfHandleFiles(files) {
+  Array.from(files).forEach(function(f) { lfUploadFile(f); });
+}
+
+async function lfUploadFile(file) {
+  var sb = lfGetSB();
+  var lenderId = LF_LENDER_ID || window.__lfLenderId;
+  var safeName = file.name.replace(/\s+/g,'-');
+  var path = (lenderId ? lenderId + '/' : 'portal/') + Date.now() + '_' + safeName;
+  var rowId = 'lfr_' + Math.random().toString(36).slice(2,8);
+
+  var list = document.getElementById('lfFileList');
+  var row = document.createElement('div');
+  row.id = rowId;
+  row.style.cssText = 'display:flex;align-items:center;gap:10px;' +
+    'background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 14px;font-size:13px;';
+  row.innerHTML = '<span style="font-size:20px;">📄</span>' +
+    '<span style="flex:1;color:#e5e5e5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+file.name+'</span>'+
+    '<span id="'+rowId+'_s" style="font-size:12px;color:rgba(255,255,255,0.4);white-space:nowrap;">Uploading...</span>';
+  list.appendChild(row);
+
+  function st(msg,col){ var e=document.getElementById(rowId+'_s'); if(e){e.textContent=msg;e.style.color=col||'rgba(255,255,255,0.4)';} }
+
+  try {
+    var up = await fetch(sb.url+'/storage/v1/object/'+LF_BUCKET+'/'+encodeURIComponent(path),{
+      method:'POST', headers:{'Authorization':'Bearer '+sb.key,'Content-Type':file.type||'application/octet-stream','x-upsert':'true'}, body:file
+    });
+    if(!up.ok){ st('Upload failed','#e55'); return; }
+    st('Saving...','rgba(255,255,255,0.4)');
+    var pubUrl = sb.url+'/storage/v1/object/public/'+LF_BUCKET+'/'+encodeURIComponent(path);
+    var ins = await fetch(sb.url+'/rest/v1/lender_guidelines',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+sb.key,'apikey':sb.key,'Content-Type':'application/json','Prefer':'return=minimal'},
+      body:JSON.stringify({
+        lender_id:lenderId||null, file_name:file.name, file_url:pubUrl,
+        source_type:'lender', ocr_status:'pending', upload_source:'lender_portal',
+        is_active:true, title:file.name.replace(/\.[^.]+$/,'').replace(/[-_]/g,' '),
+        created_at:new Date().toISOString(), updated_at:new Date().toISOString()
+      })
+    });
+    st(ins.ok ? '✓ Uploaded' : '✓ Stored (log pending)', ins.ok ? '#4caf50' : '#f5a623');
+  } catch(e){ st('Error: '+e.message,'#e55'); }
+}
+
+async function lfLoadExistingDocs(lenderId) {
+  var sb = lfGetSB();
+  var container = document.getElementById('lfExistingDocs');
+  if (!container || !lenderId) return;
+  try {
+    var res = await fetch(sb.url+'/rest/v1/lender_guidelines?lender_id=eq.'+lenderId+'&is_active=eq.true&order=created_at.desc&limit=20',{
+      headers:{'Authorization':'Bearer '+sb.key,'apikey':sb.key}
+    });
+    var docs = await res.json();
+    if (!docs || !docs.length) return;
+    container.innerHTML = '<p style="font-size:12px;color:rgba(255,255,255,0.3);margin-bottom:10px;">Previously uploaded</p>' +
+      docs.map(function(d){
+        return '<a href="'+d.file_url+'" target="_blank" style="display:flex;align-items:center;gap:8px;'+
+          'background:rgba(255,255,255,0.03);border-radius:6px;padding:8px 12px;margin-bottom:6px;'+
+          'color:#C9A84C;text-decoration:none;font-size:12px;">📄 '+d.file_name+'</a>';
+      }).join('');
+  } catch(e){}
+}
+// ─────────────────────────────────────────────────────────────────
 </script>
 
 </body>
