@@ -373,7 +373,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
     <button class="btn-search" onclick="doSearch()"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
     <div class="status-tabs">
       <button class="status-tab active" data-status="Active">For Sale</button>
-      <button class="status-tab" data-status="ComingSoon">Coming Soon</button>
+      <button class="status-tab" data-status="Coming Soon">Coming Soon</button>
       <button class="status-tab" data-status="Closed">Sold</button>
       <button class="status-tab" data-status="Active" data-lease="true">For Rent</button>
       <button class="status-tab" data-status="">All Properties</button>
@@ -1311,16 +1311,19 @@ function buildODataFilter(bounds) {
     parts.push("StateOrProvince eq 'CA'");
   }
 
-  // Status
-  if (activeStatus) parts.push("StandardStatus eq '" + activeStatus + "'");
+  // Status — For Rent uses Active status but Trestle lease listings may use different values
+  if (activeStatus && !currentLease) {
+    parts.push("StandardStatus eq '" + activeStatus + "'");
+  }
+  // For Rent: Active leases in Trestle
+  if (currentLease) {
+    parts.push("(StandardStatus eq 'Active' or StandardStatus eq 'Active Under Contract')");
+  }
 
-  // Property types — For Rent tab overrides type filter
+  // Property types — skip for Sold/Closed and For Rent
   if (currentLease) {
     parts.push("(PropertyType eq 'ResidentialLease' or PropertyType eq 'CommercialLease')");
-  } else {
-    // TYPE_MAP: UI label → Trestle RESO filter clause(s).
-    // Condominium and Townhouse are PropertySubType values within Residential —
-    // using them as PropertyType silently returns 0 results. SFR is also a subtype.
+  } else if (activeStatus !== 'Closed') {
     var TYPE_MAP = {
       'Residential':        ["(PropertyType eq 'Residential' and PropertySubType eq 'Single Family Residence')"],
       'Condominium':        ["(PropertyType eq 'Residential' and PropertySubType eq 'Condominium')"],
@@ -1333,9 +1336,7 @@ function buildODataFilter(bounds) {
     };
     var defaultTypes = ['Residential','Condominium','Townhouse'];
     var isDefault = filters.types.length === 3 && defaultTypes.every(function(t){return filters.types.includes(t);});
-
     if (isDefault) {
-      // Default = SFR+Condo+Townhome — all three are Residential subtypes
       parts.push("PropertyType eq 'Residential'");
     } else if (filters.types.length > 0) {
       var tp = [];
@@ -1346,7 +1347,6 @@ function buildODataFilter(bounds) {
       if (tp.length === 1) parts.push(tp[0]);
       else if (tp.length > 1) parts.push('(' + tp.join(' or ') + ')');
     }
-
     // Exclude leases from sale results
     parts.push("PropertyType ne 'ResidentialLease'");
   }
@@ -1373,6 +1373,10 @@ function buildODataFilter(bounds) {
 
   // Garage
   if (filters.minGarage) parts.push('GarageSpaces ge ' + filters.minGarage);
+
+  // Amenities
+  if (filters.pool) parts.push("PoolPrivateYN eq true");
+  if (filters.openHouse) parts.push("OpenHouseCount ge 1");
 
   var orderby = document.getElementById('sortSelect').value || 'ModificationTimestamp desc';
   var filterStr = parts.length > 0 ? parts.join(' and ') : "City eq 'Westminster'";
