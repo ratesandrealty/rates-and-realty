@@ -1722,6 +1722,14 @@ function applySort() {
 }
 
 function doSearch() {
+  const input = document.querySelector('.search-row input[type=text]');
+  const val = input ? input.value.trim() : '';
+  if (val) {
+    acApplyFreeText(val);
+    if (input) input.value = '';
+    const dropdown = document.getElementById('searchAutocomplete');
+    if (dropdown) dropdown.style.display = 'none';
+  }
   applyClientFilters();
 }
 
@@ -2010,6 +2018,321 @@ function toggleSat() {
   // Re-add markers after style swap
   map.once('styledata', function() { renderMarkers(); });
 }
+
+// ── SOCAL CITY + COUNTY AUTOCOMPLETE ───────────────────────────────
+const SOCAL_PLACES = [
+  // Orange County
+  {name:'Anaheim',type:'city',county:'Orange'},
+  {name:'Irvine',type:'city',county:'Orange'},
+  {name:'Huntington Beach',type:'city',county:'Orange'},
+  {name:'Santa Ana',type:'city',county:'Orange'},
+  {name:'Newport Beach',type:'city',county:'Orange'},
+  {name:'Garden Grove',type:'city',county:'Orange'},
+  {name:'Costa Mesa',type:'city',county:'Orange'},
+  {name:'Fullerton',type:'city',county:'Orange'},
+  {name:'Mission Viejo',type:'city',county:'Orange'},
+  {name:'Laguna Beach',type:'city',county:'Orange'},
+  {name:'Lake Forest',type:'city',county:'Orange'},
+  {name:'Westminster',type:'city',county:'Orange'},
+  {name:'Orange',type:'city',county:'Orange'},
+  {name:'Tustin',type:'city',county:'Orange'},
+  {name:'Yorba Linda',type:'city',county:'Orange'},
+  {name:'Brea',type:'city',county:'Orange'},
+  {name:'Placentia',type:'city',county:'Orange'},
+  {name:'La Habra',type:'city',county:'Orange'},
+  {name:'Aliso Viejo',type:'city',county:'Orange'},
+  {name:'Rancho Santa Margarita',type:'city',county:'Orange'},
+  {name:'Laguna Niguel',type:'city',county:'Orange'},
+  {name:'Dana Point',type:'city',county:'Orange'},
+  {name:'San Clemente',type:'city',county:'Orange'},
+  {name:'Cypress',type:'city',county:'Orange'},
+  {name:'Stanton',type:'city',county:'Orange'},
+  {name:'Seal Beach',type:'city',county:'Orange'},
+  {name:'Los Alamitos',type:'city',county:'Orange'},
+  {name:'Fountain Valley',type:'city',county:'Orange'},
+  {name:'Buena Park',type:'city',county:'Orange'},
+  {name:'La Palma',type:'city',county:'Orange'},
+  // Los Angeles County
+  {name:'Los Angeles',type:'city',county:'Los Angeles'},
+  {name:'Long Beach',type:'city',county:'Los Angeles'},
+  {name:'Glendale',type:'city',county:'Los Angeles'},
+  {name:'Pasadena',type:'city',county:'Los Angeles'},
+  {name:'Torrance',type:'city',county:'Los Angeles'},
+  {name:'Burbank',type:'city',county:'Los Angeles'},
+  {name:'Inglewood',type:'city',county:'Los Angeles'},
+  {name:'Santa Clarita',type:'city',county:'Los Angeles'},
+  {name:'Lancaster',type:'city',county:'Los Angeles'},
+  {name:'Palmdale',type:'city',county:'Los Angeles'},
+  {name:'Pomona',type:'city',county:'Los Angeles'},
+  {name:'Beverly Hills',type:'city',county:'Los Angeles'},
+  {name:'Hawthorne',type:'city',county:'Los Angeles'},
+  {name:'Compton',type:'city',county:'Los Angeles'},
+  {name:'El Monte',type:'city',county:'Los Angeles'},
+  {name:'Downey',type:'city',county:'Los Angeles'},
+  {name:'West Covina',type:'city',county:'Los Angeles'},
+  {name:'Norwalk',type:'city',county:'Los Angeles'},
+  {name:'Whittier',type:'city',county:'Los Angeles'},
+  {name:'Alhambra',type:'city',county:'Los Angeles'},
+  {name:'Santa Monica',type:'city',county:'Los Angeles'},
+  {name:'Redondo Beach',type:'city',county:'Los Angeles'},
+  {name:'Manhattan Beach',type:'city',county:'Los Angeles'},
+  {name:'Hermosa Beach',type:'city',county:'Los Angeles'},
+  {name:'Culver City',type:'city',county:'Los Angeles'},
+  {name:'Carson',type:'city',county:'Los Angeles'},
+  {name:'Gardena',type:'city',county:'Los Angeles'},
+  {name:'Lakewood',type:'city',county:'Los Angeles'},
+  {name:'Cerritos',type:'city',county:'Los Angeles'},
+  {name:'Glendora',type:'city',county:'Los Angeles'},
+  {name:'Covina',type:'city',county:'Los Angeles'},
+  {name:'Azusa',type:'city',county:'Los Angeles'},
+  {name:'Monrovia',type:'city',county:'Los Angeles'},
+  {name:'La Puente',type:'city',county:'Los Angeles'},
+  {name:'Baldwin Park',type:'city',county:'Los Angeles'},
+  {name:'Arcadia',type:'city',county:'Los Angeles'},
+  {name:'Temple City',type:'city',county:'Los Angeles'},
+  {name:'San Gabriel',type:'city',county:'Los Angeles'},
+  {name:'Rosemead',type:'city',county:'Los Angeles'},
+  // Riverside County
+  {name:'Riverside',type:'city',county:'Riverside'},
+  {name:'Moreno Valley',type:'city',county:'Riverside'},
+  {name:'Corona',type:'city',county:'Riverside'},
+  {name:'Murrieta',type:'city',county:'Riverside'},
+  {name:'Temecula',type:'city',county:'Riverside'},
+  {name:'Hemet',type:'city',county:'Riverside'},
+  {name:'Menifee',type:'city',county:'Riverside'},
+  {name:'Perris',type:'city',county:'Riverside'},
+  {name:'Lake Elsinore',type:'city',county:'Riverside'},
+  {name:'Indio',type:'city',county:'Riverside'},
+  {name:'Palm Springs',type:'city',county:'Riverside'},
+  {name:'Palm Desert',type:'city',county:'Riverside'},
+  {name:'Coachella',type:'city',county:'Riverside'},
+  {name:'Cathedral City',type:'city',county:'Riverside'},
+  {name:'Banning',type:'city',county:'Riverside'},
+  {name:'Beaumont',type:'city',county:'Riverside'},
+  {name:'Norco',type:'city',county:'Riverside'},
+  {name:'La Quinta',type:'city',county:'Riverside'},
+  {name:'Desert Hot Springs',type:'city',county:'Riverside'},
+  // San Bernardino County
+  {name:'San Bernardino',type:'city',county:'San Bernardino'},
+  {name:'Fontana',type:'city',county:'San Bernardino'},
+  {name:'Rancho Cucamonga',type:'city',county:'San Bernardino'},
+  {name:'Ontario',type:'city',county:'San Bernardino'},
+  {name:'Victorville',type:'city',county:'San Bernardino'},
+  {name:'Rialto',type:'city',county:'San Bernardino'},
+  {name:'Hesperia',type:'city',county:'San Bernardino'},
+  {name:'Chino',type:'city',county:'San Bernardino'},
+  {name:'Chino Hills',type:'city',county:'San Bernardino'},
+  {name:'Upland',type:'city',county:'San Bernardino'},
+  {name:'Big Bear Lake',type:'city',county:'San Bernardino'},
+  {name:'Apple Valley',type:'city',county:'San Bernardino'},
+  {name:'Redlands',type:'city',county:'San Bernardino'},
+  {name:'Yucaipa',type:'city',county:'San Bernardino'},
+  {name:'Colton',type:'city',county:'San Bernardino'},
+  {name:'Loma Linda',type:'city',county:'San Bernardino'},
+  {name:'Montclair',type:'city',county:'San Bernardino'},
+  {name:'Highland',type:'city',county:'San Bernardino'},
+  // San Diego County
+  {name:'San Diego',type:'city',county:'San Diego'},
+  {name:'Chula Vista',type:'city',county:'San Diego'},
+  {name:'Oceanside',type:'city',county:'San Diego'},
+  {name:'Escondido',type:'city',county:'San Diego'},
+  {name:'El Cajon',type:'city',county:'San Diego'},
+  {name:'Carlsbad',type:'city',county:'San Diego'},
+  {name:'Vista',type:'city',county:'San Diego'},
+  {name:'San Marcos',type:'city',county:'San Diego'},
+  {name:'La Mesa',type:'city',county:'San Diego'},
+  {name:'Santee',type:'city',county:'San Diego'},
+  {name:'Encinitas',type:'city',county:'San Diego'},
+  {name:'National City',type:'city',county:'San Diego'},
+  {name:'Poway',type:'city',county:'San Diego'},
+  {name:'El Cajon',type:'city',county:'San Diego'},
+  // Ventura County
+  {name:'Ventura',type:'city',county:'Ventura'},
+  {name:'Oxnard',type:'city',county:'Ventura'},
+  {name:'Thousand Oaks',type:'city',county:'Ventura'},
+  {name:'Simi Valley',type:'city',county:'Ventura'},
+  {name:'Camarillo',type:'city',county:'Ventura'},
+  {name:'Moorpark',type:'city',county:'Ventura'},
+  {name:'Santa Paula',type:'city',county:'Ventura'},
+  {name:'Fillmore',type:'city',county:'Ventura'},
+  // Counties
+  {name:'Orange County',type:'county',county:'Orange'},
+  {name:'Los Angeles County',type:'county',county:'Los Angeles'},
+  {name:'Riverside County',type:'county',county:'Riverside'},
+  {name:'San Bernardino County',type:'county',county:'San Bernardino'},
+  {name:'San Diego County',type:'county',county:'San Diego'},
+  {name:'Ventura County',type:'county',county:'Ventura'},
+];
+
+let _acSelectedIndex = -1;
+
+function initSearchAutocomplete() {
+  const input = document.querySelector('.search-row input[type=text]');
+  if (!input) return;
+
+  // Wrap input in a positioned container for the dropdown
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'position:relative;flex:1;min-width:200px;';
+  input.parentNode.insertBefore(wrapper, input);
+  wrapper.appendChild(input);
+  input.style.width = '100%';
+  input.style.minWidth = 'unset';
+
+  // Create dropdown
+  const dropdown = document.createElement('div');
+  dropdown.id = 'searchAutocomplete';
+  dropdown.style.cssText = `
+    position:absolute;top:calc(100% + 4px);left:0;right:0;
+    background:#1a1a1a;border:1px solid #333;border-radius:8px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;
+    display:none;max-height:320px;overflow-y:auto;
+  `;
+  wrapper.appendChild(dropdown);
+
+  input.addEventListener('input', function() {
+    const q = this.value.trim().toLowerCase();
+    if (q.length < 1) { dropdown.style.display = 'none'; return; }
+
+    const matches = SOCAL_PLACES.filter(p =>
+      p.name.toLowerCase().includes(q)
+    ).slice(0, 10);
+
+    if (!matches.length) { dropdown.style.display = 'none'; return; }
+
+    _acSelectedIndex = -1;
+    dropdown.innerHTML = matches.map((p, i) => `
+      <div class="ac-item" data-index="${i}" data-name="${p.name}" data-type="${p.type}" data-county="${p.county}"
+        style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;border-bottom:1px solid #2a2a2a;transition:background 0.15s;"
+        onmouseover="this.style.background='rgba(201,168,76,0.08)'"
+        onmouseout="this.style.background=''"
+        onclick="acSelectItem(this)">
+        <span style="font-size:16px;">${p.type === 'county' ? '🗺️' : '📍'}</span>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:#eee;">${p.name}</div>
+          <div style="font-size:11px;color:#666;">${p.type === 'county' ? 'County' : p.county + ' County'}</div>
+        </div>
+      </div>
+    `).join('');
+    dropdown.style.display = 'block';
+  });
+
+  // Keyboard navigation
+  input.addEventListener('keydown', function(e) {
+    const items = dropdown.querySelectorAll('.ac-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      _acSelectedIndex = Math.min(_acSelectedIndex + 1, items.length - 1);
+      items.forEach((el, i) => el.style.background = i === _acSelectedIndex ? 'rgba(201,168,76,0.12)' : '');
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      _acSelectedIndex = Math.max(_acSelectedIndex - 1, -1);
+      items.forEach((el, i) => el.style.background = i === _acSelectedIndex ? 'rgba(201,168,76,0.12)' : '');
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (_acSelectedIndex >= 0 && items[_acSelectedIndex]) {
+        acSelectItem(items[_acSelectedIndex]);
+      } else {
+        // Free-text search — try to match typed city exactly
+        acApplyFreeText(this.value.trim());
+        dropdown.style.display = 'none';
+        fetchListings();
+      }
+    } else if (e.key === 'Escape') {
+      dropdown.style.display = 'none';
+    }
+  });
+
+  // Close dropdown on outside click
+  document.addEventListener('click', function(e) {
+    if (!wrapper.contains(e.target)) dropdown.style.display = 'none';
+  });
+}
+
+function acSelectItem(el) {
+  const name   = el.dataset.name;
+  const type   = el.dataset.type;
+  const county = el.dataset.county;
+  const input  = document.querySelector('.search-row input[type=text]');
+  const dropdown = document.getElementById('searchAutocomplete');
+
+  input.value = '';
+  dropdown.style.display = 'none';
+
+  if (type === 'county') {
+    // Add county filter
+    addCountyFilter(county);
+  } else {
+    // Add city filter
+    addCityFilter(name);
+  }
+
+  fetchListings();
+}
+
+function acApplyFreeText(text) {
+  if (!text) return;
+  // Try exact city match first
+  const exact = SOCAL_PLACES.find(p => p.name.toLowerCase() === text.toLowerCase() && p.type === 'city');
+  if (exact) { addCityFilter(exact.name); return; }
+  // Try partial city match
+  const partial = SOCAL_PLACES.find(p => p.name.toLowerCase().includes(text.toLowerCase()) && p.type === 'city');
+  if (partial) { addCityFilter(partial.name); return; }
+  // Try county match
+  const countyMatch = SOCAL_PLACES.find(p => p.county.toLowerCase().includes(text.toLowerCase()) && p.type === 'county');
+  if (countyMatch) { addCountyFilter(countyMatch.county); }
+}
+
+function addCityFilter(cityName) {
+  // Find the city chips/dropdown and add the city
+  // Try to use existing city filter mechanism
+  const cityDropdown = document.getElementById('citySelect');
+  if (cityDropdown) {
+    // Find or add option
+    let opt = Array.from(cityDropdown.options).find(o => o.value === cityName);
+    if (!opt) {
+      opt = new Option(cityName, cityName);
+      cityDropdown.appendChild(opt);
+    }
+    opt.selected = true;
+    cityDropdown.dispatchEvent(new Event('change'));
+    return;
+  }
+
+  // Fallback: use the activeCities array if it exists
+  if (typeof activeCities !== 'undefined') {
+    if (!activeCities.includes(cityName)) activeCities.push(cityName);
+    renderCityChips();
+    return;
+  }
+
+  // Last resort: set URL param and reload
+  const url = new URL(window.location);
+  const existing = url.searchParams.get('cities') || '';
+  const cities = existing ? existing.split(',').filter(Boolean) : [];
+  if (!cities.includes(cityName)) cities.push(cityName);
+  url.searchParams.set('cities', cities.join(','));
+  window.history.pushState({}, '', url);
+  fetchListings();
+}
+
+function addCountyFilter(countyName) {
+  const countyDropdown = document.getElementById('countySelect');
+  if (countyDropdown) {
+    Array.from(countyDropdown.options).forEach(o => { o.selected = o.value === countyName || o.value === countyName + ' County'; });
+    countyDropdown.dispatchEvent(new Event('change'));
+    return;
+  }
+  // Fallback: URL param
+  const url = new URL(window.location);
+  url.searchParams.set('counties', countyName);
+  window.history.pushState({}, '', url);
+  fetchListings();
+}
+
+// Initialize autocomplete when DOM is ready
+document.addEventListener('DOMContentLoaded', initSearchAutocomplete);
+// Also init after a short delay in case DOM loads dynamically
+setTimeout(initSearchAutocomplete, 500);
 </script>
 </body>
 </html>
