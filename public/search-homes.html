@@ -938,6 +938,7 @@ function _applyIncomingSearchParams() {
 
     // --- Status tab from homepage widget (status=rent or status=sold) ---
     const statusParam = new URLSearchParams(window.location.search).get('status');
+    const priceParam  = p.get('maxPrice') || p.get('maxPriceParam') || null;
 
     if (statusParam === 'rent') {
       activeStatus = 'Active';
@@ -948,6 +949,9 @@ function _applyIncomingSearchParams() {
         t.classList.remove('active');
         if (t.dataset.lease === 'true') t.classList.add('active');
       });
+      if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
+      if (typeof updateCityBtnLabel   === 'function') updateCityBtnLabel();
+      if (typeof updateLocationChips  === 'function') updateLocationChips();
     } else if (statusParam === 'sold') {
       activeStatus = 'Closed';
       currentLease = false;
@@ -957,6 +961,9 @@ function _applyIncomingSearchParams() {
         t.classList.remove('active');
         if (t.dataset.status === 'Closed') t.classList.add('active');
       });
+      if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
+      if (typeof updateCityBtnLabel   === 'function') updateCityBtnLabel();
+      if (typeof updateLocationChips  === 'function') updateLocationChips();
     } else {
       activeStatus = 'Active';
       currentLease = false;
@@ -1028,11 +1035,17 @@ function _applyIncomingSearchParams() {
         btn.classList.toggle('active', btn.dataset.val === minBedsParam);
       });
     }
-    var maxPriceParam = p.get('maxPrice');
-    if (maxPriceParam) {
-      filters.maxPrice = maxPriceParam;
+    if (priceParam) {
+      filters.maxPrice = priceParam;
       var maEl = document.getElementById('fMaxPrice');
-      if (maEl) maEl.value = maxPriceParam;
+      if (maEl) maEl.value = priceParam;
+      document.querySelectorAll('.price-btn, [data-price], [data-value]').forEach(function(b) {
+        b.classList.remove('active');
+        const val = String(
+          b.dataset.price || b.dataset.value || b.getAttribute('data-max-price') || ''
+        );
+        if (val === priceParam) b.classList.add('active');
+      });
     }
 
     // --- Price: write to filters object AND the real DOM input IDs (#fMinPrice/#fMaxPrice) ---
@@ -1093,6 +1106,7 @@ function _applyIncomingSearchParams() {
     if ((filters.beds || filters.baths) && document.querySelector('.chip[data-chip="beds"]')) document.querySelector('.chip[data-chip="beds"]').classList.add('has-value');
 
     console.log('[URL params] → filters object:', { cities: selectedCities, minPrice: filters.minPrice, maxPrice: filters.maxPrice, beds: filters.beds, baths: filters.baths, types: filters.types });
+    if (typeof fetchListings === 'function') fetchListings();
   } catch(e) { console.warn('[search-homes] param apply error:', e); }
 }
 
@@ -1329,20 +1343,20 @@ function buildODataFilter(bounds) {
     parts.push('Longitude le ' + neLng.toFixed(4));
   }
 
-  // City filter — ALWAYS applies when cities are selected (independent of bounds)
-  if (selectedCities.length > 0) {
+  // For Rent and Sold: never filter by city — Trestle lease/closed data doesn't match city fields
+  var skipLocationFilter = currentLease || activeStatus === 'Closed';
+
+  if (!skipLocationFilter && selectedCities.length > 0) {
     var cityList = selectedCities.slice(0, 60);
     var cityClause = cityList.length === 1
       ? "City eq '" + cityList[0].replace(/'/g,"''") + "'"
       : '(' + cityList.map(function(c){return "City eq '" + c.replace(/'/g,"''") + "'";}).join(' or ') + ')';
     parts.push(cityClause);
     console.log('[trestle filter] city clause:', cityClause);
-  } else if (!bounds && selectedCounties.size > 0) {
-    // County fallback — only when no cities AND no bounds
+  } else if (!skipLocationFilter && !bounds && selectedCounties.size > 0) {
     var countyFilters = Array.from(selectedCounties).map(function(k) { return "CountyOrParish eq '" + k + "'"; });
     parts.push('(' + countyFilters.join(' or ') + ')');
-  } else if (!bounds) {
-    // State fallback — only when no bounds, no cities, no counties
+  } else if (!skipLocationFilter && !bounds) {
     parts.push("StateOrProvince eq 'CA'");
   }
 
