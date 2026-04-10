@@ -89,18 +89,9 @@ export default {
     }
 
     // Clean-URL routing for county area pages (/areas/slug → /areas/slug.html)
-    const COUNTY_ROUTES = {
-      '/areas/orange': '/areas/orange.html',
-      '/areas/los-angeles': '/areas/los-angeles.html',
-      '/areas/riverside': '/areas/riverside.html',
-      '/areas/san-bernardino': '/areas/san-bernardino.html',
-      '/areas/san-diego': '/areas/san-diego.html',
-      '/areas/ventura': '/areas/ventura.html',
-    };
-    const mapped = COUNTY_ROUTES[path];
-    if (mapped) {
+    if (/^\/areas\/[a-z0-9-]+$/.test(path)) {
       const newUrl = new URL(request.url);
-      newUrl.pathname = mapped;
+      newUrl.pathname = path + '.html';
       return env.ASSETS.fetch(new Request(newUrl, request));
     }
 
