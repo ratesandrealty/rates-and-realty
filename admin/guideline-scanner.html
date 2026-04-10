@@ -666,7 +666,7 @@
     // Load guidelines for this lender
     let guidelineHtml = '';
     if (docCount > 0) {
-      const r = await fetch(SB_URL + '/rest/v1/lender_guidelines?select=id,title,category,file_url,external_url,gdrive_file_url,ai_summary,version,effective_date&lender_id=eq.' + lenderId + '&order=created_at.desc', {
+      const r = await fetch(SB_URL + '/rest/v1/lender_guidelines?select=id,title,category,file_name,file_url,external_url,gdrive_file_url,ai_summary,version,effective_date,source_type,upload_source,ocr_status&lender_id=eq.' + lenderId + '&is_active=neq.false&order=created_at.desc', {
         headers: { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON }
       });
       const docs = await r.json();
@@ -929,22 +929,34 @@
         fileUrl = upData.file_url || SB_URL + '/storage/v1/object/public/lender-guidelines/' + path;
       }
 
-      // Insert into lender_guidelines
+      // Upsert into lender_guidelines so re-uploading the same file from the same
+      // lender updates the existing row instead of creating a duplicate.
+      // The unique constraint (lender_id, file_name) drives the conflict target.
+      const safeFileName = uploadFile
+        ? uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+        : (extUrl ? title.replace(/[^a-zA-Z0-9._-]/g, '_') + '.url' : title.replace(/[^a-zA-Z0-9._-]/g, '_'));
       const payload = {
         lender_id: uploadLenderId,
         title, category,
         version: version || null,
+        file_name: safeFileName,
         file_url: fileUrl || null,
         external_url: extUrl || null,
         content_notes: notes || null,
         source_type: 'lender',
         is_active: true,
         ocr_status: 'pending',
-        upload_source: 'admin'
+        upload_source: 'admin',
+        updated_at: new Date().toISOString()
       };
-      const insR = await fetch(SB_URL + '/rest/v1/lender_guidelines', {
+      const insR = await fetch(SB_URL + '/rest/v1/lender_guidelines?on_conflict=lender_id,file_name', {
         method: 'POST',
-        headers: { 'Content-Type':'application/json', apikey:SB_ANON, Authorization:'Bearer '+SB_ANON, Prefer:'return=representation' },
+        headers: {
+          'Content-Type':'application/json',
+          apikey: SB_ANON,
+          Authorization: 'Bearer ' + SB_ANON,
+          Prefer: 'return=representation,resolution=merge-duplicates'
+        },
         body: JSON.stringify(payload)
       });
       const insData = await insR.json();
