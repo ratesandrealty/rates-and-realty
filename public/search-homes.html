@@ -297,6 +297,22 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 @media(max-width:480px){
   footer>div:first-child{grid-template-columns:1fr!important;}
 }
+/* Photo swiper */
+.card-swiper { position:relative; overflow:hidden; width:100%; aspect-ratio:4/3; background:#1a1a1a; border-radius:8px 8px 0 0; }
+.card-swiper-track { display:flex; height:100%; transition:transform 0.3s ease; will-change:transform; }
+.card-swiper-slide { min-width:100%; height:100%; flex-shrink:0; }
+.card-swiper-slide img { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+.swiper-btn { position:absolute; top:50%; transform:translateY(-50%); z-index:10; background:rgba(0,0,0,0.55); border:none; color:#fff; width:30px; height:30px; border-radius:50%; font-size:14px; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:background 0.2s; opacity:0; }
+.card-swiper:hover .swiper-btn { opacity:1; }
+.swiper-btn:hover { background:rgba(0,0,0,0.85); }
+.swiper-prev { left:8px; }
+.swiper-next { right:8px; }
+.swiper-dots { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; gap:4px; z-index:10; }
+.swiper-dot { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,0.5); transition:background 0.2s; }
+.swiper-dot.active { background:#fff; }
+.swiper-count { position:absolute; bottom:8px; right:10px; background:rgba(0,0,0,0.6); color:#fff; font-size:11px; padding:2px 7px; border-radius:10px; z-index:10; }
+/* Touch swipe support */
+.card-swiper { touch-action:pan-y; }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 <script src="/api/env.js"></script>
@@ -1146,7 +1162,7 @@ function buildODataFilter(bounds) {
   return '$filter=' + filterStr
     + '&$orderby=' + orderby
     + '&$count=true&$top=' + PAGE_SIZE
-    + '&$expand=Media($top=1;$select=MediaURL,Order)'
+    + '&$expand=Media($top=10;$select=MediaURL,Order;$orderby=Order)'
     + '&$select=ListingKey,ListPrice,UnparsedAddress,City,StateOrProvince,PostalCode,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,StandardStatus,ListingContractDate,DaysOnMarket,Latitude,Longitude,PublicRemarks,YearBuilt,LotSizeAcres,GarageSpaces,AssociationFee,CountyOrParish';
 }
 
@@ -1246,6 +1262,37 @@ function applyClientFilters(page, append) {
 }
 
 /* ===== RENDER LISTINGS ===== */
+function buildSwiper(el) {
+  const track  = el.querySelector('.card-swiper-track');
+  const dots   = el.querySelectorAll('.swiper-dot');
+  const count  = el.querySelector('.swiper-count');
+  const slides = el.querySelectorAll('.card-swiper-slide');
+  if (slides.length <= 1) return;
+
+  let cur = 0;
+  const total = slides.length;
+
+  function goTo(n) {
+    cur = Math.max(0, Math.min(n, total - 1));
+    track.style.transform = `translateX(-${cur * 100}%)`;
+    dots.forEach((d, i) => d.classList.toggle('active', i === cur));
+    if (count) count.textContent = `${cur+1}/${total}`;
+  }
+
+  el.querySelector('.swiper-prev')?.addEventListener('click', e => { e.stopPropagation(); goTo(cur - 1); });
+  el.querySelector('.swiper-next')?.addEventListener('click', e => { e.stopPropagation(); goTo(cur + 1); });
+
+  // Touch swipe
+  let touchX = 0;
+  el.addEventListener('touchstart', e => { touchX = e.touches[0].clientX; }, {passive:true});
+  el.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 40) goTo(dx < 0 ? cur + 1 : cur - 1);
+  }, {passive:true});
+
+  goTo(0);
+}
+
 function renderListings(page, append) {
   var grid = document.getElementById('listingsGrid');
   if (filteredListings.length === 0 && !append) {
@@ -1256,7 +1303,7 @@ function renderListings(page, append) {
   var html = '';
   for (var i = 0; i < filteredListings.length; i++) {
     var l = filteredListings[i];
-    var img = (l.Media && l.Media[0]) ? l.Media[0].MediaURL : '';
+    var addr = l.UnparsedAddress || 'listing';
     var status = l.StandardStatus || 'Active';
     var badgeClass = status === 'Active' ? 'active-badge' : status === 'ComingSoon' ? 'coming' : 'closed';
     var badgeText = status === 'Active' ? 'For Sale' : status === 'ComingSoon' ? 'Coming Soon' : 'Sold';
@@ -1264,9 +1311,43 @@ function renderListings(page, append) {
     var inCart = showingCart.some(function(c) { return c.listingKey === l.ListingKey; });
     var subtype = l.PropertySubType || l.PropertyType || '';
 
+    // Build photo array — sort by Order, proxy through trestle-proxy
+    var PROXY = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/trestle-proxy?photo=';
+    var photos = [];
+    if (l.Media && l.Media.length) {
+      photos = l.Media
+        .slice()
+        .sort(function(a,b){ return (a.Order||999)-(b.Order||999); })
+        .map(function(m){ return m.MediaURL ? PROXY + encodeURIComponent(m.MediaURL) : null; })
+        .filter(Boolean)
+        .slice(0, 10);
+    }
+    var firstPhoto = photos[0] || '';
+
+    var swiperHtml;
+    if (photos.length <= 1) {
+      swiperHtml = '<div class="card-swiper">'
+        + (firstPhoto ? '<img src="'+firstPhoto+'" alt="'+addr+'" loading="lazy" style="width:100%;height:100%;object-fit:cover;">' : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#444;font-size:32px;">🏠</div>')
+        + '</div>';
+    } else {
+      var slides = photos.map(function(url){
+        return '<div class="card-swiper-slide"><img src="'+url+'" alt="'+addr+'" loading="lazy"></div>';
+      }).join('');
+      var dots = photos.map(function(_,i2){
+        return '<div class="swiper-dot'+(i2===0?' active':'')+'"></div>';
+      }).join('');
+      swiperHtml = '<div class="card-swiper" data-swiper="1">'
+        + '<div class="card-swiper-track">'+slides+'</div>'
+        + '<button class="swiper-btn swiper-prev">‹</button>'
+        + '<button class="swiper-btn swiper-next">›</button>'
+        + '<div class="swiper-dots">'+dots+'</div>'
+        + '<div class="swiper-count">1/'+photos.length+'</div>'
+        + '</div>';
+    }
+
     html += '<div class="listing-card" data-idx="' + i + '" onmouseenter="highlightMarker(' + i + ')" onmouseleave="unhighlightMarker(' + i + ')">'
       + '<div class="card-img" onclick="goDetail(' + i + ')">'
-      + (img ? '<img src="' + img + '" alt="listing" loading="lazy">' : '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:#333;"><i class="fa-solid fa-image" style="font-size:32px;"></i></div>')
+      + swiperHtml
       + '<span class="status-badge ' + badgeClass + '">' + badgeText + '</span>'
       + '<button class="heart-btn ' + (inCart ? 'liked' : '') + '" onclick="event.stopPropagation();handleSaveListing(\'' + l.ListingKey + '\',this)"><i class="fa-' + (inCart ? 'solid' : 'regular') + ' fa-heart"></i></button>'
       + (l.DaysOnMarket != null ? '<span class="dom-badge">' + l.DaysOnMarket + ' DOM</span>' : '')
@@ -1305,6 +1386,7 @@ function renderListings(page, append) {
   html += '</div>';
 
   grid.innerHTML = html;
+  document.querySelectorAll('.card-swiper[data-swiper="1"]').forEach(buildSwiper);
 }
 
 /* ===== CARD ACTIONS ===== */
@@ -2254,19 +2336,13 @@ function acSelectItem(el) {
   const county = el.dataset.county;
   const input  = document.querySelector('.search-row input[type=text]');
   const dropdown = document.getElementById('searchAutocomplete');
-
-  input.value = '';
-  dropdown.style.display = 'none';
-
+  if (input) input.value = '';
+  if (dropdown) dropdown.style.display = 'none';
   if (type === 'county') {
-    // Add county filter
     addCountyFilter(county);
   } else {
-    // Add city filter
     addCityFilter(name);
   }
-
-  fetchListings();
 }
 
 function acApplyFreeText(text) {
@@ -2283,32 +2359,32 @@ function acApplyFreeText(text) {
 }
 
 function addCityFilter(cityName) {
-  // Find the city chips/dropdown and add the city
-  // Try to use existing city filter mechanism
-  const cityDropdown = document.getElementById('citySelect');
-  if (cityDropdown) {
-    // Find or add option
-    let opt = Array.from(cityDropdown.options).find(o => o.value === cityName);
-    if (!opt) {
-      opt = new Option(cityName, cityName);
-      cityDropdown.appendChild(opt);
+  // selectedCities is the global array that drives the Trestle city filter
+  if (typeof selectedCities !== 'undefined') {
+    if (!selectedCities.includes(cityName)) {
+      selectedCities.push(cityName);
     }
-    opt.selected = true;
-    cityDropdown.dispatchEvent(new Event('change'));
+    // Also activate the matching county so the county tab is correct
+    const place = SOCAL_PLACES.find(p => p.name === cityName && p.type === 'city');
+    if (place && typeof selectedCounties !== 'undefined') {
+      const countyKey = place.county + ' County';
+      // Find and check the county checkbox
+      const cb = document.querySelector(`.county-cb[value="${countyKey}"]`);
+      if (cb && !cb.checked) {
+        cb.checked = true;
+        if (typeof onCountyChange === 'function') onCountyChange(cb);
+        return; // onCountyChange will call fetchListings via updateCityDropdown chain
+      }
+    }
+    // Re-render city pills and fetch
+    if (typeof renderCityPills === 'function') renderCityPills();
+    if (typeof updateCityPills === 'function') updateCityPills();
+    fetchListings();
     return;
   }
-
-  // Fallback: use the activeCities array if it exists
-  if (typeof activeCities !== 'undefined') {
-    if (!activeCities.includes(cityName)) activeCities.push(cityName);
-    renderCityChips();
-    return;
-  }
-
-  // Last resort: set URL param and reload
+  // URL param fallback
   const url = new URL(window.location);
-  const existing = url.searchParams.get('cities') || '';
-  const cities = existing ? existing.split(',').filter(Boolean) : [];
+  const cities = (url.searchParams.get('cities') || '').split(',').filter(Boolean);
   if (!cities.includes(cityName)) cities.push(cityName);
   url.searchParams.set('cities', cities.join(','));
   window.history.pushState({}, '', url);
@@ -2316,17 +2392,24 @@ function addCityFilter(cityName) {
 }
 
 function addCountyFilter(countyName) {
-  const countyDropdown = document.getElementById('countySelect');
-  if (countyDropdown) {
-    Array.from(countyDropdown.options).forEach(o => { o.selected = o.value === countyName || o.value === countyName + ' County'; });
-    countyDropdown.dispatchEvent(new Event('change'));
+  const countyKey = countyName.includes('County') ? countyName : countyName + ' County';
+  const cb = document.querySelector(`.county-cb[value="${countyKey}"]`);
+  if (cb) {
+    if (!cb.checked) {
+      cb.checked = true;
+      if (typeof onCountyChange === 'function') onCountyChange(cb);
+    }
+    // Close any open dropdown
+    const dropdown = document.getElementById('countyDropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    fetchListings();
     return;
   }
-  // Fallback: URL param
-  const url = new URL(window.location);
-  url.searchParams.set('counties', countyName);
-  window.history.pushState({}, '', url);
-  fetchListings();
+  // Fallback: set selectedCounties directly
+  if (typeof selectedCounties !== 'undefined') {
+    selectedCounties.add(countyKey);
+    fetchListings();
+  }
 }
 
 // Initialize autocomplete when DOM is ready
