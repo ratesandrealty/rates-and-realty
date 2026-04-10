@@ -3709,7 +3709,7 @@
             <div class="lender-filter-label">Loan Programs</div>
             <div id="lenderProgramFilters"></div>
           </div>
-          <div class="lender-filter-group">
+          <div class="lender-filter-group" style="display:none">
             <div class="lender-filter-label">Min Credit Score <span id="creditFilterVal" style="color:#C9A84C;font-weight:700;margin-left:4px">—</span></div>
             <input type="range" id="lenderCreditSlider" min="0" max="850" step="20" value="0" oninput="setMinCreditFilter(this.value)" style="width:100%;accent-color:#C9A84C">
           </div>
@@ -12903,23 +12903,24 @@ window.loadLenderMatches = loadLenders;
 
 // Curated loan type/program lists (static — do NOT derive from DB values)
 var LENDER_LOAN_TYPES_CURATED = [
-  'Conventional','FHA','VA','USDA','Jumbo','Non-QM','Commercial','Hard Money','HELOC','Reverse','SBA'
+  'Conventional','FHA','VA','USDA','Non-QM','Jumbo','Hard Money',
+  'Heloan','Heloc','Reverse','Commercial','SBA','Bridge Loan','Credit Union'
 ];
 var LENDER_LOAN_PROGRAMS_CURATED = [
   'DSCR','Bank Statement','Asset Depletion','Fix & Flip','Bridge','Construction',
-  'ITIN','Foreign National','CalHFA','Downpayment Assistance','P&L','ARM'
+  'ITIN','Foreign National','CalHFA','Down Payment Assistance','P&L Statement','ARM',
+  '203K','Commercial DSCR','Close in LLC','Mixed Use','Renovation','NO FICO',
+  'Non-Warrantable Condo','Manufactured'
 ];
 var LENDER_LOAN_TYPES_LABELS = {
   'Reverse':'Reverse / HECM'
 };
 var LENDER_LOAN_PROGRAMS_LABELS = {
-  'CalHFA':'CalHFA / DPA',
-  'Downpayment Assistance':'Down Payment Assistance',
-  'P&L':'P&L Statement'
+  'CalHFA':'CalHFA / DPA'
 };
 
 function buildLenderSidebarFilters() {
-  var chans = new Set();
+  var chans = new Set(['Wholesale','Correspondent','Retail','Credit Union']);
   (window._allLenders||[]).forEach(function(l){
     if (l.channel) String(l.channel).split(',').forEach(function(c){ c=c.trim(); if(c) chans.add(c); });
   });
@@ -12978,6 +12979,14 @@ function setLenderView(view){
 }
 
 // Qualifying check — pulls from the live DTI calculator + mortgage_applications
+function lenderHasScenario() {
+  var app = window._currentApp || {};
+  var creditScore = parseInt(app.credit_score) || parseInt(document.getElementById('ls_credit_score')?.value||'0') || 0;
+  var loanAmt = parseFloat(document.getElementById('ls_loan_amount')?.value||'0') || parseFloat(app.loan_amount||'0') || 0;
+  var loanType = document.getElementById('ls_loan_type')?.value || app.loan_type || '';
+  return creditScore > 0 || loanAmt > 0 || (loanType && loanType !== '');
+}
+
 function lenderQualifies(lender) {
   var app = window._currentApp || {};
   var creditScore = parseInt(app.credit_score) || parseInt(document.getElementById('ls_credit_score')?.value||'0') || 0;
@@ -13022,6 +13031,7 @@ function renderLenderGridNew() {
   var grid = document.getElementById('lenderGrid'); if (!grid) return;
   var items = window._filteredLenders || [];
   if (!items.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#555">No lenders match your filters.</div>'; return; }
+  var showQual = lenderHasScenario();
   grid.innerHTML = items.map(function(l) {
     var qualifies = lenderQualifies(l);
     var name = _lhEsc(l.name);
@@ -13036,13 +13046,13 @@ function renderLenderGridNew() {
       return '<span onclick="rateLender(\''+l.id+'\','+n+')" style="color:'+(filled?'#C9A84C':'#333')+'">\u2605</span>';
     }).join('');
     var favColor = l.is_favorite ? '#ef4444' : '#444';
-    return '<div class="lender-card '+(qualifies?'qualifies':'fails')+'" data-lender-id="'+l.id+'">'+
+    return '<div class="lender-card '+(showQual?(qualifies?'qualifies':'fails'):'')+'" data-lender-id="'+l.id+'">'+
       '<div style="display:flex;gap:10px;align-items:start">'+
         '<div class="lender-logo" onclick="openLenderDetail(\''+l.id+'\')" style="cursor:pointer">'+logoHtml+'</div>'+
         '<div style="flex:1;min-width:0;cursor:pointer" onclick="openLenderDetail(\''+l.id+'\')">'+
           '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><div style="font-size:.8rem;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+name+'</div>'+
           (l.is_preferred?'<span style="background:rgba(201,168,76,0.15);color:#C9A84C;border-radius:8px;padding:1px 6px;font-size:.54rem;font-weight:700;letter-spacing:.04em">PREFERRED</span>':'')+'</div>'+
-          '<div style="font-size:.66rem;color:'+(qualifies?'#22c55e':'#ef4444')+';margin-top:2px;font-weight:600">'+(qualifies?'\u2713 Qualifies':'\u2717 Does not qualify')+'</div>'+
+          (showQual ? '<div style="font-size:.66rem;color:'+(qualifies?'#22c55e':'#ef4444')+';margin-top:2px;font-weight:600">'+(qualifies?'\u2713 Qualifies':'\u2717 Does not qualify')+'</div>' : '')+
         '</div>'+
         '<button class="lender-action-btn" onclick="toggleLenderFavorite(\''+l.id+'\','+(!l.is_favorite)+',this)" style="color:'+favColor+';border:none;background:none" title="Favorite">\u2665</button>'+
       '</div>'+
