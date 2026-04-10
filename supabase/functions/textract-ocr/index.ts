@@ -122,12 +122,32 @@ Rules:
       const keyReqs = Array.isArray(parsed.key_requirements) ? parsed.key_requirements.map(String) : []
       const rawExcerpt = String(parsed.raw_excerpt || '')
 
-      // Insert into lender_guidelines
-      const { data: row, error: insertErr } = await sb.from('lender_guidelines').insert({
+      // Upload the raw PDF to the lender-guidelines storage bucket so Guideline AI
+      // (and the lender modal preview) can fetch it via a public URL.
+      const safeFileName = (file_name || 'document.pdf').replace(/[^a-zA-Z0-9._-]/g, '_')
+      let publicUrl: string | null = null
+      try {
+        const fileBytes = Uint8Array.from(atob(file_base64), (c) => c.charCodeAt(0))
+        const { error: storageErr } = await sb.storage
+          .from('lender-guidelines')
+          .upload(safeFileName, fileBytes, { contentType: 'application/pdf', upsert: true })
+        if (storageErr) {
+          console.error('[lender] Storage upload failed:', storageErr.message)
+        } else {
+          publicUrl = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/lender-guidelines/${encodeURIComponent(safeFileName)}`
+        }
+      } catch (storageEx) {
+        console.error('[lender] Storage exception:', (storageEx as Error).message)
+      }
+
+      // Upsert into lender_guidelines (onConflict: lender_id + file_name).
+      // Same lender re-uploading the same filename overwrites the existing row.
+      const { data: row, error: upsertErr } = await sb.from('lender_guidelines').upsert({
         lender_id: lender_id || null,
         title: title || file_name?.replace(/\.pdf$/i, '') || 'Untitled',
         category: docCategory,
-        file_name: file_name || null,
+        file_name: safeFileName,
+        file_url: publicUrl,
         file_type: file_type || 'application/pdf',
         version: version || null,
         content_notes: notes || null,
@@ -144,17 +164,19 @@ Rules:
         states_available: states.length ? states : null,
         loan_types: loanPrograms.length ? loanPrograms : null,
         upload_source: 'lender_modal',
-        source_type: 'pdf_upload'
-      }).select('id').single()
+        source_type: 'lender',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'lender_id,file_name' }).select('id').single()
 
-      if (insertErr) {
-        console.error('[lender] DB insert failed:', insertErr.message)
-        return jsonErr(500, 'DB insert failed: ' + insertErr.message)
+      if (upsertErr) {
+        console.error('[lender] DB upsert failed:', upsertErr.message)
+        return jsonErr(500, 'DB upsert failed: ' + upsertErr.message)
       }
 
       return new Response(JSON.stringify({
         success: true,
         document_id: row?.id,
+        file_url: publicUrl,
         summary,
         loan_programs: loanPrograms,
         min_fico: minFico,
