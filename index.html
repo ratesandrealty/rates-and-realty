@@ -2023,33 +2023,49 @@
   <script>
     // ── HOME SEARCH WIDGET ──
     let homepageStatus = 'buy';
+    let homepageBeds   = 'any';
+    let homepagePrice  = 'any';
 
     function hswTab(el, type) {
       document.querySelectorAll('.hsw-tab').forEach(t => t.classList.remove('active'));
       el.classList.add('active');
       homepageStatus = type;
       window._hswType = type;
+      if (type === 'rent' || type === 'sold') {
+        const inp = document.querySelector('input[type="text"], .search-input, #hero-search-input');
+        if (inp) inp.value = '';
+      }
     }
 
-    // Chip selection (beds / price)
-    document.querySelectorAll('#hswBeds .hsw-chip, #hswPrice .hsw-chip').forEach(function(chip) {
+    // Beds chip selection → homepageBeds
+    document.querySelectorAll('#hswBeds .hsw-chip').forEach(function(chip) {
       chip.addEventListener('click', function() {
-        var row = this.closest('.hsw-chip-row');
-        row.querySelectorAll('.hsw-chip').forEach(function(c){ c.classList.remove('active'); });
+        document.querySelectorAll('#hswBeds .hsw-chip').forEach(function(c){ c.classList.remove('active'); });
         this.classList.add('active');
+        var v = this.dataset.val || '';
+        homepageBeds = v === '' ? 'any' : v;
+      });
+    });
+
+    // Price chip selection → homepagePrice
+    document.querySelectorAll('#hswPrice .hsw-chip').forEach(function(chip) {
+      chip.addEventListener('click', function() {
+        document.querySelectorAll('#hswPrice .hsw-chip').forEach(function(c){ c.classList.remove('active'); });
+        this.classList.add('active');
+        var v = this.dataset.val || '';
+        homepagePrice = v === '' ? 'any' : v;
       });
     });
 
     function hswGo() {
-      var selectedCity  = (document.getElementById('hswInput').value || '').trim();
-      var selectedBeds  = (document.querySelector('#hswBeds .hsw-chip.active')?.dataset.val) || '';
-      var selectedPrice = (document.querySelector('#hswPrice .hsw-chip.active')?.dataset.val) || '';
-
-      const params = new URLSearchParams();
+      var searchInput = document.querySelector('input[type="text"], .search-input, #hero-search-input');
+      var query = searchInput ? searchInput.value.trim() : '';
+      var params = new URLSearchParams();
       params.set('status', homepageStatus);
-      if (selectedCity) params.set('cities', selectedCity);
-      if (selectedBeds && selectedBeds !== 'any') params.set('beds', selectedBeds);
-      if (selectedPrice && selectedPrice !== 'any') params.set('maxPrice', selectedPrice);
+      if (homepageBeds && homepageBeds !== 'any') params.set('beds', homepageBeds);
+      if (homepagePrice && homepagePrice !== 'any') params.set('maxPrice', homepagePrice);
+      if (query) params.set('cities', query);
+      console.log('[hswGo] navigating with status=' + homepageStatus, params.toString());
       window.location.href = '/public/search-homes.html?' + params.toString();
     }
 
