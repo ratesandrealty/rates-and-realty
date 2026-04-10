@@ -941,6 +941,10 @@ function _applyIncomingSearchParams() {
     if (statusParam === 'rent') {
       activeStatus = 'Active';
       currentLease = true;
+      // Clear city/county filter — lease listings in Trestle don't always
+      // match city fields the same way as for-sale, so search statewide
+      selectedCities = [];
+      selectedCounties.clear();
       // Activate the For Rent tab
       document.querySelectorAll('.status-tab').forEach(function(t) {
         t.classList.remove('active');
@@ -949,6 +953,9 @@ function _applyIncomingSearchParams() {
     } else if (statusParam === 'sold') {
       activeStatus = 'Closed';
       currentLease = false;
+      // Clear city/county so sold search returns results statewide
+      selectedCities = [];
+      selectedCounties.clear();
       // Activate the Sold tab
       document.querySelectorAll('.status-tab').forEach(function(t) {
         t.classList.remove('active');
@@ -1289,6 +1296,15 @@ function initStatusTabs() {
       t.classList.add('active');
       activeStatus = t.dataset.status;
       currentLease = t.dataset.lease === 'true';
+      // For Rent and Sold: clear city filter so Trestle returns results
+      // (lease and closed listings don't always match city filters reliably)
+      if (currentLease || activeStatus === 'Closed') {
+        selectedCities = [];
+        selectedCounties.clear();
+        if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
+        if (typeof updateCityBtnLabel === 'function') updateCityBtnLabel();
+        if (typeof updateLocationChips === 'function') updateLocationChips();
+      }
       fetchListings();
     });
   });
