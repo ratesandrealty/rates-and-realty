@@ -120,37 +120,32 @@ function fmt$(n) { if(!n) return '$0'; if(n>=1000000) return '$'+(n/1000000).toF
 function getTimeAgo(d) { const diff=Math.floor((Date.now()-new Date(d))/86400000); return diff===0?'Today':diff===1?'1d ago':diff<30?diff+'d ago':Math.floor(diff/30)+'mo ago'; }
 
 async function loadData() {
-  const [leadsRes, partnersRes, closedDealsRes] = await Promise.all([
-    fetch(`${SB}/rest/v1/leads?select=id,contact_id,loan_amount,loan_type,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,contacts(first_name,last_name,referral_partner_id)&order=created_at.desc`, { headers: H }),
-    fetch(`${SB}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type`, { headers: H }),
-    fetch(`${SB}/rest/v1/closed_deals?select=id,contact_id,loan_amount,commission_earned,outcome,close_date,lost_reason,created_at,contacts(first_name,last_name)&order=created_at.desc`, { headers: H })
+  const [contactsRes, partnersRes] = await Promise.all([
+    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,loan_amount,loan_type,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,referral_partner_id&order=created_at.desc`, { headers: H }),
+    fetch(`${SB}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type`, { headers: H })
   ]);
 
-  const leadsRaw = await leadsRes.json();
+  const contacts = await contactsRes.json();
   const partners = await partnersRes.json();
-  const closedDeals = await closedDealsRes.json();
 
-  // Build a set of contact_ids already in leads to avoid double-counting
-  const leadsContactIds = new Set((leadsRaw || []).map(l => l.contact_id));
-
-  // Convert closed_deals rows that have NO matching leads row into lead-like objects
-  const syntheticLeads = (closedDeals || [])
-    .filter(d => !leadsContactIds.has(d.contact_id))
-    .map(d => ({
-      id: 'cd_' + d.id,
-      contact_id: d.contact_id,
-      loan_amount: d.loan_amount,
-      loan_type: 'Conventional',
-      estimated_earnings: d.commission_earned,
-      actual_earnings: d.commission_earned,
-      deal_outcome: d.outcome === 'closed' ? 'won' : d.outcome === 'lost' ? 'lost' : 'pending',
-      closed_date: d.close_date,
-      lost_reason: d.lost_reason,
-      created_at: d.created_at,
-      contacts: d.contacts
-    }));
-
-  _leads = [...(leadsRaw || []), ...syntheticLeads];
+  // Map contacts into the lead-shaped objects the rest of the page expects
+  // Only include contacts that have a deal_outcome set (actual leads with outcomes)
+  // plus all contacts for pipeline view
+  _leads = (contacts || []).map(c => ({
+    id: c.id,
+    contact_id: c.id,
+    loan_amount: c.loan_amount,
+    loan_type: c.loan_type,
+    estimated_earnings: c.estimated_earnings || 0,
+    actual_earnings: c.actual_earnings || 0,
+    deal_outcome: c.deal_outcome || 'pending',
+    closed_date: c.closed_date,
+    lost_reason: c.lost_reason,
+    created_at: c.created_at,
+    referral_partner_id: c.referral_partner_id,
+    // Embed contact info directly (no join needed)
+    contacts: { first_name: c.first_name, last_name: c.last_name, referral_partner_id: c.referral_partner_id }
+  }));
 
   _partnerMap = {};
   partners.forEach(p => { _partnerMap[p.id] = p; });
@@ -170,10 +165,10 @@ function filterByTime(leads) {
 function setTime(t, el) { _timeFilter = t; document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active')); el.classList.add('active'); updateAll(); }
 
 function updateAll() {
-  const leads = filterByTime(_leads);
+  const leads = filterByTime(_leads).filter(l => l.loan_amount > 0 || l.deal_outcome === 'won' || l.deal_outcome === 'lost');
   const won = leads.filter(l => l.deal_outcome === 'won');
   const lost = leads.filter(l => l.deal_outcome === 'lost');
-  const pending = leads.filter(l => l.deal_outcome === 'pending' || !l.deal_outcome);
+  const pending = leads.filter(l => l.deal_outcome === 'pending' && l.loan_amount > 0);
   const totalEarned = won.reduce((s,l) => s+(l.actual_earnings||0), 0);
   const pipelineVal = pending.reduce((s,l) => s+(l.estimated_earnings||0), 0);
   const wonVol = won.reduce((s,l) => s+(l.loan_amount||0), 0);
