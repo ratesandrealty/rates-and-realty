@@ -1370,131 +1370,89 @@ async function syncFromClickUp() {
 async function uploadGuidelinePDFs(files) {
   if (!files || files.length === 0) return;
 
-  // Gate: no lender context here — redirect to per-lender flow
-  showToast('⚠️ To upload guidelines, open a lender from the Lender Database tab and use the Docs tab inside the lender modal.');
-  // Reset the file input so re-selecting the same file fires onchange again
+  // Reset file input so the same file can be re-selected later
   const inputs = document.querySelectorAll('input[type="file"][accept=".pdf"]');
   inputs.forEach(function(i){ try { i.value = ''; } catch(e){} });
-  return;
 
-  // eslint-disable-next-line no-unreachable
   for (const file of Array.from(files)) {
-    // File size check — base64 adds ~33% overhead, Supabase edge body limit ~6MB
+    // STEP 0 — validate
     if (file.size > 4 * 1024 * 1024) {
+      console.error('[uploadGuidelinePDFs] File too large:', file.name, file.size);
       showToast(file.name + ' too large (max 4MB). Please compress first.');
       continue;
     }
 
-    showToast('Uploading ' + file.name + '...');
-
-    const base64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(r.result.split(',')[1]);
-      r.onerror = rej;
-      r.readAsDataURL(file);
-    });
-
-    const name = file.name.toLowerCase();
-    let lenderName = 'Custom';
-    if (name.includes('fannie') || name.includes('fnma')) lenderName = 'Fannie Mae';
-    else if (name.includes('freddie') || name.includes('fhlmc')) lenderName = 'Freddie Mac';
-    else if (name.includes('fha') || name.includes('hud')) lenderName = 'FHA';
-    else if (name.includes('va ') || name.includes('_va_')) lenderName = 'VA';
-    else if (name.includes('usda')) lenderName = 'USDA';
-    else if (name.includes('dscr')) lenderName = 'DSCR Loans';
-    else if (name.includes('jumbo')) lenderName = 'Jumbo';
-    else if (name.includes('calhfa')) lenderName = 'CalHFA';
+    // Sanitize and namespace the filename so collisions don't overwrite
+    const safeBase = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileName = Date.now() + '_' + safeBase;
+    const setFileStatus = (msg) => showToast(file.name + ': ' + msg);
 
     try {
-      const ocrRes = await fetch(
-        `${SB_URL}/functions/v1/textract-ocr`,
+      setFileStatus('uploading…');
+
+      // STEP A — Upload raw PDF bytes to Supabase storage via REST
+      // (no JS SDK loaded on this page; equivalent to supabase.storage.upload)
+      const storageRes = await fetch(
+        `${SB_URL}/storage/v1/object/lender-guidelines/${encodeURIComponent(fileName)}`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SB_KEY,
+            'Authorization': `Bearer ${SB_KEY}`,
+            'Content-Type': 'application/pdf',
+            'x-upsert': 'true'
+          },
+          body: file
+        }
+      );
+
+      if (!storageRes.ok) {
+        const errText = await storageRes.text().catch(() => '');
+        console.error('[uploadGuidelinePDFs] Storage error:', storageRes.status, errText);
+        setFileStatus('storage upload failed (' + storageRes.status + '): ' + (errText || 'unknown'));
+        continue;
+      }
+
+      // STEP B — Build the public URL
+      const publicUrl = `${SB_URL}/storage/v1/object/public/lender-guidelines/${encodeURIComponent(fileName)}`;
+
+      // STEP C — Call guidelines-ai to index it
+      setFileStatus('indexing…');
+      const indexRes = await fetch(
+        `${SB_URL}/functions/v1/guidelines-ai`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${SB_KEY}`,
-            'apikey': SB_KEY
+            'apikey': SB_KEY,
+            'Authorization': `Bearer ${SB_KEY}`
           },
           body: JSON.stringify({
-            action: 'start',
-            file_base64: base64,
-            file_name: file.name,
-            file_type: 'application/pdf'
+            action: 'index',
+            url: publicUrl,
+            fileName: fileName
           })
         }
       );
-      let ocrData;
+
+      let indexResult = null;
       try {
-        const text = await ocrRes.text();
-        if (!text) throw new Error('Empty response from server (HTTP ' + ocrRes.status + ')');
-        ocrData = JSON.parse(text);
-      } catch(e) {
-        showToast('Upload error: ' + e.message);
+        const txt = await indexRes.text();
+        indexResult = txt ? JSON.parse(txt) : null;
+      } catch(parseErr) {
+        console.error('[uploadGuidelinePDFs] Index parse error:', parseErr);
+      }
+
+      if (!indexRes.ok) {
+        console.error('[uploadGuidelinePDFs] Index error:', indexRes.status, indexResult);
+        setFileStatus('indexing failed (' + indexRes.status + '): ' + ((indexResult && indexResult.error) || 'see console'));
         continue;
       }
 
-      if (ocrData.success) {
-        showToast(file.name + ' uploaded — OCR scanning...');
-
-        let polls = 0;
-        const pollInterval = setInterval(async () => {
-          polls++;
-          if (polls > 20) { clearInterval(pollInterval); return; }
-
-          const r = await fetch(
-            `${SB_URL}/functions/v1/textract-ocr`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${SB_KEY}`,
-                'apikey': SB_KEY
-              },
-              body: JSON.stringify({ action: 'result', job_id: ocrData.job_id })
-            }
-          );
-          let result;
-          try {
-            const text = await r.text();
-            if (!text) throw new Error('Empty response');
-            result = JSON.parse(text);
-          } catch(e) {
-            clearInterval(pollInterval);
-            showToast('OCR poll error: ' + e.message);
-            return;
-          }
-
-          if (result.status === 'completed') {
-            clearInterval(pollInterval);
-            const rawText = result.fields?._raw_lines || 'Text extracted';
-            await fetch(`${SB_URL}/rest/v1/lender_guidelines`, {
-              method: 'POST',
-              headers: {
-                'apikey': SB_KEY,
-                'Authorization': `Bearer ${SB_KEY}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-              },
-              body: JSON.stringify({
-                lender_name: lenderName,
-                lender_type: 'custom',
-                category: 'general',
-                guideline_key: file.name.replace('.pdf',''),
-                guideline_text: rawText,
-                loan_programs: [lenderName],
-                tags: ['pdf-upload', lenderName.toLowerCase().replace(/\s+/g,'-')],
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              })
-            });
-            showToast(lenderName + ' guidelines extracted and saved!');
-          }
-        }, 3000);
-      } else {
-        showToast('Upload failed: ' + (ocrData.error || 'Unknown error'));
-      }
-    } catch(e) {
-      showToast('Error: ' + e.message);
+      setFileStatus('uploaded & indexed ✓');
+    } catch(err) {
+      console.error('[uploadGuidelinePDFs] Unhandled error for', file.name, err);
+      setFileStatus('error: ' + (err && err.message ? err.message : String(err)));
     }
   }
 }
