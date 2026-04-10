@@ -1141,9 +1141,9 @@
       <div class="hsw-card">
         <!-- Tab row -->
         <div class="hsw-tabs">
-          <button class="hsw-tab active" onclick="hswTab(this,'buy')">🏠 Buy</button>
-          <button class="hsw-tab" onclick="hswTab(this,'rent')">🔑 Rent</button>
-          <button class="hsw-tab" onclick="hswTab(this,'sold')">📋 Sold</button>
+          <button class="hsw-tab active" id="hsTab_buy"  data-status="buy">🏠 Buy</button>
+          <button class="hsw-tab"        id="hsTab_rent" data-status="rent">🔑 Rent</button>
+          <button class="hsw-tab"        id="hsTab_sold" data-status="sold">📋 Sold</button>
         </div>
 
         <!-- Main search row -->
@@ -1157,7 +1157,7 @@
               placeholder="City, zip code, address, or neighborhood..."
               onkeydown="if(event.key==='Enter')hswGo()">
           </div>
-          <button class="hsw-go-btn" onclick="hswGo()">
+          <button class="hsw-go-btn" id="heroSearchBtn" onclick="hswGo()">
             Search
             <svg viewBox="0 0 20 20" fill="none" width="14" height="14" style="margin-left:6px">
               <path d="M4 10h12M10 4l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -2021,53 +2021,82 @@
   </script>
   <script src="public/js/chat-widget.js"></script>
   <script>
-    // ── HOME SEARCH WIDGET ──
-    let homepageStatus = 'buy';
-    let homepageBeds   = 'any';
-    let homepagePrice  = 'any';
+    // ── Homepage search widget — tab + filter state ──────────────────
+    var _hsStatus = 'buy';
+    var _hsBeds   = 'any';
+    var _hsPrice  = 'any';
 
-    function hswTab(el, type) {
-      document.querySelectorAll('.hsw-tab').forEach(t => t.classList.remove('active'));
-      el.classList.add('active');
-      homepageStatus = type;
-      window._hswType = type;
-      if (type === 'rent' || type === 'sold') {
-        const inp = document.querySelector('input[type="text"], .search-input, #hero-search-input');
-        if (inp) inp.value = '';
-      }
-    }
-
-    // Beds chip selection → homepageBeds
-    document.querySelectorAll('#hswBeds .hsw-chip').forEach(function(chip) {
-      chip.addEventListener('click', function() {
-        document.querySelectorAll('#hswBeds .hsw-chip').forEach(function(c){ c.classList.remove('active'); });
-        this.classList.add('active');
-        var v = this.dataset.val || '';
-        homepageBeds = v === '' ? 'any' : v;
+    (function() {
+      // Wire tab buttons by id
+      ['buy','rent','sold'].forEach(function(s) {
+        var btn = document.getElementById('hsTab_' + s);
+        if (!btn) return;
+        btn.addEventListener('click', function() {
+          _hsStatus = s;
+          ['buy','rent','sold'].forEach(function(x) {
+            var b = document.getElementById('hsTab_' + x);
+            if (b) b.classList.remove('active');
+          });
+          btn.classList.add('active');
+          // Clear city input when switching to rent or sold
+          if (s === 'rent' || s === 'sold') {
+            var inp = document.querySelector('#heroSearch, #hero-search-input, .search-input, input[type="text"]');
+            if (inp) inp.value = '';
+          }
+          console.log('[tab] status set to:', _hsStatus);
+        });
       });
-    });
 
-    // Price chip selection → homepagePrice
-    document.querySelectorAll('#hswPrice .hsw-chip').forEach(function(chip) {
-      chip.addEventListener('click', function() {
-        document.querySelectorAll('#hswPrice .hsw-chip').forEach(function(c){ c.classList.remove('active'); });
-        this.classList.add('active');
-        var v = this.dataset.val || '';
-        homepagePrice = v === '' ? 'any' : v;
+      // Wire Beds buttons
+      document.querySelectorAll('#hswBeds .hsw-chip, #bedToggles .toggle-btn, .beds-btn, [data-beds]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          // Visual active-state toggle for hsw-chip rows
+          var row = btn.closest('.hsw-chip-row');
+          if (row) row.querySelectorAll('.hsw-chip').forEach(function(c){ c.classList.remove('active'); });
+          btn.classList.add('active');
+          var v = btn.dataset.val || btn.dataset.beds || btn.textContent.replace('+','').trim();
+          _hsBeds = (v === '' || btn.textContent.trim() === 'Any') ? 'any' : v;
+          console.log('[tab] beds set to:', _hsBeds);
+        });
       });
-    });
+
+      // Wire Price buttons
+      document.querySelectorAll('#hswPrice .hsw-chip, .price-btn, [data-price], [data-max-price]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var row = btn.closest('.hsw-chip-row');
+          if (row) row.querySelectorAll('.hsw-chip').forEach(function(c){ c.classList.remove('active'); });
+          btn.classList.add('active');
+          var v = btn.dataset.val || btn.dataset.price || btn.dataset.value || btn.dataset.maxPrice || '';
+          _hsPrice = (v === '' || btn.textContent.trim() === 'Any') ? 'any' : v;
+          console.log('[tab] price set to:', _hsPrice);
+        });
+      });
+    })();
 
     function hswGo() {
-      var searchInput = document.querySelector('input[type="text"], .search-input, #hero-search-input');
-      var query = searchInput ? searchInput.value.trim() : '';
+      var inp = document.querySelector('#heroSearch, #hero-search-input, .search-input, input[type="text"]');
+      var query = inp ? inp.value.trim() : '';
       var params = new URLSearchParams();
-      params.set('status', homepageStatus);
-      if (homepageBeds && homepageBeds !== 'any') params.set('beds', homepageBeds);
-      if (homepagePrice && homepagePrice !== 'any') params.set('maxPrice', homepagePrice);
-      if (query) params.set('cities', query);
-      console.log('[hswGo] navigating with status=' + homepageStatus, params.toString());
-      window.location.href = '/public/search-homes.html?' + params.toString();
+      params.set('status', _hsStatus);
+      if (_hsBeds  !== 'any') params.set('beds',     _hsBeds);
+      if (_hsPrice !== 'any') params.set('maxPrice', _hsPrice);
+      if (query && _hsStatus === 'buy') params.set('cities', query);
+      var url = '/public/search-homes.html?' + params.toString();
+      console.log('[hswGo] navigating to:', url);
+      window.location.href = url;
     }
+
+    // Also wire the Search button directly by every possible selector
+    (function() {
+      var searchBtns = document.querySelectorAll(
+        '#heroSearchBtn, .search-btn, .hsw-search, [onclick*="hswGo"], button.search'
+      );
+      searchBtns.forEach(function(btn) {
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click', hswGo);
+      });
+    })();
+    // ─────────────────────────────────────────────────────────────────
 
     // County click — maps directly to the county tab keys used in search-homes.html
     function hswCounty(county) {
