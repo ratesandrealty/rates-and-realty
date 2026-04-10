@@ -1226,6 +1226,29 @@
         border-bottom:1px solid rgba(255,255,255,0.07) !important;
       }
     }
+    /* ── Bulk Upload ── */
+    .bulk-file-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      padding: 10px 12px;
+      transition: border-color 0.15s;
+    }
+    .bulk-file-row.uploading { border-color: rgba(201,168,76,0.4); }
+    .bulk-file-row.done      { border-color: rgba(80,200,120,0.4); background: rgba(80,200,120,0.04); }
+    .bulk-file-row.error     { border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.04); }
+    .bulk-file-icon { font-size: 20px; flex-shrink: 0; }
+    .bulk-file-name { flex: 1; font-size: 12px; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bulk-file-size { font-size: 11px; color: #555; flex-shrink: 0; }
+    .bulk-file-type { background: #1a1a1a; border: 1px solid #333; color: #ccc; padding: 5px 8px; border-radius: 7px; font-size: 11px; cursor: pointer; flex-shrink: 0; width: 140px; }
+    .bulk-file-status { font-size: 11px; flex-shrink: 0; width: 70px; text-align: right; }
+    .bulk-file-remove { background: none; border: none; color: #555; font-size: 16px; cursor: pointer; padding: 0 2px; flex-shrink: 0; transition: color 0.15s; }
+    .bulk-file-remove:hover { color: #f87171; }
+    .bulk-progress-bar { height: 3px; background: rgba(255,255,255,0.06); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+    .bulk-progress-fill { height: 100%; background: var(--gold); border-radius: 3px; transition: width 0.3s; }
   </style>
   <!-- Google Maps Places autocomplete removed (API key retired); address input uses plain text -->
 
@@ -3157,25 +3180,51 @@
       </div>
 
       <!-- Upload modal -->
-      <div id="doc-upload-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9998; align-items:center; justify-content:center;">
-        <div style="background:#1e1e1e; border-radius:16px; width:420px; padding:28px; border:1px solid rgba(255,255,255,0.1);">
-          <div style="font-size:17px; font-weight:600; margin-bottom:20px;">Upload Document</div>
-          <div style="margin-bottom:14px;">
-            <label class="ld-label">Document Type</label>
-            <select id="upload-doc-type" class="ld-select">
-              <option value="w2">W-2</option>
-              <option value="pay_stubs">Pay Stubs</option>
-              <option value="bank_statements">Bank Statements</option>
-              <option value="gov_id">Gov ID / Driver's License</option>
-              <option value="tax_returns">Tax Returns</option>
-              <option value="purchase_contract">Purchase Contract</option>
-              <option value="other">Other</option>
-            </select>
+      <!-- Bulk Upload Modal -->
+      <div id="doc-upload-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9998;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+        <div style="background:#161616;border-radius:20px;width:min(680px,95vw);max-height:85vh;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.1);box-shadow:0 24px 80px rgba(0,0,0,0.6);">
+
+          <!-- Header -->
+          <div style="padding:20px 24px 16px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+            <div>
+              <div style="font-size:16px;font-weight:700;color:#f0ebe0;">📎 Upload Documents</div>
+              <div style="font-size:12px;color:#888;margin-top:2px;">Set type for each file, then upload all at once</div>
+            </div>
+            <button onclick="closeDocUploadModal()" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#888;padding:6px 12px;cursor:pointer;font-size:13px;">✕ Close</button>
           </div>
-          <div id="upload-modal-file-info" style="padding:12px; background:rgba(255,255,255,0.04); border-radius:8px; font-size:13px; color:rgba(255,255,255,0.6); margin-bottom:16px;">No file selected</div>
-          <div style="display:flex; gap:10px; justify-content:flex-end;">
-            <button onclick="closeDocUploadModal()" style="padding:9px 18px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#fff; cursor:pointer; font-size:13px;">Cancel</button>
-            <button onclick="confirmDocUpload()" style="padding:9px 18px; background:var(--gold); border:none; border-radius:8px; color:#000; font-weight:600; cursor:pointer; font-size:13px;">Upload</button>
+
+          <!-- Add more files button -->
+          <div style="padding:12px 24px 0;flex-shrink:0;">
+            <button onclick="addMoreFiles()" style="width:100%;padding:10px;border:2px dashed rgba(201,168,76,0.3);border-radius:10px;background:rgba(201,168,76,0.04);color:rgba(201,168,76,0.7);font-size:13px;cursor:pointer;transition:all .2s;" onmouseover="this.style.borderColor='rgba(201,168,76,0.6)';this.style.color='#C9A84C'" onmouseout="this.style.borderColor='rgba(201,168,76,0.3)';this.style.color='rgba(201,168,76,0.7)'">
+              + Add More Files
+            </button>
+          </div>
+
+          <!-- File list -->
+          <div id="bulk-upload-file-list" style="flex:1;overflow-y:auto;padding:12px 24px;display:flex;flex-direction:column;gap:8px;min-height:120px;">
+            <div style="text-align:center;padding:32px;color:#555;font-size:13px;">No files selected</div>
+          </div>
+
+          <!-- Global type + footer -->
+          <div style="padding:16px 24px;border-top:1px solid rgba(255,255,255,0.07);flex-shrink:0;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+              <span style="font-size:12px;color:#888;white-space:nowrap;">Set all to:</span>
+              <select id="bulk-type-all" onchange="setBulkTypeAll(this.value)" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#ccc;padding:7px 10px;border-radius:8px;font-size:12px;cursor:pointer;">
+                <option value="">— pick type for all —</option>
+                <option value="w2">W-2</option>
+                <option value="pay_stubs">Pay Stubs</option>
+                <option value="bank_statements">Bank Statements</option>
+                <option value="gov_id">Gov ID / Driver's License</option>
+                <option value="tax_returns">Tax Returns</option>
+                <option value="purchase_contract">Purchase Contract</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div id="bulk-upload-status" style="flex:1;font-size:12px;color:#888;"></div>
+              <button onclick="closeDocUploadModal()" style="padding:9px 20px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#aaa;cursor:pointer;font-size:13px;">Cancel</button>
+              <button id="bulk-upload-btn" onclick="confirmDocUpload()" style="padding:9px 24px;background:var(--gold);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px;min-width:120px;">Upload All</button>
+            </div>
           </div>
         </div>
       </div>
@@ -5060,8 +5109,24 @@ function triggerDocFileInput() {
   const input = document.getElementById('doc-file-input');
   input.value = '';
   input.onchange = function() {
-    _pendingDocFiles = Array.from(this.files);
-    if (_pendingDocFiles.length) showDocUploadModal();
+    const newFiles = Array.from(this.files);
+    if (newFiles.length) {
+      _pendingDocFiles = _pendingDocFiles.concat(newFiles);
+      showDocUploadModal();
+    }
+  };
+  input.click();
+}
+
+function addMoreFiles() {
+  const input = document.getElementById('doc-file-input');
+  input.value = '';
+  input.onchange = function() {
+    const newFiles = Array.from(this.files);
+    if (newFiles.length) {
+      _pendingDocFiles = _pendingDocFiles.concat(newFiles);
+      renderBulkFileList();
+    }
   };
   input.click();
 }
@@ -5074,32 +5139,85 @@ function handleDocFileSelect(files) {
 function handleDocDrop(e) {
   e.preventDefault();
   document.getElementById('doc-drop-zone').style.borderColor = 'rgba(201,168,76,0.3)';
-  _pendingDocFiles = Array.from(e.dataTransfer.files);
-  if (_pendingDocFiles.length) showDocUploadModal();
+  const dropped = Array.from(e.dataTransfer.files);
+  if (dropped.length) {
+    _pendingDocFiles = _pendingDocFiles.concat(dropped);
+    showDocUploadModal();
+  }
 }
 
 function showDocUploadModal() {
   const modal = document.getElementById('doc-upload-modal');
   modal.style.display = 'flex';
-  const info = document.getElementById('upload-modal-file-info');
+  document.getElementById('bulk-upload-status').textContent = '';
+  document.getElementById('bulk-type-all').value = '';
+  const btn = document.getElementById('bulk-upload-btn');
+  btn.textContent = 'Upload All';
+  btn.disabled = false;
+  renderBulkFileList();
+}
+
+function renderBulkFileList() {
+  const list = document.getElementById('bulk-upload-file-list');
   if (!_pendingDocFiles.length) {
-    // Files selected via input will re-call this after selection
-    document.getElementById('doc-file-input').onchange = function() {
-      _pendingDocFiles = Array.from(this.files);
-      if (_pendingDocFiles.length) showDocUploadModal();
-    };
-    document.getElementById('doc-file-input').click();
+    list.innerHTML = '<div style="text-align:center;padding:32px;color:#555;font-size:13px;">No files selected</div>';
     return;
   }
-  if (_pendingDocFiles.length) {
-    const names = _pendingDocFiles.map(f => {
-      const willConvert = f.type !== 'application/pdf' && (_convertibleTypes.includes(f.type) || f.type === 'text/plain');
-      return f.name + (willConvert ? ' → PDF' : '');
-    }).join(', ');
-    info.innerHTML = names + ` (${_pendingDocFiles.length} file${_pendingDocFiles.length>1?'s':''})`;
-  } else {
-    info.innerHTML = '<span style="cursor:pointer;color:var(--gold);" onclick="triggerDocFileInput()">Click to select files</span>';
-  }
+  list.innerHTML = _pendingDocFiles.map((f, i) => {
+    const ext  = f.name.split('.').pop().toLowerCase();
+    const icon = ext === 'pdf' ? '📄' : ['jpg','jpeg','png','gif','webp','bmp','tiff'].includes(ext) ? '🖼️' : '📎';
+    const size = f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB';
+    const willConvert = f.type !== 'application/pdf' && (_convertibleTypes.includes(f.type) || f.type === 'text/plain');
+    return `<div class="bulk-file-row" id="bulk-row-${i}">
+      <span class="bulk-file-icon">${icon}</span>
+      <div style="flex:1;min-width:0;">
+        <div class="bulk-file-name" title="${f.name}">${f.name}${willConvert ? ' <span style="color:#C9A84C;font-size:10px;">→PDF</span>' : ''}</div>
+        <div class="bulk-progress-bar" id="bulk-bar-${i}" style="display:none;"><div class="bulk-progress-fill" id="bulk-fill-${i}" style="width:0%"></div></div>
+      </div>
+      <span class="bulk-file-size">${size}</span>
+      <select class="bulk-file-type" id="bulk-type-${i}">
+        <option value="other">Other</option>
+        <option value="w2">W-2</option>
+        <option value="pay_stubs">Pay Stubs</option>
+        <option value="bank_statements">Bank Statements</option>
+        <option value="gov_id">Gov ID</option>
+        <option value="tax_returns">Tax Returns</option>
+        <option value="purchase_contract">Purchase Contract</option>
+      </select>
+      <span class="bulk-file-status" id="bulk-status-${i}"></span>
+      <button class="bulk-file-remove" onclick="removeBulkFile(${i})" title="Remove">×</button>
+    </div>`;
+  }).join('');
+
+  // Auto-detect type from filename
+  _pendingDocFiles.forEach((f, i) => {
+    const n = f.name.toLowerCase();
+    const sel = document.getElementById(`bulk-type-${i}`);
+    if (!sel) return;
+    if (n.includes('w2') || n.includes('w-2')) sel.value = 'w2';
+    else if (n.includes('pay') || n.includes('stub')) sel.value = 'pay_stubs';
+    else if (n.includes('bank') || n.includes('statement')) sel.value = 'bank_statements';
+    else if (n.includes('id') || n.includes('license') || n.includes('passport')) sel.value = 'gov_id';
+    else if (n.includes('tax') || n.includes('1040') || n.includes('return')) sel.value = 'tax_returns';
+    else if (n.includes('contract') || n.includes('purchase')) sel.value = 'purchase_contract';
+    else sel.value = 'other';
+  });
+
+  document.getElementById('bulk-upload-status').textContent =
+    `${_pendingDocFiles.length} file${_pendingDocFiles.length > 1 ? 's' : ''} ready`;
+}
+
+function removeBulkFile(i) {
+  _pendingDocFiles.splice(i, 1);
+  renderBulkFileList();
+}
+
+function setBulkTypeAll(type) {
+  if (!type) return;
+  _pendingDocFiles.forEach((_, i) => {
+    const sel = document.getElementById(`bulk-type-${i}`);
+    if (sel) sel.value = type;
+  });
 }
 
 function closeDocUploadModal() {
@@ -5112,111 +5230,95 @@ async function confirmDocUpload() {
     document.getElementById('doc-file-input').click();
     return;
   }
-  const docType = document.getElementById('upload-doc-type').value;
-  const btn = document.querySelector('#doc-upload-modal button[onclick="confirmDocUpload()"]');
+
+  const btn = document.getElementById('bulk-upload-btn');
   btn.textContent = 'Uploading…';
   btn.disabled = true;
 
-  let convertedCount = 0;
-  for (const file of _pendingDocFiles) {
-    console.log('Uploading doc:', file.name, 'contactId:', contactId, 'leadId:', leadId, 'docType:', docType);
+  let doneCount = 0, errorCount = 0;
+
+  for (let i = 0; i < _pendingDocFiles.length; i++) {
+    const file = _pendingDocFiles[i];
+    const row  = document.getElementById(`bulk-row-${i}`);
+    const bar  = document.getElementById(`bulk-bar-${i}`);
+    const fill = document.getElementById(`bulk-fill-${i}`);
+    const stat = document.getElementById(`bulk-status-${i}`);
+    const docType = document.getElementById(`bulk-type-${i}`)?.value || 'other';
+
+    if (row) row.classList.add('uploading');
+    if (bar) bar.style.display = 'block';
+    if (stat) stat.innerHTML = '<span style="color:#C9A84C">⏳</span>';
+    if (fill) fill.style.width = '30%';
+
     try {
-      // Auto-convert images/text to PDF
       const { file: finalFile, converted } = await _convertToPdfIfNeeded(file);
-      if (converted) convertedCount++;
+      if (fill) fill.style.width = '60%';
 
-      const { data: sessionData } = await sb.auth.getSession();
-      console.log('Auth state:', sessionData?.session?.user?.email || 'NOT LOGGED IN');
-      const ts = Date.now();
-        const safeName = finalFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const path = `${contactId || leadId}/${docType}/${ts}_${safeName}`;
+      const safeName = finalFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${contactId || leadId}/${docType}/${Date.now()}_${safeName}`;
+      const base64 = await _fileToBase64(finalFile);
 
-        // Convert file to base64 for edge function
-        const base64 = await _fileToBase64(finalFile);
+      if (fill) fill.style.width = '80%';
 
-        // Upload via edge function (uses service role, bypasses RLS)
-        const uploadResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/google-drive-upload`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
-          },
-          body: JSON.stringify({
-            action: 'upload_to_storage',
-            file_base64: base64,
-            file_name: safeName,
-            file_type: finalFile.type || 'application/octet-stream',
-            storage_path: path,
-            contact_id: contactId || null,
-            lead_id: leadId || null,
-            document_type: docType,
-            file_size: finalFile.size
-          })
+      const uploadResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/google-drive-upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
+        body: JSON.stringify({
+          action: 'upload_to_storage',
+          file_base64: base64,
+          file_name: safeName,
+          file_type: finalFile.type || 'application/octet-stream',
+          storage_path: path,
+          contact_id: contactId || null,
+          lead_id: leadId || null,
+          document_type: docType,
+          file_size: finalFile.size
+        })
+      });
+
+      if (!uploadResp.ok) {
+        // Fallback: direct upload
+        const { error: directError } = await sb.storage.from('borrower-documents').upload(path, finalFile, { upsert: true });
+        if (directError) throw new Error(directError.message);
+        const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
+        await sb.from('uploaded_documents').insert({
+          contact_id: contactId || null, lead_id: leadId || null,
+          document_type: docType, type: docType,
+          file_name: finalFile.name, file_path: path,
+          file_url: urlData.publicUrl, status: 'received',
+          file_size: finalFile.size, uploaded_at: new Date().toISOString()
         });
+      }
 
-        if (!uploadResp.ok) {
-          const errText = await uploadResp.text();
-          console.error('Edge function error:', errText);
-          // Fallback: try direct upload with anon key
-          const { error: directError } = await sb.storage
-            .from('borrower-documents')
-            .upload(path, finalFile, { upsert: true });
+      if (fill) fill.style.width = '100%';
+      if (fill) fill.style.background = '#50c878';
+      if (row)  row.classList.remove('uploading'); row.classList.add('done');
+      if (stat) stat.innerHTML = '<span style="color:#50c878">✓</span>';
+      doneCount++;
+      await logActivity('document_uploaded', `Document uploaded: ${docType} — ${finalFile.name}${converted ? ' (converted to PDF)' : ''}`);
 
-          if (directError) throw new Error('Upload failed: ' + directError.message);
-
-          const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
-          const { error: insertError } = await sb.from('uploaded_documents').insert({
-            contact_id: contactId || null,
-            lead_id: leadId || null,
-            document_type: docType,
-            type: docType,
-            file_name: finalFile.name,
-            file_path: path,
-            file_url: urlData.publicUrl,
-            status: 'received',
-            file_size: finalFile.size,
-            uploaded_at: new Date().toISOString()
-          });
-          if (insertError) throw new Error('DB insert failed: ' + insertError.message);
-        } else {
-          const result = await uploadResp.json();
-          console.log('Edge upload result:', result);
-          if (result.error) throw new Error(result.error);
-
-          // Auto-sync to Google Drive (fire and forget — don't block UX)
-          const docId = result.document_id || result.id;
-          if (docId) {
-            const cfg = window.APP_CONFIG || {};
-            fetch(`${cfg.SUPABASE_URL}/functions/v1/gdrive-sync`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'apikey': cfg.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + cfg.SUPABASE_ANON_KEY },
-              body: JSON.stringify({
-                action: 'sync_document',
-                document_id: docId,
-                contact_id: contactId,
-                storage_path: result.storage_path || path,
-                file_name: finalFile.name,
-                file_type: (finalFile.name.split('.').pop() || '').toLowerCase()
-              })
-            }).then(r => r.json()).then(d => {
-              if (d.success && d.gdrive_file_id) toast('📁 Synced to Google Drive');
-              else if (d.skipped) console.log('[gdrive] Skipped:', d.reason);
-            }).catch(e => console.warn('[gdrive-sync] failed:', e));
-          }
-        }
-    } catch(err) {
-      console.error('Upload error for', file.name, ':', err);
-      toast('Upload failed: ' + err.message, true);
-      continue;
+    } catch (err) {
+      if (row)  { row.classList.remove('uploading'); row.classList.add('error'); }
+      if (fill) { fill.style.width = '100%'; fill.style.background = '#f87171'; }
+      if (stat) stat.innerHTML = '<span style="color:#f87171" title="' + err.message + '">✗</span>';
+      errorCount++;
     }
   }
 
-  btn.textContent = 'Upload';
-  btn.disabled = false;
-  closeDocUploadModal();
-  const msg = _pendingDocFiles.length + ' document(s) uploaded' + (convertedCount ? ` (${convertedCount} converted to PDF)` : '');
-  toast(msg);
+  const statusEl = document.getElementById('bulk-upload-status');
+  statusEl.innerHTML = `<span style="color:#50c878">✓ ${doneCount} uploaded</span>${errorCount ? ` <span style="color:#f87171">· ${errorCount} failed</span>` : ''}`;
+  btn.textContent = 'Done ✓';
   loadDocumentsGrid();
+
+  // Auto-close after 1.5s if all succeeded
+  if (errorCount === 0) {
+    setTimeout(() => {
+      closeDocUploadModal();
+    }, 1500);
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'Retry Failed';
+  }
 }
 
 async function syncAllDocsToDrive() {
