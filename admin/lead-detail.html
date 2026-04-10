@@ -4153,7 +4153,7 @@ async function driveLinkPasted() {
 }
 
 /* ── POPULATE UI ── */
-function populateUI() {
+async function populateUI() {
   const name = [contactData.first_name, contactData.last_name].filter(Boolean).join(' ') || 'Unknown Lead';
   const initials = [(contactData.first_name||'')[0], (contactData.last_name||'')[0]].filter(Boolean).join('').toUpperCase() || '?';
 
@@ -4213,20 +4213,22 @@ function populateUI() {
   if (leadData.deal_outcome) setOutcome(leadData.deal_outcome);
   if (leadData.lost_reason && document.getElementById('lostReason')) document.getElementById('lostReason').value = leadData.lost_reason;
 
-  // Pull fresh earnings from contacts (single source of truth)
+  // Pull fresh earnings directly from contacts (single source of truth)
   if (contactId) {
-    const { data: cData } = await sb.from('contacts')
-      .select('actual_earnings, estimated_earnings, deal_outcome, closed_date, lost_reason')
-      .eq('id', contactId).single();
-    if (cData) {
-      if (document.getElementById('estimatedEarnings'))
-        document.getElementById('estimatedEarnings').value = cData.estimated_earnings || '';
-      if (document.getElementById('actualEarnings'))
-        document.getElementById('actualEarnings').value = cData.actual_earnings || '';
-      if (cData.deal_outcome) setOutcome(cData.deal_outcome);
-      if (cData.lost_reason && document.getElementById('lostReason'))
-        document.getElementById('lostReason').value = cData.lost_reason;
-    }
+    try {
+      const { data: cData } = await sb.from('contacts')
+        .select('actual_earnings, estimated_earnings, deal_outcome, closed_date, lost_reason')
+        .eq('id', contactId).single();
+      if (cData) {
+        if (document.getElementById('estimatedEarnings'))
+          document.getElementById('estimatedEarnings').value = cData.estimated_earnings || '';
+        if (document.getElementById('actualEarnings'))
+          document.getElementById('actualEarnings').value = cData.actual_earnings || '';
+        if (cData.deal_outcome) setOutcome(cData.deal_outcome);
+        if (cData.lost_reason && document.getElementById('lostReason'))
+          document.getElementById('lostReason').value = cData.lost_reason;
+      }
+    } catch(e) { console.warn('earnings fetch:', e.message); }
   }
   setVal('f-created', leadData.created_at ? fmtDate(leadData.created_at) : '');
 
