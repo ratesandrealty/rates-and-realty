@@ -9,6 +9,7 @@
 //   GET  ?action=get-folder&folderId=FOLDER_ID
 //   GET  ?action=list-files&folderId=FOLDER_ID
 //   POST ?action=create-folder    body: { parentId, name }
+//   POST ?action=upload-file      body: multipart/form-data { folderId, file }
 //
 // Deploy with --no-verify-jwt so browser clients can call it directly.
 
@@ -198,6 +199,60 @@ Deno.serve(async (req: Request) => {
           parents: [parentId],
         }),
       });
+      return json(await r.json(), r.status);
+    }
+
+    if (req.method === "POST" && action === "upload-file") {
+      let form: FormData;
+      try {
+        form = await req.formData();
+      } catch (_e) {
+        return err("Expected multipart/form-data body", 400);
+      }
+      const folderId = form.get("folderId");
+      const file = form.get("file");
+      if (!folderId || typeof folderId !== "string") {
+        return err("folderId field required", 400);
+      }
+      if (!(file instanceof File)) {
+        return err("file field required (must be a File)", 400);
+      }
+
+      // Build a multipart/related body by hand. Drive's /upload endpoint
+      // expects: metadata part (JSON) + media part (file bytes) separated
+      // by a unique boundary string.
+      const token = await getAccessToken();
+      const boundary = "boundary_" + crypto.randomUUID();
+      const metadata = JSON.stringify({
+        name: file.name,
+        parents: [folderId],
+      });
+      const fileBytes = new Uint8Array(await file.arrayBuffer());
+      const encoder = new TextEncoder();
+      const head = encoder.encode(
+        `--${boundary}\r\n` +
+          `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+          metadata + `\r\n` +
+          `--${boundary}\r\n` +
+          `Content-Type: ${file.type || "application/octet-stream"}\r\n\r\n`,
+      );
+      const tail = encoder.encode(`\r\n--${boundary}--`);
+      const body = new Uint8Array(head.length + fileBytes.length + tail.length);
+      body.set(head, 0);
+      body.set(fileBytes, head.length);
+      body.set(tail, head.length + fileBytes.length);
+
+      const r = await fetch(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,mimeType,size,modifiedTime",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": `multipart/related; boundary=${boundary}`,
+          },
+          body,
+        },
+      );
       return json(await r.json(), r.status);
     }
 

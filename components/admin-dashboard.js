@@ -1152,7 +1152,52 @@ async function _fvHandleAction(e) {
   if (!contact) return;
   if (action === "create") return _fvCreateFolder(contact, btn);
   if (action === "toggle") return _fvToggleFiles(contact);
-  if (action === "upload") return _fvShowToast("Upload coming soon");
+  if (action === "upload") return _fvStartUpload(contact, btn);
+}
+
+function _fvStartUpload(contact, btn) {
+  if (!contact.gdrive_folder_id) { _fvShowToast("No folder yet — create one first"); return; }
+  const input = document.createElement("input");
+  input.type = "file";
+  input.style.display = "none";
+  input.addEventListener("change", async () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading…';
+    try {
+      const { key } = getSupabaseConfig();
+      const fd = new FormData();
+      fd.append("folderId", contact.gdrive_folder_id);
+      fd.append("file", file);
+      const res = await fetch(`${GDRIVE_PROXY}?action=upload-file`, {
+        method: "POST",
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        body: fd
+      });
+      const data = await res.json();
+      if (!res.ok || !data.id) throw new Error(data.error || "Upload failed");
+      _fvShowToast("Uploaded ✓");
+      await _fvLoadFiles(contact.gdrive_folder_id);
+      _fvRenderFileList(contact);
+      // Refresh the View Files count pill on the card.
+      const card = document.querySelector(`[data-fv-card="${contact.id}"]`);
+      const toggle = card?.querySelector('[data-fv-action="toggle"]');
+      if (toggle) {
+        const label = _fvExpanded.has(contact.id) ? "Hide Files" : "View Files";
+        toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[contact.gdrive_folder_id] ?? 0})`;
+      }
+    } catch (e) {
+      console.error("[FileVault] upload failed:", e);
+      _fvShowToast("Upload failed");
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  });
+  document.body.appendChild(input);
+  input.click();
 }
 
 async function _fvCreateFolder(contact, btn) {
