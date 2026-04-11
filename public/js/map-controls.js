@@ -249,8 +249,11 @@
     bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;background:#0d0d0d;border:1px solid #1f1f1f;border-radius:12px;margin:8px 0;';
 
     var service = new google.maps.places.PlacesService(map);
-    var iw = new google.maps.InfoWindow();
-    var state = {}; // { key: { active, markers } }
+    // disableAutoPan — critical: InfoWindow's default behavior pans the map
+    // on open, which previously tripped 'idle' listeners and caused loops.
+    var iw = new google.maps.InfoWindow({ disableAutoPan: true });
+    var state = {};      // { key: { active, markers } }
+    var _searching = {}; // { key: bool } — guards against rapid re-click double-fire
 
     function clearMarkersFor(key) {
       var s = state[key]; if (!s) return;
@@ -258,14 +261,22 @@
       s.markers = [];
     }
 
+    // Fire nearbySearch immediately on toggle using the current map center.
+    // NO 'idle' listener — that caused a feedback loop where marker creation
+    // (or auto-pan from InfoWindow) retriggered the idle event and the map
+    // continuously re-searched/zoomed.
+    // NEVER call fitBounds() / setZoom() / panTo() in this callback.
     function fetchFor(cat) {
       var s = state[cat.key]; if (!s || !s.active) return;
+      if (_searching[cat.key]) return;
       var center = map.getCenter(); if (!center) return;
+      _searching[cat.key] = true;
       service.nearbySearch({
         location: center,
         radius: 1500,
         type: cat.type
       }, function(results, status) {
+        _searching[cat.key] = false;
         if (status !== google.maps.places.PlacesServiceStatus.OK || !results) return;
         if (!s.active) return; // toggled off mid-flight
         clearMarkersFor(cat.key);
@@ -284,7 +295,7 @@
               (p.vicinity ? '<br><span style="color:#666;font-size:11px">' + p.vicinity + '</span>' : '') +
               '</div>'
             );
-            iw.open({ map: map, anchor: marker });
+            iw.open({ map: map, anchor: marker, shouldFocus: false });
           });
           marker.addListener('mouseout', function(){ iw.close(); });
           s.markers.push(marker);
@@ -292,15 +303,9 @@
       });
     }
 
-    function scheduleFetchOnIdle(cat) {
-      // Spec: only search when map is idle after toggle. If bounds already
-      // resolved (map is effectively idle), fetch now; otherwise wait.
-      if (map.getBounds()) fetchFor(cat);
-      else google.maps.event.addListenerOnce(map, 'idle', function(){ fetchFor(cat); });
-    }
-
     NEARBY_CATEGORIES.forEach(function(cat) {
       state[cat.key] = { active: false, markers: [] };
+      _searching[cat.key] = false;
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.textContent = cat.label;
@@ -309,7 +314,7 @@
         var s = state[cat.key];
         s.active = !s.active;
         styleNearbyBtn(btn, s.active, cat.color);
-        if (s.active) scheduleFetchOnIdle(cat);
+        if (s.active) fetchFor(cat);
         else clearMarkersFor(cat.key);
       });
       bar.appendChild(btn);
