@@ -1773,9 +1773,9 @@ function _fvOpenViewer(contact, files, index) {
   panel.style.cssText = "position:fixed;top:0;right:0;width:480px;height:100vh;background:#1a1a1a;border-left:2px solid #C9A84C;z-index:8001;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .28s ease;box-shadow:-12px 0 40px rgba(0,0,0,0.6);";
   panel.innerHTML = `
     <div id="fv-viewer-header" style="padding:14px 16px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;gap:10px;flex-shrink:0;">
-      <a id="fv-viewer-download" title="Download" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 9px;font-size:.78rem;text-decoration:none;"><i class="fa-solid fa-download"></i></a>
-      <a id="fv-viewer-openlink" title="Open in Drive" target="_blank" rel="noopener" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 9px;font-size:.78rem;text-decoration:none;"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
-      <button id="fv-viewer-close" title="Close" style="background:#222;border:1px solid #333;color:#eee;border-radius:6px;padding:6px 10px;font-size:.82rem;cursor:pointer;font-family:inherit;">✕</button>
+      <a id="fv-viewer-download" title="Download" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:4px 10px;font-size:15px;line-height:1;text-decoration:none;">&#8681;</a>
+      <a id="fv-viewer-openlink" title="Open in Drive" target="_blank" rel="noopener" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:4px 10px;font-size:15px;line-height:1;text-decoration:none;">&#8599;</a>
+      <button id="fv-viewer-close" title="Close" style="background:#222;border:1px solid #333;color:#eee;border-radius:6px;padding:4px 10px;font-size:15px;line-height:1;cursor:pointer;font-family:inherit;">&#10005;</button>
     </div>
     <div id="fv-viewer-nav" style="padding:8px 16px;border-bottom:1px solid #222;display:flex;align-items:center;gap:8px;flex-shrink:0;">
       <button id="fv-viewer-prev" style="background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:6px;padding:5px 10px;font-size:.75rem;cursor:pointer;font-family:inherit;">← Prev</button>
@@ -1797,7 +1797,7 @@ function _fvOpenViewer(contact, files, index) {
   titleBar.style.cssText = "display:flex;align-items:center;min-width:0;gap:8px;flex:1;";
   titleBar.innerHTML = `
     <span id="fv-viewer-title" style="color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;"></span>
-    <button id="fv-viewer-rename" title="Rename file" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:13px;padding:2px 6px;"><i class="fa-solid fa-pen"></i></button>
+    <button id="fv-viewer-rename" title="Rename file" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:16px;padding:2px 6px;line-height:1;flex-shrink:0;">&#9998;</button>
     <span id="fv-viewer-saving" style="display:none;width:14px;height:14px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin 0.7s linear infinite;flex-shrink:0;"></span>
   `;
   fvHeader.insertBefore(titleBar, fvHeader.firstChild);
