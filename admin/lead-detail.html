@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
   <script src="/api/env.js?v=2026033004"></script>
+  <!-- Google Identity Services — OAuth token client for GDrive Documents tab -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <title>Lead Detail | Rates &amp; Realty CRM</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -3144,7 +3146,7 @@
           <button class="doc-filter-btn" onclick="filterDocs('gov_id',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Gov ID</button>
           <button class="doc-filter-btn" onclick="filterDocs('tax_returns',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Tax Returns</button>
           <button class="doc-filter-btn" onclick="filterDocs('other',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Other</button>
-          <button id="syncToGdriveBtn" onclick="syncAllDocsToDrive()" title="Open Drive folder + download links for manual upload (auto-sync when Google Cloud reinstated)" style="margin-left:auto;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">📁 Open in Drive</button>
+          <button id="syncToGdriveBtn" onclick="openContactDriveFolder()" title="Open this borrower's GDrive folder" style="margin-left:auto;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">📁 Open in Drive</button>
         </div>
 
         <!-- Documents grid -->
@@ -4044,14 +4046,16 @@ function updateDriveFolderBtn() {
   const btn = document.getElementById('driveFolderBtn');
   const label = document.getElementById('driveFolderBtnLabel');
   if (!btn || !label) return;
-  if (window._leadDriveFolderId) {
+  // Hide the header pill entirely when no folder URL is linked. Users can
+  // still link a folder from the Documents tab via the "Link Drive folder"
+  // modal (see showDriveMatchModal), and uploads will auto-create one.
+  if (window._leadDriveFolderUrl) {
+    btn.style.display = 'inline-flex';
     btn.style.borderColor = '#C9A84C';
     btn.style.color = '#C9A84C';
     label.textContent = '📁 View Drive Folder';
   } else {
-    btn.style.borderColor = '#444';
-    btn.style.color = '#aaa';
-    label.textContent = 'no folder yet';
+    btn.style.display = 'none';
   }
 }
 
@@ -5112,7 +5116,77 @@ function handleDocUpload(docType) {
 // ── Document Tab: Upload + Viewer ──────────────────────────────
 let _pendingDocFiles = [];
 let _currentDocFilter = 'all';
-let _allDocs = [];
+let _allDocs = []; // now holds GDrive file objects (was borrower_documents rows)
+
+// ── GDrive OAuth (shared pattern with File Vault) ─────────────────
+const LD_OAUTH_CLIENT_ID = "17691954677-9e7d3rjur37pt5uvb3joordt5qs1usl1.apps.googleusercontent.com";
+const LD_OAUTH_SCOPE = "https://www.googleapis.com/auth/drive";
+
+function _ldCachedToken() {
+  try {
+    const tok = sessionStorage.getItem("gdriveOAuthToken");
+    const exp = Number(sessionStorage.getItem("gdriveOAuthExpiry") || 0);
+    if (tok && exp > Date.now() + 60000) return tok;
+  } catch (_) {}
+  return null;
+}
+
+function _ldEnsureToken() {
+  const cached = _ldCachedToken();
+  if (cached) return Promise.resolve(cached);
+  return new Promise((resolve, reject) => {
+    if (!(window.google && window.google.accounts && window.google.accounts.oauth2)) {
+      return reject(new Error("Google Identity Services not loaded — reload the page"));
+    }
+    try {
+      const tc = google.accounts.oauth2.initTokenClient({
+        client_id: LD_OAUTH_CLIENT_ID,
+        scope: LD_OAUTH_SCOPE,
+        callback: (resp) => {
+          if (resp.error) return reject(new Error(resp.error));
+          if (!resp.access_token) return reject(new Error("No access token returned"));
+          try {
+            sessionStorage.setItem("gdriveOAuthToken", resp.access_token);
+            sessionStorage.setItem("gdriveOAuthExpiry", String(Date.now() + (Number(resp.expires_in) || 3600) * 1000));
+          } catch (_) {}
+          resolve(resp.access_token);
+        },
+        error_callback: (err) => reject(new Error((err && err.message) || "OAuth popup failed"))
+      });
+      tc.requestAccessToken({ prompt: "" });
+    } catch (e) { reject(e); }
+  });
+}
+
+function _ldClearToken() {
+  try {
+    sessionStorage.removeItem("gdriveOAuthToken");
+    sessionStorage.removeItem("gdriveOAuthExpiry");
+  } catch (_) {}
+}
+
+// Filter pill key → substring matched against file.appProperties.docType
+// (the File Vault uses these docType labels). Kept lowercase/contains for
+// resilience against historical capitalization variants.
+const LD_DOC_FILTER_MAP = {
+  all: null,
+  w2: "w-2",
+  pay_stubs: "pay stub",
+  bank_statements: "bank statement",
+  gov_id: ["photo id", "gov id", "driver"],
+  tax_returns: "tax return",
+  other: "other"
+};
+
+function _ldDocMatches(file, filter) {
+  if (!filter || filter === "all") return true;
+  const tokens = LD_DOC_FILTER_MAP[filter];
+  if (!tokens) return true;
+  const type = ((file.appProperties && file.appProperties.docType) || "").toLowerCase();
+  if (!type) return false;
+  const arr = Array.isArray(tokens) ? tokens : [tokens];
+  return arr.some((t) => type.includes(t));
+}
 
 function triggerDocFileInput() {
   const input = document.getElementById('doc-file-input');
@@ -5396,26 +5470,65 @@ function showDriveUploadHelper() {
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
 }
 
+// Open the currently-loaded contact's Drive folder in a new tab. Sources the
+// URL from contactData.gdrive_folder_url — same column the File Vault and
+// header pill both read from.
+function openContactDriveFolder() {
+  const url = (typeof contactData !== "undefined" && contactData && contactData.gdrive_folder_url) ||
+    (typeof contactData !== "undefined" && contactData && contactData.gdrive_folder_id
+      ? 'https://drive.google.com/drive/folders/' + contactData.gdrive_folder_id
+      : null);
+  if (!url) { if (typeof toast === 'function') toast('No Drive folder linked to this contact'); return; }
+  window.open(url, '_blank', 'noopener');
+}
+
 async function loadDocumentsGrid() {
   const container = document.getElementById('docs-list');
   if (!container) return;
-  container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:32px;color:rgba(255,255,255,0.3);">Loading…</div>';
 
-  try {
-    const payload = { action: 'get_documents' };
-    if (contactId) payload.contact_id = contactId;
-    if (leadId) payload.lead_id = leadId;
-    const res = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/portal-data`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const result = await res.json();
-    _allDocs = result.documents || [];
-    window._currentContactDocs = _allDocs;
-  } catch(e) {
-    console.error('loadDocumentsGrid error:', e);
+  // Source of truth: contactData.gdrive_folder_id (same column the File Vault
+  // and the header "View Drive Folder" pill both read from). Everything on
+  // this tab now reads straight from Google Drive via OAuth — no more
+  // borrower_documents table — so both CRM views show the same files.
+  const folderId = (typeof contactData !== "undefined" && contactData && contactData.gdrive_folder_id) || null;
+  if (!folderId) {
     _allDocs = [];
+    window._currentContactDocs = [];
+    container.innerHTML = `
+      <div style="grid-column:1/-1;text-align:center;padding:48px 20px;color:rgba(255,255,255,0.5);">
+        <div style="font-size:40px;margin-bottom:10px;">📁</div>
+        <p style="font-size:14px;margin-bottom:6px;">No Drive folder linked to this contact</p>
+        <p style="font-size:12px;color:rgba(255,255,255,0.35);">Upload a document or use "Link Drive folder" to create one.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:32px;color:rgba(255,255,255,0.3);">Loading Drive files…</div>';
+  try {
+    const token = await _ldEnsureToken();
+    const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+    const fields = encodeURIComponent(
+      "files(id,name,size,mimeType,createdTime,modifiedTime,webViewLink,webContentLink,iconLink,thumbnailLink,appProperties)"
+    );
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&orderBy=createdTime+desc&pageSize=500`,
+      { headers: { Authorization: "Bearer " + token } }
+    );
+    if (res.status === 401 || res.status === 403) { _ldClearToken(); throw new Error("Drive auth failed — click Documents tab again to re-auth"); }
+    const data = await res.json();
+    _allDocs = Array.isArray(data.files) ? data.files : [];
+    window._currentContactDocs = _allDocs;
+  } catch (e) {
+    console.error("loadDocumentsGrid (GDrive) error:", e);
+    _allDocs = [];
+    container.innerHTML = `
+      <div style="grid-column:1/-1;text-align:center;padding:32px;color:#e0a0a0;">
+        <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
+        <p style="font-size:13px;">${_driveEsc ? _driveEsc(e.message) : e.message}</p>
+      </div>
+    `;
+    return;
   }
   renderDocsGrid();
 }
@@ -5429,46 +5542,68 @@ function filterDocs(type, btn) {
   renderDocsGrid();
 }
 
+function _ldFileIconEmoji(mime, name) {
+  if (!mime && name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    if (ext === 'pdf') return '📄';
+    if (['jpg','jpeg','png','gif','webp','bmp'].includes(ext)) return '🖼️';
+    if (['doc','docx'].includes(ext)) return '📝';
+    if (['xls','xlsx','csv'].includes(ext)) return '📊';
+    return '📎';
+  }
+  if (!mime) return '📎';
+  if (mime.includes('pdf')) return '📄';
+  if (mime.indexOf('image/') === 0) return '🖼️';
+  if (mime.includes('word') || mime.includes('document')) return '📝';
+  if (mime.includes('sheet') || mime.includes('excel') || mime.includes('csv')) return '📊';
+  if (mime.includes('presentation') || mime.includes('slides')) return '📊';
+  if (mime.indexOf('video/') === 0) return '🎬';
+  if (mime.indexOf('audio/') === 0) return '🎵';
+  return '📎';
+}
+
+function _ldFormatSize(bytes) {
+  const b = Number(bytes);
+  if (!isFinite(b) || b <= 0) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
+  if (b < 1024 * 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + ' MB';
+  return (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
 function renderDocsGrid() {
   const container = document.getElementById('docs-list');
   if (!container) return;
-  const filtered = _currentDocFilter === 'all' ? _allDocs : _allDocs.filter(d => d.document_type === _currentDocFilter);
+  const filtered = _allDocs.filter((f) => _ldDocMatches(f, _currentDocFilter));
 
   if (!filtered.length) {
     container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:rgba(255,255,255,0.3);"><div style="font-size:40px;margin-bottom:8px;">📁</div><p>No documents found</p></div>';
     return;
   }
 
-  const iconMap = { pdf:'📄', jpg:'🖼️', jpeg:'🖼️', png:'🖼️', docx:'📝', doc:'📝' };
-  const statusColors = { received:'rgba(201,168,76,0.8)', reviewed:'rgba(100,180,255,0.8)', approved:'rgba(80,200,120,0.8)', not_received:'rgba(255,255,255,0.3)' };
-
-  container.innerHTML = filtered.map(doc => {
-    const ext = (doc.file_name||'').split('.').pop().toLowerCase();
-    const icon = iconMap[ext] || '📎';
-    const size = doc.file_size ? (doc.file_size > 1048576 ? (doc.file_size/1048576).toFixed(1)+' MB' : (doc.file_size/1024).toFixed(0)+' KB') : '';
-    const date = doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
-    const statusColor = statusColors[doc.status] || statusColors.not_received;
-    const docTypeMap = {gov_id:'Government ID',w2:'W-2',tax_return:'Tax Return',tax_returns:'Tax Returns',bank_statement:'Bank Statement',bank_statements:'Bank Statements',pay_stub:'Pay Stub',pay_stubs:'Pay Stubs',approval_letter:'Approval Letter',purchase_contract:'Purchase Contract',other:'Document'};
-    const typeLabel = docTypeMap[doc.document_type] || (doc.document_type||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) || 'Document';
+  container.innerHTML = filtered.map((f) => {
+    const icon = _ldFileIconEmoji(f.mimeType, f.name);
+    const size = _ldFormatSize(f.size);
+    const date = f.modifiedTime
+      ? new Date(f.modifiedTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : (f.createdTime ? new Date(f.createdTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '');
+    const docType = (f.appProperties && f.appProperties.docType) || '';
+    const typeLabel = docType || 'Untagged';
+    const safeName = (f.name || 'Untitled').replace(/"/g, '&quot;');
+    const viewLink = f.webViewLink || '#';
+    const isPdf = (f.mimeType || '').includes('pdf');
     return `
-      <div onclick="openDocViewer('${doc.id}')" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
+      <div onclick="window.open('${viewLink}','_blank','noopener')" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
         onmouseenter="this.style.borderColor='rgba(201,168,76,0.35)';this.style.background='rgba(255,255,255,0.07)'"
         onmouseleave="this.style.borderColor='rgba(255,255,255,0.08)';this.style.background='rgba(255,255,255,0.04)'">
         <div style="font-size:32px;margin-bottom:10px;text-align:center;">${icon}</div>
-        <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${doc.file_name}">${doc.file_name}</div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:8px;">${typeLabel} ${size ? '· '+size : ''}</div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${safeName}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:8px;">${typeLabel}${size ? ' · ' + size : ''}</div>
         <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:10px;">${date}</div>
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-size:11px;font-weight:600;color:${statusColor};text-transform:uppercase;letter-spacing:0.5px;">${doc.status||'received'}</span>
-          <select onclick="event.stopPropagation()" onchange="updateDocStatus('${doc.document_type}',this.value,'${doc.id}')" style="background:#1a1a1a;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:rgba(255,255,255,0.6);font-size:11px;padding:3px 6px;cursor:pointer;-webkit-appearance:none;appearance:none;">
-            <option value="received" ${doc.status==='received'?'selected':''}>Received</option>
-            <option value="reviewed" ${doc.status==='reviewed'?'selected':''}>Reviewed</option>
-            <option value="approved" ${doc.status==='approved'?'selected':''}>Approved</option>
-            <option value="not_received" ${doc.status==='not_received'?'selected':''}>Missing</option>
-          </select>
+          <span style="font-size:10px;font-weight:700;color:${docType ? 'rgba(201,168,76,0.9)' : 'rgba(255,255,255,0.35)'};background:${docType ? 'rgba(201,168,76,0.12)' : 'rgba(255,255,255,0.05)'};padding:3px 10px;border-radius:10px;text-transform:uppercase;letter-spacing:.4px;">${docType || 'No type'}</span>
+          ${isPdf ? '<span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);background:rgba(255,255,255,0.06);padding:3px 8px;border-radius:6px;">PDF</span>' : ''}
         </div>
-        ${ext === 'pdf' ? '<div style="margin-top:8px;text-align:center;"><span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;">PDF</span></div>' : `<div style="margin-top:8px;text-align:center;"><button id="convert-btn-${doc.id}" onclick="event.stopPropagation();convertDocToPdf(${JSON.stringify(doc).replace(/"/g,'&quot;')})" style="font-size:11px;font-weight:600;color:#000;background:var(--gold);border:none;border-radius:6px;padding:4px 12px;cursor:pointer;transition:opacity .2s;" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='1'">Convert to PDF</button></div>`}
-        ${doc.gdrive_file_url ? `<div style="margin-top:6px;text-align:center;"><a href="${doc.gdrive_file_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10px;color:#C9A84C;text-decoration:none;">📁 Drive</a></div>` : ''}
       </div>`;
   }).join('');
 }
