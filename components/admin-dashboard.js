@@ -1223,6 +1223,7 @@ async function _fvHandleAction(e) {
 // Builds a multipart/related body by hand: JSON metadata + raw file bytes.
 async function _fvUploadOne(folderId, file, nameOverride) {
   const fileName = nameOverride || file.name || "upload";
+  console.log("[FileVault][uploadOne] called", fileName, file.type, file.size, "folder:", folderId);
   try {
     const token = await _fvEnsureToken();
     const boundary = "fv_" + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
@@ -1265,10 +1266,84 @@ async function _fvUploadOne(folderId, file, nameOverride) {
   }
 }
 
+// Convert an image File to a single-page A4 PDF using jsPDF, then upload the
+// PDF to Drive. Falls back to uploading the raw image if jsPDF isn't loaded.
+async function _fvHandleImageFile(file, folderId) {
+  try {
+    _fvShowToast(`Converting ${file.name} to PDF...`);
+    console.log("[FileVault][imgUpload] start", file.name, file.type, file.size);
+
+    let uploadBlob, uploadName;
+
+    const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+    if (jsPDFCtor) {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = () => reject(new Error("image decode failed"));
+          img.src = objectUrl;
+        });
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+      console.log("[FileVault][imgUpload] image loaded", img.naturalWidth, img.naturalHeight);
+
+      const pdf = new jsPDFCtor({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const ratio = Math.min(pageW / img.naturalWidth, pageH / img.naturalHeight);
+      const w = img.naturalWidth * ratio;
+      const h = img.naturalHeight * ratio;
+      const x = (pageW - w) / 2;
+      const y = (pageH - h) / 2;
+
+      // Draw onto canvas → JPEG data URL for broad jsPDF compatibility.
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d").drawImage(img, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+
+      pdf.addImage(dataUrl, "JPEG", x, y, w, h);
+      const pdfBlob = pdf.output("blob");
+      console.log("[FileVault][imgUpload] pdf blob size", pdfBlob.size);
+
+      uploadBlob = pdfBlob;
+      uploadName = file.name.replace(/\.[a-zA-Z0-9]{1,6}$/, "") + ".pdf";
+    } else {
+      console.warn("[FileVault][imgUpload] jsPDF not found, uploading image as-is");
+      _fvShowToast(`Uploading ${file.name}...`);
+      uploadBlob = file;
+      uploadName = file.name;
+    }
+
+    console.log("[FileVault][imgUpload] uploading as", uploadName, "size", uploadBlob.size);
+
+    const uploadFile = new File([uploadBlob], uploadName, {
+      type: uploadBlob.type || "application/pdf"
+    });
+    const result = await _fvUploadOne(folderId, uploadFile);
+    console.log("[FileVault][imgUpload] upload result", result);
+
+    if (result && result.ok) {
+      _fvShowToast(`✓ ${uploadName} uploaded`);
+      return result;
+    }
+    throw new Error((result && result.error) || "upload failed");
+  } catch (err) {
+    console.error("[FileVault][imgUpload] FAILED", err);
+    _fvShowToast(`Upload failed: ${err.message || err}`);
+    return { ok: false, name: file.name, error: err.message || String(err) };
+  }
+}
+
 async function _fvUploadFiles(contact, files) {
   if (!contact.gdrive_folder_id) { _fvShowToast("No folder yet — create one first"); return; }
   if (!files || !files.length) return;
 
+  const folderId = contact.gdrive_folder_id;
   const zone = document.getElementById(`fv-dropzone-${contact.id}`);
   const status = document.getElementById(`fv-upload-status-${contact.id}`);
   if (zone) { zone.dataset.fvBusy = "1"; zone.style.pointerEvents = "none"; zone.style.opacity = "0.75"; }
@@ -1285,42 +1360,52 @@ async function _fvUploadFiles(contact, files) {
     `).join("");
   }
 
-  // Sequential upload — simpler error handling and easier on the Drive API.
   let okCount = 0;
   let failCount = 0;
   for (let i = 0; i < list.length; i++) {
-    const result = await _fvUploadOne(contact.gdrive_folder_id, list[i]);
+    const file = list[i];
+    const isImage = (file.type || "").startsWith("image/");
+    let result;
+    if (isImage) {
+      result = await _fvHandleImageFile(file, folderId);
+    } else {
+      _fvShowToast(`Uploading ${file.name}...`);
+      result = await _fvUploadOne(folderId, file);
+    }
+
     const row = document.getElementById(rowIds[i]);
     if (row) {
-      if (result.ok) {
+      if (result && result.ok) {
         row.innerHTML = `
           <i class="fa-solid fa-check" style="color:#52C87A;"></i>
-          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#cfe7d7;">✓ ${(result.name || "file").replace(/</g, "&lt;")}</span>
+          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#cfe7d7;">✓ ${((result.name) || file.name || "file").replace(/</g, "&lt;")}</span>
         `;
       } else {
+        const errMsg = (result && result.error) || "unknown";
         row.innerHTML = `
           <i class="fa-solid fa-xmark" style="color:#E05252;"></i>
-          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f0bdbd;" title="${(result.error || "").replace(/"/g, "&quot;")}">✗ ${(result.name || "file").replace(/</g, "&lt;")}</span>
+          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f0bdbd;" title="${errMsg.replace(/"/g, "&quot;")}">✗ ${(file.name || "file").replace(/</g, "&lt;")}</span>
         `;
       }
     }
-    if (result.ok) okCount++;
+    if (result && result.ok) okCount++;
     else {
       failCount++;
-      console.error("[FileVault] upload failed:", result.name, result.error);
+      console.error("[FileVault] upload failed:", file.name, result && result.error);
     }
+
+    // Refresh the Drive listing after EACH file so a mid-batch failure
+    // doesn't leave the list stale.
+    await _fvLoadFiles(folderId);
   }
 
   _fvShowToast(failCount ? `${okCount} uploaded, ${failCount} failed` : `${okCount} uploaded ✓`);
 
-  // Refresh folder contents + count pill, then re-render the file list (which
-  // rebuilds the dropzone and clears the status rows).
-  await _fvLoadFiles(contact.gdrive_folder_id);
   const card = document.querySelector(`[data-fv-card="${contact.id}"]`);
   const toggle = card?.querySelector('[data-fv-action="toggle"]');
   if (toggle) {
     const label = _fvExpanded.has(contact.id) ? "Hide Files" : "View Files";
-    toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[contact.gdrive_folder_id] ?? 0})`;
+    toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[folderId] ?? 0})`;
   }
   _fvRenderFileList(contact);
 }
