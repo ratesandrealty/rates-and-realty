@@ -136,19 +136,59 @@
     document.head.appendChild(s);
   }
 
-  function addLocateBtn(map, container) {
-    var btn = makeBtn('Show my location', '\uD83D\uDCCD');
+  function mount(map) {
+    if (map._crmControlsMounted) return;
+    map._crmControlsMounted = true;
+    var container = document.createElement('div');
+    container.className = 'crm-map-controls';
+    container.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:10px;';
+    addSatelliteToggle(map, container);
+    addStreetViewBtn(map, container);
+    map.controls[google.maps.ControlPosition.LEFT_TOP].push(container);
+  }
+
+  window.addAllMapControls = function(map) {
+    if (!map) return;
+    if (window.google && window.google.maps) { mount(map); return; }
+    window.loadGoogleMaps().then(function(){ mount(map); });
+  };
+
+  // ── TOAST ─────────────────────────────────────────────────────────
+  function showMapToast(msg) {
+    var t = document.getElementById('gmToast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'gmToast';
+      t.style.cssText = 'position:fixed;bottom:32px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#C9A84C;padding:10px 18px;border-radius:22px;border:1px solid #333;font-size:.82rem;font-weight:700;z-index:9999;box-shadow:0 6px 20px rgba(0,0,0,.5);font-family:system-ui,sans-serif;';
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.display = 'block';
+  }
+  function hideMapToast() {
+    var t = document.getElementById('gmToast');
+    if (t) t.style.display = 'none';
+  }
+
+  // ── LOCATE-ME BUTTON (RIGHT_BOTTOM, above zoom) ───────────────────
+  window.addLocateButton = function(map) {
+    if (!map || map._locateBtnMounted) return;
+    map._locateBtnMounted = true;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = 'Locate me';
+    btn.setAttribute('aria-label', 'Locate me');
+    btn.style.cssText = 'width:40px;height:40px;border:none;border-radius:2px;background:#fff;color:#333;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px -1px rgba(0,0,0,.3);margin:0 10px 10px 0;';
+    btn.innerHTML = '<i class="fa-solid fa-location-crosshairs"></i>';
     var locationMarker = null;
     btn.addEventListener('click', function() {
       if (!navigator.geolocation) { alert('Geolocation not supported by your browser.'); return; }
-      var orig = btn.innerHTML;
-      btn.innerHTML = '\u231B';
+      showMapToast('Locating you\u2026');
       btn.disabled = true;
       navigator.geolocation.getCurrentPosition(function(pos) {
-        var lat = pos.coords.latitude;
-        var lng = pos.coords.longitude;
+        var lat = pos.coords.latitude, lng = pos.coords.longitude;
         map.panTo({ lat: lat, lng: lng });
-        map.setZoom(15);
+        map.setZoom(14);
         if (locationMarker) { try { locationMarker.setMap(null); } catch(e){} }
         ensurePulseKeyframes();
         var dotSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><circle cx="11" cy="11" r="7" fill="#4285F4" stroke="#ffffff" stroke-width="3"/></svg>';
@@ -162,33 +202,119 @@
             scaledSize: new google.maps.Size(22, 22)
           }
         });
-        btn.innerHTML = orig;
         btn.disabled = false;
+        hideMapToast();
       }, function(err) {
-        btn.innerHTML = orig;
         btn.disabled = false;
+        hideMapToast();
         if (err.code === 1) alert('Location access denied. Please allow location in your browser settings.');
         else alert('Could not get your location. Try again.');
       }, { enableHighAccuracy: true, timeout: 10000 });
     });
-    container.appendChild(btn);
+    map.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(btn);
+  };
+
+  // ── NEARBY PLACES TOGGLE TOOLBAR ──────────────────────────────────
+  // Pill-shaped buttons for Restaurants / Grocery / Schools / Coffee —
+  // each toggles PlacesService.nearbySearch markers on the given map.
+  var NEARBY_CATEGORIES = [
+    { key: 'restaurant', type: 'restaurant',  label: '\uD83C\uDF7D Restaurants', color: '#E74C3C' },
+    { key: 'grocery',    type: 'supermarket', label: '\uD83D\uDED2 Grocery',     color: '#27AE60' },
+    { key: 'school',     type: 'school',      label: '\uD83C\uDFEB Schools',     color: '#3498DB' },
+    { key: 'coffee',     type: 'cafe',        label: '\u2615 Coffee',            color: '#8E5A2F' }
+  ];
+
+  function nearbyCircleIcon(color) {
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"><circle cx="9" cy="9" r="6.5" fill="' + color + '" stroke="#ffffff" stroke-width="2"/></svg>';
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      anchor: new google.maps.Point(9, 9),
+      scaledSize: new google.maps.Size(18, 18)
+    };
   }
 
-  function mount(map) {
-    if (map._crmControlsMounted) return;
-    map._crmControlsMounted = true;
-    var container = document.createElement('div');
-    container.className = 'crm-map-controls';
-    container.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:10px;';
-    addSatelliteToggle(map, container);
-    addStreetViewBtn(map, container);
-    addLocateBtn(map, container);
-    map.controls[google.maps.ControlPosition.LEFT_TOP].push(container);
+  function styleNearbyBtn(btn, active, color) {
+    btn.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:20px;font-size:.78rem;font-weight:700;cursor:pointer;font-family:system-ui,sans-serif;transition:all .15s;border:1px solid ' +
+      (active ? color : '#333') + ';background:' +
+      (active ? 'rgba(201,168,76,0.14)' : '#1a1a1a') + ';color:' +
+      (active ? '#C9A84C' : '#bbb') + ';';
   }
 
-  window.addAllMapControls = function(map) {
-    if (!map) return;
-    if (window.google && window.google.maps) { mount(map); return; }
-    window.loadGoogleMaps().then(function(){ mount(map); });
+  window.addNearbyPlacesToolbar = function(map, mountEl) {
+    if (!map || !mountEl || mountEl._nearbyToolbarMounted) return;
+    mountEl._nearbyToolbarMounted = true;
+
+    var bar = document.createElement('div');
+    bar.className = 'nearby-places-bar';
+    bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;background:#0d0d0d;border:1px solid #1f1f1f;border-radius:12px;margin:8px 0;';
+
+    var service = new google.maps.places.PlacesService(map);
+    var iw = new google.maps.InfoWindow();
+    var state = {}; // { key: { active, markers } }
+
+    function clearMarkersFor(key) {
+      var s = state[key]; if (!s) return;
+      s.markers.forEach(function(m){ m.setMap(null); });
+      s.markers = [];
+    }
+
+    function fetchFor(cat) {
+      var s = state[cat.key]; if (!s || !s.active) return;
+      var center = map.getCenter(); if (!center) return;
+      service.nearbySearch({
+        location: center,
+        radius: 1500,
+        type: cat.type
+      }, function(results, status) {
+        if (status !== google.maps.places.PlacesServiceStatus.OK || !results) return;
+        if (!s.active) return; // toggled off mid-flight
+        clearMarkersFor(cat.key);
+        results.forEach(function(p) {
+          if (!p.geometry || !p.geometry.location) return;
+          var marker = new google.maps.Marker({
+            position: p.geometry.location,
+            map: map,
+            icon: nearbyCircleIcon(cat.color),
+            title: p.name || ''
+          });
+          marker.addListener('mouseover', function() {
+            iw.setContent(
+              '<div style="color:#000;font-size:12px;padding:2px;font-family:system-ui,sans-serif;max-width:220px">' +
+              '<strong>' + (p.name || '') + '</strong>' +
+              (p.vicinity ? '<br><span style="color:#666;font-size:11px">' + p.vicinity + '</span>' : '') +
+              '</div>'
+            );
+            iw.open({ map: map, anchor: marker });
+          });
+          marker.addListener('mouseout', function(){ iw.close(); });
+          s.markers.push(marker);
+        });
+      });
+    }
+
+    function scheduleFetchOnIdle(cat) {
+      // Spec: only search when map is idle after toggle. If bounds already
+      // resolved (map is effectively idle), fetch now; otherwise wait.
+      if (map.getBounds()) fetchFor(cat);
+      else google.maps.event.addListenerOnce(map, 'idle', function(){ fetchFor(cat); });
+    }
+
+    NEARBY_CATEGORIES.forEach(function(cat) {
+      state[cat.key] = { active: false, markers: [] };
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = cat.label;
+      styleNearbyBtn(btn, false, cat.color);
+      btn.addEventListener('click', function() {
+        var s = state[cat.key];
+        s.active = !s.active;
+        styleNearbyBtn(btn, s.active, cat.color);
+        if (s.active) scheduleFetchOnIdle(cat);
+        else clearMarkersFor(cat.key);
+      });
+      bar.appendChild(btn);
+    });
+
+    mountEl.appendChild(bar);
   };
 })();
