@@ -2324,7 +2324,15 @@ function renderMarkers() {
     })(i);
   }
 
-  if (hasPoints) map.fitBounds(bounds, 40);
+  // Only fit bounds on the FIRST render — subsequent searches preserve the
+  // user's current zoom and center. The flag is reset when the user picks a
+  // new city/county (addCityFilter / addCountyFilter / clearCityTag) so the
+  // next load recenters on the new area. Manual "Fit All" button still calls
+  // fitMarkers() directly to force a fit.
+  if (hasPoints && !window._searchMapFitted) {
+    map.fitBounds(bounds, 40);
+    window._searchMapFitted = true;
+  }
 }
 
 function fitMarkers() {
@@ -2651,6 +2659,8 @@ function addCityFilter(cityName) {
   // Cancel any active bounds/area search so city filter takes effect
   _boundsFetchActive = false;
   currentShape = null;
+  // Allow one fitBounds on this new area — the user explicitly picked it.
+  window._searchMapFitted = false;
 
   fetchListings();
 }
@@ -2667,6 +2677,8 @@ function clearCityTag() {
   if (defCb) defCb.checked = true;
   if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
   if (typeof updateCityDropdown === 'function') updateCityDropdown();
+  // Allow one fitBounds on this new area.
+  window._searchMapFitted = false;
   fetchListings();
 }
 
@@ -2692,6 +2704,8 @@ function addCountyFilter(countyName) {
 
   _boundsFetchActive = false;
   currentShape = null;
+  // Allow one fitBounds on this new county.
+  window._searchMapFitted = false;
 
   fetchListings();
 }
