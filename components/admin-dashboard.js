@@ -1,4 +1,4 @@
-// admin-dashboard.js v20260411-1
+// admin-dashboard.js v20260411b
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
   if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_URL) {
@@ -26,7 +26,7 @@ import {
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks
-} from "/api/admin-api-v2.js?v=20260411";
+} from "/api/admin-api-v2.js?v=20260411b";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
@@ -1578,6 +1578,10 @@ function _fvFormatSize(bytes) {
 function _fvEscape(s) {
   return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+// Alias so viewer templates that use escapeHtml(...) Just Work.
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 function _fvIsPdf(f) { return (f.mimeType || "").indexOf("pdf") >= 0; }
 function _fvIsGoogleDoc(f) {
@@ -1875,14 +1879,22 @@ function _fvOpenViewer(contact, files, index) {
     ["Other", "Other"]
   ].map(([val, label]) => `<option value="${_fvEscape(val)}">${_fvEscape(label)}</option>`).join("");
 
+  // The viewer renders INLINE into the #fv-viewer-panel on the right side of
+  // the Documents tab's split layout — NOT as a fixed full-screen overlay.
+  const mountEl = document.getElementById("fv-viewer-panel");
+  if (!mountEl) {
+    console.error("[FileVault] #fv-viewer-panel not found — cannot open viewer. Make sure dashboard/admin.html has the split layout.");
+    return;
+  }
+
   const viewerHTML = `
-<div id="fv-viewer-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;display:flex;flex-direction:column;">
+<div id="fv-viewer-overlay" style="display:flex;flex-direction:column;width:100%;height:100%;min-height:640px;background:#1a1a1a;border-radius:12px;overflow:hidden;">
 
   <div id="fv-viewer-header" style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:#111;border-bottom:1px solid #333;flex-shrink:0;">
 
     <div style="display:flex;align-items:center;min-width:0;gap:6px;flex:1;">
-      <span id="fv-viewer-title" style="color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;">${_fvEscape(file.name || "Untitled")}</span>
-      <button id="fv-viewer-rename" title="Rename file" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:18px;padding:0 6px;line-height:1;flex-shrink:0;">&#9998;</button>
+      <span id="fv-viewer-title" style="color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;">${escapeHtml(file.name || "Untitled")}</span>
+      <button id="fv-viewer-rename" title="Rename file" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:18px;padding:0 8px;line-height:1;flex-shrink:0;">&#9998;</button>
       <span id="fv-viewer-saving" style="display:none;width:14px;height:14px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin 0.7s linear infinite;flex-shrink:0;"></span>
     </div>
 
@@ -1902,7 +1914,10 @@ function _fvOpenViewer(contact, files, index) {
   <div id="fv-viewer-body" style="flex:1;overflow:auto;background:#0a0a0a;position:relative;"></div>
 </div>`;
 
-  document.body.insertAdjacentHTML("beforeend", viewerHTML);
+  // Reset panel styling to hold the viewer (clear placeholder flex-centering).
+  mountEl.style.display = "block";
+  mountEl.style.padding = "0";
+  mountEl.innerHTML = viewerHTML;
 
   // ── NUCLEAR DEBUG ────────────────────────────────────────────────
   // Verify the template actually mounted every element we expect. If the
@@ -1932,6 +1947,7 @@ function _fvOpenViewer(contact, files, index) {
   if (nextBtn) nextBtn.onclick = _fvViewerNext;
 
   const renameBtn = document.getElementById("fv-viewer-rename");
+  console.log("[FileVault][debug] rename btn after panel render:", renameBtn);
   if (renameBtn) {
     renameBtn.onclick = () => {
       const f = _fvViewerState.files[_fvViewerState.index];
@@ -2027,12 +2043,20 @@ function _fvRevokeBlobUrl() {
 }
 
 function _fvCloseViewer() {
-  const overlay = document.getElementById("fv-viewer-overlay");
   if (_fvViewerState && _fvViewerState.keyHandler) {
     document.removeEventListener("keydown", _fvViewerState.keyHandler);
   }
   _fvRevokeBlobUrl();
-  if (overlay) overlay.remove();
+  // Reset the right panel to its placeholder state — the viewer lives inline
+  // inside #fv-viewer-panel, so we just clear its contents.
+  const panel = document.getElementById("fv-viewer-panel");
+  if (panel) {
+    panel.innerHTML = "Select a file to preview";
+    panel.style.display = "flex";
+    panel.style.alignItems = "center";
+    panel.style.justifyContent = "center";
+    panel.style.padding = "";
+  }
   _fvViewerState = null;
 }
 
