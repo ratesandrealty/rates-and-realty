@@ -1002,14 +1002,74 @@ function filterApplications() {
 window.filterApplications = function() { filterApplications(); };
 
 // ── FILE VAULT (Documents tab) ────────────────────────────────────
-const GDRIVE_PROXY = "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/gdrive-proxy";
 const GDRIVE_BORROWERS_ROOT = "11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6";
+const GDRIVE_OAUTH_CLIENT_ID = "17691954677-9e7d3rjur37pt5uvb3joordt5qs1usl1.apps.googleusercontent.com";
+const GDRIVE_OAUTH_SCOPE = "https://www.googleapis.com/auth/drive";
 
 let _fvContacts = [];
 let _fvFilter = "";
 let _fvExpanded = new Set();
 let _fvFileCounts = {};
 let _fvFiles = {};
+let _fvViewerState = null; // { contactId, files, index, keyHandler }
+
+// ── OAUTH (Google Identity Services) ──────────────────────────────
+// Returns a fresh OAuth access token scoped to Drive. On first call within
+// a tab session this opens the Google consent popup; subsequent calls reuse
+// the sessionStorage-cached token until it's within 60s of expiry.
+function _fvCachedToken() {
+  try {
+    const tok = sessionStorage.getItem("gdriveOAuthToken");
+    const exp = Number(sessionStorage.getItem("gdriveOAuthExpiry") || 0);
+    if (tok && exp > Date.now() + 60000) return tok;
+  } catch (_) {}
+  return null;
+}
+
+function _fvEnsureToken() {
+  const cached = _fvCachedToken();
+  if (cached) return Promise.resolve(cached);
+  return new Promise((resolve, reject) => {
+    if (!(window.google && window.google.accounts && window.google.accounts.oauth2)) {
+      return reject(new Error("Google Identity Services not loaded — reload the page"));
+    }
+    try {
+      const tc = google.accounts.oauth2.initTokenClient({
+        client_id: GDRIVE_OAUTH_CLIENT_ID,
+        scope: GDRIVE_OAUTH_SCOPE,
+        callback: (resp) => {
+          if (resp.error) return reject(new Error(resp.error));
+          if (!resp.access_token) return reject(new Error("No access token returned"));
+          try {
+            sessionStorage.setItem("gdriveOAuthToken", resp.access_token);
+            sessionStorage.setItem(
+              "gdriveOAuthExpiry",
+              String(Date.now() + (Number(resp.expires_in) || 3600) * 1000)
+            );
+          } catch (_) {}
+          resolve(resp.access_token);
+        },
+        error_callback: (err) => reject(new Error((err && err.message) || "OAuth popup failed"))
+      });
+      tc.requestAccessToken({ prompt: "" });
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+async function _fvAuthHeaders(extra) {
+  const token = await _fvEnsureToken();
+  return Object.assign({ Authorization: "Bearer " + token }, extra || {});
+}
+
+// On auth failure (401/403), clear cache so the next call re-prompts.
+function _fvClearToken() {
+  try {
+    sessionStorage.removeItem("gdriveOAuthToken");
+    sessionStorage.removeItem("gdriveOAuthExpiry");
+  } catch (_) {}
+}
 
 async function renderDocuments() {
   const el = document.getElementById("admin-document-table");
@@ -1159,40 +1219,49 @@ async function _fvHandleAction(e) {
   if (action === "toggle") return _fvToggleFiles(contact);
 }
 
-// Upload one file to gdrive-proxy. Returns { ok, name, error? }.
-// The Supabase edge gateway requires BOTH apikey (for routing) and
-// Authorization (for the gateway to accept the request) even when the
-// function itself is deployed with --no-verify-jwt. Using the anon key as
-// the bearer is safe because the function never validates the JWT.
-async function _fvUploadOne(folderId, file) {
-  const { key } = getSupabaseConfig();
-  if (!key) {
-    console.error("[FileVault] Supabase anon key missing from window.APP_CONFIG");
-    return { ok: false, name: file.name, error: "anon key missing" };
-  }
-  console.log("[FileVault] upload", file.name, "-> folder", folderId, "key present:", !!key);
-  const fd = new FormData();
-  fd.append("folderId", folderId);
-  fd.append("file", file);
+// Upload a File/Blob directly to Drive using the OAuth token (no proxy).
+// Builds a multipart/related body by hand: JSON metadata + raw file bytes.
+async function _fvUploadOne(folderId, file, nameOverride) {
+  const fileName = nameOverride || file.name || "upload";
   try {
+    const token = await _fvEnsureToken();
+    const boundary = "fv_" + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+    const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
+    const fileBytes = new Uint8Array(await file.arrayBuffer());
+    const encoder = new TextEncoder();
+    const head = encoder.encode(
+      `--${boundary}\r\n` +
+      `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+      metadata + `\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Type: ${file.type || "application/octet-stream"}\r\n\r\n`
+    );
+    const tail = encoder.encode(`\r\n--${boundary}--`);
+    const body = new Uint8Array(head.length + fileBytes.length + tail.length);
+    body.set(head, 0);
+    body.set(fileBytes, head.length);
+    body.set(tail, head.length + fileBytes.length);
+
     const res = await fetch(
-      "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/gdrive-proxy?action=upload-file",
+      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink,webContentLink,size,modifiedTime",
       {
         method: "POST",
         headers: {
-          apikey: key,
-          Authorization: "Bearer " + key
+          Authorization: "Bearer " + token,
+          "Content-Type": `multipart/related; boundary=${boundary}`
         },
-        body: fd
+        body
       }
     );
+    if (res.status === 401 || res.status === 403) _fvClearToken();
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.id) {
-      return { ok: false, name: file.name, error: data.error || `HTTP ${res.status}` };
+      const msg = (data.error && data.error.message) || `HTTP ${res.status}`;
+      return { ok: false, name: fileName, error: msg };
     }
-    return { ok: true, name: file.name };
+    return { ok: true, name: fileName, file: data };
   } catch (e) {
-    return { ok: false, name: file.name, error: e.message || "network error" };
+    return { ok: false, name: fileName, error: e.message || "network error" };
   }
 }
 
@@ -1307,21 +1376,22 @@ async function _fvCreateFolder(contact, btn) {
   const orig = btn.innerHTML;
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating…';
   try {
-    const { key } = getSupabaseConfig();
-    const res = await fetch(`${GDRIVE_PROXY}?action=create-folder`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: key,
-        Authorization: `Bearer ${key}`
-      },
-      body: JSON.stringify({
-        parentId: GDRIVE_BORROWERS_ROOT,
-        name: `${contact.first_name || ""} ${contact.last_name || ""}`.trim().toUpperCase() || "UNNAMED BORROWER"
-      })
-    });
+    const headers = await _fvAuthHeaders({ "Content-Type": "application/json" });
+    const res = await fetch(
+      "https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink,parents",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          name: `${contact.first_name || ""} ${contact.last_name || ""}`.trim().toUpperCase() || "UNNAMED BORROWER",
+          mimeType: "application/vnd.google-apps.folder",
+          parents: [GDRIVE_BORROWERS_ROOT]
+        })
+      }
+    );
+    if (res.status === 401 || res.status === 403) _fvClearToken();
     const data = await res.json();
-    if (!res.ok || !data.id) throw new Error(data.error || "Folder create failed");
+    if (!res.ok || !data.id) throw new Error((data.error && data.error.message) || "Folder create failed");
     const folderId = data.id;
     const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
     // PATCH contact
@@ -1364,19 +1434,25 @@ async function _fvToggleFiles(contact) {
 }
 
 async function _fvLoadFiles(folderId) {
-  const { key } = getSupabaseConfig();
   try {
-    const res = await fetch(`${GDRIVE_PROXY}?action=list-files&folderId=${encodeURIComponent(folderId)}`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` }
-    });
+    const headers = await _fvAuthHeaders();
+    const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+    const fields = encodeURIComponent(
+      "files(id,name,mimeType,webViewLink,webContentLink,size,createdTime,modifiedTime,iconLink,thumbnailLink,parents)"
+    );
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&pageSize=500&orderBy=name`,
+      { headers }
+    );
+    if (res.status === 401 || res.status === 403) { _fvClearToken(); throw new Error("Drive auth failed — retry upload to re-auth"); }
     const data = await res.json();
     const files = Array.isArray(data.files) ? data.files : [];
     _fvFiles[folderId] = files;
     _fvFileCounts[folderId] = files.length;
   } catch (e) {
     console.error("[FileVault] list files failed:", e);
-    _fvFiles[folderId] = [];
-    _fvFileCounts[folderId] = 0;
+    _fvFiles[folderId] = _fvFiles[folderId] || [];
+    _fvFileCounts[folderId] = _fvFileCounts[folderId] ?? 0;
   }
 }
 
@@ -1413,32 +1489,60 @@ function _fvFormatSize(bytes) {
   return (b / (1024 * 1024 * 1024)).toFixed(2) + " GB";
 }
 
+function _fvEscape(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function _fvIsPdf(f) { return (f.mimeType || "").indexOf("pdf") >= 0; }
+function _fvIsGoogleDoc(f) {
+  const m = f.mimeType || "";
+  return m === "application/vnd.google-apps.document" ||
+         m === "application/vnd.google-apps.spreadsheet" ||
+         m === "application/vnd.google-apps.presentation" ||
+         m === "application/vnd.google-apps.drawing";
+}
+function _fvGoogleExportMime(mime) {
+  if (mime === "application/vnd.google-apps.document") return "application/pdf";
+  if (mime === "application/vnd.google-apps.spreadsheet") return "application/pdf";
+  if (mime === "application/vnd.google-apps.presentation") return "application/pdf";
+  if (mime === "application/vnd.google-apps.drawing") return "application/pdf";
+  return null;
+}
+
 function _fvRenderFileList(contact) {
   const host = document.getElementById(`fv-files-${contact.id}`);
   if (!host) return;
   const files = _fvFiles[contact.gdrive_folder_id] || [];
   const rows = files.length
-    ? files.map((f) => {
+    ? files.map((f, idx) => {
         const icon = _fvFileIcon(f.mimeType || "");
         const size = _fvFormatSize(f.size);
         const date = f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString() : "";
-        const link = f.webViewLink || "#";
-        const nm = (f.name || "Untitled").replace(/</g, "&lt;");
+        const nm = _fvEscape(f.name || "Untitled");
+        const showConvert = !_fvIsPdf(f);
         return `
-          <a href="${link}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.02);margin-bottom:6px;color:#eee;text-decoration:none;border:1px solid rgba(255,255,255,0.04);">
-            <i class="fa-solid ${icon}" style="color:#C9A84C;width:16px;text-align:center;"></i>
+          <div class="fv-row" data-fv-row="${f.id}" data-fv-index="${idx}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.02);margin-bottom:6px;color:#eee;border:1px solid rgba(255,255,255,0.04);transition:background .15s;" onmouseover="this.style.background='rgba(201,168,76,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+            <i class="fa-solid ${icon}" style="color:#C9A84C;width:16px;text-align:center;flex-shrink:0;"></i>
             <div style="flex:1;min-width:0;">
-              <div style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nm}</div>
+              <div class="fv-name" data-fv-view="${f.id}" style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;">${nm}</div>
               <div style="font-size:.68rem;color:var(--muted);">${size}${date ? " · " + date : ""}</div>
             </div>
-            <i class="fa-solid fa-arrow-up-right-from-square" style="color:var(--muted);font-size:.72rem;"></i>
-          </a>
+            <button type="button" data-fv-rename="${f.id}" title="Rename" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 6px;font-size:.78rem;"><i class="fa-solid fa-pen"></i></button>
+            ${showConvert ? `<button type="button" data-fv-topdf="${f.id}" title="Convert to PDF" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 6px;font-size:.78rem;"><i class="fa-solid fa-file-pdf"></i></button>` : ""}
+            <div style="position:relative;">
+              <button type="button" data-fv-menu="${f.id}" title="More" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 8px;font-size:.9rem;"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+              <div id="fv-menu-${f.id}" class="fv-menu" style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#111;border:1px solid #2a2a2a;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.6);z-index:50;min-width:140px;overflow:hidden;">
+                <a href="${_fvEscape(f.webContentLink || f.webViewLink || "#")}" ${f.webContentLink ? "" : 'target="_blank" rel="noopener"'} style="display:block;padding:9px 12px;color:#eee;text-decoration:none;font-size:.78rem;border-bottom:1px solid #222;"><i class="fa-solid fa-download" style="margin-right:6px;color:#C9A84C;"></i>Download</a>
+                <button type="button" data-fv-delete="${f.id}" style="display:block;width:100%;text-align:left;background:none;border:none;padding:9px 12px;color:#f0bdbd;cursor:pointer;font-size:.78rem;font-family:inherit;"><i class="fa-solid fa-trash" style="margin-right:6px;"></i>Delete</button>
+              </div>
+            </div>
+          </div>
         `;
       }).join("")
     : '<div style="padding:14px;text-align:center;color:var(--muted);font-size:.78rem;">No files yet.</div>';
 
   host.innerHTML = `
-    ${rows}
+    <div class="fv-file-list" data-fv-list="${contact.id}">${rows}</div>
     <div id="fv-dropzone-${contact.id}" style="margin-top:12px;padding:18px 14px;border:2px dashed #C9A84C;background:rgba(201,168,76,0.06);border-radius:10px;text-align:center;cursor:pointer;transition:background .15s,border-color .15s;user-select:none;">
       <i class="fa-solid fa-cloud-arrow-up" style="color:#C9A84C;font-size:1.35rem;display:block;margin-bottom:6px;"></i>
       <div style="color:#eee;font-size:.82rem;font-weight:600;">Drop files here or click to browse</div>
@@ -1450,6 +1554,286 @@ function _fvRenderFileList(contact) {
     </div>
   `;
   _fvBindDropzone(contact);
+  _fvBindRowActions(contact);
+}
+
+function _fvBindRowActions(contact) {
+  const host = document.getElementById(`fv-files-${contact.id}`);
+  if (!host) return;
+  host.querySelectorAll("[data-fv-view]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const fileId = el.dataset.fvView;
+      const files = _fvFiles[contact.gdrive_folder_id] || [];
+      const idx = files.findIndex((f) => f.id === fileId);
+      if (idx >= 0) _fvOpenViewer(contact, files, idx);
+    });
+  });
+  host.querySelectorAll("[data-fv-rename]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      _fvStartRename(contact, btn.dataset.fvRename);
+    });
+  });
+  host.querySelectorAll("[data-fv-topdf]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      _fvConvertToPdf(contact, btn.dataset.fvTopdf, btn);
+    });
+  });
+  host.querySelectorAll("[data-fv-menu]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.fvMenu;
+      const menu = document.getElementById(`fv-menu-${id}`);
+      if (!menu) return;
+      // Close any other menus first
+      host.querySelectorAll(".fv-menu").forEach((m) => { if (m !== menu) m.style.display = "none"; });
+      menu.style.display = menu.style.display === "block" ? "none" : "block";
+    });
+  });
+  host.querySelectorAll("[data-fv-delete]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      _fvDeleteFile(contact, btn.dataset.fvDelete);
+    });
+  });
+  // Dismiss open menus on any outside click
+  if (!host._fvMenuBound) {
+    host._fvMenuBound = true;
+    document.addEventListener("click", () => {
+      host.querySelectorAll(".fv-menu").forEach((m) => { m.style.display = "none"; });
+    });
+  }
+}
+
+// ── RENAME ────────────────────────────────────────────────────────
+function _fvStartRename(contact, fileId) {
+  const files = _fvFiles[contact.gdrive_folder_id] || [];
+  const file = files.find((f) => f.id === fileId);
+  if (!file) return;
+  const row = document.querySelector(`[data-fv-row="${fileId}"]`);
+  if (!row) return;
+  const nameEl = row.querySelector(".fv-name");
+  if (!nameEl) return;
+  const currentName = file.name || "";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = currentName;
+  input.style.cssText = "flex:1;background:#1a1a1a;border:1px solid #C9A84C;border-radius:6px;padding:4px 8px;color:#eee;font-size:.82rem;font-family:inherit;outline:none;width:100%;";
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const commit = async () => {
+    const newName = input.value.trim();
+    if (!newName || newName === currentName) { cancel(); return; }
+    input.disabled = true;
+    input.style.opacity = "0.6";
+    try {
+      const headers = await _fvAuthHeaders({ "Content-Type": "application/json" });
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name`,
+        { method: "PATCH", headers, body: JSON.stringify({ name: newName }) }
+      );
+      if (res.status === 401 || res.status === 403) _fvClearToken();
+      const data = await res.json();
+      if (!res.ok || !data.id) throw new Error((data.error && data.error.message) || `HTTP ${res.status}`);
+      file.name = data.name;
+      _fvShowToast("Renamed ✓");
+    } catch (e) {
+      console.error("[FileVault] rename failed:", e);
+      _fvShowToast("Rename failed");
+    }
+    _fvRenderFileList(contact);
+  };
+  const cancel = () => { _fvRenderFileList(contact); };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener("blur", commit);
+}
+
+// ── DELETE ────────────────────────────────────────────────────────
+async function _fvDeleteFile(contact, fileId) {
+  const files = _fvFiles[contact.gdrive_folder_id] || [];
+  const file = files.find((f) => f.id === fileId);
+  if (!file) return;
+  if (!confirm(`Delete "${file.name}"? This cannot be undone.`)) return;
+  try {
+    const headers = await _fvAuthHeaders();
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+      { method: "DELETE", headers }
+    );
+    if (res.status === 401 || res.status === 403) { _fvClearToken(); throw new Error(`HTTP ${res.status}`); }
+    if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+    _fvFiles[contact.gdrive_folder_id] = files.filter((f) => f.id !== fileId);
+    _fvFileCounts[contact.gdrive_folder_id] = _fvFiles[contact.gdrive_folder_id].length;
+    _fvShowToast("Deleted ✓");
+    _fvRenderFileList(contact);
+    const card = document.querySelector(`[data-fv-card="${contact.id}"]`);
+    const toggle = card?.querySelector('[data-fv-action="toggle"]');
+    if (toggle) {
+      const label = _fvExpanded.has(contact.id) ? "Hide Files" : "View Files";
+      toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[contact.gdrive_folder_id] ?? 0})`;
+    }
+  } catch (e) {
+    console.error("[FileVault] delete failed:", e);
+    _fvShowToast("Delete failed");
+  }
+}
+
+// ── CONVERT TO PDF ────────────────────────────────────────────────
+async function _fvConvertToPdf(contact, fileId, btn) {
+  const files = _fvFiles[contact.gdrive_folder_id] || [];
+  const file = files.find((f) => f.id === fileId);
+  if (!file) return;
+  if (_fvIsPdf(file)) { _fvShowToast("Already a PDF"); return; }
+  const exportMime = _fvGoogleExportMime(file.mimeType || "");
+  if (!exportMime) {
+    _fvShowToast("To convert: open file in Drive then File > Download as PDF");
+    return;
+  }
+  const origHtml = btn ? btn.innerHTML : "";
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+  try {
+    const headers = await _fvAuthHeaders();
+    const exportRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
+      { headers }
+    );
+    if (exportRes.status === 401 || exportRes.status === 403) _fvClearToken();
+    if (!exportRes.ok) throw new Error(`Export failed HTTP ${exportRes.status}`);
+    const blob = await exportRes.blob();
+    const pdfBlob = new File([blob], (file.name || "document") + ".pdf", { type: "application/pdf" });
+    const result = await _fvUploadOne(contact.gdrive_folder_id, pdfBlob);
+    if (!result.ok) throw new Error(result.error || "upload failed");
+    _fvShowToast("Converted to PDF ✓");
+    await _fvLoadFiles(contact.gdrive_folder_id);
+    _fvRenderFileList(contact);
+  } catch (e) {
+    console.error("[FileVault] convert failed:", e);
+    _fvShowToast("Convert failed");
+    if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+  }
+}
+
+// ── INLINE FILE VIEWER (right slide-in panel) ─────────────────────
+function _fvOpenViewer(contact, files, index) {
+  _fvCloseViewer(); // close any existing first
+  _fvViewerState = { contactId: contact.id, files, index, keyHandler: null };
+
+  const overlay = document.createElement("div");
+  overlay.id = "fv-viewer-overlay";
+  overlay.style.cssText = "position:fixed;inset:0 480px 0 0;background:rgba(0,0,0,0.5);z-index:8000;";
+  overlay.addEventListener("click", _fvCloseViewer);
+  document.body.appendChild(overlay);
+
+  const panel = document.createElement("div");
+  panel.id = "fv-viewer-panel";
+  panel.style.cssText = "position:fixed;top:0;right:0;width:480px;height:100vh;background:#1a1a1a;border-left:2px solid #C9A84C;z-index:8001;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .28s ease;box-shadow:-12px 0 40px rgba(0,0,0,0.6);";
+  panel.innerHTML = `
+    <div id="fv-viewer-header" style="padding:14px 16px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;gap:10px;flex-shrink:0;">
+      <div id="fv-viewer-title" style="flex:1;min-width:0;font-size:.88rem;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+      <a id="fv-viewer-download" title="Download" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 9px;font-size:.78rem;text-decoration:none;"><i class="fa-solid fa-download"></i></a>
+      <a id="fv-viewer-openlink" title="Open in Drive" target="_blank" rel="noopener" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 9px;font-size:.78rem;text-decoration:none;"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
+      <button id="fv-viewer-close" title="Close" style="background:#222;border:1px solid #333;color:#eee;border-radius:6px;padding:6px 10px;font-size:.82rem;cursor:pointer;font-family:inherit;">✕</button>
+    </div>
+    <div id="fv-viewer-nav" style="padding:8px 16px;border-bottom:1px solid #222;display:flex;align-items:center;gap:8px;flex-shrink:0;">
+      <button id="fv-viewer-prev" style="background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:6px;padding:5px 10px;font-size:.75rem;cursor:pointer;font-family:inherit;">← Prev</button>
+      <span id="fv-viewer-counter" style="flex:1;text-align:center;font-size:.72rem;color:var(--muted);"></span>
+      <button id="fv-viewer-next" style="background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:6px;padding:5px 10px;font-size:.75rem;cursor:pointer;font-family:inherit;">Next →</button>
+    </div>
+    <div id="fv-viewer-body" style="flex:1;overflow:auto;background:#0a0a0a;"></div>
+  `;
+  document.body.appendChild(panel);
+  requestAnimationFrame(() => { panel.style.transform = "translateX(0)"; });
+
+  document.getElementById("fv-viewer-close").addEventListener("click", _fvCloseViewer);
+  document.getElementById("fv-viewer-prev").addEventListener("click", () => _fvViewerNav(-1));
+  document.getElementById("fv-viewer-next").addEventListener("click", () => _fvViewerNav(1));
+
+  const keyHandler = (e) => {
+    if (e.key === "Escape") { _fvCloseViewer(); }
+    else if (e.key === "ArrowLeft") { _fvViewerNav(-1); }
+    else if (e.key === "ArrowRight") { _fvViewerNav(1); }
+  };
+  document.addEventListener("keydown", keyHandler);
+  _fvViewerState.keyHandler = keyHandler;
+
+  _fvViewerRender();
+}
+
+function _fvCloseViewer() {
+  const panel = document.getElementById("fv-viewer-panel");
+  const overlay = document.getElementById("fv-viewer-overlay");
+  if (_fvViewerState && _fvViewerState.keyHandler) {
+    document.removeEventListener("keydown", _fvViewerState.keyHandler);
+  }
+  if (panel) {
+    panel.style.transform = "translateX(100%)";
+    setTimeout(() => panel.remove(), 280);
+  }
+  if (overlay) overlay.remove();
+  _fvViewerState = null;
+}
+
+function _fvViewerNav(delta) {
+  if (!_fvViewerState) return;
+  const next = _fvViewerState.index + delta;
+  if (next < 0 || next >= _fvViewerState.files.length) return;
+  _fvViewerState.index = next;
+  _fvViewerRender();
+}
+
+function _fvViewerRender() {
+  if (!_fvViewerState) return;
+  const { files, index } = _fvViewerState;
+  const f = files[index];
+  if (!f) return;
+  const title = document.getElementById("fv-viewer-title");
+  const counter = document.getElementById("fv-viewer-counter");
+  const prev = document.getElementById("fv-viewer-prev");
+  const next = document.getElementById("fv-viewer-next");
+  const body = document.getElementById("fv-viewer-body");
+  const dl = document.getElementById("fv-viewer-download");
+  const openlink = document.getElementById("fv-viewer-openlink");
+  if (!title || !body) return;
+
+  title.textContent = f.name || "Untitled";
+  title.title = f.name || "";
+  counter.textContent = `${index + 1} of ${files.length}`;
+  prev.disabled = index === 0;
+  next.disabled = index === files.length - 1;
+  prev.style.opacity = prev.disabled ? "0.4" : "1";
+  next.style.opacity = next.disabled ? "0.4" : "1";
+
+  if (dl) dl.href = f.webContentLink || f.webViewLink || "#";
+  if (openlink) openlink.href = f.webViewLink || "#";
+
+  const mime = f.mimeType || "";
+  const previewUrl = (f.webViewLink || "").replace(/\/view(\?.*)?$/, "/preview");
+  if (_fvIsPdf(f)) {
+    body.innerHTML = `<iframe src="${_fvEscape(previewUrl)}" style="width:100%;height:100%;border:0;background:#0a0a0a;" allow="autoplay"></iframe>`;
+  } else if (mime.indexOf("image/") === 0) {
+    // Use thumbnailLink at higher res where possible, fall back to webContentLink.
+    const src = (f.thumbnailLink || "").replace(/=s\d+(-.*)?$/, "=s1600") || f.webContentLink || previewUrl;
+    body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:20px;min-height:100%;"><img src="${_fvEscape(src)}" style="max-width:100%;max-height:80vh;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,0.6);" alt="${_fvEscape(f.name || '')}"></div>`;
+  } else if (_fvIsGoogleDoc(f) || mime.indexOf("video/") === 0 || mime.indexOf("audio/") === 0) {
+    body.innerHTML = `<iframe src="${_fvEscape(previewUrl)}" style="width:100%;height:100%;border:0;background:#0a0a0a;" allow="autoplay"></iframe>`;
+  } else {
+    const icon = _fvFileIcon(mime);
+    body.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;text-align:center;gap:12px;">
+        <i class="fa-solid ${icon}" style="font-size:3rem;color:#C9A84C;"></i>
+        <div style="font-size:.95rem;font-weight:700;color:#eee;">${_fvEscape(f.name || "Untitled")}</div>
+        <div style="font-size:.78rem;color:var(--muted);">Preview not available for this file type.</div>
+        <a href="${_fvEscape(f.webViewLink || '#')}" target="_blank" rel="noopener" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.82rem;text-decoration:none;margin-top:8px;">Open in Drive →</a>
+      </div>
+    `;
+  }
 }
 
 function _fvShowToast(msg) {
