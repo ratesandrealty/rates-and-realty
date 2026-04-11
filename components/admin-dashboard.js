@@ -1,4 +1,4 @@
-// admin-dashboard.js v20260411d
+// admin-dashboard.js v20260411e
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
   if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_URL) {
@@ -26,7 +26,7 @@ import {
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks
-} from "/api/admin-api-v2.js?v=20260411d";
+} from "/api/admin-api-v2.js?v=20260411e";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
@@ -1077,83 +1077,84 @@ async function renderDocuments() {
   const el = document.getElementById("admin-document-table");
   if (!el) return;
 
-  // One-time style block for pills / cards / file rows.
-  if (!document.getElementById("fv-style")) {
+  // One-time style block.
+  if (!document.getElementById("fv-styles")) {
     const s = document.createElement("style");
-    s.id = "fv-style";
+    s.id = "fv-styles";
     s.textContent = `
-      .fv-pill{background:transparent;border:1px solid #2a2a2a;color:#555;font-size:11px;padding:3px 8px;border-radius:20px;cursor:pointer;white-space:nowrap;transition:all .15s;font-family:inherit;}
-      .fv-pill:hover{border-color:#C9A84C44;color:#888;}
-      .fv-pill.active{background:#C9A84C22;border-color:#C9A84C;color:#C9A84C;}
-      .fv-borrower-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:4px;transition:all .15s;}
-      .fv-borrower-card:hover{background:#161616;border-color:#C9A84C44;}
+      .fv-pill{background:transparent;border:1px solid #2a2a2a;color:#555;font-size:11px;padding:3px 10px;border-radius:20px;cursor:pointer;white-space:nowrap;transition:all .15s;font-family:inherit;}
+      .fv-pill:hover{border-color:#C9A84C55;color:#999;}
+      .fv-pill.active{background:#C9A84C1a;border-color:#C9A84C;color:#C9A84C;}
+      .fv-borrower-card{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;cursor:pointer;margin-bottom:6px;border:1px solid transparent;transition:all .15s;background:#111;}
+      .fv-borrower-card:hover{background:#161616!important;border-color:#C9A84C44!important;}
       .fv-borrower-card.active{border-color:#C9A84C!important;background:#1a1a14!important;}
-      .fv-file-row{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #161616;cursor:pointer;transition:background .1s;border-left:2px solid transparent;}
-      .fv-file-row:hover{background:#161616;}
+      .fv-file-row{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #161616;cursor:pointer;transition:background .1s;border-left:2px solid transparent;}
+      .fv-file-row:hover{background:#161616!important;}
       .fv-file-row.active{background:#1a1a14;border-left-color:#C9A84C;}
-      #fv-filter-bar::-webkit-scrollbar{display:none;}
       @keyframes fvSpin{to{transform:rotate(360deg);}}
+      #fv-borrower-list::-webkit-scrollbar,#fv-file-list::-webkit-scrollbar{width:4px;}
+      #fv-borrower-list::-webkit-scrollbar-thumb,#fv-file-list::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:2px;}
     `;
     document.head.appendChild(s);
   }
 
-  // Build the persistent 3-panel shell ONCE. The viewer chrome (header +
-  // buttons + iframe) lives in the DOM from mount — element lookups always
-  // succeed, no race on file click.
+  // 2-panel shell: left borrowers (320px) + right panel that toggles between
+  // file-list view and viewer view. Viewer chrome is pre-mounted so element
+  // lookups never fail on file click.
   el.className = "";
   el.innerHTML = `
-    <div id="fv-root" style="display:flex;height:calc(100vh - 200px);min-height:500px;background:#0a0a0a;border-radius:12px;overflow:hidden;border:1px solid #1e1e1e;">
+    <div id="fv-root" style="display:flex;height:calc(100vh - 180px);min-height:560px;background:#0a0a0a;border-radius:12px;overflow:hidden;border:1px solid #1e1e1e;">
 
-      <!-- PANEL 1: BORROWERS (240px) -->
-      <div id="fv-panel-borrowers" style="width:240px;flex-shrink:0;border-right:1px solid #1e1e1e;display:flex;flex-direction:column;overflow:hidden;">
-        <div style="padding:12px 14px;border-bottom:1px solid #1e1e1e;flex-shrink:0;">
-          <div style="color:#C9A84C;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Borrowers</div>
+      <!-- LEFT: borrowers (320px) -->
+      <div id="fv-panel-left" style="width:320px;flex-shrink:0;border-right:1px solid #1e1e1e;display:flex;flex-direction:column;overflow:hidden;">
+        <div style="padding:14px 16px;border-bottom:1px solid #1e1e1e;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span style="color:#C9A84C;font-size:11px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;flex-shrink:0;">File Vault</span>
+          <input id="fv-search" type="text" placeholder="Search borrowers..." style="background:#161616;border:1px solid #2a2a2a;color:#ccc;font-size:12px;padding:4px 10px;border-radius:6px;width:160px;outline:none;font-family:inherit;">
         </div>
-        <div id="fv-borrower-list" style="flex:1;overflow-y:auto;padding:8px;"></div>
-      </div>
-
-      <!-- PANEL 2: FILE LIST (280px) -->
-      <div id="fv-panel-files" style="width:280px;flex-shrink:0;border-right:1px solid #1e1e1e;display:flex;flex-direction:column;overflow:hidden;">
-        <div style="padding:10px 12px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;gap:8px;flex-shrink:0;">
-          <span id="fv-panel-title" style="color:#888;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Select a borrower</span>
-          <button id="fv-upload-btn" style="background:#C9A84C;border:none;color:#000;font-size:11px;font-weight:600;padding:4px 10px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit;">+ Upload</button>
-          <a id="fv-open-drive-btn" href="#" target="_blank" rel="noopener" style="color:#C9A84C55;font-size:16px;text-decoration:none;flex-shrink:0;" title="Open Drive folder">&#128193;</a>
-        </div>
-        <div id="fv-filter-bar" style="display:flex;gap:6px;padding:8px 10px;overflow-x:auto;flex-shrink:0;border-bottom:1px solid #161616;scrollbar-width:none;">
-          <button class="fv-pill active" data-fv-pill="">All</button>
-          <button class="fv-pill" data-fv-pill="Pay Stubs">Pay</button>
-          <button class="fv-pill" data-fv-pill="W-2 / Tax Returns">W-2</button>
-          <button class="fv-pill" data-fv-pill="Bank Statements">Bank</button>
-          <button class="fv-pill" data-fv-pill="Photo ID">ID</button>
-          <button class="fv-pill" data-fv-pill="Insurance Policy">Ins</button>
-          <button class="fv-pill" data-fv-pill="Credit Report">Credit</button>
-          <button class="fv-pill" data-fv-pill="Other">Other</button>
-        </div>
-        <div id="fv-file-list" style="flex:1;overflow-y:auto;">
-          <div style="padding:40px 20px;text-align:center;color:#444;font-size:12px;">No borrower selected</div>
-        </div>
-        <div id="fv-dropzone" style="border-top:1px solid #1e1e1e;padding:12px;flex-shrink:0;">
-          <div id="fv-drop-target" style="border:1.5px dashed #C9A84C33;border-radius:8px;padding:14px;text-align:center;cursor:pointer;background:#0d0d0d;transition:all .2s;">
-            <div style="color:#555;font-size:12px;">&#8613; Drop files or <span style="color:#C9A84C;cursor:pointer;">browse</span></div>
-            <div style="color:#444;font-size:10px;margin-top:3px;">PDF · JPG · PNG · max 25MB</div>
+        <div id="fv-borrower-list" style="flex:1;overflow-y:auto;padding:10px;"></div>
+        <div style="padding:10px;border-top:1px solid #1e1e1e;flex-shrink:0;">
+          <div id="fv-drop-target" style="border:1.5px dashed #C9A84C33;border-radius:8px;padding:16px;text-align:center;cursor:pointer;background:#0d0d0d;transition:border-color .2s;">
+            <div style="font-size:11px;color:#555;">&#8613; Drop files or <span style="color:#C9A84C;cursor:pointer;text-decoration:underline;">browse</span><span style="color:#444;"> · PDF JPG PNG</span></div>
           </div>
-          <div id="fv-upload-status" style="margin-top:8px;"></div>
+          <div id="fv-upload-status" style="margin-top:6px;"></div>
           <input type="file" id="fv-file-input" multiple accept=".pdf,image/*" style="display:none;">
         </div>
       </div>
 
-      <!-- PANEL 3: VIEWER (flex:1) -->
-      <div id="fv-panel-viewer" style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0d0d0d;min-width:0;">
-        <div id="fv-viewer-empty" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#333;">
-          <div style="font-size:48px;">&#128196;</div>
-          <div style="font-size:13px;">Select a file to preview</div>
+      <!-- RIGHT: panel with two views (list / viewer) -->
+      <div id="fv-panel-right" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;background:#0a0a0a;">
+
+        <!-- VIEW A: FILE LIST -->
+        <div id="fv-view-list" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #1e1e1e;flex-shrink:0;flex-wrap:wrap;">
+            <div id="fv-filter-pills" style="display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;">
+              <button class="fv-pill active" data-fv-pill="">All</button>
+              <button class="fv-pill" data-fv-pill="Pay Stubs">Pay Stubs</button>
+              <button class="fv-pill" data-fv-pill="W-2 / Tax Returns">W-2</button>
+              <button class="fv-pill" data-fv-pill="Bank Statements">Bank Stmts</button>
+              <button class="fv-pill" data-fv-pill="Photo ID">Gov ID</button>
+              <button class="fv-pill" data-fv-pill="Insurance Policy">Insurance</button>
+              <button class="fv-pill" data-fv-pill="Credit Report">Credit</button>
+              <button class="fv-pill" data-fv-pill="Other">Other</button>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+              <button id="fv-upload-btn" style="background:#C9A84C;border:none;color:#000;font-size:12px;font-weight:700;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;">+ Upload</button>
+              <a id="fv-open-drive-link" href="#" target="_blank" rel="noopener" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;text-decoration:none;white-space:nowrap;">&#128193; Drive</a>
+            </div>
+          </div>
+          <div id="fv-file-list" style="flex:1;overflow-y:auto;">
+            <div style="padding:48px 20px;text-align:center;color:#444;font-size:13px;">Select a borrower to view files</div>
+          </div>
         </div>
-        <div id="fv-viewer-wrap" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
-          <div id="fv-viewer-header" style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#111;border-bottom:1px solid #222;flex-shrink:0;">
-            <span id="fv-viewer-title" style="color:#C9A84C;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;"></span>
-            <button id="fv-viewer-rename" title="Rename" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;flex-shrink:0;font-family:inherit;">&#9998;</button>
+
+        <!-- VIEW B: VIEWER (hidden by default) -->
+        <div id="fv-view-viewer" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
+          <div id="fv-viewer-header" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:#111;border-bottom:1px solid #222;flex-shrink:0;">
+            <button id="fv-viewer-back" title="Back to file list" style="background:transparent;border:1px solid #2a2a2a;color:#888;cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px;flex-shrink:0;white-space:nowrap;font-family:inherit;">&#8592; Files</button>
+            <span id="fv-viewer-title" style="color:#C9A84C;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;"></span>
+            <button id="fv-viewer-rename" title="Rename file" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:17px;padding:0 6px;line-height:1;flex-shrink:0;font-family:inherit;">&#9998;</button>
             <span id="fv-viewer-saving" style="display:none;width:12px;height:12px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;flex-shrink:0;"></span>
-            <select id="fv-doc-type" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:11px;border-radius:20px;padding:2px 8px;cursor:pointer;outline:none;max-width:130px;flex-shrink:0;font-family:inherit;">
+            <select id="fv-doc-type" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:11px;border-radius:20px;padding:3px 10px;cursor:pointer;outline:none;max-width:140px;flex-shrink:0;font-family:inherit;">
               <option value="">-- Type --</option>
               <option>Pay Stubs</option>
               <option>W-2 / Tax Returns</option>
@@ -1171,13 +1172,13 @@ async function renderDocuments() {
               <option>VOE / Employment Letter</option>
               <option>Other</option>
             </select>
-            <button id="fv-viewer-download" title="Download" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;cursor:pointer;font-size:14px;padding:3px 8px;border-radius:5px;flex-shrink:0;font-family:inherit;">&#8681;</button>
-            <button id="fv-viewer-openlink" title="Open in Drive" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;cursor:pointer;font-size:14px;padding:3px 8px;border-radius:5px;flex-shrink:0;font-family:inherit;">&#8599;</button>
+            <button id="fv-viewer-download" title="Download" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;cursor:pointer;font-size:15px;padding:4px 10px;border-radius:6px;flex-shrink:0;font-family:inherit;">&#8681;</button>
+            <button id="fv-viewer-openlink" title="Open in Drive" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;cursor:pointer;font-size:15px;padding:4px 10px;border-radius:6px;flex-shrink:0;font-family:inherit;">&#8599;</button>
           </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 14px;background:#0d0d0d;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
-            <button id="fv-viewer-prev" style="background:transparent;border:1px solid #2a2a2a;color:#777;cursor:pointer;padding:3px 12px;border-radius:5px;font-size:12px;font-family:inherit;">&#8592; Prev</button>
-            <span id="fv-viewer-counter" style="color:#444;font-size:11px;"></span>
-            <button id="fv-viewer-next" style="background:transparent;border:1px solid #2a2a2a;color:#777;cursor:pointer;padding:3px 12px;border-radius:5px;font-size:12px;font-family:inherit;">Next &#8594;</button>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px;background:#0d0d0d;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
+            <button id="fv-viewer-prev" style="background:transparent;border:1px solid #2a2a2a;color:#666;cursor:pointer;padding:4px 16px;border-radius:6px;font-size:13px;font-family:inherit;">&#8592; Prev</button>
+            <span id="fv-viewer-counter" style="color:#444;font-size:12px;"></span>
+            <button id="fv-viewer-next" style="background:transparent;border:1px solid #2a2a2a;color:#666;cursor:pointer;padding:4px 16px;border-radius:6px;font-size:13px;font-family:inherit;">Next &#8594;</button>
           </div>
           <div style="flex:1;overflow:hidden;background:#0a0a0a;">
             <iframe id="fv-viewer-iframe" style="width:100%;height:100%;border:none;" src="about:blank"></iframe>
@@ -1187,11 +1188,10 @@ async function renderDocuments() {
     </div>
   `;
 
-  // Wire ALL buttons once at shell mount. Elements stay in the DOM forever.
   _fvBindSearch();
   _fvBindPanels();
 
-  // Diagnostic — confirm pencil button made it into the DOM (it always should).
+  // Diagnostic — confirm the pencil button made it into the DOM (always should).
   const _dbgRename = document.getElementById("fv-viewer-rename");
   console.log("[FileVault][debug] rename btn after shell mount:", _dbgRename);
   if (!_dbgRename) {
@@ -1209,13 +1209,18 @@ async function renderDocuments() {
   });
 }
 
-// Wire every interactive element in the 3-panel shell ONCE at mount. All
+// Wire every interactive element in the 2-panel shell ONCE at mount. All
 // .onclick assignments so re-wiring replaces the slot, no stacking.
 function _fvBindPanels() {
-  // Upload button (top of Panel 2) + file input + dropzone all trigger uploads.
+  // Upload button (top of the right panel file-list view) + dropzone + file
+  // input all trigger uploads for the currently-selected borrower.
   const uploadBtn = document.getElementById("fv-upload-btn");
   const dropTarget = document.getElementById("fv-drop-target");
   const input = document.getElementById("fv-file-input");
+
+  // Back button — switches from viewer view to file-list view.
+  const backBtn = document.getElementById("fv-viewer-back");
+  if (backBtn) backBtn.onclick = _fvShowFileList;
 
   const pickFiles = () => {
     if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
@@ -1258,7 +1263,7 @@ function _fvBindPanels() {
     };
   }
 
-  // Filter pills (Panel 2)
+  // Filter pills (inside the file-list view)
   document.querySelectorAll("[data-fv-pill]").forEach((pill) => {
     pill.onclick = () => {
       _fvFileFilter = pill.dataset.fvPill;
@@ -1307,22 +1312,22 @@ function _fvBindPanels() {
     };
   }
 
-  // Open in Drive link on Panel 2 header — folder URL for selected borrower.
-  const openDriveBtn = document.getElementById("fv-open-drive-btn");
-  if (openDriveBtn) {
-    openDriveBtn.onclick = (e) => {
+  // Open in Drive link in the file-list header — folder URL for selected borrower.
+  const openDriveLink = document.getElementById("fv-open-drive-link");
+  if (openDriveLink) {
+    openDriveLink.onclick = (e) => {
       const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
       if (!contact || !contact.gdrive_folder_url) { e.preventDefault(); _fvShowToast("No folder linked"); }
     };
   }
 
-  // Keyboard navigation works whenever the viewer is visible.
+  // Keyboard navigation — only fires when the viewer view is shown.
   if (!document._fvKeyBound) {
     document._fvKeyBound = true;
     document.addEventListener("keydown", (e) => {
-      const wrap = document.getElementById("fv-viewer-wrap");
-      if (!wrap || wrap.style.display !== "flex") return;
-      if (e.key === "Escape") _fvShowViewerEmpty();
+      const viewerView = document.getElementById("fv-view-viewer");
+      if (!viewerView || viewerView.style.display !== "flex") return;
+      if (e.key === "Escape") _fvShowFileList();
       else if (e.key === "ArrowLeft") _fvViewerPrev();
       else if (e.key === "ArrowRight") _fvViewerNext();
     });
@@ -1442,23 +1447,22 @@ function _fvBorrowerCardHtml(c) {
   `;
 }
 
-// Click handler: select a borrower → load files → populate Panel 2. Does NOT
-// touch Panel 3 — the viewer stays as-is (empty or showing a previous file).
+// Click handler: select a borrower → load files → populate file-list view.
+// Always switches the right panel back to the list view (even if the viewer
+// was open on another file).
 async function _fvSelectBorrower(contact) {
   _fvSelectedContactId = contact.id;
   _fvFileFilter = "";
+  _fvShowFileList();
   // Reset filter pill active state
   document.querySelectorAll("[data-fv-pill]").forEach((p) => p.classList.toggle("active", p.dataset.fvPill === ""));
   // Highlight the active borrower card
   document.querySelectorAll(".fv-borrower-card").forEach((card) => {
     card.classList.toggle("active", card.dataset.fvBorrower === String(contact.id));
   });
-  // Panel 2 header: show borrower name
-  const title = document.getElementById("fv-panel-title");
-  if (title) title.textContent = `${contact.first_name || ""} ${contact.last_name || ""}`.trim() || "Borrower";
-  // Open-in-drive link in Panel 2 header
-  const openDriveBtn = document.getElementById("fv-open-drive-btn");
-  if (openDriveBtn) openDriveBtn.href = contact.gdrive_folder_url || "#";
+  // Open-in-drive link in the file-list header
+  const openDriveLink = document.getElementById("fv-open-drive-link");
+  if (openDriveLink) openDriveLink.href = contact.gdrive_folder_url || "#";
 
   const fileListEl = document.getElementById("fv-file-list");
   if (!fileListEl) return;
@@ -2024,21 +2028,33 @@ async function _fvConvertToPdf(contact, fileId, btn) {
   }
 }
 
-// ── INLINE FILE VIEWER (Panel 3) ─────────────────────────────────
+// ── INLINE FILE VIEWER (right panel view toggle) ────────────────
 // The viewer chrome is pre-mounted in the shell. This function just
-// populates fields and reveals #fv-viewer-wrap. No DOM rebuilds.
+// populates fields and toggles the right panel to the viewer view.
 function _fvOpenViewer(contact, files, index) {
   _fvRevokeBlobUrl();
   _fvViewerState = { contactId: contact.id, files, index, blobUrl: null };
 
-  // Show the viewer, hide the empty state.
-  const emptyEl = document.getElementById("fv-viewer-empty");
-  const wrap = document.getElementById("fv-viewer-wrap");
-  if (emptyEl) emptyEl.style.display = "none";
-  if (wrap) wrap.style.display = "flex";
+  // Swap right panel to viewer view.
+  const listView = document.getElementById("fv-view-list");
+  const viewerView = document.getElementById("fv-view-viewer");
+  if (listView) listView.style.display = "none";
+  if (viewerView) viewerView.style.display = "flex";
 
   _fvViewerRender();
   _fvHighlightActiveFileRow();
+}
+
+// Toggle back to the file-list view.
+function _fvShowFileList() {
+  _fvRevokeBlobUrl();
+  const listView = document.getElementById("fv-view-list");
+  const viewerView = document.getElementById("fv-view-viewer");
+  if (listView) listView.style.display = "flex";
+  if (viewerView) viewerView.style.display = "none";
+  // Clear any active-row highlight from the file list.
+  document.querySelectorAll(".fv-file-row.active").forEach((r) => r.classList.remove("active"));
+  _fvViewerState = null;
 }
 
 // Highlight the active row in Panel 2 and scroll it into view.
@@ -2097,20 +2113,8 @@ function _fvRevokeBlobUrl() {
   }
 }
 
-// Back-compat shim — with the 3-panel layout there's no "close" per se,
-// the viewer just reverts to its empty state while the file list stays.
-function _fvCloseViewer() { _fvShowViewerEmpty(); }
-
-function _fvShowViewerEmpty() {
-  _fvRevokeBlobUrl();
-  const emptyEl = document.getElementById("fv-viewer-empty");
-  const wrap = document.getElementById("fv-viewer-wrap");
-  if (emptyEl) emptyEl.style.display = "flex";
-  if (wrap) wrap.style.display = "none";
-  // Clear active row highlight
-  document.querySelectorAll(".fv-file-row.active").forEach((r) => r.classList.remove("active"));
-  _fvViewerState = null;
-}
+// Back-compat shim — "close" means return to the file-list view.
+function _fvCloseViewer() { _fvShowFileList(); }
 
 function _fvViewerNav(delta) {
   if (!_fvViewerState) return;
