@@ -1872,7 +1872,13 @@ function _fvOpenViewer(contact, files, index) {
   document.getElementById("fv-viewer-close").addEventListener("click", _fvCloseViewer);
   document.getElementById("fv-viewer-prev").addEventListener("click", () => _fvViewerNav(-1));
   document.getElementById("fv-viewer-next").addEventListener("click", () => _fvViewerNav(1));
-  document.getElementById("fv-viewer-rename").addEventListener("click", _fvStartRenameInViewer);
+  // Read the live file reference at click time so rename always targets the
+  // currently-displayed file (not a stale closure from when the viewer mounted).
+  document.getElementById("fv-viewer-rename").addEventListener("click", () => {
+    if (!_fvViewerState) return;
+    const f = _fvViewerState.files[_fvViewerState.index];
+    if (f) _fvStartRenameInViewer(f);
+  });
 
   const keyHandler = (e) => {
     if (e.key === "Escape") { _fvCloseViewer(); }
@@ -2028,75 +2034,84 @@ async function _fvViewerRender() {
   `;
 }
 
-// Inline rename from inside the viewer header. Updates both the viewer title
-// and the matching file row in the list on success.
-function _fvStartRenameInViewer() {
-  if (!_fvViewerState) return;
-  const { files, index, contactId } = _fvViewerState;
-  const file = files[index];
-  if (!file) return;
+// Inline rename from inside the viewer header. Module-scoped so the click
+// listener wired by _fvOpenViewer can invoke it directly. Accepts the live
+// file reference from the caller so navigation between files never leaves
+// a stale closure here.
+async function _fvStartRenameInViewer(file) {
   const titleSpan = document.getElementById("fv-viewer-title");
   const pencilBtn = document.getElementById("fv-viewer-rename");
-  const saving = document.getElementById("fv-viewer-saving");
+  const savingSpinner = document.getElementById("fv-viewer-saving");
   if (!titleSpan || !pencilBtn) return;
 
-  const currentName = file.name || "";
+  const originalName = file.name;
+
   const input = document.createElement("input");
   input.type = "text";
-  input.id = "fv-viewer-rename-input";
-  input.value = currentName;
-  input.style.cssText = "background:transparent;border:1px solid #C9A84C;border-radius:4px;color:#C9A84C;font-size:14px;padding:2px 6px;min-width:180px;max-width:320px;font-family:inherit;outline:none;";
+  input.value = originalName;
+  input.style.cssText = "background:transparent;border:1px solid #C9A84C;border-radius:4px;color:#C9A84C;font-size:14px;padding:2px 6px;min-width:180px;max-width:320px;outline:none;font-family:inherit;";
+  input._fvDone = false;
+
   titleSpan.replaceWith(input);
   pencilBtn.style.display = "none";
   input.focus();
   input.select();
 
-  const restore = (name) => {
-    const span = document.createElement("span");
-    span.id = "fv-viewer-title";
-    span.style.cssText = "color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;";
-    span.textContent = name;
-    span.title = name;
-    input.replaceWith(span);
+  function restore(name) {
+    const newSpan = document.createElement("span");
+    newSpan.id = "fv-viewer-title";
+    newSpan.style.cssText = "color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;";
+    newSpan.textContent = name;
+    newSpan.title = name;
+    input.replaceWith(newSpan);
     pencilBtn.style.display = "";
-    if (saving) saving.style.display = "none";
-  };
+  }
 
-  const commit = async () => {
+  function cancel() {
+    input._fvDone = true;
+    restore(originalName);
+  }
+
+  async function commit() {
     if (input._fvDone) return;
     input._fvDone = true;
     const newName = input.value.trim();
-    if (!newName || newName === currentName) { restore(currentName); return; }
-    input.disabled = true;
-    input.style.opacity = "0.6";
-    if (saving) saving.style.display = "inline-block";
+    if (!newName || newName === originalName) { restore(originalName); return; }
+
+    if (savingSpinner) savingSpinner.style.display = "inline-block";
     try {
-      const headers = await _fvAuthHeaders({ "Content-Type": "application/json" });
+      const token = await _fvEnsureToken();
       const res = await fetch(
         `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?fields=id,name`,
-        { method: "PATCH", headers, body: JSON.stringify({ name: newName }) }
+        {
+          method: "PATCH",
+          headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName })
+        }
       );
-      if (res.status === 401 || res.status === 403) _fvClearToken();
-      const data = await res.json();
-      if (!res.ok || !data.id) throw new Error((data.error && data.error.message) || `HTTP ${res.status}`);
-      // Update in-memory file model + viewer header + the row in the file list
-      file.name = data.name;
-      restore(data.name);
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) _fvClearToken();
+        throw new Error(`HTTP ${res.status}`);
+      }
+      file.name = newName;
+      restore(newName);
       const rowName = document.querySelector(`[data-fv-row="${file.id}"] .fv-name`);
-      if (rowName) rowName.textContent = data.name;
-      _fvShowToast("Renamed ✓");
-    } catch (e) {
-      console.error("[FileVault] rename (viewer) failed:", e);
-      _fvShowToast("Rename failed");
-      restore(currentName);
+      if (rowName) rowName.textContent = newName;
+      _fvShowToast("Renamed successfully");
+    } catch (err) {
+      console.error("[FileVault][rename]", err);
+      _fvShowToast("Rename failed: " + err.message);
+      restore(originalName);
+    } finally {
+      if (savingSpinner) savingSpinner.style.display = "none";
     }
-  };
+  }
 
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); commit(); }
-    else if (e.key === "Escape") { e.preventDefault(); input._fvDone = true; restore(currentName); }
+    if (e.key === "Escape") { e.preventDefault(); cancel(); }
   });
-  input.addEventListener("blur", commit);
+  input.addEventListener("blur", () => commit());
 }
 
 function _fvShowToast(msg) {
