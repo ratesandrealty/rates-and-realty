@@ -1,0 +1,124 @@
+{
+  "name": "Lender Folder Creator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lender-created",
+        "responseMode": "onReceived",
+        "responseData": "firstEntryJson",
+        "options": {}
+      },
+      "id": "c1f1b4a0-1111-4a00-b0aa-000000000001",
+      "name": "Supabase Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "lender-created"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/gdrive-proxy?action=create-folder",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"parentId\": \"1Pg6GkbwzgiIp3PfZqP4oXycw7tLKUN8p\",\n  \"name\": {{ JSON.stringify($json.record.name) }}\n}",
+        "options": {}
+      },
+      "id": "c1f1b4a0-2222-4a00-b0aa-000000000002",
+      "name": "Create Drive Folder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1/lenders?id=eq.{{ $('Supabase Webhook').item.json.record.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"gdrive_folder_id\": {{ JSON.stringify($json.id) }}\n}",
+        "options": {}
+      },
+      "id": "c1f1b4a0-3333-4a00-b0aa-000000000003",
+      "name": "Update Lender Row",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Supabase Webhook": {
+      "main": [
+        [
+          {
+            "node": "Create Drive Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Drive Folder": {
+      "main": [
+        [
+          {
+            "node": "Update Lender Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "lender-folder-workflow",
+  "tags": []
+}
