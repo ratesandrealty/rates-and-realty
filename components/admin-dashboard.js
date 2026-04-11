@@ -1,4 +1,4 @@
-// admin-dashboard.js v20260411e
+// admin-dashboard.js v20260411f
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
   if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_URL) {
@@ -26,7 +26,7 @@ import {
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks
-} from "/api/admin-api-v2.js?v=20260411e";
+} from "/api/admin-api-v2.js?v=20260411f";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
@@ -1727,6 +1727,9 @@ async function _fvCreateFolder(contact, btn) {
 async function _fvToggleFiles(contact) { return _fvSelectBorrower(contact); }
 
 async function _fvLoadFiles(folderId) {
+  // Store globally so row action handlers (PDF convert, etc) can find the
+  // current folder without needing the contact plumbed through.
+  window._fvCurrentFolderId = folderId;
   try {
     const headers = await _fvAuthHeaders();
     const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
@@ -1835,27 +1838,33 @@ function _fvRenderFileListPanel(contact) {
   }
   host.innerHTML = filteredFiles.map((f) => _fvFileRowHtml(f)).join("");
 
-  // Wire file row clicks
-  host.querySelectorAll("[data-fv-row]").forEach((row) => {
+  // Wire file row clicks + action buttons (class-based).
+  host.querySelectorAll(".fv-file-row").forEach((row) => {
     const fileId = row.dataset.fvRow;
+    const f = files.find((x) => x.id === fileId);
+    if (!f) return;
+
     row.onclick = (e) => {
-      if (e.target && e.target.closest && e.target.closest("[data-fv-action]")) return;
-      const idx = files.findIndex((f) => f.id === fileId);
+      if (e.target && e.target.closest && (e.target.closest(".fv-pdf-btn") || e.target.closest(".fv-dl-btn"))) return;
+      const idx = files.findIndex((x) => x.id === fileId);
       if (idx >= 0) _fvOpenViewer(contact, files, idx);
     };
-  });
-  host.querySelectorAll("[data-fv-action='pdf']").forEach((btn) => {
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      _fvConvertToPdf(contact, btn.dataset.fvId, btn);
-    };
-  });
-  host.querySelectorAll("[data-fv-action='download']").forEach((btn) => {
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      const fileId = btn.dataset.fvId;
-      window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`, "_blank", "noopener");
-    };
+
+    const pdfBtn = row.querySelector(".fv-pdf-btn");
+    if (pdfBtn) {
+      pdfBtn.onclick = (e) => {
+        e.stopPropagation();
+        _fvConvertToPdf(f);
+      };
+    }
+
+    const dlBtn = row.querySelector(".fv-dl-btn");
+    if (dlBtn) {
+      dlBtn.onclick = (e) => {
+        e.stopPropagation();
+        window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`, "_blank", "noopener");
+      };
+    }
   });
 
   // If a file was previously active in the viewer, highlight its row.
@@ -1874,7 +1883,7 @@ function _fvFileRowHtml(f) {
   const date = f.createdTime ? new Date(f.createdTime).toLocaleDateString() : "";
   const nm = _fvEscape(f.name || "Untitled");
   const docType = (f.appProperties && f.appProperties.docType) || "";
-  const showConvert = _fvIsGoogleDoc(f);
+  const isGoogleDoc = (f.mimeType || "").startsWith("application/vnd.google-apps.");
   return `
     <div class="fv-file-row" data-fv-row="${_fvEscape(f.id)}">
       <div style="font-size:16px;flex-shrink:0;">${icon}</div>
@@ -1885,9 +1894,9 @@ function _fvFileRowHtml(f) {
         </div>
         ${docType ? `<span class="fv-doc-type-badge" style="font-size:9px;color:#C9A84C88;background:#C9A84C11;padding:1px 5px;border-radius:3px;margin-top:2px;display:inline-block;">${_fvEscape(docType)}</span>` : ''}
       </div>
-      <div style="display:flex;gap:2px;flex-shrink:0;">
-        ${showConvert ? `<button data-fv-action="pdf" data-fv-id="${_fvEscape(f.id)}" title="Convert to PDF" style="background:transparent;border:none;color:#444;cursor:pointer;font-size:10px;padding:3px 6px;font-family:inherit;">PDF</button>` : ''}
-        <button data-fv-action="download" data-fv-id="${_fvEscape(f.id)}" title="Download" style="background:transparent;border:none;color:#444;cursor:pointer;font-size:13px;padding:3px 6px;font-family:inherit;">&#8681;</button>
+      <div style="display:flex;gap:4px;flex-shrink:0;align-items:center;">
+        ${isGoogleDoc ? `<button class="fv-pdf-btn" title="Export as PDF" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C88;font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;font-family:inherit;">PDF</button>` : ''}
+        <button class="fv-dl-btn" title="Download" style="background:transparent;border:none;color:#444;cursor:pointer;font-size:14px;padding:2px 4px;font-family:inherit;">&#8681;</button>
       </div>
     </div>
   `;
@@ -1969,62 +1978,65 @@ async function _fvDeleteFile(contact, fileId) {
 }
 
 // ── CONVERT TO PDF ────────────────────────────────────────────────
-async function _fvConvertToPdf(contact, fileId, btn) {
-  const files = _fvFiles[contact.gdrive_folder_id] || [];
-  const file = files.find((f) => f.id === fileId);
-  if (!file) return;
-  console.log("[FileVault][convert] start", { name: file.name, mimeType: file.mimeType });
-  if (_fvIsPdf(file)) { _fvShowToast("Already a PDF"); return; }
-  // Only Google-native docs can be exported via the Drive export endpoint.
-  // Other uploaded file types (docx, xlsx, jpg, png, etc) need to be converted
-  // in the Drive UI — the API has no generic convert endpoint.
-  if (!_fvIsGoogleDoc(file)) {
-    _fvShowToast("Open this file in Google Drive, then File > Download as PDF");
+async function _fvConvertToPdf(file) {
+  console.log("[FileVault][convert] start", file.name, file.mimeType);
+
+  const exportable = [
+    "application/vnd.google-apps.document",
+    "application/vnd.google-apps.spreadsheet",
+    "application/vnd.google-apps.presentation",
+    "application/vnd.google-apps.drawing"
+  ];
+  if (!exportable.includes(file.mimeType)) {
+    _fvShowToast("Only Google Docs/Sheets/Slides can be converted. For other files, open in Drive → File → Download as PDF.");
     return;
   }
-  const origHtml = btn ? btn.innerHTML : "";
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+
+  _fvShowToast("Converting to PDF...");
   try {
-    // Step 1: token
     const token = await _fvEnsureToken();
     console.log("[FileVault][convert] token acquired");
 
-    // Step 2: export the Google-native doc as PDF bytes
-    const exportUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=application/pdf`;
-    const exportRes = await fetch(exportUrl, { headers: { Authorization: "Bearer " + token } });
+    const exportRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}/export?mimeType=application/pdf`,
+      { headers: { Authorization: "Bearer " + token } }
+    );
     console.log("[FileVault][convert] export response status", exportRes.status);
     if (exportRes.status === 401 || exportRes.status === 403) _fvClearToken();
     if (!exportRes.ok) {
       const errText = await exportRes.text().catch(() => "");
       console.error("[FileVault][convert] export failed body:", errText);
       _fvShowToast(`Export failed: HTTP ${exportRes.status}`);
-      if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
       return;
     }
     const blob = await exportRes.blob();
     console.log("[FileVault][convert] blob size/type", blob.size, blob.type);
 
-    // Step 3: strip the existing extension and append .pdf
-    const baseName = (file.name || "document").replace(/\.[a-zA-Z0-9]{1,6}$/, "");
-    const pdfName = baseName + ".pdf";
+    const pdfName = (file.name || "document").replace(/\.[a-zA-Z0-9]{1,6}$/, "") + ".pdf";
     console.log("[FileVault][convert] upload filename", pdfName);
 
-    // Step 4: upload the PDF blob back to the same folder via OAuth multipart
-    const pdfFile = new File([blob], pdfName, { type: "application/pdf" });
-    const result = await _fvUploadOne(contact.gdrive_folder_id, pdfFile);
-    console.log("[FileVault][convert] upload result", result);
-    if (!result.ok) {
-      _fvShowToast("PDF upload failed: " + (result.error || "unknown"));
-      if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+    const folderId = window._fvCurrentFolderId;
+    if (!folderId) {
+      _fvShowToast("No folder selected");
+      console.error("[FileVault][convert] window._fvCurrentFolderId is not set");
       return;
     }
-    _fvShowToast("Converted to PDF ✓");
-    await _fvLoadFiles(contact.gdrive_folder_id);
-    _fvRenderFileList(contact);
-  } catch (e) {
-    console.error("[FileVault][convert] failed:", e);
-    _fvShowToast("Convert failed: " + (e.message || "unknown"));
-    if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+
+    const uploadFile = new File([blob], pdfName, { type: "application/pdf" });
+    const result = await _fvUploadOne(folderId, uploadFile);
+    console.log("[FileVault][convert] upload result", result);
+
+    if (result && result.ok) {
+      _fvShowToast(`✓ ${pdfName} created`);
+      await _fvLoadFiles(folderId);
+      const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
+      if (contact) _fvRenderFileListPanel(contact);
+    } else {
+      _fvShowToast("PDF upload failed: " + ((result && result.error) || "unknown error"));
+    }
+  } catch (err) {
+    console.error("[FileVault][convert] FAILED", err);
+    _fvShowToast("Convert failed: " + (err.message || err));
   }
 }
 
