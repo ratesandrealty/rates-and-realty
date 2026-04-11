@@ -12,9 +12,7 @@
 <link rel="icon" href="/assets/images/favicon.png"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
 <script src="/api/env.js"></script>
-<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet"/>
-<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
-<script src="/public/js/map-controls.js" defer></script>
+<script src="/public/js/map-controls.js"></script>
 <script src="/public/auth-persist.js"></script>
 <script src="/public/portal-auth-modal.js"></script>
 <script src="/public/js/portal-tracker.js" defer></script>
@@ -648,11 +646,6 @@ const NEARBY_PLACES = {
   ]
 };
 
-// Mapbox public token loaded from window.APP_CONFIG (api/env.js)
-const MAPBOX_TOKEN = window.APP_CONFIG?.MAPBOX_TOKEN || '';
-const MAPBOX_DARK_STYLE = 'mapbox://styles/mapbox/dark-v11';
-mapboxgl.accessToken = MAPBOX_TOKEN;
-
 /* ===== STATE ===== */
 let listing = null;
 let descExpanded = false;
@@ -858,75 +851,65 @@ function populateListing() {
   loadNearbyHomesMap(city, price, l.ListingKey, isLand, l.PropertyType, l.Latitude, l.Longitude);
 }
 
-/* ===== DETAIL MAP (Mapbox) ===== */
-function makeGoldDot(size) {
-  var el = document.createElement('div');
-  el.style.cssText = 'width:'+size+'px;height:'+size+'px;border-radius:50%;background:#C9A84C;border:3px solid #000;box-shadow:0 2px 8px rgba(0,0,0,0.6);cursor:pointer';
-  return el;
-}
+/* ===== DETAIL MAP (Google Maps) ===== */
 function formatPricePin(p) {
   if (!p) return '';
   if (p >= 1000000) return '$' + (p / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
   if (p >= 1000) return '$' + Math.round(p / 1000) + 'K';
   return '$' + p;
 }
-// Returns a wrapper element whose INNER child carries all visual styling.
-// Mapbox sets transform on the wrapper for positioning — never touch the wrapper's transform.
-function makePricePin(price) {
-  var wrapper = document.createElement('div');
-  var inner = document.createElement('div');
-  inner.textContent = formatPricePin(price);
-  inner.style.cssText = 'background:#C9A84C;color:#1A0E00;font-weight:700;font-size:11px;font-family:sans-serif;padding:4px 9px;border-radius:20px;border:2px solid #fff;cursor:pointer;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.4);transition:transform .15s,background .15s,color .15s;line-height:1;user-select:none;';
-  wrapper.appendChild(inner);
-  return wrapper;
-}
-// Build a non-interactive subject-property gold price pill (slightly larger, higher z).
-function makeSubjectPricePill(price) {
-  var el = document.createElement('div');
-  el.style.cssText = 'background:#C9A84C;color:#111;font-weight:700;font-size:12px;font-family:sans-serif;padding:5px 10px;border-radius:20px;border:2px solid #fff;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.5);cursor:default;pointer-events:none;line-height:1';
-  el.textContent = formatPricePin(price) || '\u2022';
-  return el;
-}
-function initDetailMap(lat, lng, addr, price) {
+async function initDetailMap(lat, lng, addr, price) {
   if (!lat || !lng) {
     document.getElementById('detailMap').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.85rem">Map not available - no coordinates</div>';
     return;
   }
-  detailMapRef = new mapboxgl.Map({
-    container: 'detailMap',
-    style: MAPBOX_DARK_STYLE,
-    center: [lng, lat],
+  try { await window.loadGoogleMaps(); }
+  catch (e) { console.error('[maps] failed to load:', e); return; }
+  detailMapRef = new google.maps.Map(document.getElementById('detailMap'), {
+    center: { lat: Number(lat), lng: Number(lng) },
     zoom: 15,
-    attributionControl: false
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: false,
+    styles: window.DARK_MAP_STYLE || []
   });
-  detailMapRef.addControl(new mapboxgl.NavigationControl({showCompass:false}), 'top-right');
   if (window.addAllMapControls) addAllMapControls(detailMapRef);
-  new mapboxgl.Marker({ element: makeSubjectPricePill(price), anchor: 'bottom' })
-    .setLngLat([lng, lat])
-    .setPopup(new mapboxgl.Popup({offset:20}).setHTML('<div style="color:#000;font-size:12px;padding:2px">'+(addr||'')+'</div>'))
-    .addTo(detailMapRef);
+  var iw = new google.maps.InfoWindow({
+    content: '<div style="color:#000;font-size:12px;padding:2px">' + (addr || '') + '</div>'
+  });
+  var marker = new google.maps.Marker({
+    position: { lat: Number(lat), lng: Number(lng) },
+    map: detailMapRef,
+    title: addr || '',
+    icon: window.makeSubjectPinIcon(formatPricePin(price))
+  });
+  marker.addListener('click', function(){ iw.open({ map: detailMapRef, anchor: marker }); });
 }
 
 /* ===== FULL SCREEN MAP ===== */
-function openFullMap() {
+async function openFullMap() {
   if (!listing || !listing.Latitude || !listing.Longitude) return;
   const modal = document.getElementById('fullMapModal');
   modal.classList.add('open');
   document.getElementById('fullMapTitle').textContent = listing.UnparsedAddress || 'Map';
   document.body.style.overflow = 'hidden';
+  try { await window.loadGoogleMaps(); }
+  catch (e) { console.error('[maps] failed to load:', e); return; }
   setTimeout(function() {
-    fullMapRef = new mapboxgl.Map({
-      container: 'fullMapBody',
-      style: MAPBOX_DARK_STYLE,
-      center: [listing.Longitude, listing.Latitude],
+    fullMapRef = new google.maps.Map(document.getElementById('fullMapBody'), {
+      center: { lat: Number(listing.Latitude), lng: Number(listing.Longitude) },
       zoom: 16,
-      attributionControl: false
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: false,
+      styles: window.DARK_MAP_STYLE || []
     });
-    fullMapRef.addControl(new mapboxgl.NavigationControl(), 'top-right');
     if (window.addAllMapControls) addAllMapControls(fullMapRef);
-    new mapboxgl.Marker({ element: makeGoldDot(20) })
-      .setLngLat([listing.Longitude, listing.Latitude])
-      .addTo(fullMapRef);
+    new google.maps.Marker({
+      position: { lat: Number(listing.Latitude), lng: Number(listing.Longitude) },
+      map: fullMapRef,
+      icon: window.makeSubjectPinIcon(formatPricePin(listing.ListPrice))
+    });
   }, 100);
 }
 function closeFullMap() {
@@ -1054,35 +1037,31 @@ function goToSimilar(listingKey) {
 
 /* ===== NEARBY HOMES MAP — dynamic viewport refetch ===== */
 var nearbyMarkers = [];
-var nearbyMarkerMap = {}; // { ListingKey: pinRootEl } for card→pin hover sync
+var nearbyMarkerMap = {}; // { ListingKey: google.maps.Marker } for card→pin hover sync
 var nearbyExcludeKey = null;
 var nearbyFetchTimer = null;
 var nearbyFetchSeq = 0;
 
 window.highlightNearbyPin = function(key) {
-  var el = nearbyMarkerMap[key]; if (!el) return;
-  var inner = el.firstElementChild; if (!inner) return;
-  inner.style.transform = 'scale(1.25)';
-  inner.style.background = '#fff';
-  inner.style.color = '#C9A84C';
-  el.style.zIndex = '999';
+  var m = nearbyMarkerMap[key]; if (!m || !m._labelText) return;
+  m.setIcon(window.makePricePinIcon(m._labelText, true));
+  m.setZIndex(999);
 };
 window.resetNearbyPin = function(key) {
-  var el = nearbyMarkerMap[key]; if (!el) return;
-  var inner = el.firstElementChild; if (!inner) return;
-  inner.style.transform = '';
-  inner.style.background = '#C9A84C';
-  inner.style.color = '#1A0E00';
-  el.style.zIndex = '';
+  var m = nearbyMarkerMap[key]; if (!m || !m._labelText) return;
+  m.setIcon(window.makePricePinIcon(m._labelText, false));
+  m.setZIndex(null);
 };
 
 async function fetchAndRenderNearby() {
-  if (!nearbyMapRef) return;
+  if (!nearbyMapRef || !window.google) return;
   var seq = ++nearbyFetchSeq; // prevent race between overlapping fetches
   var bounds = nearbyMapRef.getBounds();
+  if (!bounds) return;
   var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
-  var odata = "Latitude ge " + sw.lat + " and Latitude le " + ne.lat +
-              " and Longitude ge " + sw.lng + " and Longitude le " + ne.lng +
+  var swLat = sw.lat(), swLng = sw.lng(), neLat = ne.lat(), neLng = ne.lng();
+  var odata = "Latitude ge " + swLat + " and Latitude le " + neLat +
+              " and Longitude ge " + swLng + " and Longitude le " + neLng +
               " and StandardStatus eq 'Active' and ListPrice ge 50000";
   var rawFilter = "$filter=" + encodeURIComponent(odata) +
                   "&$top=50&$orderby=ListPrice desc" +
@@ -1111,46 +1090,50 @@ async function fetchAndRenderNearby() {
   console.log('[nearby] viewport fetch: ' + listings.length + ' listings in bounds');
 
   // Clear existing nearby markers (subject stays)
-  nearbyMarkers.forEach(function(m){ m.remove(); });
+  nearbyMarkers.forEach(function(m){ m.setMap(null); });
   nearbyMarkers = [];
   nearbyMarkerMap = {};
+
+  if (!window._nearbyInfoWindow) {
+    window._nearbyInfoWindow = new google.maps.InfoWindow({ maxWidth: 240 });
+  }
+  var iw = window._nearbyInfoWindow;
 
   listings.forEach(function(l){
     var lat = parseFloat(l.Latitude), lng = parseFloat(l.Longitude);
     if (!lat || !lng) return;
-    var el = makePricePin(l.ListPrice || 0);
-    var inner = el.firstElementChild;
+    var labelText = formatPricePin(l.ListPrice || 0);
     var popupHtml = '<div style="color:#000;font-size:13px;max-width:220px;line-height:1.5;font-family:system-ui,sans-serif">'+
       '<strong>$'+(l.ListPrice||0).toLocaleString()+'</strong><br>'+
       (l.UnparsedAddress||'')+'<br>'+
       ((l.BedroomsTotal||'\u2014')+' bd \u00b7 '+(l.BathroomsTotalInteger||'\u2014')+' ba'+(l.LivingArea?' \u00b7 '+l.LivingArea.toLocaleString()+' sqft':''))+
       '<br><a href="property-detail.html?listing_key='+encodeURIComponent(l.ListingKey)+'" style="color:#C9A84C;font-weight:700;font-size:12px">View Details \u2192</a>'+
     '</div>';
-    el.addEventListener('click', function(){
-      window.location.href = 'property-detail.html?listing_key=' + encodeURIComponent(l.ListingKey);
+    var marker = new google.maps.Marker({
+      position: { lat: lat, lng: lng },
+      map: nearbyMapRef,
+      icon: window.makePricePinIcon(labelText, false),
+      title: l.UnparsedAddress || ''
     });
-    el.addEventListener('mouseover', function(){
-      inner.style.transform = 'scale(1.12)';
-      inner.style.background = '#fff';
-      inner.style.color = '#C9A84C';
-      el.style.zIndex = '10';
+    marker._labelText = labelText;
+    marker.addListener('click', function(){
+      iw.setContent(popupHtml);
+      iw.open({ map: nearbyMapRef, anchor: marker });
+    });
+    marker.addListener('mouseover', function(){
+      marker.setIcon(window.makePricePinIcon(labelText, true));
+      marker.setZIndex(10);
       var item = document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');
       if (item) { item.style.background='rgba(201,168,76,0.08)'; item.style.borderColor='rgba(201,168,76,0.4)'; }
     });
-    el.addEventListener('mouseout', function(){
-      inner.style.transform = '';
-      inner.style.background = '#C9A84C';
-      inner.style.color = '#1A0E00';
-      el.style.zIndex = '';
+    marker.addListener('mouseout', function(){
+      marker.setIcon(window.makePricePinIcon(labelText, false));
+      marker.setZIndex(null);
       var item = document.querySelector('[data-nearby-id="'+l.ListingKey+'"]');
       if (item) { item.style.background=''; item.style.borderColor=''; }
     });
-    var m = new mapboxgl.Marker({ element: el })
-      .setLngLat([lng, lat])
-      .setPopup(new mapboxgl.Popup({offset:16,closeButton:false,maxWidth:'240px'}).setHTML(popupHtml))
-      .addTo(nearbyMapRef);
-    nearbyMarkers.push(m);
-    nearbyMarkerMap[l.ListingKey] = el;
+    nearbyMarkers.push(marker);
+    nearbyMarkerMap[l.ListingKey] = marker;
   });
 
   // Merge into session storage for navigation
@@ -1195,26 +1178,34 @@ async function loadNearbyHomesMap(city, price, excludeKey, isLand, propType, sub
   }
   nearbyExcludeKey = excludeKey;
 
-  nearbyMapRef = new mapboxgl.Map({
-    container: 'nearbyHomesMap',
-    style: MAPBOX_DARK_STYLE,
-    center: [subjectLng, subjectLat],
+  try { await window.loadGoogleMaps(); }
+  catch (e) { console.error('[maps] failed to load:', e); return; }
+
+  nearbyMapRef = new google.maps.Map(document.getElementById('nearbyHomesMap'), {
+    center: { lat: Number(subjectLat), lng: Number(subjectLng) },
     zoom: 14,
-    attributionControl: false
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: false,
+    styles: window.DARK_MAP_STYLE || []
   });
-  nearbyMapRef.addControl(new mapboxgl.NavigationControl({showCompass:false}), 'top-right');
   if (window.addAllMapControls) addAllMapControls(nearbyMapRef);
 
   // Subject marker — always pinned at subject coords, never cleared on re-fetch
-  new mapboxgl.Marker({ element: makeSubjectPricePill(price), anchor: 'bottom' })
-    .setLngLat([subjectLng, subjectLat])
-    .setPopup(new mapboxgl.Popup({offset:20}).setHTML('<div style="color:#000;font-size:12px;padding:2px"><strong>\uD83D\uDCCD This Property</strong><br>'+(listing.UnparsedAddress||'')+'</div>'))
-    .addTo(nearbyMapRef);
+  var subjectIw = new google.maps.InfoWindow({
+    content: '<div style="color:#000;font-size:12px;padding:2px"><strong>\uD83D\uDCCD This Property</strong><br>'+(listing.UnparsedAddress||'')+'</div>'
+  });
+  var subjectMarker = new google.maps.Marker({
+    position: { lat: Number(subjectLat), lng: Number(subjectLng) },
+    map: nearbyMapRef,
+    icon: window.makeSubjectPinIcon(formatPricePin(price)),
+    zIndex: 2000
+  });
+  subjectMarker.addListener('click', function(){ subjectIw.open({ map: nearbyMapRef, anchor: subjectMarker }); });
 
-  // Initial fetch on load + refetch on any pan/zoom (debounced)
-  nearbyMapRef.on('load', fetchAndRenderNearby);
-  nearbyMapRef.on('moveend', debouncedNearbyFetch);
-  nearbyMapRef.on('zoomend', debouncedNearbyFetch);
+  // Initial fetch once idle + refetch on any pan/zoom (debounced)
+  google.maps.event.addListenerOnce(nearbyMapRef, 'idle', fetchAndRenderNearby);
+  nearbyMapRef.addListener('idle', debouncedNearbyFetch);
 }
 
 /* ===== LIGHTBOX ===== */

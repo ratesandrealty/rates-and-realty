@@ -345,12 +345,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 <script src="/api/env.js"></script>
-<link href='https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css' rel='stylesheet'>
-<script src='https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js'></script>
-<link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.3/mapbox-gl-draw.css" rel="stylesheet">
-<script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.3/mapbox-gl-draw.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
-<script src="/public/js/map-controls.js" defer></script>
+<script src="/public/js/map-controls.js"></script>
 </head>
 <body>
 
@@ -1324,7 +1319,7 @@ function initStatusTabs() {
 }
 
 /* ===== ODATA FILTER BUILDER ===== */
-// When `bounds` is provided (mapboxgl LngLatBounds), the city/county/state
+// When `bounds` is provided (google.maps.LatLngBounds), the city/county/state
 // location filter is replaced with a Lat/Lng bounding box — this is used by
 // the "Search this area" button and zoom auto-search.
 function buildODataFilter(bounds) {
@@ -1333,9 +1328,10 @@ function buildODataFilter(bounds) {
   // Bounds (if provided) — bounding box constraints always apply on top of location filter
   if (bounds) {
     var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
-    var swLat = Math.max(sw.lat, 25), swLng = Math.max(sw.lng, -125);
-    var neLat = Math.min(ne.lat, 49), neLng = Math.min(ne.lng, -114);
-    console.log('[bounds-search] raw:', { sw_lat:sw.lat, sw_lng:sw.lng, ne_lat:ne.lat, ne_lng:ne.lng });
+    var swLatV = sw.lat(), swLngV = sw.lng(), neLatV = ne.lat(), neLngV = ne.lng();
+    var swLat = Math.max(swLatV, 25), swLng = Math.max(swLngV, -125);
+    var neLat = Math.min(neLatV, 49), neLng = Math.min(neLngV, -114);
+    console.log('[bounds-search] raw:', { sw_lat:swLatV, sw_lng:swLngV, ne_lat:neLatV, ne_lng:neLngV });
     console.log('[bounds-search] clamped:', { swLat:swLat, swLng:swLng, neLat:neLat, neLng:neLng });
     parts.push('Latitude ge ' + swLat.toFixed(4));
     parts.push('Latitude le ' + neLat.toFixed(4));
@@ -1439,7 +1435,7 @@ function buildODataFilter(bounds) {
 }
 
 /* ===== FETCH LISTINGS ===== */
-// boundsOverride: optional mapboxgl LngLatBounds — when provided, fetches by
+// boundsOverride: optional google.maps.LatLngBounds — when provided, fetches by
 // viewport instead of city/county. All other filter UI values (price, beds,
 // types, etc.) still apply.
 async function fetchListings(page, append, boundsOverride) {
@@ -1517,14 +1513,7 @@ function applyClientFilters(page, append) {
     });
   }
 
-  // Polygon filter — applies when user has drawn a shape via MapboxDraw
-  if (_drawPolygon && typeof turf !== 'undefined') {
-    items = items.filter(function(l) {
-      if (!l.Latitude || !l.Longitude) return false;
-      var pt = turf.point([l.Longitude, l.Latitude]);
-      return turf.booleanPointInPolygon(pt, _drawPolygon);
-    });
-  }
+  // Polygon filter disabled — draw tool was Mapbox-specific and has not been ported.
 
   filteredListings = items;
   renderListings(page, append);
@@ -1704,30 +1693,22 @@ function toggleShowing(i) {
 function panTo(i) {
   var l = filteredListings[i];
   if (l.Latitude && l.Longitude && map) {
-    map.flyTo({ center: [l.Longitude, l.Latitude], zoom: 16 });
-    if (markers[i] && markers[i].togglePopup) { try { markers[i].togglePopup(); } catch(e){} }
+    map.panTo({ lat: Number(l.Latitude), lng: Number(l.Longitude) });
+    map.setZoom(16);
+    if (markers[i]) { try { google.maps.event.trigger(markers[i], 'click'); } catch(e){} }
   }
 }
 
 function highlightMarker(i) {
-  var m = markers[i]; if (!m) return;
-  var root = m.getElement(); if (!root) return;
-  // NEVER touch root's transform — Mapbox uses it for positioning.
-  var inner = root.firstElementChild; if (!inner) return;
-  inner.style.transform = 'scale(1.15)';
-  inner.style.background = '#fff';
-  inner.style.color = '#C9A84C';
-  root.style.zIndex = '10';
+  var m = markers[i]; if (!m || !m._labelText) return;
+  m.setIcon(window.makePricePinIcon(m._labelText, true));
+  m.setZIndex(1000);
 }
 
 function unhighlightMarker(i) {
-  var m = markers[i]; if (!m) return;
-  var root = m.getElement(); if (!root) return;
-  var inner = root.firstElementChild; if (!inner) return;
-  inner.style.transform = '';
-  inner.style.background = '#C9A84C';
-  inner.style.color = '#1A0E00';
-  root.style.zIndex = '';
+  var m = markers[i]; if (!m || !m._labelText) return;
+  m.setIcon(window.makePricePinIcon(m._labelText, false));
+  m.setZIndex(null);
 }
 
 /* ===== SHOWING CART ===== */
@@ -2117,7 +2098,7 @@ function toggleMap() {
     btn.classList.remove('active');
     grid.style.gridTemplateColumns = '1fr 1fr';
     setTimeout(function() {
-      if (map) map.resize();
+      if (map && window.google && google.maps.event) { google.maps.event.trigger(map, 'resize'); }
       fitMarkers();
     }, 350);
   }
@@ -2192,24 +2173,30 @@ function searchCartCheckout(){closeSearchCart();var user=getPortalUser();if(!use
 function openCheckoutFlow(user){var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');if(!cart.length){showToast('Cart is empty');return;}document.getElementById('checkoutFlowModal')?.remove();var m=document.createElement('div');m.id='checkoutFlowModal';m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:800;display:flex;align-items:center;justify-content:center;padding:20px;isolation:isolate';m.innerHTML='<div style="background:#151515;border:1px solid #2a2a2a;border-radius:16px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto"><div style="padding:18px 22px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center"><div><h2 style="font-size:1rem;font-weight:700;color:#eee"><i class="fas fa-calendar-check" style="color:#C9A84C;margin-right:8px"></i>Schedule Showings</h2><div style="font-size:.73rem;color:#666;margin-top:2px">'+cart.length+' home'+(cart.length>1?'s':'')+' selected</div></div><button onclick="document.getElementById(\'checkoutFlowModal\').remove()" style="background:#1a1a1a;border:1px solid #333;border-radius:50%;width:30px;height:30px;color:#888;cursor:pointer">✕</button></div><div style="padding:14px 22px;border-bottom:1px solid #1a1a1a;max-height:180px;overflow-y:auto">'+cart.map(function(item){return'<div style="display:flex;gap:9px;align-items:center;background:#1a1a1a;border-radius:8px;padding:8px 10px;margin-bottom:6px">'+(item.photo?'<img src="'+item.photo+'" style="width:48px;height:38px;object-fit:cover;border-radius:5px;flex-shrink:0">':'')+'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:.82rem;color:#C9A84C">$'+(item.price||0).toLocaleString()+'</div><div style="font-size:.73rem;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(item.address||'')+'</div></div></div>';}).join('')+'</div><div style="padding:18px 22px;display:flex;flex-direction:column;gap:11px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label style="font-size:.72rem;color:#888;display:block;margin-bottom:4px">Date *</label><input type="date" id="cfDate" min="'+new Date().toISOString().split('T')[0]+'" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;color:#eee;font-size:.85rem;outline:none"></div><div><label style="font-size:.72rem;color:#888;display:block;margin-bottom:4px">Time *</label><select id="cfTime" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;color:#eee;font-size:.85rem;outline:none"><option value="">Select...</option><option>Morning (9-12)</option><option>Afternoon (12-4)</option><option>Evening (4-7)</option><option>Flexible</option></select></div></div><div><label style="font-size:.72rem;color:#888;display:block;margin-bottom:4px">Phone *</label><input type="tel" id="cfPhone" value="'+(user.phone||'')+'" placeholder="(714) 555-0000" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;color:#eee;font-size:.85rem;outline:none"></div><div><label style="font-size:.72rem;color:#888;display:block;margin-bottom:4px">Notes</label><textarea id="cfNotes" rows="2" placeholder="Questions or requests..." style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;color:#eee;font-size:.83rem;outline:none;resize:none"></textarea></div><div style="background:#1a1a1a;border-radius:8px;padding:10px 12px;font-size:.76rem;color:#888"><i class="fas fa-user-check" style="color:#C9A84C;margin-right:6px"></i>Booking as <strong style="color:#eee">'+(user.first_name||'')+' '+(user.last_name||'')+'</strong> · '+(user.email||'')+'</div><button id="cfSubmitBtn" onclick="submitCheckoutFlow(\''+encodeURIComponent(user.id||'')+'\',\''+encodeURIComponent(user.email||'')+'\')" style="width:100%;background:#C9A84C;color:#000;border:none;border-radius:10px;padding:14px;font-weight:700;font-size:.92rem;cursor:pointer"><i class="fas fa-paper-plane"></i> Submit Request'+(cart.length>1?'s':'')+'</button><div style="text-align:center;font-size:.7rem;color:#444">Rene confirms within a few hours</div></div></div>';document.body.appendChild(m);m.addEventListener('click',function(e){if(e.target===m)m.remove();});}
 window.submitCheckoutFlow=async function(userId,userEmail){userId=decodeURIComponent(userId);userEmail=decodeURIComponent(userEmail);var date=document.getElementById('cfDate')?.value;var time=document.getElementById('cfTime')?.value;var phone=document.getElementById('cfPhone')?.value?.trim();var notes=document.getElementById('cfNotes')?.value;var user=getPortalUser();if(!date||!time||!phone){showToast('Fill in date, time, and phone');return;}var cart=JSON.parse(localStorage.getItem('showingCart')||'[]');if(!cart.length){showToast('Cart empty');return;}var btn=document.getElementById('cfSubmitBtn');if(btn){btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Submitting...';}var homes=cart.map(function(item){return{listingKey:String(item.listingKey||''),address:String(item.address||''),city:String(item.city||''),price:String(item.price||''),photo:String(item.photo||''),beds:String(item.beds||''),baths:String(item.baths||''),sqft:String(item.sqft||''),agentName:String(item.listing_agent_name||''),agentPhone:String(item.listing_agent_phone||''),agentEmail:String(item.listing_agent_email||'')};});try{var res=await fetch(SUPABASE_URL+'/functions/v1/submit-showing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:userEmail||null,name:user?((user.first_name||'')+' '+(user.last_name||'')).trim():'',phone:phone,portal_user_id:userId||null,borrower_id:user?.borrower_id||user?.crm_id||null,preferred_date:date,preferred_time:time,notes:notes||null,homes:homes})});var result=await res.json();if(!res.ok||result.error)throw new Error(result.error||result.message||JSON.stringify(result));localStorage.removeItem('showingCart');updateSearchCartBadge();document.getElementById('checkoutFlowModal').querySelector('div').innerHTML='<div style="padding:48px 32px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px"><div style="width:68px;height:68px;background:rgba(0,160,80,.15);border-radius:50%;display:flex;align-items:center;justify-content:center"><i class="fas fa-check" style="font-size:2rem;color:#3cb43c"></i></div><div style="font-size:1.2rem;font-weight:700;color:#eee">All Set! 🎉</div><div style="font-size:.85rem;color:#888;line-height:1.7">Rene will confirm your '+homes.length+' showing'+(homes.length>1?'s':'')+' shortly.<br>You\'ll get a call at <strong style="color:#eee">'+phone+'</strong>.</div><a href="/public/unified-portal.html" style="display:block;width:100%;text-align:center;background:#C9A84C;color:#000;text-decoration:none;padding:13px;border-radius:10px;font-weight:700;font-size:.9rem">View in My Portal →</a><button onclick="document.getElementById(\'checkoutFlowModal\').remove()" style="background:none;border:none;color:#555;cursor:pointer;font-size:.82rem">Close</button></div>';}catch(e){console.error('Checkout error:',e);if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-paper-plane"></i> Submit';}showToast('Error: '+e.message+'. Call (714) 472-8508');}};
 
-/* ===== MAPBOX MAP ===== */
-var MAPBOX_TOKEN = window.APP_CONFIG?.MAPBOX_TOKEN || '';
+/* ===== GOOGLE MAPS ===== */
 var satelliteOn = false;
 var _searchAreaBounds = null;   // bounds captured when user pans/zooms
 var _mapZoomDebounce = null;
 var _lastMapZoom = null;
 var _boundsFetchActive = false; // true once the user has initiated a viewport search
-function initMap() {
-  if (typeof mapboxgl === 'undefined') return;
-  mapboxgl.accessToken = MAPBOX_TOKEN;
-  map = new mapboxgl.Map({
-    container: 'map',
-    style: 'mapbox://styles/mapbox/dark-v11',
-    center: [-117.99, 33.75],
+var _mapInfoWindow = null;
+
+async function initMap() {
+  try { await window.loadGoogleMaps(); }
+  catch (e) { console.error('[maps] failed to load:', e); return; }
+
+  var mapEl = document.getElementById('map');
+  map = new google.maps.Map(mapEl, {
+    center: { lat: 33.75, lng: -117.99 },
     zoom: 13,
-    attributionControl: false
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: false,
+    zoomControl: true,
+    styles: window.DARK_MAP_STYLE || []
   });
-  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+  _mapInfoWindow = new google.maps.InfoWindow({ maxWidth: 260 });
+
   if (window.addAllMapControls) addAllMapControls(map);
 
   // "Search this area" button (Zillow-style) — injected once into map container
@@ -2224,10 +2211,10 @@ function initMap() {
     btn.style.display = 'none';
     fetchListings(1, false, _searchAreaBounds);
   };
-  map.getContainer().appendChild(btn);
+  mapEl.appendChild(btn);
 
   _lastMapZoom = map.getZoom();
-  map.on('moveend', function() {
+  map.addListener('idle', function() {
     var newZoom = map.getZoom();
     var zoomDelta = Math.abs(newZoom - (_lastMapZoom || newZoom));
     _lastMapZoom = newZoom;
@@ -2245,14 +2232,46 @@ function initMap() {
       btn.style.display = 'block';
     }
   });
+
+  initPlacesAutocomplete();
+}
+
+// Wire Google Places Autocomplete to the city search input.
+function initPlacesAutocomplete() {
+  var input = document.getElementById('searchInput');
+  if (!input || !google.maps.places) return;
+  // Kill the legacy custom dropdown if it's already been mounted.
+  var legacy = document.getElementById('searchAutocomplete');
+  if (legacy) legacy.style.display = 'none';
+
+  var ac = new google.maps.places.Autocomplete(input, {
+    types: ['(cities)'],
+    componentRestrictions: { country: 'us' },
+    fields: ['address_components', 'geometry', 'name']
+  });
+  ac.addListener('place_changed', function() {
+    var place = ac.getPlace();
+    if (!place || !place.geometry) return;
+    // Find locality (city) name from address components, falling back to place.name.
+    var cityName = place.name || '';
+    if (place.address_components) {
+      var loc = place.address_components.find(function(c){ return c.types.indexOf('locality') >= 0; });
+      if (loc) cityName = loc.long_name;
+    }
+    if (place.geometry.location && map) {
+      if (place.geometry.viewport) map.fitBounds(place.geometry.viewport);
+      else { map.panTo(place.geometry.location); map.setZoom(13); }
+    }
+    if (cityName) addCityFilter(cityName);
+  });
 }
 
 function renderMarkers() {
-  markers.forEach(function(m) { m.remove(); });
+  markers.forEach(function(m) { m.setMap(null); });
   markers = [];
-  if (!map) return;
+  if (!map || !window.google) return;
 
-  var bounds = new mapboxgl.LngLatBounds();
+  var bounds = new google.maps.LatLngBounds();
   var hasPoints = false;
 
   for (var i = 0; i < filteredListings.length; i++) {
@@ -2260,20 +2279,21 @@ function renderMarkers() {
       var l = filteredListings[idx];
       if (!l.Latitude || !l.Longitude) return;
       hasPoints = true;
-      bounds.extend([l.Longitude, l.Latitude]);
+      var pos = { lat: Number(l.Latitude), lng: Number(l.Longitude) };
+      bounds.extend(pos);
 
-      // Mapbox applies transform to `el` for positioning — never touch el's transform.
-      // Styling/scale goes on the inner child instead.
-      var el = document.createElement('div');
-      var inner = document.createElement('div');
       var price = Number(l.ListPrice || 0);
       var label = price >= 1000000
         ? '$' + (price / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
         : '$' + Math.round(price / 1000) + 'K';
-      inner.textContent = label;
-      inner.style.cssText = 'background:#C9A84C;color:#1A0E00;padding:5px 10px;border-radius:20px;font-size:12px;font-weight:700;font-family:sans-serif;cursor:pointer;white-space:nowrap;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35);transition:transform .15s,background .15s,color .15s;line-height:1;user-select:none;';
-      el.appendChild(inner);
-      el.title = l.UnparsedAddress || '';
+
+      var marker = new google.maps.Marker({
+        position: pos,
+        map: map,
+        title: l.UnparsedAddress || '',
+        icon: window.makePricePinIcon(label, false)
+      });
+      marker._labelText = label;
 
       var isLand = l.PropertySubType === 'Land';
       var content = '<div style="background:#1a1a1a;color:#eee;padding:12px;border-radius:8px;min-width:220px;font-family:sans-serif;">'
@@ -2287,91 +2307,32 @@ function renderMarkers() {
         + '<button onclick="goDetail(' + idx + ')" style="margin-top:8px;background:#C9A84C;color:#000;border:none;padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:12px;">View Details</button>'
         + '</div>';
 
-      var popup = new mapboxgl.Popup({ offset: 14, closeButton: false, maxWidth: '260px' }).setHTML(content);
-      var marker = new mapboxgl.Marker({ element: el })
-        .setLngLat([l.Longitude, l.Latitude])
-        .setPopup(popup)
-        .addTo(map);
+      marker.addListener('click', function() {
+        _mapInfoWindow.setContent(content);
+        _mapInfoWindow.open({ map: map, anchor: marker });
+      });
 
       markers.push(marker);
     })(i);
   }
 
-  if (hasPoints) map.fitBounds(bounds, { padding: 40, maxZoom: 15, duration: 0 });
+  if (hasPoints) map.fitBounds(bounds, 40);
 }
 
 function fitMarkers() {
-  if (!map || markers.length === 0) return;
-  var bounds = new mapboxgl.LngLatBounds();
-  markers.forEach(function(m) { bounds.extend(m.getLngLat()); });
-  map.fitBounds(bounds, { padding: 40, maxZoom: 15 });
+  if (!map || markers.length === 0 || !window.google) return;
+  var bounds = new google.maps.LatLngBounds();
+  markers.forEach(function(m) { bounds.extend(m.getPosition()); });
+  map.fitBounds(bounds, 40);
 }
 
-// Draw-to-filter via @mapbox/mapbox-gl-draw + turf
-var _drawCtl = null;
-var _drawPolygon = null; // active GeoJSON polygon filter
-function _initDrawControl() {
-  if (_drawCtl || !map || typeof MapboxDraw === 'undefined') return;
-  _drawCtl = new MapboxDraw({
-    displayControlsDefault: false,
-    styles: [
-      { id:'gl-draw-polygon-fill', type:'fill', filter:['all',['==','active','true'],['==','$type','Polygon']],
-        paint:{ 'fill-color':'#C9A84C','fill-opacity':0.15 } },
-      { id:'gl-draw-polygon-stroke-active', type:'line', filter:['all',['==','active','true'],['==','$type','Polygon']],
-        paint:{ 'line-color':'#C9A84C','line-width':2 } },
-      { id:'gl-draw-polygon-fill-inactive', type:'fill', filter:['all',['==','active','false'],['==','$type','Polygon']],
-        paint:{ 'fill-color':'#C9A84C','fill-opacity':0.10 } },
-      { id:'gl-draw-polygon-stroke-inactive', type:'line', filter:['all',['==','active','false'],['==','$type','Polygon']],
-        paint:{ 'line-color':'#C9A84C','line-width':1.5 } },
-      { id:'gl-draw-polygon-midpoint', type:'circle', filter:['all',['==','meta','midpoint'],['==','$type','Point']],
-        paint:{ 'circle-radius':3,'circle-color':'#C9A84C' } },
-      { id:'gl-draw-polygon-point', type:'circle', filter:['all',['==','meta','vertex'],['==','$type','Point']],
-        paint:{ 'circle-radius':5,'circle-color':'#C9A84C','circle-stroke-width':2,'circle-stroke-color':'#fff' } }
-    ]
-  });
-  map.addControl(_drawCtl);
-  map.on('draw.create', _onDrawDone);
-  map.on('draw.update', _onDrawDone);
-  map.on('draw.delete', _onDrawDeleted);
-}
-function _onDrawDone(e) {
-  var feat = e.features && e.features[0];
-  if (!feat || typeof turf === 'undefined') return;
-  _drawPolygon = feat;
-  var c = document.getElementById('drawCircleBtn'); if (c) c.classList.remove('active');
-  var r = document.getElementById('drawRectBtn'); if (r) r.classList.remove('active');
-  // Filter existing fetched listings to those inside the polygon
-  var inside = filteredListings.filter(function(l) {
-    if (!l.Latitude || !l.Longitude) return false;
-    var pt = turf.point([l.Longitude, l.Latitude]);
-    return turf.booleanPointInPolygon(pt, feat);
-  });
-  filteredListings = inside;
-  renderListings(1, false);
-  renderMarkers();
-  document.getElementById('listingCount').textContent = inside.length + ' home' + (inside.length !== 1 ? 's' : '') + ' in drawn area';
-  showToast(inside.length + ' homes in your drawn area');
-}
-function _onDrawDeleted() {
-  _drawPolygon = null;
-  applyClientFilters();
-}
+// Draw-to-filter is stubbed until re-implemented on Google Maps — the buttons
+// in the toolbar now just notify the user.
+var _drawPolygon = null;
 function startDraw(type) {
-  _initDrawControl();
-  if (!_drawCtl) { showToast('Draw tool loading…'); return; }
-  _drawCtl.deleteAll();
-  _drawPolygon = null;
-  _drawCtl.changeMode('draw_polygon');
-  var c = document.getElementById('drawCircleBtn');
-  var r = document.getElementById('drawRectBtn');
-  if (c) c.classList.remove('active');
-  if (r) r.classList.remove('active');
-  var active = (type === 'circle' ? c : r);
-  if (active) active.classList.add('active');
-  showToast(type === 'circle' ? 'Click to place points around the area; double-click to finish' : 'Click corners to draw; double-click to finish');
+  showToast('Draw filter temporarily unavailable — use "Search this area" instead.');
 }
 function clearDraw() {
-  if (_drawCtl) _drawCtl.deleteAll();
   _drawPolygon = null;
   var c = document.getElementById('drawCircleBtn'); if (c) c.classList.remove('active');
   var r = document.getElementById('drawRectBtn'); if (r) r.classList.remove('active');
@@ -2382,10 +2343,9 @@ function toggleSat() {
   if (!map) return;
   var btn = document.getElementById('satBtn');
   satelliteOn = !satelliteOn;
-  map.setStyle(satelliteOn ? 'mapbox://styles/mapbox/satellite-streets-v12' : 'mapbox://styles/mapbox/dark-v11');
+  map.setMapTypeId(satelliteOn ? 'hybrid' : 'roadmap');
+  map.setOptions({ styles: satelliteOn ? [] : (window.DARK_MAP_STYLE || []) });
   if (btn) btn.classList.toggle('active', satelliteOn);
-  // Re-add markers after style swap
-  map.once('styledata', function() { renderMarkers(); });
 }
 
 // ── SOCAL CITY + COUNTY AUTOCOMPLETE ───────────────────────────────
@@ -2728,10 +2688,8 @@ function addCountyFilter(countyName) {
   fetchListings();
 }
 
-// Initialize autocomplete when DOM is ready
-document.addEventListener('DOMContentLoaded', initSearchAutocomplete);
-// Also init after a short delay in case DOM loads dynamically
-setTimeout(initSearchAutocomplete, 500);
+// Google Places Autocomplete replaces the legacy SOCAL_PLACES dropdown — it is
+// wired up from initMap() after the Maps JS finishes loading.
 </script>
 </body>
 </html>

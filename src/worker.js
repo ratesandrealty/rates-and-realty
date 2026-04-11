@@ -1,6 +1,6 @@
 /**
- * Cloudflare Worker entry — serves /api/env.js dynamically so secrets
- * (MAPBOX_TOKEN) come from Cloudflare bindings instead of git.
+ * Cloudflare Worker entry — serves /api/env.js and /config dynamically so
+ * secrets come from Cloudflare bindings instead of git.
  * Also blocks access to sensitive paths that were accidentally uploaded.
  */
 const BLOCKED_PREFIXES = [
@@ -47,8 +47,7 @@ export default {
         SUPABASE_URL: env.SUPABASE_URL || '',
         SUPABASE_ANON_KEY: env.SUPABASE_ANON_KEY || '',
         ADMIN_EMAILS: adminEmails,
-        ADMIN_USER_IDS: [],
-        MAPBOX_TOKEN: env.MAPBOX_TOKEN || ''
+        ADMIN_USER_IDS: []
       };
 
       return new Response(
@@ -56,6 +55,20 @@ export default {
         {
           headers: {
             'content-type': 'application/javascript; charset=utf-8',
+            'cache-control': 'no-store'
+          }
+        }
+      );
+    }
+
+    // Google Maps API key — served to the browser at runtime so it stays in
+    // Cloudflare secrets instead of git.
+    if (path === '/config') {
+      return new Response(
+        JSON.stringify({ googleMapsApiKey: env.GOOGLE_MAPS_API_KEY || '' }),
+        {
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store'
           }
         }

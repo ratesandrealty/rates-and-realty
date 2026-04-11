@@ -1,23 +1,96 @@
 /**
- * Shared Mapbox GL map controls for CRM pages.
- * Adds a vertical control stack to the top-left of any map:
- *   1. Satellite / street-view style toggle
- *   2. Street View (opens Google Maps street view in a new tab)
- *   3. Locate Me (browser geolocation → pulsing blue dot)
+ * Google Maps JS API loader + shared map helpers.
  *
- * Usage: call window.addAllMapControls(mapInstance) after creating a
- * mapboxgl.Map. Safe to call before or after the 'load' event.
+ * Exposes:
+ *   window.loadGoogleMaps()        — promise resolving when the Maps JS is ready
+ *   window.DARK_MAP_STYLE          — style array approximating the old Mapbox dark theme
+ *   window.makePricePinIcon(text)  — google.maps.Icon for a gold price pill
+ *   window.addAllMapControls(map)  — adds satellite / street-view / locate-me overlay buttons
  *
- * Notes:
- * - setStyle() does NOT remove mapboxgl.Marker instances (they are DOM
- *   elements attached to the marker-container), only style-owned layers.
- * - After a style change, the map fires a 'style-changed' custom event.
- *   Pages that use map.addSource / map.addLayer should re-add them in a
- *   handler: map.on('style-changed', () => { /* re-add layers *\/ }).
+ * The API key is fetched from the Cloudflare worker's /config endpoint so it
+ * never lives in git.
  */
 (function(){
-  var DARK_STYLE = 'mapbox://styles/mapbox/dark-v11';
-  var SATELLITE_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12';
+  var _loadPromise = null;
+
+  window.loadGoogleMaps = function() {
+    if (window.google && window.google.maps) return Promise.resolve(window.google.maps);
+    if (_loadPromise) return _loadPromise;
+    _loadPromise = (async function() {
+      var res = await fetch('/config');
+      if (!res.ok) throw new Error('Failed to load /config');
+      var cfg = await res.json();
+      var key = cfg.googleMapsApiKey;
+      if (!key) throw new Error('googleMapsApiKey missing from /config');
+      await new Promise(function(resolve, reject) {
+        var s = document.createElement('script');
+        s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&libraries=places&v=weekly';
+        s.async = true;
+        s.defer = true;
+        s.onload = resolve;
+        s.onerror = function() { reject(new Error('Google Maps script failed to load')); };
+        document.head.appendChild(s);
+      });
+      return window.google.maps;
+    })();
+    return _loadPromise;
+  };
+
+  // Dark basemap styles — gold-tinted dark theme for the main UI.
+  window.DARK_MAP_STYLE = [
+    { elementType: 'geometry', stylers: [{ color: '#1d1d1d' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#1d1d1d' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#8a8a8a' }] },
+    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#b0b0b0' }] },
+    { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b6b' }] },
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#1f2a1f' }] },
+    { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#4d6b4d' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a2a' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#151515' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#9a9a9a' }] },
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a3a3a' }] },
+    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1a1a1a' }] },
+    { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#c9a84c' }] },
+    { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2a2a2a' }] },
+    { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#8a8a8a' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1a24' }] },
+    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4d6f85' }] }
+  ];
+
+  // SVG gold price pill used as a google.maps.Marker icon.
+  window.makePricePinIcon = function(text, highlighted) {
+    var label = String(text || '');
+    var w = Math.max(46, label.length * 8 + 18);
+    var h = 24;
+    var fill = highlighted ? '#ffffff' : '#C9A84C';
+    var fg = highlighted ? '#C9A84C' : '#1A0E00';
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">'
+      + '<rect x="1" y="1" width="' + (w - 2) + '" height="' + (h - 2) + '" rx="12" ry="12" fill="' + fill + '" stroke="#ffffff" stroke-width="2"/>'
+      + '<text x="' + (w / 2) + '" y="16" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" font-weight="700" fill="' + fg + '">' + label + '</text>'
+      + '</svg>';
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      anchor: new google.maps.Point(w / 2, h / 2),
+      scaledSize: new google.maps.Size(w, h)
+    };
+  };
+
+  // Subject-property pill (slightly larger, non-interactive styling).
+  window.makeSubjectPinIcon = function(text) {
+    var label = String(text || '\u2022');
+    var w = Math.max(52, label.length * 9 + 20);
+    var h = 28;
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">'
+      + '<rect x="1" y="1" width="' + (w - 2) + '" height="' + (h - 2) + '" rx="14" ry="14" fill="#C9A84C" stroke="#ffffff" stroke-width="2"/>'
+      + '<text x="' + (w / 2) + '" y="19" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="#111">' + label + '</text>'
+      + '</svg>';
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      anchor: new google.maps.Point(w / 2, h),
+      scaledSize: new google.maps.Size(w, h)
+    };
+  };
+
   var BTN_CSS = 'width:34px;height:34px;border:none;border-radius:6px;background:#1a1a1a;color:#fff;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.4);font-family:system-ui,sans-serif;padding:0;line-height:1;';
 
   function makeBtn(title, label) {
@@ -35,12 +108,10 @@
     var isSatellite = false;
     btn.addEventListener('click', function() {
       isSatellite = !isSatellite;
-      map.setStyle(isSatellite ? SATELLITE_STYLE : DARK_STYLE);
+      map.setMapTypeId(isSatellite ? 'hybrid' : 'roadmap');
+      map.setOptions({ styles: isSatellite ? [] : (window.DARK_MAP_STYLE || []) });
       btn.innerHTML = isSatellite ? '\uD83D\uDDFA\uFE0F' : '\uD83D\uDEF0\uFE0F';
       btn.title = isSatellite ? 'Switch to street view' : 'Switch to satellite';
-      map.once('styledata', function() {
-        map.fire('style-changed', { satellite: isSatellite });
-      });
     });
     container.appendChild(btn);
   }
@@ -49,18 +120,14 @@
     var btn = makeBtn('Street View', '\uD83D\uDEB6');
     btn.addEventListener('click', function() {
       var c = map.getCenter();
-      var lat = c.lat.toFixed(6);
-      var lng = c.lng.toFixed(6);
-      // Fallback while GCP Maps key is unavailable: open Google Maps street
-      // view in a new tab (layer=c enables pegman/Streetside pane).
-      var url = 'https://www.google.com/maps?q=' + lat + ',' + lng +
-                '&layer=c&cbll=' + lat + ',' + lng;
+      var lat = c.lat().toFixed(6);
+      var lng = c.lng().toFixed(6);
+      var url = 'https://www.google.com/maps?q=' + lat + ',' + lng + '&layer=c&cbll=' + lat + ',' + lng;
       window.open(url, '_blank', 'noopener,noreferrer');
     });
     container.appendChild(btn);
   }
 
-  // Inject @keyframes pulse once per page
   function ensurePulseKeyframes() {
     if (document.getElementById('mapCtrlPulseStyle')) return;
     var s = document.createElement('style');
@@ -73,25 +140,28 @@
     var btn = makeBtn('Show my location', '\uD83D\uDCCD');
     var locationMarker = null;
     btn.addEventListener('click', function() {
-      if (!navigator.geolocation) {
-        alert('Geolocation not supported by your browser.');
-        return;
-      }
+      if (!navigator.geolocation) { alert('Geolocation not supported by your browser.'); return; }
       var orig = btn.innerHTML;
       btn.innerHTML = '\u231B';
       btn.disabled = true;
       navigator.geolocation.getCurrentPosition(function(pos) {
         var lat = pos.coords.latitude;
         var lng = pos.coords.longitude;
-        map.flyTo({ center: [lng, lat], zoom: 15, speed: 1.4 });
-        if (locationMarker) { try { locationMarker.remove(); } catch(e){} }
+        map.panTo({ lat: lat, lng: lng });
+        map.setZoom(15);
+        if (locationMarker) { try { locationMarker.setMap(null); } catch(e){} }
         ensurePulseKeyframes();
-        var dot = document.createElement('div');
-        dot.style.cssText = 'width:18px;height:18px;border-radius:50%;background:#4285F4;border:3px solid #fff;box-shadow:0 0 0 0 rgba(66,133,244,0.55);animation:mapCtrlPulse 2s infinite;';
-        locationMarker = new mapboxgl.Marker({ element: dot })
-          .setLngLat([lng, lat])
-          .setPopup(new mapboxgl.Popup({offset:20,closeButton:false}).setHTML('<div style="color:#000;font-size:12px;padding:4px;font-family:sans-serif">Your location</div>'))
-          .addTo(map);
+        var dotSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><circle cx="11" cy="11" r="7" fill="#4285F4" stroke="#ffffff" stroke-width="3"/></svg>';
+        locationMarker = new google.maps.Marker({
+          position: { lat: lat, lng: lng },
+          map: map,
+          title: 'Your location',
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(dotSvg),
+            anchor: new google.maps.Point(11, 11),
+            scaledSize: new google.maps.Size(22, 22)
+          }
+        });
         btn.innerHTML = orig;
         btn.disabled = false;
       }, function(err) {
@@ -105,21 +175,20 @@
   }
 
   function mount(map) {
-    // Avoid double-mounting
     if (map._crmControlsMounted) return;
     map._crmControlsMounted = true;
     var container = document.createElement('div');
     container.className = 'crm-map-controls';
-    container.style.cssText = 'position:absolute;top:10px;left:10px;z-index:5;display:flex;flex-direction:column;gap:4px;';
-    map.getContainer().appendChild(container);
+    container.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:10px;';
     addSatelliteToggle(map, container);
     addStreetViewBtn(map, container);
     addLocateBtn(map, container);
+    map.controls[google.maps.ControlPosition.LEFT_TOP].push(container);
   }
 
   window.addAllMapControls = function(map) {
     if (!map) return;
-    if (map.loaded && map.loaded()) { mount(map); return; }
-    map.once('load', function(){ mount(map); });
+    if (window.google && window.google.maps) { mount(map); return; }
+    window.loadGoogleMaps().then(function(){ mount(map); });
   };
 })();
