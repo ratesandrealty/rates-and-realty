@@ -1,4 +1,4 @@
-// admin-dashboard.js v20260411b
+// admin-dashboard.js v20260411c
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
   if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_URL) {
@@ -26,7 +26,7 @@ import {
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks
-} from "/api/admin-api-v2.js?v=20260411b";
+} from "/api/admin-api-v2.js?v=20260411c";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
@@ -1008,8 +1008,9 @@ const GDRIVE_OAUTH_CLIENT_ID = "17691954677-9e7d3rjur37pt5uvb3joordt5qs1usl1.app
 const GDRIVE_OAUTH_SCOPE = "https://www.googleapis.com/auth/drive";
 
 let _fvContacts = [];
-let _fvFilter = "";
-let _fvExpanded = new Set();
+let _fvFilter = "";               // borrower search
+let _fvFileFilter = "";           // doc-type filter pill (empty = All)
+let _fvSelectedContactId = null;  // currently-selected borrower in left column
 let _fvFileCounts = {};
 let _fvFiles = {};
 let _fvViewerState = null; // { contactId, files, index, keyHandler }
@@ -1075,16 +1076,121 @@ function _fvClearToken() {
 async function renderDocuments() {
   const el = document.getElementById("admin-document-table");
   if (!el) return;
-  el.innerHTML = '<div style="grid-column:1/-1;padding:32px;text-align:center;color:var(--muted);font-size:.9rem;"><i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i>Loading borrowers…</div>';
-  await _fvLoadContacts();
+
+  // One-time style block for pill / card hover states.
+  if (!document.getElementById("fv-style")) {
+    const s = document.createElement("style");
+    s.id = "fv-style";
+    s.textContent = `
+      .fv-filter-pill{background:transparent;border:1px solid #2a2a2a;color:#888;font-size:12px;padding:4px 12px;border-radius:20px;cursor:pointer;transition:all .15s;font-family:inherit;}
+      .fv-filter-pill:hover{border-color:#C9A84C44;color:#aaa;}
+      .fv-filter-pill.active{background:#C9A84C22;border-color:#C9A84C;color:#C9A84C;}
+      .fv-borrower-card:hover{border-color:#C9A84C44!important;}
+      .fv-borrower-card.active{border-color:#C9A84C!important;background:#1a1a14!important;}
+      .fv-file-row:hover{background:#161616!important;}
+      @keyframes fvSpin{to{transform:rotate(360deg);}}
+    `;
+    document.head.appendChild(s);
+  }
+
+  // Build the split shell ONCE — subsequent renders only touch child nodes.
+  el.className = "";
+  el.innerHTML = `
+    <div id="fv-root" style="display:flex;height:calc(100vh - 240px);min-height:600px;background:#0a0a0a;border-radius:12px;overflow:hidden;border:1px solid #1e1e1e;">
+      <div id="fv-left" style="width:340px;flex-shrink:0;border-right:1px solid #1e1e1e;display:flex;flex-direction:column;overflow:hidden;">
+        <div style="padding:14px 16px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span style="color:#e0e0e0;font-size:14px;font-weight:500;">Borrowers</span>
+          <button id="fv-upload-trigger" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit;">+ Upload</button>
+        </div>
+        <div id="fv-borrower-list" style="flex:1;overflow-y:auto;padding:12px;"></div>
+        <div style="padding:12px;border-top:1px solid #1e1e1e;">
+          <div id="fv-dropzone" style="border:1.5px dashed #C9A84C33;border-radius:10px;padding:20px;text-align:center;cursor:pointer;background:#0d0d0d;transition:border-color .2s, background .2s;">
+            <div style="font-size:24px;">&#128206;</div>
+            <div style="color:#666;font-size:12px;margin-top:6px;">Drop files or <span style="color:#C9A84C;">browse</span></div>
+            <div style="color:#444;font-size:10px;margin-top:2px;">Select a borrower first</div>
+            <input type="file" id="fv-file-input" multiple accept=".pdf,image/*" style="display:none;">
+          </div>
+          <div id="fv-upload-status" style="margin-top:8px;"></div>
+        </div>
+      </div>
+      <div id="fv-right" style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0d0d0d;min-width:0;"></div>
+    </div>
+  `;
+
   _fvBindSearch();
-  _fvRenderGrid();
-  // Lazy-refresh file counts for contacts that already have folders
+  _fvBindLeftPanel();
+
+  // Placeholder in right panel until a borrower is picked.
+  _fvRenderRightPlaceholder("Select a borrower to view files");
+
+  await _fvLoadContacts();
+  _fvRenderBorrowerList();
+
+  // Lazy-refresh file counts so each borrower card shows accurate badge.
   _fvContacts.forEach((c) => {
     if (c.gdrive_folder_id && _fvFileCounts[c.gdrive_folder_id] == null) {
       _fvRefreshCount(c.id, c.gdrive_folder_id);
     }
   });
+}
+
+function _fvRenderRightPlaceholder(msg) {
+  const right = document.getElementById("fv-right");
+  if (!right) return;
+  right.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#555;font-size:.9rem;">${_fvEscape(msg || "")}</div>`;
+}
+
+function _fvBindLeftPanel() {
+  const uploadBtn = document.getElementById("fv-upload-trigger");
+  const dropzone = document.getElementById("fv-dropzone");
+  const input = document.getElementById("fv-file-input");
+
+  if (uploadBtn) {
+    uploadBtn.onclick = () => {
+      if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
+      if (input) input.click();
+    };
+  }
+
+  if (dropzone) {
+    dropzone.onclick = (e) => {
+      // Don't bounce the click from inside file input
+      if (e.target && e.target.id === "fv-file-input") return;
+      if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
+      if (input) input.click();
+    };
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = "#C9A84C";
+      dropzone.style.background = "rgba(201,168,76,0.08)";
+    });
+    dropzone.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = "#C9A84C33";
+      dropzone.style.background = "#0d0d0d";
+    });
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = "#C9A84C33";
+      dropzone.style.background = "#0d0d0d";
+      if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
+      const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
+      if (contact && e.dataTransfer && e.dataTransfer.files.length) {
+        _fvUploadFiles(contact, e.dataTransfer.files);
+      }
+    });
+  }
+
+  if (input) {
+    input.onchange = () => {
+      if (!_fvSelectedContactId) return;
+      const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
+      if (contact && input.files && input.files.length) {
+        _fvUploadFiles(contact, input.files);
+      }
+      input.value = "";
+    };
+  }
 }
 
 async function _fvLoadContacts() {
@@ -1108,7 +1214,7 @@ function _fvBindSearch() {
   inp._fvBound = true;
   inp.addEventListener("input", (e) => {
     _fvFilter = (e.target.value || "").trim().toLowerCase();
-    _fvRenderGrid();
+    _fvRenderBorrowerList();
   });
 }
 
@@ -1134,9 +1240,9 @@ function _fvInitials(c) {
   return (((c.first_name || "").charAt(0) + (c.last_name || "").charAt(0)).toUpperCase()) || "?";
 }
 
-function _fvRenderGrid() {
-  const el = document.getElementById("admin-document-table");
-  if (!el) return;
+function _fvRenderBorrowerList() {
+  const listEl = document.getElementById("fv-borrower-list");
+  if (!listEl) return;
   const summary = document.getElementById("fv-summary");
   if (summary) {
     const withFolder = _fvContacts.filter((c) => c.gdrive_folder_id).length;
@@ -1149,75 +1255,77 @@ function _fvRenderGrid() {
   }
   const list = _fvFiltered();
   if (!list.length) {
-    el.innerHTML = '<div style="grid-column:1/-1;padding:32px;text-align:center;color:var(--muted);font-size:.9rem;">No borrowers match your search.</div>';
+    listEl.innerHTML = '<div style="padding:24px 8px;text-align:center;color:#555;font-size:.85rem;">No borrowers match your search.</div>';
     return;
   }
-  el.innerHTML = list.map(_fvCardHtml).join("");
-  el.querySelectorAll("[data-fv-action]").forEach((btn) => {
-    btn.addEventListener("click", _fvHandleAction);
+  listEl.innerHTML = list.map(_fvBorrowerCardHtml).join("");
+  listEl.querySelectorAll("[data-fv-borrower]").forEach((card) => {
+    card.onclick = (e) => {
+      // Let the Drive-folder link handle its own click and stop propagation
+      if (e.target && e.target.closest && e.target.closest("[data-fv-drive-link]")) return;
+      const id = card.dataset.fvBorrower;
+      const contact = _fvContacts.find((c) => String(c.id) === String(id));
+      if (contact) _fvSelectBorrower(contact);
+    };
   });
-  // Re-populate file lists for any expanded cards
-  list.forEach((c) => {
-    if (_fvExpanded.has(c.id) && c.gdrive_folder_id) _fvRenderFileList(c);
+  listEl.querySelectorAll("[data-fv-create]").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.fvCreate;
+      const contact = _fvContacts.find((c) => String(c.id) === String(id));
+      if (contact) _fvCreateFolder(contact, btn);
+    };
   });
 }
 
-function _fvCardHtml(c) {
+function _fvBorrowerCardHtml(c) {
   const name = `${c.first_name || ""} ${c.last_name || ""}`.trim() || "Unnamed";
   const initials = _fvInitials(c);
   const pipeline = c.pipeline_status || "New Lead";
   const pipeColor = _fvPipelineColor(pipeline);
-  const expanded = _fvExpanded.has(c.id);
   const hasFolder = !!c.gdrive_folder_id;
-  const count = hasFolder ? (_fvFileCounts[c.gdrive_folder_id] ?? "…") : "";
+  const count = hasFolder ? (_fvFileCounts[c.gdrive_folder_id] ?? "…") : 0;
+  const isActive = String(c.id) === String(_fvSelectedContactId);
 
-  let footer;
-  if (hasFolder) {
-    footer = `
-      <div style="display:flex;gap:8px;margin-top:12px;">
-        <button data-fv-action="toggle" data-id="${c.id}" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:8px;padding:8px 12px;font-size:.78rem;font-weight:600;cursor:pointer;">
-          <i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${expanded ? "Hide Files" : "View Files"} (${count})
-        </button>
-        <a href="/admin/lead-detail.html?id=${c.id}" title="Open contact" style="background:#1a1a1a;border:1px solid #333;color:var(--muted);border-radius:8px;padding:8px 12px;font-size:.78rem;font-weight:600;text-decoration:none;">Lead →</a>
-      </div>
-      ${expanded ? `<div id="fv-files-${c.id}" style="margin-top:12px;border-top:1px solid #222;padding-top:12px;"></div>` : ""}
-    `;
-  } else {
-    footer = `
-      <div style="display:flex;gap:8px;margin-top:12px;">
-        <button data-fv-action="create" data-id="${c.id}" style="flex:1;background:#C9A84C;color:#111;border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:.78rem;cursor:pointer;font-family:inherit;">
-          <i class="fa-solid fa-folder-plus" style="margin-right:5px;"></i>Create Folder
-        </button>
-        <a href="/admin/lead-detail.html?id=${c.id}" style="background:#1a1a1a;border:1px solid #333;color:var(--muted);border-radius:8px;padding:9px 14px;font-size:.78rem;font-weight:600;text-decoration:none;">Lead →</a>
-      </div>
-    `;
-  }
+  const folderLink = c.gdrive_folder_url
+    ? `<a href="${_fvEscape(c.gdrive_folder_url)}" target="_blank" rel="noopener" data-fv-drive-link onclick="event.stopPropagation()" style="color:#C9A84C77;font-size:16px;text-decoration:none;flex-shrink:0;padding:4px;" title="Open Drive folder">&#128193;</a>`
+    : `<button type="button" data-fv-create="${_fvEscape(c.id)}" title="Create folder" style="background:transparent;border:1px solid #C9A84C44;color:#C9A84C;font-size:10px;padding:3px 8px;border-radius:12px;cursor:pointer;flex-shrink:0;font-family:inherit;">+ folder</button>`;
 
   return `
-    <article class="crm-record-card" data-fv-card="${c.id}" style="padding:16px;">
-      <div style="display:flex;gap:12px;align-items:flex-start;">
-        <div style="flex-shrink:0;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#C9A84C,#8c6e23);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.95rem;color:#111;">${initials}</div>
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
-            <strong style="font-size:.95rem;color:#eee;">${name}</strong>
-            <span style="background:${pipeColor}22;color:${pipeColor};border:1px solid ${pipeColor}55;padding:2px 8px;border-radius:10px;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">${pipeline}</span>
-          </div>
-          <div style="font-size:.76rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.email || "—"}</div>
+    <div class="fv-borrower-card${isActive ? ' active' : ''}" data-fv-borrower="${_fvEscape(c.id)}" style="background:#161616;border:1px solid #2a2a2a;border-radius:10px;padding:14px;margin-bottom:8px;cursor:pointer;transition:border-color .15s;display:flex;align-items:center;gap:12px;">
+      <div style="width:40px;height:40px;border-radius:50%;background:#C9A84C22;border:1px solid #C9A84C44;display:flex;align-items:center;justify-content:center;color:#C9A84C;font-size:13px;font-weight:600;flex-shrink:0;">${_fvEscape(initials)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="color:#e8e8e8;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_fvEscape(name)}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
+          <span style="font-size:10px;padding:2px 7px;border-radius:20px;background:${pipeColor}22;color:${pipeColor};font-weight:500;text-transform:uppercase;letter-spacing:.4px;">${_fvEscape(pipeline)}</span>
+          <span class="fv-borrower-count" data-fv-count="${_fvEscape(c.id)}" style="font-size:11px;color:#555;">${hasFolder ? count + ' files' : 'no folder'}</span>
         </div>
       </div>
-      ${footer}
-    </article>
+      ${folderLink}
+    </div>
   `;
 }
 
-async function _fvHandleAction(e) {
-  const btn = e.currentTarget;
-  const action = btn.dataset.fvAction;
-  const id = btn.dataset.id;
-  const contact = _fvContacts.find((c) => String(c.id) === String(id));
-  if (!contact) return;
-  if (action === "create") return _fvCreateFolder(contact, btn);
-  if (action === "toggle") return _fvToggleFiles(contact);
+// Click handler: select a borrower → load files → render file list on right.
+async function _fvSelectBorrower(contact) {
+  _fvSelectedContactId = contact.id;
+  _fvFileFilter = "";
+  // Mark the active card
+  document.querySelectorAll(".fv-borrower-card").forEach((card) => {
+    card.classList.toggle("active", card.dataset.fvBorrower === String(contact.id));
+  });
+  if (!contact.gdrive_folder_id) {
+    _fvRenderRightPlaceholder("No Drive folder linked for this borrower. Create one or upload a file.");
+    return;
+  }
+  // Loading state
+  const right = document.getElementById("fv-right");
+  if (right) right.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#666;font-size:.85rem;"><span style="width:18px;height:18px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;margin-right:10px;"></span>Loading files…</div>`;
+  await _fvLoadFiles(contact.gdrive_folder_id);
+  _fvRenderRightFileList(contact);
+  // Update the current borrower's file count pill in the left list.
+  const countSpan = document.querySelector(`[data-fv-count="${contact.id}"]`);
+  if (countSpan) countSpan.textContent = (_fvFileCounts[contact.gdrive_folder_id] || 0) + " files";
 }
 
 // Upload a File/Blob directly to Drive using the OAuth token (no proxy).
@@ -1345,17 +1453,15 @@ async function _fvUploadFiles(contact, files) {
   if (!files || !files.length) return;
 
   const folderId = contact.gdrive_folder_id;
-  const zone = document.getElementById(`fv-dropzone-${contact.id}`);
-  const status = document.getElementById(`fv-upload-status-${contact.id}`);
-  if (zone) { zone.dataset.fvBusy = "1"; zone.style.pointerEvents = "none"; zone.style.opacity = "0.75"; }
+  // Single upload-status element in the left panel.
+  const status = document.getElementById("fv-upload-status");
 
-  // Seed status list with one row per file.
   const list = Array.from(files);
   const rowIds = list.map((_, i) => `fv-u-${contact.id}-${Date.now()}-${i}`);
   if (status) {
     status.innerHTML = list.map((f, i) => `
-      <div id="${rowIds[i]}" style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;margin-bottom:4px;font-size:.75rem;color:#eee;">
-        <i class="fa-solid fa-spinner fa-spin" style="color:#C9A84C;"></i>
+      <div id="${rowIds[i]}" style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:6px;margin-bottom:4px;font-size:.72rem;color:#eee;">
+        <span style="width:10px;height:10px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;flex-shrink:0;"></span>
         <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Uploading ${(f.name || "file").replace(/</g, "&lt;")}…</span>
       </div>
     `).join("");
@@ -1378,14 +1484,14 @@ async function _fvUploadFiles(contact, files) {
     if (row) {
       if (result && result.ok) {
         row.innerHTML = `
-          <i class="fa-solid fa-check" style="color:#52C87A;"></i>
-          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#cfe7d7;">✓ ${((result.name) || file.name || "file").replace(/</g, "&lt;")}</span>
+          <span style="color:#52C87A;flex-shrink:0;">✓</span>
+          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#cfe7d7;">${((result.name) || file.name || "file").replace(/</g, "&lt;")}</span>
         `;
       } else {
         const errMsg = (result && result.error) || "unknown";
         row.innerHTML = `
-          <i class="fa-solid fa-xmark" style="color:#E05252;"></i>
-          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f0bdbd;" title="${errMsg.replace(/"/g, "&quot;")}">✗ ${(file.name || "file").replace(/</g, "&lt;")}</span>
+          <span style="color:#E05252;flex-shrink:0;">✗</span>
+          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f0bdbd;" title="${String(errMsg).replace(/"/g, "&quot;")}">${(file.name || "file").replace(/</g, "&lt;")}</span>
         `;
       }
     }
@@ -1395,67 +1501,23 @@ async function _fvUploadFiles(contact, files) {
       console.error("[FileVault] upload failed:", file.name, result && result.error);
     }
 
-    // Refresh the Drive listing after EACH file so a mid-batch failure
-    // doesn't leave the list stale.
+    // Refresh the Drive listing + right panel after each file.
     await _fvLoadFiles(folderId);
+    if (String(_fvSelectedContactId) === String(contact.id)) {
+      _fvRenderRightFileList(contact);
+    }
   }
 
   _fvShowToast(failCount ? `${okCount} uploaded, ${failCount} failed` : `${okCount} uploaded ✓`);
 
-  const card = document.querySelector(`[data-fv-card="${contact.id}"]`);
-  const toggle = card?.querySelector('[data-fv-action="toggle"]');
-  if (toggle) {
-    const label = _fvExpanded.has(contact.id) ? "Hide Files" : "View Files";
-    toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[folderId] ?? 0})`;
-  }
-  _fvRenderFileList(contact);
+  // Update left-list file count pill for this borrower.
+  const countSpan = document.querySelector(`[data-fv-count="${contact.id}"]`);
+  if (countSpan) countSpan.textContent = (_fvFileCounts[folderId] || 0) + " files";
 }
 
-function _fvBindDropzone(contact) {
-  const zone = document.getElementById(`fv-dropzone-${contact.id}`);
-  if (!zone || zone._fvBound) return;
-  zone._fvBound = true;
-
-  const baseBorder = "2px dashed #C9A84C";
-  const activeBorder = "2px solid #C9A84C";
-  const baseBg = "rgba(201,168,76,0.06)";
-  const activeBg = "rgba(201,168,76,0.18)";
-
-  zone.addEventListener("click", () => {
-    if (zone.dataset.fvBusy) return;
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    input.style.display = "none";
-    input.addEventListener("change", () => {
-      const files = input.files;
-      input.remove();
-      if (files && files.length) _fvUploadFiles(contact, files);
-    });
-    document.body.appendChild(input);
-    input.click();
-  });
-
-  zone.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    if (zone.dataset.fvBusy) return;
-    zone.style.border = activeBorder;
-    zone.style.background = activeBg;
-  });
-  zone.addEventListener("dragleave", (e) => {
-    e.preventDefault();
-    zone.style.border = baseBorder;
-    zone.style.background = baseBg;
-  });
-  zone.addEventListener("drop", (e) => {
-    e.preventDefault();
-    zone.style.border = baseBorder;
-    zone.style.background = baseBg;
-    if (zone.dataset.fvBusy) return;
-    const files = e.dataTransfer && e.dataTransfer.files;
-    if (files && files.length) _fvUploadFiles(contact, files);
-  });
-}
+// Dropzone is now wired once in _fvBindLeftPanel() against the single
+// #fv-dropzone in the left column. No per-card dropzones.
+function _fvBindDropzone(_contact) { /* no-op — see _fvBindLeftPanel() */ }
 
 async function _fvCreateFolder(contact, btn) {
   btn.disabled = true;
@@ -1497,8 +1559,8 @@ async function _fvCreateFolder(contact, btn) {
     contact.gdrive_folder_url = folderUrl;
     _fvFileCounts[folderId] = 0;
     _fvFiles[folderId] = [];
-    _fvExpanded.add(contact.id);
-    _fvRenderGrid();
+    _fvRenderBorrowerList();
+    _fvSelectBorrower(contact);
     _fvShowToast("Folder created ✓");
   } catch (e) {
     console.error("[FileVault] create folder failed:", e);
@@ -1508,16 +1570,9 @@ async function _fvCreateFolder(contact, btn) {
   }
 }
 
-async function _fvToggleFiles(contact) {
-  const wasOpen = _fvExpanded.has(contact.id);
-  if (wasOpen) _fvExpanded.delete(contact.id);
-  else _fvExpanded.add(contact.id);
-  _fvRenderGrid();
-  if (!wasOpen && contact.gdrive_folder_id) {
-    await _fvLoadFiles(contact.gdrive_folder_id);
-    _fvRenderFileList(contact);
-  }
-}
+// Legacy shim — old borrower card had an expand toggle. The new flow is
+// direct: click the borrower card → select it → load + show files.
+async function _fvToggleFiles(contact) { return _fvSelectBorrower(contact); }
 
 async function _fvLoadFiles(folderId) {
   try {
@@ -1544,12 +1599,8 @@ async function _fvLoadFiles(folderId) {
 
 async function _fvRefreshCount(contactId, folderId) {
   await _fvLoadFiles(folderId);
-  const card = document.querySelector(`[data-fv-card="${contactId}"]`);
-  const toggle = card?.querySelector('[data-fv-action="toggle"]');
-  if (toggle) {
-    const label = _fvExpanded.has(contactId) ? "Hide Files" : "View Files";
-    toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[folderId] ?? 0})`;
-  }
+  const countSpan = document.querySelector(`[data-fv-count="${contactId}"]`);
+  if (countSpan) countSpan.textContent = (_fvFileCounts[folderId] || 0) + " files";
 }
 
 function _fvFileIcon(mime) {
@@ -1599,105 +1650,112 @@ function _fvGoogleExportMime(mime) {
   return null;
 }
 
-function _fvRenderFileList(contact) {
-  const host = document.getElementById(`fv-files-${contact.id}`);
-  if (!host) return;
-  const files = _fvFiles[contact.gdrive_folder_id] || [];
-  const rows = files.length
-    ? files.map((f, idx) => {
-        const icon = _fvFileIcon(f.mimeType || "");
-        const size = _fvFormatSize(f.size);
-        const date = f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString() : "";
-        const nm = _fvEscape(f.name || "Untitled");
-        const showConvert = !_fvIsPdf(f);
-        const docType = _fvEscape((f.appProperties && f.appProperties.docType) || "");
-        return `
-          <div class="fv-row" data-fv-row="${f.id}" data-fv-index="${idx}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.02);margin-bottom:6px;color:#eee;border:1px solid rgba(255,255,255,0.04);transition:background .15s;" onmouseover="this.style.background='rgba(201,168,76,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
-            <i class="fa-solid ${icon}" style="color:#C9A84C;width:16px;text-align:center;flex-shrink:0;"></i>
-            <div style="flex:1;min-width:0;">
-              <div style="display:flex;align-items:center;gap:6px;min-width:0;">
-                <span class="fv-name" data-fv-view="${f.id}" style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;min-width:0;">${nm}</span>
-                <span class="fv-doc-type-badge" style="font-size:10px;color:#888;flex-shrink:0;">${docType}</span>
-              </div>
-              <div style="font-size:.68rem;color:var(--muted);">${size}${date ? " · " + date : ""}</div>
-            </div>
-            <button type="button" data-fv-rename="${f.id}" title="Rename" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 6px;font-size:.78rem;"><i class="fa-solid fa-pen"></i></button>
-            ${showConvert ? `<button type="button" data-fv-topdf="${f.id}" title="Convert to PDF" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 6px;font-size:.78rem;"><i class="fa-solid fa-file-pdf"></i></button>` : ""}
-            <div style="position:relative;">
-              <button type="button" data-fv-menu="${f.id}" title="More" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 8px;font-size:.9rem;"><i class="fa-solid fa-ellipsis-vertical"></i></button>
-              <div id="fv-menu-${f.id}" class="fv-menu" style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#111;border:1px solid #2a2a2a;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.6);z-index:50;min-width:140px;overflow:hidden;">
-                <a href="${_fvEscape(f.webContentLink || f.webViewLink || "#")}" ${f.webContentLink ? "" : 'target="_blank" rel="noopener"'} style="display:block;padding:9px 12px;color:#eee;text-decoration:none;font-size:.78rem;border-bottom:1px solid #222;"><i class="fa-solid fa-download" style="margin-right:6px;color:#C9A84C;"></i>Download</a>
-                <button type="button" data-fv-delete="${f.id}" style="display:block;width:100%;text-align:left;background:none;border:none;padding:9px 12px;color:#f0bdbd;cursor:pointer;font-size:.78rem;font-family:inherit;"><i class="fa-solid fa-trash" style="margin-right:6px;"></i>Delete</button>
-              </div>
-            </div>
-          </div>
-        `;
-      }).join("")
-    : '<div style="padding:14px;text-align:center;color:var(--muted);font-size:.78rem;">No files yet.</div>';
+// Legacy shim — kept as alias so other call sites still compile.
+function _fvRenderFileList(contact) { _fvRenderRightFileList(contact); }
 
-  host.innerHTML = `
-    <div class="fv-file-list" data-fv-list="${contact.id}">${rows}</div>
-    <div id="fv-dropzone-${contact.id}" style="margin-top:12px;padding:18px 14px;border:2px dashed #C9A84C;background:rgba(201,168,76,0.06);border-radius:10px;text-align:center;cursor:pointer;transition:background .15s,border-color .15s;user-select:none;">
-      <i class="fa-solid fa-cloud-arrow-up" style="color:#C9A84C;font-size:1.35rem;display:block;margin-bottom:6px;"></i>
-      <div style="color:#eee;font-size:.82rem;font-weight:600;">Drop files here or click to browse</div>
-      <div style="color:var(--muted);font-size:.68rem;margin-top:3px;">Multi-file upload to Google Drive</div>
-    </div>
-    <div id="fv-upload-status-${contact.id}" style="margin-top:8px;"></div>
-    <div style="display:flex;gap:8px;margin-top:10px;">
-      <a href="${contact.gdrive_folder_url}" target="_blank" rel="noopener" style="flex:1;text-align:center;background:#1a1a1a;border:1px solid #333;color:var(--muted);border-radius:8px;padding:8px 12px;font-size:.75rem;font-weight:600;text-decoration:none;">Open in Drive →</a>
-    </div>
-  `;
-  _fvBindDropzone(contact);
-  _fvBindRowActions(contact);
+// Inline icon helpers for the new file list rows.
+function _fvMimeIconEmoji(mime) {
+  if (!mime) return "\uD83D\uDCC4"; // 📄
+  if (mime === "application/pdf") return "\uD83D\uDCC4";
+  if (mime.indexOf("image/") === 0) return "\uD83D\uDDBC\uFE0F"; // 🖼️
+  if (mime.indexOf("video/") === 0) return "\uD83C\uDFAC"; // 🎬
+  if (mime.indexOf("audio/") === 0) return "\uD83C\uDFB5"; // 🎵
+  if (mime.indexOf("word") >= 0 || mime.indexOf("google-apps.document") >= 0) return "\uD83D\uDCDD"; // 📝
+  if (mime.indexOf("sheet") >= 0 || mime.indexOf("excel") >= 0 || mime.indexOf("csv") >= 0 || mime.indexOf("google-apps.spreadsheet") >= 0) return "\uD83D\uDCCA"; // 📊
+  if (mime.indexOf("zip") >= 0 || mime.indexOf("compressed") >= 0) return "\uD83D\uDDC4\uFE0F"; // 🗄️
+  return "\uD83D\uDCC4";
 }
 
-function _fvBindRowActions(contact) {
-  const host = document.getElementById(`fv-files-${contact.id}`);
-  if (!host) return;
-  host.querySelectorAll("[data-fv-view]").forEach((el) => {
-    el.addEventListener("click", () => {
-      const fileId = el.dataset.fvView;
-      const files = _fvFiles[contact.gdrive_folder_id] || [];
+// Render the file list into the RIGHT panel (#fv-right).
+function _fvRenderRightFileList(contact) {
+  const right = document.getElementById("fv-right");
+  if (!right) return;
+  const files = _fvFiles[contact.gdrive_folder_id] || [];
+
+  const pillKeys = [
+    ["", "All"],
+    ["Pay Stubs", "Pay Stubs"],
+    ["W-2 / Tax Returns", "W-2"],
+    ["Bank Statements", "Bank Stmts"],
+    ["Photo ID", "Gov ID"],
+    ["Insurance Policy", "Insurance"],
+    ["Other", "Other"]
+  ];
+  const pillsHtml = pillKeys.map(([val, label]) => `
+    <button class="fv-filter-pill${_fvFileFilter === val ? ' active' : ''}" data-fv-pill="${_fvEscape(val)}">${_fvEscape(label)}</button>
+  `).join("");
+
+  const filteredFiles = _fvFileFilter
+    ? files.filter((f) => (f.appProperties && f.appProperties.docType) === _fvFileFilter)
+    : files;
+
+  const rowsHtml = filteredFiles.length
+    ? filteredFiles.map((f) => _fvFileRowHtml(f)).join("")
+    : `<div style="padding:40px 20px;text-align:center;color:#555;font-size:.85rem;">${files.length ? "No files match this filter" : "No files yet — drop files in the left panel to upload"}</div>`;
+
+  right.innerHTML = `
+    <div style="display:flex;gap:8px;padding:14px 16px;flex-wrap:wrap;border-bottom:1px solid #1e1e1e;align-items:center;">
+      ${pillsHtml}
+      <a id="fv-open-drive" href="${_fvEscape(contact.gdrive_folder_url || '#')}" target="_blank" rel="noopener" style="margin-left:auto;color:#C9A84C;font-size:12px;text-decoration:none;padding:4px 12px;border:1px solid #C9A84C44;border-radius:20px;white-space:nowrap;">&#128193; Open in Drive</a>
+    </div>
+    <div id="fv-file-list" style="flex:1;overflow-y:auto;">${rowsHtml}</div>
+  `;
+
+  // Wire filter pills
+  right.querySelectorAll("[data-fv-pill]").forEach((pill) => {
+    pill.onclick = () => {
+      _fvFileFilter = pill.dataset.fvPill;
+      _fvRenderRightFileList(contact);
+    };
+  });
+
+  // Wire file row actions
+  right.querySelectorAll("[data-fv-row]").forEach((row) => {
+    const fileId = row.dataset.fvRow;
+    row.onclick = (e) => {
+      if (e.target && e.target.closest && e.target.closest("[data-fv-action]")) return; // action buttons stop bubbling
       const idx = files.findIndex((f) => f.id === fileId);
       if (idx >= 0) _fvOpenViewer(contact, files, idx);
-    });
+    };
   });
-  host.querySelectorAll("[data-fv-rename]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
+  right.querySelectorAll("[data-fv-action='pdf']").forEach((btn) => {
+    btn.onclick = (e) => {
       e.stopPropagation();
-      _fvStartRename(contact, btn.dataset.fvRename);
-    });
+      _fvConvertToPdf(contact, btn.dataset.fvId, btn);
+    };
   });
-  host.querySelectorAll("[data-fv-topdf]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
+  right.querySelectorAll("[data-fv-action='download']").forEach((btn) => {
+    btn.onclick = (e) => {
       e.stopPropagation();
-      _fvConvertToPdf(contact, btn.dataset.fvTopdf, btn);
-    });
+      const fileId = btn.dataset.fvId;
+      window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`, "_blank", "noopener");
+    };
   });
-  host.querySelectorAll("[data-fv-menu]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const id = btn.dataset.fvMenu;
-      const menu = document.getElementById(`fv-menu-${id}`);
-      if (!menu) return;
-      // Close any other menus first
-      host.querySelectorAll(".fv-menu").forEach((m) => { if (m !== menu) m.style.display = "none"; });
-      menu.style.display = menu.style.display === "block" ? "none" : "block";
-    });
-  });
-  host.querySelectorAll("[data-fv-delete]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      _fvDeleteFile(contact, btn.dataset.fvDelete);
-    });
-  });
-  // Dismiss open menus on any outside click
-  if (!host._fvMenuBound) {
-    host._fvMenuBound = true;
-    document.addEventListener("click", () => {
-      host.querySelectorAll(".fv-menu").forEach((m) => { m.style.display = "none"; });
-    });
-  }
+}
+
+function _fvFileRowHtml(f) {
+  const icon = _fvMimeIconEmoji(f.mimeType || "");
+  const size = _fvFormatSize(f.size);
+  const date = f.createdTime ? new Date(f.createdTime).toLocaleDateString() : "";
+  const nm = _fvEscape(f.name || "Untitled");
+  const docType = (f.appProperties && f.appProperties.docType) || "";
+  const showConvert = _fvIsGoogleDoc(f);
+  return `
+    <div class="fv-file-row" data-fv-row="${_fvEscape(f.id)}" style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #161616;cursor:pointer;transition:background .1s;">
+      <div style="font-size:20px;flex-shrink:0;">${icon}</div>
+      <div style="flex:1;min-width:0;">
+        <div class="fv-name" style="color:#e0e0e0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</div>
+        <div style="color:#555;font-size:11px;margin-top:2px;">
+          ${size || '—'}${date ? ' · ' + date : ''}
+          ${docType ? `<span class="fv-doc-type-badge" style="color:#C9A84C88;margin-left:6px;">${_fvEscape(docType)}</span>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-shrink:0;">
+        ${showConvert ? `<button data-fv-action="pdf" data-fv-id="${_fvEscape(f.id)}" title="Convert to PDF" style="background:transparent;border:none;color:#555;cursor:pointer;font-size:11px;padding:4px 8px;font-family:inherit;">PDF</button>` : ''}
+        <button data-fv-action="download" data-fv-id="${_fvEscape(f.id)}" title="Download" style="background:transparent;border:none;color:#555;cursor:pointer;font-size:14px;padding:4px 8px;font-family:inherit;">&#8681;</button>
+      </div>
+    </div>
+  `;
 }
 
 // ── RENAME ────────────────────────────────────────────────────────
@@ -1766,13 +1824,9 @@ async function _fvDeleteFile(contact, fileId) {
     _fvFiles[contact.gdrive_folder_id] = files.filter((f) => f.id !== fileId);
     _fvFileCounts[contact.gdrive_folder_id] = _fvFiles[contact.gdrive_folder_id].length;
     _fvShowToast("Deleted ✓");
-    _fvRenderFileList(contact);
-    const card = document.querySelector(`[data-fv-card="${contact.id}"]`);
-    const toggle = card?.querySelector('[data-fv-action="toggle"]');
-    if (toggle) {
-      const label = _fvExpanded.has(contact.id) ? "Hide Files" : "View Files";
-      toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[contact.gdrive_folder_id] ?? 0})`;
-    }
+    _fvRenderRightFileList(contact);
+    const countSpan = document.querySelector(`[data-fv-count="${contact.id}"]`);
+    if (countSpan) countSpan.textContent = (_fvFileCounts[contact.gdrive_folder_id] || 0) + " files";
   } catch (e) {
     console.error("[FileVault] delete failed:", e);
     _fvShowToast("Delete failed");
@@ -1879,11 +1933,12 @@ function _fvOpenViewer(contact, files, index) {
     ["Other", "Other"]
   ].map(([val, label]) => `<option value="${_fvEscape(val)}">${_fvEscape(label)}</option>`).join("");
 
-  // The viewer renders INLINE into the #fv-viewer-panel on the right side of
-  // the Documents tab's split layout — NOT as a fixed full-screen overlay.
-  const mountEl = document.getElementById("fv-viewer-panel");
+  // The viewer renders INLINE into #fv-right (replacing the file list) on
+  // the right side of the Documents tab's split layout — NOT as a fixed
+  // full-screen overlay. Closing restores the file list via _fvRenderRightFileList.
+  const mountEl = document.getElementById("fv-right");
   if (!mountEl) {
-    console.error("[FileVault] #fv-viewer-panel not found — cannot open viewer. Make sure dashboard/admin.html has the split layout.");
+    console.error("[FileVault] #fv-right not found — cannot open viewer. Make sure the split layout rendered.");
     return;
   }
 
@@ -1914,9 +1969,7 @@ function _fvOpenViewer(contact, files, index) {
   <div id="fv-viewer-body" style="flex:1;overflow:auto;background:#0a0a0a;position:relative;"></div>
 </div>`;
 
-  // Reset panel styling to hold the viewer (clear placeholder flex-centering).
-  mountEl.style.display = "block";
-  mountEl.style.padding = "0";
+  // Replace the file list with the viewer in the right panel.
   mountEl.innerHTML = viewerHTML;
 
   // ── NUCLEAR DEBUG ────────────────────────────────────────────────
@@ -2047,15 +2100,12 @@ function _fvCloseViewer() {
     document.removeEventListener("keydown", _fvViewerState.keyHandler);
   }
   _fvRevokeBlobUrl();
-  // Reset the right panel to its placeholder state — the viewer lives inline
-  // inside #fv-viewer-panel, so we just clear its contents.
-  const panel = document.getElementById("fv-viewer-panel");
-  if (panel) {
-    panel.innerHTML = "Select a file to preview";
-    panel.style.display = "flex";
-    panel.style.alignItems = "center";
-    panel.style.justifyContent = "center";
-    panel.style.padding = "";
+  // Restore the file list in the right panel for the currently-selected borrower.
+  const contact = _fvContacts.find((c) => String(c.id) === String(_fvSelectedContactId));
+  if (contact) {
+    _fvRenderRightFileList(contact);
+  } else {
+    _fvRenderRightPlaceholder("Select a borrower to view files");
   }
   _fvViewerState = null;
 }
