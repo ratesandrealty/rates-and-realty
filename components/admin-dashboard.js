@@ -1,4 +1,4 @@
-// admin-dashboard.js v20260411c
+// admin-dashboard.js v20260411d
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
   if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_URL) {
@@ -26,7 +26,7 @@ import {
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks
-} from "/api/admin-api-v2.js?v=20260411c";
+} from "/api/admin-api-v2.js?v=20260411d";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
@@ -1077,51 +1077,126 @@ async function renderDocuments() {
   const el = document.getElementById("admin-document-table");
   if (!el) return;
 
-  // One-time style block for pill / card hover states.
+  // One-time style block for pills / cards / file rows.
   if (!document.getElementById("fv-style")) {
     const s = document.createElement("style");
     s.id = "fv-style";
     s.textContent = `
-      .fv-filter-pill{background:transparent;border:1px solid #2a2a2a;color:#888;font-size:12px;padding:4px 12px;border-radius:20px;cursor:pointer;transition:all .15s;font-family:inherit;}
-      .fv-filter-pill:hover{border-color:#C9A84C44;color:#aaa;}
-      .fv-filter-pill.active{background:#C9A84C22;border-color:#C9A84C;color:#C9A84C;}
-      .fv-borrower-card:hover{border-color:#C9A84C44!important;}
+      .fv-pill{background:transparent;border:1px solid #2a2a2a;color:#555;font-size:11px;padding:3px 8px;border-radius:20px;cursor:pointer;white-space:nowrap;transition:all .15s;font-family:inherit;}
+      .fv-pill:hover{border-color:#C9A84C44;color:#888;}
+      .fv-pill.active{background:#C9A84C22;border-color:#C9A84C;color:#C9A84C;}
+      .fv-borrower-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:4px;transition:all .15s;}
+      .fv-borrower-card:hover{background:#161616;border-color:#C9A84C44;}
       .fv-borrower-card.active{border-color:#C9A84C!important;background:#1a1a14!important;}
-      .fv-file-row:hover{background:#161616!important;}
+      .fv-file-row{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #161616;cursor:pointer;transition:background .1s;border-left:2px solid transparent;}
+      .fv-file-row:hover{background:#161616;}
+      .fv-file-row.active{background:#1a1a14;border-left-color:#C9A84C;}
+      #fv-filter-bar::-webkit-scrollbar{display:none;}
       @keyframes fvSpin{to{transform:rotate(360deg);}}
     `;
     document.head.appendChild(s);
   }
 
-  // Build the split shell ONCE — subsequent renders only touch child nodes.
+  // Build the persistent 3-panel shell ONCE. The viewer chrome (header +
+  // buttons + iframe) lives in the DOM from mount — element lookups always
+  // succeed, no race on file click.
   el.className = "";
   el.innerHTML = `
-    <div id="fv-root" style="display:flex;height:calc(100vh - 240px);min-height:600px;background:#0a0a0a;border-radius:12px;overflow:hidden;border:1px solid #1e1e1e;">
-      <div id="fv-left" style="width:340px;flex-shrink:0;border-right:1px solid #1e1e1e;display:flex;flex-direction:column;overflow:hidden;">
-        <div style="padding:14px 16px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-          <span style="color:#e0e0e0;font-size:14px;font-weight:500;">Borrowers</span>
-          <button id="fv-upload-trigger" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit;">+ Upload</button>
+    <div id="fv-root" style="display:flex;height:calc(100vh - 200px);min-height:500px;background:#0a0a0a;border-radius:12px;overflow:hidden;border:1px solid #1e1e1e;">
+
+      <!-- PANEL 1: BORROWERS (240px) -->
+      <div id="fv-panel-borrowers" style="width:240px;flex-shrink:0;border-right:1px solid #1e1e1e;display:flex;flex-direction:column;overflow:hidden;">
+        <div style="padding:12px 14px;border-bottom:1px solid #1e1e1e;flex-shrink:0;">
+          <div style="color:#C9A84C;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Borrowers</div>
         </div>
-        <div id="fv-borrower-list" style="flex:1;overflow-y:auto;padding:12px;"></div>
-        <div style="padding:12px;border-top:1px solid #1e1e1e;">
-          <div id="fv-dropzone" style="border:1.5px dashed #C9A84C33;border-radius:10px;padding:20px;text-align:center;cursor:pointer;background:#0d0d0d;transition:border-color .2s, background .2s;">
-            <div style="font-size:24px;">&#128206;</div>
-            <div style="color:#666;font-size:12px;margin-top:6px;">Drop files or <span style="color:#C9A84C;">browse</span></div>
-            <div style="color:#444;font-size:10px;margin-top:2px;">Select a borrower first</div>
-            <input type="file" id="fv-file-input" multiple accept=".pdf,image/*" style="display:none;">
+        <div id="fv-borrower-list" style="flex:1;overflow-y:auto;padding:8px;"></div>
+      </div>
+
+      <!-- PANEL 2: FILE LIST (280px) -->
+      <div id="fv-panel-files" style="width:280px;flex-shrink:0;border-right:1px solid #1e1e1e;display:flex;flex-direction:column;overflow:hidden;">
+        <div style="padding:10px 12px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;gap:8px;flex-shrink:0;">
+          <span id="fv-panel-title" style="color:#888;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Select a borrower</span>
+          <button id="fv-upload-btn" style="background:#C9A84C;border:none;color:#000;font-size:11px;font-weight:600;padding:4px 10px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit;">+ Upload</button>
+          <a id="fv-open-drive-btn" href="#" target="_blank" rel="noopener" style="color:#C9A84C55;font-size:16px;text-decoration:none;flex-shrink:0;" title="Open Drive folder">&#128193;</a>
+        </div>
+        <div id="fv-filter-bar" style="display:flex;gap:6px;padding:8px 10px;overflow-x:auto;flex-shrink:0;border-bottom:1px solid #161616;scrollbar-width:none;">
+          <button class="fv-pill active" data-fv-pill="">All</button>
+          <button class="fv-pill" data-fv-pill="Pay Stubs">Pay</button>
+          <button class="fv-pill" data-fv-pill="W-2 / Tax Returns">W-2</button>
+          <button class="fv-pill" data-fv-pill="Bank Statements">Bank</button>
+          <button class="fv-pill" data-fv-pill="Photo ID">ID</button>
+          <button class="fv-pill" data-fv-pill="Insurance Policy">Ins</button>
+          <button class="fv-pill" data-fv-pill="Credit Report">Credit</button>
+          <button class="fv-pill" data-fv-pill="Other">Other</button>
+        </div>
+        <div id="fv-file-list" style="flex:1;overflow-y:auto;">
+          <div style="padding:40px 20px;text-align:center;color:#444;font-size:12px;">No borrower selected</div>
+        </div>
+        <div id="fv-dropzone" style="border-top:1px solid #1e1e1e;padding:12px;flex-shrink:0;">
+          <div id="fv-drop-target" style="border:1.5px dashed #C9A84C33;border-radius:8px;padding:14px;text-align:center;cursor:pointer;background:#0d0d0d;transition:all .2s;">
+            <div style="color:#555;font-size:12px;">&#8613; Drop files or <span style="color:#C9A84C;cursor:pointer;">browse</span></div>
+            <div style="color:#444;font-size:10px;margin-top:3px;">PDF · JPG · PNG · max 25MB</div>
           </div>
           <div id="fv-upload-status" style="margin-top:8px;"></div>
+          <input type="file" id="fv-file-input" multiple accept=".pdf,image/*" style="display:none;">
         </div>
       </div>
-      <div id="fv-right" style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0d0d0d;min-width:0;"></div>
+
+      <!-- PANEL 3: VIEWER (flex:1) -->
+      <div id="fv-panel-viewer" style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0d0d0d;min-width:0;">
+        <div id="fv-viewer-empty" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#333;">
+          <div style="font-size:48px;">&#128196;</div>
+          <div style="font-size:13px;">Select a file to preview</div>
+        </div>
+        <div id="fv-viewer-wrap" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
+          <div id="fv-viewer-header" style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#111;border-bottom:1px solid #222;flex-shrink:0;">
+            <span id="fv-viewer-title" style="color:#C9A84C;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;"></span>
+            <button id="fv-viewer-rename" title="Rename" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;flex-shrink:0;font-family:inherit;">&#9998;</button>
+            <span id="fv-viewer-saving" style="display:none;width:12px;height:12px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;flex-shrink:0;"></span>
+            <select id="fv-doc-type" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:11px;border-radius:20px;padding:2px 8px;cursor:pointer;outline:none;max-width:130px;flex-shrink:0;font-family:inherit;">
+              <option value="">-- Type --</option>
+              <option>Pay Stubs</option>
+              <option>W-2 / Tax Returns</option>
+              <option>Bank Statements</option>
+              <option>1099 / Self-Employed</option>
+              <option>Credit Report</option>
+              <option>Photo ID</option>
+              <option>Insurance Policy</option>
+              <option>Purchase Agreement</option>
+              <option>Title / Escrow</option>
+              <option>Appraisal</option>
+              <option>HOA Docs</option>
+              <option>Loan Application</option>
+              <option>Gift Letter</option>
+              <option>VOE / Employment Letter</option>
+              <option>Other</option>
+            </select>
+            <button id="fv-viewer-download" title="Download" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;cursor:pointer;font-size:14px;padding:3px 8px;border-radius:5px;flex-shrink:0;font-family:inherit;">&#8681;</button>
+            <button id="fv-viewer-openlink" title="Open in Drive" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C;cursor:pointer;font-size:14px;padding:3px 8px;border-radius:5px;flex-shrink:0;font-family:inherit;">&#8599;</button>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 14px;background:#0d0d0d;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
+            <button id="fv-viewer-prev" style="background:transparent;border:1px solid #2a2a2a;color:#777;cursor:pointer;padding:3px 12px;border-radius:5px;font-size:12px;font-family:inherit;">&#8592; Prev</button>
+            <span id="fv-viewer-counter" style="color:#444;font-size:11px;"></span>
+            <button id="fv-viewer-next" style="background:transparent;border:1px solid #2a2a2a;color:#777;cursor:pointer;padding:3px 12px;border-radius:5px;font-size:12px;font-family:inherit;">Next &#8594;</button>
+          </div>
+          <div style="flex:1;overflow:hidden;background:#0a0a0a;">
+            <iframe id="fv-viewer-iframe" style="width:100%;height:100%;border:none;" src="about:blank"></iframe>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
+  // Wire ALL buttons once at shell mount. Elements stay in the DOM forever.
   _fvBindSearch();
-  _fvBindLeftPanel();
+  _fvBindPanels();
 
-  // Placeholder in right panel until a borrower is picked.
-  _fvRenderRightPlaceholder("Select a borrower to view files");
+  // Diagnostic — confirm pencil button made it into the DOM (it always should).
+  const _dbgRename = document.getElementById("fv-viewer-rename");
+  console.log("[FileVault][debug] rename btn after shell mount:", _dbgRename);
+  if (!_dbgRename) {
+    console.error("[FileVault] fv-viewer-rename button NOT FOUND after shell render — DOM template failed.");
+  }
 
   await _fvLoadContacts();
   _fvRenderBorrowerList();
@@ -1134,45 +1209,36 @@ async function renderDocuments() {
   });
 }
 
-function _fvRenderRightPlaceholder(msg) {
-  const right = document.getElementById("fv-right");
-  if (!right) return;
-  right.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#555;font-size:.9rem;">${_fvEscape(msg || "")}</div>`;
-}
-
-function _fvBindLeftPanel() {
-  const uploadBtn = document.getElementById("fv-upload-trigger");
-  const dropzone = document.getElementById("fv-dropzone");
+// Wire every interactive element in the 3-panel shell ONCE at mount. All
+// .onclick assignments so re-wiring replaces the slot, no stacking.
+function _fvBindPanels() {
+  // Upload button (top of Panel 2) + file input + dropzone all trigger uploads.
+  const uploadBtn = document.getElementById("fv-upload-btn");
+  const dropTarget = document.getElementById("fv-drop-target");
   const input = document.getElementById("fv-file-input");
 
-  if (uploadBtn) {
-    uploadBtn.onclick = () => {
-      if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
-      if (input) input.click();
-    };
-  }
+  const pickFiles = () => {
+    if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
+    if (input) input.click();
+  };
+  if (uploadBtn) uploadBtn.onclick = pickFiles;
+  if (dropTarget) dropTarget.onclick = pickFiles;
 
-  if (dropzone) {
-    dropzone.onclick = (e) => {
-      // Don't bounce the click from inside file input
-      if (e.target && e.target.id === "fv-file-input") return;
-      if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
-      if (input) input.click();
-    };
-    dropzone.addEventListener("dragover", (e) => {
+  if (dropTarget) {
+    dropTarget.addEventListener("dragover", (e) => {
       e.preventDefault();
-      dropzone.style.borderColor = "#C9A84C";
-      dropzone.style.background = "rgba(201,168,76,0.08)";
+      dropTarget.style.borderColor = "#C9A84C";
+      dropTarget.style.background = "rgba(201,168,76,0.08)";
     });
-    dropzone.addEventListener("dragleave", (e) => {
+    dropTarget.addEventListener("dragleave", (e) => {
       e.preventDefault();
-      dropzone.style.borderColor = "#C9A84C33";
-      dropzone.style.background = "#0d0d0d";
+      dropTarget.style.borderColor = "#C9A84C33";
+      dropTarget.style.background = "#0d0d0d";
     });
-    dropzone.addEventListener("drop", (e) => {
+    dropTarget.addEventListener("drop", (e) => {
       e.preventDefault();
-      dropzone.style.borderColor = "#C9A84C33";
-      dropzone.style.background = "#0d0d0d";
+      dropTarget.style.borderColor = "#C9A84C33";
+      dropTarget.style.background = "#0d0d0d";
       if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
       const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
       if (contact && e.dataTransfer && e.dataTransfer.files.length) {
@@ -1190,6 +1256,76 @@ function _fvBindLeftPanel() {
       }
       input.value = "";
     };
+  }
+
+  // Filter pills (Panel 2)
+  document.querySelectorAll("[data-fv-pill]").forEach((pill) => {
+    pill.onclick = () => {
+      _fvFileFilter = pill.dataset.fvPill;
+      document.querySelectorAll("[data-fv-pill]").forEach((p) => p.classList.toggle("active", p === pill));
+      const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
+      if (contact) _fvRenderFileListPanel(contact);
+    };
+  });
+
+  // Viewer header buttons — wired ONCE, read the current file from state.
+  const renameBtn = document.getElementById("fv-viewer-rename");
+  if (renameBtn) {
+    renameBtn.onclick = () => {
+      if (!_fvViewerState) return;
+      const f = _fvViewerState.files[_fvViewerState.index];
+      if (f) _fvStartRenameInViewer(f);
+    };
+  }
+  const downloadBtn = document.getElementById("fv-viewer-download");
+  if (downloadBtn) {
+    downloadBtn.onclick = () => {
+      if (!_fvViewerState) return;
+      const f = _fvViewerState.files[_fvViewerState.index];
+      if (f) window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`, "_blank", "noopener");
+    };
+  }
+  const openlinkBtn = document.getElementById("fv-viewer-openlink");
+  if (openlinkBtn) {
+    openlinkBtn.onclick = () => {
+      if (!_fvViewerState) return;
+      const f = _fvViewerState.files[_fvViewerState.index];
+      if (f) window.open(f.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(f.id)}/view`, "_blank", "noopener");
+    };
+  }
+  const prevBtn = document.getElementById("fv-viewer-prev");
+  if (prevBtn) prevBtn.onclick = _fvViewerPrev;
+  const nextBtn = document.getElementById("fv-viewer-next");
+  if (nextBtn) nextBtn.onclick = _fvViewerNext;
+
+  const typeSel = document.getElementById("fv-doc-type");
+  if (typeSel) {
+    typeSel.onchange = (e) => {
+      if (!_fvViewerState) return;
+      const f = _fvViewerState.files[_fvViewerState.index];
+      if (f) _fvSaveDocType(e, f);
+    };
+  }
+
+  // Open in Drive link on Panel 2 header — folder URL for selected borrower.
+  const openDriveBtn = document.getElementById("fv-open-drive-btn");
+  if (openDriveBtn) {
+    openDriveBtn.onclick = (e) => {
+      const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
+      if (!contact || !contact.gdrive_folder_url) { e.preventDefault(); _fvShowToast("No folder linked"); }
+    };
+  }
+
+  // Keyboard navigation works whenever the viewer is visible.
+  if (!document._fvKeyBound) {
+    document._fvKeyBound = true;
+    document.addEventListener("keydown", (e) => {
+      const wrap = document.getElementById("fv-viewer-wrap");
+      if (!wrap || wrap.style.display !== "flex") return;
+      if (e.key === "Escape") _fvShowViewerEmpty();
+      else if (e.key === "ArrowLeft") _fvViewerPrev();
+      else if (e.key === "ArrowRight") _fvViewerNext();
+    });
   }
 }
 
@@ -1306,24 +1442,36 @@ function _fvBorrowerCardHtml(c) {
   `;
 }
 
-// Click handler: select a borrower → load files → render file list on right.
+// Click handler: select a borrower → load files → populate Panel 2. Does NOT
+// touch Panel 3 — the viewer stays as-is (empty or showing a previous file).
 async function _fvSelectBorrower(contact) {
   _fvSelectedContactId = contact.id;
   _fvFileFilter = "";
-  // Mark the active card
+  // Reset filter pill active state
+  document.querySelectorAll("[data-fv-pill]").forEach((p) => p.classList.toggle("active", p.dataset.fvPill === ""));
+  // Highlight the active borrower card
   document.querySelectorAll(".fv-borrower-card").forEach((card) => {
     card.classList.toggle("active", card.dataset.fvBorrower === String(contact.id));
   });
+  // Panel 2 header: show borrower name
+  const title = document.getElementById("fv-panel-title");
+  if (title) title.textContent = `${contact.first_name || ""} ${contact.last_name || ""}`.trim() || "Borrower";
+  // Open-in-drive link in Panel 2 header
+  const openDriveBtn = document.getElementById("fv-open-drive-btn");
+  if (openDriveBtn) openDriveBtn.href = contact.gdrive_folder_url || "#";
+
+  const fileListEl = document.getElementById("fv-file-list");
+  if (!fileListEl) return;
+
   if (!contact.gdrive_folder_id) {
-    _fvRenderRightPlaceholder("No Drive folder linked for this borrower. Create one or upload a file.");
+    fileListEl.innerHTML = '<div style="padding:40px 20px;text-align:center;color:#555;font-size:12px;">No Drive folder for this borrower.<br>Click <strong style="color:#C9A84C;">+ folder</strong> on the card to create one.</div>';
     return;
   }
-  // Loading state
-  const right = document.getElementById("fv-right");
-  if (right) right.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#666;font-size:.85rem;"><span style="width:18px;height:18px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;margin-right:10px;"></span>Loading files…</div>`;
+
+  fileListEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:40px 20px;color:#666;font-size:12px;"><span style="width:14px;height:14px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;margin-right:8px;"></span>Loading files…</div>`;
   await _fvLoadFiles(contact.gdrive_folder_id);
-  _fvRenderRightFileList(contact);
-  // Update the current borrower's file count pill in the left list.
+  _fvRenderFileListPanel(contact);
+
   const countSpan = document.querySelector(`[data-fv-count="${contact.id}"]`);
   if (countSpan) countSpan.textContent = (_fvFileCounts[contact.gdrive_folder_id] || 0) + " files";
 }
@@ -1515,9 +1663,9 @@ async function _fvUploadFiles(contact, files) {
   if (countSpan) countSpan.textContent = (_fvFileCounts[folderId] || 0) + " files";
 }
 
-// Dropzone is now wired once in _fvBindLeftPanel() against the single
-// #fv-dropzone in the left column. No per-card dropzones.
-function _fvBindDropzone(_contact) { /* no-op — see _fvBindLeftPanel() */ }
+// Dropzone is wired once in _fvBindPanels() against the single #fv-drop-target
+// in Panel 2. No per-card dropzones.
+function _fvBindDropzone(_contact) { /* no-op — see _fvBindPanels() */ }
 
 async function _fvCreateFolder(contact, btn) {
   btn.disabled = true;
@@ -1651,7 +1799,8 @@ function _fvGoogleExportMime(mime) {
 }
 
 // Legacy shim — kept as alias so other call sites still compile.
-function _fvRenderFileList(contact) { _fvRenderRightFileList(contact); }
+function _fvRenderFileList(contact) { _fvRenderFileListPanel(contact); }
+function _fvRenderRightFileList(contact) { _fvRenderFileListPanel(contact); }
 
 // Inline icon helpers for the new file list rows.
 function _fvMimeIconEmoji(mime) {
@@ -1666,71 +1815,53 @@ function _fvMimeIconEmoji(mime) {
   return "\uD83D\uDCC4";
 }
 
-// Render the file list into the RIGHT panel (#fv-right).
-function _fvRenderRightFileList(contact) {
-  const right = document.getElementById("fv-right");
-  if (!right) return;
+// Render the file list into Panel 2 (#fv-file-list). Filter pills + dropzone
+// are permanent siblings and never re-rendered.
+function _fvRenderFileListPanel(contact) {
+  const host = document.getElementById("fv-file-list");
+  if (!host) return;
   const files = _fvFiles[contact.gdrive_folder_id] || [];
-
-  const pillKeys = [
-    ["", "All"],
-    ["Pay Stubs", "Pay Stubs"],
-    ["W-2 / Tax Returns", "W-2"],
-    ["Bank Statements", "Bank Stmts"],
-    ["Photo ID", "Gov ID"],
-    ["Insurance Policy", "Insurance"],
-    ["Other", "Other"]
-  ];
-  const pillsHtml = pillKeys.map(([val, label]) => `
-    <button class="fv-filter-pill${_fvFileFilter === val ? ' active' : ''}" data-fv-pill="${_fvEscape(val)}">${_fvEscape(label)}</button>
-  `).join("");
-
   const filteredFiles = _fvFileFilter
     ? files.filter((f) => (f.appProperties && f.appProperties.docType) === _fvFileFilter)
     : files;
 
-  const rowsHtml = filteredFiles.length
-    ? filteredFiles.map((f) => _fvFileRowHtml(f)).join("")
-    : `<div style="padding:40px 20px;text-align:center;color:#555;font-size:.85rem;">${files.length ? "No files match this filter" : "No files yet — drop files in the left panel to upload"}</div>`;
+  if (!filteredFiles.length) {
+    host.innerHTML = `<div style="padding:40px 20px;text-align:center;color:#555;font-size:12px;">${files.length ? "No files match this filter" : "No files yet — drop files below"}</div>`;
+    return;
+  }
+  host.innerHTML = filteredFiles.map((f) => _fvFileRowHtml(f)).join("");
 
-  right.innerHTML = `
-    <div style="display:flex;gap:8px;padding:14px 16px;flex-wrap:wrap;border-bottom:1px solid #1e1e1e;align-items:center;">
-      ${pillsHtml}
-      <a id="fv-open-drive" href="${_fvEscape(contact.gdrive_folder_url || '#')}" target="_blank" rel="noopener" style="margin-left:auto;color:#C9A84C;font-size:12px;text-decoration:none;padding:4px 12px;border:1px solid #C9A84C44;border-radius:20px;white-space:nowrap;">&#128193; Open in Drive</a>
-    </div>
-    <div id="fv-file-list" style="flex:1;overflow-y:auto;">${rowsHtml}</div>
-  `;
-
-  // Wire filter pills
-  right.querySelectorAll("[data-fv-pill]").forEach((pill) => {
-    pill.onclick = () => {
-      _fvFileFilter = pill.dataset.fvPill;
-      _fvRenderRightFileList(contact);
-    };
-  });
-
-  // Wire file row actions
-  right.querySelectorAll("[data-fv-row]").forEach((row) => {
+  // Wire file row clicks
+  host.querySelectorAll("[data-fv-row]").forEach((row) => {
     const fileId = row.dataset.fvRow;
     row.onclick = (e) => {
-      if (e.target && e.target.closest && e.target.closest("[data-fv-action]")) return; // action buttons stop bubbling
+      if (e.target && e.target.closest && e.target.closest("[data-fv-action]")) return;
       const idx = files.findIndex((f) => f.id === fileId);
       if (idx >= 0) _fvOpenViewer(contact, files, idx);
     };
   });
-  right.querySelectorAll("[data-fv-action='pdf']").forEach((btn) => {
+  host.querySelectorAll("[data-fv-action='pdf']").forEach((btn) => {
     btn.onclick = (e) => {
       e.stopPropagation();
       _fvConvertToPdf(contact, btn.dataset.fvId, btn);
     };
   });
-  right.querySelectorAll("[data-fv-action='download']").forEach((btn) => {
+  host.querySelectorAll("[data-fv-action='download']").forEach((btn) => {
     btn.onclick = (e) => {
       e.stopPropagation();
       const fileId = btn.dataset.fvId;
       window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`, "_blank", "noopener");
     };
   });
+
+  // If a file was previously active in the viewer, highlight its row.
+  if (_fvViewerState && String(_fvViewerState.contactId) === String(contact.id)) {
+    const activeId = _fvViewerState.files[_fvViewerState.index]?.id;
+    if (activeId) {
+      const activeRow = host.querySelector(`[data-fv-row="${activeId}"]`);
+      if (activeRow) activeRow.classList.add("active");
+    }
+  }
 }
 
 function _fvFileRowHtml(f) {
@@ -1741,18 +1872,18 @@ function _fvFileRowHtml(f) {
   const docType = (f.appProperties && f.appProperties.docType) || "";
   const showConvert = _fvIsGoogleDoc(f);
   return `
-    <div class="fv-file-row" data-fv-row="${_fvEscape(f.id)}" style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #161616;cursor:pointer;transition:background .1s;">
-      <div style="font-size:20px;flex-shrink:0;">${icon}</div>
+    <div class="fv-file-row" data-fv-row="${_fvEscape(f.id)}">
+      <div style="font-size:16px;flex-shrink:0;">${icon}</div>
       <div style="flex:1;min-width:0;">
-        <div class="fv-name" style="color:#e0e0e0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</div>
-        <div style="color:#555;font-size:11px;margin-top:2px;">
+        <div class="fv-name" style="color:#d0d0d0;font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</div>
+        <div style="color:#444;font-size:10px;margin-top:1px;">
           ${size || '—'}${date ? ' · ' + date : ''}
-          ${docType ? `<span class="fv-doc-type-badge" style="color:#C9A84C88;margin-left:6px;">${_fvEscape(docType)}</span>` : ''}
         </div>
+        ${docType ? `<span class="fv-doc-type-badge" style="font-size:9px;color:#C9A84C88;background:#C9A84C11;padding:1px 5px;border-radius:3px;margin-top:2px;display:inline-block;">${_fvEscape(docType)}</span>` : ''}
       </div>
-      <div style="display:flex;gap:4px;flex-shrink:0;">
-        ${showConvert ? `<button data-fv-action="pdf" data-fv-id="${_fvEscape(f.id)}" title="Convert to PDF" style="background:transparent;border:none;color:#555;cursor:pointer;font-size:11px;padding:4px 8px;font-family:inherit;">PDF</button>` : ''}
-        <button data-fv-action="download" data-fv-id="${_fvEscape(f.id)}" title="Download" style="background:transparent;border:none;color:#555;cursor:pointer;font-size:14px;padding:4px 8px;font-family:inherit;">&#8681;</button>
+      <div style="display:flex;gap:2px;flex-shrink:0;">
+        ${showConvert ? `<button data-fv-action="pdf" data-fv-id="${_fvEscape(f.id)}" title="Convert to PDF" style="background:transparent;border:none;color:#444;cursor:pointer;font-size:10px;padding:3px 6px;font-family:inherit;">PDF</button>` : ''}
+        <button data-fv-action="download" data-fv-id="${_fvEscape(f.id)}" title="Download" style="background:transparent;border:none;color:#444;cursor:pointer;font-size:13px;padding:3px 6px;font-family:inherit;">&#8681;</button>
       </div>
     </div>
   `;
@@ -1893,162 +2024,33 @@ async function _fvConvertToPdf(contact, fileId, btn) {
   }
 }
 
-// ── INLINE FILE VIEWER ────────────────────────────────────────────
-// Diagnostic history (2026-04-11): the previous implementation built the
-// header across TWO passes — a panel.innerHTML template PLUS a second
-// DOM-injection pass via createElement + insertBefore for the title bar and
-// doc-type select. Some browsers / timings lost the injected children,
-// leaving the pencil invisible. Consolidated into ONE innerHTML template
-// below, with every listener wired immediately after the single mount.
+// ── INLINE FILE VIEWER (Panel 3) ─────────────────────────────────
+// The viewer chrome is pre-mounted in the shell. This function just
+// populates fields and reveals #fv-viewer-wrap. No DOM rebuilds.
 function _fvOpenViewer(contact, files, index) {
-  _fvCloseViewer(); // close any existing first
-  _fvViewerState = { contactId: contact.id, files, index, keyHandler: null };
+  _fvRevokeBlobUrl();
+  _fvViewerState = { contactId: contact.id, files, index, blobUrl: null };
 
-  // Inject spinner keyframes once (used by #fv-viewer-saving and any other
-  // CSS spinners in the vault).
-  if (!document.getElementById("fv-spin-keyframes")) {
-    const s = document.createElement("style");
-    s.id = "fv-spin-keyframes";
-    s.textContent = "@keyframes fvSpin{to{transform:rotate(360deg);}}";
-    document.head.appendChild(s);
-  }
-
-  const file = files[index];
-  const docTypeOptions = [
-    ["", "-- Type --"],
-    ["Pay Stubs", "Pay Stubs"],
-    ["W-2 / Tax Returns", "W-2 / Tax Returns"],
-    ["Bank Statements", "Bank Statements"],
-    ["1099 / Self-Employed", "1099 / Self-Employed"],
-    ["Credit Report", "Credit Report"],
-    ["Photo ID", "Photo ID"],
-    ["Insurance Policy", "Insurance Policy"],
-    ["Purchase Agreement", "Purchase Agreement"],
-    ["Title / Escrow", "Title / Escrow"],
-    ["Appraisal", "Appraisal"],
-    ["HOA Docs", "HOA Docs"],
-    ["Loan Application", "Loan Application"],
-    ["Gift Letter", "Gift Letter"],
-    ["VOE / Employment Letter", "VOE / Employment Letter"],
-    ["Other", "Other"]
-  ].map(([val, label]) => `<option value="${_fvEscape(val)}">${_fvEscape(label)}</option>`).join("");
-
-  // The viewer renders INLINE into #fv-right (replacing the file list) on
-  // the right side of the Documents tab's split layout — NOT as a fixed
-  // full-screen overlay. Closing restores the file list via _fvRenderRightFileList.
-  const mountEl = document.getElementById("fv-right");
-  if (!mountEl) {
-    console.error("[FileVault] #fv-right not found — cannot open viewer. Make sure the split layout rendered.");
-    return;
-  }
-
-  const viewerHTML = `
-<div id="fv-viewer-overlay" style="display:flex;flex-direction:column;width:100%;height:100%;min-height:640px;background:#1a1a1a;border-radius:12px;overflow:hidden;">
-
-  <div id="fv-viewer-header" style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:#111;border-bottom:1px solid #333;flex-shrink:0;">
-
-    <div style="display:flex;align-items:center;min-width:0;gap:6px;flex:1;">
-      <span id="fv-viewer-title" style="color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;">${escapeHtml(file.name || "Untitled")}</span>
-      <button id="fv-viewer-rename" title="Rename file" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:18px;padding:0 8px;line-height:1;flex-shrink:0;">&#9998;</button>
-      <span id="fv-viewer-saving" style="display:none;width:14px;height:14px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin 0.7s linear infinite;flex-shrink:0;"></span>
-    </div>
-
-    <select id="fv-doc-type" title="Document type" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;border-radius:20px;padding:3px 10px;cursor:pointer;outline:none;max-width:160px;flex-shrink:0;font-family:inherit;">${docTypeOptions}</select>
-
-    <button id="fv-viewer-download" title="Download" style="background:#222;border:1px solid #444;color:#C9A84C;cursor:pointer;font-size:15px;padding:4px 10px;border-radius:6px;flex-shrink:0;font-family:inherit;">&#8681;</button>
-    <button id="fv-viewer-openlink" title="Open in Drive" style="background:#222;border:1px solid #444;color:#C9A84C;cursor:pointer;font-size:15px;padding:4px 10px;border-radius:6px;flex-shrink:0;font-family:inherit;">&#8599;</button>
-    <button id="fv-viewer-close" title="Close" style="background:#222;border:1px solid #444;color:#aaa;cursor:pointer;font-size:15px;padding:4px 10px;border-radius:6px;flex-shrink:0;font-family:inherit;">&#10005;</button>
-  </div>
-
-  <div id="fv-viewer-nav" style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px;background:#0d0d0d;border-bottom:1px solid #222;flex-shrink:0;">
-    <button id="fv-viewer-prev" style="background:transparent;border:1px solid #333;color:#aaa;cursor:pointer;padding:4px 14px;border-radius:6px;font-family:inherit;">&#8592; Prev</button>
-    <span id="fv-viewer-counter" style="color:#666;font-size:13px;"></span>
-    <button id="fv-viewer-next" style="background:transparent;border:1px solid #333;color:#aaa;cursor:pointer;padding:4px 14px;border-radius:6px;font-family:inherit;">Next &#8594;</button>
-  </div>
-
-  <div id="fv-viewer-body" style="flex:1;overflow:auto;background:#0a0a0a;position:relative;"></div>
-</div>`;
-
-  // Replace the file list with the viewer in the right panel.
-  mountEl.innerHTML = viewerHTML;
-
-  // ── NUCLEAR DEBUG ────────────────────────────────────────────────
-  // Verify the template actually mounted every element we expect. If the
-  // rename button is missing, logs exactly what the header DOES contain.
-  const _dbgRename = document.getElementById("fv-viewer-rename");
-  const _dbgDownload = document.getElementById("fv-viewer-download");
-  console.log("[FileVault][debug] rename btn:", _dbgRename);
-  console.log(
-    "[FileVault][debug] viewer HTML snippet:",
-    _dbgDownload?.parentElement?.innerHTML?.substring(0, 500)
-  );
-  if (!_dbgRename) {
-    console.error("[FileVault] fv-viewer-rename button NOT FOUND in DOM — template did not render it.");
-  }
-
-  // ── Wire all listeners after the single mount ──
-  // Using .onclick = instead of addEventListener so every call reassigns the
-  // same slot — no double-bind risk — and paired with an explicit null-check
-  // so a missing element is loud in the console instead of throwing.
-  const closeBtn = document.getElementById("fv-viewer-close");
-  if (closeBtn) closeBtn.onclick = _fvCloseViewer;
-
-  const prevBtn = document.getElementById("fv-viewer-prev");
-  if (prevBtn) prevBtn.onclick = _fvViewerPrev;
-
-  const nextBtn = document.getElementById("fv-viewer-next");
-  if (nextBtn) nextBtn.onclick = _fvViewerNext;
-
-  const renameBtn = document.getElementById("fv-viewer-rename");
-  console.log("[FileVault][debug] rename btn after panel render:", renameBtn);
-  if (renameBtn) {
-    renameBtn.onclick = () => {
-      const f = _fvViewerState.files[_fvViewerState.index];
-      _fvStartRenameInViewer(f);
-    };
-  } else {
-    console.error("[FileVault] fv-viewer-rename button NOT FOUND in DOM");
-  }
-
-  const downloadBtn = document.getElementById("fv-viewer-download");
-  if (downloadBtn) {
-    downloadBtn.onclick = () => {
-      if (!_fvViewerState) return;
-      const f = _fvViewerState.files[_fvViewerState.index];
-      if (f) window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`, "_blank", "noopener");
-    };
-  }
-
-  const openlinkBtn = document.getElementById("fv-viewer-openlink");
-  if (openlinkBtn) {
-    openlinkBtn.onclick = () => {
-      if (!_fvViewerState) return;
-      const f = _fvViewerState.files[_fvViewerState.index];
-      if (f) window.open(f.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(f.id)}/view`, "_blank", "noopener");
-    };
-  }
-
-  // Clicking the overlay background (outside the inner chrome) closes.
-  // Scoped to the overlay element only so inner clicks bubble normally.
-  document.getElementById("fv-viewer-overlay").addEventListener("click", (e) => {
-    if (e.target.id === "fv-viewer-overlay") _fvCloseViewer();
-  });
-
-  // Doc type pill — set initial value from the current file and wire change.
-  const typeSel = document.getElementById("fv-doc-type");
-  typeSel.value = (file.appProperties && file.appProperties.docType) || "";
-  typeSel.dataset.prev = typeSel.value;
-  typeSel.addEventListener("change", (e) => _fvSaveDocType(e, _fvViewerState.files[_fvViewerState.index]));
-
-  const keyHandler = (e) => {
-    if (e.key === "Escape") _fvCloseViewer();
-    else if (e.key === "ArrowLeft") _fvViewerPrev();
-    else if (e.key === "ArrowRight") _fvViewerNext();
-  };
-  document.addEventListener("keydown", keyHandler);
-  _fvViewerState.keyHandler = keyHandler;
+  // Show the viewer, hide the empty state.
+  const emptyEl = document.getElementById("fv-viewer-empty");
+  const wrap = document.getElementById("fv-viewer-wrap");
+  if (emptyEl) emptyEl.style.display = "none";
+  if (wrap) wrap.style.display = "flex";
 
   _fvViewerRender();
+  _fvHighlightActiveFileRow();
+}
+
+// Highlight the active row in Panel 2 and scroll it into view.
+function _fvHighlightActiveFileRow() {
+  if (!_fvViewerState) return;
+  const activeId = _fvViewerState.files[_fvViewerState.index]?.id;
+  if (!activeId) return;
+  const host = document.getElementById("fv-file-list");
+  if (!host) return;
+  host.querySelectorAll(".fv-file-row").forEach((row) => {
+    row.classList.toggle("active", row.dataset.fvRow === activeId);
+  });
 }
 
 function _fvViewerPrev() { _fvViewerNav(-1); }
@@ -2095,18 +2097,18 @@ function _fvRevokeBlobUrl() {
   }
 }
 
-function _fvCloseViewer() {
-  if (_fvViewerState && _fvViewerState.keyHandler) {
-    document.removeEventListener("keydown", _fvViewerState.keyHandler);
-  }
+// Back-compat shim — with the 3-panel layout there's no "close" per se,
+// the viewer just reverts to its empty state while the file list stays.
+function _fvCloseViewer() { _fvShowViewerEmpty(); }
+
+function _fvShowViewerEmpty() {
   _fvRevokeBlobUrl();
-  // Restore the file list in the right panel for the currently-selected borrower.
-  const contact = _fvContacts.find((c) => String(c.id) === String(_fvSelectedContactId));
-  if (contact) {
-    _fvRenderRightFileList(contact);
-  } else {
-    _fvRenderRightPlaceholder("Select a borrower to view files");
-  }
+  const emptyEl = document.getElementById("fv-viewer-empty");
+  const wrap = document.getElementById("fv-viewer-wrap");
+  if (emptyEl) emptyEl.style.display = "flex";
+  if (wrap) wrap.style.display = "none";
+  // Clear active row highlight
+  document.querySelectorAll(".fv-file-row.active").forEach((r) => r.classList.remove("active"));
   _fvViewerState = null;
 }
 
@@ -2129,8 +2131,8 @@ async function _fvViewerRender() {
   const counter = document.getElementById("fv-viewer-counter");
   const prev = document.getElementById("fv-viewer-prev");
   const next = document.getElementById("fv-viewer-next");
-  const body = document.getElementById("fv-viewer-body");
-  if (!title || !body) return;
+  const iframe = document.getElementById("fv-viewer-iframe");
+  if (!title || !iframe) return;
 
   title.textContent = f.name || "Untitled";
   title.title = f.name || "";
@@ -2139,8 +2141,6 @@ async function _fvViewerRender() {
   next.disabled = index === files.length - 1;
   prev.style.opacity = prev.disabled ? "0.4" : "1";
   next.style.opacity = next.disabled ? "0.4" : "1";
-  // Download + Open in Drive are <button>s now; their click handlers read the
-  // live file from _fvViewerState at click time, so no href to update here.
 
   // Sync doc-type pill to this file's saved appProperties.docType.
   const typeSel = document.getElementById("fv-doc-type");
@@ -2150,24 +2150,26 @@ async function _fvViewerRender() {
     typeSel.dataset.prev = currentType;
   }
 
-  // Capture the index we're rendering for — if the user navigates while a
-  // fetch is in flight, we discard the stale result.
-  const renderIndex = index;
+  _fvLoadBlobIntoIframe(f);
+  _fvHighlightActiveFileRow();
+}
+
+// Load file bytes via Drive alt=media + OAuth token, create a blob URL, and
+// set the persistent iframe src. Fetching via OAuth (not embed of
+// drive.google.com) sidesteps the frame-ancestors CSP block.
+async function _fvLoadBlobIntoIframe(f) {
+  const iframe = document.getElementById("fv-viewer-iframe");
+  if (!iframe) return;
+  const renderIndex = _fvViewerState && _fvViewerState.index;
   const mime = f.mimeType || "";
   const isPdf = _fvIsPdf(f);
   const isImage = mime.indexOf("image/") === 0;
 
-  // Show a loading placeholder up front.
-  body.innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;gap:12px;">
-      <span style="width:22px;height:22px;border:3px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin 0.7s linear infinite;"></span>
-      <div style="font-size:.78rem;color:var(--muted);">Loading preview…</div>
-    </div>
-  `;
+  // Loading indicator via about:blank with a tiny inline page.
+  iframe.src = "data:text/html;charset=UTF-8," + encodeURIComponent(
+    `<html><body style="margin:0;background:#0a0a0a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#666;"><div style="display:flex;align-items:center;gap:10px;"><span style="width:18px;height:18px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;"></span>Loading…</div><style>@keyframes s{to{transform:rotate(360deg)}}</style></body></html>`
+  );
 
-  // PDF and image files: fetch the bytes via alt=media, render as blob URL.
-  // Going through the Drive API with the OAuth token avoids Google's CSP
-  // frame-ancestors header that blocks drive.google.com/file/d/.../preview.
   if (isPdf || isImage) {
     try {
       const token = await _fvEnsureToken();
@@ -2178,54 +2180,25 @@ async function _fvViewerRender() {
       if (res.status === 401 || res.status === 403) _fvClearToken();
       if (!res.ok) throw new Error("HTTP " + res.status);
       const blob = await res.blob();
-      // Stale fetch guard — user may have navigated or closed the viewer.
-      if (!_fvViewerState || _fvViewerState.index !== renderIndex) {
-        try { URL.revokeObjectURL(URL.createObjectURL(blob)); } catch (_) {}
-        return;
-      }
+      // Stale-fetch guard — user navigated away mid-load.
+      if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
       const blobUrl = URL.createObjectURL(blob);
+      _fvRevokeBlobUrl();
       _fvViewerState.blobUrl = blobUrl;
-      if (isPdf) {
-        body.innerHTML = `<iframe src="${blobUrl}" style="width:100%;height:100%;border:0;background:#0a0a0a;"></iframe>`;
-      } else {
-        body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:20px;min-height:100%;"><img src="${blobUrl}" style="max-width:100%;max-height:80vh;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,0.6);" alt="${_fvEscape(f.name || '')}"></div>`;
-      }
+      iframe.src = blobUrl;
     } catch (e) {
       console.error("[FileVault][viewer] fetch failed:", e);
-      if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
-      body.innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;text-align:center;gap:12px;">
-          <i class="fa-solid fa-triangle-exclamation" style="font-size:2rem;color:#E05252;"></i>
-          <div style="font-size:.85rem;color:#eee;">Preview failed: ${_fvEscape(e.message || "network error")}</div>
-          <a href="${_fvEscape(f.webViewLink || '#')}" target="_blank" rel="noopener" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.82rem;text-decoration:none;margin-top:8px;">Open in Drive →</a>
-        </div>
-      `;
+      iframe.src = "data:text/html;charset=UTF-8," + encodeURIComponent(
+        `<html><body style="margin:0;background:#0a0a0a;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#e0a0a0;gap:10px;"><div style="font-size:2rem;">⚠️</div><div>Preview failed: ${(e.message || "network error").replace(/</g, "&lt;")}</div></body></html>`
+      );
     }
     return;
   }
 
-  // Google-native docs (Docs/Sheets/Slides/Drawings) and other file types
-  // (docx, xlsx, etc.): use the Google Docs viewer proxy. This avoids the
-  // drive.google.com CSP frame-ancestors block. Note: this only renders for
-  // files whose download URL the proxy can fetch — fully private borrower
-  // files may still fail, in which case the user can click "Open in Drive".
+  // Google-native docs + other types: use the Docs viewer proxy.
   const docsViewerUrl = "https://docs.google.com/viewer?embedded=true&url=" +
     encodeURIComponent(`https://drive.google.com/uc?export=download&id=${f.id}`);
-  if (_fvIsGoogleDoc(f) || mime.indexOf("video/") === 0 || mime.indexOf("audio/") === 0 || mime) {
-    body.innerHTML = `<iframe src="${_fvEscape(docsViewerUrl)}" style="width:100%;height:100%;border:0;background:#0a0a0a;" allow="autoplay"></iframe>`;
-    return;
-  }
-
-  // Unknown / no mime: fallback card.
-  const icon = _fvFileIcon(mime);
-  body.innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;text-align:center;gap:12px;">
-      <i class="fa-solid ${icon}" style="font-size:3rem;color:#C9A84C;"></i>
-      <div style="font-size:.95rem;font-weight:700;color:#eee;">${_fvEscape(f.name || "Untitled")}</div>
-      <div style="font-size:.78rem;color:var(--muted);">Preview not available for this file type.</div>
-      <a href="${_fvEscape(f.webViewLink || '#')}" target="_blank" rel="noopener" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.82rem;text-decoration:none;margin-top:8px;">Open in Drive →</a>
-    </div>
-  `;
+  iframe.src = docsViewerUrl;
 }
 
 // Inline rename from inside the viewer header. Module-scoped so the click
