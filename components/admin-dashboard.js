@@ -1903,27 +1903,60 @@ function _fvOpenViewer(contact, files, index) {
 
   document.body.insertAdjacentHTML("beforeend", viewerHTML);
 
+  // ── NUCLEAR DEBUG ────────────────────────────────────────────────
+  // Verify the template actually mounted every element we expect. If the
+  // rename button is missing, logs exactly what the header DOES contain.
+  const _dbgRename = document.getElementById("fv-viewer-rename");
+  const _dbgDownload = document.getElementById("fv-viewer-download");
+  console.log("[FileVault][debug] rename btn:", _dbgRename);
+  console.log(
+    "[FileVault][debug] viewer HTML snippet:",
+    _dbgDownload?.parentElement?.innerHTML?.substring(0, 500)
+  );
+  if (!_dbgRename) {
+    console.error("[FileVault] fv-viewer-rename button NOT FOUND in DOM — template did not render it.");
+  }
+
   // ── Wire all listeners after the single mount ──
-  document.getElementById("fv-viewer-close").addEventListener("click", _fvCloseViewer);
-  document.getElementById("fv-viewer-prev").addEventListener("click", _fvViewerPrev);
-  document.getElementById("fv-viewer-next").addEventListener("click", _fvViewerNext);
+  // Using .onclick = instead of addEventListener so every call reassigns the
+  // same slot — no double-bind risk — and paired with an explicit null-check
+  // so a missing element is loud in the console instead of throwing.
+  const closeBtn = document.getElementById("fv-viewer-close");
+  if (closeBtn) closeBtn.onclick = _fvCloseViewer;
 
-  document.getElementById("fv-viewer-rename").addEventListener("click", () => {
-    if (!_fvViewerState) return;
-    const f = _fvViewerState.files[_fvViewerState.index];
-    if (f) _fvStartRenameInViewer(f);
-  });
+  const prevBtn = document.getElementById("fv-viewer-prev");
+  if (prevBtn) prevBtn.onclick = _fvViewerPrev;
 
-  document.getElementById("fv-viewer-download").addEventListener("click", () => {
-    if (!_fvViewerState) return;
-    const f = _fvViewerState.files[_fvViewerState.index];
-    if (f) window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`, "_blank", "noopener");
-  });
-  document.getElementById("fv-viewer-openlink").addEventListener("click", () => {
-    if (!_fvViewerState) return;
-    const f = _fvViewerState.files[_fvViewerState.index];
-    if (f) window.open(f.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(f.id)}/view`, "_blank", "noopener");
-  });
+  const nextBtn = document.getElementById("fv-viewer-next");
+  if (nextBtn) nextBtn.onclick = _fvViewerNext;
+
+  const renameBtn = document.getElementById("fv-viewer-rename");
+  if (renameBtn) {
+    renameBtn.onclick = () => {
+      const f = _fvViewerState.files[_fvViewerState.index];
+      _fvStartRenameInViewer(f);
+    };
+  } else {
+    console.error("[FileVault] fv-viewer-rename button NOT FOUND in DOM");
+  }
+
+  const downloadBtn = document.getElementById("fv-viewer-download");
+  if (downloadBtn) {
+    downloadBtn.onclick = () => {
+      if (!_fvViewerState) return;
+      const f = _fvViewerState.files[_fvViewerState.index];
+      if (f) window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`, "_blank", "noopener");
+    };
+  }
+
+  const openlinkBtn = document.getElementById("fv-viewer-openlink");
+  if (openlinkBtn) {
+    openlinkBtn.onclick = () => {
+      if (!_fvViewerState) return;
+      const f = _fvViewerState.files[_fvViewerState.index];
+      if (f) window.open(f.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(f.id)}/view`, "_blank", "noopener");
+    };
+  }
 
   // Clicking the overlay background (outside the inner chrome) closes.
   // Scoped to the overlay element only so inner clicks bubble normally.
