@@ -122,7 +122,7 @@ function renderActiveTab() {
       console.log('about to call loadApplications, cached:', dashboardData.applications?.length);
       loadApplications();
       break;
-    case "documents": renderDocuments(dashboardData.documents); break;
+    case "documents": renderDocuments(); break;
   }
 }
 
@@ -997,22 +997,324 @@ function filterApplications() {
 // Expose to global scope for inline HTML event handlers
 window.filterApplications = function() { filterApplications(); };
 
-function renderDocuments(documents) {
+// ── FILE VAULT (Documents tab) ────────────────────────────────────
+const GDRIVE_PROXY = "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/gdrive-proxy";
+const GDRIVE_BORROWERS_ROOT = "11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6";
+
+let _fvContacts = [];
+let _fvFilter = "";
+let _fvExpanded = new Set();
+let _fvFileCounts = {};
+let _fvFiles = {};
+
+async function renderDocuments() {
   const el = document.getElementById("admin-document-table");
   if (!el) return;
-  if (!documents.length) { renderEmptyState(el, "Uploaded borrower documents will appear here."); return; }
-  el.innerHTML = documents.map((doc) => `
-    <article class="crm-record-card">
-      <div class="crm-record-top">
-        <div><strong>${doc.file_name || "File"}</strong><span>${doc.mime_type || "Unknown type"}</span></div>
-        <span class="status-pill">${doc.status || "uploaded"}</span>
+  el.innerHTML = '<div style="grid-column:1/-1;padding:32px;text-align:center;color:var(--muted);font-size:.9rem;"><i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i>Loading borrowers…</div>';
+  await _fvLoadContacts();
+  _fvBindSearch();
+  _fvRenderGrid();
+  // Lazy-refresh file counts for contacts that already have folders
+  _fvContacts.forEach((c) => {
+    if (c.gdrive_folder_id && _fvFileCounts[c.gdrive_folder_id] == null) {
+      _fvRefreshCount(c.id, c.gdrive_folder_id);
+    }
+  });
+}
+
+async function _fvLoadContacts() {
+  const { url, key } = getSupabaseConfig();
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/contacts?select=id,first_name,last_name,email,pipeline_status,gdrive_folder_id,gdrive_folder_url&order=last_name.asc.nullslast`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    );
+    const data = await res.json();
+    _fvContacts = Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error("[FileVault] contacts load failed:", e);
+    _fvContacts = [];
+  }
+}
+
+function _fvBindSearch() {
+  const inp = document.getElementById("fv-search");
+  if (!inp || inp._fvBound) return;
+  inp._fvBound = true;
+  inp.addEventListener("input", (e) => {
+    _fvFilter = (e.target.value || "").trim().toLowerCase();
+    _fvRenderGrid();
+  });
+}
+
+function _fvFiltered() {
+  if (!_fvFilter) return _fvContacts;
+  return _fvContacts.filter((c) => {
+    const name = `${c.first_name || ""} ${c.last_name || ""}`.toLowerCase();
+    const email = (c.email || "").toLowerCase();
+    return name.includes(_fvFilter) || email.includes(_fvFilter);
+  });
+}
+
+function _fvPipelineColor(status) {
+  const m = {
+    "New Lead": "#6B6B7A", "Contacted": "#5AA0E0", "Pre-Approved": "#C9A84C",
+    "Under Contract": "#AB7FE0", "Processing": "#E07F50", "Clear to Close": "#52C87A",
+    "Closed": "#3AB06A", "Lost": "#E05252"
+  };
+  return m[status] || "#6B6B7A";
+}
+
+function _fvInitials(c) {
+  return (((c.first_name || "").charAt(0) + (c.last_name || "").charAt(0)).toUpperCase()) || "?";
+}
+
+function _fvRenderGrid() {
+  const el = document.getElementById("admin-document-table");
+  if (!el) return;
+  const summary = document.getElementById("fv-summary");
+  if (summary) {
+    const withFolder = _fvContacts.filter((c) => c.gdrive_folder_id).length;
+    const without = _fvContacts.length - withFolder;
+    summary.innerHTML = `
+      <span><strong style="color:#eee;">${_fvContacts.length}</strong> borrowers</span>
+      <span><strong style="color:#C9A84C;">${withFolder}</strong> with folders</span>
+      <span><strong style="color:#E05252;">${without}</strong> no folder</span>
+    `;
+  }
+  const list = _fvFiltered();
+  if (!list.length) {
+    el.innerHTML = '<div style="grid-column:1/-1;padding:32px;text-align:center;color:var(--muted);font-size:.9rem;">No borrowers match your search.</div>';
+    return;
+  }
+  el.innerHTML = list.map(_fvCardHtml).join("");
+  el.querySelectorAll("[data-fv-action]").forEach((btn) => {
+    btn.addEventListener("click", _fvHandleAction);
+  });
+  // Re-populate file lists for any expanded cards
+  list.forEach((c) => {
+    if (_fvExpanded.has(c.id) && c.gdrive_folder_id) _fvRenderFileList(c);
+  });
+}
+
+function _fvCardHtml(c) {
+  const name = `${c.first_name || ""} ${c.last_name || ""}`.trim() || "Unnamed";
+  const initials = _fvInitials(c);
+  const pipeline = c.pipeline_status || "New Lead";
+  const pipeColor = _fvPipelineColor(pipeline);
+  const expanded = _fvExpanded.has(c.id);
+  const hasFolder = !!c.gdrive_folder_id;
+  const count = hasFolder ? (_fvFileCounts[c.gdrive_folder_id] ?? "…") : "";
+
+  let footer;
+  if (hasFolder) {
+    footer = `
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button data-fv-action="toggle" data-id="${c.id}" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:8px;padding:8px 12px;font-size:.78rem;font-weight:600;cursor:pointer;">
+          <i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${expanded ? "Hide Files" : "View Files"} (${count})
+        </button>
+        <a href="/admin/lead-detail.html?id=${c.id}" title="Open contact" style="background:#1a1a1a;border:1px solid #333;color:var(--muted);border-radius:8px;padding:8px 12px;font-size:.78rem;font-weight:600;text-decoration:none;">Lead →</a>
       </div>
-      <div class="crm-record-meta">
-        <span>${formatDate(doc.created_at)}</span>
-        <span>App ${doc.application_id || "—"}</span>
+      ${expanded ? `<div id="fv-files-${c.id}" style="margin-top:12px;border-top:1px solid #222;padding-top:12px;"></div>` : ""}
+    `;
+  } else {
+    footer = `
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button data-fv-action="create" data-id="${c.id}" style="flex:1;background:#C9A84C;color:#111;border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:.78rem;cursor:pointer;font-family:inherit;">
+          <i class="fa-solid fa-folder-plus" style="margin-right:5px;"></i>Create Folder
+        </button>
+        <a href="/admin/lead-detail.html?id=${c.id}" style="background:#1a1a1a;border:1px solid #333;color:var(--muted);border-radius:8px;padding:9px 14px;font-size:.78rem;font-weight:600;text-decoration:none;">Lead →</a>
       </div>
+    `;
+  }
+
+  return `
+    <article class="crm-record-card" data-fv-card="${c.id}" style="padding:16px;">
+      <div style="display:flex;gap:12px;align-items:flex-start;">
+        <div style="flex-shrink:0;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#C9A84C,#8c6e23);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.95rem;color:#111;">${initials}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+            <strong style="font-size:.95rem;color:#eee;">${name}</strong>
+            <span style="background:${pipeColor}22;color:${pipeColor};border:1px solid ${pipeColor}55;padding:2px 8px;border-radius:10px;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">${pipeline}</span>
+          </div>
+          <div style="font-size:.76rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.email || "—"}</div>
+        </div>
+      </div>
+      ${footer}
     </article>
-  `).join("");
+  `;
+}
+
+async function _fvHandleAction(e) {
+  const btn = e.currentTarget;
+  const action = btn.dataset.fvAction;
+  const id = btn.dataset.id;
+  const contact = _fvContacts.find((c) => String(c.id) === String(id));
+  if (!contact) return;
+  if (action === "create") return _fvCreateFolder(contact, btn);
+  if (action === "toggle") return _fvToggleFiles(contact);
+  if (action === "upload") return _fvShowToast("Upload coming soon");
+}
+
+async function _fvCreateFolder(contact, btn) {
+  btn.disabled = true;
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating…';
+  try {
+    const { key } = getSupabaseConfig();
+    const res = await fetch(`${GDRIVE_PROXY}?action=create-folder`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`
+      },
+      body: JSON.stringify({
+        parentId: GDRIVE_BORROWERS_ROOT,
+        name: `${contact.first_name || ""} ${contact.last_name || ""}`.trim().toUpperCase() || "UNNAMED BORROWER"
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.id) throw new Error(data.error || "Folder create failed");
+    const folderId = data.id;
+    const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+    // PATCH contact
+    const { url, key: sbKey } = getSupabaseConfig();
+    const patch = await fetch(`${url}/rest/v1/contacts?id=eq.${encodeURIComponent(contact.id)}`, {
+      method: "PATCH",
+      headers: {
+        apikey: sbKey,
+        Authorization: `Bearer ${sbKey}`,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal"
+      },
+      body: JSON.stringify({ gdrive_folder_id: folderId, gdrive_folder_url: folderUrl })
+    });
+    if (!patch.ok) throw new Error("Failed to save folder ID to contact");
+    contact.gdrive_folder_id = folderId;
+    contact.gdrive_folder_url = folderUrl;
+    _fvFileCounts[folderId] = 0;
+    _fvFiles[folderId] = [];
+    _fvExpanded.add(contact.id);
+    _fvRenderGrid();
+    _fvShowToast("Folder created ✓");
+  } catch (e) {
+    console.error("[FileVault] create folder failed:", e);
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    _fvShowToast("Error: " + (e.message || "create failed"));
+  }
+}
+
+async function _fvToggleFiles(contact) {
+  const wasOpen = _fvExpanded.has(contact.id);
+  if (wasOpen) _fvExpanded.delete(contact.id);
+  else _fvExpanded.add(contact.id);
+  _fvRenderGrid();
+  if (!wasOpen && contact.gdrive_folder_id) {
+    await _fvLoadFiles(contact.gdrive_folder_id);
+    _fvRenderFileList(contact);
+  }
+}
+
+async function _fvLoadFiles(folderId) {
+  const { key } = getSupabaseConfig();
+  try {
+    const res = await fetch(`${GDRIVE_PROXY}?action=list-files&folderId=${encodeURIComponent(folderId)}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` }
+    });
+    const data = await res.json();
+    const files = Array.isArray(data.files) ? data.files : [];
+    _fvFiles[folderId] = files;
+    _fvFileCounts[folderId] = files.length;
+  } catch (e) {
+    console.error("[FileVault] list files failed:", e);
+    _fvFiles[folderId] = [];
+    _fvFileCounts[folderId] = 0;
+  }
+}
+
+async function _fvRefreshCount(contactId, folderId) {
+  await _fvLoadFiles(folderId);
+  const card = document.querySelector(`[data-fv-card="${contactId}"]`);
+  const toggle = card?.querySelector('[data-fv-action="toggle"]');
+  if (toggle) {
+    const label = _fvExpanded.has(contactId) ? "Hide Files" : "View Files";
+    toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[folderId] ?? 0})`;
+  }
+}
+
+function _fvFileIcon(mime) {
+  if (!mime) return "fa-file";
+  if (mime.includes("pdf")) return "fa-file-pdf";
+  if (mime.includes("image")) return "fa-file-image";
+  if (mime.includes("word") || mime.includes("document")) return "fa-file-word";
+  if (mime.includes("sheet") || mime.includes("excel") || mime.includes("csv")) return "fa-file-excel";
+  if (mime.includes("video")) return "fa-file-video";
+  if (mime.includes("audio")) return "fa-file-audio";
+  if (mime.includes("zip") || mime.includes("compressed")) return "fa-file-zipper";
+  if (mime.includes("folder")) return "fa-folder";
+  return "fa-file";
+}
+
+function _fvFormatSize(bytes) {
+  if (bytes == null) return "—";
+  const b = Number(bytes);
+  if (!isFinite(b) || b <= 0) return "—";
+  if (b < 1024) return b + " B";
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+  if (b < 1024 * 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + " MB";
+  return (b / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+}
+
+function _fvRenderFileList(contact) {
+  const host = document.getElementById(`fv-files-${contact.id}`);
+  if (!host) return;
+  const files = _fvFiles[contact.gdrive_folder_id] || [];
+  const rows = files.length
+    ? files.map((f) => {
+        const icon = _fvFileIcon(f.mimeType || "");
+        const size = _fvFormatSize(f.size);
+        const date = f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString() : "";
+        const link = f.webViewLink || "#";
+        const nm = (f.name || "Untitled").replace(/</g, "&lt;");
+        return `
+          <a href="${link}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.02);margin-bottom:6px;color:#eee;text-decoration:none;border:1px solid rgba(255,255,255,0.04);">
+            <i class="fa-solid ${icon}" style="color:#C9A84C;width:16px;text-align:center;"></i>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nm}</div>
+              <div style="font-size:.68rem;color:var(--muted);">${size}${date ? " · " + date : ""}</div>
+            </div>
+            <i class="fa-solid fa-arrow-up-right-from-square" style="color:var(--muted);font-size:.72rem;"></i>
+          </a>
+        `;
+      }).join("")
+    : '<div style="padding:14px;text-align:center;color:var(--muted);font-size:.78rem;">No files yet.</div>';
+
+  host.innerHTML = `
+    ${rows}
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button data-fv-action="upload" data-id="${contact.id}" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:8px;padding:8px 12px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit;">
+        <i class="fa-solid fa-upload" style="margin-right:4px;"></i>Upload File
+      </button>
+      <a href="${contact.gdrive_folder_url}" target="_blank" rel="noopener" style="background:#1a1a1a;border:1px solid #333;color:var(--muted);border-radius:8px;padding:8px 12px;font-size:.75rem;font-weight:600;text-decoration:none;">Open in Drive →</a>
+    </div>
+  `;
+  host.querySelectorAll('[data-fv-action="upload"]').forEach((btn) => btn.addEventListener("click", _fvHandleAction));
+}
+
+function _fvShowToast(msg) {
+  let t = document.getElementById("fvToast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "fvToast";
+    t.style.cssText = "position:fixed;bottom:32px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#C9A84C;padding:10px 18px;border-radius:22px;border:1px solid #333;font-size:.82rem;font-weight:700;z-index:9999;box-shadow:0 6px 20px rgba(0,0,0,.5);font-family:system-ui,sans-serif;";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.display = "block";
+  clearTimeout(t._hide);
+  t._hide = setTimeout(() => { t.style.display = "none"; }, 3000);
 }
 
 // ── LEAD DETAIL DRAWER ────────────────────────────────────────────────────────
