@@ -1,3 +1,4 @@
+// admin-dashboard.js v20260411-1
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
   if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_URL) {
@@ -25,7 +26,7 @@ import {
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks
-} from "/api/admin-api-v2.js";
+} from "/api/admin-api-v2.js?v=20260411";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
