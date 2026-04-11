@@ -62,14 +62,16 @@ export default {
     }
 
     // Google Maps API key — served to the browser at runtime so it stays in
-    // Cloudflare secrets instead of git.
+    // Cloudflare secrets instead of git. Cache in the browser for 5 minutes
+    // so page reloads / multiple call sites within a page don't re-hit the
+    // worker unnecessarily.
     if (path === '/config') {
       return new Response(
         JSON.stringify({ googleMapsApiKey: env.GOOGLE_MAPS_API_KEY || '' }),
         {
           headers: {
             'content-type': 'application/json; charset=utf-8',
-            'cache-control': 'no-store'
+            'cache-control': 'private, max-age=300'
           }
         }
       );

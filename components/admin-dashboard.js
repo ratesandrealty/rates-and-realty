@@ -7,11 +7,16 @@
   }
 })();
 
+// Module-level cache — getSupabaseConfig() is called from many renderers;
+// read window.APP_CONFIG once and reuse the result.
+let _cachedSupabaseConfig = null;
 function getSupabaseConfig() {
-  return {
+  if (_cachedSupabaseConfig && _cachedSupabaseConfig.key) return _cachedSupabaseConfig;
+  _cachedSupabaseConfig = {
     url: window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co',
     key: window.APP_CONFIG?.SUPABASE_ANON_KEY
   };
+  return _cachedSupabaseConfig;
 }
 
 import { requireAdmin } from "/api/auth-api.js";
@@ -1155,17 +1160,31 @@ async function _fvHandleAction(e) {
 }
 
 // Upload one file to gdrive-proxy. Returns { ok, name, error? }.
-// IMPORTANT: gdrive-proxy is deployed with --no-verify-jwt, so it only needs
-// the apikey header — sending Authorization: Bearer triggers a 403.
+// The Supabase edge gateway requires BOTH apikey (for routing) and
+// Authorization (for the gateway to accept the request) even when the
+// function itself is deployed with --no-verify-jwt. Using the anon key as
+// the bearer is safe because the function never validates the JWT.
 async function _fvUploadOne(folderId, file) {
   const { key } = getSupabaseConfig();
+  if (!key) {
+    console.error("[FileVault] Supabase anon key missing from window.APP_CONFIG");
+    return { ok: false, name: file.name, error: "anon key missing" };
+  }
+  console.log("[FileVault] upload", file.name, "-> folder", folderId, "key present:", !!key);
   const fd = new FormData();
   fd.append("folderId", folderId);
   fd.append("file", file);
   try {
     const res = await fetch(
       "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/gdrive-proxy?action=upload-file",
-      { method: "POST", headers: { apikey: key }, body: fd }
+      {
+        method: "POST",
+        headers: {
+          apikey: key,
+          Authorization: "Bearer " + key
+        },
+        body: fd
+      }
     );
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.id) {

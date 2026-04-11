@@ -23,11 +23,18 @@
     // and the same Maps JS script injection.
     if (window._gmapsLoadPromise) return window._gmapsLoadPromise;
     window._gmapsLoadPromise = (async function() {
-      var res = await fetch('/config');
-      if (!res.ok) throw new Error('Failed to load /config');
-      var cfg = await res.json();
-      var key = cfg.googleMapsApiKey;
-      if (!key) throw new Error('googleMapsApiKey missing from /config');
+      // sessionStorage cache: avoids /config fetch on soft-navigations and
+      // after the Maps script has loaded once this tab-session.
+      var key = null;
+      try { key = sessionStorage.getItem('gmapsKey'); } catch (_) {}
+      if (!key) {
+        var res = await fetch('/config');
+        if (!res.ok) throw new Error('Failed to load /config');
+        var cfg = await res.json();
+        key = cfg.googleMapsApiKey;
+        if (!key) throw new Error('googleMapsApiKey missing from /config');
+        try { sessionStorage.setItem('gmapsKey', key); } catch (_) {}
+      }
       await new Promise(function(resolve, reject) {
         // If something else already injected the Maps script, don't inject again.
         var existing = document.querySelector('script[data-gmaps-js="1"]');
