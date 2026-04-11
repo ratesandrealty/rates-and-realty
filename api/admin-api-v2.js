@@ -6,31 +6,51 @@ import { supabase } from "/api/supabase-client.js";
 export async function getAdminDashboardData() {
   console.log('getAdminDashboardData v2026033102 starting...');
 
+  // Leads embeds contacts — disambiguate via explicit FK column hint since
+  // some leads rows have nullable contact_id and PostgREST can otherwise
+  // pick the wrong relationship.
+  const leadsSelect = "*, contacts!contact_id(first_name, last_name, email, phone, credit_score, employer_name, monthly_income)";
+
   const [contactsResult, leadsResult, applicationsResult, documentsResult, notesResult, tasksResult] = await Promise.all([
     supabase.from("contacts").select("*").order("created_at", { ascending: false }),
-    supabase.from("leads").select("*, contacts(first_name, last_name, email, phone, credit_score, employer_name, monthly_income)").order("created_at", { ascending: false }),
+    supabase.from("leads").select(leadsSelect).order("created_at", { ascending: false }),
     supabase.from("mortgage_applications").select("id, loan_type, loan_amount, status, updated_at, contact_id, property_address_street").order("updated_at", { ascending: false }),
     supabase.from("uploaded_documents").select("*").order("created_at", { ascending: false }),
     supabase.from("notes").select("*").order("created_at", { ascending: false }),
     supabase.from("tasks").select("*").order("created_at", { ascending: false })
   ]);
 
-  console.log('Results:', {
-    contacts: contactsResult.error || contactsResult.data?.length,
-    leads: leadsResult.error || leadsResult.data?.length,
-    applications: applicationsResult.error || applicationsResult.data?.length
+  console.log('[admin-api] dashboard results:', {
+    contacts: contactsResult.error ? `ERR: ${contactsResult.error.message}` : contactsResult.data?.length,
+    leads: leadsResult.error ? `ERR: ${leadsResult.error.message}` : leadsResult.data?.length,
+    applications: applicationsResult.error ? `ERR: ${applicationsResult.error.message}` : applicationsResult.data?.length,
+    documents: documentsResult.error ? `ERR: ${documentsResult.error.message}` : documentsResult.data?.length,
+    notes: notesResult.error ? `ERR: ${notesResult.error.message}` : notesResult.data?.length,
+    tasks: tasksResult.error ? `ERR: ${tasksResult.error.message}` : tasksResult.data?.length
   });
 
-  if (contactsResult.error) console.warn("Contacts load error:", contactsResult.error);
-  if (leadsResult.error) console.warn("Leads load error:", leadsResult.error);
-  if (applicationsResult.error) console.warn("Applications load error:", applicationsResult.error);
-  if (documentsResult.error) console.warn("Documents load error:", documentsResult.error);
-  if (notesResult.error) console.warn("Notes load error:", notesResult.error);
-  if (tasksResult.error) console.warn("Tasks load error:", tasksResult.error);
+  if (contactsResult.error) console.error("[admin-api] Contacts load error:", contactsResult.error);
+  if (applicationsResult.error) console.error("[admin-api] Applications load error:", applicationsResult.error);
+  if (documentsResult.error) console.error("[admin-api] Documents load error:", documentsResult.error);
+  if (notesResult.error) console.error("[admin-api] Notes load error:", notesResult.error);
+  if (tasksResult.error) console.error("[admin-api] Tasks load error:", tasksResult.error);
+
+  // Leads: if the embed failed (e.g. schema FK not yet named contact_id),
+  // fall back to a flat select so the dashboard still renders.
+  let leadsData = leadsResult.data;
+  if (leadsResult.error) {
+    console.error("[admin-api] Leads load error (with embed):", leadsResult.error);
+    const flat = await supabase
+      .from("leads")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (flat.error) console.error("[admin-api] Leads flat fallback also failed:", flat.error);
+    leadsData = flat.data || [];
+  }
 
   return {
     contacts: contactsResult.data || [],
-    leads: leadsResult.data || [],
+    leads: leadsData || [],
     applications: applicationsResult.data || [],
     documents: documentsResult.data || [],
     notes: notesResult.data || [],
@@ -230,11 +250,21 @@ export async function completeTask(taskId) {
 }
 
 export async function getAllTasks() {
+  // Disambiguate: tasks has both a direct lead_id FK and a polymorphic
+  // related_table/related_id pointer — PostgREST needs the column hint.
   const { data, error } = await supabase
     .from("tasks")
-    .select("*, leads(id, status, contacts(first_name, last_name))")
+    .select("*, leads!lead_id(id, status, contacts(first_name, last_name))")
     .order("due_date", { ascending: true, nullsLast: true });
-  if (error) throw error;
+  if (error) {
+    console.warn("getAllTasks embed failed, retrying without leads join:", error);
+    const fallback = await supabase
+      .from("tasks")
+      .select("*")
+      .order("due_date", { ascending: true, nullsLast: true });
+    if (fallback.error) throw fallback.error;
+    return fallback.data || [];
+  }
   return data || [];
 }
 
@@ -244,11 +274,20 @@ export async function getAppointments() {
   try {
     const { data, error } = await supabase
       .from("appointments")
-      .select("*, leads(id, status, contacts(first_name, last_name))")
+      .select("*, leads!lead_id(id, status, contacts(first_name, last_name))")
       .order("scheduled_at", { ascending: true });
-    if (error) throw error;
+    if (error) {
+      console.warn("getAppointments embed failed, retrying without leads join:", error);
+      const fallback = await supabase
+        .from("appointments")
+        .select("*")
+        .order("scheduled_at", { ascending: true });
+      if (fallback.error) throw fallback.error;
+      return fallback.data || [];
+    }
     return data || [];
-  } catch (_) {
+  } catch (e) {
+    console.error("getAppointments failed:", e);
     return [];
   }
 }

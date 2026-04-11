@@ -11,29 +11,39 @@
  * never lives in git.
  */
 (function(){
-  var _loadPromise = null;
+  // If the module has already been wired up on this page, bail out — this
+  // guards against the script tag being included twice (which would otherwise
+  // duplicate the /config fetch and the Maps JS injection).
+  if (window.loadGoogleMaps) return;
 
   window.loadGoogleMaps = function() {
     if (window.google && window.google.maps) return Promise.resolve(window.google.maps);
-    if (_loadPromise) return _loadPromise;
-    _loadPromise = (async function() {
+    // Cache the in-flight load promise on `window` so every caller — even
+    // across separate script evaluations — reuses the same /config fetch
+    // and the same Maps JS script injection.
+    if (window._gmapsLoadPromise) return window._gmapsLoadPromise;
+    window._gmapsLoadPromise = (async function() {
       var res = await fetch('/config');
       if (!res.ok) throw new Error('Failed to load /config');
       var cfg = await res.json();
       var key = cfg.googleMapsApiKey;
       if (!key) throw new Error('googleMapsApiKey missing from /config');
       await new Promise(function(resolve, reject) {
+        // If something else already injected the Maps script, don't inject again.
+        var existing = document.querySelector('script[data-gmaps-js="1"]');
+        if (existing) { existing.addEventListener('load', resolve); existing.addEventListener('error', reject); return; }
         var s = document.createElement('script');
         s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&libraries=places&v=weekly';
         s.async = true;
         s.defer = true;
+        s.setAttribute('data-gmaps-js', '1');
         s.onload = resolve;
         s.onerror = function() { reject(new Error('Google Maps script failed to load')); };
         document.head.appendChild(s);
       });
       return window.google.maps;
     })();
-    return _loadPromise;
+    return window._gmapsLoadPromise;
   };
 
   // Dark basemap styles — gold-tinted dark theme for the main UI.
