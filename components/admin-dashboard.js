@@ -1804,12 +1804,20 @@ function _fvOpenViewer(contact, files, index) {
   _fvViewerRender();
 }
 
+function _fvRevokeBlobUrl() {
+  if (_fvViewerState && _fvViewerState.blobUrl) {
+    try { URL.revokeObjectURL(_fvViewerState.blobUrl); } catch (_) {}
+    _fvViewerState.blobUrl = null;
+  }
+}
+
 function _fvCloseViewer() {
   const panel = document.getElementById("fv-viewer-panel");
   const overlay = document.getElementById("fv-viewer-overlay");
   if (_fvViewerState && _fvViewerState.keyHandler) {
     document.removeEventListener("keydown", _fvViewerState.keyHandler);
   }
+  _fvRevokeBlobUrl();
   if (panel) {
     panel.style.transform = "translateX(100%)";
     setTimeout(() => panel.remove(), 280);
@@ -1822,11 +1830,13 @@ function _fvViewerNav(delta) {
   if (!_fvViewerState) return;
   const next = _fvViewerState.index + delta;
   if (next < 0 || next >= _fvViewerState.files.length) return;
+  // Revoke the previous file's blob URL before switching.
+  _fvRevokeBlobUrl();
   _fvViewerState.index = next;
   _fvViewerRender();
 }
 
-function _fvViewerRender() {
+async function _fvViewerRender() {
   if (!_fvViewerState) return;
   const { files, index } = _fvViewerState;
   const f = files[index];
@@ -1851,27 +1861,82 @@ function _fvViewerRender() {
   if (dl) dl.href = f.webContentLink || f.webViewLink || "#";
   if (openlink) openlink.href = f.webViewLink || "#";
 
+  // Capture the index we're rendering for — if the user navigates while a
+  // fetch is in flight, we discard the stale result.
+  const renderIndex = index;
   const mime = f.mimeType || "";
-  const previewUrl = (f.webViewLink || "").replace(/\/view(\?.*)?$/, "/preview");
-  if (_fvIsPdf(f)) {
-    body.innerHTML = `<iframe src="${_fvEscape(previewUrl)}" style="width:100%;height:100%;border:0;background:#0a0a0a;" allow="autoplay"></iframe>`;
-  } else if (mime.indexOf("image/") === 0) {
-    // Use thumbnailLink at higher res where possible, fall back to webContentLink.
-    const src = (f.thumbnailLink || "").replace(/=s\d+(-.*)?$/, "=s1600") || f.webContentLink || previewUrl;
-    body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:20px;min-height:100%;"><img src="${_fvEscape(src)}" style="max-width:100%;max-height:80vh;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,0.6);" alt="${_fvEscape(f.name || '')}"></div>`;
-  } else if (_fvIsGoogleDoc(f) || mime.indexOf("video/") === 0 || mime.indexOf("audio/") === 0) {
-    body.innerHTML = `<iframe src="${_fvEscape(previewUrl)}" style="width:100%;height:100%;border:0;background:#0a0a0a;" allow="autoplay"></iframe>`;
-  } else {
-    const icon = _fvFileIcon(mime);
-    body.innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;text-align:center;gap:12px;">
-        <i class="fa-solid ${icon}" style="font-size:3rem;color:#C9A84C;"></i>
-        <div style="font-size:.95rem;font-weight:700;color:#eee;">${_fvEscape(f.name || "Untitled")}</div>
-        <div style="font-size:.78rem;color:var(--muted);">Preview not available for this file type.</div>
-        <a href="${_fvEscape(f.webViewLink || '#')}" target="_blank" rel="noopener" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.82rem;text-decoration:none;margin-top:8px;">Open in Drive →</a>
-      </div>
-    `;
+  const isPdf = _fvIsPdf(f);
+  const isImage = mime.indexOf("image/") === 0;
+
+  // Show a loading placeholder up front.
+  body.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;gap:12px;">
+      <span style="width:22px;height:22px;border:3px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin 0.7s linear infinite;"></span>
+      <div style="font-size:.78rem;color:var(--muted);">Loading preview…</div>
+    </div>
+  `;
+
+  // PDF and image files: fetch the bytes via alt=media, render as blob URL.
+  // Going through the Drive API with the OAuth token avoids Google's CSP
+  // frame-ancestors header that blocks drive.google.com/file/d/.../preview.
+  if (isPdf || isImage) {
+    try {
+      const token = await _fvEnsureToken();
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(f.id)}?alt=media`,
+        { headers: { Authorization: "Bearer " + token } }
+      );
+      if (res.status === 401 || res.status === 403) _fvClearToken();
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const blob = await res.blob();
+      // Stale fetch guard — user may have navigated or closed the viewer.
+      if (!_fvViewerState || _fvViewerState.index !== renderIndex) {
+        try { URL.revokeObjectURL(URL.createObjectURL(blob)); } catch (_) {}
+        return;
+      }
+      const blobUrl = URL.createObjectURL(blob);
+      _fvViewerState.blobUrl = blobUrl;
+      if (isPdf) {
+        body.innerHTML = `<iframe src="${blobUrl}" style="width:100%;height:100%;border:0;background:#0a0a0a;"></iframe>`;
+      } else {
+        body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:20px;min-height:100%;"><img src="${blobUrl}" style="max-width:100%;max-height:80vh;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,0.6);" alt="${_fvEscape(f.name || '')}"></div>`;
+      }
+    } catch (e) {
+      console.error("[FileVault][viewer] fetch failed:", e);
+      if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
+      body.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;text-align:center;gap:12px;">
+          <i class="fa-solid fa-triangle-exclamation" style="font-size:2rem;color:#E05252;"></i>
+          <div style="font-size:.85rem;color:#eee;">Preview failed: ${_fvEscape(e.message || "network error")}</div>
+          <a href="${_fvEscape(f.webViewLink || '#')}" target="_blank" rel="noopener" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.82rem;text-decoration:none;margin-top:8px;">Open in Drive →</a>
+        </div>
+      `;
+    }
+    return;
   }
+
+  // Google-native docs (Docs/Sheets/Slides/Drawings) and other file types
+  // (docx, xlsx, etc.): use the Google Docs viewer proxy. This avoids the
+  // drive.google.com CSP frame-ancestors block. Note: this only renders for
+  // files whose download URL the proxy can fetch — fully private borrower
+  // files may still fail, in which case the user can click "Open in Drive".
+  const docsViewerUrl = "https://docs.google.com/viewer?embedded=true&url=" +
+    encodeURIComponent(`https://drive.google.com/uc?export=download&id=${f.id}`);
+  if (_fvIsGoogleDoc(f) || mime.indexOf("video/") === 0 || mime.indexOf("audio/") === 0 || mime) {
+    body.innerHTML = `<iframe src="${_fvEscape(docsViewerUrl)}" style="width:100%;height:100%;border:0;background:#0a0a0a;" allow="autoplay"></iframe>`;
+    return;
+  }
+
+  // Unknown / no mime: fallback card.
+  const icon = _fvFileIcon(mime);
+  body.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;text-align:center;gap:12px;">
+      <i class="fa-solid ${icon}" style="font-size:3rem;color:#C9A84C;"></i>
+      <div style="font-size:.95rem;font-weight:700;color:#eee;">${_fvEscape(f.name || "Untitled")}</div>
+      <div style="font-size:.78rem;color:var(--muted);">Preview not available for this file type.</div>
+      <a href="${_fvEscape(f.webViewLink || '#')}" target="_blank" rel="noopener" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.82rem;text-decoration:none;margin-top:8px;">Open in Drive →</a>
+    </div>
+  `;
 }
 
 // Inline rename from inside the viewer header. Updates both the viewer title
