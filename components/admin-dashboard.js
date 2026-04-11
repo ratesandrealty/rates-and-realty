@@ -1690,32 +1690,59 @@ async function _fvConvertToPdf(contact, fileId, btn) {
   const files = _fvFiles[contact.gdrive_folder_id] || [];
   const file = files.find((f) => f.id === fileId);
   if (!file) return;
+  console.log("[FileVault][convert] start", { fileId, name: file.name, mimeType: file.mimeType });
   if (_fvIsPdf(file)) { _fvShowToast("Already a PDF"); return; }
-  const exportMime = _fvGoogleExportMime(file.mimeType || "");
-  if (!exportMime) {
-    _fvShowToast("To convert: open file in Drive then File > Download as PDF");
+  // Only Google-native docs can be exported via the Drive export endpoint.
+  // Other uploaded file types (docx, xlsx, jpg, png, etc) need to be converted
+  // in the Drive UI — the API has no generic convert endpoint.
+  if (!_fvIsGoogleDoc(file)) {
+    _fvShowToast("Open this file in Google Drive, then File > Download as PDF");
+    console.log("[FileVault][convert] skipped — not a Google-native doc");
     return;
   }
+  const exportMime = "application/pdf";
   const origHtml = btn ? btn.innerHTML : "";
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
   try {
-    const headers = await _fvAuthHeaders();
-    const exportRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
-      { headers }
-    );
+    // Step 1: ensure a fresh OAuth token.
+    const token = await _fvEnsureToken();
+    console.log("[FileVault][convert] token acquired, exporting…");
+
+    // Step 2: export the Google-native doc as PDF bytes.
+    const exportUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`;
+    const exportRes = await fetch(exportUrl, {
+      headers: { Authorization: "Bearer " + token }
+    });
+    console.log("[FileVault][convert] export response:", exportRes.status);
     if (exportRes.status === 401 || exportRes.status === 403) _fvClearToken();
-    if (!exportRes.ok) throw new Error(`Export failed HTTP ${exportRes.status}`);
+    if (!exportRes.ok) {
+      const errText = await exportRes.text().catch(() => "");
+      console.error("[FileVault][convert] export failed body:", errText);
+      _fvShowToast(`Export failed: HTTP ${exportRes.status}`);
+      throw new Error(`Export failed HTTP ${exportRes.status}`);
+    }
     const blob = await exportRes.blob();
-    const pdfBlob = new File([blob], (file.name || "document") + ".pdf", { type: "application/pdf" });
-    const result = await _fvUploadOne(contact.gdrive_folder_id, pdfBlob);
-    if (!result.ok) throw new Error(result.error || "upload failed");
+    console.log("[FileVault][convert] export blob size:", blob.size, "type:", blob.type);
+
+    // Step 3: strip the existing extension off the original name before
+    // appending .pdf so we don't end up with "budget.docx.pdf".
+    const baseName = (file.name || "document").replace(/\.[a-zA-Z0-9]{1,6}$/, "");
+    const newFileName = baseName + ".pdf";
+    const pdfFile = new File([blob], newFileName, { type: "application/pdf" });
+    console.log("[FileVault][convert] uploading as:", newFileName);
+
+    // Step 4: upload the PDF blob back to the same folder via OAuth multipart.
+    const result = await _fvUploadOne(contact.gdrive_folder_id, pdfFile);
+    console.log("[FileVault][convert] upload result:", result);
+    if (!result.ok) {
+      _fvShowToast("PDF upload failed: " + (result.error || "unknown"));
+      throw new Error(result.error || "upload failed");
+    }
     _fvShowToast("Converted to PDF ✓");
     await _fvLoadFiles(contact.gdrive_folder_id);
     _fvRenderFileList(contact);
   } catch (e) {
-    console.error("[FileVault] convert failed:", e);
-    _fvShowToast("Convert failed");
+    console.error("[FileVault][convert] failed:", e);
     if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
   }
 }
@@ -1736,7 +1763,11 @@ function _fvOpenViewer(contact, files, index) {
   panel.style.cssText = "position:fixed;top:0;right:0;width:480px;height:100vh;background:#1a1a1a;border-left:2px solid #C9A84C;z-index:8001;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .28s ease;box-shadow:-12px 0 40px rgba(0,0,0,0.6);";
   panel.innerHTML = `
     <div id="fv-viewer-header" style="padding:14px 16px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;gap:10px;flex-shrink:0;">
-      <div id="fv-viewer-title" style="flex:1;min-width:0;font-size:.88rem;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+      <div id="fv-viewer-title-wrap" style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;">
+        <span id="fv-viewer-title" style="flex:1;min-width:0;font-size:14px;font-weight:500;color:#C9A84C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+        <button id="fv-viewer-rename" title="Rename" style="background:none;border:none;color:#C9A84C;cursor:pointer;padding:2px 4px;font-size:.82rem;flex-shrink:0;"><i class="fa-solid fa-pen"></i></button>
+        <span id="fv-viewer-saving" style="display:none;color:#C9A84C;font-size:.78rem;flex-shrink:0;"><i class="fa-solid fa-spinner fa-spin"></i></span>
+      </div>
       <a id="fv-viewer-download" title="Download" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 9px;font-size:.78rem;text-decoration:none;"><i class="fa-solid fa-download"></i></a>
       <a id="fv-viewer-openlink" title="Open in Drive" target="_blank" rel="noopener" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 9px;font-size:.78rem;text-decoration:none;"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
       <button id="fv-viewer-close" title="Close" style="background:#222;border:1px solid #333;color:#eee;border-radius:6px;padding:6px 10px;font-size:.82rem;cursor:pointer;font-family:inherit;">✕</button>
@@ -1754,6 +1785,7 @@ function _fvOpenViewer(contact, files, index) {
   document.getElementById("fv-viewer-close").addEventListener("click", _fvCloseViewer);
   document.getElementById("fv-viewer-prev").addEventListener("click", () => _fvViewerNav(-1));
   document.getElementById("fv-viewer-next").addEventListener("click", () => _fvViewerNav(1));
+  document.getElementById("fv-viewer-rename").addEventListener("click", _fvStartRenameInViewer);
 
   const keyHandler = (e) => {
     if (e.key === "Escape") { _fvCloseViewer(); }
@@ -1834,6 +1866,77 @@ function _fvViewerRender() {
       </div>
     `;
   }
+}
+
+// Inline rename from inside the viewer header. Updates both the viewer title
+// and the matching file row in the list on success.
+function _fvStartRenameInViewer() {
+  if (!_fvViewerState) return;
+  const { files, index, contactId } = _fvViewerState;
+  const file = files[index];
+  if (!file) return;
+  const titleSpan = document.getElementById("fv-viewer-title");
+  const pencilBtn = document.getElementById("fv-viewer-rename");
+  const saving = document.getElementById("fv-viewer-saving");
+  if (!titleSpan || !pencilBtn) return;
+
+  const currentName = file.name || "";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = currentName;
+  input.id = "fv-viewer-title-input";
+  input.style.cssText = "flex:1;min-width:0;background:#0f0f0f;border:1px solid #C9A84C;border-radius:6px;padding:5px 9px;color:#C9A84C;font-size:14px;font-weight:500;font-family:inherit;outline:none;";
+  titleSpan.replaceWith(input);
+  pencilBtn.style.display = "none";
+  input.focus();
+  input.select();
+
+  const restore = (name) => {
+    const span = document.createElement("span");
+    span.id = "fv-viewer-title";
+    span.style.cssText = "flex:1;min-width:0;font-size:14px;font-weight:500;color:#C9A84C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+    span.textContent = name;
+    span.title = name;
+    input.replaceWith(span);
+    pencilBtn.style.display = "";
+    if (saving) saving.style.display = "none";
+  };
+
+  const commit = async () => {
+    if (input._fvDone) return;
+    input._fvDone = true;
+    const newName = input.value.trim();
+    if (!newName || newName === currentName) { restore(currentName); return; }
+    input.disabled = true;
+    input.style.opacity = "0.6";
+    if (saving) saving.style.display = "inline-block";
+    try {
+      const headers = await _fvAuthHeaders({ "Content-Type": "application/json" });
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?fields=id,name`,
+        { method: "PATCH", headers, body: JSON.stringify({ name: newName }) }
+      );
+      if (res.status === 401 || res.status === 403) _fvClearToken();
+      const data = await res.json();
+      if (!res.ok || !data.id) throw new Error((data.error && data.error.message) || `HTTP ${res.status}`);
+      // Update in-memory file model + viewer header + the row in the file list
+      file.name = data.name;
+      restore(data.name);
+      const rowName = document.querySelector(`[data-fv-row="${file.id}"] .fv-name`);
+      if (rowName) rowName.textContent = data.name;
+      _fvShowToast("Renamed ✓");
+    } catch (e) {
+      console.error("[FileVault] rename (viewer) failed:", e);
+      _fvShowToast("Rename failed");
+      restore(currentName);
+    }
+  };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { e.preventDefault(); input._fvDone = true; restore(currentName); }
+  });
+  input.addEventListener("blur", commit);
 }
 
 function _fvShowToast(msg) {
