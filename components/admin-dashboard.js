@@ -1152,52 +1152,135 @@ async function _fvHandleAction(e) {
   if (!contact) return;
   if (action === "create") return _fvCreateFolder(contact, btn);
   if (action === "toggle") return _fvToggleFiles(contact);
-  if (action === "upload") return _fvStartUpload(contact, btn);
 }
 
-function _fvStartUpload(contact, btn) {
-  if (!contact.gdrive_folder_id) { _fvShowToast("No folder yet — create one first"); return; }
-  const input = document.createElement("input");
-  input.type = "file";
-  input.style.display = "none";
-  input.addEventListener("change", async () => {
-    const file = input.files && input.files[0];
-    input.remove();
-    if (!file) return;
-    const origHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading…';
-    try {
-      const { key } = getSupabaseConfig();
-      const fd = new FormData();
-      fd.append("folderId", contact.gdrive_folder_id);
-      fd.append("file", file);
-      const res = await fetch(`${GDRIVE_PROXY}?action=upload-file`, {
-        method: "POST",
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
-        body: fd
-      });
-      const data = await res.json();
-      if (!res.ok || !data.id) throw new Error(data.error || "Upload failed");
-      _fvShowToast("Uploaded ✓");
-      await _fvLoadFiles(contact.gdrive_folder_id);
-      _fvRenderFileList(contact);
-      // Refresh the View Files count pill on the card.
-      const card = document.querySelector(`[data-fv-card="${contact.id}"]`);
-      const toggle = card?.querySelector('[data-fv-action="toggle"]');
-      if (toggle) {
-        const label = _fvExpanded.has(contact.id) ? "Hide Files" : "View Files";
-        toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[contact.gdrive_folder_id] ?? 0})`;
-      }
-    } catch (e) {
-      console.error("[FileVault] upload failed:", e);
-      _fvShowToast("Upload failed");
-      btn.disabled = false;
-      btn.innerHTML = origHtml;
+// Upload one file to gdrive-proxy. Returns { ok, name, error? }.
+// IMPORTANT: gdrive-proxy is deployed with --no-verify-jwt, so it only needs
+// the apikey header — sending Authorization: Bearer triggers a 403.
+async function _fvUploadOne(folderId, file) {
+  const { key } = getSupabaseConfig();
+  const fd = new FormData();
+  fd.append("folderId", folderId);
+  fd.append("file", file);
+  try {
+    const res = await fetch(
+      "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/gdrive-proxy?action=upload-file",
+      { method: "POST", headers: { apikey: key }, body: fd }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.id) {
+      return { ok: false, name: file.name, error: data.error || `HTTP ${res.status}` };
     }
+    return { ok: true, name: file.name };
+  } catch (e) {
+    return { ok: false, name: file.name, error: e.message || "network error" };
+  }
+}
+
+async function _fvUploadFiles(contact, files) {
+  if (!contact.gdrive_folder_id) { _fvShowToast("No folder yet — create one first"); return; }
+  if (!files || !files.length) return;
+
+  const zone = document.getElementById(`fv-dropzone-${contact.id}`);
+  const status = document.getElementById(`fv-upload-status-${contact.id}`);
+  if (zone) { zone.dataset.fvBusy = "1"; zone.style.pointerEvents = "none"; zone.style.opacity = "0.75"; }
+
+  // Seed status list with one row per file.
+  const list = Array.from(files);
+  const rowIds = list.map((_, i) => `fv-u-${contact.id}-${Date.now()}-${i}`);
+  if (status) {
+    status.innerHTML = list.map((f, i) => `
+      <div id="${rowIds[i]}" style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;margin-bottom:4px;font-size:.75rem;color:#eee;">
+        <i class="fa-solid fa-spinner fa-spin" style="color:#C9A84C;"></i>
+        <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Uploading ${(f.name || "file").replace(/</g, "&lt;")}…</span>
+      </div>
+    `).join("");
+  }
+
+  // Sequential upload — simpler error handling and easier on the Drive API.
+  let okCount = 0;
+  let failCount = 0;
+  for (let i = 0; i < list.length; i++) {
+    const result = await _fvUploadOne(contact.gdrive_folder_id, list[i]);
+    const row = document.getElementById(rowIds[i]);
+    if (row) {
+      if (result.ok) {
+        row.innerHTML = `
+          <i class="fa-solid fa-check" style="color:#52C87A;"></i>
+          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#cfe7d7;">✓ ${(result.name || "file").replace(/</g, "&lt;")}</span>
+        `;
+      } else {
+        row.innerHTML = `
+          <i class="fa-solid fa-xmark" style="color:#E05252;"></i>
+          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f0bdbd;" title="${(result.error || "").replace(/"/g, "&quot;")}">✗ ${(result.name || "file").replace(/</g, "&lt;")}</span>
+        `;
+      }
+    }
+    if (result.ok) okCount++;
+    else {
+      failCount++;
+      console.error("[FileVault] upload failed:", result.name, result.error);
+    }
+  }
+
+  _fvShowToast(failCount ? `${okCount} uploaded, ${failCount} failed` : `${okCount} uploaded ✓`);
+
+  // Refresh folder contents + count pill, then re-render the file list (which
+  // rebuilds the dropzone and clears the status rows).
+  await _fvLoadFiles(contact.gdrive_folder_id);
+  const card = document.querySelector(`[data-fv-card="${contact.id}"]`);
+  const toggle = card?.querySelector('[data-fv-action="toggle"]');
+  if (toggle) {
+    const label = _fvExpanded.has(contact.id) ? "Hide Files" : "View Files";
+    toggle.innerHTML = `<i class="fa-solid fa-folder-open" style="color:#C9A84C;margin-right:5px;"></i>${label} (${_fvFileCounts[contact.gdrive_folder_id] ?? 0})`;
+  }
+  _fvRenderFileList(contact);
+}
+
+function _fvBindDropzone(contact) {
+  const zone = document.getElementById(`fv-dropzone-${contact.id}`);
+  if (!zone || zone._fvBound) return;
+  zone._fvBound = true;
+
+  const baseBorder = "2px dashed #C9A84C";
+  const activeBorder = "2px solid #C9A84C";
+  const baseBg = "rgba(201,168,76,0.06)";
+  const activeBg = "rgba(201,168,76,0.18)";
+
+  zone.addEventListener("click", () => {
+    if (zone.dataset.fvBusy) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.style.display = "none";
+    input.addEventListener("change", () => {
+      const files = input.files;
+      input.remove();
+      if (files && files.length) _fvUploadFiles(contact, files);
+    });
+    document.body.appendChild(input);
+    input.click();
   });
-  document.body.appendChild(input);
-  input.click();
+
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    if (zone.dataset.fvBusy) return;
+    zone.style.border = activeBorder;
+    zone.style.background = activeBg;
+  });
+  zone.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    zone.style.border = baseBorder;
+    zone.style.background = baseBg;
+  });
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.style.border = baseBorder;
+    zone.style.background = baseBg;
+    if (zone.dataset.fvBusy) return;
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) _fvUploadFiles(contact, files);
+  });
 }
 
 async function _fvCreateFolder(contact, btn) {
@@ -1337,14 +1420,17 @@ function _fvRenderFileList(contact) {
 
   host.innerHTML = `
     ${rows}
+    <div id="fv-dropzone-${contact.id}" style="margin-top:12px;padding:18px 14px;border:2px dashed #C9A84C;background:rgba(201,168,76,0.06);border-radius:10px;text-align:center;cursor:pointer;transition:background .15s,border-color .15s;user-select:none;">
+      <i class="fa-solid fa-cloud-arrow-up" style="color:#C9A84C;font-size:1.35rem;display:block;margin-bottom:6px;"></i>
+      <div style="color:#eee;font-size:.82rem;font-weight:600;">Drop files here or click to browse</div>
+      <div style="color:var(--muted);font-size:.68rem;margin-top:3px;">Multi-file upload to Google Drive</div>
+    </div>
+    <div id="fv-upload-status-${contact.id}" style="margin-top:8px;"></div>
     <div style="display:flex;gap:8px;margin-top:10px;">
-      <button data-fv-action="upload" data-id="${contact.id}" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:8px;padding:8px 12px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit;">
-        <i class="fa-solid fa-upload" style="margin-right:4px;"></i>Upload File
-      </button>
-      <a href="${contact.gdrive_folder_url}" target="_blank" rel="noopener" style="background:#1a1a1a;border:1px solid #333;color:var(--muted);border-radius:8px;padding:8px 12px;font-size:.75rem;font-weight:600;text-decoration:none;">Open in Drive →</a>
+      <a href="${contact.gdrive_folder_url}" target="_blank" rel="noopener" style="flex:1;text-align:center;background:#1a1a1a;border:1px solid #333;color:var(--muted);border-radius:8px;padding:8px 12px;font-size:.75rem;font-weight:600;text-decoration:none;">Open in Drive →</a>
     </div>
   `;
-  host.querySelectorAll('[data-fv-action="upload"]').forEach((btn) => btn.addEventListener("click", _fvHandleAction));
+  _fvBindDropzone(contact);
 }
 
 function _fvShowToast(msg) {
