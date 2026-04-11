@@ -1690,59 +1690,57 @@ async function _fvConvertToPdf(contact, fileId, btn) {
   const files = _fvFiles[contact.gdrive_folder_id] || [];
   const file = files.find((f) => f.id === fileId);
   if (!file) return;
-  console.log("[FileVault][convert] start", { fileId, name: file.name, mimeType: file.mimeType });
+  console.log("[FileVault][convert] start", { name: file.name, mimeType: file.mimeType });
   if (_fvIsPdf(file)) { _fvShowToast("Already a PDF"); return; }
   // Only Google-native docs can be exported via the Drive export endpoint.
   // Other uploaded file types (docx, xlsx, jpg, png, etc) need to be converted
   // in the Drive UI — the API has no generic convert endpoint.
   if (!_fvIsGoogleDoc(file)) {
     _fvShowToast("Open this file in Google Drive, then File > Download as PDF");
-    console.log("[FileVault][convert] skipped — not a Google-native doc");
     return;
   }
-  const exportMime = "application/pdf";
   const origHtml = btn ? btn.innerHTML : "";
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
   try {
-    // Step 1: ensure a fresh OAuth token.
+    // Step 1: token
     const token = await _fvEnsureToken();
-    console.log("[FileVault][convert] token acquired, exporting…");
+    console.log("[FileVault][convert] token acquired");
 
-    // Step 2: export the Google-native doc as PDF bytes.
-    const exportUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`;
-    const exportRes = await fetch(exportUrl, {
-      headers: { Authorization: "Bearer " + token }
-    });
-    console.log("[FileVault][convert] export response:", exportRes.status);
+    // Step 2: export the Google-native doc as PDF bytes
+    const exportUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=application/pdf`;
+    const exportRes = await fetch(exportUrl, { headers: { Authorization: "Bearer " + token } });
+    console.log("[FileVault][convert] export response status", exportRes.status);
     if (exportRes.status === 401 || exportRes.status === 403) _fvClearToken();
     if (!exportRes.ok) {
       const errText = await exportRes.text().catch(() => "");
       console.error("[FileVault][convert] export failed body:", errText);
       _fvShowToast(`Export failed: HTTP ${exportRes.status}`);
-      throw new Error(`Export failed HTTP ${exportRes.status}`);
+      if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+      return;
     }
     const blob = await exportRes.blob();
-    console.log("[FileVault][convert] export blob size:", blob.size, "type:", blob.type);
+    console.log("[FileVault][convert] blob size/type", blob.size, blob.type);
 
-    // Step 3: strip the existing extension off the original name before
-    // appending .pdf so we don't end up with "budget.docx.pdf".
+    // Step 3: strip the existing extension and append .pdf
     const baseName = (file.name || "document").replace(/\.[a-zA-Z0-9]{1,6}$/, "");
-    const newFileName = baseName + ".pdf";
-    const pdfFile = new File([blob], newFileName, { type: "application/pdf" });
-    console.log("[FileVault][convert] uploading as:", newFileName);
+    const pdfName = baseName + ".pdf";
+    console.log("[FileVault][convert] upload filename", pdfName);
 
-    // Step 4: upload the PDF blob back to the same folder via OAuth multipart.
+    // Step 4: upload the PDF blob back to the same folder via OAuth multipart
+    const pdfFile = new File([blob], pdfName, { type: "application/pdf" });
     const result = await _fvUploadOne(contact.gdrive_folder_id, pdfFile);
-    console.log("[FileVault][convert] upload result:", result);
+    console.log("[FileVault][convert] upload result", result);
     if (!result.ok) {
       _fvShowToast("PDF upload failed: " + (result.error || "unknown"));
-      throw new Error(result.error || "upload failed");
+      if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+      return;
     }
     _fvShowToast("Converted to PDF ✓");
     await _fvLoadFiles(contact.gdrive_folder_id);
     _fvRenderFileList(contact);
   } catch (e) {
     console.error("[FileVault][convert] failed:", e);
+    _fvShowToast("Convert failed: " + (e.message || "unknown"));
     if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
   }
 }
@@ -1751,6 +1749,14 @@ async function _fvConvertToPdf(contact, fileId, btn) {
 function _fvOpenViewer(contact, files, index) {
   _fvCloseViewer(); // close any existing first
   _fvViewerState = { contactId: contact.id, files, index, keyHandler: null };
+
+  // Inject spinner keyframes once (used by #fv-viewer-saving + any other CSS spinners in the vault).
+  if (!document.getElementById("fv-spin-keyframes")) {
+    const s = document.createElement("style");
+    s.id = "fv-spin-keyframes";
+    s.textContent = "@keyframes fvSpin{to{transform:rotate(360deg);}}";
+    document.head.appendChild(s);
+  }
 
   const overlay = document.createElement("div");
   overlay.id = "fv-viewer-overlay";
@@ -1763,10 +1769,10 @@ function _fvOpenViewer(contact, files, index) {
   panel.style.cssText = "position:fixed;top:0;right:0;width:480px;height:100vh;background:#1a1a1a;border-left:2px solid #C9A84C;z-index:8001;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .28s ease;box-shadow:-12px 0 40px rgba(0,0,0,0.6);";
   panel.innerHTML = `
     <div id="fv-viewer-header" style="padding:14px 16px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;gap:10px;flex-shrink:0;">
-      <div id="fv-viewer-title-wrap" style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;">
-        <span id="fv-viewer-title" style="flex:1;min-width:0;font-size:14px;font-weight:500;color:#C9A84C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
-        <button id="fv-viewer-rename" title="Rename" style="background:none;border:none;color:#C9A84C;cursor:pointer;padding:2px 4px;font-size:.82rem;flex-shrink:0;"><i class="fa-solid fa-pen"></i></button>
-        <span id="fv-viewer-saving" style="display:none;color:#C9A84C;font-size:.78rem;flex-shrink:0;"><i class="fa-solid fa-spinner fa-spin"></i></span>
+      <div id="fv-viewer-title-wrap" style="display:flex;align-items:center;min-width:0;gap:8px;flex:1;">
+        <span id="fv-viewer-title" style="color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;"></span>
+        <button id="fv-viewer-rename" title="Rename" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;padding:2px 4px;font-size:.9rem;flex-shrink:0;"><i class="fa-solid fa-pen"></i></button>
+        <span id="fv-viewer-saving" style="display:none;width:14px;height:14px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin 0.7s linear infinite;flex-shrink:0;"></span>
       </div>
       <a id="fv-viewer-download" title="Download" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 9px;font-size:.78rem;text-decoration:none;"><i class="fa-solid fa-download"></i></a>
       <a id="fv-viewer-openlink" title="Open in Drive" target="_blank" rel="noopener" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 9px;font-size:.78rem;text-decoration:none;"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
@@ -1883,9 +1889,9 @@ function _fvStartRenameInViewer() {
   const currentName = file.name || "";
   const input = document.createElement("input");
   input.type = "text";
+  input.id = "fv-viewer-rename-input";
   input.value = currentName;
-  input.id = "fv-viewer-title-input";
-  input.style.cssText = "flex:1;min-width:0;background:#0f0f0f;border:1px solid #C9A84C;border-radius:6px;padding:5px 9px;color:#C9A84C;font-size:14px;font-weight:500;font-family:inherit;outline:none;";
+  input.style.cssText = "background:transparent;border:1px solid #C9A84C;border-radius:4px;color:#C9A84C;font-size:14px;padding:2px 6px;min-width:180px;max-width:320px;font-family:inherit;outline:none;";
   titleSpan.replaceWith(input);
   pencilBtn.style.display = "none";
   input.focus();
@@ -1894,7 +1900,7 @@ function _fvStartRenameInViewer() {
   const restore = (name) => {
     const span = document.createElement("span");
     span.id = "fv-viewer-title";
-    span.style.cssText = "flex:1;min-width:0;font-size:14px;font-weight:500;color:#C9A84C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+    span.style.cssText = "color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;";
     span.textContent = name;
     span.title = name;
     input.replaceWith(span);
