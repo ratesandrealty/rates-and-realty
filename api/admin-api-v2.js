@@ -250,14 +250,13 @@ export async function completeTask(taskId) {
 }
 
 export async function getAllTasks() {
-  // Disambiguate: tasks has both a direct lead_id FK and a polymorphic
-  // related_table/related_id pointer — PostgREST needs the column hint.
+  // tasks has no leads relationship — it joins contacts directly via contact_id.
   const { data, error } = await supabase
     .from("tasks")
-    .select("*, leads!lead_id(id, status, contacts(first_name, last_name))")
+    .select("*, contacts!contact_id(id, first_name, last_name, pipeline_status)")
     .order("due_date", { ascending: true, nullsLast: true });
   if (error) {
-    console.warn("getAllTasks embed failed, retrying without leads join:", error);
+    console.error("[admin-api] getAllTasks embed failed, falling back to flat select:", error);
     const fallback = await supabase
       .from("tasks")
       .select("*")
@@ -272,12 +271,13 @@ export async function getAllTasks() {
 
 export async function getAppointments() {
   try {
+    // appointments joins contacts directly via contact_id — no leads layer.
     const { data, error } = await supabase
       .from("appointments")
-      .select("*, leads!lead_id(id, status, contacts(first_name, last_name))")
+      .select("*, contacts!contact_id(id, first_name, last_name, pipeline_status)")
       .order("scheduled_at", { ascending: true });
     if (error) {
-      console.warn("getAppointments embed failed, retrying without leads join:", error);
+      console.error("[admin-api] getAppointments embed failed, falling back to flat select:", error);
       const fallback = await supabase
         .from("appointments")
         .select("*")
@@ -287,7 +287,7 @@ export async function getAppointments() {
     }
     return data || [];
   } catch (e) {
-    console.error("getAppointments failed:", e);
+    console.error("[admin-api] getAppointments failed:", e);
     return [];
   }
 }

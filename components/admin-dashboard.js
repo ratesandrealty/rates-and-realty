@@ -509,8 +509,7 @@ function renderAllTasksTable(tasks) {
       return;
     }
     tbody.innerHTML = list.map((task) => {
-      const lead = task.leads;
-      const c = lead?.contacts || {};
+      const c = task.contacts || {};
       const leadName = c.first_name ? `${c.first_name} ${c.last_name || ""}` : (task.related_id ? `Lead ${task.related_id.substring(0, 8)}` : "—");
       const isOverdue = task.due_date && new Date(task.due_date) < now && task.status !== "completed";
       const priorityClass = { high: "status-pill-orange", urgent: "status-pill-red", normal: "" }[task.priority || "normal"] || "";
