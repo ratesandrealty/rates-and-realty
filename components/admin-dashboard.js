@@ -1834,12 +1834,19 @@ async function _fvConvertToPdf(contact, fileId, btn) {
   }
 }
 
-// ── INLINE FILE VIEWER (right slide-in panel) ─────────────────────
+// ── INLINE FILE VIEWER ────────────────────────────────────────────
+// Diagnostic history (2026-04-11): the previous implementation built the
+// header across TWO passes — a panel.innerHTML template PLUS a second
+// DOM-injection pass via createElement + insertBefore for the title bar and
+// doc-type select. Some browsers / timings lost the injected children,
+// leaving the pencil invisible. Consolidated into ONE innerHTML template
+// below, with every listener wired immediately after the single mount.
 function _fvOpenViewer(contact, files, index) {
   _fvCloseViewer(); // close any existing first
   _fvViewerState = { contactId: contact.id, files, index, keyHandler: null };
 
-  // Inject spinner keyframes once (used by #fv-viewer-saving + any other CSS spinners in the vault).
+  // Inject spinner keyframes once (used by #fv-viewer-saving and any other
+  // CSS spinners in the vault).
   if (!document.getElementById("fv-spin-keyframes")) {
     const s = document.createElement("style");
     s.id = "fv-spin-keyframes";
@@ -1847,53 +1854,8 @@ function _fvOpenViewer(contact, files, index) {
     document.head.appendChild(s);
   }
 
-  const overlay = document.createElement("div");
-  overlay.id = "fv-viewer-overlay";
-  overlay.style.cssText = "position:fixed;inset:0 480px 0 0;background:rgba(0,0,0,0.5);z-index:8000;";
-  overlay.addEventListener("click", _fvCloseViewer);
-  document.body.appendChild(overlay);
-
-  const panel = document.createElement("div");
-  panel.id = "fv-viewer-panel";
-  panel.style.cssText = "position:fixed;top:0;right:0;width:480px;height:100vh;background:#1a1a1a;border-left:2px solid #C9A84C;z-index:8001;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .28s ease;box-shadow:-12px 0 40px rgba(0,0,0,0.6);";
-  panel.innerHTML = `
-    <div id="fv-viewer-header" style="padding:14px 16px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;gap:10px;flex-shrink:0;">
-      <a id="fv-viewer-download" title="Download" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:4px 10px;font-size:15px;line-height:1;text-decoration:none;">&#8681;</a>
-      <a id="fv-viewer-openlink" title="Open in Drive" target="_blank" rel="noopener" style="background:#222;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:4px 10px;font-size:15px;line-height:1;text-decoration:none;">&#8599;</a>
-      <button id="fv-viewer-close" title="Close" style="background:#222;border:1px solid #333;color:#eee;border-radius:6px;padding:4px 10px;font-size:15px;line-height:1;cursor:pointer;font-family:inherit;">&#10005;</button>
-    </div>
-    <div id="fv-viewer-nav" style="padding:8px 16px;border-bottom:1px solid #222;display:flex;align-items:center;gap:8px;flex-shrink:0;">
-      <button id="fv-viewer-prev" style="background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:6px;padding:5px 10px;font-size:.75rem;cursor:pointer;font-family:inherit;">← Prev</button>
-      <span id="fv-viewer-counter" style="flex:1;text-align:center;font-size:.72rem;color:var(--muted);"></span>
-      <button id="fv-viewer-next" style="background:#1a1a1a;border:1px solid #333;color:#eee;border-radius:6px;padding:5px 10px;font-size:.75rem;cursor:pointer;font-family:inherit;">Next →</button>
-    </div>
-    <div id="fv-viewer-body" style="flex:1;overflow:auto;background:#0a0a0a;"></div>
-  `;
-  document.body.appendChild(panel);
-  requestAnimationFrame(() => { panel.style.transform = "translateX(0)"; });
-
-  // ── Build the gold filename title bar via DOM methods and prepend it to the
-  // header. Doing this *after* innerHTML assignment — the user reported the
-  // inlined version wasn't showing, and DOM injection is the more reliable
-  // pattern. The title bar lives before Download/Open/Close.
-  const fvHeader = panel.querySelector("#fv-viewer-header");
-  const titleBar = document.createElement("div");
-  titleBar.id = "fv-viewer-title-wrap";
-  titleBar.style.cssText = "display:flex;align-items:center;min-width:0;gap:8px;flex:1;";
-  titleBar.innerHTML = `
-    <span id="fv-viewer-title" style="color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;"></span>
-    <button id="fv-viewer-rename" title="Rename file" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:16px;padding:2px 6px;line-height:1;flex-shrink:0;">&#9998;</button>
-    <span id="fv-viewer-saving" style="display:none;width:14px;height:14px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin 0.7s linear infinite;flex-shrink:0;"></span>
-  `;
-  fvHeader.insertBefore(titleBar, fvHeader.firstChild);
-
-  // ── Document-type selector pill — sits between the title bar and the
-  // Download button. Populated + wired by _fvViewerRender on each file.
-  const typeSelect = document.createElement("select");
-  typeSelect.id = "fv-doc-type";
-  typeSelect.title = "Document type";
-  typeSelect.style.cssText = "background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;border-radius:20px;padding:3px 10px;cursor:pointer;outline:none;max-width:160px;flex-shrink:0;font-family:inherit;";
-  const FV_DOC_TYPES = [
+  const file = files[index];
+  const docTypeOptions = [
     ["", "-- Type --"],
     ["Pay Stubs", "Pay Stubs"],
     ["W-2 / Tax Returns", "W-2 / Tax Returns"],
@@ -1910,70 +1872,117 @@ function _fvOpenViewer(contact, files, index) {
     ["Gift Letter", "Gift Letter"],
     ["VOE / Employment Letter", "VOE / Employment Letter"],
     ["Other", "Other"]
-  ];
-  FV_DOC_TYPES.forEach(([val, label]) => {
-    const opt = document.createElement("option");
-    opt.value = val;
-    opt.textContent = label;
-    typeSelect.appendChild(opt);
-  });
-  const downloadBtn = fvHeader.querySelector("#fv-viewer-download");
-  fvHeader.insertBefore(typeSelect, downloadBtn);
+  ].map(([val, label]) => `<option value="${_fvEscape(val)}">${_fvEscape(label)}</option>`).join("");
 
-  // Save on change — PATCH appProperties.docType on the current viewer file.
-  typeSelect.addEventListener("change", async (e) => {
-    if (!_fvViewerState) return;
-    const currentFile = _fvViewerState.files[_fvViewerState.index];
-    if (!currentFile) return;
-    const sel = e.currentTarget;
-    const newVal = sel.value;
-    const prev = sel.dataset.prev || "";
-    sel.dataset.prev = newVal;
-    try {
-      const token = await _fvEnsureToken();
-      const res = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(currentFile.id)}?fields=id,appProperties`,
-        {
-          method: "PATCH",
-          headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-          body: JSON.stringify({ appProperties: { docType: newVal } })
-        }
-      );
-      if (res.status === 401 || res.status === 403) _fvClearToken();
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      currentFile.appProperties = currentFile.appProperties || {};
-      currentFile.appProperties.docType = newVal;
-      const rowBadge = document.querySelector(`[data-fv-row="${currentFile.id}"] .fv-doc-type-badge`);
-      if (rowBadge) rowBadge.textContent = newVal;
-      _fvShowToast("Document type saved");
-    } catch (err) {
-      console.error("[FileVault][docType]", err);
-      sel.value = prev;
-      sel.dataset.prev = prev;
-      _fvShowToast("Failed to save type");
-    }
-  });
+  const viewerHTML = `
+<div id="fv-viewer-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;display:flex;flex-direction:column;">
 
+  <div id="fv-viewer-header" style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:#111;border-bottom:1px solid #333;flex-shrink:0;">
+
+    <div style="display:flex;align-items:center;min-width:0;gap:6px;flex:1;">
+      <span id="fv-viewer-title" style="color:#C9A84C;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;">${_fvEscape(file.name || "Untitled")}</span>
+      <button id="fv-viewer-rename" title="Rename file" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:18px;padding:0 6px;line-height:1;flex-shrink:0;">&#9998;</button>
+      <span id="fv-viewer-saving" style="display:none;width:14px;height:14px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin 0.7s linear infinite;flex-shrink:0;"></span>
+    </div>
+
+    <select id="fv-doc-type" title="Document type" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;border-radius:20px;padding:3px 10px;cursor:pointer;outline:none;max-width:160px;flex-shrink:0;font-family:inherit;">${docTypeOptions}</select>
+
+    <button id="fv-viewer-download" title="Download" style="background:#222;border:1px solid #444;color:#C9A84C;cursor:pointer;font-size:15px;padding:4px 10px;border-radius:6px;flex-shrink:0;font-family:inherit;">&#8681;</button>
+    <button id="fv-viewer-openlink" title="Open in Drive" style="background:#222;border:1px solid #444;color:#C9A84C;cursor:pointer;font-size:15px;padding:4px 10px;border-radius:6px;flex-shrink:0;font-family:inherit;">&#8599;</button>
+    <button id="fv-viewer-close" title="Close" style="background:#222;border:1px solid #444;color:#aaa;cursor:pointer;font-size:15px;padding:4px 10px;border-radius:6px;flex-shrink:0;font-family:inherit;">&#10005;</button>
+  </div>
+
+  <div id="fv-viewer-nav" style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px;background:#0d0d0d;border-bottom:1px solid #222;flex-shrink:0;">
+    <button id="fv-viewer-prev" style="background:transparent;border:1px solid #333;color:#aaa;cursor:pointer;padding:4px 14px;border-radius:6px;font-family:inherit;">&#8592; Prev</button>
+    <span id="fv-viewer-counter" style="color:#666;font-size:13px;"></span>
+    <button id="fv-viewer-next" style="background:transparent;border:1px solid #333;color:#aaa;cursor:pointer;padding:4px 14px;border-radius:6px;font-family:inherit;">Next &#8594;</button>
+  </div>
+
+  <div id="fv-viewer-body" style="flex:1;overflow:auto;background:#0a0a0a;position:relative;"></div>
+</div>`;
+
+  document.body.insertAdjacentHTML("beforeend", viewerHTML);
+
+  // ── Wire all listeners after the single mount ──
   document.getElementById("fv-viewer-close").addEventListener("click", _fvCloseViewer);
-  document.getElementById("fv-viewer-prev").addEventListener("click", () => _fvViewerNav(-1));
-  document.getElementById("fv-viewer-next").addEventListener("click", () => _fvViewerNav(1));
-  // Read the live file reference at click time so rename always targets the
-  // currently-displayed file (not a stale closure from when the viewer mounted).
+  document.getElementById("fv-viewer-prev").addEventListener("click", _fvViewerPrev);
+  document.getElementById("fv-viewer-next").addEventListener("click", _fvViewerNext);
+
   document.getElementById("fv-viewer-rename").addEventListener("click", () => {
     if (!_fvViewerState) return;
     const f = _fvViewerState.files[_fvViewerState.index];
     if (f) _fvStartRenameInViewer(f);
   });
 
+  document.getElementById("fv-viewer-download").addEventListener("click", () => {
+    if (!_fvViewerState) return;
+    const f = _fvViewerState.files[_fvViewerState.index];
+    if (f) window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`, "_blank", "noopener");
+  });
+  document.getElementById("fv-viewer-openlink").addEventListener("click", () => {
+    if (!_fvViewerState) return;
+    const f = _fvViewerState.files[_fvViewerState.index];
+    if (f) window.open(f.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(f.id)}/view`, "_blank", "noopener");
+  });
+
+  // Clicking the overlay background (outside the inner chrome) closes.
+  // Scoped to the overlay element only so inner clicks bubble normally.
+  document.getElementById("fv-viewer-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "fv-viewer-overlay") _fvCloseViewer();
+  });
+
+  // Doc type pill — set initial value from the current file and wire change.
+  const typeSel = document.getElementById("fv-doc-type");
+  typeSel.value = (file.appProperties && file.appProperties.docType) || "";
+  typeSel.dataset.prev = typeSel.value;
+  typeSel.addEventListener("change", (e) => _fvSaveDocType(e, _fvViewerState.files[_fvViewerState.index]));
+
   const keyHandler = (e) => {
-    if (e.key === "Escape") { _fvCloseViewer(); }
-    else if (e.key === "ArrowLeft") { _fvViewerNav(-1); }
-    else if (e.key === "ArrowRight") { _fvViewerNav(1); }
+    if (e.key === "Escape") _fvCloseViewer();
+    else if (e.key === "ArrowLeft") _fvViewerPrev();
+    else if (e.key === "ArrowRight") _fvViewerNext();
   };
   document.addEventListener("keydown", keyHandler);
   _fvViewerState.keyHandler = keyHandler;
 
   _fvViewerRender();
+}
+
+function _fvViewerPrev() { _fvViewerNav(-1); }
+function _fvViewerNext() { _fvViewerNav(1); }
+
+// PATCH file.appProperties.docType on Drive and sync the in-memory file +
+// any visible row badge. Extracted from the inline change handler so the
+// template-only mount path can pass a single listener reference.
+async function _fvSaveDocType(e, currentFile) {
+  if (!currentFile) return;
+  const sel = e.currentTarget;
+  const newVal = sel.value;
+  const prev = sel.dataset.prev || "";
+  sel.dataset.prev = newVal;
+  try {
+    const token = await _fvEnsureToken();
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(currentFile.id)}?fields=id,appProperties`,
+      {
+        method: "PATCH",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ appProperties: { docType: newVal } })
+      }
+    );
+    if (res.status === 401 || res.status === 403) _fvClearToken();
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    currentFile.appProperties = currentFile.appProperties || {};
+    currentFile.appProperties.docType = newVal;
+    const rowBadge = document.querySelector(`[data-fv-row="${currentFile.id}"] .fv-doc-type-badge`);
+    if (rowBadge) rowBadge.textContent = newVal;
+    _fvShowToast("Document type saved");
+  } catch (err) {
+    console.error("[FileVault][docType]", err);
+    sel.value = prev;
+    sel.dataset.prev = prev;
+    _fvShowToast("Failed to save type");
+  }
 }
 
 function _fvRevokeBlobUrl() {
@@ -1984,16 +1993,11 @@ function _fvRevokeBlobUrl() {
 }
 
 function _fvCloseViewer() {
-  const panel = document.getElementById("fv-viewer-panel");
   const overlay = document.getElementById("fv-viewer-overlay");
   if (_fvViewerState && _fvViewerState.keyHandler) {
     document.removeEventListener("keydown", _fvViewerState.keyHandler);
   }
   _fvRevokeBlobUrl();
-  if (panel) {
-    panel.style.transform = "translateX(100%)";
-    setTimeout(() => panel.remove(), 280);
-  }
   if (overlay) overlay.remove();
   _fvViewerState = null;
 }
@@ -2018,8 +2022,6 @@ async function _fvViewerRender() {
   const prev = document.getElementById("fv-viewer-prev");
   const next = document.getElementById("fv-viewer-next");
   const body = document.getElementById("fv-viewer-body");
-  const dl = document.getElementById("fv-viewer-download");
-  const openlink = document.getElementById("fv-viewer-openlink");
   if (!title || !body) return;
 
   title.textContent = f.name || "Untitled";
@@ -2029,9 +2031,8 @@ async function _fvViewerRender() {
   next.disabled = index === files.length - 1;
   prev.style.opacity = prev.disabled ? "0.4" : "1";
   next.style.opacity = next.disabled ? "0.4" : "1";
-
-  if (dl) dl.href = f.webContentLink || f.webViewLink || "#";
-  if (openlink) openlink.href = f.webViewLink || "#";
+  // Download + Open in Drive are <button>s now; their click handlers read the
+  // live file from _fvViewerState at click time, so no href to update here.
 
   // Sync doc-type pill to this file's saved appProperties.docType.
   const typeSel = document.getElementById("fv-doc-type");
