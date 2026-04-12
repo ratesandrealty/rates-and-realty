@@ -2336,11 +2336,9 @@ function renderFileQueue() {
   ub.style.display = 'block';
   fq.innerHTML = fileQueue.map(function(f, i) {
     var sizeMB = (f.file.size / 1024 / 1024).toFixed(1);
-    var willConvert = f.file.type !== 'application/pdf' && (_supportedConvertTypes.indexOf(f.file.type) > -1 || f.file.type === 'text/plain');
-    var badge = willConvert ? ' <span style="background:rgba(201,168,76,.15);color:var(--gold);font-size:.65rem;padding:1px 6px;border-radius:8px;font-weight:600">&rarr; PDF</span>' : '';
     return '<div class="file-queue-item">'
       + '<i class="fas fa-file" style="color:var(--gold)"></i>'
-      + '<span class="fq-name">' + f.file.name + badge + '</span>'
+      + '<span class="fq-name">' + f.file.name + '</span>'
       + '<span class="fq-size">' + sizeMB + ' MB &middot; ' + f.category + '</span>'
       + '<button class="fq-remove" onclick="removeFromQueue(' + i + ')"><i class="fas fa-times"></i></button>'
       + '</div>'
@@ -2351,43 +2349,6 @@ function renderFileQueue() {
 function removeFromQueue(idx) {
   fileQueue.splice(idx, 1);
   renderFileQueue();
-}
-
-/* ===== PDF CONVERSION ===== */
-var CONVERT_FN = SB + '/functions/v1/convert-to-pdf';
-var _supportedConvertTypes = ['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/bmp','image/tiff'];
-
-function fileToBase64(file) {
-  return new Promise(function(resolve, reject) {
-    var reader = new FileReader();
-    reader.onload = function() { resolve(reader.result.split(',')[1]); };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-async function convertToPdfIfNeeded(file) {
-  var isPdf = file.type === 'application/pdf';
-  var isSupported = _supportedConvertTypes.indexOf(file.type) > -1 || file.type === 'text/plain';
-  if (isPdf) return { file: file, converted: false };
-  if (!isSupported) return { file: file, converted: false };
-  try {
-    showToast('Converting ' + file.name + ' to PDF...', 'info');
-    var base64 = await fileToBase64(file);
-    var res = await fetch(CONVERT_FN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_base64: base64, mime_type: file.type, file_name: file.name })
-    });
-    if (res.status === 415) {
-      showToast('This file type cannot be auto-converted. File saved in original format.', 'warning');
-      return { file: file, converted: false };
-    }
-    var data = await res.json();
-    if (!res.ok || !data.success) return { file: file, converted: false };
-    var pdfBytes = Uint8Array.from(atob(data.pdf_base64), function(c) { return c.charCodeAt(0); });
-    return { file: new File([pdfBytes], data.pdf_name, { type: 'application/pdf' }), converted: true };
-  } catch(e) { console.warn('PDF conversion failed, using original:', e); return { file: file, converted: false }; }
 }
 
 function uploadFiles() {
@@ -2446,7 +2407,7 @@ function loadDocHistory() {
   // Use portal-data edge function to avoid direct REST 401
   fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'get_documents', portal_user_id: u.id, email: u.email })
+    body: JSON.stringify({ action: 'get_documents', portal_user_id: u.id, contact_id: u.contact_id })
   }).then(function(r) { return r.json(); })
     .then(function(result) {
       var docs = result.documents || [];
