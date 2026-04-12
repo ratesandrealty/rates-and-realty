@@ -1679,54 +1679,57 @@ async function _fvUploadFiles(contact, files) {
 // in Panel 2. No per-card dropzones.
 function _fvBindDropzone(_contact) { /* no-op — see _fvBindPanels() */ }
 
+// Creates a GDrive folder for a contact via the n8n webhook. The workflow
+// creates the folder in Google Drive and writes gdrive_folder_id +
+// gdrive_folder_url back to the contacts row. We poll Supabase for up to
+// 10 seconds waiting for the writeback.
 async function _fvCreateFolder(contact, btn) {
-  btn.disabled = true;
-  const orig = btn.innerHTML;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating…';
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
   try {
-    const headers = await _fvAuthHeaders({ "Content-Type": "application/json" });
-    const res = await fetch(
-      "https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink,parents",
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          name: `${contact.first_name || ""} ${contact.last_name || ""}`.trim().toUpperCase() || "UNNAMED BORROWER",
-          mimeType: "application/vnd.google-apps.folder",
-          parents: [GDRIVE_BORROWERS_ROOT]
-        })
-      }
-    );
-    if (res.status === 401 || res.status === 403) _fvClearToken();
-    const data = await res.json();
-    if (!res.ok || !data.id) throw new Error((data.error && data.error.message) || "Folder create failed");
-    const folderId = data.id;
-    const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
-    // PATCH contact
-    const { url, key: sbKey } = getSupabaseConfig();
-    const patch = await fetch(`${url}/rest/v1/contacts?id=eq.${encodeURIComponent(contact.id)}`, {
-      method: "PATCH",
-      headers: {
-        apikey: sbKey,
-        Authorization: `Bearer ${sbKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal"
-      },
-      body: JSON.stringify({ gdrive_folder_id: folderId, gdrive_folder_url: folderUrl })
+    const res = await fetch("https://ratesandrealty.app.n8n.cloud/webhook/contact-folder-create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contact_id: contact.id,
+        first_name: contact.first_name || "",
+        last_name: contact.last_name || ""
+      })
     });
-    if (!patch.ok) throw new Error("Failed to save folder ID to contact");
-    contact.gdrive_folder_id = folderId;
-    contact.gdrive_folder_url = folderUrl;
-    _fvFileCounts[folderId] = 0;
-    _fvFiles[folderId] = [];
-    _fvRenderBorrowerList();
-    _fvSelectBorrower(contact);
-    _fvShowToast("Folder created ✓");
+    if (!res.ok) throw new Error("Webhook failed: HTTP " + res.status);
+
+    // Poll for the writeback — n8n creates the folder and PATCHes contacts.
+    const { url, key } = getSupabaseConfig();
+    let folderId = null, folderUrl = null;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const pollRes = await fetch(
+        `${url}/rest/v1/contacts?id=eq.${encodeURIComponent(contact.id)}&select=gdrive_folder_id,gdrive_folder_url`,
+        { headers: { apikey: key, Authorization: "Bearer " + key } }
+      );
+      const rows = await pollRes.json();
+      if (rows && rows[0] && rows[0].gdrive_folder_id) {
+        folderId = rows[0].gdrive_folder_id;
+        folderUrl = rows[0].gdrive_folder_url;
+        break;
+      }
+    }
+
+    if (folderId) {
+      contact.gdrive_folder_id = folderId;
+      contact.gdrive_folder_url = folderUrl;
+      _fvFileCounts[folderId] = 0;
+      _fvFiles[folderId] = [];
+      _fvRenderBorrowerList();
+      _fvSelectBorrower(contact);
+      _fvShowToast("✓ Drive folder created!");
+    } else {
+      _fvShowToast("Folder created — refreshing…");
+      setTimeout(() => window.location.reload(), 2000);
+    }
   } catch (e) {
     console.error("[FileVault] create folder failed:", e);
-    btn.disabled = false;
-    btn.innerHTML = orig;
-    _fvShowToast("Error: " + (e.message || "create failed"));
+    if (btn) { btn.disabled = false; btn.textContent = "+ folder"; }
+    _fvShowToast("Failed to create folder: " + (e.message || "unknown"));
   }
 }
 

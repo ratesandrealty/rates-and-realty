@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <script src="/api/env.js?v=20260411j"></script>
+  <script src="/api/env.js?v=20260411l"></script>
   <!-- Google Identity Services — OAuth token client for GDrive Documents tab -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion before GDrive upload -->
@@ -4113,16 +4113,15 @@ function updateDriveFolderBtn() {
   const btn = document.getElementById('driveFolderBtn');
   const label = document.getElementById('driveFolderBtnLabel');
   if (!btn || !label) return;
-  // Hide the header pill entirely when no folder URL is linked. Users can
-  // still link a folder from the Documents tab via the "Link Drive folder"
-  // modal (see showDriveMatchModal), and uploads will auto-create one.
+  btn.style.display = 'inline-flex';
   if (window._leadDriveFolderUrl) {
-    btn.style.display = 'inline-flex';
     btn.style.borderColor = '#C9A84C';
     btn.style.color = '#C9A84C';
     label.textContent = '📁 View Drive Folder';
   } else {
-    btn.style.display = 'none';
+    btn.style.borderColor = '#2a2a2a';
+    btn.style.color = '#888';
+    label.textContent = '+ Create Folder';
   }
 }
 
@@ -4131,7 +4130,53 @@ async function handleDriveFolderBtn() {
     window.open(window._leadDriveFolderUrl, '_blank');
     return;
   }
-  showDriveMatchModal();
+  // No folder yet — create one via n8n webhook.
+  const label = document.getElementById('driveFolderBtnLabel');
+  const btn = document.getElementById('driveFolderBtn');
+  if (label) label.textContent = 'Creating…';
+  if (btn) { btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
+  try {
+    await _ldCreateContactFolder();
+  } catch (e) {
+    console.error('[handleDriveFolderBtn]', e);
+    if (typeof toast === 'function') toast('Failed: ' + e.message, true);
+  }
+  if (btn) { btn.style.opacity = '1'; btn.style.pointerEvents = ''; }
+  updateDriveFolderBtn();
+}
+
+// Create folder via n8n webhook, poll for writeback, then update state.
+async function _ldCreateContactFolder() {
+  if (!contactId || !contactData) throw new Error('No contact loaded');
+  const res = await fetch('https://ratesandrealty.app.n8n.cloud/webhook/contact-folder-create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contact_id: contactId,
+      first_name: contactData.first_name || '',
+      last_name: contactData.last_name || ''
+    })
+  });
+  if (!res.ok) throw new Error('Webhook HTTP ' + res.status);
+
+  // Poll Supabase for up to 10s waiting for n8n to write back.
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    const pollRes = await fetch(
+      `${window.APP_CONFIG.SUPABASE_URL}/rest/v1/contacts?id=eq.${encodeURIComponent(contactId)}&select=gdrive_folder_id,gdrive_folder_url`,
+      { headers: { apikey: window.APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY } }
+    );
+    const rows = await pollRes.json();
+    if (rows && rows[0] && rows[0].gdrive_folder_id) {
+      window._leadDriveFolderId = rows[0].gdrive_folder_id;
+      window._leadDriveFolderUrl = rows[0].gdrive_folder_url || ('https://drive.google.com/drive/folders/' + rows[0].gdrive_folder_id);
+      contactData.gdrive_folder_id = rows[0].gdrive_folder_id;
+      contactData.gdrive_folder_url = window._leadDriveFolderUrl;
+      if (typeof toast === 'function') toast('✓ Drive folder created!');
+      return;
+    }
+  }
+  if (typeof toast === 'function') toast('Folder created — refresh to see it.');
 }
 
 async function showDriveMatchModal() {
