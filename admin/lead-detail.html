@@ -1940,6 +1940,8 @@
 
       <!-- ═══ BORROWER SWITCHER (multi-borrower tabs) ═══ -->
       <div id="los1003BorrowerBar" style="display:none;border-bottom:1px solid #222;background:#0f0f0f;padding:8px 22px;gap:6px;overflow-x:auto;align-items:center;flex-wrap:nowrap"></div>
+      <!-- 1003 Summary (collapsible read-only display, populated by render1003Summary) -->
+      <div id="app-1003-summary" style="padding:20px 22px 0;"></div>
       <style>
         .borr-tab{display:inline-flex;align-items:center;gap:8px;padding:7px 12px 7px 9px;border:1px solid #2a2a2a;border-radius:24px;background:#151515;color:#888;cursor:pointer;font-size:.72rem;font-weight:600;font-family:inherit;white-space:nowrap;transition:all .15s;flex-shrink:0}
         .borr-tab:hover{border-color:#C9A84C55;color:#ccc}
@@ -9366,6 +9368,118 @@ function attachAutoSave() {
   });
 }
 
+/* ── 1003 DISPLAY (collapsible sections, read-only) ── */
+// Inject the app-grid CSS once.
+if (!document.getElementById('app1003Style')) {
+  const _s = document.createElement('style');
+  _s.id = 'app1003Style';
+  _s.textContent = '.app-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 16px;}';
+  document.head.appendChild(_s);
+}
+
+function _1003Section(title, content) {
+  return `<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;margin-bottom:12px;overflow:hidden;">
+    <div style="padding:12px 16px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+      <span style="color:#C9A84C;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;">${title}</span>
+      <span style="color:#555;">&#8964;</span>
+    </div>
+    <div style="padding:16px;">${content}</div>
+  </div>`;
+}
+function _1003Field(label, val) {
+  if (!val && val !== 0) return '';
+  return `<div style="margin-bottom:10px;"><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px;">${label}</div><div style="color:#d0d0d0;font-size:13px;">${val}</div></div>`;
+}
+function _1003Decl(label, val) {
+  const yes = val === true || val === 'true';
+  return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#0d0d0d;border-radius:5px;"><span style="width:16px;height:16px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;background:${yes?'#ef444422':'#22c55e22'};color:${yes?'#ef4444':'#22c55e'};">${yes?'✓':'✗'}</span><span style="color:#888;font-size:11px;">${label}</span></div>`;
+}
+
+function render1003Summary(app) {
+  const el = document.getElementById('app-1003-summary');
+  if (!el) return;
+  if (!app) { el.innerHTML = ''; return; }
+  const f = _1003Field;
+  const s = _1003Section;
+  const d = _1003Decl;
+  const dt = fromISODate;
+  const $ = (v) => v ? '$' + Number(v).toLocaleString() : '';
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:12px 16px;background:#161616;border-radius:8px;border:1px solid #1e1e1e;">
+      <div><div style="color:#555;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Borrower ID</div><div style="color:#C9A84C;font-size:14px;font-weight:600;font-family:monospace;">${app.borrower_id || 'Not assigned'}</div></div>
+      <div style="margin-left:auto;"><span style="font-size:11px;padding:3px 10px;border-radius:20px;background:${app.status==='submitted'?'#22c55e22':'#C9A84C22'};color:${app.status==='submitted'?'#22c55e':'#C9A84C'};">${(app.status||'draft').toUpperCase()}</span></div>
+    </div>
+    ${s('1A. Personal Information', `<div class="app-grid">
+      ${f('First Name',app.first_name)}${f('Middle',app.middle_name)}${f('Last Name',app.last_name)}${f('Suffix',app.suffix)}
+      ${f('DOB',dt(app.date_of_birth))}${f('Marital',app.marital_status)}${f('Citizenship',app.citizenship)}
+      ${f('Cell',app.cell_phone)}${f('Email',app.email)}${f('SSN (last 4)',app.ssn ? '***-**-'+app.ssn.slice(-4) : '')}
+    </div>`)}
+    ${s('1B. Current Address', `<div class="app-grid">
+      ${f('Street',app.current_address_street)}${f('Unit',app.current_address_unit)}${f('City',app.current_address_city)}
+      ${f('State',app.current_address_state)}${f('ZIP',app.current_address_zip)}
+      ${f('Housing',app.current_housing_type)}${f('Years',app.current_address_years)}${f('Rent/mo',$(app.current_rent_amount))}
+    </div>
+    ${app.former_address_street ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e1e1e;"><div style="color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Previous Address</div><div class="app-grid">
+      ${f('Street',app.former_address_street)}${f('City',app.former_address_city)}${f('State',app.former_address_state)}${f('ZIP',app.former_address_zip)}${f('Years',app.former_address_years)}
+    </div></div>` : ''}`)}
+    ${s('2. Employment & Income', `
+      <div style="color:#C9A84C;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Current Employer</div>
+      <div class="app-grid">
+        ${f('Employer',app.employer_name)}${f('Phone',app.employer_phone)}${f('Position',app.position_title)}
+        ${f('Start Date',dt(app.employment_start_date))}${f('Self-Employed',app.is_self_employed?'Yes':'No')}
+        ${f('Years in Field',app.years_in_line_of_work)}${f('Base/mo',$(app.base_income))}${f('Overtime/mo',$(app.overtime_income))}
+        ${f('Bonus/mo',$(app.bonus_income))}${f('Commission/mo',$(app.commission_income))}${f('Total Monthly',$(app.total_monthly_income))}
+      </div>
+      ${app.employer_street ? `<div class="app-grid" style="margin-top:8px;">${f('Address',[app.employer_street,app.employer_city,app.employer_state,app.employer_zip].filter(Boolean).join(', '))}</div>` : ''}
+      ${app.prev_employer_name ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e1e1e;">
+        <div style="color:#C9A84C;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Previous Employer</div>
+        <div class="app-grid">${f('Employer',app.prev_employer_name)}${f('Position',app.prev_position_title)}${f('Start',dt(app.prev_employment_start_date))}${f('End',dt(app.prev_employment_end_date))}${f('Income/mo',$(app.prev_monthly_income))}</div>
+      </div>` : ''}
+      ${app.employer2_name ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e1e1e;">
+        <div style="color:#C9A84C;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Additional Job</div>
+        <div class="app-grid">${f('Employer',app.employer2_name)}${f('Position',app.position2_title)}${f('Start',dt(app.employment2_start_date))}${f('Income/mo',$(app.base_income2))}</div>
+      </div>` : ''}
+    `)}
+    ${s('3. Assets & Liabilities', `<div class="app-grid">
+      ${f('Total Assets',$(app.total_assets))}${f('Monthly Debt',$(app.monthly_debt))}${f('Credit Score',app.credit_score)}
+    </div>`)}
+    ${s('4. Loan & Property', `<div class="app-grid">
+      ${f('Purpose',app.loan_purpose)}${f('Loan Type',app.loan_type)}${f('Amount',$(app.loan_amount))}
+      ${f('Property Value',$(app.property_value))}${f('Occupancy',app.occupancy_type||app.occupancy)}
+      ${f('Property Address',[app.property_address_street,app.property_address_city,app.property_address_state,app.property_address_zip].filter(Boolean).join(', '))}
+    </div>`)}
+    ${s('5. Declarations', `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+      ${d('Primary Residence',app.decl_primary_residence)}${d('Outstanding Judgments',app.decl_outstanding_judgments)}
+      ${d('Delinquent Federal',app.decl_delinquent_federal)}${d('Deed in Lieu',app.decl_deed_in_lieu)}
+      ${d('Short Sale',app.decl_short_sale)}${d('Foreclosure',app.decl_foreclosure)}
+      ${d('Bankruptcy',app.decl_bankruptcy)}${d('Co-Signer',app.decl_cosigner)}
+      ${d('Family/Seller',app.decl_family_relationship_seller)}${d('Other Mortgage',app.decl_applying_other_mortgage)}
+    </div>`)}
+  `;
+}
+
+/* ── DATE CONVERSION HELPERS ── */
+function toISODate(val) {
+  if (!val) return null;
+  val = String(val).trim();
+  if (!val) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(val)) {
+    const [m, d, y] = val.split('/');
+    return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  return null;
+}
+function fromISODate(val) {
+  if (!val) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(val)) {
+    const [y, m, d] = val.substring(0, 10).split('-');
+    return `${m}/${d}/${y}`;
+  }
+  return val;
+}
+
 /* ── 1003 — SAVE TO SUPABASE ── */
 async function save1003() {
   const cid = getContactId();
@@ -9381,7 +9495,7 @@ async function save1003() {
     last_name: gv('f_last_name'),
     suffix: gv('f_suffix'),
     ssn: gv('f_ssn'),
-    date_of_birth: gv('f_dob'),
+    date_of_birth: toISODate(gv('f_dob')),
     citizenship: gv('f_citizenship'),
     credit_type: gr('credit_type'),
     marital_status: gv('f_marital_status'),
@@ -9432,7 +9546,7 @@ async function save1003() {
     co_borrower_last_name: gv('cb_last_name'),
     co_borrower_suffix: gv('cb_suffix'),
     co_borrower_ssn: gv('cb_ssn'),
-    co_borrower_dob: gv('cb_dob'),
+    co_borrower_dob: toISODate(gv('cb_dob')),
     co_borrower_citizenship: gv('cb_citizenship'),
     co_borrower_marital_status: gv('cb_marital_status'),
     co_borrower_cell_phone: gv('cb_cell_phone'),
@@ -9447,7 +9561,7 @@ async function save1003() {
     co_borrower_employer: gv('cb_employer'),
     co_borrower_employer_phone: gv('cb_employer_phone'),
     co_borrower_title: gv('cb_title'),
-    co_borrower_start_date: gv('cb_start_date') || null,
+    co_borrower_start_date: toISODate(gv('cb_start_date')),
     co_borrower_decl_judgments: gr('cb_judgments') === 'yes',
     co_borrower_decl_federal: gr('cb_federal') === 'yes',
     co_borrower_decl_foreclosure: gr('cb_foreclosure') === 'yes',
@@ -9506,11 +9620,21 @@ async function save1003() {
     // legitimately have multiple applications, so we manually look up + update.
     const { data: existingApps } = await sb
       .from('mortgage_applications')
-      .select('id')
+      .select('id, borrower_id')
       .eq('contact_id', cid)
       .order('created_at', { ascending: false })
       .limit(1);
-    const existingAppId = existingApps && existingApps[0] ? existingApps[0].id : null;
+    const existingApp = existingApps && existingApps[0] ? existingApps[0] : null;
+    const existingAppId = existingApp ? existingApp.id : null;
+
+    // Generate a stable borrower_id if one doesn't exist yet.
+    let borrowerId = existingApp ? existingApp.borrower_id : null;
+    if (!borrowerId) {
+      const year = new Date().getFullYear();
+      const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+      borrowerId = `BR-${year}-${rand}`;
+    }
+    cleanData.borrower_id = borrowerId;
 
     let upsertResult, error;
     if (existingAppId) {
@@ -9562,6 +9686,8 @@ async function load1003(overrideCid) {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+    // Render the collapsible read-only summary above the form.
+    if (typeof render1003Summary === 'function') render1003Summary(data);
     if (!data) return;
 
     const sv = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
