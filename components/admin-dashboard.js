@@ -1,4 +1,4 @@
-// admin-dashboard.js v20260411f
+// admin-dashboard.js v20260411g
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
   if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_URL) {
@@ -26,7 +26,7 @@ import {
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks
-} from "/api/admin-api-v2.js?v=20260411f";
+} from "/api/admin-api-v2.js?v=20260411g";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
@@ -1011,6 +1011,7 @@ let _fvContacts = [];
 let _fvFilter = "";               // borrower search
 let _fvFileFilter = "";           // doc-type filter pill (empty = All)
 let _fvSelectedContactId = null;  // currently-selected borrower in left column
+let _fvFolderStack = [];          // breadcrumb: [{id, name}, ...]
 let _fvFileCounts = {};
 let _fvFiles = {};
 let _fvViewerState = null; // { contactId, files, index, keyHandler }
@@ -1127,6 +1128,7 @@ async function renderDocuments() {
         <!-- VIEW A: FILE LIST -->
         <div id="fv-view-list" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
           <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #1e1e1e;flex-shrink:0;flex-wrap:wrap;">
+            <button id="fv-folder-back" style="display:none;background:transparent;border:1px solid #2a2a2a;color:#C9A84C;font-size:12px;padding:4px 12px;border-radius:6px;cursor:pointer;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0;font-family:inherit;">&#8592; Back</button>
             <div id="fv-filter-pills" style="display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;">
               <button class="fv-pill active" data-fv-pill="">All</button>
               <button class="fv-pill" data-fv-pill="Pay Stubs">Pay Stubs</button>
@@ -1221,6 +1223,10 @@ function _fvBindPanels() {
   // Back button — switches from viewer view to file-list view.
   const backBtn = document.getElementById("fv-viewer-back");
   if (backBtn) backBtn.onclick = _fvShowFileList;
+
+  // Folder breadcrumb back button — pops up one level in the folder stack.
+  const folderBackBtn = document.getElementById("fv-folder-back");
+  if (folderBackBtn) folderBackBtn.onclick = _fvFolderBack;
 
   const pickFiles = () => {
     if (!_fvSelectedContactId) { _fvShowToast("Pick a borrower first"); return; }
@@ -1453,6 +1459,8 @@ function _fvBorrowerCardHtml(c) {
 async function _fvSelectBorrower(contact) {
   _fvSelectedContactId = contact.id;
   _fvFileFilter = "";
+  _fvFolderStack = [];
+  _fvUpdateBreadcrumb();
   _fvShowFileList();
   // Reset filter pill active state
   document.querySelectorAll("[data-fv-pill]").forEach((p) => p.classList.toggle("active", p.dataset.fvPill === ""));
@@ -1827,37 +1835,48 @@ function _fvMimeIconEmoji(mime) {
 function _fvRenderFileListPanel(contact) {
   const host = document.getElementById("fv-file-list");
   if (!host) return;
-  const files = _fvFiles[contact.gdrive_folder_id] || [];
-  const filteredFiles = _fvFileFilter
-    ? files.filter((f) => (f.appProperties && f.appProperties.docType) === _fvFileFilter)
-    : files;
+  // Read from the CURRENT folder (which may be a subfolder, not the root).
+  const currentFolderId = window._fvCurrentFolderId || contact.gdrive_folder_id;
+  const allItems = _fvFiles[currentFolderId] || [];
 
-  if (!filteredFiles.length) {
-    host.innerHTML = `<div style="padding:40px 20px;text-align:center;color:#555;font-size:12px;">${files.length ? "No files match this filter" : "No files yet — drop files below"}</div>`;
+  // Separate folders from files and show folders first.
+  const isFolder = (f) => f.mimeType === "application/vnd.google-apps.folder";
+  const folders = allItems.filter(isFolder);
+  const docs = allItems.filter((f) => !isFolder(f));
+  const filteredDocs = _fvFileFilter
+    ? docs.filter((f) => (f.appProperties && f.appProperties.docType) === _fvFileFilter)
+    : docs;
+  const sorted = [...folders, ...filteredDocs];
+
+  if (!sorted.length) {
+    host.innerHTML = `<div style="padding:40px 20px;text-align:center;color:#555;font-size:12px;">${allItems.length ? "No files match this filter" : "No files yet — drop files below"}</div>`;
     return;
   }
-  host.innerHTML = filteredFiles.map((f) => _fvFileRowHtml(f)).join("");
+  host.innerHTML = sorted.map((f) => _fvFileRowHtml(f)).join("");
 
-  // Wire file row clicks + action buttons (class-based).
+  // Wire row clicks.
   host.querySelectorAll(".fv-file-row").forEach((row) => {
     const fileId = row.dataset.fvRow;
-    const f = files.find((x) => x.id === fileId);
+    const f = allItems.find((x) => x.id === fileId);
     if (!f) return;
 
+    if (isFolder(f)) {
+      // Folder click — navigate into it.
+      row.onclick = () => _fvNavigateIntoFolder(f);
+      return;
+    }
+
+    // Regular file row.
     row.onclick = (e) => {
       if (e.target && e.target.closest && (e.target.closest(".fv-pdf-btn") || e.target.closest(".fv-dl-btn"))) return;
-      const idx = files.findIndex((x) => x.id === fileId);
-      if (idx >= 0) _fvOpenViewer(contact, files, idx);
+      const idx = docs.findIndex((x) => x.id === fileId);
+      if (idx >= 0) _fvOpenViewer(contact, docs, idx);
     };
 
     const pdfBtn = row.querySelector(".fv-pdf-btn");
     if (pdfBtn) {
-      pdfBtn.onclick = (e) => {
-        e.stopPropagation();
-        _fvConvertToPdf(f);
-      };
+      pdfBtn.onclick = (e) => { e.stopPropagation(); _fvConvertToPdf(f); };
     }
-
     const dlBtn = row.querySelector(".fv-dl-btn");
     if (dlBtn) {
       dlBtn.onclick = (e) => {
@@ -1867,7 +1886,7 @@ function _fvRenderFileListPanel(contact) {
     }
   });
 
-  // If a file was previously active in the viewer, highlight its row.
+  // Highlight the active viewer row if still in this folder.
   if (_fvViewerState && String(_fvViewerState.contactId) === String(contact.id)) {
     const activeId = _fvViewerState.files[_fvViewerState.index]?.id;
     if (activeId) {
@@ -1878,10 +1897,25 @@ function _fvRenderFileListPanel(contact) {
 }
 
 function _fvFileRowHtml(f) {
+  const nm = _fvEscape(f.name || "Untitled");
+
+  // Folder rows have a distinct gold style with an arrow affordance.
+  if (f.mimeType === "application/vnd.google-apps.folder") {
+    return `
+      <div class="fv-file-row" data-fv-row="${_fvEscape(f.id)}">
+        <div style="font-size:18px;flex-shrink:0;">&#128193;</div>
+        <div style="flex:1;min-width:0;">
+          <div class="fv-name" style="color:#C9A84C;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</div>
+          <div style="color:#555;font-size:11px;margin-top:1px;">Folder</div>
+        </div>
+        <div style="color:#C9A84C44;font-size:11px;flex-shrink:0;">&#8594;</div>
+      </div>
+    `;
+  }
+
   const icon = _fvMimeIconEmoji(f.mimeType || "");
   const size = _fvFormatSize(f.size);
   const date = f.createdTime ? new Date(f.createdTime).toLocaleDateString() : "";
-  const nm = _fvEscape(f.name || "Untitled");
   const docType = (f.appProperties && f.appProperties.docType) || "";
   const isGoogleDoc = (f.mimeType || "").startsWith("application/vnd.google-apps.");
   return `
@@ -1900,6 +1934,40 @@ function _fvFileRowHtml(f) {
       </div>
     </div>
   `;
+}
+
+// ── FOLDER NAVIGATION ────────────────────────────────────────────
+async function _fvNavigateIntoFolder(folder) {
+  // Push the current folder onto the breadcrumb stack.
+  _fvFolderStack.push({
+    id: window._fvCurrentFolderId,
+    name: document.getElementById("fv-panel-title")?.textContent || "Files"
+  });
+  _fvUpdateBreadcrumb();
+  await _fvLoadFiles(folder.id);
+  const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
+  if (contact) _fvRenderFileListPanel(contact);
+}
+
+async function _fvFolderBack() {
+  if (!_fvFolderStack.length) return;
+  const parent = _fvFolderStack.pop();
+  _fvUpdateBreadcrumb();
+  await _fvLoadFiles(parent.id);
+  const contact = _fvContacts.find((c) => c.id === _fvSelectedContactId);
+  if (contact) _fvRenderFileListPanel(contact);
+}
+
+function _fvUpdateBreadcrumb() {
+  const backBtn = document.getElementById("fv-folder-back");
+  if (!backBtn) return;
+  if (_fvFolderStack.length > 0) {
+    const parent = _fvFolderStack[_fvFolderStack.length - 1];
+    backBtn.style.display = "inline-flex";
+    backBtn.innerHTML = "&#8592; " + _fvEscape(parent.name);
+  } else {
+    backBtn.style.display = "none";
+  }
 }
 
 // ── RENAME ────────────────────────────────────────────────────────
@@ -2044,6 +2112,12 @@ async function _fvConvertToPdf(file) {
 // The viewer chrome is pre-mounted in the shell. This function just
 // populates fields and toggles the right panel to the viewer view.
 function _fvOpenViewer(contact, files, index) {
+  // Never try to "view" a folder — navigate into it instead.
+  const file = files[index];
+  if (file && file.mimeType === "application/vnd.google-apps.folder") {
+    _fvNavigateIntoFolder(file);
+    return;
+  }
   _fvRevokeBlobUrl();
   _fvViewerState = { contactId: contact.id, files, index, blobUrl: null };
 
