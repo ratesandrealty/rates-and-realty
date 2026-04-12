@@ -8,11 +8,21 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="/assets/images/favicon.png"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<script src="/api/env.js"></script>
+<script src="/public/js/map-controls.js"></script>
 <script src="/public/auth-persist.js"></script>
 <script src="/public/listing-alerts.js"></script>
 <script src="/public/js/portal-tracker.js" defer></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
+/* Google Places Autocomplete dark theme */
+.pac-container{background:#161616!important;border:1px solid #C9A84C44!important;border-radius:10px!important;box-shadow:0 8px 32px rgba(0,0,0,.7)!important;margin-top:4px!important;font-family:inherit!important;overflow:hidden;}
+.pac-item{background:#161616!important;color:#ccc!important;border-top:1px solid #1e1e1e!important;padding:10px 14px!important;cursor:pointer!important;font-size:13px!important;line-height:1.4!important;}
+.pac-item:hover,.pac-item-selected{background:#1a1a14!important;}
+.pac-item-query{color:#e0e0e0!important;font-size:13px!important;font-weight:500!important;}
+.pac-matched{color:#C9A84C!important;font-weight:600!important;}
+.pac-icon{display:none!important;}
+.pac-logo::after{display:none!important;}
 :root{--gold:#C9A84C;--gold-light:#e8c96d;--dark:#0a0a0a;--card:#111;--border:#222;--text:#eee;--muted:#888;--radius:12px}
 body{background:var(--dark);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
 a{color:var(--text);text-decoration:none}
@@ -522,7 +532,7 @@ html,body{overflow-x:hidden}
           <div style="font-size:.7rem;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.12em;padding-bottom:8px;border-bottom:1px solid #C9A84C22;margin-bottom:16px">1B. Current Address</div>
           <div style="background:rgba(201,168,76,.06);border:1px solid #C9A84C22;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:.75rem;color:#888"><i class="fas fa-info-circle" style="color:#C9A84C;margin-right:6px"></i>2-year address history required</div>
           <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px">
-            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Street Address</label><input type="text" id="app_street" placeholder="Start typing address..." title="Start typing and select from suggestions" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Street Address</label><input type="text" id="app_street" placeholder="Start typing address..." title="Start typing and select from suggestions" data-autocomplete="address" data-fills-city="app_city" data-fills-state="app_state" data-fills-zip="app_zip" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Unit #</label><input type="text" id="app_unit" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'"></div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:14px">
@@ -564,7 +574,7 @@ html,body{overflow-x:hidden}
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Loan Purpose</label><select id="app_loan_purpose" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>Purchase</option><option>Refinance</option><option>Cash-Out Refinance</option></select></div>
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Loan Type</label><select id="app_loan_type" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>FHA</option><option>VA</option><option>Conventional</option><option>DSCR</option><option>Jumbo</option><option>Bank Statement</option><option>ITIN</option><option>Non-QM</option></select></div>
-            <div style="grid-column:1/-1"><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Property Address (if known)</label><input type="text" id="app_prop_street" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
+            <div style="grid-column:1/-1"><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Property Address (if known)</label><input type="text" id="app_prop_street" data-autocomplete="address" data-fills-city="app_prop_city" data-fills-state="app_prop_state" data-fills-zip="app_prop_zip" placeholder="Start typing property address..." style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Purchase Price $</label><input type="number" id="app_purchase_price" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Loan Amount $</label><input type="number" id="app_loan_amount" min="0" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='#C9A84C'" onblur="this.style.borderColor='#2a2a2a'" oninput="updateAppProgress()"></div>
             <div><label style="font-size:.68rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Occupancy</label><select id="app_occupancy" style="width:100%;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 13px;color:#eee;font-size:.88rem;outline:none;box-sizing:border-box"><option value="">Select...</option><option>Primary Residence</option><option>Investment Property</option><option>Second Home</option></select></div>
@@ -1553,6 +1563,50 @@ function getPrevEmployers() {
     emps.push({ employer_name: name, title: document.getElementById('pemp_title_'+idx)?.value||'', phone: document.getElementById('pemp_phone_'+idx)?.value||'', start_date: document.getElementById('pemp_start_'+idx)?.value||'', end_date: document.getElementById('pemp_end_'+idx)?.value||'', city: document.getElementById('pemp_city_'+idx)?.value||'', state: document.getElementById('pemp_state_'+idx)?.value||'CA', zip: document.getElementById('pemp_zip_'+idx)?.value||'', monthly_income: parseFloat(document.getElementById('pemp_income_'+idx)?.value)||0, self_employed: document.getElementById('pemp_selfemp_'+idx)?.checked||false });
   });
   return emps;
+}
+
+// ── GOOGLE PLACES ADDRESS AUTOCOMPLETE ────────────────────────────
+// Wires every input[data-autocomplete="address"] with Google Places suggestions.
+// Loads the Maps JS via map-controls.js (fetches API key from /config).
+function initAddressAutocomplete() {
+  if (!window.google || !window.google.maps || !window.google.maps.places) return;
+  document.querySelectorAll('[data-autocomplete="address"]').forEach(function(input) {
+    if (input._acWired) return;
+    input._acWired = true;
+    var ac = new google.maps.places.Autocomplete(input, {
+      types: ['address'],
+      componentRestrictions: { country: 'us' },
+      fields: ['address_components', 'formatted_address']
+    });
+    ac.addListener('place_changed', function() {
+      var place = ac.getPlace();
+      if (!place || !place.address_components) return;
+      var streetNum = '', route = '', city = '', state = '', zip = '';
+      place.address_components.forEach(function(comp) {
+        var t = comp.types;
+        if (t.indexOf('street_number') >= 0) streetNum = comp.long_name;
+        if (t.indexOf('route') >= 0) route = comp.short_name;
+        if (t.indexOf('locality') >= 0) city = comp.long_name;
+        if (t.indexOf('administrative_area_level_1') >= 0) state = comp.short_name;
+        if (t.indexOf('postal_code') >= 0) zip = comp.long_name;
+      });
+      input.value = [streetNum, route].filter(Boolean).join(' ') || place.formatted_address;
+      var fill = function(attr, val) {
+        var id = input.dataset[attr];
+        if (id && val) { var el = document.getElementById(id); if (el) { el.value = val; el.dispatchEvent(new Event('input')); } }
+      };
+      fill('fillsCity', city);
+      fill('fillsState', state);
+      fill('fillsZip', zip);
+    });
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') e.preventDefault(); });
+  });
+}
+// Load Maps + Places, then wire autocomplete on all marked inputs.
+if (typeof window.loadGoogleMaps === 'function') {
+  window.loadGoogleMaps().then(initAddressAutocomplete).catch(function(e) {
+    console.warn('[AddressAC] Maps load failed:', e.message);
+  });
 }
 
 // v20260412a — date/numeric sanitizers are GLOBAL so every code path can use them.

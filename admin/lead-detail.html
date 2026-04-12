@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <script src="/api/env.js?v=20260411p"></script>
+  <script src="/api/env.js?v=20260411q"></script>
+  <script src="/public/js/map-controls.js"></script>
   <!-- Google Identity Services — OAuth token client for GDrive Documents tab -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion before GDrive upload -->
@@ -13,6 +14,16 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/public/css/responsive.css?v=2026033001">
+  <style>
+    /* Google Places Autocomplete dark theme */
+    .pac-container{background:#161616!important;border:1px solid #C9A84C44!important;border-radius:10px!important;box-shadow:0 8px 32px rgba(0,0,0,.7)!important;margin-top:4px!important;font-family:inherit!important;overflow:hidden;}
+    .pac-item{background:#161616!important;color:#ccc!important;border-top:1px solid #1e1e1e!important;padding:10px 14px!important;cursor:pointer!important;font-size:13px!important;}
+    .pac-item:hover,.pac-item-selected{background:#1a1a14!important;}
+    .pac-item-query{color:#e0e0e0!important;font-size:13px!important;font-weight:500!important;}
+    .pac-matched{color:#C9A84C!important;font-weight:600!important;}
+    .pac-icon{display:none!important;}
+    .pac-logo::after{display:none!important;}
+  </style>
   <script src="/admin/js/auth-guard.js?v=2026033001"></script>
   <script>if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
   <style>
@@ -2556,7 +2567,7 @@
           <!-- Row 1: Address full width -->
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;">
             <div style="grid-column:span 3;"><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Street Address</label>
-              <input id="f_current_street" type="text" placeholder="123 Main St" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+              <input id="f_current_street" type="text" placeholder="Start typing address..." data-autocomplete="address" data-fills-city="f_current_city" data-fills-state="f_current_state" data-fills-zip="f_current_zip" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
             <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Unit #</label>
               <input id="f_current_unit" type="text" placeholder="Apt 2B" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
           </div>
@@ -2656,7 +2667,7 @@
         <!-- Row 2: Property Address (span 2), City, State -->
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;">
           <div style="grid-column:span 2;"><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Property Address</label>
-            <input id="f_prop_street" type="text" placeholder="123 Main St" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+            <input id="f_prop_street" type="text" placeholder="Start typing property address..." data-autocomplete="address" data-fills-city="f_prop_city" data-fills-state="f_prop_state" data-fills-zip="f_prop_zip" data-fills-county="f_prop_county" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">City</label>
             <input id="f_prop_city" type="text" placeholder="City" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">State</label>
@@ -9494,6 +9505,50 @@ function attachAutoSave() {
   panel.querySelectorAll('input, select, textarea').forEach(el => {
     const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
     el.addEventListener(evt, triggerAutoSave);
+  });
+}
+
+/* ── ADDRESS AUTOCOMPLETE ── */
+function initAddressAutocomplete() {
+  if (!window.google || !window.google.maps || !window.google.maps.places) return;
+  document.querySelectorAll('[data-autocomplete="address"]').forEach(function(input) {
+    if (input._acWired) return;
+    input._acWired = true;
+    var ac = new google.maps.places.Autocomplete(input, {
+      types: ['address'],
+      componentRestrictions: { country: 'us' },
+      fields: ['address_components', 'formatted_address']
+    });
+    ac.addListener('place_changed', function() {
+      var place = ac.getPlace();
+      if (!place || !place.address_components) return;
+      var streetNum = '', route = '', city = '', state = '', zip = '', county = '';
+      place.address_components.forEach(function(comp) {
+        var t = comp.types;
+        if (t.indexOf('street_number') >= 0) streetNum = comp.long_name;
+        if (t.indexOf('route') >= 0) route = comp.short_name;
+        if (t.indexOf('locality') >= 0) city = comp.long_name;
+        if (t.indexOf('administrative_area_level_1') >= 0) state = comp.short_name;
+        if (t.indexOf('postal_code') >= 0) zip = comp.long_name;
+        if (t.indexOf('administrative_area_level_2') >= 0) county = comp.long_name.replace(' County', '');
+      });
+      input.value = [streetNum, route].filter(Boolean).join(' ') || place.formatted_address;
+      var fill = function(attr, val) {
+        var id = input.dataset[attr];
+        if (id && val) { var el = document.getElementById(id); if (el) { el.value = val; el.dispatchEvent(new Event('input')); } }
+      };
+      fill('fillsCity', city);
+      fill('fillsState', state);
+      fill('fillsZip', zip);
+      fill('fillsCounty', county);
+    });
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') e.preventDefault(); });
+  });
+}
+// Load Maps + Places, then wire autocomplete.
+if (typeof window.loadGoogleMaps === 'function') {
+  window.loadGoogleMaps().then(initAddressAutocomplete).catch(function(e) {
+    console.warn('[AddressAC] Maps load failed:', e.message);
   });
 }
 
