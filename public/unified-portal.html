@@ -1579,42 +1579,78 @@ async function saveApplication(silent) {
     return null;
   };
 
-  var data = {
-    first_name: val('app_first_name'), middle_name: val('app_middle_name'), last_name: val('app_last_name'),
-    suffix: val('app_suffix'), date_of_birth: toISODate(val('app_dob')), marital_status: val('app_marital'),
-    citizenship: val('app_citizenship'), cell_phone: val('app_cell'), home_phone: val('app_home_phone'),
-    work_phone: val('app_work_phone'), dl_number: val('app_dl'), dl_state: val('app_dl_state'),
-    current_address_street: val('app_street'), current_address_unit: val('app_unit'),
-    current_address_city: val('app_city'), current_address_state: val('app_state') || 'CA',
-    current_address_zip: val('app_zip'), current_housing_type: val('app_housing'),
-    current_address_years: intVal('app_years'), current_rent_amount: numVal('app_rent'),
-    employer_name: val('app_employer'), employer_phone: val('app_emp_phone'),
-    employer_street: val('app_emp_street'), employer_city: val('app_emp_city'),
-    employer_state: val('app_emp_state'), employer_zip: val('app_emp_zip'),
-    position_title: val('app_title'), employment_start_date: toISODate(val('app_start_date')),
-    is_self_employed: chkVal('app_self_emp'),
-    base_income: numVal('app_base_income'), overtime_income: numVal('app_overtime'),
-    bonus_income: numVal('app_bonus'), commission_income: numVal('app_commission'),
-    loan_purpose: val('app_loan_purpose'), loan_type: val('app_loan_type'),
-    property_address_street: val('app_prop_street'), property_address_city: val('app_prop_city'),
-    property_address_state: val('app_prop_state'), property_address_zip: val('app_prop_zip'),
-    purchase_price: numVal('app_purchase_price'), requested_loan_amount: numVal('app_loan_amount'),
-    occupancy_type: val('app_occupancy'), monthly_debt: numVal('app_monthly_debt'),
-    bank_accounts: JSON.stringify([
-      { type: 'checking', balance: numVal('app_checking') || 0 },
-      { type: 'savings', balance: numVal('app_savings') || 0 },
-      { type: 'retirement', balance: numVal('app_retirement') || 0 }
-    ]),
-    decl_primary_residence: chkVal('app_decl_primary'), decl_foreclosure: chkVal('app_decl_foreclosure'),
-    decl_bankruptcy: chkVal('app_decl_bankruptcy'), decl_lawsuit: chkVal('app_decl_lawsuit'),
-    decl_delinquent_federal: chkVal('app_decl_federal'),
-    former_addresses: JSON.stringify(typeof getPrevAddresses === 'function' ? getPrevAddresses() : []),
-    employments: JSON.stringify(typeof getPrevEmployers === 'function' ? getPrevEmployers() : []),
-    borrower_id: u.borrower_id || u.crm_id || null,
-    borrower_user_id: u.id || null,
-    email: u.email,
-    updated_at: new Date().toISOString()
-  };
+  // Strip nulls from the payload so we don't send fields the DB might reject.
+  var data = {};
+  function _set(k, v) { if (v != null && v !== '') data[k] = v; }
+  // Text fields
+  _set('first_name', val('app_first_name'));
+  _set('middle_name', val('app_middle_name'));
+  _set('last_name', val('app_last_name'));
+  _set('suffix', val('app_suffix'));
+  _set('marital_status', val('app_marital'));
+  _set('citizenship', val('app_citizenship'));
+  _set('cell_phone', val('app_cell'));
+  _set('home_phone', val('app_home_phone'));
+  _set('work_phone', val('app_work_phone'));
+  _set('dl_number', val('app_dl'));
+  _set('dl_state', val('app_dl_state'));
+  _set('current_address_street', val('app_street'));
+  _set('current_address_unit', val('app_unit'));
+  _set('current_address_city', val('app_city'));
+  _set('current_address_state', val('app_state') || 'CA');
+  _set('current_address_zip', val('app_zip'));
+  _set('current_housing_type', val('app_housing'));
+  _set('employer_name', val('app_employer'));
+  _set('employer_phone', val('app_emp_phone'));
+  _set('employer_street', val('app_emp_street'));
+  _set('employer_city', val('app_emp_city'));
+  _set('employer_state', val('app_emp_state'));
+  _set('employer_zip', val('app_emp_zip'));
+  _set('position_title', val('app_title'));
+  _set('loan_purpose', val('app_loan_purpose'));
+  _set('loan_type', val('app_loan_type'));
+  _set('property_address_street', val('app_prop_street'));
+  _set('property_address_city', val('app_prop_city'));
+  _set('property_address_state', val('app_prop_state'));
+  _set('property_address_zip', val('app_prop_zip'));
+  _set('occupancy_type', val('app_occupancy'));
+  _set('email', u.email);
+  // Date fields — YYYY-MM-DD via toISODate()
+  _set('date_of_birth', toISODate(val('app_dob')));
+  _set('employment_start_date', toISODate(val('app_start_date')));
+  // Numeric fields — null if empty/NaN
+  _set('current_address_years', intVal('app_years'));
+  _set('current_rent_amount', numVal('app_rent'));
+  _set('base_income', numVal('app_base_income'));
+  _set('overtime_income', numVal('app_overtime'));
+  _set('bonus_income', numVal('app_bonus'));
+  _set('commission_income', numVal('app_commission'));
+  _set('purchase_price', numVal('app_purchase_price'));
+  _set('requested_loan_amount', numVal('app_loan_amount'));
+  _set('monthly_debt', numVal('app_monthly_debt'));
+  // Boolean fields
+  _set('is_self_employed', chkVal('app_self_emp'));
+  // Declaration booleans
+  _set('decl_primary_residence', chkVal('app_decl_primary'));
+  _set('decl_foreclosure', chkVal('app_decl_foreclosure'));
+  _set('decl_bankruptcy', chkVal('app_decl_bankruptcy'));
+  _set('decl_lawsuit', chkVal('app_decl_lawsuit'));
+  _set('decl_delinquent_federal', chkVal('app_decl_federal'));
+  // JSON-encoded arrays
+  _set('bank_accounts', JSON.stringify([
+    { type: 'checking', balance: numVal('app_checking') || 0 },
+    { type: 'savings', balance: numVal('app_savings') || 0 },
+    { type: 'retirement', balance: numVal('app_retirement') || 0 }
+  ]));
+  _set('former_addresses', JSON.stringify(typeof getPrevAddresses === 'function' ? getPrevAddresses() : []));
+  _set('employments', JSON.stringify(typeof getPrevEmployers === 'function' ? getPrevEmployers() : []));
+  // IDs
+  _set('borrower_id', u.borrower_id || u.crm_id || null);
+  _set('borrower_user_id', u.id || null);
+  data.updated_at = new Date().toISOString();
+
+  console.log('[1003 Save] payload keys:', Object.keys(data).length, 'fields');
+  console.log('[1003 Save] date_of_birth:', data.date_of_birth, '| employment_start_date:', data.employment_start_date);
 
   try {
     var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
@@ -1623,9 +1659,10 @@ async function saveApplication(silent) {
       body: JSON.stringify({ action: 'save_application', email: u.email, borrower_id: u.borrower_id || u.crm_id || null, portal_user_id: u.id || null, data: data })
     });
     var result = await res.json();
+    console.log('[1003 Save] response:', res.status, result);
 
     if (!res.ok || result.error || result.success === false) {
-      throw new Error(result.error || result.message || 'Save failed');
+      throw new Error(result.error || result.message || result.details || 'Save failed (HTTP ' + res.status + ')');
     }
 
     appDirty = false;
@@ -1638,10 +1675,11 @@ async function saveApplication(silent) {
     if (!silent) showToast('Application saved!', 'success');
 
   } catch(e) {
-    console.error('Save error:', e);
-    var errMsg = (e.message && e.message.indexOf('date') >= 0)
-      ? 'Please check date fields are filled correctly (use MM/DD/YYYY).'
-      : (e.message || 'Unknown error');
+    console.error('[1003 Save] FULL ERROR:', e);
+    console.error('[1003 Save] message:', e.message, '| details:', e.details, '| hint:', e.hint);
+    var errMsg = e.message || 'Unknown error';
+    if (errMsg.indexOf('date') >= 0) errMsg = 'Please check date fields are filled correctly (use MM/DD/YYYY).';
+    else if (errMsg.indexOf('numeric') >= 0 || errMsg.indexOf('integer') >= 0) errMsg = 'Please check numeric fields (income, amounts) — remove $ signs.';
     if (statusEl) { statusEl.textContent = '✗ Save failed: ' + errMsg; statusEl.style.color = '#ef4444'; }
     if (!silent) showToast('Save failed: ' + errMsg, 'error');
   }
