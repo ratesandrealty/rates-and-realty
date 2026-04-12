@@ -1555,6 +1555,29 @@ function getPrevEmployers() {
   return emps;
 }
 
+// v20260412a — date/numeric sanitizers are GLOBAL so every code path can use them.
+function toISODate(val) {
+  if (!val) return null;
+  val = String(val).trim();
+  if (!val) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(val)) {
+    var p = val.split('/');
+    return p[2] + '-' + p[0].padStart(2, '0') + '-' + p[1].padStart(2, '0');
+  }
+  return null;
+}
+function toNum(val) {
+  if (val === null || val === undefined || val === '') return null;
+  var n = parseFloat(String(val).replace(/[$,\s]/g, ''));
+  return isNaN(n) ? null : n;
+}
+function toInt(val) {
+  if (val === null || val === undefined || val === '') return null;
+  var n = parseInt(String(val));
+  return isNaN(n) ? null : n;
+}
+
 async function saveApplication(silent) {
   var u = currentUser;
   if (!u || !u.email) {
@@ -1571,13 +1594,7 @@ async function saveApplication(silent) {
   var numVal = function(id) { var v = document.getElementById(id)?.value; return v && v.trim() ? parseFloat(v) : null; };
   var intVal = function(id) { var v = document.getElementById(id)?.value; return v && v.trim() ? parseInt(v) : null; };
   var chkVal = function(id) { var el = document.getElementById(id); return el ? el.checked : false; };
-  // DB date columns require YYYY-MM-DD. Inputs may send MM/DD/YYYY or M/D/YYYY.
-  var toISODate = function(v) {
-    if (!v) return null; v = String(v).trim(); if (!v) return null;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(v)) { var p=v.split('/'); return p[2]+'-'+p[0].padStart(2,'0')+'-'+p[1].padStart(2,'0'); }
-    return null;
-  };
+  // toISODate, toNum, toInt are defined globally above saveApplication().
 
   // Strip nulls from the payload so we don't send fields the DB might reject.
   var data = {};
