@@ -1663,7 +1663,10 @@ async function saveApplication(silent) {
   _set('employments', JSON.stringify(typeof getPrevEmployers === 'function' ? getPrevEmployers() : []));
   // IDs
   _set('borrower_id', u.borrower_id || u.crm_id || null);
-  _set('borrower_user_id', u.id || null);
+  // Skip borrower_user_id — the FK constraint on mortgage_applications references
+  // auth.users, but portal_users.id is NOT an auth.users UUID. Sending it causes
+  // a FK violation 500. The edge function resolves the contact_id separately.
+  // _set('borrower_user_id', u.id || null);
   data.updated_at = new Date().toISOString();
 
   console.log('[1003 Save] payload keys:', Object.keys(data).length, 'fields');

@@ -129,7 +129,10 @@ Deno.serve(async (req: Request) => {
       }
       cleanData.contact_id = contact_id;
       cleanData.updated_at = new Date().toISOString();
-      if (portal_user_id) cleanData.borrower_user_id = portal_user_id;
+      // Do NOT set borrower_user_id — the FK references auth.users and
+      // portal_user_id is from portal_users, not auth.users. Sending it
+      // causes "violates foreign key constraint mortgage_applications_borrower_user_id_fkey".
+      // if (portal_user_id) cleanData.borrower_user_id = portal_user_id;
       if (borrower_id) cleanData.borrower_id = borrower_id;
       if (email) cleanData.email = email;
 
