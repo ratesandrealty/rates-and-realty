@@ -100,18 +100,62 @@ Deno.serve(async (req: Request) => {
     }
 
     // ─── SAVE APPLICATION ────────────────────────────────────────────────
+    // Bypasses the save_mortgage_application RPC (which doesn't cast text→date
+    // properly) and does a direct upsert via the Supabase client.
     if (action === 'save_application') {
       const { email, borrower_id, portal_user_id, data: appData } = body;
       if (!email && !borrower_id) return err('email or borrower_id required');
 
-      const { data: result, error } = await sb.rpc('save_mortgage_application', {
-        p_email: email,
-        p_borrower_id: borrower_id || null,
-        p_borrower_user_id: portal_user_id || null,
-        p_data: appData || {}
-      });
-      if (error) return err(error.message, 500);
-      return ok(result);
+      // Resolve contact_id from email or borrower_id.
+      let contact_id: string | null = null;
+      if (borrower_id) {
+        const { data: c } = await sb.from('contacts').select('id').eq('borrower_id', borrower_id).maybeSingle();
+        if (c) contact_id = c.id;
+      }
+      if (!contact_id && email) {
+        const { data: c } = await sb.from('contacts').select('id').eq('email', email.toLowerCase()).maybeSingle();
+        if (c) contact_id = c.id;
+      }
+      if (!contact_id && portal_user_id) {
+        const { data: pu } = await sb.from('portal_users').select('contact_id').eq('id', portal_user_id).maybeSingle();
+        if (pu?.contact_id) contact_id = pu.contact_id;
+      }
+      if (!contact_id) return err('Could not resolve contact — check email or borrower_id');
+
+      // Clean the payload: strip undefined/null, ensure dates are ISO strings.
+      const cleanData: Record<string, any> = {};
+      for (const [k, v] of Object.entries(appData || {})) {
+        if (v !== null && v !== undefined && v !== '') cleanData[k] = v;
+      }
+      cleanData.contact_id = contact_id;
+      cleanData.updated_at = new Date().toISOString();
+      if (portal_user_id) cleanData.borrower_user_id = portal_user_id;
+      if (borrower_id) cleanData.borrower_id = borrower_id;
+      if (email) cleanData.email = email;
+
+      // Check for existing app row.
+      const { data: existing } = await sb.from('mortgage_applications')
+        .select('id')
+        .eq('contact_id', contact_id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const existingId = existing?.[0]?.id;
+
+      let result, error;
+      if (existingId) {
+        delete cleanData.contact_id; // don't re-write immutable FK
+        const r = await sb.from('mortgage_applications').update(cleanData).eq('id', existingId).select();
+        result = r.data; error = r.error;
+      } else {
+        cleanData.created_at = new Date().toISOString();
+        const r = await sb.from('mortgage_applications').insert(cleanData).select();
+        result = r.data; error = r.error;
+      }
+      if (error) {
+        console.error('[portal-data] save_application error:', JSON.stringify(error));
+        return err(error.message || error.details || 'Save failed', 500);
+      }
+      return ok({ success: true, application: result?.[0] || null });
     }
 
     // ─── GET SAVED HOMES ─────────────────────────────────────────────────
