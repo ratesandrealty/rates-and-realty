@@ -6340,7 +6340,7 @@ function switchTab(name, btn) {
   const panel = document.getElementById('tab-' + name);
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
-  if (name === 'application') { load1003(); loadLiabilities1003(); loadApp1003Borrowers(); buildBorrowerSwitcher(); }
+  if (name === 'application') { load1003(); loadLiabilities1003(); loadApp1003Borrowers(); buildBorrowerSwitcher(); setTimeout(initSectionPageSwap, 100); }
   if (name === 'lenders') loadLenderMatches();
   if (name === 'documents') loadDocumentsGrid();
   if (name === 'conditions') loadConditions();
@@ -9497,10 +9497,76 @@ function attachAutoSave() {
   });
 }
 
-/* ── LEFT NAV SCROLL-TO ── */
+/* ── LEFT NAV PAGE-SWAP ── */
+// Inject slide animation styles once.
+(function() {
+  if (document.getElementById('appPageSwapStyle')) return;
+  var s = document.createElement('style');
+  s.id = 'appPageSwapStyle';
+  s.textContent =
+    '@keyframes appSlideInR{from{opacity:0;transform:translateX(60px)}to{opacity:1;transform:translateX(0)}}' +
+    '@keyframes appSlideInL{from{opacity:0;transform:translateX(-60px)}to{opacity:1;transform:translateX(0)}}' +
+    '.app-slide-r{animation:appSlideInR .25s ease forwards}' +
+    '.app-slide-l{animation:appSlideInL .25s ease forwards}';
+  document.head.appendChild(s);
+})();
+
+// Map of section anchor IDs → the elements that belong to that section.
+// Built lazily on first call so the DOM is ready.
+var _appSectionMap = null;
+var _appSectionOrder = ['loanSummaryPanel','sec-borrower-info','sec-employment','sec-loan-property','sec-declarations'];
+var _appCurrentSecIdx = 0;
+
+function _buildSectionMap() {
+  if (_appSectionMap) return;
+  _appSectionMap = {};
+  var scroll = document.getElementById('app-content-scroll');
+  if (!scroll) return;
+  var children = Array.from(scroll.children);
+  // Walk children. When we hit a section anchor, start collecting into that group.
+  var currentKey = null;
+  children.forEach(function(el) {
+    if (_appSectionOrder.indexOf(el.id) >= 0) {
+      currentKey = el.id;
+      _appSectionMap[currentKey] = _appSectionMap[currentKey] || [];
+      _appSectionMap[currentKey].push(el);
+    } else if (currentKey) {
+      _appSectionMap[currentKey].push(el);
+    } else {
+      // Elements before the first anchor belong to the first section.
+      var firstKey = _appSectionOrder[0];
+      _appSectionMap[firstKey] = _appSectionMap[firstKey] || [];
+      _appSectionMap[firstKey].push(el);
+    }
+  });
+}
+
 function scrollToSection(id, navEl) {
-  console.log('[1003 nav] scrollToSection:', id);
-  // Update active nav styling.
+  _buildSectionMap();
+  if (!_appSectionMap) return;
+  var newIdx = _appSectionOrder.indexOf(id);
+  if (newIdx < 0) newIdx = 0;
+  var goingRight = newIdx >= _appCurrentSecIdx;
+  _appCurrentSecIdx = newIdx;
+
+  // Hide all sections, show only the active one.
+  _appSectionOrder.forEach(function(secId) {
+    var els = _appSectionMap[secId] || [];
+    var show = secId === id;
+    els.forEach(function(el) { el.style.display = show ? '' : 'none'; });
+  });
+
+  // Apply slide animation to the scroll container.
+  var scroll = document.getElementById('app-content-scroll');
+  if (scroll) {
+    scroll.classList.remove('app-slide-r', 'app-slide-l');
+    void scroll.offsetWidth;
+    scroll.classList.add(goingRight ? 'app-slide-r' : 'app-slide-l');
+    setTimeout(function() { scroll.classList.remove('app-slide-r', 'app-slide-l'); }, 280);
+    scroll.scrollTop = 0;
+  }
+
+  // Highlight active nav item.
   document.querySelectorAll('.app-nav-item').forEach(function(n) {
     var isActive = n.dataset && n.dataset.sec === id;
     n.style.borderLeftColor = isActive ? '#C9A84C' : 'transparent';
@@ -9508,15 +9574,12 @@ function scrollToSection(id, navEl) {
     n.style.background = isActive ? '#C9A84C08' : 'transparent';
     n.style.fontWeight = isActive ? '500' : '400';
   });
-  // Scroll to the section.
-  var target = document.getElementById(id);
-  if (target) {
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    // Brief gold flash on the target to confirm navigation.
-    target.style.transition = 'box-shadow .15s';
-    target.style.boxShadow = 'inset 4px 0 0 #C9A84C';
-    setTimeout(function() { target.style.boxShadow = ''; }, 600);
-  }
+}
+
+// On first 1003 tab load, default to showing only the Loan & DTI section.
+function initSectionPageSwap() {
+  _appSectionMap = null; // force rebuild
+  scrollToSection(_appSectionOrder[0]);
 }
 
 /* ── BORROWER SWITCHER (co-borrower data fix) ── */
