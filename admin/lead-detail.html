@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <script src="/api/env.js?v=2026033004"></script>
+  <script src="/api/env.js?v=20260411h"></script>
   <!-- Google Identity Services — OAuth token client for GDrive Documents tab -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion before GDrive upload -->
@@ -1787,6 +1787,17 @@
         </div>
       </div>
 
+      <!-- Connected People — positioned above Loan Details -->
+      <div id="connectedPeopleSection" style="background:#111;border:1px solid #1e1e1e;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <h3 style="color:#e0e0e0;font-size:15px;font-weight:600;margin:0;">&#128101; Connected People</h3>
+          <button onclick="openAddRelationshipModal()" style="background:#C9A84C;border:none;color:#000;font-size:12px;font-weight:700;padding:6px 14px;border-radius:6px;cursor:pointer;">+ Add Person</button>
+        </div>
+        <div id="relatedContactsList" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="color:#555;font-size:13px;text-align:center;padding:16px;">No connected people yet. Add a co-borrower, spouse, or partner.</div>
+        </div>
+      </div>
+
       <div class="ld-section">
         <div class="ld-section-title">Loan Details</div>
         <div class="ld-form-grid cols-3">
@@ -1912,17 +1923,6 @@
               <option value="evening">Evening</option>
             </select>
           </div>
-        </div>
-      </div>
-
-      <!-- Connected People -->
-      <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:18px 20px;margin-top:16px;" id="connectedPeopleSection">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <div style="font-size:13px;font-weight:700;">👥 Connected People</div>
-          <button onclick="openAddRelationshipModal()" style="padding:5px 12px;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.25);border-radius:7px;color:#c9a84c;font-size:11px;font-weight:600;cursor:pointer;">+ Add Member</button>
-        </div>
-        <div id="relatedContactsList" style="display:flex;flex-direction:column;gap:8px;">
-          <div style="font-size:12px;color:rgba(255,255,255,0.3);padding:8px 0;">No connected people yet</div>
         </div>
       </div>
 
@@ -9212,19 +9212,26 @@ async function loadRelatedContacts(cId) {
   ].filter(r => r.person);
 
   const el = document.getElementById('relatedContactsList');
-  if (!all.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);padding:8px 0;">No connected people yet</div>'; return; }
+  if (!all.length) { el.innerHTML = '<div style="color:#555;font-size:13px;text-align:center;padding:16px;">No connected people yet. Add a co-borrower, spouse, or partner.</div>'; return; }
   el.innerHTML = all.map(r => {
     const p = r.person;
     const name = `${p.first_name||''} ${p.last_name||''}`.trim();
     const init = `${(p.first_name||'?')[0]}${(p.last_name||'')[0]||''}`.toUpperCase();
-    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:9px;cursor:pointer;transition:all .15s;"
-      onclick="window.location.href='lead-detail.html?contact_id=${p.id}'"
-      onmouseenter="this.style.borderColor='rgba(201,168,76,0.25)'" onmouseleave="this.style.borderColor='rgba(255,255,255,0.06)'">
-      <div style="width:32px;height:32px;border-radius:50%;background:rgba(201,168,76,0.15);color:#c9a84c;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">${init}</div>
-      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">${name}</div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${p.email||''} ${p.phone?'· '+p.phone:''}</div></div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span style="font-size:10px;padding:2px 8px;background:rgba(96,160,255,0.12);color:#60a0ff;border-radius:6px;font-weight:600">${r.relationship_type}</span>
-        <button onclick="event.stopPropagation();removeRelationship('${r.id}')" style="background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.2);border-radius:5px;color:#f87171;font-size:10px;padding:2px 6px;cursor:pointer;">✕</button>
+    return `<div style="display:flex;align-items:center;gap:14px;padding:12px 14px;background:#161616;border-radius:8px;margin-bottom:8px;border:1px solid #1e1e1e;">
+      <div style="width:38px;height:38px;border-radius:50%;background:#C9A84C1a;border:1.5px solid #C9A84C44;display:flex;align-items:center;justify-content:center;color:#C9A84C;font-size:12px;font-weight:700;flex-shrink:0;">${init}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="color:#e0e0e0;font-size:14px;font-weight:500;">${name}</span>
+          <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:#C9A84C22;color:#C9A84C;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">${r.relationship_type}</span>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:4px;flex-wrap:wrap;">
+          ${p.email ? `<span style="color:#666;font-size:12px;">${p.email}</span>` : ''}
+          ${p.phone ? `<span style="color:#666;font-size:12px;">${p.phone}</span>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button onclick="window.location='/admin/lead-detail.html?contact_id=${p.id}'" style="background:transparent;border:1px solid #2a2a2a;color:#888;font-size:11px;padding:3px 10px;border-radius:5px;cursor:pointer;">View</button>
+        <button onclick="event.stopPropagation();removeRelationship('${r.id}')" style="background:transparent;border:1px solid #333;color:#ef4444;font-size:11px;padding:3px 10px;border-radius:5px;cursor:pointer;">&#10005;</button>
       </div>
     </div>`;
   }).join('');
