@@ -1571,10 +1571,17 @@ async function saveApplication(silent) {
   var numVal = function(id) { var v = document.getElementById(id)?.value; return v && v.trim() ? parseFloat(v) : null; };
   var intVal = function(id) { var v = document.getElementById(id)?.value; return v && v.trim() ? parseInt(v) : null; };
   var chkVal = function(id) { var el = document.getElementById(id); return el ? el.checked : false; };
+  // DB date columns require YYYY-MM-DD. Inputs may send MM/DD/YYYY or M/D/YYYY.
+  var toISODate = function(v) {
+    if (!v) return null; v = String(v).trim(); if (!v) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(v)) { var p=v.split('/'); return p[2]+'-'+p[0].padStart(2,'0')+'-'+p[1].padStart(2,'0'); }
+    return null;
+  };
 
   var data = {
     first_name: val('app_first_name'), middle_name: val('app_middle_name'), last_name: val('app_last_name'),
-    suffix: val('app_suffix'), date_of_birth: val('app_dob'), marital_status: val('app_marital'),
+    suffix: val('app_suffix'), date_of_birth: toISODate(val('app_dob')), marital_status: val('app_marital'),
     citizenship: val('app_citizenship'), cell_phone: val('app_cell'), home_phone: val('app_home_phone'),
     work_phone: val('app_work_phone'), dl_number: val('app_dl'), dl_state: val('app_dl_state'),
     current_address_street: val('app_street'), current_address_unit: val('app_unit'),
@@ -1584,7 +1591,7 @@ async function saveApplication(silent) {
     employer_name: val('app_employer'), employer_phone: val('app_emp_phone'),
     employer_street: val('app_emp_street'), employer_city: val('app_emp_city'),
     employer_state: val('app_emp_state'), employer_zip: val('app_emp_zip'),
-    position_title: val('app_title'), employment_start_date: val('app_start_date'),
+    position_title: val('app_title'), employment_start_date: toISODate(val('app_start_date')),
     is_self_employed: chkVal('app_self_emp'),
     base_income: numVal('app_base_income'), overtime_income: numVal('app_overtime'),
     bonus_income: numVal('app_bonus'), commission_income: numVal('app_commission'),
@@ -1632,8 +1639,11 @@ async function saveApplication(silent) {
 
   } catch(e) {
     console.error('Save error:', e);
-    if (statusEl) { statusEl.textContent = '✗ Save failed: ' + e.message; statusEl.style.color = '#ef4444'; }
-    if (!silent) showToast('Save failed: ' + e.message, 'error');
+    var errMsg = (e.message && e.message.indexOf('date') >= 0)
+      ? 'Please check date fields are filled correctly (use MM/DD/YYYY).'
+      : (e.message || 'Unknown error');
+    if (statusEl) { statusEl.textContent = '✗ Save failed: ' + errMsg; statusEl.style.color = '#ef4444'; }
+    if (!silent) showToast('Save failed: ' + errMsg, 'error');
   }
   if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '<i class="fas fa-save"></i> Save Progress'; }
 }
