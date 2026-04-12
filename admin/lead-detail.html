@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <script src="/api/env.js?v=20260411q"></script>
+  <script src="/api/env.js?v=20260412a"></script>
   <script src="/public/js/map-controls.js"></script>
   <!-- Google Identity Services — OAuth token client for GDrive Documents tab -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -1957,21 +1957,34 @@
         <!-- Borrower switcher pills -->
         <div id="app-borrower-switcher" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;"></div>
 
-        <!-- Loan summary bar -->
-        <div id="app-loan-bar" style="display:flex;gap:0;flex-wrap:wrap;align-items:center;background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:12px 20px;margin-bottom:16px;">
-          <div style="padding-right:20px;border-right:1px solid #2a2a2a;margin-right:20px;">
-            <div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Loan Amount</div>
-            <div id="alb-amount" style="color:#C9A84C;font-size:22px;font-weight:700;">—</div>
-          </div>
-          <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;flex:1;">
+        <!-- Loan summary bar + live DTI calculator -->
+        <div id="app-loan-bar" style="background:#111;border:1px solid #1e1e1e;border-radius:12px;padding:16px 20px;margin-bottom:14px;">
+          <!-- Row 1: Key metrics -->
+          <div style="display:flex;gap:20px;align-items:center;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #1e1e1e;flex-wrap:wrap;">
+            <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Loan Amount</div><div id="alb-amount" style="color:#C9A84C;font-size:22px;font-weight:700;">—</div></div>
+            <div style="width:1px;background:#2a2a2a;align-self:stretch;"></div>
             <div><div style="color:#555;font-size:10px;text-transform:uppercase;">Type</div><div id="alb-type" style="color:#e0e0e0;font-size:13px;font-weight:500;">—</div></div>
             <div><div style="color:#555;font-size:10px;text-transform:uppercase;">Rate</div><div id="alb-rate" style="color:#e0e0e0;font-size:13px;font-weight:500;">—</div></div>
             <div><div style="color:#555;font-size:10px;text-transform:uppercase;">LTV</div><div id="alb-ltv" style="color:#e0e0e0;font-size:13px;font-weight:500;">—</div></div>
-            <div><div style="color:#555;font-size:10px;text-transform:uppercase;">Income/mo</div><div id="alb-income" style="color:#22c55e;font-size:13px;font-weight:500;">—</div></div>
-            <div><div style="color:#555;font-size:10px;text-transform:uppercase;">Debts/mo</div><div id="alb-debts" style="color:#ef4444;font-size:13px;font-weight:500;">—</div></div>
-            <div><div style="color:#555;font-size:10px;text-transform:uppercase;">Back DTI</div><div id="alb-dti" style="font-size:13px;font-weight:600;">—</div></div>
+            <div><div style="color:#555;font-size:10px;text-transform:uppercase;">Credit</div><div id="alb-credit" style="color:#e0e0e0;font-size:13px;font-weight:500;">—</div></div>
+            <div style="margin-left:auto;"><div id="alb-qualify" style="font-size:12px;padding:5px 16px;border-radius:20px;font-weight:700;border:1px solid transparent;"></div></div>
           </div>
-          <div id="alb-status" style="font-size:12px;padding:4px 14px;border-radius:20px;font-weight:600;border:1px solid transparent;"></div>
+          <!-- Row 2: Live DTI inputs -->
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+            <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">P&I /mo</div><input id="dti-pi" type="number" placeholder="0" style="width:80px;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:6px 8px;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box;" oninput="calcDTI()"></div>
+            <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Taxes /mo</div><input id="dti-taxes" type="number" placeholder="0" style="width:80px;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:6px 8px;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box;" oninput="calcDTI()"></div>
+            <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Ins /mo</div><input id="dti-ins" type="number" placeholder="0" style="width:80px;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:6px 8px;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box;" oninput="calcDTI()"></div>
+            <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">HOA /mo</div><input id="dti-hoa" type="number" placeholder="0" style="width:70px;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:6px 8px;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box;" oninput="calcDTI()"></div>
+            <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Debts /mo</div><input id="dti-debts" type="number" placeholder="0" style="width:90px;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:6px 8px;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box;" oninput="calcDTI()"></div>
+            <div><div style="color:#22c55e;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Income /mo</div><input id="dti-income" type="number" placeholder="0" style="width:100px;background:#0d0d0d;border:1px solid #22c55e44;color:#22c55e;padding:6px 8px;border-radius:6px;font-size:13px;font-weight:600;outline:none;box-sizing:border-box;" oninput="calcDTI()"></div>
+            <div style="display:flex;gap:12px;align-items:center;margin-left:8px;padding-left:16px;border-left:1px solid #2a2a2a;flex-wrap:wrap;">
+              <div style="text-align:center;"><div style="color:#555;font-size:10px;text-transform:uppercase;">PITIA</div><div id="dti-pitia" style="color:#C9A84C;font-size:15px;font-weight:700;">—</div></div>
+              <div style="text-align:center;"><div style="color:#555;font-size:10px;text-transform:uppercase;">Front</div><div id="dti-front" style="font-size:15px;font-weight:700;">—</div></div>
+              <div style="text-align:center;"><div style="color:#555;font-size:10px;text-transform:uppercase;">Back</div><div id="dti-back" style="font-size:15px;font-weight:700;">—</div></div>
+              <div style="text-align:center;"><div style="color:#555;font-size:10px;text-transform:uppercase;">Max @45%</div><div id="dti-maxloan" style="color:#60a5fa;font-size:14px;font-weight:600;">—</div></div>
+            </div>
+            <button onclick="saveDTIInputs()" style="background:transparent;border:1px solid #C9A84C44;color:#C9A84C;font-size:11px;padding:6px 12px;border-radius:6px;cursor:pointer;white-space:nowrap;align-self:flex-end;font-family:inherit;">&#128190; Save</button>
+          </div>
         </div>
       </div>
 
@@ -1986,6 +1999,8 @@
             <span>&#128100;</span> Borrower</div>
           <div class="app-nav-item" data-sec="sec-employment" onclick="scrollToSection('sec-employment',this)" style="display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;border-left:3px solid transparent;color:#666;font-size:13px;transition:all .15s;">
             <span>&#128188;</span> Employment</div>
+          <div class="app-nav-item" data-sec="sec-assets" onclick="scrollToSection('sec-assets',this)" style="display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;border-left:3px solid transparent;color:#666;font-size:13px;transition:all .15s;">
+            <span>&#128176;</span> Assets &amp; Debts</div>
           <div class="app-nav-item" data-sec="sec-loan-property" onclick="scrollToSection('sec-loan-property',this)" style="display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;border-left:3px solid transparent;color:#666;font-size:13px;transition:all .15s;">
             <span>&#127969;</span> Property</div>
           <div class="app-nav-item" data-sec="sec-declarations" onclick="scrollToSection('sec-declarations',this)" style="display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;border-left:3px solid transparent;color:#666;font-size:13px;transition:all .15s;">
@@ -2633,6 +2648,13 @@
           </div>
           <div id="prev-employment-container"></div>
         </div>
+      </div>
+
+      <!-- ═══ ASSETS & DEBTS (read-only summary from app data) ═══ -->
+      <div id="sec-assets"></div>
+      <div class="ld-section" style="padding:24px;border-bottom:1px solid rgba(255,255,255,0.06);">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:rgba(255,255,255,0.4);padding:16px 0 10px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:16px;">ASSETS &amp; LIABILITIES</div>
+        <div id="assets-summary-content" style="color:#555;font-size:13px;">Loading...</div>
       </div>
 
       <!-- ═══ SECTION 4a: LOAN & PROPERTY ═══ -->
@@ -9569,7 +9591,7 @@ if (typeof window.loadGoogleMaps === 'function') {
 // Map of section anchor IDs → the elements that belong to that section.
 // Built lazily on first call so the DOM is ready.
 var _appSectionMap = null;
-var _appSectionOrder = ['loanSummaryPanel','sec-borrower-info','sec-employment','sec-loan-property','sec-declarations'];
+var _appSectionOrder = ['loanSummaryPanel','sec-borrower-info','sec-employment','sec-assets','sec-loan-property','sec-declarations'];
 var _appCurrentSecIdx = 0;
 
 function _buildSectionMap() {
@@ -9610,6 +9632,10 @@ function scrollToSection(id, navEl) {
     var show = secId === id;
     els.forEach(function(el) { el.style.display = show ? '' : 'none'; });
   });
+  // The co-borrower panel lives inside the borrower section group but must
+  // stay hidden unless explicitly toggled by the borrower-switcher JS.
+  var _cbPanel = document.getElementById('co-borrower-panel');
+  if (_cbPanel) _cbPanel.style.display = 'none';
 
   // Apply slide animation to the scroll container.
   var scroll = document.getElementById('app-content-scroll');
@@ -9691,40 +9717,140 @@ async function switchToBorrower(cid) {
   if (typeof render1003Summary === 'function') render1003Summary(_activeBorrowerApp);
 }
 
-/* ── LOAN SUMMARY BAR ── */
+/* ── LOAN SUMMARY BAR + LIVE DTI CALCULATOR ── */
 function updateLoanBar(app) {
   if (!app) return;
   var set = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val || '—'; };
   var loan = app.loan_amount || app.requested_loan_amount || 0;
   var price = app.purchase_price || app.property_value || 0;
-  var income = app.total_monthly_income || app.base_income || 0;
-  var liabs = Array.isArray(app.liabilities) ? app.liabilities : [];
-  var debts = liabs.filter(function(l) { return !l.omit; }).reduce(function(s, l) { return s + (l.monthly || 0); }, 0);
   var ltv = price ? ((loan / price) * 100).toFixed(1) + '%' : '—';
-  var pitia = (parseFloat(app.pi_payment) || 0) + (parseFloat(app.taxes_monthly) || 0) + (parseFloat(app.insurance_monthly) || 0);
-  var backDTI = income ? (((pitia + debts) / income) * 100).toFixed(1) : null;
 
   set('alb-amount', loan ? '$' + Number(loan).toLocaleString() : '—');
   set('alb-type', app.loan_type || '—');
   set('alb-rate', app.current_interest_rate ? app.current_interest_rate + '%' : '—');
   set('alb-ltv', ltv);
-  set('alb-income', income ? '$' + Math.round(income).toLocaleString() + '/mo' : '—');
-  set('alb-debts', debts ? '$' + Math.round(debts).toLocaleString() + '/mo' : '—');
+  set('alb-credit', app.credit_score || '—');
 
-  var dtiEl = document.getElementById('alb-dti');
-  var statusEl = document.getElementById('alb-status');
-  if (backDTI && dtiEl) {
-    var pct = parseFloat(backDTI);
-    dtiEl.textContent = backDTI + '%';
-    dtiEl.style.color = pct <= 36 ? '#22c55e' : pct <= 45 ? '#f59e0b' : '#ef4444';
-    if (statusEl) {
-      statusEl.textContent = pct <= 45 ? '✓ Qualifies' : '⚠ Review DTI';
-      statusEl.style.background = pct <= 45 ? '#22c55e22' : '#ef444422';
-      statusEl.style.color = pct <= 45 ? '#22c55e' : '#ef4444';
-      statusEl.style.border = '1px solid ' + (pct <= 45 ? '#22c55e44' : '#ef444444');
-    }
+  // Populate DTI calculator inputs from saved app data.
+  populateDTIInputs(app);
+}
+
+function populateDTIInputs(app) {
+  var sv = function(id, val) { var el = document.getElementById(id); if (el && val) el.value = val; };
+  sv('dti-pi', app.pi_payment);
+  sv('dti-taxes', app.taxes_monthly);
+  sv('dti-ins', app.insurance_monthly);
+  sv('dti-debts', app.monthly_debt);
+  sv('dti-income', app.total_monthly_income || app.base_income);
+  calcDTI();
+}
+
+function calcDTI() {
+  var pi = parseFloat(document.getElementById('dti-pi')?.value) || 0;
+  var taxes = parseFloat(document.getElementById('dti-taxes')?.value) || 0;
+  var ins = parseFloat(document.getElementById('dti-ins')?.value) || 0;
+  var hoa = parseFloat(document.getElementById('dti-hoa')?.value) || 0;
+  var debts = parseFloat(document.getElementById('dti-debts')?.value) || 0;
+  var income = parseFloat(document.getElementById('dti-income')?.value) || 0;
+  var pitia = pi + taxes + ins + hoa;
+  var frontDTI = income > 0 ? (pitia / income * 100) : 0;
+  var backDTI = income > 0 ? ((pitia + debts) / income * 100) : 0;
+  var rate = parseFloat((_activeBorrowerApp && _activeBorrowerApp.current_interest_rate) || 7) / 100 / 12;
+  var n = (_activeBorrowerApp && _activeBorrowerApp.loan_term_months) || 360;
+  var maxPmt = income > 0 ? (income * 0.45 - taxes - ins - hoa - debts) : 0;
+  var maxLoan = (rate > 0 && maxPmt > 0) ? maxPmt * (Math.pow(1 + rate, n) - 1) / (rate * Math.pow(1 + rate, n)) : 0;
+
+  var set = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+  var color = function(id, pct) { var el = document.getElementById(id); if (el) el.style.color = pct <= 31 ? '#22c55e' : pct <= 43 ? '#f59e0b' : '#ef4444'; };
+
+  set('dti-pitia', pitia ? '$' + Math.round(pitia).toLocaleString() + '/mo' : '—');
+  set('dti-front', frontDTI > 0 ? frontDTI.toFixed(1) + '%' : '—');
+  set('dti-back', backDTI > 0 ? backDTI.toFixed(1) + '%' : '—');
+  set('dti-maxloan', maxLoan > 0 ? '$' + Math.round(maxLoan).toLocaleString() : '—');
+  if (frontDTI > 0) color('dti-front', frontDTI);
+  if (backDTI > 0) color('dti-back', backDTI);
+
+  var qualEl = document.getElementById('alb-qualify');
+  if (qualEl && backDTI > 0) {
+    var ok = backDTI <= 45;
+    qualEl.textContent = ok ? '✓ Qualifies' : '⚠ Review DTI';
+    qualEl.style.background = ok ? '#22c55e22' : '#ef444422';
+    qualEl.style.color = ok ? '#22c55e' : '#ef4444';
+    qualEl.style.borderColor = ok ? '#22c55e44' : '#ef444444';
   }
 }
+
+async function saveDTIInputs() {
+  if (!_activeBorrowerApp || !_activeBorrowerApp.id) { if (typeof toast === 'function') toast('No app loaded'); return; }
+  var payload = {
+    pi_payment: parseFloat(document.getElementById('dti-pi')?.value) || null,
+    taxes_monthly: parseFloat(document.getElementById('dti-taxes')?.value) || null,
+    insurance_monthly: parseFloat(document.getElementById('dti-ins')?.value) || null,
+    monthly_debt: parseFloat(document.getElementById('dti-debts')?.value) || null,
+    total_monthly_income: parseFloat(document.getElementById('dti-income')?.value) || null
+  };
+  var r = await fetch(
+    window.APP_CONFIG.SUPABASE_URL + '/rest/v1/mortgage_applications?id=eq.' + encodeURIComponent(_activeBorrowerApp.id),
+    { method: 'PATCH', headers: { apikey: window.APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' }, body: JSON.stringify(payload) }
+  );
+  if (r.ok) {
+    Object.assign(_activeBorrowerApp, payload);
+    var btn = document.querySelector('[onclick="saveDTIInputs()"]');
+    if (btn) { btn.textContent = '✓ Saved'; setTimeout(function() { btn.textContent = '💾 Save'; }, 2000); }
+  } else {
+    if (typeof toast === 'function') toast('Save failed', true);
+  }
+}
+
+/* ── ASSETS SUMMARY RENDERER ── */
+function renderAssetsContent() {
+  var el = document.getElementById('assets-summary-content');
+  if (!el) return;
+  var app = _activeBorrowerApp || {};
+  var banks = [];
+  try { banks = typeof app.bank_accounts === 'string' ? JSON.parse(app.bank_accounts) : (Array.isArray(app.bank_accounts) ? app.bank_accounts : []); } catch(_) {}
+  var liabs = Array.isArray(app.liabilities) ? app.liabilities : [];
+
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px 20px;margin-bottom:20px;">';
+  if (app.total_assets) html += '<div><div style="color:#444;font-size:10px;text-transform:uppercase;margin-bottom:3px;">Total Assets</div><div style="color:#22c55e;font-size:13px;">$' + Number(app.total_assets).toLocaleString() + '</div></div>';
+  if (app.credit_score) html += '<div><div style="color:#444;font-size:10px;text-transform:uppercase;margin-bottom:3px;">Credit Score</div><div style="color:#e0e0e0;font-size:13px;">' + app.credit_score + '</div></div>';
+  html += '</div>';
+
+  if (banks.length) {
+    html += '<div style="color:#C9A84C;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Bank Accounts</div>';
+    html += '<div style="background:#0d0d0d;border-radius:8px;overflow:hidden;margin-bottom:20px;">';
+    banks.forEach(function(b) {
+      html += '<div style="display:flex;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #161616;font-size:12px;"><span style="color:#ccc;">' + (b.institution || b.type || '—') + '</span><span style="color:#22c55e;font-weight:500;">$' + Number(b.balance || 0).toLocaleString() + '</span></div>';
+    });
+    html += '</div>';
+  }
+
+  if (liabs.length) {
+    html += '<div style="color:#C9A84C;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Liabilities</div>';
+    html += '<div style="background:#0d0d0d;border-radius:8px;overflow:hidden;">';
+    html += '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:6px 12px;background:#161616;border-bottom:1px solid #1e1e1e;"><span style="color:#444;font-size:10px;">CREDITOR</span><span style="color:#444;font-size:10px;">TYPE</span><span style="color:#444;font-size:10px;">BALANCE</span><span style="color:#444;font-size:10px;">MONTHLY</span></div>';
+    var totalDebt = 0;
+    liabs.forEach(function(l) {
+      if (!l.omit) totalDebt += (l.monthly || 0);
+      html += '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:10px 12px;border-bottom:1px solid #111;font-size:12px;' + (l.omit ? 'opacity:.4;' : '') + '"><span style="color:#ccc;">' + (l.creditor || '—') + '</span><span style="color:#888;">' + (l.type || '—') + '</span><span style="color:#888;">$' + Number(l.balance || 0).toLocaleString() + '</span><span style="color:' + (l.omit ? '#555' : '#ef4444') + ';">$' + Number(l.monthly || 0).toLocaleString() + (l.omit ? ' <span style="font-size:9px;color:#555;">OMIT</span>' : '') + '</span></div>';
+    });
+    html += '<div style="padding:8px 12px;background:#161616;display:flex;justify-content:flex-end;border-top:1px solid #1e1e1e;"><span style="color:#888;font-size:11px;">Total: </span><span style="color:#ef4444;font-size:13px;font-weight:600;margin-left:8px;">$' + totalDebt.toLocaleString() + '/mo</span></div>';
+    html += '</div>';
+  }
+
+  if (!banks.length && !liabs.length && !app.total_assets) {
+    html += '<div style="color:#555;font-size:13px;text-align:center;padding:20px;">No assets or liabilities recorded.</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+// Render assets when the section becomes visible.
+var _origScrollToSection = scrollToSection;
+scrollToSection = function(id, navEl) {
+  _origScrollToSection(id, navEl);
+  if (id === 'sec-assets') renderAssetsContent();
+};
 
 /* ── NAMED OWNER DROPDOWNS ── */
 function buildOwnerOptions(selectedVal) {
