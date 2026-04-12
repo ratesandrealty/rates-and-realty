@@ -2394,36 +2394,42 @@ function uploadFiles() {
   if (!fileQueue.length) return;
   var u = currentUser;
   if (!u || !u.id) { showToast('Please log in first', 'error'); return; }
-  var borrowerName = ((u.first_name || '') + ' ' + (u.last_name || '')).trim();
-  var convertedCount = 0;
 
   var promises = fileQueue.map(function(item, idx) {
-    return convertToPdfIfNeeded(item.file).then(function(result) {
-      if (result.converted) convertedCount++;
-      var fd = new FormData();
-      fd.append('file', result.file);
-      fd.append('borrower_name', borrowerName);
-      fd.append('category', item.category);
-      fd.append('user_id', u.id);
-      fd.append('loan_type', 'Portal Upload');
+    var fd = new FormData();
+    fd.append('file', item.file);
+    fd.append('contact_id', u.contact_id || '');
+    fd.append('portal_user_id', u.id);
+    fd.append('category', (item.category || '').toLowerCase().replace(/\s+/g, '_'));
 
-      return fetch(SB + '/functions/v1/google-drive-upload', {
-        method: 'POST',
-        headers: { 'apikey': SK },
-        body: fd
-      }).then(function(r) {
-        fileQueue[idx].progress = 100;
-        renderFileQueue();
-        return r.json();
-      });
+    return fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data?action=upload_document', {
+      method: 'POST',
+      body: fd
+    }).then(function(r) { return r.json(); }).then(function(result) {
+      fileQueue[idx].progress = 100;
+      renderFileQueue();
+      if (result && result.document) {
+        var c = document.getElementById('docHistory');
+        if (c) {
+          var d = result.document;
+          var emptyMsg = c.querySelector('p');
+          if (emptyMsg) c.innerHTML = '';
+          var item = document.createElement('div');
+          item.className = 'doc-history-item';
+          item.innerHTML = '<i class="fas fa-file-alt"></i>'
+            + '<span class="dh-name"><a href="' + (result.file_url || '#') + '" target="_blank" style="color:inherit;text-decoration:none">' + (d.file_name || d.original_name || 'Document') + '</a></span>'
+            + '<span class="dh-cat">' + (d.category || 'Other') + '</span>'
+            + '<span class="dh-date">' + (d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : 'Just now') + '</span>';
+          c.insertBefore(item, c.firstChild);
+        }
+      }
+      return result;
     });
   });
 
   Promise.all(promises)
     .then(function() {
-      var msg = fileQueue.length + ' file(s) uploaded successfully!';
-      if (convertedCount) msg += ' (' + convertedCount + ' converted to PDF)';
-      showToast(msg, 'success');
+      showToast(fileQueue.length + ' file(s) uploaded successfully!', 'success');
       trackPortalAction('document_uploaded', 'Document Uploaded', { file_count: fileQueue.length });
       fileQueue = [];
       renderFileQueue();
