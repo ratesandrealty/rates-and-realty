@@ -1043,8 +1043,17 @@
       .hsw-stats-row { gap: 20px; }
       .hsw-stat-divider { height: 24px; }
     }
+  /* Google Places Autocomplete dark theme */
+  .pac-container{background:#111!important;border:1px solid #C9A84C44!important;border-radius:8px!important;box-shadow:0 8px 32px rgba(0,0,0,0.6)!important;margin-top:4px;font-family:inherit;}
+  .pac-item{background:#111!important;color:#ccc!important;border-top:1px solid #1e1e1e!important;padding:8px 14px!important;cursor:pointer!important;font-size:13px!important;}
+  .pac-item:hover,.pac-item-selected{background:#1a1a14!important;color:#C9A84C!important;}
+  .pac-item-query{color:#e0e0e0!important;font-size:13px!important;}
+  .pac-matched{color:#C9A84C!important;font-weight:600;}
+  .pac-icon{filter:invert(0.6) sepia(1) saturate(2) hue-rotate(5deg)!important;}
   </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
+  <script src="/api/env.js"></script>
+  <script src="/public/js/map-controls.js"></script>
 </head>
 <body>
   <div id="site-header"></div>
@@ -2143,6 +2152,48 @@
       var el = document.getElementById('hswCountySlider');
       if (el) el.scrollBy({ left: dir * 220, behavior: 'smooth' });
     }
+
+    // ── Google Places Autocomplete on the hero search bar ────────────
+    // Uses loadGoogleMaps() from map-controls.js to fetch the API key
+    // from /config and inject the Maps JS with the Places library.
+    (function initHomepageSearch() {
+      if (typeof window.loadGoogleMaps !== 'function') return;
+      window.loadGoogleMaps().then(function() {
+        var input = document.getElementById('hswSearchInput');
+        if (!input || !google.maps.places) return;
+
+        var ac = new google.maps.places.Autocomplete(input, {
+          types: ['geocode'],
+          componentRestrictions: { country: 'us' },
+          fields: ['address_components', 'geometry', 'name', 'formatted_address']
+        });
+
+        ac.addListener('place_changed', function() {
+          var place = ac.getPlace();
+          if (!place || !place.geometry) return;
+          var lat = place.geometry.location.lat();
+          var lng = place.geometry.location.lng();
+          var label = encodeURIComponent(place.formatted_address || place.name || input.value);
+          console.log('[Homepage] Place selected:', decodeURIComponent(label), lat, lng);
+
+          // Redirect to search-homes.html with the selected coordinates.
+          window.location.href = '/public/search-homes.html?lat=' + lat + '&lng=' + lng + '&q=' + label;
+        });
+
+        // Prevent Enter from firing hswGo() while the autocomplete dropdown
+        // is showing — let the pac selection close first.
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') {
+            var pac = document.querySelector('.pac-container');
+            if (pac && pac.style.display !== 'none' && pac.childElementCount > 0) {
+              e.preventDefault();
+            }
+          }
+        });
+      }).catch(function(err) {
+        console.warn('[Homepage] Places autocomplete unavailable:', err.message);
+      });
+    })();
   </script>
 </body>
 </html>

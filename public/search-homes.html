@@ -342,6 +342,13 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
     margin-left: 0 !important;
   }
 }
+/* Google Places Autocomplete dark theme */
+.pac-container{background:#111!important;border:1px solid #C9A84C44!important;border-radius:8px!important;box-shadow:0 8px 32px rgba(0,0,0,0.6)!important;margin-top:4px;font-family:inherit;}
+.pac-item{background:#111!important;color:#ccc!important;border-top:1px solid #1e1e1e!important;padding:8px 14px!important;cursor:pointer!important;font-size:13px!important;}
+.pac-item:hover,.pac-item-selected{background:#1a1a14!important;color:#C9A84C!important;}
+.pac-item-query{color:#e0e0e0!important;font-size:13px!important;}
+.pac-matched{color:#C9A84C!important;font-weight:600;}
+.pac-icon{filter:invert(0.6) sepia(1) saturate(2) hue-rotate(5deg)!important;}
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 <script src="/api/env.js"></script>
@@ -2242,9 +2249,11 @@ async function initMap() {
   });
 
   initPlacesAutocomplete();
+  _applyUrlSearchParams();
 }
 
-// Wire Google Places Autocomplete to the city search input.
+// Wire Google Places Autocomplete to the search input — suggests addresses,
+// cities, ZIP codes, neighborhoods (like Zillow/Redfin).
 function initPlacesAutocomplete() {
   var input = document.getElementById('searchInput');
   if (!input || !google.maps.places) return;
@@ -2253,25 +2262,77 @@ function initPlacesAutocomplete() {
   if (legacy) legacy.style.display = 'none';
 
   var ac = new google.maps.places.Autocomplete(input, {
-    types: ['(cities)'],
+    types: ['geocode'],
     componentRestrictions: { country: 'us' },
-    fields: ['address_components', 'geometry', 'name']
+    fields: ['address_components', 'geometry', 'name', 'formatted_address']
   });
   ac.addListener('place_changed', function() {
     var place = ac.getPlace();
     if (!place || !place.geometry) return;
-    // Find locality (city) name from address components, falling back to place.name.
-    var cityName = place.name || '';
-    if (place.address_components) {
-      var loc = place.address_components.find(function(c){ return c.types.indexOf('locality') >= 0; });
-      if (loc) cityName = loc.long_name;
+
+    var lat = place.geometry.location.lat();
+    var lng = place.geometry.location.lng();
+    console.log('[Search] Place selected:', place.formatted_address || place.name, lat, lng);
+
+    // Pan / fit the map to the selected location.
+    if (map) {
+      if (place.geometry.viewport) {
+        map.fitBounds(place.geometry.viewport);
+      } else {
+        map.panTo({ lat: lat, lng: lng });
+        map.setZoom(13);
+      }
     }
-    if (place.geometry.location && map) {
-      if (place.geometry.viewport) map.fitBounds(place.geometry.viewport);
-      else { map.panTo(place.geometry.location); map.setZoom(13); }
+    // Allow one fitBounds for this new area.
+    window._searchMapFitted = false;
+
+    // Extract city, state, zip from the place.
+    var city = '', state = '', zip = '';
+    var comps = place.address_components || [];
+    for (var i = 0; i < comps.length; i++) {
+      var c = comps[i];
+      if (c.types.indexOf('locality') >= 0) city = c.long_name;
+      if (c.types.indexOf('administrative_area_level_1') >= 0) state = c.short_name;
+      if (c.types.indexOf('postal_code') >= 0) zip = c.long_name;
     }
-    if (cityName) addCityFilter(cityName);
+    window._searchCity = city;
+    window._searchState = state;
+    window._searchZip = zip;
+
+    if (city) addCityFilter(city);
+    else if (typeof fetchListings === 'function') fetchListings();
   });
+
+  // Prevent the default Enter-to-submit so the autocomplete dropdown can
+  // close and fire place_changed instead.
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      // Only prevent if the pac-container is showing.
+      var pac = document.querySelector('.pac-container');
+      if (pac && pac.style.display !== 'none' && pac.childElementCount > 0) {
+        e.preventDefault();
+      }
+    }
+  });
+}
+
+// Read URL params (?lat=…&lng=…&q=…) from homepage redirect and pre-center
+// the map on the selected location.
+function _applyUrlSearchParams() {
+  var params = new URLSearchParams(window.location.search);
+  var lat = parseFloat(params.get('lat'));
+  var lng = parseFloat(params.get('lng'));
+  var q = params.get('q');
+  if (lat && lng && !isNaN(lat) && !isNaN(lng) && map) {
+    map.setCenter({ lat: lat, lng: lng });
+    map.setZoom(13);
+    window._searchMapFitted = false;
+    if (q) {
+      var inp = document.getElementById('searchInput');
+      if (inp) inp.value = decodeURIComponent(q);
+    }
+    if (typeof fetchListings === 'function') fetchListings();
+  }
 }
 
 function renderMarkers() {
