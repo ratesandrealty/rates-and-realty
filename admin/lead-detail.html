@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <script src="/api/env.js?v=20260411o"></script>
+  <script src="/api/env.js?v=20260411p"></script>
   <!-- Google Identity Services — OAuth token client for GDrive Documents tab -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion before GDrive upload -->
@@ -9497,16 +9497,54 @@ function attachAutoSave() {
   });
 }
 
-/* ── LEFT NAV SCROLL-TO ── */
+/* ── LEFT NAV SCROLL-TO + SLIDE ANIMATION ── */
+// Inject keyframes once.
+if (!document.getElementById('appSlideStyle')) {
+  var _ss = document.createElement('style');
+  _ss.id = 'appSlideStyle';
+  _ss.textContent = `
+    @keyframes appSlideIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
+    @keyframes appSlideInBack{from{opacity:0;transform:translateX(-30px)}to{opacity:1;transform:translateX(0)}}
+    .app-slide-in{animation:appSlideIn .22s cubic-bezier(.25,.46,.45,.94) forwards}
+    .app-slide-in-back{animation:appSlideInBack .22s cubic-bezier(.25,.46,.45,.94) forwards}
+    #app-content-scroll{will-change:transform,opacity;}
+  `;
+  document.head.appendChild(_ss);
+}
+
+var APP_NAV_ORDER = ['loanSummaryPanel','sec-borrower-info','sec-employment','sec-loan-property','sec-declarations'];
+var _appCurrentNavIdx = 0;
+
 function scrollToSection(id, navEl) {
-  var target = document.getElementById(id);
-  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  var newIdx = APP_NAV_ORDER.indexOf(id);
+  var goingForward = newIdx >= _appCurrentNavIdx;
+  _appCurrentNavIdx = newIdx >= 0 ? newIdx : _appCurrentNavIdx;
+
+  // Update active nav styling.
   document.querySelectorAll('.app-nav-item').forEach(function(n) {
     var isActive = n.dataset.sec === id;
     n.style.borderLeftColor = isActive ? '#C9A84C' : 'transparent';
     n.style.color = isActive ? '#C9A84C' : '#666';
     n.style.background = isActive ? '#C9A84C08' : 'transparent';
+    n.style.fontWeight = isActive ? '500' : '400';
   });
+
+  // Press feedback on the clicked nav item.
+  if (navEl) {
+    navEl.style.transform = 'scale(0.97)';
+    setTimeout(function() { navEl.style.transform = ''; }, 120);
+  }
+
+  // Scroll to the section, then apply a direction-aware slide-in animation.
+  var target = document.getElementById(id);
+  var scroll = document.getElementById('app-content-scroll');
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (scroll) {
+    scroll.classList.remove('app-slide-in', 'app-slide-in-back');
+    void scroll.offsetWidth; // force reflow
+    scroll.classList.add(goingForward ? 'app-slide-in' : 'app-slide-in-back');
+    setTimeout(function() { scroll.classList.remove('app-slide-in', 'app-slide-in-back'); }, 250);
+  }
 }
 
 /* ── BORROWER SWITCHER (co-borrower data fix) ── */
