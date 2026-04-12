@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <script src="/api/env.js?v=20260411l"></script>
+  <script src="/api/env.js?v=20260411m"></script>
   <!-- Google Identity Services — OAuth token client for GDrive Documents tab -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion before GDrive upload -->
@@ -5426,9 +5426,27 @@ async function confirmDocUpload() {
     return;
   }
 
+  const folderId = (typeof contactData !== 'undefined' && contactData && contactData.gdrive_folder_id) || null;
+  if (!folderId) {
+    toast('No Drive folder linked. Click "+ Create Folder" in the header first.', true);
+    return;
+  }
+
   const btn = document.getElementById('bulk-upload-btn');
   btn.textContent = 'Uploading…';
   btn.disabled = true;
+
+  // Get OAuth token up front — all files share the same token.
+  let token;
+  try {
+    token = await _ldEnsureToken();
+    console.log('[DocUpload] OAuth token OK');
+  } catch (e) {
+    console.error('[DocUpload] OAuth failed:', e);
+    toast('Sign in to Google Drive required — please allow the popup', true);
+    btn.textContent = 'Upload All'; btn.disabled = false;
+    return;
+  }
 
   let doneCount = 0, errorCount = 0;
 
@@ -5446,56 +5464,75 @@ async function confirmDocUpload() {
     if (fill) fill.style.width = '30%';
 
     try {
-      const { file: finalFile, converted } = await _convertToPdfIfNeeded(file);
-      if (fill) fill.style.width = '60%';
+      // Convert image to PDF if needed.
+      let finalFile = file;
+      let converted = false;
+      if (typeof _convertToPdfIfNeeded === 'function') {
+        const r = await _convertToPdfIfNeeded(file);
+        finalFile = r.file; converted = r.converted;
+      }
+      if (fill) fill.style.width = '50%';
 
-      const safeName = finalFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const path = `${contactId || leadId}/${docType}/${Date.now()}_${safeName}`;
-      const base64 = await _fileToBase64(finalFile);
+      console.log('[DocUpload] uploading:', finalFile.name, finalFile.type, finalFile.size, '→ folder', folderId);
+
+      // Build multipart/related body for GDrive (same format as File Vault _fvUploadOne).
+      const boundary = 'docupload_' + Math.random().toString(36).slice(2);
+      const metadata = JSON.stringify({
+        name: finalFile.name,
+        parents: [folderId],
+        appProperties: { docType: docType }
+      });
+      const fileBytes = new Uint8Array(await finalFile.arrayBuffer());
+      const enc = new TextEncoder();
+      const head = enc.encode(
+        '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' +
+        metadata + '\r\n--' + boundary + '\r\nContent-Type: ' +
+        (finalFile.type || 'application/octet-stream') + '\r\n\r\n'
+      );
+      const tail = enc.encode('\r\n--' + boundary + '--');
+      const body = new Uint8Array(head.length + fileBytes.length + tail.length);
+      body.set(head, 0);
+      body.set(fileBytes, head.length);
+      body.set(tail, head.length + fileBytes.length);
 
       if (fill) fill.style.width = '80%';
 
-      const uploadResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/google-drive-upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
-        body: JSON.stringify({
-          action: 'upload_to_storage',
-          file_base64: base64,
-          file_name: safeName,
-          file_type: finalFile.type || 'application/octet-stream',
-          storage_path: path,
-          contact_id: contactId || null,
-          lead_id: leadId || null,
-          document_type: docType,
-          file_size: finalFile.size
-        })
-      });
+      const res = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + token,
+            'Content-Type': 'multipart/related; boundary=' + boundary
+          },
+          body: body
+        }
+      );
+      console.log('[DocUpload] GDrive response:', res.status);
 
-      if (!uploadResp.ok) {
-        // Fallback: direct upload
-        const { error: directError } = await sb.storage.from('borrower-documents').upload(path, finalFile, { upsert: true });
-        if (directError) throw new Error(directError.message);
-        const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
-        await sb.from('uploaded_documents').insert({
-          contact_id: contactId || null, lead_id: leadId || null,
-          document_type: docType, type: docType,
-          file_name: finalFile.name, file_path: path,
-          file_url: urlData.publicUrl, status: 'received',
-          file_size: finalFile.size, uploaded_at: new Date().toISOString()
-        });
+      if (res.status === 401 || res.status === 403) {
+        _ldClearToken();
+        throw new Error('Drive auth failed (HTTP ' + res.status + ')');
       }
+      if (!res.ok) throw new Error('GDrive HTTP ' + res.status);
+
+      const data = await res.json();
+      console.log('[DocUpload] success:', data.id, data.name);
 
       if (fill) fill.style.width = '100%';
       if (fill) fill.style.background = '#50c878';
-      if (row)  row.classList.remove('uploading'); row.classList.add('done');
+      if (row) { row.classList.remove('uploading'); row.classList.add('done'); }
       if (stat) stat.innerHTML = '<span style="color:#50c878">✓</span>';
       doneCount++;
-      await logActivity('document_uploaded', `Document uploaded: ${docType} — ${finalFile.name}${converted ? ' (converted to PDF)' : ''}`);
+      if (typeof logActivity === 'function') {
+        logActivity('document_uploaded', 'Document uploaded to Drive: ' + docType + ' — ' + finalFile.name + (converted ? ' (PDF)' : '')).catch(function(){});
+      }
 
     } catch (err) {
+      console.error('[DocUpload] FAILED for', file.name, err);
       if (row)  { row.classList.remove('uploading'); row.classList.add('error'); }
       if (fill) { fill.style.width = '100%'; fill.style.background = '#f87171'; }
-      if (stat) stat.innerHTML = '<span style="color:#f87171" title="' + err.message + '">✗</span>';
+      if (stat) stat.innerHTML = '<span style="color:#f87171" title="' + (err.message || '') + '">✗</span>';
       errorCount++;
     }
   }
@@ -5505,11 +5542,8 @@ async function confirmDocUpload() {
   btn.textContent = 'Done ✓';
   loadDocumentsGrid();
 
-  // Auto-close after 1.5s if all succeeded
   if (errorCount === 0) {
-    setTimeout(() => {
-      closeDocUploadModal();
-    }, 1500);
+    setTimeout(() => { closeDocUploadModal(); }, 1500);
   } else {
     btn.disabled = false;
     btn.textContent = 'Retry Failed';
