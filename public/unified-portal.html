@@ -2370,18 +2370,13 @@ function uploadFiles() {
       fileQueue[idx].progress = 100;
       renderFileQueue();
       if (result && result.document) {
+        var d = result.document;
+        if (result.file_url && !d.file_url) d.file_url = result.file_url;
+        if (!window._portalDocs) window._portalDocs = [];
+        window._portalDocs.unshift(d);
         var c = document.getElementById('docHistory');
         if (c) {
-          var d = result.document;
-          var emptyMsg = c.querySelector('p');
-          if (emptyMsg) c.innerHTML = '';
-          var item = document.createElement('div');
-          item.className = 'doc-history-item';
-          item.innerHTML = '<i class="fas fa-file-alt"></i>'
-            + '<span class="dh-name"><a href="' + (result.file_url || '#') + '" target="_blank" style="color:inherit;text-decoration:none">' + (d.file_name || d.original_name || 'Document') + '</a></span>'
-            + '<span class="dh-cat">' + (d.category || 'Other') + '</span>'
-            + '<span class="dh-date">' + (d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : 'Just now') + '</span>';
-          c.insertBefore(item, c.firstChild);
+          c.innerHTML = window._portalDocs.map(function(doc, i) { return _portalRenderDocHistoryRow(doc, i); }).join('');
         }
       }
       return result;
@@ -2399,6 +2394,126 @@ function uploadFiles() {
     .catch(function() { showToast('Upload error. Try again or call (714) 472-8508', 'error'); });
 }
 
+window._portalDocs = window._portalDocs || [];
+var _portalPendingDelete = null;
+
+function _portalEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _portalRenderDocHistoryRow(d, idx) {
+  var name = d.file_name || d.original_name || 'Document';
+  var category = d.category || 'Other';
+  var date = d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '';
+  return '<div class="doc-history-item" data-idx="' + idx + '">'
+    + '<i class="fas fa-file-alt"></i>'
+    + '<span class="dh-name" onclick="portalOpenDocByIdx(this)" '
+    + 'style="cursor:pointer;transition:color .15s;" '
+    + 'onmouseover="this.style.color=\'#C9A84C\'" onmouseout="this.style.color=\'\'">'
+    + _portalEsc(name) + '</span>'
+    + '<span class="dh-cat">' + _portalEsc(category) + '</span>'
+    + '<span class="dh-date">' + _portalEsc(date) + '</span>'
+    + '<button class="dh-delete" onclick="portalDeleteDocByIdx(this)" title="Delete" aria-label="Delete" '
+    + 'style="background:transparent;border:none;color:#E05252;cursor:pointer;padding:4px 10px;font-size:14px;border-radius:6px;margin-left:4px;flex-shrink:0;" '
+    + 'onmouseover="this.style.background=\'rgba(224,82,82,0.15)\'" onmouseout="this.style.background=\'transparent\'">'
+    + '<i class="fas fa-trash"></i></button>'
+    + '</div>';
+}
+
+function portalOpenDocByIdx(el) {
+  var row = el.closest('.doc-history-item');
+  if (!row) return;
+  var idx = parseInt(row.dataset.idx, 10);
+  var d = window._portalDocs[idx];
+  if (!d) return;
+  portalOpenDocViewer(d.file_url || '', d.file_name || d.original_name || 'Document');
+}
+
+function portalOpenDocViewer(url, name) {
+  if (!url) { showToast('No file URL available', 'error'); return; }
+  var modal = document.getElementById('portalDocViewerModal');
+  var body = document.getElementById('portalDocViewerBody');
+  var title = document.getElementById('portalDocViewerTitle');
+  if (!modal || !body || !title) return;
+  title.textContent = name || 'Document';
+  var lower = String(name || url).toLowerCase().split('?')[0];
+  var isImg = /\.(jpe?g|png|gif|webp|bmp)$/.test(lower);
+  var isPdf = /\.pdf$/.test(lower);
+  var safeUrl = _portalEsc(url);
+  if (isImg) {
+    body.innerHTML = '<img src="' + safeUrl + '" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;display:block;">';
+  } else if (isPdf) {
+    body.innerHTML = '<iframe src="' + safeUrl + '" style="width:100%;height:100%;border:none;background:#fff;"></iframe>';
+  } else {
+    body.innerHTML = '<div style="padding:40px;text-align:center;color:rgba(255,255,255,0.6);font-size:14px;">Preview not available for this file type.<br><br><a href="' + safeUrl + '" target="_blank" rel="noopener" style="color:#C9A84C;">Open in new tab</a></div>';
+  }
+  modal.style.display = 'flex';
+}
+
+function portalCloseDocViewer() {
+  var modal = document.getElementById('portalDocViewerModal');
+  if (!modal) return;
+  modal.style.display = 'none';
+  var body = document.getElementById('portalDocViewerBody');
+  if (body) body.innerHTML = '';
+}
+
+function portalDeleteDocByIdx(btn) {
+  var row = btn.closest('.doc-history-item');
+  if (!row) return;
+  var idx = parseInt(row.dataset.idx, 10);
+  var d = window._portalDocs[idx];
+  if (!d) return;
+  _portalPendingDelete = { doc: d, row: row };
+  var nameEl = document.getElementById('portalDeleteConfirmName');
+  if (nameEl) nameEl.textContent = d.file_name || d.original_name || 'Document';
+  var modal = document.getElementById('portalDeleteConfirmModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function portalCloseDeleteConfirm() {
+  var modal = document.getElementById('portalDeleteConfirmModal');
+  if (modal) modal.style.display = 'none';
+  _portalPendingDelete = null;
+  var btn = document.getElementById('portalDeleteConfirmBtn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
+}
+
+function portalConfirmDelete() {
+  if (!_portalPendingDelete) return;
+  var pd = _portalPendingDelete;
+  var u = currentUser;
+  if (!u || !u.id) { showToast('Please log in first', 'error'); return; }
+  var btn = document.getElementById('portalDeleteConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+
+  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'delete_document', document_id: pd.doc.id, portal_user_id: u.id })
+  }).then(function(r) { return r.json(); }).then(function(result) {
+    if (result && result.success) {
+      window._portalDocs = (window._portalDocs || []).filter(function(x) { return x.id !== pd.doc.id; });
+      var c = document.getElementById('docHistory');
+      if (c) {
+        if (!window._portalDocs.length) {
+          c.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No documents uploaded yet.</p>';
+        } else {
+          c.innerHTML = window._portalDocs.map(function(doc, i) { return _portalRenderDocHistoryRow(doc, i); }).join('');
+        }
+      }
+      showToast('Deleted', 'success');
+    } else {
+      showToast((result && result.error) || 'Delete failed', 'error');
+    }
+  }).catch(function() {
+    showToast('Delete failed', 'error');
+  }).then(function() {
+    portalCloseDeleteConfirm();
+  });
+}
+
 function loadDocHistory() {
   var u = currentUser;
   if (!u || !u.id) return;
@@ -2411,18 +2526,12 @@ function loadDocHistory() {
   }).then(function(r) { return r.json(); })
     .then(function(result) {
       var docs = result.documents || [];
+      window._portalDocs = docs;
       if (!docs.length) {
         c.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No documents uploaded yet.</p>';
         return;
       }
-      c.innerHTML = docs.map(function(d) {
-        return '<div class="doc-history-item">'
-          + '<i class="fas fa-file-alt"></i>'
-          + '<span class="dh-name">' + (d.file_name || d.original_name || 'Document') + '</span>'
-          + '<span class="dh-cat">' + (d.category || 'Other') + '</span>'
-          + '<span class="dh-date">' + (d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '') + '</span>'
-          + '</div>';
-      }).join('');
+      c.innerHTML = docs.map(function(d, i) { return _portalRenderDocHistoryRow(d, i); }).join('');
 
       // update checklist
       var cats = docs.map(function(d) { return (d.category || '').toLowerCase(); });
@@ -2877,5 +2986,28 @@ async function sendBcMsg() {
   } catch(e) { document.getElementById(tid)?.remove(); msgs.innerHTML += '<div style="color:#E05252;font-size:12px;padding:8px;">Connection error. Try again.</div>'; }
 }
 </script>
+
+<!-- Portal Document Viewer Modal -->
+<div id="portalDocViewerModal" onclick="if(event.target===this)portalCloseDocViewer()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:10000;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#1a1a1a;border-radius:12px;width:90vw;max-width:1100px;height:90vh;max-height:calc(100vh - 40px);display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(201,168,76,0.3);box-shadow:0 24px 80px rgba(0,0,0,0.6);">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;">
+      <div id="portalDocViewerTitle" style="font-weight:600;font-size:14px;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:12px;">Document</div>
+      <button onclick="portalCloseDocViewer()" aria-label="Close" style="background:rgba(255,255,255,0.08);border:none;color:#fff;width:32px;height:32px;border-radius:8px;font-size:20px;cursor:pointer;flex-shrink:0;line-height:1;">&times;</button>
+    </div>
+    <div id="portalDocViewerBody" style="flex:1;min-height:0;background:#0a0a0a;overflow:auto;display:flex;align-items:center;justify-content:center;"></div>
+  </div>
+</div>
+
+<!-- Portal Delete Confirm Modal -->
+<div id="portalDeleteConfirmModal" onclick="if(event.target===this)portalCloseDeleteConfirm()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:10001;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#1a1a1a;border-radius:12px;width:90vw;max-width:420px;padding:24px;border:1px solid rgba(201,168,76,0.3);box-shadow:0 24px 80px rgba(0,0,0,0.6);">
+    <div style="font-size:15px;font-weight:600;color:#eee;margin-bottom:8px;">Delete document?</div>
+    <div id="portalDeleteConfirmName" style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:20px;word-break:break-all;"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button onclick="portalCloseDeleteConfirm()" style="background:rgba(255,255,255,0.08);border:none;color:#fff;padding:8px 18px;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>
+      <button id="portalDeleteConfirmBtn" onclick="portalConfirmDelete()" style="background:#E05252;border:none;color:#fff;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Delete</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

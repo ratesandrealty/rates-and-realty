@@ -223,6 +223,42 @@ Deno.serve(async (req: Request) => {
       return ok({ success: true, status });
     }
 
+    // ─── DELETE DOCUMENT ─────────────────────────────────────────────────
+    if (action === 'delete_document') {
+      const { document_id, portal_user_id } = body;
+      if (!document_id || !portal_user_id) return err('document_id and portal_user_id required');
+
+      // Resolve the portal user's contact_id so we can authorize.
+      const { data: pu, error: puErr } = await sb.from('portal_users')
+        .select('contact_id').eq('id', portal_user_id).maybeSingle();
+      if (puErr) return err(puErr.message, 500);
+      const userContactId = pu?.contact_id || null;
+      if (!userContactId) return err('Portal user has no linked contact', 403);
+
+      // Load the document and verify ownership.
+      const { data: doc, error: docErr } = await sb.from('uploaded_documents')
+        .select('id, contact_id, file_path, file_name')
+        .eq('id', document_id)
+        .maybeSingle();
+      if (docErr) return err(docErr.message, 500);
+      if (!doc) return err('Document not found', 404);
+      if (doc.contact_id !== userContactId) {
+        return err('Forbidden — document does not belong to this user', 403);
+      }
+
+      // Remove the storage object (non-fatal if this fails — still delete the row).
+      if (doc.file_path) {
+        const { error: rmErr } = await sb.storage.from('borrower-documents').remove([doc.file_path]);
+        if (rmErr) console.warn('[portal-data] storage remove failed:', rmErr.message);
+      }
+
+      // Delete the DB row.
+      const { error: delErr } = await sb.from('uploaded_documents').delete().eq('id', document_id);
+      if (delErr) return err(delErr.message, 500);
+
+      return ok({ success: true });
+    }
+
     return err('Unknown action: ' + action);
 
   } catch (e: any) {
