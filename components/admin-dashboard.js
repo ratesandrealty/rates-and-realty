@@ -1104,7 +1104,7 @@ async function renderDocuments() {
   // lookups never fail on file click.
   el.className = "";
   el.innerHTML = `
-    <div id="fv-root" style="display:flex;height:calc(100vh - 180px);min-height:560px;background:#0a0a0a;border-radius:12px;overflow:hidden;border:1px solid #1e1e1e;">
+    <div id="fv-root" style="display:flex;height:calc(100vh - 80px);min-height:560px;background:#0a0a0a;border-radius:12px;overflow:hidden;border:1px solid #1e1e1e;">
 
       <!-- LEFT: borrowers (320px) -->
       <div id="fv-panel-left" style="width:320px;flex-shrink:0;border-right:1px solid #1e1e1e;display:flex;flex-direction:column;overflow:hidden;">
