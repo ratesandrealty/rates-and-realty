@@ -223,6 +223,53 @@ Deno.serve(async (req: Request) => {
       return ok({ success: true, status });
     }
 
+    // ─── GET ANNOTATIONS ─────────────────────────────────────────────────
+    if (action === 'get_annotations') {
+      const { document_id } = body;
+      if (!document_id) return err('document_id required');
+      const { data, error } = await sb.from('document_annotations')
+        .select('id, document_id, contact_id, page, x, y, text, font_size, color, created_at, created_by')
+        .eq('document_id', String(document_id))
+        .order('page', { ascending: true })
+        .order('y', { ascending: true });
+      if (error) return err(error.message, 500);
+      return ok({ annotations: data || [] });
+    }
+
+    // ─── SAVE ANNOTATIONS ────────────────────────────────────────────────
+    // Replaces the full annotation set for a given document_id. Safer than
+    // partial upserts since the browser sends the authoritative current state.
+    if (action === 'save_annotations') {
+      const { document_id, annotations, contact_id, created_by } = body;
+      if (!document_id) return err('document_id required');
+      if (!Array.isArray(annotations)) return err('annotations must be an array');
+
+      // Delete everything previously saved for this document, then insert the new set.
+      const { error: delErr } = await sb.from('document_annotations')
+        .delete().eq('document_id', String(document_id));
+      if (delErr) return err('Delete existing failed: ' + delErr.message, 500);
+
+      if (annotations.length === 0) {
+        return ok({ success: true, count: 0 });
+      }
+
+      const rows = annotations.map((a: any) => ({
+        document_id: String(document_id),
+        contact_id:  contact_id || null,
+        page:        Number.isFinite(Number(a.page)) ? Math.max(1, Math.floor(Number(a.page))) : 1,
+        x:           Number(a.x) || 0,
+        y:           Number(a.y) || 0,
+        text:        String(a.text || ''),
+        font_size:   Number.isFinite(Number(a.font_size)) ? Math.max(6, Math.min(72, Math.floor(Number(a.font_size)))) : 12,
+        color:       /^#[0-9A-Fa-f]{6}$/.test(String(a.color || '')) ? a.color : '#000000',
+        created_by:  created_by || null,
+      }));
+      const { data, error: insErr } = await sb.from('document_annotations')
+        .insert(rows).select();
+      if (insErr) return err('Insert failed: ' + insErr.message, 500);
+      return ok({ success: true, count: data?.length || 0 });
+    }
+
     // ─── DELETE DOCUMENT ─────────────────────────────────────────────────
     if (action === 'delete_document') {
       const { document_id, portal_user_id } = body;
