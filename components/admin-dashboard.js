@@ -1535,76 +1535,73 @@ async function _fvUploadOne(folderId, file, nameOverride) {
   }
 }
 
-// Convert an image File to a single-page A4 PDF using jsPDF, then upload the
-// PDF to Drive. Falls back to uploading the raw image if jsPDF isn't loaded.
+// Convert an image File to a PDF via the convert-to-pdf edge function, then
+// upload the PDF to Drive. Falls back to uploading the raw image if the
+// edge function fails for any reason.
 async function _fvHandleImageFile(file, folderId) {
+  const originalName = file.name || "upload";
   try {
-    _fvShowToast(`Converting ${file.name} to PDF...`);
-    console.log("[FileVault][imgUpload] start", file.name, file.type, file.size);
+    _fvShowToast(`Converting ${originalName} to PDF...`);
+    console.log("[FileVault][imgUpload] start", originalName, file.type, file.size);
 
-    let uploadBlob, uploadName;
-
-    const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
-    if (jsPDFCtor) {
-      const img = new Image();
-      const objectUrl = URL.createObjectURL(file);
-      try {
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = () => reject(new Error("image decode failed"));
-          img.src = objectUrl;
-        });
-      } finally {
-        URL.revokeObjectURL(objectUrl);
-      }
-      console.log("[FileVault][imgUpload] image loaded", img.naturalWidth, img.naturalHeight);
-
-      const pdf = new jsPDFCtor({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const ratio = Math.min(pageW / img.naturalWidth, pageH / img.naturalHeight);
-      const w = img.naturalWidth * ratio;
-      const h = img.naturalHeight * ratio;
-      const x = (pageW - w) / 2;
-      const y = (pageH - h) / 2;
-
-      // Draw onto canvas → JPEG data URL for broad jsPDF compatibility.
-      const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      canvas.getContext("2d").drawImage(img, 0, 0);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-
-      pdf.addImage(dataUrl, "JPEG", x, y, w, h);
-      const pdfBlob = pdf.output("blob");
-      console.log("[FileVault][imgUpload] pdf blob size", pdfBlob.size);
-
-      uploadBlob = pdfBlob;
-      uploadName = file.name.replace(/\.[a-zA-Z0-9]{1,6}$/, "") + ".pdf";
-    } else {
-      console.warn("[FileVault][imgUpload] jsPDF not found, uploading image as-is");
-      _fvShowToast(`Uploading ${file.name}...`);
-      uploadBlob = file;
-      uploadName = file.name;
-    }
-
-    console.log("[FileVault][imgUpload] uploading as", uploadName, "size", uploadBlob.size);
-
-    const uploadFile = new File([uploadBlob], uploadName, {
-      type: uploadBlob.type || "application/pdf"
+    // Read the image as base64 (strip the data URL prefix).
+    const b64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const s = String(r.result || "");
+        const comma = s.indexOf(",");
+        resolve(comma >= 0 ? s.slice(comma + 1) : s);
+      };
+      r.onerror = () => reject(r.error || new Error("image read failed"));
+      r.readAsDataURL(file);
     });
+
+    const res = await fetch(
+      "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/convert-to-pdf",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          file_base64: b64,
+          file_name: originalName,
+          mime_type: file.type || "application/octet-stream",
+        }),
+      }
+    );
+    if (!res.ok) throw new Error(`convert-to-pdf HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data || !data.pdf_base64) throw new Error("convert-to-pdf returned no pdf_base64");
+
+    // Decode base64 → bytes.
+    const bin = atob(data.pdf_base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+    const uploadName = originalName.replace(/\.[a-zA-Z0-9]{1,6}$/, "") + ".pdf";
+    const uploadFile = new File([bytes], uploadName, { type: "application/pdf" });
+    console.log("[FileVault][imgUpload] uploading as", uploadName, "size", bytes.length);
+
     const result = await _fvUploadOne(folderId, uploadFile);
     console.log("[FileVault][imgUpload] upload result", result);
-
     if (result && result.ok) {
       _fvShowToast(`✓ ${uploadName} uploaded`);
       return result;
     }
     throw new Error((result && result.error) || "upload failed");
   } catch (err) {
-    console.error("[FileVault][imgUpload] FAILED", err);
-    _fvShowToast(`Upload failed: ${err.message || err}`);
-    return { ok: false, name: file.name, error: err.message || String(err) };
+    console.warn("[FileVault][imgUpload] convert failed, uploading original:", err);
+    _fvShowToast(`Conversion failed, uploading original...`);
+    try {
+      const result = await _fvUploadOne(folderId, file);
+      if (result && result.ok) {
+        _fvShowToast(`✓ ${originalName} uploaded (original)`);
+        return result;
+      }
+      return result || { ok: false, name: originalName, error: "upload failed" };
+    } catch (e2) {
+      _fvShowToast(`Upload failed: ${e2.message || e2}`);
+      return { ok: false, name: originalName, error: e2.message || String(e2) };
+    }
   }
 }
 
@@ -1844,8 +1841,13 @@ function _fvRenderFileListPanel(contact) {
 
   // Separate folders from files and show folders first.
   const isFolder = (f) => f.mimeType === "application/vnd.google-apps.folder";
+  const isPdf = (f) => {
+    const mt = (f.mimeType || "").toLowerCase();
+    const nm = (f.name || "").toLowerCase();
+    return mt.indexOf("pdf") !== -1 || nm.endsWith(".pdf");
+  };
   const folders = allItems.filter(isFolder);
-  const docs = allItems.filter((f) => !isFolder(f));
+  const docs = allItems.filter((f) => !isFolder(f) && !isPdf(f));
   const filteredDocs = _fvFileFilter
     ? docs.filter((f) => (f.appProperties && f.appProperties.docType) === _fvFileFilter)
     : docs;
