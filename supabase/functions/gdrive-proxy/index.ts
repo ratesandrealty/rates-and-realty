@@ -1,8 +1,15 @@
 // supabase/functions/gdrive-proxy/index.ts
 //
-// Google Drive proxy — authenticates via the GOOGLE_SERVICE_ACCOUNT_JSON
-// secret (service account), mints an RS256 JWT, exchanges it for an OAuth2
-// access token, then proxies a handful of Drive v3 operations.
+// Google Drive proxy.
+//
+// Auth strategy:
+//   - Folder reads/creates use a service account (GOOGLE_SERVICE_ACCOUNT_JSON).
+//     Service accounts can list/create/read folders fine — folders don't count
+//     against storage quota.
+//   - File uploads use a user OAuth refresh token stored in the
+//     google_calendar_tokens table (id='rene'). Service accounts cannot upload
+//     file bytes to personal Drive folders (storageQuotaExceeded), so uploads
+//     must run as a real user.
 //
 // Supported actions:
 //   GET  ?action=list-folders&parentId=FOLDER_ID
@@ -13,12 +20,20 @@
 //
 // Deploy with --no-verify-jwt so browser clients can call it directly.
 
+import { createClient } from "jsr:@supabase/supabase-js@2";
+
 const CORS: HeadersInit = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
 };
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const GOOGLE_CLIENT_ID     = Deno.env.get("GOOGLE_CLIENT_ID") || "";
+const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET") || "";
+const USER_TOKEN_ID = "rene";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -31,7 +46,7 @@ function err(message: string, status = 500): Response {
   return json({ error: message }, status);
 }
 
-// ── PEM → CryptoKey ──────────────────────────────────────────────
+// ── PEM → CryptoKey (service account) ─────────────────────────────
 function pemToArrayBuffer(pem: string): ArrayBuffer {
   const b64 = pem
     .replace(/-----BEGIN [^-]+-----/g, "")
@@ -63,12 +78,12 @@ function base64UrlEncode(data: ArrayBuffer | Uint8Array | string): string {
   return btoa(bin).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-// ── OAuth2 token cache (per-isolate) ─────────────────────────────
-let cachedToken: { token: string; exp: number } | null = null;
+// ── Service account access token (for folder ops) ────────────────
+let cachedSaToken: { token: string; exp: number } | null = null;
 
 async function getAccessToken(): Promise<string> {
-  if (cachedToken && cachedToken.exp > Date.now() + 60_000) {
-    return cachedToken.token;
+  if (cachedSaToken && cachedSaToken.exp > Date.now() + 60_000) {
+    return cachedSaToken.token;
   }
 
   const rawJson = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
@@ -119,18 +134,59 @@ async function getAccessToken(): Promise<string> {
     throw new Error(`Token exchange failed: ${res.status} ${txt}`);
   }
   const data = await res.json();
-  cachedToken = {
+  cachedSaToken = {
     token: data.access_token,
     exp: Date.now() + data.expires_in * 1000,
   };
   return data.access_token;
 }
 
+// ── User OAuth access token (for file uploads) ───────────────────
+async function getUserAccessToken(): Promise<string | null> {
+  try {
+    const refreshToken = Deno.env.get('GOOGLE_DRIVE_REFRESH_TOKEN');
+    const clientId     = Deno.env.get('GOOGLE_CLIENT_ID');
+    const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET');
+
+    if (!refreshToken || !clientId || !clientSecret) {
+      console.error('[drive-auth] Missing GOOGLE_DRIVE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, or GOOGLE_CLIENT_SECRET');
+      return null;
+    }
+
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'refresh_token',
+        refresh_token: refreshToken,
+        client_id:     clientId,
+        client_secret: clientSecret,
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.access_token) {
+      console.error('[drive-auth] Token refresh failed:', JSON.stringify(data));
+      return null;
+    }
+    return data.access_token;
+  } catch (e: any) {
+    console.error('[drive-auth] getUserAccessToken error:', e.message);
+    return null;
+  }
+}
+
+// ── Drive fetch helpers ──────────────────────────────────────────
+function withSharedDrives(path: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}supportsAllDrives=true&includeItemsFromAllDrives=true`;
+}
+
 async function driveFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = await getAccessToken();
   const headers = new Headers(init?.headers);
   headers.set("Authorization", `Bearer ${token}`);
-  return await fetch(`https://www.googleapis.com/drive/v3${path}`, {
+  return await fetch(`https://www.googleapis.com/drive/v3${withSharedDrives(path)}`, {
     ...init,
     headers,
   });
@@ -221,7 +277,8 @@ Deno.serve(async (req: Request) => {
       // Build a multipart/related body by hand. Drive's /upload endpoint
       // expects: metadata part (JSON) + media part (file bytes) separated
       // by a unique boundary string.
-      const token = await getAccessToken();
+      const token = await getUserAccessToken();
+      if (!token) return err("User OAuth token fetch failed (check GOOGLE_DRIVE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)", 500);
       const boundary = "boundary_" + crypto.randomUUID();
       const metadata = JSON.stringify({
         name: file.name,
@@ -243,7 +300,7 @@ Deno.serve(async (req: Request) => {
       body.set(tail, head.length + fileBytes.length);
 
       const r = await fetch(
-        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,mimeType,size,modifiedTime",
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,mimeType,size,modifiedTime",
         {
           method: "POST",
           headers: {

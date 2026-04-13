@@ -3304,6 +3304,7 @@
                 <span id="docZoomLevel" style="font-size:12px;color:rgba(255,255,255,0.5);min-width:36px;text-align:center;">100%</span>
                 <button onclick="docViewerZoom(0.2)" style="padding:6px 10px;background:rgba(255,255,255,0.08);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;">+</button>
                 <button onclick="docViewerRotate()" style="padding:6px 10px;background:rgba(255,255,255,0.08);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;">↻</button>
+                <button id="doc-viewer-save-btn" onclick="docViewerSaveRotation()" style="display:none;margin-left:4px;padding:6px 14px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;">Save Rotation</button>
               </div>
               <button onclick="closeDocViewer()" style="padding:7px 14px; background:rgba(255,255,255,0.08); border:none; border-radius:8px; color:#fff; font-size:13px; cursor:pointer;">Close</button>
             </div>
@@ -6012,6 +6013,14 @@ async function openDocViewerForFile(file) {
   if (otLink) otLink.href = file.webViewLink || '#';
   const zoomEl = document.getElementById('docZoomLevel');
   if (zoomEl) zoomEl.textContent = '100%';
+  const saveBtn = document.getElementById('doc-viewer-save-btn');
+  if (saveBtn) {
+    saveBtn.style.display = 'none';
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = 'Save Rotation';
+    saveBtn.style.background = 'linear-gradient(135deg,#7A5020,#C9A84C)';
+    saveBtn.style.color = '#1A0E00';
+  }
 
   modal.style.display = 'flex';
   body.style.overflow = 'auto';
@@ -6111,6 +6120,14 @@ function closeDocViewer() {
   _docViewerState = { file: null, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null };
   _docViewerScale = 1.0;
   _docViewerRotation = 0;
+  const saveBtn = document.getElementById('doc-viewer-save-btn');
+  if (saveBtn) {
+    saveBtn.style.display = 'none';
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = 'Save Rotation';
+    saveBtn.style.background = 'linear-gradient(135deg,#7A5020,#C9A84C)';
+    saveBtn.style.color = '#1A0E00';
+  }
 }
 
 // Grid card click: route PDFs and images to the in-app viewer; leave
@@ -6165,6 +6182,94 @@ function docViewerRotate() {
     _renderPdfAllPages();
   } else if (_docViewerState.type === 'image') {
     _applyImageTransform();
+  }
+  // Save button only makes sense for PDFs with a pending rotation.
+  _docViewerUpdateSaveBtn();
+}
+
+function _docViewerUpdateSaveBtn() {
+  const saveBtn = document.getElementById('doc-viewer-save-btn');
+  if (!saveBtn) return;
+  const visible = _docViewerState.type === 'pdf' && _docViewerState.rotation !== 0;
+  saveBtn.style.display = visible ? 'inline-block' : 'none';
+}
+
+async function docViewerSaveRotation() {
+  const saveBtn = document.getElementById('doc-viewer-save-btn');
+  if (_docViewerState.type !== 'pdf' || _docViewerState.rotation === 0 || !_docViewerState.file) return;
+  const pendingRot = _docViewerState.rotation;
+  const file = _docViewerState.file;
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #1A0E00;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px;"></span>Saving…';
+  }
+  try {
+    const sess = await sb.auth.getSession();
+    const accessToken = sess?.data?.session?.access_token;
+    if (!accessToken) throw new Error('Not signed in — refresh the page and log in again');
+
+    const res = await fetch(
+      (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL ? window.APP_CONFIG.SUPABASE_URL : '') + '/functions/v1/save-document',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + accessToken,
+        },
+        body: JSON.stringify({
+          file_id: file.id,
+          rotation_degrees: pendingRot,
+        }),
+      }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      throw new Error((data && data.error) || ('HTTP ' + res.status));
+    }
+
+    // Success — flash the button, push the new file into the grid, reopen viewer on it.
+    if (saveBtn) {
+      saveBtn.innerHTML = '✓ Saved';
+      saveBtn.style.background = '#52C87A';
+      saveBtn.style.color = '#fff';
+    }
+    if (typeof showToast === 'function') showToast('Rotation saved');
+
+    // Insert new Drive file at the top of _allDocs so the grid sees it.
+    if (data.file && typeof _allDocs !== 'undefined' && Array.isArray(_allDocs)) {
+      _allDocs.unshift(data.file);
+      window._currentContactDocs = _allDocs;
+    }
+    // Refresh the thumbnail grid in the background so the new file appears.
+    if (typeof renderDocsGrid === 'function') { try { renderDocsGrid(); } catch (_) {} }
+
+    // After a brief confirmation, reopen the viewer on the new file.
+    // openDocViewerForFile resets all state including the save button.
+    setTimeout(async () => {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = 'Save Rotation';
+        saveBtn.style.background = 'linear-gradient(135deg,#7A5020,#C9A84C)';
+        saveBtn.style.color = '#1A0E00';
+        saveBtn.style.display = 'none';
+      }
+      if (data.file) {
+        try { await openDocViewerForFile(data.file); } catch (e) { console.warn('[docViewer] reload failed:', e); }
+      }
+    }, 900);
+  } catch (e) {
+    console.error('[docViewer] save rotation failed:', e);
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = 'Save Rotation';
+      saveBtn.style.background = 'linear-gradient(135deg,#7A5020,#C9A84C)';
+      saveBtn.style.color = '#1A0E00';
+    }
+    if (typeof showToast === 'function') {
+      showToast('Save failed: ' + (e.message || e));
+    } else {
+      alert('Save failed: ' + (e.message || e));
+    }
   }
 }
 
