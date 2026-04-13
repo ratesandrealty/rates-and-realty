@@ -117,7 +117,13 @@ function buildODataFilter(a: AlertRow): string {
   if (a.min_year_built) parts.push(`YearBuilt ge ${a.min_year_built}`);
 
   // Property types
-  if (a.property_types?.length) {
+  // Rentals live on the same /Property endpoint as sales — the distinction
+  // is PropertyType='ResidentialLease' vs 'Residential'. A rental alert
+  // without that filter ends up matching both sale and rent listings,
+  // because the endpoint returns everything by default.
+  if (a.listing_type === "rent") {
+    parts.push("PropertyType eq 'ResidentialLease'");
+  } else if (a.property_types?.length) {
     parts.push(
       "(" +
         a.property_types.map((t) => `PropertyType eq '${t}'`).join(" or ") +
