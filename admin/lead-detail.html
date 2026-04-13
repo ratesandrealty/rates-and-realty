@@ -5810,7 +5810,7 @@ function renderDocsGrid() {
         </div>`
       : `<div style="font-size:32px;margin-bottom:10px;text-align:center;">${icon}</div>`;
     return `
-      <div onclick="window.open('${viewLink}','_blank','noopener')" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
+      <div data-drive-id="${_ldDriveEsc(f.id)}" onclick="_ldOpenViewerFromCard(this)" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
         onmouseenter="this.style.borderColor='rgba(201,168,76,0.35)';this.style.background='rgba(255,255,255,0.07)'"
         onmouseleave="this.style.borderColor='rgba(255,255,255,0.08)';this.style.background='rgba(255,255,255,0.04)'">
         ${previewBlock}
@@ -5957,10 +5957,179 @@ function renderViewerPDF(url) {
 let _docViewerScale = 1.0;
 let _docViewerRotation = 0;
 let _docViewerCurrentUrl = null;
+let _docViewerState = { file: null, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null };
+let _pdfJsLoadPromise = null;
+
+// Lazy-load pdf.js from CDN on first PDF open.
+function _ensurePdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_pdfJsLoadPromise) return _pdfJsLoadPromise;
+  _pdfJsLoadPromise = new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload = function() {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        resolve(window.pdfjsLib);
+      } else { reject(new Error('pdfjsLib missing after script load')); }
+    };
+    s.onerror = function() { _pdfJsLoadPromise = null; reject(new Error('pdf.js CDN failed to load')); };
+    document.head.appendChild(s);
+  });
+  return _pdfJsLoadPromise;
+}
+
+function _ldDriveEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Open the in-app viewer for a Google Drive file object. Handles PDFs
+// (pdf.js canvas) and images (<img> with CSS transform). Other types
+// get a fallback link to Drive.
+async function openDocViewerForFile(file) {
+  const modal = document.getElementById('doc-viewer-modal');
+  const body  = document.getElementById('doc-viewer-body');
+  if (!modal || !body || !file) return;
+
+  // Reset any previous viewer state.
+  if (_docViewerState.objectUrl) { try { URL.revokeObjectURL(_docViewerState.objectUrl); } catch (_) {} }
+  if (_docViewerState.pdfDoc)    { try { _docViewerState.pdfDoc.destroy(); } catch (_) {} }
+  _docViewerState = { file: file, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null };
+  _docViewerScale = 1.0;
+  _docViewerRotation = 0;
+
+  // Header chrome.
+  const nameEl = document.getElementById('doc-viewer-name');
+  const metaEl = document.getElementById('doc-viewer-meta');
+  if (nameEl) nameEl.textContent = file.name || 'Document';
+  if (metaEl) metaEl.textContent = ((file.mimeType || '').replace('application/', '') || 'file')
+    + (file.size ? ' · ' + _ldFormatSize(file.size) : '');
+  const dlLink = document.getElementById('doc-viewer-download');
+  const otLink = document.getElementById('doc-viewer-open-tab');
+  if (dlLink) { dlLink.href = file.webContentLink || file.webViewLink || '#'; dlLink.removeAttribute('download'); }
+  if (otLink) otLink.href = file.webViewLink || '#';
+  const zoomEl = document.getElementById('docZoomLevel');
+  if (zoomEl) zoomEl.textContent = '100%';
+
+  modal.style.display = 'flex';
+  body.style.overflow = 'auto';
+  body.style.padding = '12px';
+  body.style.justifyContent = 'flex-start';
+  body.style.alignItems = 'stretch';
+  body.innerHTML = '<div style="width:100%;text-align:center;color:rgba(255,255,255,0.55);padding:60px 20px;font-size:14px;">Loading…</div>';
+
+  const mime = (file.mimeType || '').toLowerCase();
+  const nm   = (file.name || '').toLowerCase();
+  const isPdf   = mime.indexOf('pdf') !== -1 || nm.endsWith('.pdf');
+  const isImage = mime.indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|bmp)$/.test(nm);
+
+  try {
+    const token = await _ldEnsureToken();
+    const res = await fetch(
+      'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.id) + '?alt=media',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    if (!res.ok) throw new Error('Drive fetch failed: HTTP ' + res.status);
+    const buf = await res.arrayBuffer();
+
+    if (isPdf) {
+      _docViewerState.type = 'pdf';
+      const pdfjsLib = await _ensurePdfJs();
+      _docViewerState.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+      await _renderPdfAllPages();
+    } else if (isImage) {
+      _docViewerState.type = 'image';
+      const blob = new Blob([buf], { type: file.mimeType || 'image/jpeg' });
+      _docViewerState.objectUrl = URL.createObjectURL(blob);
+      body.innerHTML = '<img id="_docViewerImg" src="' + _ldDriveEsc(_docViewerState.objectUrl) + '" alt="" style="display:block;margin:20px auto;max-width:100%;transform-origin:center center;transition:transform .15s;">';
+    } else {
+      _docViewerState.type = 'other';
+      body.innerHTML =
+        '<div style="padding:60px 20px;text-align:center;color:rgba(255,255,255,0.6);">'
+          + '<div style="font-size:48px;margin-bottom:16px;">📎</div>'
+          + '<p style="margin-bottom:10px;font-size:14px;color:#eee;">' + _ldDriveEsc(file.name || 'File') + '</p>'
+          + '<p style="font-size:12px;margin-bottom:20px;color:rgba(255,255,255,0.4);">In-app preview not available for this file type.</p>'
+          + '<a href="' + _ldDriveEsc(file.webViewLink || '#') + '" target="_blank" rel="noopener" style="color:#1A0E00;background:linear-gradient(135deg,#7A5020,#C9A84C);padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Open in Drive ↗</a>'
+        + '</div>';
+    }
+  } catch (e) {
+    console.error('[docViewer] open failed:', e);
+    body.innerHTML =
+      '<div style="padding:60px 20px;text-align:center;color:#E0A0A0;">'
+        + '<div style="font-size:40px;margin-bottom:12px;">⚠️</div>'
+        + '<p style="font-size:13px;margin-bottom:18px;">Failed to load: ' + _ldDriveEsc(e.message || 'unknown error') + '</p>'
+        + '<a href="' + _ldDriveEsc(file.webViewLink || '#') + '" target="_blank" rel="noopener" style="color:#C9A84C;font-size:12px;">Open in Drive instead ↗</a>'
+      + '</div>';
+  }
+}
+
+// Render every page of the current PDF with the current scale+rotation.
+async function _renderPdfAllPages() {
+  const body = document.getElementById('doc-viewer-body');
+  if (!body || !_docViewerState.pdfDoc) return;
+  const pdfDoc   = _docViewerState.pdfDoc;
+  const scale    = _docViewerState.scale;
+  const rotation = _docViewerState.rotation;
+  const baseScale = 1.5; // crisp baseline; user zoom multiplies this
+  body.innerHTML = '';
+  for (let i = 1; i <= pdfDoc.numPages; i++) {
+    const page = await pdfDoc.getPage(i);
+    const viewport = page.getViewport({ scale: scale * baseScale, rotation: rotation });
+    const canvas = document.createElement('canvas');
+    canvas.width  = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.display = 'block';
+    canvas.style.margin = '0 auto 12px';
+    canvas.style.boxShadow = '0 4px 16px rgba(0,0,0,0.5)';
+    canvas.style.maxWidth = '100%';
+    canvas.style.height = 'auto';
+    canvas.style.background = '#fff';
+    body.appendChild(canvas);
+    try {
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+    } catch (err) {
+      console.warn('[docViewer] page render failed:', i, err);
+    }
+  }
+}
+
+function _applyImageTransform() {
+  const img = document.getElementById('_docViewerImg');
+  if (!img) return;
+  img.style.transform = 'scale(' + _docViewerState.scale + ') rotate(' + _docViewerState.rotation + 'deg)';
+}
 
 function closeDocViewer() {
-  document.getElementById('doc-viewer-modal').style.display = 'none';
-  document.getElementById('doc-viewer-body').innerHTML = '';
+  const m = document.getElementById('doc-viewer-modal');
+  const b = document.getElementById('doc-viewer-body');
+  if (m) m.style.display = 'none';
+  if (b) b.innerHTML = '';
+  if (_docViewerState.objectUrl) { try { URL.revokeObjectURL(_docViewerState.objectUrl); } catch (_) {} }
+  if (_docViewerState.pdfDoc)    { try { _docViewerState.pdfDoc.destroy(); } catch (_) {} }
+  _docViewerState = { file: null, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null };
+  _docViewerScale = 1.0;
+  _docViewerRotation = 0;
+}
+
+// Grid card click: route PDFs and images to the in-app viewer; leave
+// Google Docs / Sheets / other types opening in Drive as before.
+function _ldOpenViewerFromCard(el) {
+  if (!el) return;
+  const id = el.getAttribute('data-drive-id');
+  if (!id) return;
+  const file = (typeof _allDocs !== 'undefined' ? _allDocs : []).find(function(x) { return x.id === id; });
+  if (!file) return;
+  const mt = (file.mimeType || '').toLowerCase();
+  const nm = (file.name || '').toLowerCase();
+  const isPdf   = mt.indexOf('pdf') !== -1 || nm.endsWith('.pdf');
+  const isImage = mt.indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|bmp)$/.test(nm);
+  if (isPdf || isImage) {
+    openDocViewerForFile(file);
+  } else {
+    window.open(file.webViewLink || '#', '_blank', 'noopener');
+  }
 }
 
 async function downloadDocument(fileUrl, fileName) {
@@ -5978,22 +6147,25 @@ async function downloadDocument(fileUrl, fileName) {
 }
 
 function docViewerZoom(delta) {
-  _docViewerScale = Math.max(0.4, Math.min(3.0, _docViewerScale + delta));
-  document.getElementById('docZoomLevel').textContent = Math.round(_docViewerScale * 100) + '%';
-  const canvases = document.querySelectorAll('#doc-viewer-body canvas');
-  if (canvases.length > 0 && _docViewerCurrentUrl) {
-    doRenderViewerPDF(_docViewerCurrentUrl);
-  } else {
-    const img = document.querySelector('#doc-viewer-body img');
-    if (img) img.style.transform = `scale(${_docViewerScale}) rotate(${_docViewerRotation}deg)`;
+  _docViewerState.scale = Math.max(0.4, Math.min(3.0, (_docViewerState.scale || 1) + delta));
+  _docViewerScale = _docViewerState.scale;
+  const zoomEl = document.getElementById('docZoomLevel');
+  if (zoomEl) zoomEl.textContent = Math.round(_docViewerState.scale * 100) + '%';
+  if (_docViewerState.type === 'pdf') {
+    _renderPdfAllPages();
+  } else if (_docViewerState.type === 'image') {
+    _applyImageTransform();
   }
 }
 
 function docViewerRotate() {
-  _docViewerRotation = (_docViewerRotation + 90) % 360;
-  const img = document.querySelector('#doc-viewer-body img');
-  if (img) img.style.transform = `scale(${_docViewerScale}) rotate(${_docViewerRotation}deg)`;
-  else if (_docViewerCurrentUrl) doRenderViewerPDF(_docViewerCurrentUrl);
+  _docViewerState.rotation = ((_docViewerState.rotation || 0) + 90) % 360;
+  _docViewerRotation = _docViewerState.rotation;
+  if (_docViewerState.type === 'pdf') {
+    _renderPdfAllPages();
+  } else if (_docViewerState.type === 'image') {
+    _applyImageTransform();
+  }
 }
 
 /* ── CREDIT APPS ── */
