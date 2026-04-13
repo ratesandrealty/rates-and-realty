@@ -1841,13 +1841,8 @@ function _fvRenderFileListPanel(contact) {
 
   // Separate folders from files and show folders first.
   const isFolder = (f) => f.mimeType === "application/vnd.google-apps.folder";
-  const isPdf = (f) => {
-    const mt = (f.mimeType || "").toLowerCase();
-    const nm = (f.name || "").toLowerCase();
-    return mt.indexOf("pdf") !== -1 || nm.endsWith(".pdf");
-  };
   const folders = allItems.filter(isFolder);
-  const docs = allItems.filter((f) => !isFolder(f) && !isPdf(f));
+  const docs = allItems.filter((f) => !isFolder(f));
   const filteredDocs = _fvFileFilter
     ? docs.filter((f) => (f.appProperties && f.appProperties.docType) === _fvFileFilter)
     : docs;
