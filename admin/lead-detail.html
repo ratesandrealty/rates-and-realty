@@ -3306,6 +3306,9 @@
                 <button onclick="docViewerRotate()" style="padding:6px 10px;background:rgba(255,255,255,0.08);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;">↻</button>
                 <button id="doc-viewer-type-btn" onclick="docViewerToggleAnnotateMode()" title="Add text notes" style="padding:6px 12px;background:rgba(255,255,255,0.08);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;font-weight:700;font-family:inherit;">T</button>
                 <button id="doc-viewer-save-notes-btn" onclick="docViewerSaveAnnotations()" style="display:none;padding:6px 12px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.4);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;">Save Notes</button>
+                <button id="doc-viewer-crop-btn" onclick="docViewerToggleCropMode()" title="Crop page" style="padding:6px 10px;background:rgba(255,255,255,0.08);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-family:inherit;">✂</button>
+                <button id="doc-viewer-crop-apply-btn" onclick="docViewerApplyCrop()" style="display:none;padding:6px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;">Apply Crop</button>
+                <button id="doc-viewer-crop-cancel-btn" onclick="docViewerCancelCrop()" style="display:none;padding:6px 12px;background:rgba(255,255,255,0.08);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:12px;font-family:inherit;">Cancel</button>
                 <button id="doc-viewer-save-btn" onclick="docViewerSaveRotation()" style="display:none;margin-left:4px;padding:6px 14px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit;">Save Rotation</button>
               </div>
               <button onclick="closeDocViewer()" style="padding:7px 14px; background:rgba(255,255,255,0.08); border:none; border-radius:8px; color:#fff; font-size:13px; cursor:pointer;">Close</button>
@@ -5965,6 +5968,9 @@ let _pdfJsLoadPromise = null;
 let _docViewerAnnotations = [];
 let _docViewerAnnotateMode = false;
 let _docViewerDirty = false;
+let _docViewerCropMode = false;
+let _docViewerCropSelection = null; // { page, canvas, left, top, width, height } in CSS px relative to body
+let _docViewerCropDragging = false;
 
 // Lazy-load pdf.js from CDN on first PDF open.
 function _ensurePdfJs() {
@@ -6008,6 +6014,9 @@ async function openDocViewerForFile(file) {
   _docViewerAnnotations = [];
   _docViewerAnnotateMode = false;
   _docViewerDirty = false;
+  _docViewerCropMode = false;
+  _docViewerCropDragging = false;
+  _docViewerCropSelection = null;
   const typeBtn = document.getElementById('doc-viewer-type-btn');
   if (typeBtn) { typeBtn.style.background = 'rgba(255,255,255,0.08)'; typeBtn.style.color = '#fff'; }
   const saveNotesBtn = document.getElementById('doc-viewer-save-notes-btn');
@@ -6019,6 +6028,14 @@ async function openDocViewerForFile(file) {
     saveNotesBtn.style.color = '#C9A84C';
     saveNotesBtn.style.borderColor = 'rgba(201,168,76,0.4)';
   }
+  const cropBtn = document.getElementById('doc-viewer-crop-btn');
+  if (cropBtn) { cropBtn.style.background = 'rgba(255,255,255,0.08)'; cropBtn.style.color = '#fff'; }
+  const cropApplyBtn = document.getElementById('doc-viewer-crop-apply-btn');
+  if (cropApplyBtn) { cropApplyBtn.style.display = 'none'; cropApplyBtn.disabled = false; cropApplyBtn.innerHTML = 'Apply Crop'; }
+  const cropCancelBtn = document.getElementById('doc-viewer-crop-cancel-btn');
+  if (cropCancelBtn) { cropCancelBtn.style.display = 'none'; cropCancelBtn.disabled = false; }
+  const priorCropRect = document.getElementById('_docViewerCropRect');
+  if (priorCropRect) priorCropRect.remove();
 
   // Header chrome.
   const nameEl = document.getElementById('doc-viewer-name');
@@ -6152,10 +6169,21 @@ function closeDocViewer() {
   _docViewerAnnotations = [];
   _docViewerAnnotateMode = false;
   _docViewerDirty = false;
+  _docViewerCropMode = false;
+  _docViewerCropDragging = false;
+  _docViewerCropSelection = null;
   const typeBtn = document.getElementById('doc-viewer-type-btn');
   if (typeBtn) { typeBtn.style.background = 'rgba(255,255,255,0.08)'; typeBtn.style.color = '#fff'; }
   const saveNotesBtn = document.getElementById('doc-viewer-save-notes-btn');
   if (saveNotesBtn) { saveNotesBtn.style.display = 'none'; saveNotesBtn.textContent = 'Save Notes'; }
+  const cropBtn = document.getElementById('doc-viewer-crop-btn');
+  if (cropBtn) { cropBtn.style.background = 'rgba(255,255,255,0.08)'; cropBtn.style.color = '#fff'; }
+  const cropApplyBtn = document.getElementById('doc-viewer-crop-apply-btn');
+  if (cropApplyBtn) { cropApplyBtn.style.display = 'none'; cropApplyBtn.innerHTML = 'Apply Crop'; }
+  const cropCancelBtn = document.getElementById('doc-viewer-crop-cancel-btn');
+  if (cropCancelBtn) cropCancelBtn.style.display = 'none';
+  const rectEl = document.getElementById('_docViewerCropRect');
+  if (rectEl) rectEl.remove();
   const saveBtn = document.getElementById('doc-viewer-save-btn');
   if (saveBtn) {
     saveBtn.style.display = 'none';
@@ -6586,6 +6614,220 @@ async function docViewerSaveAnnotations() {
     if (btn) { btn.disabled = false; btn.textContent = 'Save Notes'; }
     if (typeof showToast === 'function') showToast('Save failed: ' + (e.message || e));
     else alert('Save failed: ' + (e.message || e));
+  }
+}
+
+// ── CROP TOOL ──────────────────────────────────────────────────────────
+// Draws a drag-selection rectangle on a single page; Apply sends the
+// rectangle (in PDF points, bottom-left origin) to save-document.
+
+function docViewerToggleCropMode() {
+  if (_docViewerState.type !== 'pdf') {
+    if (typeof showToast === 'function') showToast('Crop only works on PDFs');
+    return;
+  }
+  if (!_docViewerCropMode && _docViewerState.rotation !== 0) {
+    if (typeof showToast === 'function') showToast('Reset rotation to 0 before cropping');
+    return;
+  }
+  if (_docViewerCropMode) { _docViewerExitCropMode(); return; }
+  if (_docViewerAnnotateMode) docViewerToggleAnnotateMode();
+  _docViewerCropMode = true;
+  _docViewerCropSelection = null;
+  const btn = document.getElementById('doc-viewer-crop-btn');
+  if (btn) { btn.style.background = '#C9A84C'; btn.style.color = '#1A0E00'; }
+  const body = document.getElementById('doc-viewer-body');
+  if (body) {
+    body.style.cursor = 'crosshair';
+    body.addEventListener('mousedown', _docViewerCropMouseDown);
+  }
+}
+
+function _docViewerExitCropMode() {
+  _docViewerCropMode = false;
+  _docViewerCropDragging = false;
+  _docViewerCropSelection = null;
+  const btn = document.getElementById('doc-viewer-crop-btn');
+  if (btn) { btn.style.background = 'rgba(255,255,255,0.08)'; btn.style.color = '#fff'; }
+  const body = document.getElementById('doc-viewer-body');
+  if (body) {
+    body.style.cursor = _docViewerAnnotateMode ? 'text' : '';
+    body.removeEventListener('mousedown', _docViewerCropMouseDown);
+    const sel = document.getElementById('_docViewerCropRect');
+    if (sel) sel.remove();
+  }
+  _docViewerSetCropButtonsVisibility(false);
+}
+
+function _docViewerSetCropButtonsVisibility(show) {
+  const applyBtn = document.getElementById('doc-viewer-crop-apply-btn');
+  const cancelBtn = document.getElementById('doc-viewer-crop-cancel-btn');
+  if (applyBtn) applyBtn.style.display = show ? 'inline-block' : 'none';
+  if (cancelBtn) cancelBtn.style.display = show ? 'inline-block' : 'none';
+}
+
+function _docViewerCropMouseDown(evt) {
+  if (!_docViewerCropMode) return;
+  if (!evt.target || !evt.target.closest) return;
+  const canvas = evt.target.closest('canvas[data-page]');
+  if (!canvas) return;
+  evt.preventDefault();
+  const body = document.getElementById('doc-viewer-body');
+  if (!body) return;
+  const bodyRect = body.getBoundingClientRect();
+  const startX = evt.clientX - bodyRect.left + body.scrollLeft;
+  const startY = evt.clientY - bodyRect.top  + body.scrollTop;
+  const pageNum = parseInt(canvas.dataset.page || '1', 10);
+
+  const prior = document.getElementById('_docViewerCropRect');
+  if (prior) prior.remove();
+
+  const rect = document.createElement('div');
+  rect.id = '_docViewerCropRect';
+  rect.style.cssText = 'position:absolute;left:' + startX + 'px;top:' + startY + 'px;width:0;height:0;border:2px dashed #C9A84C;background:rgba(201,168,76,0.12);pointer-events:none;z-index:20;';
+  body.style.position = 'relative';
+  body.appendChild(rect);
+
+  _docViewerCropDragging = true;
+  _docViewerCropSelection = { page: pageNum, canvas: canvas, left: startX, top: startY, width: 0, height: 0 };
+
+  const move = function(ev) {
+    if (!_docViewerCropDragging) return;
+    const curX = ev.clientX - bodyRect.left + body.scrollLeft;
+    const curY = ev.clientY - bodyRect.top  + body.scrollTop;
+    const left = Math.min(startX, curX);
+    const top  = Math.min(startY, curY);
+    const width  = Math.abs(curX - startX);
+    const height = Math.abs(curY - startY);
+    rect.style.left   = left + 'px';
+    rect.style.top    = top + 'px';
+    rect.style.width  = width + 'px';
+    rect.style.height = height + 'px';
+    _docViewerCropSelection.left   = left;
+    _docViewerCropSelection.top    = top;
+    _docViewerCropSelection.width  = width;
+    _docViewerCropSelection.height = height;
+  };
+  const up = function() {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    _docViewerCropDragging = false;
+    if (!_docViewerCropSelection || _docViewerCropSelection.width < 8 || _docViewerCropSelection.height < 8) {
+      const el = document.getElementById('_docViewerCropRect');
+      if (el) el.remove();
+      _docViewerCropSelection = null;
+      _docViewerSetCropButtonsVisibility(false);
+      return;
+    }
+    _docViewerSetCropButtonsVisibility(true);
+  };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+}
+
+function docViewerCancelCrop() { _docViewerExitCropMode(); }
+
+async function docViewerApplyCrop() {
+  if (!_docViewerCropSelection || !_docViewerState.file) return;
+  const sel = _docViewerCropSelection;
+  const canvas = sel.canvas;
+  if (!canvas) return;
+
+  // body-relative CSS px → canvas-relative CSS px → intrinsic canvas px
+  // → PDF points (top-left origin) → flip Y to bottom-left origin.
+  const baseScale = 1.5;
+  const totalScale = (_docViewerState.scale || 1) * baseScale;
+
+  const canvasLeftInBody = canvas.offsetLeft;
+  const canvasTopInBody  = canvas.offsetTop;
+
+  const relLeft   = sel.left - canvasLeftInBody;
+  const relTop    = sel.top  - canvasTopInBody;
+  const relWidth  = sel.width;
+  const relHeight = sel.height;
+
+  const dispW = canvas.offsetWidth;
+  const dispH = canvas.offsetHeight;
+  const clampedLeft   = Math.max(0, Math.min(dispW, relLeft));
+  const clampedTop    = Math.max(0, Math.min(dispH, relTop));
+  const clampedRight  = Math.max(0, Math.min(dispW, relLeft + relWidth));
+  const clampedBottom = Math.max(0, Math.min(dispH, relTop + relHeight));
+  const finalLeft   = clampedLeft;
+  const finalTop    = clampedTop;
+  const finalWidth  = clampedRight - clampedLeft;
+  const finalHeight = clampedBottom - clampedTop;
+
+  if (finalWidth < 4 || finalHeight < 4) {
+    if (typeof showToast === 'function') showToast('Selection is outside the page');
+    return;
+  }
+
+  const ratio = canvas.width / (dispW || canvas.width); // intrinsic / display
+  const intrLeft   = finalLeft   * ratio;
+  const intrTop    = finalTop    * ratio;
+  const intrWidth  = finalWidth  * ratio;
+  const intrHeight = finalHeight * ratio;
+
+  const pdfXTL = intrLeft   / totalScale;
+  const pdfYTL = intrTop    / totalScale;
+  const pdfW   = intrWidth  / totalScale;
+  const pdfH   = intrHeight / totalScale;
+  const pageHeightPdf = canvas.height / totalScale;
+
+  const pdfXBL = pdfXTL;
+  const pdfYBL = pageHeightPdf - (pdfYTL + pdfH);
+
+  const cropPayload = {
+    page:   sel.page,
+    x:      pdfXBL,
+    y:      pdfYBL,
+    width:  pdfW,
+    height: pdfH,
+  };
+
+  const applyBtn = document.getElementById('doc-viewer-crop-apply-btn');
+  const cancelBtn = document.getElementById('doc-viewer-crop-cancel-btn');
+  if (applyBtn) { applyBtn.disabled = true; applyBtn.innerHTML = 'Cropping…'; }
+  if (cancelBtn) cancelBtn.disabled = true;
+
+  try {
+    const sess = await sb.auth.getSession();
+    const accessToken = sess?.data?.session?.access_token;
+    if (!accessToken) throw new Error('Not signed in — refresh the page and log in again');
+
+    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) ? window.APP_CONFIG.SUPABASE_URL : '';
+    const res = await fetch(base + '/functions/v1/save-document', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + accessToken,
+      },
+      body: JSON.stringify({
+        file_id: _docViewerState.file.id,
+        crop: cropPayload,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error((data && data.error) || ('HTTP ' + res.status));
+
+    if (typeof showToast === 'function') showToast('Cropped!');
+
+    if (data.file && typeof _allDocs !== 'undefined' && Array.isArray(_allDocs)) {
+      _allDocs.unshift(data.file);
+      window._currentContactDocs = _allDocs;
+    }
+    if (typeof renderDocsGrid === 'function') { try { renderDocsGrid(); } catch (_) {} }
+
+    _docViewerExitCropMode();
+    if (data.file) {
+      try { await openDocViewerForFile(data.file); } catch (e) { console.warn('[docViewer] reload failed:', e); }
+    }
+  } catch (e) {
+    console.error('[docViewer] crop failed:', e);
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.innerHTML = 'Apply Crop'; }
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (typeof showToast === 'function') showToast('Crop failed: ' + (e.message || e));
+    else alert('Crop failed: ' + (e.message || e));
   }
 }
 

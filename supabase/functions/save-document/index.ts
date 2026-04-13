@@ -81,17 +81,50 @@ Deno.serve(async (req: Request) => {
     if (authErr || !userData?.user) return err("Invalid or expired session", 401);
     const userEmail = userData.user.email || "(no email)";
 
-    // 2. Parse and validate body.
+    // 2. Parse body and figure out the operation.
+    //    Dispatch: if `crop` object is set → crop. Else if rotation_degrees → rotate.
     const body = await req.json().catch(() => ({} as any));
     const fileId: string = body.file_id || body.drive_file_id || body.document_id || "";
-    const rotationDegrees = Number(body.rotation_degrees || 0);
     if (!fileId) return err("file_id (or drive_file_id / document_id) required");
 
-    const normalizedRot = (((rotationDegrees % 360) + 360) % 360);
-    if (![0, 90, 180, 270].includes(normalizedRot)) {
-      return err("rotation_degrees must be a multiple of 90");
+    const hasRotate = body.rotation_degrees !== undefined && body.rotation_degrees !== null;
+    const hasCrop   = body.crop && typeof body.crop === "object";
+    if (hasRotate && hasCrop) return err("Specify either rotation_degrees or crop, not both");
+    if (!hasRotate && !hasCrop) return err("Specify rotation_degrees or crop");
+
+    let normalizedRot = 0;
+    let cropPage = 0;
+    let cropX = 0, cropY = 0, cropW = 0, cropH = 0;
+    let opLabel = "";
+    let newNameSuffix = "";
+
+    if (hasRotate) {
+      const rotationDegrees = Number(body.rotation_degrees || 0);
+      normalizedRot = (((rotationDegrees % 360) + 360) % 360);
+      if (![0, 90, 180, 270].includes(normalizedRot)) {
+        return err("rotation_degrees must be a multiple of 90");
+      }
+      if (normalizedRot === 0) return err("rotation_degrees is 0 — nothing to save");
+      opLabel = "rotated";
+      newNameSuffix = `_rotated_${Date.now()}`;
+    } else {
+      // Crop path
+      const c = body.crop || {};
+      cropPage = Number(c.page || 0);
+      cropX = Number(c.x);
+      cropY = Number(c.y);
+      cropW = Number(c.width);
+      cropH = Number(c.height);
+      if (!Number.isFinite(cropPage) || cropPage < 1 || Math.floor(cropPage) !== cropPage) {
+        return err("crop.page must be a positive integer (1-indexed)");
+      }
+      if (![cropX, cropY, cropW, cropH].every(Number.isFinite)) {
+        return err("crop.x, crop.y, crop.width, crop.height must be finite numbers");
+      }
+      if (cropW <= 0 || cropH <= 0) return err("crop.width and crop.height must be > 0");
+      opLabel = "cropped";
+      newNameSuffix = `_cropped_${Date.now()}`;
     }
-    if (normalizedRot === 0) return err("rotation_degrees is 0 — nothing to save");
 
     // 3. Get a Google OAuth access token (user flow — SA has no storage quota).
     const googleToken = await getGoogleAccessToken();
@@ -124,24 +157,45 @@ Deno.serve(async (req: Request) => {
     }
     const origBytes = new Uint8Array(await dlRes.arrayBuffer());
 
-    // 6. Apply rotation additively via pdf-lib.
-    let rotatedBytes: Uint8Array;
+    // 6. Apply the transformation via pdf-lib.
+    let newBytes: Uint8Array;
     try {
       const pdfDoc = await PDFDocument.load(origBytes);
-      for (const page of pdfDoc.getPages()) {
-        const existing = page.getRotation().angle || 0;
-        page.setRotation(degrees((existing + normalizedRot) % 360));
+
+      if (hasRotate) {
+        for (const page of pdfDoc.getPages()) {
+          const existing = page.getRotation().angle || 0;
+          page.setRotation(degrees((existing + normalizedRot) % 360));
+        }
+      } else {
+        // Crop: set MediaBox on the specified page to the caller's rectangle.
+        // Coordinates are already in PDF points with bottom-left origin —
+        // the browser flips the y axis before sending.
+        const pages = pdfDoc.getPages();
+        if (cropPage > pages.length) {
+          return err(`crop.page ${cropPage} out of range (document has ${pages.length} pages)`);
+        }
+        const page = pages[cropPage - 1];
+        const { width: pw, height: ph } = page.getSize();
+        // Clamp so the crop box never exceeds the current page bounds.
+        const x = Math.max(0, Math.min(pw, cropX));
+        const y = Math.max(0, Math.min(ph, cropY));
+        const w = Math.max(1, Math.min(pw - x, cropW));
+        const h = Math.max(1, Math.min(ph - y, cropH));
+        page.setMediaBox(x, y, w, h);
+        // Also set the CropBox so viewers that honor CropBox render the clipped area.
+        try { (page as any).setCropBox(x, y, w, h); } catch (_) {}
       }
-      rotatedBytes = await pdfDoc.save();
+
+      newBytes = await pdfDoc.save();
     } catch (e) {
       return err("pdf-lib failed to process PDF: " + ((e as Error).message || String(e)), 500);
     }
 
     // 7. Upload as a NEW Drive file in the same parent folder(s).
-    const ts = Date.now();
     const origName: string = meta.name || "document.pdf";
     const stem = origName.replace(/\.pdf$/i, "");
-    const newName = `${stem}_rotated_${ts}.pdf`;
+    const newName = `${stem}${newNameSuffix}.pdf`;
     const parents: string[] = Array.isArray(meta.parents) ? meta.parents : [];
 
     const boundary = "save_" + crypto.randomUUID();
@@ -155,10 +209,10 @@ Deno.serve(async (req: Request) => {
         `Content-Type: application/pdf\r\n\r\n`,
     );
     const tail = encoder.encode(`\r\n--${boundary}--`);
-    const multipartBody = new Uint8Array(head.length + rotatedBytes.length + tail.length);
+    const multipartBody = new Uint8Array(head.length + newBytes.length + tail.length);
     multipartBody.set(head, 0);
-    multipartBody.set(rotatedBytes, head.length);
-    multipartBody.set(tail, head.length + rotatedBytes.length);
+    multipartBody.set(newBytes, head.length);
+    multipartBody.set(tail, head.length + newBytes.length);
 
     const upRes = await fetch(
       "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,webContentLink,mimeType,size,parents,createdTime,modifiedTime,thumbnailLink,iconLink,appProperties",
@@ -177,7 +231,7 @@ Deno.serve(async (req: Request) => {
     }
     const newFile = await upRes.json();
 
-    console.log(`[save-document] ${userEmail} rotated ${fileId} by ${normalizedRot}° → new file ${newFile.id}`);
+    console.log(`[save-document] ${userEmail} ${opLabel} ${fileId} → new file ${newFile.id}`);
     return ok({
       success: true,
       file_id: newFile.id,
