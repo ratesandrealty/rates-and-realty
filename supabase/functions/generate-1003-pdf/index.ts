@@ -146,7 +146,8 @@ Deno.serve(async (req: Request) => {
     if (templatePdf) {
       const base64 = btoa(String.fromCharCode(...templatePdf));
       const fileName = `1003_${(d.last_name || 'Borrower').replace(/\s/g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`;
-      return new Response(JSON.stringify({ pdf_base64: base64, file_name: fileName, source: 'template' }), { headers: cors });
+      // Return both `pdf` and `pdf_base64` so legacy + new clients both work.
+      return new Response(JSON.stringify({ success: true, pdf: base64, pdf_base64: base64, file_name: fileName, source: 'template' }), { headers: cors });
     }
 
     // Fallback: build custom PDF from scratch
@@ -159,6 +160,11 @@ Deno.serve(async (req: Request) => {
     const GRAY = rgb(0.4, 0.4, 0.4);
     const LGRAY = rgb(0.85, 0.85, 0.85);
     const W = 612, H = 792;
+
+    // Row spacing: tight rows (30-35pt) caused field labels to overlap the
+    // values from the previous row. ROW=50pt gives every fieldLine a clean
+    // band: label at y-14 (top), underline at y, value at y-4 (mid-band).
+    const ROW = 50;
 
     function addPage() {
       const page = pdfDoc.addPage([W, H]);
@@ -175,98 +181,179 @@ Deno.serve(async (req: Request) => {
         drawBox(x, y, 8, 8);
         if (checked) page.drawText('X', { x: x + 1.5, y: H - y - 6.5, size: 6.5, font: fontB, color: BLACK });
       };
+      // Each field row gets:
+      //   label at y - 14  (small gray cap above)
+      //   underline at y
+      //   value at y - 4   (sits just above the underline)
+      // Caller is responsible for spacing y values at least ROW apart.
       const fieldLine = (label: string, value: string, x: number, y: number, w: number) => {
-        drawText(label, x, y - 9, { size: 6, color: GRAY });
+        drawText(label, x, y - 14, { size: 6, color: GRAY });
         drawLine(x, y, x + w, y);
-        drawText(fmt(value), x + 2, y - 2, { size: 8.5 });
+        drawText(fmt(value), x + 2, y - 4, { size: 8.5 });
       };
       return { page, drawText, drawLine, drawBox, drawCheck, fieldLine };
     }
 
-    // ── PAGE 1: Section 1a + 1b ──
+    // ── PAGE 1: Section 1a (Personal) + Section 1b (Employment) ──
+    // Income table moved to top of Page 2 to give every row 50pt of clearance
+    // without spilling past the 770pt footer.
     {
       const { drawText, drawLine, drawBox, drawCheck, fieldLine } = addPage();
       drawText('Uniform Residential Loan Application', 170, 38, { size: 14, bold: true });
       drawText('Verify and complete the information on this application.', 165, 54, { size: 8, color: GRAY });
 
-      drawBox(50, 72, 512, 15, { fill: rgb(0.15, 0.15, 0.15) });
-      drawText('Section 1a. Personal Information', 54, 71, { size: 8.5, bold: true, color: rgb(1,1,1) });
+      // Section 1a header
+      drawBox(50, 72, 512, 16, { fill: rgb(0.15, 0.15, 0.15) });
+      drawText('Section 1a. Personal Information', 54, 73, { size: 8.5, bold: true, color: rgb(1,1,1) });
 
-      const r1 = 108; fieldLine('FIRST NAME', d.first_name, 50, r1, 130); fieldLine('MIDDLE', d.middle_name, 190, r1, 90); fieldLine('LAST NAME', d.last_name, 290, r1, 180); fieldLine('SUFFIX', d.suffix, 480, r1, 80);
-      const r2 = 143; fieldLine('SSN', fmtSSN(d.ssn), 50, r2, 120); fieldLine('DOB', fmtDate(d.date_of_birth), 180, r2, 90); fieldLine('MARITAL STATUS', d.marital_status, 280, r2, 110);
-      drawText('CITIZENSHIP', 400, r2 - 9, { size: 6, color: GRAY });
-      drawCheck(d.citizenship === 'U.S. Citizen', 400, r2 - 1); drawText('U.S. Citizen', 412, r2 - 1, { size: 7 });
-      drawCheck(d.citizenship === 'Permanent Resident Alien', 400, r2 + 10); drawText('Perm. Resident', 412, r2 + 10, { size: 7 });
+      let y = 110;
+      // Row 1: Name parts
+      fieldLine('FIRST NAME', d.first_name, 50, y, 130);
+      fieldLine('MIDDLE', d.middle_name, 190, y, 90);
+      fieldLine('LAST NAME', d.last_name, 290, y, 180);
+      fieldLine('SUFFIX', d.suffix, 480, y, 80);
 
-      const r3 = 178; fieldLine('DEPENDENTS #', fmt(d.dependents_count), 50, r3, 90); fieldLine('AGES', d.dependents_ages, 150, r3, 120);
-      fieldLine('CELL PHONE', d.cell_phone, 280, r3, 130); fieldLine('HOME PHONE', d.home_phone, 420, r3, 140);
+      // Row 2: SSN / DOB / Marital + Citizenship checkboxes
+      y += ROW;
+      fieldLine('SSN', fmtSSN(d.ssn), 50, y, 120);
+      fieldLine('DOB', fmtDate(d.date_of_birth), 180, y, 90);
+      fieldLine('MARITAL STATUS', d.marital_status, 280, y, 110);
+      drawText('CITIZENSHIP', 400, y - 14, { size: 6, color: GRAY });
+      drawCheck(d.citizenship === 'U.S. Citizen', 400, y - 6); drawText('U.S. Citizen', 412, y - 6, { size: 7 });
+      drawCheck(d.citizenship === 'Permanent Resident Alien', 400, y + 8); drawText('Perm. Resident', 412, y + 8, { size: 7 });
 
-      const r4 = 210; drawText('CURRENT ADDRESS', 50, r4 - 12, { size: 7, bold: true, color: GRAY });
-      fieldLine('STREET', d.cur_street, 50, r4, 230); fieldLine('UNIT', d.cur_unit, 290, r4, 60);
-      fieldLine('CITY', d.cur_city, 360, r4, 100); fieldLine('STATE', d.cur_state, 470, r4, 40); fieldLine('ZIP', d.cur_zip, 520, r4, 40);
-      const r5 = 240; fieldLine('YEARS', fmt(d.cur_years), 50, r5, 50); fieldLine('MO', fmt(d.cur_months), 110, r5, 40);
-      drawCheck(d.cur_housing==='Own', 160, r5); drawText('Own', 172, r5, { size: 7 });
-      drawCheck(d.cur_housing==='Rent', 200, r5); drawText('Rent', 212, r5, { size: 7 });
-      fieldLine('RENT $/MO', fmtMoney(d.cur_rent), 250, r5, 100);
+      // Row 3: Dependents + phones
+      y += ROW;
+      fieldLine('DEPENDENTS #', fmt(d.dependents_count), 50, y, 90);
+      fieldLine('AGES', d.dependents_ages, 150, y, 120);
+      fieldLine('CELL PHONE', d.cell_phone, 280, y, 130);
+      fieldLine('HOME PHONE', d.home_phone, 420, y, 140);
 
-      const r6 = 270; drawText('FORMER ADDRESS', 50, r6 - 12, { size: 7, bold: true, color: GRAY });
-      fieldLine('STREET', d.fmr_street, 50, r6, 230); fieldLine('CITY', d.fmr_city, 290, r6, 100);
-      fieldLine('STATE', d.fmr_state, 400, r6, 40); fieldLine('ZIP', d.fmr_zip, 450, r6, 60); fieldLine('YRS', fmt(d.fmr_years), 520, r6, 40);
+      // Row 4: Current address row 1
+      y += ROW;
+      drawText('CURRENT ADDRESS', 50, y - 28, { size: 7, bold: true, color: GRAY });
+      fieldLine('STREET', d.cur_street, 50, y, 230);
+      fieldLine('UNIT', d.cur_unit, 290, y, 60);
+      fieldLine('CITY', d.cur_city, 360, y, 100);
+      fieldLine('STATE', d.cur_state, 470, y, 40);
+      fieldLine('ZIP', d.cur_zip, 520, y, 40);
 
-      fieldLine('EMAIL', d.email, 50, 305, 280); fieldLine('WORK PHONE', d.work_phone, 340, 305, 130);
+      // Row 5: Years / Own/Rent / Rent amount
+      y += ROW;
+      fieldLine('YEARS', fmt(d.cur_years), 50, y, 50);
+      fieldLine('MO', fmt(d.cur_months), 110, y, 40);
+      drawCheck(d.cur_housing === 'Own', 160, y - 4); drawText('Own', 172, y - 4, { size: 7 });
+      drawCheck(d.cur_housing === 'Rent', 200, y - 4); drawText('Rent', 212, y - 4, { size: 7 });
+      fieldLine('RENT $/MO', fmtMoney(d.cur_rent), 250, y, 100);
 
-      // 1b: Employment
-      drawBox(50, 330, 512, 15, { fill: rgb(0.15, 0.15, 0.15) });
-      drawText('Section 1b. Current Employment / Self-Employment and Income', 54, 329, { size: 8.5, bold: true, color: rgb(1,1,1) });
+      // Row 6: Former address
+      y += ROW;
+      drawText('FORMER ADDRESS', 50, y - 28, { size: 7, bold: true, color: GRAY });
+      fieldLine('STREET', d.fmr_street, 50, y, 230);
+      fieldLine('CITY', d.fmr_city, 290, y, 100);
+      fieldLine('STATE', d.fmr_state, 400, y, 40);
+      fieldLine('ZIP', d.fmr_zip, 450, y, 60);
+      fieldLine('YRS', fmt(d.fmr_years), 520, y, 40);
 
-      const e1 = 366; fieldLine('EMPLOYER NAME', d.emp_name, 50, e1, 260); fieldLine('PHONE', d.emp_phone, 320, e1, 130);
-      const e2 = 396; fieldLine('STREET', d.emp_street, 50, e2, 220); fieldLine('CITY', d.emp_city, 280, e2, 100); fieldLine('STATE', d.emp_state, 390, e2, 40); fieldLine('ZIP', d.emp_zip, 440, e2, 60);
-      const e3 = 426; fieldLine('TITLE', d.emp_title, 50, e3, 180); fieldLine('START DATE', fmtDate(d.emp_start), 240, e3, 100);
-      fieldLine('YRS IN LINE', fmt(d.emp_years), 350, e3, 60); fieldLine('MO', fmt(d.emp_months), 420, e3, 40);
-      drawCheck(d.self_employed, 470, e3); drawText('Self-Employed', 482, e3, { size: 7 });
+      // Row 7: Email + work phone
+      y += ROW;
+      fieldLine('EMAIL', d.email, 50, y, 280);
+      fieldLine('WORK PHONE', d.work_phone, 340, y, 130);
 
-      // Income
-      drawText('GROSS MONTHLY INCOME', 50, 458, { size: 7, bold: true, color: GRAY });
-      const inc = [['Base', d.base_income], ['Overtime', d.overtime_income], ['Bonus', d.bonus_income],
-        ['Commission', d.commission_income], ['Military', d.military_income], ['Other', d.other_income], ['TOTAL', d.total_income]];
-      inc.forEach(([label, val], i) => {
-        const iy = 478 + i * 20;
-        drawText(String(label), 50, iy, { size: 7.5, bold: label === 'TOTAL' });
-        drawLine(110, iy, 220, iy);
-        drawText(fmtMoney(val), 112, iy - 2, { size: 8.5 });
-      });
+      // Section 1b header
+      y += 32;
+      drawBox(50, y, 512, 16, { fill: rgb(0.15, 0.15, 0.15) });
+      drawText('Section 1b. Current Employment / Self-Employment', 54, y + 1, { size: 8.5, bold: true, color: rgb(1,1,1) });
 
-      drawLine(50, 770, 562, 770); drawText('Uniform Residential Loan Application — Page 1 of 3', 50, 780, { size: 7, color: GRAY });
+      // Employer rows
+      y += ROW - 12;
+      fieldLine('EMPLOYER NAME', d.emp_name, 50, y, 260);
+      fieldLine('PHONE', d.emp_phone, 320, y, 130);
+      y += ROW;
+      fieldLine('STREET', d.emp_street, 50, y, 220);
+      fieldLine('CITY', d.emp_city, 280, y, 100);
+      fieldLine('STATE', d.emp_state, 390, y, 40);
+      fieldLine('ZIP', d.emp_zip, 440, y, 60);
+      y += ROW;
+      fieldLine('TITLE', d.emp_title, 50, y, 180);
+      fieldLine('START DATE', fmtDate(d.emp_start), 240, y, 100);
+      fieldLine('YRS', fmt(d.emp_years), 350, y, 50);
+      fieldLine('MO', fmt(d.emp_months), 410, y, 40);
+      drawCheck(d.self_employed, 470, y - 4); drawText('Self-Employed', 482, y - 4, { size: 7 });
+
+      drawLine(50, 770, 562, 770);
+      drawText('Uniform Residential Loan Application — Page 1 of 3', 50, 780, { size: 7, color: GRAY });
       drawText('Borrower: ' + d.first_name + ' ' + d.last_name, 350, 780, { size: 7, color: GRAY });
     }
 
-    // ── PAGE 2: Loan/Property + Declarations ──
+    // ── PAGE 2: Income + Loan/Property + Declarations + Military ──
     {
       const { drawText, drawLine, drawBox, drawCheck, fieldLine } = addPage();
-      drawBox(50, 40, 512, 15, { fill: rgb(0.15, 0.15, 0.15) });
-      drawText('Section 4. Loan and Property Information', 54, 39, { size: 8.5, bold: true, color: rgb(1,1,1) });
 
-      const l1 = 78; fieldLine('LOAN AMOUNT', fmtMoney(d.loan_amount), 50, l1, 140);
-      drawText('LOAN PURPOSE', 210, l1 - 9, { size: 6, color: GRAY });
-      drawCheck(d.loan_purpose === 'Purchase', 210, l1); drawText('Purchase', 222, l1, { size: 7 });
-      drawCheck(d.loan_purpose === 'Refinance', 280, l1); drawText('Refinance', 292, l1, { size: 7 });
+      // Section 1b continued — Income table (moved here from Page 1).
+      drawBox(50, 40, 512, 16, { fill: rgb(0.15, 0.15, 0.15) });
+      drawText('Section 1b. Gross Monthly Income', 54, 41, { size: 8.5, bold: true, color: rgb(1,1,1) });
 
-      const p1 = 113; fieldLine('PROPERTY STREET', d.prop_street, 50, p1, 280);
-      const p2 = 143; fieldLine('CITY', d.prop_city, 50, p2, 140); fieldLine('STATE', d.prop_state, 200, p2, 50);
-      fieldLine('ZIP', d.prop_zip, 260, p2, 80); fieldLine('COUNTY', d.prop_county, 350, p2, 120); fieldLine('UNITS', fmt(d.num_units), 480, p2, 80);
-      const p3 = 173; fieldLine('PROPERTY VALUE', fmtMoney(d.prop_value), 50, p3, 160);
-      drawText('OCCUPANCY', 230, p3 - 9, { size: 6, color: GRAY });
-      ['Primary Residence','Second Home','Investment'].forEach((o, i) => {
-        drawCheck(d.occupancy === o, 230 + i * 115, p3); drawText(o, 242 + i * 115, p3, { size: 7 });
+      const inc: Array<[string, any]> = [
+        ['Base', d.base_income],
+        ['Overtime', d.overtime_income],
+        ['Bonus', d.bonus_income],
+        ['Commission', d.commission_income],
+        ['Military', d.military_income],
+        ['Other', d.other_income],
+        ['TOTAL', d.total_income],
+      ];
+      // Two-column layout: labels in col 1, values in col 2, 22pt rows.
+      inc.forEach(([label, val], i) => {
+        const iy = 78 + i * 22;
+        drawText(String(label), 60, iy - 3, { size: 8, bold: label === 'TOTAL' });
+        drawLine(140, iy, 280, iy);
+        drawText(fmtMoney(val), 144, iy - 4, { size: 9, bold: label === 'TOTAL' });
       });
-      const p4 = 203; drawText('LOAN TYPE', 50, p4 - 9, { size: 6, color: GRAY });
-      ['Conventional','FHA','VA','USDA-RD'].forEach((lt, i) => {
-        drawCheck(d.loan_type === lt, 50 + i * 100, p4); drawText(lt, 62 + i * 100, p4, { size: 7 });
+
+      // Section 4 header — anchored below the income table.
+      let y = 250;
+      drawBox(50, y, 512, 16, { fill: rgb(0.15, 0.15, 0.15) });
+      drawText('Section 4. Loan and Property Information', 54, y + 1, { size: 8.5, bold: true, color: rgb(1,1,1) });
+
+      // Loan amount + purpose
+      y += ROW - 12;
+      fieldLine('LOAN AMOUNT', fmtMoney(d.loan_amount), 50, y, 140);
+      drawText('LOAN PURPOSE', 210, y - 14, { size: 6, color: GRAY });
+      drawCheck(d.loan_purpose === 'Purchase', 210, y - 4); drawText('Purchase', 222, y - 4, { size: 7 });
+      drawCheck(d.loan_purpose === 'Refinance', 280, y - 4); drawText('Refinance', 292, y - 4, { size: 7 });
+
+      // Property street
+      y += ROW;
+      fieldLine('PROPERTY STREET', d.prop_street, 50, y, 280);
+
+      // Property city/state/zip/county/units
+      y += ROW;
+      fieldLine('CITY', d.prop_city, 50, y, 140);
+      fieldLine('STATE', d.prop_state, 200, y, 50);
+      fieldLine('ZIP', d.prop_zip, 260, y, 80);
+      fieldLine('COUNTY', d.prop_county, 350, y, 120);
+      fieldLine('UNITS', fmt(d.num_units), 480, y, 80);
+
+      // Property value + occupancy
+      y += ROW;
+      fieldLine('PROPERTY VALUE', fmtMoney(d.prop_value), 50, y, 160);
+      drawText('OCCUPANCY', 230, y - 14, { size: 6, color: GRAY });
+      ['Primary Residence', 'Second Home', 'Investment'].forEach((o, i) => {
+        drawCheck(d.occupancy === o, 230 + i * 115, y - 4); drawText(o, 242 + i * 115, y - 4, { size: 7 });
       });
 
-      // Declarations
-      const s5 = 240; drawBox(50, s5, 512, 15, { fill: rgb(0.15, 0.15, 0.15) });
-      drawText('Section 5. Declarations', 54, s5 - 1, { size: 8.5, bold: true, color: rgb(1,1,1) });
+      // Loan type
+      y += ROW - 10;
+      drawText('LOAN TYPE', 50, y - 14, { size: 6, color: GRAY });
+      ['Conventional', 'FHA', 'VA', 'USDA-RD'].forEach((lt, i) => {
+        drawCheck(d.loan_type === lt, 50 + i * 100, y - 4); drawText(lt, 62 + i * 100, y - 4, { size: 7 });
+      });
+
+      // Section 5 — Declarations
+      y += 30;
+      drawBox(50, y, 512, 16, { fill: rgb(0.15, 0.15, 0.15) });
+      drawText('Section 5. Declarations', 54, y + 1, { size: 8.5, bold: true, color: rgb(1,1,1) });
       const decls: [string, boolean][] = [
         ['A. Will you occupy this property as your primary residence?', d.decl_primary],
         ['F. Are you a co-signer or guarantor on any debt?', d.decl_cosigner],
@@ -275,55 +362,75 @@ Deno.serve(async (req: Request) => {
         ['L. Have you had property foreclosed in the last 7 years?', d.decl_foreclosure],
         ['M. Have you declared bankruptcy in the past 7 years?', d.decl_bankruptcy],
       ];
+      const declStart = y + 28;
       decls.forEach(([q, ans], i) => {
-        const dy = s5 + 28 + i * 26;
-        drawText(q, 54, dy, { size: 7.5 }); drawText('NO', 488, dy, { size: 7 }); drawText('YES', 518, dy, { size: 7 });
-        drawCheck(!ans, 484, dy + 3); drawCheck(!!ans, 514, dy + 3);
-        drawLine(50, dy + 14, 562, dy + 14, { color: LGRAY });
+        const dy = declStart + i * 22;
+        drawText(q, 54, dy, { size: 7.5 });
+        drawText('NO', 488, dy, { size: 7 });
+        drawText('YES', 518, dy, { size: 7 });
+        drawCheck(!ans, 484, dy + 3);
+        drawCheck(!!ans, 514, dy + 3);
+        drawLine(50, dy + 12, 562, dy + 12, { color: LGRAY });
       });
 
+      let postDecl = declStart + decls.length * 22 + 8;
       if (d.decl_bankruptcy) {
-        const btY = s5 + 28 + decls.length * 26 + 8;
-        drawText('Bankruptcy type:', 70, btY, { size: 7.5 });
-        ['Chapter 7','Chapter 11','Chapter 12','Chapter 13'].forEach((t, i) => {
-          drawCheck(d.bankruptcy_type === t, 170 + i * 90, btY + 2); drawText(t, 182 + i * 90, btY + 2, { size: 7 });
+        drawText('Bankruptcy type:', 70, postDecl, { size: 7.5 });
+        ['Chapter 7', 'Chapter 11', 'Chapter 12', 'Chapter 13'].forEach((t, i) => {
+          drawCheck(d.bankruptcy_type === t, 170 + i * 90, postDecl - 2); drawText(t, 182 + i * 90, postDecl - 2, { size: 7 });
         });
+        postDecl += 18;
       }
 
-      // Military
-      const milY = s5 + 210; drawBox(50, milY, 512, 15, { fill: rgb(0.15, 0.15, 0.15) });
-      drawText('Section 7. Military Service', 54, milY - 1, { size: 8.5, bold: true, color: rgb(1,1,1) });
-      drawText('Did you serve in the U.S. Armed Forces?', 54, milY + 22, { size: 7.5 });
-      drawText('NO', 488, milY + 22, { size: 7 }); drawText('YES', 518, milY + 22, { size: 7 });
-      drawCheck(!d.military_service, 484, milY + 26); drawCheck(!!d.military_service, 514, milY + 26);
+      // Section 7 — Military Service
+      const milY = postDecl + 14;
+      drawBox(50, milY, 512, 16, { fill: rgb(0.15, 0.15, 0.15) });
+      drawText('Section 7. Military Service', 54, milY + 1, { size: 8.5, bold: true, color: rgb(1,1,1) });
+      drawText('Did you serve in the U.S. Armed Forces?', 54, milY + 32, { size: 7.5 });
+      drawText('NO', 488, milY + 32, { size: 7 });
+      drawText('YES', 518, milY + 32, { size: 7 });
+      drawCheck(!d.military_service, 484, milY + 36);
+      drawCheck(!!d.military_service, 514, milY + 36);
 
-      drawLine(50, 770, 562, 770); drawText('Uniform Residential Loan Application — Page 2 of 3', 50, 780, { size: 7, color: GRAY });
+      drawLine(50, 770, 562, 770);
+      drawText('Uniform Residential Loan Application — Page 2 of 3', 50, 780, { size: 7, color: GRAY });
       drawText('Borrower: ' + d.first_name + ' ' + d.last_name, 350, 780, { size: 7, color: GRAY });
     }
 
     // ── PAGE 3: LO Info + Signature ──
     {
       const { drawText, drawLine, drawBox, fieldLine } = addPage();
-      drawBox(50, 40, 512, 15, { fill: rgb(0.15, 0.15, 0.15) });
-      drawText('Section 9. Loan Originator Information', 54, 39, { size: 8.5, bold: true, color: rgb(1,1,1) });
+      drawBox(50, 40, 512, 16, { fill: rgb(0.15, 0.15, 0.15) });
+      drawText('Section 9. Loan Originator Information', 54, 41, { size: 8.5, bold: true, color: rgb(1,1,1) });
 
-      const y = 78;
+      let y = 90;
       fieldLine('ORGANIZATION', 'E Mortgage Capital / Rates & Realty', 50, y, 350);
-      fieldLine('ADDRESS', 'Huntington Beach, CA', 50, y + 30, 350);
-      fieldLine('ORG NMLS ID', '1795044', 50, y + 60, 180);
-      fieldLine('LOAN ORIGINATOR', 'Rene Duarte', 50, y + 90, 220);
-      fieldLine('ORIGINATOR NMLS', '1795044', 50, y + 120, 150); fieldLine('DRE LICENSE', '02035220', 220, y + 120, 120);
-      fieldLine('EMAIL', 'rene@ratesandrealty.com', 50, y + 150, 250); fieldLine('PHONE', '714-472-8508', 310, y + 150, 150);
+      y += ROW;
+      fieldLine('ADDRESS', 'Huntington Beach, CA', 50, y, 350);
+      y += ROW;
+      fieldLine('ORG NMLS ID', '1795044', 50, y, 180);
+      y += ROW;
+      fieldLine('LOAN ORIGINATOR', 'Rene Duarte', 50, y, 220);
+      y += ROW;
+      fieldLine('ORIGINATOR NMLS', '1795044', 50, y, 150);
+      fieldLine('DRE LICENSE', '02035220', 220, y, 120);
+      y += ROW;
+      fieldLine('EMAIL', 'rene@ratesandrealty.com', 50, y, 250);
+      fieldLine('PHONE', '714-472-8508', 310, y, 150);
 
-      const sigY = y + 200;
+      const sigY = y + 60;
       drawText('BORROWER SIGNATURE', 50, sigY, { size: 8, bold: true });
-      drawLine(50, sigY + 28, 340, sigY + 28); drawText('Date:', 360, sigY + 28, { size: 7.5 }); drawLine(390, sigY + 28, 500, sigY + 28);
+      drawLine(50, sigY + 28, 340, sigY + 28);
+      drawText('Date:', 360, sigY + 28, { size: 7.5 });
+      drawLine(390, sigY + 28, 500, sigY + 28);
       drawText('By signing, I certify the information in this application is true and correct.', 50, sigY + 48, { size: 7, color: GRAY });
 
-      // Branding
-      drawLine(50, 720, 562, 720, { color: GOLD }); drawText('Rates & Realty | E Mortgage Capital', 50, 732, { size: 8.5, bold: true, color: GOLD });
+      // Branding footer
+      drawLine(50, 720, 562, 720, { color: GOLD });
+      drawText('Rates & Realty | E Mortgage Capital', 50, 732, { size: 8.5, bold: true, color: GOLD });
       drawText('Rene Duarte NMLS #1795044 · DRE #02035220 · 714-472-8508 · rene@ratesandrealty.com', 50, 744, { size: 7, color: GRAY });
-      drawLine(50, 770, 562, 770); drawText('Uniform Residential Loan Application — Page 3 of 3', 50, 780, { size: 7, color: GRAY });
+      drawLine(50, 770, 562, 770);
+      drawText('Uniform Residential Loan Application — Page 3 of 3', 50, 780, { size: 7, color: GRAY });
     }
 
     // Serialize
@@ -331,7 +438,8 @@ Deno.serve(async (req: Request) => {
     const base64 = btoa(String.fromCharCode(...new Uint8Array(pdfBytes)));
     const fileName = `1003_${(d.last_name || 'Borrower').replace(/\s/g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`;
 
-    return new Response(JSON.stringify({ pdf_base64: base64, file_name: fileName }), { headers: cors });
+    // Return both `pdf` and `pdf_base64` so legacy + new clients both work.
+    return new Response(JSON.stringify({ success: true, pdf: base64, pdf_base64: base64, file_name: fileName, source: 'custom' }), { headers: cors });
   } catch (err: any) {
     console.error('[generate-1003-pdf] Error:', err);
     return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: cors });
