@@ -31,9 +31,58 @@ Deno.serve(async (req: Request) => {
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 
   try {
-    const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
     const url = new URL(req.url);
-    const action = body.action || url.searchParams.get('action');
+    const contentType = req.headers.get('content-type') || '';
+    const qsAction = url.searchParams.get('action');
+
+    // ─── UPLOAD DOCUMENT (multipart/form-data) ───────────────────────────
+    // Client posts FormData with fields: file, contact_id, portal_user_id, category
+    if (req.method === 'POST' && contentType.includes('multipart/form-data')) {
+      if (qsAction !== 'upload_document') return err('Unsupported multipart action');
+      const form = await req.formData();
+      const file = form.get('file') as File | null;
+      if (!file) return err('file required');
+      const portal_user_id = (form.get('portal_user_id') as string) || '';
+      let contact_id = (form.get('contact_id') as string) || '';
+      const category = (form.get('category') as string) || 'general';
+
+      // Resolve contact_id from portal_user_id if missing
+      if (!contact_id && portal_user_id) {
+        const { data: pu } = await sb.from('portal_users').select('contact_id').eq('id', portal_user_id).maybeSingle();
+        if (pu?.contact_id) contact_id = pu.contact_id;
+      }
+      if (!contact_id) return err('Could not resolve contact_id', 400);
+
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storage_path = `${contact_id}/${Date.now()}_${safeName}`;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+
+      const { error: upErr } = await sb.storage
+        .from('borrower-documents')
+        .upload(storage_path, bytes, { contentType: file.type || 'application/octet-stream', upsert: true });
+      if (upErr) return err('Storage upload failed: ' + upErr.message, 500);
+
+      const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(storage_path);
+      const file_url = urlData.publicUrl;
+
+      const { data: inserted, error: dbErr } = await sb.from('uploaded_documents').insert({
+        contact_id,
+        document_type: category,
+        type: category,
+        file_name: file.name,
+        file_path: storage_path,
+        file_url,
+        file_size: file.size,
+        status: 'received',
+        uploaded_at: new Date().toISOString(),
+      }).select().maybeSingle();
+      if (dbErr) return err('DB insert failed: ' + dbErr.message, 500);
+
+      return ok({ success: true, document: inserted, file_url });
+    }
+
+    const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
+    const action = body.action || qsAction;
 
     // ─── GET SHOWINGS (portal) ───────────────────────────────────────────
     if (action === 'get_showings') {
@@ -163,15 +212,37 @@ Deno.serve(async (req: Request) => {
 
     // ─── GET SAVED HOMES ─────────────────────────────────────────────────
     if (action === 'get_saved_homes') {
-      const { portal_user_id, contact_id, email } = body;
-      let q = sb.from('saved_listings').select('*').order('created_at', { ascending: false });
-      if (portal_user_id) q = q.eq('portal_user_id', portal_user_id);
-      else if (contact_id) q = q.eq('contact_id', contact_id);
-      else if (email) q = q.eq('email', email);
-      else return err('portal_user_id, contact_id or email required');
-      const { data, error } = await q;
+      const { portal_user_id, email } = body;
+      let { contact_id } = body;
+      // Resolve contact_id from portal_user_id so legacy rows (saved before
+      // portal_user_id was populated) are still found.
+      if (!contact_id && portal_user_id) {
+        const { data: pu } = await sb.from('portal_users').select('contact_id').eq('id', portal_user_id).maybeSingle();
+        if (pu?.contact_id) contact_id = pu.contact_id;
+      }
+      const orParts: string[] = [];
+      if (portal_user_id) orParts.push(`portal_user_id.eq.${portal_user_id}`);
+      if (contact_id) orParts.push(`contact_id.eq.${contact_id}`);
+      if (email) orParts.push(`email.eq.${email}`);
+      if (!orParts.length) return err('portal_user_id, contact_id or email required');
+      const { data, error } = await sb.from('saved_listings')
+        .select('*')
+        .or(orParts.join(','))
+        .order('created_at', { ascending: false });
       if (error) return err(error.message, 500);
-      return ok({ saved_homes: data || [] });
+      // Return both `homes` (legacy client key) and `saved_homes`.
+      return ok({ homes: data || [], saved_homes: data || [] });
+    }
+
+    // ─── REMOVE SAVED HOME ───────────────────────────────────────────────
+    if (action === 'remove_saved_home') {
+      const { id, portal_user_id } = body;
+      if (!id) return err('id required');
+      let q = sb.from('saved_listings').delete().eq('id', id);
+      if (portal_user_id) q = q.eq('portal_user_id', portal_user_id);
+      const { error } = await q;
+      if (error) return err(error.message, 500);
+      return ok({ success: true });
     }
 
     // ─── GET DOCUMENTS ───────────────────────────────────────────────────
