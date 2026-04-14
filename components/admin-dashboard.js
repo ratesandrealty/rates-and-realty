@@ -1101,6 +1101,19 @@ async function renderDocuments() {
       @keyframes fvSpin{to{transform:rotate(360deg);}}
       #fv-borrower-list::-webkit-scrollbar,#fv-file-list::-webkit-scrollbar{width:4px;}
       #fv-borrower-list::-webkit-scrollbar-thumb,#fv-file-list::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:2px;}
+      /* Adobe-style PDF toolbar */
+      .fv-pdf-tb{display:none;align-items:center;gap:2px;height:36px;padding:0 10px;background:#2D2D2D;border-bottom:1px solid #1a1a1a;flex-shrink:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;}
+      .fv-tb-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:26px;min-width:26px;padding:0 7px;background:transparent;border:1px solid transparent;border-radius:4px;color:#d8d8d8;cursor:pointer;font-family:inherit;font-size:12px;line-height:1;transition:background .12s,border-color .12s,color .12s;}
+      .fv-tb-btn:hover{background:#3d3d3d;color:#fff;}
+      .fv-tb-btn:active{background:#454545;}
+      .fv-tb-btn.is-active{background:#454545;border-color:#5a5a5a;color:#fff;}
+      .fv-tb-btn-save{display:none;background:#1f7a3f;border-color:#268a48;color:#fff;}
+      .fv-tb-btn-save:hover{background:#268a48;color:#fff;}
+      .fv-tb-btn-ghost{display:none;}
+      .fv-tb-label{font-size:11px;font-weight:600;letter-spacing:.2px;}
+      .fv-tb-zoom{height:24px;width:54px;padding:0 6px;background:#1f1f1f;border:1px solid #4a4a4a;border-radius:3px;color:#e8e8e8;font-family:inherit;font-size:11px;text-align:center;outline:none;margin:0 2px;}
+      .fv-tb-zoom:focus{border-color:#7a7a7a;background:#252525;}
+      .fv-tb-sep{display:inline-block;width:1px;height:18px;background:#4a4a4a;margin:0 6px;}
     `;
     document.head.appendChild(s);
   }
@@ -1188,18 +1201,18 @@ async function renderDocuments() {
             <span id="fv-viewer-counter" style="color:#444;font-size:12px;"></span>
             <button id="fv-viewer-next" style="background:transparent;border:1px solid #2a2a2a;color:#666;cursor:pointer;padding:4px 16px;border-radius:6px;font-size:13px;font-family:inherit;">Next &#8594;</button>
           </div>
-          <!-- PDF editing toolbar — only visible when a PDF is loaded -->
-          <div id="fv-pdf-toolbar" style="display:none;flex-wrap:wrap;gap:8px;padding:8px 16px;background:#111;border-bottom:1px solid #2a2a2a;align-items:center;flex-shrink:0;">
-            <button id="fv-pdf-zoom-out" type="button" title="Zoom out" style="padding:5px 11px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:14px;font-family:inherit;">&minus;</button>
-            <span id="fv-pdf-zoom-level" style="font-size:11px;color:rgba(201,168,76,0.7);min-width:38px;text-align:center;">100%</span>
-            <button id="fv-pdf-zoom-in" type="button" title="Zoom in" style="padding:5px 11px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:14px;font-family:inherit;">+</button>
-            <span style="width:1px;height:20px;background:#2a2a2a;margin:0 4px;"></span>
-            <button id="fv-pdf-rotate-btn" type="button" title="Rotate 90&deg;" style="padding:5px 11px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:13px;font-family:inherit;">&#8635; Rotate</button>
-            <button id="fv-pdf-save-rot-btn" type="button" style="display:none;padding:5px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit;">&#128190; Save Rotation</button>
-            <span style="width:1px;height:20px;background:#2a2a2a;margin:0 4px;"></span>
-            <button id="fv-pdf-crop-btn" type="button" title="Crop page" style="padding:5px 12px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:13px;font-family:inherit;">&#9986; Crop</button>
-            <button id="fv-pdf-crop-apply-btn" type="button" style="display:none;padding:5px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit;">Apply Crop</button>
-            <button id="fv-pdf-crop-cancel-btn" type="button" style="display:none;padding:5px 12px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;cursor:pointer;font-size:11px;font-family:inherit;">Cancel</button>
+          <!-- PDF editing toolbar — Adobe Acrobat style, only visible when a PDF is loaded -->
+          <div id="fv-pdf-toolbar" class="fv-pdf-tb">
+            <button id="fv-pdf-zoom-out" type="button" class="fv-tb-btn" title="Zoom out" aria-label="Zoom out"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="8" x2="13" y2="8"/></svg></button>
+            <input id="fv-pdf-zoom-level" class="fv-tb-zoom" type="text" value="100%" title="Click to enter a zoom percentage">
+            <button id="fv-pdf-zoom-in" type="button" class="fv-tb-btn" title="Zoom in" aria-label="Zoom in"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="8" x2="13" y2="8"/><line x1="8" y1="3" x2="8" y2="13"/></svg></button>
+            <span class="fv-tb-sep"></span>
+            <button id="fv-pdf-rotate-btn" type="button" class="fv-tb-btn" title="Rotate 90&deg; clockwise" aria-label="Rotate 90 degrees"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><polyline points="13.5 2.5 13.5 5 11 5"/></svg></button>
+            <button id="fv-pdf-save-rot-btn" type="button" class="fv-tb-btn fv-tb-btn-save" title="Save rotation to file" aria-label="Save rotation"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5h-9a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-9z"/><polyline points="4 1.5 4 5.5 10 5.5 10 1.5"/><rect x="4" y="9" width="8" height="5"/></svg><span class="fv-tb-label">Save</span></button>
+            <span class="fv-tb-sep"></span>
+            <button id="fv-pdf-crop-btn" type="button" class="fv-tb-btn" title="Crop page" aria-label="Crop"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 1v10a1 1 0 0 0 1 1h10"/><path d="M1 4h10a1 1 0 0 1 1 1v10"/></svg></button>
+            <button id="fv-pdf-crop-apply-btn" type="button" class="fv-tb-btn fv-tb-btn-save" title="Apply crop"><span class="fv-tb-label">Apply</span></button>
+            <button id="fv-pdf-crop-cancel-btn" type="button" class="fv-tb-btn fv-tb-btn-ghost" title="Cancel crop"><span class="fv-tb-label">Cancel</span></button>
           </div>
           <div id="fv-viewer-host" style="flex:1;overflow:auto;background:#0a0a0a;position:relative;">
             <div id="fv-viewer-canvas-wrap" style="display:none;padding:16px;position:relative;"></div>
@@ -1334,6 +1347,21 @@ function _fvBindPanels() {
   if (zoomOut) zoomOut.onclick = () => _fvPdfZoom(-0.2);
   const zoomIn = document.getElementById("fv-pdf-zoom-in");
   if (zoomIn) zoomIn.onclick = () => _fvPdfZoom(0.2);
+  const zoomInput = document.getElementById("fv-pdf-zoom-level");
+  if (zoomInput) {
+    zoomInput.onfocus = () => zoomInput.select();
+    const commit = () => {
+      const raw = (zoomInput.value || "").replace(/[^0-9.]/g, "");
+      const pct = parseFloat(raw);
+      if (Number.isFinite(pct) && pct > 0) _fvPdfZoomTo(pct);
+      else _fvSyncZoomInput();
+    };
+    zoomInput.onblur = commit;
+    zoomInput.onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); zoomInput.blur(); }
+      else if (e.key === "Escape") { _fvSyncZoomInput(); zoomInput.blur(); }
+    };
+  }
   const rotateBtn = document.getElementById("fv-pdf-rotate-btn");
   if (rotateBtn) rotateBtn.onclick = _fvPdfRotate;
   const saveRotBtn = document.getElementById("fv-pdf-save-rot-btn");
@@ -2412,9 +2440,20 @@ async function _fvLoadBlobIntoIframe(f) {
   if (isPdf || isImage) {
     try {
       const token = await _fvEnsureToken();
+      // Cache-bust query param + no-cache headers — after Save Rotation the
+      // Drive file id is unchanged, so without this the browser/CDN serves
+      // the stale pre-rotation bytes and the viewer looks like nothing
+      // happened.
       const res = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(f.id)}?alt=media`,
-        { headers: { Authorization: "Bearer " + token } }
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(f.id)}?alt=media&supportsAllDrives=true&t=${Date.now()}`,
+        {
+          headers: {
+            Authorization: "Bearer " + token,
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+          cache: "no-store",
+        }
       );
       if (res.status === 401 || res.status === 403) _fvClearToken();
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -2500,14 +2539,19 @@ function _fvUpdateSaveRotBtn() {
   const btn = document.getElementById("fv-pdf-save-rot-btn");
   if (!btn) return;
   const visible = _fvViewerState && _fvViewerState.type === "pdf" && (_fvViewerState.rotation || 0) !== 0;
-  btn.style.display = visible ? "inline-block" : "none";
+  btn.style.display = visible ? "inline-flex" : "none";
 }
 
 function _fvSetCropBtnsVisibility(show) {
   const apply = document.getElementById("fv-pdf-crop-apply-btn");
   const cancel = document.getElementById("fv-pdf-crop-cancel-btn");
-  if (apply) apply.style.display = show ? "inline-block" : "none";
-  if (cancel) cancel.style.display = show ? "inline-block" : "none";
+  if (apply) apply.style.display = show ? "inline-flex" : "none";
+  if (cancel) cancel.style.display = show ? "inline-flex" : "none";
+}
+
+function _fvSyncZoomInput() {
+  const lvl = document.getElementById("fv-pdf-zoom-level");
+  if (lvl && _fvViewerState) lvl.value = Math.round((_fvViewerState.scale || 1) * 100) + "%";
 }
 
 // ── PDF EDITING ACTIONS ────────────────────────────────────────────────
@@ -2515,8 +2559,15 @@ function _fvSetCropBtnsVisibility(show) {
 function _fvPdfZoom(delta) {
   if (!_fvViewerState || _fvViewerState.type !== "pdf") return;
   _fvViewerState.scale = Math.max(0.4, Math.min(3.0, (_fvViewerState.scale || 1) + delta));
-  const lvl = document.getElementById("fv-pdf-zoom-level");
-  if (lvl) lvl.textContent = Math.round(_fvViewerState.scale * 100) + "%";
+  _fvSyncZoomInput();
+  _fvRenderPdfPages(_fvViewerState.index);
+}
+
+function _fvPdfZoomTo(percent) {
+  if (!_fvViewerState || _fvViewerState.type !== "pdf") return;
+  const pct = Math.max(40, Math.min(300, Number(percent) || 100));
+  _fvViewerState.scale = pct / 100;
+  _fvSyncZoomInput();
   _fvRenderPdfPages(_fvViewerState.index);
 }
 
@@ -2533,10 +2584,11 @@ async function _fvPdfSaveRotation() {
   const file = _fvViewerState.files && _fvViewerState.files[_fvViewerState.index];
   if (!file || !_fvViewerState.rotation) return;
   const btn = document.getElementById("fv-pdf-save-rot-btn");
+  const SAVE_BTN_HTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5h-9a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-9z"/><polyline points="4 1.5 4 5.5 10 5.5 10 1.5"/><rect x="4" y="9" width="8" height="5"/></svg><span class="fv-tb-label">Save</span>';
   const pendingRot = _fvViewerState.rotation;
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #1A0E00;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;vertical-align:middle;margin-right:6px;"></span>Saving…';
+    btn.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;"></span><span class="fv-tb-label">Saving</span>';
   }
   try {
     const { supabase } = await import("/api/supabase-client.js");
@@ -2551,15 +2603,15 @@ async function _fvPdfSaveRotation() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) throw new Error((data && data.error) || ("HTTP " + res.status));
-    if (btn) { btn.innerHTML = "✓ Saved"; btn.style.background = "#52C87A"; btn.style.color = "#fff"; }
+    if (btn) {
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8.5 6.5 12 13 4.5"/></svg><span class="fv-tb-label">Saved</span>';
+    }
     _fvShowToast("Rotation saved");
     // Refresh the file list and reopen viewer on the new (rotated) file.
     setTimeout(async () => {
       if (btn) {
         btn.disabled = false;
-        btn.innerHTML = "&#128190; Save Rotation";
-        btn.style.background = "linear-gradient(135deg,#7A5020,#C9A84C)";
-        btn.style.color = "#1A0E00";
+        btn.innerHTML = SAVE_BTN_HTML;
         btn.style.display = "none";
       }
       const contact = _fvContacts.find((c) => c.id === _fvViewerState.contactId);
@@ -2580,9 +2632,7 @@ async function _fvPdfSaveRotation() {
     console.error("[FileVault][saveRotation] failed:", e);
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = "&#128190; Save Rotation";
-      btn.style.background = "linear-gradient(135deg,#7A5020,#C9A84C)";
-      btn.style.color = "#1A0E00";
+      btn.innerHTML = SAVE_BTN_HTML;
     }
     _fvShowToast("Save failed: " + (e.message || e));
   }
@@ -2603,7 +2653,7 @@ function _fvPdfToggleCrop() {
   _fvViewerState.cropMode = true;
   _fvViewerState.cropSelection = null;
   const btn = document.getElementById("fv-pdf-crop-btn");
-  if (btn) { btn.style.background = "#C9A84C"; btn.style.color = "#1A0E00"; }
+  if (btn) btn.classList.add("is-active");
   const wrap = document.getElementById("fv-viewer-canvas-wrap");
   if (wrap) {
     wrap.style.cursor = "crosshair";
@@ -2617,7 +2667,7 @@ function _fvPdfExitCropMode() {
   _fvViewerState.cropDragging = false;
   _fvViewerState.cropSelection = null;
   const btn = document.getElementById("fv-pdf-crop-btn");
-  if (btn) { btn.style.background = "#1a1a1a"; btn.style.color = "#C9A84C"; }
+  if (btn) btn.classList.remove("is-active");
   const wrap = document.getElementById("fv-viewer-canvas-wrap");
   if (wrap) {
     wrap.style.cursor = "";
