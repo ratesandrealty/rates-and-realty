@@ -1182,8 +1182,9 @@ async function renderDocuments() {
             <span id="fv-viewer-counter" style="color:#444;font-size:12px;"></span>
             <button id="fv-viewer-next" style="background:transparent;border:1px solid #2a2a2a;color:#666;cursor:pointer;padding:4px 16px;border-radius:6px;font-size:13px;font-family:inherit;">Next &#8594;</button>
           </div>
-          <div style="flex:1;overflow:hidden;background:#0a0a0a;">
-            <iframe id="fv-viewer-iframe" style="width:100%;height:100%;border:none;" src="about:blank"></iframe>
+          <div id="fv-viewer-host" style="flex:1;overflow:auto;background:#0a0a0a;position:relative;">
+            <div id="fv-viewer-canvas-wrap" style="display:none;padding:16px;"></div>
+            <iframe id="fv-viewer-iframe" style="width:100%;height:100%;border:none;display:block;" src="about:blank"></iframe>
           </div>
         </div>
       </div>
@@ -2244,21 +2245,48 @@ async function _fvViewerRender() {
   _fvHighlightActiveFileRow();
 }
 
-// Load file bytes via Drive alt=media + OAuth token, create a blob URL, and
-// set the persistent iframe src. Fetching via OAuth (not embed of
-// drive.google.com) sidesteps the frame-ancestors CSP block.
+// Lazy-load pdf.js from CDN once per session.
+let _fvPdfJsPromise = null;
+function _fvEnsurePdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_fvPdfJsPromise) return _fvPdfJsPromise;
+  _fvPdfJsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload = () => {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        resolve(window.pdfjsLib);
+      } else {
+        reject(new Error("pdfjsLib missing after script load"));
+      }
+    };
+    s.onerror = () => { _fvPdfJsPromise = null; reject(new Error("pdf.js CDN failed to load")); };
+    document.head.appendChild(s);
+  });
+  return _fvPdfJsPromise;
+}
+
+// Load file bytes via Drive alt=media + OAuth token. PDFs render into a
+// <canvas> stack via pdf.js (no browser-native viewer chrome). Images render
+// inline. Other types fall back to the Google Docs viewer iframe.
 async function _fvLoadBlobIntoIframe(f) {
   const iframe = document.getElementById("fv-viewer-iframe");
-  if (!iframe) return;
+  const canvasWrap = document.getElementById("fv-viewer-canvas-wrap");
+  if (!iframe || !canvasWrap) return;
   const renderIndex = _fvViewerState && _fvViewerState.index;
   const mime = f.mimeType || "";
   const isPdf = _fvIsPdf(f);
   const isImage = mime.indexOf("image/") === 0;
 
-  // Loading indicator via about:blank with a tiny inline page.
-  iframe.src = "data:text/html;charset=UTF-8," + encodeURIComponent(
-    `<html><body style="margin:0;background:#0a0a0a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#666;"><div style="display:flex;align-items:center;gap:10px;"><span style="width:18px;height:18px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;"></span>Loading…</div><style>@keyframes s{to{transform:rotate(360deg)}}</style></body></html>`
-  );
+  // Show loading state in the canvas wrap; hide the iframe by default.
+  canvasWrap.style.display = "block";
+  canvasWrap.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:center;padding:60px 20px;color:#666;font-family:system-ui;gap:10px;">' +
+    '<span style="width:18px;height:18px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;"></span>Loading…</div>';
+  iframe.style.display = "none";
+  iframe.src = "about:blank";
 
   if (isPdf || isImage) {
     try {
@@ -2269,23 +2297,50 @@ async function _fvLoadBlobIntoIframe(f) {
       );
       if (res.status === 401 || res.status === 403) _fvClearToken();
       if (!res.ok) throw new Error("HTTP " + res.status);
-      const blob = await res.blob();
+      const buf = await res.arrayBuffer();
       // Stale-fetch guard — user navigated away mid-load.
       if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
-      const blobUrl = URL.createObjectURL(blob);
-      _fvRevokeBlobUrl();
-      _fvViewerState.blobUrl = blobUrl;
-      iframe.src = blobUrl;
+
+      if (isPdf) {
+        const pdfjsLib = await _fvEnsurePdfJs();
+        if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
+        const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+        if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
+        canvasWrap.innerHTML = "";
+        const baseScale = 1.5;
+        for (let i = 1; i <= pdfDoc.numPages; i++) {
+          const page = await pdfDoc.getPage(i);
+          if (!_fvViewerState || _fvViewerState.index !== renderIndex) { try { pdfDoc.destroy(); } catch (_) {} return; }
+          const viewport = page.getViewport({ scale: baseScale });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.style.cssText = "display:block;margin:0 auto 12px;max-width:100%;height:auto;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.5);border-radius:4px;";
+          canvasWrap.appendChild(canvas);
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+        }
+      } else {
+        // Image: blob URL inside an <img>, retain blobUrl for cleanup.
+        _fvRevokeBlobUrl();
+        const blob = new Blob([buf], { type: mime || "image/jpeg" });
+        const blobUrl = URL.createObjectURL(blob);
+        _fvViewerState.blobUrl = blobUrl;
+        canvasWrap.innerHTML = '<img src="' + blobUrl + '" alt="" style="display:block;margin:0 auto;max-width:100%;height:auto;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.5);">';
+      }
     } catch (e) {
       console.error("[FileVault][viewer] fetch failed:", e);
-      iframe.src = "data:text/html;charset=UTF-8," + encodeURIComponent(
-        `<html><body style="margin:0;background:#0a0a0a;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#e0a0a0;gap:10px;"><div style="font-size:2rem;">⚠️</div><div>Preview failed: ${(e.message || "network error").replace(/</g, "&lt;")}</div></body></html>`
-      );
+      canvasWrap.innerHTML =
+        '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#e0a0a0;font-family:system-ui;gap:10px;">' +
+        '<div style="font-size:2rem;">⚠️</div><div>Preview failed: ' +
+        (e.message || "network error").replace(/</g, "&lt;") + "</div></div>";
     }
     return;
   }
 
-  // Google-native docs + other types: use the Docs viewer proxy.
+  // Google-native docs + other types: use the Docs viewer proxy iframe.
+  canvasWrap.style.display = "none";
+  canvasWrap.innerHTML = "";
+  iframe.style.display = "block";
   const docsViewerUrl = "https://docs.google.com/viewer?embedded=true&url=" +
     encodeURIComponent(`https://drive.google.com/uc?export=download&id=${f.id}`);
   iframe.src = docsViewerUrl;

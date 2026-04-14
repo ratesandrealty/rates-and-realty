@@ -189,11 +189,13 @@ Deno.serve(async (req: Request) => {
         resolvedContactId = c?.id || null;
       }
 
-      // Build OR filter to catch all docs for this person
+      // Build OR filter to catch all docs for this person.
+      // NOTE: portal_user_id is NOT a column on uploaded_documents — it's
+      // resolved to contact_id above. Don't add it to the OR filter or the
+      // query 500s.
       const filters: string[] = [];
       if (resolvedContactId) filters.push(`contact_id.eq.${resolvedContactId}`);
       if (lead_id) filters.push(`lead_id.eq.${lead_id}`);
-      if (portal_user_id) filters.push(`portal_user_id.eq.${portal_user_id}`);
       if (borrower_id) filters.push(`borrower_id.eq.${borrower_id}`);
 
       if (!filters.length) return err('contact_id, portal_user_id, lead_id, borrower_id, or email required');
