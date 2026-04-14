@@ -78,6 +78,29 @@ Deno.serve(async (req: Request) => {
       }).select().maybeSingle();
       if (dbErr) return err('DB insert failed: ' + dbErr.message, 500);
 
+      // Trigger gdrive-sync synchronously with an 8s timeout so the doc
+      // lands in Drive before the upload response returns. Failures here
+      // are non-fatal — the DB row is already saved and a later
+      // sync_all_pending run will pick it up.
+      try {
+        const syncUrl = Deno.env.get('SUPABASE_URL') + '/functions/v1/gdrive-sync';
+        const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8000);
+        try {
+          await fetch(syncUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + serviceKey },
+            body: JSON.stringify({ action: 'sync_document', document_id: inserted?.id }),
+            signal: ctrl.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (syncErr: any) {
+        console.warn('[portal-data] gdrive-sync trigger failed (non-fatal):', syncErr?.message);
+      }
+
       return ok({ success: true, document: inserted, file_url });
     }
 
