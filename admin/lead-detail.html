@@ -250,6 +250,32 @@
       min-height: 100vh;
       align-items: stretch;
     }
+    .ld-sidebar { transition: width .25s ease, min-width .25s ease, padding .25s ease, opacity .2s ease; }
+
+    /* PDF viewer modal — responsive width based on collapse state */
+    #doc-viewer-modal > .doc-viewer-shell {
+      width: var(--doc-viewer-w, 90vw);
+      max-width: var(--doc-viewer-max, 900px);
+      transition: width .25s ease, max-width .25s ease;
+    }
+    body.sidebar-collapsed { --doc-viewer-w: 94vw; --doc-viewer-max: 1300px; }
+    body.vault-collapsed { --doc-viewer-w: 95vw; --doc-viewer-max: 1600px; }
+    body.sidebar-collapsed.vault-collapsed { --doc-viewer-w: 97vw; --doc-viewer-max: none; }
+
+    /* Vault collapse arrow on documents tab */
+    #vaultCollapseBtn {
+      position: absolute; top: 22px; right: 24px; z-index: 10;
+      width: 28px; height: 28px; border-radius: 6px;
+      background: #1a1a1a; border: 1px solid #333; color: #C9A84C;
+      font-size: 14px; font-weight: 700; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      transition: background .2s, color .2s;
+    }
+    #vaultCollapseBtn:hover { background: #222; color: #f2cf85; }
+    body.vault-collapsed #docs-list,
+    body.vault-collapsed #doc-drop-zone { display: none !important; }
+    body.vault-collapsed #tab-documents .ld-section > div:first-child > .ld-section-title { opacity: .5; }
 
     /* ── LEFT SIDEBAR ── */
     .ld-sidebar {
@@ -3246,7 +3272,8 @@
          TAB 3: DOCUMENTS
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-documents">
-      <div class="ld-section" style="padding:0;">
+      <button id="vaultCollapseBtn" type="button" onclick="toggleVaultCollapse()" title="Collapse / expand documents list" aria-label="Toggle documents list">&#8249;</button>
+      <div class="ld-section" style="padding:0;position:relative;">
         <!-- Header -->
         <div style="padding:22px 24px 16px; display:flex; justify-content:space-between; align-items:center;">
           <div class="ld-section-title" style="margin:0;border:none;padding:0;">Documents</div>
@@ -3288,9 +3315,10 @@
         </div>
       </div>
 
+      <!-- pdf viewer toolbar v2 -->
       <!-- PDF Viewer Modal -->
       <div id="doc-viewer-modal" onclick="if(event.target===this)closeDocViewer()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9999; align-items:center; justify-content:center;">
-        <div style="background:#1a1a1a; border-radius:16px; width:90vw; max-width:900px; height:95vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(255,255,255,0.1);">
+        <div class="doc-viewer-shell" style="background:#1a1a1a; border-radius:16px; height:95vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(255,255,255,0.1);">
           <div style="padding:16px 20px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08);">
             <div>
               <div id="doc-viewer-name" style="font-weight:600; font-size:15px;"></div>
@@ -7213,30 +7241,62 @@ async function logActivity(type, description) {
 
 /* ── TAB SWITCHING ── */
 var _sidebarCollapsed = false;
-function toggleLeadSidebar() {
-  _sidebarCollapsed = !_sidebarCollapsed;
+function _applyLeadSidebarState(collapsed) {
   var panel = document.getElementById('leadLeftSidebar');
   var btn = document.getElementById('sidebarToggleBtn');
-  if (!panel) {
-    console.error('leadLeftSidebar not found');
-    return;
-  }
-  if (_sidebarCollapsed) {
-    panel._ow = panel.offsetWidth;
-    panel._op = getComputedStyle(panel).padding;
+  if (!panel) return;
+  _sidebarCollapsed = collapsed;
+  if (collapsed) {
+    if (!panel._ow) {
+      panel._ow = panel.offsetWidth || 220;
+      panel._op = getComputedStyle(panel).padding;
+    }
     panel.style.width = '0px';
     panel.style.minWidth = '0px';
     panel.style.padding = '0';
     panel.style.opacity = '0';
+    document.body.classList.add('sidebar-collapsed');
     if (btn) btn.innerHTML = '&#8250;';
   } else {
     panel.style.width = (panel._ow || 220) + 'px';
     panel.style.minWidth = (panel._ow || 220) + 'px';
     panel.style.padding = panel._op || '';
     panel.style.opacity = '1';
+    document.body.classList.remove('sidebar-collapsed');
     if (btn) btn.innerHTML = '&#8249;';
   }
 }
+function toggleLeadSidebar() {
+  var next = !_sidebarCollapsed;
+  _applyLeadSidebarState(next);
+  try { localStorage.setItem('rr-lead-sidebar-collapsed', next ? '1' : '0'); } catch(_){}
+}
+
+/* ── FILE VAULT (documents list) collapse ── */
+var _vaultCollapsed = false;
+function _applyVaultState(collapsed) {
+  _vaultCollapsed = collapsed;
+  var btn = document.getElementById('vaultCollapseBtn');
+  if (collapsed) {
+    document.body.classList.add('vault-collapsed');
+    if (btn) btn.innerHTML = '&#8250;';
+  } else {
+    document.body.classList.remove('vault-collapsed');
+    if (btn) btn.innerHTML = '&#8249;';
+  }
+}
+function toggleVaultCollapse() {
+  var next = !_vaultCollapsed;
+  _applyVaultState(next);
+  try { localStorage.setItem('rr-lead-vault-collapsed', next ? '1' : '0'); } catch(_){}
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  try {
+    if (localStorage.getItem('rr-lead-sidebar-collapsed') === '1') _applyLeadSidebarState(true);
+    if (localStorage.getItem('rr-lead-vault-collapsed') === '1') _applyVaultState(true);
+  } catch(_){}
+});
 
 var _portalCollapsed = false;
 function togglePortalPanel() {
