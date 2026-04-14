@@ -98,6 +98,12 @@ function bindSidebarNav() {
 }
 
 function navigateTo(tabKey) {
+  // Tear down any active File Vault realtime channel before switching tabs.
+  // No-op when nothing is subscribed. _fvSelectBorrower will resubscribe if
+  // the user lands back on documents and picks a borrower again.
+  if (typeof _fvUnsubscribeContactUploads === "function") {
+    try { _fvUnsubscribeContactUploads(); } catch (_) {}
+  }
   activeTab = tabKey;
   // Persist active tab
   window.location.hash = tabKey;
