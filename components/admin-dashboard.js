@@ -1529,6 +1529,74 @@ async function _fvSelectBorrower(contact) {
 
   const countSpan = document.querySelector(`[data-fv-count="${contact.id}"]`);
   if (countSpan) countSpan.textContent = (_fvFileCounts[contact.gdrive_folder_id] || 0) + " files";
+
+  // Subscribe to borrower-portal uploads for this contact so the file list
+  // refreshes the moment they push something new — no manual refresh needed.
+  _fvSubscribeContactUploads(contact);
+}
+
+// ── REALTIME: borrower portal uploads ──────────────────────────────────
+// Listens to INSERTs on uploaded_documents filtered by contact_id. On hit:
+// toast, refetch Drive folder, refresh file list + borrower badge counts.
+// Only one channel is active at a time — switching borrowers (or closing
+// the vault) tears down the previous subscription first.
+let _fvRealtimeChannel = null;
+
+async function _fvSubscribeContactUploads(contact) {
+  if (!contact || !contact.id) return;
+  await _fvUnsubscribeContactUploads();
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    const channelName = "fv-uploads-" + contact.id;
+    _fvRealtimeChannel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "uploaded_documents",
+          filter: `contact_id=eq.${contact.id}`,
+        },
+        async (payload) => {
+          // Stale-callback guard: the user may have switched borrowers
+          // between subscribe() and the first event firing.
+          if (String(_fvSelectedContactId) !== String(contact.id)) return;
+          const docName = (payload && payload.new && (payload.new.file_name || payload.new.name)) || "a file";
+          const borrowerName =
+            contact.name ||
+            [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim() ||
+            contact.email ||
+            "borrower";
+          _fvShowToast("📄 New document uploaded by " + borrowerName + ": " + docName);
+          if (contact.gdrive_folder_id) {
+            await _fvLoadFiles(contact.gdrive_folder_id);
+            _fvRenderFileListPanel(contact);
+            _fvRenderBorrowerList();
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("[FileVault][realtime] channel status:", status);
+        }
+      });
+  } catch (e) {
+    console.warn("[FileVault][realtime] subscribe failed:", e);
+    _fvRealtimeChannel = null;
+  }
+}
+
+async function _fvUnsubscribeContactUploads() {
+  if (!_fvRealtimeChannel) return;
+  const ch = _fvRealtimeChannel;
+  _fvRealtimeChannel = null;
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    await supabase.removeChannel(ch);
+  } catch (e) {
+    console.warn("[FileVault][realtime] unsubscribe failed:", e);
+  }
 }
 
 // Upload a File/Blob directly to Drive using the OAuth token (no proxy).
