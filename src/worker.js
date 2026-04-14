@@ -107,9 +107,23 @@ export default {
     if (/^\/areas\/[a-z0-9-]+$/.test(path)) {
       const newUrl = new URL(request.url);
       newUrl.pathname = path + '.html';
-      return env.ASSETS.fetch(new Request(newUrl, request));
+      return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)));
     }
 
-    return env.ASSETS.fetch(request);
+    return withCsp(await env.ASSETS.fetch(request));
   }
 };
+
+// Inject a relaxed CSP into HTML responses so pdf.js can spawn its worker
+// from a blob: URL. The asset bundler doesn't let us set per-page headers,
+// so we layer it on at the worker. Non-HTML responses pass through unchanged.
+function withCsp(res) {
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('text/html')) return res;
+  const headers = new Headers(res.headers);
+  headers.set(
+    'Content-Security-Policy',
+    "script-src * 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob: *; child-src blob: *;"
+  );
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}

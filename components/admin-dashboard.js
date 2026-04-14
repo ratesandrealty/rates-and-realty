@@ -2406,6 +2406,7 @@ function _fvResetPdfEditState() {
     _fvViewerState.pdfDoc = null;
     _fvViewerState.scale = 1.0;
     _fvViewerState.rotation = 0;
+    _fvViewerState.savedRotation = 0;
     _fvViewerState.type = null;
     _fvViewerState.cropMode = false;
     _fvViewerState.cropSelection = null;
@@ -2538,7 +2539,13 @@ function _fvUpdatePdfToolbarVisibility() {
 function _fvUpdateSaveRotBtn() {
   const btn = document.getElementById("fv-pdf-save-rot-btn");
   if (!btn) return;
-  const visible = _fvViewerState && _fvViewerState.type === "pdf" && (_fvViewerState.rotation || 0) !== 0;
+  // Visible when the on-screen rotation differs from the last-saved rotation.
+  // After Save Rotation succeeds we set savedRotation = current rotation so
+  // the button hides without needing a Drive re-fetch.
+  const visible =
+    _fvViewerState &&
+    _fvViewerState.type === "pdf" &&
+    (_fvViewerState.rotation || 0) !== (_fvViewerState.savedRotation || 0);
   btn.style.display = visible ? "inline-flex" : "none";
 }
 
@@ -2603,30 +2610,21 @@ async function _fvPdfSaveRotation() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) throw new Error((data && data.error) || ("HTTP " + res.status));
+    // The viewer is already showing the rotated pages (we render with
+    // state.rotation each time). Mark the rotation as saved so the Save
+    // button hides — no Drive re-fetch needed. Drive's CDN ignores cache-
+    // busting query params, so a re-fetch would return stale bytes anyway.
+    if (_fvViewerState) _fvViewerState.savedRotation = pendingRot;
     if (btn) {
       btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8.5 6.5 12 13 4.5"/></svg><span class="fv-tb-label">Saved</span>';
     }
     _fvShowToast("Rotation saved");
-    // Refresh the file list and reopen viewer on the new (rotated) file.
-    setTimeout(async () => {
+    setTimeout(() => {
       if (btn) {
         btn.disabled = false;
         btn.innerHTML = SAVE_BTN_HTML;
-        btn.style.display = "none";
       }
-      const contact = _fvContacts.find((c) => c.id === _fvViewerState.contactId);
-      if (contact && contact.gdrive_folder_id) {
-        await _fvLoadFiles(contact.gdrive_folder_id);
-        const refreshed = _fvFiles[contact.gdrive_folder_id] || [];
-        _fvViewerState.files = refreshed;
-        const newId = (data.file && data.file.id) || file.id;
-        const idx = refreshed.findIndex((x) => x.id === newId);
-        if (idx >= 0) {
-          _fvViewerState.index = idx;
-          _fvViewerRender();
-        }
-        _fvRenderFileListPanel(contact);
-      }
+      _fvUpdateSaveRotBtn();
     }, 900);
   } catch (e) {
     console.error("[FileVault][saveRotation] failed:", e);
