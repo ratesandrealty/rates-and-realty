@@ -3340,9 +3340,6 @@
             <button onclick="docViewerRotate()" title="Rotate 90°" style="padding:6px 12px; background:#1a1a1a; border:1px solid rgba(201,168,76,0.35); border-radius:6px; color:#C9A84C; cursor:pointer; font-size:14px; font-family:inherit;">↻ Rotate</button>
             <button id="doc-viewer-save-btn" onclick="docViewerSaveRotation()" style="display:none; padding:6px 14px; background:linear-gradient(135deg,#7A5020,#C9A84C); border:none; border-radius:6px; color:#1A0E00; font-weight:700; font-size:12px; cursor:pointer; font-family:inherit;">💾 Save Rotation</button>
             <span style="width:1px; height:22px; background:#333; margin:0 4px;"></span>
-            <button id="doc-viewer-type-btn" onclick="docViewerToggleAnnotateMode()" title="Add text notes" style="padding:6px 14px; background:#1a1a1a; border:1px solid rgba(201,168,76,0.35); border-radius:6px; color:#C9A84C; cursor:pointer; font-size:13px; font-weight:700; font-family:inherit;">T Type</button>
-            <button id="doc-viewer-save-notes-btn" onclick="docViewerSaveAnnotations()" style="display:none; padding:6px 14px; background:linear-gradient(135deg,#7A5020,#C9A84C); border:none; border-radius:6px; color:#1A0E00; font-weight:700; font-size:12px; cursor:pointer; font-family:inherit;">💾 Save Notes</button>
-            <span style="width:1px; height:22px; background:#333; margin:0 4px;"></span>
             <button id="doc-viewer-crop-btn" onclick="docViewerToggleCropMode()" title="Crop page" style="padding:6px 14px; background:#1a1a1a; border:1px solid rgba(201,168,76,0.35); border-radius:6px; color:#C9A84C; cursor:pointer; font-size:14px; font-family:inherit;">✂ Crop</button>
             <button id="doc-viewer-crop-apply-btn" onclick="docViewerApplyCrop()" style="display:none; padding:6px 14px; background:linear-gradient(135deg,#7A5020,#C9A84C); border:none; border-radius:6px; color:#1A0E00; font-weight:700; font-size:12px; cursor:pointer; font-family:inherit;">Apply Crop</button>
             <button id="doc-viewer-crop-cancel-btn" onclick="docViewerCancelCrop()" style="display:none; padding:6px 14px; background:#1a1a1a; border:1px solid rgba(255,255,255,0.2); border-radius:6px; color:#fff; cursor:pointer; font-size:12px; font-family:inherit;">Cancel</button>
@@ -5998,9 +5995,6 @@ let _docViewerRotation = 0;
 let _docViewerCurrentUrl = null;
 let _docViewerState = { file: null, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null };
 let _pdfJsLoadPromise = null;
-let _docViewerAnnotations = [];
-let _docViewerAnnotateMode = false;
-let _docViewerDirty = false;
 let _docViewerCropMode = false;
 let _docViewerCropSelection = null; // { page, canvas, left, top, width, height } in CSS px relative to body
 let _docViewerCropDragging = false;
@@ -6044,23 +6038,9 @@ async function openDocViewerForFile(file) {
   _docViewerState = { file: file, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null };
   _docViewerScale = 1.0;
   _docViewerRotation = 0;
-  _docViewerAnnotations = [];
-  _docViewerAnnotateMode = false;
-  _docViewerDirty = false;
   _docViewerCropMode = false;
   _docViewerCropDragging = false;
   _docViewerCropSelection = null;
-  const typeBtn = document.getElementById('doc-viewer-type-btn');
-  if (typeBtn) { typeBtn.style.background = 'rgba(255,255,255,0.08)'; typeBtn.style.color = '#fff'; }
-  const saveNotesBtn = document.getElementById('doc-viewer-save-notes-btn');
-  if (saveNotesBtn) {
-    saveNotesBtn.style.display = 'none';
-    saveNotesBtn.disabled = false;
-    saveNotesBtn.textContent = 'Save Notes';
-    saveNotesBtn.style.background = 'rgba(201,168,76,0.15)';
-    saveNotesBtn.style.color = '#C9A84C';
-    saveNotesBtn.style.borderColor = 'rgba(201,168,76,0.4)';
-  }
   const cropBtn = document.getElementById('doc-viewer-crop-btn');
   if (cropBtn) { cropBtn.style.background = 'rgba(255,255,255,0.08)'; cropBtn.style.color = '#fff'; }
   const cropApplyBtn = document.getElementById('doc-viewer-crop-apply-btn');
@@ -6116,10 +6096,7 @@ async function openDocViewerForFile(file) {
       _docViewerState.type = 'pdf';
       const pdfjsLib = await _ensurePdfJs();
       _docViewerState.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
-      // Load any saved annotations BEFORE first render so they appear immediately.
-      await _docViewerLoadAnnotations(file.id);
       await _renderPdfAllPages();
-      _docViewerUpdateSaveNotesBtn();
     } else if (isImage) {
       _docViewerState.type = 'image';
       const blob = new Blob([buf], { type: file.mimeType || 'image/jpeg' });
@@ -6156,7 +6133,7 @@ async function _renderPdfAllPages() {
   const baseScale = 1.5; // crisp baseline; user zoom multiplies this
   body.innerHTML = '';
   body.style.position = 'relative';
-  body.style.cursor = _docViewerAnnotateMode ? 'text' : '';
+  body.style.cursor = '';
   for (let i = 1; i <= pdfDoc.numPages; i++) {
     const page = await pdfDoc.getPage(i);
     const viewport = page.getViewport({ scale: scale * baseScale, rotation: rotation });
@@ -6177,10 +6154,6 @@ async function _renderPdfAllPages() {
       console.warn('[docViewer] page render failed:', i, err);
     }
   }
-  // Re-apply annotation overlays on top of the freshly-rendered canvases.
-  _docViewerRenderAnnotations();
-  // Install click listener (annotate mode checks inside handler).
-  body.onclick = _docViewerHandleAnnotateClick;
 }
 
 function _applyImageTransform() {
@@ -6199,16 +6172,9 @@ function closeDocViewer() {
   _docViewerState = { file: null, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null };
   _docViewerScale = 1.0;
   _docViewerRotation = 0;
-  _docViewerAnnotations = [];
-  _docViewerAnnotateMode = false;
-  _docViewerDirty = false;
   _docViewerCropMode = false;
   _docViewerCropDragging = false;
   _docViewerCropSelection = null;
-  const typeBtn = document.getElementById('doc-viewer-type-btn');
-  if (typeBtn) { typeBtn.style.background = 'rgba(255,255,255,0.08)'; typeBtn.style.color = '#fff'; }
-  const saveNotesBtn = document.getElementById('doc-viewer-save-notes-btn');
-  if (saveNotesBtn) { saveNotesBtn.style.display = 'none'; saveNotesBtn.textContent = 'Save Notes'; }
   const cropBtn = document.getElementById('doc-viewer-crop-btn');
   if (cropBtn) { cropBtn.style.background = 'rgba(255,255,255,0.08)'; cropBtn.style.color = '#fff'; }
   const cropApplyBtn = document.getElementById('doc-viewer-crop-apply-btn');
@@ -6370,286 +6336,6 @@ async function docViewerSaveRotation() {
   }
 }
 
-// ── TEXT ANNOTATION TOOL ───────────────────────────────────────────────
-// Annotations are stored in Supabase document_annotations (NOT baked into
-// the PDF binary). Each annotation has (page, x, y, text, font_size, color)
-// in PDF points relative to the page's top-left. Persisted per file_id.
-
-function docViewerToggleAnnotateMode() {
-  if (_docViewerState.type !== 'pdf') {
-    if (typeof showToast === 'function') showToast('Text notes only work on PDFs');
-    return;
-  }
-  if (!_docViewerAnnotateMode && _docViewerState.rotation !== 0) {
-    if (typeof showToast === 'function') showToast('Reset rotation to 0 before adding notes');
-    return;
-  }
-  _docViewerAnnotateMode = !_docViewerAnnotateMode;
-  const btn = document.getElementById('doc-viewer-type-btn');
-  if (btn) {
-    if (_docViewerAnnotateMode) {
-      btn.style.background = '#C9A84C';
-      btn.style.color = '#1A0E00';
-    } else {
-      btn.style.background = 'rgba(255,255,255,0.08)';
-      btn.style.color = '#fff';
-    }
-  }
-  const body = document.getElementById('doc-viewer-body');
-  if (body) body.style.cursor = _docViewerAnnotateMode ? 'text' : '';
-  _docViewerUpdateSaveNotesBtn();
-}
-
-function _docViewerUpdateSaveNotesBtn() {
-  const btn = document.getElementById('doc-viewer-save-notes-btn');
-  if (!btn) return;
-  const hasAnns = _docViewerAnnotations.length > 0;
-  btn.style.display = (_docViewerAnnotateMode || _docViewerDirty || hasAnns) ? 'inline-block' : 'none';
-}
-
-function _docViewerHandleAnnotateClick(evt) {
-  if (!_docViewerAnnotateMode) return;
-  if (!evt.target || (evt.target.closest && evt.target.closest('.doc-ann'))) return;
-  const canvas = evt.target.closest && evt.target.closest('canvas[data-page]');
-  if (!canvas) return;
-  const rect = canvas.getBoundingClientRect();
-  const relX = evt.clientX - rect.left;
-  const relY = evt.clientY - rect.top;
-  const ratio = canvas.offsetWidth / canvas.width; // CSS / intrinsic
-  const baseScale = 1.5;
-  const totalScale = (_docViewerState.scale || 1) * baseScale;
-  const pdfX = (relX / (ratio || 1)) / totalScale;
-  const pdfY = (relY / (ratio || 1)) / totalScale;
-  const pageNum = parseInt(canvas.dataset.page || '1', 10);
-  _docViewerAnnotations.push({
-    page: pageNum,
-    x: pdfX,
-    y: pdfY,
-    text: 'Note',
-    font_size: 12,
-    color: '#000000',
-  });
-  _docViewerDirty = true;
-  _docViewerRenderAnnotations();
-  _docViewerUpdateSaveNotesBtn();
-  // Focus the new annotation's textarea for immediate typing.
-  setTimeout(() => {
-    const wrap = document.getElementById('doc-viewer-body');
-    if (!wrap) return;
-    const all = wrap.querySelectorAll('.doc-ann textarea');
-    const last = all[all.length - 1];
-    if (last) { last.focus(); last.select(); }
-  }, 0);
-}
-
-function _docViewerRenderAnnotations() {
-  const body = document.getElementById('doc-viewer-body');
-  if (!body) return;
-  // Remove existing annotation DOM nodes.
-  body.querySelectorAll('.doc-ann').forEach(el => el.remove());
-  body.style.position = 'relative';
-  const baseScale = 1.5;
-  const totalScale = (_docViewerState.scale || 1) * baseScale;
-  _docViewerAnnotations.forEach((ann, idx) => {
-    const canvas = body.querySelector('canvas[data-page="' + ann.page + '"]');
-    if (!canvas) return;
-    const ratio = canvas.offsetWidth / canvas.width; // CSS / intrinsic
-    const left = canvas.offsetLeft + ann.x * totalScale * (ratio || 1);
-    const top  = canvas.offsetTop  + ann.y * totalScale * (ratio || 1);
-    const div = document.createElement('div');
-    div.className = 'doc-ann';
-    div.dataset.idx = String(idx);
-    div.style.cssText = 'position:absolute;left:' + left + 'px;top:' + top + 'px;min-width:140px;background:rgba(255,255,255,0.97);border:1px solid rgba(201,168,76,0.55);border-radius:6px;padding:4px;box-shadow:0 2px 10px rgba(0,0,0,0.35);z-index:10;font-family:inherit;';
-    const swatches = ['#000000', '#E05252', '#3D7EFF', '#C9A84C'];
-    const sizeOpts = [8, 10, 12, 14, 16, 18]
-      .map(s => '<option value="' + s + '"' + (s === Number(ann.font_size) ? ' selected' : '') + '>' + s + '</option>')
-      .join('');
-    const colorBtns = swatches.map(c =>
-      '<button type="button" class="doc-ann-color" data-color="' + c + '" style="width:14px;height:14px;border-radius:50%;background:' + c + ';border:' + (c === ann.color ? '2px solid #1A0E00' : '1px solid #666') + ';cursor:pointer;padding:0;margin:0;"></button>'
-    ).join('');
-    const safeText = String(ann.text == null ? '' : ann.text)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    div.innerHTML =
-      '<div class="doc-ann-header" style="display:flex;align-items:center;gap:4px;padding:2px 4px 4px;border-bottom:1px solid rgba(0,0,0,0.1);margin-bottom:4px;cursor:move;font-size:10px;user-select:none;">'
-        + '<span style="color:#888;flex:1;">⋮⋮</span>'
-        + '<select class="doc-ann-size" style="font-size:10px;padding:1px 2px;border:1px solid #ccc;border-radius:3px;background:#fff;color:#000;font-family:inherit;">' + sizeOpts + '</select>'
-        + colorBtns
-        + '<button type="button" class="doc-ann-del" title="Delete" style="background:none;border:none;color:#E05252;cursor:pointer;padding:0 4px;font-size:12px;font-family:inherit;">✕</button>'
-      + '</div>'
-      + '<textarea class="doc-ann-text" rows="2" style="display:block;width:130px;min-height:36px;border:none;resize:both;outline:none;font-size:' + Number(ann.font_size) + 'px;color:' + ann.color + ';background:transparent;font-family:inherit;padding:2px;">' + safeText + '</textarea>';
-    body.appendChild(div);
-    _docViewerWireAnnotation(div, ann);
-  });
-}
-
-function _docViewerWireAnnotation(div, ann) {
-  // Drag via header
-  const header = div.querySelector('.doc-ann-header');
-  if (header) {
-    header.addEventListener('mousedown', function(e) {
-      if (e.target && e.target.closest && e.target.closest('select,button,.doc-ann-del,.doc-ann-color')) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const startX = e.clientX;
-      const startY = e.clientY;
-      const startLeft = parseFloat(div.style.left) || 0;
-      const startTop  = parseFloat(div.style.top)  || 0;
-      const move = function(ev) {
-        div.style.left = (startLeft + ev.clientX - startX) + 'px';
-        div.style.top  = (startTop  + ev.clientY - startY) + 'px';
-      };
-      const up = function() {
-        document.removeEventListener('mousemove', move);
-        document.removeEventListener('mouseup', up);
-        // Convert new position back to PDF points.
-        const body = document.getElementById('doc-viewer-body');
-        const canvas = body && body.querySelector('canvas[data-page="' + ann.page + '"]');
-        if (canvas) {
-          const ratio = canvas.offsetWidth / canvas.width;
-          const baseScale = 1.5;
-          const totalScale = (_docViewerState.scale || 1) * baseScale;
-          ann.x = ((parseFloat(div.style.left) || 0) - canvas.offsetLeft) / ((ratio || 1) * totalScale);
-          ann.y = ((parseFloat(div.style.top)  || 0) - canvas.offsetTop ) / ((ratio || 1) * totalScale);
-          _docViewerDirty = true;
-          _docViewerUpdateSaveNotesBtn();
-        }
-      };
-      document.addEventListener('mousemove', move);
-      document.addEventListener('mouseup', up);
-    });
-  }
-  // Text editing
-  const ta = div.querySelector('.doc-ann-text');
-  if (ta) {
-    ta.addEventListener('input', function() {
-      ann.text = ta.value;
-      _docViewerDirty = true;
-      _docViewerUpdateSaveNotesBtn();
-    });
-    // Prevent click inside textarea from bubbling to canvas handler.
-    ta.addEventListener('mousedown', function(e) { e.stopPropagation(); });
-    ta.addEventListener('click', function(e) { e.stopPropagation(); });
-  }
-  // Font size
-  const sizeSel = div.querySelector('.doc-ann-size');
-  if (sizeSel) {
-    sizeSel.addEventListener('change', function() {
-      ann.font_size = parseInt(sizeSel.value, 10) || 12;
-      if (ta) ta.style.fontSize = ann.font_size + 'px';
-      _docViewerDirty = true;
-      _docViewerUpdateSaveNotesBtn();
-    });
-    sizeSel.addEventListener('mousedown', function(e) { e.stopPropagation(); });
-  }
-  // Color
-  div.querySelectorAll('.doc-ann-color').forEach(function(btn) {
-    btn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      ann.color = btn.getAttribute('data-color') || '#000000';
-      if (ta) ta.style.color = ann.color;
-      _docViewerDirty = true;
-      _docViewerRenderAnnotations(); // re-render to update swatch highlight
-      _docViewerUpdateSaveNotesBtn();
-    });
-  });
-  // Delete
-  const delBtn = div.querySelector('.doc-ann-del');
-  if (delBtn) {
-    delBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      const i = _docViewerAnnotations.indexOf(ann);
-      if (i >= 0) _docViewerAnnotations.splice(i, 1);
-      _docViewerDirty = true;
-      _docViewerRenderAnnotations();
-      _docViewerUpdateSaveNotesBtn();
-    });
-  }
-}
-
-async function _docViewerLoadAnnotations(fileId) {
-  _docViewerAnnotations = [];
-  _docViewerDirty = false;
-  if (!fileId) return;
-  try {
-    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) ? window.APP_CONFIG.SUPABASE_URL : '';
-    const res = await fetch(base + '/functions/v1/portal-data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'get_annotations', document_id: fileId }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data && Array.isArray(data.annotations)) {
-      _docViewerAnnotations = data.annotations.map(function(a) {
-        return {
-          id: a.id,
-          page: a.page || 1,
-          x: Number(a.x) || 0,
-          y: Number(a.y) || 0,
-          text: a.text || '',
-          font_size: Number(a.font_size) || 12,
-          color: a.color || '#000000',
-        };
-      });
-    }
-  } catch (e) {
-    console.warn('[docViewer] load annotations failed:', e);
-  }
-}
-
-async function docViewerSaveAnnotations() {
-  if (!_docViewerState.file) return;
-  const btn = document.getElementById('doc-viewer-save-notes-btn');
-  const docId = _docViewerState.file.id;
-  const cid = (typeof contactId !== 'undefined' ? contactId : (window.contactId || null));
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-  try {
-    const payload = _docViewerAnnotations.map(function(a) {
-      return {
-        page: a.page || 1,
-        x: Number(a.x) || 0,
-        y: Number(a.y) || 0,
-        text: a.text || '',
-        font_size: Number(a.font_size) || 12,
-        color: a.color || '#000000',
-      };
-    });
-    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) ? window.APP_CONFIG.SUPABASE_URL : '';
-    const res = await fetch(base + '/functions/v1/portal-data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'save_annotations',
-        document_id: docId,
-        contact_id: cid,
-        annotations: payload,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success) throw new Error((data && data.error) || ('HTTP ' + res.status));
-    _docViewerDirty = false;
-    if (btn) {
-      btn.textContent = '✓ Saved';
-      btn.style.background = '#52C87A';
-      btn.style.color = '#fff';
-      btn.style.borderColor = '#52C87A';
-      setTimeout(() => {
-        btn.disabled = false;
-        btn.textContent = 'Save Notes';
-        btn.style.background = 'rgba(201,168,76,0.15)';
-        btn.style.color = '#C9A84C';
-        btn.style.borderColor = 'rgba(201,168,76,0.4)';
-        _docViewerUpdateSaveNotesBtn();
-      }, 1200);
-    }
-    if (typeof showToast === 'function') showToast('Notes saved');
-  } catch (e) {
-    console.error('[docViewer] save annotations failed:', e);
-    if (btn) { btn.disabled = false; btn.textContent = 'Save Notes'; }
-    if (typeof showToast === 'function') showToast('Save failed: ' + (e.message || e));
-    else alert('Save failed: ' + (e.message || e));
-  }
-}
-
 // ── CROP TOOL ──────────────────────────────────────────────────────────
 // Draws a drag-selection rectangle on a single page; Apply sends the
 // rectangle (in PDF points, bottom-left origin) to save-document.
@@ -6664,7 +6350,6 @@ function docViewerToggleCropMode() {
     return;
   }
   if (_docViewerCropMode) { _docViewerExitCropMode(); return; }
-  if (_docViewerAnnotateMode) docViewerToggleAnnotateMode();
   _docViewerCropMode = true;
   _docViewerCropSelection = null;
   const btn = document.getElementById('doc-viewer-crop-btn');
@@ -6684,7 +6369,7 @@ function _docViewerExitCropMode() {
   if (btn) { btn.style.background = 'rgba(255,255,255,0.08)'; btn.style.color = '#fff'; }
   const body = document.getElementById('doc-viewer-body');
   if (body) {
-    body.style.cursor = _docViewerAnnotateMode ? 'text' : '';
+    body.style.cursor = '';
     body.removeEventListener('mousedown', _docViewerCropMouseDown);
     const sel = document.getElementById('_docViewerCropRect');
     if (sel) sel.remove();

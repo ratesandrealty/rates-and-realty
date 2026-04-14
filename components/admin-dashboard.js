@@ -1197,9 +1197,6 @@ async function renderDocuments() {
             <button id="fv-pdf-rotate-btn" type="button" title="Rotate 90&deg;" style="padding:5px 11px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:13px;font-family:inherit;">&#8635; Rotate</button>
             <button id="fv-pdf-save-rot-btn" type="button" style="display:none;padding:5px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit;">&#128190; Save Rotation</button>
             <span style="width:1px;height:20px;background:#2a2a2a;margin:0 4px;"></span>
-            <button id="fv-pdf-type-btn" type="button" title="Add text notes" style="padding:5px 12px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">T Type</button>
-            <button id="fv-pdf-save-notes-btn" type="button" style="display:none;padding:5px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit;">&#128190; Save Notes</button>
-            <span style="width:1px;height:20px;background:#2a2a2a;margin:0 4px;"></span>
             <button id="fv-pdf-crop-btn" type="button" title="Crop page" style="padding:5px 12px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:13px;font-family:inherit;">&#9986; Crop</button>
             <button id="fv-pdf-crop-apply-btn" type="button" style="display:none;padding:5px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit;">Apply Crop</button>
             <button id="fv-pdf-crop-cancel-btn" type="button" style="display:none;padding:5px 12px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;cursor:pointer;font-size:11px;font-family:inherit;">Cancel</button>
@@ -1341,22 +1338,12 @@ function _fvBindPanels() {
   if (rotateBtn) rotateBtn.onclick = _fvPdfRotate;
   const saveRotBtn = document.getElementById("fv-pdf-save-rot-btn");
   if (saveRotBtn) saveRotBtn.onclick = _fvPdfSaveRotation;
-  const typeBtn = document.getElementById("fv-pdf-type-btn");
-  if (typeBtn) typeBtn.onclick = _fvPdfToggleAnnotate;
-  const saveNotesBtn = document.getElementById("fv-pdf-save-notes-btn");
-  if (saveNotesBtn) saveNotesBtn.onclick = _fvPdfSaveAnnotations;
   const cropBtn = document.getElementById("fv-pdf-crop-btn");
   if (cropBtn) cropBtn.onclick = _fvPdfToggleCrop;
   const cropApply = document.getElementById("fv-pdf-crop-apply-btn");
   if (cropApply) cropApply.onclick = _fvPdfApplyCrop;
   const cropCancel = document.getElementById("fv-pdf-crop-cancel-btn");
   if (cropCancel) cropCancel.onclick = _fvPdfExitCropMode;
-  // Click-to-place annotation handler (delegated on the canvas wrap)
-  const canvasWrap = document.getElementById("fv-viewer-canvas-wrap");
-  if (canvasWrap && !canvasWrap.dataset.annotateBound) {
-    canvasWrap.addEventListener("click", _fvPdfAnnotateClick);
-    canvasWrap.dataset.annotateBound = "1";
-  }
 
   const typeSel = document.getElementById("fv-doc-type");
   if (typeSel) {
@@ -2392,9 +2379,6 @@ function _fvResetPdfEditState() {
     _fvViewerState.scale = 1.0;
     _fvViewerState.rotation = 0;
     _fvViewerState.type = null;
-    _fvViewerState.annotations = [];
-    _fvViewerState.annotateMode = false;
-    _fvViewerState.dirty = false;
     _fvViewerState.cropMode = false;
     _fvViewerState.cropSelection = null;
     _fvViewerState.cropDragging = false;
@@ -2413,7 +2397,7 @@ async function _fvLoadBlobIntoIframe(f) {
   const isPdf = _fvIsPdf(f);
   const isImage = mime.indexOf("image/") === 0;
 
-  // Reset editing state (rotation/crop/annotations) for the new file.
+  // Reset editing state (rotation/crop) for the new file.
   _fvResetPdfEditState();
   _fvUpdatePdfToolbarVisibility();
 
@@ -2447,11 +2431,7 @@ async function _fvLoadBlobIntoIframe(f) {
         _fvViewerState.type = "pdf";
         _fvViewerState.scale = 1.0;
         _fvViewerState.rotation = 0;
-        // Load any saved annotations BEFORE first render so they appear.
-        await _fvLoadAnnotations(f.id);
-        if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
         await _fvRenderPdfPages(renderIndex);
-        _fvRenderAnnotations();
         _fvUpdatePdfToolbarVisibility();
       } else {
         // Image: blob URL inside an <img>, retain blobUrl for cleanup.
@@ -2513,7 +2493,6 @@ function _fvUpdatePdfToolbarVisibility() {
   if (!bar) return;
   bar.style.display = (_fvViewerState && _fvViewerState.type === "pdf") ? "flex" : "none";
   _fvUpdateSaveRotBtn();
-  _fvUpdateSaveNotesBtn();
   _fvSetCropBtnsVisibility(false);
 }
 
@@ -2521,14 +2500,6 @@ function _fvUpdateSaveRotBtn() {
   const btn = document.getElementById("fv-pdf-save-rot-btn");
   if (!btn) return;
   const visible = _fvViewerState && _fvViewerState.type === "pdf" && (_fvViewerState.rotation || 0) !== 0;
-  btn.style.display = visible ? "inline-block" : "none";
-}
-
-function _fvUpdateSaveNotesBtn() {
-  const btn = document.getElementById("fv-pdf-save-notes-btn");
-  if (!btn || !_fvViewerState) return;
-  const hasAnns = (_fvViewerState.annotations || []).length > 0;
-  const visible = _fvViewerState.type === "pdf" && (_fvViewerState.annotateMode || _fvViewerState.dirty || hasAnns);
   btn.style.display = visible ? "inline-block" : "none";
 }
 
@@ -2546,14 +2517,13 @@ function _fvPdfZoom(delta) {
   _fvViewerState.scale = Math.max(0.4, Math.min(3.0, (_fvViewerState.scale || 1) + delta));
   const lvl = document.getElementById("fv-pdf-zoom-level");
   if (lvl) lvl.textContent = Math.round(_fvViewerState.scale * 100) + "%";
-  _fvRenderPdfPages(_fvViewerState.index).then(() => _fvRenderAnnotations());
+  _fvRenderPdfPages(_fvViewerState.index);
 }
 
 function _fvPdfRotate() {
   if (!_fvViewerState || _fvViewerState.type !== "pdf") return;
   _fvViewerState.rotation = ((_fvViewerState.rotation || 0) + 90) % 360;
   _fvRenderPdfPages(_fvViewerState.index).then(() => {
-    _fvRenderAnnotations();
     _fvUpdateSaveRotBtn();
   });
 }
@@ -2618,245 +2588,6 @@ async function _fvPdfSaveRotation() {
   }
 }
 
-// ── ANNOTATIONS ────────────────────────────────────────────────────────
-
-function _fvPdfToggleAnnotate() {
-  if (!_fvViewerState || _fvViewerState.type !== "pdf") {
-    _fvShowToast("Text notes only work on PDFs");
-    return;
-  }
-  if (!_fvViewerState.annotateMode && (_fvViewerState.rotation || 0) !== 0) {
-    _fvShowToast("Reset rotation to 0 before adding notes");
-    return;
-  }
-  _fvViewerState.annotateMode = !_fvViewerState.annotateMode;
-  const btn = document.getElementById("fv-pdf-type-btn");
-  if (btn) {
-    if (_fvViewerState.annotateMode) {
-      btn.style.background = "#C9A84C";
-      btn.style.color = "#1A0E00";
-    } else {
-      btn.style.background = "#1a1a1a";
-      btn.style.color = "#C9A84C";
-    }
-  }
-  const wrap = document.getElementById("fv-viewer-canvas-wrap");
-  if (wrap) wrap.style.cursor = _fvViewerState.annotateMode ? "text" : "";
-  _fvUpdateSaveNotesBtn();
-}
-
-function _fvPdfAnnotateClick(evt) {
-  if (!_fvViewerState || !_fvViewerState.annotateMode) return;
-  if (!evt.target || (evt.target.closest && evt.target.closest(".fv-ann"))) return;
-  const canvas = evt.target.closest && evt.target.closest("canvas[data-page]");
-  if (!canvas) return;
-  const rect = canvas.getBoundingClientRect();
-  const relX = evt.clientX - rect.left;
-  const relY = evt.clientY - rect.top;
-  const ratio = canvas.offsetWidth / canvas.width;
-  const baseScale = 1.5;
-  const totalScale = (_fvViewerState.scale || 1) * baseScale;
-  const pdfX = (relX / (ratio || 1)) / totalScale;
-  const pdfY = (relY / (ratio || 1)) / totalScale;
-  const pageNum = parseInt(canvas.dataset.page || "1", 10);
-  _fvViewerState.annotations.push({
-    page: pageNum, x: pdfX, y: pdfY, text: "Note", font_size: 12, color: "#000000",
-  });
-  _fvViewerState.dirty = true;
-  _fvRenderAnnotations();
-  _fvUpdateSaveNotesBtn();
-  setTimeout(() => {
-    const w = document.getElementById("fv-viewer-canvas-wrap");
-    if (!w) return;
-    const all = w.querySelectorAll(".fv-ann textarea");
-    const last = all[all.length - 1];
-    if (last) { last.focus(); last.select(); }
-  }, 0);
-}
-
-function _fvRenderAnnotations() {
-  const wrap = document.getElementById("fv-viewer-canvas-wrap");
-  if (!wrap || !_fvViewerState) return;
-  wrap.querySelectorAll(".fv-ann").forEach((el) => el.remove());
-  const baseScale = 1.5;
-  const totalScale = (_fvViewerState.scale || 1) * baseScale;
-  (_fvViewerState.annotations || []).forEach((ann, idx) => {
-    const canvas = wrap.querySelector('canvas[data-page="' + ann.page + '"]');
-    if (!canvas) return;
-    const ratio = canvas.offsetWidth / canvas.width;
-    const left = canvas.offsetLeft + ann.x * totalScale * (ratio || 1);
-    const top  = canvas.offsetTop  + ann.y * totalScale * (ratio || 1);
-    const div = document.createElement("div");
-    div.className = "fv-ann";
-    div.dataset.idx = String(idx);
-    div.style.cssText = "position:absolute;left:" + left + "px;top:" + top + "px;min-width:140px;background:rgba(255,255,255,0.97);border:1px solid rgba(201,168,76,0.55);border-radius:6px;padding:4px;box-shadow:0 2px 10px rgba(0,0,0,0.35);z-index:10;font-family:inherit;";
-    const swatches = ["#000000", "#E05252", "#3D7EFF", "#C9A84C"];
-    const sizeOpts = [8, 10, 12, 14, 16, 18]
-      .map((s) => '<option value="' + s + '"' + (s === Number(ann.font_size) ? " selected" : "") + ">" + s + "</option>")
-      .join("");
-    const colorBtns = swatches.map((c) =>
-      '<button type="button" class="fv-ann-color" data-color="' + c + '" style="width:14px;height:14px;border-radius:50%;background:' + c + ";border:" + (c === ann.color ? "2px solid #1A0E00" : "1px solid #666") + ';cursor:pointer;padding:0;margin:0;"></button>'
-    ).join("");
-    const safeText = String(ann.text == null ? "" : ann.text)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    div.innerHTML =
-      '<div class="fv-ann-header" style="display:flex;align-items:center;gap:4px;padding:2px 4px 4px;border-bottom:1px solid rgba(0,0,0,0.1);margin-bottom:4px;cursor:move;font-size:10px;user-select:none;">' +
-        '<span style="color:#888;flex:1;">⋮⋮</span>' +
-        '<select class="fv-ann-size" style="font-size:10px;padding:1px 2px;border:1px solid #ccc;border-radius:3px;background:#fff;color:#000;font-family:inherit;">' + sizeOpts + "</select>" +
-        colorBtns +
-        '<button type="button" class="fv-ann-del" title="Delete" style="background:none;border:none;color:#E05252;cursor:pointer;padding:0 4px;font-size:12px;font-family:inherit;">✕</button>' +
-      "</div>" +
-      '<textarea class="fv-ann-text" rows="2" style="display:block;width:130px;min-height:36px;border:none;resize:both;outline:none;font-size:' + Number(ann.font_size) + "px;color:" + ann.color + ';background:transparent;font-family:inherit;padding:2px;">' + safeText + "</textarea>";
-    wrap.appendChild(div);
-    _fvWireAnnotation(div, ann);
-  });
-}
-
-function _fvWireAnnotation(div, ann) {
-  const header = div.querySelector(".fv-ann-header");
-  if (header) {
-    header.addEventListener("mousedown", function (e) {
-      if (e.target && e.target.closest && e.target.closest("select,button,.fv-ann-del,.fv-ann-color")) return;
-      e.preventDefault(); e.stopPropagation();
-      const startX = e.clientX, startY = e.clientY;
-      const startLeft = parseFloat(div.style.left) || 0;
-      const startTop  = parseFloat(div.style.top)  || 0;
-      const move = (ev) => {
-        div.style.left = (startLeft + ev.clientX - startX) + "px";
-        div.style.top  = (startTop  + ev.clientY - startY) + "px";
-      };
-      const up = () => {
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-        const wrap = document.getElementById("fv-viewer-canvas-wrap");
-        const canvas = wrap && wrap.querySelector('canvas[data-page="' + ann.page + '"]');
-        if (canvas) {
-          const ratio = canvas.offsetWidth / canvas.width;
-          const baseScale = 1.5;
-          const totalScale = (_fvViewerState.scale || 1) * baseScale;
-          ann.x = ((parseFloat(div.style.left) || 0) - canvas.offsetLeft) / ((ratio || 1) * totalScale);
-          ann.y = ((parseFloat(div.style.top)  || 0) - canvas.offsetTop ) / ((ratio || 1) * totalScale);
-          _fvViewerState.dirty = true;
-          _fvUpdateSaveNotesBtn();
-        }
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    });
-  }
-  const ta = div.querySelector(".fv-ann-text");
-  if (ta) {
-    ta.addEventListener("input", () => { ann.text = ta.value; _fvViewerState.dirty = true; _fvUpdateSaveNotesBtn(); });
-    ta.addEventListener("mousedown", (e) => e.stopPropagation());
-    ta.addEventListener("click", (e) => e.stopPropagation());
-  }
-  const sizeSel = div.querySelector(".fv-ann-size");
-  if (sizeSel) {
-    sizeSel.addEventListener("change", () => {
-      ann.font_size = parseInt(sizeSel.value, 10) || 12;
-      if (ta) ta.style.fontSize = ann.font_size + "px";
-      _fvViewerState.dirty = true;
-      _fvUpdateSaveNotesBtn();
-    });
-    sizeSel.addEventListener("mousedown", (e) => e.stopPropagation());
-  }
-  div.querySelectorAll(".fv-ann-color").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      ann.color = btn.getAttribute("data-color") || "#000000";
-      if (ta) ta.style.color = ann.color;
-      _fvViewerState.dirty = true;
-      _fvRenderAnnotations();
-      _fvUpdateSaveNotesBtn();
-    });
-  });
-  const delBtn = div.querySelector(".fv-ann-del");
-  if (delBtn) {
-    delBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const i = _fvViewerState.annotations.indexOf(ann);
-      if (i >= 0) _fvViewerState.annotations.splice(i, 1);
-      _fvViewerState.dirty = true;
-      _fvRenderAnnotations();
-      _fvUpdateSaveNotesBtn();
-    });
-  }
-}
-
-async function _fvLoadAnnotations(fileId) {
-  if (!_fvViewerState) return;
-  _fvViewerState.annotations = [];
-  _fvViewerState.dirty = false;
-  if (!fileId) return;
-  try {
-    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
-    const res = await fetch(base + "/functions/v1/portal-data", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "get_annotations", document_id: fileId }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data && Array.isArray(data.annotations)) {
-      _fvViewerState.annotations = data.annotations.map((a) => ({
-        id: a.id,
-        page: a.page || 1,
-        x: Number(a.x) || 0,
-        y: Number(a.y) || 0,
-        text: a.text || "",
-        font_size: Number(a.font_size) || 12,
-        color: a.color || "#000000",
-      }));
-    }
-  } catch (e) {
-    console.warn("[FileVault] load annotations failed:", e);
-  }
-}
-
-async function _fvPdfSaveAnnotations() {
-  if (!_fvViewerState) return;
-  const file = _fvViewerState.files && _fvViewerState.files[_fvViewerState.index];
-  if (!file) return;
-  const btn = document.getElementById("fv-pdf-save-notes-btn");
-  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
-  try {
-    const payload = (_fvViewerState.annotations || []).map((a) => ({
-      page: a.page || 1, x: Number(a.x) || 0, y: Number(a.y) || 0,
-      text: a.text || "", font_size: Number(a.font_size) || 12, color: a.color || "#000000",
-    }));
-    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
-    const res = await fetch(base + "/functions/v1/portal-data", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "save_annotations",
-        document_id: file.id,
-        contact_id: _fvViewerState.contactId,
-        annotations: payload,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success) throw new Error((data && data.error) || ("HTTP " + res.status));
-    _fvViewerState.dirty = false;
-    if (btn) {
-      btn.textContent = "✓ Saved";
-      btn.style.background = "#52C87A";
-      btn.style.color = "#fff";
-      setTimeout(() => {
-        btn.disabled = false;
-        btn.innerHTML = "&#128190; Save Notes";
-        btn.style.background = "linear-gradient(135deg,#7A5020,#C9A84C)";
-        btn.style.color = "#1A0E00";
-        _fvUpdateSaveNotesBtn();
-      }, 1200);
-    }
-    _fvShowToast("Notes saved");
-  } catch (e) {
-    console.error("[FileVault] save annotations failed:", e);
-    if (btn) { btn.disabled = false; btn.innerHTML = "&#128190; Save Notes"; }
-    _fvShowToast("Save failed: " + (e.message || e));
-  }
-}
-
 // ── CROP TOOL ──────────────────────────────────────────────────────────
 
 function _fvPdfToggleCrop() {
@@ -2869,7 +2600,6 @@ function _fvPdfToggleCrop() {
     return;
   }
   if (_fvViewerState.cropMode) { _fvPdfExitCropMode(); return; }
-  if (_fvViewerState.annotateMode) _fvPdfToggleAnnotate();
   _fvViewerState.cropMode = true;
   _fvViewerState.cropSelection = null;
   const btn = document.getElementById("fv-pdf-crop-btn");
@@ -2890,7 +2620,7 @@ function _fvPdfExitCropMode() {
   if (btn) { btn.style.background = "#1a1a1a"; btn.style.color = "#C9A84C"; }
   const wrap = document.getElementById("fv-viewer-canvas-wrap");
   if (wrap) {
-    wrap.style.cursor = _fvViewerState.annotateMode ? "text" : "";
+    wrap.style.cursor = "";
     wrap.removeEventListener("mousedown", _fvPdfCropMouseDown);
     const sel = document.getElementById("_fvCropRect");
     if (sel) sel.remove();
