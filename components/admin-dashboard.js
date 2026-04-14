@@ -1182,8 +1182,24 @@ async function renderDocuments() {
             <span id="fv-viewer-counter" style="color:#444;font-size:12px;"></span>
             <button id="fv-viewer-next" style="background:transparent;border:1px solid #2a2a2a;color:#666;cursor:pointer;padding:4px 16px;border-radius:6px;font-size:13px;font-family:inherit;">Next &#8594;</button>
           </div>
+          <!-- PDF editing toolbar — only visible when a PDF is loaded -->
+          <div id="fv-pdf-toolbar" style="display:none;flex-wrap:wrap;gap:8px;padding:8px 16px;background:#111;border-bottom:1px solid #2a2a2a;align-items:center;flex-shrink:0;">
+            <button id="fv-pdf-zoom-out" type="button" title="Zoom out" style="padding:5px 11px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:14px;font-family:inherit;">&minus;</button>
+            <span id="fv-pdf-zoom-level" style="font-size:11px;color:rgba(201,168,76,0.7);min-width:38px;text-align:center;">100%</span>
+            <button id="fv-pdf-zoom-in" type="button" title="Zoom in" style="padding:5px 11px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:14px;font-family:inherit;">+</button>
+            <span style="width:1px;height:20px;background:#2a2a2a;margin:0 4px;"></span>
+            <button id="fv-pdf-rotate-btn" type="button" title="Rotate 90&deg;" style="padding:5px 11px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:13px;font-family:inherit;">&#8635; Rotate</button>
+            <button id="fv-pdf-save-rot-btn" type="button" style="display:none;padding:5px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit;">&#128190; Save Rotation</button>
+            <span style="width:1px;height:20px;background:#2a2a2a;margin:0 4px;"></span>
+            <button id="fv-pdf-type-btn" type="button" title="Add text notes" style="padding:5px 12px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">T Type</button>
+            <button id="fv-pdf-save-notes-btn" type="button" style="display:none;padding:5px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit;">&#128190; Save Notes</button>
+            <span style="width:1px;height:20px;background:#2a2a2a;margin:0 4px;"></span>
+            <button id="fv-pdf-crop-btn" type="button" title="Crop page" style="padding:5px 12px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.35);border-radius:6px;color:#C9A84C;cursor:pointer;font-size:13px;font-family:inherit;">&#9986; Crop</button>
+            <button id="fv-pdf-crop-apply-btn" type="button" style="display:none;padding:5px 12px;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;border-radius:6px;color:#1A0E00;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit;">Apply Crop</button>
+            <button id="fv-pdf-crop-cancel-btn" type="button" style="display:none;padding:5px 12px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;cursor:pointer;font-size:11px;font-family:inherit;">Cancel</button>
+          </div>
           <div id="fv-viewer-host" style="flex:1;overflow:auto;background:#0a0a0a;position:relative;">
-            <div id="fv-viewer-canvas-wrap" style="display:none;padding:16px;"></div>
+            <div id="fv-viewer-canvas-wrap" style="display:none;padding:16px;position:relative;"></div>
             <iframe id="fv-viewer-iframe" style="width:100%;height:100%;border:none;display:block;" src="about:blank"></iframe>
           </div>
         </div>
@@ -1309,6 +1325,32 @@ function _fvBindPanels() {
   if (prevBtn) prevBtn.onclick = _fvViewerPrev;
   const nextBtn = document.getElementById("fv-viewer-next");
   if (nextBtn) nextBtn.onclick = _fvViewerNext;
+
+  // PDF editing toolbar
+  const zoomOut = document.getElementById("fv-pdf-zoom-out");
+  if (zoomOut) zoomOut.onclick = () => _fvPdfZoom(-0.2);
+  const zoomIn = document.getElementById("fv-pdf-zoom-in");
+  if (zoomIn) zoomIn.onclick = () => _fvPdfZoom(0.2);
+  const rotateBtn = document.getElementById("fv-pdf-rotate-btn");
+  if (rotateBtn) rotateBtn.onclick = _fvPdfRotate;
+  const saveRotBtn = document.getElementById("fv-pdf-save-rot-btn");
+  if (saveRotBtn) saveRotBtn.onclick = _fvPdfSaveRotation;
+  const typeBtn = document.getElementById("fv-pdf-type-btn");
+  if (typeBtn) typeBtn.onclick = _fvPdfToggleAnnotate;
+  const saveNotesBtn = document.getElementById("fv-pdf-save-notes-btn");
+  if (saveNotesBtn) saveNotesBtn.onclick = _fvPdfSaveAnnotations;
+  const cropBtn = document.getElementById("fv-pdf-crop-btn");
+  if (cropBtn) cropBtn.onclick = _fvPdfToggleCrop;
+  const cropApply = document.getElementById("fv-pdf-crop-apply-btn");
+  if (cropApply) cropApply.onclick = _fvPdfApplyCrop;
+  const cropCancel = document.getElementById("fv-pdf-crop-cancel-btn");
+  if (cropCancel) cropCancel.onclick = _fvPdfExitCropMode;
+  // Click-to-place annotation handler (delegated on the canvas wrap)
+  const canvasWrap = document.getElementById("fv-viewer-canvas-wrap");
+  if (canvasWrap && !canvasWrap.dataset.annotateBound) {
+    canvasWrap.addEventListener("click", _fvPdfAnnotateClick);
+    canvasWrap.dataset.annotateBound = "1";
+  }
 
   const typeSel = document.getElementById("fv-doc-type");
   if (typeSel) {
@@ -2268,6 +2310,23 @@ function _fvEnsurePdfJs() {
   return _fvPdfJsPromise;
 }
 
+// PDF editing state — mirrors the lead-detail.html docViewer state but
+// scoped to the File Vault component.
+function _fvResetPdfEditState() {
+  if (_fvViewerState) {
+    _fvViewerState.pdfDoc = null;
+    _fvViewerState.scale = 1.0;
+    _fvViewerState.rotation = 0;
+    _fvViewerState.type = null;
+    _fvViewerState.annotations = [];
+    _fvViewerState.annotateMode = false;
+    _fvViewerState.dirty = false;
+    _fvViewerState.cropMode = false;
+    _fvViewerState.cropSelection = null;
+    _fvViewerState.cropDragging = false;
+  }
+}
+
 // Load file bytes via Drive alt=media + OAuth token. PDFs render into a
 // <canvas> stack via pdf.js (no browser-native viewer chrome). Images render
 // inline. Other types fall back to the Google Docs viewer iframe.
@@ -2279,6 +2338,10 @@ async function _fvLoadBlobIntoIframe(f) {
   const mime = f.mimeType || "";
   const isPdf = _fvIsPdf(f);
   const isImage = mime.indexOf("image/") === 0;
+
+  // Reset editing state (rotation/crop/annotations) for the new file.
+  _fvResetPdfEditState();
+  _fvUpdatePdfToolbarVisibility();
 
   // Show loading state in the canvas wrap; hide the iframe by default.
   canvasWrap.style.display = "block";
@@ -2306,26 +2369,25 @@ async function _fvLoadBlobIntoIframe(f) {
         if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
         const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
         if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
-        canvasWrap.innerHTML = "";
-        const baseScale = 1.5;
-        for (let i = 1; i <= pdfDoc.numPages; i++) {
-          const page = await pdfDoc.getPage(i);
-          if (!_fvViewerState || _fvViewerState.index !== renderIndex) { try { pdfDoc.destroy(); } catch (_) {} return; }
-          const viewport = page.getViewport({ scale: baseScale });
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          canvas.style.cssText = "display:block;margin:0 auto 12px;max-width:100%;height:auto;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.5);border-radius:4px;";
-          canvasWrap.appendChild(canvas);
-          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-        }
+        _fvViewerState.pdfDoc = pdfDoc;
+        _fvViewerState.type = "pdf";
+        _fvViewerState.scale = 1.0;
+        _fvViewerState.rotation = 0;
+        // Load any saved annotations BEFORE first render so they appear.
+        await _fvLoadAnnotations(f.id);
+        if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
+        await _fvRenderPdfPages(renderIndex);
+        _fvRenderAnnotations();
+        _fvUpdatePdfToolbarVisibility();
       } else {
         // Image: blob URL inside an <img>, retain blobUrl for cleanup.
         _fvRevokeBlobUrl();
         const blob = new Blob([buf], { type: mime || "image/jpeg" });
         const blobUrl = URL.createObjectURL(blob);
         _fvViewerState.blobUrl = blobUrl;
+        _fvViewerState.type = "image";
         canvasWrap.innerHTML = '<img src="' + blobUrl + '" alt="" style="display:block;margin:0 auto;max-width:100%;height:auto;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.5);">';
+        _fvUpdatePdfToolbarVisibility();
       }
     } catch (e) {
       console.error("[FileVault][viewer] fetch failed:", e);
@@ -2338,12 +2400,565 @@ async function _fvLoadBlobIntoIframe(f) {
   }
 
   // Google-native docs + other types: use the Docs viewer proxy iframe.
+  _fvViewerState.type = "other";
+  _fvUpdatePdfToolbarVisibility();
   canvasWrap.style.display = "none";
   canvasWrap.innerHTML = "";
   iframe.style.display = "block";
   const docsViewerUrl = "https://docs.google.com/viewer?embedded=true&url=" +
     encodeURIComponent(`https://drive.google.com/uc?export=download&id=${f.id}`);
   iframe.src = docsViewerUrl;
+}
+
+// Render every page of the current PDF using state.scale + state.rotation.
+async function _fvRenderPdfPages(renderIndex) {
+  const canvasWrap = document.getElementById("fv-viewer-canvas-wrap");
+  if (!canvasWrap || !_fvViewerState || !_fvViewerState.pdfDoc) return;
+  const pdfDoc = _fvViewerState.pdfDoc;
+  const baseScale = 1.5;
+  const totalScale = (_fvViewerState.scale || 1) * baseScale;
+  const rotation = _fvViewerState.rotation || 0;
+  canvasWrap.innerHTML = "";
+  for (let i = 1; i <= pdfDoc.numPages; i++) {
+    const page = await pdfDoc.getPage(i);
+    if (!_fvViewerState || (renderIndex != null && _fvViewerState.index !== renderIndex)) return;
+    const viewport = page.getViewport({ scale: totalScale, rotation });
+    const canvas = document.createElement("canvas");
+    canvas.dataset.page = String(i);
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.cssText = "display:block;margin:0 auto 12px;max-width:100%;height:auto;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.5);border-radius:4px;";
+    canvasWrap.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+  }
+}
+
+// Toggle visibility of the PDF editing toolbar based on current file type.
+function _fvUpdatePdfToolbarVisibility() {
+  const bar = document.getElementById("fv-pdf-toolbar");
+  if (!bar) return;
+  bar.style.display = (_fvViewerState && _fvViewerState.type === "pdf") ? "flex" : "none";
+  _fvUpdateSaveRotBtn();
+  _fvUpdateSaveNotesBtn();
+  _fvSetCropBtnsVisibility(false);
+}
+
+function _fvUpdateSaveRotBtn() {
+  const btn = document.getElementById("fv-pdf-save-rot-btn");
+  if (!btn) return;
+  const visible = _fvViewerState && _fvViewerState.type === "pdf" && (_fvViewerState.rotation || 0) !== 0;
+  btn.style.display = visible ? "inline-block" : "none";
+}
+
+function _fvUpdateSaveNotesBtn() {
+  const btn = document.getElementById("fv-pdf-save-notes-btn");
+  if (!btn || !_fvViewerState) return;
+  const hasAnns = (_fvViewerState.annotations || []).length > 0;
+  const visible = _fvViewerState.type === "pdf" && (_fvViewerState.annotateMode || _fvViewerState.dirty || hasAnns);
+  btn.style.display = visible ? "inline-block" : "none";
+}
+
+function _fvSetCropBtnsVisibility(show) {
+  const apply = document.getElementById("fv-pdf-crop-apply-btn");
+  const cancel = document.getElementById("fv-pdf-crop-cancel-btn");
+  if (apply) apply.style.display = show ? "inline-block" : "none";
+  if (cancel) cancel.style.display = show ? "inline-block" : "none";
+}
+
+// ── PDF EDITING ACTIONS ────────────────────────────────────────────────
+
+function _fvPdfZoom(delta) {
+  if (!_fvViewerState || _fvViewerState.type !== "pdf") return;
+  _fvViewerState.scale = Math.max(0.4, Math.min(3.0, (_fvViewerState.scale || 1) + delta));
+  const lvl = document.getElementById("fv-pdf-zoom-level");
+  if (lvl) lvl.textContent = Math.round(_fvViewerState.scale * 100) + "%";
+  _fvRenderPdfPages(_fvViewerState.index).then(() => _fvRenderAnnotations());
+}
+
+function _fvPdfRotate() {
+  if (!_fvViewerState || _fvViewerState.type !== "pdf") return;
+  _fvViewerState.rotation = ((_fvViewerState.rotation || 0) + 90) % 360;
+  _fvRenderPdfPages(_fvViewerState.index).then(() => {
+    _fvRenderAnnotations();
+    _fvUpdateSaveRotBtn();
+  });
+}
+
+async function _fvPdfSaveRotation() {
+  if (!_fvViewerState || _fvViewerState.type !== "pdf") return;
+  const file = _fvViewerState.files && _fvViewerState.files[_fvViewerState.index];
+  if (!file || !_fvViewerState.rotation) return;
+  const btn = document.getElementById("fv-pdf-save-rot-btn");
+  const pendingRot = _fvViewerState.rotation;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #1A0E00;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;vertical-align:middle;margin-right:6px;"></span>Saving…';
+  }
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    const sess = await supabase.auth.getSession();
+    const accessToken = sess?.data?.session?.access_token;
+    if (!accessToken) throw new Error("Not signed in — refresh and log in again");
+    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
+    const res = await fetch(base + "/functions/v1/save-document", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+      body: JSON.stringify({ file_id: file.id, rotation_degrees: pendingRot }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error((data && data.error) || ("HTTP " + res.status));
+    if (btn) { btn.innerHTML = "✓ Saved"; btn.style.background = "#52C87A"; btn.style.color = "#fff"; }
+    _fvShowToast("Rotation saved");
+    // Refresh the file list and reopen viewer on the new (rotated) file.
+    setTimeout(async () => {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = "&#128190; Save Rotation";
+        btn.style.background = "linear-gradient(135deg,#7A5020,#C9A84C)";
+        btn.style.color = "#1A0E00";
+        btn.style.display = "none";
+      }
+      const contact = _fvContacts.find((c) => c.id === _fvViewerState.contactId);
+      if (contact && contact.gdrive_folder_id) {
+        await _fvLoadFiles(contact.gdrive_folder_id);
+        const refreshed = _fvFiles[contact.gdrive_folder_id] || [];
+        _fvViewerState.files = refreshed;
+        const newId = (data.file && data.file.id) || file.id;
+        const idx = refreshed.findIndex((x) => x.id === newId);
+        if (idx >= 0) {
+          _fvViewerState.index = idx;
+          _fvViewerRender();
+        }
+        _fvRenderFileListPanel(contact);
+      }
+    }, 900);
+  } catch (e) {
+    console.error("[FileVault][saveRotation] failed:", e);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = "&#128190; Save Rotation";
+      btn.style.background = "linear-gradient(135deg,#7A5020,#C9A84C)";
+      btn.style.color = "#1A0E00";
+    }
+    _fvShowToast("Save failed: " + (e.message || e));
+  }
+}
+
+// ── ANNOTATIONS ────────────────────────────────────────────────────────
+
+function _fvPdfToggleAnnotate() {
+  if (!_fvViewerState || _fvViewerState.type !== "pdf") {
+    _fvShowToast("Text notes only work on PDFs");
+    return;
+  }
+  if (!_fvViewerState.annotateMode && (_fvViewerState.rotation || 0) !== 0) {
+    _fvShowToast("Reset rotation to 0 before adding notes");
+    return;
+  }
+  _fvViewerState.annotateMode = !_fvViewerState.annotateMode;
+  const btn = document.getElementById("fv-pdf-type-btn");
+  if (btn) {
+    if (_fvViewerState.annotateMode) {
+      btn.style.background = "#C9A84C";
+      btn.style.color = "#1A0E00";
+    } else {
+      btn.style.background = "#1a1a1a";
+      btn.style.color = "#C9A84C";
+    }
+  }
+  const wrap = document.getElementById("fv-viewer-canvas-wrap");
+  if (wrap) wrap.style.cursor = _fvViewerState.annotateMode ? "text" : "";
+  _fvUpdateSaveNotesBtn();
+}
+
+function _fvPdfAnnotateClick(evt) {
+  if (!_fvViewerState || !_fvViewerState.annotateMode) return;
+  if (!evt.target || (evt.target.closest && evt.target.closest(".fv-ann"))) return;
+  const canvas = evt.target.closest && evt.target.closest("canvas[data-page]");
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const relX = evt.clientX - rect.left;
+  const relY = evt.clientY - rect.top;
+  const ratio = canvas.offsetWidth / canvas.width;
+  const baseScale = 1.5;
+  const totalScale = (_fvViewerState.scale || 1) * baseScale;
+  const pdfX = (relX / (ratio || 1)) / totalScale;
+  const pdfY = (relY / (ratio || 1)) / totalScale;
+  const pageNum = parseInt(canvas.dataset.page || "1", 10);
+  _fvViewerState.annotations.push({
+    page: pageNum, x: pdfX, y: pdfY, text: "Note", font_size: 12, color: "#000000",
+  });
+  _fvViewerState.dirty = true;
+  _fvRenderAnnotations();
+  _fvUpdateSaveNotesBtn();
+  setTimeout(() => {
+    const w = document.getElementById("fv-viewer-canvas-wrap");
+    if (!w) return;
+    const all = w.querySelectorAll(".fv-ann textarea");
+    const last = all[all.length - 1];
+    if (last) { last.focus(); last.select(); }
+  }, 0);
+}
+
+function _fvRenderAnnotations() {
+  const wrap = document.getElementById("fv-viewer-canvas-wrap");
+  if (!wrap || !_fvViewerState) return;
+  wrap.querySelectorAll(".fv-ann").forEach((el) => el.remove());
+  const baseScale = 1.5;
+  const totalScale = (_fvViewerState.scale || 1) * baseScale;
+  (_fvViewerState.annotations || []).forEach((ann, idx) => {
+    const canvas = wrap.querySelector('canvas[data-page="' + ann.page + '"]');
+    if (!canvas) return;
+    const ratio = canvas.offsetWidth / canvas.width;
+    const left = canvas.offsetLeft + ann.x * totalScale * (ratio || 1);
+    const top  = canvas.offsetTop  + ann.y * totalScale * (ratio || 1);
+    const div = document.createElement("div");
+    div.className = "fv-ann";
+    div.dataset.idx = String(idx);
+    div.style.cssText = "position:absolute;left:" + left + "px;top:" + top + "px;min-width:140px;background:rgba(255,255,255,0.97);border:1px solid rgba(201,168,76,0.55);border-radius:6px;padding:4px;box-shadow:0 2px 10px rgba(0,0,0,0.35);z-index:10;font-family:inherit;";
+    const swatches = ["#000000", "#E05252", "#3D7EFF", "#C9A84C"];
+    const sizeOpts = [8, 10, 12, 14, 16, 18]
+      .map((s) => '<option value="' + s + '"' + (s === Number(ann.font_size) ? " selected" : "") + ">" + s + "</option>")
+      .join("");
+    const colorBtns = swatches.map((c) =>
+      '<button type="button" class="fv-ann-color" data-color="' + c + '" style="width:14px;height:14px;border-radius:50%;background:' + c + ";border:" + (c === ann.color ? "2px solid #1A0E00" : "1px solid #666") + ';cursor:pointer;padding:0;margin:0;"></button>'
+    ).join("");
+    const safeText = String(ann.text == null ? "" : ann.text)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    div.innerHTML =
+      '<div class="fv-ann-header" style="display:flex;align-items:center;gap:4px;padding:2px 4px 4px;border-bottom:1px solid rgba(0,0,0,0.1);margin-bottom:4px;cursor:move;font-size:10px;user-select:none;">' +
+        '<span style="color:#888;flex:1;">⋮⋮</span>' +
+        '<select class="fv-ann-size" style="font-size:10px;padding:1px 2px;border:1px solid #ccc;border-radius:3px;background:#fff;color:#000;font-family:inherit;">' + sizeOpts + "</select>" +
+        colorBtns +
+        '<button type="button" class="fv-ann-del" title="Delete" style="background:none;border:none;color:#E05252;cursor:pointer;padding:0 4px;font-size:12px;font-family:inherit;">✕</button>' +
+      "</div>" +
+      '<textarea class="fv-ann-text" rows="2" style="display:block;width:130px;min-height:36px;border:none;resize:both;outline:none;font-size:' + Number(ann.font_size) + "px;color:" + ann.color + ';background:transparent;font-family:inherit;padding:2px;">' + safeText + "</textarea>";
+    wrap.appendChild(div);
+    _fvWireAnnotation(div, ann);
+  });
+}
+
+function _fvWireAnnotation(div, ann) {
+  const header = div.querySelector(".fv-ann-header");
+  if (header) {
+    header.addEventListener("mousedown", function (e) {
+      if (e.target && e.target.closest && e.target.closest("select,button,.fv-ann-del,.fv-ann-color")) return;
+      e.preventDefault(); e.stopPropagation();
+      const startX = e.clientX, startY = e.clientY;
+      const startLeft = parseFloat(div.style.left) || 0;
+      const startTop  = parseFloat(div.style.top)  || 0;
+      const move = (ev) => {
+        div.style.left = (startLeft + ev.clientX - startX) + "px";
+        div.style.top  = (startTop  + ev.clientY - startY) + "px";
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        const wrap = document.getElementById("fv-viewer-canvas-wrap");
+        const canvas = wrap && wrap.querySelector('canvas[data-page="' + ann.page + '"]');
+        if (canvas) {
+          const ratio = canvas.offsetWidth / canvas.width;
+          const baseScale = 1.5;
+          const totalScale = (_fvViewerState.scale || 1) * baseScale;
+          ann.x = ((parseFloat(div.style.left) || 0) - canvas.offsetLeft) / ((ratio || 1) * totalScale);
+          ann.y = ((parseFloat(div.style.top)  || 0) - canvas.offsetTop ) / ((ratio || 1) * totalScale);
+          _fvViewerState.dirty = true;
+          _fvUpdateSaveNotesBtn();
+        }
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  }
+  const ta = div.querySelector(".fv-ann-text");
+  if (ta) {
+    ta.addEventListener("input", () => { ann.text = ta.value; _fvViewerState.dirty = true; _fvUpdateSaveNotesBtn(); });
+    ta.addEventListener("mousedown", (e) => e.stopPropagation());
+    ta.addEventListener("click", (e) => e.stopPropagation());
+  }
+  const sizeSel = div.querySelector(".fv-ann-size");
+  if (sizeSel) {
+    sizeSel.addEventListener("change", () => {
+      ann.font_size = parseInt(sizeSel.value, 10) || 12;
+      if (ta) ta.style.fontSize = ann.font_size + "px";
+      _fvViewerState.dirty = true;
+      _fvUpdateSaveNotesBtn();
+    });
+    sizeSel.addEventListener("mousedown", (e) => e.stopPropagation());
+  }
+  div.querySelectorAll(".fv-ann-color").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      ann.color = btn.getAttribute("data-color") || "#000000";
+      if (ta) ta.style.color = ann.color;
+      _fvViewerState.dirty = true;
+      _fvRenderAnnotations();
+      _fvUpdateSaveNotesBtn();
+    });
+  });
+  const delBtn = div.querySelector(".fv-ann-del");
+  if (delBtn) {
+    delBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const i = _fvViewerState.annotations.indexOf(ann);
+      if (i >= 0) _fvViewerState.annotations.splice(i, 1);
+      _fvViewerState.dirty = true;
+      _fvRenderAnnotations();
+      _fvUpdateSaveNotesBtn();
+    });
+  }
+}
+
+async function _fvLoadAnnotations(fileId) {
+  if (!_fvViewerState) return;
+  _fvViewerState.annotations = [];
+  _fvViewerState.dirty = false;
+  if (!fileId) return;
+  try {
+    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
+    const res = await fetch(base + "/functions/v1/portal-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "get_annotations", document_id: fileId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data && Array.isArray(data.annotations)) {
+      _fvViewerState.annotations = data.annotations.map((a) => ({
+        id: a.id,
+        page: a.page || 1,
+        x: Number(a.x) || 0,
+        y: Number(a.y) || 0,
+        text: a.text || "",
+        font_size: Number(a.font_size) || 12,
+        color: a.color || "#000000",
+      }));
+    }
+  } catch (e) {
+    console.warn("[FileVault] load annotations failed:", e);
+  }
+}
+
+async function _fvPdfSaveAnnotations() {
+  if (!_fvViewerState) return;
+  const file = _fvViewerState.files && _fvViewerState.files[_fvViewerState.index];
+  if (!file) return;
+  const btn = document.getElementById("fv-pdf-save-notes-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  try {
+    const payload = (_fvViewerState.annotations || []).map((a) => ({
+      page: a.page || 1, x: Number(a.x) || 0, y: Number(a.y) || 0,
+      text: a.text || "", font_size: Number(a.font_size) || 12, color: a.color || "#000000",
+    }));
+    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
+    const res = await fetch(base + "/functions/v1/portal-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "save_annotations",
+        document_id: file.id,
+        contact_id: _fvViewerState.contactId,
+        annotations: payload,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error((data && data.error) || ("HTTP " + res.status));
+    _fvViewerState.dirty = false;
+    if (btn) {
+      btn.textContent = "✓ Saved";
+      btn.style.background = "#52C87A";
+      btn.style.color = "#fff";
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.innerHTML = "&#128190; Save Notes";
+        btn.style.background = "linear-gradient(135deg,#7A5020,#C9A84C)";
+        btn.style.color = "#1A0E00";
+        _fvUpdateSaveNotesBtn();
+      }, 1200);
+    }
+    _fvShowToast("Notes saved");
+  } catch (e) {
+    console.error("[FileVault] save annotations failed:", e);
+    if (btn) { btn.disabled = false; btn.innerHTML = "&#128190; Save Notes"; }
+    _fvShowToast("Save failed: " + (e.message || e));
+  }
+}
+
+// ── CROP TOOL ──────────────────────────────────────────────────────────
+
+function _fvPdfToggleCrop() {
+  if (!_fvViewerState || _fvViewerState.type !== "pdf") {
+    _fvShowToast("Crop only works on PDFs");
+    return;
+  }
+  if (!_fvViewerState.cropMode && (_fvViewerState.rotation || 0) !== 0) {
+    _fvShowToast("Reset rotation to 0 before cropping");
+    return;
+  }
+  if (_fvViewerState.cropMode) { _fvPdfExitCropMode(); return; }
+  if (_fvViewerState.annotateMode) _fvPdfToggleAnnotate();
+  _fvViewerState.cropMode = true;
+  _fvViewerState.cropSelection = null;
+  const btn = document.getElementById("fv-pdf-crop-btn");
+  if (btn) { btn.style.background = "#C9A84C"; btn.style.color = "#1A0E00"; }
+  const wrap = document.getElementById("fv-viewer-canvas-wrap");
+  if (wrap) {
+    wrap.style.cursor = "crosshair";
+    wrap.addEventListener("mousedown", _fvPdfCropMouseDown);
+  }
+}
+
+function _fvPdfExitCropMode() {
+  if (!_fvViewerState) return;
+  _fvViewerState.cropMode = false;
+  _fvViewerState.cropDragging = false;
+  _fvViewerState.cropSelection = null;
+  const btn = document.getElementById("fv-pdf-crop-btn");
+  if (btn) { btn.style.background = "#1a1a1a"; btn.style.color = "#C9A84C"; }
+  const wrap = document.getElementById("fv-viewer-canvas-wrap");
+  if (wrap) {
+    wrap.style.cursor = _fvViewerState.annotateMode ? "text" : "";
+    wrap.removeEventListener("mousedown", _fvPdfCropMouseDown);
+    const sel = document.getElementById("_fvCropRect");
+    if (sel) sel.remove();
+  }
+  _fvSetCropBtnsVisibility(false);
+}
+
+function _fvPdfCropMouseDown(evt) {
+  if (!_fvViewerState || !_fvViewerState.cropMode) return;
+  if (!evt.target || !evt.target.closest) return;
+  const canvas = evt.target.closest("canvas[data-page]");
+  if (!canvas) return;
+  evt.preventDefault();
+  const wrap = document.getElementById("fv-viewer-canvas-wrap");
+  if (!wrap) return;
+  const wrapRect = wrap.getBoundingClientRect();
+  const startX = evt.clientX - wrapRect.left + wrap.scrollLeft;
+  const startY = evt.clientY - wrapRect.top  + wrap.scrollTop;
+  const pageNum = parseInt(canvas.dataset.page || "1", 10);
+
+  const prior = document.getElementById("_fvCropRect");
+  if (prior) prior.remove();
+
+  const rect = document.createElement("div");
+  rect.id = "_fvCropRect";
+  rect.style.cssText = "position:absolute;left:" + startX + "px;top:" + startY + "px;width:0;height:0;border:2px dashed #C9A84C;background:rgba(201,168,76,0.12);pointer-events:none;z-index:20;";
+  wrap.appendChild(rect);
+
+  _fvViewerState.cropDragging = true;
+  _fvViewerState.cropSelection = { page: pageNum, canvas, left: startX, top: startY, width: 0, height: 0 };
+
+  const move = (ev) => {
+    if (!_fvViewerState || !_fvViewerState.cropDragging) return;
+    const curX = ev.clientX - wrapRect.left + wrap.scrollLeft;
+    const curY = ev.clientY - wrapRect.top  + wrap.scrollTop;
+    const left = Math.min(startX, curX);
+    const top  = Math.min(startY, curY);
+    const width  = Math.abs(curX - startX);
+    const height = Math.abs(curY - startY);
+    rect.style.left   = left + "px";
+    rect.style.top    = top + "px";
+    rect.style.width  = width + "px";
+    rect.style.height = height + "px";
+    _fvViewerState.cropSelection.left = left;
+    _fvViewerState.cropSelection.top = top;
+    _fvViewerState.cropSelection.width = width;
+    _fvViewerState.cropSelection.height = height;
+  };
+  const up = () => {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    _fvViewerState.cropDragging = false;
+    if (!_fvViewerState.cropSelection || _fvViewerState.cropSelection.width < 8 || _fvViewerState.cropSelection.height < 8) {
+      const el = document.getElementById("_fvCropRect");
+      if (el) el.remove();
+      _fvViewerState.cropSelection = null;
+      _fvSetCropBtnsVisibility(false);
+      return;
+    }
+    _fvSetCropBtnsVisibility(true);
+  };
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+}
+
+async function _fvPdfApplyCrop() {
+  if (!_fvViewerState || !_fvViewerState.cropSelection) return;
+  const file = _fvViewerState.files && _fvViewerState.files[_fvViewerState.index];
+  if (!file) return;
+  const sel = _fvViewerState.cropSelection;
+  const canvas = sel.canvas;
+  if (!canvas) return;
+
+  const baseScale = 1.5;
+  const totalScale = (_fvViewerState.scale || 1) * baseScale;
+
+  const canvasLeftInWrap = canvas.offsetLeft;
+  const canvasTopInWrap  = canvas.offsetTop;
+  const relLeft   = sel.left - canvasLeftInWrap;
+  const relTop    = sel.top  - canvasTopInWrap;
+  const dispW = canvas.offsetWidth;
+  const dispH = canvas.offsetHeight;
+  const clampedLeft   = Math.max(0, Math.min(dispW, relLeft));
+  const clampedTop    = Math.max(0, Math.min(dispH, relTop));
+  const clampedRight  = Math.max(0, Math.min(dispW, relLeft + sel.width));
+  const clampedBottom = Math.max(0, Math.min(dispH, relTop  + sel.height));
+  const finalLeft   = clampedLeft;
+  const finalTop    = clampedTop;
+  const finalWidth  = clampedRight - clampedLeft;
+  const finalHeight = clampedBottom - clampedTop;
+  if (finalWidth < 4 || finalHeight < 4) { _fvShowToast("Selection is outside the page"); return; }
+
+  const ratio = canvas.width / (dispW || canvas.width);
+  const intrLeft   = finalLeft   * ratio;
+  const intrTop    = finalTop    * ratio;
+  const intrWidth  = finalWidth  * ratio;
+  const intrHeight = finalHeight * ratio;
+  const pdfXTL = intrLeft   / totalScale;
+  const pdfYTL = intrTop    / totalScale;
+  const pdfW   = intrWidth  / totalScale;
+  const pdfH   = intrHeight / totalScale;
+  const pageHeightPdf = canvas.height / totalScale;
+  const pdfXBL = pdfXTL;
+  const pdfYBL = pageHeightPdf - (pdfYTL + pdfH);
+  const cropPayload = { page: sel.page, x: pdfXBL, y: pdfYBL, width: pdfW, height: pdfH };
+
+  const applyBtn = document.getElementById("fv-pdf-crop-apply-btn");
+  const cancelBtn = document.getElementById("fv-pdf-crop-cancel-btn");
+  if (applyBtn) { applyBtn.disabled = true; applyBtn.innerHTML = "Cropping…"; }
+  if (cancelBtn) cancelBtn.disabled = true;
+
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    const sess = await supabase.auth.getSession();
+    const accessToken = sess?.data?.session?.access_token;
+    if (!accessToken) throw new Error("Not signed in — refresh and log in again");
+    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
+    const res = await fetch(base + "/functions/v1/save-document", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+      body: JSON.stringify({ file_id: file.id, crop: cropPayload }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error((data && data.error) || ("HTTP " + res.status));
+    _fvShowToast("Cropped!");
+    _fvPdfExitCropMode();
+    const contact = _fvContacts.find((c) => c.id === _fvViewerState.contactId);
+    if (contact) {
+      await _fvLoadFilesForContact(contact);
+      const newId = (data.file && data.file.id) || file.id;
+      const idx = (_fvViewerState.files || []).findIndex((x) => x.id === newId);
+      if (idx >= 0) {
+        _fvViewerState.index = idx;
+        _fvViewerRender();
+      }
+    }
+  } catch (e) {
+    console.error("[FileVault] crop failed:", e);
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.innerHTML = "Apply Crop"; }
+    if (cancelBtn) cancelBtn.disabled = false;
+    _fvShowToast("Crop failed: " + (e.message || e));
+  }
 }
 
 // Inline rename from inside the viewer header. Module-scoped so the click
