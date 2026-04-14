@@ -38,6 +38,27 @@
   .drag-handle { position:absolute;top:12px;right:12px;cursor:grab;color:rgba(255,255,255,0.15);font-size:18px;user-select:none;transition:color .2s;z-index:2; }
   .drag-handle:hover { color: #c9a84c; }
   .drag-handle:active { cursor: grabbing; }
+  /* Collapsible sidebar */
+  .crm-sidebar { transition: width .25s ease, min-width .25s ease, padding .25s ease; }
+  .crm-sidebar.is-collapsed { width: 56px !important; min-width: 56px !important; overflow: hidden; }
+  .crm-sidebar.is-collapsed .crm-sidebar-brand-label,
+  .crm-sidebar.is-collapsed .crm-sidebar-label,
+  .crm-sidebar.is-collapsed .crm-nav-link span,
+  .crm-sidebar.is-collapsed .crm-nav-link,
+  .crm-sidebar.is-collapsed .crm-sidebar-footer { display: none; }
+  .crm-sidebar.is-collapsed .crm-sidebar-brand { padding: 16px 8px; justify-content: center; border-bottom: 1px solid var(--line-soft); }
+  #crmSidebarToggleBtn {
+    position: fixed; top: 50vh; left: calc(var(--sidebar-w) - 8px);
+    z-index: 9999; width: 18px; height: 52px;
+    border-radius: 0 6px 6px 0; background: #1a1a1a; border: 1px solid #333; border-left: none;
+    color: #C9A84C; font-size: 13px; font-weight: 700; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.55); padding: 0; line-height: 1;
+    transition: left .25s ease;
+  }
+  #crmSidebarToggleBtn:hover { background: #222; color: #f2cf85; }
+  body.sidebar-collapsed #crmSidebarToggleBtn { left: 48px; }
+  @media (max-width: 768px) { #crmSidebarToggleBtn { display: none; } }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
@@ -47,7 +68,8 @@
   <div class="dashboard-sidebar-layout">
 
     <!-- ── SIDEBAR NAV ──────────────────────────────── -->
-    <nav class="crm-sidebar" aria-label="CRM Navigation">
+    <button id="crmSidebarToggleBtn" type="button" title="Collapse / expand sidebar" aria-label="Toggle sidebar">&#8249;</button>
+    <nav class="crm-sidebar" id="crmSidebar" aria-label="CRM Navigation">
       <div class="crm-sidebar-brand">
         <span class="crm-sidebar-brand-mark">R&R</span>
         <span class="crm-sidebar-brand-label">Rates &amp; Realty</span>
@@ -1594,6 +1616,42 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(function() { window.loadPipelineBoard(); }, 500);
   }
 });
+
+// Collapsible sidebar — persists state in localStorage
+(function(){
+  var STORAGE_KEY = 'rr-admin-sidebar-collapsed';
+  function apply(collapsed) {
+    var sb = document.getElementById('crmSidebar');
+    var btn = document.getElementById('crmSidebarToggleBtn');
+    if (!sb || !btn) return;
+    if (collapsed) {
+      sb.classList.add('is-collapsed');
+      document.body.classList.add('sidebar-collapsed');
+      btn.innerHTML = '&#8250;';
+    } else {
+      sb.classList.remove('is-collapsed');
+      document.body.classList.remove('sidebar-collapsed');
+      btn.innerHTML = '&#8249;';
+    }
+  }
+  function init() {
+    var collapsed = localStorage.getItem(STORAGE_KEY) === '1';
+    apply(collapsed);
+    var btn = document.getElementById('crmSidebarToggleBtn');
+    if (btn) {
+      btn.addEventListener('click', function(){
+        var nowCollapsed = !document.getElementById('crmSidebar').classList.contains('is-collapsed');
+        apply(nowCollapsed);
+        localStorage.setItem(STORAGE_KEY, nowCollapsed ? '1' : '0');
+      });
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
 </script>
 </body>
 </html>
