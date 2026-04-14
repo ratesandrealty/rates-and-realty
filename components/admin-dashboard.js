@@ -2465,7 +2465,31 @@ async function _fvLoadBlobIntoIframe(f) {
       if (isPdf) {
         const pdfjsLib = await _fvEnsurePdfJs();
         if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
-        const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+        let pdfDoc;
+        try {
+          pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+        } catch (gdErr) {
+          console.error(
+            "[pdf.js] getDocument failed — workerSrc=" +
+              (pdfjsLib.GlobalWorkerOptions && pdfjsLib.GlobalWorkerOptions.workerSrc) +
+              " err=",
+            gdErr
+          );
+          // Fallback: disable the worker and retry on the main thread.
+          // Slower, but avoids any blob:/worker/CSP/MIME failure mode.
+          try {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+            pdfDoc = await pdfjsLib.getDocument({
+              data: new Uint8Array(buf),
+              disableWorker: true,
+              workerPort: null,
+            }).promise;
+            console.warn("[pdf.js] main-thread fallback succeeded");
+          } catch (fbErr) {
+            console.error("[pdf.js] main-thread fallback also failed:", fbErr);
+            throw fbErr;
+          }
+        }
         if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
         _fvViewerState.pdfDoc = pdfDoc;
         _fvViewerState.type = "pdf";
