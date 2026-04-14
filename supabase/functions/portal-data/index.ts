@@ -379,6 +379,41 @@ Deno.serve(async (req: Request) => {
       return ok({ success: true });
     }
 
+    // ─── GET PROFILE ─────────────────────────────────────────────────────
+    if (action === 'get_profile') {
+      const { portal_user_id } = body;
+      if (!portal_user_id) return err('portal_user_id required');
+      const { data: pu, error: puErr } = await sb.from('portal_users')
+        .select('contact_id').eq('id', portal_user_id).maybeSingle();
+      if (puErr) return err(puErr.message, 500);
+      if (!pu?.contact_id) return err('Portal user has no linked contact', 404);
+      const { data: c, error: cErr } = await sb.from('contacts')
+        .select('id, first_name, last_name, email, phone, borrower_id, address, city, state, zip')
+        .eq('id', pu.contact_id).maybeSingle();
+      if (cErr) return err(cErr.message, 500);
+      return ok({ profile: c || null });
+    }
+
+    // ─── UPDATE PROFILE ──────────────────────────────────────────────────
+    if (action === 'update_profile') {
+      const { portal_user_id, first_name, last_name, phone, email } = body;
+      if (!portal_user_id) return err('portal_user_id required');
+      const { data: pu, error: puErr } = await sb.from('portal_users')
+        .select('contact_id').eq('id', portal_user_id).maybeSingle();
+      if (puErr) return err(puErr.message, 500);
+      if (!pu?.contact_id) return err('Portal user has no linked contact', 404);
+
+      const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+      if (first_name !== undefined) patch.first_name = first_name;
+      if (last_name !== undefined) patch.last_name = last_name;
+      if (phone !== undefined) patch.phone = phone;
+      if (email !== undefined) patch.email = email;
+
+      const { error: updErr } = await sb.from('contacts').update(patch).eq('id', pu.contact_id);
+      if (updErr) return err(updErr.message, 500);
+      return ok({ success: true });
+    }
+
     return err('Unknown action: ' + action);
 
   } catch (e: any) {
