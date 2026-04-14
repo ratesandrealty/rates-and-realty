@@ -11213,7 +11213,7 @@ function openAdobePdfViewer(base64Pdf, fileName) {
   setTimeout(() => URL.revokeObjectURL(blobUrl), 600000);
 }
 
-// Generate standard URLA 1003 PDF via generate-preapproval?action=1003_pdf
+// Generate URLA 1003 as filled HTML → browser print (Save as PDF)
 async function lsGenerate1003() {
   var btn = document.getElementById('ls1003PdfBtn');
   var origTxt = btn ? btn.textContent : ''; if (btn) { btn.textContent = '\u23F3 Generating...'; btn.disabled = true; }
@@ -11221,81 +11221,33 @@ async function lsGenerate1003() {
     var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
     var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
     var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-    var hdrs = {'Authorization':'Bearer '+anon,'apikey':anon};
-    // Load full mortgage_application row
-    var appRes = await fetch(base+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&order=created_at.desc&limit=1', { headers: hdrs });
-    var apps = await appRes.json();
-    var app = (apps && apps[0]) || {};
-    // Load normalized tables
-    var liabRes = await fetch(base+'/rest/v1/loan_liabilities?contact_id=eq.'+cid+'&is_omitted=eq.false&order=sort_order.asc', { headers: hdrs });
-    var liabs = liabRes.ok ? (await liabRes.json() || []) : [];
-    var assetRes = await fetch(base+'/rest/v1/loan_assets?contact_id=eq.'+cid+'&order=sort_order.asc', { headers: hdrs });
-    var assets = assetRes.ok ? (await assetRes.json() || []) : [];
-    var reoRes = await fetch(base+'/rest/v1/loan_reo?contact_id=eq.'+cid+'&order=sort_order.asc', { headers: hdrs });
-    var reos = reoRes.ok ? (await reoRes.json() || []) : [];
-    // Load primary scenario
-    var sr = await fetch(base+'/rest/v1/loan_scenarios?contact_id=eq.'+cid+'&is_primary=eq.true&limit=1', { headers: hdrs });
-    var scens = sr.ok ? (await sr.json() || []) : [];
-    var scenario = scens[0] || {};
-    // Build 1003 payload — strip $ and commas so edge function gets raw numbers
-    const cleanNum = (v) => parseFloat(String(v||'').replace(/[$,]/g,'')) || 0;
-    var payload = Object.assign({}, app, {
-      action: '1003_pdf',
-      loan_amount: cleanNum(scenario.loan_amount || app.loan_amount || app.requested_loan_amount),
-      interest_rate: cleanNum(scenario.interest_rate || app.current_interest_rate || 0),
-      current_interest_rate: cleanNum(scenario.interest_rate || app.current_interest_rate || 0),
-      loan_term_months: parseInt(scenario.loan_term_months || app.loan_term_months || 360),
-      // Clean borrower income fields (stored as strings in some cases)
-      base_income: cleanNum(app.base_income),
-      overtime_income: cleanNum(app.overtime_income),
-      bonus_income: cleanNum(app.bonus_income),
-      commission_income: cleanNum(app.commission_income),
-      other_income: cleanNum(app.other_income),
-      // Clean co-borrower income fields
-      co_borrower_base_income: cleanNum(app.co_borrower_base_income),
-      co_borrower_overtime_income: cleanNum(app.co_borrower_overtime_income),
-      co_borrower_bonus_income: cleanNum(app.co_borrower_bonus_income),
-      co_borrower_commission_income: cleanNum(app.co_borrower_commission_income),
-      co_borrower_other_income: cleanNum(app.co_borrower_other_income),
-      liabilities_list: JSON.stringify(liabs),
-      assets: JSON.stringify(assets),
-      reo_list: JSON.stringify(reos),
-      lo_name: 'Rene Duarte', lo_nmls: '1795044', lo_phone: '(714) 472-8508', lo_email: 'rene@ratesandrealty.com',
-      company_name: 'E Mortgage Capital', company_nmls: '1416824',
-      loan_number: app.borrower_id || ''
-    });
-    // Point at generate-1003-pdf — the only function whose source is in the
-    // repo. The legacy /generate-1003 endpoint was an older deploy without
-    // matching source, which produced the bunched-text output.
     var res = await fetch(base+'/functions/v1/generate-1003-pdf', {
-      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
-      body: JSON.stringify(payload)
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
+      body: JSON.stringify({ contact_id: cid })
     });
-    var nameStr = ((app.first_name||'')+' '+(app.last_name||'')).trim() || 'Borrower';
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); } catch(e) {
       throw new Error('Server returned invalid response: ' + text.slice(0,120));
     }
-    if (!data.success || !data.pdf) {
+    if (!data.success || !data.html) {
       alert('Error generating 1003: ' + (data.error || 'Unknown error'));
       return;
     }
-
-    // Direct download — bypass Adobe viewer (CSP/client-id issues)
-    const bytes = atob(data.pdf);
-    const arr = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-    const blob = new Blob([arr], {type: 'application/pdf'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = '1003_' + ((app.first_name || 'borrower') + '_' + (app.last_name || '')).replace(/\s+/g,'_') + '.pdf';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-    showToast('\u2705 1003 exported successfully');
+    // Decode base64 UTF-8 → HTML string
+    const bin = atob(data.html);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const htmlContent = new TextDecoder('utf-8').decode(bytes);
+    // Open in a new window and trigger print dialog
+    const win = window.open('', '_blank', 'width=900,height=1100');
+    if (!win) { showToast('Popup blocked — allow popups for this site'); return; }
+    win.document.open();
+    win.document.write(htmlContent);
+    win.document.close();
+    win.focus();
+    showToast('\u2705 1003 ready — use the print dialog to Save as PDF');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
