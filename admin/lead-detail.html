@@ -11282,9 +11282,20 @@ async function lsGenerate1003() {
       return;
     }
 
-    // Open in Adobe Acrobat Embed viewer
-    openAdobePdfViewer(data.pdf, '1003_Application — ' + (nameStr || 'Borrower') + '.pdf');
-    showToast('1003 ready \u2713');
+    // Direct download — bypass Adobe viewer (CSP/client-id issues)
+    const bytes = atob(data.pdf);
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    const blob = new Blob([arr], {type: 'application/pdf'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '1003_' + ((app.first_name || 'borrower') + '_' + (app.last_name || '')).replace(/\s+/g,'_') + '.pdf';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    showToast('\u2705 1003 exported successfully');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
