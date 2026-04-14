@@ -1,11 +1,14 @@
 // save-document edge function
 //
-// Accepts a signed request from the admin CRM to apply a rotation to a PDF
-// stored in Google Drive. Writes the rotated PDF back as a NEW Drive file
-// in the same parent folder (original stays recoverable).
+// Accepts a signed request from the admin CRM to apply a rotation or crop to
+// a PDF stored in Google Drive. PATCHes the new bytes back over the SAME
+// Drive file (same id, same name, same parent folder). No file copies are
+// accumulated, and there's no parents-routing failure mode because we never
+// create a new file.
 //
 // Request body (JSON):
 //   { file_id: string, rotation_degrees: 90|180|270 }
+//   { file_id: string, crop: { page, x, y, width, height } }
 //
 // Also accepts `drive_file_id` or `document_id` as aliases for file_id.
 //
@@ -96,7 +99,6 @@ Deno.serve(async (req: Request) => {
     let cropPage = 0;
     let cropX = 0, cropY = 0, cropW = 0, cropH = 0;
     let opLabel = "";
-    let newNameSuffix = "";
 
     if (hasRotate) {
       const rotationDegrees = Number(body.rotation_degrees || 0);
@@ -106,7 +108,6 @@ Deno.serve(async (req: Request) => {
       }
       if (normalizedRot === 0) return err("rotation_degrees is 0 — nothing to save");
       opLabel = "rotated";
-      newNameSuffix = `_rotated_${Date.now()}`;
     } else {
       // Crop path
       const c = body.crop || {};
@@ -123,7 +124,6 @@ Deno.serve(async (req: Request) => {
       }
       if (cropW <= 0 || cropH <= 0) return err("crop.width and crop.height must be > 0");
       opLabel = "cropped";
-      newNameSuffix = `_cropped_${Date.now()}`;
     }
 
     // 3. Get a Google OAuth access token (user flow — SA has no storage quota).
@@ -192,52 +192,35 @@ Deno.serve(async (req: Request) => {
       return err("pdf-lib failed to process PDF: " + ((e as Error).message || String(e)), 500);
     }
 
-    // 7. Upload as a NEW Drive file in the same parent folder(s).
-    const origName: string = meta.name || "document.pdf";
-    const stem = origName.replace(/\.pdf$/i, "");
-    const newName = `${stem}${newNameSuffix}.pdf`;
-    const parents: string[] = Array.isArray(meta.parents) ? meta.parents : [];
-
-    const boundary = "save_" + crypto.randomUUID();
-    const metadata = JSON.stringify({ name: newName, parents, mimeType: "application/pdf" });
-    const encoder = new TextEncoder();
-    const head = encoder.encode(
-      `--${boundary}\r\n` +
-        `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-        metadata + `\r\n` +
-        `--${boundary}\r\n` +
-        `Content-Type: application/pdf\r\n\r\n`,
-    );
-    const tail = encoder.encode(`\r\n--${boundary}--`);
-    const multipartBody = new Uint8Array(head.length + newBytes.length + tail.length);
-    multipartBody.set(head, 0);
-    multipartBody.set(newBytes, head.length);
-    multipartBody.set(tail, head.length + newBytes.length);
-
+    // 7. PATCH the new bytes back over the SAME Drive file. uploadType=media
+    //    is a content-only update — no metadata change, so name/parents stay
+    //    intact and the file id is preserved. This avoids accumulating
+    //    `_rotated_<ts>.pdf` copies and sidesteps any parents-routing issue.
+    const fieldsCsv = "id,name,webViewLink,webContentLink,mimeType,size,parents,createdTime,modifiedTime,thumbnailLink,iconLink,appProperties";
     const upRes = await fetch(
-      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,webContentLink,mimeType,size,parents,createdTime,modifiedTime,thumbnailLink,iconLink,appProperties",
+      `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&supportsAllDrives=true&fields=${encodeURIComponent(fieldsCsv)}`,
       {
-        method: "POST",
+        method: "PATCH",
         headers: {
           Authorization: `Bearer ${googleToken}`,
-          "Content-Type": `multipart/related; boundary=${boundary}`,
+          "Content-Type": "application/pdf",
         },
-        body: multipartBody,
+        body: newBytes,
       },
     );
     if (!upRes.ok) {
       const txt = await upRes.text();
-      return err(`Drive upload failed: ${upRes.status} ${txt}`, 502);
+      return err(`Drive in-place update failed: ${upRes.status} ${txt}`, 502);
     }
-    const newFile = await upRes.json();
+    const updatedFile = await upRes.json();
 
-    console.log(`[save-document] ${userEmail} ${opLabel} ${fileId} → new file ${newFile.id}`);
+    console.log(`[save-document] ${userEmail} ${opLabel} ${fileId} (in-place)`);
     return ok({
       success: true,
-      file_id: newFile.id,
-      file_url: newFile.webViewLink || null,
-      name: newFile.name,
-      file: newFile,
+      file_id: updatedFile.id || fileId,
+      file_url: updatedFile.webViewLink || null,
+      name: updatedFile.name,
+      file: updatedFile,
     });
   } catch (e) {
     console.error("save-document error:", e);
