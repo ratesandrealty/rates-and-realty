@@ -2944,14 +2944,17 @@ async function _fvPdfApplyCrop() {
     _fvShowToast("Cropped!");
     _fvPdfExitCropMode();
     const contact = _fvContacts.find((c) => c.id === _fvViewerState.contactId);
-    if (contact) {
-      await _fvLoadFilesForContact(contact);
+    if (contact && contact.gdrive_folder_id) {
+      await _fvLoadFiles(contact.gdrive_folder_id);
+      const refreshed = _fvFiles[contact.gdrive_folder_id] || [];
+      _fvViewerState.files = refreshed;
       const newId = (data.file && data.file.id) || file.id;
-      const idx = (_fvViewerState.files || []).findIndex((x) => x.id === newId);
+      const idx = refreshed.findIndex((x) => x.id === newId);
       if (idx >= 0) {
         _fvViewerState.index = idx;
         _fvViewerRender();
       }
+      _fvRenderFileListPanel(contact);
     }
   } catch (e) {
     console.error("[FileVault] crop failed:", e);
