@@ -11235,27 +11235,67 @@ async function lsGenerate1003() {
       alert('Error generating 1003: ' + (data.error || 'Unknown error'));
       return;
     }
-    // Decode base64 UTF-8 → HTML bytes → blob URL
-    // (pre-approval uses the same pattern with type:'application/pdf'; here we
-    // use type:'text/html' because Deno edge functions can't render HTML→PDF.
-    // The viewer modal shell is byte-for-byte identical to lsGeneratePreApproval.)
+    // Decode base64 UTF-8 → HTML string
     const bin = atob(data.html);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    var blob = new Blob([bytes], { type: 'text/html;charset=utf-8' });
-    var blobUrl = URL.createObjectURL(blob);
+    const htmlContent = new TextDecoder('utf-8').decode(bytes);
 
     var contactName = (data.file_name || '').replace(/^1003_/, '').replace(/_\d{4}-\d{2}-\d{2}\.html$/, '').replace(/_/g, ' ') || 'Borrower';
-    var fileName = '1003 \u2014 ' + contactName + '.html';
+    var fileName = '1003 \u2014 ' + contactName + '.pdf';
 
-    // Open viewer popup with the SAME toolbar shell as lsGeneratePreApproval.
+    // ── Ensure html2pdf.js is loaded (cached after first use) ──
+    if (!window.html2pdf) {
+      showToast('Loading PDF renderer\u2026');
+      await new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        s.onload = resolve;
+        s.onerror = function () { reject(new Error('Failed to load html2pdf.js from CDN')); };
+        document.head.appendChild(s);
+      });
+    }
+
+    showToast('Rendering 1003 PDF\u2026');
+
+    // ── Inject the 1003 HTML into an off-screen container ──
+    // html2canvas needs a rendered DOM; position off-screen so it stays invisible.
+    var bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    var bodyInner = bodyMatch ? bodyMatch[1] : htmlContent;
+    var styleMatches = htmlContent.match(/<style[^>]*>[\s\S]*?<\/style>/gi) || [];
+
+    var container = document.createElement('div');
+    container.style.cssText = 'position:absolute;left:-10000px;top:0;width:8.5in;background:#fff;z-index:-1;';
+    container.innerHTML = styleMatches.join('\n') + bodyInner;
+    document.body.appendChild(container);
+
+    // Wait a tick for layout/fonts to settle
+    await new Promise(function (r) { setTimeout(r, 150); });
+
+    var pdfBlob;
+    try {
+      pdfBlob = await window.html2pdf().set({
+        margin: 0,
+        filename: fileName,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait', compress: true },
+        pagebreak: { mode: ['css', 'legacy'], before: '.page' }
+      }).from(container).outputPdf('blob');
+    } finally {
+      document.body.removeChild(container);
+    }
+
+    var blobUrl = URL.createObjectURL(pdfBlob);
+
+    // ── Open viewer popup — byte-for-byte identical shell as lsGeneratePreApproval ──
     var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
     if (!popup) {
       var a = document.createElement('a');
       a.href = blobUrl;
       a.download = fileName;
       a.click();
-      showToast('1003 downloaded \u2713');
+      showToast('1003 PDF downloaded \u2713');
       return;
     }
 
@@ -11275,19 +11315,19 @@ async function lsGenerate1003() {
     .btn-print { background: #2a2a2a; color: #eee; border: 1px solid #444; }
     .btn-dl { background: #C9A84C; color: #111; }
     .btn-close { background: transparent; color: #888; border: 1px solid #444; }
-    iframe { flex: 1; border: none; width: 100%; background: #fff; }
+    iframe { flex: 1; border: none; width: 100%; }
   </style>
 </head>
 <body>
   <div class="toolbar">
-    <div><div class="title">\uD83D\uDCCB 1003 Uniform Residential Loan Application \u2014 ${contactName}</div><div class="sub">${new Date().toLocaleDateString()}</div></div>
+    <div><div class="title">\uD83D\uDCC4 1003 Uniform Residential Loan Application \u2014 ${contactName}</div><div class="sub">${new Date().toLocaleDateString()}</div></div>
     <div class="btns">
       <button class="btn btn-print" onclick="document.getElementById('pf').contentWindow.print()">\uD83D\uDDA8\uFE0F Print</button>
-      <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download</button>
+      <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download PDF</button>
       <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
     </div>
   </div>
-  <iframe id="pf" src="${blobUrl}"></iframe>
+  <iframe id="pf" src="${blobUrl}" type="application/pdf"></iframe>
   <script>
     function dl() {
       var a = document.createElement('a');
@@ -11299,8 +11339,8 @@ async function lsGenerate1003() {
 </body>
 </html>`);
     popup.document.close();
-    setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 600000);
-    showToast('1003 ready \u2713');
+    setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 600000);
+    showToast('1003 PDF ready \u2713');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
