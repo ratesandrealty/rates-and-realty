@@ -21,7 +21,13 @@ const chk = (on: any) => on ? '&#9746;' : '&#9744;'; // ☑ / ☐
 // ─── HTML builder ──────────────────────────────────────────────────────────
 function buildHtml(d: any): string {
   const fullName = [d.first_name, d.middle_name, d.last_name, d.suffix].filter(Boolean).join(' ') || '—';
-  const coName = [d.co_borrower_first_name, d.co_borrower_last_name].filter(Boolean).join(' ');
+  const coName = [d.co_borrower_first_name, d.co_borrower_middle_name, d.co_borrower_last_name, d.co_borrower_suffix].filter(Boolean).join(' ');
+
+  // Normalize citizenship — DB stores snake_case (us_citizen, permanent_resident_alien, non_permanent_resident_alien)
+  const citRaw = String(d.citizenship || '').toLowerCase().replace(/[^a-z]/g, '');
+  const isCitizen = citRaw === 'uscitizen' || citRaw === 'usacitizen';
+  const isPermRes = citRaw === 'permanentresidentalien' || citRaw === 'permanentresident';
+  const isNonPermRes = citRaw === 'nonpermanentresidentalien' || citRaw === 'nonpermanentresident';
   const curAddr = [d.cur_street, d.cur_unit && '#' + d.cur_unit, d.cur_city, d.cur_state, d.cur_zip].filter(Boolean).join(', ');
   const totalIncome = d.total_income || (
     (parseFloat(d.base_income) || 0) +
@@ -146,19 +152,23 @@ function buildHtml(d: any): string {
     }
     .print-btn {
       position: fixed;
-      top: 12px;
-      right: 12px;
+      top: 10px;
+      right: 14px;
       background: #C9A84C;
-      color: #000;
-      padding: 9px 18px;
-      border: none;
-      border-radius: 4px;
-      font-weight: bold;
+      color: #1a1a1a;
+      padding: 6px 12px;
+      border: 0.5pt solid #a88a3a;
+      border-radius: 3px;
+      font-weight: 600;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 11px;
+      letter-spacing: 0.2pt;
       z-index: 9999;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+      opacity: 0.92;
+      font-family: Arial, Helvetica, sans-serif;
     }
+    .print-btn:hover { opacity: 1; }
     @media print {
       body { background: #fff; }
       .page {
@@ -168,7 +178,7 @@ function buildHtml(d: any): string {
         min-height: auto;
         padding: 0;
       }
-      .print-btn { display: none !important; }
+      .no-print { display: none !important; }
     }
   `;
 
@@ -186,15 +196,19 @@ function buildHtml(d: any): string {
         <td class="val" colspan="5">${esc(fullName)}</td>
       </tr>
       <tr>
+        <td class="lbl">List Name(s) of Other Borrower(s) on this Application</td>
+        <td class="val" colspan="5">${esc(coName) || '&nbsp;'}</td>
+      </tr>
+      <tr>
         <td class="lbl">Social Security Number</td>
         <td class="val">${esc(fmtSSN(d.ssn))}</td>
         <td class="lbl">Date of Birth (mm/dd/yyyy)</td>
         <td class="val">${esc(fmtDate(d.date_of_birth))}</td>
         <td class="lbl">Citizenship</td>
         <td class="val">
-          <div><span class="chk">${chk(d.citizenship === 'U.S. Citizen')}</span>U.S. Citizen</div>
-          <div><span class="chk">${chk(d.citizenship === 'Permanent Resident Alien')}</span>Permanent Resident Alien</div>
-          <div><span class="chk">${chk(d.citizenship === 'Non-Permanent Resident Alien')}</span>Non-Permanent Resident</div>
+          <div><span class="chk">${chk(isCitizen)}</span>U.S. Citizen</div>
+          <div><span class="chk">${chk(isPermRes)}</span>Permanent Resident Alien</div>
+          <div><span class="chk">${chk(isNonPermRes)}</span>Non-Permanent Resident</div>
         </td>
       </tr>
       <tr>
@@ -622,7 +636,7 @@ function buildHtml(d: any): string {
 <style>${css}</style>
 </head>
 <body>
-<button class="print-btn" onclick="window.print()">&#128424; Print / Save as PDF</button>
+<button class="print-btn no-print" onclick="window.print()">Print / Save as PDF</button>
 
 <div class="page">
   ${titleBar}
@@ -726,7 +740,7 @@ Deno.serve(async (req: Request) => {
       military_income: app.military_income || '',
       other_income: app.other_income || '',
       total_income: app.total_monthly_income || c.monthly_income || '',
-      loan_amount: app.loan_amount || c.loan_amount || '',
+      loan_amount: app.loan_amount || app.requested_loan_amount || c.loan_amount || '',
       loan_purpose: app.loan_purpose || '',
       loan_type: app.loan_type || c.loan_type || '',
       current_interest_rate: app.current_interest_rate || '',
@@ -762,7 +776,9 @@ Deno.serve(async (req: Request) => {
       race: app.demographic_race || '',
       sex: app.demographic_sex || '',
       co_borrower_first_name: app.co_borrower_first_name || '',
+      co_borrower_middle_name: app.co_borrower_middle_name || '',
       co_borrower_last_name: app.co_borrower_last_name || '',
+      co_borrower_suffix: app.co_borrower_suffix || '',
     };
 
     const html = buildHtml(d);
