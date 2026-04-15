@@ -908,13 +908,23 @@ function buildHtml(d: any): string {
   const sectionL1 = `
     <div class="sect">L1. Property and Loan Information</div>
     <table>
-      <colgroup><col style="width:25%"/><col style="width:25%"/><col style="width:25%"/><col style="width:25%"/></colgroup>
+      <colgroup><col style="width:22%"/><col style="width:78%"/></colgroup>
       <tr>
         <td class="lbl">Community Property State</td>
         <td class="val">
-          <span class="opt"><span class="chk">${chk(false)}</span>At least one borrower lives in a community property state</span><br/>
-          <span class="opt"><span class="chk">${chk(false)}</span>The property is in a community property state</span>
+          <div><span class="chk">${chk(false)}</span>At least one borrower lives in a community property state</div>
+          <div><span class="chk">${chk(false)}</span>The property is in a community property state</div>
         </td>
+      </tr>
+      <tr>
+        <td class="lbl">Transaction Detail</td>
+        <td class="val">
+          <div><span class="chk">${chk(false)}</span>Conversion of Contract for Deed or Land Contract</div>
+          <div><span class="chk">${chk(false)}</span>Renovation</div>
+          <div><span class="chk">${chk(false)}</span>Construction-Conversion / Construction-to-Permanent</div>
+        </td>
+      </tr>
+      <tr>
         <td class="lbl">Refinance Type</td>
         <td class="val">
           <span class="opt"><span class="chk">${chk(false)}</span>No Cash Out</span>
@@ -924,7 +934,7 @@ function buildHtml(d: any): string {
       </tr>
       <tr>
         <td class="lbl">Refinance Program</td>
-        <td class="val" colspan="3">
+        <td class="val">
           <span class="opt"><span class="chk">${chk(false)}</span>Full Documentation</span>
           <span class="opt"><span class="chk">${chk(false)}</span>Interest Rate Reduction</span>
           <span class="opt"><span class="chk">${chk(false)}</span>Streamlined without Appraisal</span>
@@ -933,14 +943,14 @@ function buildHtml(d: any): string {
       </tr>
       <tr>
         <td class="lbl">Energy Improvement</td>
-        <td class="val" colspan="3">
-          <span class="opt"><span class="chk">${chk(false)}</span>Mortgage loan will finance energy-related improvements</span>
-          <span class="opt"><span class="chk">${chk(false)}</span>Property is currently subject to a lien that could take priority over the first mortgage lien for energy-related improvements</span>
+        <td class="val">
+          <div><span class="chk">${chk(false)}</span>Mortgage loan will finance energy-related improvements</div>
+          <div><span class="chk">${chk(false)}</span>Property is currently subject to a PACE lien for energy improvements</div>
         </td>
       </tr>
       <tr>
         <td class="lbl">Project Type</td>
-        <td class="val" colspan="3">
+        <td class="val">
           <span class="opt"><span class="chk">${chk(false)}</span>Condominium</span>
           <span class="opt"><span class="chk">${chk(false)}</span>Cooperative</span>
           <span class="opt"><span class="chk">${chk(false)}</span>Planned Unit Development (PUD)</span>
@@ -1063,8 +1073,6 @@ function buildHtml(d: any): string {
 <style>${css}</style>
 </head>
 <body>
-<button class="print-btn no-print" onclick="window.print()">Print / Save as PDF</button>
-
 <div class="page">
   ${titleBar}
   <div class="intro">This application is designed to be completed by the applicant(s) with the Lender's assistance. Applicants should complete this form as "Borrower" or "Co-Borrower," as applicable. Co-Borrower information must also be provided (and the appropriate box checked) when the income or assets of a person other than the Borrower (including the Borrower's spouse) will be used as a basis for loan qualification.</div>

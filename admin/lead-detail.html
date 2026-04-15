@@ -11235,67 +11235,47 @@ async function lsGenerate1003() {
       alert('Error generating 1003: ' + (data.error || 'Unknown error'));
       return;
     }
-    // Decode base64 UTF-8 → HTML bytes → blob URL (same pattern as lsGeneratePreApproval)
+    // Decode base64 UTF-8 → HTML string
     const bin = atob(data.html);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    var blob = new Blob([bytes], { type: 'text/html;charset=utf-8' });
-    var blobUrl = URL.createObjectURL(blob);
+    const htmlContent = new TextDecoder('utf-8').decode(bytes);
 
     var contactName = (data.file_name || '').replace(/^1003_/, '').replace(/_\d{4}-\d{2}-\d{2}\.html$/, '').replace(/_/g, ' ') || 'Borrower';
     var fileName = '1003 — ' + contactName + '.html';
+    var today = new Date().toLocaleDateString();
 
-    var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
-    if (!popup) {
+    var win = window.open('', '_blank', 'width=1100,height=900,scrollbars=yes,resizable=yes');
+    if (!win) {
+      var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
       var a = document.createElement('a');
-      a.href = blobUrl;
+      a.href = URL.createObjectURL(blob);
       a.download = fileName;
       a.click();
-      showToast('1003 downloaded \u2713');
+      showToast('1003 downloaded — popup was blocked');
       return;
     }
 
-    popup.document.write(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${fileName}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; background: #404040; font-family: sans-serif; display: flex; flex-direction: column; }
-    .toolbar { background: #111; border-bottom: 2px solid #C9A84C; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-    .title { color: #C9A84C; font-weight: 700; font-size: 14px; }
-    .sub { color: #888; font-size: 12px; margin-top: 2px; }
-    .btns { display: flex; gap: 10px; }
-    .btn { padding: 8px 18px; border-radius: 6px; border: none; font-weight: 700; font-size: 13px; cursor: pointer; }
-    .btn-print { background: #2a2a2a; color: #eee; border: 1px solid #444; }
-    .btn-dl { background: #C9A84C; color: #111; }
-    .btn-close { background: transparent; color: #888; border: 1px solid #444; }
-    iframe { flex: 1; border: none; width: 100%; background: #fff; }
-  </style>
-</head>
-<body>
-  <div class="toolbar">
-    <div><div class="title">\uD83D\uDCCB 1003 Uniform Residential Loan Application \u2014 ${contactName}</div><div class="sub">${new Date().toLocaleDateString()}</div></div>
-    <div class="btns">
-      <button class="btn btn-print" onclick="document.getElementById('pf').contentWindow.print()">\uD83D\uDDA8\uFE0F Print</button>
-      <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download</button>
-      <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
-    </div>
-  </div>
-  <iframe id="pf" src="${blobUrl}"></iframe>
-  <script>
-    function dl() {
-      var a = document.createElement('a');
-      a.href = '${blobUrl}';
-      a.download = '${fileName}';
-      a.click();
-    }
-  <\/script>
-</body>
-</html>`);
-    popup.document.close();
-    setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 600000);
+    // Toolbar injected into 1003 HTML, directly before </body>. No iframe —
+    // print dialog targets the same document that renders the 1003 pages.
+    var toolbar =
+      '<div id="urla-toolbar" class="no-print" style="position:sticky;top:0;left:0;right:0;z-index:10000;background:#1a1a1a;border-bottom:2px solid #C9A84C;color:#fff;padding:10px 20px;display:flex;align-items:center;gap:16px;font-family:Arial,Helvetica,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.4)">' +
+        '<div style="flex:1">' +
+          '<div style="color:#C9A84C;font-weight:700;font-size:14px">\uD83D\uDCCB 1003 Uniform Residential Loan Application \u2014 ' + contactName + '</div>' +
+          '<div style="color:#888;font-size:12px;margin-top:2px">' + today + '</div>' +
+        '</div>' +
+        '<button onclick="window.print()" style="background:#C9A84C;border:none;color:#111;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px">\uD83D\uDDA8\uFE0F Print / Save as PDF</button>' +
+        '<button onclick="(function(){var b=new Blob([document.documentElement.outerHTML],{type:\'text/html\'});var a=document.createElement(\'a\');a.href=URL.createObjectURL(b);a.download=' + JSON.stringify(fileName) + ';a.click();})()" style="background:#2a2a2a;border:1px solid #444;color:#eee;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px">\u2B07\uFE0F Download</button>' +
+        '<button onclick="window.close()" style="background:transparent;border:1px solid #444;color:#888;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px">\u2715 Close</button>' +
+      '</div>';
+
+    // Inject the toolbar immediately after the opening <body> tag so it sits
+    // above the 1003 pages. The 1003 CSS already has @media print { .no-print { display:none } }.
+    var injected = htmlContent.replace(/<body([^>]*)>/i, '<body$1>' + toolbar);
+    win.document.open();
+    win.document.write(injected);
+    win.document.close();
+    win.focus();
     showToast('1003 ready \u2713');
   } catch(e) {
     console.error('[1003]', e);
