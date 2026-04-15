@@ -66,23 +66,38 @@ function buildHtml(d: any): string {
     .title-bar .subttl { font-size: 7pt; color: #333; text-align: right; }
     .intro { font-size: 7.5pt; color: #444; margin-bottom: 8pt; font-style: italic; }
     .sect {
-      background: #1f1f1f;
+      background: #1a1a2e;
       color: #fff;
-      padding: 4pt 7pt;
+      padding: 5pt 8pt;
       font-weight: bold;
       font-size: 9pt;
       margin-top: 9pt;
       border: 0.75pt solid #000;
+      font-variant: small-caps;
+      letter-spacing: 0.4pt;
     }
     .subsect {
-      background: #4a4a4a;
+      background: #3a3a52;
       color: #fff;
-      padding: 2pt 7pt;
+      padding: 2pt 8pt;
       font-weight: bold;
       font-size: 8pt;
       border: 0.5pt solid #000;
       border-top: 0;
+      font-variant: small-caps;
     }
+    .lender-bar {
+      background: #d8d8d8;
+      border: 0.75pt solid #000;
+      padding: 5pt 8pt;
+      font-size: 7.5pt;
+      display: flex;
+      gap: 14pt;
+      margin-bottom: 6pt;
+    }
+    .lender-bar .fld { flex: 1; }
+    .lender-bar .fld b { text-transform: uppercase; font-size: 6.5pt; letter-spacing: 0.2pt; }
+    .lender-bar .fld .v { border-bottom: 0.5pt solid #000; min-height: 12pt; padding-top: 1pt; }
     table { width: 100%; border-collapse: collapse; margin: 0; table-layout: fixed; }
     td {
       border: 0.5pt solid #000;
@@ -186,6 +201,15 @@ function buildHtml(d: any): string {
     </div>
   `;
 
+  // ─── Lender Loan Bar (top of page 1) ───────────────────────────────────
+  const lenderBar = `
+    <div class="lender-bar">
+      <div class="fld"><b>To be completed by the Lender:</b></div>
+      <div class="fld"><b>Lender Loan No./Universal Loan Identifier</b><div class="v">&nbsp;</div></div>
+      <div class="fld"><b>Agency Case No.</b><div class="v">&nbsp;</div></div>
+    </div>
+  `;
+
   // ─── Section 1a. Personal Information ───────────────────────────────────
   const section1a = `
     <div class="sect">Section 1a. Personal Information</div>
@@ -194,6 +218,15 @@ function buildHtml(d: any): string {
       <tr>
         <td class="lbl">Name (First, Middle, Last, Suffix)</td>
         <td class="val" colspan="5">${esc(fullName)}</td>
+      </tr>
+      <tr>
+        <td class="lbl">Type of Credit</td>
+        <td class="val" colspan="3">
+          <span class="opt"><span class="chk">${chk(!coName)}</span>I am applying for individual credit</span>
+          <span class="opt"><span class="chk">${chk(!!coName)}</span>I am applying for joint credit. Total Number of Borrowers: ${coName ? 2 : 1}</span>
+        </td>
+        <td class="lbl">Initials (each Borrower)</td>
+        <td class="val">&nbsp;</td>
       </tr>
       <tr>
         <td class="lbl">List Name(s) of Other Borrower(s) on this Application</td>
@@ -262,6 +295,10 @@ function buildHtml(d: any): string {
         <td class="lbl">How Long</td>
         <td class="val">${esc(d.fmr_years || 0)} Yrs&nbsp;&nbsp;${esc(d.fmr_months || 0)} Mos</td>
       </tr>` : ''}
+      <tr>
+        <td class="lbl">Mailing Address — if different from Current</td>
+        <td class="val" colspan="5">${esc(d.mailing_address) || '&nbsp;'}</td>
+      </tr>
     </table>
   `;
 
@@ -312,7 +349,7 @@ function buildHtml(d: any): string {
         <td class="val">${esc(fmtMoney(d.other_income)) || '&nbsp;'}</td>
       </tr>
       <tr>
-        <td class="lbl" style="background:#1f1f1f;color:#fff;font-size:8pt">TOTAL GROSS MONTHLY INCOME</td>
+        <td class="lbl" style="background:#1a1a2e;color:#fff;font-size:8pt">TOTAL GROSS MONTHLY INCOME</td>
         <td class="val" colspan="3" style="font-weight:bold;background:#f5f5f5;font-size:9pt">${esc(fmtMoney(totalIncome)) || '$0.00'} /month</td>
       </tr>
     </table>
@@ -366,7 +403,7 @@ function buildHtml(d: any): string {
       <tr><td class="val empty"></td><td class="val empty"></td></tr>
       <tr><td class="val empty"></td><td class="val empty"></td></tr>
       <tr><td class="val empty"></td><td class="val empty"></td></tr>
-      <tr><td class="lbl" style="background:#1f1f1f;color:#fff;font-size:8pt">Provide TOTAL Amount Here</td><td class="val" style="font-weight:bold;background:#f5f5f5">&nbsp;</td></tr>
+      <tr><td class="lbl" style="background:#1a1a2e;color:#fff;font-size:8pt">Provide TOTAL Amount Here</td><td class="val" style="font-weight:bold;background:#f5f5f5">&nbsp;</td></tr>
     </table>
     <div style="font-size:6.5pt;color:#333;padding:4pt 7pt;border:0.5pt solid #000;border-top:0">
       <b>Income Sources:</b> ${otherIncomeSources.join(' &bull; ')}
@@ -390,7 +427,7 @@ function buildHtml(d: any): string {
       <tr><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td></tr>
       <tr><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td></tr>
       <tr><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td></tr>`}
-      <tr><td class="lbl" colspan="2" style="background:#1f1f1f;color:#fff;font-size:8pt">Provide TOTAL Amount Here</td>
+      <tr><td class="lbl" colspan="2" style="background:#1a1a2e;color:#fff;font-size:8pt">Provide TOTAL Amount Here</td>
           <td class="val" style="font-weight:bold;background:#f5f5f5">${esc(fmtMoney(assets.reduce((s: number, a: any) => s + (parseFloat(a.value || a.balance) || 0), 0))) || '&nbsp;'}</td></tr>
     </table>
     <div style="font-size:6.5pt;color:#333;padding:4pt 7pt;border:0.5pt solid #000;border-top:0">
@@ -1014,7 +1051,7 @@ function buildHtml(d: any): string {
       <tr><td class="lbl" colspan="3">CALCULATION</td></tr>
       <tr><td class="val">&nbsp;</td><td class="val">TOTAL DUE FROM BORROWER(s) (Line H)</td><td class="val empty"></td></tr>
       <tr><td class="val">&nbsp;</td><td class="val">LESS TOTAL MORTGAGE LOANS (Line L) and TOTAL CREDITS (Line O)</td><td class="val">${esc(fmtMoney(d.loan_amount))}</td></tr>
-      <tr><td class="val" style="background:#1f1f1f;color:#fff;font-weight:bold">P.</td><td class="val" style="background:#1f1f1f;color:#fff;font-weight:bold">Cash From/To the Borrower (Line H minus Line L and Line O)</td><td class="val" style="background:#f5f5f5;font-weight:bold">&nbsp;</td></tr>
+      <tr><td class="val" style="background:#1a1a2e;color:#fff;font-weight:bold">P.</td><td class="val" style="background:#1a1a2e;color:#fff;font-weight:bold">Cash From/To the Borrower (Line H minus Line L and Line O)</td><td class="val" style="background:#f5f5f5;font-weight:bold">&nbsp;</td></tr>
     </table>
   `;
 
@@ -1031,6 +1068,7 @@ function buildHtml(d: any): string {
 <div class="page">
   ${titleBar}
   <div class="intro">This application is designed to be completed by the applicant(s) with the Lender's assistance. Applicants should complete this form as "Borrower" or "Co-Borrower," as applicable. Co-Borrower information must also be provided (and the appropriate box checked) when the income or assets of a person other than the Borrower (including the Borrower's spouse) will be used as a basis for loan qualification.</div>
+  ${lenderBar}
   ${section1a}
   ${section1b}
   ${pageFooter(1, 11)}
@@ -1150,6 +1188,7 @@ Deno.serve(async (req: Request) => {
       fmr_zip: app.former_address_zip || '',
       fmr_years: app.former_address_years || '',
       fmr_months: app.former_address_months || '',
+      mailing_address: app.mailing_address || '',
       emp_name: app.employer_name || c.employer_name || '',
       emp_phone: app.employer_phone || '',
       emp_street: app.employer_street || '',
