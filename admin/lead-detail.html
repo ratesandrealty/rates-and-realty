@@ -11235,19 +11235,68 @@ async function lsGenerate1003() {
       alert('Error generating 1003: ' + (data.error || 'Unknown error'));
       return;
     }
-    // Decode base64 UTF-8 → HTML string
+    // Decode base64 UTF-8 → HTML bytes → blob URL (same pattern as lsGeneratePreApproval)
     const bin = atob(data.html);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const htmlContent = new TextDecoder('utf-8').decode(bytes);
-    // Open in a new window and trigger print dialog
-    const win = window.open('', '_blank', 'width=900,height=1100');
-    if (!win) { showToast('Popup blocked — allow popups for this site'); return; }
-    win.document.open();
-    win.document.write(htmlContent);
-    win.document.close();
-    win.focus();
-    showToast('\u2705 1003 ready — use the print dialog to Save as PDF');
+    var blob = new Blob([bytes], { type: 'text/html;charset=utf-8' });
+    var blobUrl = URL.createObjectURL(blob);
+
+    var contactName = (data.file_name || '').replace(/^1003_/, '').replace(/_\d{4}-\d{2}-\d{2}\.html$/, '').replace(/_/g, ' ') || 'Borrower';
+    var fileName = '1003 — ' + contactName + '.html';
+
+    var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
+    if (!popup) {
+      var a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fileName;
+      a.click();
+      showToast('1003 downloaded \u2713');
+      return;
+    }
+
+    popup.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${fileName}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #404040; font-family: sans-serif; display: flex; flex-direction: column; }
+    .toolbar { background: #111; border-bottom: 2px solid #C9A84C; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .title { color: #C9A84C; font-weight: 700; font-size: 14px; }
+    .sub { color: #888; font-size: 12px; margin-top: 2px; }
+    .btns { display: flex; gap: 10px; }
+    .btn { padding: 8px 18px; border-radius: 6px; border: none; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .btn-print { background: #2a2a2a; color: #eee; border: 1px solid #444; }
+    .btn-dl { background: #C9A84C; color: #111; }
+    .btn-close { background: transparent; color: #888; border: 1px solid #444; }
+    iframe { flex: 1; border: none; width: 100%; background: #fff; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div><div class="title">\uD83D\uDCCB 1003 Uniform Residential Loan Application \u2014 ${contactName}</div><div class="sub">${new Date().toLocaleDateString()}</div></div>
+    <div class="btns">
+      <button class="btn btn-print" onclick="document.getElementById('pf').contentWindow.print()">\uD83D\uDDA8\uFE0F Print</button>
+      <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download</button>
+      <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
+    </div>
+  </div>
+  <iframe id="pf" src="${blobUrl}"></iframe>
+  <script>
+    function dl() {
+      var a = document.createElement('a');
+      a.href = '${blobUrl}';
+      a.download = '${fileName}';
+      a.click();
+    }
+  <\/script>
+</body>
+</html>`);
+    popup.document.close();
+    setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 600000);
+    showToast('1003 ready \u2713');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
