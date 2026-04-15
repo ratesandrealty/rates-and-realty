@@ -11258,35 +11258,68 @@ async function lsGenerate1003() {
 
     showToast('Rendering 1003 PDF\u2026');
 
-    // ── Inject the 1003 HTML into an off-screen container ──
-    // html2canvas needs a rendered DOM; position off-screen so it stays invisible.
-    var bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    var bodyInner = bodyMatch ? bodyMatch[1] : htmlContent;
-    var styleMatches = htmlContent.match(/<style[^>]*>[\s\S]*?<\/style>/gi) || [];
-
-    var container = document.createElement('div');
-    container.style.cssText = 'position:absolute;left:-10000px;top:0;width:8.5in;background:#fff;z-index:-1;';
-    container.innerHTML = styleMatches.join('\n') + bodyInner;
-    document.body.appendChild(container);
-
-    // Wait a tick for layout/fonts to settle
-    await new Promise(function (r) { setTimeout(r, 150); });
-
-    var pdfBlob;
+    // ── Attempt 1: html2pdf via a same-origin iframe ──
+    // Writing into an iframe gives the 1003 HTML its own document context with
+    // the stylesheets in <head> properly applied, which html2canvas then serializes.
+    // Off-screen container (left:-10000px) would work for html2canvas if it's
+    // kept visible in layout; opacity:0 / z-index:-1 also ok. We use a real iframe
+    // because it's the most robust way to get correct layout.
+    var pdfBlob = null;
+    var renderError = null;
+    var iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;top:0;left:0;width:8.5in;height:11in;z-index:-1;opacity:0;border:none;pointer-events:none;';
+    document.body.appendChild(iframe);
     try {
+      iframe.contentDocument.open();
+      iframe.contentDocument.write(htmlContent);
+      iframe.contentDocument.close();
+
+      // Wait for layout + fonts to settle inside the iframe
+      await new Promise(function (r) { setTimeout(r, 1500); });
+      try { if (iframe.contentDocument.fonts && iframe.contentDocument.fonts.ready) await iframe.contentDocument.fonts.ready; } catch (e) {}
+
       pdfBlob = await window.html2pdf().set({
-        margin: 0,
+        margin: [0.4, 0.4, 0.4, 0.4],
         filename: fileName,
-        image: { type: 'jpeg', quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
+        image: { type: 'jpeg', quality: 0.92 },
+        html2canvas: {
+          scale: 1.5,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          windowWidth: iframe.contentDocument.documentElement.scrollWidth || 816,
+          windowHeight: iframe.contentDocument.documentElement.scrollHeight || 1056
+        },
         jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait', compress: true },
         pagebreak: { mode: ['css', 'legacy'], before: '.page' }
-      }).from(container).outputPdf('blob');
+      }).from(iframe.contentDocument.body).outputPdf('blob');
+    } catch (e) {
+      renderError = e;
+      console.warn('[1003] html2pdf render failed, falling back to HTML blob:', e);
     } finally {
-      document.body.removeChild(container);
+      document.body.removeChild(iframe);
     }
 
-    var blobUrl = URL.createObjectURL(pdfBlob);
+    // If html2pdf produced a blank/too-small PDF (< 20KB is almost certainly empty),
+    // treat that as a failure too.
+    if (pdfBlob && pdfBlob.size < 20000) {
+      console.warn('[1003] html2pdf produced suspiciously small PDF (' + pdfBlob.size + ' bytes), falling back');
+      pdfBlob = null;
+    }
+
+    var blobUrl, isFallback = false;
+    if (pdfBlob) {
+      blobUrl = URL.createObjectURL(pdfBlob);
+    } else {
+      // ── Attempt 2: HTML blob fallback ──
+      // The viewer iframe renders HTML natively; user prints to PDF via toolbar
+      // Print button (which triggers the iframe content's @media print CSS).
+      isFallback = true;
+      var htmlBlob = new Blob([bytes], { type: 'text/html;charset=utf-8' });
+      blobUrl = URL.createObjectURL(htmlBlob);
+      fileName = fileName.replace(/\.pdf$/, '.html');
+    }
 
     // ── Open viewer popup — byte-for-byte identical shell as lsGeneratePreApproval ──
     var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
@@ -11327,7 +11360,7 @@ async function lsGenerate1003() {
       <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
     </div>
   </div>
-  <iframe id="pf" src="${blobUrl}" type="application/pdf"></iframe>
+  <iframe id="pf" src="${blobUrl}"${isFallback ? '' : ' type="application/pdf"'}></iframe>
   <script>
     function dl() {
       var a = document.createElement('a');
@@ -11340,7 +11373,7 @@ async function lsGenerate1003() {
 </html>`);
     popup.document.close();
     setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 600000);
-    showToast('1003 PDF ready \u2713');
+    showToast(isFallback ? '1003 ready (use Print button to save as PDF) \u2713' : '1003 PDF ready \u2713');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
