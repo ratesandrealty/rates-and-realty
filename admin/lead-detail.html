@@ -11235,146 +11235,90 @@ async function lsGenerate1003() {
       alert('Error generating 1003: ' + (data.error || 'Unknown error'));
       return;
     }
-    // Decode base64 UTF-8 → HTML string
+    // Decode base64 UTF-8 → HTML string. Render it directly in an iframe.
+    // No html2pdf / html2canvas — those consistently produce black backgrounds
+    // and clipped content. Browser's native HTML rendering + Print → Save as PDF
+    // is the reliable path.
     const bin = atob(data.html);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     const htmlContent = new TextDecoder('utf-8').decode(bytes);
 
     var contactName = (data.file_name || '').replace(/^1003_/, '').replace(/_\d{4}-\d{2}-\d{2}\.html$/, '').replace(/_/g, ' ') || 'Borrower';
-    var fileName = '1003 \u2014 ' + contactName + '.pdf';
+    var today = new Date().toLocaleDateString('en-US');
 
-    // ── Ensure html2pdf.js is loaded (cached after first use) ──
-    if (!window.html2pdf) {
-      showToast('Loading PDF renderer\u2026');
-      await new Promise(function (resolve, reject) {
-        var s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
-        s.onload = resolve;
-        s.onerror = function () { reject(new Error('Failed to load html2pdf.js from CDN')); };
-        document.head.appendChild(s);
-      });
-    }
-
-    showToast('Rendering 1003 PDF\u2026');
-
-    // ── Attempt 1: html2pdf via a same-origin iframe ──
-    // Writing into an iframe gives the 1003 HTML its own document context with
-    // the stylesheets in <head> properly applied, which html2canvas then serializes.
-    // Off-screen container (left:-10000px) would work for html2canvas if it's
-    // kept visible in layout; opacity:0 / z-index:-1 also ok. We use a real iframe
-    // because it's the most robust way to get correct layout.
-    var pdfBlob = null;
-    var renderError = null;
-    var iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:fixed;top:0;left:0;width:8.5in;height:11in;z-index:-1;opacity:0;border:none;pointer-events:none;';
-    document.body.appendChild(iframe);
-    try {
-      iframe.contentDocument.open();
-      iframe.contentDocument.write(htmlContent);
-      iframe.contentDocument.close();
-
-      // Wait for layout + fonts to settle inside the iframe
-      await new Promise(function (r) { setTimeout(r, 1500); });
-      try { if (iframe.contentDocument.fonts && iframe.contentDocument.fonts.ready) await iframe.contentDocument.fonts.ready; } catch (e) {}
-
-      pdfBlob = await window.html2pdf().set({
-        margin: [0, 0, 0, 0],
-        filename: fileName,
-        image: { type: 'jpeg', quality: 0.92 },
-        html2canvas: {
-          scale: 1.5,
-          useCORS: true,
-          allowTaint: true,
-          logging: false,
-          backgroundColor: '#ffffff',
-          windowWidth: 816,
-          scrollX: 0,
-          scrollY: 0
-        },
-        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait', compress: true },
-        pagebreak: { mode: ['css', 'legacy'], before: '.page', avoid: ['tr', '.subsection-bar'] }
-      }).from(iframe.contentDocument.body).outputPdf('blob');
-    } catch (e) {
-      renderError = e;
-      console.warn('[1003] html2pdf render failed, falling back to HTML blob:', e);
-    } finally {
-      document.body.removeChild(iframe);
-    }
-
-    // If html2pdf produced a blank/too-small PDF (< 20KB is almost certainly empty),
-    // treat that as a failure too.
-    if (pdfBlob && pdfBlob.size < 20000) {
-      console.warn('[1003] html2pdf produced suspiciously small PDF (' + pdfBlob.size + ' bytes), falling back');
-      pdfBlob = null;
-    }
-
-    var blobUrl, isFallback = false;
-    if (pdfBlob) {
-      blobUrl = URL.createObjectURL(pdfBlob);
-    } else {
-      // ── Attempt 2: HTML blob fallback ──
-      // The viewer iframe renders HTML natively; user prints to PDF via toolbar
-      // Print button (which triggers the iframe content's @media print CSS).
-      isFallback = true;
-      var htmlBlob = new Blob([bytes], { type: 'text/html;charset=utf-8' });
-      blobUrl = URL.createObjectURL(htmlBlob);
-      fileName = fileName.replace(/\.pdf$/, '.html');
-    }
-
-    // ── Open viewer popup — byte-for-byte identical shell as lsGeneratePreApproval ──
-    var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
+    var popup = window.open('', '_blank', 'width=1000,height=850,scrollbars=yes,resizable=yes');
     if (!popup) {
+      var htmlBlob = new Blob([bytes], { type: 'text/html;charset=utf-8' });
       var a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = fileName;
+      a.href = URL.createObjectURL(htmlBlob);
+      a.download = '1003 \u2014 ' + contactName + '.html';
       a.click();
-      showToast('1003 PDF downloaded \u2713');
+      showToast('Popup blocked \u2014 1003 downloaded instead');
       return;
     }
 
+    popup.document.open();
     popup.document.write(`<!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>${fileName}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; background: #404040; font-family: sans-serif; display: flex; flex-direction: column; }
-    .toolbar { background: #111; border-bottom: 2px solid #C9A84C; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-    .title { color: #C9A84C; font-weight: 700; font-size: 14px; }
-    .sub { color: #888; font-size: 12px; margin-top: 2px; }
-    .btns { display: flex; gap: 10px; }
-    .btn { padding: 8px 18px; border-radius: 6px; border: none; font-weight: 700; font-size: 13px; cursor: pointer; }
-    .btn-print { background: #2a2a2a; color: #eee; border: 1px solid #444; }
-    .btn-dl { background: #C9A84C; color: #111; }
-    .btn-close { background: transparent; color: #888; border: 1px solid #444; }
-    iframe { flex: 1; border: none; width: 100%; }
-  </style>
+<meta charset="utf-8">
+<title>1003 \u2014 ${contactName}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #404040; font-family: Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  .toolbar { background: #111; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; border-bottom: 2px solid #C9A84C; }
+  .toolbar-title { color: #C9A84C; font-weight: bold; font-size: 14px; }
+  .toolbar-sub { color: #999; font-size: 12px; margin-left: 4px; }
+  .toolbar-btns { margin-left: auto; display: flex; gap: 8px; }
+  .btn { padding: 7px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .btn-print { background: #555; color: #fff; }
+  .btn-print:hover { background: #666; }
+  .btn-dl { background: #C9A84C; color: #000; }
+  .btn-dl:hover { background: #d4b05c; }
+  .btn-close { background: #333; color: #fff; }
+  .btn-close:hover { background: #444; }
+  .frame-container { flex: 1; overflow: hidden; background: #404040; display: flex; justify-content: center; padding: 16px; }
+  iframe { width: 100%; height: 100%; border: none; background: white; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
+  @media print { .toolbar, .frame-container { padding: 0 !important; } .toolbar { display: none !important; } }
+</style>
 </head>
 <body>
-  <div class="toolbar">
-    <div><div class="title">\uD83D\uDCC4 1003 Uniform Residential Loan Application \u2014 ${contactName}</div><div class="sub">${new Date().toLocaleDateString()}</div></div>
-    <div class="btns">
-      <button class="btn btn-print" onclick="document.getElementById('pf').contentWindow.print()">\uD83D\uDDA8\uFE0F Print</button>
-      <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download PDF</button>
-      <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
-    </div>
+<div class="toolbar">
+  <span>\uD83D\uDCCB</span>
+  <span class="toolbar-title">1003 Uniform Residential Loan Application \u2014 ${contactName}</span>
+  <span class="toolbar-sub">${today}</span>
+  <div class="toolbar-btns">
+    <button class="btn btn-print" onclick="document.getElementById('form-frame').contentWindow.print()">\uD83D\uDDA8 Print</button>
+    <button class="btn btn-dl" id="btn-dl">\u2B07 Save as PDF</button>
+    <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
   </div>
-  <iframe id="pf" src="${blobUrl}"${isFallback ? '' : ' type="application/pdf"'}></iframe>
-  <script>
-    function dl() {
-      var a = document.createElement('a');
-      a.href = '${blobUrl}';
-      a.download = '${fileName}';
-      a.click();
-    }
-  <\/script>
+</div>
+<div class="frame-container">
+  <iframe id="form-frame"></iframe>
+</div>
+<script>
+  // Render the 1003 HTML directly into the iframe via a blob URL — this is
+  // the browser's native HTML rendering path, so every style (including the
+  // dark navy section headers) displays exactly as authored.
+  var htmlContent = ${JSON.stringify(htmlContent)};
+  var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  var blobUrl = URL.createObjectURL(blob);
+  document.getElementById('form-frame').src = blobUrl;
+
+  // "Save as PDF" triggers the iframe's print dialog; Chrome's print dialog
+  // has "Save as PDF" built in as a destination. No server-side or client-side
+  // HTML\u2192PDF conversion required.
+  document.getElementById('btn-dl').onclick = function () {
+    document.getElementById('form-frame').contentWindow.print();
+  };
+
+  setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 10 * 60 * 1000);
+<\/script>
 </body>
 </html>`);
     popup.document.close();
-    setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 600000);
-    showToast(isFallback ? '1003 ready (use Print button to save as PDF) \u2713' : '1003 PDF ready \u2713');
+    showToast('1003 ready \u2713');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
