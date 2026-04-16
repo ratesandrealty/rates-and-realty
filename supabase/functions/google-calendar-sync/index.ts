@@ -83,16 +83,99 @@ serve(async (req) => {
   }
 
   const body = await req.json().catch(() => ({}))
-  const { appointment_id } = body
+  const { appointment_id, action } = body
 
-  if (!appointment_id) {
-    return new Response(JSON.stringify({ error: 'appointment_id required' }), {
-      status: 400,
+  // Push a single appointment to Google Calendar. Creates a new event or
+  // updates an existing one (when apt.google_event_id is set). Returns the
+  // resulting event id/link or throws on failure.
+  async function syncAppointment(apt: any) {
+    const start = new Date(apt.scheduled_at || apt.appointment_time)
+    const end = new Date(start.getTime() + (apt.duration_minutes || 60) * 60000)
+
+    const contactName = apt.contacts
+      ? `${apt.contacts.first_name || ''} ${apt.contacts.last_name || ''}`.trim()
+      : apt.attendee_name || ''
+    const contactPhone = apt.contacts?.phone || apt.attendee_phone || ''
+    const contactEmail = apt.contacts?.email || apt.attendee_email || ''
+
+    const eventBody: any = {
+      summary: apt.title || apt.type || 'CRM Appointment',
+      description: [
+        contactName ? `Client: ${contactName}` : '',
+        contactPhone ? `Phone: ${contactPhone}` : '',
+        contactEmail ? `Email: ${contactEmail}` : '',
+        apt.meeting_url ? `Meeting: ${apt.meeting_url}` : '',
+        apt.notes ? `Notes: ${apt.notes}` : '',
+        '\n--- Created by Rates & Realty CRM ---'
+      ].filter(Boolean).join('\n'),
+      start: { dateTime: start.toISOString(), timeZone: 'America/Los_Angeles' },
+      end: { dateTime: end.toISOString(), timeZone: 'America/Los_Angeles' },
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: 'email', minutes: 60 },
+          { method: 'popup', minutes: 15 }
+        ]
+      }
+    }
+    if (contactEmail) {
+      eventBody.attendees = [{ email: contactEmail, displayName: contactName }]
+    }
+
+    let method = 'POST'
+    let endpoint = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+    if (apt.google_event_id) {
+      method = 'PUT'
+      endpoint = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${apt.google_event_id}`
+    }
+    const r = await fetch(endpoint, {
+      method,
+      headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(eventBody),
+    })
+    const ev = await r.json()
+    if (!ev.id) throw new Error('Google Calendar error: ' + JSON.stringify(ev))
+    await supabase.from('appointments').update({
+      google_event_id: ev.id,
+      synced_to_google_at: new Date().toISOString(),
+    }).eq('id', apt.id)
+    return { google_event_id: ev.id, google_event_link: ev.htmlLink }
+  }
+
+  // ── sync_all: push every upcoming appointment from today forward. Used
+  // by the calendar "Sync Google Cal" button. Reports per-appointment results
+  // so partial failures don't block the rest.
+  if (action === 'sync_all') {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const { data: appts, error } = await supabase
+      .from('appointments')
+      .select('*, contacts(first_name, last_name, phone, email)')
+      .gte('scheduled_at', today.toISOString())
+      .order('scheduled_at', { ascending: true })
+    if (error) {
+      return new Response(JSON.stringify({ error: 'Fetch appointments failed: ' + error.message }), {
+        status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      })
+    }
+    let synced = 0, failed = 0
+    const errors: string[] = []
+    for (const apt of (appts || [])) {
+      try { await syncAppointment(apt); synced++ }
+      catch (e: any) { failed++; errors.push(`${apt.id}: ${e.message || e}`) }
+    }
+    return new Response(JSON.stringify({ success: true, synced, failed, total: (appts || []).length, errors }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     })
   }
 
-  // Fetch appointment from Supabase
+  // ── single-appointment sync (legacy default behavior) ──
+  if (!appointment_id) {
+    return new Response(JSON.stringify({ error: 'appointment_id or action:sync_all required' }), {
+      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    })
+  }
+
   const { data: apt, error: aptErr } = await supabase
     .from('appointments')
     .select('*, contacts(first_name, last_name, phone, email)')
@@ -101,84 +184,18 @@ serve(async (req) => {
 
   if (aptErr || !apt) {
     return new Response(JSON.stringify({ error: 'Appointment not found' }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }
     })
   }
 
-  const start = new Date(apt.scheduled_at || apt.appointment_time)
-  const end = new Date(start.getTime() + (apt.duration_minutes || 60) * 60000)
-
-  const contactName = apt.contacts
-    ? `${apt.contacts.first_name || ''} ${apt.contacts.last_name || ''}`.trim()
-    : apt.attendee_name || ''
-
-  const contactPhone = apt.contacts?.phone || apt.attendee_phone || ''
-  const contactEmail = apt.contacts?.email || apt.attendee_email || ''
-
-  const eventBody: any = {
-    summary: apt.title || apt.type || 'CRM Appointment',
-    description: [
-      contactName ? `Client: ${contactName}` : '',
-      contactPhone ? `Phone: ${contactPhone}` : '',
-      contactEmail ? `Email: ${contactEmail}` : '',
-      apt.meeting_url ? `Meeting: ${apt.meeting_url}` : '',
-      apt.notes ? `Notes: ${apt.notes}` : '',
-      '\n--- Created by Rates & Realty CRM ---'
-    ].filter(Boolean).join('\n'),
-    start: { dateTime: start.toISOString(), timeZone: 'America/Los_Angeles' },
-    end: { dateTime: end.toISOString(), timeZone: 'America/Los_Angeles' },
-    reminders: {
-      useDefault: false,
-      overrides: [
-        { method: 'email', minutes: 60 },
-        { method: 'popup', minutes: 15 }
-      ]
-    }
-  }
-
-  if (contactEmail) {
-    eventBody.attendees = [{ email: contactEmail, displayName: contactName }]
-  }
-
-  let method = 'POST'
-  let endpoint = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
-
-  // If already synced, update instead of create
-  if (apt.google_event_id) {
-    method = 'PUT'
-    endpoint = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${apt.google_event_id}`
-  }
-
-  const gcalResponse = await fetch(endpoint, {
-    method,
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(eventBody),
-  })
-
-  const gcalEvent = await gcalResponse.json()
-
-  if (!gcalEvent.id) {
-    return new Response(JSON.stringify({ error: 'Google Calendar error', details: gcalEvent }), {
-      status: 500,
+  try {
+    const result = await syncAppointment(apt)
+    return new Response(JSON.stringify({ success: true, ...result }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     })
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message || 'Sync failed' }), {
+      status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    })
   }
-
-  // Save Google event ID back to appointment
-  await supabase.from('appointments').update({
-    google_event_id: gcalEvent.id,
-    synced_to_google_at: new Date().toISOString()
-  }).eq('id', appointment_id)
-
-  return new Response(JSON.stringify({
-    success: true,
-    google_event_id: gcalEvent.id,
-    google_event_link: gcalEvent.htmlLink
-  }), {
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  })
 })

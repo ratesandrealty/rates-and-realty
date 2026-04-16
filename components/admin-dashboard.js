@@ -35,6 +35,102 @@ let dashboardData = null;
 let activeTab = "overview";
 let openLeadId = null;
 let calendarDate = new Date();
+
+// ── Calendar integrations state (Google sync + ClickUp task overlay) ──
+let clickupTasks = [];
+let clickupTasksEnabled = localStorage.getItem('clickup_overlay_enabled') === '1';
+
+function calToast(msg, tone) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  const accent = tone === 'error' ? 'rgba(255,90,90,0.45)' : tone === 'info' ? 'rgba(140,180,255,0.35)' : 'rgba(201,168,76,0.45)';
+  const color  = tone === 'error' ? '#ffb0b0' : tone === 'info' ? '#bcd2ff' : '#f2cf85';
+  el.style.cssText = `position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:rgba(20,20,20,0.98);border:1px solid ${accent};color:${color};padding:10px 22px;border-radius:999px;font-size:0.85rem;font-weight:600;z-index:9999;box-shadow:0 4px 24px rgba(0,0,0,0.4);`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+async function syncGoogleCalendarAll() {
+  const cfg = getSupabaseConfig();
+  if (!cfg.url || !cfg.key) { calToast('Config missing', 'error'); return; }
+  calToast('Syncing with Google Calendar…', 'info');
+  try {
+    const res = await fetch(`${cfg.url}/functions/v1/google-calendar-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.key, apikey: cfg.key },
+      body: JSON.stringify({ action: 'sync_all' })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      calToast('Sync failed: ' + (data.error || res.status), 'error');
+      return;
+    }
+    calToast('✓ Synced with Google Calendar');
+    // Refetch appointments + rerender if we're still on the calendar tab
+    if (typeof loadDashboard === 'function') {
+      try { await loadDashboard(); } catch (e) {}
+    }
+    if (activeTab === 'calendar') renderCalendar();
+  } catch (e) {
+    calToast('Sync failed: ' + (e.message || e), 'error');
+  }
+}
+
+async function fetchClickupTasks({ force } = {}) {
+  const cfg = getSupabaseConfig();
+  if (!cfg.url || !cfg.key) return [];
+  const lastSync = parseInt(localStorage.getItem('clickup_last_sync') || '0', 10);
+  const oneDayAgo = Date.now() - 86400000;
+  const cached = localStorage.getItem('clickup_tasks_cache');
+  if (!force && cached && lastSync > oneDayAgo) {
+    try { clickupTasks = JSON.parse(cached); return clickupTasks; } catch (e) {}
+  }
+  try {
+    const res = await fetch(`${cfg.url}/functions/v1/clickup-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.key, apikey: cfg.key },
+      body: JSON.stringify({ action: 'fetch_incomplete_tasks' })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.success && Array.isArray(data.tasks)) {
+      clickupTasks = data.tasks;
+      localStorage.setItem('clickup_tasks_cache', JSON.stringify(clickupTasks));
+      localStorage.setItem('clickup_last_sync', String(Date.now()));
+      return clickupTasks;
+    }
+  } catch (e) {
+    console.warn('[clickup] fetch failed', e);
+  }
+  return clickupTasks;
+}
+
+function updateClickupBadge() {
+  const badge = document.getElementById('clickup-task-badge');
+  const btn = document.getElementById('clickup-toggle-btn');
+  if (badge) {
+    if (clickupTasks.length) {
+      badge.textContent = String(clickupTasks.length);
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+  if (btn) {
+    btn.style.background = clickupTasksEnabled ? 'rgba(255,140,0,0.25)' : 'rgba(255,140,0,0.08)';
+    btn.style.borderColor = clickupTasksEnabled ? 'rgba(255,140,0,0.75)' : 'rgba(255,140,0,0.45)';
+  }
+}
+
+async function toggleClickupOverlay() {
+  clickupTasksEnabled = !clickupTasksEnabled;
+  localStorage.setItem('clickup_overlay_enabled', clickupTasksEnabled ? '1' : '0');
+  if (clickupTasksEnabled && !clickupTasks.length) {
+    calToast('Loading ClickUp tasks…', 'info');
+    await fetchClickupTasks({ force: true });
+  }
+  updateClickupBadge();
+  if (activeTab === 'calendar') renderCalendar();
+}
 let allAppointments = [];
 let drawerActiveTab = "details";
 let allTasks = [];
@@ -589,16 +685,38 @@ function renderCalendar() {
   const remaining = 42 - cells.length;
   for (let d = 1; d <= remaining; d++) cells.push({ day: d, month: month + 1, year, other: true });
 
+  // Group ClickUp tasks by due date (YYYY-MM-DD) when overlay is on
+  const clickupByDate = {};
+  if (clickupTasksEnabled) {
+    for (const t of clickupTasks) {
+      if (!t.due_date) continue;
+      const key = new Date(t.due_date).toISOString().split('T')[0];
+      (clickupByDate[key] = clickupByDate[key] || []).push(t);
+    }
+  }
+
   const gridHTML = cells.map((cell) => {
     const dateStr = `${cell.year}-${String(cell.month + 1).padStart(2, "0")}-${String(cell.day).padStart(2, "0")}`;
     const isToday = dateStr === todayStr;
     const dayAppts = allAppointments.filter((a) => (a.scheduled_at || "").startsWith(dateStr));
-    const eventChips = dayAppts.slice(0, 3).map((a) => `<div class="calendar-event-chip type-${a.type || "appointment"}" title="${a.title}">${a.title}</div>`).join("");
+    const eventChips = dayAppts.slice(0, 2).map((a) => `<div class="calendar-event-chip type-${a.type || "appointment"}" title="${a.title}">${a.title}</div>`).join("");
+
+    const dayTasks = clickupByDate[dateStr] || [];
+    const taskChips = dayTasks.slice(0, 2).map((t) => {
+      const name = (t.name || '').slice(0, 20);
+      const safeUrl = String(t.url || '').replace(/"/g, '&quot;');
+      const safeName = String(t.name || '').replace(/"/g, '&quot;');
+      return `<a href="${safeUrl}" target="_blank" rel="noopener" class="calendar-clickup-chip" title="TASK: ${safeName}" onclick="event.stopPropagation()" style="display:block;background:rgba(255,140,0,0.18);border-left:2px solid #ff8c00;color:#ffb673;font-size:0.68rem;padding:1px 4px;margin-top:2px;border-radius:2px;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span style="font-weight:700;font-size:0.58rem;opacity:0.7;">TASK</span> ${name}</a>`;
+    }).join("");
+    const moreTasks = dayTasks.length > 2 ? `<div style="font-size:0.64rem;color:#ff8c00;">+${dayTasks.length - 2} task${dayTasks.length - 2 > 1 ? 's' : ''}</div>` : '';
+
     return `
       <div class="calendar-cell ${isToday ? "today" : ""} ${cell.other ? "other-month" : ""}" data-date="${dateStr}">
         <span class="cell-date">${cell.day}</span>
         ${eventChips}
-        ${dayAppts.length > 3 ? `<div style="font-size:0.68rem;color:var(--muted);">+${dayAppts.length - 3} more</div>` : ""}
+        ${dayAppts.length > 2 ? `<div style="font-size:0.68rem;color:var(--muted);">+${dayAppts.length - 2} more</div>` : ""}
+        ${taskChips}
+        ${moreTasks}
       </div>
     `;
   }).join("");
@@ -628,7 +746,63 @@ function renderCalendar() {
     });
   });
 
+  // Wire up the two header buttons (added to dashboard/admin.html). Re-bound
+  // every render because they only live in the DOM while the calendar tab is
+  // active — using .onclick makes re-binding idempotent.
+  const syncBtn = document.getElementById('sync-gcal-btn');
+  if (syncBtn) syncBtn.onclick = syncGoogleCalendarAll;
+  const clickupBtn = document.getElementById('clickup-toggle-btn');
+  if (clickupBtn) clickupBtn.onclick = toggleClickupOverlay;
+  updateClickupBadge();
+
+  // Daily auto-sync of ClickUp tasks when the calendar tab is opened.
+  // Uses localStorage to throttle — fetches at most once per 24 hours.
+  const lastSync = parseInt(localStorage.getItem('clickup_last_sync') || '0', 10);
+  const oneDayAgo = Date.now() - 86400000;
+  if (lastSync < oneDayAgo) {
+    fetchClickupTasks().then(() => {
+      updateClickupBadge();
+      if (clickupTasksEnabled && activeTab === 'calendar') renderCalendar();
+    });
+  }
+
+  renderClickupSidebar(root);
   renderUpcomingAppointmentsInEl(document.getElementById("upcoming-appointments"));
+}
+
+// Overdue / no-due-date ClickUp task sidebar — only shown when overlay is on.
+function renderClickupSidebar(root) {
+  const existing = document.getElementById('clickup-sidebar');
+  if (existing) existing.remove();
+  if (!clickupTasksEnabled || !clickupTasks.length) return;
+
+  const now = Date.now();
+  const overdue = clickupTasks.filter((t) => t.due_date && new Date(t.due_date).getTime() < now);
+  const noDue = clickupTasks.filter((t) => !t.due_date);
+  if (!overdue.length && !noDue.length) return;
+
+  const row = (t) => {
+    const safeUrl = String(t.url || '').replace(/"/g, '&quot;');
+    const due = t.due_date ? new Date(t.due_date).toLocaleDateString('en-US') : '—';
+    const priColor = t.priority_label === 'high' ? '#ff5555' : '#ffb347';
+    return `<a href="${safeUrl}" target="_blank" rel="noopener" class="list-item" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;padding:8px 10px;border-left:2px solid ${priColor};">
+      <span style="font-size:0.64rem;font-weight:700;text-transform:uppercase;color:${priColor};letter-spacing:0.5px;">TASK</span>
+      <span style="flex:1;font-size:0.82rem;">${(t.name || '').slice(0, 60)}</span>
+      <span style="color:var(--muted);font-size:0.72rem;">${due}</span>
+    </a>`;
+  };
+
+  const section = document.createElement('div');
+  section.id = 'clickup-sidebar';
+  section.style.cssText = 'margin-top:20px;';
+  section.innerHTML = `
+    <div class="panel" style="padding:14px 16px;">
+      <p class="kicker" style="color:#ff8c00;">ClickUp · Overdue / No Due Date</p>
+      ${overdue.length ? `<div style="font-size:0.72rem;text-transform:uppercase;color:#ff5555;font-weight:700;margin:10px 0 4px;letter-spacing:0.5px;">Overdue (${overdue.length})</div>${overdue.map(row).join('')}` : ''}
+      ${noDue.length ? `<div style="font-size:0.72rem;text-transform:uppercase;color:var(--muted);font-weight:700;margin:10px 0 4px;letter-spacing:0.5px;">No Due Date (${noDue.length})</div>${noDue.map(row).join('')}` : ''}
+    </div>
+  `;
+  root.appendChild(section);
 }
 
 function renderUpcomingAppointmentsInEl(el) {

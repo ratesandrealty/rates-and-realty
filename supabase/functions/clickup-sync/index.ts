@@ -13,6 +13,52 @@ serve(async (req) => {
     const body = await req.json()
     const { action } = body
 
+    // ── FETCH INCOMPLETE TASKS (HIGH + MEDIUM PRIORITY LISTS) ─────
+    // Used by the admin calendar to overlay ClickUp tasks on appointment cells.
+    // Returns a merged list with normalized fields suitable for rendering.
+    if (action === 'fetch_incomplete_tasks') {
+      const HIGH_LIST = Deno.env.get('CLICKUP_LIST_HIGH') || '901712241684'
+      const MED_LIST  = Deno.env.get('CLICKUP_LIST_MEDIUM') || '901712241685'
+
+      async function fetchList(listId: string, priorityLabel: string) {
+        const out: any[] = []
+        let page = 0
+        while (true) {
+          const res = await fetch(
+            `https://api.clickup.com/api/v2/list/${listId}/task?page=${page}&include_closed=false&subtasks=false&archived=false`,
+            { headers: { Authorization: CLICKUP_TOKEN! } }
+          )
+          if (!res.ok) break
+          const data = await res.json()
+          if (!data.tasks || data.tasks.length === 0) break
+          for (const t of data.tasks) {
+            const type = (t.status?.type || '').toLowerCase()
+            if (type === 'closed' || type === 'done') continue
+            out.push({
+              id: t.id,
+              name: t.name || '',
+              url: t.url || '',
+              due_date: t.due_date ? new Date(parseInt(t.due_date, 10)).toISOString() : null,
+              priority: t.priority?.priority || priorityLabel,
+              priority_label: priorityLabel,
+              status: t.status?.status || '',
+              list_id: listId,
+            })
+          }
+          if (data.tasks.length < 100) break
+          page++
+        }
+        return out
+      }
+
+      const [high, medium] = await Promise.all([
+        fetchList(HIGH_LIST, 'high'),
+        fetchList(MED_LIST, 'medium'),
+      ])
+      const tasks = [...high, ...medium]
+      return json({ success: true, tasks, count: tasks.length, by_list: { high: high.length, medium: medium.length } })
+    }
+
     // ── SYNC LENDERS FROM CLICKUP ──────────────────────
     if (action === 'sync_lenders') {
       const LIST_ID = Deno.env.get('CLICKUP_LENDERS_LIST_ID') || body.list_id
