@@ -11244,12 +11244,9 @@ async function lsGenerate1003() {
     var borrowerName = (data.borrower_name || '').replace(/[<>"']/g, '') || 'Borrower';
     var today = new Date().toLocaleDateString('en-US');
 
-    // Open popup — write the 1003 HTML directly into the body.
-    // NO iframe, NO blob URL, NO <script> holding HTML as a variable.
-    // The previous approach embedded htmlContent inside a <script> tag via
-    // JSON.stringify — but the 1003 HTML itself contains </script> (from
-    // the URLA.fill() block), which prematurely closed the outer script
-    // tag and leaked JS source as visible text.
+    // Write the 1003 HTML directly into the popup body — no iframe, no blob.
+    // The htmlContent is passed via a separate document.write() call so its
+    // own script tags never interfere with the wrapper markup.
     var popup = window.open('', '_blank', 'width=1050,height=900,scrollbars=yes,resizable=yes');
     if (!popup) {
       alert('Allow popups for this site to view the 1003');
@@ -11290,9 +11287,8 @@ async function lsGenerate1003() {
         '</div>' +
       '</div>' +
       '<div class="content"><div class="form-wrapper">');
-    // The 1003 HTML (including its own <style> tags and <script> blocks) is
-    // written as a separate document.write call so it never lives inside a
-    // JS string literal — no escaping issues, no </script> breakage.
+    // The 1003 HTML (including its own style and script blocks) is written
+    // as a separate document.write call so it never lives inside a JS string.
     popup.document.write(htmlContent);
     popup.document.write('</div></div></body></html>');
     popup.document.close();
