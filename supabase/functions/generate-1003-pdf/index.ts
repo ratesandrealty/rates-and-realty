@@ -227,7 +227,8 @@ Deno.serve(async (req: Request) => {
     const b64 = btoa(bin);
 
     const fileName = `1003_${(urlaData.borrower.lastName || 'Borrower').replace(/\s/g, '_')}_${new Date().toISOString().slice(0, 10)}.html`;
-    return new Response(JSON.stringify({ success: true, html: b64, file_name: fileName }), { headers: cors });
+    const borrowerName = urlaData.borrower.fullName || 'Borrower';
+    return new Response(JSON.stringify({ success: true, html: b64, file_name: fileName, borrower_name: borrowerName }), { headers: cors });
   } catch (err: any) {
     console.error('[generate-1003-pdf] Error:', err);
     return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: cors });

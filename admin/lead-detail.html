@@ -11235,90 +11235,68 @@ async function lsGenerate1003() {
       alert('Error generating 1003: ' + (data.error || 'Unknown error'));
       return;
     }
-    // Decode base64 UTF-8 → HTML string. Render it directly in an iframe.
-    // No html2pdf / html2canvas — those consistently produce black backgrounds
-    // and clipped content. Browser's native HTML rendering + Print → Save as PDF
-    // is the reliable path.
-    const bin = atob(data.html);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const htmlContent = new TextDecoder('utf-8').decode(bytes);
+    // Decode base64 → HTML string
+    var bin = atob(data.html);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var htmlContent = new TextDecoder('utf-8').decode(bytes);
 
-    var contactName = (data.file_name || '').replace(/^1003_/, '').replace(/_\d{4}-\d{2}-\d{2}\.html$/, '').replace(/_/g, ' ') || 'Borrower';
+    var borrowerName = (data.borrower_name || '').replace(/[<>"']/g, '') || 'Borrower';
     var today = new Date().toLocaleDateString('en-US');
 
-    var popup = window.open('', '_blank', 'width=1000,height=850,scrollbars=yes,resizable=yes');
+    // Open popup — write the 1003 HTML directly into the body.
+    // NO iframe, NO blob URL, NO <script> holding HTML as a variable.
+    // The previous approach embedded htmlContent inside a <script> tag via
+    // JSON.stringify — but the 1003 HTML itself contains </script> (from
+    // the URLA.fill() block), which prematurely closed the outer script
+    // tag and leaked JS source as visible text.
+    var popup = window.open('', '_blank', 'width=1050,height=900,scrollbars=yes,resizable=yes');
     if (!popup) {
-      var htmlBlob = new Blob([bytes], { type: 'text/html;charset=utf-8' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(htmlBlob);
-      a.download = '1003 \u2014 ' + contactName + '.html';
-      a.click();
-      showToast('Popup blocked \u2014 1003 downloaded instead');
+      alert('Allow popups for this site to view the 1003');
       return;
     }
 
+    // Build the wrapper as separate strings, then write them sequentially.
+    // This avoids ever putting htmlContent inside a template literal (which
+    // would break if the HTML contained backticks or ${...}).
     popup.document.open();
-    popup.document.write(`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>1003 \u2014 ${contactName}</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #404040; font-family: Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-  .toolbar { background: #111; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; border-bottom: 2px solid #C9A84C; }
-  .toolbar-title { color: #C9A84C; font-weight: bold; font-size: 14px; }
-  .toolbar-sub { color: #999; font-size: 12px; margin-left: 4px; }
-  .toolbar-btns { margin-left: auto; display: flex; gap: 8px; }
-  .btn { padding: 7px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; }
-  .btn-print { background: #555; color: #fff; }
-  .btn-print:hover { background: #666; }
-  .btn-dl { background: #C9A84C; color: #000; }
-  .btn-dl:hover { background: #d4b05c; }
-  .btn-close { background: #333; color: #fff; }
-  .btn-close:hover { background: #444; }
-  .frame-container { flex: 1; overflow: hidden; background: #404040; display: flex; justify-content: center; padding: 16px; }
-  iframe { width: 100%; height: 100%; border: none; background: white; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
-  @media print { .toolbar, .frame-container { padding: 0 !important; } .toolbar { display: none !important; } }
-</style>
-</head>
-<body>
-<div class="toolbar">
-  <span>\uD83D\uDCCB</span>
-  <span class="toolbar-title">1003 Uniform Residential Loan Application \u2014 ${contactName}</span>
-  <span class="toolbar-sub">${today}</span>
-  <div class="toolbar-btns">
-    <button class="btn btn-print" onclick="document.getElementById('form-frame').contentWindow.print()">\uD83D\uDDA8 Print</button>
-    <button class="btn btn-dl" id="btn-dl">\u2B07 Save as PDF</button>
-    <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
-  </div>
-</div>
-<div class="frame-container">
-  <iframe id="form-frame"></iframe>
-</div>
-<script>
-  // Render the 1003 HTML directly into the iframe via a blob URL — this is
-  // the browser's native HTML rendering path, so every style (including the
-  // dark navy section headers) displays exactly as authored.
-  var htmlContent = ${JSON.stringify(htmlContent)};
-  var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-  var blobUrl = URL.createObjectURL(blob);
-  document.getElementById('form-frame').src = blobUrl;
-
-  // "Save as PDF" triggers the iframe's print dialog; Chrome's print dialog
-  // has "Save as PDF" built in as a destination. No server-side or client-side
-  // HTML\u2192PDF conversion required.
-  document.getElementById('btn-dl').onclick = function () {
-    document.getElementById('form-frame').contentWindow.print();
-  };
-
-  setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 10 * 60 * 1000);
-<\/script>
-</body>
-</html>`);
+    popup.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>1003 \u2014 ' + borrowerName + '</title>' +
+      '<style>' +
+      '* { margin:0; padding:0; box-sizing:border-box; }' +
+      'body { background:#2a2a2a; font-family:Arial,sans-serif; }' +
+      '.toolbar { position:fixed; top:0; left:0; right:0; z-index:9999; background:#111; color:#fff; padding:10px 20px; display:flex; align-items:center; gap:12px; border-bottom:2px solid #C9A84C; box-shadow:0 2px 8px rgba(0,0,0,0.5); }' +
+      '.toolbar-title { color:#C9A84C; font-weight:bold; font-size:14px; }' +
+      '.toolbar-date { color:#888; font-size:12px; }' +
+      '.toolbar-btns { margin-left:auto; display:flex; gap:8px; }' +
+      '.t-btn { padding:7px 16px; border:none; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600; }' +
+      '.t-btn-print { background:#444; color:#fff; }' +
+      '.t-btn-print:hover { background:#555; }' +
+      '.t-btn-save { background:#C9A84C; color:#000; }' +
+      '.t-btn-save:hover { background:#d4b860; }' +
+      '.t-btn-close { background:#333; color:#fff; }' +
+      '.t-btn-close:hover { background:#444; }' +
+      '.content { margin-top:52px; background:#404040; min-height:calc(100vh - 52px); padding:20px; }' +
+      '.form-wrapper { max-width:850px; margin:0 auto; background:white; box-shadow:0 4px 20px rgba(0,0,0,0.4); }' +
+      '@media print { .toolbar { display:none !important; } .content { margin-top:0 !important; background:white !important; padding:0 !important; } .form-wrapper { box-shadow:none !important; max-width:none !important; } }' +
+      '</style></head><body>' +
+      '<div class="toolbar">' +
+        '<span>\uD83D\uDCCB</span>' +
+        '<span class="toolbar-title">1003 Uniform Residential Loan Application \u2014 ' + borrowerName + '</span>' +
+        '<span class="toolbar-date">' + today + '</span>' +
+        '<div class="toolbar-btns">' +
+          '<button class="t-btn t-btn-print" onclick="window.print()">\uD83D\uDDA8 Print</button>' +
+          '<button class="t-btn t-btn-save" onclick="window.print()">\u2B07 Save as PDF</button>' +
+          '<button class="t-btn t-btn-close" onclick="window.close()">\u2715 Close</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="content"><div class="form-wrapper">');
+    // The 1003 HTML (including its own <style> tags and <script> blocks) is
+    // written as a separate document.write call so it never lives inside a
+    // JS string literal — no escaping issues, no </script> breakage.
+    popup.document.write(htmlContent);
+    popup.document.write('</div></div></body></html>');
     popup.document.close();
-    showToast('1003 ready \u2713');
+    showToast('\u2705 1003 ready');
   } catch(e) {
     console.error('[1003]', e);
     showToast('1003 failed: ' + e.message);
