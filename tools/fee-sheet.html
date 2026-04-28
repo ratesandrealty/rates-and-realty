@@ -995,6 +995,42 @@ function copyToClipboard() {
 // ── Init ──
 ['purchasePrice', 'loanAmount', 'annualTax', 'annualInsurance'].forEach(id => formatCurrencyInput($(id)));
 
+// ── Auto-save: collect all data and post to parent ──
+let _saveTimer = null;
+function notifyParentOfChange() {
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(function() {
+        if (window.parent === window) return; // not in iframe
+        var featured = scenarios.findIndex(s => s.recommended);
+        var data = {
+            type: 'feeSheetAutoSave',
+            scenarioA: { rate: scenarios[0].rate, points: scenarios[0].points, origComp: scenarios[0].origComp, credits: scenarios[0].lenderCredits, label: scenarios[0].label },
+            scenarioB: { rate: scenarios[1].rate, points: scenarios[1].points, origComp: scenarios[1].origComp, credits: scenarios[1].lenderCredits, label: scenarios[1].label },
+            scenarioC: { rate: scenarios[2].rate, points: scenarios[2].points, origComp: scenarios[2].origComp, credits: scenarios[2].lenderCredits, label: scenarios[2].label },
+            featuredScenario: ['a','b','c'][featured >= 0 ? featured : 0],
+            purchasePrice: parseCurrency($('purchasePrice').value),
+            downPct: parseFloat($('downPct').value) || 0,
+            loanAmount: parseCurrency($('loanAmount').value),
+            loanProduct: $('loanProduct').value,
+            lockPeriod: $('lockPeriod').value,
+            propertyType: $('propertyType').value,
+            creditScore: $('creditScore').value,
+            state: $('state').value,
+            county: $('county').value,
+            annualTax: parseCurrency($('annualTax').value),
+            annualInsurance: parseCurrency($('annualInsurance').value),
+            borrowerName: $('borrowerName').value,
+            propertyAddress: $('propertyAddress').value,
+            lastUpdated: new Date().toISOString()
+        };
+        window.parent.postMessage(data, '*');
+    }, 1000);
+}
+
+// Wrap recalc to also trigger auto-save
+const _origRecalc = recalc;
+recalc = function() { _origRecalc(); notifyParentOfChange(); };
+
 // Live recalc on any input change
 document.querySelectorAll('.sidebar input, .sidebar select').forEach(el => {
     el.addEventListener('input', recalc);
@@ -1053,13 +1089,40 @@ recalc();
 
     // Listen for postMessage from parent (lead-detail iframe sync)
     window.addEventListener('message', function(e) {
-        if (e.data && e.data.type === 'feeSheetSync') {
+        if (!e.data || !e.data.type) return;
+        if (e.data.type === 'feeSheetSync') {
             const d = e.data;
             if (d.borrower_name) $('borrowerName').value = d.borrower_name;
             if (d.property_address) $('propertyAddress').value = d.property_address;
             if (d.purchase_price) $('purchasePrice').value = '$' + Number(d.purchase_price).toLocaleString('en-US');
             if (d.loan_amount) $('loanAmount').value = '$' + Number(d.loan_amount).toLocaleString('en-US');
-            recalc();
+            _origRecalc(); // don't trigger auto-save back
+        }
+        if (e.data.type === 'feeSheetRestore') {
+            const d = e.data;
+            if (d.borrowerName) $('borrowerName').value = d.borrowerName;
+            if (d.propertyAddress) $('propertyAddress').value = d.propertyAddress;
+            if (d.purchasePrice) $('purchasePrice').value = '$' + Number(d.purchasePrice).toLocaleString('en-US');
+            if (d.loanAmount) $('loanAmount').value = '$' + Number(d.loanAmount).toLocaleString('en-US');
+            if (d.downPct != null) $('downPct').value = d.downPct;
+            if (d.loanProduct) $('loanProduct').value = d.loanProduct;
+            if (d.lockPeriod) $('lockPeriod').value = d.lockPeriod;
+            if (d.propertyType) $('propertyType').value = d.propertyType;
+            if (d.creditScore) $('creditScore').value = d.creditScore;
+            if (d.state) $('state').value = d.state;
+            if (d.county) $('county').value = d.county;
+            if (d.annualTax) $('annualTax').value = '$' + Number(d.annualTax).toLocaleString('en-US');
+            if (d.annualInsurance) $('annualInsurance').value = '$' + Number(d.annualInsurance).toLocaleString('en-US');
+            // Restore scenarios
+            if (d.scenarioA) { Object.assign(scenarios[0], { rate: d.scenarioA.rate||0, points: d.scenarioA.points||0, origComp: d.scenarioA.origComp||1.5, lenderCredits: d.scenarioA.credits||0, label: d.scenarioA.label||'Par Rate' }); }
+            if (d.scenarioB) { Object.assign(scenarios[1], { rate: d.scenarioB.rate||0, points: d.scenarioB.points||0, origComp: d.scenarioB.origComp||1.5, lenderCredits: d.scenarioB.credits||0, label: d.scenarioB.label||'Buy Down' }); }
+            if (d.scenarioC) { Object.assign(scenarios[2], { rate: d.scenarioC.rate||0, points: d.scenarioC.points||0, origComp: d.scenarioC.origComp||1.5, lenderCredits: d.scenarioC.credits||0, label: d.scenarioC.label||'Lender Credit' }); }
+            if (d.featuredScenario) {
+                var fi = { a:0, b:1, c:2 }[d.featuredScenario] || 0;
+                scenarios.forEach(function(s,i) { s.recommended = (i === fi); });
+            }
+            buildScenarioCards();
+            _origRecalc(); // don't trigger auto-save back
         }
     });
 })();

@@ -3803,9 +3803,9 @@
             <div style="font-size:.73rem;color:#555">Create rate comparison fee sheets for this borrower</div>
           </div>
           <div style="display:flex;gap:8px">
+            <span id="feeSheetSaveStatus" style="font-size:.7rem;min-width:60px;text-align:right;"></span>
             <button onclick="openFeeSheetPDF()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);"><i class="fas fa-file-pdf" style="margin-right:4px"></i>Download PDF</button>
             <button onclick="openFeeSheetFullscreen()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-expand" style="margin-right:4px"></i>Fullscreen</button>
-            <button onclick="saveFeeSheetQuote()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-save" style="margin-right:4px"></i>Save Quote</button>
           </div>
         </div>
         <iframe id="feeSheetIframe" src="about:blank" style="width:100%;height:calc(100vh - 200px);border:1px solid #222;border-radius:10px;background:#1a1a1a;"></iframe>
@@ -7075,16 +7075,76 @@ function buildFeeSheetUrl() {
 }
 
 let _feeSheetLoaded = false;
-function prefillFeeSheet() {
+let _feeSheetSaveTimer = null;
+let _feeSheetSavedData = null;
+
+async function prefillFeeSheet() {
   var iframe = document.getElementById('feeSheetIframe');
   if (!iframe) return;
   if (!_feeSheetLoaded) {
     _feeSheetLoaded = true;
     iframe.src = buildFeeSheetUrl();
+    // After iframe loads, try to restore saved fee sheet data
+    iframe.addEventListener('load', async function() {
+      var cid = new URLSearchParams(window.location.search).get('contact_id');
+      if (!cid) return;
+      try {
+        var res = await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=fee_sheet_data&order=created_at.desc&limit=1', {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        });
+        var rows = await res.json();
+        if (rows && rows[0] && rows[0].fee_sheet_data) {
+          _feeSheetSavedData = rows[0].fee_sheet_data;
+          // Send restore message to iframe
+          setTimeout(function() {
+            iframe.contentWindow.postMessage(Object.assign({ type: 'feeSheetRestore' }, _feeSheetSavedData), '*');
+          }, 300);
+        }
+      } catch(e) { console.warn('Fee sheet restore:', e); }
+    });
   } else {
     syncFeeSheetData();
   }
 }
+
+// Listen for auto-save messages from fee sheet iframe
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'feeSheetAutoSave') return;
+  var saveIndicator = document.getElementById('feeSheetSaveStatus');
+  if (saveIndicator) { saveIndicator.textContent = 'Saving...'; saveIndicator.style.color = '#888'; }
+  clearTimeout(_feeSheetSaveTimer);
+  _feeSheetSaveTimer = setTimeout(async function() {
+    var cid = new URLSearchParams(window.location.search).get('contact_id');
+    if (!cid) return;
+    var payload = Object.assign({}, e.data);
+    delete payload.type;
+    try {
+      var res = await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=id&limit=1', {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+      });
+      var apps = await res.json();
+      if (apps && apps.length) {
+        await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?id=eq.' + apps[0].id, {
+          method: 'PATCH',
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() })
+        });
+      } else {
+        await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications', {
+          method: 'POST',
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ contact_id: cid, fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() })
+        });
+      }
+      if (saveIndicator) { saveIndicator.textContent = '\u2713 Saved'; saveIndicator.style.color = '#2ecc71'; }
+    } catch(err) {
+      console.warn('Fee sheet auto-save:', err);
+      if (saveIndicator) { saveIndicator.textContent = 'Save failed'; saveIndicator.style.color = '#e74c3c'; }
+    }
+    // Fade out after 2s
+    setTimeout(function() { if (saveIndicator) saveIndicator.textContent = ''; }, 2500);
+  }, 500);
+});
 
 function syncFeeSheetData() {
   var iframe = document.getElementById('feeSheetIframe');
