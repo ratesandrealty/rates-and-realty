@@ -44,7 +44,7 @@
   + '    <div style="font-size:.68rem;color:#333">&copy; 2026 Rates &amp; Realty. All rights reserved. | NMLS #1795044 | Equal Housing Lender</div>'
   + '    <div style="font-size:.68rem;color:#333">MLS data provided by CRMLS/Trestle. Information deemed reliable but not guaranteed.</div>'
   + '  </div>'
-  + '  <div style="text-align:center;margin-top:12px"><a href="/dashboard/admin.html" style="color:rgba(255,255,255,0.15);font-size:10px;text-decoration:none;letter-spacing:.08em" onmouseover="this.style.color=\'rgba(201,168,76,0.5)\'" onmouseout="this.style.color=\'rgba(255,255,255,0.15)\'">&#x1f512; Team Login</a></div>'
+  + '  <div style="text-align:center;margin-top:12px"><a href="/auth/admin-login.html" style="color:rgba(255,255,255,0.15);font-size:10px;text-decoration:none;letter-spacing:.08em" onmouseover="this.style.color=\'rgba(201,168,76,0.5)\'" onmouseout="this.style.color=\'rgba(255,255,255,0.15)\'">&#x1f512; Team Login</a></div>'
   + '</div>'
   + '</footer>';
 

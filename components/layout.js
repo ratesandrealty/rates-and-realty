@@ -270,7 +270,7 @@ if (footerRoot) {
           <div style="text-align:center;font-size:12px;color:#6b5f40;padding:16px 0;border-top:1px solid rgba(186,117,23,0.1);">
             &copy; ${new Date().getFullYear()} Rates &amp; Realty &middot; Rene Duarte NMLS #1795044 &middot; Equal Housing Lender &middot;
             <a href="https://nmlsconsumeraccess.org" target="_blank" style="color:#BA7517;text-decoration:none;">NMLS Consumer Access</a>
-            <br><a href="/dashboard/admin.html" style="color:rgba(255,255,255,0.18);font-size:10px;text-decoration:none;margin-top:10px;display:inline-block;letter-spacing:0.08em;" onmouseover="this.style.color='rgba(201,168,76,0.6)'" onmouseout="this.style.color='rgba(255,255,255,0.18)'">&#x1f512; Team Login</a>
+            <br><a href="/auth/admin-login.html" style="color:rgba(255,255,255,0.18);font-size:10px;text-decoration:none;margin-top:10px;display:inline-block;letter-spacing:0.08em;" onmouseover="this.style.color='rgba(201,168,76,0.6)'" onmouseout="this.style.color='rgba(255,255,255,0.18)'">&#x1f512; Team Login</a>
           </div>
         </div>
       </footer>
