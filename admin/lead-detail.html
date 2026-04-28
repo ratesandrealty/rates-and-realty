@@ -7163,78 +7163,103 @@ function openFeeSheetPDF() {
     var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
     var sheetEl = iframeDoc.getElementById('sheet');
     if (!sheetEl || !sheetEl.innerHTML.trim()) { alert('Generate a fee sheet first'); return; }
-    // Grab the rendered sheet HTML and all styles from the iframe
     var sheetHTML = sheetEl.innerHTML;
-    var styles = '';
-    try {
-      Array.from(iframeDoc.querySelectorAll('style')).forEach(function(s) { styles += s.outerHTML; });
-    } catch(e) {}
     var borrowerName = getFeeSheetData().borrower_name || 'Borrower';
-    var fileName = 'Fee Sheet \u2014 ' + borrowerName + '.pdf';
     var todayStr = new Date().toLocaleDateString();
 
-    // Build a self-contained HTML doc, convert to Blob, display in iframe like pre-approval
-    var htmlDoc = '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+    var popup = window.open('', '_blank', 'width=1050,height=900,scrollbars=yes,resizable=yes');
+    if (!popup) { alert('Allow popups for this site'); return; }
+    popup.document.open();
+    popup.document.write(
+      '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Fee Sheet \u2014 ' + borrowerName + '</title>' +
       '<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">' +
-      styles +
       '<style>' +
-      '*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }' +
-      'body { font-family:"DM Sans",sans-serif; background:white; }' +
-      '#sheet { max-width:1100px; margin:0 auto; background:#fff; }' +
-      '@media print { @page { size:landscape; margin:0.3in; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } #sheet { transform:scale(0.72); transform-origin:top left; width:138%; } table { font-size:9px !important; } th,td { padding:2px 6px !important; } }' +
-      '</style></head><body><div id="sheet">' + sheetHTML + '</div></body></html>';
-
-    var blob = new Blob([htmlDoc], { type: 'text/html' });
-    var blobUrl = URL.createObjectURL(blob);
-
-    // Open popup matching the pre-approval viewer exactly
-    var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
-    if (!popup) {
-      var a = document.createElement('a'); a.href = blobUrl; a.download = fileName; a.click();
-      showToast('Fee sheet downloaded \u2713'); return;
-    }
-
-    popup.document.write('<!DOCTYPE html>\n' +
-'<html>\n' +
-'<head>\n' +
-'  <meta charset="UTF-8">\n' +
-'  <title>' + fileName + '</title>\n' +
-'  <style>\n' +
-'    * { margin: 0; padding: 0; box-sizing: border-box; }\n' +
-'    html, body { height: 100%; background: #404040; font-family: sans-serif; display: flex; flex-direction: column; }\n' +
-'    .toolbar { background: #111; border-bottom: 2px solid #C9A84C; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }\n' +
-'    .title { color: #C9A84C; font-weight: 700; font-size: 14px; }\n' +
-'    .sub { color: #888; font-size: 12px; margin-top: 2px; }\n' +
-'    .btns { display: flex; gap: 10px; }\n' +
-'    .btn { padding: 8px 18px; border-radius: 6px; border: none; font-weight: 700; font-size: 13px; cursor: pointer; }\n' +
-'    .btn-print { background: #2a2a2a; color: #eee; border: 1px solid #444; }\n' +
-'    .btn-dl { background: #C9A84C; color: #111; }\n' +
-'    .btn-close { background: transparent; color: #888; border: 1px solid #444; }\n' +
-'    iframe { flex: 1; border: none; width: 100%; }\n' +
-'  </style>\n' +
-'</head>\n' +
-'<body>\n' +
-'  <div class="toolbar">\n' +
-'    <div><div class="title">\uD83D\uDCC4 Fee Sheet \u2014 ' + borrowerName + '</div><div class="sub">' + todayStr + '</div></div>\n' +
-'    <div class="btns">\n' +
-'      <button class="btn btn-print" onclick="document.getElementById(\'pf\').contentWindow.print()">\uD83D\uDDA8\uFE0F Print</button>\n' +
-'      <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download PDF</button>\n' +
-'      <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>\n' +
-'    </div>\n' +
-'  </div>\n' +
-'  <iframe id="pf" src="' + blobUrl + '"></iframe>\n' +
-'  <script>\n' +
-'    function dl() {\n' +
-'      var a = document.createElement("a");\n' +
-'      a.href = "' + blobUrl + '";\n' +
-'      a.download = "' + fileName + '";\n' +
-'      a.click();\n' +
-'    }\n' +
-'  <\/script>\n' +
-'</body>\n' +
-'</html>');
+      '* { margin:0; padding:0; box-sizing:border-box; }' +
+      'body { background:#2a2a2a; font-family:"DM Sans",sans-serif; }' +
+      /* Toolbar — matches pre-approval exactly */
+      '.toolbar { position:fixed; top:0; left:0; right:0; z-index:9999; background:#111; border-bottom:2px solid #C9A84C; padding:10px 20px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }' +
+      '.title { color:#C9A84C; font-weight:700; font-size:14px; }' +
+      '.sub { color:#888; font-size:12px; margin-top:2px; }' +
+      '.btns { display:flex; gap:10px; }' +
+      '.btn { padding:8px 18px; border-radius:6px; border:none; font-weight:700; font-size:13px; cursor:pointer; }' +
+      '.btn-print { background:#2a2a2a; color:#eee; border:1px solid #444; }' +
+      '.btn-print:hover { background:#333; }' +
+      '.btn-dl { background:#C9A84C; color:#111; }' +
+      '.btn-dl:hover { background:#d4b860; }' +
+      '.btn-close { background:transparent; color:#888; border:1px solid #444; }' +
+      '.btn-close:hover { background:#222; }' +
+      /* Content area */
+      '.content { margin-top:52px; padding:20px; }' +
+      '.sheet-wrap { max-width:1020px; margin:0 auto; background:#fff; box-shadow:0 4px 24px rgba(0,0,0,0.5); border-radius:2px; padding:36px 40px 24px; }' +
+      /* Fee sheet styles (from fee-sheet.html) */
+      ':root { --gold:#C9A84C; --gold-light:rgba(201,168,76,0.08); --gold-border:rgba(201,168,76,0.25); --credit-green:#2ecc71; }' +
+      '.sheet-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; border-bottom:2px solid var(--gold); padding-bottom:18px; }' +
+      '.sheet-header-left { display:flex; align-items:center; gap:14px; }' +
+      '.sheet-logo { height:52px; }' +
+      '.sheet-logo-text { font-family:"Playfair Display",serif; font-size:22px; font-weight:700; color:#111; }' +
+      '.sheet-logo-tag { font-size:11px; color:#888; letter-spacing:0.5px; }' +
+      '.sheet-header-right { text-align:right; font-size:12px; color:#555; }' +
+      '.sheet-header-right strong { color:#111; }' +
+      '.quote-bar { display:flex; justify-content:space-between; font-size:12px; color:#555; margin-bottom:6px; }' +
+      '.borrower-bar { margin-bottom:20px; font-size:13px; }' +
+      '.borrower-bar strong { color:#111; }' +
+      '.summary-strip { display:flex; background:var(--gold-light); border:1px solid var(--gold-border); border-radius:6px; padding:12px 0; margin-bottom:24px; }' +
+      '.summary-strip .item { flex:1; text-align:center; border-right:1px solid var(--gold-border); padding:0 10px; }' +
+      '.summary-strip .item:last-child { border-right:none; }' +
+      '.summary-strip .item .lbl { font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.6px; }' +
+      '.summary-strip .item .val { font-family:"DM Mono",monospace; font-weight:600; font-size:14px; color:#111; margin-top:2px; }' +
+      '.fee-table { width:100%; border-collapse:collapse; margin-bottom:24px; }' +
+      '.fee-table th,.fee-table td { padding:6px 10px; font-size:12px; vertical-align:top; }' +
+      '.fee-table thead th { background:#111; color:#fff; font-weight:600; text-align:center; font-size:12px; }' +
+      '.fee-table thead th:first-child { text-align:left; width:40%; }' +
+      '.fee-table thead th.rec-col { background:#2a2208; color:var(--gold); }' +
+      '.fee-table .cat-header td { background:#f5f5f5; font-weight:700; font-size:11.5px; text-transform:uppercase; letter-spacing:0.5px; color:#333; padding-top:10px; padding-bottom:6px; border-bottom:1px solid #ddd; }' +
+      '.fee-table .row-item td { border-bottom:1px solid #eee; }' +
+      '.fee-table .row-item td:first-child { color:#444; }' +
+      '.fee-table .row-item td:not(:first-child) { text-align:right; font-family:"DM Mono",monospace; font-size:12px; }' +
+      '.fee-table .subtotal td { border-top:1.5px solid #ccc; border-bottom:2px solid #ccc; font-weight:700; font-size:12px; }' +
+      '.fee-table .subtotal td:not(:first-child) { text-align:right; font-family:"DM Mono",monospace; }' +
+      '.fee-table .grand-total td { background:#111; color:#fff; font-weight:700; font-size:13px; }' +
+      '.fee-table .grand-total td:not(:first-child) { text-align:right; font-family:"DM Mono",monospace; }' +
+      '.fee-table .grand-total td.rec-col-cell { background:#2a2208; color:var(--gold); }' +
+      '.credit { color:var(--credit-green) !important; }' +
+      '.rec-col-cell { background:rgba(201,168,76,0.06) !important; border-left:2px solid rgba(201,168,76,0.3) !important; border-right:2px solid rgba(201,168,76,0.3) !important; }' +
+      '.ctc-section { margin-bottom:24px; }' +
+      '.ctc-section h4,.monthly-section h4 { font-family:"Playfair Display",serif; font-size:15px; margin-bottom:8px; color:#111; }' +
+      '.monthly-section { margin-bottom:20px; }' +
+      '.monthly-table { width:100%; border-collapse:collapse; }' +
+      '.monthly-table th,.monthly-table td { padding:6px 10px; font-size:12px; }' +
+      '.monthly-table thead th { background:#111; color:#fff; font-weight:600; text-align:center; }' +
+      '.monthly-table thead th:first-child { text-align:left; width:40%; }' +
+      '.monthly-table thead th.rec-col { background:#2a2208; color:var(--gold); }' +
+      '.monthly-table td { border-bottom:1px solid #eee; }' +
+      '.monthly-table td:not(:first-child) { text-align:right; font-family:"DM Mono",monospace; font-size:12px; }' +
+      '.monthly-table .total-row td { background:#f5f5f5; font-weight:700; border-top:2px solid #ccc; }' +
+      '.monthly-table .total-row td.rec-col-cell { background:rgba(201,168,76,0.12); }' +
+      '.sheet-footer { border-top:1px solid #ddd; padding-top:14px; margin-top:20px; font-size:10px; color:#999; line-height:1.6; }' +
+      /* Print — landscape single page */
+      '@media print {' +
+        '@page { size:landscape; margin:0.4in; }' +
+        'body { background:white !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }' +
+        '.toolbar { display:none !important; }' +
+        '.content { margin-top:0 !important; padding:0 !important; background:white !important; }' +
+        '.sheet-wrap { box-shadow:none !important; max-width:none !important; border-radius:0 !important; padding:0 !important; zoom:0.68; }' +
+        '.rec-col-cell { background:#fdf8e8 !important; }' +
+        '.fee-table thead th,.monthly-table thead th,.fee-table .grand-total td { -webkit-print-color-adjust:exact; print-color-adjust:exact; }' +
+      '}' +
+      '</style></head><body>' +
+      '<div class="toolbar">' +
+        '<div><div class="title">\uD83D\uDCC4 Fee Sheet \u2014 ' + borrowerName + '</div><div class="sub">' + todayStr + '</div></div>' +
+        '<div class="btns">' +
+          '<button class="btn btn-print" onclick="window.print()">\uD83D\uDDA8\uFE0F Print</button>' +
+          '<button class="btn btn-dl" onclick="window.print()">\u2B07\uFE0F Download PDF</button>' +
+          '<button class="btn btn-close" onclick="window.close()">\u2715 Close</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="content"><div class="sheet-wrap">');
+    popup.document.write(sheetHTML);
+    popup.document.write('</div></div></body></html>');
     popup.document.close();
-    setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 600000);
     showToast('Fee sheet ready \u2713');
   } catch(e) { alert('Error opening fee sheet: ' + e.message); console.error(e); }
 }
