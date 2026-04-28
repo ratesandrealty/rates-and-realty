@@ -279,11 +279,11 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     if (qrRes.ok) {
       const qrBytes = new Uint8Array(await qrRes.arrayBuffer());
       const qrImg = await doc.embedPng(qrBytes);
-      const qrSize = 72;
+      const qrSize = 80;
       const qrX = W - M - qrSize;
       const qrY = vbTop - 42 - qrSize - 6;
       page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
-      T('Scan to Apply', qrX + (qrSize - R.widthOfTextAtSize('Scan to Apply', 5.5)) / 2, qrY - 8, R, 5.5, GRAY);
+      T('Scan to connect', qrX + (qrSize - R.widthOfTextAtSize('Scan to connect', 5.5)) / 2, qrY - 8, R, 5.5, GRAY);
     }
   } catch (e) { console.log('[qr] Could not embed QR code:', String(e).slice(0, 80)); }
   y-=18;
