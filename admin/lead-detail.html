@@ -3803,8 +3803,9 @@
             <div style="font-size:.73rem;color:#555">Create rate comparison fee sheets for this borrower</div>
           </div>
           <div style="display:flex;gap:8px">
+            <button onclick="openFeeSheetPDF()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);"><i class="fas fa-file-pdf" style="margin-right:4px"></i>Download PDF</button>
             <button onclick="openFeeSheetFullscreen()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-expand" style="margin-right:4px"></i>Fullscreen</button>
-            <button onclick="saveFeeSheetQuote()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);"><i class="fas fa-save" style="margin-right:4px"></i>Save Quote</button>
+            <button onclick="saveFeeSheetQuote()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-save" style="margin-right:4px"></i>Save Quote</button>
           </div>
         </div>
         <iframe id="feeSheetIframe" src="about:blank" style="width:100%;height:calc(100vh - 200px);border:1px solid #222;border-radius:10px;background:#1a1a1a;"></iframe>
@@ -7046,7 +7047,7 @@ function switchTab(name, btn) {
 function getFeeSheetData() {
   var name = [contactData.first_name, contactData.last_name].filter(Boolean).join(' ');
   var addr = [leadData.property_address, leadData.property_city, leadData.property_state, leadData.property_zip].filter(Boolean).join(', ');
-  // Also check 1003 fields for more detailed address
+  // Check 1003 fields for more detailed address
   var propStreet = document.getElementById('f_prop_street');
   var propCity = document.getElementById('f_prop_city');
   var propState = document.getElementById('f_prop_state');
@@ -7054,11 +7055,13 @@ function getFeeSheetData() {
   if (propStreet && propStreet.value) {
     addr = [propStreet.value, propCity ? propCity.value : '', propState ? propState.value : '', propZip ? propZip.value : ''].filter(Boolean).join(', ');
   }
-  var pp = leadData.purchase_price || '';
-  var la = leadData.loan_amount || '';
-  var lt = leadData.loan_type || leadData.loan_program || '';
+  // Pull purchase price and loan amount from multiple sources (1003 fields → loan scenario fields → leadData)
+  var pp = _elVal('ls_purchase_price') || _elVal('f_prop_value') || leadData.purchase_price || '';
+  var la = _elVal('ls_loan_amount') || _elVal('f_loan_amount') || leadData.loan_amount || '';
+  var lt = _elVal('ls_loan_type') || _elVal('f_loan_type_app') || leadData.loan_type || leadData.loan_program || '';
   return { borrower_name: name, property_address: addr, purchase_price: pp, loan_amount: la, loan_type: lt };
 }
+function _elVal(id) { var el = document.getElementById(id); return el && el.value ? el.value.replace(/[$,]/g,'') : ''; }
 
 function buildFeeSheetUrl() {
   var d = getFeeSheetData();
@@ -7076,11 +7079,9 @@ function prefillFeeSheet() {
   var iframe = document.getElementById('feeSheetIframe');
   if (!iframe) return;
   if (!_feeSheetLoaded) {
-    // First load: set src with URL params
     _feeSheetLoaded = true;
     iframe.src = buildFeeSheetUrl();
   } else {
-    // Subsequent opens: sync via postMessage
     syncFeeSheetData();
   }
 }
@@ -7093,6 +7094,80 @@ function syncFeeSheetData() {
 
 function openFeeSheetFullscreen() {
   window.open(buildFeeSheetUrl(), '_blank');
+}
+
+function openFeeSheetPDF() {
+  try {
+    var iframe = document.getElementById('feeSheetIframe');
+    if (!iframe || !iframe.contentWindow) { alert('Fee sheet not loaded yet'); return; }
+    var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+    var sheetEl = iframeDoc.getElementById('sheet');
+    if (!sheetEl || !sheetEl.innerHTML.trim()) { alert('Generate a fee sheet first'); return; }
+    var sheetHTML = sheetEl.innerHTML;
+    var borrowerName = getFeeSheetData().borrower_name || 'Borrower';
+
+    var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=yes,resizable=yes');
+    if (!popup) { alert('Allow popups for this site'); return; }
+    popup.document.open();
+    popup.document.write('<!DOCTYPE html><html><head><meta charset="utf-8">' +
+      '<title>Fee Sheet \u2014 ' + borrowerName + '</title>' +
+      '<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">' +
+      '<style>' +
+      '*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }' +
+      'body { background:#2a2a2a; font-family:"DM Sans",sans-serif; }' +
+      '.toolbar { position:fixed; top:0; left:0; right:0; z-index:9999; background:#111; color:#fff; padding:10px 20px; display:flex; align-items:center; gap:12px; border-bottom:2px solid #C9A84C; box-shadow:0 2px 8px rgba(0,0,0,0.5); }' +
+      '.toolbar-title { color:#C9A84C; font-weight:bold; font-size:14px; }' +
+      '.toolbar-btns { margin-left:auto; display:flex; gap:8px; }' +
+      '.t-btn { padding:7px 16px; border:none; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600; }' +
+      '.t-btn-print { background:#C9A84C; color:#000; }' +
+      '.t-btn-print:hover { background:#d4b860; }' +
+      '.t-btn-close { background:#333; color:#fff; }' +
+      '.t-btn-close:hover { background:#444; }' +
+      '.content { margin-top:52px; padding:20px; min-height:calc(100vh - 52px); }' +
+      '.sheet-wrap { max-width:1040px; margin:0 auto; background:#fff; box-shadow:0 4px 20px rgba(0,0,0,0.4); border-radius:2px; }' +
+      /* Print styles — landscape, single page, no toolbar */
+      '@media print {' +
+        '@page { size:landscape; margin:0.3in; }' +
+        '.toolbar { display:none !important; }' +
+        '.content { margin-top:0 !important; padding:0 !important; background:white !important; }' +
+        '.sheet-wrap { box-shadow:none !important; max-width:none !important; border-radius:0 !important; }' +
+        /* Compact everything to fit one page */
+        '.sheet-wrap { transform:scale(0.72); transform-origin:top left; width:138%; }' +
+        'table { font-size:9px !important; }' +
+        'th, td { padding:2px 6px !important; }' +
+        'h1, h2, h3 { margin:2px 0 !important; }' +
+      '}' +
+      /* Copy all the fee sheet table/cell styles from the iframe */
+      '.fee-header { padding:20px 28px; border-bottom:1px solid #e0e0e0; }' +
+      '.fee-summary-bar { background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.2); padding:10px 24px; display:flex; gap:32px; flex-wrap:wrap; }' +
+      '.fee-summary-bar .item { font-size:11px; color:#666; }' +
+      '.fee-summary-bar .item strong { color:#222; font-size:13px; display:block; }' +
+      'table { width:100%; border-collapse:collapse; font-size:11px; }' +
+      'th, td { padding:4px 10px; text-align:right; border-bottom:1px solid #eee; }' +
+      'th:first-child, td:first-child { text-align:left; }' +
+      'th { background:#f7f6f3; color:#666; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }' +
+      '.cat-header td { background:#f0efe9; font-weight:700; color:#333; font-size:10px; text-transform:uppercase; letter-spacing:0.03em; border-top:2px solid #ddd; }' +
+      '.subtotal td { font-weight:700; border-top:1px solid #ccc; }' +
+      '.total-row td { background:#222; color:#fff; font-weight:700; font-size:12px; }' +
+      '.recommended { background:rgba(201,168,76,0.06); }' +
+      'th.recommended { background:rgba(201,168,76,0.15); color:#8B7025; }' +
+      '.credit { color:#2ecc71; }' +
+      '.monthly-section { padding:16px 24px; border-top:2px solid #C9A84C; }' +
+      '.sheet-footer { padding:14px 24px; font-size:8px; color:#999; border-top:1px solid #eee; line-height:1.5; }' +
+      '</style></head><body>' +
+      '<div class="toolbar">' +
+        '<span>\uD83D\uDCC4</span>' +
+        '<span class="toolbar-title">Fee Sheet \u2014 ' + borrowerName + '</span>' +
+        '<div class="toolbar-btns">' +
+          '<button class="t-btn t-btn-print" onclick="window.print()">\uD83D\uDDA8 Print / Save PDF</button>' +
+          '<button class="t-btn t-btn-close" onclick="window.close()">\u2715 Close</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="content"><div class="sheet-wrap">');
+    popup.document.write(sheetHTML);
+    popup.document.write('</div></div></body></html>');
+    popup.document.close();
+  } catch(e) { alert('Error opening fee sheet PDF: ' + e.message); console.error(e); }
 }
 
 async function saveFeeSheetQuote() {
