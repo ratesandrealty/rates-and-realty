@@ -1729,6 +1729,7 @@
       <button class="ld-tab-btn" onclick="switchTab('activity', this)">Activity</button>
       <button class="ld-tab-btn" onclick="switchTab('alerts', this)"><i class="fas fa-bell" style="margin-right:4px"></i>Alerts</button>
       <button class="ld-tab-btn" onclick="switchTab('showings', this)"><i class="fas fa-home" style="margin-right:4px"></i>Showings</button>
+      <button class="ld-tab-btn" onclick="switchTab('fee-sheet', this)"><i class="fas fa-file-invoice-dollar" style="margin-right:4px"></i>Fee Sheet</button>
     </nav>
 
     <!-- ═══════════════════════════════════════════
@@ -3788,6 +3789,25 @@
         <div id="contactShowingsContainer">
           <div style="text-align:center;padding:32px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.5rem"></i></div>
         </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════
+         TAB: FEE SHEET
+    ═══════════════════════════════════════════ -->
+    <div class="ld-tab-panel" id="tab-fee-sheet">
+      <div style="padding:20px 24px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div>
+            <h3 style="font-size:1rem;font-weight:700;color:#eee;margin:0 0 4px">Fee Sheet Generator</h3>
+            <div style="font-size:.73rem;color:#555">Create rate comparison fee sheets for this borrower</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button onclick="openFeeSheetFullscreen()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-expand" style="margin-right:4px"></i>Fullscreen</button>
+            <button onclick="saveFeeSheetQuote()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);"><i class="fas fa-save" style="margin-right:4px"></i>Save Quote</button>
+          </div>
+        </div>
+        <iframe id="feeSheetIframe" src="/tools/fee-sheet.html" style="width:100%;height:calc(100vh - 200px);border:1px solid #222;border-radius:10px;background:#1a1a1a;"></iframe>
       </div>
     </div>
 
@@ -7019,6 +7039,79 @@ function switchTab(name, btn) {
   if (name === 'activity') { loadActivity(); loadPortalActivity(); loadIntelBanners(); loadDripStatus(); }
   if (name === 'showings') loadContactShowings();
   if (name === 'contact-log') { loadCommunications(); loadIntelBanners(); }
+  if (name === 'fee-sheet') prefillFeeSheet();
+}
+
+/* ═══ FEE SHEET ═══ */
+let _feeSheetPrefilled = false;
+function prefillFeeSheet() {
+  if (_feeSheetPrefilled) return;
+  _feeSheetPrefilled = true;
+  const iframe = document.getElementById('feeSheetIframe');
+  if (!iframe) return;
+  iframe.addEventListener('load', function() {
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow.document;
+      const name = [contactData.first_name, contactData.last_name].filter(Boolean).join(' ');
+      const addr = [leadData.property_address, leadData.property_city, leadData.property_state, leadData.property_zip].filter(Boolean).join(', ');
+      const setVal = function(id, v) { var el = doc.getElementById(id); if (el && v) { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); } };
+      setVal('borrowerName', name);
+      setVal('propertyAddress', addr);
+      if (leadData.purchase_price) setVal('purchasePrice', String(leadData.purchase_price));
+      if (leadData.loan_amount) setVal('loanAmount', String(leadData.loan_amount));
+    } catch(e) { console.warn('Fee sheet prefill:', e); }
+  });
+}
+
+function openFeeSheetFullscreen() {
+  var name = encodeURIComponent([contactData.first_name, contactData.last_name].filter(Boolean).join(' '));
+  var pp = leadData.purchase_price || '';
+  var la = leadData.loan_amount || '';
+  window.open('/tools/fee-sheet.html?borrower=' + name + '&pp=' + pp + '&la=' + la, '_blank');
+}
+
+async function saveFeeSheetQuote() {
+  try {
+    var iframe = document.getElementById('feeSheetIframe');
+    var doc = iframe.contentDocument || iframe.contentWindow.document;
+    var scenarios = [];
+    ['A','B','C'].forEach(function(letter) {
+      var lbl = doc.getElementById('label' + letter);
+      var rate = doc.getElementById('rate' + letter);
+      var pts = doc.getElementById('points' + letter);
+      var comp = doc.getElementById('comp' + letter);
+      var cred = doc.getElementById('credits' + letter);
+      if (rate && rate.value) {
+        scenarios.push({
+          label: lbl ? lbl.value : 'Option ' + letter,
+          rate: parseFloat(rate.value) || 0,
+          points: parseFloat(pts ? pts.value : 0) || 0,
+          comp: parseFloat(comp ? comp.value : 0) || 0,
+          credits: parseFloat(cred ? cred.value : 0) || 0
+        });
+      }
+    });
+    var contactId = new URLSearchParams(window.location.search).get('contact_id');
+    if (!contactId) return alert('No contact loaded');
+    var res = await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?contact_id=eq.' + contactId + '&select=id&limit=1', {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    });
+    var apps = await res.json();
+    if (apps.length) {
+      await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?id=eq.' + apps[0].id, {
+        method: 'PATCH',
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() })
+      });
+    } else {
+      await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications', {
+        method: 'POST',
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ contact_id: contactId, fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() })
+      });
+    }
+    alert('Fee sheet quote saved!');
+  } catch(e) { alert('Error saving: ' + e.message); }
 }
 
 /* ═══ CONDITIONS ═══ */

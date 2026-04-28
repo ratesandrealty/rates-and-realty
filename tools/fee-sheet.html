@@ -3,679 +3,1021 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fee Sheet Generator — Rates & Realty</title>
+    <title>Fee Sheet Generator | Rates &amp; Realty</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
         :root {
             --gold: #C9A84C;
-            --gold-dim: #a8893d;
-            --bg-dark: #060606;
-            --bg-card: #0d0d0d;
-            --bg-input: #1a1a1a;
-            --border: #2a2a2a;
-            --text: #e8e8e8;
-            --text-dim: #999;
-            --text-bright: #fff;
-            --red: #e74c3c;
-            --green: #2ecc71;
+            --gold-light: rgba(201,168,76,0.08);
+            --gold-border: rgba(201,168,76,0.25);
+            --sidebar-bg: #0A0A0A;
+            --sidebar-w: 340px;
+            --credit-green: #2ecc71;
+            --sheet-max: 1060px;
         }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-dark);
-            color: var(--text);
+            font-family: 'DM Sans', sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            display: flex;
             min-height: 100vh;
         }
 
-        /* ── Header ────────────────────────────── */
-        .header {
-            background: var(--bg-card);
-            border-bottom: 1px solid var(--border);
-            padding: 14px 28px;
-            display: flex;
-            align-items: center;
-            gap: 18px;
+        /* ── SIDEBAR ── */
+        .sidebar {
+            width: var(--sidebar-w);
+            min-width: var(--sidebar-w);
+            background: var(--sidebar-bg);
+            border-right: 1px solid #222;
+            padding: 20px 18px 30px;
+            overflow-y: auto;
+            height: 100vh;
+            position: sticky;
+            top: 0;
         }
-        .header img { height: 38px; }
-        .header .title { font-size: 18px; font-weight: 600; color: var(--gold); }
-        .header .back {
-            margin-left: auto;
-            color: var(--text-dim);
+
+        .sidebar a.back-link {
+            color: var(--gold);
             text-decoration: none;
             font-size: 13px;
-            transition: color .2s;
+            display: inline-block;
+            margin-bottom: 14px;
         }
-        .header .back:hover { color: var(--gold); }
+        .sidebar a.back-link:hover { text-decoration: underline; }
 
-        /* ── Layout ────────────────────────────── */
-        .container { max-width: 1280px; margin: 0 auto; padding: 24px; }
-
-        .grid {
-            display: grid;
-            grid-template-columns: 380px 1fr;
-            gap: 24px;
+        .sidebar h2 {
+            font-family: 'Playfair Display', serif;
+            color: #fff;
+            font-size: 20px;
+            margin-bottom: 18px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
         }
-        @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
 
-        /* ── Cards ─────────────────────────────── */
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 22px;
-        }
-        .card h2 {
-            font-size: 15px;
-            font-weight: 600;
+        .sidebar h3 {
             color: var(--gold);
-            margin-bottom: 16px;
+            font-size: 12px;
             text-transform: uppercase;
-            letter-spacing: .5px;
+            letter-spacing: 1.2px;
+            margin: 18px 0 8px;
         }
 
-        /* ── Form ──────────────────────────────── */
-        .field { margin-bottom: 12px; }
+        .field { margin-bottom: 10px; }
         .field label {
             display: block;
-            font-size: 12px;
-            color: var(--text-dim);
-            margin-bottom: 4px;
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 3px;
             text-transform: uppercase;
-            letter-spacing: .3px;
+            letter-spacing: 0.5px;
         }
         .field input, .field select {
             width: 100%;
-            background: var(--bg-input);
-            border: 1px solid var(--border);
+            padding: 8px 10px;
+            background: #151515;
+            border: 1px solid #333;
             border-radius: 6px;
-            padding: 9px 12px;
-            color: var(--text);
-            font-size: 14px;
+            color: #e0e0e0;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 13px;
             outline: none;
             transition: border-color .2s;
         }
-        .field input:focus, .field select:focus { border-color: var(--gold); }
-        .field select option { background: var(--bg-input); }
-        .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: opacity .2s;
+        .field input:focus, .field select:focus {
+            border-color: var(--gold);
         }
-        .btn:hover { opacity: .85; }
-        .btn-gold { background: var(--gold); color: #000; }
-        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
-        .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
-
-        /* ── Output tables ─────────────────────── */
-        #output { display: none; }
-        #output.visible { display: block; }
-
-        .fee-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 18px; }
-        .fee-table th {
-            text-align: left;
-            padding: 8px 10px;
-            background: var(--bg-input);
-            color: var(--gold);
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: .3px;
-        }
-        .fee-table td {
-            padding: 6px 10px;
-            border-bottom: 1px solid var(--border);
-        }
-        .fee-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
-        .fee-table .subtotal td {
-            font-weight: 700;
-            border-top: 2px solid var(--border);
-            padding-top: 8px;
-            color: var(--text-bright);
-        }
-        .fee-table .cat-header td {
-            font-weight: 600;
-            color: var(--gold);
-            padding-top: 12px;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: .3px;
-            border-bottom: none;
+        .field input[type="number"] {
+            font-family: 'DM Mono', monospace;
         }
 
-        .summary-box {
-            background: var(--bg-input);
-            border: 1px solid var(--border);
+        .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+        /* scenario card */
+        .scenario-card {
+            background: #111;
+            border: 1px solid #2a2a2a;
             border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 16px;
+            padding: 12px;
+            margin-bottom: 10px;
         }
-        .summary-box h3 { font-size: 13px; color: var(--gold); margin-bottom: 10px; text-transform: uppercase; }
-        .summary-row {
+        .scenario-card.recommended { border-color: var(--gold); }
+        .scenario-header {
             display: flex;
             justify-content: space-between;
-            padding: 4px 0;
-            font-size: 13px;
+            align-items: center;
+            margin-bottom: 8px;
         }
-        .summary-row.total {
-            border-top: 2px solid var(--gold);
-            margin-top: 6px;
-            padding-top: 8px;
-            font-weight: 700;
-            font-size: 15px;
-            color: var(--text-bright);
+        .scenario-header span {
+            font-weight: 600;
+            color: #fff;
+            font-size: 14px;
         }
-        .summary-row .label { color: var(--text-dim); }
-
-        .borrower-header {
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--border);
-        }
-        .borrower-header .name { font-size: 18px; font-weight: 700; color: var(--text-bright); }
-        .borrower-header .addr { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
-        .borrower-header .meta { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
-
-        .disclaimer {
+        .btn-recommend {
+            padding: 4px 10px;
             font-size: 11px;
-            color: var(--text-dim);
-            line-height: 1.5;
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px solid var(--border);
+            border-radius: 4px;
+            border: 1px solid #555;
+            background: transparent;
+            color: #888;
+            cursor: pointer;
+            transition: all .2s;
         }
+        .btn-recommend.active {
+            background: var(--gold);
+            color: #000;
+            border-color: var(--gold);
+            font-weight: 600;
+        }
+
+        .sidebar-actions {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .btn-gold {
+            padding: 12px;
+            background: var(--gold);
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            transition: filter .2s;
+        }
+        .btn-gold:hover { filter: brightness(1.1); }
+        .btn-outline {
+            padding: 10px;
+            background: transparent;
+            color: #ccc;
+            border: 1px solid #444;
+            border-radius: 8px;
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all .2s;
+        }
+        .btn-outline:hover { border-color: var(--gold); color: var(--gold); }
 
         .toast {
             position: fixed;
-            bottom: 24px;
-            right: 24px;
-            background: var(--gold);
-            color: #000;
-            padding: 10px 20px;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #222;
+            color: var(--gold);
+            padding: 10px 24px;
             border-radius: 8px;
             font-size: 13px;
-            font-weight: 600;
+            border: 1px solid var(--gold);
             opacity: 0;
-            transform: translateY(10px);
             transition: all .3s;
-            pointer-events: none;
             z-index: 999;
         }
-        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
-        /* ── Print styles ──────────────────────── */
-        @media print {
-            body { background: #fff; color: #222; }
-            .header, .form-panel, .actions, .no-print { display: none !important; }
-            .container { padding: 0; max-width: 100%; }
-            .grid { grid-template-columns: 1fr; }
-            .card { border: none; padding: 0; background: #fff; }
-            .fee-table th { background: #f5f0e1; color: #333; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            .fee-table td { border-color: #ddd; color: #222; }
-            .fee-table .cat-header td { color: #8a7530; }
-            .fee-table .subtotal td { color: #000; }
-            .summary-box { background: #f9f7f0; border-color: #ddd; }
-            .summary-box h3 { color: #8a7530; }
-            .summary-row .label { color: #666; }
-            .summary-row.total { border-color: #8a7530; color: #000; }
-            .borrower-header .name { color: #000; }
-            .borrower-header .addr, .borrower-header .meta { color: #555; }
-            .disclaimer { color: #888; border-color: #ddd; }
-            var { color: #222; }
-            #output { page-break-inside: avoid; }
-            .print-logo { display: block !important; margin-bottom: 12px; }
-            .print-brand { display: flex !important; align-items: center; gap: 12px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #C9A84C; }
-            .print-brand img { height: 40px; }
-            .print-brand .pb-text { font-size: 20px; font-weight: 700; color: #8a7530; }
-            .print-brand .pb-sub { font-size: 11px; color: #999; }
+        /* ── MAIN / SHEET ── */
+        .main {
+            flex: 1;
+            padding: 40px;
+            display: flex;
+            justify-content: center;
+            overflow-y: auto;
         }
-        .print-brand { display: none; }
 
-        @page { margin: .6in .75in; }
+        .sheet {
+            background: #fff;
+            color: #1a1a1a;
+            width: 100%;
+            max-width: var(--sheet-max);
+            padding: 50px 52px;
+            border-radius: 4px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+            font-size: 13px;
+            line-height: 1.5;
+            align-self: flex-start;
+        }
+
+        .sheet .mono {
+            font-family: 'DM Mono', monospace;
+            font-size: 12.5px;
+        }
+
+        /* header */
+        .sheet-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 24px;
+            border-bottom: 2px solid var(--gold);
+            padding-bottom: 18px;
+        }
+        .sheet-header-left { display: flex; align-items: center; gap: 14px; }
+        .sheet-logo { height: 52px; }
+        .sheet-logo-text {
+            font-family: 'Playfair Display', serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #111;
+        }
+        .sheet-logo-tag { font-size: 11px; color: #888; letter-spacing: 0.5px; }
+        .sheet-header-right { text-align: right; font-size: 12px; color: #555; }
+        .sheet-header-right strong { color: #111; }
+
+        .quote-bar {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #555;
+            margin-bottom: 6px;
+        }
+        .borrower-bar {
+            margin-bottom: 20px;
+            font-size: 13px;
+        }
+        .borrower-bar strong { color: #111; }
+
+        /* summary strip */
+        .summary-strip {
+            display: flex;
+            background: var(--gold-light);
+            border: 1px solid var(--gold-border);
+            border-radius: 6px;
+            padding: 12px 0;
+            margin-bottom: 24px;
+        }
+        .summary-strip .item {
+            flex: 1;
+            text-align: center;
+            border-right: 1px solid var(--gold-border);
+            padding: 0 10px;
+        }
+        .summary-strip .item:last-child { border-right: none; }
+        .summary-strip .item .lbl { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.6px; }
+        .summary-strip .item .val { font-family: 'DM Mono', monospace; font-weight: 600; font-size: 14px; color: #111; margin-top: 2px; }
+
+        /* fee table */
+        .fee-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+        }
+        .fee-table th, .fee-table td {
+            padding: 6px 10px;
+            font-size: 12px;
+            vertical-align: top;
+        }
+        .fee-table thead th {
+            background: #111;
+            color: #fff;
+            font-weight: 600;
+            text-align: center;
+            font-size: 12px;
+        }
+        .fee-table thead th:first-child {
+            text-align: left;
+            width: 40%;
+        }
+        .fee-table thead th.rec-col {
+            background: #2a2208;
+            color: var(--gold);
+        }
+        .fee-table .cat-header td {
+            background: #f5f5f5;
+            font-weight: 700;
+            font-size: 11.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #333;
+            padding-top: 10px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #ddd;
+        }
+        .fee-table .row-item td {
+            border-bottom: 1px solid #eee;
+        }
+        .fee-table .row-item td:first-child {
+            color: #444;
+        }
+        .fee-table .row-item td:not(:first-child) {
+            text-align: right;
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+        }
+        .fee-table .subtotal td {
+            border-top: 1.5px solid #ccc;
+            border-bottom: 2px solid #ccc;
+            font-weight: 700;
+            font-size: 12px;
+        }
+        .fee-table .subtotal td:not(:first-child) {
+            text-align: right;
+            font-family: 'DM Mono', monospace;
+        }
+        .fee-table .grand-total td {
+            background: #111;
+            color: #fff;
+            font-weight: 700;
+            font-size: 13px;
+        }
+        .fee-table .grand-total td:not(:first-child) {
+            text-align: right;
+            font-family: 'DM Mono', monospace;
+        }
+        .fee-table .grand-total td.rec-col-cell { background: #2a2208; color: var(--gold); }
+
+        .credit { color: var(--credit-green) !important; }
+
+        .rec-col-cell {
+            background: rgba(201,168,76,0.06) !important;
+            border-left: 2px solid rgba(201,168,76,0.3) !important;
+            border-right: 2px solid rgba(201,168,76,0.3) !important;
+        }
+
+        /* cash to close */
+        .ctc-section {
+            margin-bottom: 24px;
+        }
+        .ctc-section h4 {
+            font-family: 'Playfair Display', serif;
+            font-size: 15px;
+            margin-bottom: 8px;
+            color: #111;
+        }
+
+        /* monthly payment */
+        .monthly-section { margin-bottom: 20px; }
+        .monthly-section h4 {
+            font-family: 'Playfair Display', serif;
+            font-size: 15px;
+            margin-bottom: 8px;
+            color: #111;
+        }
+        .monthly-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .monthly-table th, .monthly-table td {
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+        .monthly-table thead th {
+            background: #111;
+            color: #fff;
+            font-weight: 600;
+            text-align: center;
+        }
+        .monthly-table thead th:first-child { text-align: left; width: 40%; }
+        .monthly-table thead th.rec-col { background: #2a2208; color: var(--gold); }
+        .monthly-table td { border-bottom: 1px solid #eee; }
+        .monthly-table td:not(:first-child) { text-align: right; font-family: 'DM Mono', monospace; font-size: 12px; }
+        .monthly-table .total-row td { background: #f5f5f5; font-weight: 700; border-top: 2px solid #ccc; }
+        .monthly-table .total-row td.rec-col-cell { background: rgba(201,168,76,0.12); }
+
+        /* footer */
+        .sheet-footer {
+            border-top: 1px solid #ddd;
+            padding-top: 14px;
+            margin-top: 20px;
+            font-size: 10px;
+            color: #999;
+            line-height: 1.6;
+        }
+
+        /* PRINT */
+        @media print {
+            body { background: #fff; }
+            .sidebar, .toast { display: none !important; }
+            .main { padding: 0; }
+            .sheet {
+                box-shadow: none;
+                border-radius: 0;
+                max-width: 100%;
+                padding: 30px 40px;
+            }
+            .rec-col-cell {
+                background: #fdf8e8 !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .fee-table thead th, .monthly-table thead th, .fee-table .grand-total td {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+
+        @media (max-width: 1100px) {
+            .sidebar { width: 300px; min-width: 300px; }
+        }
     </style>
 </head>
 <body>
 
-<div class="header">
-    <img src="/assets/images/logo.png" alt="Rates & Realty" onerror="this.style.display='none'">
-    <span class="title">Fee Sheet Generator</span>
-    <a href="/dashboard/admin.html" class="back">Back to CRM Dashboard</a>
-</div>
+<!-- SIDEBAR -->
+<div class="sidebar" id="sidebar">
+    <a href="/dashboard/admin.html" class="back-link">&larr; Back to CRM</a>
+    <h2>Fee Sheet Generator</h2>
 
-<div class="container">
-    <div class="grid">
-
-        <!-- ── Left: Form ───────────────────── -->
-        <div class="form-panel">
-            <div class="card" style="margin-bottom:16px">
-                <h2>Borrower & Loan Info</h2>
-                <div class="field"><label>Borrower Name</label><input id="borrowerName" placeholder="John & Jane Doe"></div>
-                <div class="field"><label>Property Address</label><input id="propAddr" placeholder="123 Main St, City, State ZIP"></div>
-                <div class="row2">
-                    <div class="field"><label>Purchase Price</label><input id="purchasePrice" type="text" inputmode="decimal" placeholder="$450,000"></div>
-                    <div class="field"><label>Loan Amount</label><input id="loanAmount" type="text" inputmode="decimal" placeholder="$360,000"></div>
-                </div>
-                <div class="row2">
-                    <div class="field">
-                        <label>Loan Type</label>
-                        <select id="loanType">
-                            <option>Conventional</option>
-                            <option>FHA</option>
-                            <option>VA</option>
-                            <option>Jumbo</option>
-                            <option>DSCR</option>
-                            <option>Bank Statement</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label>Loan Term</label>
-                        <select id="loanTerm">
-                            <option value="30">30-Year Fixed</option>
-                            <option value="20">20-Year Fixed</option>
-                            <option value="15">15-Year Fixed</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="row2">
-                    <div class="field"><label>Interest Rate (%)</label><input id="intRate" type="number" step="0.125" value="6.875" min="0" max="15"></div>
-                    <div class="field">
-                        <label>Property Type</label>
-                        <select id="propType">
-                            <option value="sfr">Single Family</option>
-                            <option value="condo">Condo</option>
-                            <option value="multi">2-4 Unit</option>
-                            <option value="invest">Investment</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="row2">
-                    <div class="field"><label>County</label><input id="county" placeholder="Los Angeles" value=""></div>
-                    <div class="field">
-                        <label>Est. Credit Score</label>
-                        <select id="creditScore">
-                            <option value="760">760+</option>
-                            <option value="740">740-759</option>
-                            <option value="720" selected>720-739</option>
-                            <option value="700">700-719</option>
-                            <option value="680">680-699</option>
-                            <option value="660">660-679</option>
-                            <option value="640">640-659</option>
-                            <option value="620">620-639</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card" style="margin-bottom:16px">
-                <h2>Adjustable Fees</h2>
-                <div class="row2">
-                    <div class="field"><label>Origination Fee (%)</label><input id="origPct" type="number" step="0.125" value="1.0" min="0" max="5"></div>
-                    <div class="field"><label>Discount Points (%)</label><input id="discPts" type="number" step="0.125" value="0" min="0" max="5"></div>
-                </div>
-                <div class="row2">
-                    <div class="field"><label>Processing Fee ($)</label><input id="processingFee" type="number" value="595" min="0"></div>
-                    <div class="field"><label>Underwriting Fee ($)</label><input id="uwFee" type="number" value="995" min="0"></div>
-                </div>
-                <div class="row2">
-                    <div class="field"><label>Admin Fee ($)</label><input id="adminFee" type="number" value="295" min="0"></div>
-                    <div class="field"><label>Prepaid Interest (days)</label><input id="prepaidDays" type="number" value="15" min="0" max="31"></div>
-                </div>
-                <div class="row2">
-                    <div class="field"><label>Lender Credit ($)</label><input id="lenderCredit" type="number" value="0" min="0"></div>
-                    <div class="field"><label>Property Tax Rate (%)</label><input id="taxRate" type="number" step="0.01" value="1.10" min="0" max="5"></div>
-                </div>
-                <div class="field"><label>Annual Homeowner's Insurance ($)</label><input id="hoiAnnual" type="number" value="1800" min="0"></div>
-            </div>
-
-            <div class="actions">
-                <button class="btn btn-gold" onclick="generate()">Generate Fee Sheet</button>
-                <button class="btn btn-outline" onclick="resetForm()">Reset</button>
-            </div>
+    <h3>Loan Info</h3>
+    <div class="field"><label>Borrower Name</label><input type="text" id="borrowerName" placeholder="John Doe"></div>
+    <div class="field"><label>Property Address</label><input type="text" id="propertyAddress" placeholder="123 Main St, City, CA"></div>
+    <div class="row2">
+        <div class="field"><label>Purchase Price</label><input type="text" id="purchasePrice" placeholder="$500,000"></div>
+        <div class="field"><label>Down Payment %</label><input type="number" id="downPct" value="20" step="0.5" min="0" max="100"></div>
+    </div>
+    <div class="row2">
+        <div class="field"><label>Down Payment $</label><input type="text" id="downDollar" readonly></div>
+        <div class="field"><label>Loan Amount</label><input type="text" id="loanAmount" placeholder="Auto-calc"></div>
+    </div>
+    <div class="row2">
+        <div class="field"><label>Loan Product</label>
+            <select id="loanProduct">
+                <option>Conv 30yr Fixed</option><option>Conv 15yr Fixed</option>
+                <option>FHA 30yr Fixed</option><option>VA 30yr Fixed</option>
+                <option>Jumbo 30yr Fixed</option><option>DSCR 30yr Fixed</option>
+                <option>ARM 5/1</option><option>ARM 7/1</option>
+            </select>
         </div>
-
-        <!-- ── Right: Output ─────────────────── -->
-        <div id="output">
-            <div class="card">
-                <!-- Print-only brand header -->
-                <div class="print-brand">
-                    <img src="/assets/images/logo.png" alt="R&R" onerror="this.style.display='none'">
-                    <div>
-                        <div class="pb-text">Rates & Realty</div>
-                        <div class="pb-sub">Mortgage Fee Estimate</div>
-                    </div>
-                </div>
-
-                <div class="borrower-header" id="bHeader"></div>
-
-                <table class="fee-table" id="feeTable">
-                    <thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
-                    <tbody id="feeBody"></tbody>
-                </table>
-
-                <div class="summary-box" id="costSummary"></div>
-                <div class="summary-box" id="paymentSummary"></div>
-
-                <div class="disclaimer">
-                    This is an estimate only and does not constitute a commitment to lend. Actual charges may vary.
-                    Fees are subject to change based on final loan terms, third-party charges, and lender requirements.
-                    Please refer to your official Loan Estimate (LE) for binding figures. NMLS# pending.
-                    <br>Prepared by Rates & Realty &mdash; <span id="genDate"></span>
-                </div>
-
-                <div class="actions no-print" style="margin-top:16px">
-                    <button class="btn btn-gold" onclick="window.print()">Print / PDF</button>
-                    <button class="btn btn-outline" onclick="copyToClipboard()">Copy to Clipboard</button>
-                </div>
-            </div>
+        <div class="field"><label>Lock Period</label>
+            <select id="lockPeriod">
+                <option>15 days</option><option selected>30 days</option><option>45 days</option><option>60 days</option>
+            </select>
         </div>
     </div>
+    <div class="row2">
+        <div class="field"><label>Property Type</label>
+            <select id="propertyType">
+                <option>SFR</option><option>Condo</option><option>2-4 Unit</option><option>Townhouse</option>
+            </select>
+        </div>
+        <div class="field"><label>Credit Score</label>
+            <select id="creditScore">
+                <option>780+</option><option selected>760-779</option><option>740-759</option><option>720-739</option>
+                <option>700-719</option><option>680-699</option><option>660-679</option><option>640-659</option><option>620-639</option>
+            </select>
+        </div>
+    </div>
+    <div class="row2">
+        <div class="field"><label>State</label>
+            <select id="state">
+                <option>AL</option><option>AK</option><option>AZ</option><option>AR</option><option selected>CA</option>
+                <option>CO</option><option>CT</option><option>DE</option><option>FL</option><option>GA</option>
+                <option>HI</option><option>ID</option><option>IL</option><option>IN</option><option>IA</option>
+                <option>KS</option><option>KY</option><option>LA</option><option>ME</option><option>MD</option>
+                <option>MA</option><option>MI</option><option>MN</option><option>MS</option><option>MO</option>
+                <option>MT</option><option>NE</option><option>NV</option><option>NH</option><option>NJ</option>
+                <option>NM</option><option>NY</option><option>NC</option><option>ND</option><option>OH</option>
+                <option>OK</option><option>OR</option><option>PA</option><option>RI</option><option>SC</option>
+                <option>SD</option><option>TN</option><option>TX</option><option>UT</option><option>VT</option>
+                <option>VA</option><option>WA</option><option>WV</option><option>WI</option><option>WY</option><option>DC</option>
+            </select>
+        </div>
+        <div class="field"><label>County</label><input type="text" id="county" placeholder="Los Angeles"></div>
+    </div>
+    <div class="row2">
+        <div class="field"><label>Est. Annual Prop Tax</label><input type="text" id="annualTax" placeholder="Auto 1.25%"></div>
+        <div class="field"><label>Annual Hazard Ins.</label><input type="text" id="annualInsurance" placeholder="$1,800"></div>
+    </div>
+
+    <!-- SCENARIO CARDS -->
+    <div id="scenarioCards"></div>
+
+    <div class="sidebar-actions">
+        <button class="btn-gold" onclick="generate()">Generate Fee Sheet</button>
+        <button class="btn-outline" onclick="window.print()">Print / PDF</button>
+        <button class="btn-outline" onclick="copyToClipboard()">Copy to Clipboard</button>
+    </div>
+</div>
+
+<!-- SHEET -->
+<div class="main">
+    <div class="sheet" id="sheet"></div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
-/* ── Utilities ──────────────────────────────── */
+// ── Helpers ──
 const $ = id => document.getElementById(id);
-const fmt = n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const num = id => { const v = $(id).value.replace(/[^0-9.\-]/g, ''); return parseFloat(v) || 0; };
+const fmt = (n, decimals=2) => {
+    if (n == null || isNaN(n)) return '$0.00';
+    const abs = Math.abs(n);
+    const str = abs.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+    return n < 0 ? `<span class="credit">($${str})</span>` : `$${str}`;
+};
+const fmtPlain = (n, decimals=2) => {
+    if (n == null || isNaN(n)) return '$0.00';
+    const abs = Math.abs(n);
+    const str = abs.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+    return n < 0 ? `($${str})` : `$${str}`;
+};
+const parseCurrency = s => {
+    if (!s) return 0;
+    return parseFloat(String(s).replace(/[^0-9.\-]/g, '')) || 0;
+};
 
-function toast(msg) {
+function formatCurrencyInput(el) {
+    el.addEventListener('blur', () => {
+        const v = parseCurrency(el.value);
+        if (v) el.value = '$' + v.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+    });
+}
+
+function showToast(msg) {
     const t = $('toast');
     t.textContent = msg;
     t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-/* ── Currency formatting on input ───────────── */
-['purchasePrice', 'loanAmount'].forEach(id => {
-    $(id).addEventListener('blur', function () {
-        const v = this.value.replace(/[^0-9.]/g, '');
-        if (v) this.value = fmt(parseFloat(v));
-    });
-});
+// ── Scenarios ──
+const scenarios = [
+    { id: 'A', label: 'Par Rate', rate: 6.875, points: 0, origComp: 1.5, lenderCredits: 0, recommended: true },
+    { id: 'B', label: 'Buy Down', rate: 6.625, points: 0.75, origComp: 1.5, lenderCredits: 0, recommended: false },
+    { id: 'C', label: 'Lender Credit', rate: 7.125, points: -0.5, origComp: 1.5, lenderCredits: 0, recommended: false }
+];
 
-/* ── Monthly P&I calculation ────────────────── */
-function calcPI(principal, annualRate, years) {
-    if (!principal || !annualRate) return 0;
-    const r = annualRate / 100 / 12;
-    const n = years * 12;
-    return principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+function buildScenarioCards() {
+    const container = $('scenarioCards');
+    container.innerHTML = '';
+    scenarios.forEach((s, i) => {
+        const card = document.createElement('div');
+        card.className = 'scenario-card' + (s.recommended ? ' recommended' : '');
+        card.innerHTML = `
+            <h3 style="margin:0 0 8px">Option ${s.id}</h3>
+            <div class="scenario-header">
+                <span></span>
+                <button class="btn-recommend ${s.recommended ? 'active' : ''}" onclick="toggleRecommend(${i})">&#9733; Recommend</button>
+            </div>
+            <div class="field"><label>Label</label><input type="text" value="${s.label}" onchange="scenarios[${i}].label=this.value;recalc()"></div>
+            <div class="row2">
+                <div class="field"><label>Rate %</label><input type="number" step="0.125" value="${s.rate}" onchange="scenarios[${i}].rate=parseFloat(this.value)||0;recalc()"></div>
+                <div class="field"><label>Points %</label><input type="number" step="0.125" value="${s.points}" onchange="scenarios[${i}].points=parseFloat(this.value)||0;recalc()"></div>
+            </div>
+            <div class="row2">
+                <div class="field"><label>Orig Comp %</label><input type="number" step="0.125" value="${s.origComp}" onchange="scenarios[${i}].origComp=parseFloat(this.value)||0;recalc()"></div>
+                <div class="field"><label>Lender Credits $</label><input type="number" step="100" value="${s.lenderCredits}" onchange="scenarios[${i}].lenderCredits=parseFloat(this.value)||0;recalc()"></div>
+            </div>`;
+        container.appendChild(card);
+    });
 }
 
-/* ── PMI / MI logic ─────────────────────────── */
-function calcMonthlyMI(loanAmt, purchasePrice, loanType, score) {
-    const ltv = purchasePrice > 0 ? loanAmt / purchasePrice * 100 : 80;
-    if (loanType === 'VA') return 0;
-    if (loanType === 'FHA') {
-        // FHA annual MIP: 0.55% for most, slightly higher for high LTV
-        return loanAmt * (ltv > 95 ? 0.0055 : 0.005) / 12;
+function toggleRecommend(idx) {
+    scenarios.forEach((s, i) => s.recommended = (i === idx));
+    buildScenarioCards();
+    recalc();
+}
+
+// ── Calculation Engine ──
+function getInputs() {
+    const purchasePrice = parseCurrency($('purchasePrice').value);
+    const downPct = parseFloat($('downPct').value) || 0;
+    const downPayment = purchasePrice * downPct / 100;
+    $('downDollar').value = downPayment ? '$' + downPayment.toLocaleString('en-US', {minimumFractionDigits: 0}) : '';
+
+    let loanAmount;
+    const loanInput = parseCurrency($('loanAmount').value);
+    if (loanInput > 0 && Math.abs(loanInput - (purchasePrice - downPayment)) > 1) {
+        loanAmount = loanInput;
+    } else {
+        loanAmount = purchasePrice - downPayment;
+        if (loanAmount > 0) $('loanAmount').value = '$' + loanAmount.toLocaleString('en-US', {minimumFractionDigits: 0});
     }
+
+    const ltv = purchasePrice > 0 ? (loanAmount / purchasePrice * 100) : 0;
+    const annualTaxInput = parseCurrency($('annualTax').value);
+    const annualTax = annualTaxInput > 0 ? annualTaxInput : purchasePrice * 0.0125;
+    if (annualTaxInput <= 0 && purchasePrice > 0) $('annualTax').value = '$' + annualTax.toLocaleString('en-US', {minimumFractionDigits: 0});
+
+    const annualInsInput = parseCurrency($('annualInsurance').value);
+    const annualInsurance = annualInsInput > 0 ? annualInsInput : 1800;
+    if (annualInsInput <= 0) $('annualInsurance').value = '$1,800';
+
+    return {
+        borrowerName: $('borrowerName').value || 'TBD',
+        propertyAddress: $('propertyAddress').value || 'TBD',
+        purchasePrice,
+        downPct,
+        downPayment,
+        loanAmount,
+        ltv,
+        loanProduct: $('loanProduct').value,
+        lockPeriod: $('lockPeriod').value,
+        propertyType: $('propertyType').value,
+        creditScore: $('creditScore').value,
+        state: $('state').value,
+        county: $('county').value || '',
+        annualTax,
+        annualInsurance
+    };
+}
+
+function calcAppraisal(propertyType) {
+    if (propertyType === 'Condo') return 695;
+    if (propertyType === '2-4 Unit') return 895;
+    return 595;
+}
+
+function calcRecordingFee(state) {
+    const map = { CA: 125, TX: 100, FL: 150, NY: 250 };
+    return map[state] || 125;
+}
+
+function calcTitleLender(loanAmount) {
+    return Math.min(Math.max(loanAmount * 0.00575, 450), 3500);
+}
+function calcTitleOwner(purchasePrice) {
+    return Math.min(Math.max(purchasePrice * 0.00575, 500), 4500);
+}
+function calcEscrow(purchasePrice) {
+    return Math.max(purchasePrice / 1000 * 2, 500);
+}
+
+function calcPI(loanAmount, annualRate, termYears) {
+    if (loanAmount <= 0 || annualRate <= 0) return 0;
+    const r = annualRate / 100 / 12;
+    const n = termYears * 12;
+    return loanAmount * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+}
+
+function getLoanTermYears(product) {
+    if (product.includes('15yr')) return 15;
+    return 30;
+}
+
+function calcMI(inp, rate) {
+    const product = inp.loanProduct;
+    const ltv = inp.ltv;
+    const loanAmount = inp.loanAmount;
+    if (product.startsWith('FHA')) {
+        return loanAmount * 0.0055 / 12;
+    }
+    if (product.startsWith('VA')) return 0;
     // Conventional PMI
     if (ltv <= 80) return 0;
-    let factor = 0.005; // base
-    if (score >= 760) factor = 0.0025;
-    else if (score >= 740) factor = 0.003;
-    else if (score >= 720) factor = 0.0038;
-    else if (score >= 700) factor = 0.0046;
-    else if (score >= 680) factor = 0.006;
-    else if (score >= 660) factor = 0.0075;
-    else factor = 0.009;
-    if (ltv > 95) factor += 0.002;
-    else if (ltv > 90) factor += 0.001;
-    return loanAmt * factor / 12;
+    // rough PMI based on LTV and credit
+    let pmiRate = 0.005; // 0.5% baseline
+    const cs = inp.creditScore;
+    if (cs === '780+' || cs === '760-779') pmiRate = 0.003;
+    else if (cs === '740-759' || cs === '720-739') pmiRate = 0.004;
+    else if (cs === '700-719' || cs === '680-699') pmiRate = 0.006;
+    else pmiRate = 0.008;
+    if (ltv > 95) pmiRate += 0.002;
+    else if (ltv > 90) pmiRate += 0.001;
+    return loanAmount * pmiRate / 12;
 }
 
-/* ── Appraisal fee by property type ─────────── */
-function appraisalFee(propType) {
-    const map = { sfr: 550, condo: 600, multi: 750, invest: 700 };
-    return map[propType] || 550;
-}
+function calcScenario(inp, sc) {
+    const la = inp.loanAmount;
+    const pp = inp.purchasePrice;
 
-/* ── Generate fee sheet ─────────────────────── */
-function generate() {
-    const borrower = $('borrowerName').value.trim() || 'Borrower';
-    const addr = $('propAddr').value.trim() || 'TBD';
-    const purchase = num('purchasePrice');
-    const loan = num('loanAmount');
-    const loanType = $('loanType').value;
-    const term = parseInt($('loanTerm').value);
-    const rate = num('intRate');
-    const propType = $('propType').value;
-    const county = $('county').value.trim() || 'N/A';
-    const score = parseInt($('creditScore').value);
-    const origPct = num('origPct');
-    const discPts = num('discPts');
-    const processingFee = num('processingFee');
-    const uwFee = num('uwFee');
-    const adminFee = num('adminFee');
-    const prepaidDays = num('prepaidDays');
-    const lenderCredit = num('lenderCredit');
-    const taxRate = num('taxRate');
-    const hoiAnnual = num('hoiAnnual');
+    const origFee = la * sc.origComp / 100;
+    const discountPoints = la * sc.points / 100;
+    const subtotalA = origFee + discountPoints;
 
-    if (!loan) { toast('Please enter a loan amount'); return; }
-
-    const downPayment = Math.max(0, purchase - loan);
-    const ltv = purchase > 0 ? (loan / purchase * 100).toFixed(1) : 'N/A';
-
-    // ── Fee calculations ──
-    const origFee = loan * origPct / 100;
-    const discFee = loan * discPts / 100;
-    const appraisal = appraisalFee(propType);
+    const appraisal = calcAppraisal(inp.propertyType);
     const creditReport = 65;
-    const floodCert = 15;
+    const floodCert = 12;
     const taxService = 85;
-    const titleIns = Math.round(loan * 0.005);
-    const escrowFee = 750;
-    const recordingFee = 125;
-    const notaryFee = 175;
+    const subtotalB = appraisal + creditReport + floodCert + taxService;
 
-    // Prepaids
-    const dailyInterest = loan * (rate / 100) / 365;
-    const prepaidInterest = dailyInterest * prepaidDays;
-    const monthlyTax = purchase * (taxRate / 100) / 12;
-    const monthlyIns = hoiAnnual / 12;
-    const prepaidIns = monthlyIns * 3;
-    const prepaidTax = 0; // taxes prepaid handled in reserves
+    const titleLender = calcTitleLender(la);
+    const titleOwner = calcTitleOwner(pp);
+    const escrow = calcEscrow(pp);
+    const recording = calcRecordingFee(inp.state);
+    const notary = 175;
+    const subtotalC = titleLender + titleOwner + escrow + recording + notary;
 
-    // Reserves
-    const taxReserves = monthlyTax * 2;
-    const insReserves = monthlyIns * 2;
+    const totalLoanCosts = subtotalA + subtotalB + subtotalC;
 
-    // Loan-type specific
-    let fhaMipUpfront = 0, vaFundingFee = 0;
-    if (loanType === 'FHA') fhaMipUpfront = loan * 0.0175;
-    if (loanType === 'VA') vaFundingFee = loan * 0.0215;
+    const dailyInterest = la * (sc.rate / 100) / 365;
+    const prepaidInterest = dailyInterest * 3;
+    const prepaidInsurance = inp.annualInsurance;
+    const subtotalE = prepaidInterest + prepaidInsurance;
 
-    // Monthly MI
-    const monthlyMI = calcMonthlyMI(loan, purchase, loanType, score);
+    const taxReserve = inp.annualTax / 12 * 3;
+    const insReserve = inp.annualInsurance / 12 * 2;
+    const subtotalF = taxReserve + insReserve;
 
-    // ── Build category arrays ──
-    const categories = [];
+    const totalOther = subtotalE + subtotalF;
+    const totalClosing = totalLoanCosts + totalOther;
 
-    // A. Origination
-    const origItems = [
-        ['Loan Origination Fee (' + origPct + '%)', origFee],
-    ];
-    if (discPts > 0) origItems.push(['Discount Points (' + discPts + '%)', discFee]);
-    origItems.push(
-        ['Processing Fee', processingFee],
-        ['Underwriting Fee', uwFee],
-        ['Admin Fee', adminFee]
-    );
-    categories.push({ name: 'A. Loan Origination Charges', items: origItems });
+    const lenderCreditsTotal = (sc.points < 0 ? 0 : 0) + sc.lenderCredits;
+    // discount points negative means lender credit already accounted in subtotalA
+    const lenderCreditLine = sc.lenderCredits;
 
-    // B. Third-Party
-    const tpItems = [
-        ['Appraisal Fee', appraisal],
-        ['Credit Report', creditReport],
-        ['Flood Certification', floodCert],
-        ['Tax Service Fee', taxService],
-        ['Title Insurance', titleIns],
-        ['Escrow / Settlement Fee', escrowFee],
-        ['Recording Fees', recordingFee],
-        ['Notary Fee', notaryFee],
-    ];
-    categories.push({ name: 'B. Third-Party Fees', items: tpItems });
+    const cashToClose = inp.downPayment + totalClosing - lenderCreditLine;
 
-    // C. Gov't / Loan-Type Fees
-    if (loanType === 'FHA' || loanType === 'VA') {
-        const govItems = [];
-        if (loanType === 'FHA') govItems.push(['FHA Upfront MIP (1.75%)', fhaMipUpfront]);
-        if (loanType === 'VA') govItems.push(['VA Funding Fee (2.15%)', vaFundingFee]);
-        categories.push({ name: 'C. Government / Loan-Type Fees', items: govItems });
-    }
+    const termYears = getLoanTermYears(inp.loanProduct);
+    const pi = calcPI(la, sc.rate, termYears);
+    const monthlyTax = inp.annualTax / 12;
+    const monthlyIns = inp.annualInsurance / 12;
+    const mi = calcMI(inp, sc.rate);
+    const totalMonthly = pi + monthlyTax + monthlyIns + mi;
 
-    // D. Prepaids
-    const ppLabel = loanType === 'FHA' || loanType === 'VA' ? 'D' : 'C';
-    const ppItems = [
-        ['Prepaid Interest (' + prepaidDays + ' days @ ' + fmt(dailyInterest) + '/day)', prepaidInterest],
-        ['Homeowner\'s Insurance (3 months)', prepaidIns],
-    ];
-    categories.push({ name: ppLabel + '. Prepaid Items', items: ppItems });
+    return {
+        origFee, discountPoints, subtotalA,
+        appraisal, creditReport, floodCert, taxService, subtotalB,
+        titleLender, titleOwner, escrow, recording, notary, subtotalC,
+        totalLoanCosts,
+        prepaidInterest, prepaidInsurance, subtotalE,
+        taxReserve, insReserve, subtotalF,
+        totalOther, totalClosing,
+        lenderCreditLine, cashToClose,
+        pi, monthlyTax, monthlyIns, mi, totalMonthly
+    };
+}
 
-    // E. Reserves / Escrow
-    const resLabel = String.fromCharCode(ppLabel.charCodeAt(0) + 1);
-    const resItems = [
-        ['Property Tax Reserves (2 months)', taxReserves],
-        ['Insurance Reserves (2 months)', insReserves],
-    ];
-    categories.push({ name: resLabel + '. Initial Escrow / Reserves', items: resItems });
+// ── Quote ID ──
+let quoteSeq = Math.floor(Math.random() * 9000) + 1000;
+function genQuoteId() {
+    const d = new Date();
+    const ds = d.getFullYear().toString() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+    return 'RR-' + ds + '-' + (quoteSeq++);
+}
+const quoteId = genQuoteId();
 
-    // ── Build table ──
-    const tbody = $('feeBody');
-    tbody.innerHTML = '';
-    let grandTotal = 0;
+// ── Render ──
+function render(inp, results) {
+    const recIdx = scenarios.findIndex(s => s.recommended);
+    const today = new Date();
+    const dateStr = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const timeStr = today.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-    categories.forEach(cat => {
-        const catRow = document.createElement('tr');
-        catRow.className = 'cat-header';
-        catRow.innerHTML = '<td colspan="2">' + cat.name + '</td>';
-        tbody.appendChild(catRow);
+    const colClass = idx => idx === recIdx ? 'rec-col-cell' : '';
+    const thClass = idx => idx === recIdx ? 'rec-col' : '';
 
-        let sub = 0;
-        cat.items.forEach(([desc, amt]) => {
-            sub += amt;
-            const r = document.createElement('tr');
-            r.innerHTML = '<td>' + desc + '</td><td>' + fmt(amt) + '</td>';
-            tbody.appendChild(r);
+    function row(label, getter, isSub=false, isGrand=false) {
+        const cls = isGrand ? 'grand-total' : isSub ? 'subtotal' : 'row-item';
+        let cells = `<td>${label}</td>`;
+        results.forEach((r, i) => {
+            const v = getter(r, i);
+            cells += `<td class="${colClass(i)}">${fmt(v)}</td>`;
         });
-
-        const sr = document.createElement('tr');
-        sr.className = 'subtotal';
-        sr.innerHTML = '<td>Subtotal</td><td>' + fmt(sub) + '</td>';
-        tbody.appendChild(sr);
-        grandTotal += sub;
-    });
-
-    // Credits
-    if (lenderCredit > 0) {
-        const cr = document.createElement('tr');
-        cr.className = 'cat-header';
-        cr.innerHTML = '<td colspan="2">Credits</td>';
-        tbody.appendChild(cr);
-        const lr = document.createElement('tr');
-        lr.innerHTML = '<td>Lender Credit</td><td style="color:' + 'var(--green)' + '">(' + fmt(lenderCredit) + ')</td>';
-        tbody.appendChild(lr);
+        return `<tr class="${cls}">${cells}</tr>`;
     }
 
-    // Total row
-    const totalClosing = grandTotal - lenderCredit;
-    const tr2 = document.createElement('tr');
-    tr2.className = 'subtotal';
-    tr2.innerHTML = '<td style="font-size:14px">Total Estimated Closing Costs</td><td style="font-size:14px">' + fmt(totalClosing) + '</td>';
-    tbody.appendChild(tr2);
+    function catHeader(label) {
+        let cells = `<td colspan="1">${label}</td>`;
+        results.forEach((_, i) => { cells += `<td class="${colClass(i)}"></td>`; });
+        return `<tr class="cat-header">${cells}</tr>`;
+    }
 
-    // ── Borrower header ──
-    $('bHeader').innerHTML = `
-        <div class="name">${borrower}</div>
-        <div class="addr">${addr}</div>
-        <div class="meta">${loanType} | ${term}-Year Fixed @ ${rate}% | LTV: ${ltv}% | ${county} County</div>
+    const logoImg = `<img src="/assets/images/logo.png" alt="Rates &amp; Realty" class="sheet-logo" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">`;
+
+    const html = `
+        <div class="sheet-header">
+            <div class="sheet-header-left">
+                ${logoImg}<span class="sheet-logo-text" style="display:none">R&amp;R</span>
+                <div>
+                    <div class="sheet-logo-text">Rates &amp; Realty</div>
+                    <div class="sheet-logo-tag">AI-Powered Mortgage</div>
+                </div>
+            </div>
+            <div class="sheet-header-right">
+                <strong>Rene Duarte</strong><br>
+                NMLS #1795044<br>
+                (714) 472-8508<br>
+                rene@ratesandrealty.com
+            </div>
+        </div>
+
+        <div class="quote-bar">
+            <span>Quote # <strong>${quoteId}</strong></span>
+            <span>${dateStr}</span>
+        </div>
+        <div class="borrower-bar">
+            <strong>${inp.borrowerName}</strong> &nbsp;|&nbsp; ${inp.propertyAddress}
+        </div>
+
+        <div class="summary-strip">
+            <div class="item"><div class="lbl">Purchase Price</div><div class="val">${fmtPlain(inp.purchasePrice, 0)}</div></div>
+            <div class="item"><div class="lbl">Loan Amount</div><div class="val">${fmtPlain(inp.loanAmount, 0)}</div></div>
+            <div class="item"><div class="lbl">LTV</div><div class="val">${inp.ltv.toFixed(1)}%</div></div>
+            <div class="item"><div class="lbl">Product</div><div class="val" style="font-family:'DM Sans';font-size:12px">${inp.loanProduct}</div></div>
+            <div class="item"><div class="lbl">Lock</div><div class="val" style="font-family:'DM Sans';font-size:12px">${inp.lockPeriod}</div></div>
+        </div>
+
+        <table class="fee-table">
+            <thead><tr>
+                <th>Fee Description</th>
+                ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}: ${s.label}<br><span style="font-weight:400;font-size:11px">${s.rate}% &middot; ${s.points >= 0 ? s.points : s.points}pts</span></th>`).join('')}
+            </tr></thead>
+            <tbody>
+                ${catHeader('A. Origination Charges')}
+                ${row('Origination Fee', r => r.origFee)}
+                ${row('Discount Points', r => r.discountPoints)}
+                ${row('Subtotal A', r => r.subtotalA, true)}
+
+                ${catHeader('B. Services You Cannot Shop For')}
+                ${row('Appraisal Fee', r => r.appraisal)}
+                ${row('Credit Report', r => r.creditReport)}
+                ${row('Flood Certification', r => r.floodCert)}
+                ${row('Tax Service Fee', r => r.taxService)}
+                ${row('Subtotal B', r => r.subtotalB, true)}
+
+                ${catHeader('C. Services You Can Shop For')}
+                ${row("Title - Lender's Policy", r => r.titleLender)}
+                ${row("Title - Owner's Policy", r => r.titleOwner)}
+                ${row('Escrow / Settlement Fee', r => r.escrow)}
+                ${row('Recording Fees', r => r.recording)}
+                ${row('Notary Fee', r => r.notary)}
+                ${row('Subtotal C', r => r.subtotalC, true)}
+
+                ${row('D. TOTAL LOAN COSTS (A+B+C)', r => r.totalLoanCosts, false, true)}
+
+                ${catHeader('E. Prepaids')}
+                ${row('Prepaid Interest (3 days)', r => r.prepaidInterest)}
+                ${row('Homeowner\'s Insurance (12 mo)', r => r.prepaidInsurance)}
+                ${row('Subtotal E', r => r.subtotalE, true)}
+
+                ${catHeader('F. Initial Escrow Payment at Closing')}
+                ${row('Property Tax Reserve (3 mo)', r => r.taxReserve)}
+                ${row('Hazard Insurance Reserve (2 mo)', r => r.insReserve)}
+                ${row('Subtotal F', r => r.subtotalF, true)}
+
+                ${row('G. TOTAL OTHER COSTS (E+F)', r => r.totalOther, false, true)}
+                ${row('H. TOTAL CLOSING COSTS (D+G)', r => r.totalClosing, false, true)}
+
+                ${catHeader('I. Lender Credits')}
+                ${row('Lender Credits', r => r.lenderCreditLine > 0 ? -r.lenderCreditLine : 0)}
+                ${row('Points Credit (if negative pts)', (r, i) => scenarios[i].points < 0 ? scenarios[i].points / 100 * inp.loanAmount : 0)}
+            </tbody>
+        </table>
+
+        <div class="ctc-section">
+            <h4>J. Estimated Cash to Close</h4>
+            <table class="fee-table">
+                <thead><tr>
+                    <th></th>
+                    ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}</th>`).join('')}
+                </tr></thead>
+                <tbody>
+                    ${row('Down Payment', () => inp.downPayment)}
+                    ${row('Total Closing Costs (H)', r => r.totalClosing)}
+                    ${row('Less: Lender Credits', (r, i) => {
+                        let c = 0;
+                        if (r.lenderCreditLine > 0) c -= r.lenderCreditLine;
+                        if (scenarios[i].points < 0) c += scenarios[i].points / 100 * inp.loanAmount;
+                        return c;
+                    })}
+                    ${row('Estimated Funds Needed', (r, i) => {
+                        let credits = 0;
+                        if (r.lenderCreditLine > 0) credits += r.lenderCreditLine;
+                        if (scenarios[i].points < 0) credits += Math.abs(scenarios[i].points / 100 * inp.loanAmount);
+                        return inp.downPayment + r.totalClosing - credits;
+                    }, false, true)}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="monthly-section">
+            <h4>Monthly Payment Comparison</h4>
+            <table class="monthly-table">
+                <thead><tr>
+                    <th>Payment Component</th>
+                    ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}: ${s.rate}%</th>`).join('')}
+                </tr></thead>
+                <tbody>
+                    <tr class="row-item"><td>Principal &amp; Interest</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.pi)}</td>`).join('')}</tr>
+                    <tr class="row-item"><td>Property Tax</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.monthlyTax)}</td>`).join('')}</tr>
+                    <tr class="row-item"><td>Hazard Insurance</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.monthlyIns)}</td>`).join('')}</tr>
+                    <tr class="row-item"><td>Mortgage Insurance</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.mi)}</td>`).join('')}</tr>
+                    <tr class="total-row"><td><strong>Total Monthly Payment</strong></td>${results.map((r, i) => `<td class="${colClass(i)}"><strong>${fmt(r.totalMonthly)}</strong></td>`).join('')}</tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="sheet-footer">
+            <p><strong>Disclaimer:</strong> This is an estimate only. Actual charges may vary. This is not a commitment to lend. All rates and fees are subject to change without notice. This estimate is provided for informational purposes and does not constitute a Loan Estimate as defined under TRID/TILA-RESPA.</p>
+            <p style="margin-top:6px">Rene Duarte | NMLS #1795044 | Rates &amp; Realty | Equal Housing Lender</p>
+            <p style="margin-top:4px;font-size:9px;color:#bbb">Generated ${dateStr} at ${timeStr}</p>
+        </div>
     `;
 
-    // ── Cost summary ──
-    const cashToClose = downPayment + totalClosing;
-    $('costSummary').innerHTML = `
-        <h3>Cash to Close Estimate</h3>
-        <div class="summary-row"><span class="label">Down Payment</span><span>${fmt(downPayment)}</span></div>
-        <div class="summary-row"><span class="label">Total Closing Costs</span><span>${fmt(grandTotal)}</span></div>
-        ${lenderCredit > 0 ? '<div class="summary-row"><span class="label">Lender Credit</span><span style="color:var(--green)">(' + fmt(lenderCredit) + ')</span></div>' : ''}
-        <div class="summary-row total"><span>Estimated Cash to Close</span><span>${fmt(cashToClose)}</span></div>
-    `;
-
-    // ── Payment summary ──
-    const pi = calcPI(loan, rate, term);
-    const totalMonthly = pi + monthlyTax + monthlyIns + monthlyMI;
-    let miLabel = '';
-    if (loanType === 'FHA') miLabel = 'FHA Monthly MIP';
-    else if (monthlyMI > 0) miLabel = 'Private Mortgage Insurance (PMI)';
-
-    $('paymentSummary').innerHTML = `
-        <h3>Estimated Monthly Payment</h3>
-        <div class="summary-row"><span class="label">Principal & Interest</span><span>${fmt(pi)}</span></div>
-        <div class="summary-row"><span class="label">Property Taxes</span><span>${fmt(monthlyTax)}</span></div>
-        <div class="summary-row"><span class="label">Homeowner's Insurance</span><span>${fmt(monthlyIns)}</span></div>
-        ${monthlyMI > 0 ? '<div class="summary-row"><span class="label">' + miLabel + '</span><span>' + fmt(monthlyMI) + '</span></div>' : ''}
-        <div class="summary-row total"><span>Total PITI${monthlyMI > 0 ? ' + MI' : ''}</span><span>${fmt(totalMonthly)}</span></div>
-    `;
-
-    // Date
-    $('genDate').textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-
-    // Show output
-    $('output').classList.add('visible');
-    $('output').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('sheet').innerHTML = html;
 }
 
-/* ── Copy to clipboard ──────────────────────── */
+// ── Recalc ──
+function recalc() {
+    const inp = getInputs();
+    const results = scenarios.map(sc => calcScenario(inp, sc));
+    render(inp, results);
+}
+
+function generate() {
+    recalc();
+    $('sheet').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Copy to Clipboard ──
 function copyToClipboard() {
-    const header = $('bHeader').innerText;
-    const rows = $('feeTable').querySelectorAll('tr');
-    let text = 'MORTGAGE FEE ESTIMATE\n';
-    text += '='.repeat(44) + '\n';
-    text += header + '\n';
-    text += '-'.repeat(44) + '\n';
+    const inp = getInputs();
+    const results = scenarios.map(sc => calcScenario(inp, sc));
+    const pad = (s, w) => s.toString().padEnd(w);
+    const rpad = (s, w) => s.toString().padStart(w);
 
-    rows.forEach(r => {
-        const cells = r.querySelectorAll('td, th');
-        if (cells.length === 1) {
-            text += '\n' + cells[0].textContent + '\n';
-        } else if (cells.length === 2) {
-            const desc = cells[0].textContent;
-            const amt = cells[1].textContent;
-            text += desc.padEnd(36) + amt.padStart(12) + '\n';
-        }
-    });
+    let txt = `RATES & REALTY - MORTGAGE FEE SHEET\n`;
+    txt += `Quote: ${quoteId}  |  ${new Date().toLocaleDateString()}\n`;
+    txt += `Borrower: ${inp.borrowerName}  |  ${inp.propertyAddress}\n`;
+    txt += `Purchase: ${fmtPlain(inp.purchasePrice,0)}  |  Loan: ${fmtPlain(inp.loanAmount,0)}  |  LTV: ${inp.ltv.toFixed(1)}%  |  ${inp.loanProduct}\n`;
+    txt += `${'='.repeat(80)}\n\n`;
 
-    text += '\n' + '-'.repeat(44) + '\n';
-    // Summaries
-    const summaryEls = document.querySelectorAll('.summary-box .summary-row');
-    summaryEls.forEach(el => {
-        const parts = el.innerText.split('\n');
-        if (parts.length >= 2) {
-            text += parts[0].padEnd(36) + parts[1].padStart(12) + '\n';
-        }
-    });
+    const w1 = 35, w2 = 14;
+    txt += pad('', w1) + scenarios.map(s => rpad(`Opt ${s.id}: ${s.rate}%`, w2)).join('') + '\n';
+    txt += '-'.repeat(w1 + w2 * 3) + '\n';
 
-    text += '\n' + $('genDate').parentElement.textContent.trim() + '\n';
+    const addRow = (label, getter) => {
+        txt += pad(label, w1) + results.map((r, i) => rpad(fmtPlain(getter(r, i)), w2)).join('') + '\n';
+    };
 
-    navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard'));
+    txt += '\nA. ORIGINATION CHARGES\n';
+    addRow('  Origination Fee', r => r.origFee);
+    addRow('  Discount Points', r => r.discountPoints);
+    addRow('  Subtotal A', r => r.subtotalA);
+
+    txt += '\nB. SERVICES (CANNOT SHOP)\n';
+    addRow('  Appraisal', r => r.appraisal);
+    addRow('  Credit Report', r => r.creditReport);
+    addRow('  Flood Cert', r => r.floodCert);
+    addRow('  Tax Service', r => r.taxService);
+    addRow('  Subtotal B', r => r.subtotalB);
+
+    txt += '\nC. SERVICES (CAN SHOP)\n';
+    addRow('  Title - Lender', r => r.titleLender);
+    addRow('  Title - Owner', r => r.titleOwner);
+    addRow('  Escrow/Settlement', r => r.escrow);
+    addRow('  Recording', r => r.recording);
+    addRow('  Notary', r => r.notary);
+    addRow('  Subtotal C', r => r.subtotalC);
+
+    txt += '\n' + pad('D. TOTAL LOAN COSTS', w1) + results.map(r => rpad(fmtPlain(r.totalLoanCosts), w2)).join('') + '\n';
+
+    txt += '\nE. PREPAIDS\n';
+    addRow('  Prepaid Interest (3d)', r => r.prepaidInterest);
+    addRow('  Insurance (12mo)', r => r.prepaidInsurance);
+
+    txt += '\nF. ESCROW RESERVES\n';
+    addRow('  Tax Reserve (3mo)', r => r.taxReserve);
+    addRow('  Insurance Reserve (2mo)', r => r.insReserve);
+
+    txt += '\n' + pad('H. TOTAL CLOSING COSTS', w1) + results.map(r => rpad(fmtPlain(r.totalClosing), w2)).join('') + '\n';
+
+    txt += '\n' + '='.repeat(w1 + w2 * 3) + '\n';
+    txt += 'MONTHLY PAYMENT\n';
+    addRow('  P&I', r => r.pi);
+    addRow('  Tax', r => r.monthlyTax);
+    addRow('  Insurance', r => r.monthlyIns);
+    addRow('  MI', r => r.mi);
+    addRow('  TOTAL', r => r.totalMonthly);
+
+    txt += '\n---\nThis is an estimate only. Not a commitment to lend.\n';
+    txt += 'Rene Duarte | NMLS #1795044 | Rates & Realty\n';
+
+    navigator.clipboard.writeText(txt).then(() => showToast('Copied to clipboard!')).catch(() => showToast('Copy failed'));
 }
 
-/* ── Reset ──────────────────────────────────── */
-function resetForm() {
-    document.querySelectorAll('.form-panel input:not([type=number])').forEach(i => i.value = '');
-    $('output').classList.remove('visible');
-    toast('Form reset');
-}
+// ── Init ──
+['purchasePrice', 'loanAmount', 'annualTax', 'annualInsurance'].forEach(id => formatCurrencyInput($(id)));
+
+// Live recalc on any input change
+document.querySelectorAll('.sidebar input, .sidebar select').forEach(el => {
+    el.addEventListener('input', recalc);
+    el.addEventListener('change', recalc);
+});
+
+// Observe scenario cards for new inputs
+const observer = new MutationObserver(() => {
+    document.querySelectorAll('#scenarioCards input, #scenarioCards select').forEach(el => {
+        if (!el._bound) {
+            el._bound = true;
+            el.addEventListener('input', recalc);
+            el.addEventListener('change', recalc);
+        }
+    });
+});
+observer.observe($('scenarioCards'), { childList: true, subtree: true });
+
+buildScenarioCards();
+recalc();
+
+// URL param prefill for iframe / fullscreen mode
+(function() {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('borrower')) $('borrowerName').value = decodeURIComponent(p.get('borrower'));
+    if (p.get('pp')) $('purchasePrice').value = p.get('pp');
+    if (p.get('la')) $('loanAmount').value = p.get('la');
+    if (p.get('addr')) $('propertyAddress').value = decodeURIComponent(p.get('addr'));
+    recalc();
+})();
 </script>
 </body>
 </html>
