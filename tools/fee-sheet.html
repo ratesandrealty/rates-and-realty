@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fee Sheet Generator — Rates & Realty</title>
+    <style>
+        :root {
+            --gold: #C9A84C;
+            --gold-dim: #a8893d;
+            --bg-dark: #060606;
+            --bg-card: #0d0d0d;
+            --bg-input: #1a1a1a;
+            --border: #2a2a2a;
+            --text: #e8e8e8;
+            --text-dim: #999;
+            --text-bright: #fff;
+            --red: #e74c3c;
+            --green: #2ecc71;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* ── Header ────────────────────────────── */
+        .header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 28px;
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+        .header img { height: 38px; }
+        .header .title { font-size: 18px; font-weight: 600; color: var(--gold); }
+        .header .back {
+            margin-left: auto;
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 13px;
+            transition: color .2s;
+        }
+        .header .back:hover { color: var(--gold); }
+
+        /* ── Layout ────────────────────────────── */
+        .container { max-width: 1280px; margin: 0 auto; padding: 24px; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 24px;
+        }
+        @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
+
+        /* ── Cards ─────────────────────────────── */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 22px;
+        }
+        .card h2 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--gold);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+        }
+
+        /* ── Form ──────────────────────────────── */
+        .field { margin-bottom: 12px; }
+        .field label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-dim);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: .3px;
+        }
+        .field input, .field select {
+            width: 100%;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 9px 12px;
+            color: var(--text);
+            font-size: 14px;
+            outline: none;
+            transition: border-color .2s;
+        }
+        .field input:focus, .field select:focus { border-color: var(--gold); }
+        .field select option { background: var(--bg-input); }
+        .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity .2s;
+        }
+        .btn:hover { opacity: .85; }
+        .btn-gold { background: var(--gold); color: #000; }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+
+        /* ── Output tables ─────────────────────── */
+        #output { display: none; }
+        #output.visible { display: block; }
+
+        .fee-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 18px; }
+        .fee-table th {
+            text-align: left;
+            padding: 8px 10px;
+            background: var(--bg-input);
+            color: var(--gold);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: .3px;
+        }
+        .fee-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .fee-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+        .fee-table .subtotal td {
+            font-weight: 700;
+            border-top: 2px solid var(--border);
+            padding-top: 8px;
+            color: var(--text-bright);
+        }
+        .fee-table .cat-header td {
+            font-weight: 600;
+            color: var(--gold);
+            padding-top: 12px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: .3px;
+            border-bottom: none;
+        }
+
+        .summary-box {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .summary-box h3 { font-size: 13px; color: var(--gold); margin-bottom: 10px; text-transform: uppercase; }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 13px;
+        }
+        .summary-row.total {
+            border-top: 2px solid var(--gold);
+            margin-top: 6px;
+            padding-top: 8px;
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--text-bright);
+        }
+        .summary-row .label { color: var(--text-dim); }
+
+        .borrower-header {
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .borrower-header .name { font-size: 18px; font-weight: 700; color: var(--text-bright); }
+        .borrower-header .addr { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+        .borrower-header .meta { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
+
+        .disclaimer {
+            font-size: 11px;
+            color: var(--text-dim);
+            line-height: 1.5;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--gold);
+            color: #000;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all .3s;
+            pointer-events: none;
+            z-index: 999;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+
+        /* ── Print styles ──────────────────────── */
+        @media print {
+            body { background: #fff; color: #222; }
+            .header, .form-panel, .actions, .no-print { display: none !important; }
+            .container { padding: 0; max-width: 100%; }
+            .grid { grid-template-columns: 1fr; }
+            .card { border: none; padding: 0; background: #fff; }
+            .fee-table th { background: #f5f0e1; color: #333; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .fee-table td { border-color: #ddd; color: #222; }
+            .fee-table .cat-header td { color: #8a7530; }
+            .fee-table .subtotal td { color: #000; }
+            .summary-box { background: #f9f7f0; border-color: #ddd; }
+            .summary-box h3 { color: #8a7530; }
+            .summary-row .label { color: #666; }
+            .summary-row.total { border-color: #8a7530; color: #000; }
+            .borrower-header .name { color: #000; }
+            .borrower-header .addr, .borrower-header .meta { color: #555; }
+            .disclaimer { color: #888; border-color: #ddd; }
+            var { color: #222; }
+            #output { page-break-inside: avoid; }
+            .print-logo { display: block !important; margin-bottom: 12px; }
+            .print-brand { display: flex !important; align-items: center; gap: 12px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #C9A84C; }
+            .print-brand img { height: 40px; }
+            .print-brand .pb-text { font-size: 20px; font-weight: 700; color: #8a7530; }
+            .print-brand .pb-sub { font-size: 11px; color: #999; }
+        }
+        .print-brand { display: none; }
+
+        @page { margin: .6in .75in; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <img src="/assets/images/logo.png" alt="Rates & Realty" onerror="this.style.display='none'">
+    <span class="title">Fee Sheet Generator</span>
+    <a href="/dashboard/admin.html" class="back">Back to CRM Dashboard</a>
+</div>
+
+<div class="container">
+    <div class="grid">
+
+        <!-- ── Left: Form ───────────────────── -->
+        <div class="form-panel">
+            <div class="card" style="margin-bottom:16px">
+                <h2>Borrower & Loan Info</h2>
+                <div class="field"><label>Borrower Name</label><input id="borrowerName" placeholder="John & Jane Doe"></div>
+                <div class="field"><label>Property Address</label><input id="propAddr" placeholder="123 Main St, City, State ZIP"></div>
+                <div class="row2">
+                    <div class="field"><label>Purchase Price</label><input id="purchasePrice" type="text" inputmode="decimal" placeholder="$450,000"></div>
+                    <div class="field"><label>Loan Amount</label><input id="loanAmount" type="text" inputmode="decimal" placeholder="$360,000"></div>
+                </div>
+                <div class="row2">
+                    <div class="field">
+                        <label>Loan Type</label>
+                        <select id="loanType">
+                            <option>Conventional</option>
+                            <option>FHA</option>
+                            <option>VA</option>
+                            <option>Jumbo</option>
+                            <option>DSCR</option>
+                            <option>Bank Statement</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Loan Term</label>
+                        <select id="loanTerm">
+                            <option value="30">30-Year Fixed</option>
+                            <option value="20">20-Year Fixed</option>
+                            <option value="15">15-Year Fixed</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="row2">
+                    <div class="field"><label>Interest Rate (%)</label><input id="intRate" type="number" step="0.125" value="6.875" min="0" max="15"></div>
+                    <div class="field">
+                        <label>Property Type</label>
+                        <select id="propType">
+                            <option value="sfr">Single Family</option>
+                            <option value="condo">Condo</option>
+                            <option value="multi">2-4 Unit</option>
+                            <option value="invest">Investment</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="row2">
+                    <div class="field"><label>County</label><input id="county" placeholder="Los Angeles" value=""></div>
+                    <div class="field">
+                        <label>Est. Credit Score</label>
+                        <select id="creditScore">
+                            <option value="760">760+</option>
+                            <option value="740">740-759</option>
+                            <option value="720" selected>720-739</option>
+                            <option value="700">700-719</option>
+                            <option value="680">680-699</option>
+                            <option value="660">660-679</option>
+                            <option value="640">640-659</option>
+                            <option value="620">620-639</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-bottom:16px">
+                <h2>Adjustable Fees</h2>
+                <div class="row2">
+                    <div class="field"><label>Origination Fee (%)</label><input id="origPct" type="number" step="0.125" value="1.0" min="0" max="5"></div>
+                    <div class="field"><label>Discount Points (%)</label><input id="discPts" type="number" step="0.125" value="0" min="0" max="5"></div>
+                </div>
+                <div class="row2">
+                    <div class="field"><label>Processing Fee ($)</label><input id="processingFee" type="number" value="595" min="0"></div>
+                    <div class="field"><label>Underwriting Fee ($)</label><input id="uwFee" type="number" value="995" min="0"></div>
+                </div>
+                <div class="row2">
+                    <div class="field"><label>Admin Fee ($)</label><input id="adminFee" type="number" value="295" min="0"></div>
+                    <div class="field"><label>Prepaid Interest (days)</label><input id="prepaidDays" type="number" value="15" min="0" max="31"></div>
+                </div>
+                <div class="row2">
+                    <div class="field"><label>Lender Credit ($)</label><input id="lenderCredit" type="number" value="0" min="0"></div>
+                    <div class="field"><label>Property Tax Rate (%)</label><input id="taxRate" type="number" step="0.01" value="1.10" min="0" max="5"></div>
+                </div>
+                <div class="field"><label>Annual Homeowner's Insurance ($)</label><input id="hoiAnnual" type="number" value="1800" min="0"></div>
+            </div>
+
+            <div class="actions">
+                <button class="btn btn-gold" onclick="generate()">Generate Fee Sheet</button>
+                <button class="btn btn-outline" onclick="resetForm()">Reset</button>
+            </div>
+        </div>
+
+        <!-- ── Right: Output ─────────────────── -->
+        <div id="output">
+            <div class="card">
+                <!-- Print-only brand header -->
+                <div class="print-brand">
+                    <img src="/assets/images/logo.png" alt="R&R" onerror="this.style.display='none'">
+                    <div>
+                        <div class="pb-text">Rates & Realty</div>
+                        <div class="pb-sub">Mortgage Fee Estimate</div>
+                    </div>
+                </div>
+
+                <div class="borrower-header" id="bHeader"></div>
+
+                <table class="fee-table" id="feeTable">
+                    <thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+                    <tbody id="feeBody"></tbody>
+                </table>
+
+                <div class="summary-box" id="costSummary"></div>
+                <div class="summary-box" id="paymentSummary"></div>
+
+                <div class="disclaimer">
+                    This is an estimate only and does not constitute a commitment to lend. Actual charges may vary.
+                    Fees are subject to change based on final loan terms, third-party charges, and lender requirements.
+                    Please refer to your official Loan Estimate (LE) for binding figures. NMLS# pending.
+                    <br>Prepared by Rates & Realty &mdash; <span id="genDate"></span>
+                </div>
+
+                <div class="actions no-print" style="margin-top:16px">
+                    <button class="btn btn-gold" onclick="window.print()">Print / PDF</button>
+                    <button class="btn btn-outline" onclick="copyToClipboard()">Copy to Clipboard</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ── Utilities ──────────────────────────────── */
+const $ = id => document.getElementById(id);
+const fmt = n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const num = id => { const v = $(id).value.replace(/[^0-9.\-]/g, ''); return parseFloat(v) || 0; };
+
+function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ── Currency formatting on input ───────────── */
+['purchasePrice', 'loanAmount'].forEach(id => {
+    $(id).addEventListener('blur', function () {
+        const v = this.value.replace(/[^0-9.]/g, '');
+        if (v) this.value = fmt(parseFloat(v));
+    });
+});
+
+/* ── Monthly P&I calculation ────────────────── */
+function calcPI(principal, annualRate, years) {
+    if (!principal || !annualRate) return 0;
+    const r = annualRate / 100 / 12;
+    const n = years * 12;
+    return principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+}
+
+/* ── PMI / MI logic ─────────────────────────── */
+function calcMonthlyMI(loanAmt, purchasePrice, loanType, score) {
+    const ltv = purchasePrice > 0 ? loanAmt / purchasePrice * 100 : 80;
+    if (loanType === 'VA') return 0;
+    if (loanType === 'FHA') {
+        // FHA annual MIP: 0.55% for most, slightly higher for high LTV
+        return loanAmt * (ltv > 95 ? 0.0055 : 0.005) / 12;
+    }
+    // Conventional PMI
+    if (ltv <= 80) return 0;
+    let factor = 0.005; // base
+    if (score >= 760) factor = 0.0025;
+    else if (score >= 740) factor = 0.003;
+    else if (score >= 720) factor = 0.0038;
+    else if (score >= 700) factor = 0.0046;
+    else if (score >= 680) factor = 0.006;
+    else if (score >= 660) factor = 0.0075;
+    else factor = 0.009;
+    if (ltv > 95) factor += 0.002;
+    else if (ltv > 90) factor += 0.001;
+    return loanAmt * factor / 12;
+}
+
+/* ── Appraisal fee by property type ─────────── */
+function appraisalFee(propType) {
+    const map = { sfr: 550, condo: 600, multi: 750, invest: 700 };
+    return map[propType] || 550;
+}
+
+/* ── Generate fee sheet ─────────────────────── */
+function generate() {
+    const borrower = $('borrowerName').value.trim() || 'Borrower';
+    const addr = $('propAddr').value.trim() || 'TBD';
+    const purchase = num('purchasePrice');
+    const loan = num('loanAmount');
+    const loanType = $('loanType').value;
+    const term = parseInt($('loanTerm').value);
+    const rate = num('intRate');
+    const propType = $('propType').value;
+    const county = $('county').value.trim() || 'N/A';
+    const score = parseInt($('creditScore').value);
+    const origPct = num('origPct');
+    const discPts = num('discPts');
+    const processingFee = num('processingFee');
+    const uwFee = num('uwFee');
+    const adminFee = num('adminFee');
+    const prepaidDays = num('prepaidDays');
+    const lenderCredit = num('lenderCredit');
+    const taxRate = num('taxRate');
+    const hoiAnnual = num('hoiAnnual');
+
+    if (!loan) { toast('Please enter a loan amount'); return; }
+
+    const downPayment = Math.max(0, purchase - loan);
+    const ltv = purchase > 0 ? (loan / purchase * 100).toFixed(1) : 'N/A';
+
+    // ── Fee calculations ──
+    const origFee = loan * origPct / 100;
+    const discFee = loan * discPts / 100;
+    const appraisal = appraisalFee(propType);
+    const creditReport = 65;
+    const floodCert = 15;
+    const taxService = 85;
+    const titleIns = Math.round(loan * 0.005);
+    const escrowFee = 750;
+    const recordingFee = 125;
+    const notaryFee = 175;
+
+    // Prepaids
+    const dailyInterest = loan * (rate / 100) / 365;
+    const prepaidInterest = dailyInterest * prepaidDays;
+    const monthlyTax = purchase * (taxRate / 100) / 12;
+    const monthlyIns = hoiAnnual / 12;
+    const prepaidIns = monthlyIns * 3;
+    const prepaidTax = 0; // taxes prepaid handled in reserves
+
+    // Reserves
+    const taxReserves = monthlyTax * 2;
+    const insReserves = monthlyIns * 2;
+
+    // Loan-type specific
+    let fhaMipUpfront = 0, vaFundingFee = 0;
+    if (loanType === 'FHA') fhaMipUpfront = loan * 0.0175;
+    if (loanType === 'VA') vaFundingFee = loan * 0.0215;
+
+    // Monthly MI
+    const monthlyMI = calcMonthlyMI(loan, purchase, loanType, score);
+
+    // ── Build category arrays ──
+    const categories = [];
+
+    // A. Origination
+    const origItems = [
+        ['Loan Origination Fee (' + origPct + '%)', origFee],
+    ];
+    if (discPts > 0) origItems.push(['Discount Points (' + discPts + '%)', discFee]);
+    origItems.push(
+        ['Processing Fee', processingFee],
+        ['Underwriting Fee', uwFee],
+        ['Admin Fee', adminFee]
+    );
+    categories.push({ name: 'A. Loan Origination Charges', items: origItems });
+
+    // B. Third-Party
+    const tpItems = [
+        ['Appraisal Fee', appraisal],
+        ['Credit Report', creditReport],
+        ['Flood Certification', floodCert],
+        ['Tax Service Fee', taxService],
+        ['Title Insurance', titleIns],
+        ['Escrow / Settlement Fee', escrowFee],
+        ['Recording Fees', recordingFee],
+        ['Notary Fee', notaryFee],
+    ];
+    categories.push({ name: 'B. Third-Party Fees', items: tpItems });
+
+    // C. Gov't / Loan-Type Fees
+    if (loanType === 'FHA' || loanType === 'VA') {
+        const govItems = [];
+        if (loanType === 'FHA') govItems.push(['FHA Upfront MIP (1.75%)', fhaMipUpfront]);
+        if (loanType === 'VA') govItems.push(['VA Funding Fee (2.15%)', vaFundingFee]);
+        categories.push({ name: 'C. Government / Loan-Type Fees', items: govItems });
+    }
+
+    // D. Prepaids
+    const ppLabel = loanType === 'FHA' || loanType === 'VA' ? 'D' : 'C';
+    const ppItems = [
+        ['Prepaid Interest (' + prepaidDays + ' days @ ' + fmt(dailyInterest) + '/day)', prepaidInterest],
+        ['Homeowner\'s Insurance (3 months)', prepaidIns],
+    ];
+    categories.push({ name: ppLabel + '. Prepaid Items', items: ppItems });
+
+    // E. Reserves / Escrow
+    const resLabel = String.fromCharCode(ppLabel.charCodeAt(0) + 1);
+    const resItems = [
+        ['Property Tax Reserves (2 months)', taxReserves],
+        ['Insurance Reserves (2 months)', insReserves],
+    ];
+    categories.push({ name: resLabel + '. Initial Escrow / Reserves', items: resItems });
+
+    // ── Build table ──
+    const tbody = $('feeBody');
+    tbody.innerHTML = '';
+    let grandTotal = 0;
+
+    categories.forEach(cat => {
+        const catRow = document.createElement('tr');
+        catRow.className = 'cat-header';
+        catRow.innerHTML = '<td colspan="2">' + cat.name + '</td>';
+        tbody.appendChild(catRow);
+
+        let sub = 0;
+        cat.items.forEach(([desc, amt]) => {
+            sub += amt;
+            const r = document.createElement('tr');
+            r.innerHTML = '<td>' + desc + '</td><td>' + fmt(amt) + '</td>';
+            tbody.appendChild(r);
+        });
+
+        const sr = document.createElement('tr');
+        sr.className = 'subtotal';
+        sr.innerHTML = '<td>Subtotal</td><td>' + fmt(sub) + '</td>';
+        tbody.appendChild(sr);
+        grandTotal += sub;
+    });
+
+    // Credits
+    if (lenderCredit > 0) {
+        const cr = document.createElement('tr');
+        cr.className = 'cat-header';
+        cr.innerHTML = '<td colspan="2">Credits</td>';
+        tbody.appendChild(cr);
+        const lr = document.createElement('tr');
+        lr.innerHTML = '<td>Lender Credit</td><td style="color:' + 'var(--green)' + '">(' + fmt(lenderCredit) + ')</td>';
+        tbody.appendChild(lr);
+    }
+
+    // Total row
+    const totalClosing = grandTotal - lenderCredit;
+    const tr2 = document.createElement('tr');
+    tr2.className = 'subtotal';
+    tr2.innerHTML = '<td style="font-size:14px">Total Estimated Closing Costs</td><td style="font-size:14px">' + fmt(totalClosing) + '</td>';
+    tbody.appendChild(tr2);
+
+    // ── Borrower header ──
+    $('bHeader').innerHTML = `
+        <div class="name">${borrower}</div>
+        <div class="addr">${addr}</div>
+        <div class="meta">${loanType} | ${term}-Year Fixed @ ${rate}% | LTV: ${ltv}% | ${county} County</div>
+    `;
+
+    // ── Cost summary ──
+    const cashToClose = downPayment + totalClosing;
+    $('costSummary').innerHTML = `
+        <h3>Cash to Close Estimate</h3>
+        <div class="summary-row"><span class="label">Down Payment</span><span>${fmt(downPayment)}</span></div>
+        <div class="summary-row"><span class="label">Total Closing Costs</span><span>${fmt(grandTotal)}</span></div>
+        ${lenderCredit > 0 ? '<div class="summary-row"><span class="label">Lender Credit</span><span style="color:var(--green)">(' + fmt(lenderCredit) + ')</span></div>' : ''}
+        <div class="summary-row total"><span>Estimated Cash to Close</span><span>${fmt(cashToClose)}</span></div>
+    `;
+
+    // ── Payment summary ──
+    const pi = calcPI(loan, rate, term);
+    const totalMonthly = pi + monthlyTax + monthlyIns + monthlyMI;
+    let miLabel = '';
+    if (loanType === 'FHA') miLabel = 'FHA Monthly MIP';
+    else if (monthlyMI > 0) miLabel = 'Private Mortgage Insurance (PMI)';
+
+    $('paymentSummary').innerHTML = `
+        <h3>Estimated Monthly Payment</h3>
+        <div class="summary-row"><span class="label">Principal & Interest</span><span>${fmt(pi)}</span></div>
+        <div class="summary-row"><span class="label">Property Taxes</span><span>${fmt(monthlyTax)}</span></div>
+        <div class="summary-row"><span class="label">Homeowner's Insurance</span><span>${fmt(monthlyIns)}</span></div>
+        ${monthlyMI > 0 ? '<div class="summary-row"><span class="label">' + miLabel + '</span><span>' + fmt(monthlyMI) + '</span></div>' : ''}
+        <div class="summary-row total"><span>Total PITI${monthlyMI > 0 ? ' + MI' : ''}</span><span>${fmt(totalMonthly)}</span></div>
+    `;
+
+    // Date
+    $('genDate').textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    // Show output
+    $('output').classList.add('visible');
+    $('output').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ── Copy to clipboard ──────────────────────── */
+function copyToClipboard() {
+    const header = $('bHeader').innerText;
+    const rows = $('feeTable').querySelectorAll('tr');
+    let text = 'MORTGAGE FEE ESTIMATE\n';
+    text += '='.repeat(44) + '\n';
+    text += header + '\n';
+    text += '-'.repeat(44) + '\n';
+
+    rows.forEach(r => {
+        const cells = r.querySelectorAll('td, th');
+        if (cells.length === 1) {
+            text += '\n' + cells[0].textContent + '\n';
+        } else if (cells.length === 2) {
+            const desc = cells[0].textContent;
+            const amt = cells[1].textContent;
+            text += desc.padEnd(36) + amt.padStart(12) + '\n';
+        }
+    });
+
+    text += '\n' + '-'.repeat(44) + '\n';
+    // Summaries
+    const summaryEls = document.querySelectorAll('.summary-box .summary-row');
+    summaryEls.forEach(el => {
+        const parts = el.innerText.split('\n');
+        if (parts.length >= 2) {
+            text += parts[0].padEnd(36) + parts[1].padStart(12) + '\n';
+        }
+    });
+
+    text += '\n' + $('genDate').parentElement.textContent.trim() + '\n';
+
+    navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard'));
+}
+
+/* ── Reset ──────────────────────────────────── */
+function resetForm() {
+    document.querySelectorAll('.form-panel input:not([type=number])').forEach(i => i.value = '');
+    $('output').classList.remove('visible');
+    toast('Form reset');
+}
+</script>
+</body>
+</html>
