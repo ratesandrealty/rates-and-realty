@@ -1720,6 +1720,7 @@
     <nav class="ld-tabs-nav">
       <button class="ld-tab-btn active" onclick="switchTab('lead-details', this)">Lead Details</button>
       <button class="ld-tab-btn" onclick="switchTab('application', this)" id="tab-btn-application">1003 Application</button>
+      <button class="ld-tab-btn" onclick="switchTab('fee-sheet', this)" id="tab-btn-fee-sheet"><i class="fas fa-file-invoice-dollar" style="margin-right:4px"></i>Fee Sheet</button>
       <button class="ld-tab-btn" onclick="switchTab('lenders', this)">Lenders</button>
       <button class="ld-tab-btn" onclick="switchTab('commercial', this)">🏢 Commercial</button>
       <button class="ld-tab-btn" onclick="switchTab('documents', this)">Documents</button>
@@ -1729,7 +1730,6 @@
       <button class="ld-tab-btn" onclick="switchTab('activity', this)">Activity</button>
       <button class="ld-tab-btn" onclick="switchTab('alerts', this)"><i class="fas fa-bell" style="margin-right:4px"></i>Alerts</button>
       <button class="ld-tab-btn" onclick="switchTab('showings', this)"><i class="fas fa-home" style="margin-right:4px"></i>Showings</button>
-      <button class="ld-tab-btn" onclick="switchTab('fee-sheet', this)"><i class="fas fa-file-invoice-dollar" style="margin-right:4px"></i>Fee Sheet</button>
     </nav>
 
     <!-- ═══════════════════════════════════════════
@@ -3807,7 +3807,7 @@
             <button onclick="saveFeeSheetQuote()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);"><i class="fas fa-save" style="margin-right:4px"></i>Save Quote</button>
           </div>
         </div>
-        <iframe id="feeSheetIframe" src="/tools/fee-sheet.html" style="width:100%;height:calc(100vh - 200px);border:1px solid #222;border-radius:10px;background:#1a1a1a;"></iframe>
+        <iframe id="feeSheetIframe" src="about:blank" style="width:100%;height:calc(100vh - 200px);border:1px solid #222;border-radius:10px;background:#1a1a1a;"></iframe>
       </div>
     </div>
 
@@ -7043,31 +7043,56 @@ function switchTab(name, btn) {
 }
 
 /* ═══ FEE SHEET ═══ */
-let _feeSheetPrefilled = false;
+function getFeeSheetData() {
+  var name = [contactData.first_name, contactData.last_name].filter(Boolean).join(' ');
+  var addr = [leadData.property_address, leadData.property_city, leadData.property_state, leadData.property_zip].filter(Boolean).join(', ');
+  // Also check 1003 fields for more detailed address
+  var propStreet = document.getElementById('f_prop_street');
+  var propCity = document.getElementById('f_prop_city');
+  var propState = document.getElementById('f_prop_state');
+  var propZip = document.getElementById('f_prop_zip');
+  if (propStreet && propStreet.value) {
+    addr = [propStreet.value, propCity ? propCity.value : '', propState ? propState.value : '', propZip ? propZip.value : ''].filter(Boolean).join(', ');
+  }
+  var pp = leadData.purchase_price || '';
+  var la = leadData.loan_amount || '';
+  var lt = leadData.loan_type || leadData.loan_program || '';
+  return { borrower_name: name, property_address: addr, purchase_price: pp, loan_amount: la, loan_type: lt };
+}
+
+function buildFeeSheetUrl() {
+  var d = getFeeSheetData();
+  var params = [];
+  if (d.borrower_name) params.push('borrower_name=' + encodeURIComponent(d.borrower_name));
+  if (d.property_address) params.push('property_address=' + encodeURIComponent(d.property_address));
+  if (d.purchase_price) params.push('purchase_price=' + d.purchase_price);
+  if (d.loan_amount) params.push('loan_amount=' + d.loan_amount);
+  if (d.loan_type) params.push('loan_type=' + encodeURIComponent(d.loan_type));
+  return '/tools/fee-sheet.html' + (params.length ? '?' + params.join('&') : '');
+}
+
+let _feeSheetLoaded = false;
 function prefillFeeSheet() {
-  if (_feeSheetPrefilled) return;
-  _feeSheetPrefilled = true;
-  const iframe = document.getElementById('feeSheetIframe');
+  var iframe = document.getElementById('feeSheetIframe');
   if (!iframe) return;
-  iframe.addEventListener('load', function() {
-    try {
-      const doc = iframe.contentDocument || iframe.contentWindow.document;
-      const name = [contactData.first_name, contactData.last_name].filter(Boolean).join(' ');
-      const addr = [leadData.property_address, leadData.property_city, leadData.property_state, leadData.property_zip].filter(Boolean).join(', ');
-      const setVal = function(id, v) { var el = doc.getElementById(id); if (el && v) { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); } };
-      setVal('borrowerName', name);
-      setVal('propertyAddress', addr);
-      if (leadData.purchase_price) setVal('purchasePrice', String(leadData.purchase_price));
-      if (leadData.loan_amount) setVal('loanAmount', String(leadData.loan_amount));
-    } catch(e) { console.warn('Fee sheet prefill:', e); }
-  });
+  if (!_feeSheetLoaded) {
+    // First load: set src with URL params
+    _feeSheetLoaded = true;
+    iframe.src = buildFeeSheetUrl();
+  } else {
+    // Subsequent opens: sync via postMessage
+    syncFeeSheetData();
+  }
+}
+
+function syncFeeSheetData() {
+  var iframe = document.getElementById('feeSheetIframe');
+  if (!iframe || !iframe.contentWindow) return;
+  try { iframe.contentWindow.postMessage(Object.assign({ type: 'feeSheetSync' }, getFeeSheetData()), '*'); } catch(e) {}
 }
 
 function openFeeSheetFullscreen() {
-  var name = encodeURIComponent([contactData.first_name, contactData.last_name].filter(Boolean).join(' '));
-  var pp = leadData.purchase_price || '';
-  var la = leadData.loan_amount || '';
-  window.open('/tools/fee-sheet.html?borrower=' + name + '&pp=' + pp + '&la=' + la, '_blank');
+  window.open(buildFeeSheetUrl(), '_blank');
 }
 
 async function saveFeeSheetQuote() {
@@ -10935,6 +10960,8 @@ async function save1003() {
       });
     }
     toast('Application saved!');
+    // Sync updated data to fee sheet iframe if loaded
+    if (_feeSheetLoaded) syncFeeSheetData();
   } catch (err) {
     console.error('Save exception:', err);
     toast('Error saving: ' + err.message, true);

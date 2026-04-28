@@ -901,8 +901,12 @@ function render(inp, results) {
             <p style="margin-top:6px">Rene Duarte | NMLS #1795044 | Rates &amp; Realty | Equal Housing Lender</p>
             <p style="margin-top:4px;font-size:9px;color:#bbb">Generated ${dateStr} at ${timeStr}</p>
         </div>
-        <div style="background:#F2F2F0;border-top:1px solid #EBEBEB;padding:10px 32px;font-size:9px;color:#ABABAB;line-height:1.6;">
-            &copy; 2026 | E Mortgage Capital, Inc. DBA E Mortgage Capital | NMLS #1416824 | Licensed by the Department of Financial Protection and Innovation under the California Residential Mortgage Lending Act | For licensing information, go to <a href="https://www.nmlsconsumeraccess.org" target="_blank" style="color:#ABABAB;text-decoration:underline;">www.nmlsconsumeraccess.org</a> | 3750 S Susan Street, Santa Ana, California 92704
+        <div style="background:#F2F2F0;border-top:1px solid #EBEBEB;padding:10px 32px;font-size:9px;color:#ABABAB;line-height:1.6;display:flex;align-items:center;gap:16px;">
+            <div style="flex:1;">&copy; 2026 | E Mortgage Capital, Inc. DBA E Mortgage Capital | NMLS #1416824 | Licensed by the Department of Financial Protection and Innovation under the California Residential Mortgage Lending Act | For licensing information, go to <a href="https://www.nmlsconsumeraccess.org" target="_blank" style="color:#ABABAB;text-decoration:underline;">www.nmlsconsumeraccess.org</a> | 3750 S Susan Street, Santa Ana, California 92704</div>
+            <div style="flex-shrink:0;text-align:center;">
+                <img src="/assets/images/qr-code.png" alt="QR Code" style="width:80px;height:80px;border-radius:4px;opacity:0.85;" onerror="this.style.display='none'">
+                <div style="font-size:7px;color:#bbb;margin-top:2px;">Scan to Apply</div>
+            </div>
         </div>
     `;
 
@@ -1015,11 +1019,49 @@ recalc();
 // URL param prefill for iframe / fullscreen mode
 (function() {
     const p = new URLSearchParams(window.location.search);
-    if (p.get('borrower')) $('borrowerName').value = decodeURIComponent(p.get('borrower'));
-    if (p.get('pp')) $('purchasePrice').value = p.get('pp');
-    if (p.get('la')) $('loanAmount').value = p.get('la');
-    if (p.get('addr')) $('propertyAddress').value = decodeURIComponent(p.get('addr'));
+    // Support both short and long param names
+    const bn = p.get('borrower_name') || p.get('borrower') || '';
+    const pp = p.get('purchase_price') || p.get('pp') || '';
+    const la = p.get('loan_amount') || p.get('la') || '';
+    const addr = p.get('property_address') || p.get('addr') || '';
+    const lt = p.get('loan_type') || '';
+    const term = p.get('term') || '';
+
+    if (bn) $('borrowerName').value = decodeURIComponent(bn);
+    if (pp) $('purchasePrice').value = '$' + Number(pp).toLocaleString('en-US');
+    if (la) $('loanAmount').value = '$' + Number(la).toLocaleString('en-US');
+    if (addr) $('propertyAddress').value = decodeURIComponent(addr);
+    if (lt) {
+        const sel = $('loanProduct');
+        for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value.toLowerCase().includes(lt.toLowerCase()) ||
+                sel.options[i].text.toLowerCase().includes(lt.toLowerCase())) {
+                sel.selectedIndex = i; break;
+            }
+        }
+    }
+    if (term) {
+        const sel = $('loanProduct');
+        // Try matching term in product name (e.g. "15" matches "Conv 15yr Fixed")
+        if (term === '15' || term === '20') {
+            for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].text.includes(term + 'yr')) { sel.selectedIndex = i; break; }
+            }
+        }
+    }
     recalc();
+
+    // Listen for postMessage from parent (lead-detail iframe sync)
+    window.addEventListener('message', function(e) {
+        if (e.data && e.data.type === 'feeSheetSync') {
+            const d = e.data;
+            if (d.borrower_name) $('borrowerName').value = d.borrower_name;
+            if (d.property_address) $('propertyAddress').value = d.property_address;
+            if (d.purchase_price) $('purchasePrice').value = '$' + Number(d.purchase_price).toLocaleString('en-US');
+            if (d.loan_amount) $('loanAmount').value = '$' + Number(d.loan_amount).toLocaleString('en-US');
+            recalc();
+        }
+    });
 })();
 </script>
 </body>
