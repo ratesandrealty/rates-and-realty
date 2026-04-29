@@ -3,26 +3,33 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<title>Marketing Automations — Rates & Realty CRM</title>
+<title>Email Marketing — Rates & Realty CRM</title>
 <script src="/api/env.js?v=2026033003"></script>
+<link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+<script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <style>
-  :root { --gold: #c9a84c; --bg: #0d0d0d; --surface: #141414; --surface2: #1a1a1a; --border: rgba(255,255,255,0.07); --text: #fff; --text-muted: rgba(255,255,255,0.4); }
+  :root { --gold: #C9A84C; --bg: #0d0d0d; --surface: #141414; --surface2: #1a1a1a; --border: rgba(255,255,255,0.07); --text: #fff; --text-muted: rgba(255,255,255,0.4); --green: #50c878; --red: #ff6b6b; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
 
+  /* Header */
   .header { display:flex; align-items:center; gap:12px; padding:12px 20px; background:var(--surface); border-bottom:1px solid var(--border); }
   .header h1 { font-size:16px; font-weight:700; }
-  .btn-back { padding:6px 12px; background:rgba(255,255,255,0.06); border:1px solid var(--border); border-radius:7px; color:var(--text-muted); font-size:12px; cursor:pointer; text-decoration:none; }
+  .btn-back { padding:6px 12px; background:rgba(255,255,255,0.06); border:1px solid var(--border); border-radius:7px; color:var(--text-muted); font-size:12px; cursor:pointer; text-decoration:none; transition:all .15s; }
+  .btn-back:hover { color:#fff; border-color:rgba(255,255,255,0.15); }
 
+  /* Layout */
   .layout { display:flex; gap:0; min-height:calc(100vh - 48px); }
 
-  /* Sidebar tabs */
+  /* Sidebar */
   .sidebar { width:200px; background:var(--surface); border-right:1px solid var(--border); padding:16px 0; flex-shrink:0; }
-  .sidebar-item { display:flex; align-items:center; gap:10px; padding:10px 16px; cursor:pointer; font-size:13px; color:var(--text-muted); border-left:3px solid transparent; transition:all .15s; }
+  .sidebar-item { display:flex; align-items:center; gap:10px; padding:11px 16px; cursor:pointer; font-size:13px; color:var(--text-muted); border-left:3px solid transparent; transition:all .15s; user-select:none; }
   .sidebar-item:hover { background:rgba(255,255,255,0.04); color:#fff; }
   .sidebar-item.active { background:rgba(201,168,76,0.08); color:var(--gold); border-left-color:var(--gold); font-weight:600; }
 
-  /* Main content */
+  /* Main */
   .main { flex:1; padding:24px; overflow-y:auto; }
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
@@ -31,290 +38,319 @@
   .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }
   .card-title { font-size:14px; font-weight:700; margin-bottom:14px; display:flex; align-items:center; gap:8px; }
 
-  /* Form elements */
+  /* Form */
   .field { margin-bottom:14px; }
   .field label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); display:block; margin-bottom:6px; }
-  .field input, .field select, .field textarea {
-    width:100%; padding:9px 12px; background:rgba(255,255,255,0.05);
-    border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff;
-    font-size:13px; outline:none; font-family:inherit;
-  }
-  .field textarea { min-height:120px; resize:vertical; }
-  .field input:focus, .field select:focus, .field textarea:focus { border-color:rgba(201,168,76,0.4); }
+  .field input, .field select { width:100%; padding:9px 12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff; font-size:13px; outline:none; font-family:inherit; }
+  .field input:focus, .field select:focus { border-color:rgba(201,168,76,0.4); }
+  .field input::placeholder { color:rgba(255,255,255,0.25); }
   select option { background:#1a1a1a; }
 
   /* Buttons */
-  .btn-gold { padding:9px 20px; background:var(--gold); border:none; border-radius:8px; color:#000; font-size:13px; font-weight:700; cursor:pointer; }
-  .btn-ghost { padding:9px 16px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff; font-size:13px; cursor:pointer; }
+  .btn-gold { padding:9px 20px; background:var(--gold); border:none; border-radius:8px; color:#000; font-size:13px; font-weight:700; cursor:pointer; transition:opacity .15s; }
+  .btn-gold:hover { opacity:0.9; }
+  .btn-ghost { padding:9px 16px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff; font-size:13px; cursor:pointer; transition:all .15s; }
+  .btn-ghost:hover { background:rgba(255,255,255,0.1); }
   .btn-sm { padding:5px 12px; font-size:11px; font-weight:600; border-radius:6px; cursor:pointer; border:none; }
 
-  /* Stats */
-  .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }
-  .stat-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; text-align:center; }
-  .stat-num { font-size:24px; font-weight:700; color:var(--gold); }
-  .stat-label { font-size:11px; color:var(--text-muted); margin-top:3px; text-transform:uppercase; letter-spacing:0.4px; }
+  /* Subject line */
+  .subject-wrap { position:relative; }
+  .subject-wrap input { padding-right:60px; }
+  .char-count { position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:11px; color:var(--text-muted); pointer-events:none; }
+  .char-count.warn { color:var(--red); }
 
-  /* Segment builder */
-  .segment-row { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
-  .segment-count { font-size:12px; color:var(--gold); font-weight:600; }
+  /* Token buttons */
+  .token-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .token-btn { padding:4px 10px; background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.2); border-radius:16px; color:var(--gold); font-size:11px; cursor:pointer; font-family:monospace; transition:all .15s; }
+  .token-btn:hover { background:rgba(201,168,76,0.2); }
 
-  /* Automation list */
-  .auto-item { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:8px; display:flex; align-items:center; gap:12px; }
-  .auto-status { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-  .auto-status.on { background:#50c878; }
-  .auto-status.off { background:rgba(255,255,255,0.2); }
-  .auto-name { font-size:13px; font-weight:600; flex:1; }
-  .auto-meta { font-size:11px; color:var(--text-muted); }
+  /* Quill overrides */
+  .ql-toolbar.ql-snow { background:var(--surface2); border-color:rgba(255,255,255,0.1) !important; border-radius:8px 8px 0 0; }
+  .ql-container.ql-snow { border-color:rgba(255,255,255,0.1) !important; border-radius:0 0 8px 8px; min-height:260px; background:rgba(255,255,255,0.03); }
+  .ql-editor { color:#fff; font-size:14px; line-height:1.7; min-height:240px; }
+  .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
+  .ql-snow .ql-stroke { stroke:rgba(255,255,255,0.5) !important; }
+  .ql-snow .ql-fill { fill:rgba(255,255,255,0.5) !important; }
+  .ql-snow .ql-picker-label { color:rgba(255,255,255,0.5) !important; }
+  .ql-snow .ql-picker-options { background:var(--surface2) !important; border-color:rgba(255,255,255,0.1) !important; }
+  .ql-snow .ql-picker-item { color:rgba(255,255,255,0.7) !important; }
+  .ql-snow .ql-active .ql-stroke { stroke:var(--gold) !important; }
+  .ql-snow .ql-active .ql-fill { fill:var(--gold) !important; }
+  .ql-snow .ql-active { color:var(--gold) !important; }
+  .editor-stats { display:flex; gap:16px; padding:8px 0; font-size:11px; color:var(--text-muted); }
 
-  /* Campaign list */
-  .camp-item { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:8px; display:flex; align-items:center; gap:12px; }
-  .camp-badge { font-size:10px; padding:2px 8px; border-radius:8px; font-weight:600; text-transform:uppercase; }
+  /* Checkbox filters */
+  .filter-group { margin-bottom:12px; }
+  .filter-group-title { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); margin-bottom:8px; }
+  .checkbox-grid { display:flex; flex-wrap:wrap; gap:6px; }
+  .cb-label { display:flex; align-items:center; gap:5px; padding:4px 10px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:6px; font-size:12px; cursor:pointer; transition:all .15s; user-select:none; }
+  .cb-label:hover { background:rgba(255,255,255,0.07); }
+  .cb-label input { accent-color:var(--gold); width:13px; height:13px; cursor:pointer; }
+  .cb-label.checked { background:rgba(201,168,76,0.1); border-color:rgba(201,168,76,0.25); color:var(--gold); }
+
+  /* Recipient list */
+  .recipient-badge { font-size:13px; font-weight:700; color:var(--gold); padding:8px 0; }
+  .recipient-actions { display:flex; gap:8px; margin-bottom:10px; }
+  .recipient-list { max-height:300px; overflow-y:auto; border:1px solid rgba(255,255,255,0.06); border-radius:8px; }
+  .recipient-item { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid rgba(255,255,255,0.04); font-size:12px; transition:background .1s; }
+  .recipient-item:last-child { border-bottom:none; }
+  .recipient-item:hover { background:rgba(255,255,255,0.03); }
+  .recipient-item input { accent-color:var(--gold); width:14px; height:14px; cursor:pointer; flex-shrink:0; }
+  .recipient-name { font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .recipient-email { color:var(--text-muted); font-size:11px; flex-shrink:0; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .status-badge { font-size:9px; padding:2px 7px; border-radius:8px; font-weight:600; text-transform:uppercase; flex-shrink:0; }
+  .status-new { background:rgba(80,200,120,0.15); color:#50c878; }
+  .status-contacted { background:rgba(100,149,237,0.15); color:#6495ed; }
+  .status-pre-approved { background:rgba(201,168,76,0.15); color:var(--gold); }
+  .status-processing { background:rgba(255,165,0,0.15); color:#ffa500; }
+  .status-closed { background:rgba(138,43,226,0.15); color:#ba68c8; }
+  .status-lost { background:rgba(255,107,107,0.15); color:var(--red); }
+
+  /* Send section */
+  .send-buttons { display:flex; flex-direction:column; gap:10px; }
+  .schedule-row { display:flex; gap:8px; align-items:center; }
+  .schedule-row input { flex:1; }
+
+  /* Preview */
+  .preview-toggle { display:flex; gap:0; margin-bottom:16px; }
+  .preview-toggle button { padding:8px 20px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:var(--text-muted); font-size:12px; cursor:pointer; font-weight:600; }
+  .preview-toggle button:first-child { border-radius:8px 0 0 8px; }
+  .preview-toggle button:last-child { border-radius:0 8px 8px 0; border-left:none; }
+  .preview-toggle button.active { background:rgba(201,168,76,0.15); border-color:rgba(201,168,76,0.3); color:var(--gold); }
+  .preview-desktop { width:100%; }
+  .preview-mobile { width:375px; margin:0 auto; border:2px solid rgba(255,255,255,0.15); border-radius:24px; padding:12px; background:var(--surface2); }
+  .email-frame { background:#fff; border-radius:8px; overflow:hidden; }
+  .email-header-bar { background:var(--gold); padding:16px 24px; text-align:center; }
+  .email-header-bar span { color:#000; font-weight:800; font-size:16px; letter-spacing:1px; }
+  .email-body { padding:24px; color:#333; font-size:14px; line-height:1.7; }
+  .email-footer { padding:16px 24px; border-top:1px solid #eee; font-size:10px; color:#999; line-height:1.6; text-align:center; }
+
+  /* Templates grid */
+  .templates-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:14px; }
+  .template-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; cursor:pointer; transition:all .15s; }
+  .template-card:hover { border-color:rgba(201,168,76,0.3); transform:translateY(-2px); }
+  .template-icon { font-size:28px; margin-bottom:10px; }
+  .template-title { font-size:14px; font-weight:700; margin-bottom:6px; }
+  .template-desc { font-size:12px; color:var(--text-muted); margin-bottom:14px; line-height:1.5; }
+
+  /* Campaign table */
+  .camp-table { width:100%; border-collapse:collapse; }
+  .camp-table th { text-align:left; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); padding:10px 14px; border-bottom:1px solid var(--border); }
+  .camp-table td { padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.04); font-size:13px; }
+  .camp-table tr:hover td { background:rgba(255,255,255,0.02); }
+  .camp-badge { font-size:10px; padding:3px 9px; border-radius:8px; font-weight:600; text-transform:uppercase; display:inline-block; }
   .badge-sent { background:rgba(80,200,120,0.15); color:#50c878; }
+  .badge-scheduled { background:rgba(201,168,76,0.15); color:var(--gold); }
   .badge-draft { background:rgba(255,255,255,0.08); color:var(--text-muted); }
-  .badge-ready { background:rgba(201,168,76,0.15); color:var(--gold); }
 
-  .divider { border:none; border-top:1px solid var(--border); margin:20px 0; }
+  /* Automation cards */
+  .auto-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:10px; display:flex; align-items:center; gap:14px; }
+  .auto-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .auto-dot.active { background:var(--green); box-shadow:0 0 8px rgba(80,200,120,0.4); }
+  .auto-dot.inactive { background:rgba(255,255,255,0.15); }
+  .auto-info { flex:1; }
+  .auto-name { font-size:13px; font-weight:700; margin-bottom:3px; }
+  .auto-meta { font-size:11px; color:var(--text-muted); }
+  .toggle-switch { position:relative; width:40px; height:22px; flex-shrink:0; }
+  .toggle-switch input { opacity:0; width:0; height:0; }
+  .toggle-slider { position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(255,255,255,0.15); border-radius:22px; cursor:pointer; transition:all .2s; }
+  .toggle-slider::before { content:''; position:absolute; width:16px; height:16px; left:3px; top:3px; background:#fff; border-radius:50%; transition:all .2s; }
+  .toggle-switch input:checked + .toggle-slider { background:var(--gold); }
+  .toggle-switch input:checked + .toggle-slider::before { transform:translateX(18px); }
 
-  /* Email preview */
-  .email-preview { background:#fff; border-radius:8px; padding:24px; color:#333; font-size:14px; line-height:1.6; min-height:200px; }
+  /* Two-column layout for send campaign */
+  .compose-grid { display:grid; grid-template-columns:3fr 2fr; gap:20px; }
 
-  /* Recipient tag */
-  .recipient-tag { display:inline-flex; align-items:center; gap:6px; background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.2); border-radius:20px; padding:3px 10px; font-size:12px; color:var(--gold); margin:2px; }
+  /* Toast */
+  #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:12px 24px; font-size:13px; opacity:0; transition:all .3s; pointer-events:none; z-index:9999; box-shadow:0 8px 32px rgba(0,0,0,0.4); }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
 
-  #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#222; border:1px solid var(--border); border-radius:10px; padding:10px 20px; font-size:13px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9999; }
-  #toast.show { opacity:1; }
+  /* Flatpickr dark overrides */
+  .flatpickr-calendar { background:var(--surface2) !important; border-color:rgba(255,255,255,0.1) !important; box-shadow:0 8px 32px rgba(0,0,0,0.5) !important; }
+  .flatpickr-day { color:#fff !important; }
+  .flatpickr-day:hover { background:rgba(201,168,76,0.2) !important; border-color:transparent !important; }
+  .flatpickr-day.selected { background:var(--gold) !important; color:#000 !important; border-color:var(--gold) !important; }
+  .flatpickr-months .flatpickr-month, .flatpickr-current-month .flatpickr-monthDropdown-months { background:transparent !important; color:#fff !important; }
+  .flatpickr-weekday { color:var(--text-muted) !important; }
+  .flatpickr-day.flatpickr-disabled { color:rgba(255,255,255,0.15) !important; }
+  span.flatpickr-weekday { background:transparent !important; }
+  .flatpickr-months .flatpickr-prev-month, .flatpickr-months .flatpickr-next-month { color:#fff !important; fill:#fff !important; }
+  .numInputWrapper span { border-color:rgba(255,255,255,0.1) !important; }
+  .flatpickr-time input { color:#fff !important; background:transparent !important; }
+  .flatpickr-time .flatpickr-am-pm { color:#fff !important; background:transparent !important; }
+  .flatpickr-time .flatpickr-time-separator { color:#fff !important; }
 </style>
-  <link rel="stylesheet" href="/public/css/responsive-global.css">
+<link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
 <body>
 
 <div class="header">
-  <a href="people.html" class="btn-back">← Back</a>
-  <h1>📣 Marketing Automations</h1>
+  <a href="people.html" class="btn-back">Back</a>
+  <h1>Email Marketing</h1>
 </div>
 
 <div class="layout">
-  <!-- Sidebar -->
   <div class="sidebar">
-    <div class="sidebar-item active" onclick="switchTab('blast')">📤 Send Campaign</div>
-    <div class="sidebar-item" onclick="switchTab('automations')">🔄 Automations</div>
-    <div class="sidebar-item" onclick="switchTab('campaigns')">📋 Past Campaigns</div>
-    <div class="sidebar-item" onclick="switchTab('templates')">✉️ Templates</div>
+    <div class="sidebar-item active" data-tab="send">Send Campaign</div>
+    <div class="sidebar-item" data-tab="templates">Templates</div>
+    <div class="sidebar-item" data-tab="campaigns">Past Campaigns</div>
+    <div class="sidebar-item" data-tab="automations">Automations</div>
   </div>
 
-  <!-- Main -->
   <div class="main">
 
-    <!-- ═══ TAB: SEND CAMPAIGN ═══ -->
-    <div id="tab-blast" class="tab-panel active">
+    <!-- SEND CAMPAIGN TAB -->
+    <div id="tab-send" class="tab-panel active">
       <div style="margin-bottom:20px;">
-        <div style="font-size:18px;font-weight:700;">📤 Send Email Campaign</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Blast an email to your contacts or a filtered segment</div>
+        <div style="font-size:18px;font-weight:700;">Send Email Campaign</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Compose and send HTML emails to your contacts</div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 380px;gap:20px;">
-
-        <!-- Left: Compose -->
+      <div class="compose-grid">
+        <!-- LEFT: Compose -->
         <div>
           <div class="card">
-            <div class="card-title">✉️ Compose</div>
-
-            <div class="field">
-              <label>Campaign Name (internal)</label>
-              <input type="text" id="campName" placeholder="e.g. March Rate Update Newsletter">
-            </div>
+            <div class="card-title">Compose</div>
             <div class="field">
               <label>Subject Line</label>
-              <input type="text" id="campSubject" placeholder="e.g. 🏡 Rates just dropped — lock in now!">
+              <div class="subject-wrap">
+                <input type="text" id="subjectLine" placeholder="e.g. Rates just dropped - lock in now!" oninput="updateSubjectCount()">
+                <span class="char-count" id="subjectCount">0/80</span>
+              </div>
             </div>
-            <div class="field">
-              <label>From Name</label>
-              <input type="text" id="campFromName" value="Rene Duarte — Rates & Realty" placeholder="Your name">
+
+            <div class="filter-group-title" style="margin-bottom:8px;">Insert Token</div>
+            <div class="token-row">
+              <span class="token-btn" onclick="insertToken('{first_name}')">{first_name}</span>
+              <span class="token-btn" onclick="insertToken('{last_name}')">{last_name}</span>
+              <span class="token-btn" onclick="insertToken('{email}')">{email}</span>
+              <span class="token-btn" onclick="insertToken('{loan_type}')">{loan_type}</span>
+              <span class="token-btn" onclick="insertToken('{pipeline_status}')">{pipeline_status}</span>
             </div>
-            <div class="field">
-              <label>Email Body</label>
-              <textarea id="campBody" placeholder="Hi {name},&#10;&#10;I wanted to reach out personally...&#10;&#10;Type {name} to personalize with the contact's first name."></textarea>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
-              <span style="font-size:11px;color:var(--text-muted);">Use {name} for personalization</span>
-              <button class="btn-ghost" onclick="previewEmail()" style="font-size:12px;padding:6px 12px;">👁 Preview</button>
+
+            <div id="quill-editor"></div>
+            <div class="editor-stats">
+              <span id="wordCount">0 words</span>
+              <span id="charCountBody">0 characters</span>
             </div>
           </div>
 
-          <!-- Preview -->
-          <div class="card" id="previewCard" style="display:none;">
-            <div class="card-title">👁 Email Preview</div>
-            <div class="email-preview" id="emailPreview"></div>
+          <!-- EMAIL PREVIEW -->
+          <div class="card">
+            <div class="card-title">Email Preview</div>
+            <div class="preview-toggle">
+              <button class="active" onclick="setPreview('desktop', this)">Desktop</button>
+              <button onclick="setPreview('mobile', this)">Mobile</button>
+            </div>
+            <div id="previewWrap" class="preview-desktop">
+              <div class="email-frame">
+                <div class="email-header-bar"><span>RATES & REALTY</span></div>
+                <div class="email-body" id="previewBody"><em style="color:#999;">Start typing to see a live preview...</em></div>
+                <div class="email-footer">
+                  <a href="#" style="color:#888;">Unsubscribe</a><br>
+                  Rene Duarte | NMLS #1795044<br>
+                  Rates & Realty | 714-472-8508 | ratesandrealty.com<br>
+                  Equal Housing Lender
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Right: Recipients + Send -->
+        <!-- RIGHT: Recipients + Send -->
         <div>
           <div class="card">
-            <div class="card-title">👥 Recipients</div>
+            <div class="card-title">Recipients</div>
 
-            <div class="field">
-              <label>Filter by Status</label>
-              <select id="filterStatus">
-                <option value="">All Contacts</option>
-                <option value="New Lead">New Lead</option>
-                <option value="Contacted">Contacted</option>
-                <option value="Qualified">Qualified</option>
-                <option value="Pre-Qualified">Pre-Qualified</option>
-                <option value="Application">Application</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Filter by Source</label>
-              <select id="filterSource">
-                <option value="">All Sources</option>
-                <option value="Website">Website</option>
-                <option value="Referral">Referral</option>
-                <option value="Facebook">Facebook</option>
-                <option value="Instagram">Instagram</option>
-                <option value="TikTok">TikTok</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Filter by Loan Type</label>
-              <select id="filterLoan">
-                <option value="">All Loan Types</option>
-                <option value="Conventional">Conventional</option>
-                <option value="FHA">FHA</option>
-                <option value="VA">VA</option>
-                <option value="DSCR">DSCR</option>
-                <option value="Jumbo">Jumbo</option>
-              </select>
+            <div class="filter-group">
+              <div class="filter-group-title">Pipeline Status</div>
+              <div class="checkbox-grid" id="statusFilters">
+                <label class="cb-label"><input type="checkbox" value="New" onchange="toggleCbStyle(this);filterRecipients()"> New</label>
+                <label class="cb-label"><input type="checkbox" value="Contacted" onchange="toggleCbStyle(this);filterRecipients()"> Contacted</label>
+                <label class="cb-label"><input type="checkbox" value="Pre-Approved" onchange="toggleCbStyle(this);filterRecipients()"> Pre-Approved</label>
+                <label class="cb-label"><input type="checkbox" value="Processing" onchange="toggleCbStyle(this);filterRecipients()"> Processing</label>
+                <label class="cb-label"><input type="checkbox" value="Closed" onchange="toggleCbStyle(this);filterRecipients()"> Closed</label>
+                <label class="cb-label"><input type="checkbox" value="Lost" onchange="toggleCbStyle(this);filterRecipients()"> Lost</label>
+              </div>
             </div>
 
-            <button class="btn-ghost" onclick="loadRecipients()" style="width:100%;margin-bottom:12px;">🔍 Find Recipients</button>
+            <div class="filter-group">
+              <div class="filter-group-title">Source</div>
+              <div class="checkbox-grid" id="sourceFilters">
+                <label class="cb-label"><input type="checkbox" value="Website" onchange="toggleCbStyle(this);filterRecipients()"> Website</label>
+                <label class="cb-label"><input type="checkbox" value="Referral" onchange="toggleCbStyle(this);filterRecipients()"> Referral</label>
+                <label class="cb-label"><input type="checkbox" value="Zillow" onchange="toggleCbStyle(this);filterRecipients()"> Zillow</label>
+                <label class="cb-label"><input type="checkbox" value="Social Media" onchange="toggleCbStyle(this);filterRecipients()"> Social Media</label>
+                <label class="cb-label"><input type="checkbox" value="Other" onchange="toggleCbStyle(this);filterRecipients()"> Other</label>
+              </div>
+            </div>
 
-            <div id="recipientCount" style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">Click Find to load recipients</div>
-            <div id="recipientList" style="max-height:180px;overflow-y:auto;"></div>
+            <div class="field" style="margin-bottom:10px;">
+              <input type="text" id="recipientSearch" placeholder="Search by name or email..." oninput="filterRecipients()">
+            </div>
+
+            <div class="recipient-badge" id="recipientCountBadge">0 recipients selected</div>
+
+            <div class="recipient-actions">
+              <button class="btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="selectAll(true)">Select All</button>
+              <button class="btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="selectAll(false)">Deselect All</button>
+            </div>
+
+            <div class="recipient-list" id="recipientList">
+              <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:12px;">Loading contacts...</div>
+            </div>
           </div>
 
           <div class="card">
-            <div class="card-title">🚀 Send</div>
-            <div class="field">
-              <label>Schedule</label>
-              <select id="campSchedule">
-                <option value="now">Send Immediately</option>
-                <option value="schedule">Schedule for Later</option>
-              </select>
+            <div class="card-title">Send</div>
+            <div class="send-buttons">
+              <button class="btn-gold" style="width:100%;padding:12px;" onclick="sendCampaign('now')">Send Immediately</button>
+              <div class="schedule-row">
+                <input type="text" id="schedulePicker" placeholder="Pick date & time to schedule..." style="padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;font-size:13px;outline:none;flex:1;">
+                <button class="btn-ghost" style="white-space:nowrap;" onclick="sendCampaign('schedule')">Schedule</button>
+              </div>
+              <button class="btn-ghost" style="width:100%;border-color:rgba(201,168,76,0.2);color:var(--gold);" onclick="sendTestEmail()">Send Test Email</button>
+              <div style="font-size:10px;color:var(--text-muted);text-align:center;">Test sends to rene@ratesandrealty.com</div>
             </div>
-            <div class="field" id="scheduleTimeField" style="display:none;">
-              <label>Send Date & Time</label>
-              <input type="datetime-local" id="campScheduleTime">
-            </div>
-            <button class="btn-gold" onclick="sendCampaign()" style="width:100%;">📤 Send Campaign</button>
-            <div id="sendStatus" style="margin-top:10px;font-size:12px;color:var(--text-muted);text-align:center;"></div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ═══ TAB: AUTOMATIONS ═══ -->
-    <div id="tab-automations" class="tab-panel">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <div>
-          <div style="font-size:18px;font-weight:700;">🔄 Email Automations</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Drip sequences that fire automatically when contacts are added</div>
-        </div>
-        <button class="btn-gold" onclick="openNewDrip()">+ New Drip</button>
-      </div>
-
-      <!-- Quick drip templates -->
-      <div class="card" style="margin-bottom:20px;">
-        <div class="card-title">⚡ Quick Drip Templates</div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;" onclick="createDrip('new_lead')">
-            <div style="font-size:20px;margin-bottom:6px;">🆕</div>
-            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">New Lead Welcome</div>
-            <div style="font-size:11px;color:var(--text-muted);">5 emails over 9 days</div>
-            <div style="margin-top:10px;font-size:11px;color:var(--gold);">Create →</div>
-          </div>
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;" onclick="createDrip('rate_update')">
-            <div style="font-size:20px;margin-bottom:6px;">📉</div>
-            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Rate Drop Alert</div>
-            <div style="font-size:11px;color:var(--text-muted);">3 emails, urgent sequence</div>
-            <div style="margin-top:10px;font-size:11px;color:var(--gold);">Create →</div>
-          </div>
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;" onclick="createDrip('re_engage')">
-            <div style="font-size:20px;margin-bottom:6px;">🔁</div>
-            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Cold Lead Re-Engage</div>
-            <div style="font-size:11px;color:var(--text-muted);">4 emails over 30 days</div>
-            <div style="margin-top:10px;font-size:11px;color:var(--gold);">Create →</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Existing automations -->
-      <div class="card">
-        <div class="card-title">Your Automations</div>
-        <div id="automationList">
-          <div style="text-align:center;padding:24px;color:var(--text-muted);">Loading automations…</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ═══ TAB: PAST CAMPAIGNS ═══ -->
-    <div id="tab-campaigns" class="tab-panel">
-      <div style="font-size:18px;font-weight:700;margin-bottom:20px;">📋 Past Campaigns</div>
-      <div class="card">
-        <div id="campaignList">
-          <div style="text-align:center;padding:24px;color:var(--text-muted);">Loading campaigns…</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ═══ TAB: TEMPLATES ═══ -->
+    <!-- TEMPLATES TAB -->
     <div id="tab-templates" class="tab-panel">
-      <div style="font-size:18px;font-weight:700;margin-bottom:20px;">✉️ Email Templates</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">
-
-        <div class="card" style="cursor:pointer;" onclick="useTemplate('welcome')">
-          <div style="font-size:24px;margin-bottom:8px;">👋</div>
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Welcome / Introduction</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Introduce yourself and your services to a new lead</div>
-          <button class="btn-sm btn-gold">Use Template</button>
-        </div>
-
-        <div class="card" style="cursor:pointer;" onclick="useTemplate('rate_update')">
-          <div style="font-size:24px;margin-bottom:8px;">📉</div>
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Rate Update</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Share current mortgage rates with your contacts</div>
-          <button class="btn-sm btn-gold">Use Template</button>
-        </div>
-
-        <div class="card" style="cursor:pointer;" onclick="useTemplate('preapproval')">
-          <div style="font-size:24px;margin-bottom:8px;">✅</div>
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Pre-Approval Push</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Encourage contacts to start their pre-approval</div>
-          <button class="btn-sm btn-gold">Use Template</button>
-        </div>
-
-        <div class="card" style="cursor:pointer;" onclick="useTemplate('market_update')">
-          <div style="font-size:24px;margin-bottom:8px;">🏡</div>
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Market Update Newsletter</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Monthly housing market recap and insights</div>
-          <button class="btn-sm btn-gold">Use Template</button>
-        </div>
-
-        <div class="card" style="cursor:pointer;" onclick="useTemplate('followup')">
-          <div style="font-size:24px;margin-bottom:8px;">📞</div>
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Follow-Up Check-In</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Gentle nudge for contacts who went quiet</div>
-          <button class="btn-sm btn-gold">Use Template</button>
-        </div>
-
-        <div class="card" style="cursor:pointer;" onclick="useTemplate('referral')">
-          <div style="font-size:24px;margin-bottom:8px;">🤝</div>
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Referral Request</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Ask satisfied clients for referrals</div>
-          <button class="btn-sm btn-gold">Use Template</button>
-        </div>
-
+      <div style="margin-bottom:20px;">
+        <div style="font-size:18px;font-weight:700;">Email Templates</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Click a template to load it into the editor</div>
       </div>
+      <div class="templates-grid" id="templatesGrid"></div>
+    </div>
+
+    <!-- PAST CAMPAIGNS TAB -->
+    <div id="tab-campaigns" class="tab-panel">
+      <div style="margin-bottom:20px;">
+        <div style="font-size:18px;font-weight:700;">Past Campaigns</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">History of campaigns you have sent or scheduled</div>
+      </div>
+      <div class="card">
+        <table class="camp-table">
+          <thead>
+            <tr><th>Campaign</th><th>Date</th><th>Recipients</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="campaignTableBody">
+            <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:32px;">No campaigns yet. Send your first one!</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- AUTOMATIONS TAB -->
+    <div id="tab-automations" class="tab-panel">
+      <div style="margin-bottom:20px;">
+        <div style="font-size:18px;font-weight:700;">Automations</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Automated workflows running in the background</div>
+      </div>
+      <div id="automationsList"></div>
     </div>
 
   </div>
@@ -323,444 +359,452 @@
 <div id="toast"></div>
 
 <script>
-const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+/* ================================================================
+   CONFIG
+   ================================================================ */
+const SB_URL = window.APP_CONFIG?.SUPABASE_URL || '';
+const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
 
-let _recipients = [];
+let quill = null;
+let allContacts = [];
+let filteredContacts = [];
+let scheduleFp = null;
 
-// ── Tab switching ─────────────────────────────────────────────
-function switchTab(tab) {
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
-  event.target.classList.add('active');
-  if (tab === 'automations') loadAutomations();
-  if (tab === 'campaigns') loadCampaigns();
-}
-
-// ── Schedule toggle ───────────────────────────────────────────
-document.getElementById('campSchedule').addEventListener('change', function() {
-  document.getElementById('scheduleTimeField').style.display = this.value === 'schedule' ? 'block' : 'none';
+/* ================================================================
+   INIT
+   ================================================================ */
+document.addEventListener('DOMContentLoaded', () => {
+  initQuill();
+  initFlatpickr();
+  initSidebar();
+  loadContacts();
+  renderTemplates();
+  renderAutomations();
+  loadCampaignHistory();
 });
 
-// ── Load recipients from Supabase ─────────────────────────────
-async function loadRecipients() {
-  const status = document.getElementById('filterStatus').value;
-  const source = document.getElementById('filterSource').value;
-  const loan = document.getElementById('filterLoan').value;
+/* ================================================================
+   SIDEBAR TAB SWITCHING
+   ================================================================ */
+function initSidebar() {
+  document.querySelectorAll('.sidebar-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById('tab-' + item.dataset.tab).classList.add('active');
+    });
+  });
+}
 
-  let query = `${SB_URL}/rest/v1/contacts?select=id,first_name,last_name,email,contact_type,source,loan_type&not.email.is.null&order=created_at.desc&limit=200`;
-  if (status) query += `&contact_type=eq.${encodeURIComponent(status)}`;
-  if (source) query += `&source=eq.${encodeURIComponent(source)}`;
-  if (loan) query += `&loan_type=eq.${encodeURIComponent(loan)}`;
+/* ================================================================
+   QUILL EDITOR
+   ================================================================ */
+function initQuill() {
+  quill = new Quill('#quill-editor', {
+    theme: 'snow',
+    placeholder: 'Write your email content here...',
+    modules: {
+      toolbar: [
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ 'size': ['small', false, 'large', 'huge'] }],
+        [{ 'color': [] }, { 'background': [] }],
+        [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+        ['link', 'image', 'blockquote', 'code-block'],
+        ['clean']
+      ]
+    }
+  });
 
-  const res = await fetch(query, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
-  _recipients = (await res.json()).filter(c => c.email);
+  quill.on('text-change', () => {
+    updateEditorStats();
+    updatePreview();
+  });
+}
 
-  document.getElementById('recipientCount').innerHTML = `<span style="color:var(--gold);font-weight:700;">${_recipients.length}</span> contacts with email addresses`;
+function updateEditorStats() {
+  const text = quill.getText().trim();
+  const words = text ? text.split(/\s+/).length : 0;
+  const chars = text.length;
+  document.getElementById('wordCount').textContent = words + ' word' + (words !== 1 ? 's' : '');
+  document.getElementById('charCountBody').textContent = chars + ' character' + (chars !== 1 ? 's' : '');
+}
 
+function insertToken(token) {
+  const range = quill.getSelection(true);
+  quill.insertText(range.index, token);
+  quill.setSelection(range.index + token.length);
+}
+
+/* ================================================================
+   SUBJECT LINE
+   ================================================================ */
+function updateSubjectCount() {
+  const el = document.getElementById('subjectLine');
+  const counter = document.getElementById('subjectCount');
+  const len = el.value.length;
+  counter.textContent = len + '/80';
+  counter.classList.toggle('warn', len > 80);
+}
+
+/* ================================================================
+   FLATPICKR
+   ================================================================ */
+function initFlatpickr() {
+  scheduleFp = flatpickr('#schedulePicker', {
+    enableTime: true,
+    dateFormat: 'Y-m-d H:i',
+    minDate: 'today',
+    time_24hr: false,
+    theme: 'dark'
+  });
+}
+
+/* ================================================================
+   CONTACTS / RECIPIENTS
+   ================================================================ */
+async function loadContacts() {
+  try {
+    const url = SB_URL + '/rest/v1/contacts?select=id,first_name,last_name,email,pipeline_status,source,loan_type,tags&not.email.is.null&order=created_at.desc&limit=500';
+    const res = await fetch(url, {
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY }
+    });
+    allContacts = (await res.json()).filter(c => c.email);
+    filteredContacts = [...allContacts];
+    renderRecipients();
+  } catch (e) {
+    document.getElementById('recipientList').innerHTML = '<div style="padding:24px;text-align:center;color:var(--red);font-size:12px;">Failed to load contacts</div>';
+  }
+}
+
+function filterRecipients() {
+  const statusChecked = [...document.querySelectorAll('#statusFilters input:checked')].map(i => i.value);
+  const sourceChecked = [...document.querySelectorAll('#sourceFilters input:checked')].map(i => i.value);
+  const search = document.getElementById('recipientSearch').value.toLowerCase().trim();
+
+  filteredContacts = allContacts.filter(c => {
+    if (statusChecked.length && !statusChecked.includes(c.pipeline_status)) return false;
+    if (sourceChecked.length && !sourceChecked.includes(c.source)) return false;
+    if (search) {
+      const full = ((c.first_name || '') + ' ' + (c.last_name || '') + ' ' + c.email).toLowerCase();
+      if (!full.includes(search)) return false;
+    }
+    return true;
+  });
+
+  renderRecipients();
+}
+
+function renderRecipients() {
   const list = document.getElementById('recipientList');
-  list.innerHTML = _recipients.slice(0, 10).map(c => `
-    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;">
-      <span>${c.first_name || ''} ${c.last_name || ''}</span>
-      <span style="color:var(--text-muted);">${c.email}</span>
-    </div>`).join('') + (_recipients.length > 10 ? `<div style="font-size:11px;color:var(--text-muted);padding:8px 0;">+ ${_recipients.length - 10} more...</div>` : '');
+  if (!filteredContacts.length) {
+    list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:12px;">No contacts match your filters</div>';
+    updateRecipientCount();
+    return;
+  }
+
+  list.innerHTML = filteredContacts.map((c, i) => {
+    const name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || 'Unknown';
+    const statusClass = (c.pipeline_status || '').toLowerCase().replace(/[\s_]+/g, '-');
+    return '<div class="recipient-item">' +
+      '<input type="checkbox" checked data-idx="' + i + '" onchange="updateRecipientCount()">' +
+      '<span class="recipient-name">' + escHtml(name) + '</span>' +
+      '<span class="status-badge status-' + statusClass + '">' + escHtml(c.pipeline_status || '') + '</span>' +
+      '<span class="recipient-email">' + escHtml(c.email) + '</span>' +
+      '</div>';
+  }).join('');
+
+  updateRecipientCount();
 }
 
-// ── Preview email ─────────────────────────────────────────────
-function previewEmail() {
-  const subject = document.getElementById('campSubject').value;
-  const body = document.getElementById('campBody').value;
-  const sampleName = 'John';
-  const preview = document.getElementById('emailPreview');
-  const card = document.getElementById('previewCard');
-
-  preview.innerHTML = `
-    <div style="border-bottom:1px solid #eee;padding-bottom:12px;margin-bottom:16px;">
-      <div style="font-size:11px;color:#888;margin-bottom:3px;">FROM: Rene Duarte — Rates & Realty</div>
-      <div style="font-size:16px;font-weight:700;color:#1a1a1a;">${subject || '(no subject)'}</div>
-    </div>
-    <div style="white-space:pre-wrap;line-height:1.7;">${body.replace(/{name}/g, sampleName) || '(no content)'}</div>
-    <div style="margin-top:24px;padding-top:16px;border-top:1px solid #eee;font-size:11px;color:#888;">
-      Rene Duarte | NMLS #1795044 | Rates & Realty | 714-472-8508 | ratesandrealty.com
-    </div>`;
-  card.style.display = 'block';
+function updateRecipientCount() {
+  const checked = document.querySelectorAll('#recipientList input[type="checkbox"]:checked').length;
+  document.getElementById('recipientCountBadge').textContent = checked + ' recipient' + (checked !== 1 ? 's' : '') + ' selected';
 }
 
-// ── Send campaign via MailerLite edge function ────────────────
-async function sendCampaign() {
-  const name = document.getElementById('campName').value.trim();
-  const subject = document.getElementById('campSubject').value.trim();
-  const body = document.getElementById('campBody').value.trim();
-  const fromName = document.getElementById('campFromName').value.trim();
-  const status = document.getElementById('sendStatus');
+function selectAll(state) {
+  document.querySelectorAll('#recipientList input[type="checkbox"]').forEach(cb => cb.checked = state);
+  updateRecipientCount();
+}
 
-  if (!name || !subject || !body) { showToast('Please fill in campaign name, subject, and body'); return; }
-  if (_recipients.length === 0) { showToast('Click "Find Recipients" first to select who to send to'); return; }
+function toggleCbStyle(input) {
+  input.closest('.cb-label').classList.toggle('checked', input.checked);
+}
 
-  if (!confirm(`Send "${subject}" to ${_recipients.length} contacts?`)) return;
+function getSelectedRecipients() {
+  const checked = document.querySelectorAll('#recipientList input[type="checkbox"]:checked');
+  return [...checked].map(cb => filteredContacts[parseInt(cb.dataset.idx)]).filter(Boolean);
+}
 
-  status.textContent = '⏳ Creating campaign in MailerLite…';
+/* ================================================================
+   EMAIL PREVIEW
+   ================================================================ */
+function updatePreview() {
+  const html = quill.root.innerHTML;
+  document.getElementById('previewBody').innerHTML = html || '<em style="color:#999;">Start typing to see a live preview...</em>';
+}
+
+function setPreview(mode, btn) {
+  document.querySelectorAll('.preview-toggle button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const wrap = document.getElementById('previewWrap');
+  wrap.className = mode === 'mobile' ? 'preview-mobile' : 'preview-desktop';
+}
+
+/* ================================================================
+   SEND CAMPAIGN
+   ================================================================ */
+async function sendCampaign(mode) {
+  const subject = document.getElementById('subjectLine').value.trim();
+  const html = quill.root.innerHTML;
+  const recipients = getSelectedRecipients();
+
+  if (!subject) { showToast('Please enter a subject line'); return; }
+  if (!quill.getText().trim()) { showToast('Please write some email content'); return; }
+  if (!recipients.length) { showToast('No recipients selected'); return; }
+
+  if (mode === 'schedule') {
+    const dt = document.getElementById('schedulePicker').value;
+    if (!dt) { showToast('Please pick a date and time to schedule'); return; }
+  }
+
+  const label = mode === 'schedule' ? 'schedule' : 'send';
+  if (!confirm(label.charAt(0).toUpperCase() + label.slice(1) + ' "' + subject + '" to ' + recipients.length + ' recipients?')) return;
 
   try {
-    const resp = await fetch(`${SB_URL}/functions/v1/mailerlite-send`, {
+    showToast('Sending campaign...');
+    const emails = recipients.map(r => r.email);
+    const resp = await fetch(SB_URL + '/functions/v1/email-service', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}` },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SB_KEY },
       body: JSON.stringify({
-        action: 'send_campaign',
-        campaign_name: name,
-        subject,
-        body,
-        from_name: fromName || 'Rene Duarte — Rates & Realty',
-        from_email: 'rene@ratesandrealty.com',
-        recipients: _recipients.map(r => ({ email: r.email, name: `${r.first_name || ''} ${r.last_name || ''}`.trim() }))
+        to: emails,
+        subject: subject,
+        html: buildFullHtml(html),
+        from_name: 'Rene Duarte',
+        from_email: 'rene@ratesandrealty.com'
       })
     });
     const data = await resp.json();
-    if (data.success) {
-      status.innerHTML = `<span style="color:#50c878;">✓ Campaign sent to ${_recipients.length} contacts!</span>`;
-      showToast(`✓ Email sent to ${_recipients.length} contacts`);
-    } else {
-      status.innerHTML = `<span style="color:#ff6b6b;">Error: ${data.error || 'Send failed'}</span>`;
-    }
-  } catch(e) {
-    status.innerHTML = `<span style="color:#ff6b6b;">Error: ${e.message}</span>`;
+    if (data.error) throw new Error(data.error);
+
+    saveCampaign(subject, recipients.length, mode === 'schedule' ? 'Scheduled' : 'Sent');
+    showToast('Campaign ' + (mode === 'schedule' ? 'scheduled' : 'sent') + ' to ' + recipients.length + ' recipients!');
+  } catch (e) {
+    showToast('Error: ' + e.message);
   }
 }
 
-// ── Load automations ──────────────────────────────────────────
-async function loadAutomations() {
-  const list = document.getElementById('automationList');
+async function sendTestEmail() {
+  const subject = document.getElementById('subjectLine').value.trim() || '(Test) No Subject';
+  const html = quill.root.innerHTML;
+
   try {
-    const resp = await fetch(`${SB_URL}/functions/v1/mailerlite-send`, {
+    showToast('Sending test email...');
+    await fetch(SB_URL + '/functions/v1/email-service', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}` },
-      body: JSON.stringify({ action: 'list_automations' })
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SB_KEY },
+      body: JSON.stringify({
+        to: ['rene@ratesandrealty.com'],
+        subject: '[TEST] ' + subject,
+        html: buildFullHtml(html),
+        from_name: 'Rene Duarte',
+        from_email: 'rene@ratesandrealty.com'
+      })
     });
-    const data = await resp.json();
-    const autos = data.automations || [];
-    if (!autos.length) { list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted);">No automations yet</div>'; return; }
-    list.innerHTML = autos.map(a => `
-      <div class="auto-item">
-        <div class="auto-status ${a.enabled ? 'on' : 'off'}"></div>
-        <div style="flex:1;">
-          <div class="auto-name">${a.name}</div>
-          <div class="auto-meta">${a.steps_count || 0} steps · ${a.trigger_type?.replace('_',' ') || ''}</div>
-        </div>
-        <a href="${a.dashboard_url || '#'}" target="_blank" style="font-size:11px;color:var(--gold);text-decoration:none;">Edit in MailerLite →</a>
-      </div>`).join('');
-  } catch(e) { list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted);">Could not load automations</div>'; }
-}
-
-// ── Load campaigns ────────────────────────────────────────────
-async function loadCampaigns() {
-  const list = document.getElementById('campaignList');
-  try {
-    const resp = await fetch(`${SB_URL}/functions/v1/mailerlite-send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}` },
-      body: JSON.stringify({ action: 'list_campaigns' })
-    });
-    const data = await resp.json();
-    const camps = data.campaigns || [];
-    if (!camps.length) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);">No campaigns yet. Send your first one!</div>'; return; }
-    list.innerHTML = camps.map(c => `
-      <div class="camp-item">
-        <div style="flex:1;">
-          <div style="font-size:13px;font-weight:600;">${c.name}</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${c.emails?.[0]?.subject || ''}</div>
-        </div>
-        <span class="camp-badge badge-${c.status}">${c.status}</span>
-        <div style="font-size:11px;color:var(--text-muted);">${c.stats?.sent || 0} sent · ${c.stats?.open_rate || 0}% open</div>
-      </div>`).join('');
-  } catch(e) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);">Could not load campaigns</div>'; }
-}
-
-// ── Templates ─────────────────────────────────────────────────
-const TEMPLATES = {
-  welcome: {
-    name: 'New Lead Welcome',
-    subject: '👋 Hi {name}, I\'m Rene — Let\'s talk about your home goals',
-    body: `Hi {name},
-
-I wanted to personally reach out and welcome you! I'm Rene Duarte, your licensed Mortgage Loan Officer at Rates & Realty.
-
-Whether you're looking to purchase your first home, refinance, or explore investment options — I'm here to help you find the best loan for your situation.
-
-Here's what I can do for you:
-- Free consultation — no obligation
-- Same-day pre-approval letters
-- Access to 50+ wholesale lenders
-- FHA, VA, Conventional, DSCR, and more
-
-Ready to get started? Reply to this email or book a quick call:
-https://ratesandrealty.com
-
-Looking forward to helping you achieve your real estate goals!
-
-Best,
-Rene Duarte
-NMLS #1795044 | Rates & Realty
-📞 714-472-8508`
-  },
-  rate_update: {
-    name: 'Rate Update',
-    subject: '📉 Mortgage rates just dropped — time to lock in?',
-    body: `Hi {name},
-
-Quick update — mortgage rates have moved this week and I wanted to make sure you're in the loop.
-
-Current rates as of this week:
-- 30-Year Fixed: Competitive rates available
-- 15-Year Fixed: Even better options
-- FHA Loans: Low down payment options
-- VA Loans: 0% down for veterans
-
-If you've been on the fence about buying or refinancing, now could be the right time to take action before rates change again.
-
-Want to see what rate you'd qualify for? Reply to this email or click below to schedule a free 15-minute call.
-
-Book a call: https://ratesandrealty.com
-
-No pressure — just want to make sure you have the most current information.
-
-Best,
-Rene Duarte | NMLS #1795044 | 714-472-8508`
-  },
-  preapproval: {
-    name: 'Pre-Approval Push',
-    subject: '✅ Get pre-approved today — it\'s faster than you think',
-    body: `Hi {name},
-
-Did you know you can get pre-approved for a mortgage in as little as 24 hours?
-
-A pre-approval letter gives you:
-✅ A clear budget so you know what you can afford
-✅ Credibility with sellers in a competitive market
-✅ A head start over buyers who aren't pre-approved
-✅ Confidence when making an offer
-
-The process is simple — I just need a few documents and I'll handle the rest.
-
-Start your application here: https://beta.ratesandrealty.com/public/apply.html
-
-Or reply to this email and I'll walk you through it personally.
-
-Let's get you ready to make an offer!
-
-Best,
-Rene Duarte | NMLS #1795044 | 714-472-8508`
-  },
-  market_update: {
-    name: 'Market Update Newsletter',
-    subject: '🏡 Southern California Real Estate — Monthly Market Update',
-    body: `Hi {name},
-
-Here's your monthly Southern California real estate and mortgage market update.
-
-📊 MARKET HIGHLIGHTS
-- Home values in Orange County continue to hold strong
-- Inventory remains limited, creating competitive buying conditions
-- Interest rates remain a key factor for affordability
-
-💡 WHAT THIS MEANS FOR BUYERS
-This is still a great time to get into the market if you're ready. With the right loan program, your monthly payment might be lower than you think.
-
-💡 WHAT THIS MEANS FOR HOMEOWNERS
-If you purchased in the last 2-3 years and haven't reviewed your rate, let's talk. There may be options to improve your situation.
-
-Want a personalized rate quote or market analysis for your specific situation?
-
-Reply to this email or schedule a call: https://ratesandrealty.com
-
-Best,
-Rene Duarte
-NMLS #1795044 | Rates & Realty | 714-472-8508`
-  },
-  followup: {
-    name: 'Follow-Up Check-In',
-    subject: '👋 Checking in — still thinking about a home purchase?',
-    body: `Hi {name},
-
-I wanted to check in and see how things are going with your home search or financing goals.
-
-I know life gets busy, and sometimes the timing just isn't right. But I wanted you to know I'm still here whenever you're ready — no pressure at all.
-
-If your situation has changed or you have any questions about current rates, loan options, or the market in general, I'm happy to help.
-
-Even if you're not ready to move forward right now, feel free to reach out anytime.
-
-Hope you're doing well!
-
-Best,
-Rene Duarte
-NMLS #1795044 | Rates & Realty
-📞 714-472-8508 | ratesandrealty.com`
-  },
-  referral: {
-    name: 'Referral Request',
-    subject: '🤝 Know someone who needs a great mortgage?',
-    body: `Hi {name},
-
-I hope everything is going well! I wanted to reach out with a quick favor.
-
-Do you know anyone who is:
-- Looking to buy a home?
-- Wanting to refinance their current mortgage?
-- Interested in investment properties?
-
-If so, I'd love the opportunity to help them the same way I've tried to help you.
-
-Referrals are the highest compliment I can receive, and I promise to take great care of anyone you send my way.
-
-Simply have them reach out to me directly:
-📞 714-472-8508
-📧 rene@ratesandrealty.com
-🌐 ratesandrealty.com
-
-Thank you for your trust and support!
-
-Best,
-Rene Duarte
-NMLS #1795044 | Rates & Realty`
+    showToast('Test email sent to rene@ratesandrealty.com');
+  } catch (e) {
+    showToast('Error: ' + e.message);
   }
-};
+}
 
-function useTemplate(key) {
-  const t = TEMPLATES[key];
+function buildFullHtml(bodyHtml) {
+  return '<!DOCTYPE html><html><body style="margin:0;padding:0;font-family:Arial,sans-serif;background:#f5f5f5;">' +
+    '<div style="max-width:600px;margin:0 auto;background:#fff;">' +
+    '<div style="background:#C9A84C;padding:20px;text-align:center;">' +
+    '<span style="color:#000;font-weight:800;font-size:18px;letter-spacing:1px;">RATES &amp; REALTY</span></div>' +
+    '<div style="padding:28px 24px;font-size:15px;line-height:1.7;color:#333;">' + bodyHtml + '</div>' +
+    '<div style="padding:16px 24px;border-top:1px solid #eee;font-size:10px;color:#999;text-align:center;line-height:1.6;">' +
+    '<a href="{unsubscribe_url}" style="color:#888;">Unsubscribe</a><br>' +
+    'Rene Duarte | NMLS #1795044<br>Rates &amp; Realty | 714-472-8508 | ratesandrealty.com<br>Equal Housing Lender</div>' +
+    '</div></body></html>';
+}
+
+/* ================================================================
+   CAMPAIGN HISTORY (localStorage)
+   ================================================================ */
+function saveCampaign(subject, count, status) {
+  const history = JSON.parse(localStorage.getItem('rr_campaigns') || '[]');
+  history.unshift({
+    subject: subject,
+    date: new Date().toISOString(),
+    recipients: count,
+    status: status
+  });
+  localStorage.setItem('rr_campaigns', JSON.stringify(history.slice(0, 50)));
+  loadCampaignHistory();
+}
+
+function loadCampaignHistory() {
+  const history = JSON.parse(localStorage.getItem('rr_campaigns') || '[]');
+  const tbody = document.getElementById('campaignTableBody');
+
+  if (!history.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:32px;">No campaigns yet. Send your first one!</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = history.map(c => {
+    const d = new Date(c.date);
+    const dateStr = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+    const badgeClass = c.status === 'Sent' ? 'badge-sent' : c.status === 'Scheduled' ? 'badge-scheduled' : 'badge-draft';
+    return '<tr>' +
+      '<td style="font-weight:600;">' + escHtml(c.subject) + '</td>' +
+      '<td style="color:var(--text-muted);">' + dateStr + '</td>' +
+      '<td>' + c.recipients + '</td>' +
+      '<td><span class="camp-badge ' + badgeClass + '">' + c.status + '</span></td>' +
+      '<td><button class="btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="reuseCampaign(\'' + escHtml(c.subject).replace(/'/g, "\\'") + '\')">Reuse</button></td>' +
+      '</tr>';
+  }).join('');
+}
+
+function reuseCampaign(subject) {
+  document.getElementById('subjectLine').value = subject;
+  updateSubjectCount();
+  document.querySelector('[data-tab="send"]').click();
+  showToast('Subject loaded - update content and send again');
+}
+
+/* ================================================================
+   TEMPLATES
+   ================================================================ */
+const TEMPLATES = [
+  {
+    id: 'rate_drop',
+    icon: '\u{1F4C9}',
+    title: 'Rate Drop Alert',
+    desc: 'Notify contacts when mortgage rates decrease significantly.',
+    subject: 'Rates just dropped - time to lock in?',
+    body: '<p>Hi {first_name},</p><p>Great news! Mortgage rates have dropped this week and I wanted to make sure you know about it.</p><p><strong>This could mean significant savings</strong> on your monthly payment. Whether you are looking to buy or refinance, now might be the perfect time to take action.</p><p>Want to see what rate you would qualify for? Reply to this email or give me a call.</p><p>Best,<br>Rene Duarte</p>'
+  },
+  {
+    id: 'follow_up',
+    icon: '\u{1F4DE}',
+    title: 'Follow Up',
+    desc: 'Gentle check-in for contacts who have gone quiet.',
+    subject: 'Checking in - still thinking about a home purchase?',
+    body: '<p>Hi {first_name},</p><p>I wanted to check in and see how things are going with your home search or financing goals.</p><p>I know life gets busy, and sometimes the timing just is not right. But I wanted you to know I am still here whenever you are ready - no pressure at all.</p><p>If your situation has changed or you have any questions about current rates, loan options, or the market in general, I am happy to help.</p><p>Hope you are doing well!</p><p>Best,<br>Rene Duarte</p>'
+  },
+  {
+    id: 'pre_approval',
+    icon: '\u2705',
+    title: 'Pre-Approval Ready',
+    desc: 'Encourage contacts to start their pre-approval process.',
+    subject: 'Get pre-approved today - it is faster than you think',
+    body: '<p>Hi {first_name},</p><p>Did you know you can get pre-approved for a mortgage in as little as <strong>24 hours</strong>?</p><p>A pre-approval letter gives you:</p><ul><li>A clear budget so you know what you can afford</li><li>Credibility with sellers in a competitive market</li><li>A head start over buyers who are not pre-approved</li><li>Confidence when making an offer</li></ul><p>The process is simple - I just need a few documents and I will handle the rest.</p><p>Ready to get started? Reply to this email and I will walk you through it personally.</p><p>Best,<br>Rene Duarte</p>'
+  },
+  {
+    id: 'market_update',
+    icon: '\u{1F3E1}',
+    title: 'Market Update',
+    desc: 'Monthly housing market recap and insights for your area.',
+    subject: 'Southern California Real Estate - Monthly Market Update',
+    body: '<p>Hi {first_name},</p><p>Here is your monthly Southern California real estate and mortgage market update.</p><h3>Market Highlights</h3><ul><li>Home values in Orange County continue to hold strong</li><li>Inventory remains limited, creating competitive buying conditions</li><li>Interest rates remain a key factor for affordability</li></ul><h3>What This Means For Buyers</h3><p>This is still a great time to get into the market if you are ready. With the right loan program, your monthly payment might be lower than you think.</p><h3>What This Means For Homeowners</h3><p>If you purchased in the last 2-3 years and have not reviewed your rate, let us talk. There may be options to improve your situation.</p><p>Want a personalized rate quote? Reply to this email or schedule a call.</p><p>Best,<br>Rene Duarte</p>'
+  },
+  {
+    id: 'open_house',
+    icon: '\u{1F3E0}',
+    title: 'Open House Invite',
+    desc: 'Invite contacts to an upcoming open house event.',
+    subject: 'You are invited - Open House this weekend!',
+    body: '<p>Hi {first_name},</p><p>I wanted to personally invite you to an <strong>Open House</strong> this weekend!</p><p><strong>Details:</strong></p><ul><li>Date: [DATE]</li><li>Time: [TIME]</li><li>Address: [ADDRESS]</li></ul><p>This is a great opportunity to tour a beautiful property and ask any questions about the buying process or financing options.</p><p>I will be there to answer any mortgage-related questions and can even get you started on a pre-approval on the spot.</p><p>Hope to see you there!</p><p>Best,<br>Rene Duarte</p>'
+  },
+  {
+    id: 'referral_thanks',
+    icon: '\u{1F91D}',
+    title: 'Referral Thank You',
+    desc: 'Thank clients who have referred friends and family to you.',
+    subject: 'Thank you for the referral!',
+    body: '<p>Hi {first_name},</p><p>I just wanted to take a moment to <strong>thank you</strong> for referring someone my way. It truly means the world to me.</p><p>Referrals are the highest compliment I can receive, and I promise to take great care of anyone you send to me - just like I did with you.</p><p>If you ever need anything in the future - whether it is a rate check, a refinance question, or just general real estate advice - please do not hesitate to reach out.</p><p>Thank you again for your trust and support!</p><p>Warm regards,<br>Rene Duarte</p>'
+  }
+];
+
+function renderTemplates() {
+  const grid = document.getElementById('templatesGrid');
+  grid.innerHTML = TEMPLATES.map(t =>
+    '<div class="template-card" onclick="useTemplate(\'' + t.id + '\')">' +
+    '<div class="template-icon">' + t.icon + '</div>' +
+    '<div class="template-title">' + t.title + '</div>' +
+    '<div class="template-desc">' + t.desc + '</div>' +
+    '<button class="btn-sm btn-gold">Use Template</button>' +
+    '</div>'
+  ).join('');
+}
+
+function useTemplate(id) {
+  const t = TEMPLATES.find(x => x.id === id);
   if (!t) return;
-  document.getElementById('campName').value = t.name;
-  document.getElementById('campSubject').value = t.subject;
-  document.getElementById('campBody').value = t.body;
-  switchTabDirect('blast');
-  showToast('Template loaded — customize and send!');
+  document.getElementById('subjectLine').value = t.subject;
+  updateSubjectCount();
+  quill.root.innerHTML = t.body;
+  updateEditorStats();
+  updatePreview();
+  document.querySelector('[data-tab="send"]').click();
+  showToast('Template loaded - customize and send!');
 }
 
-function switchTabDirect(tab) {
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
-  document.querySelector('.sidebar-item').classList.add('active');
+/* ================================================================
+   AUTOMATIONS
+   ================================================================ */
+const AUTOMATIONS = [
+  { name: 'ClickUp Calendar Sync', active: true, lastRun: '2 hours ago', desc: 'Syncs ClickUp tasks to calendar events' },
+  { name: 'Google Calendar Sync', active: true, lastRun: '1 hour ago', desc: 'Two-way sync with Google Calendar' },
+  { name: 'Roll Overdue Tasks', active: true, lastRun: 'Today 8:00 PM PT', desc: 'Moves overdue tasks to today at 8pm PT daily' },
+  { name: 'Lead Auto-Scoring', active: false, lastRun: 'Never', desc: 'Automatically scores new leads based on profile data' },
+  { name: 'New Lead Welcome Email', active: false, lastRun: 'Never', desc: 'Sends a welcome email when a new contact is created' }
+];
+
+function renderAutomations() {
+  const el = document.getElementById('automationsList');
+  el.innerHTML = AUTOMATIONS.map((a, i) =>
+    '<div class="auto-card">' +
+    '<div class="auto-dot ' + (a.active ? 'active' : 'inactive') + '"></div>' +
+    '<div class="auto-info">' +
+    '<div class="auto-name">' + a.name + '</div>' +
+    '<div class="auto-meta">' + a.desc + '</div>' +
+    '<div class="auto-meta" style="margin-top:2px;">Last run: ' + a.lastRun + '</div>' +
+    '</div>' +
+    '<label class="toggle-switch"><input type="checkbox" ' + (a.active ? 'checked' : '') + ' onchange="toggleAutomation(' + i + ', this.checked)"><span class="toggle-slider"></span></label>' +
+    '</div>'
+  ).join('');
 }
 
-function createDrip(type) {
-  window.location.href = 'drip-builder.html';
+function toggleAutomation(idx, state) {
+  AUTOMATIONS[idx].active = state;
+  const dots = document.querySelectorAll('.auto-dot');
+  if (dots[idx]) {
+    dots[idx].className = 'auto-dot ' + (state ? 'active' : 'inactive');
+  }
+  showToast(AUTOMATIONS[idx].name + ' ' + (state ? 'enabled' : 'disabled'));
 }
 
-function openNewDrip() {
-  window.location.href = 'drip-builder.html';
+/* ================================================================
+   UTILITIES
+   ================================================================ */
+function escHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
 }
 
-// ── Toast ─────────────────────────────────────────────────────
 function showToast(msg) {
   const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 3000);
-}
-
-// ── AI Marketing Assistant ────────────────────────────────────
-let _aiHistory = [];
-let _aiPanelOpen = false;
-
-function toggleAIChat() {
-  _aiPanelOpen = !_aiPanelOpen;
-  const panel = document.getElementById('aiChatPanel');
-  panel.style.display = _aiPanelOpen ? 'flex' : 'none';
-  if (_aiPanelOpen) document.getElementById('aiInput').focus();
-}
-
-function aiQuick(msg) {
-  document.getElementById('aiInput').value = msg;
-  sendAIMessage();
-}
-
-function addAIMessage(content, isUser) {
-  const msgs = document.getElementById('aiMessages');
-  const div = document.createElement('div');
-  div.style.cssText = isUser
-    ? 'background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.2);border-radius:10px 10px 3px 10px;padding:11px 13px;font-size:13px;line-height:1.5;max-width:90%;align-self:flex-end;'
-    : 'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px 10px 10px 3px;padding:11px 13px;font-size:13px;line-height:1.5;max-width:95%;white-space:pre-wrap;';
-  div.textContent = content;
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
-  return div;
-}
-
-async function sendAIMessage() {
-  const input = document.getElementById('aiInput');
-  const msg = input.value.trim();
-  if (!msg) return;
-  input.value = '';
-
-  addAIMessage(msg, true);
-  _aiHistory.push({ role: 'user', content: msg });
-
-  const loadingEl = addAIMessage('⏳ Thinking...', false);
-
-  try {
-    const resp = await fetch(`${SB_URL}/functions/v1/ai-marketing`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}` },
-      body: JSON.stringify({ messages: _aiHistory })
-    });
-    const data = await resp.json();
-    const reply = data.reply || data.content?.[0]?.text || 'Sorry, I could not generate a response.';
-    loadingEl.textContent = reply;
-    _aiHistory.push({ role: 'assistant', content: reply });
-
-    if (reply.length > 100) {
-      const copyBtn = document.createElement('button');
-      copyBtn.textContent = '📋 Copy';
-      copyBtn.style.cssText = 'margin-top:8px;padding:4px 10px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:var(--gold);font-size:11px;cursor:pointer;display:block;';
-      copyBtn.onclick = () => { navigator.clipboard.writeText(reply); copyBtn.textContent = '✓ Copied!'; setTimeout(()=>copyBtn.textContent='📋 Copy',2000); };
-      loadingEl.appendChild(copyBtn);
-    }
-  } catch(e) {
-    loadingEl.textContent = '⚠️ Could not connect to AI. Check your connection.';
-  }
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3500);
 }
 </script>
-
-<!-- AI Marketing Assistant -->
-<div id="aiChatBtn" onclick="toggleAIChat()" style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;background:var(--gold);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:22px;box-shadow:0 4px 20px rgba(201,168,76,0.4);z-index:500;transition:transform .2s;" onmouseenter="this.style.transform='scale(1.1)'" onmouseleave="this.style.transform='scale(1)'">🤖</div>
-
-<div id="aiChatPanel" style="display:none;position:fixed;bottom:88px;right:24px;width:360px;height:520px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.1);border-radius:16px;flex-direction:column;overflow:hidden;z-index:500;box-shadow:0 8px 40px rgba(0,0,0,0.6);">
-  <div style="padding:14px 16px;background:#141414;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <span style="font-size:18px;">🤖</span>
-      <div>
-        <div style="font-size:13px;font-weight:700;">AI Marketing Assistant</div>
-        <div style="font-size:10px;color:rgba(255,255,255,0.4);">Powered by Claude AI</div>
-      </div>
-    </div>
-    <button onclick="toggleAIChat()" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:16px;">✕</button>
-  </div>
-
-  <div id="aiMessages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;">
-    <div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.15);border-radius:10px 10px 10px 3px;padding:11px 13px;font-size:13px;line-height:1.5;max-width:90%;">
-      👋 Hi Rene! I'm your AI Marketing Assistant. I can help you:<br><br>
-      • Write email subject lines & bodies<br>
-      • Plan drip campaign sequences<br>
-      • Create SMS messages<br>
-      • Suggest campaign strategies<br>
-      • Review your email content<br><br>
-      What would you like help with today?
-    </div>
-  </div>
-
-  <div style="padding:10px 12px 4px;display:flex;gap:5px;flex-wrap:wrap;">
-    <button onclick="aiQuick('Write a welcome email for new leads')" style="padding:4px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:rgba(255,255,255,0.7);font-size:11px;cursor:pointer;white-space:nowrap;">Welcome email</button>
-    <button onclick="aiQuick('Create a 5-step drip sequence for cold leads')" style="padding:4px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:rgba(255,255,255,0.7);font-size:11px;cursor:pointer;white-space:nowrap;">Drip sequence</button>
-    <button onclick="aiQuick('Write an SMS follow-up message')" style="padding:4px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:rgba(255,255,255,0.7);font-size:11px;cursor:pointer;white-space:nowrap;">SMS message</button>
-  </div>
-
-  <div style="padding:6px 12px 12px;display:flex;gap:8px;">
-    <input id="aiInput" type="text" placeholder="Ask me anything about marketing..."
-      onkeydown="if(event.key==='Enter')sendAIMessage()"
-      style="flex:1;padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;font-size:13px;outline:none;">
-    <button onclick="sendAIMessage()" style="padding:9px 14px;background:var(--gold);border:none;border-radius:8px;color:#000;font-size:13px;font-weight:700;cursor:pointer;">↑</button>
-  </div>
-</div>
 
 </body>
 </html>
