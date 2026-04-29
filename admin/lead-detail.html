@@ -7093,21 +7093,33 @@ async function prefillFeeSheet() {
       var cid = new URLSearchParams(window.location.search).get('contact_id');
       if (!cid) return;
       try {
-        var fsd = null;
+        var fsd = null, appRow = null;
         if (typeof sb !== 'undefined' && sb.from) {
-          var { data } = await sb.from('mortgage_applications').select('fee_sheet_data').eq('contact_id', cid).order('created_at', { ascending: false }).limit(1).maybeSingle();
-          if (data && data.fee_sheet_data) fsd = data.fee_sheet_data;
+          var { data } = await sb.from('mortgage_applications')
+            .select('fee_sheet_data,purchase_price,loan_amount,property_value,first_name,last_name,property_address_street,property_address_city,property_address_state,property_address_zip')
+            .eq('contact_id', cid).order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if (data) { appRow = data; fsd = data.fee_sheet_data; }
         } else {
-          var res = await fetch(_fsSbUrl() + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=fee_sheet_data&order=created_at.desc&limit=1', {
+          var res = await fetch(_fsSbUrl() + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=fee_sheet_data,purchase_price,loan_amount,property_value,first_name,last_name,property_address_street,property_address_city,property_address_state,property_address_zip&order=created_at.desc&limit=1', {
             headers: { 'apikey': _fsSbKey(), 'Authorization': 'Bearer ' + _fsSbKey() }
           });
           var rows = await res.json();
-          if (rows && rows[0] && rows[0].fee_sheet_data) fsd = rows[0].fee_sheet_data;
+          if (rows && rows[0]) { appRow = rows[0]; fsd = rows[0].fee_sheet_data; }
         }
-        if (fsd) {
-          _feeSheetSavedData = fsd;
+        // Build restore payload — merge saved fee_sheet_data with mortgage_applications fallbacks
+        var restore = fsd ? Object.assign({}, fsd) : {};
+        if (appRow) {
+          var pp = restore.purchasePrice || appRow.purchase_price || appRow.property_value || 0;
+          var la = restore.loanAmount || appRow.loan_amount || 0;
+          if (pp && !restore.purchasePrice) restore.purchasePrice = Number(pp);
+          if (la && !restore.loanAmount) restore.loanAmount = Number(la);
+          if (!restore.borrowerName && appRow.first_name) restore.borrowerName = [appRow.first_name, appRow.last_name].filter(Boolean).join(' ');
+          if (!restore.propertyAddress && appRow.property_address_street) restore.propertyAddress = [appRow.property_address_street, appRow.property_address_city, appRow.property_address_state, appRow.property_address_zip].filter(Boolean).join(', ');
+        }
+        if (restore.purchasePrice || restore.scenarioA) {
+          _feeSheetSavedData = restore;
           setTimeout(function() {
-            iframe.contentWindow.postMessage(Object.assign({ type: 'feeSheetRestore' }, _feeSheetSavedData), '*');
+            iframe.contentWindow.postMessage(Object.assign({ type: 'feeSheetRestore' }, restore), '*');
           }, 300);
         }
       } catch(e) { console.warn('Fee sheet restore:', e); }
@@ -7134,10 +7146,16 @@ window.addEventListener('message', function(e) {
       if (typeof sb !== 'undefined' && sb.from) {
         var { data: apps } = await sb.from('mortgage_applications').select('id').eq('contact_id', cid).order('created_at', { ascending: false }).limit(1);
         if (apps && apps.length) {
-          var { error } = await sb.from('mortgage_applications').update({ fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() }).eq('id', apps[0].id);
+          var saveData = { fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() };
+          if (payload.purchasePrice > 0) saveData.purchase_price = payload.purchasePrice;
+          if (payload.loanAmount > 0) saveData.loan_amount = payload.loanAmount;
+          var { error } = await sb.from('mortgage_applications').update(saveData).eq('id', apps[0].id);
           if (error) throw new Error(error.message);
         } else {
-          var { error } = await sb.from('mortgage_applications').insert({ contact_id: cid, fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() });
+          var saveData2 = { contact_id: cid, fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() };
+          if (payload.purchasePrice > 0) saveData2.purchase_price = payload.purchasePrice;
+          if (payload.loanAmount > 0) saveData2.loan_amount = payload.loanAmount;
+          var { error } = await sb.from('mortgage_applications').insert(saveData2);
           if (error) throw new Error(error.message);
         }
       } else {
