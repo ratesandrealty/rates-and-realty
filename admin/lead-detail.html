@@ -18676,37 +18676,58 @@ async function saveNewLender() {
 }
 </script>
 
-<!-- Browser Call Modal -->
-<div id="call-modal" style="display:none;position:fixed;bottom:30px;right:30px;width:320px;background:#111;border:2px solid rgba(201,168,76,0.3);border-radius:16px;box-shadow:0 16px 48px rgba(0,0,0,0.7);z-index:10000;overflow:hidden;">
-  <div style="background:#0a0a0a;padding:16px;text-align:center;">
-    <div id="call-avatar" style="width:60px;height:60px;border-radius:50%;background:rgba(201,168,76,0.2);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#C9A84C;margin:0 auto 8px;">RD</div>
-    <div id="call-name" style="font-size:16px;font-weight:700;color:#E8D5A3;">Contact Name</div>
-    <div id="call-number" style="font-size:12px;color:#888;margin-top:2px;">+1 (714) 472-8508</div>
-    <div id="call-status" style="font-size:12px;color:#C9A84C;margin-top:8px;">Ready to call</div>
-    <div id="call-timer" style="font-size:24px;font-weight:700;color:#E8D5A3;font-family:'DM Mono',monospace;margin-top:4px;display:none;">0:00</div>
+<!-- Premium Call Modal -->
+<style>
+@keyframes callPulse { 0%,100%{box-shadow:0 0 0 0 rgba(201,168,76,0.4)} 50%{box-shadow:0 0 0 12px rgba(201,168,76,0)} }
+@keyframes ringPulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+@keyframes connectedGlow { 0%,100%{box-shadow:0 0 0 0 rgba(76,175,125,0.3)} 50%{box-shadow:0 0 0 8px rgba(76,175,125,0)} }
+@keyframes slideUp { from{transform:translateY(40px);opacity:0} to{transform:translateY(0);opacity:1} }
+#call-modal.show { animation: slideUp .3s ease forwards; }
+.call-outcome-pill{padding:6px 14px;border-radius:20px;border:1px solid #333;background:#1A1A1A;color:#aaa;font-size:11px;cursor:pointer;font-family:inherit;transition:all .15s;display:inline-flex;align-items:center;gap:4px;}
+.call-outcome-pill:hover{border-color:rgba(201,168,76,0.5);color:#E8D5A3;background:rgba(201,168,76,0.08);}
+.call-outcome-pill.selected{border-color:#C9A84C;color:#C9A84C;background:rgba(201,168,76,0.15);}
+</style>
+<div id="call-modal-overlay" onclick="closeCallModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:9999;"></div>
+<div id="call-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:380px;background:#0A0A0A;border:1px solid rgba(201,168,76,0.25);border-radius:20px;box-shadow:0 24px 64px rgba(0,0,0,0.8);z-index:10000;overflow:hidden;">
+  <!-- Header -->
+  <div style="padding:28px 24px 16px;text-align:center;position:relative;">
+    <button onclick="closeCallModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#555;font-size:14px;cursor:pointer;padding:4px;">&#10005;</button>
+    <div id="call-avatar" style="width:80px;height:80px;border-radius:50%;background:linear-gradient(135deg,rgba(201,168,76,0.3),rgba(201,168,76,0.1));border:3px solid #C9A84C;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:#C9A84C;margin:0 auto 12px;font-family:'Playfair Display',serif;">RD</div>
+    <div id="call-name" style="font-size:22px;font-weight:700;color:#fff;font-family:'Playfair Display',serif;">Contact Name</div>
+    <div id="call-number" style="font-size:14px;color:#C9A84C;margin-top:4px;letter-spacing:0.5px;">+1 (714) 472-8508</div>
+    <div id="call-status" style="font-size:12px;color:#888;margin-top:8px;transition:color .3s;">Ready to call</div>
+    <div id="call-timer" style="font-size:36px;font-weight:700;color:#fff;font-family:'DM Mono',monospace;margin-top:6px;display:none;letter-spacing:2px;">0:00</div>
   </div>
-  <div style="padding:16px;display:flex;flex-direction:column;gap:8px;">
-    <div style="display:flex;justify-content:center;gap:16px;">
-      <button id="call-mute-btn" onclick="toggleCallMute()" style="width:44px;height:44px;border-radius:50%;background:#222;border:1px solid #333;color:#888;font-size:18px;cursor:pointer;display:none;" title="Mute">&#x1f507;</button>
-      <button id="call-start-btn" onclick="startBrowserCall()" style="width:56px;height:56px;border-radius:50%;background:#22c55e;border:none;color:white;font-size:24px;cursor:pointer;">&#x1f4de;</button>
-      <button id="call-end-btn" onclick="endBrowserCall()" style="width:56px;height:56px;border-radius:50%;background:#ef4444;border:none;color:white;font-size:24px;cursor:pointer;display:none;">&#x1f4f5;</button>
-      <button id="call-vm-btn" onclick="openVoicemailPicker()" style="width:44px;height:44px;border-radius:50%;background:#222;border:1px solid #333;color:#888;font-size:16px;cursor:pointer;" title="Voicemail Drop">&#x1f399;</button>
+  <!-- Buttons -->
+  <div style="padding:8px 24px 20px;display:flex;justify-content:center;align-items:center;gap:20px;">
+    <button id="call-mute-btn" onclick="toggleCallMute()" style="width:52px;height:52px;border-radius:50%;background:#1A1A1A;border:1px solid #333;color:#888;font-size:20px;cursor:pointer;display:none;transition:all .2s;" title="Mute">&#x1f507;</button>
+    <button id="call-start-btn" onclick="startBrowserCall()" style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#22c55e,#16a34a);border:none;color:white;font-size:28px;cursor:pointer;box-shadow:0 4px 20px rgba(34,197,94,0.4);transition:all .2s;">&#x1f4de;</button>
+    <button id="call-end-btn" onclick="endBrowserCall()" style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#E05454,#c0392b);border:none;color:white;font-size:28px;cursor:pointer;box-shadow:0 4px 20px rgba(224,84,84,0.4);display:none;transition:all .2s;">&#x1f4f5;</button>
+    <button id="call-vm-btn" onclick="openVoicemailPicker()" style="width:52px;height:52px;border-radius:50%;background:#1A1A1A;border:1px solid #333;color:#888;font-size:18px;cursor:pointer;transition:all .2s;" title="Voicemail Drop">&#x1f399;</button>
+  </div>
+  <!-- Recent Messages -->
+  <div id="call-recent-sms" style="display:none;padding:0 24px 12px;">
+    <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">&#x1f4ac; Recent Messages</div>
+    <div id="call-recent-sms-content" style="max-height:70px;overflow-y:auto;"></div>
+  </div>
+  <!-- Notes (during call) -->
+  <div id="call-notes-wrap" style="display:none;padding:0 24px 16px;">
+    <textarea id="call-notes" placeholder="Add call notes..." rows="2" style="width:100%;background:#111;border:1px solid #222;border-radius:10px;color:#eee;padding:10px 12px;font-size:12px;resize:none;outline:none;font-family:inherit;transition:border-color .2s;" onfocus="this.style.borderColor='rgba(201,168,76,0.4)'" onblur="this.style.borderColor='#222'"></textarea>
+  </div>
+  <!-- Outcome Panel (after call) -->
+  <div id="call-outcome-panel" style="display:none;padding:16px 24px 24px;border-top:1px solid #1A1A1A;">
+    <div style="font-size:13px;color:#E8D5A3;font-weight:600;margin-bottom:10px;">How did the call go?</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+      <button onclick="setCallOutcome('spoke_interested')" class="call-outcome-pill">&#x2705; Interested</button>
+      <button onclick="setCallOutcome('callback_requested')" class="call-outcome-pill">&#x1f4de; Callback</button>
+      <button onclick="setCallOutcome('no_answer')" class="call-outcome-pill">&#x1f4f5; No Answer</button>
+      <button onclick="setCallOutcome('left_voicemail')" class="call-outcome-pill">&#x1f4ec; Left VM</button>
+      <button onclick="setCallOutcome('wrong_number')" class="call-outcome-pill">&#x274c; Wrong #</button>
+      <button onclick="setCallOutcome('not_interested')" class="call-outcome-pill">&#x1f610; Not Interested</button>
     </div>
-    <textarea id="call-notes" placeholder="Call notes..." rows="2" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;padding:8px;font-size:12px;resize:none;outline:none;font-family:inherit;display:none;"></textarea>
-    <div id="call-recent-sms" style="max-height:80px;overflow-y:auto;font-size:10px;color:#666;display:none;"></div>
+    <textarea id="call-outcome-notes" placeholder="Add call notes..." rows="2" style="width:100%;background:#111;border:1px solid #222;border-radius:10px;color:#eee;padding:10px 12px;font-size:12px;resize:none;outline:none;font-family:inherit;margin-bottom:10px;"></textarea>
+    <button onclick="saveCallAndClose()" style="width:100%;padding:10px;background:#C9A84C;color:#000;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Save &amp; Close</button>
   </div>
-  <div id="call-outcome-panel" style="display:none;padding:16px;border-top:1px solid #222;">
-    <div style="font-size:11px;color:#888;margin-bottom:6px;">Call Outcome:</div>
-    <div style="display:flex;flex-wrap:wrap;gap:4px;">
-      <button onclick="setCallOutcome('left_voicemail')" class="call-outcome-btn">Left VM</button>
-      <button onclick="setCallOutcome('spoke_interested')" class="call-outcome-btn">Interested</button>
-      <button onclick="setCallOutcome('spoke_not_interested')" class="call-outcome-btn">Not Interested</button>
-      <button onclick="setCallOutcome('no_answer')" class="call-outcome-btn">No Answer</button>
-      <button onclick="setCallOutcome('callback_requested')" class="call-outcome-btn">Callback</button>
-      <button onclick="setCallOutcome('wrong_number')" class="call-outcome-btn">Wrong #</button>
-    </div>
-  </div>
-  <button onclick="closeCallModal()" style="position:absolute;top:8px;right:8px;background:none;border:none;color:#555;font-size:16px;cursor:pointer;">&#x2715;</button>
 </div>
 
 <!-- Voicemail Picker Modal -->
@@ -18759,31 +18780,44 @@ async function initTwilioDevice() {
 }
 
 function openCallModal(name, phone, contactId) {
-  var modal = document.getElementById('call-modal');
-  modal.style.display = 'block';
-  _callContactId = contactId;
-  _callPhone = phone;
-  _callOutcome = null;
-  var initials = name.split(' ').map(function(w){return w[0]||'';}).join('').toUpperCase();
+  _callContactId = contactId; _callPhone = phone; _callOutcome = null;
+  var initials = (name||'').split(' ').map(function(w){return (w[0]||'');}).join('').toUpperCase() || '??';
   document.getElementById('call-avatar').textContent = initials;
-  document.getElementById('call-name').textContent = name;
-  var ph = phone.replace(/\D/g,'');
+  document.getElementById('call-name').textContent = name || 'Contact';
+  var ph = (phone||'').replace(/\D/g,'');
   document.getElementById('call-number').textContent = ph.length===10 ? '('+ph.slice(0,3)+') '+ph.slice(3,6)+'-'+ph.slice(6) : phone;
   document.getElementById('call-status').textContent = 'Ready to call';
-  document.getElementById('call-status').style.color = '#C9A84C';
+  document.getElementById('call-status').style.color = '#888';
   document.getElementById('call-timer').style.display = 'none';
-  document.getElementById('call-start-btn').style.display = 'inline-block';
+  document.getElementById('call-start-btn').style.display = 'inline-flex';
   document.getElementById('call-end-btn').style.display = 'none';
   document.getElementById('call-mute-btn').style.display = 'none';
-  document.getElementById('call-notes').style.display = 'none';
+  document.getElementById('call-notes-wrap').style.display = 'none';
   document.getElementById('call-outcome-panel').style.display = 'none';
   document.getElementById('call-notes').value = '';
+  document.querySelectorAll('.call-outcome-pill').forEach(function(b){b.classList.remove('selected');});
+  // Show modal with animation
+  document.getElementById('call-modal-overlay').style.display = 'block';
+  var modal = document.getElementById('call-modal');
+  modal.style.display = 'block';
+  modal.classList.remove('show');
+  requestAnimationFrame(function() { modal.classList.add('show'); });
   loadCallContextSms(contactId);
 }
 
 function closeCallModal() {
   document.getElementById('call-modal').style.display = 'none';
+  document.getElementById('call-modal-overlay').style.display = 'none';
   if (_callTimer) { clearInterval(_callTimer); _callTimer = null; }
+}
+
+function saveCallAndClose() {
+  var notes = document.getElementById('call-outcome-notes')?.value || document.getElementById('call-notes')?.value || '';
+  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  fetch(VOICE_FN, { method:'POST', headers:{'Content-Type':'application/json','apikey':anon,'Authorization':'Bearer '+anon}, body:JSON.stringify({action:'log_call',contact_id:_callContactId,to_phone:_callPhone,duration:_callSeconds,status:'completed',notes:notes,outcome:_callOutcome,twilio_call_sid:window._currentCallSid||''}) }).catch(function(e){console.warn('Log error:',e);});
+  closeCallModal();
+  showToast('Call logged: ' + (_callOutcome || 'completed').replace(/_/g,' '));
+  if (typeof loadCommunications === 'function') loadCommunications();
 }
 
 async function startBrowserCall() {
@@ -18810,7 +18844,7 @@ async function startBrowserCall() {
 
         document.getElementById('call-end-btn').style.display = 'inline-block';
         document.getElementById('call-mute-btn').style.display = 'inline-block';
-        document.getElementById('call-notes').style.display = 'block';
+        document.getElementById('call-notes-wrap').style.display = 'block';
         _callSeconds = 0;
         document.getElementById('call-timer').style.display = 'block';
         _callTimer = setInterval(function() {
@@ -18826,7 +18860,7 @@ async function startBrowserCall() {
   // Fallback: REST API call (phone rings on contact's end, not browser)
   document.getElementById('call-end-btn').style.display = 'inline-block';
   document.getElementById('call-mute-btn').style.display = 'inline-block';
-  document.getElementById('call-notes').style.display = 'block';
+  document.getElementById('call-notes-wrap').style.display = 'block';
   try {
     var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
     var res = await fetch(VOICE_FN, {
@@ -18892,27 +18926,30 @@ function toggleCallMute() {
 
 function setCallOutcome(outcome) {
   _callOutcome = outcome;
-  document.querySelectorAll('.call-outcome-btn').forEach(function(b) { b.classList.remove('selected'); });
-  event.target.classList.add('selected');
-  setTimeout(function() {
-    closeCallModal();
-    showToast('Call logged: ' + outcome.replace(/_/g,' '));
-    if (typeof loadCommunications === 'function') loadCommunications();
-  }, 800);
+  document.querySelectorAll('.call-outcome-pill').forEach(function(b) { b.classList.remove('selected'); });
+  if (event && event.target) { var pill = event.target.closest('.call-outcome-pill'); if (pill) pill.classList.add('selected'); }
 }
 
 async function loadCallContextSms(contactId) {
-  var el = document.getElementById('call-recent-sms');
-  if (!el) return;
+  var wrap = document.getElementById('call-recent-sms');
+  var el = document.getElementById('call-recent-sms-content');
+  if (!wrap || !el) return;
   try {
     var { data } = await sb.from('sms_log').select('body,direction,created_at').eq('contact_id', contactId).order('created_at', { ascending: false }).limit(3);
     if (data && data.length) {
-      el.style.display = 'block';
-      el.innerHTML = '<div style="font-size:9px;color:#555;margin-bottom:3px;">Recent messages:</div>' + data.reverse().map(function(m) {
-        return '<div style="color:' + (m.direction!=='inbound'?'#C9A84C':'#888') + ';">' + (m.direction!=='inbound'?'-> ':'<- ') + (m.body||'').substring(0,50) + '</div>';
+      wrap.style.display = 'block';
+      el.innerHTML = data.reverse().map(function(m) {
+        var isOut = m.direction !== 'inbound';
+        var ago = Math.round((Date.now() - new Date(m.created_at)) / 60000);
+        var timeStr = ago < 60 ? ago + 'm' : Math.round(ago/60) + 'h';
+        return '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;font-size:11px;">' +
+          '<span style="color:' + (isOut ? '#C9A84C' : '#666') + ';flex-shrink:0;">' + (isOut ? '&#8594;' : '&#8592;') + '</span>' +
+          '<span style="color:#aaa;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ((m.body||'').substring(0,45)) + '</span>' +
+          '<span style="color:#555;font-size:9px;flex-shrink:0;">' + timeStr + '</span>' +
+        '</div>';
       }).join('');
-    } else { el.style.display = 'none'; }
-  } catch(e) { el.style.display = 'none'; }
+    } else { wrap.style.display = 'none'; }
+  } catch(e) { wrap.style.display = 'none'; }
 }
 
 /* ═══ VOICEMAIL DROP ═══ */
