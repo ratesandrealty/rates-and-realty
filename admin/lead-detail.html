@@ -1290,6 +1290,11 @@
     .bulk-file-remove:hover { color: #f87171; }
     .bulk-progress-bar { height: 3px; background: rgba(255,255,255,0.06); border-radius: 3px; margin-top: 6px; overflow: hidden; }
     .bulk-progress-fill { height: 100%; background: var(--gold); border-radius: 3px; transition: width 0.3s; }
+
+    /* ── CALL MODAL OUTCOME BUTTONS ── */
+    .call-outcome-btn { padding:4px 10px; border-radius:12px; border:1px solid #333; background:#1a1a1a; color:#aaa; font-size:10px; cursor:pointer; font-family:inherit; }
+    .call-outcome-btn:hover { border-color:#C9A84C; color:#C9A84C; }
+    .call-outcome-btn.selected { background:rgba(201,168,76,0.15); border-color:#C9A84C; color:#C9A84C; }
   </style>
   <!-- Google Maps Places autocomplete removed (API key retired); address input uses plain text -->
 
@@ -1349,7 +1354,7 @@
 
     <!-- Quick Contact Actions -->
     <div id="sidebarQuickContact" style="margin-top:10px;margin-bottom:6px;">
-      <a id="sidebar-phone-link" href="tel:" onclick="event.preventDefault();navigator.clipboard.writeText(this.dataset.phone||'').then(()=>showToast('Phone copied!'))" style="display:none;align-items:center;gap:8px;color:#E8D5A3;text-decoration:none;padding:7px 12px;background:#1A1A1A;border-radius:8px;margin-bottom:5px;border:1px solid rgba(201,168,76,0.15);font-size:12px;cursor:pointer;">
+      <a id="sidebar-phone-link" href="tel:" onclick="event.preventDefault(); var name = document.getElementById('sidebar-name').textContent; openCallModal(name, this.dataset.phone, new URLSearchParams(location.search).get('contact_id'));" style="display:none;align-items:center;gap:8px;color:#E8D5A3;text-decoration:none;padding:7px 12px;background:#1A1A1A;border-radius:8px;margin-bottom:5px;border:1px solid rgba(201,168,76,0.15);font-size:12px;cursor:pointer;">
         <span>📞</span> <span id="sidebar-phone-text">—</span>
       </a>
       <a id="sidebar-email-link" href="mailto:" onclick="event.preventDefault();navigator.clipboard.writeText(this.dataset.email||'').then(()=>showToast('Email copied!'))" style="display:none;align-items:center;gap:8px;color:#E8D5A3;text-decoration:none;padding:7px 12px;background:#1A1A1A;border-radius:8px;margin-bottom:5px;border:1px solid rgba(201,168,76,0.15);font-size:12px;cursor:pointer;">
@@ -5129,15 +5134,17 @@ async function loadCommunications() {
   if (!cid) return;
   const el = document.getElementById('comms-timeline');
   try {
-    const [smsRes, emailRes, callRes] = await Promise.all([
+    const [smsRes, emailRes, callRes, browserCallRes] = await Promise.all([
       sb.from('sms_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(100),
       sb.from('email_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50),
-      sb.from('call_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50)
+      sb.from('call_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50),
+      sb.from('calls_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50)
     ]);
     const smsList = (smsRes.data || []).map(r => ({ ...r, _type: 'sms' }));
     const emailList = (emailRes.data || []).map(r => ({ ...r, _type: 'email' }));
     const callList = (callRes.data || []).map(r => ({ ...r, _type: 'call' }));
-    const comms = [...smsList, ...emailList, ...callList]
+    const browserCallList = (browserCallRes.data || []).map(r => ({ ...r, _type: 'browser_call' }));
+    const comms = [...smsList, ...emailList, ...callList, ...browserCallList]
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       .slice(0, 150);
     if (!comms.length) {
@@ -5145,8 +5152,8 @@ async function loadCommunications() {
       return;
     }
     el.innerHTML = comms.map(c => {
-      const icon = c._type === 'sms' ? '📱' : c._type === 'email' ? '📧' : '📞';
-      const label = c._type === 'sms' ? 'SMS' : c._type === 'email' ? 'Email' : 'Call';
+      const icon = c._type === 'sms' ? '📱' : c._type === 'email' ? '📧' : c._type === 'browser_call' ? '🖥️📞' : '📞';
+      const label = c._type === 'sms' ? 'SMS' : c._type === 'email' ? 'Email' : c._type === 'browser_call' ? 'Browser Call' : 'Call';
       const dir = c.direction || 'outbound';
       const dirLabel = dir === 'inbound' ? 'IN' : 'OUT';
       const dirColor = dir === 'inbound' ? '#3b82f6' : '#22c55e';
@@ -5155,10 +5162,12 @@ async function loadCommunications() {
       if (c._type === 'email') {
         body = esc(c.subject || c.body || '');
         if (c.open_count > 0) extras = `<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;background:rgba(34,197,94,.15);color:#22c55e;margin-left:6px;">Opened ×${c.open_count}</span>`;
-      } else if (c._type === 'call') {
+      } else if (c._type === 'call' || c._type === 'browser_call') {
         const dur = c.duration ? `${Math.floor(c.duration/60)}m${c.duration%60}s` : '';
-        body = esc(c.notes || c.outcome || dur || 'Call logged');
+        const outcomeLabel = c.outcome ? c.outcome.replace(/_/g, ' ') : '';
+        body = esc(c.notes || outcomeLabel || dur || 'Call logged');
         if (dur) extras = `<span style="font-size:10px;color:#888;margin-left:6px;">${dur}</span>`;
+        if (outcomeLabel && c.notes) extras += `<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(201,168,76,.1);color:#C9A84C;margin-left:6px;">${esc(outcomeLabel)}</span>`;
       } else {
         body = esc(c.body || '');
       }
@@ -8609,6 +8618,154 @@ async function loadRecentSmsPreview() {
 
 // Init realtime + recent preview after contact loads
 setTimeout(function() { subscribeSmsRealtime(); loadRecentSmsPreview(); }, 2000);
+
+/* ═══ BROWSER CALLING ═══ */
+var _callTimer = null, _callSeconds = 0, _callContactId = null, _callPhone = null, _callOutcome = null;
+var VOICE_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice';
+
+function openCallModal(name, phone, cid) {
+  document.getElementById('call-modal').style.display = 'block';
+  _callContactId = cid; _callPhone = phone; _callOutcome = null;
+  var initials = (name||'').split(' ').map(function(w){return (w[0]||'');}).join('').toUpperCase() || '??';
+  document.getElementById('call-avatar').textContent = initials;
+  document.getElementById('call-name').textContent = name || 'Contact';
+  var ph = (phone||'').replace(/\D/g,'');
+  document.getElementById('call-number').textContent = ph.length===10 ? '('+ph.slice(0,3)+') '+ph.slice(3,6)+'-'+ph.slice(6) : phone;
+  document.getElementById('call-status').textContent = 'Ready to call';
+  document.getElementById('call-status').style.color = '#C9A84C';
+  document.getElementById('call-timer').style.display = 'none';
+  document.getElementById('call-start-btn').style.display = 'inline-block';
+  document.getElementById('call-end-btn').style.display = 'none';
+  document.getElementById('call-mute-btn').style.display = 'none';
+  document.getElementById('call-notes').style.display = 'none';
+  document.getElementById('call-notes').value = '';
+  document.getElementById('call-outcome-panel').style.display = 'none';
+  // Load recent SMS for context
+  (async function() {
+    var el = document.getElementById('call-recent-sms');
+    try {
+      var { data } = await sb.from('sms_log').select('body,direction').eq('contact_id', cid).order('created_at', { ascending: false }).limit(3);
+      if (data && data.length) {
+        el.style.display = 'block';
+        el.innerHTML = '<div style="font-size:9px;color:#555;margin-bottom:3px;">Recent messages:</div>' + data.reverse().map(function(m) {
+          return '<div style="color:' + (m.direction!=='inbound'?'#C9A84C':'#888') + ';">' + (m.direction!=='inbound'?'> ':'< ') + (m.body||'').substring(0,50) + '</div>';
+        }).join('');
+      } else el.style.display = 'none';
+    } catch(e) { el.style.display = 'none'; }
+  })();
+}
+
+function closeCallModal() {
+  document.getElementById('call-modal').style.display = 'none';
+  if (_callTimer) { clearInterval(_callTimer); _callTimer = null; }
+}
+
+async function startBrowserCall() {
+  var s = document.getElementById('call-status');
+  s.textContent = 'Connecting...'; s.style.color = '#f39c12';
+  document.getElementById('call-start-btn').style.display = 'none';
+  document.getElementById('call-end-btn').style.display = 'inline-block';
+  document.getElementById('call-mute-btn').style.display = 'inline-block';
+  document.getElementById('call-notes').style.display = 'block';
+  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  try {
+    var res = await fetch(VOICE_FN, { method:'POST', headers:{'Content-Type':'application/json','apikey':anon,'Authorization':'Bearer '+anon}, body:JSON.stringify({action:'make_call',to:_callPhone,contact_id:_callContactId}) });
+    var data = await res.json();
+    if (data.success) {
+      s.textContent = 'Ringing...'; s.style.color = '#22c55e';
+      window._currentCallSid = data.callSid;
+      _callSeconds = 0;
+      document.getElementById('call-timer').style.display = 'block';
+      _callTimer = setInterval(function() { _callSeconds++; var m=Math.floor(_callSeconds/60),sec=_callSeconds%60; document.getElementById('call-timer').textContent = m+':'+(sec<10?'0':'')+sec; }, 1000);
+      setTimeout(function() { s.textContent = 'Connected'; }, 3000);
+    } else {
+      s.textContent = 'Failed: '+(data.error||''); s.style.color = '#ef4444';
+      document.getElementById('call-start-btn').style.display = 'inline-block';
+      document.getElementById('call-end-btn').style.display = 'none';
+    }
+  } catch(e) { s.textContent = 'Error: '+e.message; s.style.color = '#ef4444'; }
+}
+
+async function endBrowserCall() {
+  if (_callTimer) { clearInterval(_callTimer); _callTimer = null; }
+  document.getElementById('call-status').textContent = 'Call Ended';
+  document.getElementById('call-status').style.color = '#888';
+  document.getElementById('call-end-btn').style.display = 'none';
+  document.getElementById('call-mute-btn').style.display = 'none';
+  document.getElementById('call-outcome-panel').style.display = 'block';
+  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  try {
+    await fetch(VOICE_FN, { method:'POST', headers:{'Content-Type':'application/json','apikey':anon,'Authorization':'Bearer '+anon}, body:JSON.stringify({action:'log_call',contact_id:_callContactId,to_phone:_callPhone,duration:_callSeconds,status:'completed',notes:document.getElementById('call-notes').value,outcome:_callOutcome,twilio_call_sid:window._currentCallSid||''}) });
+  } catch(e) { console.warn('Call log error:', e); }
+}
+
+function toggleCallMute() { var b=document.getElementById('call-mute-btn'); b.dataset.muted = b.dataset.muted==='true'?'false':'true'; b.style.background = b.dataset.muted==='true'?'rgba(239,68,68,0.15)':'#222'; }
+
+function setCallOutcome(outcome) {
+  _callOutcome = outcome;
+  document.querySelectorAll('.call-outcome-btn').forEach(function(b){b.classList.remove('selected');});
+  if (event && event.target) event.target.classList.add('selected');
+  setTimeout(function() { closeCallModal(); showToast('Call logged: '+outcome.replace(/_/g,' ')); if(typeof loadCommunications==='function') loadCommunications(); }, 800);
+}
+
+/* ═══ VOICEMAIL DROP ═══ */
+function openVmPicker() { document.getElementById('vm-picker-modal').style.display = 'flex'; loadVmLibrary(); }
+function closeVmPicker() { document.getElementById('vm-picker-modal').style.display = 'none'; }
+
+async function loadVmLibrary() {
+  var el = document.getElementById('vm-library');
+  var sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
+  var sbKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  try {
+    var res = await fetch(sbUrl+'/storage/v1/object/list/voicemail-drops', { method:'POST', headers:{'apikey':sbKey,'Authorization':'Bearer '+sbKey,'Content-Type':'application/json'}, body:JSON.stringify({prefix:'',limit:20,offset:0,sortBy:{column:'created_at',order:'desc'}}) });
+    var files = await res.json();
+    if (!files||!files.length) { el.innerHTML = '<div style="text-align:center;padding:20px;color:#888;font-size:12px;">No voicemails yet. Record your first one!</div>'; return; }
+    el.innerHTML = files.map(function(f) {
+      var url = sbUrl+'/storage/v1/object/public/voicemail-drops/'+f.name;
+      var name = f.name.replace(/\.[^.]+$/,'').replace(/-/g,' ');
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #222;border-radius:8px;margin-bottom:6px;"><button onclick="new Audio(\''+url+'\').play()" style="background:none;border:none;color:#C9A84C;font-size:16px;cursor:pointer;">&#9654;</button><div style="flex:1;font-size:12px;color:#ccc;">'+name+'</div><button onclick="dropVm(\''+url+'\')" style="padding:4px 10px;background:#C9A84C;color:#000;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;">Drop</button></div>';
+    }).join('');
+  } catch(e) { el.innerHTML = '<div style="color:#ef4444;font-size:12px;">Error loading voicemails</div>'; }
+}
+
+async function dropVm(vmUrl) {
+  closeVmPicker();
+  document.getElementById('call-status').textContent = 'Dropping voicemail...';
+  document.getElementById('call-status').style.color = '#f39c12';
+  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  try {
+    var res = await fetch(VOICE_FN, { method:'POST', headers:{'Content-Type':'application/json','apikey':anon,'Authorization':'Bearer '+anon}, body:JSON.stringify({action:'voicemail_drop',to:_callPhone,voicemail_url:vmUrl,contact_id:_callContactId}) });
+    var data = await res.json();
+    document.getElementById('call-status').textContent = data.success ? 'Voicemail dropped!' : 'Failed: '+(data.error||'');
+    document.getElementById('call-status').style.color = data.success ? '#22c55e' : '#ef4444';
+    if (data.success) showToast('Voicemail dropped!');
+  } catch(e) { document.getElementById('call-status').textContent = 'Error: '+e.message; }
+}
+
+async function recordNewVoicemail() {
+  closeVmPicker();
+  try {
+    var stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    var recorder = new MediaRecorder(stream); var chunks = [];
+    recorder.ondataavailable = function(e) { if(e.data.size>0) chunks.push(e.data); };
+    recorder.onstop = async function() {
+      stream.getTracks().forEach(function(t){t.stop();});
+      var blob = new Blob(chunks, {type:'audio/webm'});
+      var name = prompt('Name this voicemail:') || 'voicemail';
+      var fn = name.replace(/\s+/g,'-').toLowerCase()+'-'+Date.now()+'.webm';
+      var sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
+      var sbKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+      await fetch(sbUrl+'/storage/v1/object/voicemail-drops/'+fn, { method:'POST', headers:{'apikey':sbKey,'Authorization':'Bearer '+sbKey,'Content-Type':'audio/webm'}, body:blob });
+      showToast('Voicemail saved: '+name);
+      openVmPicker();
+    };
+    showToast('Recording... click anywhere to stop');
+    recorder.start();
+    var stop = function() { recorder.stop(); document.removeEventListener('click',stop); };
+    setTimeout(function() { document.addEventListener('click',stop); }, 500);
+    setTimeout(function() { if(recorder.state==='recording') recorder.stop(); document.removeEventListener('click',stop); }, 60000);
+  } catch(e) { showToast('Microphone access denied'); }
+}
 
 /* ── CHECKLIST SYSTEM ── */
 const CHECKLISTS = {
@@ -15962,6 +16119,51 @@ async function updateLenderStatus(lenderId, status) {
       <button onclick="closePdfViewer()" style="background:none;border:none;color:#666;font-size:22px;cursor:pointer;line-height:1;padding:0 4px">&times;</button>
     </div>
     <iframe id="pdf-viewer-frame" src="" style="flex:1;border:none;width:100%;background:#fff"></iframe>
+  </div>
+</div>
+
+<!-- Call Modal -->
+<style>.call-outcome-btn{padding:4px 10px;border-radius:12px;border:1px solid #333;background:#1a1a1a;color:#aaa;font-size:10px;cursor:pointer;font-family:inherit;}.call-outcome-btn:hover,.call-outcome-btn.selected{border-color:#C9A84C;color:#C9A84C;background:rgba(201,168,76,0.15);}</style>
+<div id="call-modal" style="display:none;position:fixed;bottom:30px;right:30px;width:320px;background:#111;border:2px solid rgba(201,168,76,0.3);border-radius:16px;box-shadow:0 16px 48px rgba(0,0,0,0.7);z-index:10000;overflow:hidden;">
+  <div style="background:#0a0a0a;padding:16px;text-align:center;">
+    <div id="call-avatar" style="width:60px;height:60px;border-radius:50%;background:rgba(201,168,76,0.2);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#C9A84C;margin:0 auto 8px;">??</div>
+    <div id="call-name" style="font-size:16px;font-weight:700;color:#E8D5A3;">Contact</div>
+    <div id="call-number" style="font-size:12px;color:#888;margin-top:2px;"></div>
+    <div id="call-status" style="font-size:12px;color:#C9A84C;margin-top:8px;">Ready to call</div>
+    <div id="call-timer" style="font-size:24px;font-weight:700;color:#E8D5A3;font-family:monospace;margin-top:4px;display:none;">0:00</div>
+  </div>
+  <div style="padding:16px;display:flex;flex-direction:column;gap:8px;">
+    <div style="display:flex;justify-content:center;gap:16px;">
+      <button id="call-mute-btn" onclick="toggleCallMute()" style="width:44px;height:44px;border-radius:50%;background:#222;border:1px solid #333;color:#888;font-size:18px;cursor:pointer;display:none;" title="Mute">🔇</button>
+      <button id="call-start-btn" onclick="startBrowserCall()" style="width:56px;height:56px;border-radius:50%;background:#22c55e;border:none;color:white;font-size:24px;cursor:pointer;">📞</button>
+      <button id="call-end-btn" onclick="endBrowserCall()" style="width:56px;height:56px;border-radius:50%;background:#ef4444;border:none;color:white;font-size:24px;cursor:pointer;display:none;">📵</button>
+      <button id="call-vm-btn" onclick="openVmPicker()" style="width:44px;height:44px;border-radius:50%;background:#222;border:1px solid #333;color:#888;font-size:16px;cursor:pointer;" title="Voicemail Drop">🎙️</button>
+    </div>
+    <textarea id="call-notes" placeholder="Call notes..." rows="2" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;padding:8px;font-size:12px;resize:none;outline:none;font-family:inherit;display:none;"></textarea>
+    <div id="call-recent-sms" style="max-height:80px;overflow-y:auto;font-size:10px;color:#666;display:none;"></div>
+  </div>
+  <div id="call-outcome-panel" style="display:none;padding:16px;border-top:1px solid #222;">
+    <div style="font-size:11px;color:#888;margin-bottom:6px;">Call Outcome:</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;">
+      <button onclick="setCallOutcome('left_voicemail')" class="call-outcome-btn">Left VM</button>
+      <button onclick="setCallOutcome('spoke_interested')" class="call-outcome-btn">Interested</button>
+      <button onclick="setCallOutcome('spoke_not_interested')" class="call-outcome-btn">Not Interested</button>
+      <button onclick="setCallOutcome('no_answer')" class="call-outcome-btn">No Answer</button>
+      <button onclick="setCallOutcome('callback')" class="call-outcome-btn">Callback</button>
+      <button onclick="setCallOutcome('wrong_number')" class="call-outcome-btn">Wrong #</button>
+    </div>
+  </div>
+  <button onclick="closeCallModal()" style="position:absolute;top:8px;right:8px;background:none;border:none;color:#555;font-size:16px;cursor:pointer;">✕</button>
+</div>
+<!-- Voicemail Picker -->
+<div id="vm-picker-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10001;align-items:center;justify-content:center;">
+  <div style="background:#111;border:2px solid rgba(201,168,76,0.3);border-radius:14px;padding:24px;width:400px;max-width:95vw;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="color:#E8D5A3;font-size:15px;">🎙️ Voicemail Drop</h3>
+      <button onclick="closeVmPicker()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">✕</button>
+    </div>
+    <div id="vm-library" style="max-height:250px;overflow-y:auto;margin-bottom:12px;"></div>
+    <button onclick="recordNewVoicemail()" style="width:100%;padding:10px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:#C9A84C;font-size:12px;cursor:pointer;font-family:inherit;">+ Record New Voicemail</button>
   </div>
 </div>
 

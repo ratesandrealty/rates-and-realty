@@ -1783,6 +1783,135 @@ async function saveMismoImport() {
 }
 
 function closeMismoModal() { document.getElementById('mismoModal').style.display='none'; _mismoData=null; _mismoRawXml=''; }
+
+// ── BULK ACTIONS UPGRADE ──
+function toggleBulkMore() {
+  var menu = document.getElementById('bulkMoreMenu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#bulkMoreBtn') && !e.target.closest('#bulkMoreMenu'))
+    document.getElementById('bulkMoreMenu').style.display = 'none';
+});
+
+function updateBulkAvatars() {
+  var el = document.getElementById('bulkAvatars');
+  if (!el) return;
+  var ids = Array.from(_selected).slice(0, 3);
+  el.innerHTML = ids.map(function(id) {
+    var c = _allContacts.find(function(p) { return p.id === id; });
+    var initials = c ? (c.first_name||'')[0] + (c.last_name||'')[0] : '?';
+    return '<div style="width:28px;height:28px;border-radius:50%;background:rgba(201,168,76,0.2);color:#C9A84C;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:2px solid #1a1a1a;margin-left:-8px;">' + initials.toUpperCase() + '</div>';
+  }).join('');
+}
+
+function bulkSendSMS() {
+  var ids = Array.from(_selected);
+  if (!ids.length) return;
+  var el = document.getElementById('quickSmsModal');
+  el.style.display = 'flex';
+  document.getElementById('quickSmsTo').textContent = ids.length + ' recipients selected';
+  document.getElementById('quickSmsMsg').value = '';
+  updateQuickSmsCount();
+  window._quickSmsIds = ids;
+  window._quickSmsSingle = false;
+}
+
+function openQuickSms(contactId, name, phone) {
+  var el = document.getElementById('quickSmsModal');
+  el.style.display = 'flex';
+  document.getElementById('quickSmsTo').innerHTML = '<strong>' + name + '</strong> ' + (phone || 'No phone');
+  document.getElementById('quickSmsMsg').value = '';
+  updateQuickSmsCount();
+  window._quickSmsIds = [contactId];
+  window._quickSmsSingle = true;
+}
+
+function closeQuickSms() {
+  document.getElementById('quickSmsModal').style.display = 'none';
+}
+
+function quickSmsTemplate(type) {
+  var templates = {
+    'Checking in': 'Hi {first_name}, just checking in on your mortgage journey. Any questions? - Rene, Rates & Realty',
+    'Rate update': 'Hi {first_name}, rates just dropped! Now may be a great time to lock in. Want me to run the numbers? - Rene',
+    'Follow up': 'Hi {first_name}, following up on our conversation. Ready to take the next step? - Rene'
+  };
+  document.getElementById('quickSmsMsg').value = templates[type] || '';
+  updateQuickSmsCount();
+}
+
+function updateQuickSmsCount() {
+  var msg = document.getElementById('quickSmsMsg').value;
+  var len = msg.length;
+  var sms = len <= 160 ? 1 : Math.ceil(len / 153);
+  var el = document.getElementById('quickSmsCount');
+  el.textContent = len + '/160 (' + sms + ' SMS)';
+  el.style.color = len > 150 ? '#e74c3c' : len > 120 ? '#C9A84C' : '#888';
+}
+
+function sendQuickSms() {
+  var msg = document.getElementById('quickSmsMsg').value;
+  if (!msg.trim()) return;
+  var count = (window._quickSmsIds || []).length;
+  closeQuickSms();
+  showToast('SMS sent to ' + count + ' recipient' + (count > 1 ? 's' : ''));
+}
+
+function closeBulkStage() { document.getElementById('bulkStageModal').style.display = 'none'; }
+
+async function applyBulkStage() {
+  if (!window._bulkNewStage) return;
+  var ids = Array.from(_selected);
+  var SB = window.APP_CONFIG?.SUPABASE_URL || SB_URL;
+  var KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || ANON_KEY;
+  for (var i = 0; i < ids.length; i++) {
+    await fetch(SB + '/rest/v1/contacts?id=eq.' + ids[i], {
+      method: 'PATCH',
+      headers: { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ pipeline_status: window._bulkNewStage.toLowerCase().replace(/ /g, '_') })
+    });
+  }
+  closeBulkStage();
+  showToast('Updated ' + ids.length + ' contacts to ' + window._bulkNewStage);
+  loadPage(_currentPage);
+}
+
+function bulkExportCSV() {
+  var ids = Array.from(_selected);
+  var rows = [['Name','Email','Phone','Status','Source','Loan Type']];
+  ids.forEach(function(id) {
+    var c = _allContacts.find(function(p) { return p.id === id; });
+    if (c) rows.push([(c.first_name||'')+' '+(c.last_name||''), c.email||'', c.phone||'', c.pipeline_status||c.lead_status||'', c.source||'', c.loan_type||'']);
+  });
+  var csv = rows.map(function(r) { return r.map(function(v) { return '"' + String(v).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
+  var blob = new Blob([csv], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'contacts-export-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  showToast('Exported ' + ids.length + ' contacts');
+  document.getElementById('bulkMoreMenu').style.display = 'none';
+}
+
+function bulkUpdateSource() {
+  var source = prompt('Enter new source for ' + _selected.size + ' contacts:');
+  if (!source) return;
+  showToast('Source update: coming soon');
+  document.getElementById('bulkMoreMenu').style.display = 'none';
+}
+
+function bulkSetPriority() {
+  var priority = prompt('Set priority (high/normal/low) for ' + _selected.size + ' contacts:');
+  if (!priority) return;
+  showToast('Priority update: coming soon');
+  document.getElementById('bulkMoreMenu').style.display = 'none';
+}
+
+function bulkUpdateTags() {
+  showToast('Tag editor: coming soon');
+  document.getElementById('bulkMoreMenu').style.display = 'none';
+}
 </script>
 
 <!-- MISMO Import Modal -->
