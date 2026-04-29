@@ -1312,29 +1312,46 @@ async function sendSmsCampaign(mode) {
   const label = mode === 'schedule' ? 'Schedule' : 'Send';
   if (!confirm(label + ' SMS to ' + recipients.length + ' recipients?\n\nMessage:\n' + fullMsg)) return;
 
-  // Collect data — POST to SMS function when available
-  const payload = {
-    message: fullMsg,
-    recipients: recipients.map(r => ({
-      id: r.id,
-      first_name: r.first_name,
-      last_name: r.last_name,
-      phone: r.phone || null,
-      email: r.email
-    })),
-    scheduled_at: mode === 'schedule' ? document.getElementById('smsSchedulePicker').value : null
-  };
+  // Send via sms-service edge function
+  const sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const sbKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  const smsFn = sbUrl + '/functions/v1/sms-service';
+  const headers = { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json' };
 
-  console.log('SMS Campaign payload:', payload);
-  showToast('SMS campaign sent to ' + recipients.length + ' recipients');
+  let sent = 0, failed = 0;
+  showToast('Sending SMS 0/' + recipients.length + '...');
+
+  for (const r of recipients) {
+    const phone = (r.phone || '').replace(/\D/g, '');
+    if (!phone || phone.length < 10) { failed++; continue; }
+    const personalMsg = fullMsg.replace(/\{first_name\}/g, r.first_name || '').replace(/\{last_name\}/g, r.last_name || '').replace(/\{phone\}/g, r.phone || '');
+    try {
+      const res = await fetch(smsFn, {
+        method: 'POST', headers,
+        body: JSON.stringify({ to: phone.length === 10 ? '+1' + phone : '+' + phone, body: personalMsg, contact_id: r.id })
+      });
+      if (res.ok) { sent++; } else { failed++; console.warn('SMS fail for', r.email, await res.text()); }
+    } catch(e) { failed++; console.error('SMS error:', e); }
+    showToast('Sending SMS ' + (sent + failed) + '/' + recipients.length + '...');
+  }
+  showToast('SMS sent: ' + sent + ' success, ' + failed + ' failed');
 }
 
-function sendSmsTest() {
+async function sendSmsTest() {
   const body = document.getElementById('smsBody').value.trim();
   if (!body) { showToast('Please write an SMS message first'); return; }
   const fullMsg = body + SMS_OPT_OUT;
-  console.log('SMS Test payload:', { message: fullMsg, test: true });
-  showToast('Test SMS sent!');
+  const sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const sbKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  try {
+    const res = await fetch(sbUrl + '/functions/v1/sms-service', {
+      method: 'POST',
+      headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: '+17144728508', body: fullMsg })
+    });
+    if (res.ok) showToast('Test SMS sent to (714) 472-8508');
+    else showToast('Test SMS failed: ' + (await res.text()));
+  } catch(e) { showToast('Test SMS error: ' + e.message); }
 }
 
 /* ================================================================
