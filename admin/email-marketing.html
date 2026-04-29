@@ -1326,11 +1326,13 @@ async function sendSmsCampaign(mode) {
     if (!phone || phone.length < 10) { failed++; continue; }
     const personalMsg = fullMsg.replace(/\{first_name\}/g, r.first_name || '').replace(/\{last_name\}/g, r.last_name || '').replace(/\{phone\}/g, r.phone || '');
     try {
+      var formattedPhone = phone.length === 10 ? '+1' + phone : (phone.length === 11 && phone[0] === '1' ? '+' + phone : '+' + phone);
       const res = await fetch(smsFn, {
         method: 'POST', headers,
-        body: JSON.stringify({ to: phone.length === 10 ? '+1' + phone : '+' + phone, body: personalMsg, contact_id: r.id })
+        body: JSON.stringify({ trigger: 'custom', to_phone: formattedPhone, params: { message: personalMsg }, contact_id: r.id })
       });
-      if (res.ok) { sent++; } else { failed++; console.warn('SMS fail for', r.email, await res.text()); }
+      var resData = await res.json().catch(function() { return {}; });
+      if (res.ok && (resData.sent || resData.success)) { sent++; } else { failed++; console.warn('SMS fail for', r.email || r.phone, resData.error || res.status); showToast('Failed: ' + (resData.error || 'Unknown error')); }
     } catch(e) { failed++; console.error('SMS error:', e); }
     showToast('Sending SMS ' + (sent + failed) + '/' + recipients.length + '...');
   }
@@ -1347,10 +1349,11 @@ async function sendSmsTest() {
     const res = await fetch(sbUrl + '/functions/v1/sms-service', {
       method: 'POST',
       headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: '+17144728508', body: fullMsg })
+      body: JSON.stringify({ trigger: 'custom', to_phone: '+17144728508', params: { message: fullMsg } })
     });
-    if (res.ok) showToast('Test SMS sent to (714) 472-8508');
-    else showToast('Test SMS failed: ' + (await res.text()));
+    var data = await res.json().catch(function() { return {}; });
+    if (res.ok && (data.sent || data.success)) showToast('Test SMS sent to (714) 472-8508');
+    else showToast('Test SMS failed: ' + (data.error || 'Unknown error'));
   } catch(e) { showToast('Test SMS error: ' + e.message); }
 }
 
