@@ -7056,12 +7056,16 @@ function getFeeSheetData() {
     addr = [propStreet.value, propCity ? propCity.value : '', propState ? propState.value : '', propZip ? propZip.value : ''].filter(Boolean).join(', ');
   }
   // Pull purchase price and loan amount from multiple sources (1003 fields → loan scenario fields → leadData)
-  var pp = _elVal('ls_purchase_price') || _elVal('f_prop_value') || leadData.purchase_price || '';
-  var la = _elVal('ls_loan_amount') || _elVal('f_loan_amount') || leadData.loan_amount || '';
+  var pp = _elNum('ls_purchase_price') || _elNum('f_prop_value') || parseFloat(leadData.purchase_price) || 0;
+  var la = _elNum('ls_loan_amount') || _elNum('f_loan_amount') || parseFloat(leadData.loan_amount) || 0;
   var lt = _elVal('ls_loan_type') || _elVal('f_loan_type_app') || leadData.loan_type || leadData.loan_program || '';
-  return { borrower_name: name, property_address: addr, purchase_price: pp, loan_amount: la, loan_type: lt };
+  return { borrower_name: name, property_address: addr, purchase_price: Math.round(pp), loan_amount: Math.round(la), loan_type: lt };
 }
-function _elVal(id) { var el = document.getElementById(id); return el && el.value ? el.value.replace(/[$,]/g,'') : ''; }
+function _elVal(id) { var el = document.getElementById(id); return el && el.value ? el.value.replace(/[$,]/g,'').trim() : ''; }
+function _elNum(id) { var v = _elVal(id); return v ? (parseFloat(v) || 0) : 0; }
+// Supabase helpers for fee sheet
+function _fsSbUrl() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co'; }
+function _fsSbKey() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw'; }
 
 function buildFeeSheetUrl() {
   var d = getFeeSheetData();
@@ -7089,8 +7093,8 @@ async function prefillFeeSheet() {
       var cid = new URLSearchParams(window.location.search).get('contact_id');
       if (!cid) return;
       try {
-        var res = await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=fee_sheet_data&order=created_at.desc&limit=1', {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        var res = await fetch(_fsSbUrl() + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=fee_sheet_data&order=created_at.desc&limit=1', {
+          headers: { 'apikey': _fsSbKey(), 'Authorization': 'Bearer ' + _fsSbKey() }
         });
         var rows = await res.json();
         if (rows && rows[0] && rows[0].fee_sheet_data) {
@@ -7119,20 +7123,21 @@ window.addEventListener('message', function(e) {
     var payload = Object.assign({}, e.data);
     delete payload.type;
     try {
-      var res = await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=id&limit=1', {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+      var sbUrl = _fsSbUrl(), sbKey = _fsSbKey();
+      var res = await fetch(sbUrl + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=id&limit=1', {
+        headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey }
       });
       var apps = await res.json();
       if (apps && apps.length) {
-        await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?id=eq.' + apps[0].id, {
+        await fetch(sbUrl + '/rest/v1/mortgage_applications?id=eq.' + apps[0].id, {
           method: 'PATCH',
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
           body: JSON.stringify({ fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() })
         });
       } else {
-        await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications', {
+        await fetch(sbUrl + '/rest/v1/mortgage_applications', {
           method: 'POST',
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
           body: JSON.stringify({ contact_id: cid, fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() })
         });
       }
@@ -7287,20 +7292,21 @@ async function saveFeeSheetQuote() {
     });
     var contactId = new URLSearchParams(window.location.search).get('contact_id');
     if (!contactId) return alert('No contact loaded');
-    var res = await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?contact_id=eq.' + contactId + '&select=id&limit=1', {
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    var sbUrl = _fsSbUrl(), sbKey = _fsSbKey();
+    var res = await fetch(sbUrl + '/rest/v1/mortgage_applications?contact_id=eq.' + contactId + '&select=id&limit=1', {
+      headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey }
     });
     var apps = await res.json();
     if (apps.length) {
-      await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications?id=eq.' + apps[0].id, {
+      await fetch(sbUrl + '/rest/v1/mortgage_applications?id=eq.' + apps[0].id, {
         method: 'PATCH',
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+        headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
         body: JSON.stringify({ fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() })
       });
     } else {
-      await fetch(SUPABASE_URL + '/rest/v1/mortgage_applications', {
+      await fetch(sbUrl + '/rest/v1/mortgage_applications', {
         method: 'POST',
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+        headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
         body: JSON.stringify({ contact_id: contactId, fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() })
       });
     }
