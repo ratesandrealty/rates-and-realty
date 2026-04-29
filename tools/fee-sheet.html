@@ -275,12 +275,66 @@
             font-size: 12px;
             vertical-align: top;
         }
+        /* Rate cards */
+        .rate-cards { display: flex; gap: 0; margin-bottom: 0; }
+        .rate-card {
+            flex: 1;
+            text-align: center;
+            padding: 18px 10px 14px;
+            background: #fafafa;
+            border: 1px solid #e8e8e8;
+            border-bottom: none;
+            position: relative;
+        }
+        .rate-card:first-child { border-left: 1px solid #e8e8e8; }
+        .rate-card.rec {
+            background: #FFFDF5;
+            border-top: 3px solid var(--gold);
+            border-left-color: rgba(201,168,76,0.3);
+            border-right-color: rgba(201,168,76,0.3);
+        }
+        .rate-card + .rate-card { border-left: none; }
+        .rate-card-label {
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            font-size: 10px;
+            color: #8A8478;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .rate-card-rate {
+            font-family: 'Playfair Display', serif;
+            font-size: 42px;
+            font-weight: 700;
+            color: #1A1A1A;
+            line-height: 1.1;
+        }
+        .rate-card.rec .rate-card-rate { color: var(--gold); }
+        .rate-card-apr {
+            font-size: 12px;
+            color: #8A8478;
+            margin-top: 2px;
+        }
+        .rate-card-pill {
+            display: inline-block;
+            border-radius: 20px;
+            padding: 3px 12px;
+            font-size: 11px;
+            font-weight: 700;
+            margin-top: 6px;
+        }
+        .pill-none { background: #f0f0f0; color: #888; }
+        .pill-cost { background: rgba(231,76,60,0.1); color: #c0392b; }
+        .pill-credit { background: rgba(46,204,113,0.1); color: #27ae60; }
+        .rate-cards-spacer { width: 0; flex: 0 0 0; } /* placeholder for Fee Description col alignment */
+
         .fee-table thead th {
             background: #111;
             color: #fff;
             font-weight: 600;
             text-align: center;
-            font-size: 12px;
+            font-size: 11px;
+            padding: 6px 10px;
         }
         .fee-table thead th:first-child {
             text-align: left;
@@ -403,6 +457,9 @@
                 max-width: 100%;
                 padding: 30px 40px;
             }
+            .rate-card { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .rate-card.rec { background: #FFFDF5 !important; border-top-color: #C9A84C !important; }
+            .rate-card-pill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .rec-col-cell {
                 background: #fdf8e8 !important;
                 -webkit-print-color-adjust: exact;
@@ -811,10 +868,29 @@ function render(inp, results) {
             <div class="item"><div class="lbl">Lock</div><div class="val" style="font-family:'DM Sans';font-size:12px">${inp.lockPeriod}</div></div>
         </div>
 
+        <div style="display:flex;gap:0;">
+            <div style="width:40%;flex-shrink:0;"></div>
+            <div class="rate-cards" style="flex:1;">
+                ${scenarios.map((s, i) => {
+                    const isRec = i === recIdx;
+                    const ptsAmt = Math.abs(s.points / 100 * inp.loanAmount);
+                    let pillClass, pillText;
+                    if (s.points === 0) { pillClass = 'pill-none'; pillText = 'No Points'; }
+                    else if (s.points > 0) { pillClass = 'pill-cost'; pillText = s.points + 'pts \u2014 ' + fmtPlain(ptsAmt, 0); }
+                    else { pillClass = 'pill-credit'; pillText = 'Credit \u2014 ' + fmtPlain(ptsAmt, 0); }
+                    return '<div class="rate-card' + (isRec ? ' rec' : '') + '">' +
+                        '<div class="rate-card-label">Option ' + s.id + ' \u2014 ' + s.label + '</div>' +
+                        '<div class="rate-card-rate">' + s.rate.toFixed(3) + '%</div>' +
+                        '<div class="rate-card-apr">' + s.rate.toFixed(3) + '% APR</div>' +
+                        '<div><span class="rate-card-pill ' + pillClass + '">' + pillText + '</span></div>' +
+                    '</div>';
+                }).join('')}
+            </div>
+        </div>
         <table class="fee-table">
             <thead><tr>
                 <th>Fee Description</th>
-                ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}: ${s.label}<br><span style="font-weight:400;font-size:11px">${s.rate}% &middot; ${s.points >= 0 ? s.points : s.points}pts</span></th>`).join('')}
+                ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}</th>`).join('')}
             </tr></thead>
             <tbody>
                 ${catHeader('A. Origination Charges')}
