@@ -272,20 +272,26 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   T('VALID THROUGH',vbX+(128-R.widthOfTextAtSize('VALID THROUGH',6.5))/2,vbTop-12,R,6.5,GREEN);
   T(expiryDate,vbX+(128-B.widthOfTextAtSize(expiryDate,9))/2,vbTop-28,B,9,GREEN);
 
-  // QR Code — bottom right
+  // QR Code — bottom right (200x200px PNG, ~14KB)
   try {
     const qrUrl = 'https://beta.ratesandrealty.com/assets/images/qr-code.png';
     const qrRes = await fetch(qrUrl);
     if (qrRes.ok) {
       const qrBytes = new Uint8Array(await qrRes.arrayBuffer());
-      const qrImg = await doc.embedPng(qrBytes);
+      console.log('[qr] Fetched', qrBytes.length, 'bytes, magic:', qrBytes[0]?.toString(16));
+      let qrImg;
+      try { qrImg = await doc.embedPng(qrBytes); }
+      catch(pe) { console.log('[qr] embedPng failed, trying embedJpg:', String(pe).slice(0,60)); qrImg = await doc.embedJpg(qrBytes); }
       const qrSize = 80;
       const qrX = W - M - qrSize;
       const qrY = vbTop - 42 - qrSize - 6;
       page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
       T('Scan to connect', qrX + (qrSize - R.widthOfTextAtSize('Scan to connect', 5.5)) / 2, qrY - 8, R, 5.5, GRAY);
+      console.log('[qr] QR code embedded successfully');
+    } else {
+      console.log('[qr] Fetch failed:', qrRes.status, qrRes.statusText);
     }
-  } catch (e) { console.log('[qr] Could not embed QR code:', String(e).slice(0, 80)); }
+  } catch (e) { console.log('[qr] Could not embed QR code:', String(e).slice(0, 120)); }
   y-=18;
 
   // DISCLAIMER — removed "arranges but does not make loans" line per request
