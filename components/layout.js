@@ -290,3 +290,32 @@ try {
   }
 } catch(e) {}
 
+// ── Floating Softphone Widget (admin pages only) ──
+if (isAdminPage || path.includes('/admin/')) {
+  const widget = document.createElement('div');
+  widget.id = 'softphone-widget';
+  widget.innerHTML = `
+    <button id="softphone-btn" onclick="document.getElementById('softphone-expanded').style.display=document.getElementById('softphone-expanded').style.display==='none'?'block':'none'" style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#22c55e,#16a34a);border:none;color:white;font-size:20px;cursor:pointer;box-shadow:0 4px 16px rgba(34,197,94,0.4);transition:transform .2s;" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'">📞</button>
+    <div id="softphone-expanded" style="display:none;position:absolute;bottom:56px;right:0;width:280px;background:#111;border:1px solid rgba(201,168,76,0.3);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.6);padding:14px;">
+      <div style="font-size:12px;font-weight:700;color:#E8D5A3;margin-bottom:8px;">Quick Dial</div>
+      <input id="softphone-number" type="tel" placeholder="(714) 555-1234" style="width:100%;padding:8px 10px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#eee;font-size:13px;outline:none;font-family:inherit;margin-bottom:8px;">
+      <button onclick="softphoneDial()" style="width:100%;padding:8px;background:#22c55e;border:none;border-radius:6px;color:white;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Call Now</button>
+      <div style="font-size:10px;color:#555;margin-top:6px;text-align:center;">Powered by Twilio Voice</div>
+    </div>
+  `;
+  widget.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9998;';
+  document.body.appendChild(widget);
+
+  window.softphoneDial = function() {
+    var num = document.getElementById('softphone-number').value;
+    if (!num) return;
+    // If on lead-detail page with openCallModal, use it
+    if (typeof openCallModal === 'function') {
+      openCallModal('Quick Dial', num, null);
+    } else {
+      // Open lead-detail with call param
+      window.open('/admin/lead-detail.html?dial=' + encodeURIComponent(num), '_blank');
+    }
+    document.getElementById('softphone-expanded').style.display = 'none';
+  };
+}
