@@ -37,27 +37,31 @@ Deno.serve(async (req) => {
   const TWILIO_PHONE = Deno.env.get('TWILIO_PHONE_NUMBER') || '+18668919394';
 
   // Check if this is a TwiML webhook from Twilio (form-encoded)
+  // Also handle GET requests with query params (sub-actions like play_voicemail)
   const contentType = req.headers.get('content-type') || '';
+  const reqUrl = new URL(req.url);
+  const subAction = reqUrl.searchParams.get('action');
+
+  // Sub-action: play voicemail TwiML
+  if (subAction === 'play_voicemail') {
+    const vmUrl = reqUrl.searchParams.get('url') || '';
+    console.log('[twilio-voice] play_voicemail:', vmUrl);
+    return twimlResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/><Play>${vmUrl}</Play><Hangup/></Response>`);
+  }
+
   if (contentType.includes('application/x-www-form-urlencoded')) {
-    const formData = await req.formData().catch(() => new FormData());
-    const to = formData.get('To') as string || '';
-    const callSid = formData.get('CallSid') as string || '';
+    // Parse form body manually (more reliable than formData() in Deno)
+    const bodyText = await req.text();
+    const params = new URLSearchParams(bodyText);
+    const to = params.get('To') || '';
+    const callSid = params.get('CallSid') || '';
+    const recordingUrl = params.get('RecordingUrl') || '';
 
-    // Check URL params for sub-actions
-    const url = new URL(req.url);
-    const subAction = url.searchParams.get('action');
-
-    if (subAction === 'play_voicemail') {
-      const vmUrl = url.searchParams.get('url') || '';
-      return twimlResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/><Play>${vmUrl}</Play><Hangup/></Response>`);
-    }
+    console.log('[twilio-voice] TwiML webhook - To:', to, 'CallSid:', callSid, 'Recording:', recordingUrl ? 'yes' : 'no');
 
     // Recording status callback
-    if (formData.get('RecordingUrl')) {
-      const recordingUrl = formData.get('RecordingUrl') as string;
-      const recordingSid = formData.get('RecordingSid') as string;
-      console.log('[twilio-voice] Recording:', recordingUrl, recordingSid);
-      // Update calls_log with recording URL
+    if (recordingUrl) {
+      console.log('[twilio-voice] Recording URL:', recordingUrl);
       if (callSid) {
         await sb.from('calls_log').update({ recording_url: recordingUrl }).eq('twilio_call_sid', callSid);
       }
@@ -66,16 +70,19 @@ Deno.serve(async (req) => {
 
     // Default TwiML: Dial the number
     if (to) {
+      const dialTo = to.startsWith('+') || to.startsWith('sip:') ? to : formatPhone(to);
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Dial callerId="${TWILIO_PHONE}" record="record-from-answer" recordingStatusCallback="https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice">
-    <Number>${to}</Number>
+    <Number>${dialTo}</Number>
   </Dial>
 </Response>`;
+      console.log('[twilio-voice] Returning TwiML to dial:', dialTo);
       return twimlResponse(twiml);
     }
 
-    return twimlResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>No number provided.</Say></Response>`);
+    console.log('[twilio-voice] No To number in webhook, full params:', bodyText);
+    return twimlResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>No destination number provided.</Say></Response>`);
   }
 
   // JSON body actions
