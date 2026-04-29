@@ -9,6 +9,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion before GDrive upload -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://sdk.twilio.com/js/client/v1.14/twilio.js"></script>
   <title>Lead Detail | Rates &amp; Realty CRM</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18714,9 +18715,41 @@ async function saveNewLender() {
 </div>
 
 <script>
-/* ═══ BROWSER CALLING ═══ */
+/* ═══ BROWSER CALLING (Twilio.Device) ═══ */
 var _callTimer = null, _callSeconds = 0, _callContactId = null, _callPhone = null, _callOutcome = null;
+var _twilioDevice = null, _twilioConnection = null;
 var VOICE_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice';
+
+// Initialize Twilio Device on first use
+async function initTwilioDevice() {
+  if (_twilioDevice) return true;
+  try {
+    var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+    var res = await fetch(VOICE_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + anon },
+      body: JSON.stringify({ action: 'get_token' })
+    });
+    var data = await res.json();
+    if (!data.token) throw new Error('No token received');
+    _twilioDevice = new Twilio.Device(data.token, { codecPreferences: ['opus', 'pcmu'], closeProtection: true });
+    _twilioDevice.on('ready', function() { console.log('[Twilio] Device ready'); });
+    _twilioDevice.on('error', function(e) { console.error('[Twilio] Device error:', e); });
+    _twilioDevice.on('disconnect', function() {
+      console.log('[Twilio] Call disconnected');
+      if (_callTimer) { clearInterval(_callTimer); _callTimer = null; }
+      document.getElementById('call-status').textContent = 'Call Ended';
+      document.getElementById('call-status').style.color = '#888';
+      document.getElementById('call-end-btn').style.display = 'none';
+      document.getElementById('call-mute-btn').style.display = 'none';
+      document.getElementById('call-outcome-panel').style.display = 'block';
+    });
+    return true;
+  } catch(e) {
+    console.error('[Twilio] Init failed:', e);
+    return false;
+  }
+}
 
 function openCallModal(name, phone, contactId) {
   var modal = document.getElementById('call-modal');
@@ -18748,13 +18781,45 @@ function closeCallModal() {
 
 async function startBrowserCall() {
   var statusEl = document.getElementById('call-status');
-  statusEl.textContent = 'Connecting...';
+  statusEl.textContent = 'Initializing...';
   statusEl.style.color = '#f39c12';
   document.getElementById('call-start-btn').style.display = 'none';
+
+  // Try browser calling via Twilio.Device first, fall back to REST API
+  var useBrowser = typeof Twilio !== 'undefined' && Twilio.Device;
+  if (useBrowser) {
+    try {
+      var ready = await initTwilioDevice();
+      if (ready && _twilioDevice) {
+        statusEl.textContent = 'Connecting...';
+        var ph = (_callPhone || '').replace(/\D/g, '');
+        if (ph.length === 10) ph = '+1' + ph;
+        else if (ph.length === 11 && ph[0] === '1') ph = '+' + ph;
+        _twilioConnection = _twilioDevice.connect({ To: ph });
+        _twilioConnection.on('ringing', function() { statusEl.textContent = 'Ringing...'; statusEl.style.color = '#22c55e'; });
+        _twilioConnection.on('accept', function() { statusEl.textContent = 'Connected'; statusEl.style.color = '#22c55e'; });
+        _twilioConnection.on('disconnect', function() { /* handled by device event */ });
+        _twilioConnection.on('error', function(e) { statusEl.textContent = 'Error: ' + e.message; statusEl.style.color = '#ef4444'; });
+
+        document.getElementById('call-end-btn').style.display = 'inline-block';
+        document.getElementById('call-mute-btn').style.display = 'inline-block';
+        document.getElementById('call-notes').style.display = 'block';
+        _callSeconds = 0;
+        document.getElementById('call-timer').style.display = 'block';
+        _callTimer = setInterval(function() {
+          _callSeconds++;
+          var m = Math.floor(_callSeconds/60), s = _callSeconds%60;
+          document.getElementById('call-timer').textContent = m + ':' + (s<10?'0':'') + s;
+        }, 1000);
+        return;
+      }
+    } catch(e) { console.warn('[Twilio] Browser call failed, falling back to REST:', e); }
+  }
+
+  // Fallback: REST API call (phone rings on contact's end, not browser)
   document.getElementById('call-end-btn').style.display = 'inline-block';
   document.getElementById('call-mute-btn').style.display = 'inline-block';
   document.getElementById('call-notes').style.display = 'block';
-
   try {
     var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
     var res = await fetch(VOICE_FN, {
@@ -18788,6 +18853,9 @@ async function startBrowserCall() {
 }
 
 async function endBrowserCall() {
+  // Disconnect Twilio.Device call if active
+  if (_twilioConnection) { try { _twilioConnection.disconnect(); } catch(e) {} _twilioConnection = null; }
+  if (_twilioDevice) { try { _twilioDevice.disconnectAll(); } catch(e) {} }
   if (_callTimer) { clearInterval(_callTimer); _callTimer = null; }
   document.getElementById('call-status').textContent = 'Call Ended';
   document.getElementById('call-status').style.color = '#888';
@@ -18807,11 +18875,12 @@ async function endBrowserCall() {
 
 function toggleCallMute() {
   var btn = document.getElementById('call-mute-btn');
-  if (btn.dataset.muted === 'true') {
-    btn.dataset.muted = 'false'; btn.style.background = '#222'; btn.style.color = '#888';
-  } else {
-    btn.dataset.muted = 'true'; btn.style.background = 'rgba(239,68,68,0.15)'; btn.style.color = '#ef4444';
-  }
+  var muted = btn.dataset.muted !== 'true';
+  btn.dataset.muted = muted ? 'true' : 'false';
+  btn.style.background = muted ? 'rgba(239,68,68,0.15)' : '#222';
+  btn.style.color = muted ? '#ef4444' : '#888';
+  // Mute the actual Twilio connection
+  if (_twilioConnection && _twilioConnection.mute) { try { _twilioConnection.mute(muted); } catch(e) {} }
 }
 
 function setCallOutcome(outcome) {

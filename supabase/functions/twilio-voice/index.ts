@@ -1,211 +1,221 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization,apikey,x-client-info' };
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-const TWILIO_SID = Deno.env.get('TWILIO_ACCOUNT_SID');
-const TWILIO_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN');
-const TWILIO_FROM = Deno.env.get('TWILIO_PHONE_NUMBER') || '+17144728508';
 
 function formatPhone(phone: string): string {
-  const d = phone.replace(/\D/g,'');
-  if (d.startsWith('1') && d.length===11) return `+${d}`;
-  if (d.length===10) return `+1${d}`;
-  return `+${d}`;
+  const d = phone.replace(/\D/g, '');
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d[0] === '1') return '+' + d;
+  return '+' + d;
 }
 
-function escapeXml(s: string): string {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+function ok(data: any) {
+  return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+function err(msg: string, status = 400) {
+  return new Response(JSON.stringify({ error: msg }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+function twimlResponse(xml: string) {
+  return new Response(xml, { headers: { ...corsHeaders, 'Content-Type': 'text/xml' } });
 }
 
-async function twilioCall(to: string, twiml: string, from?: string): Promise<{success:boolean; callSid?:string; error?:string}> {
-  if (!TWILIO_SID || !TWILIO_TOKEN) return { success: false, error: 'Twilio not configured' };
-  const fromNumber = from ? formatPhone(from) : TWILIO_FROM;
-  const params = new URLSearchParams({
-    To: formatPhone(to),
-    From: fromNumber,
-    Twiml: twiml,
-    Record: 'true',
-  });
-  try {
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Basic ' + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`),
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: params.toString()
-    });
-    const data = await res.json();
-    if (data.sid) return { success: true, callSid: data.sid };
-    return { success: false, error: data.message || data.code || 'Call failed' };
-  } catch (e: any) {
-    return { success: false, error: e.message };
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  const ACCOUNT_SID = Deno.env.get('TWILIO_ACCOUNT_SID')!;
+  const AUTH_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN')!;
+  const API_KEY = Deno.env.get('TWILIO_API_KEY')!;
+  const API_SECRET = Deno.env.get('TWILIO_API_SECRET')!;
+  const TWIML_APP_SID = Deno.env.get('TWILIO_TWIML_APP_SID')!;
+  const TWILIO_PHONE = Deno.env.get('TWILIO_PHONE_NUMBER') || '+18668919394';
+
+  // Check if this is a TwiML webhook from Twilio (form-encoded)
+  const contentType = req.headers.get('content-type') || '';
+  if (contentType.includes('application/x-www-form-urlencoded')) {
+    const formData = await req.formData().catch(() => new FormData());
+    const to = formData.get('To') as string || '';
+    const callSid = formData.get('CallSid') as string || '';
+
+    // Check URL params for sub-actions
+    const url = new URL(req.url);
+    const subAction = url.searchParams.get('action');
+
+    if (subAction === 'play_voicemail') {
+      const vmUrl = url.searchParams.get('url') || '';
+      return twimlResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/><Play>${vmUrl}</Play><Hangup/></Response>`);
+    }
+
+    // Recording status callback
+    if (formData.get('RecordingUrl')) {
+      const recordingUrl = formData.get('RecordingUrl') as string;
+      const recordingSid = formData.get('RecordingSid') as string;
+      console.log('[twilio-voice] Recording:', recordingUrl, recordingSid);
+      // Update calls_log with recording URL
+      if (callSid) {
+        await sb.from('calls_log').update({ recording_url: recordingUrl }).eq('twilio_call_sid', callSid);
+      }
+      return ok({ received: true });
+    }
+
+    // Default TwiML: Dial the number
+    if (to) {
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial callerId="${TWILIO_PHONE}" record="record-from-answer" recordingStatusCallback="https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice">
+    <Number>${to}</Number>
+  </Dial>
+</Response>`;
+      return twimlResponse(twiml);
+    }
+
+    return twimlResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>No number provided.</Say></Response>`);
   }
-}
 
-async function logCall(p: {
-  contact_id?: string;
-  to_phone: string;
-  from_phone?: string;
-  duration?: number;
-  status: string;
-  notes?: string;
-  outcome?: string;
-  recording_url?: string;
-  twilio_call_sid?: string;
-  voicemail_drop?: boolean;
-}) {
+  // JSON body actions
   try {
-    await sb.from('calls_log').insert({
-      contact_id: p.contact_id || null,
-      to_phone: p.to_phone,
-      from_phone: p.from_phone || TWILIO_FROM,
-      duration: p.duration || null,
-      status: p.status,
-      notes: p.notes || null,
-      outcome: p.outcome || null,
-      recording_url: p.recording_url || null,
-      twilio_call_sid: p.twilio_call_sid || null,
-      voicemail_drop: p.voicemail_drop || false,
-      created_at: new Date().toISOString()
-    });
-  } catch (e) { console.error('logCall:', e); }
-}
+    const body = await req.json().catch(() => ({}));
+    const { action, to, contact_id, voicemail_url, duration, status, notes, outcome, twilio_call_sid } = body;
 
-async function logActivity(p: {
-  contact_id?: string;
-  title: string;
-  description?: string;
-  status: string;
-  metadata?: any;
-}) {
-  try {
-    await sb.from('activity_events').insert({
-      contact_id: p.contact_id || null,
-      type: 'call',
-      channel: 'phone',
-      direction: 'outbound',
-      title: p.title,
-      description: p.description || null,
-      status: p.status,
-      metadata: p.metadata ? JSON.stringify(p.metadata) : null,
-      created_at: new Date().toISOString()
-    });
-  } catch (e) { console.error('logActivity:', e); }
-}
+    // ── GET_TOKEN: Generate Twilio Access Token for browser calling ──
+    if (action === 'get_token') {
+      const now = Math.floor(Date.now() / 1000);
+      const exp = now + 3600;
+      const identity = 'rene_duarte';
 
-Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
-  const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, 'Content-Type': 'application/json' } });
-  const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+      const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT', cty: 'twilio-fpa;v=1' }))
+        .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 
-  try {
-    const body = await req.json();
-    const { action } = body;
-    if (!action) return err('action required');
+      const grants: any = { identity };
+      grants.voice = { incoming: { allow: true }, outgoing: { application_sid: TWIML_APP_SID } };
 
-    // ── MAKE_CALL ──────────────────────────────────────────────────────────────
+      const payload = btoa(JSON.stringify({
+        jti: `${API_KEY}-${now}`,
+        iss: API_KEY,
+        sub: ACCOUNT_SID,
+        nbf: now,
+        exp,
+        grants,
+      })).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+
+      const key = await crypto.subtle.importKey(
+        'raw', new TextEncoder().encode(API_SECRET),
+        { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+      );
+      const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${header}.${payload}`));
+      const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
+        .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+
+      const token = `${header}.${payload}.${sigB64}`;
+      return ok({ token, identity });
+    }
+
+    // ── MAKE_CALL: Initiate outbound call via REST API ──
     if (action === 'make_call') {
-      const { to, contact_id, from } = body;
-      if (!to) return err('to (phone number) required');
+      if (!to) return err('Missing "to" phone number');
+      const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
+      const twiml = `<Response><Dial callerId="${TWILIO_PHONE}" record="record-from-answer"><Number>${formatPhone(to)}</Number></Dial></Response>`;
 
-      const fromNumber = from ? formatPhone(from) : TWILIO_FROM;
-      const twiml = `<Response><Dial callerId="${escapeXml(fromNumber)}">${escapeXml(formatPhone(to))}</Dial></Response>`;
-      const result = await twilioCall(to, twiml, from);
-
-      if (result.success) {
-        await logCall({
-          contact_id,
-          to_phone: formatPhone(to),
-          from_phone: fromNumber,
-          status: 'initiated',
-          twilio_call_sid: result.callSid,
-        });
-        await logActivity({
-          contact_id,
-          title: `Outbound call to ${formatPhone(to)}`,
-          status: 'initiated',
-          metadata: { callSid: result.callSid, from: fromNumber },
-        });
-      }
-
-      return ok({ success: result.success, callSid: result.callSid, error: result.error });
-    }
-
-    // ── VOICEMAIL_DROP ─────────────────────────────────────────────────────────
-    if (action === 'voicemail_drop') {
-      const { to, voicemail_url, contact_id } = body;
-      if (!to) return err('to (phone number) required');
-      if (!voicemail_url) return err('voicemail_url required');
-
-      const twiml = `<Response><Pause length="2"/><Play>${escapeXml(voicemail_url)}</Play><Hangup/></Response>`;
-      const result = await twilioCall(to, twiml);
-
-      if (result.success) {
-        await logCall({
-          contact_id,
-          to_phone: formatPhone(to),
-          status: 'initiated',
-          twilio_call_sid: result.callSid,
-          voicemail_drop: true,
-        });
-        await logActivity({
-          contact_id,
-          title: `Voicemail drop to ${formatPhone(to)}`,
-          description: `Audio: ${voicemail_url}`,
-          status: 'initiated',
-          metadata: { callSid: result.callSid, voicemail_url, voicemail_drop: true },
-        });
-      }
-
-      return ok({ success: result.success, callSid: result.callSid, error: result.error });
-    }
-
-    // ── CALL_STATUS ────────────────────────────────────────────────────────────
-    if (action === 'call_status') {
-      const { callSid } = body;
-      if (!callSid) return err('callSid required');
-      if (!TWILIO_SID || !TWILIO_TOKEN) return err('Twilio not configured', 500);
-
-      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls/${callSid}.json`, {
-        headers: { 'Authorization': 'Basic ' + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`) }
+      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Calls.json`, {
+        method: 'POST',
+        headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ To: formatPhone(to), From: TWILIO_PHONE, Twiml: twiml }),
       });
-      if (!res.ok) return err('Failed to fetch call status', res.status);
+      const data = await res.json();
+
+      if (data.sid) {
+        // Log to calls_log
+        await sb.from('calls_log').insert({
+          contact_id: contact_id || null,
+          to_phone: formatPhone(to),
+          from_phone: TWILIO_PHONE,
+          direction: 'outbound',
+          status: 'initiated',
+          twilio_call_sid: data.sid,
+        });
+        return ok({ success: true, callSid: data.sid });
+      }
+      return err(data.message || 'Call failed');
+    }
+
+    // ── VOICEMAIL_DROP: Call and play pre-recorded message ──
+    if (action === 'voicemail_drop') {
+      if (!to || !voicemail_url) return err('Missing "to" or "voicemail_url"');
+      const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
+      const twimlUrl = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice?action=play_voicemail&url=${encodeURIComponent(voicemail_url)}`;
+
+      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Calls.json`, {
+        method: 'POST',
+        headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          To: formatPhone(to), From: TWILIO_PHONE, Url: twimlUrl,
+          MachineDetection: 'DetectMessageEnd',
+        }),
+      });
+      const data = await res.json();
+
+      if (data.sid) {
+        await sb.from('calls_log').insert({
+          contact_id: contact_id || null,
+          to_phone: formatPhone(to),
+          from_phone: TWILIO_PHONE,
+          direction: 'outbound',
+          status: 'voicemail_drop',
+          voicemail_drop: true,
+          voicemail_url,
+          twilio_call_sid: data.sid,
+        });
+        return ok({ success: true, callSid: data.sid });
+      }
+      return err(data.message || 'Voicemail drop failed');
+    }
+
+    // ── CALL_STATUS: Check call status from Twilio ──
+    if (action === 'call_status') {
+      if (!twilio_call_sid) return err('Missing "twilio_call_sid"');
+      const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
+      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Calls/${twilio_call_sid}.json`, {
+        headers: { 'Authorization': `Basic ${auth}` },
+      });
       const data = await res.json();
       return ok({ status: data.status, duration: data.duration });
     }
 
-    // ── LOG_CALL ───────────────────────────────────────────────────────────────
+    // ── LOG_CALL: Manually log a call to the database ──
     if (action === 'log_call') {
-      const { contact_id, to_phone, duration, status, notes, outcome, recording_url, twilio_call_sid } = body;
-      if (!to_phone) return err('to_phone required');
-
-      await logCall({
-        contact_id,
-        to_phone: formatPhone(to_phone),
-        duration,
+      const { error } = await sb.from('calls_log').insert({
+        contact_id: contact_id || null,
+        to_phone: to || null,
+        direction: 'outbound',
+        duration: duration || 0,
         status: status || 'completed',
-        notes,
-        outcome,
-        recording_url,
-        twilio_call_sid,
+        notes: notes || null,
+        outcome: outcome || null,
+        twilio_call_sid: twilio_call_sid || null,
       });
+      if (error) return err(error.message, 500);
 
-      await logActivity({
-        contact_id,
-        title: `Call logged — ${formatPhone(to_phone)}${outcome ? ' (' + outcome + ')' : ''}`,
-        description: notes ? notes.substring(0, 200) : undefined,
-        status: status || 'completed',
-        metadata: { twilio_call_sid, duration, outcome, recording_url },
-      });
-
+      // Also log activity event
+      if (contact_id) {
+        await sb.from('activity_events').insert({
+          contact_id,
+          event_type: 'call',
+          description: `Outbound call${outcome ? ' - ' + outcome.replace(/_/g, ' ') : ''}${duration ? ' (' + Math.floor(duration / 60) + ':' + String(duration % 60).padStart(2, '0') + ')' : ''}`,
+          metadata: { duration, outcome, notes },
+        }).catch(() => {});
+      }
       return ok({ success: true });
     }
 
     return err('Unknown action: ' + action);
   } catch (e: any) {
-    console.error('twilio-voice error:', e);
-    return err(e.message || 'Server error', 500);
+    console.error('[twilio-voice] Error:', e);
+    return err(e.message || 'Internal error', 500);
   }
 });
