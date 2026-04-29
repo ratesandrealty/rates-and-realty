@@ -242,7 +242,10 @@
           <div class="card">
             <div class="card-title" style="justify-content:space-between;">
               <span>Compose</span>
-              <button onclick="openAiPanel()" style="padding:8px 16px;background:linear-gradient(135deg,rgba(201,168,76,0.2),rgba(201,168,76,0.08));border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">&#10024; AI Assistant</button>
+              <div style="display:flex;gap:6px;">
+                <button onclick="openAiPanel()" style="padding:8px 16px;background:linear-gradient(135deg,rgba(201,168,76,0.2),rgba(201,168,76,0.08));border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">&#10024; AI Assistant</button>
+                <button onclick="openVideoModal()" style="padding:8px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#ccc;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">&#127909; Video</button>
+              </div>
             </div>
             <div class="field">
               <label>Subject Line</label>
@@ -374,12 +377,17 @@
               <input type="text" id="smsToField" readonly style="cursor:default;color:var(--gold);font-weight:600;" value="0 recipients selected">
             </div>
 
-            <div class="filter-group-title" style="margin-bottom:8px;">Quick Templates</div>
-            <div class="sms-template-row">
-              <span class="sms-template-btn" onclick="insertSmsTemplate('checkin')">Checking in</span>
-              <span class="sms-template-btn" onclick="insertSmsTemplate('rate')">Rate update</span>
-              <span class="sms-template-btn" onclick="insertSmsTemplate('followup')">Follow up</span>
-              <span class="sms-template-btn" onclick="insertSmsTemplate('appt')">Appt reminder</span>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div class="filter-group-title" style="margin-bottom:0;">Quick Templates</div>
+              <button onclick="smsAiGenerate()" style="padding:6px 14px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:8px;color:#C9A84C;font-size:11px;font-weight:600;cursor:pointer;">&#10024; AI Write SMS</button>
+            </div>
+            <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:10px;">
+              <button onclick="insertSmsTemplate('checkin')" style="flex-shrink:0;padding:6px 12px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:20px;color:#C9A84C;font-size:11px;cursor:pointer;white-space:nowrap;">Checking in &#128075;</button>
+              <button onclick="insertSmsTemplate('rate')" style="flex-shrink:0;padding:6px 12px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:20px;color:#C9A84C;font-size:11px;cursor:pointer;white-space:nowrap;">Rate alert &#128276;</button>
+              <button onclick="insertSmsTemplate('app')" style="flex-shrink:0;padding:6px 12px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:20px;color:#C9A84C;font-size:11px;cursor:pointer;white-space:nowrap;">App reminder &#128203;</button>
+              <button onclick="insertSmsTemplate('congrats')" style="flex-shrink:0;padding:6px 12px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:20px;color:#C9A84C;font-size:11px;cursor:pointer;white-space:nowrap;">Congrats &#127881;</button>
+              <button onclick="insertSmsTemplate('preapproval')" style="flex-shrink:0;padding:6px 12px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:20px;color:#C9A84C;font-size:11px;cursor:pointer;white-space:nowrap;">Pre-approval &#9989;</button>
+              <button onclick="insertSmsTemplate('followup')" style="flex-shrink:0;padding:6px 12px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:20px;color:#C9A84C;font-size:11px;cursor:pointer;white-space:nowrap;">Follow up &#128222;</button>
             </div>
 
             <div class="filter-group-title" style="margin-bottom:8px;">Insert Token</div>
@@ -714,7 +722,7 @@ function renderRecipients() {
     const statusClass = (c.pipeline_status || '').toLowerCase().replace(/[\s_]+/g, '-');
     return '<div class="recipient-item">' +
       '<input type="checkbox" checked data-idx="' + i + '" onchange="updateRecipientCount()">' +
-      '<span class="recipient-name">' + escHtml(name) + '</span>' +
+      '<span class="recipient-name"><a href="/admin/lead-detail.html?contact_id=' + c.id + '" target="_blank" style="color:#E8D5A3;text-decoration:none;font-weight:600;" onmouseover="this.style.color=\'#C9A84C\'" onmouseout="this.style.color=\'#E8D5A3\'">' + escHtml(name) + '</a></span>' +
       '<span class="status-badge status-' + statusClass + '">' + escHtml(c.pipeline_status || '') + '</span>' +
       '<span class="recipient-email">' + escHtml(c.email) + '</span>' +
       '</div>';
@@ -1038,8 +1046,19 @@ function initSmsTab() {
 }
 
 function insertSmsTemplate(key) {
+  var templates = {
+    'checkin': 'Hi {first_name}, just checking in! Any questions about your home loan? - Rene',
+    'rate': 'Hi {first_name}, rates moved today! Let us lock in your rate now. Call me: 714-472-8508 - Rene, R&R',
+    'app': 'Hi {first_name}, just a reminder to complete your application. Need help? I am here! - Rene',
+    'congrats': 'Congratulations {first_name}! Excited to help you on this journey. - Rene, Rates & Realty',
+    'preapproval': 'Great news {first_name}! You are pre-approved. Let us find your dream home! - Rene',
+    'followup': 'Hi {first_name}, tried reaching you. When is a good time to chat? - Rene, R&R',
+    'appt': 'Hi {first_name}, reminder: we have an appointment tomorrow. Looking forward to it! - Rene'
+  };
+  // Fall back to legacy SMS_TEMPLATES if key not found in new set
+  var msg = templates[key] || SMS_TEMPLATES[key] || '';
   const ta = document.getElementById('smsBody');
-  ta.value = SMS_TEMPLATES[key] || '';
+  if (ta && msg) { ta.value = msg; }
   ta.focus();
   updateSmsCounter();
   updateSmsPreview();
@@ -1132,7 +1151,7 @@ function renderSmsRecipients() {
     const statusClass = (c.pipeline_status || '').toLowerCase().replace(/[\s_]+/g, '-');
     return '<div class="recipient-item">' +
       '<input type="checkbox" checked data-sms-idx="' + i + '" onchange="updateSmsRecipientCount();updateSmsPreview()">' +
-      '<span class="recipient-name">' + escHtml(name) + '</span>' +
+      '<span class="recipient-name"><a href="/admin/lead-detail.html?contact_id=' + c.id + '" target="_blank" style="color:#E8D5A3;text-decoration:none;font-weight:600;" onmouseover="this.style.color=\'#C9A84C\'" onmouseout="this.style.color=\'#E8D5A3\'">' + escHtml(name) + '</a></span>' +
       '<span class="status-badge status-' + statusClass + '">' + escHtml(c.pipeline_status || '') + '</span>' +
       '<span class="recipient-email">' + escHtml(c.email || '') + '</span>' +
       '</div>';
@@ -1367,7 +1386,201 @@ function updateSubjectScore() {
     num.style.color = score < 40 ? '#e74c3c' : score < 70 ? '#f39c12' : '#27ae60';
   }
 }
+
+/* ================================================================
+   SMS AI ASSISTANT
+   ================================================================ */
+function smsAiGenerate() {
+  var goal = prompt('SMS goal? (check-in / rate-alert / follow-up / appointment / congrats / referral)') || 'check-in';
+  var context = prompt('Any context? (optional, e.g. "rates at 6.5%")') || '';
+
+  var templates = {
+    'check-in': [
+      'Hi {first_name}, just checking in! How is your home search going? I am here if you need anything. - Rene, R&R',
+      'Hey {first_name}, wanted to see if you had any questions about your mortgage options. Let me know! - Rene',
+      'Hi {first_name}, hope all is well! Just a quick note to say I am here whenever you are ready. - Rene, R&R'
+    ],
+    'rate-alert': [
+      'Hi {first_name}, rates just moved' + (context ? ' - ' + context : '') + '! Great time to lock in. Call me: 714-472-8508 - Rene',
+      '{first_name}, big rate update today' + (context ? ': ' + context : '') + '. Want me to run your numbers? - Rene, R&R',
+      'Rate alert {first_name}! ' + (context || 'Rates dropped today') + '. Let us lock in your rate now. - Rene'
+    ],
+    'follow-up': [
+      'Hi {first_name}, tried reaching you. When is a good time to chat this week? - Rene, Rates & Realty',
+      'Hey {first_name}, following up on our conversation. Ready to take the next step? - Rene, R&R',
+      '{first_name}, just a quick follow-up. Let me know if you have any questions! - Rene'
+    ],
+    'appointment': [
+      'Hi {first_name}, reminder about our appointment tomorrow. Looking forward to it! - Rene',
+      '{first_name}, just confirming we are meeting tomorrow. See you then! - Rene, R&R',
+      'Hi {first_name}, quick reminder about our upcoming call. Talk soon! - Rene'
+    ],
+    'congrats': [
+      'Congratulations {first_name}! So excited for you. Enjoy your new home! - Rene, Rates & Realty',
+      '{first_name}, congrats on closing! It was a pleasure working with you. - Rene, R&R',
+      'Amazing news {first_name}! Congrats on your new chapter. - Rene'
+    ],
+    'referral': [
+      'Hi {first_name}, know anyone looking to buy or refinance? I would love to help them too! - Rene',
+      '{first_name}, if you know anyone who needs a great mortgage rate, send them my way! - Rene, R&R',
+      'Hi {first_name}, your referrals mean the world. Anyone I can help? - Rene'
+    ]
+  };
+
+  var options = templates[goal] || templates['check-in'];
+  var pickerHtml = '<div style="font-size:13px;color:#E8D5A3;margin-bottom:10px;">Pick a variation:</div>';
+  options.forEach(function(opt, i) {
+    pickerHtml += '<div onclick="pickSmsVariation(' + i + ')" style="padding:10px;margin-bottom:6px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.2);border-radius:8px;cursor:pointer;font-size:12px;color:#ccc;line-height:1.5;" onmouseover="this.style.borderColor=\'#C9A84C\'" onmouseout="this.style.borderColor=\'rgba(201,168,76,0.2)\'">' + (i+1) + '. ' + opt + '</div>';
+  });
+
+  var existing = document.getElementById('smsAiPicker');
+  if (existing) existing.remove();
+  var div = document.createElement('div');
+  div.id = 'smsAiPicker';
+  div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#111;border:2px solid rgba(201,168,76,0.3);border-radius:14px;padding:20px;z-index:600;width:420px;max-width:95vw;box-shadow:0 16px 48px rgba(0,0,0,0.7);';
+  div.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><span style="color:#E8D5A3;font-weight:700;">&#10024; AI SMS Suggestions</span><button onclick="document.getElementById(\'smsAiPicker\').remove()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">&#10005;</button></div>' + pickerHtml;
+  document.body.appendChild(div);
+
+  window._smsAiOptions = options;
+}
+
+function pickSmsVariation(index) {
+  var msg = window._smsAiOptions[index];
+  var textarea = document.getElementById('smsBody');
+  if (textarea) { textarea.value = msg; }
+  if (typeof updateSmsCounter === 'function') updateSmsCounter();
+  if (typeof updateSmsPreview === 'function') updateSmsPreview();
+  var picker = document.getElementById('smsAiPicker');
+  if (picker) picker.remove();
+  showToast('SMS template applied');
+}
+
+/* ================================================================
+   VIDEO MESSAGES
+   ================================================================ */
+var _videoStream = null, _mediaRecorder = null, _videoChunks = [], _videoBlob = null, _videoTimerInterval = null, _videoSeconds = 0;
+
+function openVideoModal() {
+  var modal = document.getElementById('videoModal');
+  modal.style.display = 'flex';
+  document.getElementById('videoPlayback').style.display = 'none';
+  document.getElementById('videoPreview').style.display = 'block';
+  document.getElementById('videoActions').style.display = 'none';
+  document.getElementById('videoRecordBtn').style.display = 'block';
+  document.getElementById('videoTimer').textContent = '0:00';
+  _videoSeconds = 0;
+  navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(function(stream) {
+    _videoStream = stream;
+    document.getElementById('videoPreview').srcObject = stream;
+  }).catch(function(e) { showToast('Camera access denied'); closeVideoModal(); });
+}
+
+function closeVideoModal() {
+  if (_videoStream) { _videoStream.getTracks().forEach(function(t) { t.stop(); }); _videoStream = null; }
+  if (_videoTimerInterval) clearInterval(_videoTimerInterval);
+  document.getElementById('videoModal').style.display = 'none';
+}
+
+function toggleVideoRecord() {
+  var btn = document.getElementById('videoRecordBtn');
+  if (_mediaRecorder && _mediaRecorder.state === 'recording') {
+    _mediaRecorder.stop();
+    btn.style.background = '#e74c3c';
+    btn.style.borderRadius = '50%';
+    clearInterval(_videoTimerInterval);
+    return;
+  }
+  _videoChunks = [];
+  _mediaRecorder = new MediaRecorder(_videoStream, { mimeType: 'video/webm' });
+  _mediaRecorder.ondataavailable = function(e) { if (e.data.size > 0) _videoChunks.push(e.data); };
+  _mediaRecorder.onstop = function() {
+    _videoBlob = new Blob(_videoChunks, { type: 'video/webm' });
+    var url = URL.createObjectURL(_videoBlob);
+    document.getElementById('videoPreview').style.display = 'none';
+    var playback = document.getElementById('videoPlayback');
+    playback.src = url;
+    playback.style.display = 'block';
+    document.getElementById('videoActions').style.display = 'flex';
+    document.getElementById('videoRecordBtn').style.display = 'none';
+  };
+  _mediaRecorder.start();
+  _videoSeconds = 0;
+  btn.style.background = '#333';
+  btn.style.borderRadius = '8px';
+  _videoTimerInterval = setInterval(function() {
+    _videoSeconds++;
+    var m = Math.floor(_videoSeconds / 60);
+    var s = _videoSeconds % 60;
+    document.getElementById('videoTimer').textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    if (_videoSeconds >= 120) { toggleVideoRecord(); }
+  }, 1000);
+}
+
+function retakeVideo() {
+  document.getElementById('videoPlayback').style.display = 'none';
+  document.getElementById('videoPreview').style.display = 'block';
+  document.getElementById('videoActions').style.display = 'none';
+  document.getElementById('videoRecordBtn').style.display = 'block';
+  document.getElementById('videoTimer').textContent = '0:00';
+  _videoSeconds = 0;
+  document.getElementById('videoPreview').srcObject = _videoStream;
+}
+
+async function useVideo() {
+  if (!_videoBlob) return;
+  showToast('Uploading video...');
+  try {
+    var sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
+    var sbKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+    var fileName = 'video-' + Date.now() + '.webm';
+    var res = await fetch(sbUrl + '/storage/v1/object/video-messages/' + fileName, {
+      method: 'POST',
+      headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'video/webm' },
+      body: _videoBlob
+    });
+    if (!res.ok) throw new Error('Upload failed: ' + res.status);
+    var videoUrl = sbUrl + '/storage/v1/object/public/video-messages/' + fileName;
+    var duration = Math.floor(_videoSeconds / 60) + ':' + (_videoSeconds % 60 < 10 ? '0' : '') + (_videoSeconds % 60);
+
+    if (typeof quill !== 'undefined' && quill) {
+      var videoHtml = '<div style="text-align:center;margin:16px 0;">' +
+        '<a href="' + videoUrl + '" target="_blank" style="display:inline-block;position:relative;text-decoration:none;">' +
+        '<div style="width:400px;height:225px;background:#000;border-radius:10px;display:flex;align-items:center;justify-content:center;border:2px solid rgba(201,168,76,0.3);">' +
+        '<div style="background:rgba(201,168,76,0.9);border-radius:50%;width:60px;height:60px;display:flex;align-items:center;justify-content:center;font-size:24px;">&#9654;</div>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#888;margin-top:4px;">Click to watch video message (' + duration + ')</div>' +
+        '</a></div>';
+      quill.clipboard.dangerouslyPasteHTML(quill.getLength() - 1, videoHtml);
+    }
+
+    closeVideoModal();
+    showToast('Video inserted! (' + duration + ')');
+  } catch(e) {
+    console.error('Video upload:', e);
+    showToast('Video upload failed: ' + e.message);
+  }
+}
 </script>
+
+<!-- Video Message Modal -->
+<div id="videoModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:600;align-items:center;justify-content:center;">
+  <div style="background:#111;border:2px solid rgba(201,168,76,0.3);border-radius:16px;padding:24px;width:520px;max-width:95vw;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="color:#E8D5A3;font-size:16px;">&#127909; Video Message</h3>
+      <button onclick="closeVideoModal()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;">&#10005;</button>
+    </div>
+    <video id="videoPreview" autoplay muted playsinline style="width:100%;border-radius:10px;background:#000;max-height:300px;"></video>
+    <video id="videoPlayback" controls style="width:100%;border-radius:10px;background:#000;max-height:300px;display:none;"></video>
+    <div id="videoTimer" style="text-align:center;font-size:18px;color:#C9A84C;font-family:'DM Mono',monospace;margin:10px 0;">0:00</div>
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;">
+      <button id="videoRecordBtn" onclick="toggleVideoRecord()" style="width:52px;height:52px;border-radius:50%;background:#e74c3c;border:3px solid #fff;cursor:pointer;transition:all .2s;"></button>
+    </div>
+    <div id="videoActions" style="display:none;flex-direction:row;gap:8px;justify-content:center;margin-top:12px;">
+      <button onclick="retakeVideo()" class="btn-ghost" style="padding:8px 16px;font-size:12px;">Retake</button>
+      <button onclick="useVideo()" style="padding:8px 20px;background:#C9A84C;color:#000;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">Use This Video</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
