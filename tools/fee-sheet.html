@@ -493,8 +493,8 @@
         <div class="field"><label>Down Payment %</label><input type="number" id="downPct" value="20" step="0.5" min="0" max="100"></div>
     </div>
     <div class="row2">
-        <div class="field"><label>Down Payment $</label><input type="text" id="downDollar" readonly></div>
-        <div class="field"><label>Loan Amount</label><input type="text" id="loanAmount" placeholder="Auto-calc"></div>
+        <div class="field"><label>Down Payment $</label><input type="text" id="downDollar" placeholder="Auto-calc" oninput="syncDownFromDollar()"></div>
+        <div class="field"><label>Loan Amount</label><input type="text" id="loanAmount" placeholder="Auto-calc" readonly style="opacity:0.7;"></div>
     </div>
     <div class="row2">
         <div class="field"><label>Loan Product</label>
@@ -539,10 +539,18 @@
                 <option>VA</option><option>WA</option><option>WV</option><option>WI</option><option>WY</option><option>DC</option>
             </select>
         </div>
-        <div class="field"><label>County</label><input type="text" id="county" placeholder="Los Angeles" oninput="updateLoanLimitBadge()"></div>
+        <div class="field" style="position:relative;"><label>County</label><input type="text" id="county" placeholder="Los Angeles" oninput="filterCounties()" onfocus="filterCounties()" autocomplete="off"><div id="countyDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:0 0 6px 6px;z-index:100;"></div></div>
     </div>
     <div class="row2">
-        <div class="field"><label>Est. Annual Prop Tax <span id="taxEstLabel" style="font-size:9px;color:var(--gold);font-weight:400;">(1.25% est.)</span></label><input type="text" id="annualTax" placeholder="Auto 1.25%"></div>
+        <div class="field">
+            <label>Est. Annual Prop Tax</label>
+            <div style="display:flex;gap:0;margin-bottom:4px;">
+                <button id="taxModeAmt" onclick="setTaxMode('amt')" style="padding:3px 10px;font-size:10px;border-radius:4px 0 0 4px;border:1px solid #333;background:transparent;color:#888;cursor:pointer;font-family:inherit;">$</button>
+                <button id="taxModePct" onclick="setTaxMode('pct')" style="padding:3px 10px;font-size:10px;border-radius:0 4px 4px 0;border:1px solid #C9A84C;background:#C9A84C;color:#000;cursor:pointer;font-family:inherit;font-weight:600;">%</button>
+            </div>
+            <input type="text" id="annualTax" placeholder="Auto 1.25%" style="display:none;">
+            <input type="number" id="taxPctInput" value="1.25" step="0.01" min="0" max="5" style="width:100%;">
+        </div>
         <div class="field"><label>Annual Hazard Ins.</label><input type="text" id="annualInsurance" placeholder="$1,800"></div>
     </div>
 
@@ -653,6 +661,63 @@ function getLoanLimitInfo(county, loanAmount) {
 
 function updateLoanLimitBadge() { recalc(); }
 
+// Sync down payment $ → % when user types in the dollar field
+function syncDownFromDollar() {
+    var pp = parseCurrency($('purchasePrice').value);
+    var downAmt = parseCurrency($('downDollar').value);
+    if (pp > 0 && downAmt > 0) {
+        var pct = (downAmt / pp * 100);
+        $('downPct').value = Math.round(pct * 100) / 100; // round to 2 decimals
+    }
+}
+
+// County autocomplete
+const CA_COUNTIES = ['Alameda','Alpine','Amador','Butte','Calaveras','Colusa','Contra Costa','Del Norte','El Dorado','Fresno','Glenn','Humboldt','Imperial','Inyo','Kern','Kings','Lake','Lassen','Los Angeles','Madera','Marin','Mariposa','Mendocino','Merced','Modoc','Mono','Monterey','Napa','Nevada','Orange','Placer','Plumas','Riverside','Sacramento','San Benito','San Bernardino','San Diego','San Francisco','San Joaquin','San Luis Obispo','San Mateo','Santa Barbara','Santa Clara','Santa Cruz','Shasta','Sierra','Siskiyou','Solano','Sonoma','Stanislaus','Sutter','Tehama','Trinity','Tulare','Tuolumne','Ventura','Yolo','Yuba'];
+
+function filterCounties() {
+    var input = $('county').value.toLowerCase();
+    var dd = document.getElementById('countyDropdown');
+    if (!input) { dd.style.display = 'none'; return; }
+    var matches = CA_COUNTIES.filter(c => c.toLowerCase().includes(input));
+    if (!matches.length) { dd.style.display = 'none'; return; }
+    dd.innerHTML = matches.map(c =>
+        '<div style="padding:6px 10px;cursor:pointer;font-size:12px;color:#ccc;border-bottom:1px solid #222;" ' +
+        'onmouseover="this.style.background=\'#222\'" onmouseout="this.style.background=\'transparent\'" ' +
+        'onclick="selectCounty(\'' + c + '\')">' + c + '</div>'
+    ).join('');
+    dd.style.display = 'block';
+}
+
+function selectCounty(name) {
+    $('county').value = name;
+    document.getElementById('countyDropdown').style.display = 'none';
+    recalc();
+}
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#county') && !e.target.closest('#countyDropdown'))
+        document.getElementById('countyDropdown').style.display = 'none';
+});
+
+// Tax mode toggle ($ amount vs % rate)
+var _taxMode = 'pct'; // default to % mode
+function setTaxMode(mode) {
+    _taxMode = mode;
+    var amtBtn = document.getElementById('taxModeAmt');
+    var pctBtn = document.getElementById('taxModePct');
+    var amtInput = $('annualTax');
+    var pctInput = document.getElementById('taxPctInput');
+    if (mode === 'amt') {
+        amtBtn.style.background = '#C9A84C'; amtBtn.style.color = '#000'; amtBtn.style.borderColor = '#C9A84C'; amtBtn.style.fontWeight = '600';
+        pctBtn.style.background = 'transparent'; pctBtn.style.color = '#888'; pctBtn.style.borderColor = '#333'; pctBtn.style.fontWeight = 'normal';
+        amtInput.style.display = ''; pctInput.style.display = 'none';
+    } else {
+        pctBtn.style.background = '#C9A84C'; pctBtn.style.color = '#000'; pctBtn.style.borderColor = '#C9A84C'; pctBtn.style.fontWeight = '600';
+        amtBtn.style.background = 'transparent'; amtBtn.style.color = '#888'; amtBtn.style.borderColor = '#333'; amtBtn.style.fontWeight = 'normal';
+        pctInput.style.display = ''; amtInput.style.display = 'none';
+    }
+    recalc();
+}
+
 const scenarios = [
     { id: 'A', label: 'Par Rate', rate: 6.875, points: 0, origComp: 1.5, lenderCredits: 0, recommended: true },
     { id: 'B', label: 'Buy Down', rate: 6.625, points: 0.75, origComp: 1.5, lenderCredits: 0, recommended: false },
@@ -697,27 +762,24 @@ function getInputs() {
     const downPayment = purchasePrice * downPct / 100;
     $('downDollar').value = downPayment ? '$' + downPayment.toLocaleString('en-US', {minimumFractionDigits: 0}) : '';
 
-    let loanAmount;
-    const loanInput = parseCurrency($('loanAmount').value);
-    if (loanInput > 0 && Math.abs(loanInput - (purchasePrice - downPayment)) > 1) {
-        loanAmount = loanInput;
-    } else {
-        loanAmount = purchasePrice - downPayment;
-        if (loanAmount > 0) $('loanAmount').value = '$' + loanAmount.toLocaleString('en-US', {minimumFractionDigits: 0});
-    }
+    // Auto-calculate loan amount from purchase price - down payment
+    const loanAmount = Math.max(0, purchasePrice - downPayment);
+    if (loanAmount > 0) $('loanAmount').value = '$' + loanAmount.toLocaleString('en-US', {minimumFractionDigits: 0});
+    else $('loanAmount').value = '';
 
     const ltv = purchasePrice > 0 ? (loanAmount / purchasePrice * 100) : 0;
     // Auto-fill county from address ZIP
     autoFillCountyFromAddress();
-    const annualTaxInput = parseCurrency($('annualTax').value);
-    const autoTax = purchasePrice * 0.0125;
-    const annualTax = annualTaxInput > 0 ? annualTaxInput : autoTax;
-    var taxLabel = document.getElementById('taxEstLabel');
-    if (annualTaxInput > 0 && Math.abs(annualTaxInput - autoTax) > 1) {
-        if (taxLabel) taxLabel.textContent = '(manual)';
+
+    // Tax: % mode or $ mode
+    let annualTax;
+    if (_taxMode === 'pct') {
+        const pctVal = parseFloat(document.getElementById('taxPctInput').value) || 1.25;
+        annualTax = purchasePrice * pctVal / 100;
     } else {
-        if (taxLabel) taxLabel.textContent = '(1.25% est.)';
-        if (purchasePrice > 0) $('annualTax').value = '$' + annualTax.toLocaleString('en-US', {minimumFractionDigits: 0});
+        const annualTaxInput = parseCurrency($('annualTax').value);
+        annualTax = annualTaxInput > 0 ? annualTaxInput : purchasePrice * 0.0125;
+        if (annualTaxInput <= 0 && purchasePrice > 0) $('annualTax').value = '$' + annualTax.toLocaleString('en-US', {minimumFractionDigits: 0});
     }
 
     const annualInsInput = parseCurrency($('annualInsurance').value);
