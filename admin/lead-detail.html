@@ -1356,6 +1356,12 @@
         <span>✉️</span> <span id="sidebar-email-text">—</span>
       </a>
     </div>
+    <!-- Recent SMS Preview -->
+    <div id="sidebarRecentSms" style="margin-top:4px;margin-bottom:6px;display:none;">
+      <div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Recent Messages</div>
+      <div id="sidebarRecentSmsContent" style="max-height:100px;overflow:hidden;"></div>
+      <a href="#" onclick="event.preventDefault();switchNoteTab('texts')" style="font-size:10px;color:#C9A84C;text-decoration:none;">View all →</a>
+    </div>
 
     <!-- Borrower Portal Info -->
     <div id="leadRightSidebar" style="border-top:1px solid #1e1e1e;padding-top:12px;margin-top:12px;position:relative;overflow:hidden;transition:max-height 0.3s ease,opacity 0.2s ease">
@@ -8564,6 +8570,45 @@ async function quickSendSms() {
   } catch(e) { showToast('Error: ' + e.message); }
   btn.textContent = origTxt; btn.disabled = false;
 }
+
+/* ── SMS REALTIME + RECENT PREVIEW ── */
+var _smsRealtimeChannel = null;
+function subscribeSmsRealtime() {
+  var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
+  if (!cid || !sb || !sb.channel) return;
+  if (_smsRealtimeChannel) { sb.removeChannel(_smsRealtimeChannel); }
+  _smsRealtimeChannel = sb.channel('sms-live-' + cid)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sms_log', filter: 'contact_id=eq.' + cid }, function(payload) {
+      // Append new message to sidebar SMS history
+      var container = document.getElementById('smsHistoryContainer');
+      if (container && payload.new) {
+        loadSidebarSmsHistory(); // refresh full history
+        loadRecentSmsPreview(); // refresh sidebar preview
+      }
+    }).subscribe();
+}
+
+async function loadRecentSmsPreview() {
+  var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
+  if (!cid) return;
+  var wrapper = document.getElementById('sidebarRecentSms');
+  var el = document.getElementById('sidebarRecentSmsContent');
+  if (!wrapper || !el) return;
+  try {
+    var { data } = await sb.from('sms_log').select('body,direction,created_at').eq('contact_id', cid).order('created_at', { ascending: false }).limit(3);
+    if (!data || !data.length) { wrapper.style.display = 'none'; return; }
+    wrapper.style.display = 'block';
+    el.innerHTML = data.reverse().map(function(m) {
+      var isOut = m.direction !== 'inbound';
+      var snippet = (m.body || '').substring(0, 60) + ((m.body||'').length > 60 ? '...' : '');
+      return '<div style="font-size:10px;padding:3px 0;color:' + (isOut ? '#C9A84C' : '#aaa') + ';">' +
+        (isOut ? '→ ' : '← ') + snippet.replace(/</g,'&lt;') + '</div>';
+    }).join('');
+  } catch(e) { wrapper.style.display = 'none'; }
+}
+
+// Init realtime + recent preview after contact loads
+setTimeout(function() { subscribeSmsRealtime(); loadRecentSmsPreview(); }, 2000);
 
 /* ── CHECKLIST SYSTEM ── */
 const CHECKLISTS = {
