@@ -537,10 +537,10 @@
                 <option>VA</option><option>WA</option><option>WV</option><option>WI</option><option>WY</option><option>DC</option>
             </select>
         </div>
-        <div class="field"><label>County</label><input type="text" id="county" placeholder="Los Angeles"></div>
+        <div class="field"><label>County</label><input type="text" id="county" placeholder="Los Angeles" oninput="updateLoanLimitBadge()"></div>
     </div>
     <div class="row2">
-        <div class="field"><label>Est. Annual Prop Tax</label><input type="text" id="annualTax" placeholder="Auto 1.25%"></div>
+        <div class="field"><label>Est. Annual Prop Tax <span id="taxEstLabel" style="font-size:9px;color:var(--gold);font-weight:400;">(1.25% est.)</span></label><input type="text" id="annualTax" placeholder="Auto 1.25%"></div>
         <div class="field"><label>Annual Hazard Ins.</label><input type="text" id="annualInsurance" placeholder="$1,800"></div>
     </div>
 
@@ -596,6 +596,61 @@ function showToast(msg) {
 }
 
 // ── Scenarios ──
+// County loan limits (2026 California)
+const LOAN_LIMITS = {
+  'Los Angeles':{conforming:1149825},'Orange':{conforming:1149825},'San Diego':{conforming:1006250},
+  'San Francisco':{conforming:1149825},'Santa Clara':{conforming:1149825},'Alameda':{conforming:1149825},
+  'Contra Costa':{conforming:1149825},'San Mateo':{conforming:1149825},'Marin':{conforming:1149825},
+  'Ventura':{conforming:805000},'Riverside':{conforming:726200},'San Bernardino':{conforming:726200},
+  'Sacramento':{conforming:763600},'Fresno':{conforming:726200},'Kern':{conforming:726200},
+  'Sonoma':{conforming:877450},'Santa Barbara':{conforming:805000},'Monterey':{conforming:920200},
+  'Santa Cruz':{conforming:1149825},'Napa':{conforming:1017750},'Solano':{conforming:726200},
+  'Stanislaus':{conforming:726200},'San Joaquin':{conforming:726200},'Madera':{conforming:726200},
+  'San Luis Obispo':{conforming:911950},'Lake':{conforming:726200},'Mendocino':{conforming:726200},
+};
+const ZIP_TO_COUNTY = {
+  '926':'Orange','927':'Orange','928':'Orange',
+  '900':'Los Angeles','901':'Los Angeles','902':'Los Angeles','903':'Los Angeles','904':'Los Angeles','905':'Los Angeles','906':'Los Angeles','907':'Los Angeles','908':'Los Angeles','910':'Los Angeles','911':'Los Angeles','912':'Los Angeles','913':'Los Angeles','914':'Los Angeles','915':'Los Angeles','916':'Los Angeles',
+  '919':'San Diego','920':'San Diego','921':'San Diego','922':'San Diego',
+  '941':'San Francisco','940':'San Mateo',
+  '950':'Santa Clara','951':'Santa Clara',
+  '925':'Contra Costa','945':'Alameda','946':'Alameda',
+  '923':'Riverside','924':'Riverside',
+  '917':'San Bernardino','918':'San Bernardino',
+  '930':'Ventura','931':'Ventura',
+  '958':'Sacramento','957':'Sacramento','956':'Sacramento',
+  '937':'Fresno','936':'Fresno',
+  '933':'Kern','932':'Kern',
+  '949':'Sonoma','954':'Santa Cruz','939':'Monterey',
+  '947':'Marin','934':'Santa Barbara','943':'Napa','944':'Solano',
+  '953':'San Luis Obispo','952':'Stanislaus','942':'San Joaquin',
+};
+
+function autoFillCountyFromAddress() {
+    var addr = $('propertyAddress').value;
+    var zipMatch = addr.match(/\b(\d{5})\b/);
+    if (zipMatch) {
+        var prefix = zipMatch[1].substring(0, 3);
+        var county = ZIP_TO_COUNTY[prefix];
+        if (county && !$('county').value) {
+            $('county').value = county;
+        }
+    }
+}
+
+function getLoanLimitInfo(county, loanAmount) {
+    var limit = LOAN_LIMITS[county];
+    if (!limit) return null;
+    var conf = limit.conforming;
+    var type, color;
+    if (loanAmount <= conf) { type = 'CONFORMING'; color = '#27ae60'; }
+    else if (loanAmount <= conf * 1.5) { type = 'HIGH BALANCE'; color = '#f39c12'; }
+    else { type = 'JUMBO'; color = '#e74c3c'; }
+    return { limit: conf, type: type, color: color };
+}
+
+function updateLoanLimitBadge() { recalc(); }
+
 const scenarios = [
     { id: 'A', label: 'Par Rate', rate: 6.875, points: 0, origComp: 1.5, lenderCredits: 0, recommended: true },
     { id: 'B', label: 'Buy Down', rate: 6.625, points: 0.75, origComp: 1.5, lenderCredits: 0, recommended: false },
@@ -650,9 +705,18 @@ function getInputs() {
     }
 
     const ltv = purchasePrice > 0 ? (loanAmount / purchasePrice * 100) : 0;
+    // Auto-fill county from address ZIP
+    autoFillCountyFromAddress();
     const annualTaxInput = parseCurrency($('annualTax').value);
-    const annualTax = annualTaxInput > 0 ? annualTaxInput : purchasePrice * 0.0125;
-    if (annualTaxInput <= 0 && purchasePrice > 0) $('annualTax').value = '$' + annualTax.toLocaleString('en-US', {minimumFractionDigits: 0});
+    const autoTax = purchasePrice * 0.0125;
+    const annualTax = annualTaxInput > 0 ? annualTaxInput : autoTax;
+    var taxLabel = document.getElementById('taxEstLabel');
+    if (annualTaxInput > 0 && Math.abs(annualTaxInput - autoTax) > 1) {
+        if (taxLabel) taxLabel.textContent = '(manual)';
+    } else {
+        if (taxLabel) taxLabel.textContent = '(1.25% est.)';
+        if (purchasePrice > 0) $('annualTax').value = '$' + annualTax.toLocaleString('en-US', {minimumFractionDigits: 0});
+    }
 
     const annualInsInput = parseCurrency($('annualInsurance').value);
     const annualInsurance = annualInsInput > 0 ? annualInsInput : 1800;
@@ -868,6 +932,15 @@ function render(inp, results) {
             <div class="item"><div class="lbl">Product</div><div class="val" style="font-family:'DM Sans';font-size:12px">${inp.loanProduct}</div></div>
             <div class="item"><div class="lbl">Lock</div><div class="val" style="font-family:'DM Sans';font-size:12px">${inp.lockPeriod}</div></div>
         </div>
+
+        ${(() => {
+            const info = getLoanLimitInfo(inp.county, inp.loanAmount);
+            if (!info) return '';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 14px;margin-bottom:12px;background:#f9f9f7;border:1px solid #eee;border-radius:4px;font-size:11px;color:#666;">' +
+                '<span>' + inp.county + ' County Conforming Limit: <strong>$' + info.limit.toLocaleString('en-US') + '</strong></span>' +
+                '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;color:white;background:' + info.color + ';">' + info.type + '</span>' +
+            '</div>';
+        })()}
 
         <div style="display:flex;gap:0;">
             <div style="width:40%;flex-shrink:0;"></div>
