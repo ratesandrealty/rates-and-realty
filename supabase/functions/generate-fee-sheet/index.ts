@@ -276,12 +276,14 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const origFees   = scenarios.map(s => loanAmount * (s.origComp || 0) / 100);
   const discPoints = scenarios.map(s => s.points > 0 ? loanAmount * s.points / 100 : 0);
   const uwFee      = scenarios.map(() => 1350);
-  const subA       = scenarios.map((_, i) => origFees[i] + discPoints[i] + uwFee[i]);
+  const adminFee   = scenarios.map(() => 185);
+  const subA       = scenarios.map((_, i) => origFees[i] + discPoints[i] + uwFee[i] + adminFee[i]);
 
   addCat('A. ORIGINATION CHARGES');
   addRow('Origination Fee', origFees);
   addRow('Discount Points', discPoints);
   addRow('Underwriting Fee', uwFee);
+  addRow('Admin Fee', adminFee);
   addSub('Subtotal A', subA);
 
   // B. SERVICES YOU CANNOT SHOP FOR (ALL SAME)
