@@ -179,6 +179,16 @@
   .flatpickr-time input { color:#fff !important; background:transparent !important; }
   .flatpickr-time .flatpickr-am-pm { color:#fff !important; background:transparent !important; }
   .flatpickr-time .flatpickr-time-separator { color:#fff !important; }
+  /* AI Panel */
+  .ai-panel { position:fixed; right:-420px; top:0; bottom:0; width:400px; background:#111; border-left:2px solid rgba(201,168,76,0.3); z-index:500; transition:right .3s ease; overflow-y:auto; padding:20px; }
+  .ai-panel.open { right:0; }
+  .ai-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:499; display:none; }
+  .ai-overlay.show { display:block; }
+  .ai-btn { padding:8px 14px; border-radius:8px; border:1px solid rgba(201,168,76,0.3); background:rgba(201,168,76,0.08); color:#C9A84C; font-size:12px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:6px; transition:all .15s; }
+  .ai-btn:hover { background:rgba(201,168,76,0.15); border-color:rgba(201,168,76,0.5); }
+  .ai-select { width:100%; padding:8px 10px; background:#1a1a1a; border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#e0e0e0; font-size:12px; outline:none; }
+  .ai-loading { text-align:center; padding:20px; color:#C9A84C; }
+
   /* SMS Tab */
   .sms-compose-grid { display:grid; grid-template-columns:3fr 2fr; gap:20px; }
   .sms-textarea { width:100%; min-height:120px; padding:12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff; font-size:14px; font-family:inherit; line-height:1.6; resize:vertical; outline:none; }
@@ -230,12 +240,21 @@
         <!-- LEFT: Compose -->
         <div>
           <div class="card">
-            <div class="card-title">Compose</div>
+            <div class="card-title" style="justify-content:space-between;">
+              <span>Compose</span>
+              <button onclick="openAiPanel()" style="padding:8px 16px;background:linear-gradient(135deg,rgba(201,168,76,0.2),rgba(201,168,76,0.08));border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">&#10024; AI Assistant</button>
+            </div>
             <div class="field">
               <label>Subject Line</label>
               <div class="subject-wrap">
-                <input type="text" id="subjectLine" placeholder="e.g. Rates just dropped - lock in now!" oninput="updateSubjectCount()">
+                <input type="text" id="subjectLine" placeholder="e.g. Rates just dropped - lock in now!" oninput="updateSubjectCount();updateSubjectScore()">
                 <span class="char-count" id="subjectCount">0/80</span>
+              </div>
+              <div id="subjectScore" style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                <div style="flex:1;height:4px;background:#222;border-radius:2px;overflow:hidden;">
+                  <div id="subjectScoreBar" style="height:100%;width:0%;background:#e74c3c;border-radius:2px;transition:width .3s,background .3s;"></div>
+                </div>
+                <span id="subjectScoreNum" style="font-size:11px;color:#888;min-width:35px;">0/100</span>
               </div>
             </div>
 
@@ -488,6 +507,59 @@
 </div>
 
 <div id="toast"></div>
+
+<div class="ai-overlay" id="aiOverlay" onclick="closeAiPanel()"></div>
+<div class="ai-panel" id="aiPanel">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h3 style="color:#E8D5A3;font-size:16px;">&#10024; AI Writing Assistant</h3>
+    <button onclick="closeAiPanel()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;">&#10005;</button>
+  </div>
+
+  <div style="margin-bottom:12px;">
+    <label style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Tone</label>
+    <select id="aiTone" class="ai-select">
+      <option>Professional</option><option>Friendly</option><option>Urgent</option><option>Casual</option><option>Formal</option>
+    </select>
+  </div>
+
+  <div style="margin-bottom:12px;">
+    <label style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Goal</label>
+    <select id="aiGoal" class="ai-select">
+      <option>Rate Alert</option><option>Follow Up</option><option>Check In</option><option>Referral Request</option><option>Market Update</option><option>Pre-Approval Ready</option><option>Congratulations</option>
+    </select>
+  </div>
+
+  <div style="margin-bottom:12px;">
+    <label style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Audience</label>
+    <select id="aiAudience" class="ai-select">
+      <option>General</option><option>First-time Buyer</option><option>Investor</option><option>Refinance</option><option>Realtor Partner</option>
+    </select>
+  </div>
+
+  <div style="margin-bottom:16px;">
+    <label style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Context (optional)</label>
+    <input id="aiContext" type="text" placeholder="e.g. rates dropped to 6.5%" style="width:100%;padding:8px 10px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e0e0e0;font-size:12px;outline:none;">
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:6px;">
+    <button class="ai-btn" onclick="aiAction('write')">&#10024; Write Full Email</button>
+    <button class="ai-btn" onclick="aiAction('subjects')">&#128161; Suggest Subject Lines</button>
+    <button class="ai-btn" onclick="aiAction('improve')">&#9997;&#65039; Improve My Draft</button>
+    <button class="ai-btn" onclick="aiAction('shorten')">&#128221; Make Shorter</button>
+    <button class="ai-btn" onclick="aiAction('urgency')">&#128293; Add Urgency</button>
+    <button class="ai-btn" onclick="aiAction('personalize')">&#127775; Add Personalization</button>
+    <button class="ai-btn" onclick="aiAction('spanish')">&#127466;&#127480; Translate to Spanish</button>
+  </div>
+
+  <div id="aiResult" style="margin-top:16px;display:none;">
+    <div style="font-size:10px;color:#888;text-transform:uppercase;margin-bottom:6px;">AI Result</div>
+    <div id="aiResultContent" style="background:#1a1a1a;border:1px solid rgba(201,168,76,0.2);border-radius:8px;padding:12px;font-size:12px;color:#e0e0e0;line-height:1.6;max-height:300px;overflow-y:auto;white-space:pre-wrap;"></div>
+    <div style="display:flex;gap:6px;margin-top:8px;">
+      <button onclick="applyAiResult()" class="ai-btn" style="flex:1;justify-content:center;background:#C9A84C;color:#000;border-color:#C9A84C;">&#9989; Apply to Email</button>
+      <button onclick="aiAction(window._lastAiAction)" class="ai-btn" style="justify-content:center;">&#128260; Retry</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ================================================================
@@ -1125,6 +1197,175 @@ function sendSmsTest() {
   const fullMsg = body + SMS_OPT_OUT;
   console.log('SMS Test payload:', { message: fullMsg, test: true });
   showToast('Test SMS sent!');
+}
+
+/* ================================================================
+   AI ASSISTANT
+   ================================================================ */
+function openAiPanel() {
+  document.getElementById('aiPanel').classList.add('open');
+  document.getElementById('aiOverlay').classList.add('show');
+}
+function closeAiPanel() {
+  document.getElementById('aiPanel').classList.remove('open');
+  document.getElementById('aiOverlay').classList.remove('show');
+}
+
+async function aiAction(action) {
+  window._lastAiAction = action;
+  var tone = document.getElementById('aiTone').value;
+  var goal = document.getElementById('aiGoal').value;
+  var audience = document.getElementById('aiAudience').value;
+  var context = document.getElementById('aiContext').value;
+  var currentContent = quill ? quill.getText() : '';
+
+  var resultEl = document.getElementById('aiResult');
+  var contentEl = document.getElementById('aiResultContent');
+  resultEl.style.display = 'block';
+  contentEl.innerHTML = '<div class="ai-loading">&#10024; AI is writing...</div>';
+
+  var prompt = '';
+  switch(action) {
+    case 'write':
+      prompt = 'You are an expert mortgage loan officer email copywriter for Rene Duarte at Rates & Realty. Write a ' + goal + ' email with ' + tone + ' tone for ' + audience + ' clients.' + (context ? ' Context: ' + context : '') + ' Requirements: Subject line on first line starting with "Subject: ", blank line, email body, include {first_name} personalization, end with signature "Rene Duarte | Rates & Realty | NMLS #1795044 | (714) 472-8508", concise and action-oriented, NMLS compliant. Respond with ONLY the email.';
+      break;
+    case 'subjects':
+      prompt = 'Generate 5 email subject lines for a ' + goal + ' email with ' + tone + ' tone for mortgage clients.' + (context ? ' Context: ' + context : '') + (currentContent ? ' Email content: ' + currentContent.substring(0, 500) : '') + ' Format: numbered list 1-5. Keep under 60 chars each. Make them compelling.';
+      break;
+    case 'improve':
+      prompt = 'Improve this mortgage email. Make it more ' + tone + ' and compelling. Keep {first_name} tokens. Current draft:\n\n' + currentContent;
+      break;
+    case 'shorten':
+      prompt = 'Shorten this email to be more concise while keeping the key message and CTA. Keep {first_name} tokens:\n\n' + currentContent;
+      break;
+    case 'urgency':
+      prompt = 'Add urgency and a stronger call-to-action to this mortgage email. Keep {first_name} tokens:\n\n' + currentContent;
+      break;
+    case 'personalize':
+      prompt = 'Add more personalization and warmth to this mortgage email. Use {first_name} token. Make it feel 1-to-1:\n\n' + currentContent;
+      break;
+    case 'spanish':
+      prompt = 'Translate this email to Spanish. Keep {first_name} tokens as-is. Keep the same formatting:\n\n' + currentContent;
+      break;
+  }
+
+  try {
+    var sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    var sbKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+
+    var res = await fetch(sbUrl + '/functions/v1/email-service', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sbKey, 'apikey': sbKey },
+      body: JSON.stringify({ action: 'ai_generate', prompt: prompt, model: 'claude-sonnet-4-20250514' })
+    });
+
+    if (res.ok) {
+      var data = await res.json();
+      if (data.text) {
+        contentEl.textContent = data.text;
+        window._aiResultText = data.text;
+      } else {
+        throw new Error('AI not configured');
+      }
+    } else {
+      throw new Error('AI service unavailable');
+    }
+  } catch(e) {
+    var fallback = generateFallbackEmail(action, tone, goal, audience, context, currentContent);
+    contentEl.textContent = fallback;
+    window._aiResultText = fallback;
+  }
+}
+
+function generateFallbackEmail(action, tone, goal, audience, context, current) {
+  if (action === 'subjects') {
+    return '1. ' + goal + ' - Don\'t Miss This Opportunity, {first_name}\n' +
+           '2. Important Update for Your Mortgage Journey\n' +
+           '3. {first_name}, Here\'s What You Need to Know\n' +
+           '4. Exclusive ' + goal + ' Just for You\n' +
+           '5. Quick Update from Your Loan Officer';
+  }
+  if (action === 'spanish' && current) {
+    return '(Translation requires AI service)\n\nOriginal:\n' + current;
+  }
+  if (action === 'improve' || action === 'shorten' || action === 'urgency' || action === 'personalize') {
+    return current || 'No draft to improve. Write something first!';
+  }
+  var templates = {
+    'Rate Alert': 'Subject: Rates Just Dropped \u2014 Lock In Now, {first_name}!\n\nHi {first_name},\n\nGreat news! Mortgage rates have come down' + (context ? ' \u2014 ' + context : '') + ', and this could be a perfect opportunity for you.\n\nWhether you\'re looking to purchase or refinance, now is the time to act. These rates won\'t last long.\n\nLet me run the numbers for your specific situation. Reply to this email or call me at (714) 472-8508.\n\nBest,\nRene Duarte\nRates & Realty | NMLS #1795044',
+    'Follow Up': 'Subject: Checking In, {first_name} \u2014 How Can I Help?\n\nHi {first_name},\n\nI wanted to follow up and see how things are going with your home search. The market is moving, and I want to make sure you\'re in the best position.\n\nIf you have any questions about financing, pre-approval, or the current market, I\'m here to help.\n\nLet\'s connect this week!\n\nBest,\nRene Duarte\nRates & Realty | NMLS #1795044',
+    'Check In': 'Subject: Quick Check-In, {first_name}\n\nHi {first_name},\n\nJust a quick note to see how everything is going. I\'m always here if you need anything mortgage-related.\n\nHave a great week!\n\nRene Duarte\nRates & Realty | NMLS #1795044',
+    'Market Update': 'Subject: Your Monthly Market Update is Here, {first_name}\n\nHi {first_name},\n\nHere\'s your monthly market snapshot' + (context ? ':\n\n' + context : '.') + '\n\nThe housing market continues to evolve. If you\'d like a personalized analysis of how these trends affect your buying power, let\'s chat.\n\nBest,\nRene Duarte\nRates & Realty | NMLS #1795044',
+    'Pre-Approval Ready': 'Subject: Great News \u2014 You\'re Pre-Approved, {first_name}!\n\nHi {first_name},\n\nI\'m excited to share that your pre-approval is ready! You\'re in a strong position to make competitive offers.\n\nNext steps:\n1. Review your pre-approval letter (attached)\n2. Connect with your realtor\n3. Start touring homes with confidence\n\nLet me know if you have any questions!\n\nBest,\nRene Duarte\nRates & Realty | NMLS #1795044',
+  };
+  return templates[goal] || templates['Follow Up'];
+}
+
+function applyAiResult() {
+  var text = window._aiResultText || '';
+  if (!text) return;
+
+  var lines = text.split('\n');
+  var subjectLine = '';
+  var bodyStart = 0;
+
+  if (lines[0] && lines[0].startsWith('Subject:')) {
+    subjectLine = lines[0].replace('Subject:', '').trim();
+    bodyStart = lines[1] === '' ? 2 : 1;
+  }
+
+  if (subjectLine) {
+    var subjectInput = document.getElementById('subjectLine');
+    if (subjectInput) { subjectInput.value = subjectLine; updateSubjectCount(); updateSubjectScore(); }
+  }
+
+  var body = lines.slice(bodyStart).join('\n').trim();
+  if (quill && body) {
+    quill.setText('');
+    quill.clipboard.dangerouslyPasteHTML(body.replace(/\n/g, '<br>'));
+  }
+
+  closeAiPanel();
+  showToast('AI content applied');
+}
+
+/* ================================================================
+   SUBJECT LINE SCORER
+   ================================================================ */
+function updateSubjectScore() {
+  var input = document.getElementById('subjectLine');
+  if (!input) return;
+  var subject = input.value;
+  var score = 0;
+
+  var len = subject.length;
+  if (len >= 30 && len <= 70) score += 25;
+  else if (len >= 20 && len <= 80) score += 15;
+  else if (len > 5) score += 5;
+
+  if (subject.includes('{') && subject.includes('}')) score += 15;
+
+  if (/[\u{1F300}-\u{1FAFF}]/u.test(subject)) score += 10;
+
+  var spamWords = ['free','click now','act now','limited time','buy now','order now','winner'];
+  var hasSpam = spamWords.some(function(w) { return subject.toLowerCase().includes(w); });
+  if (!hasSpam && len > 0) score += 20;
+
+  var urgencyWords = ['now','today','don\'t miss','last chance','deadline','just dropped','breaking'];
+  if (urgencyWords.some(function(w) { return subject.toLowerCase().includes(w); })) score += 10;
+
+  if (/\d/.test(subject)) score += 10;
+
+  if (subject.includes('?')) score += 10;
+
+  var bar = document.getElementById('subjectScoreBar');
+  var num = document.getElementById('subjectScoreNum');
+  if (bar && num) {
+    bar.style.width = score + '%';
+    bar.style.background = score < 40 ? '#e74c3c' : score < 70 ? '#f39c12' : '#27ae60';
+    num.textContent = score + '/100';
+    num.style.color = score < 40 ? '#e74c3c' : score < 70 ? '#f39c12' : '#27ae60';
+  }
 }
 </script>
 
