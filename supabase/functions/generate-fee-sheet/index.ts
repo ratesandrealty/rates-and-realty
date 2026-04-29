@@ -11,8 +11,8 @@ const cors = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info'
 };
 
-// PORTRAIT tall page — fits all content without squishing
-const W = 612, H = 1600, M = 30, CW = W - M * 2;
+// Wide portrait — room for 4 columns + all fee rows
+const W = 850, H = 1100, M = 30, CW = W - M * 2;
 
 const GOLD     = rgb(0.788, 0.659, 0.298);
 const WHITE    = rgb(1, 1, 1);
@@ -543,12 +543,6 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     T(scanText, qrX + (qrSize - R.widthOfTextAtSize(scanText, 5)) / 2, qrY - 8, R, 5, GRAY);
     y = qrY - 15;
   } catch (_) { console.log('[qr] embed error'); }
-
-  // Crop page to actual content height (trim unused bottom space)
-  const actualH = H - y + 30; // content used + bottom margin
-  page.setSize(W, actualH);
-  // Shift all content down so it starts at top of cropped page
-  page.setMediaBox(0, y - 30, W, actualH);
 
   return doc.save();
 }
