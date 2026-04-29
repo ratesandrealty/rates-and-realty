@@ -381,7 +381,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     const sx = tableX + descColW + scenColW * i;
     const bgColor = s.recommended ? GOLD_HDR : DARK;
     rect(sx, y - hdrRowH, scenColW, hdrRowH, bgColor);
-    const hdrLabel = 'Option ' + s.id + (s.recommended ? ' \u2605' : '');
+    const hdrLabel = 'Option ' + s.id + (s.recommended ? ' *' : '');
     const subLabel = s.label + ' | ' + (s.rate || 0).toFixed(3) + '%';
     T(hdrLabel, sx + 4, y - hdrRowH + 7, B, 7, s.recommended ? GOLD : WHITE);
     T(subLabel, sx + 4, y - hdrRowH + 1, R, 5, s.recommended ? GOLD : LGRAY);
