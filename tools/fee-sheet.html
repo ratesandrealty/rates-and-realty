@@ -631,11 +631,11 @@ function calcRecordingFee(state) {
     return map[state] || 125;
 }
 
-function calcTitleLender(loanAmount) {
-    return Math.min(Math.max(loanAmount * 0.00575, 450), 3500);
-}
-function calcTitleOwner(purchasePrice) {
-    return Math.min(Math.max(purchasePrice * 0.00575, 500), 4500);
+function calcTitleLender(purchasePrice) {
+    // CLTA/ALTA schedule for California
+    if (purchasePrice <= 500000) return 450;
+    if (purchasePrice <= 1000000) return Math.round(450 + (purchasePrice - 500000) / 1000 * 1.75);
+    return Math.round(1325 + (purchasePrice - 1000000) / 1000 * 1.50);
 }
 function calcEscrow(purchasePrice) {
     return Math.max(purchasePrice / 1000 * 2, 500);
@@ -687,14 +687,17 @@ function calcScenario(inp, sc) {
     const creditReport = 65;
     const floodCert = 12;
     const taxService = 85;
-    const subtotalB = appraisal + creditReport + floodCert + taxService;
+    const mersReg = 24.95;
+    const subtotalB = appraisal + creditReport + floodCert + taxService + mersReg;
 
-    const titleLender = calcTitleLender(la);
-    const titleOwner = calcTitleOwner(pp);
+    const titleLender = calcTitleLender(pp);
     const escrow = calcEscrow(pp);
     const recording = calcRecordingFee(inp.state);
     const notary = 175;
-    const subtotalC = titleLender + titleOwner + escrow + recording + notary;
+    const loanTieIn = 150;
+    const messengerFee = 125;
+    const subEscrowFee = 50;
+    const subtotalC = titleLender + escrow + recording + notary + loanTieIn + messengerFee + subEscrowFee;
 
     const totalLoanCosts = subtotalA + subtotalB + subtotalC;
 
@@ -725,8 +728,8 @@ function calcScenario(inp, sc) {
 
     return {
         origFee, discountPoints, subtotalA,
-        appraisal, creditReport, floodCert, taxService, subtotalB,
-        titleLender, titleOwner, escrow, recording, notary, subtotalC,
+        appraisal, creditReport, floodCert, taxService, mersReg, subtotalB,
+        titleLender, escrow, recording, notary, loanTieIn, messengerFee, subEscrowFee, subtotalC,
         totalLoanCosts,
         prepaidInterest, prepaidInsurance, subtotalE,
         taxReserve, insReserve, subtotalF,
@@ -822,14 +825,17 @@ function render(inp, results) {
                 ${row('Credit Report', r => r.creditReport)}
                 ${row('Flood Certification', r => r.floodCert)}
                 ${row('Tax Service Fee', r => r.taxService)}
+                ${row('MERS Registration', r => r.mersReg)}
                 ${row('Subtotal B', r => r.subtotalB, true)}
 
                 ${catHeader('C. Services You Can Shop For')}
                 ${row("Title - Lender's Policy", r => r.titleLender)}
-                ${row("Title - Owner's Policy", r => r.titleOwner)}
                 ${row('Escrow / Settlement Fee', r => r.escrow)}
                 ${row('Recording Fees', r => r.recording)}
                 ${row('Notary Fee', r => r.notary)}
+                ${row('Loan Tie-In Fee', r => r.loanTieIn)}
+                ${row('Messenger Fee', r => r.messengerFee)}
+                ${row('Sub-Escrow Fee', r => r.subEscrowFee)}
                 ${row('Subtotal C', r => r.subtotalC, true)}
 
                 ${row('D. TOTAL LOAN COSTS (A+B+C)', r => r.totalLoanCosts, false, true)}
@@ -956,14 +962,17 @@ function copyToClipboard() {
     addRow('  Credit Report', r => r.creditReport);
     addRow('  Flood Cert', r => r.floodCert);
     addRow('  Tax Service', r => r.taxService);
+    addRow('  MERS Registration', r => r.mersReg);
     addRow('  Subtotal B', r => r.subtotalB);
 
     txt += '\nC. SERVICES (CAN SHOP)\n';
     addRow('  Title - Lender', r => r.titleLender);
-    addRow('  Title - Owner', r => r.titleOwner);
     addRow('  Escrow/Settlement', r => r.escrow);
     addRow('  Recording', r => r.recording);
     addRow('  Notary', r => r.notary);
+    addRow('  Loan Tie-In', r => r.loanTieIn);
+    addRow('  Messenger', r => r.messengerFee);
+    addRow('  Sub-Escrow', r => r.subEscrowFee);
     addRow('  Subtotal C', r => r.subtotalC);
 
     txt += '\n' + pad('D. TOTAL LOAN COSTS', w1) + results.map(r => rpad(fmtPlain(r.totalLoanCosts), w2)).join('') + '\n';
