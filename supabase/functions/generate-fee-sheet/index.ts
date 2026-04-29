@@ -11,11 +11,12 @@ const cors = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info'
 };
 
-// LANDSCAPE letter
-const W = 792, H = 612, M = 30, CW = W - M * 2;
+// PORTRAIT tall page — fits all content without squishing
+const W = 612, H = 1600, M = 30, CW = W - M * 2;
 
 const GOLD     = rgb(0.788, 0.659, 0.298);
 const WHITE    = rgb(1, 1, 1);
+const BLACK    = rgb(0, 0, 0);
 const DARK     = rgb(0.08, 0.08, 0.08);
 const GRAY     = rgb(0.52, 0.52, 0.52);
 const LGRAY    = rgb(0.87, 0.87, 0.87);
@@ -137,25 +138,25 @@ async function buildPDF(d: any): Promise<Uint8Array> {
 
   let y = H; // cursor from top
 
-  // ── 1. HEADER BAR (45px dark bg) ───────────────────────────────────────────
-  const hdrH = 45;
+  // ── 1. HEADER BAR (60px dark bg) ───────────────────────────────────────────
+  const hdrH = 60;
   rect(0, H - hdrH, W, hdrH, DARK);
 
   // Logo (left)
   try {
     const logoBytes = Uint8Array.from(atob(LOGO_B64), c => c.charCodeAt(0));
     const logoImg = await doc.embedPng(logoBytes);
-    page.drawImage(logoImg, { x: M, y: H - hdrH + 2, width: 42, height: 42 });
-    T('Rates & Realty', M + 50, H - 16, B, 16, GOLD);
-    T('AI-Powered Mortgage  |  NMLS #1416824', M + 50, H - 28, R, 8, GRAY);
+    page.drawImage(logoImg, { x: M, y: H - hdrH + 5, width: 50, height: 50 });
+    T('Rates & Realty', M + 58, H - 20, B, 18, GOLD);
+    T('AI-Powered Mortgage  |  NMLS #1416824', M + 58, H - 34, R, 8, GRAY);
   } catch(_) {
-    T('Rates & Realty', M, H - 16, B, 16, GOLD);
-    T('AI-Powered Mortgage  |  NMLS #1416824', M, H - 28, R, 8, GRAY);
+    T('Rates & Realty', M, H - 20, B, 18, GOLD);
+    T('AI-Powered Mortgage  |  NMLS #1416824', M, H - 34, R, 8, GRAY);
   }
 
   // Headshot + agent info (right)
   const rX = W - M;
-  const hsSize = 36;
+  const hsSize = 50;
   const hsX = rX - hsSize;
   const hsY = H - hdrH + 5;
   try {
@@ -177,25 +178,25 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     );
     page.drawImage(hsImg, { x: hsX, y: hsY, width: hsSize, height: hsSize });
     page.pushOperators(popGraphicsState());
-    let ry = H - 12;
+    let ry = H - 14;
     const t1 = 'Rene Duarte';
-    T(t1, hsX - 8 - B.widthOfTextAtSize(t1, 9), ry, B, 9, WHITE);
-    ry -= 11;
+    T(t1, hsX - 10 - B.widthOfTextAtSize(t1, 14), ry, B, 14, WHITE);
+    ry -= 14;
     const t2 = 'Loan Officer  |  NMLS #1795044';
-    T(t2, hsX - 8 - R.widthOfTextAtSize(t2, 7), ry, R, 7, GRAY);
-    ry -= 10;
+    T(t2, hsX - 10 - R.widthOfTextAtSize(t2, 8), ry, R, 8, GRAY);
+    ry -= 11;
     const t3 = '(714) 472-8508  |  rene@ratesandrealty.com';
-    T(t3, hsX - 8 - R.widthOfTextAtSize(t3, 7), ry, R, 7, GRAY);
+    T(t3, hsX - 10 - R.widthOfTextAtSize(t3, 8), ry, R, 8, GRAY);
   } catch(_) {
-    let ry = H - 12;
+    let ry = H - 14;
     const t1 = 'Rene Duarte';
-    T(t1, rX - B.widthOfTextAtSize(t1, 9), ry, B, 9, WHITE);
-    ry -= 11;
+    T(t1, rX - B.widthOfTextAtSize(t1, 14), ry, B, 14, WHITE);
+    ry -= 14;
     const t2 = 'Loan Officer  |  NMLS #1795044';
-    T(t2, rX - R.widthOfTextAtSize(t2, 7), ry, R, 7, GRAY);
-    ry -= 10;
+    T(t2, rX - R.widthOfTextAtSize(t2, 8), ry, R, 8, GRAY);
+    ry -= 11;
     const t3 = '(714) 472-8508  |  rene@ratesandrealty.com';
-    T(t3, rX - R.widthOfTextAtSize(t3, 7), ry, R, 7, GRAY);
+    T(t3, rX - R.widthOfTextAtSize(t3, 8), ry, R, 8, GRAY);
   }
 
   y = H - hdrH;
@@ -420,7 +421,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
       hLine(tableX, y, CW, LGRAY);
       const subBg = rgb(0.94, 0.94, 0.94);
       rect(tableX, y - rh, descColW, rh, subBg);
-      T(row.label, tableX + 4, y - rh + 3, B, 7, DARK);
+      T(row.label, tableX + 4, y - rh + 3, B, 7, BLACK);
       scenarios.forEach((s, i) => {
         const sx = tableX + descColW + scenColW * i;
         rect(sx, y - rh, scenColW, rh, s.recommended ? GOLD_TINT : subBg);
@@ -432,7 +433,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
       // Normal fee row: alternating white / #FAFAFA, 6.5pt
       const bgBase = altRow ? ALT_ROW : WHITE;
       rect(tableX, y - rh, descColW, rh, bgBase);
-      T(row.label, tableX + 8, y - rh + 3, R, 6.5, DARK);
+      T(row.label, tableX + 8, y - rh + 3, R, 6.5, BLACK);
       scenarios.forEach((s, i) => {
         const sx = tableX + descColW + scenColW * i;
         const cellBg = s.recommended ? (altRow ? rgb(0.97, 0.96, 0.92) : GOLD_TINT) : bgBase;
@@ -487,7 +488,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
       });
     } else {
       rect(tableX, y - mrH, descColW, mrH, WHITE);
-      T(mr.label, tableX + 8, y - mrH + 3, R, 6.5, DARK);
+      T(mr.label, tableX + 8, y - mrH + 3, R, 6.5, BLACK);
       scenarios.forEach((s, i) => {
         const sx = tableX + descColW + scenColW * i;
         const cellBg = s.recommended ? GOLD_TINT : WHITE;
@@ -529,17 +530,25 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     y -= 7;
   }
 
-  // ── 8. QR CODE — bottom RIGHT corner, BELOW disclaimer ────────────────────
+  // ── 8. QR CODE — below disclaimer, right side, with spacing ────────────────
+  y -= 20; // gap after disclaimer
   try {
     const qrBytes = Uint8Array.from(atob(QR_CODE_B64), c => c.charCodeAt(0));
     const qrImg = await doc.embedPng(qrBytes);
     const qrSize = 65;
-    const qrX = W - 30 - qrSize;
-    const qrY = 15; // 15px from bottom edge
+    const qrX = W - M - qrSize;
+    const qrY = y - qrSize;
     page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
     const scanText = 'Scan to connect';
-    T(scanText, qrX + (qrSize - R.widthOfTextAtSize(scanText, 5)) / 2, qrY - 7, R, 5, GRAY);
+    T(scanText, qrX + (qrSize - R.widthOfTextAtSize(scanText, 5)) / 2, qrY - 8, R, 5, GRAY);
+    y = qrY - 15;
   } catch (_) { console.log('[qr] embed error'); }
+
+  // Crop page to actual content height (trim unused bottom space)
+  const actualH = H - y + 30; // content used + bottom margin
+  page.setSize(W, actualH);
+  // Shift all content down so it starts at top of cropped page
+  page.setMediaBox(0, y - 30, W, actualH);
 
   return doc.save();
 }
