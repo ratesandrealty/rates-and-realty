@@ -145,12 +145,12 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   try {
     const logoBytes = Uint8Array.from(atob(LOGO_B64), c => c.charCodeAt(0));
     const logoImg = await doc.embedPng(logoBytes);
-    page.drawImage(logoImg, { x: M, y: H - hdrH + 5, width: 35, height: 35 });
-    T('Rates & Realty', M + 42, H - 14, B, 14, GOLD);
-    T('AI-Powered Mortgage  |  NMLS #1416824', M + 42, H - 26, R, 7, GRAY);
+    page.drawImage(logoImg, { x: M, y: H - hdrH + 2, width: 42, height: 42 });
+    T('Rates & Realty', M + 50, H - 16, B, 16, GOLD);
+    T('AI-Powered Mortgage  |  NMLS #1416824', M + 50, H - 28, R, 8, GRAY);
   } catch(_) {
-    T('Rates & Realty', M, H - 14, B, 14, GOLD);
-    T('AI-Powered Mortgage  |  NMLS #1416824', M, H - 26, R, 7, GRAY);
+    T('Rates & Realty', M, H - 16, B, 16, GOLD);
+    T('AI-Powered Mortgage  |  NMLS #1416824', M, H - 28, R, 8, GRAY);
   }
 
   // Headshot + agent info (right)
@@ -533,9 +533,9 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   try {
     const qrBytes = Uint8Array.from(atob(QR_CODE_B64), c => c.charCodeAt(0));
     const qrImg = await doc.embedPng(qrBytes);
-    const qrSize = 60;
-    const qrX = W - M - qrSize;
-    const qrY = M; // at the very bottom margin
+    const qrSize = 65;
+    const qrX = W - 30 - qrSize;
+    const qrY = 15; // 15px from bottom edge
     page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
     const scanText = 'Scan to connect';
     T(scanText, qrX + (qrSize - R.widthOfTextAtSize(scanText, 5)) / 2, qrY - 7, R, 5, GRAY);

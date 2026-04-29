@@ -7180,27 +7180,33 @@ async function openFeeSheetPDF() {
         scenarios.push({ id: s.id, label: s.label, rate: s.rate, points: s.points, origComp: s.origComp, lenderCredits: s.lenderCredits, recommended: s.recommended });
       });
     }
-    // Read other inputs from iframe
-    var iframeGetInputs = iframe.contentWindow.getInputs;
-    var inp = iframeGetInputs ? iframeGetInputs() : {};
+    // Read inputs from iframe — try getInputs() first, fall back to DOM reading
+    var inp = {};
+    try { inp = iframe.contentWindow.getInputs ? iframe.contentWindow.getInputs() : {}; } catch(ex) { console.warn('[fee-pdf] getInputs failed:', ex); }
+    // Fallback: read directly from iframe DOM elements
+    var _iframeVal = function(id) { try { var el = iframeDoc.getElementById(id); return el ? el.value : ''; } catch(e) { return ''; } };
+    var _iframeNum = function(id) { return parseFloat(String(_iframeVal(id)).replace(/[$,]/g,'')) || 0; };
+    var pp = inp.purchasePrice > 0 ? inp.purchasePrice : (_iframeNum('purchasePrice') || Number(d.purchase_price) || 0);
+    var la = inp.loanAmount > 0 ? inp.loanAmount : (_iframeNum('loanAmount') || Number(d.loan_amount) || 0);
+    console.log('[fee-pdf] pp=' + pp + ' la=' + la + ' inp.pp=' + inp.purchasePrice + ' d.pp=' + d.purchase_price);
     var payload = {
       borrower_name: borrowerName,
-      property_address: d.property_address || '',
-      purchase_price: inp.purchasePrice > 0 ? inp.purchasePrice : (Number(d.purchase_price) || 0),
-      loan_amount: inp.loanAmount > 0 ? inp.loanAmount : (Number(d.loan_amount) || 0),
-      down_pct: inp.downPct > 0 ? inp.downPct : 20,
-      ltv: inp.ltv > 0 ? inp.ltv : 80,
-      loan_product: inp.loanProduct || 'Conv 30yr Fixed',
-      lock_period: inp.lockPeriod || '30 days',
+      property_address: d.property_address || _iframeVal('propertyAddress') || '',
+      purchase_price: pp,
+      loan_amount: la,
+      down_pct: inp.downPct > 0 ? inp.downPct : (parseFloat(_iframeVal('downPct')) || 20),
+      ltv: pp > 0 ? (la / pp * 100) : 80,
+      loan_product: inp.loanProduct || _iframeVal('loanProduct') || 'Conv 30yr Fixed',
+      lock_period: inp.lockPeriod || _iframeVal('lockPeriod') || '30 days',
       scenarios: scenarios.length ? scenarios : [
         { id:'A', label:'Par Rate', rate:6.875, points:0, origComp:1.5, lenderCredits:0, recommended:true },
         { id:'B', label:'Buy Down', rate:6.625, points:0.75, origComp:1.5, lenderCredits:0, recommended:false },
         { id:'C', label:'Lender Credit', rate:7.125, points:-0.5, origComp:1.5, lenderCredits:0, recommended:false }
       ],
-      annual_tax: inp.annualTax || 9125,
-      annual_insurance: inp.annualInsurance || 1800,
-      property_type: inp.propertyType || 'SFR',
-      state: inp.state || 'CA'
+      annual_tax: (inp.annualTax > 0 ? inp.annualTax : _iframeNum('annualTax')) || (pp * 0.0125) || 9125,
+      annual_insurance: (inp.annualInsurance > 0 ? inp.annualInsurance : _iframeNum('annualInsurance')) || 1800,
+      property_type: inp.propertyType || _iframeVal('propertyType') || 'SFR',
+      state: inp.state || _iframeVal('state') || 'CA'
     };
     var sbUrl = _fsSbUrl(), sbKey = _fsSbKey();
     var res = await fetch(sbUrl + '/functions/v1/generate-fee-sheet', {
