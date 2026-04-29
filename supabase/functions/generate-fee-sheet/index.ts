@@ -12,7 +12,7 @@ const cors = {
 };
 
 // Wide portrait — room for 4 columns + all fee rows
-const W = 850, H = 1100, M = 30, CW = W - M * 2;
+const W = 850, H = 1200, M = 30, CW = W - M * 2;
 
 const GOLD     = rgb(0.788, 0.659, 0.298);
 const WHITE    = rgb(1, 1, 1);
@@ -136,29 +136,30 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     page.drawLine({ start: { x, y }, end: { x: x + w, y }, thickness: 0.5, color });
   };
 
-  let y = H; // cursor from top
+  let y = H - 20; // top padding so header isn't cut off
 
   // ── 1. HEADER BAR (60px dark bg) ───────────────────────────────────────────
   const hdrH = 60;
-  rect(0, H - hdrH, W, hdrH, DARK);
+  const hdrTop = y; // y already has 20px top padding
+  rect(0, hdrTop - hdrH, W, hdrH, DARK);
 
   // Logo (left)
   try {
     const logoBytes = Uint8Array.from(atob(LOGO_B64), c => c.charCodeAt(0));
     const logoImg = await doc.embedPng(logoBytes);
-    page.drawImage(logoImg, { x: M, y: H - hdrH + 5, width: 50, height: 50 });
-    T('Rates & Realty', M + 58, H - 20, B, 18, GOLD);
-    T('AI-Powered Mortgage  |  NMLS #1416824', M + 58, H - 34, R, 8, GRAY);
+    page.drawImage(logoImg, { x: M, y: hdrTop - hdrH + 5, width: 50, height: 50 });
+    T('Rates & Realty', M + 58, hdrTop - 20, B, 18, GOLD);
+    T('AI-Powered Mortgage  |  NMLS #1416824', M + 58, hdrTop - 34, R, 8, GRAY);
   } catch(_) {
-    T('Rates & Realty', M, H - 20, B, 18, GOLD);
-    T('AI-Powered Mortgage  |  NMLS #1416824', M, H - 34, R, 8, GRAY);
+    T('Rates & Realty', M, hdrTop - 20, B, 18, GOLD);
+    T('AI-Powered Mortgage  |  NMLS #1416824', M, hdrTop - 34, R, 8, GRAY);
   }
 
   // Headshot + agent info (right)
   const rX = W - M;
   const hsSize = 50;
   const hsX = rX - hsSize;
-  const hsY = H - hdrH + 5;
+  const hsY = hdrTop - hdrH + 5;
   try {
     const hsBytes = Uint8Array.from(atob(HEADSHOT_B64), c => c.charCodeAt(0));
     const hsImg = await doc.embedPng(hsBytes);
@@ -178,7 +179,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     );
     page.drawImage(hsImg, { x: hsX, y: hsY, width: hsSize, height: hsSize });
     page.pushOperators(popGraphicsState());
-    let ry = H - 14;
+    let ry = hdrTop - 14;
     const t1 = 'Rene Duarte';
     T(t1, hsX - 10 - B.widthOfTextAtSize(t1, 14), ry, B, 14, WHITE);
     ry -= 14;
@@ -188,7 +189,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     const t3 = '(714) 472-8508  |  rene@ratesandrealty.com';
     T(t3, hsX - 10 - R.widthOfTextAtSize(t3, 8), ry, R, 8, GRAY);
   } catch(_) {
-    let ry = H - 14;
+    let ry = hdrTop - 14;
     const t1 = 'Rene Duarte';
     T(t1, rX - B.widthOfTextAtSize(t1, 14), ry, B, 14, WHITE);
     ry -= 14;
@@ -199,7 +200,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     T(t3, rX - R.widthOfTextAtSize(t3, 8), ry, R, 8, GRAY);
   }
 
-  y = H - hdrH;
+  y = hdrTop - hdrH;
 
   // ── 2. GOLD BANNER (16px) ──────────────────────────────────────────────────
   const bannerH = 16;
