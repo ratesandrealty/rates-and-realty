@@ -914,80 +914,204 @@ function renderActivityItems(events) {
   }).join("");
 }
 
-// ── ANALYTICS ─────────────────────────────────────────────────────────────────
-async function renderAnalytics() {
-  const root = document.getElementById("analytics-root");
-  if (!root || !dashboardData) return;
-  const { leads, tasks, applications } = dashboardData;
-  const data = await getAnalyticsData(leads, tasks, applications);
+// ── ANALYTICS DASHBOARD ──────────────────────────────────────────────────────
+let _analyticsCharts = {};
 
-  root.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:24px;">
-      <div class="metric-card metric-card-gold"><strong>${data.totalLeads}</strong><span>Total Leads</span></div>
-      <div class="metric-card metric-card-green"><strong>${data.conversionRate}%</strong><span>Conversion Rate</span></div>
-      <div class="metric-card"><strong>${data.hotLeads}</strong><span>Hot Leads (70+)</span></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
-      <div class="panel chart-panel">
-        <p class="kicker">Leads by Source</p>
-        ${renderInlinePieChart(data.bySource)}
-      </div>
-      <div class="panel chart-panel">
-        <p class="kicker">Pipeline Distribution</p>
-        ${renderInlineBarChart(data.byStage, ["new","contacted","prequalified","preapproved","in_process","in_escrow","closed","lost"])}
-      </div>
-      <div class="panel chart-panel">
-        <p class="kicker">Leads by Loan Type</p>
-        ${renderInlineBarChart(data.byLoanType, Object.keys(data.byLoanType))}
-      </div>
-      <div class="panel chart-panel">
-        <p class="kicker">Weekly Lead Volume (Last 30 Days)</p>
-        ${renderWeeklyBar(data.weeklyLeads)}
-      </div>
-    </div>
-  `;
-}
+async function renderAnalytics() { loadAnalyticsDashboard(); }
 
-function renderInlineBarChart(data, keys) {
-  const entries = keys.map((k) => [k, data[k] || 0]).filter((e) => e[1] > 0);
-  if (!entries.length) return `<p style="color:var(--muted);font-size:0.85rem;">No data yet</p>`;
-  const max = Math.max(...entries.map((e) => e[1]), 1);
-  return `<div class="bar-chart" style="height:100px;align-items:flex-end;">` +
-    entries.map(([label, count]) => `
-      <div class="bar-chart-col">
-        <div style="height:${Math.round((count / max) * 100)}%;min-height:2px;" class="bar-fill" title="${label}: ${count}"></div>
-        <div class="bar-label">${label.replace("_", " ").substring(0, 8)}</div>
-        <div style="font-size:0.7rem;color:var(--muted-light);font-weight:700;">${count}</div>
-      </div>
-    `).join("") + `</div>`;
-}
+async function loadAnalyticsDashboard() {
+  const root = document.getElementById('analyticsKPIs');
+  if (!root) return;
 
-function renderInlinePieChart(data) {
-  const entries = Object.entries(data).filter((e) => e[1] > 0).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return `<p style="color:var(--muted);font-size:0.85rem;">No data yet</p>`;
-  const total = entries.reduce((s, e) => s + e[1], 0);
-  const colors = ["var(--gold)", "var(--blue)", "var(--green)", "#e8a87c", "#c084fc", "#f87171", "#34d399", "#60a5fa"];
-  return `<div class="pie-legend">` +
-    entries.map(([label, count], i) => `
-      <div class="pie-legend-item">
-        <span class="pie-dot" style="background:${colors[i % colors.length]};"></span>
-        <span style="font-size:0.82rem;">${label}</span>
-        <span style="margin-left:auto;font-weight:700;font-size:0.82rem;">${Math.round((count / total) * 100)}%</span>
-      </div>
-    `).join("") + `</div>`;
-}
+  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+  const headers = { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY };
 
-function renderWeeklyBar(weeklyLeads) {
-  const labels = ["3 wks ago", "2 wks ago", "Last week", "This week"];
-  const max = Math.max(...weeklyLeads, 1);
-  return `<div class="bar-chart" style="height:100px;align-items:flex-end;">` +
-    weeklyLeads.map((count, i) => `
-      <div class="bar-chart-col">
-        <div style="height:${Math.round((count / max) * 100)}%;min-height:2px;" class="bar-fill bar-fill-green"></div>
-        <div class="bar-label">${labels[i]}</div>
-        <div style="font-size:0.7rem;color:var(--muted-light);font-weight:700;">${count}</div>
-      </div>
-    `).join("") + `</div>`;
+  // Date range filter
+  const days = parseInt(document.getElementById('analyticsDateRange')?.value || '30');
+  const cutoff = days > 0 ? new Date(Date.now() - days * 86400000).toISOString() : '';
+  const dateFilter = cutoff ? '&created_at=gte.' + cutoff : '';
+
+  try {
+    const [contactsRes, appsRes, docsRes] = await Promise.all([
+      fetch(SB_URL + '/rest/v1/contacts?select=id,first_name,last_name,pipeline_status,source,loan_type,created_at,priority' + dateFilter, { headers }),
+      fetch(SB_URL + '/rest/v1/mortgage_applications?select=loan_purpose,loan_type,loan_amount,purchase_price,occupancy_type,property_state,created_at' + dateFilter, { headers }),
+      fetch(SB_URL + '/rest/v1/uploaded_documents?select=id,created_at' + dateFilter, { headers }),
+    ]);
+
+    const contacts = await contactsRes.json();
+    const apps = await appsRes.json();
+    const docs = await docsRes.json();
+
+    if (!Array.isArray(contacts)) { console.error('Analytics: contacts not array', contacts); return; }
+
+    // ── KPI CALCULATIONS ──
+    const total = contacts.length;
+    const closed = contacts.filter(c => c.pipeline_status === 'closed').length;
+    const active = contacts.filter(c => !['closed','lost','dead'].includes(c.pipeline_status)).length;
+    const convRate = total > 0 ? (closed / total * 100).toFixed(1) : '0';
+    const totalVolume = apps.reduce((s, a) => s + (parseFloat(a.loan_amount) || 0), 0);
+    const avgLoan = apps.length > 0 ? totalVolume / apps.length : 0;
+
+    // KPI Cards
+    const kpiCard = (label, value, sub, color) =>
+      '<div style="background:#1A1A1A;border-top:3px solid ' + color + ';border-radius:8px;padding:14px 16px;">' +
+      '<div style="font-size:24px;font-weight:700;color:#F5F0E8;font-family:\'DM Mono\',monospace;">' + value + '</div>' +
+      '<div style="font-size:11px;color:#8A8478;margin-top:2px;">' + label + '</div>' +
+      (sub ? '<div style="font-size:10px;color:#C9A84C;margin-top:4px;">' + sub + '</div>' : '') +
+      '</div>';
+
+    root.innerHTML =
+      kpiCard('Total Leads', total, '', '#C9A84C') +
+      kpiCard('Active Pipeline', active, '', '#E8D5A3') +
+      kpiCard('Closed Loans', closed, '$' + (totalVolume/1000000).toFixed(1) + 'M volume', '#27ae60') +
+      kpiCard('Conversion Rate', convRate + '%', '', '#C9A84C') +
+      kpiCard('Avg Loan Amount', '$' + Math.round(avgLoan).toLocaleString(), '', '#8B6914') +
+      kpiCard('Docs Uploaded', docs.length, '', '#D4A843');
+
+    // ── CHART COLORS ──
+    const COLORS = ['#C9A84C','#E8D5A3','#8B6914','#D4A843','#F0C060','#A07830','#6B5020','#B8960A'];
+    Chart.defaults.color = '#8A8478';
+    Chart.defaults.borderColor = 'rgba(201,168,76,0.1)';
+
+    function makeChart(id, config) {
+      if (_analyticsCharts[id]) _analyticsCharts[id].destroy();
+      const ctx = document.getElementById(id);
+      if (!ctx) return;
+      _analyticsCharts[id] = new Chart(ctx, config);
+    }
+
+    // ── 1. PIPELINE FUNNEL (horizontal bar) ──
+    const stages = ['new','contacted','prequalified','preapproved','in_process','in_escrow','under_contract','closed'];
+    const stageLabels = ['New Lead','Contacted','Pre-Qualified','Pre-Approved','Processing','In Escrow','Under Contract','Closed'];
+    const stageCounts = stages.map(s => contacts.filter(c => c.pipeline_status === s).length);
+    makeChart('chartPipeline', {
+      type: 'bar',
+      data: { labels: stageLabels, datasets: [{ data: stageCounts, backgroundColor: COLORS.slice(0, stages.length), borderRadius: 4 }] },
+      options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { grid: { color: 'rgba(201,168,76,0.08)' } }, y: { grid: { display: false } } } }
+    });
+
+    // ── 2. LEADS BY SOURCE (doughnut) ──
+    const sourceCounts = {};
+    contacts.forEach(c => { const s = (c.source || 'other').toLowerCase().replace(/_/g,' '); sourceCounts[s] = (sourceCounts[s] || 0) + 1; });
+    const sourceEntries = Object.entries(sourceCounts).sort((a,b) => b[1] - a[1]);
+    makeChart('chartSource', {
+      type: 'doughnut',
+      data: { labels: sourceEntries.map(e => e[0]), datasets: [{ data: sourceEntries.map(e => e[1]), backgroundColor: COLORS }] },
+      options: { plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } }, cutout: '55%' }
+    });
+
+    // ── 3. LOAN TYPE (bar) ──
+    const loanTypes = {};
+    const normalize = s => (s || 'Unknown').charAt(0).toUpperCase() + (s || 'Unknown').slice(1).toLowerCase();
+    contacts.forEach(c => { if (c.loan_type) { const t = normalize(c.loan_type); loanTypes[t] = (loanTypes[t] || 0) + 1; } });
+    apps.forEach(a => { if (a.loan_type) { const t = normalize(a.loan_type); loanTypes[t] = (loanTypes[t] || 0) + 1; } });
+    const ltEntries = Object.entries(loanTypes).sort((a,b) => b[1] - a[1]).slice(0, 8);
+    makeChart('chartLoanType', {
+      type: 'bar',
+      data: { labels: ltEntries.map(e => e[0]), datasets: [{ data: ltEntries.map(e => e[1]), backgroundColor: '#C9A84C', borderRadius: 4 }] },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(201,168,76,0.08)' } }, x: { grid: { display: false } } } }
+    });
+
+    // ── 4. LOAN PURPOSE (pie) ──
+    const purposes = {};
+    apps.forEach(a => { const p = normalize(a.loan_purpose || 'Unknown'); purposes[p] = (purposes[p] || 0) + 1; });
+    const purpEntries = Object.entries(purposes).sort((a,b) => b[1] - a[1]);
+    makeChart('chartPurpose', {
+      type: 'pie',
+      data: { labels: purpEntries.map(e => e[0]), datasets: [{ data: purpEntries.map(e => e[1]), backgroundColor: COLORS }] },
+      options: { plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } }
+    });
+
+    // ── 5. MONTHLY LEAD VOLUME (line) ──
+    const monthLabels = [];
+    const monthCounts = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(); d.setMonth(d.getMonth() - i);
+      const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      monthLabels.push(d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
+      monthCounts.push(contacts.filter(c => c.created_at && c.created_at.startsWith(key)).length);
+    }
+    makeChart('chartMonthly', {
+      type: 'line',
+      data: { labels: monthLabels, datasets: [{ data: monthCounts, borderColor: '#C9A84C', backgroundColor: 'rgba(201,168,76,0.15)', fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#C9A84C' }] },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(201,168,76,0.08)' } }, x: { grid: { display: false } } } }
+    });
+
+    // ── 6. OCCUPANCY TYPE (doughnut) ──
+    const occTypes = {};
+    apps.forEach(a => { const o = a.occupancy_type || 'Unknown'; occTypes[o] = (occTypes[o] || 0) + 1; });
+    const occEntries = Object.entries(occTypes).sort((a,b) => b[1] - a[1]);
+    makeChart('chartOccupancy', {
+      type: 'doughnut',
+      data: { labels: occEntries.map(e => e[0]), datasets: [{ data: occEntries.map(e => e[1]), backgroundColor: COLORS }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }, cutout: '50%' }
+    });
+
+    // ── 7. LOAN AMOUNT DISTRIBUTION (bar) ──
+    const buckets = { 'Under $500K': 0, '$500K-$750K': 0, '$750K-$1M': 0, '$1M-$1.5M': 0, 'Over $1.5M': 0 };
+    apps.forEach(a => {
+      const amt = parseFloat(a.loan_amount) || 0;
+      if (amt <= 0) return;
+      if (amt < 500000) buckets['Under $500K']++;
+      else if (amt < 750000) buckets['$500K-$750K']++;
+      else if (amt < 1000000) buckets['$750K-$1M']++;
+      else if (amt < 1500000) buckets['$1M-$1.5M']++;
+      else buckets['Over $1.5M']++;
+    });
+    makeChart('chartLoanAmt', {
+      type: 'bar',
+      data: { labels: Object.keys(buckets), datasets: [{ data: Object.values(buckets), backgroundColor: ['#6B5020','#8B6914','#C9A84C','#D4A843','#E8D5A3'], borderRadius: 4 }] },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(201,168,76,0.08)' } }, x: { grid: { display: false } } } }
+    });
+
+    // ── 8. CONVERSION FUNNEL ──
+    const funnelStages = [['new','contacted'],['contacted','preapproved'],['preapproved','in_process'],['in_process','under_contract'],['under_contract','closed']];
+    const funnelLabels = ['New -> Contacted','Contacted -> Pre-Approved','Pre-Approved -> Processing','Processing -> Under Contract','Under Contract -> Closed'];
+    const funnelEl = document.getElementById('conversionFunnel');
+    if (funnelEl) {
+      funnelEl.innerHTML = funnelStages.map((pair, i) => {
+        const from = contacts.filter(c => stages.indexOf(c.pipeline_status) >= stages.indexOf(pair[0])).length;
+        const to = contacts.filter(c => stages.indexOf(c.pipeline_status) >= stages.indexOf(pair[1])).length;
+        const pct = from > 0 ? Math.round(to / from * 100) : 0;
+        const color = pct >= 50 ? '#27ae60' : pct >= 25 ? '#f39c12' : '#e74c3c';
+        return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(201,168,76,0.1);">' +
+          '<span style="color:#E8D5A3;">' + funnelLabels[i] + '</span>' +
+          '<span style="color:' + color + ';font-weight:700;">' + pct + '% <span style="color:#8A8478;font-weight:400;">(' + to + '/' + from + ')</span></span>' +
+          '</div>';
+      }).join('');
+    }
+
+    // ── 9. GEO TABLE ──
+    const geoEl = document.getElementById('geoTable');
+    if (geoEl) {
+      const states = {};
+      apps.forEach(a => { if (a.property_state) { const s = a.property_state.toUpperCase(); states[s] = (states[s] || 0) + 1; } });
+      const stateEntries = Object.entries(states).sort((a,b) => b[1] - a[1]).slice(0, 10);
+      geoEl.innerHTML = stateEntries.length ? stateEntries.map(([st, ct]) =>
+        '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(201,168,76,0.08);"><span>' + st + '</span><span style="color:#C9A84C;font-weight:600;">' + ct + '</span></div>'
+      ).join('') : '<div style="color:#8A8478;">No state data yet</div>';
+    }
+
+    // ── 10. RECENT LEADS ──
+    const recentEl = document.getElementById('recentLeads');
+    if (recentEl) {
+      const recent = contacts.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
+      recentEl.innerHTML = recent.map(c => {
+        const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unknown';
+        const ago = Math.round((Date.now() - new Date(c.created_at)) / 86400000);
+        const badge = c.pipeline_status || 'new';
+        return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(201,168,76,0.08);cursor:pointer;" onclick="window.location.href=\'/admin/lead-detail.html?contact_id=' + c.id + '\'">' +
+          '<div><div style="color:#E8D5A3;font-weight:500;">' + name + '</div><div style="font-size:10px;color:#8A8478;">' + (c.source || '') + ' - ' + ago + 'd ago</div></div>' +
+          '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(201,168,76,0.15);color:#C9A84C;">' + badge.replace(/_/g,' ') + '</span>' +
+          '</div>';
+      }).join('');
+    }
+
+  } catch(err) {
+    console.error('Analytics load error:', err);
+    root.innerHTML = '<div style="color:#e74c3c;padding:20px;">Failed to load analytics: ' + err.message + '</div>';
+  }
 }
 
 // ── APPLICATIONS & DOCUMENTS ──────────────────────────────────────────────────

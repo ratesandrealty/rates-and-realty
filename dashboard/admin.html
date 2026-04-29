@@ -12,6 +12,8 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion for File Vault uploads -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- Chart.js — analytics dashboard charts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <!-- Google Analytics -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-03P16TMWM8"></script>
   <script>
@@ -546,13 +548,81 @@
 
       <!-- ── ANALYTICS TAB ─────────────────────────── -->
       <section id="tab-analytics" class="crm-tab-panel">
-        <div class="crm-page-header">
+        <div class="crm-page-header" style="display:flex;align-items:center;justify-content:space-between;">
           <div class="crm-page-title">
             <p class="kicker" style="margin-bottom:4px;">Business Intelligence</p>
             <h2>Analytics</h2>
           </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select id="analyticsDateRange" onchange="loadAnalyticsDashboard()" style="padding:6px 12px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:6px;color:#E8D5A3;font-size:12px;cursor:pointer;outline:none;">
+              <option value="7">Last 7 Days</option>
+              <option value="30" selected>Last 30 Days</option>
+              <option value="90">Last 90 Days</option>
+              <option value="365">This Year</option>
+              <option value="0">All Time</option>
+            </select>
+            <button onclick="loadAnalyticsDashboard()" style="padding:6px 14px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:6px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;">Refresh</button>
+          </div>
         </div>
-        <div id="analytics-root"></div>
+
+        <!-- KPI Cards -->
+        <div id="analyticsKPIs" style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px;"></div>
+
+        <!-- Charts Grid -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Pipeline Funnel</div>
+            <canvas id="chartPipeline" height="180"></canvas>
+          </div>
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Leads by Source</div>
+            <canvas id="chartSource" height="180"></canvas>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Loan Type Breakdown</div>
+            <canvas id="chartLoanType" height="180"></canvas>
+          </div>
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Loan Purpose Split</div>
+            <canvas id="chartPurpose" height="180"></canvas>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px;">
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Monthly Lead Volume (12 Months)</div>
+            <canvas id="chartMonthly" height="160"></canvas>
+          </div>
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Occupancy Type</div>
+            <canvas id="chartOccupancy" height="160"></canvas>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Loan Amount Distribution</div>
+            <canvas id="chartLoanAmt" height="180"></canvas>
+          </div>
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Conversion Funnel</div>
+            <div id="conversionFunnel" style="font-size:12px;color:#F5F0E8;"></div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Top States</div>
+            <div id="geoTable" style="font-size:12px;color:#F5F0E8;"></div>
+          </div>
+          <div style="background:#1A1A1A;border:1px solid rgba(201,168,76,0.15);border-radius:10px;padding:16px;">
+            <div style="font-size:11px;color:#8A8478;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Recent Leads</div>
+            <div id="recentLeads" style="font-size:12px;color:#F5F0E8;max-height:300px;overflow-y:auto;"></div>
+          </div>
+        </div>
       </section>
 
       <!-- ── APPLICATIONS TAB ──────────────────────── -->
