@@ -12,7 +12,7 @@ const cors = {
 };
 
 // Wide portrait — room for 4 columns + all fee rows
-const W = 850, H = 1200, M = 30, CW = W - M * 2;
+const W = 850, H = 1350, M = 30, CW = W - M * 2;
 
 const GOLD     = rgb(0.788, 0.659, 0.298);
 const WHITE    = rgb(1, 1, 1);
@@ -52,10 +52,10 @@ function calcAppraisalFee(propertyType: string): number {
   return 595; // SFR default
 }
 
-function calcTitleLenderPolicy(loanAmount: number): number {
-  if (loanAmount <= 500000) return 450;
-  if (loanAmount <= 1000000) return 450 + (loanAmount - 500000) / 1000 * 1.75;
-  return 1325 + (loanAmount - 1000000) / 1000 * 1.50;
+function calcTitleLenderPolicy(purchasePrice: number): number {
+  if (purchasePrice <= 500000) return 450;
+  if (purchasePrice <= 1000000) return Math.round(450 + (purchasePrice - 500000) / 1000 * 1.75);
+  return Math.round(1325 + (purchasePrice - 1000000) / 1000 * 1.50);
 }
 
 function calcEscrowFee(purchasePrice: number): number {
@@ -246,14 +246,14 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   // ── 5. FEE TABLE ───────────────────────────────────────────────────────────
   y -= 2; // small gap
 
-  // Column layout: Fee Description 45%, Options each ~18.3%
-  const descColW = CW * 0.45;
-  const scenColW = (CW - descColW) / numScenarios;
+  // Column layout: Fee Description ~38%, Options each ~20%
+  const descColW = Math.round(CW * 0.38);
+  const scenColW = Math.round((CW - descColW) / numScenarios);
   const tableX = M;
 
   // Pre-compute shared fees (SAME for ALL scenarios — BUG FIX)
   const appraisalFee = calcAppraisalFee(propertyType);
-  const titleFee     = calcTitleLenderPolicy(loanAmount);
+  const titleFee     = calcTitleLenderPolicy(purchasePrice);
   const escrowFee    = calcEscrowFee(purchasePrice);
   const recordingFee = calcRecordingFee(state);
 
@@ -374,8 +374,8 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   addGrand('Estimated Funds Needed', estFundsNeeded);
 
   // ── Draw table column headers ──
-  const rowH = 10;
-  const hdrRowH = 14;
+  const rowH = 12;
+  const hdrRowH = 16;
   rect(tableX, y - hdrRowH, descColW, hdrRowH, DARK);
   T('Fee Description', tableX + 4, y - hdrRowH + 4, B, 7, WHITE);
 
@@ -395,9 +395,9 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   for (const row of rows) {
     let rh: number;
     switch (row.type) {
-      case 'category':   rh = 11; break;
-      case 'subtotal':   rh = 10; break;
-      case 'grandtotal': rh = 11; break;
+      case 'category':   rh = 13; break;
+      case 'subtotal':   rh = 12; break;
+      case 'grandtotal': rh = 13; break;
       default:           rh = rowH; // 10
     }
 
