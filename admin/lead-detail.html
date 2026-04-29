@@ -7161,65 +7161,105 @@ function openFeeSheetFullscreen() {
   window.open(buildFeeSheetUrl(), '_blank');
 }
 
-function openFeeSheetPDF() {
-  // Capture the exact HTML preview from the fee sheet iframe — no edge function
-  var iframe = document.getElementById('feeSheetIframe');
-  if (!iframe || !iframe.contentWindow) { alert('Fee sheet not loaded yet'); return; }
-  var iframeDoc;
-  try { iframeDoc = iframe.contentDocument || iframe.contentWindow.document; } catch(e) { alert('Cannot access fee sheet content'); return; }
-  var sheetEl = iframeDoc.getElementById('sheet');
-  if (!sheetEl || !sheetEl.innerHTML.trim()) { alert('Generate a fee sheet first'); return; }
-
-  // Grab all styles from the iframe
-  var styles = '';
-  try { Array.from(iframeDoc.querySelectorAll('style')).forEach(function(s) { styles += s.innerHTML; }); } catch(e) {}
-
-  var borrowerName = (getFeeSheetData().borrower_name || 'Borrower').replace(/[<>"']/g, '');
-  var dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  var sheetHTML = sheetEl.innerHTML;
-
-  // Open popup — same dimensions as pre-approval
-  var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
-  if (!popup) { alert('Allow popups for this site'); return; }
-
-  popup.document.open();
-  popup.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">' +
-    '<title>Fee Sheet \u2014 ' + borrowerName + '</title>' +
-    '<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">' +
-    '<style>' +
-    /* Toolbar — exact copy of pre-approval */
-    '* { margin: 0; padding: 0; box-sizing: border-box; }' +
-    'html, body { height: 100%; background: #404040; font-family: sans-serif; display: flex; flex-direction: column; }' +
-    '.toolbar { background: #111; border-bottom: 2px solid #C9A84C; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }' +
-    '.title { color: #C9A84C; font-weight: 700; font-size: 14px; }' +
-    '.sub { color: #888; font-size: 12px; margin-top: 2px; }' +
-    '.btns { display: flex; gap: 10px; }' +
-    '.btn { padding: 8px 18px; border-radius: 6px; border: none; font-weight: 700; font-size: 13px; cursor: pointer; }' +
-    '.btn-print { background: #2a2a2a; color: #eee; border: 1px solid #444; }' +
-    '.btn-dl { background: #C9A84C; color: #111; }' +
-    '.btn-close { background: transparent; color: #888; border: 1px solid #444; }' +
-    /* Content area */
-    '.content { flex: 1; overflow-y: auto; background: #404040; padding: 20px; }' +
-    '.sheet-wrap { max-width: 1040px; margin: 0 auto; background: white; box-shadow: 0 4px 20px rgba(0,0,0,0.4); padding: 36px 40px 24px; font-family: "DM Sans", sans-serif; }' +
-    /* Print — single continuous page, exact colors */
-    '@page { size: letter; margin: 0.5in; }' +
-    '@media print { * { -webkit-print-color-adjust: exact !important; color-adjust: exact !important; } .toolbar { display: none !important; } .content { overflow: visible !important; background: white !important; padding: 0 !important; } .sheet-wrap { box-shadow: none !important; max-width: none !important; padding: 0 !important; } }' +
-    /* Fee sheet styles from iframe */
-    styles +
-    '</style></head><body>' +
-    '<div class="toolbar">' +
-      '<div><div class="title">\uD83D\uDCC4 Fee Sheet \u2014 ' + borrowerName + '</div><div class="sub">' + dateStr + '</div></div>' +
-      '<div class="btns">' +
-        '<button class="btn btn-print" onclick="window.print()">\uD83D\uDDA8\uFE0F Print</button>' +
-        '<button class="btn btn-dl" onclick="window.print()">\u2B07\uFE0F Download PDF</button>' +
-        '<button class="btn btn-close" onclick="window.close()">\u2715 Close</button>' +
-      '</div>' +
-    '</div>' +
-    '<div class="content"><div class="sheet-wrap">');
-  popup.document.write(sheetHTML);
-  popup.document.write('</div></div></body></html>');
-  popup.document.close();
-  showToast('Fee sheet ready \u2713');
+async function openFeeSheetPDF() {
+  var btn = document.querySelector('[onclick="openFeeSheetPDF()"]');
+  var origTxt = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating\u2026'; }
+  try {
+    showToast('Generating Fee Sheet PDF\u2026');
+    var iframe = document.getElementById('feeSheetIframe');
+    var iframeDoc = iframe && iframe.contentDocument;
+    // Read from iframe inputs
+    var _iv = function(id) { try { var el = iframeDoc.getElementById(id); return el ? el.value : ''; } catch(e) { return ''; } };
+    var _in = function(id) { return parseFloat(String(_iv(id)).replace(/[$,]/g,'')) || 0; };
+    // Read scenarios
+    var scenarios = [];
+    try {
+      var s = iframe.contentWindow.scenarios;
+      if (s) s.forEach(function(sc) { scenarios.push({ id:sc.id, label:sc.label, rate:sc.rate, points:sc.points, origComp:sc.origComp, lenderCredits:sc.lenderCredits, recommended:sc.recommended }); });
+    } catch(e) {}
+    if (!scenarios.length) scenarios = [
+      {id:'A',label:'Par Rate',rate:6.875,points:0,origComp:1.5,lenderCredits:0,recommended:true},
+      {id:'B',label:'Buy Down',rate:6.625,points:0.75,origComp:1.5,lenderCredits:0,recommended:false},
+      {id:'C',label:'Lender Credit',rate:7.125,points:-0.5,origComp:1.5,lenderCredits:0,recommended:false}
+    ];
+    var d = getFeeSheetData();
+    var pp = _in('purchasePrice') || Number(d.purchase_price) || 0;
+    var la = _in('loanAmount') || Number(d.loan_amount) || 0;
+    var borrowerName = (_iv('borrowerName') || d.borrower_name || 'Borrower').replace(/[<>"']/g,'');
+    var payload = {
+      borrower_name: borrowerName, property_address: _iv('propertyAddress') || d.property_address || '',
+      purchase_price: pp, loan_amount: la, down_pct: parseFloat(_iv('downPct')) || 20,
+      ltv: pp > 0 ? (la/pp*100) : 80, loan_product: _iv('loanProduct') || 'Conv 30yr Fixed',
+      lock_period: _iv('lockPeriod') || '30 days', scenarios: scenarios,
+      annual_tax: _in('annualTax') || (pp*0.0125) || 9125, annual_insurance: _in('annualInsurance') || 1800,
+      property_type: _iv('propertyType') || 'SFR', state: _iv('state') || 'CA'
+    };
+    var sbUrl = _fsSbUrl(), sbKey = _fsSbKey();
+    var res = await fetch(sbUrl + '/functions/v1/generate-fee-sheet', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+sbKey,'apikey':sbKey},
+      body: JSON.stringify(payload)
+    });
+    var result = await res.json();
+    if (!result.success || !result.pdf) throw new Error(result.error || 'PDF generation failed');
+    // Decode base64 PDF -> blob -> blobUrl (EXACT same as pre-approval lines 11668-11673)
+    var byteChars = atob(result.pdf);
+    var byteArray = new Uint8Array(byteChars.length);
+    for (var i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+    var blob = new Blob([byteArray], { type: 'application/pdf' });
+    var blobUrl = URL.createObjectURL(blob);
+    var fileName = 'Fee-Sheet-' + borrowerName.replace(/\s+/g,'-') + '.pdf';
+    // Open popup with iframe — EXACT same as pre-approval (lines 11690-11728)
+    var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
+    if (!popup) { var a = document.createElement('a'); a.href = blobUrl; a.download = fileName; a.click(); showToast('Fee Sheet PDF downloaded \u2713'); return; }
+    popup.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${fileName}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #404040; font-family: sans-serif; display: flex; flex-direction: column; }
+    .toolbar { background: #111; border-bottom: 2px solid #C9A84C; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .title { color: #C9A84C; font-weight: 700; font-size: 14px; }
+    .sub { color: #888; font-size: 12px; margin-top: 2px; }
+    .btns { display: flex; gap: 10px; }
+    .btn { padding: 8px 18px; border-radius: 6px; border: none; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .btn-print { background: #2a2a2a; color: #eee; border: 1px solid #444; }
+    .btn-dl { background: #C9A84C; color: #111; }
+    .btn-close { background: transparent; color: #888; border: 1px solid #444; }
+    iframe { flex: 1; border: none; width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div><div class="title">\uD83D\uDCC4 Fee Sheet \u2014 ${borrowerName}</div><div class="sub">${new Date().toLocaleDateString()}</div></div>
+    <div class="btns">
+      <button class="btn btn-print" onclick="document.getElementById('pf').contentWindow.print()">\uD83D\uDDA8\uFE0F Print</button>
+      <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download PDF</button>
+      <button class="btn btn-close" onclick="window.close()">\u2715 Close</button>
+    </div>
+  </div>
+  <iframe id="pf" src="${blobUrl}" type="application/pdf"></iframe>
+  <script>
+    function dl() {
+      var a = document.createElement('a');
+      a.href = '${blobUrl}';
+      a.download = '${fileName}';
+      a.click();
+    }
+  <\/script>
+</body>
+</html>`);
+    popup.document.close();
+    setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 600000);
+    showToast('Fee Sheet PDF ready \u2713');
+  } catch(e) {
+    console.error('[FeeSheetPDF]', e);
+    showToast('Fee sheet PDF failed: ' + e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origTxt; }
+  }
 }
 
 async function saveFeeSheetQuote() {
