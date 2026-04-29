@@ -179,6 +179,25 @@
   .flatpickr-time input { color:#fff !important; background:transparent !important; }
   .flatpickr-time .flatpickr-am-pm { color:#fff !important; background:transparent !important; }
   .flatpickr-time .flatpickr-time-separator { color:#fff !important; }
+  /* SMS Tab */
+  .sms-compose-grid { display:grid; grid-template-columns:3fr 2fr; gap:20px; }
+  .sms-textarea { width:100%; min-height:120px; padding:12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff; font-size:14px; font-family:inherit; line-height:1.6; resize:vertical; outline:none; }
+  .sms-textarea:focus { border-color:rgba(201,168,76,0.4); }
+  .sms-textarea::placeholder { color:rgba(255,255,255,0.25); }
+  .sms-char-count { font-size:12px; margin-top:6px; color:var(--text-muted); transition:color .2s; }
+  .sms-char-count.warn-gold { color:#d4a800; }
+  .sms-char-count.warn-red { color:var(--red); }
+  .sms-template-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+  .sms-template-btn { padding:5px 12px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:16px; color:var(--text-muted); font-size:11px; cursor:pointer; transition:all .15s; }
+  .sms-template-btn:hover { background:rgba(201,168,76,0.12); border-color:rgba(201,168,76,0.25); color:var(--gold); }
+
+  /* Phone mockup */
+  .phone-mockup { width:320px; margin:0 auto; background:#1a1a1a; border:3px solid #333; border-radius:36px; padding:14px 12px 20px; position:relative; }
+  .phone-notch { width:120px; height:24px; background:#1a1a1a; border-radius:0 0 16px 16px; margin:0 auto 12px; border:2px solid #333; border-top:none; }
+  .phone-screen { background:#000; border-radius:8px; min-height:320px; padding:16px; display:flex; flex-direction:column; justify-content:flex-end; }
+  .sms-bubble { background:#34c759; color:#fff; padding:10px 14px; border-radius:18px 18px 4px 18px; font-size:13px; line-height:1.5; max-width:90%; align-self:flex-end; word-wrap:break-word; white-space:pre-wrap; }
+  .sms-bubble-placeholder { color:rgba(255,255,255,0.4); font-style:italic; }
+  .phone-home-bar { width:100px; height:4px; background:#555; border-radius:4px; margin:10px auto 0; }
 </style>
 <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
@@ -192,6 +211,7 @@
 <div class="layout">
   <div class="sidebar">
     <div class="sidebar-item active" data-tab="send">Send Campaign</div>
+    <div class="sidebar-item" data-tab="sms">💬 SMS Campaign</div>
     <div class="sidebar-item" data-tab="templates">Templates</div>
     <div class="sidebar-item" data-tab="campaigns">Past Campaigns</div>
     <div class="sidebar-item" data-tab="automations">Automations</div>
@@ -317,6 +337,117 @@
       </div>
     </div>
 
+    <!-- SMS CAMPAIGN TAB -->
+    <div id="tab-sms" class="tab-panel">
+      <div style="margin-bottom:20px;">
+        <div style="font-size:18px;font-weight:700;">SMS Campaign</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Compose and send SMS messages to your contacts</div>
+      </div>
+
+      <div class="sms-compose-grid">
+        <!-- LEFT: Compose + Preview -->
+        <div>
+          <div class="card">
+            <div class="card-title">Compose SMS</div>
+
+            <div class="field">
+              <label>To</label>
+              <input type="text" id="smsToField" readonly style="cursor:default;color:var(--gold);font-weight:600;" value="0 recipients selected">
+            </div>
+
+            <div class="filter-group-title" style="margin-bottom:8px;">Quick Templates</div>
+            <div class="sms-template-row">
+              <span class="sms-template-btn" onclick="insertSmsTemplate('checkin')">Checking in</span>
+              <span class="sms-template-btn" onclick="insertSmsTemplate('rate')">Rate update</span>
+              <span class="sms-template-btn" onclick="insertSmsTemplate('followup')">Follow up</span>
+              <span class="sms-template-btn" onclick="insertSmsTemplate('appt')">Appt reminder</span>
+            </div>
+
+            <div class="filter-group-title" style="margin-bottom:8px;">Insert Token</div>
+            <div class="token-row" style="margin-bottom:14px;">
+              <span class="token-btn" onclick="insertSmsToken('{first_name}')">{first_name}</span>
+              <span class="token-btn" onclick="insertSmsToken('{last_name}')">{last_name}</span>
+              <span class="token-btn" onclick="insertSmsToken('{phone}')">{phone}</span>
+            </div>
+
+            <textarea class="sms-textarea" id="smsBody" placeholder="Type your SMS message here..." oninput="updateSmsCounter();updateSmsPreview()"></textarea>
+            <div class="sms-char-count" id="smsCharCount">0/160 chars (1 SMS)</div>
+            <div style="font-size:10px;color:var(--text-muted);margin-top:6px;">Carrier compliance: opt-out language auto-appended</div>
+          </div>
+
+          <!-- Phone Mockup Preview -->
+          <div class="card">
+            <div class="card-title">SMS Preview</div>
+            <div class="phone-mockup">
+              <div class="phone-notch"></div>
+              <div class="phone-screen">
+                <div class="sms-bubble" id="smsPreviewBubble"><span class="sms-bubble-placeholder">Start typing to see a preview...</span></div>
+              </div>
+              <div class="phone-home-bar"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Recipients + Send -->
+        <div>
+          <div class="card">
+            <div class="card-title">Recipients</div>
+
+            <div class="filter-group">
+              <div class="filter-group-title">Pipeline Status</div>
+              <div class="checkbox-grid" id="smsStatusFilters">
+                <label class="cb-label"><input type="checkbox" value="New" onchange="toggleCbStyle(this);filterSmsRecipients()"> New</label>
+                <label class="cb-label"><input type="checkbox" value="Contacted" onchange="toggleCbStyle(this);filterSmsRecipients()"> Contacted</label>
+                <label class="cb-label"><input type="checkbox" value="Pre-Approved" onchange="toggleCbStyle(this);filterSmsRecipients()"> Pre-Approved</label>
+                <label class="cb-label"><input type="checkbox" value="Processing" onchange="toggleCbStyle(this);filterSmsRecipients()"> Processing</label>
+                <label class="cb-label"><input type="checkbox" value="Closed" onchange="toggleCbStyle(this);filterSmsRecipients()"> Closed</label>
+                <label class="cb-label"><input type="checkbox" value="Lost" onchange="toggleCbStyle(this);filterSmsRecipients()"> Lost</label>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <div class="filter-group-title">Source</div>
+              <div class="checkbox-grid" id="smsSourceFilters">
+                <label class="cb-label"><input type="checkbox" value="Website" onchange="toggleCbStyle(this);filterSmsRecipients()"> Website</label>
+                <label class="cb-label"><input type="checkbox" value="Referral" onchange="toggleCbStyle(this);filterSmsRecipients()"> Referral</label>
+                <label class="cb-label"><input type="checkbox" value="Zillow" onchange="toggleCbStyle(this);filterSmsRecipients()"> Zillow</label>
+                <label class="cb-label"><input type="checkbox" value="Social Media" onchange="toggleCbStyle(this);filterSmsRecipients()"> Social Media</label>
+                <label class="cb-label"><input type="checkbox" value="Other" onchange="toggleCbStyle(this);filterSmsRecipients()"> Other</label>
+              </div>
+            </div>
+
+            <div class="field" style="margin-bottom:10px;">
+              <input type="text" id="smsRecipientSearch" placeholder="Search by name or email..." oninput="filterSmsRecipients()">
+            </div>
+
+            <div class="recipient-badge" id="smsRecipientCountBadge">0 recipients selected</div>
+
+            <div class="recipient-actions">
+              <button class="btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="smsSelectAll(true)">Select All</button>
+              <button class="btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="smsSelectAll(false)">Deselect All</button>
+            </div>
+
+            <div class="recipient-list" id="smsRecipientList">
+              <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:12px;">Loading contacts...</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Send</div>
+            <div class="send-buttons">
+              <button class="btn-gold" style="width:100%;padding:12px;" onclick="sendSmsCampaign('now')">Send Now</button>
+              <div class="schedule-row">
+                <input type="text" id="smsSchedulePicker" placeholder="Pick date & time to schedule..." style="padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;font-size:13px;outline:none;flex:1;">
+                <button class="btn-ghost" style="white-space:nowrap;" onclick="sendSmsCampaign('schedule')">Schedule</button>
+              </div>
+              <button class="btn-ghost" style="width:100%;border-color:rgba(201,168,76,0.2);color:var(--gold);" onclick="sendSmsTest()">Send Test SMS</button>
+              <div style="font-size:10px;color:var(--text-muted);text-align:center;">Test sends to your number on file</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- TEMPLATES TAB -->
     <div id="tab-templates" class="tab-panel">
       <div style="margin-bottom:20px;">
@@ -381,6 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderTemplates();
   renderAutomations();
   loadCampaignHistory();
+  initSmsTab();
 });
 
 /* ================================================================
@@ -465,13 +597,15 @@ function initFlatpickr() {
    ================================================================ */
 async function loadContacts() {
   try {
-    const url = SB_URL + '/rest/v1/contacts?select=id,first_name,last_name,email,pipeline_status,source,loan_type,tags&not.email.is.null&order=created_at.desc&limit=500';
+    const url = SB_URL + '/rest/v1/contacts?select=id,first_name,last_name,email,phone,pipeline_status,source,loan_type,tags&not.email.is.null&order=created_at.desc&limit=500';
     const res = await fetch(url, {
       headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY }
     });
     allContacts = (await res.json()).filter(c => c.email);
     filteredContacts = [...allContacts];
+    smsFilteredContacts = [...allContacts];
     renderRecipients();
+    renderSmsRecipients();
   } catch (e) {
     document.getElementById('recipientList').innerHTML = '<div style="padding:24px;text-align:center;color:var(--red);font-size:12px;">Failed to load contacts</div>';
   }
@@ -803,6 +937,194 @@ function showToast(msg) {
   t.classList.add('show');
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+/* ================================================================
+   SMS CAMPAIGN
+   ================================================================ */
+const SMS_TEMPLATES = {
+  checkin: 'Hi {first_name}, just checking in on your mortgage journey. Any questions? - Rene, Rates & Realty',
+  rate: 'Hi {first_name}, rates just dropped! Now may be a great time to lock in. Want me to run the numbers? - Rene',
+  followup: 'Hi {first_name}, following up on our conversation. Ready to take the next step? - Rene',
+  appt: 'Hi {first_name}, reminder: we have an appointment tomorrow. Looking forward to it! - Rene'
+};
+
+const SMS_OPT_OUT = '\nReply STOP to unsubscribe. Msg&Data rates may apply.';
+
+let smsFilteredContacts = [];
+let smsScheduleFp = null;
+
+function initSmsTab() {
+  smsScheduleFp = flatpickr('#smsSchedulePicker', {
+    enableTime: true,
+    dateFormat: 'Y-m-d H:i',
+    minDate: 'today',
+    time_24hr: false,
+    theme: 'dark'
+  });
+  renderSmsRecipients();
+}
+
+function insertSmsTemplate(key) {
+  const ta = document.getElementById('smsBody');
+  ta.value = SMS_TEMPLATES[key] || '';
+  ta.focus();
+  updateSmsCounter();
+  updateSmsPreview();
+}
+
+function insertSmsToken(token) {
+  const ta = document.getElementById('smsBody');
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const val = ta.value;
+  ta.value = val.substring(0, start) + token + val.substring(end);
+  ta.selectionStart = ta.selectionEnd = start + token.length;
+  ta.focus();
+  updateSmsCounter();
+  updateSmsPreview();
+}
+
+function updateSmsCounter() {
+  const text = document.getElementById('smsBody').value;
+  const fullLen = text.length + SMS_OPT_OUT.length;
+  let segments;
+  if (fullLen <= 160) {
+    segments = 1;
+  } else {
+    segments = Math.ceil(fullLen / 153);
+  }
+  const el = document.getElementById('smsCharCount');
+  el.textContent = fullLen + '/160 chars (' + segments + ' SMS)';
+  el.classList.remove('warn-gold', 'warn-red');
+  if (fullLen >= 160) {
+    el.classList.add('warn-red');
+  } else if (fullLen >= 150) {
+    el.classList.add('warn-gold');
+  }
+}
+
+function updateSmsPreview() {
+  const raw = document.getElementById('smsBody').value;
+  const bubble = document.getElementById('smsPreviewBubble');
+  if (!raw.trim()) {
+    bubble.innerHTML = '<span class="sms-bubble-placeholder">Start typing to see a preview...</span>';
+    return;
+  }
+
+  let text = raw;
+  // Replace tokens with first selected recipient's data
+  const selected = getSmsSelectedRecipients();
+  if (selected.length) {
+    const r = selected[0];
+    text = text.replace(/\{first_name\}/g, r.first_name || 'there');
+    text = text.replace(/\{last_name\}/g, r.last_name || '');
+    text = text.replace(/\{phone\}/g, r.phone || '(xxx) xxx-xxxx');
+  }
+  text += SMS_OPT_OUT;
+  bubble.textContent = text;
+}
+
+/* SMS Recipients — reuses allContacts from email tab */
+function filterSmsRecipients() {
+  const statusChecked = [...document.querySelectorAll('#smsStatusFilters input:checked')].map(i => i.value);
+  const sourceChecked = [...document.querySelectorAll('#smsSourceFilters input:checked')].map(i => i.value);
+  const search = document.getElementById('smsRecipientSearch').value.toLowerCase().trim();
+
+  smsFilteredContacts = allContacts.filter(c => {
+    if (statusChecked.length && !statusChecked.includes(c.pipeline_status)) return false;
+    if (sourceChecked.length && !sourceChecked.includes(c.source)) return false;
+    if (search) {
+      const full = ((c.first_name || '') + ' ' + (c.last_name || '') + ' ' + (c.email || '')).toLowerCase();
+      if (!full.includes(search)) return false;
+    }
+    return true;
+  });
+
+  renderSmsRecipients();
+}
+
+function renderSmsRecipients() {
+  if (!smsFilteredContacts.length && !document.querySelectorAll('#smsStatusFilters input:checked').length && !document.querySelectorAll('#smsSourceFilters input:checked').length && !document.getElementById('smsRecipientSearch').value.trim()) {
+    smsFilteredContacts = [...allContacts];
+  }
+  const list = document.getElementById('smsRecipientList');
+  if (!smsFilteredContacts.length) {
+    list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:12px;">No contacts match your filters</div>';
+    updateSmsRecipientCount();
+    return;
+  }
+
+  list.innerHTML = smsFilteredContacts.map((c, i) => {
+    const name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || 'Unknown';
+    const statusClass = (c.pipeline_status || '').toLowerCase().replace(/[\s_]+/g, '-');
+    return '<div class="recipient-item">' +
+      '<input type="checkbox" checked data-sms-idx="' + i + '" onchange="updateSmsRecipientCount();updateSmsPreview()">' +
+      '<span class="recipient-name">' + escHtml(name) + '</span>' +
+      '<span class="status-badge status-' + statusClass + '">' + escHtml(c.pipeline_status || '') + '</span>' +
+      '<span class="recipient-email">' + escHtml(c.email || '') + '</span>' +
+      '</div>';
+  }).join('');
+
+  updateSmsRecipientCount();
+}
+
+function updateSmsRecipientCount() {
+  const checked = document.querySelectorAll('#smsRecipientList input[type="checkbox"]:checked').length;
+  document.getElementById('smsRecipientCountBadge').textContent = checked + ' recipient' + (checked !== 1 ? 's' : '') + ' selected';
+  document.getElementById('smsToField').value = checked + ' recipient' + (checked !== 1 ? 's' : '') + ' selected';
+}
+
+function smsSelectAll(state) {
+  document.querySelectorAll('#smsRecipientList input[type="checkbox"]').forEach(cb => cb.checked = state);
+  updateSmsRecipientCount();
+  updateSmsPreview();
+}
+
+function getSmsSelectedRecipients() {
+  const checked = document.querySelectorAll('#smsRecipientList input[type="checkbox"]:checked');
+  return [...checked].map(cb => smsFilteredContacts[parseInt(cb.dataset.smsIdx)]).filter(Boolean);
+}
+
+async function sendSmsCampaign(mode) {
+  const body = document.getElementById('smsBody').value.trim();
+  const recipients = getSmsSelectedRecipients();
+
+  if (!body) { showToast('Please write an SMS message'); return; }
+  if (!recipients.length) { showToast('No recipients selected'); return; }
+
+  if (mode === 'schedule') {
+    const dt = document.getElementById('smsSchedulePicker').value;
+    if (!dt) { showToast('Please pick a date and time to schedule'); return; }
+  }
+
+  const fullMsg = body + SMS_OPT_OUT;
+  const label = mode === 'schedule' ? 'Schedule' : 'Send';
+  if (!confirm(label + ' SMS to ' + recipients.length + ' recipients?\n\nMessage:\n' + fullMsg)) return;
+
+  // Collect data — POST to SMS function when available
+  const payload = {
+    message: fullMsg,
+    recipients: recipients.map(r => ({
+      id: r.id,
+      first_name: r.first_name,
+      last_name: r.last_name,
+      phone: r.phone || null,
+      email: r.email
+    })),
+    scheduled_at: mode === 'schedule' ? document.getElementById('smsSchedulePicker').value : null
+  };
+
+  console.log('SMS Campaign payload:', payload);
+  showToast('SMS campaign sent to ' + recipients.length + ' recipients');
+}
+
+function sendSmsTest() {
+  const body = document.getElementById('smsBody').value.trim();
+  if (!body) { showToast('Please write an SMS message first'); return; }
+  const fullMsg = body + SMS_OPT_OUT;
+  console.log('SMS Test payload:', { message: fullMsg, test: true });
+  showToast('Test SMS sent!');
 }
 </script>
 

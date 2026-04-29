@@ -159,6 +159,8 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .bulk-bar{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--border2);border-radius:12px;padding:10px 16px;align-items:center;gap:10px;box-shadow:0 8px 32px rgba(0,0,0,0.5);z-index:100;min-width:400px}
 .bulk-bar.show{display:flex}
 .bulk-count{font-size:13px;font-weight:700;color:var(--gold)}
+.bulk-menu-item{padding:8px 16px;cursor:pointer;font-size:12px;color:#ccc;transition:background .15s;}
+.bulk-menu-item:hover{background:rgba(201,168,76,0.1);color:#E8D5A3;}
 
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:200;align-items:center;justify-content:center}
 .modal-overlay.open{display:flex}
@@ -361,13 +363,59 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 <!-- Bulk bar -->
 <div class="bulk-bar" id="bulkBar">
-  <span class="bulk-count" id="bulkCount">0 selected</span>
-  <div style="width:1px;height:20px;background:var(--border2)"></div>
-  <button class="btn btn-ghost btn-sm" onclick="bulkEnrollCampaign()">Add to Campaign</button>
-  <button class="btn btn-ghost btn-sm" onclick="bulkSendEmail()">Email All</button>
-  <button class="btn btn-ghost btn-sm" onclick="bulkUpdateStatus()">Update Stage</button>
-  <button class="btn btn-sm" onclick="confirmBulkDelete()" style="background:rgba(224,82,82,0.12);color:#E05252;border:1px solid rgba(224,82,82,0.3);">&#128465; Delete Selected</button>
-  <button class="btn btn-red btn-sm" onclick="clearSelection()">Clear</button>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div id="bulkAvatars" style="display:flex;margin-right:4px;"></div>
+    <span class="bulk-count" id="bulkCount" style="font-size:13px;font-weight:600;color:#E8D5A3;">0 selected</span>
+  </div>
+  <div style="width:1px;height:24px;background:rgba(201,168,76,0.2);"></div>
+  <button class="btn btn-ghost btn-sm" onclick="bulkSendEmail()" title="Email Selected">📧 Email</button>
+  <button class="btn btn-ghost btn-sm" onclick="bulkSendSMS()" title="SMS Selected">💬 SMS</button>
+  <button class="btn btn-ghost btn-sm" onclick="bulkEnrollCampaign()" title="Add to Campaign">📋 Campaign</button>
+  <div style="position:relative;display:inline-block;">
+    <button class="btn btn-ghost btn-sm" onclick="toggleBulkMore()" id="bulkMoreBtn">••• More</button>
+    <div id="bulkMoreMenu" style="display:none;position:absolute;bottom:40px;right:0;background:#1a1a1a;border:1px solid rgba(201,168,76,0.2);border-radius:10px;min-width:220px;padding:6px 0;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:200;">
+      <div class="bulk-menu-item" onclick="bulkUpdateTags()">🏷️ Update Tags</div>
+      <div class="bulk-menu-item" onclick="bulkUpdateStatus()">📊 Update Stage</div>
+      <div class="bulk-menu-item" onclick="bulkUpdateSource()">👤 Update Source</div>
+      <div class="bulk-menu-item" onclick="bulkSetPriority()">🔔 Set Priority</div>
+      <div class="bulk-menu-item" onclick="bulkExportCSV()">📁 Export CSV</div>
+      <div style="border-top:1px solid rgba(255,255,255,0.06);margin:4px 0;"></div>
+      <div class="bulk-menu-item" onclick="confirmBulkDelete()" style="color:#E05252;">🗑️ Delete Selected</div>
+    </div>
+  </div>
+  <button class="btn btn-sm" onclick="clearSelection()" style="background:rgba(255,255,255,0.06);color:#888;border:1px solid rgba(255,255,255,0.1);">✕ Clear</button>
+</div>
+
+<!-- Quick SMS Modal -->
+<div id="quickSmsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:300;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border:1px solid rgba(201,168,76,0.2);border-radius:14px;padding:24px;width:420px;max-width:95vw;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="font-size:15px;color:#E8D5A3;">💬 Quick SMS</h3>
+      <button onclick="closeQuickSms()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">✕</button>
+    </div>
+    <div id="quickSmsTo" style="font-size:12px;color:#888;margin-bottom:12px;"></div>
+    <div style="margin-bottom:8px;display:flex;gap:4px;flex-wrap:wrap;">
+      <button class="btn-sm" style="background:rgba(201,168,76,0.1);color:#C9A84C;border:1px solid rgba(201,168,76,0.2);" onclick="quickSmsTemplate('Checking in')">Checking in</button>
+      <button class="btn-sm" style="background:rgba(201,168,76,0.1);color:#C9A84C;border:1px solid rgba(201,168,76,0.2);" onclick="quickSmsTemplate('Rate update')">Rate update</button>
+      <button class="btn-sm" style="background:rgba(201,168,76,0.1);color:#C9A84C;border:1px solid rgba(201,168,76,0.2);" onclick="quickSmsTemplate('Follow up')">Follow up</button>
+    </div>
+    <textarea id="quickSmsMsg" rows="4" style="width:100%;background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:10px;font-size:13px;resize:none;outline:none;" placeholder="Type your message..." oninput="updateQuickSmsCount()"></textarea>
+    <div id="quickSmsCount" style="font-size:11px;color:#888;margin-top:4px;text-align:right;">0/160</div>
+    <button onclick="sendQuickSms()" class="btn-gold" style="width:100%;margin-top:12px;padding:10px;">Send SMS</button>
+  </div>
+</div>
+
+<!-- Bulk Stage Modal -->
+<div id="bulkStageModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:300;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border:1px solid rgba(201,168,76,0.2);border-radius:14px;padding:24px;width:480px;max-width:95vw;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="font-size:15px;color:#E8D5A3;">📊 Update Pipeline Stage</h3>
+      <button onclick="closeBulkStage()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">✕</button>
+    </div>
+    <div id="bulkStageCount" style="font-size:12px;color:#888;margin-bottom:14px;"></div>
+    <div id="bulkStageOptions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;"></div>
+    <button onclick="applyBulkStage()" class="btn-gold" style="width:100%;padding:10px;">Apply to Selected</button>
+  </div>
 </div>
 
 <!-- Add Person Modal (expanded with referral partner, address, birthday, tags, language) -->
@@ -1198,7 +1246,7 @@ async function deleteView(id) {
 function toggleSelect(id, cb) { if (cb.checked) _selected.add(id); else _selected.delete(id); updateBulkBar(); }
 function toggleSelectAll(cb) { _filtered.forEach(function(p) { if (cb.checked) _selected.add(p.id); else _selected.delete(p.id); }); updateBulkBar(); renderTable(); }
 function clearSelection() { _selected.clear(); updateBulkBar(); renderTable(); document.getElementById('selectAll').checked = false; }
-function updateBulkBar() { var bar = document.getElementById('bulkBar'); var n = _selected.size; if (n > 0) { bar.classList.add('show'); document.getElementById('bulkCount').textContent = n + ' selected'; } else bar.classList.remove('show'); }
+function updateBulkBar() { var bar = document.getElementById('bulkBar'); var n = _selected.size; if (n > 0) { bar.classList.add('show'); document.getElementById('bulkCount').textContent = n + ' selected'; updateBulkAvatars(); } else bar.classList.remove('show'); }
 
 /* ====== ACTIONS ====== */
 
@@ -1218,15 +1266,13 @@ function emailPerson(email) { if (email) window.location.href = 'mailto:' + emai
 function bulkEnrollCampaign() { window.location.href = 'drip-builder.html'; }
 function bulkSendEmail() { window.location.href = 'email-marketing.html'; }
 async function bulkUpdateStatus() {
-  var status = prompt('Enter new pipeline stage:\nNew Lead, Contacted, Qualified, Pre-Qualified, Application, Processing, Closed');
-  if (!status) return;
-  var ids = Array.from(_selected);
-  for (var i = 0; i < ids.length; i++) {
-    await fetch(SB_URL + '/rest/v1/contacts?id=eq.' + ids[i], { method:'PATCH', headers:hdrs(), body:JSON.stringify({ pipeline_status: status, updated_at: new Date().toISOString() }) });
-  }
-  await loadPeople();
-  clearSelection();
-  showToast('Updated ' + ids.length + ' people to ' + status);
+  var el = document.getElementById('bulkStageModal');
+  el.style.display = 'flex';
+  document.getElementById('bulkStageCount').textContent = _selected.size + ' contacts will be updated';
+  var stages = ['New Lead','Contacted','Pre-Qualified','Pre-Approved','Processing','Under Contract','Closed','Lost'];
+  document.getElementById('bulkStageOptions').innerHTML = stages.map(function(s) {
+    return '<div onclick="window._bulkNewStage=\'' + s + '\';this.parentNode.querySelectorAll(\'div\').forEach(function(d){d.style.borderColor=\'rgba(255,255,255,0.1)\';d.style.color=\'#888\'});this.style.borderColor=\'#C9A84C\';this.style.color=\'#E8D5A3\';" style="padding:12px;text-align:center;border:1px solid rgba(255,255,255,0.1);border-radius:8px;cursor:pointer;color:#888;font-size:12px;font-weight:600;transition:all .15s;">' + s + '</div>';
+  }).join('');
 }
 
 function confirmDeleteContact(id, name) {
