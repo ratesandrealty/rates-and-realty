@@ -1755,7 +1755,6 @@
       <button class="ld-tab-btn" onclick="switchTab('documents', this)">Documents</button>
       <button class="ld-tab-btn" onclick="switchTab('conditions', this)">Conditions</button>
       <button class="ld-tab-btn" onclick="switchTab('tasks', this)">Tasks</button>
-      <button class="ld-tab-btn" onclick="switchTab('contact-log', this)">Contact Log</button>
       <button class="ld-tab-btn" onclick="switchTab('activity', this)">Activity</button>
       <button class="ld-tab-btn" onclick="switchTab('alerts', this)"><i class="fas fa-bell" style="margin-right:4px"></i>Alerts</button>
       <button class="ld-tab-btn" onclick="switchTab('showings', this)"><i class="fas fa-home" style="margin-right:4px"></i>Showings</button>
@@ -3519,61 +3518,91 @@
     <!-- ═══════════════════════════════════════════
          TAB 5: CONTACT LOG
     ═══════════════════════════════════════════ -->
-    <div class="ld-tab-panel" id="tab-contact-log">
-      <div id="intel-banner-contactlog" class="intel-banner" style="margin:0 0 16px;"></div>
-      <div class="ld-section">
-        <div class="ld-section-title">Communication History</div>
-        <div class="timeline" id="comms-timeline">
-          <div class="ld-empty">
-            <div class="ld-empty-icon">📞</div>
-            <h4>No communications yet</h4>
-            <p>Calls, emails, texts and meetings will appear here.</p>
-          </div>
-        </div>
-      </div>
-    </div><!-- /tab-contact-log -->
-
-
     <!-- ═══════════════════════════════════════════
-         TAB 6: ACTIVITY
+         TAB: ACTIVITY (single source of truth — replaces Contact Log)
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-activity">
       <div style="padding:20px 24px">
         <div id="intel-banner-activity" class="intel-banner" style="margin:0 0 16px;"></div>
         <div id="drip-status-row" style="margin:0 0 16px;"></div>
+
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
           <div>
             <h3 style="font-size:1rem;font-weight:700;color:#eee;margin:0 0 4px">Activity Timeline</h3>
-            <div style="font-size:.75rem;color:#555">All communications, events, and system actions</div>
+            <div style="font-size:.75rem;color:#555">Every interaction with this contact — calls, SMS, email, page views, portal, docs and more</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <button onclick="loadActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:6px 10px;font-size:.75rem;cursor:pointer">Refresh</button>
+            <button onclick="window.loadActivityTab && window.loadActivityTab()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:6px 10px;font-size:.75rem;cursor:pointer">Refresh</button>
             <button onclick="logManualNote()" style="background:#C9A84C;color:#000;border:none;border-radius:7px;padding:6px 12px;font-size:.75rem;font-weight:700;cursor:pointer">+ Add Note</button>
           </div>
         </div>
-        <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap" id="activityFilterTabs">
-          <button class="act-filter-tab active" data-filter="" onclick="setActivityFilter('',this)">All</button>
-          <button class="act-filter-tab" data-filter="sms" onclick="setActivityFilter('sms',this)">SMS</button>
-          <button class="act-filter-tab" data-filter="email" onclick="setActivityFilter('email',this)">Email</button>
-          <button class="act-filter-tab" data-filter="call" onclick="setActivityFilter('call',this)">Call</button>
-          <button class="act-filter-tab" data-filter="portal" onclick="setActivityFilter('portal',this)">Portal</button>
-          <button class="act-filter-tab" data-filter="document" onclick="setActivityFilter('document',this)">Documents</button>
-          <button class="act-filter-tab" data-filter="system" onclick="setActivityFilter('system',this)">System</button>
+
+        <!-- Engagement stats strip -->
+        <div class="act-stats" id="actStats">
+          <div class="act-stat-card">
+            <div class="act-stat-label">Total touches (30d)</div>
+            <div class="act-stat-value" id="statTouches">&mdash;</div>
+            <div class="act-stat-trend" id="statTouchesTrend"></div>
+          </div>
+          <div class="act-stat-card">
+            <div class="act-stat-label">Email open rate</div>
+            <div class="act-stat-value" id="statOpenRate">&mdash;</div>
+            <div class="act-stat-sub" id="statOpenSub"></div>
+          </div>
+          <div class="act-stat-card">
+            <div class="act-stat-label">SMS link clicks</div>
+            <div class="act-stat-value" id="statSmsClicks">&mdash;</div>
+            <div class="act-stat-sub" id="statSmsSub"></div>
+          </div>
+          <div class="act-stat-card">
+            <div class="act-stat-label">Calls</div>
+            <div class="act-stat-value" id="statCalls">&mdash;</div>
+            <div class="act-stat-sub" id="statCallsSub"></div>
+          </div>
+          <div class="act-stat-card">
+            <div class="act-stat-label">Pages viewed (30d)</div>
+            <div class="act-stat-value" id="statPages">&mdash;</div>
+            <div class="act-stat-sub" id="statPagesSub"></div>
+          </div>
+          <div class="act-stat-card">
+            <div class="act-stat-label">Last engagement</div>
+            <div class="act-stat-value" id="statLastEngage">&mdash;</div>
+            <div class="act-stat-sub" id="statLastSub"></div>
+          </div>
         </div>
-        <div id="activity-timeline" style="display:flex;flex-direction:column;gap:0">
-          <div style="text-align:center;padding:40px;color:#444">Loading...</div>
+
+        <!-- Search + date range -->
+        <div class="act-controls">
+          <div class="act-search-wrap">
+            <svg class="act-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <input type="text" id="actSearch" placeholder="Search activity..." />
+          </div>
+          <div class="act-range">
+            <button data-range="7" class="act-range-btn">7d</button>
+            <button data-range="30" class="act-range-btn active">30d</button>
+            <button data-range="90" class="act-range-btn">90d</button>
+            <button data-range="all" class="act-range-btn">All</button>
+          </div>
         </div>
-        <div id="activityLoadMore" style="display:none;text-align:center;margin-top:16px">
-          <button onclick="loadMoreActivity()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:7px;padding:8px 20px;font-size:.78rem;cursor:pointer">Load More</button>
+
+        <!-- Filter pills -->
+        <div class="act-filters" id="actFilters">
+          <button data-filter="all" class="act-filter active">All <span class="act-count" id="cntAll">0</span></button>
+          <button data-filter="call" class="act-filter">&#128222; Calls <span class="act-count" id="cntCall">0</span></button>
+          <button data-filter="sms" class="act-filter">&#128172; SMS <span class="act-count" id="cntSms">0</span></button>
+          <button data-filter="email" class="act-filter">&#128231; Email <span class="act-count" id="cntEmail">0</span></button>
+          <button data-filter="page_view" class="act-filter">&#128065; Page views <span class="act-count" id="cntPage">0</span></button>
+          <button data-filter="document_uploaded" class="act-filter">&#128196; Documents <span class="act-count" id="cntDoc">0</span></button>
+          <button data-filter="portal" class="act-filter">&#128274; Portal <span class="act-count" id="cntPortal">0</span></button>
+          <button data-filter="showing" class="act-filter">&#127968; Showings <span class="act-count" id="cntShow">0</span></button>
+          <button data-filter="STAGE_CHANGE" class="act-filter">&#128260; Stage <span class="act-count" id="cntStage">0</span></button>
+          <button data-filter="note" class="act-filter">&#128221; Notes <span class="act-count" id="cntNote">0</span></button>
         </div>
-      </div>
-      <!-- Portal Activity sub-section -->
-      <div style="margin-top:24px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.06);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-          <div style="font-size:14px;font-weight:600;color:#E0DDD4;">&#128065; Portal Activity</div>
-          <button onclick="loadPortalActivity()" type="button" style="font-size:11px;color:#C9A84C;background:transparent;border:none;cursor:pointer;">&#8635; Refresh</button>
+
+        <!-- Timeline -->
+        <div class="act-timeline" id="actTimeline">
+          <div class="act-loading">Loading activity...</div>
         </div>
-        <div id="portalActivityFeed"><div style="text-align:center;padding:20px;color:#555;">Loading portal activity...</div></div>
       </div>
     </div><!-- /tab-activity -->
 
@@ -4233,7 +4262,8 @@ async function loadData() {
     liabilitiesData = Array.isArray(contactData.liabilities) ? [...contactData.liabilities] : [];
     populateUI();
     renderLiabilities();
-    await Promise.all([loadNotes(), loadTasks(), loadActivity(), loadCommunications(), loadDocumentsGrid(), loadCreditApps().catch(function(e){ console.warn('Credit apps skipped:', e.message); }), loadRelatedContacts(contactId)]);
+    await Promise.all([loadNotes(), loadTasks(), loadDocumentsGrid(), loadCreditApps().catch(function(e){ console.warn('Credit apps skipped:', e.message); }), loadRelatedContacts(contactId)]);
+    if (typeof window.loadActivityTab === 'function') window.loadActivityTab();
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
@@ -4985,36 +5015,11 @@ async function loadPortalActivity() {
   } catch(e) { feed.innerHTML = '<div style="color:#555;padding:20px;">Failed to load portal activity.</div>'; }
 }
 
-async function loadActivity(reset) {
-  if (reset === undefined) reset = true;
-  if (!leadId && !contactId) return;
-  if (reset) activityOffset = 0;
-  var el = document.getElementById('activity-timeline');
-  if (reset) el.innerHTML = '<div style="text-align:center;padding:30px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.2rem"></i></div>';
-
-  try {
-    var query = sb.from('activity_events').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(activityOffset, activityOffset + ACTIVITY_PAGE - 1);
-    // Match either contact_id or lead_id — events written by edge functions use
-    // contact_id (lead_id is null) while older code paths may have used lead_id.
-    var cid = contactId || leadId;
-    if (cid) query = query.or('contact_id.eq.' + cid + ',lead_id.eq.' + cid);
-    if (_activityFilter) query = query.or('channel.eq.' + _activityFilter + ',type.eq.' + _activityFilter);
-
-    var result = await query;
-    var events = result.data;
-    var count = result.count;
-    if ((!events || !events.length) && reset) {
-      el.innerHTML = '<div style="text-align:center;padding:48px 20px;color:#333"><div style="font-size:2rem;margin-bottom:12px;">\u26A1</div><div style="font-size:.88rem;color:#555">No activity yet.</div><div style="font-size:.75rem;color:#333;margin-top:4px">Activity will appear here as events happen.</div></div>';
-      return;
-    }
-    var html = (events || []).map(function(e) { return renderActivityItem(e); }).join('');
-    if (reset) el.innerHTML = html; else el.insertAdjacentHTML('beforeend', html);
-    activityOffset += (events || []).length;
-    var loadMoreEl = document.getElementById('activityLoadMore');
-    if (loadMoreEl) loadMoreEl.style.display = activityOffset < (count || 0) ? 'block' : 'none';
-  } catch(err) {
-    if (reset) el.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Error loading activity: ' + err.message + '</div>';
-  }
+// Activity tab is now driven entirely by the loadActivityTab IIFE further down
+// (engagement stats + search + filters + grouped timeline). This thin wrapper
+// keeps the old function name as an alias for any caller we missed.
+async function loadActivity() {
+  if (typeof window.loadActivityTab === 'function') return window.loadActivityTab();
 }
 window.loadActivity = loadActivity;
 
@@ -7094,9 +7099,12 @@ function switchTab(name, btn) {
   if (name === 'mismo') loadMISMOHistory();
   if (name === 'commercial') onCommercialTabOpen();
   if (name === 'alerts') { loadContactAlerts(); _slbInitPills(); loadSavedSearches(); setTimeout(function(){ _slbInstallDragHandlers(); slbRenderSlider(); }, 0); }
-  if (name === 'activity') { loadActivity(); loadPortalActivity(); loadIntelBanners(); loadDripStatus(); }
+  if (name === 'activity') {
+    if (typeof window.loadActivityTab === 'function') window.loadActivityTab();
+    if (typeof loadIntelBanners === 'function') loadIntelBanners();
+    if (typeof loadDripStatus === 'function') loadDripStatus();
+  }
   if (name === 'showings') loadContactShowings();
-  if (name === 'contact-log') { loadCommunications(); loadIntelBanners(); }
   if (name === 'fee-sheet') prefillFeeSheet();
 }
 
@@ -19074,8 +19082,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     function refreshPanels() {
       // Refresh sections that may show the new call entry / call note
       if (typeof window.loadNotes === 'function') { try { window.loadNotes(); } catch(_) {} }
-      if (typeof window.loadActivity === 'function') { try { window.loadActivity(); } catch(_) {} }
-      if (typeof window.loadCommunications === 'function') { try { window.loadCommunications(); } catch(_) {} }
+      if (typeof window.loadActivityTab === 'function') { try { window.loadActivityTab(); } catch(_) {} }
       try { window.dispatchEvent(new CustomEvent('call-logged', { detail: { contact_id: contactIdForRefresh } })); } catch(_) {}
     }
 
@@ -19242,6 +19249,411 @@ async function recordNewVoicemail() {
     setTimeout(function() { if (recorder.state === 'recording') recorder.stop(); document.removeEventListener('click', stopFn); }, 60000);
   } catch(e) { showToast('Microphone access denied'); }
 }
+</script>
+
+<!-- ═══════════════════════════════════════════
+     ACTIVITY TAB — Beast version (engagement stats, search, filters, grouped timeline)
+═══════════════════════════════════════════ -->
+<style>
+  .act-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .act-stat-card { background: rgba(201,168,76,0.04); border: 1px solid rgba(201,168,76,0.12); border-radius: 10px; padding: 14px 16px; }
+  .act-stat-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .act-stat-value { font-size: 22px; font-weight: 600; color: #F5F0E8; font-family: 'DM Mono', ui-monospace, monospace; }
+  .act-stat-sub, .act-stat-trend { font-size: 11px; color: #888; margin-top: 4px; }
+  .act-stat-trend.up { color: #6dd49b; }
+  .act-stat-trend.down { color: #f08484; }
+  .act-controls { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .act-search-wrap { position: relative; flex: 1; min-width: 240px; }
+  .act-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #666; pointer-events: none; }
+  #actSearch { width: 100%; box-sizing: border-box; padding: 9px 12px 9px 34px; background: rgba(255,255,255,0.03); border: 1px solid rgba(201,168,76,0.15); border-radius: 8px; color: #F5F0E8; font-size: 13px; font-family: inherit; outline: none; }
+  #actSearch:focus { border-color: rgba(201,168,76,0.4); }
+  .act-range { display: flex; gap: 4px; background: rgba(255,255,255,0.03); padding: 3px; border-radius: 8px; }
+  .act-range-btn { padding: 6px 12px; background: transparent; border: none; color: #888; font-size: 12px; border-radius: 6px; cursor: pointer; font-family: inherit; }
+  .act-range-btn.active { background: rgba(201,168,76,0.15); color: #C9A84C; }
+  .act-filters { display: flex; gap: 8px; margin-bottom: 16px; overflow-x: auto; padding-bottom: 4px; flex-wrap: wrap; }
+  .act-filter { padding: 7px 12px; background: transparent; border: 1px solid rgba(255,255,255,0.1); border-radius: 100px; color: #ccc; font-size: 12px; cursor: pointer; font-family: inherit; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; transition: all 0.15s; }
+  .act-filter:hover { border-color: rgba(201,168,76,0.3); color: #F5F0E8; }
+  .act-filter.active { background: rgba(201,168,76,0.12); border-color: rgba(201,168,76,0.4); color: #C9A84C; }
+  .act-count { font-size: 10px; background: rgba(255,255,255,0.08); padding: 1px 6px; border-radius: 8px; color: #aaa; }
+  .act-filter.active .act-count { background: rgba(201,168,76,0.2); color: #C9A84C; }
+  .act-timeline { position: relative; padding-left: 28px; }
+  .act-timeline::before { content: ''; position: absolute; left: 11px; top: 8px; bottom: 8px; width: 1px; background: linear-gradient(to bottom, rgba(201,168,76,0.3), rgba(201,168,76,0.05)); }
+  .act-day-header { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.1em; margin: 18px 0 10px -28px; padding-left: 28px; position: relative; }
+  .act-day-header:first-child { margin-top: 0; }
+  #tab-activity .act-item { position: relative; margin-bottom: 12px; padding: 12px 14px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; transition: all 0.15s; }
+  #tab-activity .act-item:hover { background: rgba(255,255,255,0.04); border-color: rgba(201,168,76,0.2); }
+  .act-item-dot { position: absolute; left: -22px; top: 16px; width: 10px; height: 10px; border-radius: 50%; background: #1a1a1a; border: 2px solid #C9A84C; z-index: 1; }
+  .act-item-dot.call { border-color: #6dd49b; }
+  .act-item-dot.sms { border-color: #5fa8e0; }
+  .act-item-dot.email { border-color: #d4a55f; }
+  .act-item-dot.page_view { border-color: #b08fc7; }
+  .act-item-dot.document_uploaded { border-color: #d49b6d; }
+  .act-item-dot.portal { border-color: #8fb86d; }
+  .act-item-dot.showing { border-color: #d46d8f; }
+  .act-item-dot.STAGE_CHANGE { border-color: #C9A84C; background: #C9A84C; }
+  .act-item-dot.note { border-color: #aaa; }
+  .act-item-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 4px; }
+  .act-item-title { font-size: 14px; color: #F5F0E8; font-weight: 500; flex: 1; }
+  .act-item-time { font-size: 11px; color: #888; font-family: 'DM Mono', ui-monospace, monospace; flex-shrink: 0; }
+  .act-item-body { font-size: 13px; color: #bbb; line-height: 1.5; margin-top: 4px; word-wrap: break-word; }
+  .act-item-body a { color: #C9A84C; text-decoration: none; word-break: break-all; }
+  .act-item-body a:hover { text-decoration: underline; }
+  .act-item-meta { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .act-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: rgba(255,255,255,0.05); border-radius: 100px; font-size: 11px; color: #aaa; }
+  .act-badge.success { background: rgba(109,212,155,0.12); color: #6dd49b; }
+  .act-badge.warning { background: rgba(212,165,95,0.12); color: #d4a55f; }
+  .act-badge.danger { background: rgba(240,132,132,0.12); color: #f08484; }
+  .act-badge.info { background: rgba(95,168,224,0.12); color: #5fa8e0; }
+  .act-badge.gold { background: rgba(201,168,76,0.12); color: #C9A84C; }
+  .act-empty { text-align: center; padding: 60px 20px; color: #666; font-size: 13px; }
+  .act-empty svg { opacity: 0.4; margin-bottom: 12px; }
+  .act-loading { text-align: center; padding: 40px; color: #888; font-size: 13px; }
+</style>
+
+<script>
+(function() {
+  function getAnon() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || ''; }
+  function getSbUrl() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co'; }
+
+  var allEvents = [];
+  var activeFilter = 'all';
+  var activeRange = 30;
+  var searchTerm = '';
+
+  function getContactId() {
+    return (typeof contactId !== 'undefined' && contactId) || new URLSearchParams(window.location.search).get('contact_id');
+  }
+
+  function timeAgo(date) {
+    var s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    if (s < 86400) return Math.floor(s/3600) + 'h ago';
+    if (s < 604800) return Math.floor(s/86400) + 'd ago';
+    return new Date(date).toLocaleDateString();
+  }
+  function fmtTime(date) { return new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+  function dayLabel(date) {
+    var d = new Date(date);
+    var today = new Date(); today.setHours(0,0,0,0);
+    var yest = new Date(today); yest.setDate(yest.getDate()-1);
+    var ds = new Date(d); ds.setHours(0,0,0,0);
+    if (ds.getTime() === today.getTime()) return 'Today';
+    if (ds.getTime() === yest.getTime()) return 'Yesterday';
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  }
+  function escHtml(s) { return (s || '').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+  function fmtDuration(secs) {
+    if (!secs) return '';
+    var m = Math.floor(secs/60), s = secs%60;
+    return m + ':' + String(s).padStart(2,'0');
+  }
+  function hostnameOf(u) { try { return new URL(u).hostname; } catch(_) { return u; } }
+
+  function restGet(path) {
+    var anon = getAnon();
+    return fetch(getSbUrl() + '/rest/v1/' + path, {
+      headers: { apikey: anon, Authorization: 'Bearer ' + anon }
+    }).then(function(r) { return r.json(); }).catch(function() { return []; });
+  }
+
+  function fetchEvents() {
+    var cid = getContactId();
+    if (!cid) return Promise.resolve([]);
+    // Match by contact_id OR lead_id (some legacy rows used lead_id)
+    return restGet('activity_events?or=(contact_id.eq.' + cid + ',lead_id.eq.' + cid + ')&order=created_at.desc&limit=500');
+  }
+
+  function fetchNotes() {
+    var cid = getContactId();
+    if (!cid) return Promise.resolve([]);
+    var sel = 'or=(contact_id.eq.' + cid + ',and(related_table.eq.contacts,related_id.eq.' + cid + '),and(related_table.eq.leads,related_id.eq.' + cid + '))';
+    return restGet('notes?' + sel + '&order=created_at.desc&limit=200').then(function(notes) {
+      if (!Array.isArray(notes)) return [];
+      return notes.map(function(n) {
+        return {
+          id: 'note_' + n.id,
+          type: 'note',
+          title: n.tag ? 'Note (' + n.tag + ')' : 'Note',
+          description: n.body || n.content || '',
+          direction: 'internal',
+          channel: 'note',
+          status: n.is_pinned ? 'pinned' : 'active',
+          created_at: n.created_at,
+          metadata: { tag: n.tag, is_pinned: n.is_pinned, created_by: n.created_by, related_table: n.related_table }
+        };
+      });
+    });
+  }
+
+  function fetchEmailStats() {
+    var cid = getContactId();
+    if (!cid) return Promise.resolve({ sent: 0, opened: 0, openRate: 0 });
+    return restGet('email_log?contact_id=eq.' + cid + '&select=status,open_count,first_opened_at').then(function(rows) {
+      if (!Array.isArray(rows)) return { sent: 0, opened: 0, openRate: 0 };
+      var sent = rows.filter(function(r) { return r.status === 'sent' || r.status === 'delivered' || r.status === 'opened'; }).length;
+      var opened = rows.filter(function(r) { return (r.open_count && r.open_count > 0) || r.first_opened_at; }).length;
+      var openRate = sent ? Math.round((opened / sent) * 100) : 0;
+      return { sent: sent, opened: opened, openRate: openRate };
+    });
+  }
+
+  function fetchSmsClicks() {
+    var cid = getContactId();
+    if (!cid) return Promise.resolve({ totalClicks: 0, links: 0 });
+    return restGet('short_links?contact_id=eq.' + cid + '&select=click_count').then(function(rows) {
+      if (!Array.isArray(rows)) return { totalClicks: 0, links: 0 };
+      var totalClicks = rows.reduce(function(s, r) { return s + (r.click_count || 0); }, 0);
+      return { totalClicks: totalClicks, links: rows.length };
+    });
+  }
+
+  function filterEvents() {
+    var cutoff = activeRange === 'all' ? 0 : Date.now() - (parseInt(activeRange, 10) * 86400000);
+    var term = (searchTerm || '').toLowerCase().trim();
+    return allEvents.filter(function(e) {
+      if (cutoff && new Date(e.created_at).getTime() < cutoff) return false;
+      if (activeFilter !== 'all' && e.type !== activeFilter) return false;
+      if (term) {
+        var hay = [e.title, e.description, e.email_subject, e.sms_body, e.page_url, JSON.stringify(e.metadata || {})].join(' ').toLowerCase();
+        if (hay.indexOf(term) === -1) return false;
+      }
+      return true;
+    });
+  }
+
+  function renderItem(e) {
+    var meta = (typeof e.metadata === 'string') ? (function(){ try { return JSON.parse(e.metadata); } catch(_) { return {}; } })() : (e.metadata || {});
+    var title = escHtml(e.title || '');
+    var body = '';
+    var badges = [];
+
+    switch (e.type) {
+      case 'call': {
+        var dur = e.duration_seconds || meta.duration;
+        var outcome = meta.outcome;
+        var recording = meta.recording_url;
+        title = '&#128222; Call ' + (e.direction === 'outbound' ? 'placed' : 'received') + (dur ? ' &middot; ' + fmtDuration(dur) : '');
+        if (outcome) {
+          var cls = outcome.indexOf('not_interested') !== -1 ? 'danger' : (outcome.indexOf('interested') !== -1 ? 'success' : 'info');
+          badges.push({ cls: cls, text: outcome.replace(/_/g, ' ') });
+        }
+        if (e.status === 'no_answer' || e.status === 'failed') badges.push({ cls: 'warning', text: e.status });
+        if (e.description) body = escHtml(e.description);
+        if (meta.notes) body = (body ? body + '<br>' : '') + '<em style="color:#888">' + escHtml(meta.notes) + '</em>';
+        if (recording) body += '<br><a href="' + escHtml(recording) + '" target="_blank">&#9654; Listen to recording</a>';
+        break;
+      }
+      case 'sms': {
+        title = '&#128172; SMS ' + (e.direction === 'outbound' ? 'sent' : 'received');
+        body = escHtml(e.sms_body || e.description || '');
+        if (e.status) badges.push({ cls: (e.status === 'sent' || e.status === 'delivered') ? 'success' : 'warning', text: e.status });
+        if (meta.has_media) badges.push({ cls: 'info', text: '📎 media' });
+        break;
+      }
+      case 'email': {
+        title = '&#128231; ' + escHtml(e.email_subject || e.title || 'Email');
+        body = escHtml(e.description || '');
+        if (e.status) badges.push({ cls: (e.status === 'sent' || e.status === 'delivered' || e.status === 'opened') ? 'success' : 'warning', text: e.status });
+        if (meta.opened || meta.open_count) badges.push({ cls: 'gold', text: '👁 opened' + (meta.open_count ? ' ×' + meta.open_count : '') });
+        break;
+      }
+      case 'page_view': {
+        var pageTitle = (e.title || '').replace(/^Viewed:\s*/i, '');
+        title = '&#128065; Viewed: ' + escHtml(pageTitle);
+        if (e.page_url) body = '<a href="' + escHtml(e.page_url) + '" target="_blank">' + escHtml(e.page_url) + '</a>';
+        if (meta.device_type || e.device_type) badges.push({ cls: 'info', text: meta.device_type || e.device_type });
+        if (meta.referrer) badges.push({ cls: '', text: 'from ' + hostnameOf(meta.referrer) });
+        var ip = e.ip_address || meta.ip;
+        if (ip) badges.push({ cls: '', text: ip });
+        break;
+      }
+      case 'document_uploaded': {
+        var cnt = meta.file_count || 1;
+        title = '&#128196; ' + cnt + ' document' + (cnt > 1 ? 's' : '') + ' uploaded';
+        if (meta.filenames && meta.filenames.length) body = escHtml(meta.filenames.join(', '));
+        badges.push({ cls: 'info', text: 'via portal' });
+        break;
+      }
+      case 'portal': {
+        title = '&#128274; ' + escHtml(e.title || 'Portal activity');
+        body = escHtml(e.description || '');
+        if (e.status === 'success') badges.push({ cls: 'success', text: 'login' });
+        if (meta.is_temp_password) badges.push({ cls: 'warning', text: 'temp password' });
+        break;
+      }
+      case 'showing': {
+        title = '&#127968; ' + escHtml(e.title || 'Showing');
+        body = escHtml(e.description || '');
+        if (meta.preferred_date) badges.push({ cls: 'gold', text: meta.preferred_date });
+        if (meta.home_count) badges.push({ cls: 'info', text: meta.home_count + ' home' + (meta.home_count > 1 ? 's' : '') });
+        break;
+      }
+      case 'STAGE_CHANGE': {
+        title = '&#128260; Stage changed';
+        body = escHtml(e.description || (meta.stage ? '→ ' + meta.stage : ''));
+        badges.push({ cls: 'gold', text: meta.stage || 'updated' });
+        break;
+      }
+      case 'note': {
+        title = '&#128221; ' + escHtml(e.title || 'Note');
+        body = escHtml(e.description || '');
+        if (meta.is_pinned) badges.push({ cls: 'gold', text: '📌 pinned' });
+        if (meta.tag) badges.push({ cls: '', text: meta.tag });
+        if (meta.created_by) badges.push({ cls: '', text: 'by ' + meta.created_by });
+        break;
+      }
+      default: {
+        title = escHtml(e.title || e.type || 'Event');
+        body = escHtml(e.description || '');
+      }
+    }
+
+    var badgeHtml = badges.map(function(b) { return '<span class="act-badge ' + (b.cls || '') + '">' + escHtml(b.text) + '</span>'; }).join('');
+    var metaHtml = badgeHtml ? '<div class="act-item-meta">' + badgeHtml + '</div>' : '';
+
+    return '<div class="act-item">' +
+      '<div class="act-item-dot ' + (e.type || '') + '"></div>' +
+      '<div class="act-item-head">' +
+        '<div class="act-item-title">' + title + '</div>' +
+        '<div class="act-item-time">' + fmtTime(e.created_at) + ' &middot; ' + timeAgo(e.created_at) + '</div>' +
+      '</div>' +
+      (body ? '<div class="act-item-body">' + body + '</div>' : '') +
+      metaHtml +
+    '</div>';
+  }
+
+  function renderTimeline() {
+    var events = filterEvents();
+    var tl = document.getElementById('actTimeline');
+    if (!tl) return;
+    if (!events.length) {
+      tl.innerHTML = '<div class="act-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5"/><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><div>No activity matches your filters.</div></div>';
+      return;
+    }
+    var byDay = {};
+    var dayOrder = [];
+    events.forEach(function(e) {
+      var day = dayLabel(e.created_at);
+      if (!byDay[day]) { byDay[day] = []; dayOrder.push(day); }
+      byDay[day].push(e);
+    });
+    var html = '';
+    dayOrder.forEach(function(day) {
+      html += '<div class="act-day-header">' + day + '</div>';
+      html += byDay[day].map(renderItem).join('');
+    });
+    tl.innerHTML = html;
+  }
+
+  function setText(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
+
+  function updateCounts() {
+    var counts = { all: allEvents.length, call: 0, sms: 0, email: 0, page_view: 0, document_uploaded: 0, portal: 0, showing: 0, STAGE_CHANGE: 0, note: 0 };
+    allEvents.forEach(function(e) { if (counts[e.type] !== undefined) counts[e.type]++; });
+    setText('cntAll', counts.all);
+    setText('cntCall', counts.call);
+    setText('cntSms', counts.sms);
+    setText('cntEmail', counts.email);
+    setText('cntPage', counts.page_view);
+    setText('cntDoc', counts.document_uploaded);
+    setText('cntPortal', counts.portal);
+    setText('cntShow', counts.showing);
+    setText('cntStage', counts.STAGE_CHANGE);
+    setText('cntNote', counts.note);
+  }
+
+  function updateStats() {
+    var cutoff = Date.now() - (30 * 86400000);
+    var recent = allEvents.filter(function(e) { return new Date(e.created_at).getTime() >= cutoff; });
+    setText('statTouches', recent.length);
+
+    var calls = allEvents.filter(function(e) { return e.type === 'call'; });
+    var totalCallSec = calls.reduce(function(s, c) { return s + ((c.metadata && c.metadata.duration) || c.duration_seconds || 0); }, 0);
+    setText('statCalls', calls.length);
+    setText('statCallsSub', calls.length ? ('total ' + (fmtDuration(totalCallSec) || '0:00')) : 'none yet');
+
+    var pages = recent.filter(function(e) { return e.type === 'page_view'; });
+    var unique = {};
+    pages.forEach(function(p) { if (p.page_url) unique[p.page_url] = 1; });
+    var uniqueCount = Object.keys(unique).length;
+    setText('statPages', pages.length);
+    setText('statPagesSub', uniqueCount ? (uniqueCount + ' unique') : '');
+
+    if (allEvents.length) {
+      var last = allEvents[0];
+      setText('statLastEngage', timeAgo(last.created_at));
+      setText('statLastSub', (last.type || '').replace(/_/g, ' '));
+    } else {
+      setText('statLastEngage', '—');
+      setText('statLastSub', '');
+    }
+
+    Promise.all([fetchEmailStats(), fetchSmsClicks()]).then(function(out) {
+      var em = out[0], sm = out[1];
+      setText('statOpenRate', em.sent ? em.openRate + '%' : '—');
+      setText('statOpenSub', em.sent ? (em.opened + '/' + em.sent + ' opened') : 'no emails sent');
+      setText('statSmsClicks', sm.totalClicks);
+      setText('statSmsSub', sm.links ? ('across ' + sm.links + ' link' + (sm.links > 1 ? 's' : '')) : 'no links sent');
+    });
+  }
+
+  function loadActivityTab() {
+    var tl = document.getElementById('actTimeline');
+    if (tl) tl.innerHTML = '<div class="act-loading">Loading activity...</div>';
+    return Promise.all([fetchEvents(), fetchNotes()]).then(function(out) {
+      var events = Array.isArray(out[0]) ? out[0] : [];
+      var notes = Array.isArray(out[1]) ? out[1] : [];
+      allEvents = events.concat(notes).sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+      updateCounts();
+      updateStats();
+      renderTimeline();
+    }).catch(function(err) {
+      console.error('[activity]', err);
+      if (tl) tl.innerHTML = '<div class="act-empty">Failed to load activity: ' + escHtml(err.message || String(err)) + '</div>';
+    });
+  }
+
+  window.loadActivityTab = loadActivityTab;
+  window.loadActivityTimeline = loadActivityTab;
+
+  function wireControls() {
+    document.querySelectorAll('#tab-activity .act-filter').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('#tab-activity .act-filter').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        activeFilter = btn.dataset.filter;
+        renderTimeline();
+      });
+    });
+    document.querySelectorAll('#tab-activity .act-range-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('#tab-activity .act-range-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        activeRange = btn.dataset.range;
+        renderTimeline();
+        updateStats();
+      });
+    });
+    var search = document.getElementById('actSearch');
+    if (search) {
+      var debounce;
+      search.addEventListener('input', function() {
+        clearTimeout(debounce);
+        debounce = setTimeout(function() { searchTerm = search.value; renderTimeline(); }, 200);
+      });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wireControls);
+  } else {
+    wireControls();
+  }
+
+  // Refresh when the call modal logs a new call
+  window.addEventListener('call-logged', function() { loadActivityTab(); });
+})();
 </script>
 
 </body>
