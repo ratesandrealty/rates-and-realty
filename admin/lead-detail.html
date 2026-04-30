@@ -9,7 +9,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion before GDrive upload -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://sdk.twilio.com/js/client/v1.14/twilio.js"></script>
+  <script src="https://sdk.twilio.com/js/voice/releases/2.11.3/twilio.min.js"></script>
   <title>Lead Detail | Rates &amp; Realty CRM</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18736,6 +18736,23 @@ async function saveNewLender() {
   .cm-outcome-btn.selected { background: rgba(201,168,76,0.15); border-color: rgba(201,168,76,0.4); color: #C9A84C; }
   .cm-save { width: 100%; padding: 11px; background: #C9A84C; color: #1a1208; border: none; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; letter-spacing: 0.04em; transition: background 0.15s; }
   .cm-save:hover { background: #d4b85a; }
+  /* Shape lock — defeat any inherited button rules that would stretch these into ovals */
+  #callModal .cm-btn,
+  #callModal .cm-btn.call,
+  #callModal .cm-btn.hangup,
+  #callModal .cm-btn.secondary {
+    width: 52px !important;
+    height: 52px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    flex: 0 0 auto !important;
+    aspect-ratio: 1 / 1 !important;
+  }
+  #callModal .cm-btn.call,
+  #callModal .cm-btn.hangup {
+    width: 64px !important;
+    height: 64px !important;
+  }
 </style>
 
 <div id="callModal" class="cm-overlay">
@@ -18964,18 +18981,32 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     document.getElementById('cmSaveBtn').addEventListener('click', saveAndClose);
   }
 
-  function getDevice() {
-    if (device) return Promise.resolve(device);
+  function fetchToken() {
     var anon = getAnon();
     return fetch(VOICE_FN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: anon, Authorization: 'Bearer ' + anon },
       body: JSON.stringify({ action: 'get_token' })
-    }).then(function(r) { return r.json(); }).then(function(data) {
+    }).then(function(r) { return r.json(); });
+  }
+
+  function getDevice() {
+    if (device && device.state !== 'destroyed') return Promise.resolve(device);
+    return fetchToken().then(function(data) {
       if (!data.token) throw new Error(data.error || 'Failed to get Twilio token');
-      device = new Twilio.Device(data.token, { codecPreferences: ['opus', 'pcmu'], closeProtection: true });
-      device.on('error', function(e) { console.error('[Twilio] Device error:', e); });
-      return device;
+      // v2 SDK: new Device(token, options); explicit register() before connect()
+      device = new Twilio.Device(data.token, {
+        codecPreferences: ['opus', 'pcmu'],
+        logLevel: 'warn'
+      });
+      device.on('registered', function() { console.log('[twilio] device registered'); });
+      device.on('error', function(err) { console.error('[twilio] device error', err); });
+      device.on('tokenWillExpire', function() {
+        fetchToken().then(function(d) {
+          if (d.token) device.updateToken(d.token);
+        }).catch(function(e) { console.error('[twilio] token refresh failed', e); });
+      });
+      return device.register().then(function() { return device; });
     });
   }
 
@@ -18986,7 +19017,10 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     }
     getDevice().then(function(dev) {
       renderRinging();
-      var conn = dev.connect({ params: { To: toE164(currentContact.phone) } });
+      // v2 SDK: device.connect() returns a Promise that resolves to a Call
+      return dev.connect({ params: { To: toE164(currentContact.phone) } });
+    }).then(function(conn) {
+      if (!conn) return;
       activeCall = conn;
       conn.on('ringing', function() { /* keep ringing UI */ });
       conn.on('accept', function() { startTimer(); renderConnected(); });
@@ -19001,7 +19035,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       });
     }).catch(function(e) {
       console.error('[startCall]', e);
-      alert('Could not start call: ' + (e.message || e));
+      alert('Could not start call: ' + ((e && e.message) || e));
       renderReady();
     });
   }
