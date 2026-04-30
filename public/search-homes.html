@@ -839,6 +839,7 @@ const COUNTIES = {
 let selectedCities = [];
 let activeStatus = 'Active';
 let currentLease = false;
+let selectedStatuses = [];
 let allListings = [];
 let filteredListings = [];
 let map, markers = [], infoWindow, drawingManager, currentShape = null;
@@ -928,12 +929,37 @@ async function addToExistingBatch(l) {
   } catch(e) { showToast('Error: ' + e.message); }
 }
 
-// Apply filter params from an incoming search link (shared from CRM Search Link Builder).
+// Map any case/space variant of an MLS status to its canonical "no space" form.
+// Listings come back from Trestle in canonical form (Active, ComingSoon,
+// ActiveUnderContract, etc.) so URL params and UI selections must normalize to match.
+const STATUS_NORMALIZE_MAP = {
+  'active': 'Active',
+  'coming soon': 'ComingSoon',
+  'comingsoon': 'ComingSoon',
+  'active under contract': 'ActiveUnderContract',
+  'activeundercontract': 'ActiveUnderContract',
+  'pending': 'Pending',
+  'hold': 'Hold',
+  'withdrawn': 'Withdrawn',
+  'closed': 'Closed',
+  'expired': 'Expired',
+  'canceled': 'Canceled',
+  'cancelled': 'Canceled',
+};
+function normalizeStatus(s) {
+  if (!s) return null;
+  const k = String(s).trim().toLowerCase();
+  return STATUS_NORMALIZE_MAP[k] || s;
+}
+
+// Apply filter params from an incoming search link (shared from CRM Search Link Builder
+// or listing-alert SMS/email links).
 // URL format: ?county=Orange&city=Westminster,Garden+Grove&min_price=400000&max_price=850000&beds=3&baths=2&type=SFR&sort=price_asc&min_sqft=1200&max_sqft=3000&min_year=1990&max_dom=60&pool=1&new=1
+// Alert-link format also uses: ?listing_type=rent&statuses=Active,ComingSoon&counties=Orange&min_beds=2&min_baths=2&property_types=Single+Family,Condo,Townhouse
 // This function must write to BOTH:
 //   (a) the `filters` object (drives buildODataFilter() / the Trestle query)
 //   (b) the real DOM elements (so filter chips/modal reflect the state)
-// Plus selectedCities / selectedCounties for the location-filter branch.
+// Plus selectedCities / selectedCounties / selectedStatuses for the location/status filter branches.
 function _applyIncomingSearchParams() {
   try {
     var p = new URLSearchParams(location.search);
@@ -973,8 +999,39 @@ function _applyIncomingSearchParams() {
       currentLease = false;
     }
 
-    // --- Location: county / cities ---
-    var countyParam = p.get('county');
+    // --- listing_type (from listing-alert SMS/email links) ---
+    // Overrides any statusParam above so e.g. ?listing_type=rent flips to For Rent on load.
+    var listingTypeParam = p.get('listing_type');
+    if (listingTypeParam === 'rent') {
+      activeStatus = 'Active';
+      currentLease = true;
+      document.querySelectorAll('.status-tab').forEach(function(t) {
+        t.classList.remove('active');
+        if (t.dataset.lease === 'true') t.classList.add('active');
+      });
+    } else if (listingTypeParam === 'sale' || listingTypeParam === 'sold') {
+      activeStatus = listingTypeParam === 'sold' ? 'Closed' : 'Active';
+      currentLease = false;
+      document.querySelectorAll('.status-tab').forEach(function(t) {
+        t.classList.remove('active');
+        if (t.dataset.lease !== 'true' && t.dataset.status === activeStatus) {
+          t.classList.add('active');
+        }
+      });
+    }
+
+    // --- statuses (plural, comma-separated, with format normalization) ---
+    // Accepts both "Coming Soon" and "ComingSoon" — normalizes to the canonical
+    // form Trestle returns so the OData StandardStatus filter matches.
+    var rawStatuses = p.get('statuses');
+    if (rawStatuses) {
+      selectedStatuses = rawStatuses.split(',')
+        .map(function(s) { return normalizeStatus(s.trim()); })
+        .filter(Boolean);
+    }
+
+    // --- Location: county / cities (accepts both `county` and `counties`) ---
+    var countyParam = p.get('county') || p.get('counties');
     if (countyParam) {
       selectedCounties.clear();
       selectedCities = []; // reset cities first
@@ -1057,16 +1114,16 @@ function _applyIncomingSearchParams() {
     if (minP) { filters.minPrice = minP; var mi = document.getElementById('fMinPrice'); if (mi) mi.value = minP; }
     if (maxP) { filters.maxPrice = maxP; var ma = document.getElementById('fMaxPrice'); if (ma) ma.value = maxP; }
 
-    // --- Beds: activate matching toggle button + set filters.beds ---
-    var bedsParam = p.get('beds');
+    // --- Beds: activate matching toggle button + set filters.beds (accepts beds/min_beds) ---
+    var bedsParam = p.get('beds') || p.get('min_beds');
     if (bedsParam) {
       filters.beds = bedsParam;
       document.querySelectorAll('#bedToggles .toggle-btn').forEach(function(btn){
         btn.classList.toggle('active', btn.dataset.val === bedsParam);
       });
     }
-    // --- Baths: activate matching toggle button + set filters.baths ---
-    var bathsParam = p.get('baths');
+    // --- Baths: activate matching toggle button + set filters.baths (accepts baths/min_baths) ---
+    var bathsParam = p.get('baths') || p.get('min_baths');
     if (bathsParam) {
       filters.baths = bathsParam;
       document.querySelectorAll('#bathToggles .toggle-btn').forEach(function(btn){
@@ -1075,16 +1132,28 @@ function _applyIncomingSearchParams() {
     }
 
     // --- Property type: activate type-card + set filters.types ---
-    // URL tokens (from slbGenerate): SFR / Condo / Townhouse / Multi / Land / SingleFamilyResidence / Condominium / MultiFamily
+    // URL tokens from slbGenerate: SFR / Condo / Townhouse / Multi / Land / SingleFamilyResidence / Condominium / MultiFamily
+    // Listing-alert tokens (property_types plural): "Single Family", "Condo", "Townhouse", "Multi-Family", "Land"
     var URL_TYPE_MAP = {
-      'SFR':'Residential', 'SingleFamilyResidence':'Residential',
+      'SFR':'Residential', 'SingleFamilyResidence':'Residential', 'Single Family':'Residential', 'Single-Family':'Residential',
       'Condo':'Condominium', 'Condominium':'Condominium',
       'Townhouse':'Townhouse',
-      'Multi':'Residential Income', 'MultiFamily':'Residential Income', 'Multi-Family':'Residential Income',
+      'Multi':'Residential Income', 'MultiFamily':'Residential Income', 'Multi-Family':'Residential Income', 'Multi Family':'Residential Income',
       'Land':'Land'
     };
     var typeParam = p.get('type');
-    if (typeParam) {
+    var typesParam = p.get('property_types') || p.get('types');
+    if (typesParam) {
+      var mapped = typesParam.split(',')
+        .map(function(t) { var k = t.trim(); return URL_TYPE_MAP[k] || k; })
+        .filter(Boolean);
+      if (mapped.length) {
+        filters.types = mapped;
+        document.querySelectorAll('.type-card').forEach(function(c){
+          c.classList.toggle('active', mapped.indexOf(c.dataset.type) >= 0);
+        });
+      }
+    } else if (typeParam) {
       var targetType = URL_TYPE_MAP[typeParam] || typeParam;
       filters.types = [targetType];
       document.querySelectorAll('.type-card').forEach(function(c){ c.classList.toggle('active', c.dataset.type === targetType); });
@@ -1365,9 +1434,17 @@ function buildODataFilter(bounds) {
     parts.push("StateOrProvince eq 'CA'");
   }
 
-  // Status — For Rent uses Active status but Trestle lease listings may use different values
-  if (activeStatus && !currentLease) {
-    parts.push("StandardStatus eq '" + activeStatus + "'");
+  // Status — For Rent uses Active status but Trestle lease listings may use different values.
+  // If the URL supplied a `statuses=` list (alert links), use OR over canonical values.
+  if (!currentLease) {
+    if (selectedStatuses && selectedStatuses.length > 0) {
+      var statusClauses = selectedStatuses.map(function(s){
+        return "StandardStatus eq '" + String(s).replace(/'/g,"''") + "'";
+      });
+      parts.push(statusClauses.length === 1 ? statusClauses[0] : '(' + statusClauses.join(' or ') + ')');
+    } else if (activeStatus) {
+      parts.push("StandardStatus eq '" + activeStatus + "'");
+    }
   }
   // For Rent: Active leases in Trestle
   if (currentLease) {
