@@ -18676,57 +18676,84 @@ async function saveNewLender() {
 }
 </script>
 
-<!-- Premium Call Modal -->
+<!-- Premium Call Modal (redesigned) -->
 <style>
-@keyframes callPulse { 0%,100%{box-shadow:0 0 0 0 rgba(201,168,76,0.4)} 50%{box-shadow:0 0 0 12px rgba(201,168,76,0)} }
-@keyframes ringPulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-@keyframes connectedGlow { 0%,100%{box-shadow:0 0 0 0 rgba(76,175,125,0.3)} 50%{box-shadow:0 0 0 8px rgba(76,175,125,0)} }
-@keyframes slideUp { from{transform:translateY(40px);opacity:0} to{transform:translateY(0);opacity:1} }
-#call-modal.show { animation: slideUp .3s ease forwards; }
-.call-outcome-pill{padding:6px 14px;border-radius:20px;border:1px solid #333;background:#1A1A1A;color:#aaa;font-size:11px;cursor:pointer;font-family:inherit;transition:all .15s;display:inline-flex;align-items:center;gap:4px;}
-.call-outcome-pill:hover{border-color:rgba(201,168,76,0.5);color:#E8D5A3;background:rgba(201,168,76,0.08);}
-.call-outcome-pill.selected{border-color:#C9A84C;color:#C9A84C;background:rgba(201,168,76,0.15);}
+  .cm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(4px); }
+  .cm-overlay.open { display: flex; }
+  .cm-modal { width: 360px; background: #111111; border: 1px solid rgba(201,168,76,0.18); border-radius: 18px; padding: 24px 22px 20px; position: relative; font-family: 'DM Sans', system-ui, sans-serif; color: #F5F0E8; }
+  .cm-close { position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+  .cm-close:hover { background: rgba(255,255,255,0.1); color: #fff; }
+  .cm-avatar-wrap { display: flex; justify-content: center; margin: 8px 0 14px; position: relative; }
+  .cm-avatar { width: 84px; height: 84px; border-radius: 50%; background: linear-gradient(135deg, #d4b85a, #a8862e); display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', Georgia, serif; font-size: 28px; font-weight: 600; color: #1a1208; letter-spacing: 0.02em; position: relative; z-index: 2; }
+  .cm-pulse { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 84px; height: 84px; border-radius: 50%; border: 2px solid #C9A84C; opacity: 0; }
+  .cm-pulse.ringing { animation: cmPulse 1.6s ease-out infinite; }
+  .cm-pulse.ringing.delay { animation-delay: 0.8s; }
+  @keyframes cmPulse { 0% { width: 84px; height: 84px; opacity: 0.7; } 100% { width: 160px; height: 160px; opacity: 0; } }
+  .cm-name { text-align: center; font-family: 'Playfair Display', Georgia, serif; font-size: 22px; font-weight: 500; color: #F5F0E8; margin: 0 0 4px; letter-spacing: 0.01em; }
+  .cm-phone { text-align: center; font-family: 'DM Mono', ui-monospace, monospace; font-size: 14px; color: #C9A84C; margin: 0 0 10px; letter-spacing: 0.04em; }
+  .cm-status { text-align: center; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 18px; height: 14px; }
+  .cm-status.ready { color: #888; }
+  .cm-status.ringing { color: #C9A84C; }
+  .cm-status.connected { color: #4CAF7D; }
+  .cm-status.ended { color: #E05454; }
+  .cm-status .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+  .cm-status.ringing .dot { background: #C9A84C; animation: cmBlink 1s ease-in-out infinite; }
+  .cm-status.connected .dot { background: #4CAF7D; }
+  @keyframes cmBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .cm-timer { text-align: center; font-family: 'DM Mono', ui-monospace, monospace; font-size: 32px; font-weight: 400; color: #F5F0E8; margin: 0 0 18px; letter-spacing: 0.08em; height: 38px; }
+  .cm-timer.muted { color: #555; }
+  .cm-actions { display: flex; justify-content: center; gap: 14px; margin: 4px 0 18px; }
+  .cm-btn { width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s ease; font-family: inherit; }
+  .cm-btn:hover { transform: translateY(-1px); }
+  .cm-btn:active { transform: translateY(0) scale(0.96); }
+  .cm-btn.secondary { background: rgba(255,255,255,0.06); color: #ccc; }
+  .cm-btn.secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
+  .cm-btn.secondary.active { background: rgba(201,168,76,0.2); color: #C9A84C; }
+  .cm-btn.call { width: 64px; height: 64px; background: #4CAF7D; color: #06200f; box-shadow: 0 0 0 0 rgba(76,175,125,0.5); }
+  .cm-btn.call:hover { background: #5cc28d; }
+  .cm-btn.call.pulsing { animation: cmCallPulse 2s ease-out infinite; }
+  @keyframes cmCallPulse { 0% { box-shadow: 0 0 0 0 rgba(76,175,125,0.5); } 70% { box-shadow: 0 0 0 14px rgba(76,175,125,0); } 100% { box-shadow: 0 0 0 0 rgba(76,175,125,0); } }
+  .cm-btn.hangup { width: 64px; height: 64px; background: #E05454; color: #fff; }
+  .cm-btn.hangup:hover { background: #ec6666; }
+  .cm-btn-label { font-size: 10px; color: #666; text-align: center; margin-top: 6px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .cm-action-group { display: flex; flex-direction: column; align-items: center; }
+  .cm-divider { height: 1px; background: rgba(201,168,76,0.1); margin: 0 -22px 14px; }
+  .cm-section-label { font-size: 10px; color: #666; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+  .cm-section-label svg { width: 12px; height: 12px; opacity: 0.7; }
+  .cm-msg-list { display: flex; flex-direction: column; gap: 8px; max-height: 130px; overflow: hidden; }
+  .cm-msg { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: rgba(255,255,255,0.03); border-radius: 8px; font-size: 12px; }
+  .cm-msg-arrow { color: #C9A84C; flex-shrink: 0; }
+  .cm-msg-text { color: #ccc; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cm-msg-time { color: #666; font-family: 'DM Mono', ui-monospace, monospace; font-size: 11px; flex-shrink: 0; }
+  .cm-notes { width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.03); border: 1px solid rgba(201,168,76,0.12); border-radius: 8px; padding: 10px 12px; color: #F5F0E8; font-family: inherit; font-size: 13px; resize: none; height: 38px; outline: none; transition: border-color 0.15s; }
+  .cm-notes:focus { border-color: rgba(201,168,76,0.3); }
+  .cm-notes::placeholder { color: #555; }
+  .cm-outcome { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 12px; }
+  .cm-outcome-btn { padding: 10px 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; color: #ccc; font-size: 12px; cursor: pointer; font-family: inherit; text-align: left; transition: all 0.15s; }
+  .cm-outcome-btn:hover { background: rgba(201,168,76,0.08); border-color: rgba(201,168,76,0.25); color: #F5F0E8; }
+  .cm-outcome-btn.success { color: #6dd49b; }
+  .cm-outcome-btn.danger { color: #f08484; }
+  .cm-outcome-btn.selected { background: rgba(201,168,76,0.15); border-color: rgba(201,168,76,0.4); color: #C9A84C; }
+  .cm-save { width: 100%; padding: 11px; background: #C9A84C; color: #1a1208; border: none; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; letter-spacing: 0.04em; transition: background 0.15s; }
+  .cm-save:hover { background: #d4b85a; }
 </style>
-<div id="call-modal-overlay" onclick="closeCallModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:9999;"></div>
-<div id="call-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:380px;background:#0A0A0A;border:1px solid rgba(201,168,76,0.25);border-radius:20px;box-shadow:0 24px 64px rgba(0,0,0,0.8);z-index:10000;overflow:hidden;">
-  <!-- Header -->
-  <div style="padding:28px 24px 16px;text-align:center;position:relative;">
-    <button onclick="closeCallModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#555;font-size:14px;cursor:pointer;padding:4px;">&#10005;</button>
-    <div id="call-avatar" style="width:80px;height:80px;border-radius:50%;background:linear-gradient(135deg,rgba(201,168,76,0.3),rgba(201,168,76,0.1));border:3px solid #C9A84C;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:#C9A84C;margin:0 auto 12px;font-family:'Playfair Display',serif;">RD</div>
-    <div id="call-name" style="font-size:22px;font-weight:700;color:#fff;font-family:'Playfair Display',serif;">Contact Name</div>
-    <div id="call-number" style="font-size:14px;color:#C9A84C;margin-top:4px;letter-spacing:0.5px;">+1 (714) 472-8508</div>
-    <div id="call-status" style="font-size:12px;color:#888;margin-top:8px;transition:color .3s;">Ready to call</div>
-    <div id="call-timer" style="font-size:36px;font-weight:700;color:#fff;font-family:'DM Mono',monospace;margin-top:6px;display:none;letter-spacing:2px;">0:00</div>
-  </div>
-  <!-- Buttons -->
-  <div style="padding:8px 24px 20px;display:flex;justify-content:center;align-items:center;gap:20px;">
-    <button id="call-mute-btn" onclick="toggleCallMute()" style="width:52px;height:52px;border-radius:50%;background:#1A1A1A;border:1px solid #333;color:#888;font-size:20px;cursor:pointer;display:none;transition:all .2s;" title="Mute">&#x1f507;</button>
-    <button id="call-start-btn" onclick="startBrowserCall()" style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#22c55e,#16a34a);border:none;color:white;font-size:28px;cursor:pointer;box-shadow:0 4px 20px rgba(34,197,94,0.4);transition:all .2s;">&#x1f4de;</button>
-    <button id="call-end-btn" onclick="endBrowserCall()" style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#E05454,#c0392b);border:none;color:white;font-size:28px;cursor:pointer;box-shadow:0 4px 20px rgba(224,84,84,0.4);display:none;transition:all .2s;">&#x1f4f5;</button>
-    <button id="call-vm-btn" onclick="openVoicemailPicker()" style="width:52px;height:52px;border-radius:50%;background:#1A1A1A;border:1px solid #333;color:#888;font-size:18px;cursor:pointer;transition:all .2s;" title="Voicemail Drop">&#x1f399;</button>
-  </div>
-  <!-- Recent Messages -->
-  <div id="call-recent-sms" style="display:none;padding:0 24px 12px;">
-    <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">&#x1f4ac; Recent Messages</div>
-    <div id="call-recent-sms-content" style="max-height:70px;overflow-y:auto;"></div>
-  </div>
-  <!-- Notes (during call) -->
-  <div id="call-notes-wrap" style="display:none;padding:0 24px 16px;">
-    <textarea id="call-notes" placeholder="Add call notes..." rows="2" style="width:100%;background:#111;border:1px solid #222;border-radius:10px;color:#eee;padding:10px 12px;font-size:12px;resize:none;outline:none;font-family:inherit;transition:border-color .2s;" onfocus="this.style.borderColor='rgba(201,168,76,0.4)'" onblur="this.style.borderColor='#222'"></textarea>
-  </div>
-  <!-- Outcome Panel (after call) -->
-  <div id="call-outcome-panel" style="display:none;padding:16px 24px 24px;border-top:1px solid #1A1A1A;">
-    <div style="font-size:13px;color:#E8D5A3;font-weight:600;margin-bottom:10px;">How did the call go?</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
-      <button onclick="setCallOutcome('spoke_interested')" class="call-outcome-pill">&#x2705; Interested</button>
-      <button onclick="setCallOutcome('callback_requested')" class="call-outcome-pill">&#x1f4de; Callback</button>
-      <button onclick="setCallOutcome('no_answer')" class="call-outcome-pill">&#x1f4f5; No Answer</button>
-      <button onclick="setCallOutcome('left_voicemail')" class="call-outcome-pill">&#x1f4ec; Left VM</button>
-      <button onclick="setCallOutcome('wrong_number')" class="call-outcome-pill">&#x274c; Wrong #</button>
-      <button onclick="setCallOutcome('not_interested')" class="call-outcome-pill">&#x1f610; Not Interested</button>
+
+<div id="callModal" class="cm-overlay">
+  <div class="cm-modal" id="cmModalInner">
+    <button class="cm-close" id="cmCloseBtn" aria-label="Close">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
+    <div class="cm-avatar-wrap">
+      <div class="cm-pulse" id="cmPulse1"></div>
+      <div class="cm-pulse delay" id="cmPulse2"></div>
+      <div class="cm-avatar" id="cmAvatar">RD</div>
     </div>
-    <textarea id="call-outcome-notes" placeholder="Add call notes..." rows="2" style="width:100%;background:#111;border:1px solid #222;border-radius:10px;color:#eee;padding:10px 12px;font-size:12px;resize:none;outline:none;font-family:inherit;margin-bottom:10px;"></textarea>
-    <button onclick="saveCallAndClose()" style="width:100%;padding:10px;background:#C9A84C;color:#000;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Save &amp; Close</button>
+    <h3 class="cm-name" id="cmName">Contact Name</h3>
+    <p class="cm-phone" id="cmPhone">(000) 000-0000</p>
+    <div class="cm-status ready" id="cmStatus"><span class="dot"></span><span id="cmStatusText">Ready to call</span></div>
+    <div class="cm-timer muted" id="cmTimer">00:00</div>
+    <div class="cm-actions" id="cmActions"></div>
+    <div id="cmFooter"></div>
   </div>
 </div>
 
@@ -18744,214 +18771,337 @@ async function saveNewLender() {
 
 <script>
 /* ═══ BROWSER CALLING (Twilio.Device) ═══ */
-var _callTimer = null, _callSeconds = 0, _callContactId = null, _callPhone = null, _callOutcome = null;
-var _twilioDevice = null, _twilioConnection = null;
 var VOICE_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice';
+var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
 
-// Initialize Twilio Device on first use
-async function initTwilioDevice() {
-  if (_twilioDevice) return true;
-  try {
-    var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-    var res = await fetch(VOICE_FN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + anon },
-      body: JSON.stringify({ action: 'get_token' })
-    });
-    var data = await res.json();
-    if (!data.token) throw new Error('No token received');
-    _twilioDevice = new Twilio.Device(data.token, { codecPreferences: ['opus', 'pcmu'], closeProtection: true });
-    _twilioDevice.on('ready', function() { console.log('[Twilio] Device ready'); });
-    _twilioDevice.on('error', function(e) { console.error('[Twilio] Device error:', e); });
-    _twilioDevice.on('disconnect', function() {
-      console.log('[Twilio] Call disconnected');
-      if (_callTimer) { clearInterval(_callTimer); _callTimer = null; }
-      document.getElementById('call-status').textContent = 'Call Ended';
-      document.getElementById('call-status').style.color = '#888';
-      document.getElementById('call-end-btn').style.display = 'none';
-      document.getElementById('call-mute-btn').style.display = 'none';
-      document.getElementById('call-outcome-panel').style.display = 'block';
-    });
-    return true;
-  } catch(e) {
-    console.error('[Twilio] Init failed:', e);
-    return false;
+(function() {
+  function getAnon() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || ''; }
+
+  var modal, closeBtn, avatar, nameEl, phoneEl, status, statusText, timer, actions, footer, pulse1, pulse2;
+  var device = null, activeCall = null, callStart = null, timerInterval = null;
+  var muted = false, speakerOn = false, currentContact = null, selectedOutcome = null, callDuration = 0;
+
+  function bindRefs() {
+    modal = document.getElementById('callModal');
+    closeBtn = document.getElementById('cmCloseBtn');
+    avatar = document.getElementById('cmAvatar');
+    nameEl = document.getElementById('cmName');
+    phoneEl = document.getElementById('cmPhone');
+    status = document.getElementById('cmStatus');
+    statusText = document.getElementById('cmStatusText');
+    timer = document.getElementById('cmTimer');
+    actions = document.getElementById('cmActions');
+    footer = document.getElementById('cmFooter');
+    pulse1 = document.getElementById('cmPulse1');
+    pulse2 = document.getElementById('cmPulse2');
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (modal) modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
   }
-}
 
-function openCallModal(name, phone, contactId) {
-  _callContactId = contactId; _callPhone = phone; _callOutcome = null;
-  var initials = (name||'').split(' ').map(function(w){return (w[0]||'');}).join('').toUpperCase() || '??';
-  document.getElementById('call-avatar').textContent = initials;
-  document.getElementById('call-name').textContent = name || 'Contact';
-  var ph = (phone||'').replace(/\D/g,'');
-  document.getElementById('call-number').textContent = ph.length===10 ? '('+ph.slice(0,3)+') '+ph.slice(3,6)+'-'+ph.slice(6) : phone;
-  document.getElementById('call-status').textContent = 'Ready to call';
-  document.getElementById('call-status').style.color = '#888';
-  document.getElementById('call-timer').style.display = 'none';
-  document.getElementById('call-start-btn').style.display = 'inline-flex';
-  document.getElementById('call-end-btn').style.display = 'none';
-  document.getElementById('call-mute-btn').style.display = 'none';
-  document.getElementById('call-notes-wrap').style.display = 'none';
-  document.getElementById('call-outcome-panel').style.display = 'none';
-  document.getElementById('call-notes').value = '';
-  document.querySelectorAll('.call-outcome-pill').forEach(function(b){b.classList.remove('selected');});
-  // Show modal with animation
-  document.getElementById('call-modal-overlay').style.display = 'block';
-  var modal = document.getElementById('call-modal');
-  modal.style.display = 'block';
-  modal.classList.remove('show');
-  requestAnimationFrame(function() { modal.classList.add('show'); });
-  loadCallContextSms(contactId);
-}
+  function toE164(p) {
+    var d = (p || '').replace(/\D/g, '');
+    if (d.length === 10) return '+1' + d;
+    if (d.length === 11 && d[0] === '1') return '+' + d;
+    return '+' + d;
+  }
+  function fmtTime(secs) {
+    var m = Math.floor(secs / 60), s = secs % 60;
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, function(c) { return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]; });
+  }
+  function timeAgo(date) {
+    var s = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm';
+    if (s < 86400) return Math.floor(s/3600) + 'h';
+    return Math.floor(s/86400) + 'd';
+  }
+  function formatDisplayPhone(p) {
+    var d = (p || '').replace(/\D/g, '');
+    if (d.length === 10) return '(' + d.slice(0,3) + ') ' + d.slice(3,6) + '-' + d.slice(6);
+    if (d.length === 11 && d[0] === '1') return '(' + d.slice(1,4) + ') ' + d.slice(4,7) + '-' + d.slice(7);
+    return p || '';
+  }
 
-function closeCallModal() {
-  document.getElementById('call-modal').style.display = 'none';
-  document.getElementById('call-modal-overlay').style.display = 'none';
-  if (_callTimer) { clearInterval(_callTimer); _callTimer = null; }
-}
+  function startTimer() {
+    callStart = Date.now();
+    timerInterval = setInterval(function() {
+      callDuration = Math.floor((Date.now() - callStart) / 1000);
+      if (timer) timer.textContent = fmtTime(callDuration);
+    }, 1000);
+  }
+  function stopTimer() { if (timerInterval) { clearInterval(timerInterval); timerInterval = null; } }
 
-function saveCallAndClose() {
-  var notes = document.getElementById('call-outcome-notes')?.value || document.getElementById('call-notes')?.value || '';
-  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-  fetch(VOICE_FN, { method:'POST', headers:{'Content-Type':'application/json','apikey':anon,'Authorization':'Bearer '+anon}, body:JSON.stringify({action:'log_call',contact_id:_callContactId,to_phone:_callPhone,duration:_callSeconds,status:'completed',notes:notes,outcome:_callOutcome,twilio_call_sid:window._currentCallSid||''}) }).catch(function(e){console.warn('Log error:',e);});
-  closeCallModal();
-  showToast('Call logged: ' + (_callOutcome || 'completed').replace(/_/g,' '));
-  if (typeof loadCommunications === 'function') loadCommunications();
-}
+  var phoneIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var hangupIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="transform: rotate(135deg);"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function micIcon(m) {
+    return m
+      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M1 1l22 22M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6M17 16.95A7 7 0 015 12v-2m7 10v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="2"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  }
+  function speakerIcon(on) {
+    return on
+      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M23 9l-6 6M17 9l6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  }
+  var msgIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 
-async function startBrowserCall() {
-  var statusEl = document.getElementById('call-status');
-  statusEl.textContent = 'Initializing...';
-  statusEl.style.color = '#f39c12';
-  document.getElementById('call-start-btn').style.display = 'none';
+  function renderReady() {
+    status.className = 'cm-status ready';
+    statusText.textContent = 'Ready to call';
+    pulse1.classList.remove('ringing'); pulse2.classList.remove('ringing');
+    timer.textContent = '00:00'; timer.className = 'cm-timer muted';
+    actions.innerHTML =
+      '<div class="cm-action-group">' +
+        '<button class="cm-btn call pulsing" id="cmStartBtn" aria-label="Start call">' + phoneIcon + '</button>' +
+        '<span class="cm-btn-label">Call</span>' +
+      '</div>';
+    document.getElementById('cmStartBtn').addEventListener('click', startCall);
+    renderRecentMessages();
+  }
 
-  // Try browser calling via Twilio.Device first, fall back to REST API
-  var useBrowser = typeof Twilio !== 'undefined' && Twilio.Device;
-  if (useBrowser) {
-    try {
-      var ready = await initTwilioDevice();
-      if (ready && _twilioDevice) {
-        statusEl.textContent = 'Connecting...';
-        var ph = (_callPhone || '').replace(/\D/g, '');
-        if (ph.length === 10) ph = '+1' + ph;
-        else if (ph.length === 11 && ph[0] === '1') ph = '+' + ph;
-        console.log('[Call] Dialing via browser:', ph);
-        _twilioConnection = _twilioDevice.connect({ params: { To: ph } });
-        _twilioConnection.on('ringing', function() { statusEl.textContent = 'Ringing...'; statusEl.style.color = '#22c55e'; });
-        _twilioConnection.on('accept', function() { statusEl.textContent = 'Connected'; statusEl.style.color = '#22c55e'; });
-        _twilioConnection.on('disconnect', function() { /* handled by device event */ });
-        _twilioConnection.on('error', function(e) { statusEl.textContent = 'Error: ' + e.message; statusEl.style.color = '#ef4444'; });
-
-        document.getElementById('call-end-btn').style.display = 'inline-block';
-        document.getElementById('call-mute-btn').style.display = 'inline-block';
-        document.getElementById('call-notes-wrap').style.display = 'block';
-        _callSeconds = 0;
-        document.getElementById('call-timer').style.display = 'block';
-        _callTimer = setInterval(function() {
-          _callSeconds++;
-          var m = Math.floor(_callSeconds/60), s = _callSeconds%60;
-          document.getElementById('call-timer').textContent = m + ':' + (s<10?'0':'') + s;
-        }, 1000);
+  function renderRecentMessages() {
+    footer.innerHTML =
+      '<div class="cm-divider"></div>' +
+      '<div class="cm-section-label">' + msgIcon + '<span>Recent messages</span></div>' +
+      '<div class="cm-msg-list" id="cmMsgList"><div class="cm-msg" style="color:#666;justify-content:center;">Loading…</div></div>';
+    if (!currentContact || !currentContact.id) {
+      var lst = document.getElementById('cmMsgList');
+      if (lst) lst.innerHTML = '<div class="cm-msg" style="color:#555;justify-content:center;">No contact selected</div>';
+      return;
+    }
+    var anon = getAnon();
+    fetch(SUPABASE_BASE + '/rest/v1/sms_log?contact_id=eq.' + currentContact.id + '&order=created_at.desc&limit=3&select=body,created_at,direction', {
+      headers: { apikey: anon, Authorization: 'Bearer ' + anon }
+    }).then(function(r) { return r.json(); }).then(function(msgs) {
+      var list = document.getElementById('cmMsgList');
+      if (!list) return;
+      if (!msgs || !msgs.length) {
+        list.innerHTML = '<div class="cm-msg" style="color:#555;justify-content:center;">No messages yet</div>';
         return;
       }
-    } catch(e) { console.warn('[Twilio] Browser call failed, falling back to REST:', e); }
-  }
-
-  // Fallback: REST API call (phone rings on contact's end, not browser)
-  document.getElementById('call-end-btn').style.display = 'inline-block';
-  document.getElementById('call-mute-btn').style.display = 'inline-block';
-  document.getElementById('call-notes-wrap').style.display = 'block';
-  try {
-    var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-    var res = await fetch(VOICE_FN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + anon },
-      body: JSON.stringify({ action: 'make_call', to: _callPhone, contact_id: _callContactId })
-    });
-    var data = await res.json();
-    if (data.success) {
-      statusEl.textContent = 'Ringing...';
-      statusEl.style.color = '#22c55e';
-      window._currentCallSid = data.callSid;
-      _callSeconds = 0;
-      document.getElementById('call-timer').style.display = 'block';
-      _callTimer = setInterval(function() {
-        _callSeconds++;
-        var m = Math.floor(_callSeconds/60), s = _callSeconds%60;
-        document.getElementById('call-timer').textContent = m + ':' + (s<10?'0':'') + s;
-      }, 1000);
-      setTimeout(function() { statusEl.textContent = 'Connected'; }, 3000);
-    } else {
-      statusEl.textContent = 'Failed: ' + (data.error || 'unknown');
-      statusEl.style.color = '#ef4444';
-      document.getElementById('call-start-btn').style.display = 'inline-block';
-      document.getElementById('call-end-btn').style.display = 'none';
-    }
-  } catch(e) {
-    statusEl.textContent = 'Error: ' + e.message;
-    statusEl.style.color = '#ef4444';
-  }
-}
-
-async function endBrowserCall() {
-  // Disconnect Twilio.Device call if active
-  if (_twilioConnection) { try { _twilioConnection.disconnect(); } catch(e) {} _twilioConnection = null; }
-  if (_twilioDevice) { try { _twilioDevice.disconnectAll(); } catch(e) {} }
-  if (_callTimer) { clearInterval(_callTimer); _callTimer = null; }
-  document.getElementById('call-status').textContent = 'Call Ended';
-  document.getElementById('call-status').style.color = '#888';
-  document.getElementById('call-end-btn').style.display = 'none';
-  document.getElementById('call-mute-btn').style.display = 'none';
-  document.getElementById('call-outcome-panel').style.display = 'block';
-
-  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-  try {
-    await fetch(VOICE_FN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + anon },
-      body: JSON.stringify({ action: 'log_call', contact_id: _callContactId, to_phone: _callPhone, duration: _callSeconds, status: 'completed', notes: document.getElementById('call-notes').value, outcome: _callOutcome, twilio_call_sid: window._currentCallSid || '' })
-    });
-  } catch(e) { console.warn('Call log error:', e); }
-}
-
-function toggleCallMute() {
-  var btn = document.getElementById('call-mute-btn');
-  var muted = btn.dataset.muted !== 'true';
-  btn.dataset.muted = muted ? 'true' : 'false';
-  btn.style.background = muted ? 'rgba(239,68,68,0.15)' : '#222';
-  btn.style.color = muted ? '#ef4444' : '#888';
-  // Mute the actual Twilio connection
-  if (_twilioConnection && _twilioConnection.mute) { try { _twilioConnection.mute(muted); } catch(e) {} }
-}
-
-function setCallOutcome(outcome) {
-  _callOutcome = outcome;
-  document.querySelectorAll('.call-outcome-pill').forEach(function(b) { b.classList.remove('selected'); });
-  if (event && event.target) { var pill = event.target.closest('.call-outcome-pill'); if (pill) pill.classList.add('selected'); }
-}
-
-async function loadCallContextSms(contactId) {
-  var wrap = document.getElementById('call-recent-sms');
-  var el = document.getElementById('call-recent-sms-content');
-  if (!wrap || !el) return;
-  try {
-    var { data } = await sb.from('sms_log').select('body,direction,created_at').eq('contact_id', contactId).order('created_at', { ascending: false }).limit(3);
-    if (data && data.length) {
-      wrap.style.display = 'block';
-      el.innerHTML = data.reverse().map(function(m) {
-        var isOut = m.direction !== 'inbound';
-        var ago = Math.round((Date.now() - new Date(m.created_at)) / 60000);
-        var timeStr = ago < 60 ? ago + 'm' : Math.round(ago/60) + 'h';
-        return '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;font-size:11px;">' +
-          '<span style="color:' + (isOut ? '#C9A84C' : '#666') + ';flex-shrink:0;">' + (isOut ? '&#8594;' : '&#8592;') + '</span>' +
-          '<span style="color:#aaa;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ((m.body||'').substring(0,45)) + '</span>' +
-          '<span style="color:#555;font-size:9px;flex-shrink:0;">' + timeStr + '</span>' +
-        '</div>';
+      list.innerHTML = msgs.map(function(m) {
+        var ago = timeAgo(new Date(m.created_at));
+        var arrow = m.direction === 'outbound' ? '→' : '←';
+        return '<div class="cm-msg"><span class="cm-msg-arrow">' + arrow + '</span><span class="cm-msg-text">' + escapeHtml((m.body||'').slice(0,60)) + '</span><span class="cm-msg-time">' + ago + '</span></div>';
       }).join('');
-    } else { wrap.style.display = 'none'; }
-  } catch(e) { wrap.style.display = 'none'; }
-}
+    }).catch(function() {
+      var list = document.getElementById('cmMsgList');
+      if (list) list.innerHTML = '<div class="cm-msg" style="color:#555;justify-content:center;">Could not load messages</div>';
+    });
+  }
+
+  function renderRinging() {
+    status.className = 'cm-status ringing';
+    statusText.textContent = 'Ringing';
+    pulse1.classList.add('ringing'); pulse2.classList.add('ringing');
+    timer.className = 'cm-timer muted';
+    actions.innerHTML =
+      '<div class="cm-action-group">' +
+        '<button class="cm-btn hangup" id="cmCancelBtn" aria-label="Cancel call">' + hangupIcon + '</button>' +
+        '<span class="cm-btn-label">Cancel</span>' +
+      '</div>';
+    document.getElementById('cmCancelBtn').addEventListener('click', hangup);
+    footer.innerHTML =
+      '<div class="cm-divider"></div>' +
+      '<div class="cm-section-label" style="justify-content:center;"><span style="color:#888;">Calling via Twilio</span></div>';
+  }
+
+  function renderConnected() {
+    status.className = 'cm-status connected';
+    statusText.textContent = 'Connected';
+    pulse1.classList.remove('ringing'); pulse2.classList.remove('ringing');
+    timer.className = 'cm-timer';
+    actions.innerHTML =
+      '<div class="cm-action-group">' +
+        '<button class="cm-btn secondary' + (muted ? ' active' : '') + '" id="btnMute" aria-label="Mute">' + micIcon(muted) + '</button>' +
+        '<span class="cm-btn-label">' + (muted ? 'Muted' : 'Mute') + '</span>' +
+      '</div>' +
+      '<div class="cm-action-group">' +
+        '<button class="cm-btn hangup" id="cmEndBtn" aria-label="End call">' + hangupIcon + '</button>' +
+        '<span class="cm-btn-label">End</span>' +
+      '</div>' +
+      '<div class="cm-action-group">' +
+        '<button class="cm-btn secondary' + (speakerOn ? ' active' : '') + '" id="btnSpeaker" aria-label="Speaker">' + speakerIcon(speakerOn) + '</button>' +
+        '<span class="cm-btn-label">Speaker</span>' +
+      '</div>';
+    document.getElementById('btnMute').addEventListener('click', toggleMute);
+    document.getElementById('btnSpeaker').addEventListener('click', toggleSpeaker);
+    document.getElementById('cmEndBtn').addEventListener('click', hangup);
+    footer.innerHTML =
+      '<div class="cm-divider"></div>' +
+      '<div class="cm-section-label">Live notes</div>' +
+      '<textarea class="cm-notes" id="cmLiveNotes" placeholder="Type call notes — saved with call log..."></textarea>';
+  }
+
+  function renderEnded() {
+    status.className = 'cm-status ended';
+    statusText.textContent = 'Call ended · ' + fmtTime(callDuration);
+    pulse1.classList.remove('ringing'); pulse2.classList.remove('ringing');
+    timer.className = 'cm-timer';
+    actions.innerHTML = '';
+    var liveNotes = (document.getElementById('cmLiveNotes') && document.getElementById('cmLiveNotes').value) || '';
+    footer.innerHTML =
+      '<div class="cm-divider"></div>' +
+      '<div class="cm-section-label">Log outcome</div>' +
+      '<div class="cm-outcome" id="cmOutcomeGrid">' +
+        '<button class="cm-outcome-btn success" data-outcome="spoke_interested">✓ Spoke — interested</button>' +
+        '<button class="cm-outcome-btn" data-outcome="no_answer">No answer</button>' +
+        '<button class="cm-outcome-btn" data-outcome="left_voicemail">Left voicemail</button>' +
+        '<button class="cm-outcome-btn danger" data-outcome="not_interested">Not interested</button>' +
+      '</div>' +
+      '<textarea class="cm-notes" id="cmEndNotes" placeholder="Add call notes..." style="height: 56px; margin-bottom: 12px;">' + escapeHtml(liveNotes) + '</textarea>' +
+      '<button class="cm-save" id="cmSaveBtn">Save & close</button>';
+    document.querySelectorAll('#cmOutcomeGrid .cm-outcome-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('#cmOutcomeGrid .cm-outcome-btn').forEach(function(b) { b.classList.remove('selected'); });
+        btn.classList.add('selected');
+        selectedOutcome = btn.dataset.outcome;
+      });
+    });
+    document.getElementById('cmSaveBtn').addEventListener('click', saveAndClose);
+  }
+
+  function getDevice() {
+    if (device) return Promise.resolve(device);
+    var anon = getAnon();
+    return fetch(VOICE_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: anon, Authorization: 'Bearer ' + anon },
+      body: JSON.stringify({ action: 'get_token' })
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      if (!data.token) throw new Error(data.error || 'Failed to get Twilio token');
+      device = new Twilio.Device(data.token, { codecPreferences: ['opus', 'pcmu'], closeProtection: true });
+      device.on('error', function(e) { console.error('[Twilio] Device error:', e); });
+      return device;
+    });
+  }
+
+  function startCall() {
+    if (!currentContact || !currentContact.phone) {
+      alert('No phone number for this contact');
+      return;
+    }
+    getDevice().then(function(dev) {
+      renderRinging();
+      var conn = dev.connect({ params: { To: toE164(currentContact.phone) } });
+      activeCall = conn;
+      conn.on('ringing', function() { /* keep ringing UI */ });
+      conn.on('accept', function() { startTimer(); renderConnected(); });
+      conn.on('disconnect', function() { stopTimer(); renderEnded(); activeCall = null; });
+      conn.on('cancel', function() { stopTimer(); renderEnded(); activeCall = null; });
+      conn.on('reject', function() { stopTimer(); renderEnded(); activeCall = null; });
+      conn.on('error', function(e) {
+        console.error('[twilio call]', e);
+        stopTimer();
+        renderEnded();
+        activeCall = null;
+      });
+    }).catch(function(e) {
+      console.error('[startCall]', e);
+      alert('Could not start call: ' + (e.message || e));
+      renderReady();
+    });
+  }
+
+  function hangup() {
+    if (activeCall) {
+      try { activeCall.disconnect(); } catch(e) {}
+    } else {
+      stopTimer();
+      renderEnded();
+    }
+  }
+  function toggleMute() {
+    muted = !muted;
+    if (activeCall) { try { activeCall.mute(muted); } catch(e) {} }
+    renderConnected();
+  }
+  function toggleSpeaker() {
+    speakerOn = !speakerOn;
+    renderConnected();
+  }
+
+  function saveAndClose() {
+    var notes = (document.getElementById('cmEndNotes') && document.getElementById('cmEndNotes').value) || '';
+    var anon = getAnon();
+    var sid = (activeCall && activeCall.parameters && activeCall.parameters.CallSid) || window._currentCallSid || '';
+    fetch(VOICE_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: anon, Authorization: 'Bearer ' + anon },
+      body: JSON.stringify({
+        action: 'log_call',
+        contact_id: (currentContact && currentContact.id) || null,
+        to: (currentContact && currentContact.phone) || null,
+        duration: callDuration,
+        status: 'completed',
+        notes: notes,
+        outcome: selectedOutcome,
+        twilio_call_sid: sid
+      })
+    }).catch(function(e) { console.warn('[log_call]', e); });
+    if (typeof showToast === 'function') showToast('Call logged: ' + (selectedOutcome || 'completed').replace(/_/g, ' '));
+    if (typeof loadCommunications === 'function') loadCommunications();
+    closeModal();
+  }
+
+  function closeModal() {
+    if (activeCall) { try { activeCall.disconnect(); } catch(e) {} activeCall = null; }
+    stopTimer();
+    callDuration = 0;
+    muted = false; speakerOn = false; selectedOutcome = null;
+    if (modal) modal.classList.remove('open');
+  }
+
+  // Backward-compatible API: accepts either openCallModal({id, first_name, last_name, phone})
+  // or legacy openCallModal(name, phone, contactId)
+  window.openCallModal = function(arg, phoneArg, contactIdArg) {
+    if (!modal) bindRefs();
+    var contact;
+    if (arg && typeof arg === 'object') {
+      contact = arg;
+    } else {
+      var nameStr = (arg || '').trim();
+      var parts = nameStr.split(/\s+/);
+      contact = {
+        id: contactIdArg || null,
+        first_name: parts[0] || nameStr,
+        last_name: parts.slice(1).join(' '),
+        phone: phoneArg || ''
+      };
+    }
+    currentContact = contact;
+    // Expose to legacy voicemail-drop helpers below
+    window._callPhone = contact.phone || '';
+    window._callContactId = contact.id || null;
+    window._currentCallSid = '';
+
+    var initials = ((contact.first_name && contact.first_name[0]) || '').toUpperCase()
+                 + ((contact.last_name && contact.last_name[0]) || '').toUpperCase();
+    if (!initials) initials = '?';
+    avatar.textContent = initials;
+    var displayName = ((contact.first_name || '') + ' ' + (contact.last_name || '')).trim() || 'Unknown';
+    nameEl.textContent = displayName;
+    phoneEl.textContent = formatDisplayPhone(contact.phone || '');
+
+    callDuration = 0;
+    muted = false; speakerOn = false; selectedOutcome = null;
+    modal.classList.add('open');
+    renderReady();
+  };
+
+  // Legacy helpers retained for the (now-orphaned) voicemail picker modal
+  window.closeCallModal = closeModal;
+
+  // Bind on DOM ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindRefs);
+  } else {
+    bindRefs();
+  }
+})();
 
 /* ═══ VOICEMAIL DROP ═══ */
 function openVoicemailPicker() {
@@ -18991,26 +19141,22 @@ async function loadVoicemailLibrary() {
 
 async function dropVoicemail(vmUrl) {
   closeVmPicker();
-  document.getElementById('call-status').textContent = 'Dropping voicemail...';
-  document.getElementById('call-status').style.color = '#f39c12';
+  if (typeof showToast === 'function') showToast('Dropping voicemail...');
   var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
   try {
     var res = await fetch(VOICE_FN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + anon },
-      body: JSON.stringify({ action: 'voicemail_drop', to: _callPhone, voicemail_url: vmUrl, contact_id: _callContactId })
+      body: JSON.stringify({ action: 'voicemail_drop', to: window._callPhone, voicemail_url: vmUrl, contact_id: window._callContactId })
     });
     var data = await res.json();
     if (data.success) {
-      document.getElementById('call-status').textContent = 'Voicemail dropped!';
-      document.getElementById('call-status').style.color = '#22c55e';
-      showToast('Voicemail dropped successfully');
+      if (typeof showToast === 'function') showToast('Voicemail dropped successfully');
     } else {
-      document.getElementById('call-status').textContent = 'VM failed: ' + (data.error || '');
-      document.getElementById('call-status').style.color = '#ef4444';
+      if (typeof showToast === 'function') showToast('VM failed: ' + (data.error || 'unknown'));
     }
   } catch(e) {
-    document.getElementById('call-status').textContent = 'Error: ' + e.message;
+    if (typeof showToast === 'function') showToast('Error: ' + e.message);
   }
 }
 
