@@ -4694,14 +4694,18 @@ function wireLeadInfoAutoSave(cId) {
 async function loadNotes() {
   if (!leadId && !contactId) return;
   try {
-    let q = sb.from('notes').select('*').order('created_at', { ascending: false });
-    if (leadId) q = q.eq('related_id', leadId).eq('related_table', 'leads');
-    else if (contactId) q = q.eq('related_id', contactId).eq('related_table', 'contacts');
+    const cid = contactId || leadId;
+    // Match notes by contact_id directly OR via legacy related_table/related_id.
+    // Call-notes written by twilio-voice have related_table='calls_log' but
+    // contact_id set, so contact_id is the canonical link.
+    let q = sb.from('notes').select('*').order('created_at', { ascending: false })
+      .or('contact_id.eq.' + cid + ',and(related_table.eq.contacts,related_id.eq.' + cid + '),and(related_table.eq.leads,related_id.eq.' + cid + ')');
     const { data } = await q;
     notesData = data || [];
     renderNotes();
   } catch (_) {}
 }
+window.loadNotes = loadNotes;
 
 function renderNotes() {
   const el = document.getElementById('notes-list');
@@ -4990,8 +4994,10 @@ async function loadActivity(reset) {
 
   try {
     var query = sb.from('activity_events').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(activityOffset, activityOffset + ACTIVITY_PAGE - 1);
-    if (leadId) query = query.eq('lead_id', leadId);
-    else if (contactId) query = query.eq('contact_id', contactId);
+    // Match either contact_id or lead_id — events written by edge functions use
+    // contact_id (lead_id is null) while older code paths may have used lead_id.
+    var cid = contactId || leadId;
+    if (cid) query = query.or('contact_id.eq.' + cid + ',lead_id.eq.' + cid);
     if (_activityFilter) query = query.or('channel.eq.' + _activityFilter + ',type.eq.' + _activityFilter);
 
     var result = await query;
@@ -5010,6 +5016,7 @@ async function loadActivity(reset) {
     if (reset) el.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Error loading activity: ' + err.message + '</div>';
   }
 }
+window.loadActivity = loadActivity;
 
 function renderActivityItem(e) {
   var type = e.type || e.channel || 'system';
@@ -19062,12 +19069,22 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     var notes = (document.getElementById('cmEndNotes') && document.getElementById('cmEndNotes').value) || '';
     var anon = getAnon();
     var sid = (activeCall && activeCall.parameters && activeCall.parameters.CallSid) || window._currentCallSid || '';
+    var contactIdForRefresh = (currentContact && currentContact.id) || null;
+
+    function refreshPanels() {
+      // Refresh sections that may show the new call entry / call note
+      if (typeof window.loadNotes === 'function') { try { window.loadNotes(); } catch(_) {} }
+      if (typeof window.loadActivity === 'function') { try { window.loadActivity(); } catch(_) {} }
+      if (typeof window.loadCommunications === 'function') { try { window.loadCommunications(); } catch(_) {} }
+      try { window.dispatchEvent(new CustomEvent('call-logged', { detail: { contact_id: contactIdForRefresh } })); } catch(_) {}
+    }
+
     fetch(VOICE_FN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: anon, Authorization: 'Bearer ' + anon },
       body: JSON.stringify({
         action: 'log_call',
-        contact_id: (currentContact && currentContact.id) || null,
+        contact_id: contactIdForRefresh,
         to: (currentContact && currentContact.phone) || null,
         duration: callDuration,
         status: 'completed',
@@ -19075,9 +19092,12 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
         outcome: selectedOutcome,
         twilio_call_sid: sid
       })
-    }).catch(function(e) { console.warn('[log_call]', e); });
+    }).then(refreshPanels, function(e) {
+      console.warn('[log_call]', e);
+      refreshPanels();
+    });
+
     if (typeof showToast === 'function') showToast('Call logged: ' + (selectedOutcome || 'completed').replace(/_/g, ' '));
-    if (typeof loadCommunications === 'function') loadCommunications();
     closeModal();
   }
 
