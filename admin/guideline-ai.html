@@ -6,6 +6,10 @@
   <title>Guideline AI — Rates & Realty CRM</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // PDF.js worker URL — the library itself is loaded lazily inside the citation viewer
+    window.PDFJS_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs";
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -287,6 +291,110 @@
       animation: ugSpin 0.8s linear infinite;
     }
     @keyframes ugSpin { to { transform: rotate(360deg); } }
+
+    /* ===== Inline citation chips ===== */
+    .gai-cite {
+      display: inline-flex; align-items: center;
+      padding: 1px 8px; margin: 0 2px;
+      background: rgba(201,168,76,0.15);
+      color: var(--gold);
+      border: 1px solid rgba(201,168,76,0.3);
+      border-radius: 100px;
+      font-size: 11px; font-weight: 500;
+      cursor: pointer; vertical-align: 1px;
+      line-height: 1.4;
+      transition: all 0.15s;
+    }
+    .gai-cite:hover {
+      background: rgba(201,168,76,0.28);
+      border-color: rgba(201,168,76,0.55);
+    }
+
+    /* ===== Citation viewer slide-over ===== */
+    .cv-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      background: rgba(0,0,0,0.55); backdrop-filter: blur(3px);
+      display: flex; justify-content: flex-end;
+      animation: cvFade 0.18s ease;
+    }
+    @keyframes cvFade { from { opacity: 0; } to { opacity: 1; } }
+    .cv-panel {
+      width: 720px; max-width: 95vw; height: 100%;
+      background: #0f0f0f;
+      border-left: 1px solid rgba(201,168,76,0.2);
+      display: flex; flex-direction: column;
+      color: #F5F0E8; font-family: 'Inter', system-ui, sans-serif;
+      animation: cvSlide 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    @keyframes cvSlide { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    .cv-head {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    }
+    .cv-head-text { flex: 1; min-width: 0; }
+    .cv-lender { font-size: 11px; color: var(--gold); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+    .cv-title { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 18px; font-weight: 600; line-height: 1.3; }
+    .cv-page { font-size: 12px; color: #888; margin-top: 4px; font-family: ui-monospace, monospace; }
+    .cv-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .cv-link, .cv-close {
+      width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.05); border: none; border-radius: 50%;
+      color: #ccc; font-size: 16px; cursor: pointer; text-decoration: none;
+    }
+    .cv-link:hover, .cv-close:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .cv-close { font-size: 20px; line-height: 1; }
+
+    .cv-snippet {
+      margin: 12px 20px 0;
+      padding: 12px 14px;
+      background: rgba(255,224,102,0.08);
+      border-left: 3px solid #FFE066;
+      border-radius: 4px;
+      font-size: 13px; line-height: 1.6; color: #f0e8c8;
+      max-height: 110px; overflow-y: auto;
+    }
+    .cv-snippet em { color: #888; font-style: normal; }
+
+    .cv-toolbar {
+      margin: 12px 20px 0;
+      padding: 8px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .cv-page-btn {
+      width: 30px; height: 30px;
+      background: transparent; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px; color: #ccc; cursor: pointer; font-size: 12px;
+    }
+    .cv-page-btn:hover:not(:disabled) { background: rgba(201,168,76,0.15); color: var(--gold); }
+    .cv-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .cv-page-info { font-size: 12px; color: #aaa; font-family: ui-monospace, monospace; }
+    .cv-spacer { flex: 1; }
+
+    .cv-pdf {
+      flex: 1;
+      margin: 12px 20px 20px;
+      background: #1a1a1a;
+      border-radius: 8px;
+      overflow: auto;
+      position: relative;
+      display: flex; justify-content: center; align-items: flex-start;
+      padding: 16px;
+    }
+    .cv-pdf canvas { display: block; max-width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+    .cv-loading { color: #888; font-size: 13px; padding: 40px; }
+    .cv-highlight-layer {
+      position: absolute; pointer-events: none;
+      mix-blend-mode: multiply;
+    }
+    .cv-highlight-layer .hl-rect {
+      position: absolute;
+      background: rgba(255, 224, 102, 0.55);
+      border-radius: 2px;
+    }
   </style>
 </head>
 <body>
@@ -905,7 +1013,7 @@ function askQuestion(q) {
   sendQuestion();
 }
 
-function appendMsg(text, isUser) {
+function appendMsg(text, isUser, citations) {
   var empty = document.getElementById('emptyChatState');
   if (empty) empty.remove();
   var container = document.getElementById('chatMessages');
@@ -918,16 +1026,61 @@ function appendMsg(text, isUser) {
   body.className = 'msg-body';
   var bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
-  bubble.innerHTML = text
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/^- (.+)$/gm, '<li style="list-style:none;padding-left:14px;position:relative;"><span style="position:absolute;left:0;color:var(--gold);">•</span>$1</li>')
-    .replace(/\n/g, '<br>');
+
+  if (!isUser && citations && citations.length) {
+    bubble.innerHTML = renderMarkdownWithCitations(text, citations);
+    bubble.querySelectorAll('.gai-cite').forEach(function(el) {
+      el.addEventListener('click', function() {
+        var i = parseInt(el.dataset.idx, 10);
+        var c = citations[i];
+        if (c && typeof window.openCitationViewer === 'function') window.openCitationViewer(c);
+      });
+    });
+  } else {
+    bubble.innerHTML = (text || '')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/^- (.+)$/gm, '<li style="list-style:none;padding-left:14px;position:relative;"><span style="position:absolute;left:0;color:var(--gold);">•</span>$1</li>')
+      .replace(/\n/g, '<br>');
+  }
+
   body.appendChild(bubble);
   div.appendChild(av);
   div.appendChild(body);
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
   return body;
+}
+
+function escapeHtmlGai(s) {
+  return (s || '').replace(/[&<>"']/g, function(c) {
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+function renderMarkdownWithCitations(text, citations) {
+  var idxByMarker = {};
+  citations.forEach(function(c, i) { if (c && c.marker) idxByMarker[c.marker] = i; });
+
+  var html = escapeHtmlGai(text);
+  html = html.replace(/\[\^(c\d+)\]/g, function(m, marker) {
+    var i = idxByMarker[marker];
+    if (i === undefined) return '';
+    var c = citations[i];
+    var rawLender = c.lender_name && c.lender_name !== 'Unknown lender' ? c.lender_name : (c.doc_title || 'Source');
+    var lender = escapeHtmlGai(rawLender);
+    var page = c.page_number ? ' p.' + c.page_number : '';
+    var titleAttr = escapeHtmlGai(c.doc_title || '');
+    return '<span class="gai-cite" data-idx="' + i + '" title="' + titleAttr + '">' + lender + page + '</span>';
+  });
+
+  html = html
+    .replace(/^### (.+)$/gm, '<h4 style="margin:10px 0 4px;font-size:14px;color:#fff;">$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3 style="margin:12px 0 6px;font-size:15px;color:#fff;">$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(?:^|\n)[-*] (.+)/g, '\n<li style="list-style:none;padding-left:14px;position:relative;"><span style="position:absolute;left:0;color:var(--gold);">•</span>$1</li>');
+  html = html.replace(/(<li[^>]*>[\s\S]*?<\/li>(?:\n<li[^>]*>[\s\S]*?<\/li>)*)/g, '<ul style="margin:6px 0;padding:0;">$1</ul>');
+  html = html.replace(/\n/g, '<br>');
+  return html;
 }
 
 function showSources(body, sources) {
@@ -969,7 +1122,7 @@ async function sendQuestion() {
     var data = await res.json();
     var el = document.getElementById('thinking');
     if (el) el.remove();
-    var body = appendMsg(data.reply || 'No response', false);
+    var body = appendMsg(data.reply || 'No response', false, data.citations || []);
     showSources(body, data.sources);
     chatHistory.push({ role: 'assistant', content: data.reply });
   } catch(e) {
@@ -1009,6 +1162,216 @@ document.addEventListener('DOMContentLoaded', function() {
   loadGlobalGuidelineCounts();
   renderReferenceLibrary();
 });
+</script>
+
+<!-- ===== Citation viewer (PDF.js) ===== -->
+<div id="citationViewer" class="cv-overlay" style="display:none;">
+  <div class="cv-panel">
+    <div class="cv-head">
+      <div class="cv-head-text">
+        <div class="cv-lender" id="cvLender">—</div>
+        <div class="cv-title" id="cvTitle">—</div>
+        <div class="cv-page" id="cvPage">—</div>
+      </div>
+      <div class="cv-actions">
+        <a id="cvDownload" href="#" target="_blank" class="cv-link" title="Open full PDF in new tab">↗</a>
+        <button id="cvClose" class="cv-close" type="button" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div class="cv-snippet" id="cvSnippet"></div>
+    <div class="cv-toolbar">
+      <button id="cvPrev" class="cv-page-btn" type="button">◀</button>
+      <span id="cvPageInfo" class="cv-page-info">—</span>
+      <button id="cvNext" class="cv-page-btn" type="button">▶</button>
+      <span class="cv-spacer"></span>
+      <button id="cvZoomOut" class="cv-page-btn" type="button">−</button>
+      <span id="cvZoomLabel" class="cv-page-info">100%</span>
+      <button id="cvZoomIn" class="cv-page-btn" type="button">+</button>
+    </div>
+    <div class="cv-pdf" id="cvPdf">
+      <div class="cv-loading" id="cvLoading">Loading PDF…</div>
+      <canvas id="cvCanvas"></canvas>
+      <div id="cvHighlightLayer" class="cv-highlight-layer"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  // Lazy-load pdf.js as ESM and stash on window so the viewer IIFE can use it
+  import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs').then(function(mod) {
+    var pdfjsLib = mod;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = window.PDFJS_WORKER_URL;
+    window.__pdfjsLib = pdfjsLib;
+  }).catch(function(err) {
+    console.error('[pdfjs load]', err);
+  });
+</script>
+
+<script>
+(function() {
+  const cv = document.getElementById('citationViewer');
+  const cvCanvas = document.getElementById('cvCanvas');
+  const cvLoading = document.getElementById('cvLoading');
+  const cvHighlight = document.getElementById('cvHighlightLayer');
+  const cvLender = document.getElementById('cvLender');
+  const cvTitle = document.getElementById('cvTitle');
+  const cvPage = document.getElementById('cvPage');
+  const cvSnippet = document.getElementById('cvSnippet');
+  const cvDownload = document.getElementById('cvDownload');
+  const cvPageInfo = document.getElementById('cvPageInfo');
+  const cvZoomLabel = document.getElementById('cvZoomLabel');
+
+  let pdfDoc = null;
+  let currentPage = 1;
+  let currentZoom = 1.5;
+  let currentSnippetText = '';
+
+  function escHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  async function openCitationViewer(citation) {
+    cv.style.display = 'flex';
+    cvLender.textContent = citation.lender_name && citation.lender_name !== 'Unknown lender'
+      ? citation.lender_name
+      : (citation.doc_title || 'Source');
+    cvTitle.textContent = citation.doc_title || 'Guideline';
+    cvPage.textContent = citation.page_number ? ('Page ' + citation.page_number) : '';
+    cvSnippet.innerHTML = '<em>From the source:</em> ' + escHtml(citation.snippet || '');
+    cvDownload.href = citation.file_url || '#';
+    cvLoading.style.display = 'block';
+    cvLoading.textContent = 'Loading PDF…';
+    cvCanvas.style.display = 'none';
+    cvHighlight.innerHTML = '';
+    currentPage = citation.page_number || 1;
+    currentSnippetText = citation.snippet || '';
+
+    if (!citation.file_url) {
+      cvLoading.textContent = 'PDF not available for this citation.';
+      return;
+    }
+
+    // Wait briefly for pdf.js to finish loading if user clicked very fast
+    let waited = 0;
+    while (!window.__pdfjsLib && waited < 3000) {
+      await new Promise(r => setTimeout(r, 100));
+      waited += 100;
+    }
+    const lib = window.__pdfjsLib;
+    if (!lib) {
+      cvLoading.textContent = 'PDF.js failed to load.';
+      return;
+    }
+
+    try {
+      pdfDoc = await lib.getDocument({ url: citation.file_url, withCredentials: false }).promise;
+      currentPage = Math.min(Math.max(1, currentPage), pdfDoc.numPages);
+      await renderPage(currentPage);
+    } catch (e) {
+      console.error('[citation viewer]', e);
+      cvLoading.textContent = 'Could not load PDF: ' + e.message;
+    }
+  }
+
+  async function renderPage(num) {
+    if (!pdfDoc) return;
+    cvLoading.style.display = 'block';
+    cvCanvas.style.display = 'none';
+    cvHighlight.innerHTML = '';
+    try {
+      const page = await pdfDoc.getPage(num);
+      const viewport = page.getViewport({ scale: currentZoom });
+      const ctx = cvCanvas.getContext('2d');
+      cvCanvas.width = viewport.width;
+      cvCanvas.height = viewport.height;
+      cvCanvas.style.width = viewport.width + 'px';
+      cvCanvas.style.height = viewport.height + 'px';
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      cvLoading.style.display = 'none';
+      cvCanvas.style.display = 'block';
+      cvPageInfo.textContent = num + ' / ' + pdfDoc.numPages;
+      cvZoomLabel.textContent = Math.round(currentZoom * 66.67) + '%';
+
+      if (currentSnippetText) await highlightSnippet(page, viewport);
+    } catch (e) {
+      console.error('[render page]', e);
+      cvLoading.textContent = 'Page render failed: ' + e.message;
+    }
+  }
+
+  async function highlightSnippet(page, viewport) {
+    const tc = await page.getTextContent();
+    const needle = (currentSnippetText || '').replace(/\s+/g, ' ').trim().substring(0, 60).toLowerCase();
+    if (needle.length < 8) return;
+
+    const canvasRect = cvCanvas.getBoundingClientRect();
+    const pdfRect = document.getElementById('cvPdf').getBoundingClientRect();
+    cvHighlight.style.top = (canvasRect.top - pdfRect.top) + 'px';
+    cvHighlight.style.left = (canvasRect.left - pdfRect.left) + 'px';
+    cvHighlight.style.width = canvasRect.width + 'px';
+    cvHighlight.style.height = canvasRect.height + 'px';
+    cvHighlight.innerHTML = '';
+
+    const head = needle.substring(0, 30);
+    let matched = 0;
+    for (const item of tc.items) {
+      const itemText = (item.str || '').toLowerCase().trim();
+      if (!itemText || itemText.length < 3) continue;
+      if (head.includes(itemText) || itemText.includes(head.substring(0, 12))) {
+        const tx = pdfjsTransform(item.transform, viewport);
+        const x = tx[4];
+        const y = tx[5] - item.height * currentZoom;
+        const w = item.width * currentZoom;
+        const h = item.height * currentZoom * 1.2;
+        const rect = document.createElement('div');
+        rect.className = 'hl-rect';
+        rect.style.left = x + 'px';
+        rect.style.top = y + 'px';
+        rect.style.width = w + 'px';
+        rect.style.height = h + 'px';
+        cvHighlight.appendChild(rect);
+        matched++;
+        if (matched > 20) break;
+        if (matched === 1) {
+          setTimeout(() => rect.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+        }
+      }
+    }
+  }
+
+  function pdfjsTransform(m, viewport) {
+    const vt = viewport.transform;
+    return [
+      vt[0]*m[0] + vt[2]*m[1],
+      vt[1]*m[0] + vt[3]*m[1],
+      vt[0]*m[2] + vt[2]*m[3],
+      vt[1]*m[2] + vt[3]*m[3],
+      vt[0]*m[4] + vt[2]*m[5] + vt[4],
+      vt[1]*m[4] + vt[3]*m[5] + vt[5],
+    ];
+  }
+
+  document.getElementById('cvClose').addEventListener('click', () => {
+    cv.style.display = 'none'; pdfDoc = null;
+  });
+  cv.addEventListener('click', e => {
+    if (e.target === cv) { cv.style.display = 'none'; pdfDoc = null; }
+  });
+  document.getElementById('cvPrev').addEventListener('click', () => {
+    if (pdfDoc && currentPage > 1) { currentPage--; currentSnippetText = ''; renderPage(currentPage); }
+  });
+  document.getElementById('cvNext').addEventListener('click', () => {
+    if (pdfDoc && currentPage < pdfDoc.numPages) { currentPage++; currentSnippetText = ''; renderPage(currentPage); }
+  });
+  document.getElementById('cvZoomIn').addEventListener('click', () => {
+    currentZoom = Math.min(3, currentZoom + 0.25); renderPage(currentPage);
+  });
+  document.getElementById('cvZoomOut').addEventListener('click', () => {
+    currentZoom = Math.max(0.6, currentZoom - 0.25); renderPage(currentPage);
+  });
+
+  window.openCitationViewer = openCitationViewer;
+})();
 </script>
 
 <!-- ===== Upload Guideline modal ===== -->
