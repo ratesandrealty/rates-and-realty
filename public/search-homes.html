@@ -1071,6 +1071,13 @@ function _applyIncomingSearchParams() {
     var cityParam = p.get('cities') || p.get('city');
     if (cityParam) {
       selectedCities = cityParam.split(',').map(function(s){return s.trim();}).filter(Boolean);
+      // Explicit city list takes precedence over any county selection — clear
+      // selectedCounties so the chip bar shows ONLY the URL cities, not
+      // "Orange + 8 cities" together. The county dropdown was already rendered
+      // (via the counties branch above) so we leave it intact for the user's
+      // dropdown UI; only the active selection is dropped.
+      selectedCounties.clear();
+      document.querySelectorAll('.county-cb').forEach(function(cb){ cb.checked = false; });
       // Update city checkboxes if the dropdown has already been populated
       document.querySelectorAll('.city-cb').forEach(function(cb){ cb.checked = selectedCities.indexOf(cb.value) >= 0; });
     }
@@ -1417,8 +1424,9 @@ function buildODataFilter(bounds) {
     parts.push('Longitude le ' + neLng.toFixed(4));
   }
 
-  // For Rent and Sold: never filter by city — Trestle lease/closed data doesn't match city fields
-  var skipLocationFilter = currentLease || activeStatus === 'Closed';
+  // Sold: never filter by city — Trestle closed data doesn't match city fields reliably.
+  // For Rent: honor explicit city/county selection (e.g. from listing-alert URLs).
+  var skipLocationFilter = activeStatus === 'Closed';
 
   if (!skipLocationFilter && selectedCities.length > 0) {
     var cityList = selectedCities.slice(0, 60);
@@ -1434,21 +1442,17 @@ function buildODataFilter(bounds) {
     parts.push("StateOrProvince eq 'CA'");
   }
 
-  // Status — For Rent uses Active status but Trestle lease listings may use different values.
-  // If the URL supplied a `statuses=` list (alert links), use OR over canonical values.
-  if (!currentLease) {
-    if (selectedStatuses && selectedStatuses.length > 0) {
-      var statusClauses = selectedStatuses.map(function(s){
-        return "StandardStatus eq '" + String(s).replace(/'/g,"''") + "'";
-      });
-      parts.push(statusClauses.length === 1 ? statusClauses[0] : '(' + statusClauses.join(' or ') + ')');
-    } else if (activeStatus) {
-      parts.push("StandardStatus eq '" + activeStatus + "'");
-    }
-  }
-  // For Rent: Active leases in Trestle
-  if (currentLease) {
+  // Status — honor selectedStatuses (from `?statuses=` URL param) for both sales and rentals.
+  // Falls back to activeStatus (sales) or 'Active' (rentals) when not supplied.
+  if (selectedStatuses && selectedStatuses.length > 0) {
+    var statusClauses = selectedStatuses.map(function(s){
+      return "StandardStatus eq '" + String(s).replace(/'/g,"''") + "'";
+    });
+    parts.push(statusClauses.length === 1 ? statusClauses[0] : '(' + statusClauses.join(' or ') + ')');
+  } else if (currentLease) {
     parts.push("StandardStatus eq 'Active'");
+  } else if (activeStatus) {
+    parts.push("StandardStatus eq '" + activeStatus + "'");
   }
 
   // Property types — skip for Sold/Closed and For Rent
@@ -1692,7 +1696,7 @@ function renderListings(page, append) {
         + '</div>';
     }
 
-    html += '<div class="listing-card" data-idx="' + i + '" onmouseenter="highlightMarker(' + i + ')" onmouseleave="unhighlightMarker(' + i + ')">'
+    html += '<div class="listing-card" data-idx="' + i + '" data-listing-key="' + (l.ListingKey || '') + '" onmouseenter="highlightMarker(' + i + ')" onmouseleave="unhighlightMarker(' + i + ')">'
       + '<div class="card-img" onclick="goDetail(' + i + ')">'
       + swiperHtml
       + '<span class="status-badge ' + badgeClass + '">' + badgeText + '</span>'
@@ -1734,7 +1738,35 @@ function renderListings(page, append) {
 
   grid.innerHTML = html;
   document.querySelectorAll('.card-swiper[data-swiper="1"]').forEach(buildSwiper);
+
+  // ?highlight=<MLS_ID> — emphasize a specific card after listings paint
+  if (typeof window.applyListingHighlight === 'function') {
+    setTimeout(window.applyListingHighlight, 100);
+  }
 }
+
+// Scroll to + emphasize a specific card when the URL has ?highlight=<MLS_ID>.
+// Fires once per page load (first match wins) so paginated re-renders don't
+// keep yanking the user back to the highlighted card.
+var _highlightApplied = false;
+function applyListingHighlight() {
+  if (_highlightApplied) return;
+  var params = new URLSearchParams(window.location.search);
+  var key = params.get('highlight');
+  if (!key) return;
+  var card = document.querySelector('.listing-card[data-listing-key="' + key.replace(/"/g, '\\"') + '"]');
+  if (!card) return; // listing not on current page — leave for next render
+  _highlightApplied = true;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.style.outline = '3px solid #C9A84C';
+  card.style.outlineOffset = '4px';
+  card.style.borderRadius = '8px';
+  setTimeout(function() {
+    card.style.transition = 'outline-color 1.5s ease';
+    card.style.outlineColor = 'transparent';
+  }, 4000);
+}
+window.applyListingHighlight = applyListingHighlight;
 
 /* ===== CARD ACTIONS ===== */
 function goDetail(i) {
