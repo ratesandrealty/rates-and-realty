@@ -517,6 +517,7 @@
             <select id="loanProduct">
                 <option>Conv 30yr Fixed</option><option>Conv 15yr Fixed</option>
                 <option>FHA 30yr Fixed</option><option>VA 30yr Fixed</option>
+                <option>USDA 30yr Fixed</option>
                 <option>Jumbo 30yr Fixed</option><option>DSCR 30yr Fixed</option>
                 <option>ARM 5/1</option><option>ARM 7/1</option>
             </select>
@@ -525,6 +526,22 @@
             <select id="lockPeriod">
                 <option>15 days</option><option selected>30 days</option><option>45 days</option><option>60 days</option>
             </select>
+        </div>
+    </div>
+    <div id="vaConfigBlock" style="display:none;">
+        <div class="row2">
+            <div class="field"><label>VA Use</label>
+                <select id="vaFirstUse">
+                    <option value="true" selected>First-time use</option>
+                    <option value="false">Subsequent use</option>
+                </select>
+            </div>
+            <div class="field" style="display:flex;align-items:flex-end;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#aaa;cursor:pointer;margin:0;">
+                    <input type="checkbox" id="vaExempt" style="width:14px;height:14px;accent-color:#C9A84C;">
+                    Funding fee exempt (Purple Heart / disability / surviving spouse)
+                </label>
+            </div>
         </div>
     </div>
     <div class="row2">
@@ -783,7 +800,18 @@ function getInputs() {
     if (loanAmount > 0) $('loanAmount').value = '$' + loanAmount.toLocaleString('en-US', {minimumFractionDigits: 0});
     else $('loanAmount').value = '';
 
-    const ltv = purchasePrice > 0 ? (loanAmount / purchasePrice * 100) : 0;
+    // Government upfront fee + financed total. Computed before LTV so the
+    // displayed LTV reflects the actual financed loan-to-value (e.g. an FHA
+    // 96.5% LTV becomes ~98.2% once UFMIP is rolled in).
+    const loanProductValue = $('loanProduct').value;
+    const vaConfig = {
+        firstUse: $('vaFirstUse') ? $('vaFirstUse').value !== 'false' : true,
+        exempt: $('vaExempt') ? $('vaExempt').checked === true : false,
+    };
+    const govFee = computeGovUpfrontFee(loanProductValue, loanAmount, downPct, vaConfig);
+    const totalLoanAmount = (govFee && govFee.financed) ? +(loanAmount + govFee.amount).toFixed(2) : loanAmount;
+
+    const ltv = purchasePrice > 0 ? (totalLoanAmount / purchasePrice * 100) : 0;
     // Auto-fill county from address ZIP
     autoFillCountyFromAddress();
 
@@ -809,8 +837,11 @@ function getInputs() {
         downPct,
         downPayment,
         loanAmount,
+        totalLoanAmount,
+        govFee,
+        vaConfig,
         ltv,
-        loanProduct: $('loanProduct').value,
+        loanProduct: loanProductValue,
         lockPeriod: $('lockPeriod').value,
         propertyType: $('propertyType').value,
         creditScore: $('creditScore').value,
@@ -857,15 +888,19 @@ function getLoanTermYears(product) {
 function calcMI(inp, rate) {
     const product = inp.loanProduct;
     const ltv = inp.ltv;
-    const loanAmount = inp.loanAmount;
+    // FHA monthly MIP is on the financed (post-UFMIP) loan amount.
+    const totalLoanAmount = inp.totalLoanAmount || inp.loanAmount;
     if (product.startsWith('FHA')) {
-        return loanAmount * 0.0055 / 12;
+        return totalLoanAmount * 0.0055 / 12;
     }
     if (product.startsWith('VA')) return 0;
-    // Conventional PMI
+    if (product.startsWith('USDA')) {
+        // USDA annual fee is 0.35% of avg loan balance; close enough to use total.
+        return totalLoanAmount * 0.0035 / 12;
+    }
+    // Conventional PMI — base loan amount (no upfront financed fee here).
     if (ltv <= 80) return 0;
-    // rough PMI based on LTV and credit
-    let pmiRate = 0.005; // 0.5% baseline
+    let pmiRate = 0.005;
     const cs = inp.creditScore;
     if (cs === '780+' || cs === '760-779') pmiRate = 0.003;
     else if (cs === '740-759' || cs === '720-739') pmiRate = 0.004;
@@ -873,13 +908,75 @@ function calcMI(inp, rate) {
     else pmiRate = 0.008;
     if (ltv > 95) pmiRate += 0.002;
     else if (ltv > 90) pmiRate += 0.001;
-    return loanAmount * pmiRate / 12;
+    return inp.loanAmount * pmiRate / 12;
+}
+
+// Government upfront fee (financed into the loan amount).
+//   FHA  → UFMIP 1.75%
+//   USDA → Upfront Guarantee Fee 1.00%
+//   VA   → Funding Fee, tiered by use (first/subsequent) and down-payment %.
+//          Exempt borrowers (Purple Heart / service-connected disability /
+//          surviving spouse) pay 0 — return null.
+// Returns null for non-government products or VA-exempt.
+function computeGovUpfrontFee(loanProduct, baseLoanAmount, downPaymentPct, vaConfig) {
+    if (!loanProduct || !baseLoanAmount) return null;
+    // Match the loan-program prefix as a whole word so e.g. "ARM Variable" wouldn't
+    // accidentally trigger the VA branch.
+    const product = loanProduct.toUpperCase();
+    const startsWithWord = (w) => product === w || product.startsWith(w + ' ');
+    vaConfig = vaConfig || {};
+
+    if (startsWithWord('FHA')) {
+        const rate = 0.0175;
+        return {
+            label: 'FHA Upfront MIP (UFMIP, 1.75%)',
+            rate,
+            amount: +(baseLoanAmount * rate).toFixed(2),
+            financed: true,
+        };
+    }
+    if (startsWithWord('VA')) {
+        if (vaConfig.exempt) return null;
+        const dp = downPaymentPct || 0;
+        let rate;
+        if (vaConfig.firstUse !== false) {
+            if (dp < 5) rate = 0.0215;
+            else if (dp < 10) rate = 0.0150;
+            else rate = 0.0125;
+        } else {
+            if (dp < 5) rate = 0.0330;
+            else if (dp < 10) rate = 0.0150;
+            else rate = 0.0125;
+        }
+        const useLabel = vaConfig.firstUse !== false ? '1st use' : 'subsequent';
+        return {
+            label: `VA Funding Fee (${useLabel}, ${(rate * 100).toFixed(2)}%)`,
+            rate,
+            amount: +(baseLoanAmount * rate).toFixed(2),
+            financed: true,
+        };
+    }
+    if (startsWithWord('USDA')) {
+        const rate = 0.01;
+        return {
+            label: 'USDA Upfront Guarantee Fee (1.00%)',
+            rate,
+            amount: +(baseLoanAmount * rate).toFixed(2),
+            financed: true,
+        };
+    }
+    return null;
 }
 
 function calcScenario(inp, sc) {
     const la = inp.loanAmount;
+    const totalLa = inp.totalLoanAmount || la;
     const pp = inp.purchasePrice;
+    const govFeeAmount = (inp.govFee && inp.govFee.financed) ? inp.govFee.amount : 0;
 
+    // Origination % and points are quoted off the BASE loan amount per
+    // industry convention — the financed UFMIP/Funding Fee/Guarantee Fee is
+    // an MI-style charge, not a basis for compensation.
     const origFee = la * sc.origComp / 100;
     const discountPoints = la * sc.points / 100;
     const uwFee = 1350;
@@ -892,7 +989,9 @@ function calcScenario(inp, sc) {
     const taxService = 85;
     const mersReg = 24.95;
     const processingFee = 995;
-    const subtotalB = appraisal + creditReport + floodCert + taxService + mersReg + processingFee;
+    // Government upfront fee (UFMIP / Funding Fee / Guarantee Fee) lives in
+    // Section B alongside the other lender-required services.
+    const subtotalB = appraisal + creditReport + floodCert + taxService + mersReg + processingFee + govFeeAmount;
 
     const titleLender = calcTitleLender(pp);
     const escrow = calcEscrow(pp);
@@ -921,10 +1020,12 @@ function calcScenario(inp, sc) {
     // discount points negative means lender credit already accounted in subtotalA
     const lenderCreditLine = sc.lenderCredits;
 
-    const cashToClose = inp.downPayment + totalClosing - lenderCreditLine;
+    // Financed gov fees are paid out of the loan, not cash, so subtract them
+    // from cash to close even though they're inside totalClosing.
+    const cashToClose = inp.downPayment + totalClosing - lenderCreditLine - govFeeAmount;
 
     const termYears = getLoanTermYears(inp.loanProduct);
-    const pi = calcPI(la, sc.rate, termYears);
+    const pi = calcPI(totalLa, sc.rate, termYears);
     const monthlyTax = inp.annualTax / 12;
     const monthlyIns = inp.annualInsurance / 12;
     const mi = calcMI(inp, sc.rate);
@@ -932,6 +1033,7 @@ function calcScenario(inp, sc) {
 
     return {
         origFee, discountPoints, uwFee, adminFee, subtotalA,
+        govFeeAmount,
         appraisal, creditReport, floodCert, taxService, mersReg, processingFee, subtotalB,
         titleLender, escrow, recording, notary, loanTieIn, messengerFee, subEscrowFee, subtotalC,
         totalLoanCosts,
@@ -1056,6 +1158,7 @@ function render(inp, results) {
                 ${row('Subtotal A', r => r.subtotalA, true)}
 
                 ${catHeader('B. Services You Cannot Shop For')}
+                ${inp.govFee ? row(inp.govFee.label, r => r.govFeeAmount) : ''}
                 ${row('Appraisal Fee', r => r.appraisal)}
                 ${row('Credit Report', r => r.creditReport)}
                 ${row('Flood Certification', r => r.floodCert)}
@@ -1063,6 +1166,11 @@ function render(inp, results) {
                 ${row('MERS Registration', r => r.mersReg)}
                 ${row('Processing Fee', r => r.processingFee)}
                 ${row('Subtotal B', r => r.subtotalB, true)}
+                ${inp.govFee && inp.govFee.financed ? `
+                    <tr class="financed-note"><td colspan="${scenarios.length + 1}" style="font-size:10px;color:#888;padding:2px 8px 6px;font-style:italic;">
+                        ✱ ${inp.govFee.label} financed into loan amount: $${inp.loanAmount.toLocaleString('en-US')} → $${inp.totalLoanAmount.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}
+                    </td></tr>
+                ` : ''}
 
                 ${catHeader('C. Services You Can Shop For')}
                 ${row("Title - Lender's Policy", r => r.titleLender)}
@@ -1111,11 +1219,13 @@ function render(inp, results) {
                         if (scenarios[i].points < 0) c += scenarios[i].points / 100 * inp.loanAmount;
                         return c;
                     })}
+                    ${inp.govFee && inp.govFee.financed ? row(`Less: Financed (${inp.govFee.label})`, () => -inp.govFee.amount) : ''}
                     ${row('Estimated Funds Needed', (r, i) => {
                         let credits = 0;
                         if (r.lenderCreditLine > 0) credits += r.lenderCreditLine;
                         if (scenarios[i].points < 0) credits += Math.abs(scenarios[i].points / 100 * inp.loanAmount);
-                        return inp.downPayment + r.totalClosing - credits;
+                        const financed = (inp.govFee && inp.govFee.financed) ? inp.govFee.amount : 0;
+                        return inp.downPayment + r.totalClosing - credits - financed;
                     }, false, true)}
                 </tbody>
             </table>
@@ -1208,6 +1318,7 @@ function copyToClipboard() {
     addRow('  Subtotal A', r => r.subtotalA);
 
     txt += '\nB. SERVICES (CANNOT SHOP)\n';
+    if (inp.govFee) addRow('  ' + inp.govFee.label, r => r.govFeeAmount);
     addRow('  Appraisal', r => r.appraisal);
     addRow('  Credit Report', r => r.creditReport);
     addRow('  Flood Cert', r => r.floodCert);
@@ -1215,6 +1326,9 @@ function copyToClipboard() {
     addRow('  MERS Registration', r => r.mersReg);
     addRow('  Processing Fee', r => r.processingFee);
     addRow('  Subtotal B', r => r.subtotalB);
+    if (inp.govFee && inp.govFee.financed) {
+        txt += `  * ${inp.govFee.label} financed: ${fmtPlain(inp.loanAmount, 0)} -> ${fmtPlain(inp.totalLoanAmount, 0)}\n`;
+    }
 
     txt += '\nC. SERVICES (CAN SHOP)\n';
     addRow('  Title - Lender', r => r.titleLender);
@@ -1296,6 +1410,16 @@ document.querySelectorAll('.sidebar input, .sidebar select').forEach(el => {
     el.addEventListener('input', recalc);
     el.addEventListener('change', recalc);
 });
+
+// Show / hide the VA-only config block (first use / exempt) based on loan product.
+function syncVaBlockVisibility() {
+    const v = ($('loanProduct').value || '').toUpperCase();
+    const isVA = v === 'VA' || v.startsWith('VA ');
+    const block = $('vaConfigBlock');
+    if (block) block.style.display = isVA ? 'block' : 'none';
+}
+$('loanProduct').addEventListener('change', syncVaBlockVisibility);
+syncVaBlockVisibility();
 
 // Observe scenario cards for new inputs
 const observer = new MutationObserver(() => {
