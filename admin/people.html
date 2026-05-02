@@ -208,6 +208,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   </div>
 </div>
 
+<!-- Stats pill bar (people-admin) -->
+<div id="peopleStatsBar" style="display:flex;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap;flex-shrink:0;font-size:11px;"></div>
+
 <div class="layout">
   <div class="views-sidebar">
     <div class="vs-section">
@@ -527,6 +530,19 @@ if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_ANON_KEY) {
 var ANON_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
 var hdrs = function() { return { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY, 'Content-Type': 'application/json', Prefer: 'return=representation' }; };
 
+// people-admin edge function helper
+async function peopleApi(action, payload) {
+  payload = payload || {};
+  try {
+    var r = await fetch(SB_URL + '/functions/v1/people-admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY },
+      body: JSON.stringify(Object.assign({ action: action }, payload))
+    });
+    return await r.json();
+  } catch (e) { return { error: e.message }; }
+}
+
 var _allPeople = [];
 var _filtered = [];
 var _selected = new Set();
@@ -627,11 +643,37 @@ async function loadTags() {
 }
 
 async function loadSavedViews() {
-  try {
-    var r = await fetch(SB_URL + '/rest/v1/saved_views?order=created_at.asc', { headers: hdrs() });
-    _savedViews = await r.json();
-  } catch(e) { _savedViews = []; }
+  var r = await peopleApi('list_views');
+  _savedViews = (r && r.views) || [];
   renderViewsList();
+}
+
+// Stats pill bar — populated from peopleApi('stats')
+async function loadPeopleStats() {
+  var bar = document.getElementById('peopleStatsBar');
+  if (!bar) return;
+  bar.innerHTML = '<span style="color:var(--muted);">Loading stats…</span>';
+  var r = await peopleApi('stats');
+  if (!r || !r.success || !r.stats) { bar.innerHTML = '<span style="color:var(--muted);">Stats unavailable</span>'; return; }
+  var s = r.stats;
+  function pill(label, value, opts) {
+    opts = opts || {};
+    var color = opts.color || 'var(--gold)';
+    var click = opts.tab ? 'onclick="setTab(\'' + opts.tab + '\', document.querySelector(\'.tab-pill[data-tab=&quot;' + opts.tab + '&quot;]\'))" style="cursor:pointer;"' : '';
+    return '<span class="people-stat-pill" ' + click + ' title="' + (opts.title || '') + '" style="display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:100px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#ccc;">' +
+      label + ' <strong style="color:' + color + ';font-weight:700;">' + value + '</strong></span>';
+  }
+  bar.innerHTML = [
+    pill('Total', s.total),
+    pill('🔥 Hot', s.hot, { color: '#f87171', tab: 'hot' }),
+    pill('🌡 Warm', s.warm, { color: '#fb923c', tab: 'warm' }),
+    pill('❄ Cold', s.cold, { color: '#60a0ff', tab: 'cold' }),
+    pill('🆕 New 24h', s.new_24h, { color: '#50c878' }),
+    pill('🆕 Week', s.new_week, { color: '#50c878' }),
+    pill('▲ Active clients', s.active_clients, { color: 'var(--gold)' }),
+    pill('⚠ Needs follow-up', s.needs_follow_up, { color: '#fb923c', title: 'No contact in 7+ days, not closed/lost' }),
+    pill('⏸ Stalled', s.stalled, { color: '#f87171', title: 'No contact in 14+ days' }),
+  ].join(' ');
 }
 
 /* ====== TAB COUNTS ====== */
@@ -1219,22 +1261,22 @@ async function confirmSaveView() {
     is_default: false,
     created_at: new Date().toISOString()
   };
-  var r = await fetch(SB_URL + '/rest/v1/saved_views', { method: 'POST', headers: hdrs(), body: JSON.stringify(payload) });
-  if (r.ok) {
-    var data = await r.json();
-    if (data && data[0]) _savedViews.push(data[0]);
+  var r = await peopleApi('create_view', payload);
+  if (r && r.success && r.view) {
+    _savedViews.push(r.view);
     closeSaveView();
     renderViewsList();
     showToast('View saved!');
     document.getElementById('viewName').value = '';
     document.getElementById('viewDesc').value = '';
   } else {
-    showToast('Failed to save view');
+    showToast('Failed to save view: ' + ((r && r.error) || 'unknown'));
   }
 }
 
 async function deleteView(id) {
-  await fetch(SB_URL + '/rest/v1/saved_views?id=eq.' + id, { method: 'DELETE', headers: hdrs() });
+  var r = await peopleApi('delete_view', { id: id });
+  if (!r || !r.success) { showToast('Delete failed: ' + ((r && r.error) || 'unknown')); return; }
   _savedViews = _savedViews.filter(function(v) { return v.id !== id; });
   if (_activeViewId === id) _activeViewId = null;
   renderViewsList();
@@ -1496,13 +1538,16 @@ if (_rpFilterId && _rpFilterName) {
 }
 
 /* ====== BOOT ====== */
-Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners()]).then(function() {
+Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners(), loadPeopleStats()]).then(function() {
   if (_rpFilterId) {
     _allPeople = _allPeople.filter(function(p) { return p.referral_partner_id === _rpFilterId; });
     updateTabCounts();
     applyFilters();
   }
 });
+
+// Auto-refresh stats every 60 seconds
+setInterval(loadPeopleStats, 60000);
 
 /* ====== MISMO 3.4 IMPORT ====== */
 var _mismoData = null, _mismoRawXml = '', _mismoFileName = '';
