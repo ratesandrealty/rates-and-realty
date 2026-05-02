@@ -73,25 +73,55 @@
   .crm-main:has(#tab-documents.is-active) { padding: 0 !important; }
   #tab-documents.is-active { padding: 0 !important; margin: 0 !important; }
   #fv-root { border-radius: 0 !important; border-left: none !important; border-right: none !important; height: calc(100vh - 76px) !important; }
-  /* Communications inbox */
-  .comm-thread {
-    display: flex; gap: 12px; padding: 14px 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-    cursor: pointer;
-    transition: background 0.15s;
+  /* Activity Feed rows */
+  .activity-row {
+    display: flex; gap: 14px; padding: 14px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    cursor: pointer; transition: background 0.15s;
   }
-  .comm-thread:hover { background: rgba(201,168,76,0.05); }
-  .comm-icon { font-size: 22px; flex-shrink: 0; }
-  .comm-body { flex: 1; min-width: 0; }
-  .comm-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .comm-direction { color: #888; }
+  .activity-row:hover { background: rgba(201,168,76,0.04); }
+  .activity-icon { font-size: 18px; padding-top: 2px; flex-shrink: 0; min-width: 32px; }
+  .activity-body { flex: 1; min-width: 0; }
+  .activity-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .who-link { color: #C9A84C; font-weight: 600; font-size: 14px; text-decoration: none; }
+  .who-link:hover { text-decoration: underline; }
+  .who-sub { color: #aaa; font-size: 12px; text-decoration: none; }
+  .who-sub:hover { color: #C9A84C; }
+  .who-meta { font-size: 11px; color: #888; margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .who-unknown, .who-unmatched { color: #888; font-style: italic; }
+  .activity-time { color: #888; font-size: 11px; margin-left: auto; }
+  .activity-title { color: #ddd; font-size: 13px; margin-top: 4px; }
+  .activity-preview { color: #999; font-size: 12px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Communications threads */
+  .comm-thread {
+    display: flex; gap: 14px; padding: 16px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    cursor: pointer; transition: background 0.15s;
+    align-items: flex-start;
+  }
+  .comm-thread:hover { background: rgba(201,168,76,0.06); }
+  .comm-icon { font-size: 22px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; min-width: 38px; }
+  .comm-direction { font-size: 11px; color: #888; margin-top: 2px; }
+  .comm-who { flex: 0 0 220px; min-width: 0; }
+  .comm-name { color: #C9A84C; font-size: 14px; display: block; }
+  .comm-contact-info { color: #888; font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .comm-unmatched { color: #aa6f6f; font-style: italic; }
+  .comm-content { flex: 1; min-width: 0; }
+  .comm-meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .comm-msg-count { color: #888; font-size: 11px; }
   .comm-time { color: #888; font-size: 11px; margin-left: auto; }
-  .comm-preview { color: #ccc; font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .unread { background: #C9A84C; color: #1a1208; border-radius: 100px; padding: 2px 8px; font-size: 11px; font-weight: 600; }
-  .intent-hot_lead { background: rgba(255,80,80,0.2); color: #ff8484; padding: 2px 8px; border-radius: 100px; font-size: 11px; }
-  .intent-scheduling { background: rgba(95,168,224,0.2); color: #5fa8e0; padding: 2px 8px; border-radius: 100px; font-size: 11px; }
-  .intent-opt_out { background: rgba(150,150,150,0.2); color: #aaa; padding: 2px 8px; border-radius: 100px; font-size: 11px; }
-  .intent-question { background: rgba(201,168,76,0.2); color: #C9A84C; padding: 2px 8px; border-radius: 100px; font-size: 11px; }
+  .comm-preview { color: #ccc; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Intent badges */
+  .intent-badge { padding: 2px 8px; border-radius: 100px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .intent-hot_lead { background: rgba(255,80,80,0.18); color: #ff8484; }
+  .intent-scheduling { background: rgba(95,168,224,0.18); color: #5fa8e0; }
+  .intent-opt_out { background: rgba(150,150,150,0.18); color: #aaa; }
+  .intent-question { background: rgba(201,168,76,0.18); color: #C9A84C; }
+  .intent-opt_in { background: rgba(80,200,120,0.18); color: #78d09a; }
+  .unread-badge { background: #C9A84C; color: #1a1208; border-radius: 100px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
+  .empty { color: #888; padding: 40px; text-align: center; font-style: italic; }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
@@ -1580,68 +1610,201 @@ async function loadShowingsWidget() {
 // Load widget on page init
 document.addEventListener('DOMContentLoaded', loadShowingsWidget);
 
-// ── Communications Inbox ───────────────────────────────────
-async function loadCommunications(filter = 'all') {
-  const SUPABASE_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
-  const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
-  const headers = { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` };
+// ── Communications Inbox + Activity Feed ───────────────────
+const _SB_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const _SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
+const _SB_HEADERS = { apikey: _SB_KEY, Authorization: `Bearer ${_SB_KEY}` };
 
-  const list = document.getElementById('comms-list');
-  if (!list) return;
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
-  const typeFilter = filter === 'all' ? 'sms,email,call' : filter;
-  const url = `${SUPABASE_URL}/rest/v1/activity_events?type=in.(${typeFilter})&order=created_at.desc&limit=200&select=*,contacts(id,first_name,last_name,email,phone)`;
+function timeAgo(dateStr) {
+  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff/86400)}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
+
+function formatPhone(p) {
+  const d = (p || '').replace(/\D/g, '');
+  if (d.length === 11 && d.startsWith('1')) return `(${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  return p || '';
+}
+
+window.openContactPage = function(contactId) {
+  if (!contactId) return;
+  window.location.href = `/admin/lead-detail.html?contact_id=${encodeURIComponent(contactId)}`;
+};
+
+// ── Activity Feed (full event log) ─────────────────────────
+async function loadActivityFeed() {
+  const container = document.getElementById('activity-feed-root')
+    || document.getElementById('activity-feed')
+    || document.querySelector('.activity-feed-list');
+  if (!container) return;
+
+  const url = `${_SB_URL}/rest/v1/activity_events?order=created_at.desc&limit=200&select=*,contacts(id,first_name,last_name,phone,email,crm_id)`;
   let events;
   try {
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers: _SB_HEADERS });
     events = await res.json();
-  } catch (e) {
-    list.innerHTML = '<div class="empty" style="padding:24px;color:var(--muted);">Failed to load communications.</div>';
+  } catch (err) {
+    container.innerHTML = '<div class="empty">Failed to load activity.</div>';
     return;
   }
-
   if (!Array.isArray(events) || !events.length) {
-    list.innerHTML = '<div class="empty" style="padding:24px;color:var(--muted);">No communications logged yet.</div>';
+    container.innerHTML = '<div class="empty">No activity yet.</div>';
+    return;
+  }
+  container.innerHTML = events.map(renderActivityRow).join('');
+}
+window.loadActivityFeed = loadActivityFeed;
+
+function renderActivityRow(e) {
+  const contact = e.contacts;
+  const ICONS = {
+    sms: { in: '💬←', out: '💬→' },
+    email: { in: '✉️←', out: '✉️→' },
+    call: { in: '📞←', out: '📞→' },
+    upload: { in: '📎', out: '📎' },
+    showing: { in: '🏠', out: '🏠' },
+    listing_alert: { in: '🔔', out: '🔔' },
+    system: { in: '⚙️', out: '⚙️' },
+    note: { in: '📝', out: '📝' },
+    task: { in: '✓', out: '✓' },
+    document: { in: '📄', out: '📄' },
+  };
+  const icon = (ICONS[e.type] && ICONS[e.type][e.direction === 'inbound' ? 'in' : 'out']) || '•';
+
+  let whoHtml = '<span class="who-unknown">Unknown</span>';
+  if (contact && (contact.first_name || contact.last_name)) {
+    const fullName = [contact.first_name, contact.last_name].filter(Boolean).join(' ');
+    whoHtml = `<a class="who-link" href="javascript:void(0)" onclick="event.stopPropagation();openContactPage('${contact.id}')">${escapeHtml(fullName)}</a>`;
+    const sub = [];
+    if (contact.phone) sub.push(`<a class="who-sub" href="tel:${contact.phone}" onclick="event.stopPropagation()">${escapeHtml(formatPhone(contact.phone))}</a>`);
+    if (contact.email) sub.push(`<a class="who-sub" href="mailto:${contact.email}" onclick="event.stopPropagation()">${escapeHtml(contact.email)}</a>`);
+    if (sub.length) whoHtml += `<div class="who-meta">${sub.join(' · ')}</div>`;
+  } else if (e.sms_from || e.sms_to) {
+    const ph = e.direction === 'inbound' ? e.sms_from : e.sms_to;
+    whoHtml = `<span class="who-link">${escapeHtml(formatPhone(ph))}</span><div class="who-meta who-unmatched">unmatched contact</div>`;
+  }
+
+  let intentBadge = '';
+  try {
+    const m = JSON.parse(e.metadata || '{}');
+    if (m.intent && m.intent !== 'general' && m.intent !== 'placeholder') {
+      intentBadge = `<span class="intent-badge intent-${m.intent}">${escapeHtml(m.intent.replace(/_/g,' '))}</span>`;
+    }
+  } catch {}
+
+  const preview = (e.description || e.sms_body || e.title || '').substring(0, 140);
+  const ago = timeAgo(e.created_at);
+  const rowClickHandler = contact?.id ? `onclick="openContactPage('${contact.id}')"` : '';
+
+  return `
+    <div class="activity-row" ${rowClickHandler}>
+      <div class="activity-icon">${icon}</div>
+      <div class="activity-body">
+        <div class="activity-head">
+          ${whoHtml}
+          <span class="activity-time">${ago}</span>
+        </div>
+        <div class="activity-title">${escapeHtml(e.title || '')} ${intentBadge}</div>
+        <div class="activity-preview">${escapeHtml(preview)}</div>
+      </div>
+    </div>
+  `;
+}
+
+// ── Communications (sms / email / call only, threaded) ─────
+async function loadCommunications(filter = 'all') {
+  const container = document.getElementById('comms-list') || document.querySelector('.comms-list');
+  if (!container) return;
+
+  const typeFilter = filter === 'all' ? 'sms,email,call' : filter;
+  const url = `${_SB_URL}/rest/v1/activity_events?type=in.(${typeFilter})&order=created_at.desc&limit=300&select=*,contacts(id,first_name,last_name,phone,email,crm_id)`;
+  let events;
+  try {
+    const res = await fetch(url, { headers: _SB_HEADERS });
+    events = await res.json();
+  } catch (err) {
+    container.innerHTML = '<div class="empty">Failed to load communications.</div>';
+    return;
+  }
+  if (!Array.isArray(events) || !events.length) {
+    container.innerHTML = '<div class="empty">No communications yet.</div>';
     return;
   }
 
   const byContact = new Map();
   for (const e of events) {
-    const key = e.contact_id || `unknown-${e.sms_from || e.id}`;
-    if (!byContact.has(key)) byContact.set(key, { latest: e, all: [], unread_inbound: 0 });
+    const key = e.contact_id || `phone:${e.sms_from || e.sms_to || 'unknown'}`;
+    if (!byContact.has(key)) byContact.set(key, { latest: e, all: [], unread_inbound: 0, total_msgs: 0 });
     const bucket = byContact.get(key);
     bucket.all.push(e);
+    bucket.total_msgs++;
     if (e.direction === 'inbound') bucket.unread_inbound++;
   }
 
   const threads = Array.from(byContact.values())
     .sort((a, b) => new Date(b.latest.created_at) - new Date(a.latest.created_at));
 
-  list.innerHTML = threads.map(renderThreadRow).join('');
+  container.innerHTML = threads.map(renderCommThreadRow).join('');
 }
+window.loadCommunications = loadCommunications;
 
-function renderThreadRow(t) {
+function renderCommThreadRow(t) {
   const e = t.latest;
-  const contact = e.contacts || {};
-  const name = (contact.first_name || contact.last_name)
-    ? [contact.first_name, contact.last_name].filter(Boolean).join(' ')
-    : (e.sms_from || 'Unknown');
-  const channelIcon = { sms: '💬', email: '✉️', call: '📞' }[e.type] || '•';
-  const direction = e.direction === 'inbound' ? '←' : '→';
-  const preview = (e.description || e.sms_body || e.title || '').substring(0, 80);
-  const intent = (() => { try { return JSON.parse(e.metadata || '{}').intent; } catch { return null; } })();
-  const intentBadge = intent && intent !== 'general' ? `<span class="intent-${intent}">${intent.replace(/_/g, ' ')}</span>` : '';
+  const contact = e.contacts;
+  const channelIcons = { sms: '💬', email: '✉️', call: '📞' };
+  const icon = channelIcons[e.type] || '•';
+
+  let whoBlock;
+  if (contact && (contact.first_name || contact.last_name)) {
+    const name = [contact.first_name, contact.last_name].filter(Boolean).join(' ');
+    const subParts = [];
+    if (contact.phone) subParts.push(formatPhone(contact.phone));
+    if (contact.email) subParts.push(contact.email);
+    whoBlock = `
+      <div class="comm-who">
+        <strong class="comm-name">${escapeHtml(name)}</strong>
+        <div class="comm-contact-info">${escapeHtml(subParts.join(' · '))}</div>
+      </div>`;
+  } else {
+    const ph = e.direction === 'inbound' ? e.sms_from : e.sms_to;
+    whoBlock = `
+      <div class="comm-who">
+        <strong class="comm-name">${escapeHtml(formatPhone(ph || 'Unknown'))}</strong>
+        <div class="comm-contact-info comm-unmatched">unmatched · click to assign</div>
+      </div>`;
+  }
+
+  let intentBadge = '';
+  try {
+    const m = JSON.parse(e.metadata || '{}');
+    if (m.intent && !['general','placeholder','acknowledgement'].includes(m.intent)) {
+      intentBadge = `<span class="intent-badge intent-${m.intent}">${escapeHtml(m.intent.replace(/_/g,' '))}</span>`;
+    }
+  } catch {}
+
+  const preview = (e.description || e.sms_body || e.title || '').substring(0, 100);
   const ago = timeAgo(e.created_at);
-  const unreadBadge = t.unread_inbound > 0 ? `<span class="unread">${t.unread_inbound}</span>` : '';
+  const unreadBadge = t.unread_inbound > 0 ? `<span class="unread-badge">${t.unread_inbound}</span>` : '';
+  const directionArrow = e.direction === 'inbound' ? '←' : '→';
+  const clickHandler = contact?.id ? `onclick="openContactPage('${contact.id}')"` : '';
 
   return `
-    <div class="comm-thread" onclick="openThread('${e.contact_id || ''}', '${(e.sms_from || '').replace(/'/g, "\\'")}')">
-      <div class="comm-icon">${channelIcon}</div>
-      <div class="comm-body">
-        <div class="comm-head">
-          <strong>${escapeHtml(name)}</strong>
-          <span class="comm-direction">${direction}</span>
+    <div class="comm-thread" ${clickHandler}>
+      <div class="comm-icon">${icon}<span class="comm-direction">${directionArrow}</span></div>
+      ${whoBlock}
+      <div class="comm-content">
+        <div class="comm-meta-row">
           ${intentBadge}
+          <span class="comm-msg-count">${t.total_msgs} msg${t.total_msgs > 1 ? 's' : ''}</span>
           ${unreadBadge}
           <span class="comm-time">${ago}</span>
         </div>
@@ -1651,22 +1814,15 @@ function renderThreadRow(t) {
   `;
 }
 
-function timeAgo(dateStr) {
-  const diffSec = (Date.now() - new Date(dateStr).getTime()) / 1000;
-  if (diffSec < 60) return 'just now';
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`;
-  return `${Math.floor(diffSec / 86400)}d`;
+function _routeRefresh() {
+  const hash = window.location.hash;
+  if (hash === '#communications') {
+    const active = document.querySelector('.comm-filter.is-active')?.dataset.filter || 'all';
+    loadCommunications(active);
+  } else if (hash === '#activity') {
+    loadActivityFeed();
+  }
 }
-
-function escapeHtml(s) {
-  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-window.openThread = function(contactId, fromPhone) {
-  alert(`Open thread for contact ${contactId} or phone ${fromPhone}`);
-  // TODO: implement full thread viewer in next iteration
-};
 
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.comm-filter').forEach(btn => {
@@ -1676,23 +1832,11 @@ document.addEventListener('DOMContentLoaded', () => {
       loadCommunications(btn.dataset.filter);
     });
   });
-
-  if (window.location.hash === '#communications') loadCommunications();
+  _routeRefresh();
 });
 
-setInterval(() => {
-  if (window.location.hash === '#communications') {
-    const active = document.querySelector('.comm-filter.is-active');
-    loadCommunications(active?.dataset.filter || 'all');
-  }
-}, 30000);
-
-window.addEventListener('hashchange', () => {
-  if (window.location.hash === '#communications') {
-    const active = document.querySelector('.comm-filter.is-active');
-    loadCommunications(active?.dataset.filter || 'all');
-  }
-});
+setInterval(_routeRefresh, 30000);
+window.addEventListener('hashchange', _routeRefresh);
 </script>
 <script type="module">
 import { supabase } from "/api/supabase-client.js";

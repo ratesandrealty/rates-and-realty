@@ -881,6 +881,13 @@ async function renderCommunications() {
 async function renderActivityFeed(leadId = null) {
   const root = document.getElementById("activity-feed-root");
   if (!root) return;
+  // Defer to the rich loader in admin.html when it's available (handles the
+  // top-level Activity tab with names, contact info, and click-through).
+  // The old renderer below is kept for per-lead drill-downs that pass leadId.
+  if (!leadId && typeof window.loadActivityFeed === "function") {
+    window.loadActivityFeed();
+    return;
+  }
   root.innerHTML = `<p style="color:var(--muted);">Loading activity...</p>`;
   const events = await getActivityFeed(leadId);
   root.innerHTML = renderActivityItems(events);
