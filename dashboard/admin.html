@@ -8,6 +8,8 @@
        apply the intersection per directive, which can mask whichever one
        is actually broken and makes debugging harder. -->
   <script src="/api/env.js?v=2026033004"></script>
+  <!-- Linkify utility — clickable URLs in message bubbles + activity rows -->
+  <script src="/dashboard/utils/linkify.js?v=2026050201"></script>
   <!-- Google Identity Services — OAuth token client for File Vault Drive uploads -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- jsPDF — client-side image → PDF conversion for File Vault uploads -->
@@ -183,8 +185,12 @@
   .action-opt_out_processed { background: rgba(224,127,80,0.18); color: #e07f50; }
   .action-welcome { background: rgba(201,168,76,0.18); color: #C9A84C; }
 
-  .bot-conv-row { padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; }
+  .bot-conv-wrap { border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .bot-conv-row { padding: 14px 16px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; cursor: pointer; transition: background 0.15s; }
   .bot-conv-row:hover { background: rgba(201,168,76,0.03); }
+  .bot-conv-row.is-expanded { background: rgba(201,168,76,0.05); }
+  .bot-conv-expand-caret { display: inline-block; color: #888; font-size: 11px; transition: transform 0.15s; transform-origin: center; width: 10px; }
+  .bot-conv-row.is-expanded .bot-conv-expand-caret { transform: rotate(90deg); color: #C9A84C; }
   .bot-conv-name { color: #C9A84C; font-weight: 600; font-size: 14px; }
   .bot-conv-sub { color: #aaa; font-size: 12px; margin-top: 2px; display: flex; gap: 12px; flex-wrap: wrap; }
   .bot-conv-preview { color: #ccc; font-size: 12px; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -192,6 +198,22 @@
   .bot-conv-actions button { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); color: #ccc; padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; font-family: inherit; }
   .bot-conv-actions button:hover { background: rgba(201,168,76,0.1); border-color: rgba(201,168,76,0.3); color: #C9A84C; }
   .bot-conv-actions button.danger:hover { background: rgba(255,80,80,0.1); border-color: rgba(255,80,80,0.3); color: #ff8484; }
+
+  .bot-conv-thread {
+    padding: 12px 18px 18px 36px;
+    background: rgba(0,0,0,0.25);
+    border-left: 2px solid #C9A84C;
+    margin: 0 16px 8px;
+    max-height: 520px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .bot-conv-thread .thread-date-header { font-size: 11px; color: #777; text-align: center; margin: 10px 0 6px; padding: 3px 12px; background: rgba(255,255,255,0.03); border-radius: 100px; align-self: center; text-transform: uppercase; letter-spacing: 0.1em; }
+  .bot-conv-thread-actions { display: flex; justify-content: flex-end; padding: 0 0 10px; }
+  .bot-conv-open-inbox { background: rgba(201,168,76,0.1); border: 1px solid rgba(201,168,76,0.3); color: #C9A84C; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; transition: all 0.15s; }
+  .bot-conv-open-inbox:hover { background: rgba(201,168,76,0.2); border-color: #C9A84C; color: #E8C76E; }
 
   #tab-ai-agent .status-pill { padding: 2px 8px; border-radius: 100px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border: 0; background: rgba(255,255,255,0.05); color: #aaa; }
   #tab-ai-agent .status-pill.status-active { background: rgba(80,200,120,0.18); color: #78d09a; }
@@ -337,6 +359,42 @@
   .msg-call .duration { color: #aaa; font-family: ui-monospace, monospace; }
 
   .msg-bot-decision { font-size: 11px; color: #5DA5E8; padding: 4px 14px; opacity: 0.7; align-self: center; font-family: ui-monospace, monospace; }
+
+  /* Linkified URLs inside message bubbles + activity rows */
+  .msg-link {
+    color: #C9A84C;
+    text-decoration: underline;
+    text-decoration-color: rgba(201, 168, 76, 0.4);
+    text-underline-offset: 2px;
+    word-break: break-word;
+  }
+  .msg-link:hover {
+    color: #E8C76E;
+    text-decoration-color: #E8C76E;
+  }
+  .msg-bubble.outbound .msg-link { color: #f5e9c8; text-decoration-color: rgba(245, 233, 200, 0.5); }
+  .msg-bubble.outbound .msg-link:hover { color: #fff; text-decoration-color: #fff; }
+
+  .activity-link-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    margin-left: 8px;
+    border-radius: 12px;
+    background: rgba(201, 168, 76, 0.12);
+    color: #C9A84C;
+    font-size: 12px;
+    font-weight: 500;
+    text-decoration: none;
+    border: 1px solid rgba(201, 168, 76, 0.25);
+    transition: all 0.15s;
+  }
+  .activity-link-chip:hover {
+    background: rgba(201, 168, 76, 0.2);
+    color: #E8C76E;
+    border-color: rgba(232, 199, 110, 0.5);
+  }
   .msg-bot-decision .tool { background: rgba(93,165,232,0.1); padding: 1px 6px; border-radius: 100px; margin: 0 2px; }
 
   .thread-composer { border-top: 1px solid rgba(255,255,255,0.06); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; background: #0c0c0c; flex-shrink: 0; }
@@ -2012,16 +2070,18 @@ function renderActivityRow(e) {
     ? '<span class="intent-badge" style="background:rgba(80,200,120,0.18);color:#78d09a;">received</span>'
     : (e.direction === 'outbound' ? '<span class="intent-badge" style="background:rgba(201,168,76,0.18);color:#C9A84C;">sent</span>' : '');
   if (dirBadge) badges.push(dirBadge);
+  let parsedMeta = null;
   try {
-    const m = JSON.parse(e.metadata || '{}');
-    if (m.intent && m.intent !== 'general' && m.intent !== 'placeholder') {
-      badges.push(`<span class="intent-badge intent-${m.intent}">${escapeHtml(m.intent.replace(/_/g,' '))}</span>`);
+    parsedMeta = JSON.parse(e.metadata || '{}');
+    if (parsedMeta.intent && parsedMeta.intent !== 'general' && parsedMeta.intent !== 'placeholder') {
+      badges.push(`<span class="intent-badge intent-${parsedMeta.intent}">${escapeHtml(parsedMeta.intent.replace(/_/g,' '))}</span>`);
     }
   } catch {}
 
   const preview = (e.description || e.sms_body || e.title || '').substring(0, 280);
   const ago = timeAgo(e.created_at);
   const rowClickHandler = contact?.id ? `onclick="openContactPage('${contact.id}')"` : '';
+  const linkChip = renderActivityChip(parsedMeta);
 
   return `
     <div class="activity-row" ${rowClickHandler}>
@@ -2032,7 +2092,7 @@ function renderActivityRow(e) {
       </div>
       <div class="activity-body">
         ${whoHtml}
-        ${preview ? `<div class="activity-preview">${escapeHtml(preview)}</div>` : ''}
+        ${preview ? `<div class="activity-preview">${linkifyText(preview)}${linkChip}</div>` : (linkChip ? `<div class="activity-preview">${linkChip}</div>` : '')}
       </div>
       <div class="activity-badge-col">${badges.join('')}</div>
     </div>
@@ -2116,6 +2176,17 @@ async function refreshInbox(preserveSelection = true) {
   commsState.conversations = r.conversations || [];
   renderInbox();
   if (preserveSelection) scroll.scrollTop = scrollTop;
+
+  // Deep-link from AI Agent → Conversations: a "pending phone" was set
+  // before navigating here. Match by phone (last 10 digits) and auto-open.
+  if (commsState.pendingOpenPhone) {
+    const want = String(commsState.pendingOpenPhone).replace(/\D/g, '').slice(-10);
+    commsState.pendingOpenPhone = null;
+    const match = commsState.conversations.find(c =>
+      String(c.phone || '').replace(/\D/g, '').slice(-10) === want
+    );
+    if (match) openThread(match);
+  }
 }
 
 function renderInbox() {
@@ -2177,7 +2248,7 @@ function renderInboxRow(c) {
           <span class="inbox-mini-badges">${badges}</span>
         </div>
         ${sub ? `<div class="inbox-sub">${escapeHtml(sub)}</div>` : ''}
-        ${preview ? `<div class="inbox-preview">${escapeHtml(preview)}</div>` : ''}
+        ${preview ? `<div class="inbox-preview">${linkifyText(preview)}</div>` : ''}
       </div>
       <div class="inbox-meta">
         <span class="inbox-time">${time}</span>
@@ -2330,7 +2401,7 @@ function renderSmsBubble(d) {
   const errAttr = failed && d.error_message ? ` title="${escapeHtml(d.error_message)}"` : '';
   return `
     <div class="msg-row ${dir}">
-      <div class="msg-bubble ${dir} ${failed ? 'failed' : ''}">${escapeHtml(d.body || '')}</div>
+      <div class="msg-bubble ${dir} ${failed ? 'failed' : ''}">${linkifyText(d.body || '')}</div>
       <div class="msg-meta">
         ${whoTag}
         <span>${clockTime(d.created_at)}</span>
@@ -2346,7 +2417,7 @@ function renderEmailItem(d) {
     <div class="msg-email">
       <div class="msg-email-head">📧 Email · ${escapeHtml(d.recipient_email || '')} · ${escapeHtml(clockTime(d.created_at))}${d.opened_at ? ' · opened' : ''}</div>
       <div class="msg-email-subject">${escapeHtml(subject)}</div>
-      <div class="msg-email-body">${escapeHtml(body)}</div>
+      <div class="msg-email-body">${linkifyText(body)}</div>
     </div>`;
 }
 
@@ -2943,13 +3014,92 @@ async function renderBotConversationsPanel() {
   if (!listEl) return;
   if (!list.length) { listEl.innerHTML = '<div class="empty">No conversations match.</div>'; return; }
   listEl.innerHTML = list.map(renderConvRow).join('');
+
+  // Action buttons — stop the click from bubbling so the row toggle doesn't fire.
   listEl.querySelectorAll('[data-conv-action]').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
       handleConvAction(btn.dataset.convAction, btn.dataset.convId);
     });
   });
+
+  // Row click → toggle inline thread expansion. Action buttons stop propagation
+  // above; sub-anchors (tel:/mailto:) handle their own stopPropagation in markup.
+  listEl.querySelectorAll('.bot-conv-row[data-conv-id]').forEach(row => {
+    row.addEventListener('click', () => toggleConvThread(row));
+  });
 }
+
+// Toggle inline thread under a conv row. First open lazy-loads via commsApi.
+async function toggleConvThread(row) {
+  const convId = row.dataset.convId;
+  if (!convId) return;
+  const thread = row.parentElement.querySelector(`.bot-conv-thread[data-conv-id="${cssEscape(convId)}"]`);
+  if (!thread) return;
+  const isOpen = !thread.hasAttribute('hidden');
+  if (isOpen) {
+    thread.setAttribute('hidden', '');
+    row.classList.remove('is-expanded');
+    return;
+  }
+  thread.removeAttribute('hidden');
+  row.classList.add('is-expanded');
+  // Cache a loaded thread for the row's lifetime so re-toggle is instant.
+  if (thread.dataset.loaded === '1') return;
+  thread.innerHTML = '<div class="empty" style="padding:14px;font-size:12px;">Loading thread…</div>';
+  const phone = row.dataset.phone || '';
+  const contactId = row.dataset.contactId || null;
+  const r = await commsApi('get_thread', { contact_id: contactId || undefined, phone });
+  if (r.error) {
+    thread.innerHTML = `<div class="empty" style="padding:14px;font-size:12px;color:#ff8484;">Thread error: ${escapeHtml(r.error)}</div>`;
+    return;
+  }
+  thread.innerHTML = renderConvThreadInline(r);
+  thread.dataset.loaded = '1';
+}
+
+// Minimal CSS.escape fallback — older Edge / sandboxed contexts may not have it.
+function cssEscape(s) {
+  if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(s);
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+
+function renderConvThreadInline(threadResp) {
+  const items = threadResp.timeline || [];
+  if (!items.length) return '<div class="empty" style="padding:14px;font-size:12px;">No messages yet.</div>';
+  const phone = threadResp.contact?.phone || threadResp.phone || '';
+  let html = '<div class="bot-conv-thread-actions">';
+  html += `<button class="bot-conv-open-inbox" data-open-inbox-phone="${escapeHtml(phone)}">📨 Open in Communications inbox →</button>`;
+  html += '</div>';
+  let lastDay = null;
+  for (const item of items) {
+    const day = dateGroupLabel(item.ts);
+    if (day !== lastDay) {
+      html += `<div class="thread-date-header">${escapeHtml(day)}</div>`;
+      lastDay = day;
+    }
+    if (item.type === 'sms') html += renderSmsBubble(item.data);
+    else if (item.type === 'email') html += renderEmailItem(item.data);
+    else if (item.type === 'call') html += renderCallItem(item.data);
+    else if (item.type === 'bot_decision') html += renderBotDecisionItem(item.data);
+  }
+  return html;
+}
+
+// Deep-link from AI Agent → Comms inbox. Set a pending selection that
+// refreshInbox() consumes after the conversation list loads.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.bot-conv-open-inbox');
+  if (!btn) return;
+  e.stopPropagation();
+  const phone = btn.dataset.openInboxPhone || '';
+  if (phone) commsState.pendingOpenPhone = phone;
+  // Switch to Communications tab via the existing nav link to keep all
+  // sidebar/active-state side-effects consistent.
+  const navBtn = document.querySelector('[data-crm-nav="communications"]');
+  if (navBtn) navBtn.click();
+  else window.location.hash = '#communications';
+});
 
 function renderConvRow(c) {
   const contact = c.contacts || {};
@@ -2965,7 +3115,6 @@ function renderConvRow(c) {
   const showResolve = isPaused || isEscalated;
 
   const actions = [
-    `<button data-conv-action="view" data-conv-id="${c.id}">View Thread</button>`,
     isPaused
       ? `<button data-conv-action="resume" data-conv-id="${c.id}">Resume AI</button>`
       : `<button data-conv-action="pause" data-conv-id="${c.id}">Pause AI</button>`,
@@ -2974,25 +3123,29 @@ function renderConvRow(c) {
   ].filter(Boolean).join('');
 
   return `
-    <div class="bot-conv-row">
-      <div>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <span class="bot-conv-name">${escapeHtml(name)}</span>
-          <span class="status-pill status-${escapeHtml(status)}">${escapeHtml(status)}</span>
-          ${contact.lead_temperature ? `<span class="status-pill" style="background:rgba(255,165,80,0.15);color:#ffb37a;">${escapeHtml(contact.lead_temperature)}</span>` : ''}
-          ${contact.pipeline_status ? `<span style="font-size:11px;color:#888;">pipeline: ${escapeHtml(contact.pipeline_status)}</span>` : ''}
+    <div class="bot-conv-wrap">
+      <div class="bot-conv-row" data-conv-id="${escapeHtml(c.id)}" data-phone="${escapeHtml(c.phone || '')}" data-contact-id="${escapeHtml(c.contact_id || '')}" title="Click to view full thread">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span class="bot-conv-expand-caret" aria-hidden="true">▸</span>
+            <span class="bot-conv-name">${escapeHtml(name)}</span>
+            <span class="status-pill status-${escapeHtml(status)}">${escapeHtml(status)}</span>
+            ${contact.lead_temperature ? `<span class="status-pill" style="background:rgba(255,165,80,0.15);color:#ffb37a;">${escapeHtml(contact.lead_temperature)}</span>` : ''}
+            ${contact.pipeline_status ? `<span style="font-size:11px;color:#888;">pipeline: ${escapeHtml(contact.pipeline_status)}</span>` : ''}
+          </div>
+          <div class="bot-conv-sub">
+            ${phoneFmt ? `<a href="tel:${escapeHtml(c.phone)}" onclick="event.stopPropagation()" style="color:#aaa;">${escapeHtml(phoneFmt)}</a>` : ''}
+            ${contact.email ? `<a href="mailto:${escapeHtml(contact.email)}" onclick="event.stopPropagation()" style="color:#aaa;">${escapeHtml(contact.email)}</a>` : ''}
+            <span>${msgs} msgs</span>
+            <span>${c.ai_replies_sent || 0} ai replies</span>
+            <span>${ago}</span>
+          </div>
+          ${c.last_intent ? `<div class="bot-conv-preview"><span style="color:#888;">last intent:</span> ${escapeHtml(c.last_intent)}</div>` : ''}
+          ${c.escalation_reason ? `<div class="bot-conv-preview" style="color:#ff8484;">escalation: ${escapeHtml(c.escalation_reason)}</div>` : ''}
         </div>
-        <div class="bot-conv-sub">
-          ${phoneFmt ? `<a href="tel:${escapeHtml(c.phone)}" onclick="event.stopPropagation()" style="color:#aaa;">${escapeHtml(phoneFmt)}</a>` : ''}
-          ${contact.email ? `<a href="mailto:${escapeHtml(contact.email)}" onclick="event.stopPropagation()" style="color:#aaa;">${escapeHtml(contact.email)}</a>` : ''}
-          <span>${msgs} msgs</span>
-          <span>${c.ai_replies_sent || 0} ai replies</span>
-          <span>${ago}</span>
-        </div>
-        ${c.last_intent ? `<div class="bot-conv-preview"><span style="color:#888;">last intent:</span> ${escapeHtml(c.last_intent)}</div>` : ''}
-        ${c.escalation_reason ? `<div class="bot-conv-preview" style="color:#ff8484;">escalation: ${escapeHtml(c.escalation_reason)}</div>` : ''}
+        <div class="bot-conv-actions">${actions}</div>
       </div>
-      <div class="bot-conv-actions">${actions}</div>
+      <div class="bot-conv-thread" data-conv-id="${escapeHtml(c.id)}" hidden></div>
     </div>`;
 }
 

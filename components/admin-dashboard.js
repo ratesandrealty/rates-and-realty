@@ -907,13 +907,16 @@ function renderActivityItems(events) {
     sms_sent: { icon: "💬", cls: "activity-dot" },
     call_logged: { icon: "📞", cls: "activity-dot" }
   };
+  const linkify = window.linkifyText || ((s) => (s == null ? '' : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))));
+  const chip = window.renderActivityChip || (() => '');
   return events.map((e) => {
     const m = iconMap[e.type] || { icon: "•", cls: "activity-dot" };
+    const titleText = e.description || e.type || '';
     return `
       <div class="activity-item">
         <div class="activity-dot ${m.cls}">${m.icon}</div>
         <div class="activity-content">
-          <div class="activity-title">${e.description || e.type}</div>
+          <div class="activity-title">${linkify(titleText)}${chip(e.metadata)}</div>
           <div class="activity-time">${formatDate(e.created_at)}</div>
         </div>
       </div>
