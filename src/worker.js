@@ -36,7 +36,9 @@ export default {
     // can't accidentally claim it.
     {
       const segments = path.split('/').filter(Boolean);
-      if (request.method === 'GET' && segments[0] === 'r' && segments[1]) {
+      // Accept GET and HEAD — browsers send GET when a link is clicked,
+      // but HEAD is used by link-preview crawlers and curl -I health checks.
+      if ((request.method === 'GET' || request.method === 'HEAD') && segments[0] === 'r' && segments[1]) {
         const id = segments[1];
         // id is opaque — be strict so junk paths fall through to ASSETS
         if (/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
