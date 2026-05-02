@@ -221,6 +221,10 @@
     .stp-hot  { background:rgba(248,113,113,.15); border:1px solid rgba(248,113,113,.35); color:#f87171; }
     .stp-warm { background:rgba(251,191,36,.15);  border:1px solid rgba(251,191,36,.35);  color:#fbbf24; }
     .stp-cold { background:rgba(96,165,250,.15);  border:1px solid rgba(96,165,250,.35);  color:#60a5fa; }
+    .tier-hot  { background:rgba(232,93,93,.15);  color:#E85D5D; }
+    .tier-warm { background:rgba(232,165,71,.15); color:#E8A547; }
+    .tier-cold { background:rgba(93,165,232,.15); color:#5DA5E8; }
+    .last-scored-at { font-size:.72rem; color:#777; }
     .score-action-box {
       padding: 10px 16px; border-radius: 10px;
       background: var(--gold-bg); border: 1px solid var(--gold-bdr);
@@ -1785,6 +1789,7 @@
             <div class="score-action-box" id="sc-action">Load a lead to calculate score.</div>
           </div>
           <div class="score-bars" id="sc-bars"></div>
+          <div id="sc-last-scored" class="last-scored-at" style="display:none;font-size:.72rem;color:#777;text-align:right;margin-top:8px;"></div>
         </div>
       </div>
 
@@ -13494,20 +13499,138 @@ function renderScoreCard(lead, contact) {
   return score;
 }
 
+/* ── Lead Score panel — wired to /functions/v1/lead-scorer ──────── */
+const _SB_LS_URL = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+const _SB_LS_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+async function scorerApi(action, payload) {
+  payload = payload || {};
+  try {
+    const r = await fetch(_SB_LS_URL + '/functions/v1/lead-scorer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: _SB_LS_KEY, Authorization: 'Bearer ' + _SB_LS_KEY },
+      body: JSON.stringify(Object.assign({ action }, payload))
+    });
+    return await r.json();
+  } catch (e) { return { error: e.message }; }
+}
+
+let _leadScoreData = null;
+
+async function fetchLeadScoreBreakdown(trigger) {
+  if (!contactId) return;
+  const r = await scorerApi('get_breakdown', { contact_id: contactId, trigger: trigger || 'view' });
+  if (r && r.success) {
+    _leadScoreData = r;
+    renderScoreCardFromApi(r);
+  } else if (r && r.error) {
+    console.warn('[lead-scorer] error:', r.error);
+  }
+}
+window.fetchLeadScoreBreakdown = fetchLeadScoreBreakdown;
+
+function renderScoreCardFromApi(r) {
+  if (!r) return;
+  const numEl = document.getElementById('sc-num');
+  if (numEl) numEl.textContent = r.total;
+
+  // Tier pill — manual override from contacts.temperature still wins
+  const tierEl = document.getElementById('sc-tier');
+  if (tierEl) {
+    const manual = ((window.contactData && contactData.temperature) || '').toLowerCase();
+    const tier = (manual === 'hot' || manual === 'warm' || manual === 'cold') ? manual : (r.tier || 'cold');
+    tierEl.textContent = { hot: '🔴 HOT', warm: '🟡 WARM', cold: '🔵 COLD' }[tier] || tier.toUpperCase();
+    tierEl.className = 'score-tier-pill stp-' + tier + ' tier-' + tier;
+  }
+
+  // Topbar tier badge
+  const tierBadge = document.getElementById('topbar-score-tier');
+  if (tierBadge) {
+    const t = r.tier || 'cold';
+    tierBadge.textContent = { hot: '🔴 HOT', warm: '🟡 WARM', cold: '🔵 COLD' }[t] || t.toUpperCase();
+    tierBadge.className = 'ld-score-tier-badge stb-' + t;
+    tierBadge.style.display = '';
+  }
+
+  // Action box
+  const actionEl = document.getElementById('sc-action');
+  if (actionEl) {
+    const actions = {
+      hot: '📞 Call now — High intent buyer! Assign LO immediately.',
+      warm: '📧 Send nurture email sequence and follow up in 3 days.',
+      cold: '⏰ Add to long-term drip campaign and retargeting.'
+    };
+    actionEl.textContent = actions[r.tier] || '';
+  }
+
+  // 6 sub-score bars
+  const barsCfg = [
+    { key: 'intent', label: 'Intent / Timeline' },
+    { key: 'financial', label: 'Financial Readiness' },
+    { key: 'engagement', label: 'Engagement' },
+    { key: 'property', label: 'Property Identified' },
+    { key: 'source', label: 'Source Quality' },
+    { key: 'responsiveness', label: 'Responsiveness' }
+  ];
+  const escAttr = function(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  const barsEl = document.getElementById('sc-bars');
+  if (barsEl) {
+    barsEl.innerHTML = barsCfg.map(function(b) {
+      const data = (r.breakdown && r.breakdown[b.key]) || { score: 0, max: 1, reasons: [] };
+      const pct = data.max > 0 ? Math.max(0, (data.score / data.max) * 100) : 0;
+      const reasons = (data.reasons || []).join('\n') || 'No signals yet';
+      return (
+        '<div class="score-bar-row" title="' + escAttr(reasons) + '">' +
+          '<div class="score-bar-label">' + b.label + '</div>' +
+          '<div class="score-bar-track"><div class="score-bar-fill" style="width:' + pct + '%"></div></div>' +
+          '<div class="score-bar-val">' + data.score + '/' + data.max + '</div>' +
+        '</div>'
+      );
+    }).join('');
+  }
+
+  // Last scored
+  const lastEl = document.getElementById('sc-last-scored');
+  if (lastEl) {
+    const lastTs = (r.history && r.history.length) ? r.history[r.history.length - 1].scored_at : null;
+    if (lastTs) {
+      const fmt = (typeof relativeTime === 'function') ? relativeTime(lastTs) : new Date(lastTs).toLocaleString();
+      const deltaTxt = (r.delta > 0) ? ' (+' + r.delta + ')' : (r.delta < 0) ? ' (' + r.delta + ')' : '';
+      lastEl.textContent = 'Last calculated: ' + fmt + deltaTxt;
+      lastEl.style.display = '';
+    } else {
+      lastEl.style.display = 'none';
+    }
+  }
+}
+
+// Periodic refresh of the "Last calculated" relative time only (not full re-fetch)
+setInterval(function() {
+  if (!_leadScoreData) return;
+  const lastEl = document.getElementById('sc-last-scored');
+  if (!lastEl || lastEl.style.display === 'none') return;
+  const h = _leadScoreData.history;
+  if (!h || !h.length || typeof relativeTime !== 'function') return;
+  const lastTs = h[h.length - 1].scored_at;
+  const deltaTxt = (_leadScoreData.delta > 0) ? ' (+' + _leadScoreData.delta + ')' : (_leadScoreData.delta < 0) ? ' (' + _leadScoreData.delta + ')' : '';
+  lastEl.textContent = 'Last calculated: ' + relativeTime(lastTs) + deltaTxt;
+}, 60000);
+
 async function recalculateScore() {
   const btn = document.getElementById('recalc-btn');
-  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  if (btn) { btn.textContent = '↻ Recalculating…'; btn.disabled = true; }
   try {
-    const score = renderScoreCard(leadData, contactData);
-    // Persist to Supabase
-    if (leadId) {
-      const tier = score >= 80 ? 'hot' : score >= 50 ? 'warm' : 'cold';
-      await sb.from('leads').update({ score, score_tier: tier }).eq('id', leadId).catch(()=>{});
-      leadData.score = score;
-      leadData.score_tier = tier;
-      setVal('f-score', score);
+    if (!contactId) { toast('No contact loaded'); return; }
+    const r = await scorerApi('score_contact', { contact_id: contactId, trigger: 'manual' });
+    if (!r || !r.success) {
+      toast('Recalc failed: ' + ((r && r.error) || 'unknown'));
+      return;
     }
-    toast('✓ Score updated');
+    // Re-fetch full breakdown so history reflects this manual run
+    await fetchLeadScoreBreakdown('manual');
+    if (leadData) { leadData.score = r.total; leadData.score_tier = r.tier; }
+    if (typeof setVal === 'function') setVal('f-score', r.total);
+    const msg = (r.delta > 0) ? '+' + r.delta + ' → ' + r.total : (r.delta < 0) ? r.delta + ' → ' + r.total : 'Score: ' + r.total;
+    toast('✓ ' + msg);
   } finally {
     if (btn) { btn.textContent = '↺ Recalculate'; btn.disabled = false; }
   }
@@ -13520,7 +13643,13 @@ if (localStorage.getItem('rr-theme') === 'light') {
   document.getElementById('theme-toggle').textContent = '🌙';
 }
 
-loadData().then(() => loadContactMeta());
+loadData().then(() => {
+  loadContactMeta();
+  // Fetch the canonical lead score breakdown from lead-scorer.
+  // The synchronous renderScoreCard calls show a placeholder; this overwrites
+  // with real data once the API responds.
+  if (typeof fetchLeadScoreBreakdown === 'function') fetchLeadScoreBreakdown('view');
+});
 
 /* ===== BORROWER PORTAL INFO ===== */
 let crmContactEmail = null;
