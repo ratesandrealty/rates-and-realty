@@ -73,6 +73,25 @@
   .crm-main:has(#tab-documents.is-active) { padding: 0 !important; }
   #tab-documents.is-active { padding: 0 !important; margin: 0 !important; }
   #fv-root { border-radius: 0 !important; border-left: none !important; border-right: none !important; height: calc(100vh - 76px) !important; }
+  /* Communications inbox */
+  .comm-thread {
+    display: flex; gap: 12px; padding: 14px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .comm-thread:hover { background: rgba(201,168,76,0.05); }
+  .comm-icon { font-size: 22px; flex-shrink: 0; }
+  .comm-body { flex: 1; min-width: 0; }
+  .comm-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .comm-direction { color: #888; }
+  .comm-time { color: #888; font-size: 11px; margin-left: auto; }
+  .comm-preview { color: #ccc; font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .unread { background: #C9A84C; color: #1a1208; border-radius: 100px; padding: 2px 8px; font-size: 11px; font-weight: 600; }
+  .intent-hot_lead { background: rgba(255,80,80,0.2); color: #ff8484; padding: 2px 8px; border-radius: 100px; font-size: 11px; }
+  .intent-scheduling { background: rgba(95,168,224,0.2); color: #5fa8e0; padding: 2px 8px; border-radius: 100px; font-size: 11px; }
+  .intent-opt_out { background: rgba(150,150,150,0.2); color: #aaa; padding: 2px 8px; border-radius: 100px; font-size: 11px; }
+  .intent-question { background: rgba(201,168,76,0.2); color: #C9A84C; padding: 2px 8px; border-radius: 100px; font-size: 11px; }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
@@ -520,12 +539,12 @@
           </div>
         </div>
         <div class="crm-filters" style="margin-bottom:20px;">
-          <button class="filter-chip is-active" data-comm-filter="all">All</button>
-          <button class="filter-chip" data-comm-filter="sms">SMS</button>
-          <button class="filter-chip" data-comm-filter="email">Email</button>
-          <button class="filter-chip" data-comm-filter="call">Calls</button>
+          <button class="filter-chip comm-filter is-active" data-filter="all">All</button>
+          <button class="filter-chip comm-filter" data-filter="sms">SMS</button>
+          <button class="filter-chip comm-filter" data-filter="email">Email</button>
+          <button class="filter-chip comm-filter" data-filter="call">Calls</button>
         </div>
-        <div id="comm-feed-root" class="comm-feed"></div>
+        <div id="comms-list" class="comm-feed"></div>
         <div class="panel" style="margin-top:24px;background:var(--gold-dim);border-color:rgba(215,175,82,0.2);">
           <p class="kicker">Integration Ready</p>
           <h3 style="margin:0 0 10px;font-size:1.1rem;">Twilio + Email Provider</h3>
@@ -1560,6 +1579,120 @@ async function loadShowingsWidget() {
 }
 // Load widget on page init
 document.addEventListener('DOMContentLoaded', loadShowingsWidget);
+
+// ── Communications Inbox ───────────────────────────────────
+async function loadCommunications(filter = 'all') {
+  const SUPABASE_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
+  const headers = { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` };
+
+  const list = document.getElementById('comms-list');
+  if (!list) return;
+
+  const typeFilter = filter === 'all' ? 'sms,email,call' : filter;
+  const url = `${SUPABASE_URL}/rest/v1/activity_events?type=in.(${typeFilter})&order=created_at.desc&limit=200&select=*,contacts(id,first_name,last_name,email,phone)`;
+  let events;
+  try {
+    const res = await fetch(url, { headers });
+    events = await res.json();
+  } catch (e) {
+    list.innerHTML = '<div class="empty" style="padding:24px;color:var(--muted);">Failed to load communications.</div>';
+    return;
+  }
+
+  if (!Array.isArray(events) || !events.length) {
+    list.innerHTML = '<div class="empty" style="padding:24px;color:var(--muted);">No communications logged yet.</div>';
+    return;
+  }
+
+  const byContact = new Map();
+  for (const e of events) {
+    const key = e.contact_id || `unknown-${e.sms_from || e.id}`;
+    if (!byContact.has(key)) byContact.set(key, { latest: e, all: [], unread_inbound: 0 });
+    const bucket = byContact.get(key);
+    bucket.all.push(e);
+    if (e.direction === 'inbound') bucket.unread_inbound++;
+  }
+
+  const threads = Array.from(byContact.values())
+    .sort((a, b) => new Date(b.latest.created_at) - new Date(a.latest.created_at));
+
+  list.innerHTML = threads.map(renderThreadRow).join('');
+}
+
+function renderThreadRow(t) {
+  const e = t.latest;
+  const contact = e.contacts || {};
+  const name = (contact.first_name || contact.last_name)
+    ? [contact.first_name, contact.last_name].filter(Boolean).join(' ')
+    : (e.sms_from || 'Unknown');
+  const channelIcon = { sms: '💬', email: '✉️', call: '📞' }[e.type] || '•';
+  const direction = e.direction === 'inbound' ? '←' : '→';
+  const preview = (e.description || e.sms_body || e.title || '').substring(0, 80);
+  const intent = (() => { try { return JSON.parse(e.metadata || '{}').intent; } catch { return null; } })();
+  const intentBadge = intent && intent !== 'general' ? `<span class="intent-${intent}">${intent.replace(/_/g, ' ')}</span>` : '';
+  const ago = timeAgo(e.created_at);
+  const unreadBadge = t.unread_inbound > 0 ? `<span class="unread">${t.unread_inbound}</span>` : '';
+
+  return `
+    <div class="comm-thread" onclick="openThread('${e.contact_id || ''}', '${(e.sms_from || '').replace(/'/g, "\\'")}')">
+      <div class="comm-icon">${channelIcon}</div>
+      <div class="comm-body">
+        <div class="comm-head">
+          <strong>${escapeHtml(name)}</strong>
+          <span class="comm-direction">${direction}</span>
+          ${intentBadge}
+          ${unreadBadge}
+          <span class="comm-time">${ago}</span>
+        </div>
+        <div class="comm-preview">${escapeHtml(preview)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function timeAgo(dateStr) {
+  const diffSec = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  if (diffSec < 60) return 'just now';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`;
+  return `${Math.floor(diffSec / 86400)}d`;
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+window.openThread = function(contactId, fromPhone) {
+  alert(`Open thread for contact ${contactId} or phone ${fromPhone}`);
+  // TODO: implement full thread viewer in next iteration
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.comm-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.comm-filter').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      loadCommunications(btn.dataset.filter);
+    });
+  });
+
+  if (window.location.hash === '#communications') loadCommunications();
+});
+
+setInterval(() => {
+  if (window.location.hash === '#communications') {
+    const active = document.querySelector('.comm-filter.is-active');
+    loadCommunications(active?.dataset.filter || 'all');
+  }
+}, 30000);
+
+window.addEventListener('hashchange', () => {
+  if (window.location.hash === '#communications') {
+    const active = document.querySelector('.comm-filter.is-active');
+    loadCommunications(active?.dataset.filter || 'all');
+  }
+});
 </script>
 <script type="module">
 import { supabase } from "/api/supabase-client.js";
