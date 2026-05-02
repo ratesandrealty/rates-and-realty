@@ -73,25 +73,36 @@
   .crm-main:has(#tab-documents.is-active) { padding: 0 !important; }
   #tab-documents.is-active { padding: 0 !important; margin: 0 !important; }
   #fv-root { border-radius: 0 !important; border-left: none !important; border-right: none !important; height: calc(100vh - 76px) !important; }
-  /* Activity Feed rows */
+  /* Activity Feed rows — 4-column grid: icon | label+time | body | badge */
   .activity-row {
-    display: flex; gap: 14px; padding: 14px 18px;
+    display: grid;
+    grid-template-columns: 32px 150px minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: start;
+    padding: 14px 18px;
     border-bottom: 1px solid rgba(255,255,255,0.05);
     cursor: pointer; transition: background 0.15s;
   }
   .activity-row:hover { background: rgba(201,168,76,0.04); }
-  .activity-icon { font-size: 18px; padding-top: 2px; flex-shrink: 0; min-width: 32px; }
-  .activity-body { flex: 1; min-width: 0; }
-  .activity-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .activity-icon { font-size: 18px; padding-top: 2px; }
+  .activity-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .activity-label { font-size: 12px; font-weight: 600; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .activity-time { color: #888; font-size: 11px; white-space: nowrap; }
+  .activity-body { min-width: 0; word-wrap: break-word; overflow-wrap: anywhere; line-height: 1.4; }
   .who-link { color: #C9A84C; font-weight: 600; font-size: 14px; text-decoration: none; }
   .who-link:hover { text-decoration: underline; }
   .who-sub { color: #aaa; font-size: 12px; text-decoration: none; }
   .who-sub:hover { color: #C9A84C; }
   .who-meta { font-size: 11px; color: #888; margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; }
   .who-unknown, .who-unmatched { color: #888; font-style: italic; }
-  .activity-time { color: #888; font-size: 11px; margin-left: auto; }
-  .activity-title { color: #ddd; font-size: 13px; margin-top: 4px; }
-  .activity-preview { color: #999; font-size: 12px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .activity-preview { color: #ccc; font-size: 13px; margin-top: 4px; line-height: 1.45; word-break: break-word; overflow-wrap: anywhere; }
+  .activity-badge-col { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+  @media (max-width: 720px) {
+    .activity-row { grid-template-columns: 28px 1fr auto; }
+    .activity-meta { grid-column: 2 / span 2; flex-direction: row; gap: 10px; align-items: baseline; }
+    .activity-body { grid-column: 2 / span 2; }
+    .activity-badge-col { grid-column: 3 / span 1; grid-row: 1; }
+  }
 
   /* Communications threads */
   .comm-thread {
@@ -1782,21 +1793,28 @@ async function loadActivityFeed() {
 }
 window.loadActivityFeed = loadActivityFeed;
 
+function activityChannelLabel(e) {
+  const direction = e.direction === 'inbound' ? 'received' : 'sent';
+  const map = {
+    sms: `SMS ${direction}`,
+    email: `Email ${direction}`,
+    call: e.direction === 'inbound' ? 'Call in' : 'Call out',
+    upload: 'File uploaded',
+    showing: 'Showing',
+    listing_alert: 'Listing alert',
+    system: 'System',
+    note: 'Note',
+    task: 'Task',
+    document: 'Document',
+  };
+  return map[e.type] || (e.type ? e.type.replace(/_/g, ' ') : 'Event');
+}
+
 function renderActivityRow(e) {
   const contact = e.contacts;
-  const ICONS = {
-    sms: { in: '💬←', out: '💬→' },
-    email: { in: '✉️←', out: '✉️→' },
-    call: { in: '📞←', out: '📞→' },
-    upload: { in: '📎', out: '📎' },
-    showing: { in: '🏠', out: '🏠' },
-    listing_alert: { in: '🔔', out: '🔔' },
-    system: { in: '⚙️', out: '⚙️' },
-    note: { in: '📝', out: '📝' },
-    task: { in: '✓', out: '✓' },
-    document: { in: '📄', out: '📄' },
-  };
-  const icon = (ICONS[e.type] && ICONS[e.type][e.direction === 'inbound' ? 'in' : 'out']) || '•';
+  const ICONS = { sms: '💬', email: '✉️', call: '📞', upload: '📎', showing: '🏠', listing_alert: '🔔', system: '⚙️', note: '📝', task: '✓', document: '📄' };
+  const icon = ICONS[e.type] || '•';
+  const label = activityChannelLabel(e);
 
   let whoHtml = '<span class="who-unknown">Unknown</span>';
   if (contact && (contact.first_name || contact.last_name)) {
@@ -1811,29 +1829,34 @@ function renderActivityRow(e) {
     whoHtml = `<span class="who-link">${escapeHtml(formatPhone(ph))}</span><div class="who-meta who-unmatched">unmatched contact</div>`;
   }
 
-  let intentBadge = '';
+  const badges = [];
+  const dirBadge = e.direction === 'inbound'
+    ? '<span class="intent-badge" style="background:rgba(80,200,120,0.18);color:#78d09a;">received</span>'
+    : (e.direction === 'outbound' ? '<span class="intent-badge" style="background:rgba(201,168,76,0.18);color:#C9A84C;">sent</span>' : '');
+  if (dirBadge) badges.push(dirBadge);
   try {
     const m = JSON.parse(e.metadata || '{}');
     if (m.intent && m.intent !== 'general' && m.intent !== 'placeholder') {
-      intentBadge = `<span class="intent-badge intent-${m.intent}">${escapeHtml(m.intent.replace(/_/g,' '))}</span>`;
+      badges.push(`<span class="intent-badge intent-${m.intent}">${escapeHtml(m.intent.replace(/_/g,' '))}</span>`);
     }
   } catch {}
 
-  const preview = (e.description || e.sms_body || e.title || '').substring(0, 140);
+  const preview = (e.description || e.sms_body || e.title || '').substring(0, 280);
   const ago = timeAgo(e.created_at);
   const rowClickHandler = contact?.id ? `onclick="openContactPage('${contact.id}')"` : '';
 
   return `
     <div class="activity-row" ${rowClickHandler}>
       <div class="activity-icon">${icon}</div>
-      <div class="activity-body">
-        <div class="activity-head">
-          ${whoHtml}
-          <span class="activity-time">${ago}</span>
-        </div>
-        <div class="activity-title">${escapeHtml(e.title || '')} ${intentBadge}</div>
-        <div class="activity-preview">${escapeHtml(preview)}</div>
+      <div class="activity-meta">
+        <div class="activity-label">${escapeHtml(label)}</div>
+        <div class="activity-time">${ago}</div>
       </div>
+      <div class="activity-body">
+        ${whoHtml}
+        ${preview ? `<div class="activity-preview">${escapeHtml(preview)}</div>` : ''}
+      </div>
+      <div class="activity-badge-col">${badges.join('')}</div>
     </div>
   `;
 }
