@@ -275,6 +275,7 @@
               <button onclick="insertToken('{total_referrals}')" class="btn-sm" style="background:rgba(139,105,20,0.1);color:#8B6914;border:1px solid rgba(139,105,20,0.2);margin:2px;">{total_referrals}</button>
             </div>
 
+            <div id="mergeTagDropdownWrap" style="margin:8px 0 4px;"></div>
             <div id="quill-editor"></div>
             <div class="editor-stats">
               <span id="wordCount">0 words</span>
@@ -682,6 +683,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderAutomations();
   loadCampaignHistory();
   initSmsTab();
+  loadEmailSettings();
 });
 
 /* ================================================================
@@ -854,11 +856,82 @@ function getSelectedRecipients() {
 }
 
 /* ================================================================
+   EMAIL SETTINGS + MERGE TAG DROPDOWN
+   ================================================================ */
+let cachedSettings = null;
+
+async function callEmailService(payload) {
+  const res = await fetch(SB_URL + '/functions/v1/email-service', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+async function loadEmailSettings() {
+  try {
+    cachedSettings = await callEmailService({ action: 'get_settings' });
+    renderMergeTagDropdown(cachedSettings.merge_tags_available || []);
+  } catch (e) { console.warn('settings load failed:', e); }
+}
+
+function renderMergeTagDropdown(tags) {
+  const wrap = document.getElementById('mergeTagDropdownWrap');
+  if (!wrap || !tags.length) return;
+  wrap.innerHTML = '';
+  const dropdown = document.createElement('select');
+  dropdown.id = 'mergeTagDropdown';
+  dropdown.style.cssText = 'padding:6px 10px;background:#1a1a1a;color:#C9A84C;border:1px solid rgba(201,168,76,0.3);border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;';
+  dropdown.innerHTML = '<option value="">+ Insert merge tag...</option>' +
+    tags.map(t => '<option value="' + escHtml(t.tag) + '">' + escHtml(t.tag) + ' — ' + escHtml(t.desc) + '</option>').join('');
+  dropdown.addEventListener('change', () => {
+    if (!dropdown.value || !quill) { dropdown.value = ''; return; }
+    const range = quill.getSelection(true) || { index: quill.getLength() - 1, length: 0 };
+    quill.insertText(range.index, dropdown.value);
+    quill.setSelection(range.index + dropdown.value.length, 0);
+    dropdown.value = '';
+    updatePreview();
+  });
+  wrap.appendChild(dropdown);
+}
+
+/* ================================================================
    EMAIL PREVIEW
    ================================================================ */
+let _previewTimer = null;
 function updatePreview() {
-  const html = quill.root.innerHTML;
-  document.getElementById('previewBody').innerHTML = html || '<em style="color:#999;">Start typing to see a live preview...</em>';
+  clearTimeout(_previewTimer);
+  _previewTimer = setTimeout(_renderPreview, 350);
+}
+
+async function _renderPreview() {
+  const previewBody = document.getElementById('previewBody');
+  if (!previewBody) return;
+  const subject = document.getElementById('subjectLine')?.value || '';
+  const html = quill ? quill.root.innerHTML : '';
+  if (!html || !quill?.getText().trim()) {
+    previewBody.innerHTML = '<em style="color:#999;">Start typing to see a live preview...</em>';
+    return;
+  }
+  const sample = getSelectedRecipients()[0];
+  try {
+    const data = await callEmailService({
+      action: 'preview',
+      subject,
+      html: buildFullHtml(html),
+      contact_ids: sample?.id ? [sample.id] : undefined,
+    });
+    if (data.success && data.rendered_html) {
+      previewBody.innerHTML = data.rendered_html;
+      const subjPreview = document.getElementById('previewSubject');
+      if (subjPreview) subjPreview.textContent = data.rendered_subject || '';
+    } else {
+      previewBody.innerHTML = html;
+    }
+  } catch (e) {
+    previewBody.innerHTML = html;
+  }
 }
 
 function setPreview(mode, btn) {
@@ -873,65 +946,77 @@ function setPreview(mode, btn) {
    ================================================================ */
 async function sendCampaign(mode) {
   const subject = document.getElementById('subjectLine').value.trim();
-  const html = quill.root.innerHTML;
+  const bodyHtml = quill.root.innerHTML;
   const recipients = getSelectedRecipients();
 
   if (!subject) { showToast('Please enter a subject line'); return; }
   if (!quill.getText().trim()) { showToast('Please write some email content'); return; }
   if (!recipients.length) { showToast('No recipients selected'); return; }
 
+  let scheduledAt = null;
   if (mode === 'schedule') {
     const dt = document.getElementById('schedulePicker').value;
     if (!dt) { showToast('Please pick a date and time to schedule'); return; }
+    scheduledAt = new Date(dt).toISOString();
+    if (new Date(scheduledAt).getTime() < Date.now()) { showToast('Schedule time must be in the future'); return; }
   }
 
   const label = mode === 'schedule' ? 'schedule' : 'send';
   if (!confirm(label.charAt(0).toUpperCase() + label.slice(1) + ' "' + subject + '" to ' + recipients.length + ' recipients?')) return;
 
-  try {
-    showToast('Sending campaign...');
-    const emails = recipients.map(r => r.email);
-    const resp = await fetch(SB_URL + '/functions/v1/email-service', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SB_KEY },
-      body: JSON.stringify({
-        to: emails,
-        subject: subject,
-        html: buildFullHtml(html),
-        from_name: 'Rene Duarte',
-        from_email: 'rene@ratesandrealty.com'
-      })
-    });
-    const data = await resp.json();
-    if (data.error) throw new Error(data.error);
+  const contactIds = recipients.map(r => r.id).filter(Boolean);
+  if (!contactIds.length) { showToast('Recipients missing contact IDs'); return; }
 
-    saveCampaign(subject, recipients.length, mode === 'schedule' ? 'Scheduled' : 'Sent');
-    showToast('Campaign ' + (mode === 'schedule' ? 'scheduled' : 'sent') + ' to ' + recipients.length + ' recipients!');
+  const payload = {
+    action: mode === 'schedule' ? 'bulk_schedule' : 'bulk_send',
+    subject,
+    html: buildFullHtml(bodyHtml),
+    contact_ids: contactIds,
+  };
+  if (scheduledAt) payload.scheduled_at = scheduledAt;
+
+  try {
+    showToast(mode === 'schedule' ? 'Scheduling...' : ('Sending to ' + contactIds.length + '...'));
+    const data = await callEmailService(payload);
+    if (mode === 'schedule') {
+      if (data.success) {
+        showToast('Queued ' + data.queued + ' for ' + new Date(scheduledAt).toLocaleString());
+        saveCampaign(subject, data.queued || contactIds.length, 'Scheduled');
+      } else {
+        showToast('Schedule failed: ' + (data.error || 'unknown'));
+      }
+    } else {
+      const sent = data.sent || 0;
+      const failed = data.failed || 0;
+      if (sent > 0 || data.success) {
+        showToast('Sent ' + sent + (failed ? (' · ' + failed + ' failed') : ''));
+        saveCampaign(subject, sent, 'Sent');
+        if (failed && data.errors) console.warn('Failed sends:', data.errors);
+      } else {
+        showToast('Send failed: ' + (data.error || 'unknown'));
+      }
+    }
   } catch (e) {
-    showToast('Error: ' + e.message);
+    showToast('Network error: ' + e.message);
   }
 }
 
 async function sendTestEmail() {
   const subject = document.getElementById('subjectLine').value.trim() || '(Test) No Subject';
-  const html = quill.root.innerHTML;
+  const bodyHtml = quill.root.innerHTML;
+  if (!quill.getText().trim()) { showToast('Please write some email content'); return; }
 
   try {
     showToast('Sending test email...');
-    await fetch(SB_URL + '/functions/v1/email-service', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SB_KEY },
-      body: JSON.stringify({
-        to: ['rene@ratesandrealty.com'],
-        subject: '[TEST] ' + subject,
-        html: buildFullHtml(html),
-        from_name: 'Rene Duarte',
-        from_email: 'rene@ratesandrealty.com'
-      })
+    const data = await callEmailService({
+      action: 'send_test',
+      subject,
+      html: buildFullHtml(bodyHtml),
     });
-    showToast('Test email sent to rene@ratesandrealty.com');
+    if (data.success) showToast('Test sent to ' + (data.sent_to || 'rene@ratesandrealty.com'));
+    else showToast('Test failed: ' + (data.error || 'unknown'));
   } catch (e) {
-    showToast('Error: ' + e.message);
+    showToast('Network error: ' + e.message);
   }
 }
 
