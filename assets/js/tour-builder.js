@@ -38,6 +38,14 @@
       lastSavedAt: null,
       mlsPreviewProperty: null,    // pending MLS lookup result
       isClosing: false,
+      // Stops-tab search state
+      searchSkip: 0,
+      lastSearchListings: null,
+      lastSearchParams: null,
+      // Stops-tab mini map
+      searchMap: null,
+      searchMarkers: [],
+      mapHidden: false,
     };
   }
 
@@ -325,9 +333,13 @@
       #tour-builder-modal .btn-search{width:100%;margin-top:4px;padding:9px 14px;background:#C9A84C;color:#000;border:none;border-radius:6px;font-size:.82rem;font-weight:700;cursor:pointer;font-family:inherit}
       #tour-builder-modal .btn-search:hover{background:#e8c96a}
       #tour-builder-modal .search-results{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;padding-right:4px;align-content:start}
-      #tour-builder-modal .search-result-card{background:#141414;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
+      #tour-builder-modal .search-result-card{background:#141414;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;transition:border-color .15s,transform .15s;position:relative}
       #tour-builder-modal .search-result-card:hover{border-color:rgba(201,168,76,.5);transform:translateY(-2px)}
-      #tour-builder-modal .search-result-card.added{border-color:#6ed47e}
+      #tour-builder-modal .search-result-card.added{border-color:#6ed47e;border-left-width:4px;transform:scale(.98);opacity:1}
+      #tour-builder-modal .search-result-card.added::after{content:'✓ IN CART';position:absolute;top:6px;right:6px;background:#6ed47e;color:#0a0a0a;font-size:.62rem;font-weight:700;padding:3px 7px;border-radius:3px;letter-spacing:.04em;z-index:2}
+      #tour-builder-modal .search-result-card.added .result-photo{filter:brightness(.7)}
+      #tour-builder-modal .search-result-card.flash{animation:tb-flash 1.2s}
+      @keyframes tb-flash{0%,100%{box-shadow:0 0 0 0 rgba(201,168,76,0)}30%{box-shadow:0 0 0 4px rgba(201,168,76,.6)}}
       #tour-builder-modal .result-photo{width:100%;height:104px;object-fit:cover;background:#1a1a1a;display:block}
       #tour-builder-modal .result-photo-ph{height:104px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;color:#444;font-size:1.4rem}
       #tour-builder-modal .result-body{padding:8px 10px;flex:1;display:flex;flex-direction:column;gap:3px}
@@ -352,6 +364,33 @@
       #tour-builder-modal .search-load-more button:hover{border-color:#C9A84C;color:#C9A84C}
       /* The stops tab gets a wider modal so the browse+cart layout breathes. */
       #tour-builder-modal[data-active-tab=stops] .tb-card{max-width:1100px}
+      /* ── Lead-required banner ── */
+      #tour-builder-modal .lead-required-banner{display:flex;align-items:center;gap:12px;background:rgba(240,80,80,.08);border:1px solid rgba(240,80,80,.4);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+      #tour-builder-modal .lead-required-banner[hidden]{display:none}
+      #tour-builder-modal .lead-required-banner .banner-icon{font-size:1.05rem}
+      #tour-builder-modal .lead-required-banner .banner-text{flex:1;font-size:.78rem;color:#ddd;line-height:1.4}
+      #tour-builder-modal .lead-required-banner .banner-text strong{display:block;color:#ff8888;margin-bottom:1px;font-size:.82rem}
+      #tour-builder-modal .lead-required-banner .banner-text span{color:#aaa}
+      #tour-builder-modal .lead-required-banner.shake{animation:tb-shake .4s}
+      @keyframes tb-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+      /* ── Search-pane mini map ── */
+      #tour-builder-modal .search-map-wrap{position:relative;margin-bottom:10px;border-radius:8px;overflow:hidden;border:1px solid #2a2a2a;flex-shrink:0}
+      #tour-builder-modal .search-map-wrap[hidden]{display:none}
+      #tour-builder-modal .search-map{width:100%;height:180px;background:#1a1a1a;transition:height .25s}
+      #tour-builder-modal .search-map.collapsed{height:0}
+      #tour-builder-modal .map-toggle{position:absolute;top:6px;right:6px;background:rgba(10,10,10,.85);border:1px solid #2a2a2a;color:#C9A84C;font-size:.66rem;padding:3px 9px;border-radius:4px;cursor:pointer;backdrop-filter:blur(4px);font-family:inherit;z-index:5}
+      #tour-builder-modal .map-toggle:hover{color:#e8c96a}
+      /* ── Cart toolbar ── */
+      #tour-builder-modal .cart-toolbar{display:flex;gap:14px;padding-bottom:8px;margin-bottom:10px;border-bottom:1px solid #1f1f1f;font-size:.7rem;flex-wrap:wrap}
+      #tour-builder-modal .cart-toolbar .btn-link{padding:0;font-size:.7rem}
+      /* ── Cart card: agent block ── */
+      #tour-builder-modal .stop-agent-block{background:rgba(201,168,76,.06);border-left:2px solid rgba(201,168,76,.4);border-radius:0 4px 4px 0;padding:7px 9px;margin:6px 0 4px;font-size:.74rem}
+      #tour-builder-modal .stop-agent-name{color:#ddd;margin-bottom:5px;font-weight:600}
+      #tour-builder-modal .stop-agent-name .agent-icon{margin-right:4px}
+      #tour-builder-modal .stop-agent-name .agent-office{color:#888;font-weight:400;margin-left:4px;font-size:.7rem}
+      #tour-builder-modal .stop-agent-actions{display:flex;gap:6px;flex-wrap:wrap}
+      #tour-builder-modal .agent-action{color:#C9A84C;text-decoration:none;font-size:.68rem;padding:3px 7px;background:rgba(201,168,76,.1);border-radius:4px;transition:background .15s;display:inline-flex;align-items:center;gap:3px}
+      #tour-builder-modal .agent-action:hover{background:rgba(201,168,76,.2)}
       @media(max-width:720px){
         #tour-builder-modal .stops-grid{grid-template-columns:1fr;grid-template-rows:1fr;min-height:auto}
         #tour-builder-modal .stops-view-toggle{display:flex;gap:8px;margin-bottom:10px}
@@ -529,6 +568,13 @@
     state.isClosing = true;
     // Flush any debounced saves before tearing down state.
     Object.keys(state.saveTimers || {}).forEach(function (k) { clearTimeout(state.saveTimers[k]); });
+    // Tear down map references so a reopen doesn't reuse a stale Map instance
+    // pointing at a removed DOM node.
+    if (state.searchMarkers) {
+      state.searchMarkers.forEach(function (m) { try { m.setMap(null); } catch (e) {} });
+    }
+    state.searchMap = null;
+    state.searchMarkers = [];
     var modal = document.getElementById('tour-builder-modal');
     if (modal && modal.parentElement) modal.remove();
     document.removeEventListener('keydown', onEscapeKey);
@@ -786,8 +832,12 @@
       ensureTour = Promise.resolve();
     }
     startSave();
-    ensureTour.then(function () { endSave(); refreshHead(); renderActivePanel(); })
-      .catch(function (e) { endSave(e.message || 'Failed'); });
+    ensureTour.then(function () {
+      endSave();
+      refreshHead();
+      hideLeadRequiredBanner();
+      renderActivePanel();
+    }).catch(function (e) { endSave(e.message || 'Failed'); });
   }
 
   function saveTourField(field, value) {
@@ -833,6 +883,14 @@
       + '</div>'
       + '<div class="stops-grid">'
       +   '<div class="browse-pane active" data-view-pane="browse">'
+      +     '<div class="lead-required-banner" data-field="lead-required-banner" hidden>'
+      +       '<span class="banner-icon">⚠️</span>'
+      +       '<div class="banner-text">'
+      +         '<strong>Pick a lead first.</strong>'
+      +         '<span>Tours need a contact attached. Use the link to jump to Setup.</span>'
+      +       '</div>'
+      +       '<button class="btn-link" data-act="goto-setup" type="button">Go to Setup →</button>'
+      +     '</div>'
       +     '<div class="browse-header">'
       +       '<h3>Find homes</h3>'
       +       '<button class="btn-link" data-act="quick-mls-toggle" type="button">+ Paste MLS #</button>'
@@ -862,6 +920,10 @@
       +       '</div>'
       +       '<button class="btn-search" data-act="run-search" type="button">🔍 Search homes</button>'
       +     '</div>'
+      +     '<div class="search-map-wrap" data-field="search-map-wrap" hidden>'
+      +       '<div class="search-map" id="tb-search-map"></div>'
+      +       '<button class="map-toggle" data-act="toggle-map" type="button">Hide map</button>'
+      +     '</div>'
       +     '<div class="search-results" data-role="search-results">'
       +       '<div class="search-empty">'
       +         '<span class="empty-icon">🏘️</span>'
@@ -874,6 +936,10 @@
       +     '<div class="cart-header">'
       +       '<h3>Tour cart <span class="cart-badge" data-field="cart-count-header">0</span></h3>'
       +       '<span class="cart-hint">Drag to reorder · 📝 add notes</span>'
+      +     '</div>'
+      +     '<div class="cart-toolbar">'
+      +       '<button class="btn-link" data-act="copy-mls-list" type="button" title="Copy comma-separated MLS#s">📋 Copy MLS#s</button>'
+      +       '<button class="btn-link" data-act="copy-address-list" type="button" title="Copy numbered address list">📋 Copy address list</button>'
       +     '</div>'
       +     '<div class="cart-list" id="stops-list" data-role="stops-slot"></div>'
       +   '</div>'
@@ -922,11 +988,70 @@
     var resultsEl = root.querySelector('[data-role=search-results]');
     resultsEl.addEventListener('click', onSearchResultsClick);
 
+    // Lead-required banner: clicking the link jumps to Setup + focuses the
+    // contact-search field instead of silently re-rendering. Banner shows
+    // up via showLeadRequiredBanner() when the user clicks Add-to-cart
+    // before picking a contact.
+    root.querySelector('[data-act=goto-setup]').addEventListener('click', function () {
+      switchTab('setup');
+      setTimeout(function () {
+        var focusEl = document.querySelector('#tour-builder-modal [data-field=contact-search]');
+        if (focusEl) focusEl.focus();
+      }, 80);
+    });
+
+    // Show banner up-front if user opens the tab without a contact so they
+    // know the requirement before clicking Add-to-cart.
+    if (!state.tour || !state.tour.id) showLeadRequiredBanner(false);
+
+    // Map toggle: collapse to 0 height instead of unmounting so we don't
+    // pay the load cost twice.
+    root.querySelector('[data-act=toggle-map]').addEventListener('click', function () {
+      state.mapHidden = !state.mapHidden;
+      var mapEl = root.querySelector('.search-map');
+      var btn = root.querySelector('[data-act=toggle-map]');
+      if (mapEl) mapEl.classList.toggle('collapsed', state.mapHidden);
+      if (btn) btn.textContent = state.mapHidden ? 'Show map' : 'Hide map';
+      if (!state.mapHidden && state.searchMap && window.google && window.google.maps) {
+        setTimeout(function () { google.maps.event.trigger(state.searchMap, 'resize'); }, 260);
+      }
+    });
+
+    // Copy actions
+    root.querySelector('[data-act=copy-mls-list]').addEventListener('click', copyMlsList);
+    root.querySelector('[data-act=copy-address-list]').addEventListener('click', copyAddressList);
+
     // Re-render last search results if user switches tabs and returns
     if (state.lastSearchListings && state.lastSearchListings.length) {
       paintSearchResults(state.lastSearchListings, false);
+      renderSearchMap(state.lastSearchListings);
     }
     if (state.mlsPreviewProperty) renderMlsPreview();
+  }
+
+  // ---- Lead-required banner ---------------------------------------------
+  // Replaces the old "switch to setup with a toast" UX. When the user clicks
+  // + Add to cart without a tour/contact, this surfaces the requirement
+  // inline above the search filters with a one-tap shortcut.
+  function showLeadRequiredBanner(animate) {
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var banner = modal.querySelector('[data-field=lead-required-banner]');
+    if (!banner) return;
+    banner.hidden = false;
+    if (animate) {
+      banner.classList.remove('shake'); // restart animation
+      void banner.offsetWidth;
+      banner.classList.add('shake');
+      setTimeout(function () { banner.classList.remove('shake'); }, 450);
+    }
+  }
+
+  function hideLeadRequiredBanner() {
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var banner = modal.querySelector('[data-field=lead-required-banner]');
+    if (banner) banner.hidden = true;
   }
 
   // ---- Browse pane: search ---------------------------------------------
@@ -977,18 +1102,23 @@
     trestleSearch(params).then(function (d) {
       if (d && d.error) {
         resultsEl.innerHTML = '<div class="search-empty"><span class="empty-icon">⚠️</span><div>Search failed: ' + esc(d.error) + '</div></div>';
+        renderSearchMap([]);
         return;
       }
       var listings = (d && d.value) || [];
       if (!append && !listings.length) {
         resultsEl.innerHTML = '<div class="search-empty"><span class="empty-icon">🤷</span><div>No listings match those filters.<br/>Try widening price or removing the city.</div></div>';
         state.lastSearchListings = [];
+        renderSearchMap([]);
         return;
       }
       state.searchSkip = (state.searchSkip || 0) + listings.length;
       if (!append) state.lastSearchListings = listings;
       else state.lastSearchListings = (state.lastSearchListings || []).concat(listings);
       paintSearchResults(listings, append);
+      // Map always reflects the FULL accumulated result set so Load-more
+      // pins are still visible alongside earlier ones.
+      renderSearchMap(state.lastSearchListings);
     });
   }
 
@@ -1077,8 +1207,8 @@
     var mls = String(input.value || '').trim();
     if (!mls) return;
     if (!state.tour || !state.tour.id) {
-      showToast('Pick a lead on the Setup tab first', 'error');
-      switchTab('setup');
+      // Inline banner — no surprise tab switch.
+      showLeadRequiredBanner(true);
       return;
     }
     var btn = modal.querySelector('[data-act=quick-mls-add]');
@@ -1113,8 +1243,8 @@
   // promise resolving to true on success, false on error.
   function addStopFromTrestleProperty(p) {
     if (!state.tour || !state.tour.id) {
-      showToast('Pick a lead on the Setup tab first', 'error');
-      switchTab('setup');
+      // Inline banner instead of yanking the user to Setup.
+      showLeadRequiredBanner(true);
       return Promise.resolve(false);
     }
     var showingPhone = p.ShowingContactPhone || p.ListAgentPreferredPhone || p.ListOfficePhone || null;
@@ -1165,6 +1295,241 @@
     if (stopTab) stopTab.textContent = String(n);
   }
 
+  // ---- Cart-card agent block --------------------------------------------
+  function stopAgentBlockHtml(stop) {
+    if (!stop.listing_agent_name && !stop.listing_agent_phone && !stop.listing_agent_email) return '';
+    var name = stop.listing_agent_name || 'Agent unknown';
+    var office = stop.listing_agent_office || '';
+    var phone = stop.listing_agent_phone || '';
+    var email = stop.listing_agent_email || '';
+    var cleanPhone = phone ? String(phone).replace(/[^0-9+]/g, '') : '';
+    var firstName = (stop.listing_agent_name || '').split(' ')[0] || 'there';
+    var addr = stop.property_address || '';
+    var mls = stop.mls_number || '';
+    var subject = encodeURIComponent('Showing inquiry: ' + addr);
+    var body = encodeURIComponent(
+      'Hi ' + firstName + ',\n\n'
+      + "I'd like to schedule a showing for " + addr + (mls ? ' (MLS #' + mls + ')' : '') + '.\n\n'
+      + 'Thanks,\nRene'
+    );
+    var actions = '';
+    if (phone) {
+      actions += '<a class="agent-action" href="tel:' + esc(cleanPhone) + '" title="Call ' + esc(name) + '">📞 ' + esc(phone) + '</a>';
+    }
+    if (email) {
+      actions += '<a class="agent-action" href="mailto:' + esc(email) + '?subject=' + subject + '&body=' + body + '" title="Email ' + esc(name) + '">✉ Email</a>';
+    }
+    return '<div class="stop-agent-block">'
+      + '<div class="stop-agent-name">'
+      +   '<span class="agent-icon">🏢</span>' + esc(name)
+      +   (office ? '<span class="agent-office">· ' + esc(office) + '</span>' : '')
+      + '</div>'
+      + (actions ? '<div class="stop-agent-actions">' + actions + '</div>' : '')
+      + '</div>';
+  }
+
+  // ---- Cart toolbar copy actions ----------------------------------------
+  function copyMlsList() {
+    var mlsNums = state.stops.map(function (s) { return s.mls_number; }).filter(Boolean);
+    if (!mlsNums.length) { showToast('No MLS#s in cart yet', 'error'); return; }
+    var txt = mlsNums.join(', ');
+    copyToClipboard(txt, mlsNums.length + ' MLS#s copied');
+  }
+
+  function copyAddressList() {
+    if (!state.stops.length) { showToast('Cart is empty', 'error'); return; }
+    var lines = state.stops.map(function (s, i) {
+      var parts = [
+        (i + 1) + '. ' + (s.property_address || '(no address)'),
+        s.property_city || '',
+      ].filter(Boolean).join(', ');
+      var meta = [];
+      if (s.mls_number) meta.push('MLS #' + s.mls_number);
+      if (s.property_price) meta.push('$' + Number(s.property_price).toLocaleString());
+      return parts + (meta.length ? ' — ' + meta.join(' — ') : '');
+    }).join('\n');
+    copyToClipboard(lines, 'Address list copied');
+  }
+
+  function copyToClipboard(text, successMsg) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast(successMsg || 'Copied'); },
+        function () { showToast('Copy failed', 'error'); }
+      );
+    } else {
+      // Fallback for older browsers / non-secure contexts.
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast(successMsg || 'Copied');
+      } catch (e) { showToast('Copy not supported', 'error'); }
+    }
+  }
+
+  // ---- Mini map ----------------------------------------------------------
+  // Reuses /public/js/map-controls.js (window.loadGoogleMaps + DARK_MAP_STYLE).
+  // If the loader script isn't on the page (admin/showings.html, lead-detail
+  // historically didn't include it), we lazy-inject it. If /config or the
+  // Maps script can't load (network, key missing, etc.) the map stays hidden
+  // and the rest of the search UI keeps working.
+  function ensureMapsLoaded() {
+    if (window.google && window.google.maps) return Promise.resolve();
+    if (typeof window.loadGoogleMaps === 'function') return window.loadGoogleMaps();
+    return new Promise(function (resolve, reject) {
+      var existing = document.querySelector('script[data-tb-map-controls="1"]');
+      if (existing) {
+        existing.addEventListener('load', function () {
+          if (typeof window.loadGoogleMaps === 'function') {
+            window.loadGoogleMaps().then(resolve, reject);
+          } else { reject(new Error('map-controls loaded but loader missing')); }
+        });
+        existing.addEventListener('error', function () { reject(new Error('map-controls.js failed')); });
+        return;
+      }
+      var s = document.createElement('script');
+      s.src = '/public/js/map-controls.js';
+      s.async = true;
+      s.setAttribute('data-tb-map-controls', '1');
+      s.onload = function () {
+        if (typeof window.loadGoogleMaps === 'function') {
+          window.loadGoogleMaps().then(resolve, reject);
+        } else { reject(new Error('map-controls loaded but loader missing')); }
+      };
+      s.onerror = function () { reject(new Error('map-controls.js fetch failed')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function renderSearchMap(listings) {
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var wrap = modal.querySelector('[data-field=search-map-wrap]');
+    if (!wrap) return;
+    var geocoded = (listings || []).filter(function (l) { return l.Latitude && l.Longitude; });
+    if (!geocoded.length) {
+      wrap.hidden = true;
+      // Tear down any previous markers
+      if (state.searchMarkers) {
+        state.searchMarkers.forEach(function (m) { try { m.setMap(null); } catch (e) {} });
+        state.searchMarkers = [];
+      }
+      return;
+    }
+
+    ensureMapsLoaded().then(function () {
+      // While the script was loading the user may have closed the modal.
+      var modal2 = document.getElementById('tour-builder-modal');
+      if (!modal2 || !state) return;
+      var wrap2 = modal2.querySelector('[data-field=search-map-wrap]');
+      if (!wrap2) return;
+      wrap2.hidden = false;
+
+      var mapEl = document.getElementById('tb-search-map');
+      if (!mapEl) return;
+
+      if (!state.searchMap) {
+        state.searchMap = new google.maps.Map(mapEl, {
+          zoom: 11,
+          center: { lat: geocoded[0].Latitude, lng: geocoded[0].Longitude },
+          disableDefaultUI: true,
+          zoomControl: true,
+          gestureHandling: 'cooperative',
+          styles: window.DARK_MAP_STYLE || [],
+        });
+      }
+
+      // Clear existing markers
+      if (state.searchMarkers) {
+        state.searchMarkers.forEach(function (m) { try { m.setMap(null); } catch (e) {} });
+      }
+      state.searchMarkers = [];
+
+      var cartMls = {};
+      state.stops.forEach(function (s) { if (s.mls_number) cartMls[s.mls_number] = true; });
+
+      var bounds = new google.maps.LatLngBounds();
+      geocoded.forEach(function (l, idx) {
+        var inCart = !!cartMls[l.ListingId];
+        var marker = new google.maps.Marker({
+          position: { lat: l.Latitude, lng: l.Longitude },
+          map: state.searchMap,
+          title: (l.UnparsedAddress || '') + ' — $' + Number(l.ListPrice || 0).toLocaleString(),
+          label: {
+            text: inCart ? '✓' : String(idx + 1),
+            color: inCart ? '#0a0a0a' : '#fff',
+            fontWeight: 'bold',
+            fontSize: '12px',
+          },
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 12,
+            fillColor: inCart ? '#6ed47e' : '#C9A84C',
+            fillOpacity: 1,
+            strokeColor: '#0a0a0a',
+            strokeWeight: 2,
+          },
+        });
+        marker.addListener('click', function () { flashSearchCard(l.ListingId); });
+        state.searchMarkers.push(marker);
+        bounds.extend({ lat: l.Latitude, lng: l.Longitude });
+      });
+
+      try { state.searchMap.fitBounds(bounds); } catch (e) {}
+      // Resize after the modal animation settles in case the map was
+      // mounted on a hidden flex child.
+      setTimeout(function () {
+        if (state.searchMap) google.maps.event.trigger(state.searchMap, 'resize');
+      }, 60);
+    }, function (err) {
+      // Maps unavailable — keep search UI working without the map.
+      console.warn('[tour-builder] mini map disabled:', err && err.message);
+      wrap.hidden = true;
+    });
+  }
+
+  function flashSearchCard(mls) {
+    if (!mls) return;
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var card = modal.querySelector('.search-result-card[data-mls="' + String(mls).replace(/"/g, '\\"') + '"]');
+    if (!card) return;
+    try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+    card.classList.remove('flash');
+    void card.offsetWidth;
+    card.classList.add('flash');
+    setTimeout(function () { card.classList.remove('flash'); }, 1300);
+  }
+
+  function refreshSearchMapMarkers() {
+    if (!state || !state.searchMap || !state.searchMarkers || !state.searchMarkers.length) return;
+    if (!state.lastSearchListings) return;
+    var cartMls = {};
+    state.stops.forEach(function (s) { if (s.mls_number) cartMls[s.mls_number] = true; });
+    var geocoded = state.lastSearchListings.filter(function (l) { return l.Latitude && l.Longitude; });
+    state.searchMarkers.forEach(function (marker, idx) {
+      var l = geocoded[idx];
+      if (!l) return;
+      var inCart = !!cartMls[l.ListingId];
+      marker.setLabel({
+        text: inCart ? '✓' : String(idx + 1),
+        color: inCart ? '#0a0a0a' : '#fff',
+        fontWeight: 'bold',
+        fontSize: '12px',
+      });
+      marker.setIcon({
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 12,
+        fillColor: inCart ? '#6ed47e' : '#C9A84C',
+        fillOpacity: 1,
+        strokeColor: '#0a0a0a',
+        strokeWeight: 2,
+      });
+    });
+  }
+
   function renderStopsList(slot) {
     if (!slot) slot = $('#tour-builder-modal [data-role=stops-slot]');
     if (!slot) { updateCartBadge(); return; }
@@ -1202,6 +1567,8 @@
         }
       });
     }
+    // Mirror the cart-state on the map markers (✓ green when in cart).
+    refreshSearchMapMarkers();
   }
 
   function stopCardHtml(stop, idx) {
@@ -1214,14 +1581,7 @@
     if (stop.property_baths != null) meta.push('<span>' + stop.property_baths + ' ba</span>');
     if (stop.property_sqft) meta.push('<span>' + fmtNumber(stop.property_sqft) + ' sqft</span>');
 
-    var agentLine = '';
-    if (stop.listing_agent_name) {
-      agentLine = '<div class="tb-agent">'
-        + '<span>🏢 ' + esc(stop.listing_agent_name) + '</span>'
-        + (stop.listing_agent_phone ? ' <a href="tel:' + esc(String(stop.listing_agent_phone).replace(/[^0-9+]/g, '')) + '" title="Call">📞</a>' : '')
-        + (stop.listing_agent_email ? ' <a href="mailto:' + esc(stop.listing_agent_email) + '" title="Email">✉</a>' : '')
-        + '</div>';
-    }
+    var agentLine = stopAgentBlockHtml(stop);
     var notes = stop.agent_notes_for_lead
       ? '<div class="tb-notes-disp"><span class="tb-notes-label">Note to lead:</span> ' + esc(stop.agent_notes_for_lead) + '</div>'
       : '';
