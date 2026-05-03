@@ -1408,6 +1408,7 @@ document.addEventListener('click', function(e) {
 function initStatusTabs() {
   document.querySelectorAll('.status-tab').forEach(function(t) {
     t.addEventListener('click', function() {
+      var prevLease = currentLease;
       document.querySelectorAll('.status-tab').forEach(function(s) { s.classList.remove('active'); });
       t.classList.add('active');
       activeStatus = t.dataset.status;
@@ -1421,6 +1422,22 @@ function initStatusTabs() {
         if (typeof updateCityBtnLabel === 'function') updateCityBtnLabel();
         if (typeof updateLocationChips === 'function') updateLocationChips();
       }
+      // Crossing rent↔sale: drop stale price values that don't make sense
+      // in the new mode (an $850k cap is nonsense for rentals; a $3k cap is
+      // nonsense for sales). Crossing within sale-modes (sale→sold, etc.)
+      // preserves the user's price input.
+      if (prevLease !== currentLease) {
+        filters.minPrice = '';
+        filters.maxPrice = '';
+        var nMin = document.getElementById('fMinPrice'); if (nMin) nMin.value = '';
+        var nMax = document.getElementById('fMaxPrice'); if (nMax) nMax.value = '';
+        var sMin = document.getElementById('sliderMin'); if (sMin) sMin.value = '0';
+        var sMax = document.getElementById('sliderMax'); if (sMax) sMax.value = String(getCurrentPriceConfig().sliderMax);
+        var chip = document.querySelector('.chip[data-chip="price"]');
+        if (chip) chip.classList.remove('has-value');
+      }
+      // Reconfigure the price filter UI so the next open shows correct bounds.
+      if (typeof applyPriceConfigToFilterUI === 'function') applyPriceConfigToFilterUI();
       updateStatusHeader();
       fetchListings();
     });
@@ -1436,6 +1453,86 @@ function currentStatusKey() {
   if (activeStatus === 'Coming Soon') return 'coming_soon';
   if (activeStatus === '' || activeStatus == null) return 'all';
   return 'for_sale';
+}
+
+// Price-filter UI config keyed off currentStatusKey(). Rentals get a 0-10k/mo
+// range with $100 steps; everything else gets the existing 0-5M range with
+// $25k steps. The "/mo" suffix is the rental tell. CRMLS reuses ListPrice
+// for both modes so the Trestle filter clauses don't change — only the UI
+// bounds + label formatting.
+var PRICE_CONFIG_BY_STATUS = {
+  for_rent:    { sliderMin:0, sliderMax:10000,   step:100,   minPlaceholder:'1500',   maxPlaceholder:'5000',    suffix:'/mo', label:'Monthly rent', noMaxThreshold:10000   },
+  for_sale:    { sliderMin:0, sliderMax:5000000, step:25000, minPlaceholder:'500000', maxPlaceholder:'1500000', suffix:'',    label:'Sale price',   noMaxThreshold:5000000 },
+  sold:        { sliderMin:0, sliderMax:5000000, step:25000, minPlaceholder:'500000', maxPlaceholder:'1500000', suffix:'',    label:'Sold price',   noMaxThreshold:5000000 },
+  coming_soon: { sliderMin:0, sliderMax:5000000, step:25000, minPlaceholder:'500000', maxPlaceholder:'1500000', suffix:'',    label:'Sale price',   noMaxThreshold:5000000 },
+  all:         { sliderMin:0, sliderMax:5000000, step:25000, minPlaceholder:'500000', maxPlaceholder:'1500000', suffix:'',    label:'Price',        noMaxThreshold:5000000 },
+};
+
+function getCurrentPriceConfig() {
+  return PRICE_CONFIG_BY_STATUS[currentStatusKey()] || PRICE_CONFIG_BY_STATUS.for_sale;
+}
+
+function fmtPriceForConfig(v, cfg) {
+  var n = Number(v) || 0;
+  var label;
+  if (n >= 1000000) label = '$' + (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + 'M';
+  else if (n >= 1000) label = '$' + Math.round(n / 1000) + 'K';
+  else label = '$' + n.toLocaleString();
+  return label + (cfg.suffix || '');
+}
+
+// Apply the current-status price config to the slider, number inputs, and
+// the live labels. Called when the modal opens AND when the user crosses
+// rent↔sale (so the next open is already correct). The slider position
+// derives from filters.minPrice/maxPrice — if neither is set the slider
+// fills the whole range, eliminating the "$-25,000" bug at any boundary.
+function applyPriceConfigToFilterUI() {
+  var cfg = getCurrentPriceConfig();
+  var sMin = document.getElementById('sliderMin');
+  var sMax = document.getElementById('sliderMax');
+  var nMin = document.getElementById('fMinPrice');
+  var nMax = document.getElementById('fMaxPrice');
+  var heading = document.querySelector('#fs-price > label');
+
+  if (heading) heading.textContent = cfg.label;
+
+  function clampToRange(v) {
+    var n = Number(v); if (!isFinite(n)) return null;
+    return Math.min(Math.max(n, cfg.sliderMin), cfg.sliderMax);
+  }
+
+  if (sMin) {
+    sMin.min = String(cfg.sliderMin);
+    sMin.max = String(cfg.sliderMax);
+    sMin.step = String(cfg.step);
+    var minVal = filters.minPrice ? clampToRange(filters.minPrice) : cfg.sliderMin;
+    sMin.value = String(minVal == null ? cfg.sliderMin : minVal);
+  }
+  if (sMax) {
+    sMax.min = String(cfg.sliderMin);
+    sMax.max = String(cfg.sliderMax);
+    sMax.step = String(cfg.step);
+    var maxVal = filters.maxPrice ? clampToRange(filters.maxPrice) : cfg.sliderMax;
+    sMax.value = String(maxVal == null ? cfg.sliderMax : maxVal);
+  }
+
+  if (nMin) {
+    nMin.min = String(cfg.sliderMin);
+    nMin.max = String(cfg.sliderMax);
+    nMin.step = String(cfg.step);
+    nMin.placeholder = cfg.minPlaceholder;
+    if (Number(nMin.value) < 0) nMin.value = '';
+  }
+  if (nMax) {
+    nMax.min = String(cfg.sliderMin);
+    nMax.max = String(cfg.sliderMax);
+    nMax.step = String(cfg.step);
+    nMax.placeholder = cfg.maxPlaceholder;
+    if (Number(nMax.value) < 0) nMax.value = '';
+  }
+
+  // Flow values into the live labels via the shared sync function.
+  if (typeof syncSliders === 'function') syncSliders();
 }
 
 var STATUS_HEADER_LABELS = {
@@ -1499,6 +1596,15 @@ function applyStatusFilterKey(key) {
   }
   document.querySelectorAll('.status-tab').forEach(function(t){ t.classList.remove('active'); });
   if (btn) btn.classList.add('active');
+  // Defensive: a URL like ?status=for_rent&max_price=850000 leaves filters
+  // in a state that returns 0 listings. Clear values that exceed the new
+  // mode's ceiling so the user starts with sensible bounds.
+  var cfg = getCurrentPriceConfig();
+  if (Number(filters.minPrice) < 0) filters.minPrice = '';
+  if (Number(filters.maxPrice) < 0) filters.maxPrice = '';
+  if (Number(filters.maxPrice) > cfg.sliderMax) filters.maxPrice = '';
+  if (Number(filters.minPrice) > cfg.sliderMax) filters.minPrice = '';
+  if (typeof applyPriceConfigToFilterUI === 'function') applyPriceConfigToFilterUI();
   updateStatusHeader();
 }
 
@@ -2177,22 +2283,40 @@ function resetCart() {
 
 /* ===== FILTER MODAL ===== */
 function openFilter(tab) {
+  // Reconfigure the price slider/inputs for the current status mode so the
+  // user never sees a $0-25k slider when they've selected For Rent (or vice
+  // versa). Cheap; safe to always run.
+  if (typeof applyPriceConfigToFilterUI === 'function') applyPriceConfigToFilterUI();
   document.getElementById('filterModal').classList.add('open');
   switchFilterTab(tab);
 }
 
 function syncSliders() {
   var sMin=document.getElementById('sliderMin'),sMax=document.getElementById('sliderMax');
-  var min=parseInt(sMin.value),max=parseInt(sMax.value);
-  if(min>max-25000){min=max-25000;sMin.value=min;}
-  var pct1=(min/5000000)*100,pct2=(max/5000000)*100;
+  var cfg = (typeof getCurrentPriceConfig === 'function') ? getCurrentPriceConfig() : { sliderMin:0, sliderMax:5000000, step:25000, suffix:'', noMaxThreshold:5000000 };
+  var step = parseInt(sMin.step,10) || cfg.step || 25000;
+  var ceiling = parseInt(sMin.max,10) || cfg.sliderMax || 5000000;
+  var min=parseInt(sMin.value,10), max=parseInt(sMax.value,10);
+  if (!isFinite(min)) min = 0;
+  if (!isFinite(max)) max = ceiling;
+  // Floor at 0 — fixes the "$-25,000" bug when sMax is at 0 in a fresh rental view.
+  if (min > max - step) { min = Math.max(0, max - step); sMin.value = min; }
+  if (min < cfg.sliderMin) { min = cfg.sliderMin; sMin.value = min; }
+  var pct1=(min/ceiling)*100, pct2=(max/ceiling)*100;
   var range=document.getElementById('sliderRange');
-  range.style.left=pct1+'%';range.style.width=(pct2-pct1)+'%';
-  function fmt(v){return v>=5000000?'$5M+':v>=1000000?'$'+(v/1000000).toFixed(1)+'M':v>=1000?'$'+Math.round(v/1000)+'K':'$'+v;}
-  document.getElementById('priceMinLabel').textContent=fmt(min);
-  document.getElementById('priceMaxLabel').textContent=max>=5000000?'No Max':fmt(max);
-  document.getElementById('fMinPrice').value=min>0?min:'';
-  document.getElementById('fMaxPrice').value=max<5000000?max:'';
+  if (range) { range.style.left=pct1+'%'; range.style.width=(pct2-pct1)+'%'; }
+  function fmt(v){
+    var label;
+    if (v>=1000000) label='$'+(v/1000000).toFixed(v%1000000===0?0:1)+'M';
+    else if (v>=1000) label='$'+Math.round(v/1000)+'K';
+    else label='$'+v;
+    return label + (cfg.suffix || '');
+  }
+  var noMax = max >= (cfg.noMaxThreshold || ceiling);
+  document.getElementById('priceMinLabel').textContent = fmt(min);
+  document.getElementById('priceMaxLabel').textContent = noMax ? 'No Max' : fmt(max);
+  document.getElementById('fMinPrice').value = min>cfg.sliderMin ? min : '';
+  document.getElementById('fMaxPrice').value = noMax ? '' : max;
 }
 function syncInputs() {
   var minV=document.getElementById('fMinPrice').value;
