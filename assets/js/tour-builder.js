@@ -42,10 +42,15 @@
       searchSkip: 0,
       lastSearchListings: null,
       lastSearchParams: null,
-      // Stops-tab mini map
+      // Stops-tab mini map (browse)
       searchMap: null,
       searchMarkers: [],
       mapHidden: false,
+      // Stops-tab route map (cart)
+      cartMap: null,
+      cartMarkers: [],
+      cartDirectionsService: null,
+      cartDirectionsRenderer: null,
     };
   }
 
@@ -350,7 +355,7 @@
       #tour-builder-modal .btn-add-to-cart:hover{background:rgba(201,168,76,.2)}
       #tour-builder-modal .btn-add-to-cart.added{background:rgba(110,212,126,.12);color:#6ed47e;border-color:rgba(110,212,126,.4);cursor:default}
       #tour-builder-modal .btn-add-to-cart:disabled{cursor:wait;opacity:.7}
-      #tour-builder-modal .cart-list{flex:1;overflow-y:auto;padding-right:4px;min-height:120px}
+      #tour-builder-modal .cart-list{flex:0 1 auto;padding-right:4px;min-height:120px}
       #tour-builder-modal .search-empty,#tour-builder-modal .cart-empty,#tour-builder-modal .search-loading{text-align:center;padding:30px 16px;color:#666;font-size:.8rem;line-height:1.5;grid-column:1/-1}
       #tour-builder-modal .empty-icon{font-size:1.8rem;display:block;margin-bottom:6px}
       #tour-builder-modal .quick-mls-form{display:flex;gap:6px;align-items:center;background:#141414;border:1px solid #1f1f1f;border-radius:8px;padding:9px;margin-bottom:10px}
@@ -383,6 +388,61 @@
       /* ── Cart toolbar ── */
       #tour-builder-modal .cart-toolbar{display:flex;gap:14px;padding-bottom:8px;margin-bottom:10px;border-bottom:1px solid #1f1f1f;font-size:.7rem;flex-wrap:wrap}
       #tour-builder-modal .cart-toolbar .btn-link{padding:0;font-size:.7rem}
+      /* ── Compact cart card (replaces .tb-stop layout) ── */
+      #tour-builder-modal .cart-list{display:flex;flex-direction:column;gap:8px}
+      #tour-builder-modal .cart-stop-card{background:#141414;border:1px solid #2a2a2a;border-radius:10px;padding:10px;transition:border-color .15s,transform .15s,box-shadow .15s;cursor:grab}
+      #tour-builder-modal .cart-stop-card:hover{border-color:rgba(201,168,76,.4)}
+      #tour-builder-modal .cart-stop-card.dragging{opacity:.4;cursor:grabbing}
+      #tour-builder-modal .cart-stop-card.drop-above{box-shadow:0 -2px 0 0 #C9A84C}
+      #tour-builder-modal .cart-stop-card.drop-below{box-shadow:0 2px 0 0 #C9A84C}
+      #tour-builder-modal .cart-stop-card.flash{animation:tb-cart-flash 1.2s}
+      @keyframes tb-cart-flash{0%,100%{box-shadow:0 0 0 0 rgba(201,168,76,0)}30%{box-shadow:0 0 0 3px rgba(201,168,76,.6)}}
+      #tour-builder-modal .cart-stop-row1{display:grid;grid-template-columns:16px 24px 70px 1fr auto;gap:10px;align-items:center}
+      #tour-builder-modal .drag-handle{color:#555;font-size:.86rem;cursor:grab;user-select:none;text-align:center}
+      #tour-builder-modal .drag-handle:hover{color:#C9A84C}
+      #tour-builder-modal .cart-stop-num{background:#C9A84C;color:#0a0a0a;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.74rem}
+      #tour-builder-modal .cart-stop-photo,#tour-builder-modal .cart-stop-photo-ph{width:70px;height:70px;border-radius:6px;object-fit:cover;background:#1a1a1a}
+      #tour-builder-modal .cart-stop-photo-ph{display:flex;align-items:center;justify-content:center;color:#555;font-size:1.3rem}
+      #tour-builder-modal .cart-stop-main{min-width:0}
+      #tour-builder-modal .cart-stop-price-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+      #tour-builder-modal .cart-stop-price{color:#C9A84C;font-weight:700;font-size:.92rem}
+      #tour-builder-modal .cart-stop-mls{color:#888;font-size:.62rem;background:rgba(255,255,255,.05);padding:1px 6px;border-radius:3px}
+      #tour-builder-modal .cart-stop-address{color:#fff;font-size:.8rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #tour-builder-modal .cart-stop-loc{color:#888;font-size:.74rem}
+      #tour-builder-modal .cart-stop-specs{color:#aaa;font-size:.7rem;margin-top:2px}
+      #tour-builder-modal .cart-stop-actions{display:flex;gap:4px}
+      #tour-builder-modal .btn-icon{background:transparent;border:1px solid #2a2a2a;color:#888;width:28px;height:28px;border-radius:5px;cursor:pointer;font-size:.8rem;transition:all .15s;font-family:inherit;display:inline-flex;align-items:center;justify-content:center}
+      #tour-builder-modal .btn-icon:hover{border-color:rgba(201,168,76,.5);color:#C9A84C}
+      #tour-builder-modal .btn-icon.btn-icon-danger:hover{border-color:rgba(240,80,80,.5);color:#ff8888}
+      #tour-builder-modal .cart-stop-row2{display:flex;gap:8px;margin-top:8px;padding-left:124px}
+      #tour-builder-modal .time-field{display:flex;align-items:center;gap:4px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:5px;padding:4px 8px}
+      #tour-builder-modal .time-label{font-size:.7rem;color:#888}
+      #tour-builder-modal .time-field input,#tour-builder-modal .time-field select{background:transparent;border:none;color:#e8e8e8;font-size:.74rem;font-family:inherit;color-scheme:dark}
+      #tour-builder-modal .time-field input:focus,#tour-builder-modal .time-field select:focus{outline:none}
+      #tour-builder-modal .cart-stop-agent{margin-top:8px;padding-left:124px}
+      #tour-builder-modal .cart-stop-agent summary{cursor:pointer;font-size:.7rem;color:#C9A84C;list-style:none;user-select:none;outline:none}
+      #tour-builder-modal .cart-stop-agent summary::-webkit-details-marker{display:none}
+      #tour-builder-modal .cart-stop-agent[open] summary{margin-bottom:6px}
+      #tour-builder-modal .cart-stop-agent .agent-block{background:rgba(201,168,76,.06);border-left:2px solid rgba(201,168,76,.4);border-radius:4px;padding:8px 10px;font-size:.74rem}
+      #tour-builder-modal .cart-stop-agent .agent-name{color:#ddd;font-weight:500}
+      #tour-builder-modal .cart-stop-agent .agent-office{color:#888;font-size:.7rem;margin-top:1px}
+      #tour-builder-modal .cart-stop-agent .agent-actions{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
+      #tour-builder-modal .cart-stop-agent .agent-link{color:#C9A84C;text-decoration:none;font-size:.7rem;background:rgba(201,168,76,.1);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:3px}
+      #tour-builder-modal .cart-stop-agent .agent-link:hover{background:rgba(201,168,76,.2)}
+      #tour-builder-modal .cart-stop-note{margin-top:6px;padding-left:124px;font-size:.7rem;color:#aaa;font-style:italic}
+      #tour-builder-modal .cart-stop-note .note-label{color:#C9A84C;font-style:normal;font-weight:600}
+      /* ── Cart route map ── */
+      #tour-builder-modal .cart-map-wrap{background:#0f0f0f;border:1px solid #2a2a2a;border-radius:10px;padding:12px;margin-top:12px}
+      #tour-builder-modal .cart-map-wrap[hidden]{display:none}
+      #tour-builder-modal .cart-map-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+      #tour-builder-modal .cart-map-header h3{font-size:.74rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.1em;margin:0;font-weight:700}
+      #tour-builder-modal .cart-map-stats{font-size:.7rem;color:#888}
+      #tour-builder-modal .cart-map{width:100%;height:240px;border-radius:8px;overflow:hidden;background:#1a1a1a}
+      #tour-builder-modal .cart-map-toolbar{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+      #tour-builder-modal .cart-map-toolbar .tb-btn{padding:5px 10px;font-size:.7rem}
+      /* The cart-pane should scroll the cart-list region only — keep map below
+         and pinned so it doesn't compete for vertical space. */
+      #tour-builder-modal .cart-pane{overflow:auto}
       /* ── Cart card: agent block ── */
       #tour-builder-modal .stop-agent-block{background:rgba(201,168,76,.06);border-left:2px solid rgba(201,168,76,.4);border-radius:0 4px 4px 0;padding:7px 9px;margin:6px 0 4px;font-size:.74rem}
       #tour-builder-modal .stop-agent-name{color:#ddd;margin-bottom:5px;font-weight:600}
@@ -575,6 +635,13 @@
     }
     state.searchMap = null;
     state.searchMarkers = [];
+    if (state.cartMarkers) {
+      state.cartMarkers.forEach(function (m) { try { m.setMap(null); } catch (e) {} });
+    }
+    state.cartMap = null;
+    state.cartMarkers = [];
+    state.cartDirectionsService = null;
+    state.cartDirectionsRenderer = null;
     var modal = document.getElementById('tour-builder-modal');
     if (modal && modal.parentElement) modal.remove();
     document.removeEventListener('keydown', onEscapeKey);
@@ -942,6 +1009,17 @@
       +       '<button class="btn-link" data-act="copy-address-list" type="button" title="Copy numbered address list">📋 Copy address list</button>'
       +     '</div>'
       +     '<div class="cart-list" id="stops-list" data-role="stops-slot"></div>'
+      +     '<div class="cart-map-wrap" data-field="cart-map-wrap" hidden>'
+      +       '<div class="cart-map-header">'
+      +         '<h3>Route map</h3>'
+      +         '<span class="cart-map-stats" data-field="cart-map-stats">—</span>'
+      +       '</div>'
+      +       '<div class="cart-map" id="tb-cart-map"></div>'
+      +       '<div class="cart-map-toolbar">'
+      +         '<button class="tb-btn tb-btn-secondary" data-act="optimize-route" title="Reorder stops to minimize drive time">↻ Optimize order</button>'
+      +         '<button class="tb-btn tb-btn-secondary" data-act="copy-route-link" title="Copy a Google Maps directions URL with all stops">📋 Copy Google Maps route</button>'
+      +       '</div>'
+      +     '</div>'
       +   '</div>'
       + '</div>'
       + '</section>';
@@ -1020,6 +1098,11 @@
     // Copy actions
     root.querySelector('[data-act=copy-mls-list]').addEventListener('click', copyMlsList);
     root.querySelector('[data-act=copy-address-list]').addEventListener('click', copyAddressList);
+    // Cart-map actions
+    var optBtn = root.querySelector('[data-act=optimize-route]');
+    if (optBtn) optBtn.addEventListener('click', optimizeRoute);
+    var copyRouteBtn = root.querySelector('[data-act=copy-route-link]');
+    if (copyRouteBtn) copyRouteBtn.addEventListener('click', copyRouteLink);
 
     // Re-render last search results if user switches tabs and returns
     if (state.lastSearchListings && state.lastSearchListings.length) {
@@ -1530,6 +1613,282 @@
     });
   }
 
+  // ---- Cart route map ----------------------------------------------------
+  // Renders ONLY the cart stops (with lat/lng). Pins are gold + numbered,
+  // draggable, and connected by a Google Directions polyline that gives us
+  // total mileage + drive time for the header. If a pin is dragged, the
+  // closest-neighbor heuristic in reorderCartByMarkerPositions inserts it
+  // at the matching slot in the cart and persists via reorder_stops.
+  function renderCartMap() {
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var wrap = modal.querySelector('[data-field=cart-map-wrap]');
+    if (!wrap) return;
+    var statsEl = modal.querySelector('[data-field=cart-map-stats]');
+    var geocoded = state.stops.filter(function (s) { return s.latitude && s.longitude; });
+
+    if (!geocoded.length) {
+      wrap.hidden = true;
+      if (state.cartMarkers) {
+        state.cartMarkers.forEach(function (m) { try { m.setMap(null); } catch (e) {} });
+        state.cartMarkers = [];
+      }
+      if (state.cartDirectionsRenderer) {
+        try { state.cartDirectionsRenderer.set('directions', null); } catch (e) {}
+      }
+      return;
+    }
+
+    ensureMapsLoaded().then(function () {
+      var modal2 = document.getElementById('tour-builder-modal');
+      if (!modal2 || !state) return;
+      var wrap2 = modal2.querySelector('[data-field=cart-map-wrap]');
+      if (!wrap2) return;
+      wrap2.hidden = false;
+      var mapEl = document.getElementById('tb-cart-map');
+      if (!mapEl) return;
+
+      var bounds = new google.maps.LatLngBounds();
+      geocoded.forEach(function (s) {
+        bounds.extend({ lat: Number(s.latitude), lng: Number(s.longitude) });
+      });
+
+      if (!state.cartMap) {
+        state.cartMap = new google.maps.Map(mapEl, {
+          zoom: 11,
+          center: bounds.getCenter(),
+          disableDefaultUI: true,
+          zoomControl: true,
+          gestureHandling: 'cooperative',
+          styles: window.DARK_MAP_STYLE || [],
+        });
+        state.cartDirectionsService = new google.maps.DirectionsService();
+        state.cartDirectionsRenderer = new google.maps.DirectionsRenderer({
+          map: state.cartMap,
+          suppressMarkers: true,
+          preserveViewport: true,
+          polylineOptions: { strokeColor: '#C9A84C', strokeWeight: 4, strokeOpacity: 0.85 },
+        });
+      }
+
+      // Clear old markers
+      state.cartMarkers.forEach(function (m) { try { m.setMap(null); } catch (e) {} });
+      state.cartMarkers = [];
+
+      geocoded.forEach(function (s, idx) {
+        var marker = new google.maps.Marker({
+          position: { lat: Number(s.latitude), lng: Number(s.longitude) },
+          map: state.cartMap,
+          draggable: true,
+          title: (idx + 1) + '. ' + (s.property_address || ''),
+          label: {
+            text: String(idx + 1),
+            color: '#0a0a0a',
+            fontWeight: 'bold',
+            fontSize: '13px',
+          },
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 14,
+            fillColor: '#C9A84C',
+            fillOpacity: 1,
+            strokeColor: '#0a0a0a',
+            strokeWeight: 2,
+          },
+        });
+        marker._stopId = s.id;
+        marker.addListener('click', function () { flashCartCard(s.id); });
+        marker.addListener('dragend', function () { reorderCartByMarkerPositions(); });
+        state.cartMarkers.push(marker);
+      });
+
+      try { state.cartMap.fitBounds(bounds, { top: 30, right: 30, bottom: 30, left: 30 }); } catch (e) {}
+      // Resize after the modal animation settles in case the map mounted hidden.
+      setTimeout(function () {
+        if (state.cartMap) google.maps.event.trigger(state.cartMap, 'resize');
+      }, 60);
+
+      // Polyline + drive time/distance via DirectionsService.
+      if (geocoded.length >= 2) {
+        var origin = geocoded[0];
+        var destination = geocoded[geocoded.length - 1];
+        var waypoints = geocoded.slice(1, -1).map(function (s) {
+          return { location: { lat: Number(s.latitude), lng: Number(s.longitude) }, stopover: true };
+        });
+        state.cartDirectionsService.route({
+          origin: { lat: Number(origin.latitude), lng: Number(origin.longitude) },
+          destination: { lat: Number(destination.latitude), lng: Number(destination.longitude) },
+          waypoints: waypoints,
+          travelMode: google.maps.TravelMode.DRIVING,
+        }, function (result, status) {
+          if (status === 'OK') {
+            state.cartDirectionsRenderer.setDirections(result);
+            var totalSeconds = 0, totalMeters = 0;
+            (result.routes[0].legs || []).forEach(function (leg) {
+              if (leg.duration) totalSeconds += leg.duration.value;
+              if (leg.distance) totalMeters += leg.distance.value;
+            });
+            var miles = (totalMeters / 1609.34).toFixed(1);
+            var hours = Math.floor(totalSeconds / 3600);
+            var minutes = Math.round((totalSeconds % 3600) / 60);
+            var timeStr = hours > 0 ? ('~' + hours + 'h ' + minutes + 'm') : ('~' + minutes + 'm');
+            if (statsEl) {
+              statsEl.textContent = geocoded.length + ' stops · ' + miles + ' mi · ' + timeStr + ' drive';
+            }
+          } else {
+            if (statsEl) statsEl.textContent = geocoded.length + ' stops';
+          }
+        });
+      } else {
+        if (statsEl) statsEl.textContent = '1 stop';
+        if (state.cartDirectionsRenderer) {
+          try { state.cartDirectionsRenderer.set('directions', null); } catch (e) {}
+        }
+      }
+    }, function (err) {
+      console.warn('[tour-builder] cart map disabled:', err && err.message);
+      wrap.hidden = true;
+    });
+  }
+
+  function flashCartCard(stopId) {
+    if (!stopId) return;
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var card = modal.querySelector('.cart-stop-card[data-stop-id="' + String(stopId).replace(/"/g, '\\"') + '"]');
+    if (!card) return;
+    try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+    card.classList.remove('flash');
+    void card.offsetWidth;
+    card.classList.add('flash');
+    setTimeout(function () { card.classList.remove('flash'); }, 1300);
+  }
+
+  // When the user drags a numbered pin, find which marker moved farthest from
+  // its expected position, then re-insert it next to the marker whose
+  // original lat/lng is closest to the new position. Heuristic but matches
+  // CRMLS-style "drag to reorder" behavior on short routes.
+  function reorderCartByMarkerPositions() {
+    if (!state.cartMarkers || !state.cartMarkers.length) return;
+    var stops = state.stops.filter(function (s) { return s.latitude && s.longitude; });
+    if (stops.length < 2) return;
+
+    var movedIdx = -1;
+    var maxDelta = 0;
+    state.cartMarkers.forEach(function (marker, i) {
+      var expected = stops[i];
+      if (!expected) return;
+      var pos = marker.getPosition();
+      var dLat = pos.lat() - Number(expected.latitude);
+      var dLng = pos.lng() - Number(expected.longitude);
+      var delta = Math.sqrt(dLat * dLat + dLng * dLng);
+      if (delta > maxDelta) { maxDelta = delta; movedIdx = i; }
+    });
+    // No real movement (snapped back, or noise). 0.0001° ≈ 11m — well below
+    // any meaningful drag.
+    if (movedIdx < 0 || maxDelta < 0.0001) return;
+
+    var movedPos = state.cartMarkers[movedIdx].getPosition();
+    var movedLat = movedPos.lat();
+    var movedLng = movedPos.lng();
+
+    var bestIdx = movedIdx;
+    var bestDist = Infinity;
+    stops.forEach(function (s, i) {
+      if (i === movedIdx) return;
+      var dLat = movedLat - Number(s.latitude);
+      var dLng = movedLng - Number(s.longitude);
+      var dist = Math.sqrt(dLat * dLat + dLng * dLng);
+      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+    });
+
+    var newOrder = stops.map(function (s) { return s.id; });
+    var movedId = newOrder.splice(movedIdx, 1)[0];
+    var insertAt = bestIdx > movedIdx ? bestIdx : bestIdx + 1;
+    newOrder.splice(insertAt, 0, movedId);
+
+    startSave();
+    api('reorder_stops', { batch_id: state.tour.id, showing_ids: newOrder })
+      .then(function (d) {
+        if (d && d.error) { endSave(d.error); return; }
+        endSave();
+        // Reload to get the canonical stop_order back from the server, then
+        // re-render cart cards (which redraws the map polyline + numbers).
+        return loadTour(state.tour.id).then(function () {
+          renderStopsList();
+          showToast('Route updated');
+        });
+      })
+      .catch(function (e) { endSave(e.message || 'Failed'); });
+  }
+
+  // ---- Cart-map toolbar: optimize + copy route ---------------------------
+  function optimizeRoute() {
+    var modal = document.getElementById('tour-builder-modal');
+    var btn = modal && modal.querySelector('[data-act=optimize-route]');
+    var geocoded = state.stops.filter(function (s) { return s.latitude && s.longitude; });
+    if (geocoded.length < 3) {
+      showToast('Need at least 3 stops to optimize', 'error');
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Optimizing…'; }
+
+    ensureMapsLoaded().then(function () {
+      var service = new google.maps.DirectionsService();
+      var origin = geocoded[0];
+      var destination = geocoded[geocoded.length - 1];
+      var waypoints = geocoded.slice(1, -1).map(function (s) {
+        return { location: { lat: Number(s.latitude), lng: Number(s.longitude) }, stopover: true };
+      });
+      service.route({
+        origin: { lat: Number(origin.latitude), lng: Number(origin.longitude) },
+        destination: { lat: Number(destination.latitude), lng: Number(destination.longitude) },
+        waypoints: waypoints,
+        optimizeWaypoints: true,
+        travelMode: google.maps.TravelMode.DRIVING,
+      }, function (result, status) {
+        if (btn) { btn.disabled = false; btn.textContent = '↻ Optimize order'; }
+        if (status !== 'OK') { showToast('Optimize failed', 'error'); return; }
+        var order = (result.routes[0] && result.routes[0].waypoint_order) || [];
+        var middle = geocoded.slice(1, -1);
+        var newSequence = [geocoded[0]];
+        order.forEach(function (i) { newSequence.push(middle[i]); });
+        newSequence.push(geocoded[geocoded.length - 1]);
+        var newIds = newSequence.map(function (s) { return s.id; });
+        startSave();
+        api('reorder_stops', { batch_id: state.tour.id, showing_ids: newIds })
+          .then(function (d) {
+            if (d && d.error) { endSave(d.error); showToast('Save failed: ' + d.error, 'error'); return; }
+            endSave();
+            return loadTour(state.tour.id).then(function () {
+              renderStopsList();
+              showToast('Route optimized');
+            });
+          });
+      });
+    }, function (err) {
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Optimize order'; }
+      showToast('Maps unavailable: ' + (err && err.message || ''), 'error');
+    });
+  }
+
+  function copyRouteLink() {
+    var geocoded = state.stops.filter(function (s) { return s.latitude && s.longitude; });
+    if (!geocoded.length) { showToast('Add stops to the cart first', 'error'); return; }
+    if (geocoded.length === 1) {
+      var s0 = geocoded[0];
+      var url1 = 'https://www.google.com/maps/search/?api=1&query=' + s0.latitude + ',' + s0.longitude;
+      copyToClipboard(url1, 'Map link copied');
+      return;
+    }
+    var origin = geocoded[0].latitude + ',' + geocoded[0].longitude;
+    var destination = geocoded[geocoded.length - 1].latitude + ',' + geocoded[geocoded.length - 1].longitude;
+    var middle = geocoded.slice(1, -1).map(function (s) { return s.latitude + ',' + s.longitude; }).join('%7C');
+    var middleParam = middle ? ('&waypoints=' + middle) : '';
+    var url = 'https://www.google.com/maps/dir/?api=1&origin=' + origin + '&destination=' + destination + middleParam + '&travelmode=driving';
+    copyToClipboard(url, 'Route link copied');
+  }
+
   function renderStopsList(slot) {
     if (!slot) slot = $('#tour-builder-modal [data-role=stops-slot]');
     if (!slot) { updateCartBadge(); return; }
@@ -1540,6 +1899,7 @@
         + '<div>Cart is empty.<br/>Search homes on the left and click + Add to build the tour.</div>'
         + '</div>';
       updateCartBadge();
+      renderCartMap(); // hides the wrap when there are no geocoded stops
       return;
     }
     slot.innerHTML =
@@ -1569,58 +1929,96 @@
     }
     // Mirror the cart-state on the map markers (✓ green when in cart).
     refreshSearchMapMarkers();
+    // Refresh the route map below the cart whenever the cart changes.
+    renderCartMap();
   }
 
   function stopCardHtml(stop, idx) {
-    var addr = stop.property_address || '(address)';
+    var addr = stop.property_address || '(no address)';
     var loc = [stop.property_city, stop.state || stop.property_state, stop.zip || stop.property_zip].filter(Boolean).join(', ');
-    var meta = [];
-    if (stop.mls_number) meta.push('<span class="tb-badge">MLS #' + esc(stop.mls_number) + '</span>');
-    if (stop.property_price) meta.push('<span class="tb-price">' + fmtMoney(stop.property_price) + '</span>');
-    if (stop.property_beds != null) meta.push('<span>' + stop.property_beds + ' bd</span>');
-    if (stop.property_baths != null) meta.push('<span>' + stop.property_baths + ' ba</span>');
-    if (stop.property_sqft) meta.push('<span>' + fmtNumber(stop.property_sqft) + ' sqft</span>');
+    var specs = [];
+    if (stop.property_beds != null) specs.push(stop.property_beds + ' bd');
+    if (stop.property_baths != null) specs.push(stop.property_baths + ' ba');
+    if (stop.property_sqft) specs.push(fmtNumber(stop.property_sqft) + ' sqft');
+    var specsLine = specs.join(' · ');
 
-    var agentLine = stopAgentBlockHtml(stop);
-    var notes = stop.agent_notes_for_lead
-      ? '<div class="tb-notes-disp"><span class="tb-notes-label">Note to lead:</span> ' + esc(stop.agent_notes_for_lead) + '</div>'
-      : '';
     var photo = stop.property_photo
-      ? '<img class="tb-photo" src="' + esc(stop.property_photo) + '" loading="lazy" alt="" />'
-      : '<div class="tb-photo-ph">📷</div>';
-
-    var stUrl = stop.mls_number
-      ? 'https://app.showingtime.com/scheduler/?mlsId=crmls&listingId=' + encodeURIComponent(stop.mls_number)
-      : '';
+      ? '<img class="cart-stop-photo" src="' + esc(stop.property_photo) + '" loading="lazy" alt="" />'
+      : '<div class="cart-stop-photo-ph">🏠</div>';
 
     var arrival = extractTime(stop.arrival_time);
     var dur = stop.duration_minutes || 30;
 
+    var hasAgent = !!(stop.listing_agent_name || stop.listing_agent_phone || stop.listing_agent_email);
+    var agentBlock = '';
+    if (hasAgent) {
+      var firstName = (stop.listing_agent_name || '').split(' ')[0] || 'there';
+      var subject = encodeURIComponent('Showing inquiry: ' + (stop.property_address || ''));
+      var body = encodeURIComponent(
+        'Hi ' + firstName + ',\n\n'
+        + "I'd like to schedule a showing for " + (stop.property_address || '')
+        + (stop.mls_number ? ' (MLS #' + stop.mls_number + ')' : '') + '.\n\n'
+        + 'Thanks,\nRene'
+      );
+      var cleanPhone = stop.listing_agent_phone ? String(stop.listing_agent_phone).replace(/[^0-9+]/g, '') : '';
+      var actions = '';
+      if (stop.listing_agent_phone) {
+        actions += '<a class="agent-link" href="tel:' + esc(cleanPhone) + '" title="Call ' + esc(stop.listing_agent_name || '') + '">📞 ' + esc(stop.listing_agent_phone) + '</a>';
+      }
+      if (stop.listing_agent_email) {
+        actions += '<a class="agent-link" href="mailto:' + esc(stop.listing_agent_email) + '?subject=' + subject + '&body=' + body + '" title="Email">✉ Email</a>';
+      }
+      agentBlock =
+        '<details class="cart-stop-agent">'
+        + '<summary>▸ Listing agent</summary>'
+        + '<div class="agent-block">'
+        +   '<div class="agent-name">' + esc(stop.listing_agent_name || 'Unknown') + '</div>'
+        +   (stop.listing_agent_office ? '<div class="agent-office">' + esc(stop.listing_agent_office) + '</div>' : '')
+        +   (actions ? '<div class="agent-actions">' + actions + '</div>' : '')
+        + '</div>'
+        + '</details>';
+    }
+
+    var noteLine = stop.agent_notes_for_lead
+      ? '<div class="cart-stop-note"><span class="note-label">Note for lead:</span> ' + esc(stop.agent_notes_for_lead) + '</div>'
+      : '';
+
     return ''
-      + '<div class="tb-stop" draggable="true" data-stop-id="' + esc(stop.id) + '">'
-      +   '<div class="tb-handle" title="Drag to reorder">⋮⋮</div>'
-      +   '<div class="tb-num">' + (idx + 1) + '</div>'
-      +   photo
-      +   '<div class="tb-summary">'
-      +     '<div class="tb-addr">' + esc(addr) + '</div>'
-      +     (loc ? '<div class="tb-loc">' + esc(loc) + '</div>' : '')
-      +     (meta.length ? '<div class="tb-meta">' + meta.join('') + '</div>' : '')
-      +     agentLine
-      +     notes
+      + '<div class="cart-stop-card" draggable="true" data-stop-id="' + esc(stop.id) + '" data-mls="' + esc(stop.mls_number || '') + '">'
+      +   '<div class="cart-stop-row1">'
+      +     '<span class="drag-handle" title="Drag to reorder">⋮⋮</span>'
+      +     '<span class="cart-stop-num">' + (idx + 1) + '</span>'
+      +     photo
+      +     '<div class="cart-stop-main">'
+      +       '<div class="cart-stop-price-row">'
+      +         '<span class="cart-stop-price">' + (stop.property_price ? fmtMoney(stop.property_price) : '—') + '</span>'
+      +         (stop.mls_number ? '<span class="cart-stop-mls">MLS #' + esc(stop.mls_number) + '</span>' : '')
+      +       '</div>'
+      +       '<div class="cart-stop-address">' + esc(addr) + '</div>'
+      +       (loc ? '<div class="cart-stop-loc">' + esc(loc) + '</div>' : '')
+      +       (specsLine ? '<div class="cart-stop-specs">' + specsLine + '</div>' : '')
+      +     '</div>'
+      +     '<div class="cart-stop-actions">'
+      +       '<button class="btn-icon" data-act="edit-stop-notes" data-stop-id="' + esc(stop.id) + '" title="Edit notes">📝</button>'
+      +       '<button class="btn-icon btn-icon-danger" data-act="remove-stop" data-stop-id="' + esc(stop.id) + '" title="Remove">🗑</button>'
+      +     '</div>'
       +   '</div>'
-      +   '<div class="tb-time-controls">'
-      +     '<input type="time" data-field="arrival" data-stop-id="' + esc(stop.id) + '" value="' + esc(arrival) + '" title="Arrival time" />'
-      +     '<select data-field="duration" data-stop-id="' + esc(stop.id) + '" title="Duration">'
-      +       [15, 30, 45, 60, 90].map(function (m) {
-                return '<option value="' + m + '"' + (m === dur ? ' selected' : '') + '>' + m + ' min</option>';
-              }).join('')
-      +     '</select>'
+      +   '<div class="cart-stop-row2">'
+      +     '<label class="time-field" title="Arrival time">'
+      +       '<span class="time-label">⏰</span>'
+      +       '<input type="time" data-field="arrival" data-stop-id="' + esc(stop.id) + '" value="' + esc(arrival) + '" />'
+      +     '</label>'
+      +     '<label class="time-field" title="Duration">'
+      +       '<span class="time-label">⏱</span>'
+      +       '<select data-field="duration" data-stop-id="' + esc(stop.id) + '">'
+      +         [15, 30, 45, 60, 90].map(function (m) {
+                  return '<option value="' + m + '"' + (m === dur ? ' selected' : '') + '>' + m + ' min</option>';
+                }).join('')
+      +       '</select>'
+      +     '</label>'
       +   '</div>'
-      +   '<div class="tb-actions">'
-      +     '<button data-act="edit-stop-notes" data-stop-id="' + esc(stop.id) + '" title="Notes for lead">📝</button>'
-      +     (stUrl ? '<a href="' + esc(stUrl) + '" target="_blank" rel="noopener" title="ShowingTime">📅</a>' : '')
-      +     '<button data-act="remove-stop" class="tb-act-danger" data-stop-id="' + esc(stop.id) + '" title="Remove stop">🗑</button>'
-      +   '</div>'
+      +   agentBlock
+      +   noteLine
       + '</div>';
   }
 
@@ -1642,17 +2040,18 @@
 
   function attachDragHandlers(scope) {
     var dragged = null;
-    [].slice.call(scope.querySelectorAll('.tb-stop')).forEach(function (card) {
+    [].slice.call(scope.querySelectorAll('.cart-stop-card')).forEach(function (card) {
       card.addEventListener('dragstart', function (e) {
-        dragged = card; card.style.opacity = '0.5';
+        dragged = card;
+        card.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
         try { e.dataTransfer.setData('text/plain', card.dataset.stopId); } catch (err) {}
       });
       card.addEventListener('dragend', function () {
-        if (dragged) dragged.style.opacity = '';
+        if (dragged) dragged.classList.remove('dragging');
         dragged = null;
-        [].slice.call(scope.querySelectorAll('.tb-stop')).forEach(function (c) {
-          c.classList.remove('tb-drop-above', 'tb-drop-below');
+        [].slice.call(scope.querySelectorAll('.cart-stop-card')).forEach(function (c) {
+          c.classList.remove('drop-above', 'drop-below');
         });
       });
       card.addEventListener('dragover', function (e) {
@@ -1660,15 +2059,15 @@
         if (!dragged || dragged === card) return;
         var rect = card.getBoundingClientRect();
         var after = (e.clientY - rect.top) > rect.height / 2;
-        card.classList.toggle('tb-drop-above', !after);
-        card.classList.toggle('tb-drop-below', after);
+        card.classList.toggle('drop-above', !after);
+        card.classList.toggle('drop-below', after);
       });
       card.addEventListener('dragleave', function () {
-        card.classList.remove('tb-drop-above', 'tb-drop-below');
+        card.classList.remove('drop-above', 'drop-below');
       });
       card.addEventListener('drop', function (e) {
         e.preventDefault();
-        card.classList.remove('tb-drop-above', 'tb-drop-below');
+        card.classList.remove('drop-above', 'drop-below');
         if (!dragged || dragged === card) return;
         var list = card.parentElement;
         var cards = [].slice.call(list.children);
@@ -1678,16 +2077,19 @@
         else list.insertBefore(dragged, card);
         // Re-number badges (visual only — arrival_time intentionally unchanged)
         [].slice.call(list.children).forEach(function (el, i) {
-          var nEl = el.querySelector('.tb-num');
+          var nEl = el.querySelector('.cart-stop-num');
           if (nEl) nEl.textContent = String(i + 1);
         });
         // Reorder local state to match
         var ids = [].slice.call(list.children).map(function (el) { return el.dataset.stopId; });
         state.stops.sort(function (a, b) { return ids.indexOf(a.id) - ids.indexOf(b.id); });
-        // Persist
+        // Persist + redraw the cart-map polyline in the new order.
         startSave();
         api('reorder_stops', { batch_id: state.tour.id, showing_ids: ids })
-          .then(function (d) { endSave(d && d.error ? d.error : null); })
+          .then(function (d) {
+            endSave(d && d.error ? d.error : null);
+            renderCartMap();
+          })
           .catch(function (err) { endSave(err.message || 'Failed'); });
       });
     });
