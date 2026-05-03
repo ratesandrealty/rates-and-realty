@@ -194,6 +194,10 @@
       .tb-form-row label .tb-hint{font-weight:400;color:#555;text-transform:none;letter-spacing:0;margin-left:6px}
       .tb-form-row input[type=text],.tb-form-row input[type=date],.tb-form-row input[type=time],.tb-form-row textarea{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:9px 12px;color:#e8e8e8;font-size:.86rem;font-family:inherit;outline:none}
       .tb-form-row input:focus,.tb-form-row textarea:focus{border-color:#C9A84C}
+      #tour-builder-modal input[type=date],#tour-builder-modal input[type=time]{color-scheme:dark;cursor:pointer;position:relative}
+      #tour-builder-modal input[type=date]::-webkit-calendar-picker-indicator,#tour-builder-modal input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.7) sepia(.5) saturate(2.5) hue-rotate(15deg);cursor:pointer;opacity:.85;padding:6px;margin-left:4px;transition:opacity .15s,transform .15s}
+      #tour-builder-modal input[type=date]::-webkit-calendar-picker-indicator:hover,#tour-builder-modal input[type=time]::-webkit-calendar-picker-indicator:hover{opacity:1;transform:scale(1.15)}
+      #tour-builder-modal input[type=date]:hover,#tour-builder-modal input[type=time]:hover{border-color:rgba(201,168,76,.5)}
       .tb-form-row textarea{resize:vertical;min-height:60px}
       .tb-form-row-split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
       .tb-contact-picker{position:relative}
@@ -299,6 +303,62 @@
         .tb-stop .tb-photo,.tb-stop .tb-photo-ph{display:none}
         .tb-stop .tb-time-controls,.tb-stop .tb-actions{grid-column:1/-1;flex-direction:row}
         .tb-form-row-split{grid-template-columns:1fr}
+      }
+      /* ── Stops tab: browse + cart layout ── */
+      #tour-builder-modal .stops-panel{height:100%;display:flex;flex-direction:column}
+      #tour-builder-modal .stops-card-modal-mode{max-width:1100px}
+      #tour-builder-modal .stops-view-toggle{display:none}
+      #tour-builder-modal .stops-grid{display:grid;grid-template-columns:1fr 360px;gap:14px;flex:1;min-height:520px}
+      #tour-builder-modal .browse-pane,#tour-builder-modal .cart-pane{display:flex;flex-direction:column;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:10px;padding:12px;overflow:hidden;min-height:0}
+      #tour-builder-modal .browse-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px}
+      #tour-builder-modal .browse-header h3,#tour-builder-modal .cart-header h3{font-size:.74rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.1em;margin:0;font-weight:700}
+      #tour-builder-modal .cart-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #1f1f1f;gap:6px;flex-wrap:wrap}
+      #tour-builder-modal .cart-badge{background:#C9A84C;color:#0a0a0a;font-size:.68rem;padding:1px 7px;border-radius:10px;font-weight:700;margin-left:4px}
+      #tour-builder-modal .cart-hint{font-size:.66rem;color:#666}
+      #tour-builder-modal .search-filters{background:#141414;border:1px solid #1f1f1f;border-radius:8px;padding:10px;margin-bottom:10px}
+      #tour-builder-modal .filter-row{margin-bottom:8px}
+      #tour-builder-modal .filter-row:last-child{margin-bottom:0}
+      #tour-builder-modal .filter-row label{display:block;font-size:.66rem;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;font-weight:700}
+      #tour-builder-modal .filter-row input,#tour-builder-modal .filter-row select{width:100%;padding:7px 9px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;color:#e8e8e8;font-size:.8rem;font-family:inherit;outline:none}
+      #tour-builder-modal .filter-row input:focus,#tour-builder-modal .filter-row select:focus{border-color:#C9A84C}
+      #tour-builder-modal .filter-row-split{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+      #tour-builder-modal .btn-search{width:100%;margin-top:4px;padding:9px 14px;background:#C9A84C;color:#000;border:none;border-radius:6px;font-size:.82rem;font-weight:700;cursor:pointer;font-family:inherit}
+      #tour-builder-modal .btn-search:hover{background:#e8c96a}
+      #tour-builder-modal .search-results{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;padding-right:4px;align-content:start}
+      #tour-builder-modal .search-result-card{background:#141414;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
+      #tour-builder-modal .search-result-card:hover{border-color:rgba(201,168,76,.5);transform:translateY(-2px)}
+      #tour-builder-modal .search-result-card.added{border-color:#6ed47e}
+      #tour-builder-modal .result-photo{width:100%;height:104px;object-fit:cover;background:#1a1a1a;display:block}
+      #tour-builder-modal .result-photo-ph{height:104px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;color:#444;font-size:1.4rem}
+      #tour-builder-modal .result-body{padding:8px 10px;flex:1;display:flex;flex-direction:column;gap:3px}
+      #tour-builder-modal .result-price{color:#C9A84C;font-weight:700;font-size:.92rem}
+      #tour-builder-modal .result-address{font-size:.74rem;color:#ddd;line-height:1.3}
+      #tour-builder-modal .result-meta{font-size:.7rem;color:#888;margin-bottom:6px;flex:1}
+      #tour-builder-modal .btn-add-to-cart{background:rgba(201,168,76,.12);color:#C9A84C;border:1px solid rgba(201,168,76,.4);border-radius:5px;padding:6px 8px;font-size:.74rem;font-weight:700;cursor:pointer;width:100%;font-family:inherit;transition:all .15s}
+      #tour-builder-modal .btn-add-to-cart:hover{background:rgba(201,168,76,.2)}
+      #tour-builder-modal .btn-add-to-cart.added{background:rgba(110,212,126,.12);color:#6ed47e;border-color:rgba(110,212,126,.4);cursor:default}
+      #tour-builder-modal .btn-add-to-cart:disabled{cursor:wait;opacity:.7}
+      #tour-builder-modal .cart-list{flex:1;overflow-y:auto;padding-right:4px;min-height:120px}
+      #tour-builder-modal .search-empty,#tour-builder-modal .cart-empty,#tour-builder-modal .search-loading{text-align:center;padding:30px 16px;color:#666;font-size:.8rem;line-height:1.5;grid-column:1/-1}
+      #tour-builder-modal .empty-icon{font-size:1.8rem;display:block;margin-bottom:6px}
+      #tour-builder-modal .quick-mls-form{display:flex;gap:6px;align-items:center;background:#141414;border:1px solid #1f1f1f;border-radius:8px;padding:9px;margin-bottom:10px}
+      #tour-builder-modal .quick-mls-form input{flex:1;padding:6px 9px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:5px;color:#e8e8e8;font-size:.8rem;font-family:inherit;outline:none}
+      #tour-builder-modal .quick-mls-form input:focus{border-color:#C9A84C}
+      #tour-builder-modal .btn-link{background:none;border:none;color:#C9A84C;font-size:.74rem;cursor:pointer;padding:2px 4px;font-family:inherit;text-decoration:underline}
+      #tour-builder-modal .btn-link:hover{color:#e8c96a}
+      #tour-builder-modal .btn-sm{padding:5px 10px;font-size:.74rem}
+      #tour-builder-modal .search-load-more{grid-column:1/-1;text-align:center;padding:10px}
+      #tour-builder-modal .search-load-more button{background:#1a1a1a;border:1px solid #2a2a2a;color:#e8e8e8;border-radius:6px;padding:8px 16px;font-size:.78rem;font-weight:600;cursor:pointer;font-family:inherit}
+      #tour-builder-modal .search-load-more button:hover{border-color:#C9A84C;color:#C9A84C}
+      /* The stops tab gets a wider modal so the browse+cart layout breathes. */
+      #tour-builder-modal[data-active-tab=stops] .tb-card{max-width:1100px}
+      @media(max-width:720px){
+        #tour-builder-modal .stops-grid{grid-template-columns:1fr;grid-template-rows:1fr;min-height:auto}
+        #tour-builder-modal .stops-view-toggle{display:flex;gap:8px;margin-bottom:10px}
+        #tour-builder-modal .view-toggle{flex:1;background:#141414;border:1px solid #2a2a2a;color:#888;padding:9px;border-radius:8px;font-size:.78rem;font-weight:700;cursor:pointer;font-family:inherit}
+        #tour-builder-modal .view-toggle.active{background:rgba(201,168,76,.12);border-color:rgba(201,168,76,.5);color:#C9A84C}
+        #tour-builder-modal [data-view-pane=browse]:not(.active),#tour-builder-modal [data-view-pane=cart]:not(.active){display:none}
+        #tour-builder-modal .search-results{grid-template-columns:1fr 1fr}
       }
     `;
     var style = document.createElement('style');
@@ -495,6 +555,7 @@
     var modal = document.createElement('div');
     modal.id = 'tour-builder-modal';
     modal.className = 'tb-modal';
+    modal.dataset.activeTab = 'setup';
     modal.innerHTML =
       '<div class="tb-card" role="dialog" aria-modal="true">'
       + '<div class="tb-head">'
@@ -532,6 +593,7 @@
     state.activeTab = name;
     var modal = document.getElementById('tour-builder-modal');
     if (!modal) return;
+    modal.dataset.activeTab = name;
     [].slice.call(modal.querySelectorAll('.tb-tab')).forEach(function (b) {
       b.classList.toggle('active', b.dataset.tab === name);
     });
@@ -698,6 +760,17 @@
     };
     if (dateEl) dateEl.addEventListener('change', saveSchedule);
     if (timeEl) timeEl.addEventListener('change', saveSchedule);
+
+    // Force the native date/time picker open on click. The icon area already
+    // does this; this extension makes the entire input field clickable, which
+    // matters on dark backgrounds where the picker indicator is easy to miss.
+    [].slice.call(root.querySelectorAll('input[type=date], input[type=time]')).forEach(function (input) {
+      input.addEventListener('click', function () {
+        if (typeof input.showPicker === 'function') {
+          try { input.showPicker(); } catch (e) { /* ignore — Safari < 16.4 */ }
+        }
+      });
+    });
   }
 
   function pickedContact(c) {
@@ -733,40 +806,375 @@
     });
   }
 
-  // -------- Stops tab -----------------------------------------------------
+  // -------- Stops tab — browse + cart layout ------------------------------
+  // Left pane: filter form + photo-card search results (Trestle live search).
+  // Right pane: the cart (stops in this tour) — drag-reorderable, edit inline.
+  // A Quick MLS+ disclosure swaps in for paste-an-MLS workflow. The whole
+  // shebang collapses to a single pane with a toggle on phones.
+  var CITY_SUGGESTIONS = [
+    'Garden Grove', 'Westminster', 'Huntington Beach', 'Costa Mesa', 'Santa Ana',
+    'Anaheim', 'Fountain Valley', 'Irvine', 'Newport Beach', 'Long Beach',
+  ];
+  var SEARCH_PAGE_SIZE = 12;
+
   function renderStopsTab(root) {
-    var html = '<section data-panel="stops">';
-    html +=
-      '<div class="tb-add-stop-bar">'
-      +   '<input type="text" data-field="mls-input" placeholder="Paste MLS # (e.g. OC26095667) and press Enter" />'
-      +   '<button class="tb-btn tb-btn-primary" data-act="lookup-mls">Lookup</button>'
-      +   '<button class="tb-btn tb-btn-secondary" data-act="add-blank-stop">+ Manual entry</button>'
+    var modal = document.getElementById('tour-builder-modal');
+    if (modal) modal.dataset.activeTab = 'stops';
+
+    var datalist = '<datalist id="tb-city-suggestions">'
+      + CITY_SUGGESTIONS.map(function (c) { return '<option value="' + esc(c) + '">'; }).join('')
+      + '</datalist>';
+
+    var html =
+      '<section data-panel="stops" class="stops-panel">'
+      + '<div class="stops-view-toggle">'
+      +   '<button class="view-toggle active" data-view="browse" type="button">🔍 Browse</button>'
+      +   '<button class="view-toggle" data-view="cart" type="button">🛒 Cart (<span data-field="cart-count">0</span>)</button>'
       + '</div>'
-      + '<div data-role="mls-preview-slot"></div>'
-      + '<div data-role="stops-slot"></div>'
+      + '<div class="stops-grid">'
+      +   '<div class="browse-pane active" data-view-pane="browse">'
+      +     '<div class="browse-header">'
+      +       '<h3>Find homes</h3>'
+      +       '<button class="btn-link" data-act="quick-mls-toggle" type="button">+ Paste MLS #</button>'
+      +     '</div>'
+      +     '<div class="quick-mls-form" hidden>'
+      +       '<input type="text" data-field="quick-mls-input" placeholder="OC26095667" />'
+      +       '<button class="tb-btn tb-btn-primary btn-sm" data-act="quick-mls-add" type="button">Add</button>'
+      +       '<button class="btn-link btn-sm" data-act="quick-mls-cancel" type="button">Cancel</button>'
+      +     '</div>'
+      +     '<div class="search-filters">'
+      +       '<div class="filter-row">'
+      +         '<label>City</label>'
+      +         '<input type="text" data-field="filter-city" placeholder="e.g. Garden Grove" list="tb-city-suggestions" />'
+      +         datalist
+      +       '</div>'
+      +       '<div class="filter-row filter-row-split">'
+      +         '<div><label>Min price</label><input type="number" data-field="filter-min-price" placeholder="500000" step="50000" /></div>'
+      +         '<div><label>Max price</label><input type="number" data-field="filter-max-price" placeholder="1500000" step="50000" /></div>'
+      +       '</div>'
+      +       '<div class="filter-row filter-row-split">'
+      +         '<div><label>Min beds</label><select data-field="filter-min-beds">'
+      +           '<option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option><option value="5">5+</option>'
+      +         '</select></div>'
+      +         '<div><label>Min baths</label><select data-field="filter-min-baths">'
+      +           '<option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option>'
+      +         '</select></div>'
+      +       '</div>'
+      +       '<button class="btn-search" data-act="run-search" type="button">🔍 Search homes</button>'
+      +     '</div>'
+      +     '<div class="search-results" data-role="search-results">'
+      +       '<div class="search-empty">'
+      +         '<span class="empty-icon">🏘️</span>'
+      +         '<div>Set your filters and click Search to find homes for this tour.</div>'
+      +       '</div>'
+      +     '</div>'
+      +     '<div data-role="mls-preview-slot" style="margin-top:10px"></div>'
+      +   '</div>'
+      +   '<div class="cart-pane" data-view-pane="cart">'
+      +     '<div class="cart-header">'
+      +       '<h3>Tour cart <span class="cart-badge" data-field="cart-count-header">0</span></h3>'
+      +       '<span class="cart-hint">Drag to reorder · 📝 add notes</span>'
+      +     '</div>'
+      +     '<div class="cart-list" id="stops-list" data-role="stops-slot"></div>'
+      +   '</div>'
+      + '</div>'
       + '</section>';
+
     root.innerHTML = html;
     renderStopsList(root.querySelector('[data-role=stops-slot]'));
+    updateCartBadge();
 
-    var input = root.querySelector('[data-field=mls-input]');
-    input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); doMlsLookup(input.value); }
+    // Filter form
+    root.querySelector('[data-act=run-search]').addEventListener('click', function () { runSearch(false); });
+    [].slice.call(root.querySelectorAll('[data-field^=filter-]')).forEach(function (el) {
+      el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); runSearch(false); }
+      });
     });
-    root.querySelector('[data-act=lookup-mls]').addEventListener('click', function () { doMlsLookup(input.value); });
-    root.querySelector('[data-act=add-blank-stop]').addEventListener('click', addBlankStop);
 
+    // Quick MLS+ disclosure
+    root.querySelector('[data-act=quick-mls-toggle]').addEventListener('click', function () {
+      var form = root.querySelector('.quick-mls-form');
+      form.hidden = !form.hidden;
+      if (!form.hidden) form.querySelector('input').focus();
+    });
+    root.querySelector('[data-act=quick-mls-cancel]').addEventListener('click', function () {
+      root.querySelector('.quick-mls-form').hidden = true;
+    });
+    root.querySelector('[data-act=quick-mls-add]').addEventListener('click', quickMlsAdd);
+    root.querySelector('[data-field=quick-mls-input]').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); quickMlsAdd(); }
+    });
+
+    // Mobile pane toggle
+    [].slice.call(root.querySelectorAll('.view-toggle')).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        [].slice.call(root.querySelectorAll('.view-toggle')).forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        var view = btn.dataset.view;
+        [].slice.call(root.querySelectorAll('[data-view-pane]')).forEach(function (p) {
+          p.classList.toggle('active', p.dataset.viewPane === view);
+        });
+      });
+    });
+
+    // Search-results event delegation: + Add to cart and Load more
+    var resultsEl = root.querySelector('[data-role=search-results]');
+    resultsEl.addEventListener('click', onSearchResultsClick);
+
+    // Re-render last search results if user switches tabs and returns
+    if (state.lastSearchListings && state.lastSearchListings.length) {
+      paintSearchResults(state.lastSearchListings, false);
+    }
     if (state.mlsPreviewProperty) renderMlsPreview();
+  }
+
+  // ---- Browse pane: search ---------------------------------------------
+  function buildSearchParams(append) {
+    var modal = document.getElementById('tour-builder-modal');
+    var get = function (sel) { var el = modal.querySelector(sel); return el ? el.value : ''; };
+    var city = String(get('[data-field=filter-city]')).trim();
+    var minP = parseInt(get('[data-field=filter-min-price]'), 10);
+    var maxP = parseInt(get('[data-field=filter-max-price]'), 10);
+    var minB = parseInt(get('[data-field=filter-min-beds]'), 10);
+    var minBa = parseInt(get('[data-field=filter-min-baths]'), 10);
+
+    var filters = ["StandardStatus eq 'Active'", "PropertyType eq 'Residential'"];
+    if (city) filters.push("City eq '" + city.replace(/'/g, "''") + "'");
+    if (isFinite(minP)) filters.push('ListPrice ge ' + minP);
+    if (isFinite(maxP)) filters.push('ListPrice le ' + maxP);
+    if (isFinite(minB)) filters.push('BedroomsTotal ge ' + minB);
+    if (isFinite(minBa)) filters.push('BathroomsTotalInteger ge ' + minBa);
+
+    if (!append) state.searchSkip = 0;
+    state.searchSkip = state.searchSkip || 0;
+
+    return {
+      '$top': String(SEARCH_PAGE_SIZE),
+      '$skip': append ? String(state.searchSkip) : '0',
+      '$filter': filters.join(' and '),
+      '$select': 'ListingId,ListingKey,UnparsedAddress,City,StateOrProvince,PostalCode,Latitude,Longitude,ListPrice,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,YearBuilt,ListAgentFullName,ListAgentStateLicense,ListAgentEmail,ListAgentPreferredPhone,ListOfficeName,ListOfficePhone,ShowingContactName,ShowingContactPhone,ShowingInstructions',
+      '$expand': TRESTLE_MEDIA_EXPAND,
+      '$orderby': 'ListPrice asc',
+    };
+  }
+
+  function runSearch(append) {
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var resultsEl = modal.querySelector('[data-role=search-results]');
+    if (!resultsEl) return;
+    var params = buildSearchParams(append);
+    state.lastSearchParams = params;
+
+    if (!append) {
+      resultsEl.innerHTML = '<div class="search-loading"><span class="empty-icon">⏳</span><div>Searching…</div></div>';
+    } else {
+      var more = resultsEl.querySelector('.search-load-more button');
+      if (more) { more.disabled = true; more.textContent = 'Loading…'; }
+    }
+
+    trestleSearch(params).then(function (d) {
+      if (d && d.error) {
+        resultsEl.innerHTML = '<div class="search-empty"><span class="empty-icon">⚠️</span><div>Search failed: ' + esc(d.error) + '</div></div>';
+        return;
+      }
+      var listings = (d && d.value) || [];
+      if (!append && !listings.length) {
+        resultsEl.innerHTML = '<div class="search-empty"><span class="empty-icon">🤷</span><div>No listings match those filters.<br/>Try widening price or removing the city.</div></div>';
+        state.lastSearchListings = [];
+        return;
+      }
+      state.searchSkip = (state.searchSkip || 0) + listings.length;
+      if (!append) state.lastSearchListings = listings;
+      else state.lastSearchListings = (state.lastSearchListings || []).concat(listings);
+      paintSearchResults(listings, append);
+    });
+  }
+
+  function paintSearchResults(listings, append) {
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var resultsEl = modal.querySelector('[data-role=search-results]');
+    if (!resultsEl) return;
+    var existingMore = resultsEl.querySelector('.search-load-more');
+    if (existingMore) existingMore.remove();
+    if (!append) resultsEl.innerHTML = '';
+
+    var cartMls = {};
+    state.stops.forEach(function (s) { if (s.mls_number) cartMls[s.mls_number] = true; });
+
+    var frag = document.createDocumentFragment();
+    listings.forEach(function (p) {
+      frag.appendChild(buildResultCard(p, !!cartMls[p.ListingId]));
+    });
+    resultsEl.appendChild(frag);
+
+    if (listings.length === SEARCH_PAGE_SIZE) {
+      var more = document.createElement('div');
+      more.className = 'search-load-more';
+      more.innerHTML = '<button type="button" data-act="load-more">Load more results</button>';
+      resultsEl.appendChild(more);
+    }
+  }
+
+  function buildResultCard(p, alreadyAdded) {
+    var card = document.createElement('div');
+    card.className = 'search-result-card' + (alreadyAdded ? ' added' : '');
+    card.dataset.mls = p.ListingId || '';
+    var photoUrl = p.Media && p.Media[0] && p.Media[0].MediaURL;
+    var specs = [
+      p.BedroomsTotal != null ? p.BedroomsTotal + ' bd' : null,
+      p.BathroomsTotalInteger != null ? p.BathroomsTotalInteger + ' ba' : null,
+      p.LivingArea ? fmtNumber(p.LivingArea) + ' sqft' : null,
+    ].filter(Boolean).join(' · ');
+    card.innerHTML =
+      (photoUrl
+        ? '<img class="result-photo" src="' + esc(photoUrl) + '" loading="lazy" alt="' + esc(p.UnparsedAddress || '') + '" />'
+        : '<div class="result-photo-ph">🏠</div>')
+      + '<div class="result-body">'
+      +   '<div class="result-price">' + fmtMoney(p.ListPrice || 0) + '</div>'
+      +   '<div class="result-address">' + esc(p.UnparsedAddress || '') + (p.City ? '<br/>' + esc(p.City) : '') + '</div>'
+      +   '<div class="result-meta">' + esc(specs || '—') + '</div>'
+      +   '<button class="btn-add-to-cart' + (alreadyAdded ? ' added' : '') + '" type="button" data-act="add-to-cart">'
+      +     (alreadyAdded ? '✓ In cart' : '+ Add to cart')
+      +   '</button>'
+      + '</div>';
+    // Cache the property payload on the DOM node so click-handler doesn't
+    // need to re-fetch from Trestle.
+    card._tbProperty = p;
+    return card;
+  }
+
+  function onSearchResultsClick(e) {
+    var addBtn = e.target.closest('[data-act=add-to-cart]');
+    var loadMore = e.target.closest('[data-act=load-more]');
+    if (addBtn) {
+      if (addBtn.classList.contains('added') || addBtn.disabled) return;
+      var card = addBtn.closest('.search-result-card');
+      var p = card && card._tbProperty;
+      if (!p) return;
+      addBtn.disabled = true;
+      addBtn.textContent = 'Adding…';
+      addStopFromTrestleProperty(p).then(function (ok) {
+        if (ok) {
+          addBtn.classList.add('added');
+          addBtn.textContent = '✓ In cart';
+          card.classList.add('added');
+        } else {
+          addBtn.textContent = '+ Add to cart';
+        }
+        addBtn.disabled = false;
+      });
+    } else if (loadMore) {
+      runSearch(true);
+    }
+  }
+
+  function quickMlsAdd() {
+    var modal = document.getElementById('tour-builder-modal');
+    var input = modal.querySelector('[data-field=quick-mls-input]');
+    var mls = String(input.value || '').trim();
+    if (!mls) return;
+    if (!state.tour || !state.tour.id) {
+      showToast('Pick a lead on the Setup tab first', 'error');
+      switchTab('setup');
+      return;
+    }
+    var btn = modal.querySelector('[data-act=quick-mls-add]');
+    btn.disabled = true; btn.textContent = 'Looking up…';
+    var fields = [
+      'ListingId', 'ListingKey', 'UnparsedAddress', 'City', 'StateOrProvince', 'PostalCode',
+      'Latitude', 'Longitude', 'ListPrice', 'BedroomsTotal', 'BathroomsTotalInteger',
+      'LivingArea', 'PropertyType', 'YearBuilt',
+      'ListAgentFullName', 'ListAgentStateLicense', 'ListAgentEmail', 'ListAgentPreferredPhone',
+      'ListOfficeName', 'ListOfficePhone',
+      'ShowingContactName', 'ShowingContactPhone', 'ShowingInstructions',
+    ].join(',');
+    trestleProperty("ListingId eq '" + mls.replace(/'/g, "''") + "'", fields).then(function (d) {
+      var p = d && d.value && d.value[0];
+      if (!p) {
+        btn.disabled = false; btn.textContent = 'Add';
+        showToast('MLS # ' + mls + ' not found', 'error');
+        return;
+      }
+      addStopFromTrestleProperty(p).then(function (ok) {
+        btn.disabled = false; btn.textContent = 'Add';
+        if (ok) {
+          input.value = '';
+          modal.querySelector('.quick-mls-form').hidden = true;
+          showToast('Added ' + (p.UnparsedAddress || 'home'));
+        }
+      });
+    });
+  }
+
+  // Add a stop from a fully-hydrated Trestle Property record. Returns a
+  // promise resolving to true on success, false on error.
+  function addStopFromTrestleProperty(p) {
+    if (!state.tour || !state.tour.id) {
+      showToast('Pick a lead on the Setup tab first', 'error');
+      switchTab('setup');
+      return Promise.resolve(false);
+    }
+    var showingPhone = p.ShowingContactPhone || p.ListAgentPreferredPhone || p.ListOfficePhone || null;
+    var photo = (p.Media && p.Media[0] && p.Media[0].MediaURL) || null;
+    startSave();
+    return api('add_stop', {
+      batch_id: state.tour.id,
+      mls_number: p.ListingId,
+      listing_key: p.ListingKey,
+      address: p.UnparsedAddress,
+      city: p.City,
+      state: p.StateOrProvince,
+      zip: p.PostalCode,
+      latitude: p.Latitude,
+      longitude: p.Longitude,
+      price: p.ListPrice,
+      beds: p.BedroomsTotal,
+      baths: p.BathroomsTotalInteger,
+      sqft: p.LivingArea,
+      property_type: p.PropertyType,
+      year_built: p.YearBuilt,
+      photo_url: photo,
+      listing_url: p.ListingId ? ('https://beta.ratesandrealty.com/public/property-detail.html?id=' + p.ListingId) : null,
+      listing_agent_name: p.ListAgentFullName,
+      listing_agent_phone: showingPhone,
+      listing_agent_email: p.ListAgentEmail,
+      listing_agent_office: p.ListOfficeName,
+    }).then(function (d) {
+      if (d && d.error) { endSave(d.error); showToast('Add failed: ' + d.error, 'error'); return false; }
+      endSave();
+      return loadTour(state.tour.id).then(function () {
+        renderStopsList();
+        refreshHead();
+        updateCartBadge();
+        return true;
+      });
+    });
+  }
+
+  function updateCartBadge() {
+    var modal = document.getElementById('tour-builder-modal');
+    if (!modal) return;
+    var n = state.stops.length;
+    [].slice.call(modal.querySelectorAll('[data-field=cart-count], [data-field=cart-count-header]')).forEach(function (el) {
+      el.textContent = String(n);
+    });
+    var stopTab = modal.querySelector('[data-role=stop-count]');
+    if (stopTab) stopTab.textContent = String(n);
   }
 
   function renderStopsList(slot) {
     if (!slot) slot = $('#tour-builder-modal [data-role=stops-slot]');
-    if (!slot) return;
+    if (!slot) { updateCartBadge(); return; }
     if (!state.stops.length) {
       slot.innerHTML =
-        '<div class="tb-empty">'
-        + '<span class="tb-empty-icon">🏠</span>'
-        + '<div>No stops yet. Paste an MLS # above or click "Manual entry" to add the first home.</div>'
+        '<div class="cart-empty">'
+        + '<span class="empty-icon">🛒</span>'
+        + '<div>Cart is empty.<br/>Search homes on the left and click + Add to build the tour.</div>'
         + '</div>';
+      updateCartBadge();
       return;
     }
     slot.innerHTML =
@@ -774,6 +1182,26 @@
       + state.stops.map(stopCardHtml).join('')
       + '</div>';
     attachStopHandlers(slot);
+    updateCartBadge();
+    // Re-mark any visible search-result cards that match cart MLS #s so the
+    // user sees green ✓ badges even if a stop was added by quick-mls or by
+    // a paste flow that didn't go through the visible browse pane.
+    var modal = document.getElementById('tour-builder-modal');
+    if (modal) {
+      var cartMls = {};
+      state.stops.forEach(function (s) { if (s.mls_number) cartMls[s.mls_number] = true; });
+      [].slice.call(modal.querySelectorAll('.search-result-card')).forEach(function (card) {
+        var mls = card.dataset.mls;
+        var btn = card.querySelector('.btn-add-to-cart');
+        if (cartMls[mls]) {
+          card.classList.add('added');
+          if (btn) { btn.classList.add('added'); btn.textContent = '✓ In cart'; }
+        } else {
+          card.classList.remove('added');
+          if (btn) { btn.classList.remove('added'); btn.textContent = '+ Add to cart'; }
+        }
+      });
+    }
   }
 
   function stopCardHtml(stop, idx) {
@@ -954,14 +1382,27 @@
   }
 
   // -------- MLS lookup ----------------------------------------------------
+  // OData quirk: Media is a navigation property, so $select alone doesn't
+  // include it — it has to be $expand'd. Without expand, p.Media comes back
+  // undefined and stop cards render with a 📷 placeholder.
+  var TRESTLE_MEDIA_EXPAND = 'Media($top=1;$select=MediaURL,Order)';
+
   function trestleProperty(filter, selectFields) {
     return fetch(SUPABASE_URL + '/functions/v1/trestle-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ANON_KEY },
       body: JSON.stringify({
         endpoint: 'Property',
-        params: { '$top': '1', '$filter': filter, '$select': selectFields },
+        params: { '$top': '1', '$filter': filter, '$select': selectFields, '$expand': TRESTLE_MEDIA_EXPAND },
       }),
+    }).then(function (r) { return r.json(); }).catch(function (e) { return { error: e.message }; });
+  }
+
+  function trestleSearch(params) {
+    return fetch(SUPABASE_URL + '/functions/v1/trestle-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ANON_KEY },
+      body: JSON.stringify({ endpoint: 'Property', params: params }),
     }).then(function (r) { return r.json(); }).catch(function (e) { return { error: e.message }; });
   }
 
@@ -981,7 +1422,6 @@
       'ListAgentFullName', 'ListAgentStateLicense', 'ListAgentEmail', 'ListAgentPreferredPhone',
       'ListOfficeName', 'ListOfficePhone',
       'ShowingContactName', 'ShowingContactPhone', 'ShowingInstructions',
-      'Media',
     ].join(',');
     trestleProperty("ListingId eq '" + mls.replace(/'/g, "''") + "'", fields).then(function (d) {
       var p = (d && d.value && d.value[0]) || null;
@@ -1378,7 +1818,8 @@
         params: {
           '$top': '1',
           '$filter': "ListingId eq '" + mlsNumber.replace(/'/g, "''") + "'",
-          '$select': 'ListingId,ListingKey,UnparsedAddress,City,StateOrProvince,PostalCode,Latitude,Longitude,ListPrice,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,YearBuilt,ListAgentFullName,ListAgentEmail,ListAgentPreferredPhone,ListOfficeName,ListOfficePhone,ShowingContactPhone,Media',
+          '$select': 'ListingId,ListingKey,UnparsedAddress,City,StateOrProvince,PostalCode,Latitude,Longitude,ListPrice,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,YearBuilt,ListAgentFullName,ListAgentEmail,ListAgentPreferredPhone,ListOfficeName,ListOfficePhone,ShowingContactPhone',
+          '$expand': TRESTLE_MEDIA_EXPAND,
         },
       }),
     }).then(function (r) { return r.json(); }).then(function (d) {
