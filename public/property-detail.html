@@ -664,18 +664,29 @@ async function initPage() {
   if (raw) {
     try {
       var cached = JSON.parse(raw);
-      // Cache entries from before the ListingId + agent-fields rollout lack
-      // ListingId / ListAgentFullName. Force a re-fetch in that case so the
-      // Listing Agent card and MLS # display populate correctly.
-      var cacheStale = cached && (!cached.ListingId || cached.ListAgentFullName === undefined);
+      // Cache entries from before the ListingId rollout lack the ListingId
+      // field, which we need for the public MLS # display. Don't gate on
+      // ListAgentFullName — many listings legitimately have a null agent
+      // (off-market, pre-MLS, agent withheld) and that's fine; the agent
+      // card hides itself in that case.
+      var cacheStale = cached && !cached.ListingId;
       if (!cacheStale && (!urlKey || String(cached.ListingKey) === String(urlKey))) {
         listing = cached;
         console.log('[initPage] Using cached listing:', listing.ListingKey, listing.City, listing.ListPrice);
         populateListing();
         fetchFullPhotos(listing.ListingKey);
         return;
+      }
+      // Cache is stale or doesn't match the URL. If we don't have a urlKey
+      // from the address bar (e.g. user clicked from search-homes which
+      // navigates without a query string and just stuffs the listing into
+      // sessionStorage), fall back to the cached ListingKey so we refetch
+      // instead of bouncing back to /search-homes.
+      if (!urlKey && cached && cached.ListingKey) {
+        urlKey = String(cached.ListingKey);
+        console.log('[initPage] Cache stale; refetching by cached ListingKey', urlKey);
       } else if (cacheStale) {
-        console.log('[initPage] Cached listing predates agent-fields rollout — refetching');
+        console.log('[initPage] Cached listing predates ListingId rollout — refetching');
       } else {
         console.log('[initPage] URL key', urlKey, 'differs from cached', cached.ListingKey, '- fetching fresh');
       }
