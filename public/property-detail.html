@@ -12,6 +12,10 @@
 <link rel="icon" href="/assets/images/favicon.png"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
 <script src="/api/env.js"></script>
+<!-- Supabase JS UMD — used only to detect Rene's admin session and unlock
+     the (private) Listing Agent card. Anonymous visitors never trigger any
+     auth call beyond reading localStorage. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/public/js/map-controls.js"></script>
 <script src="/public/auth-persist.js"></script>
 <script src="/public/portal-auth-modal.js"></script>
@@ -653,8 +657,41 @@ let detailMapRef = null;
 let nearbyMapRef = null;
 let fullMapRef = null;
 
+/* ===== ADMIN AUTH GATE =====
+   The Listing Agent card (name / phone / email / office / ShowingTime link)
+   is private — only Rene should see it. We check Supabase auth + admin email
+   on page load. Anonymous visitors and borrowers never see the card.
+
+   Defense in depth:
+   1. Card markup ships with [hidden] — fail-closed if JS breaks.
+   2. populateListingAgent() is only called when __isAdmin is true.
+   3. The Trestle $select omits agent fields entirely for non-admins, so
+      scraping the JS-rendered page never reveals them.
+*/
+var __isAdmin = false;
+async function checkAdminAuth() {
+  try {
+    if (typeof window.supabase === 'undefined' || !window.APP_CONFIG) return false;
+    var client = window.supabase.createClient(
+      window.APP_CONFIG.SUPABASE_URL,
+      window.APP_CONFIG.SUPABASE_ANON_KEY
+    );
+    var sess = await client.auth.getSession();
+    var email = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.email;
+    if (!email) return false;
+    var admins = (window.APP_CONFIG.ADMIN_EMAILS || []).map(function(s){return String(s).toLowerCase();});
+    return admins.indexOf(String(email).toLowerCase()) >= 0;
+  } catch (e) {
+    return false;
+  }
+}
+
 /* ===== INIT ===== */
 async function initPage() {
+  // Resolve admin status BEFORE the Trestle fetch so we can omit agent
+  // fields from the $select for anonymous visitors.
+  __isAdmin = await checkAdminAuth();
+
   // URL param takes precedence — a user clicking a similar-home link or
   // opening a shared URL must NOT get stale data from sessionStorage.
   var urlKey = new URLSearchParams(window.location.search).get('listing_key')
@@ -669,7 +706,10 @@ async function initPage() {
       // ListAgentFullName — many listings legitimately have a null agent
       // (off-market, pre-MLS, agent withheld) and that's fine; the agent
       // card hides itself in that case.
-      var cacheStale = cached && !cached.ListingId;
+      // Also: if the admin is viewing a record that was previously cached as
+      // a public visitor, the cached payload won't include agent fields. Force
+      // a refetch so the Listing Agent card has data to render.
+      var cacheStale = cached && (!cached.ListingId || (__isAdmin && cached._fetchedWith !== 'admin'));
       if (!cacheStale && (!urlKey || String(cached.ListingKey) === String(urlKey))) {
         listing = cached;
         console.log('[initPage] Using cached listing:', listing.ListingKey, listing.City, listing.ListPrice);
@@ -694,11 +734,18 @@ async function initPage() {
   }
   if (urlKey) {
     try {
-      var rf = "$filter=ListingKey eq '"+urlKey+"'&$top=1&$expand=Media($top=5;$select=MediaURL,Order)&$select=ListingKey,ListingId,ListPrice,UnparsedAddress,City,StateOrProvince,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,CountyOrParish,PostalCode,Media,DaysOnMarket,StandardStatus,LotSizeAcres,YearBuilt,PublicRemarks,ListAgentFullName,ListAgentStateLicense,ListAgentMlsId,ListAgentEmail,ListAgentPreferredPhone,ListOfficeName,ListOfficePhone,ShowingContactName,ShowingContactPhone,ShowingInstructions";
+      // Public-safe field set — never request agent data anonymously.
+      var publicSelect = 'ListingKey,ListingId,ListPrice,UnparsedAddress,City,StateOrProvince,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,CountyOrParish,PostalCode,Media,DaysOnMarket,StandardStatus,LotSizeAcres,YearBuilt,PublicRemarks';
+      var adminSelect = ',ListAgentFullName,ListAgentStateLicense,ListAgentMlsId,ListAgentEmail,ListAgentPreferredPhone,ListOfficeName,ListOfficePhone,ShowingContactName,ShowingContactPhone,ShowingInstructions';
+      var selectClause = __isAdmin ? (publicSelect + adminSelect) : publicSelect;
+      var rf = "$filter=ListingKey eq '"+urlKey+"'&$top=1&$expand=Media($top=5;$select=MediaURL,Order)&$select=" + selectClause;
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rf})});
       var data = await res.json();
       if (data.value && data.value[0]) {
         listing = data.value[0];
+        // Stamp the cache with fetch-level so we know whether to refetch
+        // when admin/public status changes between visits.
+        listing._fetchedWith = __isAdmin ? 'admin' : 'public';
         sessionStorage.setItem('selected_listing', JSON.stringify(listing));
         populateListing();
         fetchFullPhotos(listing.ListingKey);
@@ -823,9 +870,11 @@ function populateListing() {
   document.getElementById('dHOA').textContent = l.AssociationFee ? '$' + l.AssociationFee.toLocaleString() : 'None';
   document.getElementById('dCounty').textContent = l.CountyOrParish || '\u2014';
 
-  // Listing Agent card \u2014 RESO fields populate the contact buttons +
-  // ShowingTime + directions links. Card stays hidden if no agent name.
-  populateListingAgent(l);
+  // Listing Agent card \u2014 PRIVATE. Only render when the visitor is signed
+  // in as an admin (Rene). Anonymous visitors and borrowers never see this
+  // card \u2014 both because the Trestle $select skips agent fields for them,
+  // and because the section element ships with [hidden] in the markup.
+  if (__isAdmin) populateListingAgent(l);
 
   // Schools + nearby amenities — sourced live from Google Places.
   // Median/Walk Score/Income remain "—" until a paid data source is wired in.
