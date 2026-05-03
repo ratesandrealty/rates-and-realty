@@ -79,6 +79,58 @@ export default {
     }
     // === END SHORT-LINK REDIRECTOR =================================
 
+    // === SHOWING TOUR PUBLIC VIEWER (/tour/{token}) =================
+    // Proxies the lead-facing itinerary HTML rendered by tour-public-view.
+    // The upstream returns HTML in the body but tags it application/json in
+    // the Content-Type header (Supabase function header bug); we override
+    // to text/html so browsers actually render it. GET/HEAD only — POSTs
+    // would mean someone is hitting the wrong path.
+    {
+      const tourSegs = path.split('/').filter(Boolean);
+      if ((request.method === 'GET' || request.method === 'HEAD') &&
+          tourSegs[0] === 'tour' && tourSegs[1]) {
+        const tail = tourSegs.slice(1).join('/');
+        try {
+          const upstream = await fetch(
+            `${env.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co'}/functions/v1/tour-public-view/${tail}`,
+            {
+              method: 'GET',
+              headers: {
+                'user-agent': request.headers.get('user-agent') || '',
+                'x-forwarded-for':
+                  request.headers.get('cf-connecting-ip') ||
+                  request.headers.get('x-forwarded-for') || '',
+                'referer': request.headers.get('referer') || '',
+              },
+              redirect: 'manual',
+            }
+          );
+          // Surface upstream redirects (e.g. for expired tokens that 302 to a
+          // friendly /expired page) instead of swallowing the body.
+          if (upstream.status === 301 || upstream.status === 302) {
+            const loc = upstream.headers.get('location');
+            if (loc) return Response.redirect(loc, 302);
+          }
+          const body = await upstream.text();
+          return new Response(body, {
+            status: upstream.status,
+            headers: {
+              'content-type': 'text/html; charset=utf-8',
+              'cache-control': 'no-store',
+              'x-frame-options': 'SAMEORIGIN',
+            },
+          });
+        } catch (e) {
+          console.error('Tour proxy error:', e);
+          return new Response('Tour viewer unavailable.', {
+            status: 502,
+            headers: { 'content-type': 'text/plain; charset=utf-8' },
+          });
+        }
+      }
+    }
+    // === END TOUR VIEWER ===========================================
+
     // Block sensitive paths
     for (const prefix of BLOCKED_PREFIXES) {
       if (path === prefix || path.startsWith(prefix + '/') || path.startsWith(prefix)) {
