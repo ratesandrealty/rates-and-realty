@@ -101,9 +101,11 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .card-img{height:200px;background:#222 center/cover no-repeat;position:relative;overflow:hidden;}
 .card-img img{width:100%;height:100%;object-fit:cover;}
 .status-badge{position:absolute;top:8px;left:8px;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;}
-.status-badge.active-badge{background:#22c55e;color:#000;}
-.status-badge.coming{background:var(--gold);color:#000;}
-.status-badge.closed{background:#666;color:#fff;}
+.status-badge.active-badge{background:rgba(110,212,126,.95);color:#0a0a0a;}
+.status-badge.for-rent{background:rgba(108,165,255,.95);color:#fff;}
+.status-badge.coming{background:rgba(201,168,76,.95);color:#0a0a0a;}
+.status-badge.closed{background:rgba(180,90,90,.95);color:#fff;}
+.status-badge.pending{background:rgba(255,159,68,.95);color:#0a0a0a;}
 .heart-btn{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.5);border:none;color:#fff;width:28px;height:28px;border-radius:50%;font-size:13px;display:flex;align-items:center;justify-content:center;}
 .heart-btn.liked{color:var(--gold);}
 .dom-badge{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.7);color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;}
@@ -1022,6 +1024,17 @@ function _applyIncomingSearchParams() {
       });
     }
 
+    // --- status (canonical key — for shareable URLs like ?status=for_rent) ---
+    // Wins over both statusParam ("status" with quotes? no, distinct param) AND
+    // listing_type because it's the most explicit. Accepts: for_sale, for_rent,
+    // sold, coming_soon, all.
+    var statusKeyParam = p.get('status');
+    if (statusKeyParam && /^(for_sale|for_rent|sold|coming_soon|all)$/.test(statusKeyParam)) {
+      // applyStatusFilterKey isn't defined yet at the time this IIFE runs
+      // during the URL-param phase; defer until DOM is fully loaded.
+      window.__pendingStatusKey = statusKeyParam;
+    }
+
     // --- statuses (plural, comma-separated, with format normalization) ---
     // Accepts both "Coming Soon" and "ComingSoon" — normalizes to the canonical
     // form Trestle returns so the OData StandardStatus filter matches.
@@ -1203,6 +1216,14 @@ document.addEventListener('DOMContentLoaded', function() {
   initTypeGrid();
   initAddToBatchBanner();
   _applyIncomingSearchParams();
+  // ?status=for_rent etc. — applied after _applyIncomingSearchParams so the
+  // canonical key wins over the legacy listing_type/statuses params.
+  if (window.__pendingStatusKey) {
+    applyStatusFilterKey(window.__pendingStatusKey);
+    delete window.__pendingStatusKey;
+  } else {
+    updateStatusHeader();
+  }
   fetchListings();
   updateSearchCartBadge();
   // Set cart date min to today
@@ -1400,9 +1421,85 @@ function initStatusTabs() {
         if (typeof updateCityBtnLabel === 'function') updateCityBtnLabel();
         if (typeof updateLocationChips === 'function') updateLocationChips();
       }
+      updateStatusHeader();
       fetchListings();
     });
   });
+}
+
+// Translate the current (activeStatus, currentLease) pair back into a
+// canonical key — useful for human-readable labels and for round-tripping
+// to the ?status=... URL param.
+function currentStatusKey() {
+  if (currentLease) return 'for_rent';
+  if (activeStatus === 'Closed') return 'sold';
+  if (activeStatus === 'Coming Soon') return 'coming_soon';
+  if (activeStatus === '' || activeStatus == null) return 'all';
+  return 'for_sale';
+}
+
+var STATUS_HEADER_LABELS = {
+  for_sale: { title: 'Homes for Sale', noun: 'home' },
+  for_rent: { title: 'Homes for Rent', noun: 'rental' },
+  sold: { title: 'Recently Sold', noun: 'sold home' },
+  coming_soon: { title: 'Coming Soon', noun: 'upcoming home' },
+  all: { title: 'All Properties', noun: 'listing' },
+};
+
+// Update document.title + the listing-count noun so the user sees the
+// active filter reflected in the chrome (browser tab) and in the topbar.
+function updateStatusHeader() {
+  var key = currentStatusKey();
+  var info = STATUS_HEADER_LABELS[key] || STATUS_HEADER_LABELS.for_sale;
+  document.title = info.title + ' in Southern California | Rates & Realty';
+  // The count text is rebuilt every fetch (in fetchListings); piggyback on it.
+  var countEl = document.getElementById('listingCount');
+  if (countEl) {
+    var n = totalCount || (typeof filteredListings !== 'undefined' ? filteredListings.length : 0);
+    var noun = info.noun + (n === 1 ? '' : 's');
+    countEl.textContent = (n ? n.toLocaleString() : '0') + ' ' + noun;
+  }
+}
+
+// Apply a canonical status-filter key to the UI: highlight the right tab,
+// set activeStatus/currentLease, and clear location filters where the
+// existing data semantics demand it. Called from URL ?status=... init AND
+// could be called programmatically from listing-alert links.
+function applyStatusFilterKey(key) {
+  var btn = null;
+  switch (key) {
+    case 'for_rent':
+      activeStatus = 'Active'; currentLease = true;
+      btn = document.querySelector('.status-tab[data-lease="true"]');
+      break;
+    case 'sold':
+      activeStatus = 'Closed'; currentLease = false;
+      btn = document.querySelector('.status-tab[data-status="Closed"]');
+      break;
+    case 'coming_soon':
+      activeStatus = 'Coming Soon'; currentLease = false;
+      btn = document.querySelector('.status-tab[data-status="Coming Soon"]');
+      break;
+    case 'all':
+      activeStatus = ''; currentLease = false;
+      btn = document.querySelector('.status-tab[data-status=""]');
+      break;
+    case 'for_sale':
+    default:
+      activeStatus = 'Active'; currentLease = false;
+      btn = document.querySelector('.status-tab[data-status="Active"]:not([data-lease])');
+      break;
+  }
+  if (currentLease || activeStatus === 'Closed') {
+    selectedCities = [];
+    selectedCounties.clear();
+    if (typeof updateCountyBtnLabel === 'function') updateCountyBtnLabel();
+    if (typeof updateCityBtnLabel === 'function') updateCityBtnLabel();
+    if (typeof updateLocationChips === 'function') updateLocationChips();
+  }
+  document.querySelectorAll('.status-tab').forEach(function(t){ t.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  updateStatusHeader();
 }
 
 /* ===== ODATA FILTER BUILDER ===== */
@@ -1446,6 +1543,10 @@ function buildODataFilter(bounds) {
 
   // Status — honor selectedStatuses (from `?statuses=` URL param) for both sales and rentals.
   // Falls back to activeStatus (sales) or 'Active' (rentals) when not supplied.
+  // "All Properties" tab (activeStatus === '' && !currentLease) gets a wider
+  // net of Active + Coming Soon so the mixed-results view doesn't surface
+  // closed/pending listings the user almost never wants.
+  var isAllPropertiesTab = !currentLease && activeStatus === '';
   if (selectedStatuses && selectedStatuses.length > 0) {
     var statusClauses = selectedStatuses.map(function(s){
       return "StandardStatus eq '" + String(s).replace(/'/g,"''") + "'";
@@ -1455,12 +1556,18 @@ function buildODataFilter(bounds) {
     parts.push("StandardStatus eq 'Active'");
   } else if (activeStatus) {
     parts.push("StandardStatus eq '" + activeStatus + "'");
+  } else if (isAllPropertiesTab) {
+    parts.push("(StandardStatus eq 'Active' or StandardStatus eq 'Coming Soon')");
   }
 
   // Property types — skip for Sold/Closed and For Rent
+  // "All Properties" also skips PropertyType filtering so leases mix in.
   if (currentLease) {
     // Trestle RESO: rentals are PropertyType ResidentialLease, status Active
     parts.push("PropertyType eq 'ResidentialLease'");
+  } else if (isAllPropertiesTab) {
+    // No PropertyType / lease-exclusion clause — show sales + rentals mixed.
+    // Each card's badge tells the user which it is.
   } else if (activeStatus !== 'Closed') {
     var TYPE_MAP = {
       'Residential':        ["(PropertyType eq 'Residential' and PropertySubType eq 'Single Family Residence')"],
@@ -1610,8 +1717,9 @@ function applyClientFilters(page, append) {
   filteredListings = items;
   renderListings(page, append);
   renderMarkers();
-  var countText = totalCount ? totalCount.toLocaleString() + ' listings' : filteredListings.length + ' home' + (filteredListings.length !== 1 ? 's' : '');
-  document.getElementById('listingCount').textContent = countText;
+  // updateStatusHeader reads totalCount + filteredListings + currentStatusKey()
+  // and writes a noun-aware count ("197 rentals", "53 sold homes", etc.).
+  updateStatusHeader();
 }
 
 /* ===== RENDER LISTINGS ===== */
@@ -1646,6 +1754,23 @@ function buildSwiper(el) {
   goTo(0);
 }
 
+// Card status pill is driven by the listing record itself, not the active
+// search-tab. A rental record (PropertyType='ResidentialLease') with
+// StandardStatus='Active' must still render "FOR RENT" — taking only the
+// status would mis-label every rental as "For Sale".
+function statusBadgeFor(l) {
+  if (!l) return { label: '—', cssClass: 'closed' };
+  var s = l.StandardStatus || '';
+  if (l.PropertyType === 'ResidentialLease' && (s === 'Active' || s === '')) {
+    return { label: 'For Rent', cssClass: 'for-rent' };
+  }
+  if (s === 'Closed') return { label: 'Sold', cssClass: 'closed' };
+  if (s === 'Coming Soon' || s === 'ComingSoon') return { label: 'Coming Soon', cssClass: 'coming' };
+  if (s === 'Pending' || s === 'Active Under Contract') return { label: 'Pending', cssClass: 'pending' };
+  if (s === 'Active' || s === '') return { label: 'For Sale', cssClass: 'active-badge' };
+  return { label: String(s).toUpperCase(), cssClass: 'closed' };
+}
+
 function renderListings(page, append) {
   var grid = document.getElementById('listingsGrid');
   if (filteredListings.length === 0 && !append) {
@@ -1657,9 +1782,10 @@ function renderListings(page, append) {
   for (var i = 0; i < filteredListings.length; i++) {
     var l = filteredListings[i];
     var addr = l.UnparsedAddress || 'listing';
-    var status = l.StandardStatus || 'Active';
-    var badgeClass = status === 'Active' ? 'active-badge' : status === 'ComingSoon' ? 'coming' : 'closed';
-    var badgeText = status === 'Active' ? 'For Sale' : status === 'ComingSoon' ? 'Coming Soon' : 'Sold';
+    var badgeInfo = statusBadgeFor(l);
+    var badgeClass = badgeInfo.cssClass;
+    var badgeText = badgeInfo.label;
+    var isLease = l.PropertyType === 'ResidentialLease';
     var isLand = l.PropertyType === 'Land' || (l.PropertySubType||'').toLowerCase().includes('land');
     var inCart = showingCart.some(function(c) { return c.listingKey === l.ListingKey; });
     var subtype = l.PropertySubType || l.PropertyType || '';
@@ -1706,7 +1832,7 @@ function renderListings(page, append) {
       + (l.DaysOnMarket != null ? '<span class="dom-badge">' + l.DaysOnMarket + ' DOM</span>' : '')
       + '</div>'
       + '<div class="card-body" onclick="goDetail(' + i + ')">'
-      + '<div class="card-price">$' + Number(l.ListPrice || 0).toLocaleString() + '</div>'
+      + '<div class="card-price">$' + Number(l.ListPrice || 0).toLocaleString() + (isLease ? '<span style="font-size:.7em;color:#888;font-weight:500">/mo</span>' : '') + '</div>'
       + '<div class="card-address">' + (l.UnparsedAddress || '') + '</div>'
       + '<div class="card-city">' + (l.City || '') + (l.PostalCode ? ', CA ' + l.PostalCode : ', CA') + '</div>'
       + '<div class="card-stats">'
