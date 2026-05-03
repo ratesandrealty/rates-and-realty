@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Showing Requests | Rates &amp; Realty CRM</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="/api/env.js"></script>
+<script src="/assets/js/tour-builder.js" defer></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0a0a0a;color:#eee;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;display:flex}
@@ -93,7 +96,7 @@ tr:hover td{background:#0f0f0f}
     <div style="display:flex;align-items:center"><h1><i class="fas fa-calendar-check" style="color:#C9A84C;margin-right:8px"></i>Showing Requests</h1><span class="topbar-sub">All scheduled showing requests</span></div>
     <div class="topbar-right">
       <button class="btn btn-outline" onclick="loadTours()"><i class="fas fa-sync-alt"></i> Refresh</button>
-      <button class="btn btn-gold" onclick="openBuilderPlaceholder()"><i class="fas fa-plus"></i> New Tour</button>
+      <button class="btn btn-gold" onclick="openTourBuilder({ onClose: loadTours })"><i class="fas fa-plus"></i> New Tour</button>
       <a href="/public/search-homes.html" target="_blank" class="btn btn-outline"><i class="fas fa-external-link-alt"></i> Search</a>
     </div>
   </div>
@@ -245,12 +248,14 @@ function renderTable() {
       + '</tr>';
   }).join('');
 
-  // Wire row clicks → placeholder builder. Action cells stop propagation
-  // via data-stop so they don't trigger the row click.
+  // Wire row clicks → tour builder. Action cells stop propagation via
+  // data-stop so they don't trigger the row click.
   document.querySelectorAll('#showingsBody tr[data-batch-id]').forEach(function(row) {
     row.addEventListener('click', function(e) {
       if (e.target.closest('[data-stop]')) return;
-      openBuilderPlaceholder(row.getAttribute('data-batch-id'), row.getAttribute('data-token'));
+      var bid = row.getAttribute('data-batch-id');
+      if (typeof openTourBuilder === 'function') openTourBuilder({ batch_id: bid, onClose: loadTours });
+      else openBuilderPlaceholder(bid, row.getAttribute('data-token'));
     });
   });
   document.querySelectorAll('#showingsBody [data-act]').forEach(function(btn) {

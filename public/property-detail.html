@@ -372,6 +372,7 @@ input,select{font-family:inherit}
 }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
+  <script src="/assets/js/tour-builder.js" defer></script>
 </head>
 <body>
 
@@ -517,6 +518,7 @@ input,select{font-family:inherit}
         <a class="btn-secondary agent-action-link" data-field="showingtime-link" href="#" target="_blank" rel="noopener" hidden>📅 Schedule on ShowingTime</a>
         <a class="btn-secondary agent-action-link" data-field="directions-link" href="#" target="_blank" rel="noopener" hidden>🗺 Directions</a>
         <button class="btn-secondary" type="button" data-action="copy-agent-info">📋 Copy contact info</button>
+        <button class="btn-secondary" type="button" data-action="add-to-tour">➕ Add to tour</button>
       </div>
     </div>
 
@@ -1028,6 +1030,21 @@ function populateListingAgent(p) {
       } else {
         showToast('Copy not supported in this browser');
       }
+    });
+  }
+
+  // Add to tour — opens contact picker -> tour chooser -> adds this listing
+  // as a stop. Card is already gated behind __isAdmin so no auth check.
+  var tourBtn = card.querySelector('[data-action="add-to-tour"]');
+  if (tourBtn && !tourBtn.dataset.bound) {
+    tourBtn.dataset.bound = '1';
+    tourBtn.addEventListener('click', function() {
+      if (typeof window.handleAddToTour !== 'function') {
+        showToast('Tour builder not loaded yet');
+        return;
+      }
+      if (!p.ListingId) { showToast('No MLS # on this listing'); return; }
+      window.handleAddToTour(p.ListingId);
     });
   }
 }
