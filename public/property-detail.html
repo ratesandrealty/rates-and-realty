@@ -106,6 +106,24 @@ input,select{font-family:inherit}
 .detail-item .di-label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
 .detail-item .di-val{font-size:.9rem;color:var(--text);font-weight:600}
 
+/* LISTING AGENT CARD */
+.agent-name-row{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:4px}
+.agent-name{font-size:1.25rem;color:var(--text);font-weight:600}
+.agent-license{font-size:.78rem;color:var(--muted)}
+.agent-office{font-size:.85rem;color:var(--muted);margin-bottom:16px}
+.agent-contact-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:14px}
+.agent-contact-btn{display:flex;align-items:center;gap:12px;padding:12px;background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.2);border-radius:8px;text-decoration:none;color:var(--text);transition:all .15s}
+.agent-contact-btn:hover{background:rgba(201,168,76,0.12);border-color:rgba(201,168,76,0.4)}
+.agent-contact-btn.disabled{opacity:.4;pointer-events:none;cursor:not-allowed}
+.contact-icon{font-size:1.1rem;flex-shrink:0}
+.contact-label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.contact-value{font-size:.88rem;color:var(--gold);font-weight:500;word-break:break-word}
+.showing-instructions{background:#0d0d0d;border-left:3px solid var(--gold);padding:10px 14px;border-radius:4px;margin-bottom:14px}
+.showing-label{font-size:.68rem;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;font-weight:700}
+.showing-text{font-size:.82rem;color:#ccc;line-height:1.5;white-space:pre-wrap}
+.agent-actions{display:flex;gap:8px;flex-wrap:wrap}
+.agent-action-link{text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+
 /* MAP */
 .detail-map{width:100%;height:340px;border-radius:10px;overflow:hidden;margin-top:14px}
 .expand-map-btn{margin-top:10px;background:none;border:1px solid var(--border);color:var(--muted);padding:8px 16px;border-radius:8px;font-size:.82rem;cursor:pointer;display:flex;align-items:center;gap:6px}
@@ -453,6 +471,51 @@ input,select{font-family:inherit}
       </div>
     </div>
 
+    <!-- LISTING AGENT -->
+    <div class="section-card listing-agent-card" id="listingAgentCard" hidden>
+      <h2><i class="fas fa-user-tie"></i> Listing Agent</h2>
+      <div class="agent-name-row">
+        <div class="agent-name" data-field="agent-name">—</div>
+        <div class="agent-license" data-field="agent-license"></div>
+      </div>
+      <div class="agent-office" data-field="agent-office"></div>
+
+      <div class="agent-contact-grid">
+        <a class="agent-contact-btn" data-field="agent-phone-link" href="#" rel="noopener">
+          <span class="contact-icon">📞</span>
+          <div>
+            <div class="contact-label" data-field="agent-phone-label">Showing line</div>
+            <div class="contact-value" data-field="agent-phone-display">—</div>
+          </div>
+        </a>
+        <a class="agent-contact-btn" data-field="agent-email-link" href="#" rel="noopener">
+          <span class="contact-icon">✉️</span>
+          <div>
+            <div class="contact-label">Email agent</div>
+            <div class="contact-value" data-field="agent-email-display">—</div>
+          </div>
+        </a>
+        <a class="agent-contact-btn" data-field="agent-office-phone-link" href="#" rel="noopener">
+          <span class="contact-icon">🏢</span>
+          <div>
+            <div class="contact-label">Office</div>
+            <div class="contact-value" data-field="agent-office-phone-display">—</div>
+          </div>
+        </a>
+      </div>
+
+      <div class="showing-instructions" data-field="showing-instructions" hidden>
+        <div class="showing-label">Showing instructions</div>
+        <div class="showing-text" data-field="showing-instructions-text">—</div>
+      </div>
+
+      <div class="agent-actions">
+        <a class="btn-secondary agent-action-link" data-field="showingtime-link" href="#" target="_blank" rel="noopener" hidden>📅 Schedule on ShowingTime</a>
+        <a class="btn-secondary agent-action-link" data-field="directions-link" href="#" target="_blank" rel="noopener" hidden>🗺 Directions</a>
+        <button class="btn-secondary" type="button" data-action="copy-agent-info">📋 Copy contact info</button>
+      </div>
+    </div>
+
     <!-- NEARBY SCHOOLS -->
     <div class="section-card">
       <h2><i class="fas fa-graduation-cap"></i> Nearby Schools</h2>
@@ -601,12 +664,18 @@ async function initPage() {
   if (raw) {
     try {
       var cached = JSON.parse(raw);
-      if (!urlKey || String(cached.ListingKey) === String(urlKey)) {
+      // Cache entries from before the ListingId + agent-fields rollout lack
+      // ListingId / ListAgentFullName. Force a re-fetch in that case so the
+      // Listing Agent card and MLS # display populate correctly.
+      var cacheStale = cached && (!cached.ListingId || cached.ListAgentFullName === undefined);
+      if (!cacheStale && (!urlKey || String(cached.ListingKey) === String(urlKey))) {
         listing = cached;
         console.log('[initPage] Using cached listing:', listing.ListingKey, listing.City, listing.ListPrice);
         populateListing();
         fetchFullPhotos(listing.ListingKey);
         return;
+      } else if (cacheStale) {
+        console.log('[initPage] Cached listing predates agent-fields rollout — refetching');
       } else {
         console.log('[initPage] URL key', urlKey, 'differs from cached', cached.ListingKey, '- fetching fresh');
       }
@@ -614,7 +683,7 @@ async function initPage() {
   }
   if (urlKey) {
     try {
-      var rf = "$filter=ListingKey eq '"+urlKey+"'&$top=1&$expand=Media($top=5;$select=MediaURL,Order)&$select=ListingKey,ListPrice,UnparsedAddress,City,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,CountyOrParish,PostalCode,Media,DaysOnMarket,StandardStatus,LotSizeAcres,YearBuilt,PublicRemarks";
+      var rf = "$filter=ListingKey eq '"+urlKey+"'&$top=1&$expand=Media($top=5;$select=MediaURL,Order)&$select=ListingKey,ListingId,ListPrice,UnparsedAddress,City,StateOrProvince,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,CountyOrParish,PostalCode,Media,DaysOnMarket,StandardStatus,LotSizeAcres,YearBuilt,PublicRemarks,ListAgentFullName,ListAgentStateLicense,ListAgentMlsId,ListAgentEmail,ListAgentPreferredPhone,ListOfficeName,ListOfficePhone,ShowingContactName,ShowingContactPhone,ShowingInstructions";
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rf})});
       var data = await res.json();
       if (data.value && data.value[0]) {
@@ -730,8 +799,10 @@ function populateListing() {
   const descEl = document.getElementById('descriptionText');
   descEl.textContent = l.PublicRemarks || 'No description provided. Contact Rene for more details about this property.';
 
-  // Listing details
-  document.getElementById('dMLS').textContent = l.ListingKey || '\u2014';
+  // Listing details \u2014 display the public MLS # (ListingId), NOT Trestle's
+  // internal primary key (ListingKey). Fallback keeps the page rendering on
+  // the rare record that's missing ListingId.
+  document.getElementById('dMLS').textContent = l.ListingId || l.ListingKey || '\u2014';
   document.getElementById('dType').textContent = l.PropertySubType || l.PropertyType || '\u2014';
   document.getElementById('dStatus').textContent = status;
   document.getElementById('dListed').textContent = l.ListingContractDate ? new Date(l.ListingContractDate).toLocaleDateString() : '\u2014';
@@ -740,6 +811,10 @@ function populateListing() {
   document.getElementById('dGarage').textContent = l.GarageSpaces ? l.GarageSpaces + ' spaces' : '\u2014';
   document.getElementById('dHOA').textContent = l.AssociationFee ? '$' + l.AssociationFee.toLocaleString() : 'None';
   document.getElementById('dCounty').textContent = l.CountyOrParish || '\u2014';
+
+  // Listing Agent card \u2014 RESO fields populate the contact buttons +
+  // ShowingTime + directions links. Card stays hidden if no agent name.
+  populateListingAgent(l);
 
   // Schools + nearby amenities — sourced live from Google Places.
   // Median/Walk Score/Income remain "—" until a paid data source is wired in.
@@ -762,6 +837,139 @@ function populateListing() {
   // Load similar homes and nearby homes map
   loadSimilarHomes(city, price, l.ListingKey, isLand, l.PropertyType);
   loadNearbyHomesMap(city, price, l.ListingKey, isLand, l.PropertyType, l.Latitude, l.Longitude);
+}
+
+/* ===== LISTING AGENT CARD ===== */
+// ShowingTime's public scheduler URL — the listing agent gets the request
+// in their normal ShowingTime workflow. mlsBoardCode is "crmls" for SoCal
+// CRMLS listings (most of our service area). Falls back gracefully if the
+// listing isn't in ShowingTime — their page shows a helpful "not found".
+function _showingTimeUrl(mlsId, mlsBoardCode) {
+  if (!mlsId) return '';
+  var board = mlsBoardCode || 'crmls';
+  return 'https://app.showingtime.com/scheduler/?mlsId=' + encodeURIComponent(board) +
+    '&listingId=' + encodeURIComponent(mlsId);
+}
+
+function _telHref(phone) {
+  if (!phone) return '';
+  return 'tel:' + String(phone).replace(/[^0-9+]/g, '');
+}
+
+function _agentSetText(field, val) {
+  var el = document.querySelector('[data-field="' + field + '"]');
+  if (el) el.textContent = val == null ? '' : String(val);
+}
+
+function _agentSetButton(field, href, displayText, label) {
+  var link = document.querySelector('[data-field="' + field + '-link"]');
+  var disp = document.querySelector('[data-field="' + field + '-display"]');
+  if (!link || !disp) return;
+  if (href) {
+    link.href = href;
+    link.classList.remove('disabled');
+    disp.textContent = displayText;
+  } else {
+    link.href = '#';
+    link.classList.add('disabled');
+    disp.textContent = 'Not provided';
+  }
+  if (label) _agentSetText(field + '-label', label);
+}
+
+function populateListingAgent(p) {
+  var card = document.getElementById('listingAgentCard');
+  if (!card) return;
+  // No agent name = no card. Many wholesale / pre-MLS records lack agent
+  // attribution and showing the empty card just looks broken.
+  if (!p || !p.ListAgentFullName) { card.hidden = true; return; }
+  card.hidden = false;
+
+  // Best-available phone for scheduling: dedicated showing line >
+  // agent's published direct line > office main.
+  var showingPhone = p.ShowingContactPhone || p.ListAgentPreferredPhone || p.ListOfficePhone || '';
+  var phoneLabel = p.ShowingContactPhone ? 'Showing line'
+                  : p.ListAgentPreferredPhone ? 'Agent direct'
+                  : p.ListOfficePhone ? 'Office (best available)' : 'Showing line';
+
+  _agentSetText('agent-name', p.ListAgentFullName);
+  _agentSetText('agent-license', p.ListAgentStateLicense ? 'CalDRE# ' + p.ListAgentStateLicense : '');
+  _agentSetText('agent-office', p.ListOfficeName || '');
+
+  _agentSetButton('agent-phone', _telHref(showingPhone), showingPhone, phoneLabel);
+
+  if (p.ListAgentEmail) {
+    var firstName = (p.ListAgentFullName || '').split(' ')[0] || '';
+    var subject = encodeURIComponent('Showing inquiry — ' + (p.UnparsedAddress || ''));
+    var bodyLines = [
+      'Hi ' + firstName + ',',
+      '',
+      "I'd like to schedule a showing for " + (p.UnparsedAddress || '') +
+        (p.City ? ', ' + p.City : '') +
+        (p.ListingId ? ' (MLS #' + p.ListingId + ')' : '') + '.',
+      '',
+      'Thanks,',
+      'Rene Duarte',
+      'Rates & Realty',
+      '714-472-8508'
+    ];
+    var mailHref = 'mailto:' + p.ListAgentEmail + '?subject=' + subject +
+      '&body=' + encodeURIComponent(bodyLines.join('\n'));
+    _agentSetButton('agent-email', mailHref, p.ListAgentEmail, null);
+  } else {
+    _agentSetButton('agent-email', '', '', null);
+  }
+
+  _agentSetButton('agent-office-phone', _telHref(p.ListOfficePhone), p.ListOfficePhone || '', null);
+
+  if (p.ShowingInstructions) {
+    var inst = card.querySelector('[data-field="showing-instructions"]');
+    if (inst) inst.hidden = false;
+    _agentSetText('showing-instructions-text', p.ShowingInstructions);
+  }
+
+  // Action links — ShowingTime + Google Maps directions
+  var stLink = card.querySelector('[data-field="showingtime-link"]');
+  if (stLink) {
+    var stUrl = _showingTimeUrl(p.ListingId);
+    if (stUrl) { stLink.href = stUrl; stLink.hidden = false; }
+    else { stLink.hidden = true; }
+  }
+  var dirLink = card.querySelector('[data-field="directions-link"]');
+  if (dirLink) {
+    var addrParts = [p.UnparsedAddress, p.City, p.StateOrProvince, p.PostalCode].filter(Boolean).join(', ');
+    if (addrParts) {
+      dirLink.href = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(addrParts);
+      dirLink.hidden = false;
+    } else {
+      dirLink.hidden = true;
+    }
+  }
+
+  // Copy contact info
+  var copyBtn = card.querySelector('[data-action="copy-agent-info"]');
+  if (copyBtn && !copyBtn.dataset.bound) {
+    copyBtn.dataset.bound = '1';
+    copyBtn.addEventListener('click', function() {
+      var lines = [
+        p.ListAgentFullName + (p.ListAgentStateLicense ? ' · CalDRE# ' + p.ListAgentStateLicense : ''),
+        p.ListOfficeName || '',
+        showingPhone ? phoneLabel + ': ' + showingPhone : '',
+        p.ListOfficePhone && p.ListOfficePhone !== showingPhone ? 'Office: ' + p.ListOfficePhone : '',
+        p.ListAgentEmail ? 'Email: ' + p.ListAgentEmail : '',
+        p.ListingId ? 'MLS #' + p.ListingId : ''
+      ].filter(Boolean);
+      var txt = lines.join('\n');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(
+          function() { showToast('Agent info copied'); },
+          function() { showToast('Copy failed'); }
+        );
+      } else {
+        showToast('Copy not supported in this browser');
+      }
+    });
+  }
 }
 
 /* ===== NEARBY SCHOOLS + AMENITIES (Google Places) ===== */
