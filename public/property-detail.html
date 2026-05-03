@@ -696,8 +696,11 @@ async function initPage() {
 
   // URL param takes precedence — a user clicking a similar-home link or
   // opening a shared URL must NOT get stale data from sessionStorage.
-  var urlKey = new URLSearchParams(window.location.search).get('listing_key')
-    || new URLSearchParams(window.location.search).get('listing_id');
+  // Accepts: ?listing_key=<numeric Trestle key>, ?listing_id=<MLS#>, or
+  // ?id=<either>. Tour-itinerary "View listing" links use ?id=<MLS#>;
+  // similar-homes carousels use ?listing_key=<numeric>; both must work.
+  var _qs = new URLSearchParams(window.location.search);
+  var urlKey = _qs.get('listing_key') || _qs.get('listing_id') || _qs.get('id');
   var raw = sessionStorage.getItem('selected_listing');
   // Use sessionStorage only if URL has no key, OR the cached listing matches the URL key
   if (raw) {
@@ -740,7 +743,12 @@ async function initPage() {
       var publicSelect = 'ListingKey,ListingId,ListPrice,UnparsedAddress,City,StateOrProvince,BedroomsTotal,BathroomsTotalInteger,LivingArea,PropertyType,PropertySubType,Latitude,Longitude,CountyOrParish,PostalCode,Media,DaysOnMarket,StandardStatus,LotSizeAcres,YearBuilt,PublicRemarks';
       var adminSelect = ',ListAgentFullName,ListAgentStateLicense,ListAgentMlsId,ListAgentEmail,ListAgentPreferredPhone,ListOfficeName,ListOfficePhone,ShowingContactName,ShowingContactPhone,ShowingInstructions';
       var selectClause = __isAdmin ? (publicSelect + adminSelect) : publicSelect;
-      var rf = "$filter=ListingKey eq '"+urlKey+"'&$top=1&$expand=Media($top=5;$select=MediaURL,Order)&$select=" + selectClause;
+      // Match against ListingKey OR ListingId so the same handler resolves
+      // both legacy similar-home links (?listing_key=<numeric>) and tour
+      // itinerary links (?id=<MLS# like PW26047551>). OData escape: single
+      // quotes inside the value are doubled.
+      var safeKey = String(urlKey).replace(/'/g, "''");
+      var rf = "$filter=(ListingKey eq '"+safeKey+"' or ListingId eq '"+safeKey+"')&$top=1&$expand=Media($top=5;$select=MediaURL,Order)&$select=" + selectClause;
       var res = await fetch(SB_URL+'/functions/v1/trestle-proxy',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({endpoint:'Property',rawFilter:rf})});
       var data = await res.json();
       if (data.value && data.value[0]) {
@@ -755,8 +763,33 @@ async function initPage() {
       }
     } catch(e) { console.error('[initPage] Fetch by listing_key failed:', e); }
   }
-  // No listing found — redirect to search
-  window.location.href = '/public/search-homes.html';
+  // No listing found. Don't auto-redirect — anonymous visitors arriving
+  // from a tour itinerary deserve a clear "what happened" message instead
+  // of being silently bounced to /search-homes (which then says "no
+  // listings found" and looks like the link itself was broken).
+  showListingUnavailableState(urlKey);
+}
+
+function showListingUnavailableState(idOrKey) {
+  // _escapeHtml is defined further down in the file but hoisted (function
+  // declarations are hoisted, regardless of source order) so it's safe
+  // to call here.
+  var labelId = idOrKey ? _escapeHtml(String(idOrKey)) : 'this listing';
+  var main = document.querySelector('.property-detail-container, main, #pd-main, body');
+  if (!main) return;
+  var msg = '<div style="max-width:600px;margin:60px auto;padding:40px;background:#141414;border:1px solid #2a2a2a;border-radius:12px;text-align:center;font-family:Arial,sans-serif">'
+    + '<h2 style="color:#fff;margin:0 0 12px;font-size:1.3rem">Listing temporarily unavailable</h2>'
+    + '<p style="color:#aaa;font-size:.9rem;line-height:1.5;margin:0 0 16px">'
+    +   "We couldn't load the details for MLS #" + labelId + ' right now. '
+    +   "This usually means the listing was just removed from the MLS or there's a brief sync delay."
+    + '</p>'
+    + '<p style="color:#888;font-size:.84rem">'
+    +   '<a href="/public/search-homes.html" style="color:#C9A84C;text-decoration:none">Browse other listings →</a>'
+    + '</p>'
+    + '</div>';
+  // Replace the page content rather than appending so the loading
+  // skeleton doesn't sit underneath the error.
+  main.innerHTML = msg;
 }
 
 async function fetchFullPhotos(listingKey) {
