@@ -26,8 +26,8 @@ import {
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks,
-  updateTaskStatus
-} from "/api/admin-api-v2.js?v=20260411g";
+  updateTaskStatus, updateTask, deleteTask
+} from "/api/admin-api-v2.js?v=20260504e";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
@@ -679,7 +679,8 @@ function crmRenderList(tasks) {
   const tbody = document.getElementById("tasks-tbody");
   if (!tbody) return;
   if (!tasks.length) {
-    tbody.innerHTML = `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted);">No tasks.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--muted);">No tasks.</td></tr>`;
+    crmUpdateSelectionUI();
     return;
   }
   const now = new Date();
@@ -688,7 +689,8 @@ function crmRenderList(tasks) {
     const isOverdue = task.due_date && new Date(task.due_date) < now && task.status !== "completed";
     const priorityClass = { high: "status-pill-orange", urgent: "status-pill-red", normal: "" }[task.priority || "normal"] || "";
     return `
-      <tr>
+      <tr data-task-id="${crmEsc(task.id)}">
+        <td><input type="checkbox" class="ct-select-box" data-action="cm-select-row" data-task-id="${crmEsc(task.id)}" aria-label="Select task" /></td>
         <td><strong style="font-size:0.9rem;">${crmEsc(task.title || "Task")}</strong></td>
         <td style="font-size:0.82rem;color:var(--muted);">${crmEsc(leadName)}</td>
         <td><span class="status-pill ${priorityClass}" style="font-size:0.75rem;">${crmEsc(task.priority || "normal")}</span></td>
@@ -702,13 +704,15 @@ function crmRenderList(tasks) {
   }).join("");
 
   tbody.querySelectorAll("[data-complete-task]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
       btn.disabled = true;
       await completeTask(btn.dataset.completeTask);
       allTasks = await getAllTasks();
       renderAllTasksTable(allTasks);
     });
   });
+  crmUpdateSelectionUI();
 }
 
 function crmBoardCardHtml(t) {
@@ -718,6 +722,7 @@ function crmBoardCardHtml(t) {
   const contact = crmContactName(t);
   const contactId = t.contact_id || (t.contacts && t.contacts.id) || "";
   return `<div class="board-card" draggable="true" data-task-id="${crmEsc(t.id)}" data-current-col="${crmColKey(t)}">
+    <input type="checkbox" class="ct-select-box board-card-select" data-action="cm-select-row" data-task-id="${crmEsc(t.id)}" aria-label="Select task" />
     <div class="board-card-title">${crmEsc(t.title || "")}</div>
     <div class="board-card-meta">
       ${t.priority ? `<span class="board-card-pri ${crmPriClass(t.priority)}">${crmEsc(t.priority)}</span>` : ""}
@@ -746,6 +751,7 @@ function crmRenderBoard(tasks) {
     </div>
   `).join("");
   crmAttachDragHandlers();
+  crmUpdateSelectionUI();
 }
 
 function crmAttachDragHandlers() {
@@ -873,12 +879,9 @@ function crmDispatchView() {
 function crmApplyViewToDom() {
   const panel = document.querySelector('[data-subpanel="crm"]');
   if (panel) panel.dataset.currentView = crmCurrentView;
-  const listPane = document.querySelector('[data-target="cm-list"]');
-  const boardPane = document.querySelector('[data-target="cm-board"]');
-  const calPane = document.querySelector('[data-target="cm-calendar"]');
-  if (listPane) listPane.hidden = crmCurrentView !== "list";
-  if (boardPane) boardPane.hidden = crmCurrentView !== "board";
-  if (calPane) calPane.hidden = crmCurrentView !== "calendar";
+  // CSS visibility is driven by data-view on the container — no [hidden] toggling.
+  const container = document.querySelector('[data-target="cm-view-container"]');
+  if (container) container.dataset.view = crmCurrentView;
   document.querySelectorAll('[data-subpanel="crm"] .view-btn').forEach((b) => {
     b.classList.toggle("active", b.dataset.view === crmCurrentView);
   });
@@ -888,6 +891,157 @@ function crmApplyViewToDom() {
     const active = document.querySelector(".task-subpanel:not([hidden])");
     document.body.classList.toggle("view-list-active", !!active && active.dataset.currentView === "list");
   }
+}
+
+// ── CRM multi-select + bulk actions ─────────────────────────────────────────
+const crmSelectedIds = new Set();
+let crmBulkWired = false;
+
+function crmUpdateSelectionUI() {
+  document.querySelectorAll('[data-subpanel="crm"] tr[data-task-id], [data-subpanel="crm"] .board-card[data-task-id]').forEach((row) => {
+    const tid = row.dataset.taskId;
+    const sel = crmSelectedIds.has(tid);
+    row.classList.toggle("is-selected", sel);
+    const cb = row.querySelector(".ct-select-box");
+    if (cb) cb.checked = sel;
+  });
+  const bar = document.querySelector('[data-target="cm-bulk-bar"]');
+  if (bar) {
+    if (crmSelectedIds.size > 0) {
+      bar.hidden = false;
+      const c = bar.querySelector('[data-target="cm-bulk-count"]');
+      if (c) c.textContent = String(crmSelectedIds.size);
+    } else {
+      bar.hidden = true;
+    }
+  }
+  // Header "select all" checkbox in CRM list table
+  const sa = document.querySelector('[data-target="cm-select-all-table"]');
+  if (sa) {
+    const rows = document.querySelectorAll('#tasks-tbody tr[data-task-id]');
+    if (rows.length === 0) { sa.checked = false; sa.indeterminate = false; }
+    else {
+      const all = Array.from(rows).every((r) => crmSelectedIds.has(r.dataset.taskId));
+      const some = Array.from(rows).some((r) => crmSelectedIds.has(r.dataset.taskId));
+      sa.checked = all;
+      sa.indeterminate = !all && some;
+    }
+  }
+}
+
+async function crmBulkApply(perTaskFn) {
+  const ids = Array.from(crmSelectedIds);
+  if (ids.length === 0) return;
+  const bar = document.querySelector('[data-target="cm-bulk-bar"]');
+  if (bar) bar.style.opacity = "0.6";
+  let done = 0, failed = 0;
+  for (const tid of ids) {
+    try { await perTaskFn(tid); done++; }
+    catch (e) { failed++; console.error("[cm-bulk] failed for", tid, e); }
+  }
+  if (bar) bar.style.opacity = "1";
+  if (failed > 0) alert(`${done} updated, ${failed} failed. Check console for details.`);
+  crmSelectedIds.clear();
+  allTasks = await getAllTasks();
+  renderAllTasksTable(allTasks);
+}
+
+async function crmBulkSetDueDate() {
+  const date = prompt(`Set due date for ${crmSelectedIds.size} task(s) (YYYY-MM-DD), or leave blank to clear:`);
+  if (date === null) return;
+  let dueValue = null;
+  if (date.trim()) {
+    const d = new Date(date.trim() + "T09:00:00");
+    if (isNaN(d.getTime())) { alert("Invalid date — use YYYY-MM-DD"); return; }
+    dueValue = d.toISOString();
+  }
+  await crmBulkApply((tid) => updateTask(tid, { due_date: dueValue }));
+}
+
+async function crmBulkSetPriority() {
+  const choice = prompt(`Set priority for ${crmSelectedIds.size} task(s): urgent / high / normal / low / none`);
+  if (!choice) return;
+  const v = String(choice).trim().toLowerCase();
+  if (!["urgent","high","normal","low","none"].includes(v)) { alert("Invalid priority"); return; }
+  const p = v === "none" ? null : v;
+  await crmBulkApply((tid) => updateTask(tid, { priority: p }));
+}
+
+async function crmBulkAssignContact() {
+  let contacts;
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    const { data, error } = await supabase
+      .from("contacts")
+      .select("id, first_name, last_name")
+      .order("first_name")
+      .limit(500);
+    if (error) throw error;
+    contacts = data || [];
+  } catch (e) { alert("Could not load contacts: " + (e.message || "unknown")); return; }
+  const lines = contacts.map((c, i) => `${i + 1}. ${(c.first_name || "")} ${(c.last_name || "")}`.trim()).join("\n");
+  const idx = prompt(`Assign ${crmSelectedIds.size} task(s) to which lead?\n0 = unlink (no lead)\n${lines}\n\nEnter number:`);
+  if (idx === null) return;
+  const n = parseInt(idx, 10);
+  if (isNaN(n) || n < 0 || n > contacts.length) { alert("Invalid choice"); return; }
+  const cid = n === 0 ? null : contacts[n - 1].id;
+  await crmBulkApply((tid) => updateTask(tid, { contact_id: cid, related_id: cid }));
+}
+
+async function crmBulkComplete() {
+  if (!confirm(`Mark ${crmSelectedIds.size} task(s) complete?`)) return;
+  await crmBulkApply((tid) => completeTask(tid));
+}
+
+async function crmBulkReopen() {
+  if (!confirm(`Reopen ${crmSelectedIds.size} task(s)?`)) return;
+  await crmBulkApply((tid) => updateTaskStatus(tid, "open"));
+}
+
+async function crmBulkDelete() {
+  if (!confirm(`PERMANENTLY DELETE ${crmSelectedIds.size} task(s)? Cannot be undone.`)) return;
+  await crmBulkApply((tid) => deleteTask(tid));
+}
+
+function wireCrmBulkActions() {
+  if (crmBulkWired) return;
+  crmBulkWired = true;
+  // Delegated click on the CRM sub-panel — handles per-row select, select-all,
+  // and the bulk action bar buttons.
+  document.addEventListener("click", (e) => {
+    const inCrm = e.target.closest('[data-subpanel="crm"]');
+    if (!inCrm) return;
+
+    if (e.target.closest('[data-action="cm-bulk-clear"]')) { crmSelectedIds.clear(); crmUpdateSelectionUI(); return; }
+    if (e.target.closest('[data-action="cm-bulk-due"]')) { crmBulkSetDueDate(); return; }
+    if (e.target.closest('[data-action="cm-bulk-priority"]')) { crmBulkSetPriority(); return; }
+    if (e.target.closest('[data-action="cm-bulk-contact"]')) { crmBulkAssignContact(); return; }
+    if (e.target.closest('[data-action="cm-bulk-complete"]')) { crmBulkComplete(); return; }
+    if (e.target.closest('[data-action="cm-bulk-reopen"]')) { crmBulkReopen(); return; }
+    if (e.target.closest('[data-action="cm-bulk-delete"]')) { crmBulkDelete(); return; }
+
+    const tableSelectAll = e.target.closest('[data-target="cm-select-all-table"]');
+    if (tableSelectAll) {
+      e.stopPropagation();
+      const rows = document.querySelectorAll('#tasks-tbody tr[data-task-id]');
+      rows.forEach((r) => {
+        if (tableSelectAll.checked) crmSelectedIds.add(r.dataset.taskId);
+        else crmSelectedIds.delete(r.dataset.taskId);
+      });
+      crmUpdateSelectionUI();
+      return;
+    }
+
+    const selBox = e.target.closest('[data-action="cm-select-row"]');
+    if (selBox) {
+      e.stopPropagation();
+      const tid = selBox.dataset.taskId;
+      if (selBox.checked) crmSelectedIds.add(tid);
+      else crmSelectedIds.delete(tid);
+      crmUpdateSelectionUI();
+      return;
+    }
+  });
 }
 
 function renderAllTasksTable(tasks) {
@@ -929,6 +1083,7 @@ function renderAllTasksTable(tasks) {
     });
   }
 
+  wireCrmBulkActions();
   crmApplyViewToDom();
   crmDispatchView();
 }

@@ -643,12 +643,13 @@
   .ct-select, .ct-search { background: #0a0a0a; border: 1px solid #2a2a2a; color: #ddd; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-family: inherit; color-scheme: dark; }
   .ct-select:focus, .ct-search:focus { outline: none; border-color: #C9A84C; }
   .ct-search { min-width: 180px; }
-  .ct-list { display: flex; flex-direction: column; gap: 6px; min-height: 200px; }
+  .ct-list { gap: 6px; min-height: 200px; }
   .ct-list .loading-state, .ct-list .error-state, .ct-list .empty-state { padding: 40px 20px; text-align: center; color: #888; }
   .ct-list .error-state { color: #ff8888; }
   .ct-list .empty-state .empty-icon { font-size: 36px; margin-bottom: 12px; }
   .ct-list .empty-state h4 { color: #ddd; margin: 0 0 6px; font-size: 1rem; }
-  .ct-row { display: grid; grid-template-columns: 32px 1fr auto; gap: 12px; align-items: center; background: #141414; border: 1px solid #1a1a1a; border-left: 3px solid #444; border-radius: 8px; padding: 10px 14px; transition: background 0.15s, border-color 0.15s, opacity 0.2s; }
+  .ct-row { display: grid; grid-template-columns: 22px 32px 1fr auto; gap: 12px; align-items: center; background: #141414; border: 1px solid #1a1a1a; border-left: 3px solid #444; border-radius: 8px; padding: 10px 14px; transition: background 0.15s, border-color 0.15s, opacity 0.2s; }
+  .ct-row.is-selected { background: rgba(201,168,76,0.08); border-color: rgba(201,168,76,0.35); }
   .ct-row:hover { background: #1a1a1a; border-color: #2a2a2a; }
   .ct-row.is-overdue { background: linear-gradient(90deg, rgba(255,136,136,0.06), #141414); }
   /* Open task = red empty circle; click → optimistic flip to green ✓ */
@@ -707,7 +708,7 @@
   .ct-modal-footer .btn-danger { background: rgba(255,136,136,0.1); color: #ff8888; border: 1px solid rgba(255,136,136,0.3); padding: 7px 14px; font-size: 12px; border-radius: 6px; cursor: pointer; font-weight: 500; font-family: inherit; }
   .ct-modal-footer .btn-danger:hover { background: rgba(255,136,136,0.2); }
   @media (max-width: 720px) {
-    .ct-row { grid-template-columns: 28px 1fr auto; gap: 8px; padding: 10px; }
+    .ct-row { grid-template-columns: 20px 28px 1fr auto; gap: 8px; padding: 10px; }
     .ct-row-meta { gap: 6px; }
     .ct-modal-body .row-2 { grid-template-columns: 1fr; }
   }
@@ -752,10 +753,84 @@
 
   .view-sort { display: none; }
   body.view-list-active .view-sort { display: inline-block; }
-  .ct-view-container > [data-view-pane] { width: 100%; }
+
+  /* View container drives which pane shows; data-view attribute is source of truth */
+  .ct-view-container { position: relative; }
+  .ct-view-container [data-view-pane] { display: none; width: 100%; }
+  .ct-view-container[data-view="list"] [data-view-pane="list"] { display: flex; flex-direction: column; gap: 6px; }
+  .ct-view-container[data-view="board"] [data-view-pane="board"] { display: grid; }
+  .ct-view-container[data-view="calendar"] [data-view-pane="calendar"] { display: block; }
+
+  /* ── Multi-select checkboxes (square; distinct from round complete circle) ── */
+  .ct-select-box {
+    appearance: none; -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border: 1.5px solid #3a3a3a; border-radius: 4px;
+    background: #0a0a0a; cursor: pointer; margin: 0;
+    align-self: center; transition: all 0.15s;
+    position: relative; flex-shrink: 0;
+  }
+  .ct-select-box:hover { border-color: #C9A84C; }
+  .ct-select-box:checked { background: #C9A84C; border-color: #C9A84C; }
+  .ct-select-box:checked::after {
+    content: '✓';
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -55%);
+    color: #0a0a0a; font-size: 12px; font-weight: 800; line-height: 1;
+  }
+  .ct-select-box:indeterminate { background: #C9A84C; border-color: #C9A84C; }
+  .ct-select-box:indeterminate::after {
+    content: '−';
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -55%);
+    color: #0a0a0a; font-size: 14px; font-weight: 800; line-height: 1;
+  }
+  .ct-section-header .ct-select-all { margin-right: 4px; }
+
+  /* ── Bulk action bar (sticky bottom of subpanel) ── */
+  .ct-bulk-bar {
+    position: sticky; bottom: 16px;
+    margin: 16px auto 0; max-width: 900px;
+    background: #1a1a1a;
+    border: 1px solid #C9A84C;
+    border-radius: 12px;
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(201,168,76,0.2);
+    z-index: 50;
+    animation: bulk-slide-in 0.2s ease;
+  }
+  .ct-bulk-bar[hidden] { display: none; }
+  @keyframes bulk-slide-in {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .ct-bulk-count-block { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #ddd; font-weight: 500; }
+  .ct-bulk-count {
+    background: #C9A84C; color: #0a0a0a;
+    padding: 3px 10px; border-radius: 10px;
+    font-weight: 700; font-size: 12px; min-width: 24px; text-align: center;
+  }
+  .btn-link-sm { background: transparent; border: none; color: #888; font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0; font-family: inherit; }
+  .btn-link-sm:hover { color: #C9A84C; }
+  .ct-bulk-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+  .btn-bulk {
+    background: #0a0a0a; border: 1px solid #2a2a2a; color: #ddd;
+    padding: 7px 12px; font-size: 11px; border-radius: 6px;
+    cursor: pointer; font-weight: 500; transition: all 0.15s;
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: inherit;
+  }
+  .btn-bulk:hover { border-color: #C9A84C; color: #C9A84C; }
+  .btn-bulk-danger:hover { border-color: #ff5555; color: #ff5555; }
+  @media (max-width: 720px) {
+    .ct-bulk-bar { position: fixed; bottom: 8px; left: 8px; right: 8px; margin: 0; max-width: none; }
+    .ct-bulk-actions { width: 100%; margin-left: 0; }
+    .btn-bulk { flex: 1; justify-content: center; }
+  }
 
   /* ── Board view ── */
-  .ct-board { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); gap: 12px; min-height: 400px; }
+  .ct-board { grid-template-columns: repeat(3, minmax(260px, 1fr)); gap: 12px; min-height: 400px; }
   .board-col { display: flex; flex-direction: column; background: #0d0d0d; border: 1px solid #1a1a1a; border-radius: 10px; min-height: 200px; }
   .board-col-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid #1a1a1a; font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600; }
   .board-col[data-col="todo"] .board-col-header { color: #ff7777; }
@@ -768,9 +843,11 @@
   .board-col-count { background: #1a1a1a; color: #ddd; padding: 2px 9px; border-radius: 10px; font-size: 10px; font-weight: 700; margin-left: auto; }
   .board-col-body { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 70vh; }
   .board-col-body.is-drop-target { background: rgba(201,168,76,0.06); outline: 2px dashed rgba(201,168,76,0.4); outline-offset: -4px; border-radius: 6px; }
-  .board-card { background: #141414; border: 1px solid #1f1f1f; border-left: 3px solid #444; border-radius: 8px; padding: 10px 12px; cursor: grab; transition: all 0.15s; user-select: none; }
+  .board-card { position: relative; background: #141414; border: 1px solid #1f1f1f; border-left: 3px solid #444; border-radius: 8px; padding: 10px 32px 10px 12px; cursor: grab; transition: all 0.15s; user-select: none; }
   .board-card:hover { border-color: #2a2a2a; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
   .board-card:active, .board-card.is-dragging { cursor: grabbing; opacity: 0.5; }
+  .board-card.is-selected { background: rgba(201,168,76,0.08); border-color: rgba(201,168,76,0.4); }
+  .board-card-select { position: absolute; top: 8px; right: 8px; }
   .board-card-title { font-size: 13px; color: #fff; line-height: 1.4; margin-bottom: 6px; font-weight: 500; }
   .board-card-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 10px; }
   .board-card-pri { padding: 1px 7px; border-radius: 8px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
@@ -1365,13 +1442,14 @@
               </div>
             </div>
           </div>
-          <div class="ct-view-container">
+          <div class="ct-view-container" data-target="cm-view-container" data-view="list">
             <div data-target="cm-list" data-view-pane="list">
               <div class="panel" style="padding:0;overflow:hidden;">
                 <div class="leads-table-wrap">
                   <table class="leads-table">
                     <thead>
                       <tr>
+                        <th style="width:24px;"><input type="checkbox" class="ct-select-box" data-target="cm-select-all-table" aria-label="Select all" /></th>
                         <th>Task</th>
                         <th>Lead</th>
                         <th>Priority</th>
@@ -1381,14 +1459,28 @@
                       </tr>
                     </thead>
                     <tbody id="tasks-tbody">
-                      <tr><td colspan="6" style="color:var(--muted);padding:24px;text-align:center;">Loading...</td></tr>
+                      <tr><td colspan="7" style="color:var(--muted);padding:24px;text-align:center;">Loading...</td></tr>
                     </tbody>
                   </table>
                 </div>
               </div>
             </div>
-            <div class="ct-board" data-target="cm-board" data-view-pane="board" hidden></div>
-            <div class="ct-calendar" data-target="cm-calendar" data-view-pane="calendar" hidden></div>
+            <div class="ct-board" data-target="cm-board" data-view-pane="board"></div>
+            <div class="ct-calendar" data-target="cm-calendar" data-view-pane="calendar"></div>
+          </div>
+          <div class="ct-bulk-bar" data-target="cm-bulk-bar" hidden>
+            <div class="ct-bulk-count-block">
+              <span class="ct-bulk-count" data-target="cm-bulk-count">0</span> selected
+              <button class="btn-link-sm" data-action="cm-bulk-clear">Clear</button>
+            </div>
+            <div class="ct-bulk-actions">
+              <button class="btn-bulk" data-action="cm-bulk-due">📅 Set due date</button>
+              <button class="btn-bulk" data-action="cm-bulk-priority">🚩 Set priority</button>
+              <button class="btn-bulk" data-action="cm-bulk-contact">👤 Assign to lead</button>
+              <button class="btn-bulk" data-action="cm-bulk-complete">✓ Mark complete</button>
+              <button class="btn-bulk" data-action="cm-bulk-reopen">↻ Reopen</button>
+              <button class="btn-bulk btn-bulk-danger" data-action="cm-bulk-delete">🗑 Delete</button>
+            </div>
           </div>
         </div>
 
@@ -1441,12 +1533,26 @@
               </div>
             </div>
           </div>
-          <div class="ct-view-container">
+          <div class="ct-view-container" data-target="ct-view-container" data-view="list">
             <div class="ct-list" data-target="ct-list" data-view-pane="list">
               <div class="loading-state">Loading…</div>
             </div>
-            <div class="ct-board" data-target="ct-board" data-view-pane="board" hidden></div>
-            <div class="ct-calendar" data-target="ct-calendar" data-view-pane="calendar" hidden></div>
+            <div class="ct-board" data-target="ct-board" data-view-pane="board"></div>
+            <div class="ct-calendar" data-target="ct-calendar" data-view-pane="calendar"></div>
+          </div>
+          <div class="ct-bulk-bar" data-target="ct-bulk-bar" hidden>
+            <div class="ct-bulk-count-block">
+              <span class="ct-bulk-count" data-target="ct-bulk-count">0</span> selected
+              <button class="btn-link-sm" data-action="ct-bulk-clear">Clear</button>
+            </div>
+            <div class="ct-bulk-actions">
+              <button class="btn-bulk" data-action="ct-bulk-due">📅 Set due date</button>
+              <button class="btn-bulk" data-action="ct-bulk-priority">🚩 Set priority</button>
+              <button class="btn-bulk" data-action="ct-bulk-contact">👤 Assign to lead</button>
+              <button class="btn-bulk" data-action="ct-bulk-complete">✓ Mark complete</button>
+              <button class="btn-bulk" data-action="ct-bulk-reopen">↻ Reopen</button>
+              <button class="btn-bulk btn-bulk-danger" data-action="ct-bulk-delete">🗑 Delete</button>
+            </div>
           </div>
         </div>
 
@@ -2061,11 +2167,11 @@
   </div>
 
   <script type="module" src="/components/layout.js?v=20260331"></script>
-  <script type="module" src="/components/admin-dashboard.js?v=20260504d"></script>
+  <script type="module" src="/components/admin-dashboard.js?v=20260504e"></script>
   <script src="/dashboard/utils/insights.js?v=2026050402"></script>
   <script src="/dashboard/utils/calendar.js?v=2026050403"></script>
   <script src="/dashboard/utils/clickup-widget.js?v=2026050401"></script>
-  <script src="/dashboard/utils/clickup-tasks.js?v=2026050404"></script>
+  <script src="/dashboard/utils/clickup-tasks.js?v=2026050405"></script>
   <script type="module">
     import { supabase } from "/api/supabase-client.js";
 

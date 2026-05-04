@@ -30,6 +30,7 @@
   var currentView = localStorage.getItem('rr_view_clickup') || 'list';
   var currentSort = localStorage.getItem('rr_sort_clickup') || 'due_asc';
   var calendarRefDate = new Date();
+  var selectedIds = new Set();
 
   function esc(s) {
     if (s == null) return '';
@@ -100,6 +101,7 @@
       ? '<a class="ct-contact" href="/admin/lead-detail.html?contact_id=' + esc(t.contact.id) + '" onclick="event.stopPropagation()">' + esc(t.contact.name) + '</a>'
       : '<span class="ct-unlinked">No lead linked</span>';
     return '<div class="ct-row' + (overdue ? ' is-overdue' : '') + (open ? '' : ' is-done') + '" data-task-id="' + esc(t.clickup_task_id) + '">'
+      + '<input type="checkbox" class="ct-select-box" data-action="ct-select-row" data-task-id="' + esc(t.clickup_task_id) + '" aria-label="Select task" />'
       + '<button class="ct-checkbox" data-action="ct-toggle-complete" data-task-id="' + esc(t.clickup_task_id) + '" data-current="' + esc(t.status || '') + '" title="' + (open ? 'Mark complete' : 'Reopen') + '">'
       +   (open ? '○' : '✓')
       + '</button>'
@@ -146,6 +148,7 @@
       html += '<div class="ct-section" data-section="open" data-collapsed="false">'
         + '<div class="ct-section-header" data-action="ct-toggle-section">'
         +   '<span class="ct-section-icon">▼</span>'
+        +   '<input type="checkbox" class="ct-select-box ct-select-all" data-section="open" aria-label="Select all open" />'
         +   '<span class="ct-section-title">Open</span>'
         +   '<span class="ct-section-count">' + openTasks.length + '</span>'
         + '</div>'
@@ -158,6 +161,7 @@
       html += '<div class="ct-section" data-section="done" data-collapsed="' + (doneCollapsed ? 'true' : 'false') + '">'
         + '<div class="ct-section-header" data-action="ct-toggle-section">'
         +   '<span class="ct-section-icon">▼</span>'
+        +   '<input type="checkbox" class="ct-select-box ct-select-all" data-section="done" aria-label="Select all completed" />'
         +   '<span class="ct-section-title">Completed</span>'
         +   '<span class="ct-section-count">' + doneTasks.length + '</span>'
         + '</div>'
@@ -167,6 +171,7 @@
         + '</div>';
     }
     list.innerHTML = html;
+    updateSelectionUI();
   }
 
   // ── Sort + view dispatch ────────────────────────────────────────
@@ -218,6 +223,7 @@
     var overdue = open && due && due.getTime() < Date.now();
     var dueStr = due ? due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
     return '<div class="board-card" draggable="true" data-task-id="' + esc(t.clickup_task_id) + '" data-current-col="' + colKey(t) + '">'
+      + '<input type="checkbox" class="ct-select-box board-card-select" data-action="ct-select-row" data-task-id="' + esc(t.clickup_task_id) + '" aria-label="Select task" />'
       + '<div class="board-card-title">' + esc(t.title) + '</div>'
       + '<div class="board-card-meta">'
       +   (t.priority ? '<span class="board-card-pri ' + priorityClass(t.priority) + '">' + esc(t.priority) + '</span>' : '')
@@ -251,6 +257,7 @@
         + '</div>';
     }).join('');
     attachDragHandlers();
+    updateSelectionUI();
   }
 
   function attachDragHandlers() {
@@ -266,7 +273,9 @@
         try { e.dataTransfer.setData('text/plain', draggingTaskId); } catch (err) {}
       });
       card.addEventListener('dragend', function () { card.classList.remove('is-dragging'); });
-      card.addEventListener('click', function () {
+      card.addEventListener('click', function (e) {
+        // Don't open modal when clicking the select checkbox on the card.
+        if (e.target.closest('.ct-select-box')) return;
         var task = taskCache.find(function (t) { return t.clickup_task_id === card.dataset.taskId; });
         if (task) openModal(task);
       });
@@ -402,12 +411,9 @@
   function applyViewToDom() {
     var panel = document.querySelector('[data-subpanel=clickup]');
     if (panel) panel.dataset.currentView = currentView;
-    var listPane = document.querySelector('[data-target=ct-list]');
-    var boardPane = document.querySelector('[data-target=ct-board]');
-    var calPane = document.querySelector('[data-target=ct-calendar]');
-    if (listPane) listPane.hidden = currentView !== 'list';
-    if (boardPane) boardPane.hidden = currentView !== 'board';
-    if (calPane) calPane.hidden = currentView !== 'calendar';
+    // CSS visibility is driven by data-view on the container — no [hidden] toggling.
+    var container = document.querySelector('[data-target=ct-view-container]');
+    if (container) container.dataset.view = currentView;
     [].slice.call(document.querySelectorAll('[data-subpanel=clickup] .view-btn')).forEach(function (b) {
       b.classList.toggle('active', b.dataset.view === currentView);
     });
@@ -664,6 +670,123 @@
     }
   }
 
+  // ── Multi-select + bulk actions ─────────────────────────────────
+  function updateSelectionUI() {
+    [].slice.call(document.querySelectorAll('[data-subpanel=clickup] .ct-row, [data-subpanel=clickup] .board-card')).forEach(function (row) {
+      var tid = row.dataset.taskId;
+      if (!tid) return;
+      var sel = selectedIds.has(tid);
+      row.classList.toggle('is-selected', sel);
+      var cb = row.querySelector('.ct-select-box');
+      if (cb) cb.checked = sel;
+    });
+    var bar = document.querySelector('[data-target=ct-bulk-bar]');
+    if (bar) {
+      if (selectedIds.size > 0) {
+        bar.hidden = false;
+        var countEl = bar.querySelector('[data-target=ct-bulk-count]');
+        if (countEl) countEl.textContent = String(selectedIds.size);
+      } else {
+        bar.hidden = true;
+      }
+    }
+    [].slice.call(document.querySelectorAll('[data-subpanel=clickup] .ct-select-all')).forEach(function (sa) {
+      var section = sa.dataset.section;
+      var sectionRows = [].slice.call(document.querySelectorAll('.ct-section[data-section="' + section + '"] .ct-row'));
+      if (sectionRows.length === 0) { sa.checked = false; sa.indeterminate = false; return; }
+      var all = sectionRows.every(function (r) { return selectedIds.has(r.dataset.taskId); });
+      var some = sectionRows.some(function (r) { return selectedIds.has(r.dataset.taskId); });
+      sa.checked = all;
+      sa.indeterminate = !all && some;
+    });
+  }
+
+  async function bulkApply(perTaskFn) {
+    var ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    var bar = document.querySelector('[data-target=ct-bulk-bar]');
+    if (bar) bar.style.opacity = '0.6';
+    var done = 0, failed = 0;
+    for (var i = 0; i < ids.length; i++) {
+      try { await perTaskFn(ids[i]); done++; }
+      catch (e) { failed++; console.error('[ct-bulk] failed for', ids[i], e); }
+    }
+    if (bar) bar.style.opacity = '1';
+    if (failed > 0) alert(done + ' updated, ' + failed + ' failed. Check console for details.');
+    selectedIds.clear();
+    await loadTasks();
+    updateSelectionUI();
+  }
+
+  async function bulkSetDueDate() {
+    var date = prompt('Set due date for ' + selectedIds.size + ' task(s) (YYYY-MM-DD), or leave blank to clear:');
+    if (date === null) return;
+    var isoDate = null;
+    if (date.trim()) {
+      var d = new Date(date.trim() + 'T09:00:00');
+      if (isNaN(d.getTime())) { alert('Invalid date — use YYYY-MM-DD'); return; }
+      isoDate = d.toISOString();
+    }
+    await bulkApply(function (tid) {
+      return api('/task/update', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, due_date: isoDate }) });
+    });
+  }
+
+  async function bulkSetPriority() {
+    var choice = prompt('Set priority for ' + selectedIds.size + ' task(s): urgent / high / normal / low / none');
+    if (!choice) return;
+    var v = String(choice).trim().toLowerCase();
+    if (['urgent','high','normal','low','none'].indexOf(v) === -1) { alert('Invalid priority'); return; }
+    var p = v === 'none' ? null : v;
+    await bulkApply(function (tid) {
+      return api('/task/update', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, priority: p }) });
+    });
+  }
+
+  async function bulkAssignContact() {
+    var contacts;
+    try {
+      var res = await fetch(SUPABASE_URL + '/rest/v1/contacts?select=id,first_name,last_name&order=first_name&limit=500', {
+        headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY }
+      });
+      contacts = await res.json();
+    } catch (e) { alert('Could not load contacts: ' + (e.message || 'unknown')); return; }
+    if (!Array.isArray(contacts)) { alert('Could not load contacts'); return; }
+    var lines = contacts.map(function (c, i) {
+      var name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || '(unnamed)';
+      return (i + 1) + '. ' + name;
+    }).join('\n');
+    var idx = prompt('Assign ' + selectedIds.size + ' task(s) to which lead?\n0 = unlink (no lead)\n' + lines + '\n\nEnter number:');
+    if (idx === null) return;
+    var n = parseInt(idx, 10);
+    if (isNaN(n) || n < 0 || n > contacts.length) { alert('Invalid choice'); return; }
+    var cid = n === 0 ? null : contacts[n - 1].id;
+    await bulkApply(function (tid) {
+      return api('/task/relink', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, contact_id: cid }) });
+    });
+  }
+
+  async function bulkComplete() {
+    if (!confirm('Mark ' + selectedIds.size + ' task(s) complete?')) return;
+    await bulkApply(function (tid) {
+      return api('/task/complete', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid }) });
+    });
+  }
+
+  async function bulkReopen() {
+    if (!confirm('Reopen ' + selectedIds.size + ' task(s)?')) return;
+    await bulkApply(function (tid) {
+      return api('/task/reopen', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid }) });
+    });
+  }
+
+  async function bulkDelete() {
+    if (!confirm('PERMANENTLY DELETE ' + selectedIds.size + ' task(s) from ClickUp? Cannot be undone.')) return;
+    await bulkApply(function (tid) {
+      return api('/task/delete', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid }) });
+    });
+  }
+
   // ── Wiring (idempotent) ─────────────────────────────────────────
   function init() {
     if (initialized) return;
@@ -760,6 +883,41 @@
     var tasksTab = document.getElementById('tab-tasks');
     if (tasksTab) {
       tasksTab.addEventListener('click', function (e) {
+        // Bulk-bar actions
+        if (e.target.closest('[data-action=ct-bulk-clear]')) { selectedIds.clear(); updateSelectionUI(); return; }
+        if (e.target.closest('[data-action=ct-bulk-due]')) { bulkSetDueDate(); return; }
+        if (e.target.closest('[data-action=ct-bulk-priority]')) { bulkSetPriority(); return; }
+        if (e.target.closest('[data-action=ct-bulk-contact]')) { bulkAssignContact(); return; }
+        if (e.target.closest('[data-action=ct-bulk-complete]')) { bulkComplete(); return; }
+        if (e.target.closest('[data-action=ct-bulk-reopen]')) { bulkReopen(); return; }
+        if (e.target.closest('[data-action=ct-bulk-delete]')) { bulkDelete(); return; }
+
+        // Select-all in section header — checked BEFORE section toggle so the
+        // checkbox click doesn't also collapse the section.
+        var selectAll = e.target.closest('.ct-select-all');
+        if (selectAll) {
+          e.stopPropagation();
+          var sec = selectAll.dataset.section;
+          var sectionRows = [].slice.call(document.querySelectorAll('.ct-section[data-section="' + sec + '"] .ct-row'));
+          sectionRows.forEach(function (r) {
+            if (selectAll.checked) selectedIds.add(r.dataset.taskId);
+            else selectedIds.delete(r.dataset.taskId);
+          });
+          updateSelectionUI();
+          return;
+        }
+
+        // Per-row select checkbox
+        var selBox = e.target.closest('[data-action=ct-select-row]');
+        if (selBox) {
+          e.stopPropagation();
+          var tid = selBox.dataset.taskId;
+          if (selBox.checked) selectedIds.add(tid);
+          else selectedIds.delete(tid);
+          updateSelectionUI();
+          return;
+        }
+
         // Section accordion toggle — checked first so it doesn't get
         // pre-empted by the row handlers below.
         var sectionToggle = e.target.closest('[data-action=ct-toggle-section]');

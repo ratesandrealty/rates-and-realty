@@ -260,6 +260,27 @@ export async function updateTaskStatus(taskId, status) {
   return data;
 }
 
+export async function updateTask(taskId, fields) {
+  const patch = { ...fields, updated_at: new Date().toISOString() };
+  const { data, error } = await supabase
+    .from("tasks")
+    .update(patch)
+    .eq("id", taskId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteTask(taskId) {
+  const { error } = await supabase
+    .from("tasks")
+    .delete()
+    .eq("id", taskId);
+  if (error) throw error;
+  return true;
+}
+
 export async function getAllTasks() {
   // tasks has no leads relationship — it joins contacts directly via contact_id.
   const { data, error } = await supabase
