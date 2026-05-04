@@ -1224,6 +1224,13 @@ document.addEventListener('DOMContentLoaded', function() {
   } else {
     updateStatusHeader();
   }
+  // Initial-load defense: applyStatusFilterKey above already calls
+  // applyPriceConfigToFilterUI for URL-driven mode, but default For Sale users
+  // (no ?status= param) skip that path. Run it once here so the slider/inputs
+  // are configured before the user opens the Filters modal — and so any
+  // stale URL value (e.g. ?max_price=25000 from a previous rental session)
+  // gets discarded by the heuristic in applyPriceConfigToFilterUI.
+  if (typeof applyPriceConfigToFilterUI === 'function') applyPriceConfigToFilterUI();
   fetchListings();
   updateSearchCartBadge();
   // Set cart date min to today
@@ -1493,14 +1500,38 @@ function applyPriceConfigToFilterUI() {
   var nMin = document.getElementById('fMinPrice');
   var nMax = document.getElementById('fMaxPrice');
   var heading = document.querySelector('#fs-price > label');
+  var isRentMode = currentStatusKey() === 'for_rent';
 
   if (heading) heading.textContent = cfg.label;
+
+  // Heuristic for stale values left over from the previous mode. Rents are
+  // ≤$10k/mo; sale homes are essentially never <$25k. So a value in (0, 25000]
+  // belongs to rent semantics, anything >25000 belongs to sale semantics.
+  // When we detect a mismatch (rent value in sale mode or vice versa), clear
+  // it rather than preserving a position that visually looks broken
+  // (e.g. a $5k cap in sale mode collapses the slider bar to a hairline).
+  function looksLikeRentValue(v) { var n = Number(v); return isFinite(n) && n > 0 && n <= 25000; }
+  function looksLikeSaleValue(v) { var n = Number(v); return isFinite(n) && n > 25000; }
+  function discardStaleValue(v) {
+    var n = Number(v);
+    if (!isFinite(n) || n < 0) return true;
+    if (isRentMode && looksLikeSaleValue(n)) return true;
+    if (!isRentMode && looksLikeRentValue(n)) return true;
+    return false;
+  }
+  if (discardStaleValue(filters.minPrice)) filters.minPrice = '';
+  if (discardStaleValue(filters.maxPrice)) filters.maxPrice = '';
 
   function clampToRange(v) {
     var n = Number(v); if (!isFinite(n)) return null;
     return Math.min(Math.max(n, cfg.sliderMin), cfg.sliderMax);
   }
 
+  // Slider attribute order matters: max MUST be widened BEFORE setting value
+  // when we're moving from a tighter range (rent: 10k) to a wider one
+  // (sale: 5M). Otherwise the browser clamps the new value to the still-old
+  // max, and we end up with sale-mode value=10000 visually pinned at the
+  // bottom of the new 5M range.
   if (sMin) {
     sMin.min = String(cfg.sliderMin);
     sMin.max = String(cfg.sliderMax);
@@ -1521,14 +1552,14 @@ function applyPriceConfigToFilterUI() {
     nMin.max = String(cfg.sliderMax);
     nMin.step = String(cfg.step);
     nMin.placeholder = cfg.minPlaceholder;
-    if (Number(nMin.value) < 0) nMin.value = '';
+    if (discardStaleValue(nMin.value)) nMin.value = '';
   }
   if (nMax) {
     nMax.min = String(cfg.sliderMin);
     nMax.max = String(cfg.sliderMax);
     nMax.step = String(cfg.step);
     nMax.placeholder = cfg.maxPlaceholder;
-    if (Number(nMax.value) < 0) nMax.value = '';
+    if (discardStaleValue(nMax.value)) nMax.value = '';
   }
 
   // Flow values into the live labels via the shared sync function.
