@@ -668,106 +668,16 @@ function renderAllTasksTable(tasks) {
 
 // ── CALENDAR ─────────────────────────────────────────────────────────────────
 function renderCalendar() {
-  const root = document.getElementById("calendar-root");
-  if (!root) return;
-  const year = calendarDate.getFullYear();
-  const month = calendarDate.getMonth();
-  const monthName = calendarDate.toLocaleString("default", { month: "long" });
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const daysInPrevMonth = new Date(year, month, 0).getDate();
-  const todayStr = new Date().toISOString().split("T")[0];
-  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-  const cells = [];
-  for (let i = firstDay - 1; i >= 0; i--) cells.push({ day: daysInPrevMonth - i, month: month - 1, year, other: true });
-  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, month, year, other: false });
-  const remaining = 42 - cells.length;
-  for (let d = 1; d <= remaining; d++) cells.push({ day: d, month: month + 1, year, other: true });
-
-  // Group ClickUp tasks by due date (YYYY-MM-DD) when overlay is on
-  const clickupByDate = {};
-  if (clickupTasksEnabled) {
-    for (const t of clickupTasks) {
-      if (!t.due_date) continue;
-      const key = new Date(t.due_date).toISOString().split('T')[0];
-      (clickupByDate[key] = clickupByDate[key] || []).push(t);
-    }
+  // Calendar implementation moved to /dashboard/utils/calendar.js. The
+  // module self-fires on hashchange independent of the dashboardData
+  // gate, but we also expose initCalendar so this dispatcher can poke it
+  // when the user clicks the sidebar Calendar button after data loads.
+  if (typeof window.initCalendar === 'function') {
+    window.initCalendar();
+  } else {
+    var root = document.querySelector('[data-target=cal-main]');
+    if (root) root.innerHTML = '<div class="cal-error">calendar.js failed to load — refresh the page.</div>';
   }
-
-  const gridHTML = cells.map((cell) => {
-    const dateStr = `${cell.year}-${String(cell.month + 1).padStart(2, "0")}-${String(cell.day).padStart(2, "0")}`;
-    const isToday = dateStr === todayStr;
-    const dayAppts = allAppointments.filter((a) => (a.scheduled_at || "").startsWith(dateStr));
-    const eventChips = dayAppts.slice(0, 2).map((a) => `<div class="calendar-event-chip type-${a.type || "appointment"}" title="${a.title}">${a.title}</div>`).join("");
-
-    const dayTasks = clickupByDate[dateStr] || [];
-    const taskChips = dayTasks.slice(0, 2).map((t) => {
-      const name = (t.name || '').slice(0, 20);
-      const safeUrl = String(t.url || '').replace(/"/g, '&quot;');
-      const safeName = String(t.name || '').replace(/"/g, '&quot;');
-      return `<a href="${safeUrl}" target="_blank" rel="noopener" class="calendar-clickup-chip" title="TASK: ${safeName}" onclick="event.stopPropagation()" style="display:block;background:rgba(255,140,0,0.18);border-left:2px solid #ff8c00;color:#ffb673;font-size:0.68rem;padding:1px 4px;margin-top:2px;border-radius:2px;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span style="font-weight:700;font-size:0.58rem;opacity:0.7;">TASK</span> ${name}</a>`;
-    }).join("");
-    const moreTasks = dayTasks.length > 2 ? `<div style="font-size:0.64rem;color:#ff8c00;">+${dayTasks.length - 2} task${dayTasks.length - 2 > 1 ? 's' : ''}</div>` : '';
-
-    return `
-      <div class="calendar-cell ${isToday ? "today" : ""} ${cell.other ? "other-month" : ""}" data-date="${dateStr}">
-        <span class="cell-date">${cell.day}</span>
-        ${eventChips}
-        ${dayAppts.length > 2 ? `<div style="font-size:0.68rem;color:var(--muted);">+${dayAppts.length - 2} more</div>` : ""}
-        ${taskChips}
-        ${moreTasks}
-      </div>
-    `;
-  }).join("");
-
-  root.innerHTML = `
-    <div class="calendar-header">
-      <div class="calendar-nav">
-        <button class="btn btn-ghost btn-icon" id="cal-prev">‹</button>
-        <span class="calendar-month-label">${monthName} ${year}</span>
-        <button class="btn btn-ghost btn-icon" id="cal-next">›</button>
-        <button class="btn btn-secondary btn-sm" id="cal-today">Today</button>
-      </div>
-    </div>
-    <div class="calendar-grid">
-      ${dayLabels.map((d) => `<div class="calendar-day-label">${d}</div>`).join("")}
-      ${gridHTML}
-    </div>
-    <div id="upcoming-appointments" style="margin-top:20px;"></div>
-  `;
-
-  document.getElementById("cal-prev")?.addEventListener("click", () => { calendarDate = new Date(year, month - 1, 1); renderCalendar(); });
-  document.getElementById("cal-next")?.addEventListener("click", () => { calendarDate = new Date(year, month + 1, 1); renderCalendar(); });
-  document.getElementById("cal-today")?.addEventListener("click", () => { calendarDate = new Date(); renderCalendar(); });
-  root.querySelectorAll(".calendar-cell").forEach((cell) => {
-    cell.addEventListener("click", () => {
-      openDayView(cell.dataset.date);
-    });
-  });
-
-  // Wire up the two header buttons (added to dashboard/admin.html). Re-bound
-  // every render because they only live in the DOM while the calendar tab is
-  // active — using .onclick makes re-binding idempotent.
-  const syncBtn = document.getElementById('sync-gcal-btn');
-  if (syncBtn) syncBtn.onclick = syncGoogleCalendarAll;
-  const clickupBtn = document.getElementById('clickup-toggle-btn');
-  if (clickupBtn) clickupBtn.onclick = toggleClickupOverlay;
-  updateClickupBadge();
-
-  // Daily auto-sync of ClickUp tasks when the calendar tab is opened.
-  // Uses localStorage to throttle — fetches at most once per 24 hours.
-  const lastSync = parseInt(localStorage.getItem('clickup_last_sync') || '0', 10);
-  const oneDayAgo = Date.now() - 86400000;
-  if (lastSync < oneDayAgo) {
-    fetchClickupTasks().then(() => {
-      updateClickupBadge();
-      if (clickupTasksEnabled && activeTab === 'calendar') renderCalendar();
-    });
-  }
-
-  renderClickupSidebar(root);
-  renderUpcomingAppointmentsInEl(document.getElementById("upcoming-appointments"));
 }
 
 // Overdue / no-due-date ClickUp task sidebar — only shown when overlay is on.
