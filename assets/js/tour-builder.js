@@ -144,6 +144,26 @@
     return date + 'T' + t + ':00';
   }
 
+  // Build a 15-minute-interval option list for the Setup tab Start Time
+  // <select>. Range 6:00 AM through 9:45 PM covers every showing tour we
+  // realistically schedule. Values are 24h HH:MM (matches the existing
+  // joinScheduledStart contract); display labels are 12h with AM/PM.
+  function generateTimeOptions(selected) {
+    var html = ['<option value="">— Select time —</option>'];
+    for (var h = 6; h <= 21; h++) {
+      for (var m = 0; m < 60; m += 15) {
+        var hh = (h < 10 ? '0' : '') + h;
+        var mm = (m < 10 ? '0' : '') + m;
+        var value = hh + ':' + mm;
+        var hour12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+        var ampm = h >= 12 ? 'PM' : 'AM';
+        var sel = value === selected ? ' selected' : '';
+        html.push('<option value="' + value + '"' + sel + '>' + hour12 + ':' + mm + ' ' + ampm + '</option>');
+      }
+    }
+    return html.join('');
+  }
+
   // arrival_time can be ISO timestamp or HH:MM — extract HH:MM for the input.
   function extractTime(s) {
     if (!s) return '';
@@ -211,6 +231,14 @@
       #tour-builder-modal input[type=date]::-webkit-calendar-picker-indicator,#tour-builder-modal input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.7) sepia(.5) saturate(2.5) hue-rotate(15deg);cursor:pointer;opacity:.85;padding:6px;margin-left:4px;transition:opacity .15s,transform .15s}
       #tour-builder-modal input[type=date]::-webkit-calendar-picker-indicator:hover,#tour-builder-modal input[type=time]::-webkit-calendar-picker-indicator:hover{opacity:1;transform:scale(1.15)}
       #tour-builder-modal input[type=date]:hover,#tour-builder-modal input[type=time]:hover{border-color:rgba(201,168,76,.5)}
+      /* Setup-tab Start Time uses a 15-min interval <select> rather than
+         <input type=time> — gives every browser the same dropdown UX
+         (avoids iOS Safari's wheel scroller) and constrains values to
+         realistic appointment slots. */
+      .tb-time-select{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;color:#e8e8e8;font-size:.86rem;font-weight:500;padding:9px 32px 9px 12px;font-family:inherit;cursor:pointer;color-scheme:dark;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23C9A84C' d='M6 8L0 0h12z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:10px 7px;transition:border-color .15s}
+      .tb-time-select:hover{border-color:rgba(201,168,76,.5)}
+      .tb-time-select:focus{outline:none;border-color:#C9A84C;background-color:#0a0a0a}
+      .tb-time-select option{background:#1a1a1a;color:#e8e8e8;padding:8px}
       .tb-form-row textarea{resize:vertical;min-height:60px}
       .tb-form-row-split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
       .tb-contact-picker{position:relative}
@@ -883,7 +911,7 @@
       + '</div>'
       + '<div class="tb-form-row tb-form-row-split">'
       +   '<div><label>Date</label><input type="date" data-field="scheduled_date" value="' + esc(sched.date) + '" /></div>'
-      +   '<div><label>Start time</label><input type="time" data-field="scheduled_time" value="' + esc(sched.time) + '" /></div>'
+      +   '<div><label>Start time</label><select class="tb-time-select" data-field="scheduled_time">' + generateTimeOptions(sched.time) + '</select></div>'
       + '</div>'
       + '<div class="tb-form-row">'
       +   '<label>Notes for the lead <span class="tb-hint">(shown on the itinerary they receive)</span></label>'
