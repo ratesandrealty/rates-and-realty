@@ -440,6 +440,7 @@
       #tour-builder-modal .cart-map{width:100%;height:240px;border-radius:8px;overflow:hidden;background:#1a1a1a}
       #tour-builder-modal .cart-map-toolbar{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
       #tour-builder-modal .cart-map-toolbar .tb-btn{padding:5px 10px;font-size:.7rem}
+      #tour-builder-modal .cart-map-hint{font-size:.62rem;color:#666;text-align:center;margin-top:6px}
       /* The cart-pane should scroll the cart-list region only — keep map below
          and pinned so it doesn't compete for vertical space. */
       #tour-builder-modal .cart-pane{overflow:auto}
@@ -1019,6 +1020,7 @@
       +         '<button class="tb-btn tb-btn-secondary" data-act="optimize-route" title="Reorder stops to minimize drive time">↻ Optimize order</button>'
       +         '<button class="tb-btn tb-btn-secondary" data-act="copy-route-link" title="Copy a Google Maps directions URL with all stops">📋 Copy Google Maps route</button>'
       +       '</div>'
+      +       '<div class="cart-map-hint">Drag any pin to reorder stops · Click a pin to find the matching card</div>'
       +     '</div>'
       +   '</div>'
       + '</div>'
@@ -1873,19 +1875,27 @@
   }
 
   function copyRouteLink() {
-    var geocoded = state.stops.filter(function (s) { return s.latitude && s.longitude; });
-    if (!geocoded.length) { showToast('Add stops to the cart first', 'error'); return; }
-    if (geocoded.length === 1) {
-      var s0 = geocoded[0];
-      var url1 = 'https://www.google.com/maps/search/?api=1&query=' + s0.latitude + ',' + s0.longitude;
+    // Prefer street addresses over lat/lng — Trestle returns wrong coordinates
+    // for ~1-3% of CRMLS listings (confirmed: 5021 Vauxhall Rd reports a
+    // point 3 mi west in Seal Beach). Google's geocoder resolves canonical
+    // addresses correctly. Mirrors the address-first fix shipped on the
+    // admin/lead-detail showings tab.
+    function addrFor(s) {
+      var parts = [s.property_address, s.property_city, s.state, s.zip].filter(Boolean);
+      if (parts.length >= 2) return parts.join(', ');
+      if (s.latitude && s.longitude) return s.latitude + ',' + s.longitude;
+      return null;
+    }
+    var usable = state.stops.filter(function (s) { return addrFor(s) !== null; });
+    if (!usable.length) { showToast('Add stops to the cart first', 'error'); return; }
+    if (usable.length === 1) {
+      var url1 = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(addrFor(usable[0])) + '&travelmode=driving';
       copyToClipboard(url1, 'Map link copied');
       return;
     }
-    var origin = geocoded[0].latitude + ',' + geocoded[0].longitude;
-    var destination = geocoded[geocoded.length - 1].latitude + ',' + geocoded[geocoded.length - 1].longitude;
-    var middle = geocoded.slice(1, -1).map(function (s) { return s.latitude + ',' + s.longitude; }).join('%7C');
-    var middleParam = middle ? ('&waypoints=' + middle) : '';
-    var url = 'https://www.google.com/maps/dir/?api=1&origin=' + origin + '&destination=' + destination + middleParam + '&travelmode=driving';
+    var dest = usable[usable.length - 1];
+    var middle = usable.slice(0, -1).map(function (s) { return encodeURIComponent(addrFor(s)); }).join('%7C');
+    var url = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(addrFor(dest)) + '&waypoints=' + middle + '&travelmode=driving';
     copyToClipboard(url, 'Route link copied');
   }
 
