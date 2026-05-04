@@ -929,9 +929,33 @@
   // Right pane: the cart (stops in this tour) — drag-reorderable, edit inline.
   // A Quick MLS+ disclosure swaps in for paste-an-MLS workflow. The whole
   // shebang collapses to a single pane with a toggle on phones.
+  // Datalist suggestions — these are HINTS, not constraints. The City input
+  // is freetext, so any city Trestle has data for is searchable (Bakersfield,
+  // Yucaipa, anywhere). Ordering here is roughly geographic (OC → SBay+IE →
+  // LA → north LA → SD/SW Riverside) since datalist suggestions render in
+  // source order when the typed prefix doesn't disambiguate further.
   var CITY_SUGGESTIONS = [
-    'Garden Grove', 'Westminster', 'Huntington Beach', 'Costa Mesa', 'Santa Ana',
-    'Anaheim', 'Fountain Valley', 'Irvine', 'Newport Beach', 'Long Beach',
+    // Orange County
+    'Anaheim', 'Aliso Viejo', 'Brea', 'Buena Park', 'Costa Mesa', 'Cypress',
+    'Fountain Valley', 'Fullerton', 'Garden Grove', 'Huntington Beach', 'Irvine',
+    'La Habra', 'La Palma', 'Laguna Niguel', 'Lake Forest', 'Los Alamitos',
+    'Midway City', 'Mission Viejo', 'Newport Beach', 'Orange', 'Placentia',
+    'Rossmoor', 'San Clemente', 'Santa Ana', 'Seal Beach', 'Stanton', 'Tustin',
+    'Westminster', 'Yorba Linda',
+    // South Bay / Long Beach corridor
+    'Long Beach', 'Lakewood', 'Cerritos', 'La Mirada', 'Whittier',
+    'Torrance', 'Redondo Beach', 'Manhattan Beach', 'Hermosa Beach',
+    'El Segundo', 'Hawthorne', 'Inglewood', 'San Pedro',
+    // Inland Empire
+    'Riverside', 'Corona', 'Eastvale', 'Norco', 'Chino Hills', 'Diamond Bar',
+    'Pomona',
+    // LA + Westside + SF Valley
+    'Los Angeles', 'Culver City', 'Santa Monica', 'Beverly Hills', 'Pasadena',
+    'Glendale', 'Burbank', 'Los Feliz', 'Studio City', 'Sherman Oaks', 'Encino',
+    'Tarzana', 'Woodland Hills', 'Calabasas', 'Agoura Hills', 'Thousand Oaks',
+    // San Diego + SW Riverside
+    'San Diego', 'Carlsbad', 'Encinitas', 'Oceanside', 'Vista', 'Escondido',
+    'Temecula', 'Murrieta', 'Menifee', 'Lake Elsinore',
   ];
   var SEARCH_PAGE_SIZE = 12;
 
@@ -971,7 +995,7 @@
       +     '<div class="search-filters">'
       +       '<div class="filter-row">'
       +         '<label>City</label>'
-      +         '<input type="text" data-field="filter-city" placeholder="e.g. Garden Grove" list="tb-city-suggestions" />'
+      +         '<input type="text" data-field="filter-city" placeholder="Any city in the MLS (e.g. Anaheim, Irvine, Yorba Linda)" list="tb-city-suggestions" autocomplete="off" />'
       +         datalist
       +       '</div>'
       +       '<div class="filter-row filter-row-split">'
