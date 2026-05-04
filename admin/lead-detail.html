@@ -7842,12 +7842,25 @@ async function loadContactShowings() {
     return '<span class="status-badge '+meta.c+'">'+escHtml(meta.t)+'</span>';
   }
   function buildRouteUrl(stops){
-    var geo=stops.filter(function(s){return s.latitude&&s.longitude;});
-    if(!geo.length)return'';
-    if(geo.length===1)return 'https://www.google.com/maps/dir/?api=1&destination='+geo[0].latitude+','+geo[0].longitude+'&travelmode=driving';
-    var dest=geo[geo.length-1];
-    var wp=geo.slice(0,-1).map(function(s){return s.latitude+','+s.longitude;}).join('%7C');
-    return 'https://www.google.com/maps/dir/?api=1&destination='+dest.latitude+','+dest.longitude+'&waypoints='+wp+'&travelmode=driving';
+    // Prefer street addresses over MLS-supplied lat/lng — Trestle/CRMLS
+    // returns wrong coordinates for ~1-3% of listings (e.g. 5021 Vauxhall Rd
+    // resolved to a point in Seal Beach 3 miles west). Google's geocoder
+    // does the right thing on canonical address strings; lat/lng is a
+    // last-resort fallback only when address fields are missing entirely.
+    function addrFor(s){
+      var parts=[s.property_address,s.property_city,s.state,s.zip].filter(Boolean);
+      if(parts.length>=2)return parts.join(', ');
+      if(s.latitude&&s.longitude)return s.latitude+','+s.longitude;
+      return null;
+    }
+    var usable=stops.filter(function(s){return addrFor(s)!==null;});
+    if(!usable.length)return'';
+    if(usable.length===1){
+      return 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addrFor(usable[0]))+'&travelmode=driving';
+    }
+    var dest=usable[usable.length-1];
+    var wp=usable.slice(0,-1).map(function(s){return encodeURIComponent(addrFor(s));}).join('%7C');
+    return 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addrFor(dest))+'&waypoints='+wp+'&travelmode=driving';
   }
   function renderStopCard(stop, idx){
     var photoUrl=stop.property_photo;
