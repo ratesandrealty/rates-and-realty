@@ -1763,7 +1763,6 @@
       <button class="ld-tab-btn" onclick="switchTab('activity', this)">Activity</button>
       <button class="ld-tab-btn" onclick="switchTab('alerts', this)"><i class="fas fa-bell" style="margin-right:4px"></i>Alerts</button>
       <button class="ld-tab-btn" onclick="switchTab('showings', this)"><i class="fas fa-home" style="margin-right:4px"></i>Showings</button>
-      <button class="ld-tab-btn" onclick="switchTab('clickup', this)"><i class="fas fa-list-check" style="margin-right:4px"></i>ClickUp <span class="cu-tab-count" id="cu-tab-count" hidden>0</span></button>
     </nav>
 
     <!-- ═══════════════════════════════════════════
@@ -3856,22 +3855,6 @@
           </div>
         </div>
         <div id="contactShowingsContainer">
-          <div style="text-align:center;padding:32px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.5rem"></i></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- TAB: CLICKUP -->
-    <div class="ld-tab-panel" id="tab-clickup">
-      <div style="padding:20px 24px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:10px;flex-wrap:wrap">
-          <div>
-            <h3 style="font-size:1rem;font-weight:700;color:#eee;margin:0 0 4px"><i class="fas fa-list-check" style="color:#a78bfa;margin-right:6px"></i>ClickUp Tasks</h3>
-            <div style="font-size:.73rem;color:#555">Open tasks linked to this contact · cron-synced every 15&nbsp;min</div>
-          </div>
-          <button id="cuNewTaskBtn" type="button" style="background:#a78bfa;color:#0a0a0a;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center"><i class="fas fa-plus" style="margin-right:5px"></i>New ClickUp Task</button>
-        </div>
-        <div id="cuTaskList">
           <div style="text-align:center;padding:32px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.5rem"></i></div>
         </div>
       </div>
@@ -7131,7 +7114,6 @@ function switchTab(name, btn) {
     if (typeof loadDripStatus === 'function') loadDripStatus();
   }
   if (name === 'showings') loadContactShowings();
-  if (name === 'clickup' && typeof loadClickupTasksForContact === 'function') loadClickupTasksForContact();
   if (name === 'fee-sheet') prefillFeeSheet();
 }
 
@@ -20096,166 +20078,6 @@ async function recordNewVoicemail() {
 
   // Refresh when the call modal logs a new call
   window.addEventListener('call-logged', function() { loadActivityTab(); });
-})();
-</script>
-
-<!-- ── ClickUp tab — task list + new-task creation ── -->
-<style>
-  #tab-clickup .cu-task-card { background: #141414; border: 1px solid #2a2a2a; border-left: 4px solid #a78bfa; border-radius: 8px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; transition: border-color .15s; margin-bottom: 8px; }
-  #tab-clickup .cu-task-card:hover { border-color: #3a3a3a; }
-  #tab-clickup .cu-task-card.is-overdue { background: linear-gradient(90deg, rgba(255,136,136,.06), #141414); }
-  #tab-clickup .cu-card-title { font-size: 13px; color: #e8e8e8; font-weight: 500; line-height: 1.4; margin-bottom: 6px; }
-  #tab-clickup .cu-card-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  #tab-clickup .cu-card-status { font-size: 10px; text-transform: uppercase; color: #888; letter-spacing: .5px; padding: 2px 8px; background: #1a1a1a; border-radius: 10px; font-weight: 600; }
-  #tab-clickup .cu-card-pri { font-size: 10px; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; font-weight: 600; }
-  #tab-clickup .pri-urgent { background: rgba(255,136,136,.15); color: #ff8888; }
-  #tab-clickup .pri-high { background: rgba(255,153,51,.15); color: #ff9933; }
-  #tab-clickup .pri-normal { background: rgba(167,139,250,.15); color: #a78bfa; }
-  #tab-clickup .pri-low { background: rgba(140,140,140,.15); color: #888; }
-  #tab-clickup .cu-card-due { font-size: 11px; color: #888; }
-  #tab-clickup .cu-card-due.is-overdue { color: #ff8888; font-weight: 600; }
-  #tab-clickup .cu-link-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: transparent; border: 1px solid #2a2a2a; border-radius: 5px; color: #888; text-decoration: none; font-size: 14px; }
-  #tab-clickup .cu-link-btn:hover { border-color: #a78bfa; color: #a78bfa; }
-  #tab-clickup .cu-empty { padding: 40px 20px; text-align: center; color: #888; }
-  #tab-clickup .cu-empty-icon { font-size: 36px; margin-bottom: 12px; }
-  #tab-clickup .cu-empty h4 { color: #ddd; margin: 0 0 6px; font-size: 1rem; }
-  .cu-tab-count { background: #a78bfa; color: #0a0a0a; font-size: 9px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; font-weight: 700; vertical-align: middle; }
-</style>
-<script>
-(function () {
-  'use strict';
-  var SUPABASE_URL = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-  var ANON_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-
-  function esc(s) {
-    if (s == null) return '';
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
-
-  function priorityClass(p) {
-    if (p === 'urgent') return 'pri-urgent';
-    if (p === 'high') return 'pri-high';
-    if (p === 'low') return 'pri-low';
-    return 'pri-normal';
-  }
-
-  function fmtDue(due) {
-    if (!due) return 'No due date';
-    var d = new Date(due);
-    var nowYear = new Date().getFullYear();
-    var opts = { month: 'short', day: 'numeric' };
-    if (d.getFullYear() !== nowYear) opts.year = 'numeric';
-    return d.toLocaleDateString('en-US', opts);
-  }
-
-  function getContactId() {
-    var p = new URLSearchParams(location.search);
-    return p.get('contact_id') || p.get('id');
-  }
-
-  function setBadge(n) {
-    var el = document.getElementById('cu-tab-count');
-    if (!el) return;
-    if (n > 0) { el.textContent = n; el.hidden = false; }
-    else { el.hidden = true; }
-  }
-
-  // Exposed so switchTab() can call us. Idempotent — safe to re-fire.
-  window.loadClickupTasksForContact = async function () {
-    var contactId = getContactId();
-    if (!contactId) return;
-    var target = document.getElementById('cuTaskList');
-    if (!target) return;
-    target.innerHTML = '<div style="text-align:center;padding:32px;color:#444"><i class="fas fa-spinner fa-spin" style="font-size:1.5rem"></i></div>';
-    try {
-      var url = SUPABASE_URL + '/functions/v1/clickup-bridge/tasks?contact_id=' + encodeURIComponent(contactId) + '&status=open';
-      var res = await fetch(url, { headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY } });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      var data = await res.json();
-      var tasks = (data && data.tasks) || [];
-      setBadge(tasks.length);
-      if (!tasks.length) {
-        target.innerHTML = '<div class="cu-empty">'
-          + '<div class="cu-empty-icon">📋</div>'
-          + '<h4>No open ClickUp tasks for this contact</h4>'
-          + '<p style="margin:0;font-size:.86rem">Click "+ New ClickUp Task" to create one.</p>'
-          + '</div>';
-        return;
-      }
-      var now = Date.now();
-      target.innerHTML = tasks.map(function (t) {
-        var due = t.due_date ? new Date(t.due_date) : null;
-        var overdue = due && due.getTime() < now;
-        return '<div class="cu-task-card' + (overdue ? ' is-overdue' : '') + '">'
-          + '<div style="flex:1;min-width:0">'
-          +   '<div class="cu-card-title">' + esc(t.title) + '</div>'
-          +   '<div class="cu-card-meta">'
-          +     '<span class="cu-card-status">' + esc(t.status || 'to do') + '</span>'
-          +     (t.priority ? '<span class="cu-card-pri ' + priorityClass(t.priority) + '">' + esc(t.priority) + '</span>' : '')
-          +     '<span class="cu-card-due' + (overdue ? ' is-overdue' : '') + '">' + (overdue ? '⚠ ' : '') + esc(fmtDue(t.due_date)) + '</span>'
-          +     (t.assignee_username ? '<span class="cu-card-status">@' + esc(t.assignee_username) + '</span>' : '')
-          +   '</div>'
-          + '</div>'
-          + '<a href="' + esc(t.url) + '" target="_blank" rel="noopener" class="cu-link-btn" title="Open in ClickUp">↗</a>'
-          + '</div>';
-      }).join('');
-    } catch (e) {
-      console.warn('[clickup] load failed:', e);
-      target.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Failed to load ClickUp tasks: ' + esc(e.message) + '</div>';
-    }
-  };
-
-  // Minimal new-task flow — prompt-based per spec. Heavier modal can come
-  // later; this gets the path working today.
-  async function openNewClickupTaskFlow() {
-    var contactId = getContactId();
-    if (!contactId) { alert('No contact loaded'); return; }
-    var firstName = (typeof contactData !== 'undefined' && contactData && contactData.first_name) || 'lead';
-    var title = prompt('New ClickUp task — title:', 'Follow up with ' + firstName);
-    if (!title) return;
-    var dueStr = prompt('Due date (YYYY-MM-DD), leave blank for none:', '');
-    var due = null;
-    if (dueStr && dueStr.trim()) {
-      var parsed = new Date(dueStr.trim() + 'T09:00:00');
-      if (!isNaN(parsed.getTime())) due = parsed.toISOString();
-      else { alert('Invalid date — task not created'); return; }
-    }
-    var pri = prompt('Priority (urgent/high/normal/low):', 'normal');
-    if (pri && !/^(urgent|high|normal|low)$/.test(pri.trim())) pri = 'normal';
-    try {
-      var res = await fetch(SUPABASE_URL + '/functions/v1/clickup-bridge/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY },
-        body: JSON.stringify({ title: title, due_date: due, priority: (pri || 'normal').trim(), contact_id: contactId })
-      });
-      var data = await res.json();
-      if (!res.ok || data.error) {
-        alert('Create failed: ' + (data.error || ('HTTP ' + res.status)));
-        return;
-      }
-      // Reload the list so the new task appears.
-      await window.loadClickupTasksForContact();
-    } catch (e) {
-      alert('Create failed: ' + e.message);
-    }
-  }
-
-  function init() {
-    var btn = document.getElementById('cuNewTaskBtn');
-    if (btn && !btn.dataset.bound) {
-      btn.dataset.bound = '1';
-      btn.addEventListener('click', openNewClickupTaskFlow);
-    }
-    // Pre-load badge count so it shows on the Tab even before the user
-    // clicks in. Throttled by switchTab handler — calling load again on
-    // tab activation just refreshes the cached list.
-    if (getContactId()) window.loadClickupTasksForContact();
-  }
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
 })();
 </script>
 
