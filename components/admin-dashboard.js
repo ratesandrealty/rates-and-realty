@@ -882,6 +882,12 @@ function crmApplyViewToDom() {
   document.querySelectorAll('[data-subpanel="crm"] .view-btn').forEach((b) => {
     b.classList.toggle("active", b.dataset.view === crmCurrentView);
   });
+  // Toggle body.view-list-active so .view-sort visibility tracks the active sub-panel.
+  if (typeof window.__rrSyncTasksBodyClass === "function") window.__rrSyncTasksBodyClass();
+  else {
+    const active = document.querySelector(".task-subpanel:not([hidden])");
+    document.body.classList.toggle("view-list-active", !!active && active.dataset.currentView === "list");
+  }
 }
 
 function renderAllTasksTable(tasks) {

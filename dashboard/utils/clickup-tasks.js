@@ -391,6 +391,14 @@
   }
 
   // ── View switcher wiring ───────────────────────────────────────
+  function syncBodyViewClass() {
+    // Read whichever sub-panel is currently visible — that's what the
+    // body class should reflect (so the sort dropdown only shows when
+    // the *active* sub-panel is in list view).
+    var active = document.querySelector('.task-subpanel:not([hidden])');
+    document.body.classList.toggle('view-list-active', !!active && active.dataset.currentView === 'list');
+  }
+
   function applyViewToDom() {
     var panel = document.querySelector('[data-subpanel=clickup]');
     if (panel) panel.dataset.currentView = currentView;
@@ -403,7 +411,10 @@
     [].slice.call(document.querySelectorAll('[data-subpanel=clickup] .view-btn')).forEach(function (b) {
       b.classList.toggle('active', b.dataset.view === currentView);
     });
+    syncBodyViewClass();
   }
+  // Expose so admin-dashboard.js can re-sync after CRM-side view changes.
+  window.__rrSyncTasksBodyClass = syncBodyViewClass;
 
   function wireViewSwitcher() {
     [].slice.call(document.querySelectorAll('[data-subpanel=clickup] .view-btn')).forEach(function (btn) {
@@ -667,6 +678,8 @@
         [].slice.call(document.querySelectorAll('.task-subpanel')).forEach(function (p) {
           p.hidden = p.dataset.subpanel !== tab.dataset.subtab;
         });
+        // Body class follows whichever sub-panel just became visible.
+        syncBodyViewClass();
         if (tab.dataset.subtab === 'clickup') loadTasks();
       });
     });
