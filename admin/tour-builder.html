@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tour Builder | Rates &amp; Realty CRM</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="/api/env.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/public/js/map-controls.js"></script>
+<script src="/assets/js/tour-builder.js" defer></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a;color:#eee;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;display:flex}
+a{text-decoration:none;color:inherit}
+#sidebar{width:220px;flex-shrink:0;background:#0d0d0d;border-right:1px solid #1a1a1a;display:flex;flex-direction:column;height:100vh;position:sticky;top:0;overflow-y:auto}
+.sb-logo{display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid #1a1a1a;flex-shrink:0}
+.sb-logo-mark{width:36px;height:36px;background:linear-gradient(135deg,#C9A84C,#8A6A1E);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.8rem;color:#000;flex-shrink:0}
+.sb-logo-text{font-size:.88rem;font-weight:700;color:#C9A84C;line-height:1.2}
+.sb-logo-sub{font-size:.6rem;color:#444;text-transform:uppercase;letter-spacing:.1em}
+.sb-section{padding:12px 10px 4px;font-size:.62rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.1em}
+.sb-link{display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:8px;font-size:.82rem;color:#666;cursor:pointer;transition:all .15s;margin:1px 4px}
+.sb-link:hover{background:#161616;color:#aaa}
+.sb-link.active{background:rgba(201,168,76,.1);color:#C9A84C}
+.sb-link i{width:16px;text-align:center;font-size:.8rem}
+.sb-bottom{margin-top:auto;padding:12px;border-top:1px solid #1a1a1a}
+.sb-bottom a{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:.78rem;color:#555;border-radius:7px}
+.sb-bottom a:hover{color:#aaa;background:#111}
+#main{flex:1;display:flex;flex-direction:column;min-width:0;overflow-x:hidden}
+
+.topbar{background:#0d0d0d;border-bottom:1px solid #1a1a1a;padding:0 24px;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;flex-shrink:0}
+.topbar-left{display:flex;flex-direction:column;justify-content:center;min-width:0}
+.crumb{font-size:.7rem;color:#555;display:flex;align-items:center;gap:6px;margin-bottom:2px}
+.crumb a{color:#888;text-decoration:none}
+.crumb a:hover{color:#C9A84C}
+.crumb .sep{color:#333}
+.crumb-current{color:#C9A84C;font-weight:600}
+.topbar h1{font-size:.92rem;font-weight:700;color:#eee;display:flex;align-items:baseline;gap:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar h1 .meta{font-size:.72rem;color:#666;font-weight:400}
+.topbar-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.tb-act-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;font-size:.76rem;font-weight:600;border-radius:6px;cursor:pointer;border:1px solid #2a2a2a;background:#141414;color:#aaa;text-decoration:none;font-family:inherit}
+.tb-act-btn:hover{border-color:#C9A84C;color:#C9A84C}
+
+.builder-mount-wrap{flex:1;padding:20px 24px;max-width:1600px;width:100%;margin:0 auto}
+
+footer.page-footer{border-top:1px solid #1a1a1a;padding:14px 24px;background:#0d0d0d;font-size:.7rem;color:#555;display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+footer.page-footer a{color:#C9A84C}
+footer.page-footer a:hover{text-decoration:underline}
+footer .meta-list{display:flex;gap:14px;flex-wrap:wrap}
+
+@media(max-width:900px){
+  #sidebar{width:60px}
+  .sb-logo-text,.sb-logo-sub,.sb-link span,.sb-section{display:none}
+  .sb-link{justify-content:center;padding:10px 0}
+  .sb-link i{width:auto}
+  .builder-mount-wrap{padding:14px 12px}
+}
+@media(max-width:600px){
+  .topbar{padding:0 12px}
+  .topbar h1 .meta{display:none}
+}
+</style>
+</head>
+<body>
+<nav id="sidebar">
+  <div class="sb-logo"><div class="sb-logo-mark">R&R</div><div><div class="sb-logo-text">Rates &amp; Realty</div><div class="sb-logo-sub">Admin CRM</div></div></div>
+  <div class="sb-section">CRM</div>
+  <a class="sb-link" href="/admin/people.html"><i class="fas fa-users"></i><span>People</span></a>
+  <a class="sb-link" href="/admin/pipeline.html"><i class="fas fa-chart-bar"></i><span>Pipeline</span></a>
+  <a class="sb-link" href="/admin/reports.html"><i class="fas fa-chart-line"></i><span>Reports</span></a>
+  <div class="sb-section">Real Estate</div>
+  <a class="sb-link active" href="/admin/showings.html"><i class="fas fa-calendar-check"></i><span>Showings</span></a>
+  <a class="sb-link" href="/public/search-homes.html" target="_blank"><i class="fas fa-search"></i><span>Search Homes</span></a>
+  <div class="sb-bottom">
+    <a href="#" id="logoutLink"><i class="fas fa-sign-out-alt"></i><span>Logout</span></a>
+  </div>
+</nav>
+
+<div id="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="crumb">
+        <a href="/admin/showings.html">Showings</a>
+        <span class="sep">/</span>
+        <span class="crumb-current" data-field="breadcrumb-tour-name">Tour Builder</span>
+      </div>
+      <h1>
+        <span data-field="page-title">Tour Builder</span>
+        <span class="meta" data-field="page-title-meta"></span>
+      </h1>
+    </div>
+    <div class="topbar-actions">
+      <a class="tb-act-btn" href="/admin/showings.html" title="Back to all tours"><i class="fas fa-arrow-left"></i> Back</a>
+      <a class="tb-act-btn" id="publicLinkBtn" href="#" target="_blank" rel="noopener" hidden title="Open the public itinerary in a new tab"><i class="fas fa-external-link-alt"></i> Public itinerary</a>
+    </div>
+  </div>
+
+  <div class="builder-mount-wrap">
+    <div id="tour-builder-mount"></div>
+  </div>
+
+  <footer class="page-footer">
+    <div>Rene Duarte · NMLS #1795044</div>
+    <div class="meta-list">
+      <a href="https://beta.ratesandrealty.com" target="_blank" rel="noopener">beta.ratesandrealty.com</a>
+      <span>v1.0</span>
+      <span>© 2026 Rates &amp; Realty</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  // Wait for the deferred tour-builder.js to expose mountTourBuilder.
+  function whenReady(check, cb, tries) {
+    tries = tries || 0;
+    if (check()) return cb();
+    if (tries > 100) {
+      document.getElementById('tour-builder-mount').innerHTML =
+        '<div style="padding:40px;text-align:center;color:#888">Tour builder script failed to load. <a href="/admin/showings.html" style="color:#C9A84C">Back to Showings</a></div>';
+      return;
+    }
+    setTimeout(function () { whenReady(check, cb, tries + 1); }, 50);
+  }
+
+  function fmtScheduled(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString('en-US', {
+        timeZone: 'America/Los_Angeles',
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', hour12: true,
+      });
+    } catch (e) { return ''; }
+  }
+
+  function updatePageHead(snapshot) {
+    var titleEl = document.querySelector('[data-field=page-title]');
+    var metaEl = document.querySelector('[data-field=page-title-meta]');
+    var crumbEl = document.querySelector('[data-field=breadcrumb-tour-name]');
+    var publicBtn = document.getElementById('publicLinkBtn');
+    if (!snapshot) return;
+    var t = snapshot.tour;
+    var c = snapshot.contact;
+    var contactName = c ? ((c.first_name || '') + ' ' + (c.last_name || '')).trim() : '';
+    var label;
+    if (t && t.title) label = t.title;
+    else if (contactName) label = 'Tour for ' + contactName;
+    else label = 'New Tour';
+    titleEl.textContent = label;
+    crumbEl.textContent = label;
+    if (t && t.scheduled_start) metaEl.textContent = '· ' + fmtScheduled(t.scheduled_start);
+    else metaEl.textContent = '';
+    // Surface the public itinerary link in the topbar once the share token is known.
+    if (t && t.share_token) {
+      publicBtn.hidden = false;
+      publicBtn.href = window.location.origin + '/tour/' + encodeURIComponent(t.share_token);
+    } else {
+      publicBtn.hidden = true;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    var qs = new URLSearchParams(location.search);
+    var batchId = qs.get('batch_id');
+    var contactId = qs.get('contact_id');
+
+    whenReady(function () { return typeof window.mountTourBuilder === 'function'; }, function () {
+      window.mountTourBuilder({
+        target: document.getElementById('tour-builder-mount'),
+        batch_id: batchId || undefined,
+        contact_id: contactId || undefined,
+        onLoaded: updatePageHead,
+        onHeadChange: updatePageHead,
+        onClose: function () {
+          // Send tab "Save & close" / successful send_to_lead → back to list.
+          location.href = '/admin/showings.html';
+        },
+      });
+    });
+  });
+
+  // Logout — uses the same Supabase client the rest of the admin uses.
+  document.getElementById('logoutLink').addEventListener('click', function (e) {
+    e.preventDefault();
+    try {
+      if (window.supabase && window.APP_CONFIG) {
+        var client = window.supabase.createClient(window.APP_CONFIG.SUPABASE_URL, window.APP_CONFIG.SUPABASE_ANON_KEY);
+        client.auth.signOut().then(function () {
+          location.href = '/auth/admin-login.html';
+        });
+      } else {
+        location.href = '/auth/admin-login.html';
+      }
+    } catch (err) {
+      location.href = '/auth/admin-login.html';
+    }
+  });
+})();
+</script>
+</body>
+</html>

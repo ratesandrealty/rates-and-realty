@@ -369,6 +369,22 @@
       #tour-builder-modal .search-load-more button:hover{border-color:#C9A84C;color:#C9A84C}
       /* The stops tab gets a wider modal so the browse+cart layout breathes. */
       #tour-builder-modal[data-active-tab=stops] .tb-card{max-width:1100px}
+      /* ── Page mode: same internal markup, no overlay chrome ── */
+      .tb-modal.tb-page-mode{position:static;inset:auto;background:transparent;backdrop-filter:none;padding:0;display:block;height:auto;min-height:0;z-index:auto}
+      .tb-modal.tb-page-mode .tb-card{max-width:none;max-height:none;box-shadow:none;border-radius:0;border:none;background:transparent}
+      .tb-modal.tb-page-mode .tb-head{display:none}
+      .tb-modal.tb-page-mode[data-active-tab=stops] .tb-card{max-width:none}
+      .tb-modal.tb-page-mode .tb-body{padding:18px 0;max-height:none;overflow:visible}
+      .tb-modal.tb-page-mode .tb-foot{padding:8px 0}
+      .tb-modal.tb-page-mode .stops-grid{grid-template-columns:1fr 460px;gap:24px;min-height:600px}
+      @media(min-width:1500px){
+        .tb-modal.tb-page-mode .stops-grid{grid-template-columns:1fr 520px;gap:32px}
+      }
+      .tb-modal.tb-page-mode .search-map{height:380px}
+      .tb-modal.tb-page-mode .cart-map{height:320px}
+      @media(max-width:720px){
+        .tb-modal.tb-page-mode .stops-grid{grid-template-columns:1fr;min-height:0}
+      }
       /* ── Lead-required banner ── */
       #tour-builder-modal .lead-required-banner{display:flex;align-items:center;gap:12px;background:rgba(240,80,80,.08);border:1px solid rgba(240,80,80,.4);border-radius:8px;padding:10px 12px;margin-bottom:10px}
       #tour-builder-modal .lead-required-banner[hidden]{display:none}
@@ -643,9 +659,16 @@
     state.cartMarkers = [];
     state.cartDirectionsService = null;
     state.cartDirectionsRenderer = null;
-    var modal = document.getElementById('tour-builder-modal');
-    if (modal && modal.parentElement) modal.remove();
-    document.removeEventListener('keydown', onEscapeKey);
+    var pageMode = !!(state.opts && state.opts.pageMode);
+    if (!pageMode) {
+      // Modal mode: tear down the overlay + Escape listener.
+      var modal = document.getElementById('tour-builder-modal');
+      if (modal && modal.parentElement) modal.remove();
+      document.removeEventListener('keydown', onEscapeKey);
+    }
+    // Page mode keeps the DOM in place — onClose handles navigation
+    // (typically location.href = '/admin/showings.html'). The host page
+    // owns the chrome, so we don't strip the mount node.
     var onClose = state.opts && state.opts.onClose;
     state = null;
     if (typeof onClose === 'function') {
@@ -663,22 +686,22 @@
     if (e.key === 'Escape') close();
   }
 
-  function ensureMounted() {
-    var existing = document.getElementById('tour-builder-modal');
-    if (existing) existing.remove();
-    var modal = document.createElement('div');
-    modal.id = 'tour-builder-modal';
-    modal.className = 'tb-modal';
-    modal.dataset.activeTab = 'setup';
-    modal.innerHTML =
-      '<div class="tb-card" role="dialog" aria-modal="true">'
-      + '<div class="tb-head">'
-      +   '<div>'
-      +     '<div class="tb-sub">Tour Builder</div>'
-      +     '<h2 class="tb-title" data-role="head-title">New Tour</h2>'
-      +   '</div>'
-      +   '<button class="tb-x" type="button" data-act="close" aria-label="Close">✕</button>'
-      + '</div>'
+  // The "modal" element id is reused in page mode — selectors throughout
+  // the module query #tour-builder-modal so renaming would touch hundreds
+  // of lines. The .tb-page-mode class on the same element is the actual
+  // signal to the CSS overrides that we're in standalone-page mode.
+  function buildBuilderMarkup(pageMode) {
+    return ''
+      + '<div class="tb-card" role="' + (pageMode ? 'region' : 'dialog') + '"' + (pageMode ? '' : ' aria-modal="true"') + '>'
+      + (pageMode ? '' : (
+          '<div class="tb-head">'
+          +   '<div>'
+          +     '<div class="tb-sub">Tour Builder</div>'
+          +     '<h2 class="tb-title" data-role="head-title">New Tour</h2>'
+          +   '</div>'
+          +   '<button class="tb-x" type="button" data-act="close" aria-label="Close">✕</button>'
+          + '</div>'
+        ))
       + '<div class="tb-tabs">'
       +   '<button class="tb-tab active" data-tab="setup">Setup</button>'
       +   '<button class="tb-tab" data-tab="stops">Stops <span class="tb-tab-count" data-role="stop-count">0</span></button>'
@@ -689,6 +712,16 @@
       +   '<span class="tb-save-indicator">—</span>'
       + '</div>'
       + '</div>';
+  }
+
+  function ensureMounted() {
+    var existing = document.getElementById('tour-builder-modal');
+    if (existing) existing.remove();
+    var modal = document.createElement('div');
+    modal.id = 'tour-builder-modal';
+    modal.className = 'tb-modal';
+    modal.dataset.activeTab = 'setup';
+    modal.innerHTML = buildBuilderMarkup(false);
     document.body.appendChild(modal);
     modal.addEventListener('click', function (e) {
       if (e.target === modal) close();
@@ -700,6 +733,25 @@
     });
     document.addEventListener('keydown', onEscapeKey);
     return modal;
+  }
+
+  // Page-mode mount: same inner markup, no overlay/backdrop/escape, no
+  // close X (host page owns chrome). The container becomes the same
+  // #tour-builder-modal node so all the existing intra-module selectors
+  // continue to work without modification.
+  function mountInPage(target) {
+    if (!target) throw new Error('mountTourBuilder requires opts.target');
+    // Reuse the same id so internal querySelectors keep working unchanged.
+    var existing = document.getElementById('tour-builder-modal');
+    if (existing && existing !== target) existing.remove();
+    target.id = 'tour-builder-modal';
+    target.className = 'tb-modal tb-page-mode';
+    target.dataset.activeTab = 'setup';
+    target.innerHTML = buildBuilderMarkup(true);
+    [].slice.call(target.querySelectorAll('.tb-tab')).forEach(function (btn) {
+      btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
+    });
+    return target;
   }
 
   function switchTab(name) {
@@ -737,6 +789,9 @@
       titleEl.textContent = label;
     }
     if (stopCountEl) stopCountEl.textContent = String(state.stops.length);
+    // In page mode, the host owns the title/breadcrumb so it needs the
+    // same change signal the modal head got via DOM update above.
+    notifyHostHead();
   }
 
   // -------- Tour load/create --------------------------------------------
@@ -2503,15 +2558,34 @@
     });
   }
 
-  // -------- Public: openTourBuilder ---------------------------------------
+  // -------- Public: openTourBuilder (modal mode) -------------------------
   function openTourBuilder(opts) {
     opts = opts || {};
     injectStyles();
     if (state) close(true);
     state = makeState(opts);
     ensureMounted();
-    setSaveIndicator('—', '');
+    bootstrapFromOpts(opts);
+  }
 
+  // -------- Public: mountTourBuilder (page/inline mode) ------------------
+  // Drop-in alternative to openTourBuilder for the standalone tour-builder
+  // page. Mounts the same tabs/panels into `opts.target` instead of a
+  // fixed-position overlay. opts.onClose typically does
+  // location.href = '/admin/showings.html'.
+  function mountTourBuilder(opts) {
+    opts = opts || {};
+    if (!opts.target) throw new Error('mountTourBuilder requires opts.target');
+    opts.pageMode = true;
+    injectStyles();
+    if (state) close(true);
+    state = makeState(opts);
+    mountInPage(opts.target);
+    bootstrapFromOpts(opts);
+  }
+
+  function bootstrapFromOpts(opts) {
+    setSaveIndicator('—', '');
     var bootstrap;
     if (opts.batch_id) {
       bootstrap = loadTour(opts.batch_id).then(function () {
@@ -2528,10 +2602,15 @@
       // Empty new tour — Setup tab will show contact picker
       bootstrap = Promise.resolve();
     }
-
     bootstrap.then(function () {
       refreshHead();
       renderActivePanel();
+      // Notify the host page once the tour is loaded so it can update
+      // breadcrumb / page title.
+      if (opts.onLoaded && typeof opts.onLoaded === 'function') {
+        try { opts.onLoaded({ tour: state && state.tour, contact: state && state.contact }); }
+        catch (e) { /* ignore */ }
+      }
     }).catch(function (e) {
       showToast('Open failed: ' + (e.message || 'unknown'), 'error');
       close();
@@ -2691,8 +2770,28 @@
     detectAdmin();
   }
 
+  // Refresh the host page's breadcrumb/title in response to in-builder
+  // edits (title change, contact change, etc.). Invoked from refreshHead
+  // when in page mode.
+  function notifyHostHead() {
+    if (!state || !state.opts || !state.opts.pageMode) return;
+    var fn = state.opts.onHeadChange;
+    if (typeof fn === 'function') {
+      try { fn({ tour: state.tour, contact: state.contact, stops: state.stops }); }
+      catch (e) { /* ignore */ }
+    }
+  }
+
   // -------- Exports ------------------------------------------------------
   window.openTourBuilder = openTourBuilder;
+  window.mountTourBuilder = mountTourBuilder;
   window.handleAddToTour = handleAddToTour;
   window.tourBuilderClose = close;
+  // Expose a tiny read-only state accessor so the standalone page can
+  // observe tour/contact metadata for its breadcrumb/title without
+  // reaching into the closure. Returns null when no builder is mounted.
+  window.tourBuilderState = function () {
+    if (!state) return null;
+    return { tour: state.tour, contact: state.contact, stops: state.stops };
+  };
 })();
