@@ -316,4 +316,25 @@
   // Public hook so admin-dashboard.js's tab router can fire us when the
   // user clicks Insights. Idempotent — safe to call repeatedly.
   window.initInsights = initInsights;
+
+  // Self-firing init — DO NOT depend on the SPA dispatcher.
+  // The host page's renderActiveTab() bails early when dashboardData is null
+  // (initial-load race), and that silently swallows our trigger. So we
+  // listen for hashchange + DOMContentLoaded ourselves; whenever the
+  // analytics/insights/reports hash is active and the markup is on the
+  // page, we init regardless of whether the SPA has loaded its data.
+  function maybeAutoInit() {
+    var hash = (location.hash || '').replace(/^#/, '');
+    if (hash === 'reports') { location.hash = '#analytics'; return; }
+    if (hash !== 'analytics' && hash !== 'insights') return;
+    // Wait one tick so the SPA's navigateTo has flipped the section's
+    // is-active class before we measure offsetWidth on chart bodies.
+    setTimeout(initInsights, 60);
+  }
+  window.addEventListener('hashchange', maybeAutoInit);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', maybeAutoInit);
+  } else {
+    maybeAutoInit();
+  }
 })();

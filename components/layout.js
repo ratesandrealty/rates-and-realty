@@ -302,7 +302,13 @@ if (isAdminPage || path.includes('/admin/')) {
     var fabCss = document.createElement('style');
     fabCss.id = 'ai-agent-fab-css';
     fabCss.textContent =
-      '.ai-agent-fab{position:fixed;bottom:20px;right:20px;z-index:90;width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(135deg,#C9A84C 0%,#B89540 100%);color:#0a0a0a;box-shadow:0 4px 16px rgba(0,0,0,.5),0 0 0 1px rgba(201,168,76,.2);display:flex;align-items:center;justify-content:center;transition:transform .15s ease,box-shadow .15s ease;font-family:inherit;padding:0}'
+      // pointer-events:auto !important defends against any wrapper that
+      // sets pointer-events:none on body or sticky-overlay containers.
+      // The svg child also gets pointer-events:none so clicks land on the
+      // button, not the icon path (otherwise event.target.closest in any
+      // ancestor delegated listener might misroute).
+      '.ai-agent-fab{position:fixed;bottom:20px;right:20px;z-index:90;width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(135deg,#C9A84C 0%,#B89540 100%);color:#0a0a0a;box-shadow:0 4px 16px rgba(0,0,0,.5),0 0 0 1px rgba(201,168,76,.2);display:flex;align-items:center;justify-content:center;transition:transform .15s ease,box-shadow .15s ease;font-family:inherit;padding:0;pointer-events:auto !important}'
+      + '.ai-agent-fab > svg{pointer-events:none}'
       + '.ai-agent-fab:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 6px 20px rgba(201,168,76,.4),0 0 0 1px rgba(201,168,76,.4)}'
       + '.ai-agent-fab:active{transform:translateY(0) scale(1)}'
       + '.ai-agent-fab:focus-visible{outline:2px solid #C9A84C;outline-offset:3px}'
@@ -327,16 +333,48 @@ if (isAdminPage || path.includes('/admin/')) {
   // Sparkle icon — communicates "AI" at a glance without the phone-call
   // confusion the old icon caused.
   fab.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>';
-  fab.addEventListener('click', function () {
-    // Three open paths, ordered by specificity:
-    //  1. Inside the SPA dashboard with an AI Agent nav button → click it.
-    //  2. Anywhere with an #tab-ai-agent panel → flip the hash and let the
-    //     SPA's hashchange router activate it.
-    //  3. Otherwise navigate to the SPA with the hash preset.
-    var navBtn = document.querySelector('[data-crm-nav="ai-agent"]');
-    if (navBtn) { navBtn.click(); return; }
-    if (document.getElementById('tab-ai-agent')) { location.hash = '#ai-agent'; return; }
+  function openAiAgent() {
+    // Inside the SPA dashboard, do the navigation OURSELVES instead of
+    // routing through `[data-crm-nav].click()` → navigateTo() → renderActiveTab().
+    // The SPA's renderActiveTab bails early when dashboardData is null
+    // (initial-load race), which makes the FAB feel "unclickable" — the
+    // section flip happens but content stays empty. Bypassing that:
+    var aiPanel = document.getElementById('tab-ai-agent');
+    if (aiPanel) {
+      [].slice.call(document.querySelectorAll('.crm-tab-panel')).forEach(function (p) {
+        p.classList.remove('is-active');
+      });
+      aiPanel.classList.add('is-active');
+      [].slice.call(document.querySelectorAll('[data-crm-nav]')).forEach(function (b) {
+        b.classList.toggle('is-active', b.getAttribute('data-crm-nav') === 'ai-agent');
+      });
+      try { localStorage.setItem('activeSection', 'ai-agent'); } catch (e) {}
+      // Fire navigateTo too so any SPA-side per-tab init still runs once
+      // dashboardData arrives (the SPA hooks into navigateTo for that).
+      if (typeof window.crmNavigateTo === 'function') {
+        try { window.crmNavigateTo('ai-agent'); } catch (e) {}
+      }
+      if (location.hash !== '#ai-agent') location.hash = '#ai-agent';
+      return;
+    }
+    // Cross-page case (user is on /admin/showings.html etc.): navigate to
+    // the SPA with the hash preset.
     location.href = '/dashboard/admin.html#ai-agent';
-  });
+  }
+
+  fab.addEventListener('click', openAiAgent);
   document.body.appendChild(fab);
+
+  // Defensive document-level delegation. If anything ever overrides the
+  // direct fab.click handler (rare, but possible if some other script
+  // clones the button or wraps it), this catches the click from any
+  // descendant of [data-action="open-ai-agent"]. Idempotent install.
+  if (!window._aiFabDelegated) {
+    window._aiFabDelegated = true;
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('[data-action="open-ai-agent"]')) {
+        openAiAgent();
+      }
+    });
+  }
 }
