@@ -290,32 +290,53 @@ try {
   }
 } catch(e) {}
 
-// ── Floating Softphone Widget (admin pages only) ──
+// ── AI Agent FAB (admin pages only) ──
+// Replaces the older green-phone Softphone Widget. The phone icon was
+// misleading — the FAB's job is opening the AI assistant chat (the
+// #tab-ai-agent panel inside the dashboard SPA, or the AI tab on
+// standalone admin pages). Brand-gold sparkle, z-index 90 so modals
+// (1000+) cover it cleanly.
 if (isAdminPage || path.includes('/admin/')) {
-  const widget = document.createElement('div');
-  widget.id = 'softphone-widget';
-  widget.innerHTML = `
-    <button id="softphone-btn" onclick="document.getElementById('softphone-expanded').style.display=document.getElementById('softphone-expanded').style.display==='none'?'block':'none'" style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#22c55e,#16a34a);border:none;color:white;font-size:20px;cursor:pointer;box-shadow:0 4px 16px rgba(34,197,94,0.4);transition:transform .2s;" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'">📞</button>
-    <div id="softphone-expanded" style="display:none;position:absolute;bottom:56px;right:0;width:280px;background:#111;border:1px solid rgba(201,168,76,0.3);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.6);padding:14px;">
-      <div style="font-size:12px;font-weight:700;color:#E8D5A3;margin-bottom:8px;">Quick Dial</div>
-      <input id="softphone-number" type="tel" placeholder="(714) 555-1234" style="width:100%;padding:8px 10px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#eee;font-size:13px;outline:none;font-family:inherit;margin-bottom:8px;">
-      <button onclick="softphoneDial()" style="width:100%;padding:8px;background:#22c55e;border:none;border-radius:6px;color:white;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Call Now</button>
-      <div style="font-size:10px;color:#555;margin-top:6px;text-align:center;">Powered by Twilio Voice</div>
-    </div>
-  `;
-  widget.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9998;';
-  document.body.appendChild(widget);
+  // Inject scoped CSS once.
+  if (!document.getElementById('ai-agent-fab-css')) {
+    var fabCss = document.createElement('style');
+    fabCss.id = 'ai-agent-fab-css';
+    fabCss.textContent =
+      '.ai-agent-fab{position:fixed;bottom:20px;right:20px;z-index:90;width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(135deg,#C9A84C 0%,#B89540 100%);color:#0a0a0a;box-shadow:0 4px 16px rgba(0,0,0,.5),0 0 0 1px rgba(201,168,76,.2);display:flex;align-items:center;justify-content:center;transition:transform .15s ease,box-shadow .15s ease;font-family:inherit;padding:0}'
+      + '.ai-agent-fab:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 6px 20px rgba(201,168,76,.4),0 0 0 1px rgba(201,168,76,.4)}'
+      + '.ai-agent-fab:active{transform:translateY(0) scale(1)}'
+      + '.ai-agent-fab:focus-visible{outline:2px solid #C9A84C;outline-offset:3px}'
+      + '.ai-agent-fab::before{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(201,168,76,.3);opacity:0;animation:ai-fab-pulse 3s ease-out infinite;pointer-events:none}'
+      + '@keyframes ai-fab-pulse{0%{opacity:0;transform:scale(1)}50%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.4)}}'
+      + '@media(max-width:720px){.ai-agent-fab{width:48px;height:48px;bottom:16px;right:16px}}'
+      + '@media print{.ai-agent-fab{display:none}}'
+      // Bottom-of-page clearance so sticky footers / charts / table rows
+      // don't sit under the FAB. 90px = 52 button + 20 margin + 18 safety.
+      + 'body.has-ai-fab{padding-bottom:90px}'
+      + '@media(max-width:720px){body.has-ai-fab{padding-bottom:84px}}';
+    document.head.appendChild(fabCss);
+  }
+  document.body.classList.add('has-ai-fab');
 
-  window.softphoneDial = function() {
-    var num = document.getElementById('softphone-number').value;
-    if (!num) return;
-    // If on lead-detail page with openCallModal, use it
-    if (typeof openCallModal === 'function') {
-      openCallModal('Quick Dial', num, null);
-    } else {
-      // Open lead-detail with call param
-      window.open('/admin/lead-detail.html?dial=' + encodeURIComponent(num), '_blank');
-    }
-    document.getElementById('softphone-expanded').style.display = 'none';
-  };
+  const fab = document.createElement('button');
+  fab.className = 'ai-agent-fab';
+  fab.type = 'button';
+  fab.setAttribute('data-action', 'open-ai-agent');
+  fab.setAttribute('aria-label', 'Open AI assistant');
+  fab.title = 'Ask the AI assistant';
+  // Sparkle icon — communicates "AI" at a glance without the phone-call
+  // confusion the old icon caused.
+  fab.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>';
+  fab.addEventListener('click', function () {
+    // Three open paths, ordered by specificity:
+    //  1. Inside the SPA dashboard with an AI Agent nav button → click it.
+    //  2. Anywhere with an #tab-ai-agent panel → flip the hash and let the
+    //     SPA's hashchange router activate it.
+    //  3. Otherwise navigate to the SPA with the hash preset.
+    var navBtn = document.querySelector('[data-crm-nav="ai-agent"]');
+    if (navBtn) { navBtn.click(); return; }
+    if (document.getElementById('tab-ai-agent')) { location.hash = '#ai-agent'; return; }
+    location.href = '/dashboard/admin.html#ai-agent';
+  });
+  document.body.appendChild(fab);
 }
