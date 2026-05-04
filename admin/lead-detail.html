@@ -7718,70 +7718,328 @@ async function clearAndReupload() {
   await loadConditions();
 }
 
-// Showings tab — read-only swap to tours-admin (PR 1).
-// list_tours_for_contact returns one row per tour (batch) with summary
-// fields only — no per-stop data. The full builder modal that owns
-// stops + status writes ships in PR 2; for now each card links out to
-// the public itinerary so Rene can see the lead's view.
+// Showings tab — expandable rows with stops, ratings, and feedback (PR 7).
+// Two queries: list_tours_for_contact for batch summaries, then a single
+// PostgREST call against /rest/v1/showings to hydrate every stop in one
+// round-trip. Stops include lead_rating/lead_feedback/listing_agent_*
+// columns (verified anon-readable). Each row is collapsed by default;
+// click the header to expand inline. Multiple rows can be open at once.
+function _injectShowingsCss() {
+  if (document.getElementById('showings-tab-css')) return;
+  var s = document.createElement('style');
+  s.id = 'showings-tab-css';
+  s.textContent = `
+    #contactShowingsContainer .showing-row{background:#141414;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:10px;overflow:hidden;transition:border-color .15s}
+    #contactShowingsContainer .showing-row:hover{border-color:#3a3a3a}
+    #contactShowingsContainer .showing-row.open{border-color:rgba(201,168,76,.4)}
+    #contactShowingsContainer .showing-row-header{display:grid;grid-template-columns:24px 1fr auto;gap:12px;align-items:center;padding:14px 16px;cursor:pointer;user-select:none}
+    #contactShowingsContainer .expand-chevron{color:#888;font-size:.75rem;transition:color .15s}
+    #contactShowingsContainer .showing-row.open .expand-chevron{color:#C9A84C}
+    #contactShowingsContainer .showing-row-main{min-width:0}
+    #contactShowingsContainer .showing-row-line1{display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap}
+    #contactShowingsContainer .showing-date{font-size:.86rem;color:#fff;font-weight:500}
+    #contactShowingsContainer .showing-row-line2{font-size:.78rem;color:#888}
+    #contactShowingsContainer .rating-pill{font-size:.7rem;padding:2px 8px;border-radius:10px;border:1px solid;font-weight:600}
+    #contactShowingsContainer .status-badge{font-size:.62rem;padding:2px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+    #contactShowingsContainer .badge-draft{background:rgba(140,140,140,.15);color:#aaa;border:1px solid #444}
+    #contactShowingsContainer .badge-sent{background:rgba(201,168,76,.12);color:#C9A84C;border:1px solid rgba(201,168,76,.4)}
+    #contactShowingsContainer .badge-confirmed{background:rgba(110,212,126,.12);color:#6ed47e;border:1px solid rgba(110,212,126,.4)}
+    #contactShowingsContainer .badge-in-progress{background:rgba(108,165,255,.12);color:#6ca5ff;border:1px solid rgba(108,165,255,.4)}
+    #contactShowingsContainer .badge-completed{background:rgba(140,140,140,.12);color:#888;border:1px solid #333}
+    #contactShowingsContainer .badge-canceled{background:rgba(240,80,80,.12);color:#ff8888;border:1px solid rgba(240,80,80,.4)}
+    #contactShowingsContainer .badge-default{background:rgba(140,140,140,.12);color:#aaa;border:1px solid #333}
+    #contactShowingsContainer .showing-row-actions{display:flex;gap:8px;align-items:center}
+    #contactShowingsContainer .row-btn{background:rgba(201,168,76,.08);color:#C9A84C;border:1px solid rgba(201,168,76,.3);padding:5px 10px;border-radius:5px;font-size:.74rem;font-weight:500;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-family:inherit}
+    #contactShowingsContainer .row-btn:hover{background:rgba(201,168,76,.15)}
+    #contactShowingsContainer .showing-row-expanded{border-top:1px solid #2a2a2a;padding:14px 16px;background:#0d0d0d}
+    #contactShowingsContainer .stops-list{display:flex;flex-direction:column;gap:10px}
+    #contactShowingsContainer .stop-card{display:grid;grid-template-columns:60px 1fr;gap:12px;padding:10px;background:#141414;border:1px solid #2a2a2a;border-radius:8px;transition:border-color .15s}
+    #contactShowingsContainer .stop-card:hover{border-color:rgba(201,168,76,.3)}
+    #contactShowingsContainer .stop-photo-col{display:flex;align-items:flex-start}
+    #contactShowingsContainer .stop-photo-link,#contactShowingsContainer .stop-photo-link img,#contactShowingsContainer .stop-photo-placeholder{width:60px;height:60px;border-radius:6px;object-fit:cover;display:block;background:#1a1a1a}
+    #contactShowingsContainer .stop-photo-placeholder{display:flex;align-items:center;justify-content:center;color:#555;font-size:1.4rem}
+    #contactShowingsContainer .stop-photo-link{transition:transform .15s}
+    #contactShowingsContainer .stop-photo-link:hover{transform:scale(1.04)}
+    #contactShowingsContainer .stop-body{min-width:0}
+    #contactShowingsContainer .stop-header-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:3px}
+    #contactShowingsContainer .stop-header-left{font-size:.62rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;font-weight:700;display:flex;gap:8px;flex-wrap:wrap}
+    #contactShowingsContainer .stop-num{color:#C9A84C}
+    #contactShowingsContainer .stop-arrival,#contactShowingsContainer .stop-mls{color:#888;font-weight:400}
+    #contactShowingsContainer .rating-display{font-size:.74rem;font-weight:600}
+    #contactShowingsContainer .rating-empty{color:#555;font-size:.7rem;font-style:italic}
+    #contactShowingsContainer .stop-address-link{text-decoration:none}
+    #contactShowingsContainer .stop-address{font-size:.86rem;color:#fff;font-weight:600;margin-bottom:1px}
+    #contactShowingsContainer .stop-address-link:hover .stop-address{color:#C9A84C}
+    #contactShowingsContainer .stop-loc{font-size:.74rem;color:#888;margin-bottom:5px}
+    #contactShowingsContainer .stop-price-line{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px}
+    #contactShowingsContainer .stop-price{color:#C9A84C;font-weight:700;font-size:.8rem}
+    #contactShowingsContainer .stop-specs{color:#aaa;font-size:.74rem}
+    #contactShowingsContainer .stop-feedback-display{background:rgba(201,168,76,.06);border-left:2px solid #C9A84C;padding:6px 10px;border-radius:0 4px 4px 0;font-size:.74rem;color:#ddd;font-style:italic;margin:6px 0;line-height:1.4}
+    #contactShowingsContainer .stop-feedback-empty{font-size:.7rem;color:#555;font-style:italic;margin:6px 0}
+    #contactShowingsContainer .agent-disclosure{margin:6px 0}
+    #contactShowingsContainer .agent-disclosure summary{cursor:pointer;font-size:.7rem;color:#C9A84C;list-style:none;user-select:none;outline:none}
+    #contactShowingsContainer .agent-disclosure summary::-webkit-details-marker{display:none}
+    #contactShowingsContainer .agent-disclosure[open] summary{margin-bottom:4px}
+    #contactShowingsContainer .agent-content{background:rgba(201,168,76,.04);border-left:2px solid rgba(201,168,76,.3);padding:6px 10px;border-radius:0 4px 4px 0;font-size:.7rem}
+    #contactShowingsContainer .agent-name{color:#ddd;font-weight:500}
+    #contactShowingsContainer .agent-office{color:#888;font-weight:400}
+    #contactShowingsContainer .agent-actions{display:flex;gap:8px;margin-top:4px;flex-wrap:wrap}
+    #contactShowingsContainer .agent-link{color:#C9A84C;text-decoration:none;font-size:.7rem;background:rgba(201,168,76,.08);padding:2px 6px;border-radius:3px}
+    #contactShowingsContainer .agent-link:hover{background:rgba(201,168,76,.15)}
+    #contactShowingsContainer .btn-view-listing{display:inline-block;margin-top:6px;padding:4px 10px;background:transparent;color:#C9A84C;border:1px solid rgba(201,168,76,.4);border-radius:4px;font-size:.7rem;font-weight:500;text-decoration:none}
+    #contactShowingsContainer .btn-view-listing:hover{background:rgba(201,168,76,.1)}
+    #contactShowingsContainer .route-btn{display:block;text-align:center;margin-top:12px;padding:8px;background:rgba(201,168,76,.1);color:#C9A84C;border:1px solid rgba(201,168,76,.4);border-radius:6px;font-size:.78rem;font-weight:600;text-decoration:none}
+    #contactShowingsContainer .route-btn:hover{background:rgba(201,168,76,.18)}
+    #contactShowingsContainer .stops-empty{padding:20px;text-align:center;color:#666;font-size:.78rem;font-style:italic}
+    @media(max-width:600px){
+      #contactShowingsContainer .showing-row-header{grid-template-columns:20px 1fr;gap:8px}
+      #contactShowingsContainer .showing-row-actions{grid-column:1/-1;margin-top:8px;flex-wrap:wrap}
+      #contactShowingsContainer .stop-card{grid-template-columns:50px 1fr;gap:10px;padding:8px}
+      #contactShowingsContainer .stop-photo-link,#contactShowingsContainer .stop-photo-link img,#contactShowingsContainer .stop-photo-placeholder{width:50px;height:50px}
+    }
+  `;
+  document.head.appendChild(s);
+}
+
 async function loadContactShowings() {
   if (!contactId && !contactData?.email) return;
   var container = document.getElementById('contactShowingsContainer');
   var countEl = document.getElementById('showingsCount');
   if (!container) return;
+  _injectShowingsCss();
+
   var SB_S = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   var SK_S = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
 
   function escHtml(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  function statusColor(s){
-    if(s==='confirmed'||s==='in_progress')return'#22c55e';
-    if(s==='canceled'||s==='cancelled'||s==='no_show')return'#ef4444';
-    if(s==='completed')return'#3b82f6';
-    return'#C9A84C';
+  // Pacific Time formatters — matches the public itinerary's timezone so the
+  // admin and the lead see identical clocks, and DST is handled by Intl.
+  function fmtDateTime(iso){
+    if(!iso)return'';
+    try{return new Date(iso).toLocaleString('en-US',{timeZone:'America/Los_Angeles',weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});}
+    catch(e){return'';}
+  }
+  function fmtTime(iso){
+    if(!iso)return'';
+    try{
+      // arrival_time may be HH:MM (no date) or full ISO. Handle both.
+      if(typeof iso==='string'&&/^\d{2}:\d{2}/.test(iso)){
+        var parts=iso.slice(0,5).split(':'),h=Number(parts[0]),m=parts[1];
+        var ampm=h>=12?'PM':'AM',h12=h%12||12;
+        return h12+':'+m+' '+ampm;
+      }
+      return new Date(iso).toLocaleTimeString('en-US',{timeZone:'America/Los_Angeles',hour:'numeric',minute:'2-digit',hour12:true});
+    }catch(e){return'';}
+  }
+  function statusBadge(s){
+    var meta={
+      draft:{t:'DRAFT',c:'badge-draft'},sent:{t:'SENT',c:'badge-sent'},
+      confirmed:{t:'CONFIRMED',c:'badge-confirmed'},in_progress:{t:'IN PROGRESS',c:'badge-in-progress'},
+      completed:{t:'COMPLETED',c:'badge-completed'},
+      canceled:{t:'CANCELED',c:'badge-canceled'},cancelled:{t:'CANCELED',c:'badge-canceled'},
+      no_show:{t:'NO SHOW',c:'badge-canceled'}
+    }[s]||{t:String(s||'').toUpperCase(),c:'badge-default'};
+    return '<span class="status-badge '+meta.c+'">'+escHtml(meta.t)+'</span>';
+  }
+  function buildRouteUrl(stops){
+    var geo=stops.filter(function(s){return s.latitude&&s.longitude;});
+    if(!geo.length)return'';
+    if(geo.length===1)return 'https://www.google.com/maps/dir/?api=1&destination='+geo[0].latitude+','+geo[0].longitude+'&travelmode=driving';
+    var dest=geo[geo.length-1];
+    var wp=geo.slice(0,-1).map(function(s){return s.latitude+','+s.longitude;}).join('%7C');
+    return 'https://www.google.com/maps/dir/?api=1&destination='+dest.latitude+','+dest.longitude+'&waypoints='+wp+'&travelmode=driving';
+  }
+  function renderStopCard(stop, idx){
+    var photoUrl=stop.property_photo;
+    var listingUrl=stop.listing_url||(stop.mls_number?('https://beta.ratesandrealty.com/public/property-detail.html?id='+encodeURIComponent(stop.mls_number)):'');
+    var photoInner=photoUrl?'<img src="'+escHtml(photoUrl)+'" alt="" loading="lazy"/>':'<div class="stop-photo-placeholder">🏠</div>';
+    var photoWrap=listingUrl?'<a href="'+escHtml(listingUrl)+'" target="_blank" rel="noopener" class="stop-photo-link">'+photoInner+'</a>':photoInner;
+    var arrival=stop.arrival_time?fmtTime(stop.arrival_time):'';
+    var specs=[];
+    if(stop.property_beds!=null)specs.push(stop.property_beds+' bd');
+    if(stop.property_baths!=null)specs.push(stop.property_baths+' ba');
+    if(stop.property_sqft)specs.push(Number(stop.property_sqft).toLocaleString()+' sqft');
+    var specsLine=specs.join(' · ');
+
+    // Rating pill colors: green ≥4, gold =3, red ≤2
+    var ratingHtml='<span class="rating-empty">No rating</span>';
+    if(stop.lead_rating){
+      var stars='⭐'.repeat(stop.lead_rating);
+      var color=stop.lead_rating>=4?'#6ed47e':stop.lead_rating>=3?'#C9A84C':'#ff8888';
+      ratingHtml='<span class="rating-display" style="color:'+color+'">'+stars+' '+stop.lead_rating+'/5</span>';
+    }
+
+    var feedbackHtml;
+    if(stop.lead_feedback&&String(stop.lead_feedback).trim()){
+      feedbackHtml='<div class="stop-feedback-display">"'+escHtml(stop.lead_feedback)+'"</div>';
+    } else if(stop.lead_rating){
+      feedbackHtml='<div class="stop-feedback-empty">Rated but no comment left</div>';
+    } else {
+      feedbackHtml='<div class="stop-feedback-empty">No feedback yet</div>';
+    }
+
+    var agentDisclosure='';
+    if(stop.listing_agent_name||stop.listing_agent_phone){
+      var cleanPhone=stop.listing_agent_phone?String(stop.listing_agent_phone).replace(/[^0-9+]/g,''):'';
+      var subject=encodeURIComponent('Showing inquiry: '+(stop.property_address||''));
+      var actions='';
+      if(stop.listing_agent_phone)actions+='<a href="tel:'+escHtml(cleanPhone)+'" class="agent-link" title="Call">📞 '+escHtml(stop.listing_agent_phone)+'</a>';
+      if(stop.listing_agent_email)actions+='<a href="mailto:'+escHtml(stop.listing_agent_email)+'?subject='+subject+'" class="agent-link" title="Email">✉ Email</a>';
+      agentDisclosure='<details class="agent-disclosure">'
+        +'<summary>▸ Listing agent</summary>'
+        +'<div class="agent-content">'
+        +  '<div class="agent-name">'+escHtml(stop.listing_agent_name||'Unknown')
+        +    (stop.listing_agent_office?' · <span class="agent-office">'+escHtml(stop.listing_agent_office)+'</span>':'')
+        +  '</div>'
+        +  (actions?'<div class="agent-actions">'+actions+'</div>':'')
+        +'</div>'
+        +'</details>';
+    }
+
+    var addrText=escHtml(stop.property_address||'(no address)');
+    var addrBlock=listingUrl
+      ? '<a href="'+escHtml(listingUrl)+'" target="_blank" rel="noopener" class="stop-address-link"><div class="stop-address">'+addrText+'</div></a>'
+      : '<div class="stop-address">'+addrText+'</div>';
+
+    return '<div class="stop-card">'
+      + '<div class="stop-photo-col">'+photoWrap+'</div>'
+      + '<div class="stop-body">'
+      +   '<div class="stop-header-row">'
+      +     '<div class="stop-header-left">'
+      +       '<span class="stop-num">STOP '+(idx+1)+'</span>'
+      +       (arrival?'<span class="stop-arrival">'+escHtml(arrival)+'</span>':'')
+      +       (stop.mls_number?'<span class="stop-mls">MLS #'+escHtml(stop.mls_number)+'</span>':'')
+      +     '</div>'
+      +     '<div class="stop-header-right">'+ratingHtml+'</div>'
+      +   '</div>'
+      +   addrBlock
+      +   '<div class="stop-loc">'+escHtml([stop.property_city,stop.state,stop.zip].filter(Boolean).join(', '))+'</div>'
+      +   '<div class="stop-price-line">'
+      +     (stop.property_price?'<span class="stop-price">$'+Number(stop.property_price).toLocaleString()+'</span>':'')
+      +     (specsLine?'<span class="stop-specs">'+specsLine+'</span>':'')
+      +   '</div>'
+      +   feedbackHtml
+      +   agentDisclosure
+      +   (listingUrl?'<a href="'+escHtml(listingUrl)+'" target="_blank" rel="noopener" class="btn-view-listing">View listing →</a>':'')
+      + '</div>'
+      + '</div>';
   }
 
   try {
     if (!contactId) { container.innerHTML = '<div style="text-align:center;padding:40px;background:#1a1a1a;border:1px solid #222;border-radius:10px;color:#444"><div style="font-size:.85rem">Save contact to view tours.</div></div>'; return; }
-    var res = await fetch(SB_S+'/functions/v1/tours-admin', {
+
+    // Two parallel requests: tours-admin for batch summaries (status/views/
+    // share_token are already aggregated server-side), PostgREST for stops
+    // (gives us per-stop columns like lead_rating/lead_feedback that aren't
+    // in list_tours_for_contact). Two round-trips total, regardless of
+    // batch count.
+    var toursPromise = fetch(SB_S+'/functions/v1/tours-admin', {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+SK_S},
       body:JSON.stringify({action:'list_tours_for_contact',contact_id:contactId,limit:50})
+    }).then(function(r){return r.json();});
+
+    var stopsPromise = fetch(SB_S+'/rest/v1/showings'
+      + '?select=id,batch_id,sort_order,arrival_time,duration_minutes,'
+      + 'mls_number,listing_key,listing_url,property_address,property_city,state,zip,'
+      + 'property_price,property_beds,property_baths,property_sqft,property_photo,'
+      + 'latitude,longitude,'
+      + 'listing_agent_name,listing_agent_phone,listing_agent_email,listing_agent_office,'
+      + 'agent_notes_for_lead,lead_rating,lead_feedback,feedback_at,status'
+      + '&contact_id=eq.'+encodeURIComponent(contactId)
+      + '&deleted_at=is.null'
+      + '&order=sort_order.asc.nullslast', {
+      headers:{'apikey':SK_S,'Authorization':'Bearer '+SK_S}
+    }).then(function(r){return r.json();});
+
+    var results = await Promise.all([toursPromise, stopsPromise]);
+    var toursData = results[0], stopsData = results[1];
+
+    if (toursData && toursData.error) { container.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Tours error: '+escHtml(toursData.error)+'</div>'; return; }
+    var tours = (toursData && toursData.tours) || [];
+    var stopsByBatch = {};
+    (Array.isArray(stopsData)?stopsData:[]).forEach(function(s){
+      if(!stopsByBatch[s.batch_id])stopsByBatch[s.batch_id]=[];
+      stopsByBatch[s.batch_id].push(s);
     });
-    var data = await res.json();
-    if (data && data.error) { container.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Tours error: '+escHtml(data.error)+'</div>'; return; }
-    var tours = (data && data.tours) || [];
+
     if (countEl) countEl.textContent = tours.length+' tour'+(tours.length!==1?'s':'');
-    if (!tours.length) { container.innerHTML = '<div style="text-align:center;padding:40px;background:#1a1a1a;border:1px solid #222;border-radius:10px;color:#444"><i class="fas fa-home" style="font-size:2rem;display:block;margin-bottom:10px;color:#222"></i><div style="font-size:.85rem">No tours yet.</div><div style="font-size:.75rem;color:#333;margin-top:6px">Tour builder ships in next PR.</div></div>'; return; }
+    if (!tours.length) { container.innerHTML = '<div style="text-align:center;padding:40px;background:#1a1a1a;border:1px solid #222;border-radius:10px;color:#444"><i class="fas fa-home" style="font-size:2rem;display:block;margin-bottom:10px;color:#222"></i><div style="font-size:.85rem">No tours yet.</div><div style="font-size:.75rem;color:#333;margin-top:6px">Click "+ New Tour" above to get started.</div></div>'; return; }
 
     var TOUR_BASE = window.location.origin + '/tour/';
     container.innerHTML = tours.map(function(t) {
-      var ds = t.scheduled_start ? new Date(t.scheduled_start).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}) : 'Date TBD';
-      var ts = t.scheduled_start ? new Date(t.scheduled_start).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) : '';
-      var status = t.status || 'draft';
-      var color = statusColor(status);
-      var title = t.title || ((t.stop_count || 0) + ' home' + (t.stop_count === 1 ? '' : 's'));
+      var stops = (stopsByBatch[t.batch_id] || []).slice().sort(function(a,b){
+        return (a.sort_order||0) - (b.sort_order||0);
+      });
+      var ratings = stops.map(function(s){return s.lead_rating;}).filter(function(r){return r!=null && r>0;});
+      var avgRating = ratings.length ? (ratings.reduce(function(a,b){return a+b;},0)/ratings.length).toFixed(1) : null;
+      var avgColor = avgRating ? (avgRating>=4?'#6ed47e':avgRating>=3?'#C9A84C':'#ff8888') : '#888';
+      var dateStr = t.scheduled_start ? fmtDateTime(t.scheduled_start) : 'Not scheduled';
+      var titleLine = (t.title?escHtml(t.title)+' · ':'')
+        + stops.length + ' ' + (stops.length===1?'home':'homes')
+        + (t.view_count?' · 👁 '+t.view_count+' view'+(t.view_count===1?'':'s'):'');
       var publicUrl = t.share_token ? (TOUR_BASE + t.share_token) : '';
-      return '<div data-tour-batch="'+escHtml(t.batch_id||'')+'" style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;transition:border-color .15s" onmouseenter="this.style.borderColor=\'#C9A84C\'" onmouseleave="this.style.borderColor=\'#1e1e1e\'">'
-        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px">'
-        + '<div style="font-size:.85rem;color:#eee;font-weight:600">📅 '+escHtml(ds)+(ts?' · '+escHtml(ts):'')+'</div>'
-        + '<span style="background:'+color+'18;color:'+color+';padding:2px 9px;border-radius:10px;font-size:.68rem;font-weight:700;text-transform:uppercase">'+escHtml(status)+'</span>'
+      var stopsHtml = stops.length
+        ? stops.map(renderStopCard).join('')
+        : '<div class="stops-empty">No stops yet. Click Edit tour to add homes.</div>';
+      var routeUrl = buildRouteUrl(stops);
+      var routeBtn = (stops.length && routeUrl)
+        ? '<a class="route-btn" href="'+escHtml(routeUrl)+'" target="_blank" rel="noopener">🗺 Open route in Google Maps</a>'
+        : '';
+      return '<div class="showing-row" data-batch-id="'+escHtml(t.batch_id||'')+'">'
+        + '<div class="showing-row-header" data-act="toggle-expand">'
+        +   '<span class="expand-chevron">▸</span>'
+        +   '<div class="showing-row-main">'
+        +     '<div class="showing-row-line1">'
+        +       '<span class="showing-date">📅 '+escHtml(dateStr)+'</span>'
+        +       statusBadge(t.status||'draft')
+        +       (avgRating?'<span class="rating-pill" style="color:'+avgColor+';border-color:'+avgColor+'66;background:'+avgColor+'1a">⭐ '+avgRating+'</span>':'')
+        +     '</div>'
+        +     '<div class="showing-row-line2">'+titleLine+'</div>'
+        +   '</div>'
+        +   '<div class="showing-row-actions">'
+        +     '<button type="button" class="row-btn" data-act="edit-tour"><i class="fas fa-pen"></i> Edit tour</button>'
+        +     (publicUrl?'<a class="row-btn" data-act="public-itinerary" href="'+escHtml(publicUrl)+'" target="_blank" rel="noopener">🔗 Public itinerary</a>':'')
+        +   '</div>'
         + '</div>'
-        + '<div style="font-size:.78rem;color:#aaa;margin-bottom:10px">'+escHtml(title)+(t.confirmed_stops?' · <span style="color:#22c55e">'+t.confirmed_stops+' confirmed</span>':'')+(t.view_count?' · 👁 '+t.view_count+' view'+(t.view_count!==1?'s':''):'')+'</div>'
-        + '<div style="display:flex;gap:6px;flex-wrap:wrap" data-tour-actions>'
-        + '<button data-tour-edit style="display:inline-flex;align-items:center;gap:4px;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;padding:5px 10px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit"><i class="fas fa-pen"></i> Edit tour</button>'
-        + (publicUrl ? '<a href="'+escHtml(publicUrl)+'" target="_blank" style="display:inline-flex;align-items:center;gap:4px;background:rgba(95,168,224,.12);border:1px solid rgba(95,168,224,.3);color:#5fa8e0;text-decoration:none;border-radius:6px;padding:5px 10px;font-size:.72rem;font-weight:600">🔗 Public itinerary</a>' : '')
+        + '<div class="showing-row-expanded" hidden>'
+        +   '<div class="stops-list">'+stopsHtml+'</div>'
+        +   routeBtn
         + '</div>'
         + '</div>';
     }).join('');
-    // Wire: clicking the card or "Edit tour" opens the builder for that batch
-    container.querySelectorAll('[data-tour-batch]').forEach(function(card){
-      card.addEventListener('click', function(e){
-        if (e.target.closest('a')) return;
-        var bid = card.getAttribute('data-tour-batch');
-        if (typeof openTourBuilder === 'function' && bid) {
-          openTourBuilder({ batch_id: bid, onClose: loadContactShowings });
+
+    // Delegated click handler. Action buttons (`data-act` other than
+    // toggle-expand) bypass the expand toggle. Anchor clicks bubble
+    // naturally to open in a new tab.
+    if (!container._showingsClickWired) {
+      container._showingsClickWired = true;
+      container.addEventListener('click', function(e){
+        var editBtn = e.target.closest('[data-act=edit-tour]');
+        if (editBtn) {
+          e.stopPropagation();
+          var bid = editBtn.closest('[data-batch-id]').getAttribute('data-batch-id');
+          if (typeof openTourBuilder === 'function' && bid) {
+            openTourBuilder({ batch_id: bid, onClose: loadContactShowings });
+          }
+          return;
         }
+        // Public itinerary anchor — let the default handle (target=_blank).
+        if (e.target.closest('[data-act=public-itinerary]')) return;
+        // Toggle expand on header click.
+        var header = e.target.closest('[data-act=toggle-expand]');
+        if (!header) return;
+        // Don't toggle if click landed on something inside an action button.
+        if (e.target.closest('.showing-row-actions')) return;
+        var row = header.closest('.showing-row');
+        var expanded = row.querySelector('.showing-row-expanded');
+        var chevron = row.querySelector('.expand-chevron');
+        var isOpen = !expanded.hidden;
+        expanded.hidden = isOpen;
+        if (chevron) chevron.textContent = isOpen ? '▸' : '▾';
+        row.classList.toggle('open', !isOpen);
       });
-    });
+    }
   } catch(e) {
     container.innerHTML = '<div style="color:#e55;padding:20px;font-size:.82rem">Error: '+escHtml(e.message)+'</div>';
   }
