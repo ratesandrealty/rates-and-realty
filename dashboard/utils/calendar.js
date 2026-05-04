@@ -420,6 +420,49 @@
     }
   }
 
+  // ── Sync to Google ──────────────────────────────────────────────
+  // The new POST /event auto-syncs to Google, but pre-existing CRM
+  // appointments (created via Cal.com webhooks, the old appointment
+  // modal, or direct DB inserts) lack a google_event_id and never made
+  // it to Google. The deployed google-calendar-sync function's
+  // {action:"sync_all"} mode backfills future-dated unsynced rows.
+  // Note: this currently covers appointments only. Tour batches are
+  // merged into the GET response but don't push to Google — that's a
+  // backend follow-up (showing_batches has no google_event_id column).
+  async function syncToGoogle() {
+    var btn = document.querySelector('[data-action=cal-sync-google]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+    try {
+      var token = await getAuthToken();
+      var res = await fetch(SUPABASE_URL + '/functions/v1/google-calendar-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'apikey': ANON_KEY },
+        body: JSON.stringify({ action: 'sync_all' })
+      });
+      var body = await res.json();
+      if (!res.ok || body.error) {
+        var msg = body.error || ('HTTP ' + res.status);
+        alert('Sync failed: ' + msg);
+        return;
+      }
+      var synced = body.synced || 0;
+      var failed = body.failed || 0;
+      var total = body.total || 0;
+      var summary;
+      if (total === 0) summary = 'All appointments are already synced to Google ✓';
+      else if (failed === 0) summary = 'Synced ' + synced + ' appointment' + (synced === 1 ? '' : 's') + ' to Google';
+      else summary = 'Synced ' + synced + ', ' + failed + ' failed' + (body.errors && body.errors.length ? '\n\n' + body.errors.slice(0, 3).join('\n') : '');
+      alert(summary);
+      // Refresh so any newly-synced events appear under their Google source
+      // (and any duplicates the server now dedupes get collapsed).
+      await refresh();
+    } catch (e) {
+      alert('Sync failed: ' + (e.message || 'unknown'));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Sync to Google'; }
+    }
+  }
+
   // ── Refresh / view dispatcher ────────────────────────────────────
   async function refresh() {
     var main = document.querySelector('[data-target=cal-main]');
@@ -459,6 +502,8 @@
     if (newBtn) newBtn.addEventListener('click', openNewEventModal);
     var saveBtn = document.querySelector('[data-action=cal-save-event]');
     if (saveBtn) saveBtn.addEventListener('click', saveNewEvent);
+    var syncBtn = document.querySelector('[data-action=cal-sync-google]');
+    if (syncBtn) syncBtn.addEventListener('click', syncToGoogle);
     [].slice.call(document.querySelectorAll('[data-action=cal-modal-close]')).forEach(function (b) {
       b.addEventListener('click', function () {
         document.querySelector('[data-target=cal-event-modal]').hidden = true;
