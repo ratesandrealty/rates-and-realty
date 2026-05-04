@@ -33,8 +33,9 @@
       stops: [],                   // array of stops
       contact: null,               // resolved contact for summary
       activeTab: 'setup',
-      saveTimers: {},              // field -> debounce timer id
+      saveTimers: {},              // key -> {timer, fn} so flushPendingSaves can fire pending debounces
       pendingSaves: 0,             // count of in-flight saves for indicator
+      inflightSaves: null,         // Set of in-flight save promises — built lazily so flush can await them
       lastSavedAt: null,
       mlsPreviewProperty: null,    // pending MLS lookup result
       isClosing: false,
@@ -173,9 +174,58 @@
     return '';
   }
 
+  // Save-tracking machinery. Two layers:
+  //   1) saveTimers — debounced fns waiting to fire (haven't started yet)
+  //   2) inflightSaves — Set of promises that have started api() but not resolved
+  // flushPendingSaves() drains BOTH layers before any close/navigate so the
+  // user never sees a "field still saving" race when clicking Send or
+  // Save&close. The old confirm() prompt that fired in close() is gone —
+  // the flush is silent and awaited by callers that care.
   function debounce(key, fn, ms) {
-    if (state.saveTimers[key]) clearTimeout(state.saveTimers[key]);
-    state.saveTimers[key] = setTimeout(fn, ms || 600);
+    if (state.saveTimers[key]) clearTimeout(state.saveTimers[key].timer);
+    var entry = { fn: fn, timer: 0 };
+    entry.timer = setTimeout(function () {
+      // Pop ourselves from the registry the moment we fire, so flush
+      // doesn't double-fire us if it runs while the api call is in flight.
+      if (state && state.saveTimers && state.saveTimers[key] === entry) {
+        delete state.saveTimers[key];
+      }
+      try { fn(); } catch (e) { /* swallow — fn is a save closure */ }
+    }, ms || 600);
+    state.saveTimers[key] = entry;
+  }
+
+  // Wrap a save promise so flushPendingSaves can await it. Caller passes
+  // the promise returned by api(...). Returns the same promise unchanged
+  // so chained .then/.catch still work.
+  function trackSave(p) {
+    if (!state) return p;
+    if (!state.inflightSaves) state.inflightSaves = new Set();
+    state.inflightSaves.add(p);
+    var clear = function () {
+      if (state && state.inflightSaves) state.inflightSaves.delete(p);
+    };
+    p.then(clear, clear);
+    return p;
+  }
+
+  // Flush every pending save: fire any debounced fns immediately, then await
+  // the resulting in-flight promises. Safe to call when there are no pending
+  // saves (resolves immediately).
+  function flushPendingSaves() {
+    if (!state) return Promise.resolve();
+    // Fire pending debounce fns synchronously — each typically calls
+    // startSave() + api(...).then(endSave), populating inflightSaves.
+    var keys = Object.keys(state.saveTimers || {});
+    keys.forEach(function (k) {
+      var entry = state.saveTimers[k];
+      if (!entry) return;
+      clearTimeout(entry.timer);
+      delete state.saveTimers[k];
+      try { entry.fn(); } catch (e) { /* ignore */ }
+    });
+    if (!state.inflightSaves || state.inflightSaves.size === 0) return Promise.resolve();
+    return Promise.allSettled(Array.from(state.inflightSaves));
   }
 
   function setSaveIndicator(text, kind) {
@@ -689,14 +739,20 @@
   }
 
   // -------- Builder modal: open + close ------------------------------------
+  // close() is sync and never prompts — it just tears down. Callers that
+  // need to wait for in-flight saves should `await flushPendingSaves()`
+  // BEFORE calling close(). The old confirm() that asked the user about
+  // discarding in-flight changes is gone (PR fix).
   function close(skipDirtyCheck) {
     if (!state || state.isClosing) return;
-    if (!skipDirtyCheck && hasPendingSave()) {
-      if (!confirm('A field is still saving. Close anyway and discard the in-flight change?')) return;
-    }
     state.isClosing = true;
-    // Flush any debounced saves before tearing down state.
-    Object.keys(state.saveTimers || {}).forEach(function (k) { clearTimeout(state.saveTimers[k]); });
+    // Cancel any debounce timers. Anything important should have been
+    // flushed by the caller; canceling here is the last-resort cleanup
+    // to avoid setTimeouts firing into a torn-down state.
+    Object.keys(state.saveTimers || {}).forEach(function (k) {
+      var entry = state.saveTimers[k];
+      if (entry && entry.timer) clearTimeout(entry.timer);
+    });
     // Tear down map references so a reopen doesn't reuse a stale Map instance
     // pointing at a removed DOM node.
     if (state.searchMarkers) {
@@ -728,10 +784,23 @@
     }
   }
 
-  function hasPendingSave() {
-    if (!state) return false;
-    if (state.pendingSaves > 0) return true;
-    return Object.keys(state.saveTimers || {}).length > 0;
+  // Block accidental tab close / refresh / external navigation if a save
+  // is mid-flight or debounced. Stays installed for the lifetime of the
+  // page (idempotent install via _tbBeforeUnloadWired flag).
+  if (typeof window !== 'undefined' && !window._tbBeforeUnloadWired) {
+    window._tbBeforeUnloadWired = true;
+    window.addEventListener('beforeunload', function (e) {
+      if (!state) return;
+      var debounced = state.saveTimers && Object.keys(state.saveTimers).length > 0;
+      var inflight = state.inflightSaves && state.inflightSaves.size > 0;
+      if (debounced || inflight) {
+        // Browsers ignore custom strings now, but setting returnValue
+        // still triggers the native "Leave site?" prompt.
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    });
   }
 
   function onEscapeKey(e) {
@@ -1021,13 +1090,14 @@
       var payload = { batch_id: state.tour.id };
       payload[field] = value;
       startSave();
-      api('update_tour', payload).then(function (d) {
+      var p = api('update_tour', payload).then(function (d) {
         if (d && d.error) { endSave(d.error); return; }
         if (d && d.tour) state.tour = Object.assign(state.tour, d.tour);
         else state.tour[field] = value;
         endSave();
         if (field === 'title') refreshHead();
       }).catch(function (e) { endSave(e.message || 'Failed'); });
+      trackSave(p);
     });
   }
 
@@ -2377,13 +2447,14 @@
       startSave();
       var payload = { batch_id: state.tour.id, showing_id: stopId };
       payload[field] = value;
-      api('update_stop', payload).then(function (d) {
+      var p = api('update_stop', payload).then(function (d) {
         if (d && d.error) { endSave(d.error); return; }
         // Update local stop
         var s = state.stops.find(function (x) { return x.id === stopId; });
         if (s) s[field] = value;
         endSave();
       }).catch(function (e) { endSave(e.message || 'Failed'); });
+      trackSave(p);
     });
   }
 
@@ -2663,7 +2734,19 @@
         saveTourField(key, el.checked);
       });
     });
-    root.querySelector('[data-act=save-draft]').addEventListener('click', function () { close(); });
+    root.querySelector('[data-act=save-draft]').addEventListener('click', function () {
+      var saveBtn = this;
+      saveBtn.disabled = true;
+      var origText = saveBtn.textContent;
+      saveBtn.textContent = 'Saving…';
+      // Wait for any debounced/in-flight saves to settle before tearing
+      // down so the user's last edits actually persist.
+      flushPendingSaves().then(function () { close(); }, function () {
+        saveBtn.disabled = false;
+        saveBtn.textContent = origText;
+        showToast('Save failed — try again', 'error');
+      });
+    });
     root.querySelector('[data-act=send-now]').addEventListener('click', sendTourNow);
     validateSend();
   }
@@ -2723,11 +2806,18 @@
     var origText = btn.textContent;
     btn.textContent = 'Sending…';
 
-    api('update_tour', {
-      batch_id: state.tour.id,
-      reminder_day_before_enabled: rDay,
-      reminder_morning_of_enabled: rMorn,
-      reminder_post_tour_enabled: rPost,
+    // Flush any in-flight or debounced saves BEFORE the send. This is what
+    // killed the "field still saving" race — the typed-then-clicked-Send
+    // sequence would previously trigger a confirm() in close(). Now we
+    // silently wait for those saves so the email/SMS fires with the most
+    // recent persisted state (e.g. the latest title or notes_for_lead).
+    flushPendingSaves().then(function () {
+      return api('update_tour', {
+        batch_id: state.tour.id,
+        reminder_day_before_enabled: rDay,
+        reminder_morning_of_enabled: rMorn,
+        reminder_post_tour_enabled: rPost,
+      });
     }).then(function () {
       return api('send_to_lead', { batch_id: state.tour.id, channels: channels });
     }).then(function (r) {
