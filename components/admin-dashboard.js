@@ -946,46 +946,28 @@ async function crmBulkApply(perTaskFn) {
   renderAllTasksTable(allTasks);
 }
 
-async function crmBulkSetDueDate() {
-  const date = prompt(`Set due date for ${crmSelectedIds.size} task(s) (YYYY-MM-DD), or leave blank to clear:`);
-  if (date === null) return;
-  let dueValue = null;
-  if (date.trim()) {
-    const d = new Date(date.trim() + "T09:00:00");
-    if (isNaN(d.getTime())) { alert("Invalid date — use YYYY-MM-DD"); return; }
-    dueValue = d.toISOString();
-  }
-  await crmBulkApply((tid) => updateTask(tid, { due_date: dueValue }));
+function crmBulkSetDueDate() {
+  if (!window.__rrPickers) { console.error("[cm-bulk] picker module not loaded"); return; }
+  const trigger = document.querySelector('[data-subpanel="crm"] [data-action="cm-bulk-due"]');
+  window.__rrPickers.due(trigger, crmSelectedIds.size, (isoDate) => {
+    crmBulkApply((tid) => updateTask(tid, { due_date: isoDate }));
+  });
 }
 
-async function crmBulkSetPriority() {
-  const choice = prompt(`Set priority for ${crmSelectedIds.size} task(s): urgent / high / normal / low / none`);
-  if (!choice) return;
-  const v = String(choice).trim().toLowerCase();
-  if (!["urgent","high","normal","low","none"].includes(v)) { alert("Invalid priority"); return; }
-  const p = v === "none" ? null : v;
-  await crmBulkApply((tid) => updateTask(tid, { priority: p }));
+function crmBulkSetPriority() {
+  if (!window.__rrPickers) { console.error("[cm-bulk] picker module not loaded"); return; }
+  const trigger = document.querySelector('[data-subpanel="crm"] [data-action="cm-bulk-priority"]');
+  window.__rrPickers.priority(trigger, crmSelectedIds.size, (priority) => {
+    crmBulkApply((tid) => updateTask(tid, { priority }));
+  });
 }
 
-async function crmBulkAssignContact() {
-  let contacts;
-  try {
-    const { supabase } = await import("/api/supabase-client.js");
-    const { data, error } = await supabase
-      .from("contacts")
-      .select("id, first_name, last_name")
-      .order("first_name")
-      .limit(500);
-    if (error) throw error;
-    contacts = data || [];
-  } catch (e) { alert("Could not load contacts: " + (e.message || "unknown")); return; }
-  const lines = contacts.map((c, i) => `${i + 1}. ${(c.first_name || "")} ${(c.last_name || "")}`.trim()).join("\n");
-  const idx = prompt(`Assign ${crmSelectedIds.size} task(s) to which lead?\n0 = unlink (no lead)\n${lines}\n\nEnter number:`);
-  if (idx === null) return;
-  const n = parseInt(idx, 10);
-  if (isNaN(n) || n < 0 || n > contacts.length) { alert("Invalid choice"); return; }
-  const cid = n === 0 ? null : contacts[n - 1].id;
-  await crmBulkApply((tid) => updateTask(tid, { contact_id: cid, related_id: cid }));
+function crmBulkAssignContact() {
+  if (!window.__rrPickers) { console.error("[cm-bulk] picker module not loaded"); return; }
+  const trigger = document.querySelector('[data-subpanel="crm"] [data-action="cm-bulk-contact"]');
+  window.__rrPickers.lead(trigger, crmSelectedIds.size, (cid) => {
+    crmBulkApply((tid) => updateTask(tid, { contact_id: cid, related_id: cid }));
+  });
 }
 
 async function crmBulkComplete() {

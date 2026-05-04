@@ -787,22 +787,22 @@
   }
   .ct-section-header .ct-select-all { margin-right: 4px; }
 
-  /* ── Bulk action bar (sticky bottom of subpanel) ── */
+  /* ── Bulk action bar (sticky top of view container) ── */
   .ct-bulk-bar {
-    position: sticky; bottom: 16px;
-    margin: 16px auto 0; max-width: 900px;
+    position: sticky; top: 8px;
+    margin: 0 0 12px; max-width: none;
     background: #1a1a1a;
     border: 1px solid #C9A84C;
     border-radius: 12px;
     padding: 12px 16px;
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(201,168,76,0.2);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(201,168,76,0.2);
     z-index: 50;
     animation: bulk-slide-in 0.2s ease;
   }
   .ct-bulk-bar[hidden] { display: none; }
   @keyframes bulk-slide-in {
-    from { transform: translateY(20px); opacity: 0; }
+    from { transform: translateY(-12px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
   }
   .ct-bulk-count-block { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #ddd; font-weight: 500; }
@@ -824,9 +824,86 @@
   .btn-bulk:hover { border-color: #C9A84C; color: #C9A84C; }
   .btn-bulk-danger:hover { border-color: #ff5555; color: #ff5555; }
   @media (max-width: 720px) {
-    .ct-bulk-bar { position: fixed; bottom: 8px; left: 8px; right: 8px; margin: 0; max-width: none; }
+    .ct-bulk-bar { position: sticky; top: 4px; margin: 0 0 8px; }
     .ct-bulk-actions { width: 100%; margin-left: 0; }
     .btn-bulk { flex: 1; justify-content: center; }
+  }
+
+  /* ── Bulk-edit picker popovers (priority / due-date / lead) ── */
+  .bulk-picker {
+    position: fixed;
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.8), 0 0 0 1px rgba(201,168,76,0.15);
+    min-width: 220px; max-width: 320px;
+    z-index: 1000;
+    padding: 8px;
+    animation: bp-pop 0.15s ease;
+  }
+  .bulk-picker[hidden] { display: none; }
+  .bulk-picker-wide { min-width: 280px; }
+  @keyframes bp-pop {
+    from { transform: translateY(-6px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .bulk-picker-header {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: #888; font-weight: 600;
+    padding: 6px 10px 10px;
+    border-bottom: 1px solid #1a1a1a;
+    margin-bottom: 6px;
+  }
+  .bulk-picker-header span { color: #C9A84C; font-weight: 700; }
+  .bulk-picker-options { display: flex; flex-direction: column; gap: 1px; }
+  .bulk-picker-option {
+    background: transparent; border: none; color: #ddd;
+    padding: 9px 12px; font-size: 13px; cursor: pointer;
+    text-align: left; border-radius: 6px;
+    display: flex; align-items: center; gap: 10px;
+    font-family: inherit; transition: background 0.1s;
+    width: 100%;
+  }
+  .bulk-picker-option:hover { background: rgba(201,168,76,0.08); color: #fff; }
+  .bp-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .bulk-picker-divider { height: 1px; background: #1a1a1a; margin: 4px 0; }
+  .bulk-picker-quick {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px;
+  }
+  .bulk-quick-chip {
+    background: #0a0a0a; border: 1px solid #2a2a2a; color: #ddd;
+    padding: 8px; font-size: 12px; border-radius: 6px;
+    cursor: pointer; font-weight: 500; transition: all 0.1s;
+    font-family: inherit;
+  }
+  .bulk-quick-chip:hover { border-color: #C9A84C; color: #C9A84C; }
+  .bulk-picker-custom {
+    display: flex; gap: 6px; align-items: center;
+    padding: 8px; flex-wrap: wrap;
+  }
+  .bulk-picker-custom label {
+    font-size: 11px; color: #888;
+    text-transform: uppercase; letter-spacing: 0.5px; width: 100%;
+  }
+  .bulk-picker-custom input[type="date"] {
+    background: #0a0a0a; border: 1px solid #2a2a2a; color: #ddd;
+    padding: 6px 8px; border-radius: 5px; font-size: 12px;
+    flex: 1; color-scheme: dark;
+  }
+  .bulk-picker-search {
+    width: calc(100% - 16px);
+    margin: 0 8px 8px;
+    background: #0a0a0a; border: 1px solid #2a2a2a; color: #ddd;
+    padding: 7px 10px; border-radius: 6px;
+    font-size: 12px; font-family: inherit;
+  }
+  .bulk-picker-search:focus { outline: none; border-color: #C9A84C; }
+  .bulk-picker-list { max-height: 260px; overflow-y: auto; }
+  @media (max-width: 720px) {
+    .bulk-picker {
+      left: 8px !important; right: 8px;
+      max-width: none; min-width: auto;
+    }
   }
 
   /* ── Board view ── */
@@ -1442,6 +1519,20 @@
               </div>
             </div>
           </div>
+          <div class="ct-bulk-bar" data-target="cm-bulk-bar" hidden>
+            <div class="ct-bulk-count-block">
+              <span class="ct-bulk-count" data-target="cm-bulk-count">0</span> selected
+              <button class="btn-link-sm" data-action="cm-bulk-clear">Clear</button>
+            </div>
+            <div class="ct-bulk-actions">
+              <button class="btn-bulk" data-action="cm-bulk-due">📅 Set due date</button>
+              <button class="btn-bulk" data-action="cm-bulk-priority">🚩 Set priority</button>
+              <button class="btn-bulk" data-action="cm-bulk-contact">👤 Assign to lead</button>
+              <button class="btn-bulk" data-action="cm-bulk-complete">✓ Mark complete</button>
+              <button class="btn-bulk" data-action="cm-bulk-reopen">↻ Reopen</button>
+              <button class="btn-bulk btn-bulk-danger" data-action="cm-bulk-delete">🗑 Delete</button>
+            </div>
+          </div>
           <div class="ct-view-container" data-target="cm-view-container" data-view="list">
             <div data-target="cm-list" data-view-pane="list">
               <div class="panel" style="padding:0;overflow:hidden;">
@@ -1467,20 +1558,6 @@
             </div>
             <div class="ct-board" data-target="cm-board" data-view-pane="board"></div>
             <div class="ct-calendar" data-target="cm-calendar" data-view-pane="calendar"></div>
-          </div>
-          <div class="ct-bulk-bar" data-target="cm-bulk-bar" hidden>
-            <div class="ct-bulk-count-block">
-              <span class="ct-bulk-count" data-target="cm-bulk-count">0</span> selected
-              <button class="btn-link-sm" data-action="cm-bulk-clear">Clear</button>
-            </div>
-            <div class="ct-bulk-actions">
-              <button class="btn-bulk" data-action="cm-bulk-due">📅 Set due date</button>
-              <button class="btn-bulk" data-action="cm-bulk-priority">🚩 Set priority</button>
-              <button class="btn-bulk" data-action="cm-bulk-contact">👤 Assign to lead</button>
-              <button class="btn-bulk" data-action="cm-bulk-complete">✓ Mark complete</button>
-              <button class="btn-bulk" data-action="cm-bulk-reopen">↻ Reopen</button>
-              <button class="btn-bulk btn-bulk-danger" data-action="cm-bulk-delete">🗑 Delete</button>
-            </div>
           </div>
         </div>
 
@@ -1533,13 +1610,6 @@
               </div>
             </div>
           </div>
-          <div class="ct-view-container" data-target="ct-view-container" data-view="list">
-            <div class="ct-list" data-target="ct-list" data-view-pane="list">
-              <div class="loading-state">Loading…</div>
-            </div>
-            <div class="ct-board" data-target="ct-board" data-view-pane="board"></div>
-            <div class="ct-calendar" data-target="ct-calendar" data-view-pane="calendar"></div>
-          </div>
           <div class="ct-bulk-bar" data-target="ct-bulk-bar" hidden>
             <div class="ct-bulk-count-block">
               <span class="ct-bulk-count" data-target="ct-bulk-count">0</span> selected
@@ -1553,6 +1623,13 @@
               <button class="btn-bulk" data-action="ct-bulk-reopen">↻ Reopen</button>
               <button class="btn-bulk btn-bulk-danger" data-action="ct-bulk-delete">🗑 Delete</button>
             </div>
+          </div>
+          <div class="ct-view-container" data-target="ct-view-container" data-view="list">
+            <div class="ct-list" data-target="ct-list" data-view-pane="list">
+              <div class="loading-state">Loading…</div>
+            </div>
+            <div class="ct-board" data-target="ct-board" data-view-pane="board"></div>
+            <div class="ct-calendar" data-target="ct-calendar" data-view-pane="calendar"></div>
           </div>
         </div>
 
@@ -2167,11 +2244,11 @@
   </div>
 
   <script type="module" src="/components/layout.js?v=20260331"></script>
-  <script type="module" src="/components/admin-dashboard.js?v=20260504e"></script>
+  <script type="module" src="/components/admin-dashboard.js?v=20260504f"></script>
   <script src="/dashboard/utils/insights.js?v=2026050402"></script>
   <script src="/dashboard/utils/calendar.js?v=2026050403"></script>
   <script src="/dashboard/utils/clickup-widget.js?v=2026050401"></script>
-  <script src="/dashboard/utils/clickup-tasks.js?v=2026050405"></script>
+  <script src="/dashboard/utils/clickup-tasks.js?v=2026050406"></script>
   <script type="module">
     import { supabase } from "/api/supabase-client.js";
 
@@ -4090,6 +4167,207 @@ document.addEventListener('DOMContentLoaded', function() {
   } else {
     init();
   }
+})();
+</script>
+
+<!-- ── Bulk-edit picker popovers (shared between CRM + ClickUp Tasks) ── -->
+<div class="bulk-picker" data-target="bulk-priority-picker" hidden>
+  <div class="bulk-picker-header">Set priority for <span data-field="bp-count">0</span> tasks</div>
+  <div class="bulk-picker-options">
+    <button class="bulk-picker-option" data-pri="urgent"><span class="bp-dot" style="background:#ff5555"></span>Urgent</button>
+    <button class="bulk-picker-option" data-pri="high"><span class="bp-dot" style="background:#ff9933"></span>High</button>
+    <button class="bulk-picker-option" data-pri="normal"><span class="bp-dot" style="background:#a78bfa"></span>Normal</button>
+    <button class="bulk-picker-option" data-pri="low"><span class="bp-dot" style="background:#666"></span>Low</button>
+    <div class="bulk-picker-divider"></div>
+    <button class="bulk-picker-option" data-pri="none"><span class="bp-dot" style="background:transparent;border:1px solid #555"></span>Clear priority</button>
+  </div>
+</div>
+
+<div class="bulk-picker" data-target="bulk-due-picker" hidden>
+  <div class="bulk-picker-header">Set due date for <span data-field="bd-count">0</span> tasks</div>
+  <div class="bulk-picker-quick">
+    <button class="bulk-quick-chip" data-due-offset="0">Today</button>
+    <button class="bulk-quick-chip" data-due-offset="1">Tomorrow</button>
+    <button class="bulk-quick-chip" data-due-offset="3">+3 days</button>
+    <button class="bulk-quick-chip" data-due-offset="7">+1 week</button>
+    <button class="bulk-quick-chip" data-due-offset="14">+2 weeks</button>
+  </div>
+  <div class="bulk-picker-custom">
+    <label>Or pick a date:</label>
+    <input type="date" data-field="bd-custom" />
+    <button class="btn-primary btn-sm" data-action="bd-apply">Apply</button>
+  </div>
+  <div class="bulk-picker-divider"></div>
+  <div class="bulk-picker-options">
+    <button class="bulk-picker-option" data-due-offset="clear"><span class="bp-dot" style="background:transparent;border:1px solid #555"></span>Clear due date</button>
+  </div>
+</div>
+
+<div class="bulk-picker bulk-picker-wide" data-target="bulk-lead-picker" hidden>
+  <div class="bulk-picker-header">Assign <span data-field="bl-count">0</span> tasks to lead</div>
+  <input type="search" class="bulk-picker-search" data-field="bl-search" placeholder="Search leads…" />
+  <div class="bulk-picker-list" data-target="bl-list">
+    <div style="padding:12px;color:#888;font-size:12px;">Loading leads…</div>
+  </div>
+</div>
+
+<script>
+/**
+ * Shared picker module exposed on window.__rrPickers.
+ * Usage from each tasks module:
+ *   __rrPickers.priority(triggerEl, count, (priority) => { ... })
+ *   __rrPickers.due(triggerEl, count, (isoDateOrNull) => { ... })
+ *   __rrPickers.lead(triggerEl, count, (contactIdOrNull) => { ... })
+ *
+ * onChoose is called with the chosen value AFTER the popover closes — the
+ * caller is responsible for the actual API write.
+ */
+(function () {
+  'use strict';
+  var supabaseUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anonKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function closeAll() {
+    Array.prototype.forEach.call(document.querySelectorAll('.bulk-picker:not([hidden])'), function (p) {
+      p.hidden = true;
+    });
+  }
+
+  function position(picker, trigger) {
+    if (!picker || !trigger) return;
+    var rect = trigger.getBoundingClientRect();
+    picker.style.top = (rect.bottom + 6) + 'px';
+    picker.style.left = rect.left + 'px';
+    requestAnimationFrame(function () {
+      var pr = picker.getBoundingClientRect();
+      if (pr.right > window.innerWidth - 8) {
+        picker.style.left = Math.max(8, rect.right - pr.width) + 'px';
+      }
+      if (pr.bottom > window.innerHeight - 8) {
+        picker.style.top = (rect.top - pr.height - 6) + 'px';
+      }
+    });
+  }
+
+  function priority(trigger, count, onChoose) {
+    closeAll();
+    var picker = document.querySelector('[data-target=bulk-priority-picker]');
+    if (!picker) return;
+    picker.querySelector('[data-field=bp-count]').textContent = String(count);
+    position(picker, trigger);
+    picker.hidden = false;
+    Array.prototype.forEach.call(picker.querySelectorAll('[data-pri]'), function (opt) {
+      opt.onclick = function () {
+        var v = opt.dataset.pri;
+        var p = v === 'none' ? null : v;
+        picker.hidden = true;
+        onChoose(p);
+      };
+    });
+  }
+
+  function due(trigger, count, onChoose) {
+    closeAll();
+    var picker = document.querySelector('[data-target=bulk-due-picker]');
+    if (!picker) return;
+    picker.querySelector('[data-field=bd-count]').textContent = String(count);
+    position(picker, trigger);
+    picker.hidden = false;
+    var customInput = picker.querySelector('[data-field=bd-custom]');
+    if (customInput) customInput.value = '';
+    Array.prototype.forEach.call(picker.querySelectorAll('[data-due-offset]'), function (btn) {
+      btn.onclick = function () {
+        var off = btn.dataset.dueOffset;
+        picker.hidden = true;
+        if (off === 'clear') { onChoose(null); return; }
+        var d = new Date();
+        d.setDate(d.getDate() + parseInt(off, 10));
+        d.setHours(17, 0, 0, 0);
+        onChoose(d.toISOString());
+      };
+    });
+    picker.querySelector('[data-action=bd-apply]').onclick = function () {
+      var v = customInput.value;
+      if (!v) return;
+      var d = new Date(v + 'T17:00:00');
+      if (isNaN(d.getTime())) return;
+      picker.hidden = true;
+      onChoose(d.toISOString());
+    };
+  }
+
+  async function lead(trigger, count, onChoose) {
+    closeAll();
+    var picker = document.querySelector('[data-target=bulk-lead-picker]');
+    if (!picker) return;
+    picker.querySelector('[data-field=bl-count]').textContent = String(count);
+    position(picker, trigger);
+    picker.hidden = false;
+    var listEl = picker.querySelector('[data-target=bl-list]');
+    var search = picker.querySelector('[data-field=bl-search]');
+    listEl.innerHTML = '<div style="padding:12px;color:#888;font-size:12px;">Loading leads…</div>';
+
+    var contacts = [];
+    try {
+      var res = await fetch(supabaseUrl + '/rest/v1/contacts?select=id,first_name,last_name&order=first_name&limit=500', {
+        headers: { 'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey }
+      });
+      var rows = await res.json();
+      if (Array.isArray(rows)) contacts = rows;
+    } catch (e) {
+      listEl.innerHTML = '<div style="padding:12px;color:#ff7777;">Failed to load: ' + esc(e.message || 'unknown') + '</div>';
+      return;
+    }
+
+    function buildList(filter) {
+      var f = (filter || '').toLowerCase();
+      var filtered = contacts.filter(function (c) {
+        if (!f) return true;
+        var n = ((c.first_name || '') + ' ' + (c.last_name || '')).toLowerCase();
+        return n.indexOf(f) !== -1;
+      });
+      var html = '<button class="bulk-picker-option" data-cid="">— Unlink (no lead) —</button>'
+        + '<div class="bulk-picker-divider"></div>'
+        + filtered.map(function (c) {
+            var name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || '(unnamed)';
+            return '<button class="bulk-picker-option" data-cid="' + esc(c.id) + '">' + esc(name) + '</button>';
+          }).join('');
+      listEl.innerHTML = html;
+      Array.prototype.forEach.call(listEl.querySelectorAll('[data-cid]'), function (btn) {
+        btn.onclick = function () {
+          var cid = btn.dataset.cid || null;
+          picker.hidden = true;
+          onChoose(cid);
+        };
+      });
+    }
+    buildList('');
+    search.value = '';
+    search.oninput = function (e) { buildList(e.target.value); };
+    setTimeout(function () { search.focus(); }, 50);
+  }
+
+  // Outside-click + Escape dismissal — wired once globally.
+  document.addEventListener('click', function (e) {
+    Array.prototype.forEach.call(document.querySelectorAll('.bulk-picker:not([hidden])'), function (p) {
+      // Don't close if click is inside the picker, or on a bulk action button (which opens it).
+      if (p.contains(e.target)) return;
+      if (e.target.closest('[data-action^="ct-bulk-"], [data-action^="cm-bulk-"]')) return;
+      p.hidden = true;
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeAll();
+  });
+
+  window.__rrPickers = { priority: priority, due: due, lead: lead, closeAll: closeAll };
 })();
 </script>
 </body>

@@ -718,51 +718,33 @@
     updateSelectionUI();
   }
 
-  async function bulkSetDueDate() {
-    var date = prompt('Set due date for ' + selectedIds.size + ' task(s) (YYYY-MM-DD), or leave blank to clear:');
-    if (date === null) return;
-    var isoDate = null;
-    if (date.trim()) {
-      var d = new Date(date.trim() + 'T09:00:00');
-      if (isNaN(d.getTime())) { alert('Invalid date — use YYYY-MM-DD'); return; }
-      isoDate = d.toISOString();
-    }
-    await bulkApply(function (tid) {
-      return api('/task/update', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, due_date: isoDate }) });
-    });
-  }
-
-  async function bulkSetPriority() {
-    var choice = prompt('Set priority for ' + selectedIds.size + ' task(s): urgent / high / normal / low / none');
-    if (!choice) return;
-    var v = String(choice).trim().toLowerCase();
-    if (['urgent','high','normal','low','none'].indexOf(v) === -1) { alert('Invalid priority'); return; }
-    var p = v === 'none' ? null : v;
-    await bulkApply(function (tid) {
-      return api('/task/update', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, priority: p }) });
-    });
-  }
-
-  async function bulkAssignContact() {
-    var contacts;
-    try {
-      var res = await fetch(SUPABASE_URL + '/rest/v1/contacts?select=id,first_name,last_name&order=first_name&limit=500', {
-        headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY }
+  function bulkSetDueDate() {
+    if (!window.__rrPickers) { console.error('[ct-bulk] picker module not loaded'); return; }
+    var trigger = document.querySelector('[data-subpanel=clickup] [data-action="ct-bulk-due"]');
+    window.__rrPickers.due(trigger, selectedIds.size, function (isoDate) {
+      bulkApply(function (tid) {
+        return api('/task/update', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, due_date: isoDate }) });
       });
-      contacts = await res.json();
-    } catch (e) { alert('Could not load contacts: ' + (e.message || 'unknown')); return; }
-    if (!Array.isArray(contacts)) { alert('Could not load contacts'); return; }
-    var lines = contacts.map(function (c, i) {
-      var name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || '(unnamed)';
-      return (i + 1) + '. ' + name;
-    }).join('\n');
-    var idx = prompt('Assign ' + selectedIds.size + ' task(s) to which lead?\n0 = unlink (no lead)\n' + lines + '\n\nEnter number:');
-    if (idx === null) return;
-    var n = parseInt(idx, 10);
-    if (isNaN(n) || n < 0 || n > contacts.length) { alert('Invalid choice'); return; }
-    var cid = n === 0 ? null : contacts[n - 1].id;
-    await bulkApply(function (tid) {
-      return api('/task/relink', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, contact_id: cid }) });
+    });
+  }
+
+  function bulkSetPriority() {
+    if (!window.__rrPickers) { console.error('[ct-bulk] picker module not loaded'); return; }
+    var trigger = document.querySelector('[data-subpanel=clickup] [data-action="ct-bulk-priority"]');
+    window.__rrPickers.priority(trigger, selectedIds.size, function (priority) {
+      bulkApply(function (tid) {
+        return api('/task/update', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, priority: priority }) });
+      });
+    });
+  }
+
+  function bulkAssignContact() {
+    if (!window.__rrPickers) { console.error('[ct-bulk] picker module not loaded'); return; }
+    var trigger = document.querySelector('[data-subpanel=clickup] [data-action="ct-bulk-contact"]');
+    window.__rrPickers.lead(trigger, selectedIds.size, function (cid) {
+      bulkApply(function (tid) {
+        return api('/task/relink', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, contact_id: cid }) });
+      });
     });
   }
 
