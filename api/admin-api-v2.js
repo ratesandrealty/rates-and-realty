@@ -249,6 +249,17 @@ export async function completeTask(taskId) {
   return data;
 }
 
+export async function updateTaskStatus(taskId, status) {
+  const { data, error } = await supabase
+    .from("tasks")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", taskId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 export async function getAllTasks() {
   // tasks has no leads relationship — it joins contacts directly via contact_id.
   const { data, error } = await supabase

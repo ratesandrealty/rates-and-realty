@@ -27,6 +27,9 @@
   var initialized = false;
   var taskCache = []; // last loaded list — used to fill the edit modal without re-fetching
   var currentFilters = { status: 'open', due: '', priority: '', contact_id: '', q: '' };
+  var currentView = localStorage.getItem('rr_view_clickup') || 'list';
+  var currentSort = localStorage.getItem('rr_sort_clickup') || 'due_asc';
+  var calendarRefDate = new Date();
 
   function esc(s) {
     if (s == null) return '';
@@ -166,6 +169,263 @@
     list.innerHTML = html;
   }
 
+  // ── Sort + view dispatch ────────────────────────────────────────
+  function sortTasks(tasks) {
+    var sorted = tasks.slice();
+    var priWeight = { urgent: 1, high: 2, normal: 3, low: 4 };
+    sorted.sort(function (a, b) {
+      switch (currentSort) {
+        case 'due_asc': {
+          if (!a.due_date && !b.due_date) return 0;
+          if (!a.due_date) return 1;
+          if (!b.due_date) return -1;
+          return new Date(a.due_date) - new Date(b.due_date);
+        }
+        case 'due_desc': {
+          if (!a.due_date && !b.due_date) return 0;
+          if (!a.due_date) return 1;
+          if (!b.due_date) return -1;
+          return new Date(b.due_date) - new Date(a.due_date);
+        }
+        case 'created_desc': return new Date(b.fetched_at || 0) - new Date(a.fetched_at || 0);
+        case 'created_asc':  return new Date(a.fetched_at || 0) - new Date(b.fetched_at || 0);
+        case 'priority':     return (priWeight[a.priority] || 99) - (priWeight[b.priority] || 99);
+        case 'title_asc':    return (a.title || '').localeCompare(b.title || '');
+        default: return 0;
+      }
+    });
+    return sorted;
+  }
+
+  function dispatchRender(tasks) {
+    var sorted = sortTasks(tasks || []);
+    if (currentView === 'list') renderList(sorted);
+    else if (currentView === 'board') renderBoard(sorted);
+    else if (currentView === 'calendar') renderCalendar(sorted);
+  }
+
+  // ── Board renderer ──────────────────────────────────────────────
+  function colKey(t) {
+    var s = String(t.status || '').toLowerCase();
+    if (s === 'complete' || s === 'closed' || s === 'done') return 'done';
+    if (s === 'in progress') return 'inprogress';
+    return 'todo';
+  }
+
+  function boardCardHtml(t) {
+    var due = t.due_date ? new Date(t.due_date) : null;
+    var open = !isDoneStatus(t.status);
+    var overdue = open && due && due.getTime() < Date.now();
+    var dueStr = due ? due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+    return '<div class="board-card" draggable="true" data-task-id="' + esc(t.clickup_task_id) + '" data-current-col="' + colKey(t) + '">'
+      + '<div class="board-card-title">' + esc(t.title) + '</div>'
+      + '<div class="board-card-meta">'
+      +   (t.priority ? '<span class="board-card-pri ' + priorityClass(t.priority) + '">' + esc(t.priority) + '</span>' : '')
+      +   (dueStr ? '<span class="board-card-due' + (overdue ? ' is-overdue' : '') + '">' + (overdue ? '⚠ ' : '') + esc(dueStr) + '</span>' : '')
+      + '</div>'
+      + (t.contact && t.contact.id
+          ? '<a class="board-card-contact" href="/admin/lead-detail.html?contact_id=' + esc(t.contact.id) + '" onclick="event.stopPropagation()">' + esc(t.contact.name) + '</a>'
+          : '')
+      + '</div>';
+  }
+
+  function renderBoard(tasks) {
+    var board = document.querySelector('[data-target=ct-board]');
+    if (!board) return;
+    var groups = { todo: [], inprogress: [], done: [] };
+    tasks.forEach(function (t) { groups[colKey(t)].push(t); });
+    var titles = { todo: 'To Do', inprogress: 'In Progress', done: 'Complete' };
+    var cols = ['todo', 'inprogress', 'done'];
+    board.innerHTML = cols.map(function (c) {
+      return '<div class="board-col" data-col="' + c + '">'
+        + '<div class="board-col-header">'
+        +   '<span class="board-col-icon"></span>'
+        +   '<span>' + titles[c] + '</span>'
+        +   '<span class="board-col-count">' + groups[c].length + '</span>'
+        + '</div>'
+        + '<div class="board-col-body" data-drop-col="' + c + '">'
+        +   (groups[c].length === 0
+              ? '<div class="board-empty">— Drop tasks here —</div>'
+              : groups[c].map(boardCardHtml).join(''))
+        + '</div>'
+        + '</div>';
+    }).join('');
+    attachDragHandlers();
+  }
+
+  function attachDragHandlers() {
+    var draggingTaskId = null;
+    var draggingFromCol = null;
+
+    [].slice.call(document.querySelectorAll('[data-target=ct-board] .board-card[draggable]')).forEach(function (card) {
+      card.addEventListener('dragstart', function (e) {
+        draggingTaskId = card.dataset.taskId;
+        draggingFromCol = card.dataset.currentCol;
+        card.classList.add('is-dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', draggingTaskId); } catch (err) {}
+      });
+      card.addEventListener('dragend', function () { card.classList.remove('is-dragging'); });
+      card.addEventListener('click', function () {
+        var task = taskCache.find(function (t) { return t.clickup_task_id === card.dataset.taskId; });
+        if (task) openModal(task);
+      });
+    });
+
+    [].slice.call(document.querySelectorAll('[data-target=ct-board] [data-drop-col]')).forEach(function (col) {
+      col.addEventListener('dragover', function (e) { e.preventDefault(); col.classList.add('is-drop-target'); });
+      col.addEventListener('dragleave', function () { col.classList.remove('is-drop-target'); });
+      col.addEventListener('drop', async function (e) {
+        e.preventDefault();
+        col.classList.remove('is-drop-target');
+        var targetCol = col.dataset.dropCol;
+        if (!draggingTaskId || targetCol === draggingFromCol) return;
+        var safeId = String(draggingTaskId).replace(/"/g, '\\"');
+        var card = document.querySelector('[data-target=ct-board] .board-card[data-task-id="' + safeId + '"]');
+        if (card) col.appendChild(card);
+        var tid = draggingTaskId;
+        try {
+          if (targetCol === 'done') {
+            await api('/task/complete', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid }) });
+          } else if (targetCol === 'todo') {
+            await api('/task/reopen', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid }) });
+          } else if (targetCol === 'inprogress') {
+            await api('/task/update', { method: 'POST', body: JSON.stringify({ clickup_task_id: tid, status: 'in progress' }) });
+          }
+          await loadTasks();
+        } catch (err) {
+          alert('Move failed: ' + (err.message || 'unknown'));
+          await loadTasks();
+        }
+      });
+    });
+  }
+
+  // ── Calendar renderer ──────────────────────────────────────────
+  function calDayHtml(d, tasks, today, isOtherMonth) {
+    var isToday = d.getTime() === today.getTime();
+    var dayKey = d.toISOString().substring(0, 10);
+    var visible = tasks.slice(0, 3);
+    var overflow = tasks.length - visible.length;
+    var pillsHtml = visible.map(function (t) {
+      var isDone = isDoneStatus(t.status);
+      return '<div class="cal-task-pill ' + priorityClass(t.priority || 'normal') + (isDone ? ' is-done' : '')
+        + '" data-task-id="' + esc(t.clickup_task_id) + '" title="' + esc(t.title) + '">' + esc(t.title) + '</div>';
+    }).join('');
+    return '<div class="cal-day' + (isToday ? ' is-today' : '') + (isOtherMonth ? ' is-other-month' : '') + '" data-date="' + dayKey + '">'
+      + '<div class="cal-day-num">' + d.getDate() + '</div>'
+      + pillsHtml
+      + (overflow > 0 ? '<div class="cal-task-overflow">+' + overflow + ' more</div>' : '')
+      + '</div>';
+  }
+
+  function renderCalendar(tasks) {
+    var cal = document.querySelector('[data-target=ct-calendar]');
+    if (!cal) return;
+    var ref = new Date(calendarRefDate.getFullYear(), calendarRefDate.getMonth(), 1);
+    var monthName = ref.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    var startWeekday = ref.getDay();
+    var daysInMonth = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
+    var today = new Date(); today.setHours(0,0,0,0);
+
+    var tasksByDate = {};
+    tasks.forEach(function (t) {
+      if (!t.due_date) return;
+      var k = new Date(t.due_date).toISOString().substring(0, 10);
+      (tasksByDate[k] = tasksByDate[k] || []).push(t);
+    });
+
+    var html = '<div class="cal-header">'
+      + '<button class="cal-nav-btn" data-action="cal-prev">‹ Prev</button>'
+      + '<span class="cal-month-title">' + monthName + '</span>'
+      + '<button class="cal-nav-btn" data-action="cal-today">Today</button>'
+      + '<button class="cal-nav-btn" data-action="cal-next">Next ›</button>'
+      + '</div>'
+      + '<div class="cal-grid">'
+      + ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function (d) { return '<div class="cal-dow">' + d + '</div>'; }).join('');
+
+    for (var i = 0; i < startWeekday; i++) {
+      var d = new Date(ref); d.setDate(d.getDate() - (startWeekday - i));
+      html += calDayHtml(d, tasksByDate[d.toISOString().substring(0,10)] || [], today, true);
+    }
+    for (var day = 1; day <= daysInMonth; day++) {
+      var d2 = new Date(ref.getFullYear(), ref.getMonth(), day);
+      html += calDayHtml(d2, tasksByDate[d2.toISOString().substring(0,10)] || [], today, false);
+    }
+    var totalCells = startWeekday + daysInMonth;
+    var trailing = (7 - (totalCells % 7)) % 7;
+    for (var j = 1; j <= trailing; j++) {
+      var d3 = new Date(ref.getFullYear(), ref.getMonth() + 1, j);
+      html += calDayHtml(d3, tasksByDate[d3.toISOString().substring(0,10)] || [], today, true);
+    }
+    html += '</div>';
+    cal.innerHTML = html;
+
+    cal.querySelector('[data-action=cal-prev]').addEventListener('click', function () {
+      calendarRefDate = new Date(calendarRefDate.getFullYear(), calendarRefDate.getMonth() - 1, 1);
+      dispatchRender(taskCache);
+    });
+    cal.querySelector('[data-action=cal-next]').addEventListener('click', function () {
+      calendarRefDate = new Date(calendarRefDate.getFullYear(), calendarRefDate.getMonth() + 1, 1);
+      dispatchRender(taskCache);
+    });
+    cal.querySelector('[data-action=cal-today]').addEventListener('click', function () {
+      calendarRefDate = new Date();
+      dispatchRender(taskCache);
+    });
+
+    [].slice.call(cal.querySelectorAll('.cal-task-pill')).forEach(function (pill) {
+      pill.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var task = taskCache.find(function (t) { return t.clickup_task_id === pill.dataset.taskId; });
+        if (task) openModal(task);
+      });
+    });
+    [].slice.call(cal.querySelectorAll('.cal-day')).forEach(function (day) {
+      day.addEventListener('click', function () {
+        openModal(null);
+        var dueInput = document.querySelector('[data-field=ct-due-date]');
+        if (dueInput && day.dataset.date) dueInput.value = day.dataset.date;
+      });
+    });
+  }
+
+  // ── View switcher wiring ───────────────────────────────────────
+  function applyViewToDom() {
+    var panel = document.querySelector('[data-subpanel=clickup]');
+    if (panel) panel.dataset.currentView = currentView;
+    var listPane = document.querySelector('[data-target=ct-list]');
+    var boardPane = document.querySelector('[data-target=ct-board]');
+    var calPane = document.querySelector('[data-target=ct-calendar]');
+    if (listPane) listPane.hidden = currentView !== 'list';
+    if (boardPane) boardPane.hidden = currentView !== 'board';
+    if (calPane) calPane.hidden = currentView !== 'calendar';
+    [].slice.call(document.querySelectorAll('[data-subpanel=clickup] .view-btn')).forEach(function (b) {
+      b.classList.toggle('active', b.dataset.view === currentView);
+    });
+  }
+
+  function wireViewSwitcher() {
+    [].slice.call(document.querySelectorAll('[data-subpanel=clickup] .view-btn')).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        currentView = btn.dataset.view;
+        localStorage.setItem('rr_view_clickup', currentView);
+        applyViewToDom();
+        dispatchRender(taskCache);
+      });
+    });
+    var sortSel = document.querySelector('[data-subpanel=clickup] [data-target=ct-sort]');
+    if (sortSel) {
+      sortSel.value = currentSort;
+      sortSel.addEventListener('change', function (e) {
+        currentSort = e.target.value;
+        localStorage.setItem('rr_sort_clickup', currentSort);
+        dispatchRender(taskCache);
+      });
+    }
+    applyViewToDom();
+  }
+
   function updateChipCounts(counts) {
     counts = counts || {};
     var setChip = function (key, n) {
@@ -196,7 +456,7 @@
     try {
       var data = await api('/tasks?' + buildQuery());
       taskCache = data.tasks || [];
-      renderList(taskCache);
+      dispatchRender(taskCache);
       updateChipCounts(data.counts);
       updateSubtabBadge((data.counts && data.counts.open) || 0);
     } catch (e) {
@@ -517,6 +777,8 @@
       var modal = document.querySelector('[data-target=ct-modal]');
       if (modal && !modal.hidden) closeModal();
     });
+
+    wireViewSwitcher();
 
     loadContactsDropdowns();
     // Pre-fetch open count for the sub-tab badge even if user is on CRM tab

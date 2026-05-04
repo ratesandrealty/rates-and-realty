@@ -25,7 +25,8 @@ import {
   addLeadNote, calculateLeadScore, completeTask, createAppointment, createLead, createTask,
   getActivityFeed, getAdminDashboardData, getAnalyticsData,
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
-  updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks
+  updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks,
+  updateTaskStatus
 } from "/api/admin-api-v2.js?v=20260411g";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
@@ -604,66 +605,326 @@ function creditScoreClass(score) {
   return "score-red";
 }
 
-// ── TASKS TABLE ───────────────────────────────────────────────────────────────
+// ── TASKS (List / Board / Calendar) ───────────────────────────────────────────
+let crmCurrentView = (typeof localStorage !== "undefined" && localStorage.getItem("rr_view_crm_tasks")) || "list";
+let crmCurrentSort = (typeof localStorage !== "undefined" && localStorage.getItem("rr_sort_crm_tasks")) || "due_asc";
+let crmCalRefDate = new Date();
+let crmActiveFilter = "open";
+let crmTasksRef = [];
+
+function crmEsc(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function crmIsDone(s) { return s === "completed"; }
+
+function crmColKey(t) {
+  if (t.status === "completed") return "done";
+  if (t.status === "in_progress") return "inprogress";
+  return "todo";
+}
+
+function crmPriClass(p) {
+  if (p === "urgent") return "pri-urgent";
+  if (p === "high") return "pri-high";
+  if (p === "low") return "pri-low";
+  return "pri-normal";
+}
+
+function crmContactName(t) {
+  const c = t.contacts || {};
+  if (c.first_name) return `${c.first_name} ${c.last_name || ""}`.trim();
+  if (t.related_id) return `Lead ${t.related_id.substring(0, 8)}`;
+  return "";
+}
+
+function crmFilterTasks(tasks) {
+  const now = new Date();
+  if (crmActiveFilter === "open") return tasks.filter((t) => t.status === "open" || t.status === null);
+  if (crmActiveFilter === "in_progress") return tasks.filter((t) => t.status === "in_progress");
+  if (crmActiveFilter === "completed") return tasks.filter((t) => t.status === "completed");
+  if (crmActiveFilter === "overdue") return tasks.filter((t) => t.due_date && new Date(t.due_date) < now && t.status !== "completed");
+  return tasks;
+}
+
+function crmSortTasks(tasks) {
+  const sorted = tasks.slice();
+  const priWeight = { urgent: 1, high: 2, normal: 3, low: 4 };
+  sorted.sort((a, b) => {
+    switch (crmCurrentSort) {
+      case "due_asc": {
+        if (!a.due_date && !b.due_date) return 0;
+        if (!a.due_date) return 1;
+        if (!b.due_date) return -1;
+        return new Date(a.due_date) - new Date(b.due_date);
+      }
+      case "due_desc": {
+        if (!a.due_date && !b.due_date) return 0;
+        if (!a.due_date) return 1;
+        if (!b.due_date) return -1;
+        return new Date(b.due_date) - new Date(a.due_date);
+      }
+      case "created_desc": return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+      case "created_asc":  return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+      case "priority":     return (priWeight[a.priority] || 99) - (priWeight[b.priority] || 99);
+      case "title_asc":    return (a.title || "").localeCompare(b.title || "");
+      default: return 0;
+    }
+  });
+  return sorted;
+}
+
+function crmRenderList(tasks) {
+  const tbody = document.getElementById("tasks-tbody");
+  if (!tbody) return;
+  if (!tasks.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted);">No tasks.</td></tr>`;
+    return;
+  }
+  const now = new Date();
+  tbody.innerHTML = tasks.map((task) => {
+    const leadName = crmContactName(task) || "—";
+    const isOverdue = task.due_date && new Date(task.due_date) < now && task.status !== "completed";
+    const priorityClass = { high: "status-pill-orange", urgent: "status-pill-red", normal: "" }[task.priority || "normal"] || "";
+    return `
+      <tr>
+        <td><strong style="font-size:0.9rem;">${crmEsc(task.title || "Task")}</strong></td>
+        <td style="font-size:0.82rem;color:var(--muted);">${crmEsc(leadName)}</td>
+        <td><span class="status-pill ${priorityClass}" style="font-size:0.75rem;">${crmEsc(task.priority || "normal")}</span></td>
+        <td style="font-size:0.82rem;${isOverdue ? "color:var(--red);" : "color:var(--muted);"}">${task.due_date ? formatDate(task.due_date) : "—"}${isOverdue ? " ⚠" : ""}</td>
+        <td><span class="status-pill ${task.status === "completed" ? "status-pill-green" : isOverdue ? "status-pill-red" : ""}">${crmEsc(task.status || "open")}</span></td>
+        <td>
+          ${task.status !== "completed" ? `<button class="btn btn-success btn-xs" data-complete-task="${crmEsc(task.id)}">Done</button>` : ""}
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  tbody.querySelectorAll("[data-complete-task]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await completeTask(btn.dataset.completeTask);
+      allTasks = await getAllTasks();
+      renderAllTasksTable(allTasks);
+    });
+  });
+}
+
+function crmBoardCardHtml(t) {
+  const due = t.due_date ? new Date(t.due_date) : null;
+  const overdue = due && t.status !== "completed" && due.getTime() < Date.now();
+  const dueStr = due ? due.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+  const contact = crmContactName(t);
+  const contactId = t.contact_id || (t.contacts && t.contacts.id) || "";
+  return `<div class="board-card" draggable="true" data-task-id="${crmEsc(t.id)}" data-current-col="${crmColKey(t)}">
+    <div class="board-card-title">${crmEsc(t.title || "")}</div>
+    <div class="board-card-meta">
+      ${t.priority ? `<span class="board-card-pri ${crmPriClass(t.priority)}">${crmEsc(t.priority)}</span>` : ""}
+      ${dueStr ? `<span class="board-card-due${overdue ? " is-overdue" : ""}">${overdue ? "⚠ " : ""}${crmEsc(dueStr)}</span>` : ""}
+    </div>
+    ${contact && contactId ? `<a class="board-card-contact" href="/admin/lead-detail.html?contact_id=${crmEsc(contactId)}" onclick="event.stopPropagation()">${crmEsc(contact)}</a>` : (contact ? `<span class="board-card-contact">${crmEsc(contact)}</span>` : "")}
+  </div>`;
+}
+
+function crmRenderBoard(tasks) {
+  const board = document.querySelector('[data-target="cm-board"]');
+  if (!board) return;
+  const groups = { todo: [], inprogress: [], done: [] };
+  tasks.forEach((t) => groups[crmColKey(t)].push(t));
+  const titles = { todo: "To Do", inprogress: "In Progress", done: "Complete" };
+  board.innerHTML = ["todo", "inprogress", "done"].map((col) => `
+    <div class="board-col" data-col="${col}">
+      <div class="board-col-header">
+        <span class="board-col-icon"></span>
+        <span>${titles[col]}</span>
+        <span class="board-col-count">${groups[col].length}</span>
+      </div>
+      <div class="board-col-body" data-drop-col="${col}">
+        ${groups[col].length === 0 ? `<div class="board-empty">— Drop tasks here —</div>` : groups[col].map(crmBoardCardHtml).join("")}
+      </div>
+    </div>
+  `).join("");
+  crmAttachDragHandlers();
+}
+
+function crmAttachDragHandlers() {
+  let draggingId = null;
+  let draggingFromCol = null;
+  document.querySelectorAll('[data-target="cm-board"] .board-card[draggable]').forEach((card) => {
+    card.addEventListener("dragstart", (e) => {
+      draggingId = card.dataset.taskId;
+      draggingFromCol = card.dataset.currentCol;
+      card.classList.add("is-dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", draggingId); } catch (err) {}
+    });
+    card.addEventListener("dragend", () => card.classList.remove("is-dragging"));
+  });
+  document.querySelectorAll('[data-target="cm-board"] [data-drop-col]').forEach((col) => {
+    col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("is-drop-target"); });
+    col.addEventListener("dragleave", () => col.classList.remove("is-drop-target"));
+    col.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      col.classList.remove("is-drop-target");
+      const targetCol = col.dataset.dropCol;
+      if (!draggingId || targetCol === draggingFromCol) return;
+      const card = document.querySelector(`[data-target="cm-board"] .board-card[data-task-id="${CSS.escape(draggingId)}"]`);
+      if (card) col.appendChild(card);
+      const newStatus = targetCol === "done" ? "completed" : targetCol === "inprogress" ? "in_progress" : "open";
+      try {
+        await updateTaskStatus(draggingId, newStatus);
+        allTasks = await getAllTasks();
+        renderAllTasksTable(allTasks);
+      } catch (err) {
+        alert("Move failed: " + (err.message || "unknown"));
+        renderAllTasksTable(allTasks);
+      }
+    });
+  });
+}
+
+function crmCalDayHtml(d, tasks, today, isOtherMonth) {
+  const isToday = d.getTime() === today.getTime();
+  const dayKey = d.toISOString().substring(0, 10);
+  const visible = tasks.slice(0, 3);
+  const overflow = tasks.length - visible.length;
+  const pillsHtml = visible.map((t) => {
+    const isDone = crmIsDone(t.status);
+    return `<div class="cal-task-pill ${crmPriClass(t.priority || "normal")}${isDone ? " is-done" : ""}" data-task-id="${crmEsc(t.id)}" title="${crmEsc(t.title || "")}">${crmEsc(t.title || "")}</div>`;
+  }).join("");
+  return `<div class="cal-day${isToday ? " is-today" : ""}${isOtherMonth ? " is-other-month" : ""}" data-date="${dayKey}">
+    <div class="cal-day-num">${d.getDate()}</div>
+    ${pillsHtml}
+    ${overflow > 0 ? `<div class="cal-task-overflow">+${overflow} more</div>` : ""}
+  </div>`;
+}
+
+function crmRenderCalendar(tasks) {
+  const cal = document.querySelector('[data-target="cm-calendar"]');
+  if (!cal) return;
+  const ref = new Date(crmCalRefDate.getFullYear(), crmCalRefDate.getMonth(), 1);
+  const monthName = ref.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const startWeekday = ref.getDay();
+  const daysInMonth = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  const tasksByDate = {};
+  tasks.forEach((t) => {
+    if (!t.due_date) return;
+    const k = new Date(t.due_date).toISOString().substring(0, 10);
+    (tasksByDate[k] = tasksByDate[k] || []).push(t);
+  });
+
+  let html = `<div class="cal-header">
+    <button class="cal-nav-btn" data-action="cm-cal-prev">‹ Prev</button>
+    <span class="cal-month-title">${monthName}</span>
+    <button class="cal-nav-btn" data-action="cm-cal-today">Today</button>
+    <button class="cal-nav-btn" data-action="cm-cal-next">Next ›</button>
+  </div><div class="cal-grid">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => `<div class="cal-dow">${d}</div>`).join("")}`;
+
+  for (let i = 0; i < startWeekday; i++) {
+    const d = new Date(ref); d.setDate(d.getDate() - (startWeekday - i));
+    html += crmCalDayHtml(d, tasksByDate[d.toISOString().substring(0, 10)] || [], today, true);
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(ref.getFullYear(), ref.getMonth(), day);
+    html += crmCalDayHtml(d, tasksByDate[d.toISOString().substring(0, 10)] || [], today, false);
+  }
+  const totalCells = startWeekday + daysInMonth;
+  const trailing = (7 - (totalCells % 7)) % 7;
+  for (let j = 1; j <= trailing; j++) {
+    const d = new Date(ref.getFullYear(), ref.getMonth() + 1, j);
+    html += crmCalDayHtml(d, tasksByDate[d.toISOString().substring(0, 10)] || [], today, true);
+  }
+  html += `</div>`;
+  cal.innerHTML = html;
+
+  cal.querySelector('[data-action="cm-cal-prev"]').addEventListener("click", () => {
+    crmCalRefDate = new Date(crmCalRefDate.getFullYear(), crmCalRefDate.getMonth() - 1, 1);
+    crmDispatchView();
+  });
+  cal.querySelector('[data-action="cm-cal-next"]').addEventListener("click", () => {
+    crmCalRefDate = new Date(crmCalRefDate.getFullYear(), crmCalRefDate.getMonth() + 1, 1);
+    crmDispatchView();
+  });
+  cal.querySelector('[data-action="cm-cal-today"]').addEventListener("click", () => {
+    crmCalRefDate = new Date();
+    crmDispatchView();
+  });
+
+  cal.querySelectorAll(".cal-day").forEach((day) => {
+    day.addEventListener("click", () => {
+      openModal("task-modal");
+      const dueInput = document.querySelector('#task-modal-form input[name="due_date"]');
+      if (dueInput && day.dataset.date) dueInput.value = day.dataset.date;
+    });
+  });
+}
+
+function crmDispatchView() {
+  const filtered = crmFilterTasks(crmTasksRef);
+  const sorted = crmSortTasks(filtered);
+  if (crmCurrentView === "list") crmRenderList(sorted);
+  else if (crmCurrentView === "board") crmRenderBoard(sorted);
+  else if (crmCurrentView === "calendar") crmRenderCalendar(sorted);
+}
+
+function crmApplyViewToDom() {
+  const panel = document.querySelector('[data-subpanel="crm"]');
+  if (panel) panel.dataset.currentView = crmCurrentView;
+  const listPane = document.querySelector('[data-target="cm-list"]');
+  const boardPane = document.querySelector('[data-target="cm-board"]');
+  const calPane = document.querySelector('[data-target="cm-calendar"]');
+  if (listPane) listPane.hidden = crmCurrentView !== "list";
+  if (boardPane) boardPane.hidden = crmCurrentView !== "board";
+  if (calPane) calPane.hidden = crmCurrentView !== "calendar";
+  document.querySelectorAll('[data-subpanel="crm"] .view-btn').forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === crmCurrentView);
+  });
+}
+
 function renderAllTasksTable(tasks) {
   const tbody = document.getElementById("tasks-tbody");
   if (!tbody) return;
+  crmTasksRef = tasks || [];
 
-  const now = new Date();
-
-  const renderRows = (list) => {
-    if (!list.length) {
-      tbody.innerHTML = `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted);">No tasks.</td></tr>`;
-      return;
-    }
-    tbody.innerHTML = list.map((task) => {
-      const c = task.contacts || {};
-      const leadName = c.first_name ? `${c.first_name} ${c.last_name || ""}` : (task.related_id ? `Lead ${task.related_id.substring(0, 8)}` : "—");
-      const isOverdue = task.due_date && new Date(task.due_date) < now && task.status !== "completed";
-      const priorityClass = { high: "status-pill-orange", urgent: "status-pill-red", normal: "" }[task.priority || "normal"] || "";
-      return `
-        <tr>
-          <td><strong style="font-size:0.9rem;">${task.title || "Task"}</strong></td>
-          <td style="font-size:0.82rem;color:var(--muted);">${leadName}</td>
-          <td><span class="status-pill ${priorityClass}" style="font-size:0.75rem;">${task.priority || "normal"}</span></td>
-          <td style="font-size:0.82rem;${isOverdue ? "color:var(--red);" : "color:var(--muted);"}">${task.due_date ? formatDate(task.due_date) : "—"}${isOverdue ? " ⚠" : ""}</td>
-          <td><span class="status-pill ${task.status === "completed" ? "status-pill-green" : isOverdue ? "status-pill-red" : ""}">${task.status || "open"}</span></td>
-          <td>
-            ${task.status !== "completed" ? `<button class="btn btn-success btn-xs" data-complete-task="${task.id}">Done</button>` : ""}
-          </td>
-        </tr>
-      `;
-    }).join("");
-
-    tbody.querySelectorAll("[data-complete-task]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        await completeTask(btn.dataset.completeTask);
-        allTasks = await getAllTasks();
-        renderAllTasksTable(allTasks);
-      });
-    });
-  };
-
-  // Filter
+  // Filter chips — bind once
   document.querySelectorAll("[data-task-filter]").forEach((chip) => {
     if (chip.dataset.taskFilterBound) return;
     chip.dataset.taskFilterBound = "1";
     chip.addEventListener("click", () => {
       document.querySelectorAll("[data-task-filter]").forEach((c) => c.classList.remove("is-active"));
       chip.classList.add("is-active");
-      const filter = chip.dataset.taskFilter;
-      let filtered = tasks;
-      if (filter === "open") filtered = tasks.filter((t) => t.status === "open" || t.status === null);
-      else if (filter === "in_progress") filtered = tasks.filter((t) => t.status === "in_progress");
-      else if (filter === "completed") filtered = tasks.filter((t) => t.status === "completed");
-      else if (filter === "overdue") filtered = tasks.filter((t) => t.due_date && new Date(t.due_date) < now && t.status !== "completed");
-      renderRows(filtered);
+      crmActiveFilter = chip.dataset.taskFilter;
+      crmDispatchView();
     });
   });
 
-  // Default: show open tasks
-  renderRows(tasks.filter((t) => !t.status || t.status === "open" || t.status === "in_progress"));
+  // View switcher + sort dropdown — bind once
+  document.querySelectorAll('[data-subpanel="crm"] .view-btn').forEach((btn) => {
+    if (btn.dataset.viewBtnBound) return;
+    btn.dataset.viewBtnBound = "1";
+    btn.addEventListener("click", () => {
+      crmCurrentView = btn.dataset.view;
+      localStorage.setItem("rr_view_crm_tasks", crmCurrentView);
+      crmApplyViewToDom();
+      crmDispatchView();
+    });
+  });
+  const sortSel = document.querySelector('[data-subpanel="crm"] [data-target="cm-sort"]');
+  if (sortSel && !sortSel.dataset.sortBound) {
+    sortSel.dataset.sortBound = "1";
+    sortSel.value = crmCurrentSort;
+    sortSel.addEventListener("change", (e) => {
+      crmCurrentSort = e.target.value;
+      localStorage.setItem("rr_sort_crm_tasks", crmCurrentSort);
+      crmDispatchView();
+    });
+  }
+
+  crmApplyViewToDom();
+  crmDispatchView();
 }
 
 // ── CALENDAR ─────────────────────────────────────────────────────────────────
