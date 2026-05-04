@@ -18,7 +18,7 @@
   var viewMode = 'week';
   var currentDate = new Date();
   var allEvents = [];
-  var activeSources = new Set(['google', 'appts', 'tours', 'tasks']);
+  var activeSources = new Set(['google', 'appts', 'tours', 'tasks', 'clickup']);
   var initialized = false;
   var supabaseClient = null;
 
