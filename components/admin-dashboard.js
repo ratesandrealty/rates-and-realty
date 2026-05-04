@@ -1360,7 +1360,7 @@ function _fvBindPanels() {
     downloadBtn.onclick = () => {
       if (!_fvViewerState) return;
       const f = _fvViewerState.files[_fvViewerState.index];
-      if (f) window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`, "_blank", "noopener");
+      if (f) window.open((window.pinGoogleUrl ? window.pinGoogleUrl : (u)=>u)(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`), "_blank", "noopener");
     };
   }
   const openlinkBtn = document.getElementById("fv-viewer-openlink");
@@ -1368,7 +1368,7 @@ function _fvBindPanels() {
     openlinkBtn.onclick = () => {
       if (!_fvViewerState) return;
       const f = _fvViewerState.files[_fvViewerState.index];
-      if (f) window.open(f.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(f.id)}/view`, "_blank", "noopener");
+      if (f) window.open((window.pinGoogleUrl ? window.pinGoogleUrl : (u)=>u)(f.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(f.id)}/view`), "_blank", "noopener");
     };
   }
   const prevBtn = document.getElementById("fv-viewer-prev");
@@ -1533,7 +1533,7 @@ function _fvBorrowerCardHtml(c) {
   const isActive = String(c.id) === String(_fvSelectedContactId);
 
   const folderLink = c.gdrive_folder_url
-    ? `<a href="${_fvEscape(c.gdrive_folder_url)}" target="_blank" rel="noopener" data-fv-drive-link onclick="event.stopPropagation()" style="color:#C9A84C77;font-size:16px;text-decoration:none;flex-shrink:0;padding:4px;" title="Open Drive folder">&#128193;</a>`
+    ? `<a href="${_fvEscape((window.pinGoogleUrl ? window.pinGoogleUrl : (u)=>u)(c.gdrive_folder_url))}" target="_blank" rel="noopener" data-fv-drive-link onclick="event.stopPropagation()" style="color:#C9A84C77;font-size:16px;text-decoration:none;flex-shrink:0;padding:4px;" title="Open Drive folder">&#128193;</a>`
     : `<button type="button" data-fv-create="${_fvEscape(c.id)}" title="Create folder" style="background:transparent;border:1px solid #C9A84C44;color:#C9A84C;font-size:10px;padding:3px 8px;border-radius:12px;cursor:pointer;flex-shrink:0;font-family:inherit;">+ folder</button>`;
 
   return `
@@ -1568,7 +1568,7 @@ async function _fvSelectBorrower(contact) {
   });
   // Open-in-drive link in the file-list header
   const openDriveLink = document.getElementById("fv-open-drive-link");
-  if (openDriveLink) openDriveLink.href = contact.gdrive_folder_url || "#";
+  if (openDriveLink) openDriveLink.href = contact.gdrive_folder_url ? (window.pinGoogleUrl ? window.pinGoogleUrl(contact.gdrive_folder_url) : contact.gdrive_folder_url) : "#";
 
   const fileListEl = document.getElementById("fv-file-list");
   if (!fileListEl) return;
@@ -2047,7 +2047,7 @@ function _fvRenderFileListPanel(contact) {
     if (dlBtn) {
       dlBtn.onclick = (e) => {
         e.stopPropagation();
-        window.open(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`, "_blank", "noopener");
+        window.open((window.pinGoogleUrl ? window.pinGoogleUrl : (u)=>u)(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.id)}`), "_blank", "noopener");
       };
     }
   });
