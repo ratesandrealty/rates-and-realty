@@ -430,11 +430,35 @@
       #tour-builder-modal .btn-icon{background:transparent;border:1px solid #2a2a2a;color:#888;width:28px;height:28px;border-radius:5px;cursor:pointer;font-size:.8rem;transition:all .15s;font-family:inherit;display:inline-flex;align-items:center;justify-content:center}
       #tour-builder-modal .btn-icon:hover{border-color:rgba(201,168,76,.5);color:#C9A84C}
       #tour-builder-modal .btn-icon.btn-icon-danger:hover{border-color:rgba(240,80,80,.5);color:#ff8888}
-      #tour-builder-modal .cart-stop-row2{display:flex;gap:8px;margin-top:8px;padding-left:124px}
-      #tour-builder-modal .time-field{display:flex;align-items:center;gap:4px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:5px;padding:4px 8px}
-      #tour-builder-modal .time-label{font-size:.7rem;color:#888}
-      #tour-builder-modal .time-field input,#tour-builder-modal .time-field select{background:transparent;border:none;color:#e8e8e8;font-size:.74rem;font-family:inherit;color-scheme:dark}
-      #tour-builder-modal .time-field input:focus,#tour-builder-modal .time-field select:focus{outline:none}
+      /* Cart-card row 2: arrival time + duration. The native <select> dropdown
+         menu can't be styled (browsers force system rendering on the open
+         menu), so duration is a custom button-trigger + popover combo. */
+      #tour-builder-modal .cart-stop-row2{display:flex;gap:10px;margin-top:10px;padding-left:124px}
+      #tour-builder-modal .time-field-wrap,#tour-builder-modal .duration-field-wrap{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+      #tour-builder-modal .time-field-label,#tour-builder-modal .duration-field-label{font-size:.58rem;color:#888;text-transform:uppercase;letter-spacing:.08em;font-weight:600;padding-left:2px}
+      #tour-builder-modal .time-input-clean{background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;color:#e8e8e8;font-size:.8rem;font-weight:500;padding:7px 10px;font-family:inherit;color-scheme:dark;width:100%;cursor:pointer;transition:border-color .15s}
+      #tour-builder-modal .time-input-clean:hover{border-color:#3a3a3a}
+      #tour-builder-modal .time-input-clean:focus{outline:none;border-color:#C9A84C;background:#0d0d0d}
+      #tour-builder-modal .time-input-clean::-webkit-calendar-picker-indicator{filter:invert(1) brightness(.7);cursor:pointer}
+      #tour-builder-modal .duration-trigger{background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;color:#e8e8e8;font-size:.8rem;font-weight:500;padding:7px 10px;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;transition:border-color .15s;width:100%;text-align:left}
+      #tour-builder-modal .duration-trigger:hover{border-color:#3a3a3a}
+      #tour-builder-modal .duration-trigger:focus{outline:none;border-color:#C9A84C}
+      #tour-builder-modal .duration-trigger.open{border-color:#C9A84C}
+      #tour-builder-modal .duration-value{color:#e8e8e8}
+      #tour-builder-modal .duration-chevron{color:#888;font-size:.7rem;transition:transform .15s}
+      #tour-builder-modal .duration-trigger.open .duration-chevron{transform:rotate(180deg);color:#C9A84C}
+      /* Popover lives at body level, NOT scoped to the modal selector — it
+         floats above everything including modals/page chrome. z-index is
+         above .tb-mini-modal (10000) so it works inside nested dialogs too. */
+      .tb-duration-popover{position:fixed;z-index:10001;background:#1a1a1a;border:1px solid #C9A84C;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.3);padding:4px;min-width:160px;display:flex;flex-direction:column;font-family:'Segoe UI',Arial,sans-serif;animation:tb-pop-down .12s ease-out}
+      .tb-duration-popover[hidden]{display:none}
+      .tb-duration-popover.opens-above{animation:tb-pop-up .12s ease-out}
+      @keyframes tb-pop-down{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes tb-pop-up{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+      .tb-duration-popover .duration-option{background:transparent;border:none;color:#ddd;font-size:.82rem;font-weight:500;padding:9px 14px;text-align:left;cursor:pointer;border-radius:5px;font-family:inherit;transition:background .1s}
+      .tb-duration-popover .duration-option:hover{background:rgba(201,168,76,.12);color:#C9A84C}
+      .tb-duration-popover .duration-option.selected{background:rgba(201,168,76,.18);color:#C9A84C;font-weight:600}
+      .tb-duration-popover .duration-option.selected::before{content:'✓ ';color:#C9A84C}
       #tour-builder-modal .cart-stop-agent{margin-top:8px;padding-left:124px}
       #tour-builder-modal .cart-stop-agent summary{cursor:pointer;font-size:.7rem;color:#C9A84C;list-style:none;user-select:none;outline:none}
       #tour-builder-modal .cart-stop-agent summary::-webkit-details-marker{display:none}
@@ -2093,18 +2117,17 @@
       +     '</div>'
       +   '</div>'
       +   '<div class="cart-stop-row2">'
-      +     '<label class="time-field" title="Arrival time">'
-      +       '<span class="time-label">⏰</span>'
-      +       '<input type="time" data-field="arrival" data-stop-id="' + esc(stop.id) + '" value="' + esc(arrival) + '" />'
-      +     '</label>'
-      +     '<label class="time-field" title="Duration">'
-      +       '<span class="time-label">⏱</span>'
-      +       '<select data-field="duration" data-stop-id="' + esc(stop.id) + '">'
-      +         [15, 30, 45, 60, 90].map(function (m) {
-                  return '<option value="' + m + '"' + (m === dur ? ' selected' : '') + '>' + m + ' min</option>';
-                }).join('')
-      +       '</select>'
-      +     '</label>'
+      +     '<div class="time-field-wrap">'
+      +       '<span class="time-field-label">Arrival</span>'
+      +       '<input type="time" class="time-input-clean" data-field="arrival" data-stop-id="' + esc(stop.id) + '" value="' + esc(arrival) + '" />'
+      +     '</div>'
+      +     '<div class="duration-field-wrap">'
+      +       '<span class="duration-field-label">Duration</span>'
+      +       '<button type="button" class="duration-trigger" data-act="open-duration" data-stop-id="' + esc(stop.id) + '" data-current="' + dur + '">'
+      +         '<span class="duration-value">' + fmtDurationLabel(dur) + '</span>'
+      +         '<span class="duration-chevron">▾</span>'
+      +       '</button>'
+      +     '</div>'
       +   '</div>'
       +   agentBlock
       +   noteLine
@@ -2115,9 +2138,10 @@
     [].slice.call(scope.querySelectorAll('[data-field=arrival]')).forEach(function (el) {
       el.addEventListener('blur', function () { saveStopField(el.dataset.stopId, 'arrival_time', el.value || null); });
     });
-    [].slice.call(scope.querySelectorAll('[data-field=duration]')).forEach(function (el) {
-      el.addEventListener('change', function () { saveStopField(el.dataset.stopId, 'duration_minutes', Number(el.value)); });
-    });
+    // Duration is now a custom button-trigger + popover (was <select>).
+    // Open is handled by a delegated click listener installed once via
+    // ensureDurationPopover() below — no per-card binding needed.
+    ensureDurationPopover();
     [].slice.call(scope.querySelectorAll('[data-act=edit-stop-notes]')).forEach(function (el) {
       el.addEventListener('click', function (e) { e.stopPropagation(); openStopNotesEditor(el.dataset.stopId); });
     });
@@ -2125,6 +2149,142 @@
       el.addEventListener('click', function (e) { e.stopPropagation(); removeStop(el.dataset.stopId); });
     });
     attachDragHandlers(scope);
+  }
+
+  // Pretty label for the duration trigger: "30 min", "1 hour", "1 hour 30 min",
+  // "2 hours". The trigger button shows this; the popover options use the
+  // longer canonical forms.
+  function fmtDurationLabel(m) {
+    var n = Number(m) || 30;
+    if (n < 60) return n + ' min';
+    if (n === 60) return '1 hour';
+    var h = Math.floor(n / 60);
+    var rem = n - h * 60;
+    if (!rem) return h + (h === 1 ? ' hour' : ' hours');
+    return h + (h === 1 ? ' hr ' : ' hrs ') + rem + ' min';
+  }
+
+  // Custom dark popover for duration — replaces the native <select> menu
+  // (which can't be styled and would render white-on-black). Lives at body
+  // level, single instance, repositioned/repopulated per trigger click.
+  function ensureDurationPopover() {
+    if (document.getElementById('tb-duration-popover')) return;
+    var pop = document.createElement('div');
+    pop.id = 'tb-duration-popover';
+    pop.className = 'tb-duration-popover';
+    pop.hidden = true;
+    pop.innerHTML =
+      '<button type="button" class="duration-option" data-min="15">15 minutes</button>'
+      + '<button type="button" class="duration-option" data-min="30">30 minutes</button>'
+      + '<button type="button" class="duration-option" data-min="45">45 minutes</button>'
+      + '<button type="button" class="duration-option" data-min="60">1 hour</button>'
+      + '<button type="button" class="duration-option" data-min="90">1 hour 30 min</button>'
+      + '<button type="button" class="duration-option" data-min="120">2 hours</button>';
+    document.body.appendChild(pop);
+
+    pop.addEventListener('click', function (e) {
+      var btn = e.target.closest('.duration-option');
+      if (!btn) return;
+      var minutes = parseInt(btn.dataset.min, 10);
+      var stopId = pop.dataset.stopId;
+      if (!stopId || !isFinite(minutes)) return;
+      commitDuration(stopId, minutes);
+      closeDurationPopover();
+    });
+
+    // Outside-click to close — stage at capture phase so we run before the
+    // re-clicked trigger's handler reopens the popover.
+    document.addEventListener('click', function (e) {
+      if (pop.hidden) return;
+      if (e.target.closest('#tb-duration-popover')) return;
+      if (e.target.closest('[data-act=open-duration]')) return; // trigger toggles in its own handler
+      closeDurationPopover();
+    });
+    // Esc / window resize / scroll → close (no point chasing the trigger).
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !pop.hidden) closeDurationPopover();
+    });
+    window.addEventListener('resize', function () { if (!pop.hidden) closeDurationPopover(); });
+    window.addEventListener('scroll', function () { if (!pop.hidden) closeDurationPopover(); }, true);
+  }
+
+  function openDurationPopover(triggerBtn) {
+    ensureDurationPopover();
+    var pop = document.getElementById('tb-duration-popover');
+    if (!pop) return;
+    var stopId = triggerBtn.dataset.stopId;
+    var current = parseInt(triggerBtn.dataset.current, 10) || 30;
+    pop.dataset.stopId = stopId;
+    [].slice.call(pop.querySelectorAll('.duration-option')).forEach(function (opt) {
+      opt.classList.toggle('selected', parseInt(opt.dataset.min, 10) === current);
+    });
+    // Render once hidden→visible so we can measure offsetHeight to flip up/down.
+    pop.hidden = false;
+    pop.style.position = 'fixed';
+    var rect = triggerBtn.getBoundingClientRect();
+    pop.style.left = rect.left + 'px';
+    pop.style.minWidth = rect.width + 'px';
+    var spaceBelow = window.innerHeight - rect.bottom;
+    var openAbove = spaceBelow < pop.offsetHeight + 16;
+    if (openAbove) {
+      pop.classList.add('opens-above');
+      pop.style.top = (rect.top - pop.offsetHeight - 4) + 'px';
+    } else {
+      pop.classList.remove('opens-above');
+      pop.style.top = (rect.bottom + 4) + 'px';
+    }
+    triggerBtn.classList.add('open');
+    pop.dataset.triggerStopId = stopId; // for reverting trigger.open class
+  }
+
+  function closeDurationPopover() {
+    var pop = document.getElementById('tb-duration-popover');
+    if (!pop) return;
+    pop.hidden = true;
+    var prevStopId = pop.dataset.triggerStopId;
+    pop.dataset.stopId = '';
+    pop.dataset.triggerStopId = '';
+    if (prevStopId) {
+      var prev = document.querySelector('.duration-trigger[data-stop-id="' + String(prevStopId).replace(/"/g, '\\"') + '"]');
+      if (prev) prev.classList.remove('open');
+    }
+  }
+
+  // Save duration immediately (no debounce — popover is a discrete click).
+  // Optimistic local update so the trigger's label updates instantly.
+  function commitDuration(stopId, minutes) {
+    var s = state.stops.find(function (x) { return x.id === stopId; });
+    if (s) s.duration_minutes = minutes;
+    var modal = document.getElementById('tour-builder-modal');
+    var trigger = modal && modal.querySelector('.duration-trigger[data-stop-id="' + String(stopId).replace(/"/g, '\\"') + '"]');
+    if (trigger) {
+      trigger.dataset.current = String(minutes);
+      var valEl = trigger.querySelector('.duration-value');
+      if (valEl) valEl.textContent = fmtDurationLabel(minutes);
+    }
+    startSave();
+    api('update_stop', { batch_id: state.tour.id, showing_id: stopId, duration_minutes: minutes })
+      .then(function (d) { endSave(d && d.error ? d.error : null); })
+      .catch(function (e) { endSave(e.message || 'Failed'); });
+  }
+
+  // Delegated click for duration triggers — installed once at module load.
+  // The trigger toggles its own popover on click (close if already open
+  // for this stop, otherwise open).
+  if (typeof document !== 'undefined' && !document._tbDurationTriggerWired) {
+    document._tbDurationTriggerWired = true;
+    document.addEventListener('click', function (e) {
+      var trigger = e.target.closest('[data-act=open-duration]');
+      if (!trigger) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var pop = document.getElementById('tb-duration-popover');
+      if (pop && !pop.hidden && pop.dataset.stopId === trigger.dataset.stopId) {
+        closeDurationPopover();
+      } else {
+        openDurationPopover(trigger);
+      }
+    });
   }
 
   function attachDragHandlers(scope) {
