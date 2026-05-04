@@ -936,7 +936,7 @@ function renderAnalytics() {
     window.initInsights();
   } else {
     var panel = document.querySelector("[data-target=insights-active-panel]");
-    if (panel) panel.innerHTML = "<div class="insights-error">insights.js failed to load — refresh the page.</div>";
+    if (panel) panel.innerHTML = '<div class="insights-error">insights.js failed to load — refresh the page.</div>';
   }
 }
 
