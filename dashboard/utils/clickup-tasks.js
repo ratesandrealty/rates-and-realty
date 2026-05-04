@@ -122,7 +122,48 @@
       list.innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><h4>No tasks match your filter</h4><p>Try a different status or due window</p></div>';
       return;
     }
-    list.innerHTML = tasks.map(rowHtml).join('');
+
+    // Split by status. ClickUp uses lots of "open-ish" statuses (to do,
+    // in progress, blocked, etc.) — anything that isn't a recognized
+    // done-state goes in Open.
+    var openTasks = tasks.filter(function (t) { return !isDoneStatus(t.status); });
+    var doneTasks = tasks.filter(function (t) { return isDoneStatus(t.status); });
+
+    // Section visibility follows the status filter:
+    //   'open'      → Open visible, Completed hidden
+    //   'complete'  → Open hidden,  Completed visible (auto-expanded)
+    //   '' (All)    → both visible, Completed collapsed by default
+    var fs = currentFilters.status;
+    var showOpen = fs !== 'complete';
+    var showDone = fs !== 'open';
+    var doneCollapsed = fs !== 'complete';
+
+    var html = '';
+    if (showOpen) {
+      html += '<div class="ct-section" data-section="open" data-collapsed="false">'
+        + '<div class="ct-section-header" data-action="ct-toggle-section">'
+        +   '<span class="ct-section-icon">▼</span>'
+        +   '<span class="ct-section-title">Open</span>'
+        +   '<span class="ct-section-count">' + openTasks.length + '</span>'
+        + '</div>'
+        + '<div class="ct-section-body">'
+        + (openTasks.length ? openTasks.map(rowHtml).join('') : '<div class="ct-section-empty">All caught up — no open tasks</div>')
+        + '</div>'
+        + '</div>';
+    }
+    if (showDone) {
+      html += '<div class="ct-section" data-section="done" data-collapsed="' + (doneCollapsed ? 'true' : 'false') + '">'
+        + '<div class="ct-section-header" data-action="ct-toggle-section">'
+        +   '<span class="ct-section-icon">▼</span>'
+        +   '<span class="ct-section-title">Completed</span>'
+        +   '<span class="ct-section-count">' + doneTasks.length + '</span>'
+        + '</div>'
+        + '<div class="ct-section-body">'
+        + (doneTasks.length ? doneTasks.map(rowHtml).join('') : '<div class="ct-section-empty">No completed tasks yet</div>')
+        + '</div>'
+        + '</div>';
+    }
+    list.innerHTML = html;
   }
 
   function updateChipCounts(counts) {
@@ -317,13 +358,24 @@
 
   async function toggleComplete(taskId, currentStatus) {
     var open = !isDoneStatus(currentStatus);
+    // Optimistic flip — instant red→green / green→red on the row so the
+    // user gets the satisfying click feedback before the network round-trip.
+    var safeId = String(taskId).replace(/"/g, '\\"');
+    var row = document.querySelector('.ct-row[data-task-id="' + safeId + '"]');
+    if (row) row.classList.toggle('is-done');
     try {
       await api(open ? '/task/complete' : '/task/reopen', {
         method: 'POST',
         body: JSON.stringify({ clickup_task_id: taskId }),
       });
-      await loadTasks();
-    } catch (e) { alert('Update failed: ' + (e.message || 'unknown')); }
+      // Brief delay so the green-check satisfaction registers, THEN reload
+      // (which moves the row into the right section and refreshes counts).
+      setTimeout(function () { loadTasks(); }, 350);
+    } catch (e) {
+      // Network/auth failure — revert the optimistic flip.
+      if (row) row.classList.toggle('is-done');
+      alert('Update failed: ' + (e.message || 'unknown'));
+    }
   }
 
   async function syncNow() {
@@ -430,11 +482,21 @@
       if (e.target === modalRoot) closeModal();
     });
 
-    // Delegated row click + complete toggle. Inside #tab-tasks only so we
-    // don't catch clicks elsewhere on the page.
+    // Delegated row click + complete toggle + section accordion. Scoped to
+    // #tab-tasks so we don't intercept clicks elsewhere on the page.
     var tasksTab = document.getElementById('tab-tasks');
     if (tasksTab) {
       tasksTab.addEventListener('click', function (e) {
+        // Section accordion toggle — checked first so it doesn't get
+        // pre-empted by the row handlers below.
+        var sectionToggle = e.target.closest('[data-action=ct-toggle-section]');
+        if (sectionToggle) {
+          var section = sectionToggle.closest('.ct-section');
+          if (section) {
+            section.dataset.collapsed = section.dataset.collapsed === 'true' ? 'false' : 'true';
+          }
+          return;
+        }
         var completeBtn = e.target.closest('[data-action=ct-toggle-complete]');
         if (completeBtn) {
           e.stopPropagation();
