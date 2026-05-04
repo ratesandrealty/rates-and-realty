@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Insights | Rates &amp; Realty CRM</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="/api/env.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a;color:#eee;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;display:flex}
+a{text-decoration:none;color:inherit}
+
+/* ===== Sidebar (mirrors admin/showings.html for visual consistency) ===== */
+#sidebar{width:220px;flex-shrink:0;background:#0d0d0d;border-right:1px solid #1a1a1a;display:flex;flex-direction:column;height:100vh;position:sticky;top:0;overflow-y:auto}
+.sb-logo{display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid #1a1a1a;flex-shrink:0}
+.sb-logo-mark{width:36px;height:36px;background:linear-gradient(135deg,#C9A84C,#8A6A1E);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.8rem;color:#000;flex-shrink:0}
+.sb-logo-text{font-size:.88rem;font-weight:700;color:#C9A84C;line-height:1.2}
+.sb-logo-sub{font-size:.6rem;color:#444;text-transform:uppercase;letter-spacing:.1em}
+.sb-section{padding:12px 10px 4px;font-size:.62rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.1em}
+.sb-link{display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:8px;font-size:.82rem;color:#666;cursor:pointer;transition:all .15s;margin:1px 4px}
+.sb-link:hover{background:#161616;color:#aaa}
+.sb-link.active{background:rgba(201,168,76,.1);color:#C9A84C}
+.sb-link i{width:16px;text-align:center;font-size:.8rem}
+.sb-bottom{margin-top:auto;padding:12px;border-top:1px solid #1a1a1a}
+.sb-bottom a{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:.78rem;color:#555;border-radius:7px}
+.sb-bottom a:hover{color:#aaa;background:#111}
+
+#main{flex:1;display:flex;flex-direction:column;min-width:0;overflow-x:hidden}
+
+/* ===== Page header / controls ===== */
+.page-header{display:flex;justify-content:space-between;align-items:center;padding:18px 24px 14px;border-bottom:1px solid #1a1a1a;background:#0d0d0d;position:sticky;top:0;z-index:50;gap:14px;flex-wrap:wrap}
+.page-header h1{margin:0;font-size:1.3rem;font-weight:700;color:#fff;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+.page-header h1 i{color:#C9A84C;font-size:1.1rem}
+.page-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.range-toggle{display:inline-flex;background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:2px}
+.range-toggle button{background:transparent;border:none;color:#888;padding:6px 12px;font-size:.74rem;cursor:pointer;border-radius:4px;font-family:inherit;font-weight:500}
+.range-toggle button:hover{color:#ddd}
+.range-toggle button.active{background:rgba(201,168,76,.18);color:#C9A84C;font-weight:600}
+.btn-secondary{background:rgba(201,168,76,.1);color:#C9A84C;border:1px solid rgba(201,168,76,.3);padding:6px 12px;font-size:.74rem;border-radius:6px;cursor:pointer;font-weight:500;font-family:inherit}
+.btn-secondary:hover{background:rgba(201,168,76,.18)}
+.btn-secondary:disabled{opacity:.5;cursor:wait}
+
+/* ===== Overview strip (always visible) ===== */
+.overview-strip{padding:16px 24px;border-bottom:1px solid #1a1a1a;background:#0a0a0a}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.kpi-grid-overview{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.kpi-card{background:#141414;border:1px solid #2a2a2a;border-radius:8px;padding:12px 14px;transition:border-color .15s}
+.kpi-card:hover{border-color:#3a3a3a}
+.kpi-card.kpi-gold{border-color:rgba(201,168,76,.35);background:linear-gradient(135deg,#141414,rgba(201,168,76,.04))}
+.kpi-card.kpi-green{border-color:rgba(110,212,126,.3);background:linear-gradient(135deg,#141414,rgba(110,212,126,.04))}
+.kpi-card.kpi-red{border-color:rgba(240,80,80,.3);background:linear-gradient(135deg,#141414,rgba(240,80,80,.04))}
+.kpi-label{font-size:.62rem;color:#888;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.kpi-value{font-size:1.4rem;color:#fff;font-weight:700;margin:6px 0 2px;letter-spacing:-.02em;line-height:1.1}
+.kpi-card.kpi-gold .kpi-value{color:#C9A84C}
+.kpi-card.kpi-green .kpi-value{color:#6ed47e}
+.kpi-card.kpi-red .kpi-value{color:#ff8888}
+.kpi-sub{font-size:.7rem;color:#888}
+
+/* ===== Tabs ===== */
+.insights-tabs{display:flex;gap:2px;padding:0 24px;border-bottom:1px solid #1a1a1a;background:#0d0d0d;overflow-x:auto;flex-shrink:0}
+.insights-tabs .tab{background:transparent;border:none;color:#888;padding:12px 18px;font-size:.82rem;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:all .15s;font-weight:500;font-family:inherit}
+.insights-tabs .tab:hover{color:#C9A84C}
+.insights-tabs .tab.active{color:#C9A84C;border-bottom-color:#C9A84C;font-weight:600}
+
+/* ===== Active panel ===== */
+.insights-panel{padding:18px 24px 60px;flex:1}
+.report-meta{font-size:.68rem;color:#666;margin-bottom:14px;font-style:italic}
+.loading-state,.error-state,.chart-empty{padding:40px;text-align:center;color:#888;font-size:.82rem}
+.error-state{color:#ff8888}
+
+.charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;margin:16px 0}
+.chart-card{background:#141414;border:1px solid #2a2a2a;border-radius:10px;padding:16px}
+.chart-title{font-size:.74rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px;font-weight:700}
+.chart-body{width:100%}
+
+.tables-stack{display:flex;flex-direction:column;gap:14px;margin-top:14px}
+.table-card{background:#141414;border:1px solid #2a2a2a;border-radius:10px;padding:16px}
+.table-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px}
+.table-title{font-size:.74rem;color:#C9A84C;text-transform:uppercase;letter-spacing:.08em;margin:0;font-weight:700}
+.table-scroll{overflow-x:auto}
+.data-table{width:100%;border-collapse:collapse}
+.data-table th{text-align:left;padding:8px 12px;font-size:.66rem;color:#888;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #2a2a2a;font-weight:600;white-space:nowrap}
+.data-table td{padding:9px 12px;font-size:.78rem;color:#ddd;border-bottom:1px solid #1a1a1a;white-space:nowrap}
+.data-table tbody tr:hover td{background:rgba(201,168,76,.04)}
+.data-table tbody tr:last-child td{border-bottom:none}
+.empty-row{text-align:center;color:#555;font-style:italic;padding:20px !important}
+
+.btn-icon{background:transparent;border:1px solid #2a2a2a;color:#888;width:28px;height:28px;border-radius:5px;cursor:pointer;font-size:.78rem;font-family:inherit;display:inline-flex;align-items:center;justify-content:center}
+.btn-icon:hover{border-color:rgba(201,168,76,.4);color:#C9A84C}
+
+@media(max-width:900px){
+  #sidebar{width:60px}
+  .sb-logo-text,.sb-logo-sub,.sb-link span,.sb-section{display:none}
+  .sb-link{justify-content:center;padding:10px 0}
+}
+@media(max-width:720px){
+  .charts-grid{grid-template-columns:1fr}
+  .page-header{flex-direction:column;align-items:stretch;gap:10px}
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .kpi-value{font-size:1.1rem}
+  .insights-panel{padding:14px 12px 40px}
+  .overview-strip{padding:12px}
+}
+</style>
+</head>
+<body>
+<nav id="sidebar">
+  <div class="sb-logo"><div class="sb-logo-mark">R&R</div><div><div class="sb-logo-text">Rates &amp; Realty</div><div class="sb-logo-sub">Admin CRM</div></div></div>
+  <div class="sb-section">CRM</div>
+  <a class="sb-link" href="/admin/people.html"><i class="fas fa-users"></i><span>People</span></a>
+  <a class="sb-link" href="/admin/pipeline.html"><i class="fas fa-chart-bar"></i><span>Pipeline</span></a>
+  <a class="sb-link active" href="/admin/insights.html"><i class="fas fa-chart-pie"></i><span>Insights</span></a>
+  <div class="sb-section">Real Estate</div>
+  <a class="sb-link" href="/admin/showings.html"><i class="fas fa-calendar-check"></i><span>Showings</span></a>
+  <a class="sb-link" href="/public/search-homes.html" target="_blank"><i class="fas fa-search"></i><span>Search Homes</span></a>
+  <div class="sb-bottom">
+    <a href="/" target="_blank"><i class="fas fa-arrow-left"></i><span>Back to Site</span></a>
+  </div>
+</nav>
+
+<div id="main">
+  <header class="page-header">
+    <h1><i class="fas fa-chart-pie"></i> Insights</h1>
+    <div class="page-controls">
+      <div class="range-toggle" role="tablist" aria-label="Date range">
+        <button data-range="30d">30 days</button>
+        <button data-range="90d" class="active">90 days</button>
+        <button data-range="ytd">YTD</button>
+        <button data-range="all">All time</button>
+      </div>
+      <button class="btn-secondary" data-action="refresh-all" title="Refresh both overview and the active tab"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <button class="btn-secondary" data-action="export-csv" title="Export every visible table as CSV"><i class="fas fa-download"></i> Export CSV</button>
+    </div>
+  </header>
+
+  <section class="overview-strip">
+    <div class="kpi-grid kpi-grid-overview" data-target="kpis-overview">
+      <div class="loading-state">Loading overview…</div>
+    </div>
+  </section>
+
+  <nav class="insights-tabs" role="tablist" aria-label="Report category">
+    <button class="tab active" data-report="money">💰 Money</button>
+    <button class="tab" data-report="funnel">🎯 Funnel</button>
+    <button class="tab" data-report="real_estate">🏠 Real Estate</button>
+    <button class="tab" data-report="marketing">📣 Marketing</button>
+    <button class="tab" data-report="activity">⚡ Activity</button>
+  </nav>
+
+  <section class="insights-panel" data-target="active-panel">
+    <div class="loading-state">Loading…</div>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var SUPABASE_URL = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var ANON_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+
+  var currentReport = 'money';
+  var currentRange = '90d';
+  var supabaseClient = null;
+
+  function getSupabaseClient() {
+    if (supabaseClient) return supabaseClient;
+    if (window.supabase && SUPABASE_URL && ANON_KEY) {
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, ANON_KEY);
+    }
+    return supabaseClient;
+  }
+
+  // ── escapeHtml ──
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // ── Backend fetch (one fn, six reports) ──
+  // The deployed insights-data v2 accepts the anon key as fallback. When a
+  // logged-in admin session exists we send the user's access token instead
+  // so the server can apply per-user filtering if it ever needs to.
+  async function fetchInsights(report, range) {
+    range = range || currentRange;
+    var headers = { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY };
+    var client = getSupabaseClient();
+    if (client) {
+      try {
+        var sess = await client.auth.getSession();
+        var token = sess && sess.data && sess.data.session && sess.data.session.access_token;
+        if (token) headers.Authorization = 'Bearer ' + token;
+      } catch (e) { /* fall back to anon */ }
+    }
+    var url = SUPABASE_URL + '/functions/v1/insights-data?report=' + encodeURIComponent(report) + '&range=' + encodeURIComponent(range);
+    var res = await fetch(url, { headers: headers });
+    if (!res.ok) {
+      var body = '';
+      try { body = await res.text(); } catch (e) {}
+      throw new Error('insights-data ' + res.status + (body ? ': ' + body.slice(0, 120) : ''));
+    }
+    return res.json();
+  }
+
+  // ── Render: KPIs ──
+  function kpiCardHtml(k) {
+    var accent = k.accent || 'default';
+    return '<div class="kpi-card kpi-' + esc(accent) + '">'
+      + '<div class="kpi-label">' + esc(k.label) + '</div>'
+      + '<div class="kpi-value">' + esc(String(k.value)) + '</div>'
+      + (k.sub ? '<div class="kpi-sub">' + esc(k.sub) + '</div>' : '')
+      + '</div>';
+  }
+  function renderKpis(kpis, targetEl) {
+    if (!kpis || !kpis.length) {
+      targetEl.innerHTML = '<div class="kpi-card"><div class="kpi-label">No data</div><div class="kpi-value">—</div></div>';
+      return;
+    }
+    targetEl.innerHTML = kpis.map(kpiCardHtml).join('');
+  }
+
+  // ── Render: tables ──
+  function renderTables(tables) {
+    return (tables || []).map(function (t) {
+      return '<div class="table-card" data-table-name="' + esc(t.name) + '">'
+        + '<div class="table-header">'
+        +   '<h3 class="table-title">' + esc(t.title) + '</h3>'
+        +   '<button class="btn-icon" data-action="export-table" data-table="' + esc(t.name) + '" title="Export this table as CSV"><i class="fas fa-download"></i></button>'
+        + '</div>'
+        + '<div class="table-scroll">'
+        +   '<table class="data-table">'
+        +     '<thead><tr>' + (t.columns || []).map(function (c) {
+                return '<th>' + esc(String(c).replace(/_/g, ' ')) + '</th>';
+              }).join('') + '</tr></thead>'
+        +     '<tbody>' + ((!t.rows || !t.rows.length)
+                ? '<tr><td colspan="' + (t.columns || []).length + '" class="empty-row">No data in range</td></tr>'
+                : t.rows.map(function (row) {
+                    return '<tr>' + (t.columns || []).map(function (c) {
+                      var v = row[c];
+                      return '<td>' + esc(v == null ? '—' : String(v)) + '</td>';
+                    }).join('') + '</tr>';
+                  }).join('')) + '</tbody>'
+        +   '</table>'
+        + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  // ── Render: charts (inline SVG, no library) ──
+  function renderSeries(series) {
+    return (series || []).map(function (s) {
+      var safeData = JSON.stringify(s.data || []).replace(/'/g, '&apos;');
+      return '<div class="chart-card" data-chart="' + esc(s.name) + '">'
+        + '<h3 class="chart-title">' + esc(s.title) + '</h3>'
+        + '<div class="chart-body" data-chart-data=\'' + safeData + '\' data-chart-type="' + esc(s.type || 'bar') + '" data-format="' + esc(s.format || '') + '"></div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function renderChart(el) {
+    var data;
+    try { data = JSON.parse(el.dataset.chartData); }
+    catch (e) { el.innerHTML = '<div class="chart-empty">Bad data</div>'; return; }
+    var type = el.dataset.chartType || 'bar';
+    var format = el.dataset.format || '';
+    if (!data || !data.length) { el.innerHTML = '<div class="chart-empty">No data in range</div>'; return; }
+
+    var w = el.offsetWidth || 600;
+    var h = 220;
+    var padding = { top: 20, right: 20, bottom: 50, left: 60 };
+    var chartW = w - padding.left - padding.right;
+    var chartH = h - padding.top - padding.bottom;
+    var maxVal = Math.max.apply(null, data.map(function (d) { return d.value || 0; })) || 1;
+
+    function fmt(v) {
+      if (format === 'currency') return '$' + Number(v).toLocaleString();
+      if (format === 'percent') return Number(v).toFixed(1) + '%';
+      return Number(v).toLocaleString();
+    }
+    function compactNum(v) {
+      var n = Number(v);
+      if (!isFinite(n)) return '';
+      if (Math.abs(n) >= 1000000) return (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + 'M';
+      if (Math.abs(n) >= 1000) return Math.round(n / 1000) + 'k';
+      return String(n);
+    }
+
+    var parts = [];
+    parts.push('<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '">');
+    // Y-axis labels (just min + max — keep it light)
+    parts.push('<text x="' + (padding.left - 8) + '" y="' + (padding.top + 4) + '" fill="#888" font-size="10" text-anchor="end">' + fmt(maxVal) + '</text>');
+    parts.push('<text x="' + (padding.left - 8) + '" y="' + (padding.top + chartH) + '" fill="#888" font-size="10" text-anchor="end">0</text>');
+
+    if (type === 'line') {
+      var points = data.map(function (d, i) {
+        var x = padding.left + (i / Math.max(data.length - 1, 1)) * chartW;
+        var y = padding.top + chartH - ((d.value || 0) / maxVal) * chartH;
+        return x + ',' + y;
+      }).join(' ');
+      parts.push('<polyline points="' + points + '" fill="none" stroke="#C9A84C" stroke-width="2.5"/>');
+      data.forEach(function (d, i) {
+        var x = padding.left + (i / Math.max(data.length - 1, 1)) * chartW;
+        var y = padding.top + chartH - ((d.value || 0) / maxVal) * chartH;
+        parts.push('<circle cx="' + x + '" cy="' + y + '" r="3" fill="#C9A84C"><title>' + esc(d.label) + ': ' + fmt(d.value) + '</title></circle>');
+      });
+      // X-axis labels — thin to ~8 max so they don't overlap
+      var stride = data.length > 14 ? Math.ceil(data.length / 8) : 1;
+      data.forEach(function (d, i) {
+        if (i % stride !== 0 && i !== data.length - 1) return;
+        var x = padding.left + (i / Math.max(data.length - 1, 1)) * chartW;
+        parts.push('<text x="' + x + '" y="' + (h - 8) + '" fill="#888" font-size="10" text-anchor="middle">' + esc(String(d.label)) + '</text>');
+      });
+    } else {
+      // Bar chart
+      var slot = chartW / data.length;
+      var barW = Math.max(8, slot - 6);
+      data.forEach(function (d, i) {
+        var x = padding.left + i * slot + (slot - barW) / 2;
+        var v = d.value || 0;
+        var barH = (v / maxVal) * chartH;
+        var y = padding.top + chartH - barH;
+        parts.push('<rect x="' + x + '" y="' + y + '" width="' + barW + '" height="' + barH + '" fill="#C9A84C" rx="2"><title>' + esc(d.label) + ': ' + fmt(v) + '</title></rect>');
+        var labelStride = data.length > 14 ? Math.ceil(data.length / 8) : 1;
+        if (i % labelStride === 0 || i === data.length - 1) {
+          parts.push('<text x="' + (x + barW / 2) + '" y="' + (h - 8) + '" fill="#888" font-size="10" text-anchor="middle">' + esc(String(d.label).substring(0, 10)) + '</text>');
+        }
+        if (v > 0) {
+          parts.push('<text x="' + (x + barW / 2) + '" y="' + (y - 4) + '" fill="#C9A84C" font-size="10" text-anchor="middle">' + esc(compactNum(v)) + '</text>');
+        }
+      });
+    }
+    parts.push('</svg>');
+    el.innerHTML = parts.join('');
+  }
+
+  // ── Loaders ──
+  async function loadOverview() {
+    var target = document.querySelector('[data-target=kpis-overview]');
+    if (!target) return;
+    try {
+      var data = await fetchInsights('overview', currentRange);
+      renderKpis(data.kpis, target);
+    } catch (e) {
+      console.error('[insights] overview failed:', e);
+      target.innerHTML = '<div class="error-state">Overview failed: ' + esc(e.message || 'unknown') + '</div>';
+    }
+  }
+
+  async function loadReport(report, range) {
+    var panel = document.querySelector('[data-target=active-panel]');
+    if (!panel) return;
+    panel.innerHTML = '<div class="loading-state"><i class="fas fa-spinner fa-spin"></i> Loading ' + esc(report) + '…</div>';
+    try {
+      var data = await fetchInsights(report, range);
+      var meta = data.generated_at
+        ? '<div class="report-meta">Generated ' + esc(new Date(data.generated_at).toLocaleString()) + ' · Range: ' + esc(data.range || range) + '</div>'
+        : '';
+      var kpisHtml = (data.kpis && data.kpis.length)
+        ? '<div class="kpi-grid">' + data.kpis.map(kpiCardHtml).join('') + '</div>'
+        : '';
+      var seriesHtml = (data.series && data.series.length)
+        ? '<div class="charts-grid">' + renderSeries(data.series) + '</div>'
+        : '';
+      var tablesHtml = (data.tables && data.tables.length)
+        ? '<div class="tables-stack">' + renderTables(data.tables) + '</div>'
+        : '';
+      var emptyHtml = (!data.kpis || !data.kpis.length) && (!data.series || !data.series.length) && (!data.tables || !data.tables.length)
+        ? '<div class="loading-state">No data available for this report yet.</div>'
+        : '';
+      panel.innerHTML = meta + kpisHtml + seriesHtml + tablesHtml + emptyHtml;
+      // Render charts after the DOM is in place so offsetWidth resolves.
+      panel.querySelectorAll('.chart-body').forEach(function (el) { renderChart(el); });
+    } catch (e) {
+      console.error('[insights] ' + report + ' failed:', e);
+      panel.innerHTML = '<div class="error-state">Failed to load ' + esc(report) + ': ' + esc(e.message || 'unknown') + '</div>';
+    }
+  }
+
+  // ── CSV export ──
+  function exportTableCard(card) {
+    var name = card.dataset.tableName || 'table';
+    var headers = [].slice.call(card.querySelectorAll('thead th')).map(function (th) { return th.textContent.trim(); });
+    var rows = [].slice.call(card.querySelectorAll('tbody tr')).map(function (tr) {
+      // Skip the empty-row marker
+      if (tr.querySelector('.empty-row')) return null;
+      return [].slice.call(tr.querySelectorAll('td')).map(function (td) {
+        return '"' + td.textContent.trim().replace(/"/g, '""') + '"';
+      }).join(',');
+    }).filter(Boolean);
+    if (!rows.length) return;
+    var csv = headers.join(',') + '\n' + rows.join('\n');
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name + '-' + new Date().toISOString().substring(0, 10) + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  // ── Wiring ──
+  document.querySelectorAll('.insights-tabs .tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('.insights-tabs .tab').forEach(function (t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      currentReport = tab.dataset.report;
+      loadReport(currentReport, currentRange);
+    });
+  });
+
+  document.querySelectorAll('.range-toggle button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.range-toggle button').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentRange = btn.dataset.range;
+      loadOverview();
+      loadReport(currentReport, currentRange);
+    });
+  });
+
+  document.querySelector('[data-action=refresh-all]').addEventListener('click', function () {
+    var btn = this;
+    btn.disabled = true;
+    Promise.all([loadOverview(), loadReport(currentReport, currentRange)])
+      .then(function () { btn.disabled = false; })
+      .catch(function () { btn.disabled = false; });
+  });
+
+  // Per-table export (delegated since rows re-render)
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-action=export-table]');
+    if (!btn) return;
+    var card = btn.closest('.table-card');
+    if (card) exportTableCard(card);
+  });
+
+  // Export-all: trigger every visible per-table export in sequence
+  document.querySelector('[data-action=export-csv]').addEventListener('click', function () {
+    var cards = document.querySelectorAll('.table-card');
+    if (!cards.length) { alert('No tables to export on the current tab.'); return; }
+    cards.forEach(exportTableCard);
+  });
+
+  // Init
+  loadOverview();
+  loadReport(currentReport, currentRange);
+
+  // Re-render charts on resize (debounced) so SVG bars/lines fit the new width.
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      document.querySelectorAll('.chart-body').forEach(function (el) { renderChart(el); });
+    }, 200);
+  });
+})();
+</script>
+</body>
+</html>
