@@ -82,6 +82,27 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json();
     const pdfBytes = await buildPDF(body);
+
+    // v48: fire Layer 2 ClickUp automation (fire-and-forget, never blocks PDF response)
+    try {
+      const contactId = body.contact_id || body.borrower_id || null;
+      if (contactId) {
+        const refNum = 'RR-' + Date.now().toString(36).toUpperCase().slice(-7);
+        fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/clickup-auto-create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trigger_type: 'approval_letter',
+            contact_id: contactId,
+            source_id: refNum,
+            context: { loan_amount: body.loan_amount, loan_type: body.loan_type },
+          }),
+        }).catch(e => console.log('[clickup-auto-create] fire-and-forget:', String(e).slice(0, 100)));
+      }
+    } catch (hookErr) {
+      console.log('[approval_letter hook] non-blocking error:', String(hookErr).slice(0, 200));
+    }
+
     return new Response(JSON.stringify({success:true,pdf:u8b64(pdfBytes),type:'application/pdf'}),
       {headers:{...cors,'Content-Type':'application/json'}});
   } catch(e:any) {

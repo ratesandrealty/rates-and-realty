@@ -775,7 +775,7 @@
     if (!document.querySelector('[data-target=ct-list]')) return;
     initialized = true;
 
-    // Sub-tab switching (CRM ↔ ClickUp)
+    // Sub-tab switching (CRM ↔ ClickUp ↔ Automations)
     [].slice.call(document.querySelectorAll('.task-subtab')).forEach(function (tab) {
       tab.addEventListener('click', function () {
         [].slice.call(document.querySelectorAll('.task-subtab')).forEach(function (t) { t.classList.remove('active'); });
@@ -783,11 +783,21 @@
         [].slice.call(document.querySelectorAll('.task-subpanel')).forEach(function (p) {
           p.hidden = p.dataset.subpanel !== tab.dataset.subtab;
         });
+        try { localStorage.setItem('rr_tasks_subtab', tab.dataset.subtab); } catch (e) {}
         // Body class follows whichever sub-panel just became visible.
         syncBodyViewClass();
         if (tab.dataset.subtab === 'clickup') loadTasks();
       });
     });
+
+    // Restore previously chosen sub-tab (CRM is the default if nothing saved).
+    try {
+      var savedSub = localStorage.getItem('rr_tasks_subtab');
+      if (savedSub && savedSub !== 'crm') {
+        var savedTab = document.querySelector('.task-subtab[data-subtab="' + savedSub + '"]');
+        if (savedTab) savedTab.click();
+      }
+    } catch (e) {}
 
     // Status chips (single-select, can clear)
     [].slice.call(document.querySelectorAll('[data-filter-status]')).forEach(function (chip) {
