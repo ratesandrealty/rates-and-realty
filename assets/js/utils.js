@@ -13,11 +13,24 @@
   var FALLBACK_EMAIL = 'rene@ratesandrealty.com';
   var CACHE_KEY = 'rr_google_account_email';
 
+  // Defends against the JSON-encoded app_config.value bug ("\"email\"") that produced ?authuser=%22email%40domain%22
+  function normalizeEmail(s) {
+    if (s == null) return s;
+    var v = String(s).trim();
+    if (v.length >= 2) {
+      var first = v.charAt(0), last = v.charAt(v.length - 1);
+      if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+        v = v.slice(1, -1).trim();
+      }
+    }
+    return v;
+  }
+
   // Seed window with the cached value (or fallback) immediately so
   // pinGoogleUrl works synchronously on first call.
   var cached = null;
-  try { cached = localStorage.getItem(CACHE_KEY); } catch (_) {}
-  window.RR_GOOGLE_ACCOUNT_EMAIL = window.RR_GOOGLE_ACCOUNT_EMAIL || cached || FALLBACK_EMAIL;
+  try { cached = normalizeEmail(localStorage.getItem(CACHE_KEY)); } catch (_) {}
+  window.RR_GOOGLE_ACCOUNT_EMAIL = window.RR_GOOGLE_ACCOUNT_EMAIL || cached || normalizeEmail(FALLBACK_EMAIL);
 
   function pinGoogleUrl(url) {
     if (!url || typeof url !== 'string') return url;
@@ -53,9 +66,10 @@
         .then(function (data) {
           var raw = data && data[0] && data[0].value;
           // value column stores JSON-encoded strings, e.g. "\"rene@ratesandrealty.com\""
-          var email = typeof raw === 'string' ? raw.replace(/^"|"$/g, '') : raw;
+          var email = normalizeEmail(raw);
           if (email) {
             window.RR_GOOGLE_ACCOUNT_EMAIL = email;
+            // Persist the normalized form so subsequent page loads read a clean value.
             try { localStorage.setItem(CACHE_KEY, email); } catch (_) {}
           }
         })
