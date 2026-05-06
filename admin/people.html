@@ -531,16 +531,17 @@ var ANON_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
 var _sessJWT = null;
 async function _refreshSessJWT() {
   try {
-    if (window.supabase && window.supabase.auth) {
-      var s = await window.supabase.auth.getSession();
+    var sbAuthClient = window._supabaseClient || (window.supabase && window.supabase.auth ? window.supabase : null);
+    if (sbAuthClient && sbAuthClient.auth) {
+      var s = await sbAuthClient.auth.getSession();
       _sessJWT = s && s.data && s.data.session ? s.data.session.access_token : null;
     }
   } catch(e) { _sessJWT = null; }
   return _sessJWT;
 }
 _refreshSessJWT();
-if (window.supabase && window.supabase.auth && window.supabase.auth.onAuthStateChange) {
-  window.supabase.auth.onAuthStateChange(function(){ _refreshSessJWT(); });
+if (window._supabaseClient && window._supabaseClient.auth && window._supabaseClient.auth.onAuthStateChange) {
+  window._supabaseClient.auth.onAuthStateChange(function(){ _refreshSessJWT(); });
 }
 var hdrs = function() {
   var token = _sessJWT || ANON_KEY;
