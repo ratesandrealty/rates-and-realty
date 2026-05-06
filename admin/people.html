@@ -528,7 +528,24 @@ if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_ANON_KEY) {
   console.error('[people.html] window.APP_CONFIG.SUPABASE_ANON_KEY missing — /api/env.js did not load correctly. Try a hard refresh (Ctrl+Shift+R).');
 }
 var ANON_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-var hdrs = function() { return { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY, 'Content-Type': 'application/json', Prefer: 'return=representation' }; };
+var _sessJWT = null;
+async function _refreshSessJWT() {
+  try {
+    if (window.supabase && window.supabase.auth) {
+      var s = await window.supabase.auth.getSession();
+      _sessJWT = s && s.data && s.data.session ? s.data.session.access_token : null;
+    }
+  } catch(e) { _sessJWT = null; }
+  return _sessJWT;
+}
+_refreshSessJWT();
+if (window.supabase && window.supabase.auth && window.supabase.auth.onAuthStateChange) {
+  window.supabase.auth.onAuthStateChange(function(){ _refreshSessJWT(); });
+}
+var hdrs = function() {
+  var token = _sessJWT || ANON_KEY;
+  return { apikey: ANON_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+};
 
 // people-admin edge function helper
 async function peopleApi(action, payload) {
@@ -536,7 +553,7 @@ async function peopleApi(action, payload) {
   try {
     var r = await fetch(SB_URL + '/functions/v1/people-admin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY },
+      headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: 'Bearer ' + (_sessJWT || ANON_KEY) },
       body: JSON.stringify(Object.assign({ action: action }, payload))
     });
     return await r.json();
