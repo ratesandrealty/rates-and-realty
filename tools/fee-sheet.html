@@ -1185,7 +1185,7 @@ function render(inp, results) {
         <table class="fee-table">
             <thead><tr>
                 <th>Fee Description</th>
-                ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}</th>`).join('')}
+                ${results.map((r, i) => `<th class="${thClass(i)}">${(inp.mode === 'property') ? (r.headerLabel.split(' · ')[0]) : ('Option ' + scenarios[i].id)}</th>`).join('')}
             </tr></thead>
             <tbody>
                 ${catHeader('A. Origination Charges')}
@@ -1274,14 +1274,16 @@ function render(inp, results) {
             <table class="monthly-table">
                 <thead><tr>
                     <th>Payment Component</th>
-                    ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}: ${s.rate}%</th>`).join('')}
+                    ${results.map((r, i) => `<th class="${thClass(i)}">${r.headerLabel}</th>`).join('')}
                 </tr></thead>
                 <tbody>
                     <tr class="row-item"><td>Principal &amp; Interest</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.pi)}</td>`).join('')}</tr>
                     <tr class="row-item"><td>Property Tax</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.monthlyTax)}</td>`).join('')}</tr>
                     <tr class="row-item"><td>Hazard Insurance</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.monthlyIns)}</td>`).join('')}</tr>
                     <tr class="row-item"><td>Mortgage Insurance</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.mi)}</td>`).join('')}</tr>
-                    <tr class="total-row"><td><strong>Total Monthly Payment</strong></td>${results.map((r, i) => `<td class="${colClass(i)}"><strong>${fmt(r.totalMonthly)}</strong></td>`).join('')}</tr>
+                    ${(inp.mode === 'property' && results.some(r => r.monthlyHoa > 0)) ? `<tr class="row-item"><td>HOA</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.monthlyHoa)}</td>`).join('')}</tr>` : ''}
+                    <tr class="total-row"><td><strong>Total Monthly Payment</strong></td>${results.map((r, i) => `<td class="${colClass(i)}"><strong>${fmt(r.totalMonthly + (r.monthlyHoa || 0))}</strong></td>`).join('')}</tr>
+                    ${(inp.mode === 'property' && results.some(r => r.monthlyRent > 0)) ? `<tr class="row-item" style="border-top:1px solid #444;"><td>Gross Rental Income</td>${results.map((r, i) => `<td class="${colClass(i)}">${r.monthlyRent > 0 ? '$' + r.monthlyRent.toLocaleString() : '—'}</td>`).join('')}</tr><tr class="total-row" style="background:rgba(80,200,120,0.08);"><td><strong>Net Payment after rent (75% credit)</strong></td>${results.map((r, i) => `<td class="${colClass(i)}"><strong>${fmt(r.netPayment + (r.monthlyHoa || 0))}</strong></td>`).join('')}</tr>` : ''}
                 </tbody>
             </table>
         </div>
@@ -1316,10 +1318,68 @@ function render(inp, results) {
 }
 
 // ── Recalc ──
+// Property-mode helpers (commit 3b). Synthesize a per-column inp from the base inp + the column's
+// property overrides, then call calcScenario unchanged. The math engine doesn't need to know about modes.
+
+function applyColumnOverrides(baseInp, col) {
+    // Use readSidebarInputs with overrides so loanAmount / govFee / LTV / annualTax all
+    // recompute consistently for this column's purchase price + product.
+    return readSidebarInputs({
+        purchasePrice: col.purchasePrice,
+        loanProduct: col.loanProduct,
+        propertyType: col.propertyType,
+        hoa: col.hoa,
+        monthlyRent: col.monthlyRent
+    });
+}
+
+function calcPropertyColumn(col) {
+    const inp = applyColumnOverrides(readSidebarInputs(), col);
+    // Build a synthetic scenario so calcScenario can use its rate. origComp/points/lenderCredits
+    // default to "no extras" since property mode is about comparing properties, not pricing options.
+    const sc = {
+        id: col.id,
+        label: col.label,
+        rate: col.rate,
+        points: 0,
+        origComp: 1.5,
+        lenderCredits: 0,
+        recommended: !!col.recommended
+    };
+    const result = calcScenario(inp, sc);
+    // Stash a few per-column extras the renderer needs to know about in property mode.
+    result.headerLabel = col.label + ' · $' + Math.round(col.purchasePrice / 1000) + 'K';
+    result.monthlyHoa = col.hoa || 0;
+    result.monthlyRent = col.monthlyRent || 0;
+    result.netPayment = result.totalMonthly + result.monthlyHoa - (result.monthlyRent * 0.75);
+    result.inp = inp;  // Renderer needs per-column inp for property mode (LTV, loan amount, etc).
+    return result;
+}
+
 function recalc() {
-    const inp = getInputs();
-    const results = scenarios.map(sc => calcScenario(inp, sc));
-    render(inp, results);
+    if (_currentMode === 'property') {
+        if (!propertyScenarios || propertyScenarios.length === 0) {
+            propertyScenarios = defaultPropertyScenarios();
+        }
+        // Run side effects once against base inp (so sidebar fields don't fight per-column writes).
+        const baseInp = getInputs();
+        baseInp.mode = 'property';
+        const results = propertyScenarios.map(calcPropertyColumn);
+        render(baseInp, results);
+    } else {
+        const inp = getInputs();
+        inp.mode = 'rate';
+        const results = scenarios.map(sc => {
+            const r = calcScenario(inp, sc);
+            r.headerLabel = 'Option ' + sc.id + ': ' + sc.rate + '%';
+            r.monthlyHoa = 0;
+            r.monthlyRent = 0;
+            r.netPayment = r.totalMonthly;
+            r.inp = inp;
+            return r;
+        });
+        render(inp, results);
+    }
 }
 
 function generate() {
