@@ -11083,7 +11083,12 @@ function populateLoanDashboard(app) {
   sv('ld-income', app.total_monthly_income || app.base_income);
   sv('ld-debt', app.monthly_debt);
   var ltEl = document.getElementById('ld-loan-type');
-  if (ltEl && app.loan_type) ltEl.value = app.loan_type;
+  if (ltEl && app.loan_type) {
+    var matched = Array.from(ltEl.options).find(function(o) {
+      return o.value.toLowerCase() === String(app.loan_type).toLowerCase();
+    });
+    if (matched) ltEl.value = matched.value;
+  }
   if (_activeBorrowerApp) _activeBorrowerApp.mi_overridden = !!app.mi_overridden;
   recalcLoanDash();
 }
@@ -11127,7 +11132,7 @@ function recalcLoanDash() {
   var ltv = propVal > 0 ? (loan / propVal * 100) : 0;
 
   // MI: auto-calc unless user overrode it, or loan type is Non-QM/DSCR (calcMonthlyMI returns null)
-  var loanType = document.getElementById('ld-loan-type')?.value || '';
+  var loanType = (document.getElementById('ld-loan-type')?.value || '').trim();
   var miOverridden = !!(_activeBorrowerApp && _activeBorrowerApp.mi_overridden);
   var miCalc = calcMonthlyMI(loan, propVal, loanType, ltv);
   var mi;
@@ -11443,7 +11448,7 @@ async function save1003() {
     current_address_months: parseInt(gv('f_current_months')) || 0,
     current_housing_type: gv('f_current_housing'),
     current_rent_amount: parseFloat(gv('f_current_rent')) || 0,
-    loan_amount: parseFloat(gv('f_loan_amount')) || 0,
+    loan_amount: parseFloat(gv('f_loan_amount')) || null,
     loan_purpose: gv('f_loan_purpose'),
     loan_type: gv('f_loan_type_app') || null,
     property_address_street: gv('f_prop_street'),
@@ -11452,7 +11457,7 @@ async function save1003() {
     property_address_state: gv('f_prop_state'),
     property_address_zip: gv('f_prop_zip'),
     property_address_county: gv('f_prop_county'),
-    property_value: parseFloat(gv('f_prop_value')) || 0,
+    property_value: parseFloat(gv('f_prop_value')) || null,
     number_of_units: parseInt(gv('f_num_units')) || 1,
     occupancy_type: gv('f_occupancy'),
     decl_primary_residence: gr('decl_primary') === 'yes',
