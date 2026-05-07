@@ -1063,17 +1063,11 @@ function calcMI(inp, rate) {
         // USDA annual fee is 0.35% of avg loan balance; close enough to use total.
         return totalLoanAmount * 0.0035 / 12;
     }
-    // Conventional PMI — base loan amount (no upfront financed fee here).
+    // Conventional PMI — flat 0.30% on the base loan amount, only when LTV > 80%.
+    // Per Rene's spec: ignore credit-score tiering and LTV bumps for the quote estimate;
+    // actual PMI rate at lock will reflect MI provider quote.
     if (ltv <= 80) return 0;
-    let pmiRate = 0.005;
-    const cs = inp.creditScore;
-    if (cs === '780+' || cs === '760-779') pmiRate = 0.003;
-    else if (cs === '740-759' || cs === '720-739') pmiRate = 0.004;
-    else if (cs === '700-719' || cs === '680-699') pmiRate = 0.006;
-    else pmiRate = 0.008;
-    if (ltv > 95) pmiRate += 0.002;
-    else if (ltv > 90) pmiRate += 0.001;
-    return inp.loanAmount * pmiRate / 12;
+    return inp.loanAmount * 0.003 / 12;
 }
 
 // Government upfront fee (financed into the loan amount).
@@ -1510,13 +1504,29 @@ function render(inp, results) {
 // Property-mode helpers (commit 3b). Synthesize a per-column inp from the base inp + the column's
 // property overrides, then call calcScenario unchanged. The math engine doesn't need to know about modes.
 
+// Property cards use short codes ('fha30', 'va30') in their loan-product dropdowns
+// for compactness in the JSONB persistence shape. The sidebar dropdown and the
+// calc engine (computeGovUpfrontFee, calcMI, getLoanTermYears) all expect the
+// long display strings ('FHA 30yr Fixed', 'VA 30yr Fixed'). Without this map,
+// FHA/VA/USDA gov fees and monthly MI silently fall back to Conv math in
+// property mode — invisible to users until they wonder why FHA UFMIP isn't
+// showing up.
+const PRODUCT_CODE_TO_FULL = {
+    conv30: 'Conv 30yr Fixed',
+    conv15: 'Conv 15yr Fixed',
+    fha30:  'FHA 30yr Fixed',
+    va30:   'VA 30yr Fixed',
+    usda30: 'USDA 30yr Fixed',
+    jumbo30:'Jumbo 30yr Fixed'
+};
+
 function applyColumnOverrides(baseInp, col) {
     // Use readSidebarInputs with overrides so loanAmount / govFee / LTV / annualTax all
     // recompute consistently for this column's purchase price + product.
     return readSidebarInputs({
         purchasePrice: col.purchasePrice,
         downPct: (col.downPct != null) ? col.downPct : 20,
-        loanProduct: col.loanProduct,
+        loanProduct: PRODUCT_CODE_TO_FULL[col.loanProduct] || col.loanProduct,
         propertyType: col.propertyType,
         hoa: col.hoa,
         monthlyRent: col.monthlyRent
