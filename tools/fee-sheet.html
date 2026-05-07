@@ -831,13 +831,12 @@ function buildPropertyCards() {
                 <span></span>
                 <button class="btn-recommend ${p.recommended ? 'active' : ''}" onclick="togglePropertyRecommend(${i})">&#9733; Recommend</button>
             </div>
-            <div class="field"><label>Label</label><input type="text" value="${p.label}" onchange="propertyScenarios[${i}].label=this.value;buildPropertyCards();recalc()"></div>
             <div class="field"><label>Property Type</label>
-                <select onchange="propertyScenarios[${i}].propertyType=this.value;recalc()">
-                    <option value="sfr"         ${p.propertyType==='sfr' ? 'selected' : ''}>Single Family</option>
-                    <option value="condo"       ${p.propertyType==='condo' ? 'selected' : ''}>Condo</option>
-                    <option value="multifamily" ${p.propertyType==='multifamily' ? 'selected' : ''}>2-4 Unit</option>
-                    <option value="townhouse"   ${p.propertyType==='townhouse' ? 'selected' : ''}>Townhouse</option>
+                <select onchange="setPropertyTypeAndLabel(${i}, this.value)">
+                    <option value="sfr"          ${p.propertyType==='sfr' ? 'selected' : ''}>Single Family</option>
+                    <option value="condo"        ${p.propertyType==='condo' ? 'selected' : ''}>Condo</option>
+                    <option value="multifamily"  ${p.propertyType==='multifamily' ? 'selected' : ''}>2-4 Unit</option>
+                    <option value="townhouse"    ${p.propertyType==='townhouse' ? 'selected' : ''}>Townhouse</option>
                     <option value="manufactured" ${p.propertyType==='manufactured' ? 'selected' : ''}>Manufactured</option>
                 </select>
             </div>
@@ -861,6 +860,25 @@ function buildPropertyCards() {
             </div>`;
         container.appendChild(card);
     });
+}
+
+// Single source of truth for property type → label mapping. Selecting Property Type
+// updates BOTH propertyType (drives calcScenario fee lookups) and label (drives PDF
+// column headers + sidebar card title). One dropdown, two purposes.
+const PROPERTY_TYPE_LABELS = {
+    sfr: 'SFR',
+    condo: 'Condo',
+    multifamily: '2-4 Unit',
+    townhouse: 'Townhouse',
+    manufactured: 'Manufactured'
+};
+function setPropertyTypeAndLabel(i, type) {
+    if (!propertyScenarios[i]) return;
+    propertyScenarios[i].propertyType = type;
+    propertyScenarios[i].label = PROPERTY_TYPE_LABELS[type] || type;
+    buildPropertyCards();  // re-render so the <h3> title updates to match
+    recalc();
+    notifyParentOfChange();
 }
 
 function togglePropertyRecommend(i) {
@@ -1199,7 +1217,9 @@ const quoteId = genQuoteId();
 
 // ── Render ──
 function render(inp, results) {
-    const recIdx = scenarios.findIndex(s => s.recommended);
+    const recIdx = (inp.mode === 'property')
+        ? (propertyScenarios || []).findIndex(p => p.recommended)
+        : scenarios.findIndex(s => s.recommended);
     const today = new Date();
     const dateStr = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const timeStr = today.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -1251,15 +1271,16 @@ function render(inp, results) {
             <strong>${inp.borrowerName}</strong> &nbsp;|&nbsp; ${inp.propertyAddress}
         </div>
 
-        <div class="summary-strip">
+        ${(inp.mode === 'property') ? '' : `<div class="summary-strip">
             <div class="item"><div class="lbl">Purchase Price</div><div class="val">${fmtPlain(inp.purchasePrice, 0)}</div></div>
             <div class="item"><div class="lbl">Loan Amount</div><div class="val">${fmtPlain(inp.loanAmount, 0)}</div></div>
             <div class="item"><div class="lbl">LTV</div><div class="val">${inp.ltv.toFixed(1)}%</div></div>
             <div class="item"><div class="lbl">Product</div><div class="val" style="font-family:'DM Sans';font-size:12px">${inp.loanProduct}</div></div>
             <div class="item"><div class="lbl">Lock</div><div class="val" style="font-family:'DM Sans';font-size:12px">${inp.lockPeriod}</div></div>
-        </div>
+        </div>`}
 
         ${(() => {
+            if (inp.mode === 'property') return '';
             const info = getLoanLimitInfo(inp.county, inp.loanAmount);
             if (!info) return '';
             return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 14px;margin-bottom:12px;background:#f9f9f7;border:1px solid #eee;border-radius:4px;font-size:11px;color:#666;">' +
@@ -1271,7 +1292,20 @@ function render(inp, results) {
         <div style="display:flex;gap:0;">
             <div style="width:40%;flex-shrink:0;"></div>
             <div class="rate-cards" style="flex:1;">
-                ${scenarios.map((s, i) => {
+                ${(inp.mode === 'property') ? results.map((r, i) => {
+                    const p = propertyScenarios[i];
+                    const isRec = i === recIdx;
+                    const colInp = r.inp || inp;
+                    return '<div class="rate-card' + (isRec ? ' rec' : '') + '">' +
+                        '<div class="rate-card-label">' + (p ? p.label : ('Col ' + (i+1))) + '</div>' +
+                        '<div class="rate-card-rate">' + (p ? p.rate.toFixed(3) : '0.000') + '%</div>' +
+                        '<div class="rate-card-apr" style="font-size:10px;line-height:1.5;margin-top:4px;">' +
+                            'Price: ' + fmtPlain(colInp.purchasePrice, 0) + '<br>' +
+                            'Loan: ' + fmtPlain(colInp.loanAmount, 0) + '<br>' +
+                            'LTV: ' + colInp.ltv.toFixed(1) + '%' +
+                        '</div>' +
+                    '</div>';
+                }).join('') : scenarios.map((s, i) => {
                     const isRec = i === recIdx;
                     const ptsAmt = Math.abs(s.points / 100 * inp.loanAmount);
                     let pillClass, pillText;
@@ -1394,6 +1428,7 @@ function render(inp, results) {
         </div>
 
         ${(() => {
+            if (inp.mode === 'property') return '';
             const county = inp.county || 'Los Angeles';
             const info = getLoanLimitInfo(county, inp.loanAmount);
             if (!info) {
