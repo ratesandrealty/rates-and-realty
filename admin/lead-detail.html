@@ -249,8 +249,6 @@
     .score-bar-neg .score-bar-fill { background: linear-gradient(90deg, #f87171, #fca5a5); }
     .score-bar-zero .score-bar-fill { background: linear-gradient(90deg, rgba(255,255,255,0.15), rgba(255,255,255,0.08)); }
     .score-bar-zero .score-bar-val { color: var(--muted); }
-    .score-sparkline svg { display: block; }
-    .score-sparkline svg circle:hover { r: 5; cursor: default; }
 
     /* old topbar styles removed — now using .action-bar */
 
@@ -1796,7 +1794,6 @@
             <div class="score-action-box" id="sc-action">Load a lead to calculate score.</div>
           </div>
           <div class="score-bars" id="sc-bars"></div>
-          <div id="sc-sparkline" class="score-sparkline" style="display:none;margin-top:14px;padding:12px 8px 4px;background:rgba(255,255,255,0.02);border-radius:6px;"></div>
           <div id="sc-last-scored" class="last-scored-at" style="display:none;font-size:.72rem;color:#777;text-align:right;margin-top:8px;"></div>
         </div>
       </div>
@@ -13919,65 +13916,6 @@ function renderScoreCardFromApi(r) {
     }
   }
 
-  // Score history mini-chart (inline SVG, no library).
-  // Renders r.history as a 0-100 line chart with axis labels, data points, and tooltips.
-  const sparkEl = document.getElementById('sc-sparkline');
-  if (sparkEl) {
-    const hist = (r.history || []).filter(function(h) { return h && typeof h.total_score === 'number'; });
-    if (hist.length < 2) {
-      sparkEl.style.display = 'none';
-    } else {
-      const W = 480, H = 130, padL = 32, padR = 12, padT = 14, padB = 22;
-      const innerW = W - padL - padR;
-      const innerH = H - padT - padB;
-      const xs = hist.map(function(_, i) { return padL + (hist.length === 1 ? innerW / 2 : (i / (hist.length - 1)) * innerW); });
-      const ys = hist.map(function(h) {
-        const s = Math.max(0, Math.min(100, h.total_score));
-        return padT + innerH - (s / 100) * innerH;
-      });
-      // Build path
-      const path = xs.map(function(x, i) { return (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + ys[i].toFixed(1); }).join(' ');
-      // Tier band backgrounds
-      const yHot = padT + innerH - (75 / 100) * innerH;
-      const yWarm = padT + innerH - (40 / 100) * innerH;
-      const yBot = padT + innerH;
-      // Data points
-      const dots = hist.map(function(h, i) {
-        const tooltip = (h.scored_at ? new Date(h.scored_at).toLocaleString() : '') + ' · score ' + h.total_score + (h.delta ? ' (' + (h.delta > 0 ? '+' : '') + h.delta + ')' : '') + (h.trigger ? ' · ' + h.trigger : '');
-        return '<circle cx="' + xs[i].toFixed(1) + '" cy="' + ys[i].toFixed(1) + '" r="3" fill="#c9a84c" stroke="#1a1a1a" stroke-width="1"><title>' + escAttr(tooltip) + '</title></circle>';
-      }).join('');
-      // Axis labels
-      const xFirst = hist[0].scored_at ? new Date(hist[0].scored_at).toLocaleDateString(undefined, {month:'short',day:'numeric'}) : '';
-      const xLast = hist[hist.length - 1].scored_at ? new Date(hist[hist.length - 1].scored_at).toLocaleDateString(undefined, {month:'short',day:'numeric'}) : '';
-      const svg =
-        '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" xmlns="http://www.w3.org/2000/svg" style="display:block;">' +
-          // Tier zones
-          '<rect x="' + padL + '" y="' + padT + '" width="' + innerW + '" height="' + (yHot - padT) + '" fill="rgba(80,200,120,0.06)"/>' +
-          '<rect x="' + padL + '" y="' + yHot + '" width="' + innerW + '" height="' + (yWarm - yHot) + '" fill="rgba(201,168,76,0.06)"/>' +
-          '<rect x="' + padL + '" y="' + yWarm + '" width="' + innerW + '" height="' + (yBot - yWarm) + '" fill="rgba(96,160,255,0.04)"/>' +
-          // Y axis ticks at 0, 40, 75, 100
-          '<line x1="' + padL + '" y1="' + padT + '" x2="' + (W - padR) + '" y2="' + padT + '" stroke="#333" stroke-width="0.5" stroke-dasharray="2 3"/>' +
-          '<line x1="' + padL + '" y1="' + yHot + '" x2="' + (W - padR) + '" y2="' + yHot + '" stroke="#333" stroke-width="0.5" stroke-dasharray="2 3"/>' +
-          '<line x1="' + padL + '" y1="' + yWarm + '" x2="' + (W - padR) + '" y2="' + yWarm + '" stroke="#333" stroke-width="0.5" stroke-dasharray="2 3"/>' +
-          '<line x1="' + padL + '" y1="' + yBot + '" x2="' + (W - padR) + '" y2="' + yBot + '" stroke="#444" stroke-width="0.5"/>' +
-          '<text x="' + (padL - 4) + '" y="' + (padT + 3) + '" fill="#888" font-size="9" text-anchor="end">100</text>' +
-          '<text x="' + (padL - 4) + '" y="' + (yHot + 3) + '" fill="#888" font-size="9" text-anchor="end">75</text>' +
-          '<text x="' + (padL - 4) + '" y="' + (yWarm + 3) + '" fill="#888" font-size="9" text-anchor="end">40</text>' +
-          '<text x="' + (padL - 4) + '" y="' + (yBot + 3) + '" fill="#888" font-size="9" text-anchor="end">0</text>' +
-          // Score line
-          '<path d="' + path + '" fill="none" stroke="#c9a84c" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>' +
-          // Data points
-          dots +
-          // X axis date labels
-          '<text x="' + padL + '" y="' + (H - 6) + '" fill="#888" font-size="9" text-anchor="start">' + escAttr(xFirst) + '</text>' +
-          '<text x="' + (W - padR) + '" y="' + (H - 6) + '" fill="#888" font-size="9" text-anchor="end">' + escAttr(xLast) + '</text>' +
-          // Title
-          '<text x="' + padL + '" y="10" fill="#aaa" font-size="9" font-weight="600">SCORE HISTORY · ' + hist.length + ' POINTS</text>' +
-        '</svg>';
-      sparkEl.innerHTML = svg;
-      sparkEl.style.display = '';
-    }
-  }
 }
 
 // Periodic refresh of the "Last calculated" relative time only (not full re-fetch)
