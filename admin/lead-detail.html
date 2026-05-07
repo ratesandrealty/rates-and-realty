@@ -2052,7 +2052,7 @@
               <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Housing Expense (PITIA)</div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div><div style="color:#555;font-size:10px;margin-bottom:4px;">P&I /mo (Auto)</div><div id="ld-pi-display" style="background:#0d0d0d;border:1px solid #C9A84C44;color:#C9A84C;padding:8px 10px;border-radius:6px;font-size:14px;font-weight:700;">—</div></div>
-                <div><div style="color:#555;font-size:10px;margin-bottom:4px;">MI /mo</div><input id="ld-mi" type="number" value="0" oninput="recalcLoanDash()" style="width:100%;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:8px 10px;border-radius:6px;font-size:14px;box-sizing:border-box;outline:none;"></div>
+                <div><div style="color:#555;font-size:10px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;"><span>MI /mo</span><span onclick="resetMiToAuto()" style="color:#666;font-size:9px;text-decoration:underline;cursor:pointer;" title="Reset MI to auto-calculated value">auto</span></div><input id="ld-mi" type="number" value="0" oninput="onMiManualEdit();recalcLoanDash()" style="width:100%;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:8px 10px;border-radius:6px;font-size:14px;box-sizing:border-box;outline:none;"></div>
                 <div><div style="color:#555;font-size:10px;margin-bottom:4px;">Taxes /mo</div><input id="ld-taxes" type="number" oninput="recalcLoanDash()" style="width:100%;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:8px 10px;border-radius:6px;font-size:14px;box-sizing:border-box;outline:none;"></div>
                 <div><div style="color:#555;font-size:10px;margin-bottom:4px;">Insurance /mo</div><input id="ld-ins" type="number" oninput="recalcLoanDash()" style="width:100%;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:8px 10px;border-radius:6px;font-size:14px;box-sizing:border-box;outline:none;"></div>
                 <div><div style="color:#555;font-size:10px;margin-bottom:4px;">HOA /mo</div><input id="ld-hoa" type="number" value="0" oninput="recalcLoanDash()" style="width:100%;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:8px 10px;border-radius:6px;font-size:14px;box-sizing:border-box;outline:none;"></div>
@@ -11079,10 +11079,37 @@ function populateLoanDashboard(app) {
   sv('ld-credit', app.credit_score);
   sv('ld-taxes', app.taxes_monthly);
   sv('ld-ins', app.insurance_monthly);
+  sv('ld-mi', app.mi_monthly);
   sv('ld-income', app.total_monthly_income || app.base_income);
   sv('ld-debt', app.monthly_debt);
   var ltEl = document.getElementById('ld-loan-type');
   if (ltEl && app.loan_type) ltEl.value = app.loan_type;
+  if (_activeBorrowerApp) _activeBorrowerApp.mi_overridden = !!app.mi_overridden;
+  recalcLoanDash();
+}
+
+function calcMonthlyMI(loan, propValue, loanType, ltv) {
+  if (!loan || loan <= 0 || !propValue || propValue <= 0) return 0;
+  if (loanType === 'FHA') {
+    var pct = ltv > 95 ? 0.0055 : 0.0050;
+    return loan * pct / 12;
+  }
+  if (loanType === 'VA') return 0;
+  if (loanType === 'USDA') return loan * 0.0035 / 12;
+  if (loanType === 'Conventional' || loanType === 'Jumbo') {
+    if (ltv <= 80) return 0;
+    return loan * 0.0030 / 12;
+  }
+  // Non-QM, DSCR, or unknown: leave manual (caller respects user input)
+  return null;
+}
+
+function onMiManualEdit() {
+  if (_activeBorrowerApp) _activeBorrowerApp.mi_overridden = true;
+}
+
+function resetMiToAuto() {
+  if (_activeBorrowerApp) _activeBorrowerApp.mi_overridden = false;
   recalcLoanDash();
 }
 
@@ -11094,15 +11121,27 @@ function recalcLoanDash() {
   var taxes = parseFloat(document.getElementById('ld-taxes')?.value) || 0;
   var ins = parseFloat(document.getElementById('ld-ins')?.value) || 0;
   var hoa = parseFloat(document.getElementById('ld-hoa')?.value) || 0;
-  var mi = parseFloat(document.getElementById('ld-mi')?.value) || 0;
   var other = parseFloat(document.getElementById('ld-other')?.value) || 0;
   var income = parseFloat(document.getElementById('ld-income')?.value) || 0;
   var debt = parseFloat(document.getElementById('ld-debt')?.value) || 0;
+  var ltv = propVal > 0 ? (loan / propVal * 100) : 0;
+
+  // MI: auto-calc unless user overrode it, or loan type is Non-QM/DSCR (calcMonthlyMI returns null)
+  var loanType = document.getElementById('ld-loan-type')?.value || '';
+  var miOverridden = !!(_activeBorrowerApp && _activeBorrowerApp.mi_overridden);
+  var miCalc = calcMonthlyMI(loan, propVal, loanType, ltv);
+  var mi;
+  if (miOverridden || miCalc === null) {
+    mi = parseFloat(document.getElementById('ld-mi')?.value) || 0;
+  } else {
+    mi = miCalc;
+    var miEl = document.getElementById('ld-mi');
+    if (miEl) miEl.value = Math.round(mi);
+  }
 
   var r = rate / 100 / 12;
   var pi = (r > 0 && loan > 0) ? loan * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1) : 0;
   var pitia = pi + taxes + ins + hoa + mi + other;
-  var ltv = propVal > 0 ? (loan / propVal * 100) : 0;
   var frontDTI = income > 0 ? (pitia / income * 100) : 0;
   var backDTI = income > 0 ? ((pitia + debt) / income * 100) : 0;
   var ctc = propVal > loan ? (propVal - loan) + (loan * 0.025) : 0;
@@ -11155,7 +11194,10 @@ async function saveLoanDashboard() {
     taxes_monthly: parseFloat(document.getElementById('ld-taxes')?.value) || null,
     insurance_monthly: parseFloat(document.getElementById('ld-ins')?.value) || null,
     total_monthly_income: parseFloat(document.getElementById('ld-income')?.value) || null,
-    monthly_debt: parseFloat(document.getElementById('ld-debt')?.value) || null
+    monthly_debt: parseFloat(document.getElementById('ld-debt')?.value) || null,
+    mi_monthly: parseFloat(document.getElementById('ld-mi')?.value) || 0,
+    mi_overridden: !!(_activeBorrowerApp && _activeBorrowerApp.mi_overridden),
+    tax_pct: parseFloat(document.getElementById('ld-tax-pct')?.value) || 1.2
   };
   var r = await fetch(
     window.APP_CONFIG.SUPABASE_URL + '/rest/v1/mortgage_applications?id=eq.' + encodeURIComponent(_activeBorrowerApp.id),
