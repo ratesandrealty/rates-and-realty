@@ -351,9 +351,9 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   try {
     const qrBytes = Uint8Array.from(atob(QR_CODE_B64), c => c.charCodeAt(0));
     const qrImg = await doc.embedPng(qrBytes);
-    const qrSize = 80;
+    const qrSize = 64;
     const qrX = W - M - qrSize;
-    const qrY = M + 24;
+    const qrY = M + 12;
     page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
     T('Scan to connect', qrX + (qrSize - R.widthOfTextAtSize('Scan to connect', 5.5)) / 2, qrY - 8, R, 5.5, GRAY);
   } catch (e) { console.log('[qr] embed error:', String(e).slice(0, 80)); }
