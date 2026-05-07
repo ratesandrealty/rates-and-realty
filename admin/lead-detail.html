@@ -7262,6 +7262,19 @@ window.addEventListener('message', function(e) {
         }
       }
       if (saveIndicator) { saveIndicator.textContent = '\u2713 Saved'; saveIndicator.style.color = '#2ecc71'; }
+      // Lead-score event: property_comparison_generated (6pts) \u2014 dedup per contact, gated on mode=property + non-empty scenarios + at least one priced
+      try {
+        if (e.data && e.data.mode === 'property'
+            && Array.isArray(e.data.property_scenarios)
+            && e.data.property_scenarios.length > 0
+            && e.data.property_scenarios.some(function(s) { return s && Number(s.purchasePrice) > 0; })) {
+          var _evtKey = 'event_fired_property_comparison_generated_' + cid;
+          if (!sessionStorage.getItem(_evtKey)) {
+            sessionStorage.setItem(_evtKey, '1');
+            scorerApi('record_event', { contact_id: cid, event_type: 'property_comparison_generated', metadata: { trigger: 'property_mode_computed' } }).catch(function(){});
+          }
+        }
+      } catch(_e) {}
     } catch(err) {
       console.error('Fee sheet auto-save error:', err);
       if (saveIndicator) { saveIndicator.textContent = 'Save failed'; saveIndicator.style.color = '#e74c3c'; }
