@@ -1465,7 +1465,14 @@ function render(inp, results) {
                     <tr class="row-item"><td>Mortgage Insurance</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.mi)}</td>`).join('')}</tr>
                     ${(inp.mode === 'property' && results.some(r => r.monthlyHoa > 0)) ? `<tr class="row-item"><td>HOA</td>${results.map((r, i) => `<td class="${colClass(i)}">${fmt(r.monthlyHoa)}</td>`).join('')}</tr>` : ''}
                     <tr class="total-row"><td><strong>Total Monthly Payment</strong></td>${results.map((r, i) => `<td class="${colClass(i)}"><strong>${fmt(r.totalMonthly + (r.monthlyHoa || 0))}</strong></td>`).join('')}</tr>
-                    ${(inp.mode === 'property' && results.some(r => r.monthlyRent > 0)) ? `<tr class="row-item" style="border-top:1px solid #444;"><td>Gross Rental Income</td>${results.map((r, i) => `<td class="${colClass(i)}">${r.monthlyRent > 0 ? '$' + r.monthlyRent.toLocaleString() : '—'}</td>`).join('')}</tr><tr class="total-row" style="background:rgba(80,200,120,0.08);"><td><strong>Net Payment after rent (75% credit)</strong></td>${results.map((r, i) => `<td class="${colClass(i)}"><strong>${fmt(r.netPayment + (r.monthlyHoa || 0))}</strong></td>`).join('')}</tr>` : ''}
+                    ${(inp.mode === 'property' && results.some(r => r.monthlyRent > 0)) ? `<tr class="row-item" style="border-top:1px solid #444;"><td>Gross Rental Income</td>${results.map((r, i) => `<td class="${colClass(i)}">${r.monthlyRent > 0 ? '$' + r.monthlyRent.toLocaleString() : '—'}</td>`).join('')}</tr><tr class="total-row" style="background:rgba(80,200,120,0.08);"><td><strong>Net Payment after rent (100% credit)</strong></td>${results.map((r, i) => {
+                        // Per-cell render: columns with rent=0 show plain Total Monthly (no false implication
+                        // of rental offset). Columns with rent>0 show Total Monthly − 100% of gross rent.
+                        const cellValue = (r.monthlyRent > 0)
+                            ? (r.totalMonthly + (r.monthlyHoa || 0) - r.monthlyRent)
+                            : (r.totalMonthly + (r.monthlyHoa || 0));
+                        return `<td class="${colClass(i)}"><strong>${fmt(cellValue)}</strong></td>`;
+                    }).join('')}</tr>` : ''}
                 </tbody>
             </table>
         </div>
@@ -1551,7 +1558,10 @@ function calcPropertyColumn(col) {
     result.headerLabel = col.label + ' · $' + Math.round(col.purchasePrice / 1000) + 'K';
     result.monthlyHoa = col.hoa || 0;
     result.monthlyRent = col.monthlyRent || 0;
-    result.netPayment = result.totalMonthly + result.monthlyHoa - (result.monthlyRent * 0.75);
+    // Net payment after rent: subtracts 100% of gross rent. Per Rene's spec — borrowers see the
+    // full rent offset on the comparison sheet. Note: lenders qualify rental income at 75% per
+    // Fannie/Freddie/HUD; this fee sheet number is a marketing/comparison view, not a DTI calc.
+    result.netPayment = result.totalMonthly + result.monthlyHoa - result.monthlyRent;
     result.inp = inp;  // Renderer needs per-column inp for property mode (LTV, loan amount, etc).
     // Per-column gov-fee metadata for mode-aware render.
     result.govFeeLabel = (inp.govFee && inp.govFee.label) ? inp.govFee.label : null;
