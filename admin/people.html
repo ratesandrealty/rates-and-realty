@@ -605,14 +605,32 @@ function normStatus(s) {
 /* ====== DATA LOADING ====== */
 
 async function loadPeople() {
-  // Wait for the session JWT to load before any fetch — otherwise hdrs() falls back to ANON_KEY
-  // and RLS treats us as anonymous (this caused dffb416/672a329 patches to fail).
-  await _refreshSessJWT();
-  var cR = await fetch(SB_URL + '/rest/v1/contacts?select=*,contact_tags(tag_id,tags(id,name,color)),mortgage_applications(loan_type)&order=created_at.desc&limit=500', { headers: hdrs() });
-  var contacts = await cR.json();
+  // Use the canonical Supabase client so supabase-js auto-attaches the session JWT.
+  // RLS sees us as the authenticated admin user instead of anon. (Replaces the old
+  // raw-fetch + hdrs() path that fell back to ANON_KEY when _sessJWT wasn't ready.)
+  var client = await getSupabaseClient();
 
-  var lR = await fetch(SB_URL + '/rest/v1/leads?select=contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at&order=created_at.desc&limit=500', { headers: hdrs() });
-  var leads = await lR.json();
+  var contactsRes = await client
+    .from('contacts')
+    .select('*,contact_tags(tag_id,tags(id,name,color)),mortgage_applications(loan_type)')
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (contactsRes.error) {
+    console.error('[loadPeople] contacts query failed:', contactsRes.error);
+    return;
+  }
+  var contacts = contactsRes.data || [];
+
+  var leadsRes = await client
+    .from('leads')
+    .select('contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at')
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (leadsRes.error) {
+    console.error('[loadPeople] leads query failed:', leadsRes.error);
+    return;
+  }
+  var leads = leadsRes.data || [];
   var leadMap = {};
   leads.forEach(function(l) { if (!leadMap[l.contact_id]) leadMap[l.contact_id] = l; });
 
