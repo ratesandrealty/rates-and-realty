@@ -1,26 +1,56 @@
-(async function () {
+// Rates & Realty CRM — Supabase Auth Guard
+(async function() {
+  // Never run auth guard on the login page itself
   if (window.location.pathname.includes('admin-login')) return;
-  var waited = 0;
-  while (typeof window.getSupabaseClient !== 'function' && waited < 5000) {
-    await new Promise(function (r) { setTimeout(r, 25); });
-    waited += 25;
+
+  // Load Supabase if not already loaded
+  if (typeof window.supabase === 'undefined') {
+    await new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+      script.onload = resolve;
+      document.head.appendChild(script);
+    });
   }
-  if (typeof window.getSupabaseClient !== 'function') {
-    console.error('[auth-guard] getSupabaseClient not loaded'); return;
+
+  // Load env config if not already loaded
+  if (!window.APP_CONFIG) {
+    await new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = '/api/env.js';
+      script.onload = resolve;
+      document.head.appendChild(script);
+    });
   }
-  var client = await window.getSupabaseClient();
-  if (!client) { console.error('[auth-guard] no client'); return; }
-  var sessResp = await client.auth.getSession();
-  var session = sessResp && sessResp.data ? sessResp.data.session : null;
+
+  const client = window.supabase.createClient(
+    window.APP_CONFIG.SUPABASE_URL,
+    window.APP_CONFIG.SUPABASE_ANON_KEY
+  );
+  window._supabaseClient = client;
+
+  const { data: { session } } = await client.auth.getSession();
+
   if (!session) {
-    var redir = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.replace('/auth/admin-login.html?redirect=' + redir);
+    const currentPage = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.replace('/auth/admin-login.html?redirect=' + currentPage);
     return;
   }
-  window.adminLogout = async function () { await client.auth.signOut(); window.location.href = '/auth/admin-login.html'; };
+
+  // Expose logout function globally
+  window.adminLogout = async function() {
+    await client.auth.signOut();
+    window.location.href = '/auth/admin-login.html';
+  };
+
+  // Expose session user for display
   window._adminUser = session.user;
-  document.addEventListener('DOMContentLoaded', function () {
-    var el = document.getElementById('adminUserEmail');
-    if (el && session.user && session.user.email) el.textContent = session.user.email;
+
+  // Update any logout buttons with user email
+  document.addEventListener('DOMContentLoaded', function() {
+    const emailDisplay = document.getElementById('adminUserEmail');
+    if (emailDisplay && session.user?.email) {
+      emailDisplay.textContent = session.user.email;
+    }
   });
 })();

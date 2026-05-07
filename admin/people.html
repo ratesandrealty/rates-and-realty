@@ -4,10 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <title>People — Rates & Realty CRM</title>
+<script src="/admin/js/auth-guard.js?v=2026033001"></script>
 <script src="/api/env.js?v=2026033003"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="/admin/js/supabase-client.js"></script>
-<script src="/admin/js/auth-guard.js"></script>
 <style>
 :root {
   --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
@@ -605,14 +603,14 @@ function normStatus(s) {
 /* ====== DATA LOADING ====== */
 
 async function loadPeople() {
-  var client = await window.getSupabaseClient();
-  if (!client) { console.error('loadPeople: no client'); return; }
-  var contactsResp = await client.from('contacts').select('*,contact_tags(tag_id,tags(id,name,color)),mortgage_applications(loan_type)').order('created_at', { ascending: false }).limit(500);
-  if (contactsResp.error) { console.error('contacts error:', contactsResp.error); return; }
-  var contacts = contactsResp.data || [];
-  var leadsResp = await client.from('leads').select('contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at').order('created_at', { ascending: false }).limit(500);
-  if (leadsResp.error) { console.error('leads error:', leadsResp.error); return; }
-  var leads = leadsResp.data || [];
+  // Wait for the session JWT to load before any fetch — otherwise hdrs() falls back to ANON_KEY
+  // and RLS treats us as anonymous (this caused dffb416/672a329 patches to fail).
+  await _refreshSessJWT();
+  var cR = await fetch(SB_URL + '/rest/v1/contacts?select=*,contact_tags(tag_id,tags(id,name,color)),mortgage_applications(loan_type)&order=created_at.desc&limit=500', { headers: hdrs() });
+  var contacts = await cR.json();
+
+  var lR = await fetch(SB_URL + '/rest/v1/leads?select=contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at&order=created_at.desc&limit=500', { headers: hdrs() });
+  var leads = await lR.json();
   var leadMap = {};
   leads.forEach(function(l) { if (!leadMap[l.contact_id]) leadMap[l.contact_id] = l; });
 
