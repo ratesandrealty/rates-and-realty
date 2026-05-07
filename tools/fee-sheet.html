@@ -785,9 +785,9 @@ let propertyScenarios = [];
 
 function defaultPropertyScenarios() {
     return [
-        { id: 'P1', label: 'SFR',       propertyType: 'sfr',         purchasePrice: 600000, hoa: 0,   monthlyRent: 0,    rate: 6.875, loanProduct: 'conv30', recommended: true },
-        { id: 'P2', label: 'Condo',     propertyType: 'condo',       purchasePrice: 500000, hoa: 350, monthlyRent: 0,    rate: 7.000, loanProduct: 'conv30', recommended: false },
-        { id: 'P3', label: '2-4 Unit',  propertyType: 'multifamily', purchasePrice: 800000, hoa: 0,   monthlyRent: 2400, rate: 7.250, loanProduct: 'conv30', recommended: false }
+        { id: 'P1', label: 'SFR',       propertyType: 'sfr',         purchasePrice: 600000, downPct: 20, hoa: 0,   monthlyRent: 0,    rate: 6.875, loanProduct: 'conv30', recommended: true },
+        { id: 'P2', label: 'Condo',     propertyType: 'condo',       purchasePrice: 500000, downPct: 20, hoa: 350, monthlyRent: 0,    rate: 7.000, loanProduct: 'conv30', recommended: false },
+        { id: 'P3', label: '2-4 Unit',  propertyType: 'multifamily', purchasePrice: 800000, downPct: 25, hoa: 0,   monthlyRent: 2400, rate: 7.250, loanProduct: 'conv30', recommended: false }
     ];
 }
 
@@ -845,8 +845,12 @@ function buildPropertyCards() {
                 <div class="field"><label>Rate %</label><input type="number" step="0.125" value="${p.rate}" onchange="propertyScenarios[${i}].rate=parseFloat(this.value)||0;recalc()"></div>
             </div>
             <div class="row2">
+                <div class="field"><label>Down %</label><input type="number" step="0.5" min="0" max="100" value="${p.downPct != null ? p.downPct : 20}" onchange="propertyScenarios[${i}].downPct=parseFloat(this.value)||0;recalc()"></div>
                 <div class="field"><label>HOA $/mo</label><input type="number" step="25" value="${p.hoa}" onchange="propertyScenarios[${i}].hoa=parseFloat(this.value)||0;recalc()"></div>
+            </div>
+            <div class="row2">
                 <div class="field"><label>Gross Rent $/mo</label><input type="number" step="50" value="${p.monthlyRent}" onchange="propertyScenarios[${i}].monthlyRent=parseFloat(this.value)||0;recalc()"></div>
+                <div class="field"></div>
             </div>
             <div class="field"><label>Loan Product</label>
                 <select onchange="propertyScenarios[${i}].loanProduct=this.value;recalc()">
@@ -930,7 +934,7 @@ function toggleRecommend(idx) {
 function readSidebarInputs(overrides) {
     overrides = overrides || {};
     const purchasePrice = (overrides.purchasePrice != null) ? overrides.purchasePrice : parseCurrency($('purchasePrice').value);
-    const downPct = parseFloat($('downPct').value) || 0;
+    const downPct = (overrides.downPct != null) ? overrides.downPct : (parseFloat($('downPct').value) || 0);
     const downPayment = purchasePrice * downPct / 100;
     const loanAmount = Math.max(0, purchasePrice - downPayment);
 
@@ -1335,7 +1339,20 @@ function render(inp, results) {
                 ${row('Subtotal A', r => r.subtotalA, true)}
 
                 ${catHeader('B. Services You Cannot Shop For')}
-                ${inp.govFee ? row(inp.govFee.label, r => r.govFeeAmount) : ''}
+                ${(() => {
+                    if (inp.mode === 'property') {
+                        // Property mode: render gov-fee row when ANY column has a non-zero gov fee.
+                        // Use a smart label: if all non-zero columns share the same label, show it;
+                        // otherwise show generic "Upfront Gov Fee".
+                        const labels = results.filter(r => r.govFeeAmount > 0 && r.govFeeLabel).map(r => r.govFeeLabel);
+                        if (labels.length === 0) return '';
+                        const uniqueLabels = Array.from(new Set(labels));
+                        const rowLabel = (uniqueLabels.length === 1) ? uniqueLabels[0] : 'Upfront Gov Fee';
+                        return row(rowLabel, r => r.govFeeAmount);
+                    } else {
+                        return inp.govFee ? row(inp.govFee.label, r => r.govFeeAmount) : '';
+                    }
+                })()}
                 ${row('Appraisal Fee', r => r.appraisal)}
                 ${row('Credit Report', r => r.creditReport)}
                 ${row('Flood Certification', r => r.floodCert)}
@@ -1343,11 +1360,25 @@ function render(inp, results) {
                 ${row('MERS Registration', r => r.mersReg)}
                 ${row('Processing Fee', r => r.processingFee)}
                 ${row('Subtotal B', r => r.subtotalB, true)}
-                ${inp.govFee && inp.govFee.financed ? `
-                    <tr class="financed-note"><td colspan="${scenarios.length + 1}" style="font-size:10px;color:#888;padding:2px 8px 6px;font-style:italic;">
-                        ✱ ${inp.govFee.label} financed into loan amount: $${inp.loanAmount.toLocaleString('en-US')} → $${inp.totalLoanAmount.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}
-                    </td></tr>
-                ` : ''}
+                ${(() => {
+                    if (inp.mode === 'property') {
+                        // Property mode: one note per column that has a financed gov fee.
+                        const notes = results.map((r, i) => {
+                            if (!r.govFeeFinanced) return '';
+                            const colLabel = (propertyScenarios[i] && propertyScenarios[i].label) ? propertyScenarios[i].label : ('Col ' + (i+1));
+                            return `<tr class="financed-note"><td colspan="${results.length + 1}" style="font-size:10px;color:#888;padding:2px 8px 6px;font-style:italic;">
+                                ✱ ${colLabel}: ${r.govFeeFinanced.label} financed into loan amount: $${r.govFeeFinanced.loanAmount.toLocaleString('en-US')} → $${r.govFeeFinanced.totalLoanAmount.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}
+                            </td></tr>`;
+                        }).filter(Boolean).join('');
+                        return notes;
+                    } else {
+                        return inp.govFee && inp.govFee.financed ? `
+                            <tr class="financed-note"><td colspan="${scenarios.length + 1}" style="font-size:10px;color:#888;padding:2px 8px 6px;font-style:italic;">
+                                ✱ ${inp.govFee.label} financed into loan amount: $${inp.loanAmount.toLocaleString('en-US')} → $${inp.totalLoanAmount.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}
+                            </td></tr>
+                        ` : '';
+                    }
+                })()}
 
                 ${catHeader('C. Services You Can Shop For')}
                 ${row("Title - Lender's Policy", r => r.titleLender)}
@@ -1388,7 +1419,7 @@ function render(inp, results) {
                     ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}</th>`).join('')}
                 </tr></thead>
                 <tbody>
-                    ${row('Down Payment', () => inp.downPayment)}
+                    ${row('Down Payment', r => (inp.mode === 'property' && r.inp) ? r.inp.downPayment : inp.downPayment)}
                     ${row('Total Closing Costs (H)', r => r.totalClosing)}
                     ${row('Less: Lender Credits', (r, i) => {
                         let c = 0;
@@ -1396,13 +1427,31 @@ function render(inp, results) {
                         if (scenarios[i].points < 0) c += scenarios[i].points / 100 * inp.loanAmount;
                         return c;
                     })}
-                    ${inp.govFee && inp.govFee.financed ? row(`Less: Financed (${inp.govFee.label})`, () => -inp.govFee.amount) : ''}
+                    ${(() => {
+                        // Less: Financed row — mode-aware. Property mode renders when ANY column has a financed gov fee.
+                        if (inp.mode === 'property') {
+                            const anyFinanced = results.some(r => r.govFeeFinanced);
+                            if (!anyFinanced) return '';
+                            const labels = results.filter(r => r.govFeeFinanced).map(r => r.govFeeFinanced.label);
+                            const uniqueLabels = Array.from(new Set(labels));
+                            const rowLabel = (uniqueLabels.length === 1) ? `Less: Financed (${uniqueLabels[0]})` : 'Less: Financed Gov Fee';
+                            return row(rowLabel, r => r.govFeeFinanced ? -(r.govFeeFinanced.totalLoanAmount - r.govFeeFinanced.loanAmount) : 0);
+                        }
+                        return inp.govFee && inp.govFee.financed ? row(`Less: Financed (${inp.govFee.label})`, () => -inp.govFee.amount) : '';
+                    })()}
                     ${row('Estimated Funds Needed', (r, i) => {
                         let credits = 0;
                         if (r.lenderCreditLine > 0) credits += r.lenderCreditLine;
-                        if (scenarios[i].points < 0) credits += Math.abs(scenarios[i].points / 100 * inp.loanAmount);
-                        const financed = (inp.govFee && inp.govFee.financed) ? inp.govFee.amount : 0;
-                        return inp.downPayment + r.totalClosing - credits - financed;
+                        // Points are a rate-mode concept — property cards have no points field.
+                        if (inp.mode !== 'property' && scenarios[i] && scenarios[i].points < 0) {
+                            credits += Math.abs(scenarios[i].points / 100 * inp.loanAmount);
+                        }
+                        // Per-column down payment + per-column financed gov fee in property mode.
+                        const colDown = (inp.mode === 'property' && r.inp) ? r.inp.downPayment : inp.downPayment;
+                        const colFinanced = (inp.mode === 'property')
+                            ? (r.govFeeFinanced ? (r.govFeeFinanced.totalLoanAmount - r.govFeeFinanced.loanAmount) : 0)
+                            : ((inp.govFee && inp.govFee.financed) ? inp.govFee.amount : 0);
+                        return colDown + r.totalClosing - credits - colFinanced;
                     }, false, true)}
                 </tbody>
             </table>
@@ -1466,6 +1515,7 @@ function applyColumnOverrides(baseInp, col) {
     // recompute consistently for this column's purchase price + product.
     return readSidebarInputs({
         purchasePrice: col.purchasePrice,
+        downPct: (col.downPct != null) ? col.downPct : 20,
         loanProduct: col.loanProduct,
         propertyType: col.propertyType,
         hoa: col.hoa,
@@ -1493,6 +1543,13 @@ function calcPropertyColumn(col) {
     result.monthlyRent = col.monthlyRent || 0;
     result.netPayment = result.totalMonthly + result.monthlyHoa - (result.monthlyRent * 0.75);
     result.inp = inp;  // Renderer needs per-column inp for property mode (LTV, loan amount, etc).
+    // Per-column gov-fee metadata for mode-aware render.
+    result.govFeeLabel = (inp.govFee && inp.govFee.label) ? inp.govFee.label : null;
+    result.govFeeFinanced = (inp.govFee && inp.govFee.financed) ? {
+        label: inp.govFee.label,
+        loanAmount: inp.loanAmount,
+        totalLoanAmount: inp.totalLoanAmount
+    } : null;
     return result;
 }
 
@@ -1516,6 +1573,12 @@ function recalc() {
             r.monthlyRent = 0;
             r.netPayment = r.totalMonthly;
             r.inp = inp;
+            r.govFeeLabel = (inp.govFee && inp.govFee.label) ? inp.govFee.label : null;
+            r.govFeeFinanced = (inp.govFee && inp.govFee.financed) ? {
+                label: inp.govFee.label,
+                loanAmount: inp.loanAmount,
+                totalLoanAmount: inp.totalLoanAmount
+            } : null;
             return r;
         });
         render(inp, results);
@@ -1643,6 +1706,7 @@ function notifyParentOfChange() {
                     label: p.label,
                     propertyType: p.propertyType,
                     purchasePrice: p.purchasePrice,
+                    downPct: (p.downPct != null) ? p.downPct : 20,
                     hoa: p.hoa,
                     monthlyRent: p.monthlyRent,
                     rate: p.rate,
@@ -1797,6 +1861,7 @@ recalc();
                         label: p.label || '',
                         propertyType: p.propertyType || 'sfr',
                         purchasePrice: p.purchasePrice || 0,
+                        downPct: (p.downPct != null) ? p.downPct : 20,
                         hoa: p.hoa || 0,
                         monthlyRent: p.monthlyRent || 0,
                         rate: p.rate || 0,
