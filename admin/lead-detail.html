@@ -7192,6 +7192,14 @@ async function prefillFeeSheet() {
           _feeSheetSavedData = restore;
           setTimeout(function() {
             iframe.contentWindow.postMessage(Object.assign({ type: 'feeSheetRestore' }, restore), '*');
+            // Lead-score event: fee_sheet_generated (5pts) — dedup per contact per session
+            try {
+              var _evtKey = 'event_fired_fee_sheet_generated_' + cid;
+              if (!sessionStorage.getItem(_evtKey)) {
+                sessionStorage.setItem(_evtKey, '1');
+                scorerApi('record_event', { contact_id: cid, event_type: 'fee_sheet_generated', metadata: { trigger: 'fee_sheet_loaded' } }).catch(function(){});
+              }
+            } catch(_e) {}
           }, 300);
         }
       } catch(e) { console.warn('Fee sheet restore:', e); }
