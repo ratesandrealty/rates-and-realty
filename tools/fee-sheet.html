@@ -1370,18 +1370,17 @@ function copyToClipboard() {
 ['purchasePrice', 'loanAmount', 'annualTax', 'annualInsurance'].forEach(id => formatCurrencyInput($(id)));
 
 // ── Auto-save: collect all data and post to parent ──
+// Wire format v2: {version:2, mode, scenarios:[...], common:{...}}.
+// Legacy v1 readers (lead-detail.html parent gate) still trigger on `purchasePrice` which is duplicated
+// at the top level for backwards compat. Once parent gate updates to detect d.scenarios, the top-level
+// purchasePrice duplication can drop.
 let _saveTimer = null;
 function notifyParentOfChange() {
     clearTimeout(_saveTimer);
     _saveTimer = setTimeout(function() {
         if (window.parent === window) return; // not in iframe
         var featured = scenarios.findIndex(s => s.recommended);
-        var data = {
-            type: 'feeSheetAutoSave',
-            scenarioA: { rate: scenarios[0].rate, points: scenarios[0].points, origComp: scenarios[0].origComp, credits: scenarios[0].lenderCredits, label: scenarios[0].label },
-            scenarioB: { rate: scenarios[1].rate, points: scenarios[1].points, origComp: scenarios[1].origComp, credits: scenarios[1].lenderCredits, label: scenarios[1].label },
-            scenarioC: { rate: scenarios[2].rate, points: scenarios[2].points, origComp: scenarios[2].origComp, credits: scenarios[2].lenderCredits, label: scenarios[2].label },
-            featuredScenario: ['a','b','c'][featured >= 0 ? featured : 0],
+        var common = {
             purchasePrice: parseCurrency($('purchasePrice').value),
             downPct: parseFloat($('downPct').value) || 0,
             loanAmount: parseCurrency($('loanAmount').value),
@@ -1394,7 +1393,40 @@ function notifyParentOfChange() {
             annualTax: parseCurrency($('annualTax').value),
             annualInsurance: parseCurrency($('annualInsurance').value),
             borrowerName: $('borrowerName').value,
-            propertyAddress: $('propertyAddress').value,
+            propertyAddress: $('propertyAddress').value
+        };
+        var data = {
+            type: 'feeSheetAutoSave',
+            version: 2,
+            mode: 'rate',
+            scenarios: scenarios.map(function(s) {
+                return {
+                    id: s.id,
+                    label: s.label,
+                    rate: s.rate,
+                    points: s.points,
+                    origComp: s.origComp,
+                    lenderCredits: s.lenderCredits,
+                    recommended: !!s.recommended
+                };
+            }),
+            featuredIndex: featured >= 0 ? featured : 0,
+            common: common,
+            // Backwards-compat: duplicate common fields at top level so the v1 parent gate
+            // (`restore.purchasePrice || restore.scenarioA`) still triggers on this payload.
+            purchasePrice: common.purchasePrice,
+            downPct: common.downPct,
+            loanAmount: common.loanAmount,
+            loanProduct: common.loanProduct,
+            lockPeriod: common.lockPeriod,
+            propertyType: common.propertyType,
+            creditScore: common.creditScore,
+            state: common.state,
+            county: common.county,
+            annualTax: common.annualTax,
+            annualInsurance: common.annualInsurance,
+            borrowerName: common.borrowerName,
+            propertyAddress: common.propertyAddress,
             lastUpdated: new Date().toISOString()
         };
         window.parent.postMessage(data, '*');
@@ -1484,26 +1516,56 @@ recalc();
         }
         if (e.data.type === 'feeSheetRestore') {
             const d = e.data;
-            if (d.borrowerName) $('borrowerName').value = d.borrowerName;
-            if (d.propertyAddress) $('propertyAddress').value = d.propertyAddress;
-            if (d.purchasePrice > 0) $('purchasePrice').value = '$' + Number(d.purchasePrice).toLocaleString('en-US');
-            if (d.loanAmount > 0) $('loanAmount').value = '$' + Number(d.loanAmount).toLocaleString('en-US');
-            if (d.downPct != null && d.downPct > 0) $('downPct').value = d.downPct;
-            if (d.loanProduct) $('loanProduct').value = d.loanProduct;
-            if (d.lockPeriod) $('lockPeriod').value = d.lockPeriod;
-            if (d.propertyType) $('propertyType').value = d.propertyType;
-            if (d.creditScore) $('creditScore').value = d.creditScore;
-            if (d.state) $('state').value = d.state;
-            if (d.county) $('county').value = d.county;
-            if (d.annualTax) $('annualTax').value = '$' + Number(d.annualTax).toLocaleString('en-US');
-            if (d.annualInsurance) $('annualInsurance').value = '$' + Number(d.annualInsurance).toLocaleString('en-US');
-            // Restore scenarios
-            if (d.scenarioA) { Object.assign(scenarios[0], { rate: d.scenarioA.rate||0, points: d.scenarioA.points||0, origComp: d.scenarioA.origComp||1.5, lenderCredits: d.scenarioA.credits||0, label: d.scenarioA.label||'Par Rate' }); }
-            if (d.scenarioB) { Object.assign(scenarios[1], { rate: d.scenarioB.rate||0, points: d.scenarioB.points||0, origComp: d.scenarioB.origComp||1.5, lenderCredits: d.scenarioB.credits||0, label: d.scenarioB.label||'Buy Down' }); }
-            if (d.scenarioC) { Object.assign(scenarios[2], { rate: d.scenarioC.rate||0, points: d.scenarioC.points||0, origComp: d.scenarioC.origComp||1.5, lenderCredits: d.scenarioC.credits||0, label: d.scenarioC.label||'Lender Credit' }); }
-            if (d.featuredScenario) {
+            // Common fields can come either at top-level (v1, or v2 backwards-compat duplication)
+            // or inside d.common (v2 native shape). Resolve once.
+            var c = (d.common && typeof d.common === 'object') ? d.common : d;
+            if (c.borrowerName) $('borrowerName').value = c.borrowerName;
+            if (c.propertyAddress) $('propertyAddress').value = c.propertyAddress;
+            if (c.purchasePrice > 0) $('purchasePrice').value = '$' + Number(c.purchasePrice).toLocaleString('en-US');
+            if (c.loanAmount > 0) $('loanAmount').value = '$' + Number(c.loanAmount).toLocaleString('en-US');
+            if (c.downPct != null && c.downPct > 0) $('downPct').value = c.downPct;
+            if (c.loanProduct) $('loanProduct').value = c.loanProduct;
+            if (c.lockPeriod) $('lockPeriod').value = c.lockPeriod;
+            if (c.propertyType) $('propertyType').value = c.propertyType;
+            if (c.creditScore) $('creditScore').value = c.creditScore;
+            if (c.state) $('state').value = c.state;
+            if (c.county) $('county').value = c.county;
+            if (c.annualTax) $('annualTax').value = '$' + Number(c.annualTax).toLocaleString('en-US');
+            if (c.annualInsurance) $('annualInsurance').value = '$' + Number(c.annualInsurance).toLocaleString('en-US');
+            // Restore scenarios — accept either v2 (d.scenarios array) or v1 (d.scenarioA/B/C).
+            var incoming = null;
+            if (Array.isArray(d.scenarios) && d.scenarios.length > 0) {
+                incoming = d.scenarios;
+            } else if (d.scenarioA || d.scenarioB || d.scenarioC) {
+                // v1 → v2 inline migration. Note: v1 used `credits` for the lender-credits field;
+                // we normalize back to `lenderCredits` here.
+                incoming = [];
+                if (d.scenarioA) incoming.push({ id:'A', label: d.scenarioA.label || 'Par Rate', rate: d.scenarioA.rate||0, points: d.scenarioA.points||0, origComp: d.scenarioA.origComp||1.5, lenderCredits: (d.scenarioA.lenderCredits!=null ? d.scenarioA.lenderCredits : (d.scenarioA.credits||0)) });
+                if (d.scenarioB) incoming.push({ id:'B', label: d.scenarioB.label || 'Buy Down', rate: d.scenarioB.rate||0, points: d.scenarioB.points||0, origComp: d.scenarioB.origComp||1.5, lenderCredits: (d.scenarioB.lenderCredits!=null ? d.scenarioB.lenderCredits : (d.scenarioB.credits||0)) });
+                if (d.scenarioC) incoming.push({ id:'C', label: d.scenarioC.label || 'Lender Credit', rate: d.scenarioC.rate||0, points: d.scenarioC.points||0, origComp: d.scenarioC.origComp||1.5, lenderCredits: (d.scenarioC.lenderCredits!=null ? d.scenarioC.lenderCredits : (d.scenarioC.credits||0)) });
+            }
+            if (incoming) {
+                // Apply incoming into existing scenarios array (preserve length if mismatched).
+                for (var i = 0; i < scenarios.length && i < incoming.length; i++) {
+                    Object.assign(scenarios[i], {
+                        label: incoming[i].label || scenarios[i].label,
+                        rate: incoming[i].rate || 0,
+                        points: incoming[i].points || 0,
+                        origComp: incoming[i].origComp != null ? incoming[i].origComp : 1.5,
+                        lenderCredits: incoming[i].lenderCredits || 0
+                    });
+                    if (typeof incoming[i].recommended === 'boolean') {
+                        scenarios[i].recommended = incoming[i].recommended;
+                    }
+                }
+            }
+            // Featured-scenario restore. v2 uses numeric featuredIndex; v1 used letter codes.
+            if (typeof d.featuredIndex === 'number') {
+                var fi2 = Math.max(0, Math.min(scenarios.length - 1, d.featuredIndex));
+                scenarios.forEach(function(s, i) { s.recommended = (i === fi2); });
+            } else if (d.featuredScenario) {
                 var fi = { a:0, b:1, c:2 }[d.featuredScenario] || 0;
-                scenarios.forEach(function(s,i) { s.recommended = (i === fi); });
+                scenarios.forEach(function(s, i) { s.recommended = (i === fi); });
             }
             buildScenarioCards();
             _origRecalc(); // don't trigger auto-save back
