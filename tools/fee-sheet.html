@@ -757,6 +757,19 @@ const scenarios = [
     { id: 'C', label: 'Lender Credit', rate: 7.125, points: -0.5, origComp: 1.5, lenderCredits: 0, recommended: false }
 ];
 
+// Property-comparison mode (commit 3a foundation: globals only, not yet rendered or dispatched).
+// Populated lazily from defaultPropertyScenarios() the first time the user switches into property mode.
+let _currentMode = 'rate';
+let propertyScenarios = [];
+
+function defaultPropertyScenarios() {
+    return [
+        { id: 'P1', label: 'SFR',       propertyType: 'sfr',         purchasePrice: 600000, hoa: 0,   monthlyRent: 0,    rate: 6.875, loanProduct: 'conv30', recommended: true },
+        { id: 'P2', label: 'Condo',     propertyType: 'condo',       purchasePrice: 500000, hoa: 350, monthlyRent: 0,    rate: 7.000, loanProduct: 'conv30', recommended: false },
+        { id: 'P3', label: '2-4 Unit',  propertyType: 'multifamily', purchasePrice: 800000, hoa: 0,   monthlyRent: 2400, rate: 7.250, loanProduct: 'conv30', recommended: false }
+    ];
+}
+
 function buildScenarioCards() {
     const container = $('scenarioCards');
     container.innerHTML = '';
@@ -789,46 +802,39 @@ function toggleRecommend(idx) {
 }
 
 // ── Calculation Engine ──
-function getInputs() {
-    const purchasePrice = parseCurrency($('purchasePrice').value);
+// Pure read — no DOM writes, no side effects. Safe to call N times per recalc with synthetic
+// purchase-price/loan-product overrides for property-comparison mode.
+function readSidebarInputs(overrides) {
+    overrides = overrides || {};
+    const purchasePrice = (overrides.purchasePrice != null) ? overrides.purchasePrice : parseCurrency($('purchasePrice').value);
     const downPct = parseFloat($('downPct').value) || 0;
     const downPayment = purchasePrice * downPct / 100;
-    $('downDollar').value = downPayment ? '$' + downPayment.toLocaleString('en-US', {minimumFractionDigits: 0}) : '';
-
-    // Auto-calculate loan amount from purchase price - down payment
     const loanAmount = Math.max(0, purchasePrice - downPayment);
-    if (loanAmount > 0) $('loanAmount').value = '$' + loanAmount.toLocaleString('en-US', {minimumFractionDigits: 0});
-    else $('loanAmount').value = '';
 
-    // Government upfront fee + financed total. Computed before LTV so the
-    // displayed LTV reflects the actual financed loan-to-value (e.g. an FHA
-    // 96.5% LTV becomes ~98.2% once UFMIP is rolled in).
-    const loanProductValue = $('loanProduct').value;
+    const loanProductValue = (overrides.loanProduct != null) ? overrides.loanProduct : $('loanProduct').value;
     const vaConfig = {
         firstUse: $('vaFirstUse') ? $('vaFirstUse').value !== 'false' : true,
         exempt: $('vaExempt') ? $('vaExempt').checked === true : false,
     };
     const govFee = computeGovUpfrontFee(loanProductValue, loanAmount, downPct, vaConfig);
     const totalLoanAmount = (govFee && govFee.financed) ? +(loanAmount + govFee.amount).toFixed(2) : loanAmount;
-
     const ltv = purchasePrice > 0 ? (totalLoanAmount / purchasePrice * 100) : 0;
-    // Auto-fill county from address ZIP
-    autoFillCountyFromAddress();
 
-    // Tax: % mode or $ mode
+    // Tax: % mode or $ mode. In property-comparison mode we ALWAYS recompute from % regardless
+    // of _taxMode, since per-column purchase prices yield different tax amounts.
     let annualTax;
-    if (_taxMode === 'pct') {
-        const pctVal = parseFloat(document.getElementById('taxPctInput').value) || 1.25;
+    const usePctTax = (overrides.purchasePrice != null) || (_taxMode === 'pct');
+    if (usePctTax) {
+        const pctEl = document.getElementById('taxPctInput');
+        const pctVal = pctEl ? (parseFloat(pctEl.value) || 1.25) : 1.25;
         annualTax = purchasePrice * pctVal / 100;
     } else {
         const annualTaxInput = parseCurrency($('annualTax').value);
         annualTax = annualTaxInput > 0 ? annualTaxInput : purchasePrice * 0.0125;
-        if (annualTaxInput <= 0 && purchasePrice > 0) $('annualTax').value = '$' + annualTax.toLocaleString('en-US', {minimumFractionDigits: 0});
     }
 
     const annualInsInput = parseCurrency($('annualInsurance').value);
-    const annualInsurance = annualInsInput > 0 ? annualInsInput : 1800;
-    if (annualInsInput <= 0) $('annualInsurance').value = '$1,800';
+    const annualInsurance = (overrides.annualInsurance != null) ? overrides.annualInsurance : (annualInsInput > 0 ? annualInsInput : 1800);
 
     return {
         borrowerName: $('borrowerName').value || 'TBD',
@@ -843,13 +849,45 @@ function getInputs() {
         ltv,
         loanProduct: loanProductValue,
         lockPeriod: $('lockPeriod').value,
-        propertyType: $('propertyType').value,
+        propertyType: (overrides.propertyType != null) ? overrides.propertyType : $('propertyType').value,
         creditScore: $('creditScore').value,
         state: $('state').value,
         county: $('county').value || '',
         annualTax,
-        annualInsurance
+        annualInsurance,
+        // Per-column-only fields (property mode). Default to 0 in rate mode.
+        hoa: overrides.hoa || 0,
+        monthlyRent: overrides.monthlyRent || 0,
+        // Carry mode through so calcScenario can produce mode-aware headerLabel.
+        mode: _currentMode
     };
+}
+
+// DOM-write side effects extracted from the original getInputs(). Called once per recalc
+// (against the BASE inp) so per-column synthetic inputs in property mode don't fight
+// each other writing back to the same sidebar fields.
+function syncDerivedDisplays(inp) {
+    $('downDollar').value = inp.downPayment ? '$' + inp.downPayment.toLocaleString('en-US', {minimumFractionDigits: 0}) : '';
+    if (inp.loanAmount > 0) $('loanAmount').value = '$' + inp.loanAmount.toLocaleString('en-US', {minimumFractionDigits: 0});
+    else $('loanAmount').value = '';
+    autoFillCountyFromAddress();
+    // Tax: only autofill the $ field when tax mode is $ AND user left it empty.
+    if (_taxMode !== 'pct') {
+        const annualTaxInput = parseCurrency($('annualTax').value);
+        if (annualTaxInput <= 0 && inp.purchasePrice > 0) {
+            $('annualTax').value = '$' + inp.annualTax.toLocaleString('en-US', {minimumFractionDigits: 0});
+        }
+    }
+    const annualInsInput = parseCurrency($('annualInsurance').value);
+    if (annualInsInput <= 0) $('annualInsurance').value = '$1,800';
+}
+
+// Backwards-compat wrapper. Existing call sites (recalc, notifyParentOfChange) keep working
+// unchanged — they get a fully-populated inp AND the side effects fire as before.
+function getInputs() {
+    const inp = readSidebarInputs();
+    syncDerivedDisplays(inp);
+    return inp;
 }
 
 function calcAppraisal(propertyType) {
@@ -1398,7 +1436,20 @@ function notifyParentOfChange() {
         var data = {
             type: 'feeSheetAutoSave',
             version: 2,
-            mode: 'rate',
+            mode: _currentMode,
+            property_scenarios: propertyScenarios.map(function(p) {
+                return {
+                    id: p.id,
+                    label: p.label,
+                    propertyType: p.propertyType,
+                    purchasePrice: p.purchasePrice,
+                    hoa: p.hoa,
+                    monthlyRent: p.monthlyRent,
+                    rate: p.rate,
+                    loanProduct: p.loanProduct,
+                    recommended: !!p.recommended
+                };
+            }),
             scenarios: scenarios.map(function(s) {
                 return {
                     id: s.id,
@@ -1532,6 +1583,28 @@ recalc();
             if (c.county) $('county').value = c.county;
             if (c.annualTax) $('annualTax').value = '$' + Number(c.annualTax).toLocaleString('en-US');
             if (c.annualInsurance) $('annualInsurance').value = '$' + Number(c.annualInsurance).toLocaleString('en-US');
+            // Restore mode (v2+). Default to 'rate' for v1 blobs.
+            if (d.mode === 'property' || d.mode === 'rate') {
+                _currentMode = d.mode;
+            } else {
+                _currentMode = 'rate';
+            }
+            // Restore property_scenarios (v2+). Empty/missing means property mode never used yet.
+            if (Array.isArray(d.property_scenarios) && d.property_scenarios.length > 0) {
+                propertyScenarios = d.property_scenarios.map(function(p) {
+                    return {
+                        id: p.id || 'P?',
+                        label: p.label || '',
+                        propertyType: p.propertyType || 'sfr',
+                        purchasePrice: p.purchasePrice || 0,
+                        hoa: p.hoa || 0,
+                        monthlyRent: p.monthlyRent || 0,
+                        rate: p.rate || 0,
+                        loanProduct: p.loanProduct || 'conv30',
+                        recommended: !!p.recommended
+                    };
+                });
+            }
             // Restore scenarios — accept either v2 (d.scenarios array) or v1 (d.scenarioA/B/C).
             var incoming = null;
             if (Array.isArray(d.scenarios) && d.scenarios.length > 0) {
