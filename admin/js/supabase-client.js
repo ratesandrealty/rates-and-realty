@@ -59,7 +59,6 @@
             persistSession: true,
             autoRefreshToken: true,
             detectSessionInUrl: true,
-            storageKey: 'rr-admin-auth',
           },
         }
       );
