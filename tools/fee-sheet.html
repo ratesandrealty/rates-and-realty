@@ -133,6 +133,18 @@
             border-color: var(--gold);
             font-weight: 600;
         }
+        /* Mode toggle (Rate / Property comparison) */
+        .mode-toggle-wrap { margin: 14px 0 8px; }
+        .mode-toggle-label { font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 6px; text-transform: uppercase; }
+        .mode-toggle { display: flex; gap: 0; }
+        .mode-toggle button {
+            flex: 1; padding: 8px 12px; font-size: 12px;
+            background: transparent; color: #888; cursor: pointer;
+            border: 1px solid #555; transition: all .2s;
+        }
+        .mode-toggle button:first-child { border-radius: 6px 0 0 6px; border-right: none; }
+        .mode-toggle button:last-child { border-radius: 0 6px 6px 0; }
+        .mode-toggle button.active { background: var(--gold); color: #000; border-color: var(--gold); font-weight: 600; }
 
         .sidebar-actions {
             margin-top: 20px;
@@ -587,6 +599,15 @@
         <div class="field"><label>Annual Hazard Ins.</label><input type="text" id="annualInsurance" placeholder="$1,800"></div>
     </div>
 
+    <!-- MODE TOGGLE -->
+    <div class="mode-toggle-wrap">
+        <div class="mode-toggle-label">Comparison Mode</div>
+        <div class="mode-toggle">
+            <button id="modeBtnRate" type="button" onclick="setMode('rate')" class="active">Rate Comparison</button>
+            <button id="modeBtnProperty" type="button" onclick="setMode('property')">Property Comparison</button>
+        </div>
+    </div>
+
     <!-- SCENARIO CARDS -->
     <div id="scenarioCards"></div>
 
@@ -794,6 +815,90 @@ function buildScenarioCards() {
         container.appendChild(card);
     });
 }
+
+function buildPropertyCards() {
+    const container = $('scenarioCards');
+    container.innerHTML = '';
+    if (!propertyScenarios || propertyScenarios.length === 0) {
+        propertyScenarios = defaultPropertyScenarios();
+    }
+    propertyScenarios.forEach((p, i) => {
+        const card = document.createElement('div');
+        card.className = 'scenario-card' + (p.recommended ? ' recommended' : '');
+        card.innerHTML = `
+            <h3 style="margin:0 0 8px">${p.label}</h3>
+            <div class="scenario-header">
+                <span></span>
+                <button class="btn-recommend ${p.recommended ? 'active' : ''}" onclick="togglePropertyRecommend(${i})">&#9733; Recommend</button>
+            </div>
+            <div class="field"><label>Label</label><input type="text" value="${p.label}" onchange="propertyScenarios[${i}].label=this.value;buildPropertyCards();recalc()"></div>
+            <div class="field"><label>Property Type</label>
+                <select onchange="propertyScenarios[${i}].propertyType=this.value;recalc()">
+                    <option value="sfr"         ${p.propertyType==='sfr' ? 'selected' : ''}>Single Family</option>
+                    <option value="condo"       ${p.propertyType==='condo' ? 'selected' : ''}>Condo</option>
+                    <option value="multifamily" ${p.propertyType==='multifamily' ? 'selected' : ''}>2-4 Unit</option>
+                    <option value="townhouse"   ${p.propertyType==='townhouse' ? 'selected' : ''}>Townhouse</option>
+                    <option value="manufactured" ${p.propertyType==='manufactured' ? 'selected' : ''}>Manufactured</option>
+                </select>
+            </div>
+            <div class="row2">
+                <div class="field"><label>Purchase Price $</label><input type="number" step="5000" value="${p.purchasePrice}" onchange="propertyScenarios[${i}].purchasePrice=parseFloat(this.value)||0;recalc()"></div>
+                <div class="field"><label>Rate %</label><input type="number" step="0.125" value="${p.rate}" onchange="propertyScenarios[${i}].rate=parseFloat(this.value)||0;recalc()"></div>
+            </div>
+            <div class="row2">
+                <div class="field"><label>HOA $/mo</label><input type="number" step="25" value="${p.hoa}" onchange="propertyScenarios[${i}].hoa=parseFloat(this.value)||0;recalc()"></div>
+                <div class="field"><label>Gross Rent $/mo</label><input type="number" step="50" value="${p.monthlyRent}" onchange="propertyScenarios[${i}].monthlyRent=parseFloat(this.value)||0;recalc()"></div>
+            </div>
+            <div class="field"><label>Loan Product</label>
+                <select onchange="propertyScenarios[${i}].loanProduct=this.value;recalc()">
+                    <option value="conv30"  ${p.loanProduct==='conv30' ? 'selected' : ''}>Conv 30yr Fixed</option>
+                    <option value="conv15"  ${p.loanProduct==='conv15' ? 'selected' : ''}>Conv 15yr Fixed</option>
+                    <option value="fha30"   ${p.loanProduct==='fha30' ? 'selected' : ''}>FHA 30yr Fixed</option>
+                    <option value="va30"    ${p.loanProduct==='va30' ? 'selected' : ''}>VA 30yr Fixed</option>
+                    <option value="usda30"  ${p.loanProduct==='usda30' ? 'selected' : ''}>USDA 30yr Fixed</option>
+                    <option value="jumbo30" ${p.loanProduct==='jumbo30' ? 'selected' : ''}>Jumbo 30yr Fixed</option>
+                </select>
+            </div>`;
+        container.appendChild(card);
+    });
+}
+
+function togglePropertyRecommend(i) {
+    propertyScenarios.forEach((p, idx) => { p.recommended = (idx === i) ? !p.recommended : false; });
+    buildPropertyCards();
+    recalc();
+    notifyParentOfChange();
+}
+
+// Dispatcher — mounts the right cards into #scenarioCards based on _currentMode.
+function renderCards() {
+    if (_currentMode === 'property') {
+        buildPropertyCards();
+    } else {
+        buildScenarioCards();
+    }
+}
+
+// Mode toggle handler. Wired to the toggle pill buttons.
+function setMode(newMode) {
+    if (newMode !== 'rate' && newMode !== 'property') return;
+    if (_currentMode === newMode) return;
+    _currentMode = newMode;
+    // Update toggle button visuals.
+    const rateBtn = document.getElementById('modeBtnRate');
+    const propBtn = document.getElementById('modeBtnProperty');
+    if (rateBtn && propBtn) {
+        rateBtn.classList.toggle('active', newMode === 'rate');
+        propBtn.classList.toggle('active', newMode === 'property');
+    }
+    renderCards();
+    recalc();
+    notifyParentOfChange();
+}
+
+// TODO(post-3c): copyToClipboard() and PDF/print currently format from rate-mode scenarios array.
+// PDF/print is OK because it captures the rendered DOM (which IS mode-aware via 3b). Only the
+// text-formatted clipboard copy needs a property-mode variant. Defer to follow-up commit.
 
 function toggleRecommend(idx) {
     scenarios.forEach((s, i) => s.recommended = (i === idx));
@@ -1576,7 +1681,7 @@ const observer = new MutationObserver(() => {
 });
 observer.observe($('scenarioCards'), { childList: true, subtree: true });
 
-buildScenarioCards();
+renderCards();
 recalc();
 
 // URL param prefill for iframe / fullscreen mode
@@ -1700,7 +1805,15 @@ recalc();
                 var fi = { a:0, b:1, c:2 }[d.featuredScenario] || 0;
                 scenarios.forEach(function(s, i) { s.recommended = (i === fi); });
             }
-            buildScenarioCards();
+            // Use the dispatcher so property-mode restored data renders the right cards.
+            renderCards();
+            // Sync toggle button visuals to restored mode.
+            const rateBtn = document.getElementById('modeBtnRate');
+            const propBtn = document.getElementById('modeBtnProperty');
+            if (rateBtn && propBtn) {
+                rateBtn.classList.toggle('active', _currentMode === 'rate');
+                propBtn.classList.toggle('active', _currentMode === 'property');
+            }
             _origRecalc(); // don't trigger auto-save back
         }
     });
