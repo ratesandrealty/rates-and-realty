@@ -333,17 +333,6 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   T('VALID THROUGH',vbX+(128-R.widthOfTextAtSize('VALID THROUGH',6.5))/2,vbTop-12,R,6.5,GREEN);
   T(expiryDate,vbX+(128-B.widthOfTextAtSize(expiryDate,9))/2,vbTop-28,B,9,GREEN);
 
-  // QR Code — bottom right (embedded as base64, no runtime fetch)
-  try {
-    const qrBytes = Uint8Array.from(atob(QR_CODE_B64), c => c.charCodeAt(0));
-    const qrImg = await doc.embedPng(qrBytes);
-    const qrSize = 80;
-    const qrX = W - M - qrSize;
-    const qrY = vbTop - 42 - qrSize - 6;
-    page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
-    T('Scan to connect', qrX + (qrSize - R.widthOfTextAtSize('Scan to connect', 5.5)) / 2, qrY - 8, R, 5.5, GRAY);
-  } catch (e) { console.log('[qr] embed error:', String(e).slice(0, 80)); }
-  y-=18;
 
   // DISCLAIMER — removed "arranges but does not make loans" line per request
   HL(M,y,CW,LGRAY); y-=8;
@@ -357,6 +346,17 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     `receipt of an acceptable appraisal, clear title, and final investor approval. All loan programs, terms, and conditions are subject to change or withdrawal without notice. ` +
     `Equal Housing Lender. NMLS Consumer Access: www.nmlsconsumeraccess.org.`;
   T(disc, M, y, I, 5.5, GRAY, CW);
+
+  // QR Code — anchored to bottom margin so it sits below the wrapped disclaimer
+  try {
+    const qrBytes = Uint8Array.from(atob(QR_CODE_B64), c => c.charCodeAt(0));
+    const qrImg = await doc.embedPng(qrBytes);
+    const qrSize = 80;
+    const qrX = W - M - qrSize;
+    const qrY = M + 24;
+    page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
+    T('Scan to connect', qrX + (qrSize - R.widthOfTextAtSize('Scan to connect', 5.5)) / 2, qrY - 8, R, 5.5, GRAY);
+  } catch (e) { console.log('[qr] embed error:', String(e).slice(0, 80)); }
 
   return doc.save();
 }
