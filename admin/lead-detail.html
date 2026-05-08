@@ -12171,22 +12171,26 @@ async function lsGeneratePreApproval() {
     showToast('Generating Pre-Approval PDF\u2026');
 
     // Collect loan summary fields
-    var loanAmount = _lsNum('ls_loan_amount'), value = _lsNum('ls_appraised_value'),
-        rate = _lsNum('ls_interest_rate'), term = _lsNum('ls_loan_term_months')||360,
-        taxes = _lsNum('ls_property_taxes_monthly'), ins = _lsNum('ls_insurance_monthly'),
-        hoa = _lsNum('ls_hoa_monthly'), mi = _lsNum('ls_mi_monthly'), other = _lsNum('ls_other_monthly'),
-        down = _lsNum('ls_down_payment'), closing = _lsNum('ls_closing_costs'),
+    // Read PITIA + loan terms LIVE from dashboard (ld-*) — single source of truth as of dc309a0
+    var loanAmount = parseFloat(document.getElementById('ld-loan-amount')?.value) || 0;
+    var value      = parseFloat(document.getElementById('ld-prop-value')?.value)  || 0;
+    var rate       = parseFloat(document.getElementById('ld-rate')?.value)        || 0;
+    var term       = parseInt(document.getElementById('ld-term')?.value)          || 360;
+    var taxes      = parseFloat(document.getElementById('ld-taxes')?.value)       || 0;
+    var ins        = parseFloat(document.getElementById('ld-ins')?.value)         || 0;
+    var hoa        = parseFloat(document.getElementById('ld-hoa')?.value)         || 0;
+    var mi         = parseFloat(document.getElementById('ld-mi')?.value)          || 0;
+    var other      = parseFloat(document.getElementById('ld-other')?.value)       || 0;
+    // Closing-cost fields stay from Loan Summary panel — no dashboard equivalent
+    var down = _lsNum('ls_down_payment'), closing = _lsNum('ls_closing_costs'),
         prepaid = _lsNum('ls_prepaids'), credits = _lsNum('ls_credits');
     var pi = 0;
     if (loanAmount && rate && term) { var r = rate/100/12; pi = loanAmount*r*Math.pow(1+r,term)/(Math.pow(1+r,term)-1); }
     var pitia = pi + taxes + ins + hoa + mi + other;
     var ltv = value ? (loanAmount/value*100) : 0;
-    var totalIncome = (typeof losIncome !== 'undefined')
-      ? losIncome.filter(function(i){return i.is_active !== false;}).reduce(function(s,i){return s+(parseFloat(i.monthly_amount)||0);}, 0)
-      : _lsNum('ls_total_monthly_income');
-    var totalDebt = (typeof losLiabilities !== 'undefined')
-      ? losLiabilities.filter(function(l){return !l.is_omitted && !l.is_payoff;}).reduce(function(s,l){return s+(parseFloat(l.monthly_payment)||0);}, 0)
-      : _lsNum('ls_total_monthly_debt');
+    // Read income/debt LIVE from dashboard at click time — matches what user sees in DTI display
+    var totalIncome = parseFloat(document.getElementById('ld-income')?.value) || 0;
+    var totalDebt   = parseFloat(document.getElementById('ld-debt')?.value)   || 0;
     var frontDTI = totalIncome ? (pitia/totalIncome*100) : 0;
     var backDTI = totalIncome ? ((pitia+totalDebt)/totalIncome*100) : 0;
     // Get borrower info
@@ -12204,12 +12208,12 @@ async function lsGeneratePreApproval() {
       borrower_name: ((app.first_name||'')+' '+(app.last_name||'')).trim(),
       co_borrower_name: app.co_borrower_first_name ? ((app.co_borrower_first_name||'')+' '+(app.co_borrower_last_name||'')).trim() : '',
       loan_amount:loanAmount, purchase_price:value, appraised_value:value,
-      loan_type: document.getElementById('ls_loan_type').value || 'Conventional',
+      loan_type: document.getElementById('ld-loan-type')?.value || 'Conventional',
       loan_program: document.getElementById('ls_loan_program').value || '30-Year Fixed',
       interest_rate:rate, loan_term_months:term, ltv:ltv, cltv:ltv,
       pi_payment:pi, taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa, mi_monthly:mi, total_pitia:pitia,
       front_dti:frontDTI, back_dti:backDTI,
-      credit_score: _lsNum('ls_credit_score') || app.credit_score || 0,
+      credit_score: parseFloat(document.getElementById('ld-credit')?.value) || app.credit_score || 0,
       total_income:totalIncome, total_debt:totalDebt,
       down_payment:down, closing_costs:closing, prepaids:prepaid,
       cash_to_close: down + closing + prepaid - credits,
