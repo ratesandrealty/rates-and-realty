@@ -103,6 +103,37 @@ Deno.serve(async (req: Request) => {
       console.log('[approval_letter hook] non-blocking error:', String(hookErr).slice(0, 200));
     }
 
+    // Lead-score event #4: preapproval_generated (10 pts) — fire-and-forget, never blocks PDF response
+    try {
+      const contactId = body.contact_id || body.borrower_id || null;
+      if (contactId) {
+        const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+        const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        fetch(`${SUPABASE_URL}/functions/v1/lead-scorer`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SERVICE_KEY}`,
+            'apikey': SERVICE_KEY,
+          },
+          body: JSON.stringify({
+            action: 'record_event',
+            contact_id: contactId,
+            event_type: 'preapproval_generated',
+            metadata: {
+              channel: 'system',
+              title: 'Preapproval letter generated',
+              loan_amount: body.loan_amount,
+              loan_type: body.loan_type,
+              points: 10,
+            },
+          }),
+        }).catch(e => console.log('[lead-scorer preapproval_generated] fire-and-forget:', String(e).slice(0, 100)));
+      }
+    } catch (scoreErr) {
+      console.log('[preapproval_generated score hook] non-blocking error:', String(scoreErr).slice(0, 200));
+    }
+
     return new Response(JSON.stringify({success:true,pdf:u8b64(pdfBytes),type:'application/pdf'}),
       {headers:{...cors,'Content-Type':'application/json'}});
   } catch(e:any) {
