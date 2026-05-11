@@ -179,7 +179,8 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const bDTI       = parseFloat(String(d.back_dti||0));
   const loanType   = v(d.loan_type,'Conventional');
   const loanProg   = v(d.loan_program,'30-Year Fixed');
-  const purpose    = v(d.loan_purpose,'Purchase');
+  const purposeRaw = v(d.loan_purpose,'Purchase');
+  const purpose    = purposeRaw.charAt(0).toUpperCase() + purposeRaw.slice(1).toLowerCase();
   const rawOcc     = v(d.occupancy_type,'Primary Residence');
   const occ        = rawOcc.charAt(0).toUpperCase() + rawOcc.slice(1).replace(/\bresidence\b/i,'Residence');
   const cscoreRaw  = parseFloat(String(d.credit_score||0));
@@ -269,7 +270,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   for(const w of hiWords){const t=hiLine?hiLine+' '+w:w;if(R.widthOfTextAtSize(t,9)>CW-18){hiLines++;hiLine=w;}else hiLine=t;}
   const hiH=hiLines*13+14;
   RX(M-3,y-hiH+5,CW+6,hiH,BGRAY); RX(M-3,y-hiH+5,3,hiH,GOLD);
-  T(hiTxt,M+2,y,R,9,rgb(0.18,0.18,0.18),CW-4); y-=hiH+10;
+  T(hiTxt,M,y,R,9,rgb(0.18,0.18,0.18),CW-2); y-=hiH+10;
 
   T('APPROVED LOAN PARAMETERS',M,y,B,6.5,GOLD); HL(M,y-3,CW,GOLD,0.6); y-=14;
   const params=[
