@@ -269,7 +269,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   for(const w of hiWords){const t=hiLine?hiLine+' '+w:w;if(R.widthOfTextAtSize(t,9)>CW-18){hiLines++;hiLine=w;}else hiLine=t;}
   const hiH=hiLines*13+14;
   RX(M-3,y-hiH+5,CW+6,hiH,BGRAY); RX(M-3,y-hiH+5,3,hiH,GOLD);
-  T(hiTxt,M+7,y,R,9,rgb(0.18,0.18,0.18),CW-18); y-=hiH+10;
+  T(hiTxt,M+2,y,R,9,rgb(0.18,0.18,0.18),CW-4); y-=hiH+10;
 
   T('APPROVED LOAN PARAMETERS',M,y,B,6.5,GOLD); HL(M,y-3,CW,GOLD,0.6); y-=14;
   const params=[
@@ -366,6 +366,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
 
 
   // DISCLAIMER — removed "arranges but does not make loans" line per request
+  y-=14;
   HL(M,y,CW,LGRAY); y-=8;
   const disc =
     `*INTEREST RATE DISCLOSURE: The interest rate shown (${fmtP(rate)}) is a preliminary estimate provided for illustrative purposes only and does not constitute a lock, commitment, or guarantee. ` +
