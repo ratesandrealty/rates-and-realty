@@ -554,6 +554,16 @@
 const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
 const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
 
+// Authenticated client helper (Tier 1 auth migration C3).
+// Returns window._supabaseClient set up by admin/js/auth-guard.js. Falls back to a
+// fresh anon client if not ready — logs an error because the call will fail on
+// RLS-locked tables.
+function _authClient() {
+  if (window._supabaseClient) return window._supabaseClient;
+  console.error('[auth] window._supabaseClient not ready — falling back to anon. Call will fail on RLS-locked tables.');
+  return window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
+}
+
 // ── STATE ────────────────────────────────────────
 let allLenders = [];
 let filteredLenders = [];
@@ -1187,12 +1197,8 @@ async function saveLenderDetails(lenderId, clickupId) {
     updated_at: new Date().toISOString(),
   };
 
-  await fetch(`${SB_URL}/rest/v1/lenders?id=eq.${lenderId}`, {
-    method: 'PATCH',
-    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`,
-      'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-    body: JSON.stringify(updates)
-  });
+  var { error: _lenderUpdErr } = await _authClient().from('lenders').update(updates).eq('id', lenderId);
+  if (_lenderUpdErr) throw new Error('Update failed: ' + _lenderUpdErr.message);
 
   // Push to ClickUp via clickup-lender-sync (FIELD_MAP already maps these fields)
   let synced = false;
@@ -1994,20 +2000,9 @@ async function submitNewLender() {
   };
 
   try {
-    var res = await fetch(SB_URL + '/rest/v1/lenders', {
-      method: 'POST',
-      headers: {
-        'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
-        'Content-Type': 'application/json', 'Prefer': 'return=representation'
-      },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) {
-      var errData = await res.json().catch(function() { return {}; });
-      throw new Error(errData.message || errData.error || 'HTTP ' + res.status);
-    }
-    var data = await res.json();
-    var newLender = Array.isArray(data) ? data[0] : data;
+    var { data: _newLenderData, error: _newLenderErr } = await _authClient().from('lenders').insert(payload).select().single();
+    if (_newLenderErr) throw new Error(_newLenderErr.message || 'Insert failed');
+    var newLender = _newLenderData;
 
     // Auto-generate form token
     fetch(SB_URL + '/functions/v1/lender-portal', {
