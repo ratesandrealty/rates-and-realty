@@ -10120,7 +10120,7 @@ function parseMISMO(xmlStr, filename) {
   // ── Loan
   const loan = {
     loan_id:       g('LoanIdentifier') || g('MISMOLoanIdentifier'),
-    loan_type:     (g('LoanProgramIdentifier') || g('LoanType') || '').toLowerCase(),
+    loan_type:     ((g('LoanProgramIdentifier') || g('LoanType') || '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())),
     loan_amount:   parseFloat(g('LoanAmount') || g('BaseLoanAmount')) || null,
     note_rate:     parseFloat(g('NoteRatePercent') || g('LoanInterestRatePercent')) || null,
     purpose:       g('LoanPurposeType') || '',
@@ -10137,7 +10137,13 @@ function parseMISMO(xmlStr, filename) {
     value:          parseFloat(g('AppraisedValue') || g('PropertyAppraisedValueAmount')) || null,
     purchase_price: parseFloat(g('PurchasePriceAmount')) || null,
     property_type:  (g('PropertyUsageType') || g('PropertyType') || '').toLowerCase(),
-    usage:          (g('ProjectLegalStructureType') || g('OccupancyType') || '').toLowerCase(),
+    usage:          (() => {
+    const raw = (g('ProjectLegalStructureType') || g('OccupancyType') || '').toLowerCase();
+    if (raw.includes('primary') || raw === 'owner' || raw === 'principal') return 'Primary Residence';
+    if (raw.includes('second')) return 'Second Home';
+    if (raw.includes('invest')) return 'Investment Property';
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  })(),
   };
 
   // ── Liabilities
@@ -11508,7 +11514,11 @@ async function save1003() {
     property_address_county: gv('f_prop_county'),
     property_value: parseFloat(gv('f_prop_value')) || null,
     number_of_units: parseInt(gv('f_num_units')) || 1,
-    occupancy_type: gv('f_occupancy'),
+    occupancy_type: (() => {
+    const v = gv('f_occupancy') || '';
+    const map = { primary: 'Primary Residence', secondary: 'Second Home', investment: 'Investment Property' };
+    return map[v.toLowerCase()] || v;
+  })(),
     decl_primary_residence: gr('decl_primary') === 'yes',
     decl_family_relationship_seller: gr('decl_family') === 'yes',
     decl_borrowed_funds: gr('decl_borrowed') === 'yes',
@@ -11714,7 +11724,21 @@ async function load1003(overrideCid) {
     sv('f_prop_county', data.property_address_county);
     sv('f_prop_value', data.property_value);
     sv('f_num_units', data.number_of_units);
-    sv('f_occupancy', data.occupancy_type);
+    sv('f_occupancy', (() => {
+    const v = data.occupancy_type || '';
+    const map = {
+      'primary residence': 'primary',
+      'primaryresidence': 'primary',
+      'primary': 'primary',
+      'second home': 'secondary',
+      'secondhome': 'secondary',
+      'secondary': 'secondary',
+      'investment property': 'investment',
+      'investmentproperty': 'investment',
+      'investment': 'investment',
+    };
+    return map[v.toLowerCase()] || v;
+  })());
 
     if (data.credit_type) sr('credit_type', data.credit_type);
     sr('decl_primary', data.decl_primary_residence ? 'yes' : 'no');
