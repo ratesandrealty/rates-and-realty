@@ -4213,6 +4213,16 @@ const sb = createClient(
   window.APP_CONFIG.SUPABASE_ANON_KEY
 );
 
+// Authenticated client helper (Tier 1 auth migration C1).
+// Returns window._supabaseClient which is session-aware (set up by admin/js/supabase-client.js).
+// Falls back to local anon `sb` only when the auth client isn't ready yet — logs an error in that case
+// because the call will fail on RLS-locked tables.
+function _authClient() {
+  if (window._supabaseClient) return window._supabaseClient;
+  console.error('[auth] window._supabaseClient not ready — falling back to anon. Call will fail on RLS-locked tables.');
+  return sb;
+}
+
 /* ── STATE ── */
 let contactId = null;
 let leadId = null;
@@ -7166,18 +7176,11 @@ async function prefillFeeSheet() {
       if (!cid) return;
       try {
         var fsd = null, appRow = null;
-        if (typeof sb !== 'undefined' && sb.from) {
-          var { data } = await sb.from('mortgage_applications')
-            .select('fee_sheet_data,purchase_price,loan_amount,property_value,first_name,last_name,property_address_street,property_address_city,property_address_state,property_address_zip')
-            .eq('contact_id', cid).order('created_at', { ascending: false }).limit(1).maybeSingle();
-          if (data) { appRow = data; fsd = data.fee_sheet_data; }
-        } else {
-          var res = await fetch(_fsSbUrl() + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=fee_sheet_data,purchase_price,loan_amount,property_value,first_name,last_name,property_address_street,property_address_city,property_address_state,property_address_zip&order=created_at.desc&limit=1', {
-            headers: { 'apikey': _fsSbKey(), 'Authorization': 'Bearer ' + _fsSbKey() }
-          });
-          var rows = await res.json();
-          if (rows && rows[0]) { appRow = rows[0]; fsd = rows[0].fee_sheet_data; }
-        }
+        var { data: _restoreRow, error: _restoreErr } = await _authClient().from('mortgage_applications')
+          .select('fee_sheet_data,purchase_price,loan_amount,property_value,first_name,last_name,property_address_street,property_address_city,property_address_state,property_address_zip')
+          .eq('contact_id', cid).order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (_restoreErr) console.error('[fee sheet restore]', _restoreErr);
+        if (_restoreRow) { appRow = _restoreRow; fsd = _restoreRow.fee_sheet_data; }
         // Build restore payload — merge saved fee_sheet_data with mortgage_applications fallbacks
         var restore = fsd ? Object.assign({}, fsd) : {};
         if (appRow) {
@@ -7221,45 +7224,22 @@ window.addEventListener('message', function(e) {
     var payload = Object.assign({}, e.data);
     delete payload.type;
     try {
-      // Use the Supabase client (sb) if available — it has the auth session token
-      // which passes RLS. The anon key alone may be blocked by RLS.
-      if (typeof sb !== 'undefined' && sb.from) {
-        var { data: apps } = await sb.from('mortgage_applications').select('id').eq('contact_id', cid).order('created_at', { ascending: false }).limit(1);
-        if (apps && apps.length) {
-          var saveData = { fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() };
-          if (payload.purchasePrice > 0) saveData.purchase_price = payload.purchasePrice;
-          if (payload.loanAmount > 0) saveData.loan_amount = payload.loanAmount;
-          var { error } = await sb.from('mortgage_applications').update(saveData).eq('id', apps[0].id);
-          if (error) throw new Error(error.message);
-        } else {
-          var saveData2 = { contact_id: cid, fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() };
-          if (payload.purchasePrice > 0) saveData2.purchase_price = payload.purchasePrice;
-          if (payload.loanAmount > 0) saveData2.loan_amount = payload.loanAmount;
-          var { error } = await sb.from('mortgage_applications').insert(saveData2);
-          if (error) throw new Error(error.message);
-        }
+      // Always use the authenticated client (session JWT passes RLS).
+      var _c = _authClient();
+      var { data: apps, error: _lookupErr } = await _c.from('mortgage_applications').select('id').eq('contact_id', cid).order('created_at', { ascending: false }).limit(1);
+      if (_lookupErr) throw new Error(_lookupErr.message);
+      if (apps && apps.length) {
+        var saveData = { fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() };
+        if (payload.purchasePrice > 0) saveData.purchase_price = payload.purchasePrice;
+        if (payload.loanAmount > 0) saveData.loan_amount = payload.loanAmount;
+        var { error: _updErr } = await _c.from('mortgage_applications').update(saveData).eq('id', apps[0].id);
+        if (_updErr) throw new Error(_updErr.message);
       } else {
-        // Fallback to REST API with anon key
-        var sbUrl = _fsSbUrl(), sbKey = _fsSbKey();
-        var res = await fetch(sbUrl + '/rest/v1/mortgage_applications?contact_id=eq.' + cid + '&select=id&limit=1', {
-          headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey }
-        });
-        var apps = await res.json();
-        if (apps && apps.length) {
-          var r2 = await fetch(sbUrl + '/rest/v1/mortgage_applications?id=eq.' + apps[0].id, {
-            method: 'PATCH',
-            headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-            body: JSON.stringify({ fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() })
-          });
-          if (!r2.ok) throw new Error('PATCH ' + r2.status + ': ' + await r2.text());
-        } else {
-          var r3 = await fetch(sbUrl + '/rest/v1/mortgage_applications', {
-            method: 'POST',
-            headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-            body: JSON.stringify({ contact_id: cid, fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() })
-          });
-          if (!r3.ok) throw new Error('POST ' + r3.status + ': ' + await r3.text());
-        }
+        var saveData2 = { contact_id: cid, fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() };
+        if (payload.purchasePrice > 0) saveData2.purchase_price = payload.purchasePrice;
+        if (payload.loanAmount > 0) saveData2.loan_amount = payload.loanAmount;
+        var { error: _insErr } = await _c.from('mortgage_applications').insert(saveData2);
+        if (_insErr) throw new Error(_insErr.message);
       }
       if (saveIndicator) { saveIndicator.textContent = '\u2713 Saved'; saveIndicator.style.color = '#2ecc71'; }
       // Lead-score event: property_comparison_generated (6pts) \u2014 dedup per contact, gated on mode=property + non-empty scenarios + at least one priced
@@ -7379,23 +7359,15 @@ async function saveFeeSheetQuote() {
     });
     var contactId = new URLSearchParams(window.location.search).get('contact_id');
     if (!contactId) return alert('No contact loaded');
-    var sbUrl = _fsSbUrl(), sbKey = _fsSbKey();
-    var res = await fetch(sbUrl + '/rest/v1/mortgage_applications?contact_id=eq.' + contactId + '&select=id&limit=1', {
-      headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey }
-    });
-    var apps = await res.json();
-    if (apps.length) {
-      await fetch(sbUrl + '/rest/v1/mortgage_applications?id=eq.' + apps[0].id, {
-        method: 'PATCH',
-        headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-        body: JSON.stringify({ fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() })
-      });
+    var _c = _authClient();
+    var { data: apps, error: _lookupErr } = await _c.from('mortgage_applications').select('id').eq('contact_id', contactId).limit(1);
+    if (_lookupErr) throw new Error(_lookupErr.message);
+    if (apps && apps.length) {
+      var { error: _updErr } = await _c.from('mortgage_applications').update({ fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() }).eq('id', apps[0].id);
+      if (_updErr) throw new Error(_updErr.message);
     } else {
-      await fetch(sbUrl + '/rest/v1/mortgage_applications', {
-        method: 'POST',
-        headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-        body: JSON.stringify({ contact_id: contactId, fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() })
-      });
+      var { error: _insErr } = await _c.from('mortgage_applications').insert({ contact_id: contactId, fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() });
+      if (_insErr) throw new Error(_insErr.message);
     }
     alert('Fee sheet quote saved!');
   } catch(e) { alert('Error saving: ' + e.message); }
@@ -12436,8 +12408,24 @@ var losLiabilities = [];
 var LIAB_TYPES = ['Revolving','Installment','Mortgage Loan','Auto','Student Loan','HELOC','Child Support','Alimony','Tax Lien','Other'];
 var LIAB_OWNERS = ['Borrower','CoBorrower','Joint'];
 function losHeaders() {
-  var k = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-  return { 'Authorization':'Bearer '+k, 'apikey':k, 'Content-Type':'application/json' };
+  var anonKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  var sjwt = null;
+  try {
+    // supabase-js v2 persists the session to localStorage with persistSession:true.
+    // Key pattern: sb-<project_ref>-auth-token. We read it synchronously here
+    // because losHeaders() callers are not async.
+    var keys = Object.keys(localStorage);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf('sb-') === 0 && keys[i].indexOf('-auth-token') > 0) {
+        var raw = localStorage.getItem(keys[i]);
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && parsed.access_token) { sjwt = parsed.access_token; break; }
+        }
+      }
+    }
+  } catch (e) { /* fall through to anon */ }
+  return { 'Authorization':'Bearer '+(sjwt || anonKey), 'apikey':anonKey, 'Content-Type':'application/json' };
 }
 function losBase() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co'; }
 function losCid() { return new URLSearchParams(location.search).get('contact_id') || contactId; }
