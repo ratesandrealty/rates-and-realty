@@ -6802,13 +6802,12 @@ async function saveLoanProperty() {
       if (error) throw error;
     }
     Object.assign(leadData, lFields);
-    // Sync loan_type to contacts table
+    // Sync loan_type to contacts table (fire-and-forget)
     if (lFields.loan_type && contactId) {
-      fetch(window.APP_CONFIG.SUPABASE_URL + '/rest/v1/contacts?id=eq.' + contactId, {
-        method: 'PATCH',
-        headers: { 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ loan_type: lFields.loan_type, updated_at: new Date().toISOString() })
-      });
+      _authClient().from('contacts')
+        .update({ loan_type: lFields.loan_type, updated_at: new Date().toISOString() })
+        .eq('id', contactId)
+        .then(function(r) { if (r.error) console.warn('[loan_type sync]', r.error); });
     }
     renderScoreCard(leadData, contactData);
     toast('✓ Loan & property saved');
@@ -9977,9 +9976,8 @@ async function handleMismoImportSuccess(result) {
       if (app.current_address_state) patch.state = app.current_address_state;
       if (app.current_address_zip) patch.zip = app.current_address_zip;
       if (app.loan_type) patch.loan_type = app.loan_type;
-      await fetch(SB_URL+'/rest/v1/contacts?id=eq.'+primaryCid, {
-        method:'PATCH', headers: jsonHdr, body: JSON.stringify(patch)
-      });
+      var { error: _mismoSyncErr } = await _authClient().from('contacts').update(patch).eq('id', primaryCid);
+      if (_mismoSyncErr) console.warn('[mismo-import contact sync]', _mismoSyncErr);
     }
   } catch(e) { console.warn('[mismo-import] contact sync:', e); }
 
@@ -11621,14 +11619,13 @@ async function save1003() {
       toast('Error saving: ' + (error.message || error.details || JSON.stringify(error)), true);
       return;
     }
-    // Sync loan_type to contacts table
+    // Sync loan_type to contacts table (fire-and-forget)
     var loanTypeVal = cleanData.loan_type;
     if (loanTypeVal && cid) {
-      fetch(window.APP_CONFIG.SUPABASE_URL + '/rest/v1/contacts?id=eq.' + cid, {
-        method: 'PATCH',
-        headers: { 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ loan_type: loanTypeVal, updated_at: new Date().toISOString() })
-      });
+      _authClient().from('contacts')
+        .update({ loan_type: loanTypeVal, updated_at: new Date().toISOString() })
+        .eq('id', cid)
+        .then(function(r) { if (r.error) console.warn('[loan_type sync 1003]', r.error); });
     }
     toast('Application saved!');
     // Sync updated data to fee sheet iframe if loaded
@@ -18353,11 +18350,13 @@ async function loadSmsHistory() {
   } catch(e) { /* fall through */ }
   // Fallback: query activity_events directly
   try {
-    var anon = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
-    var r = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/rest/v1/activity_events?contact_id=eq.' + cid + '&type=eq.sms&order=created_at.desc&limit=50', {
-      headers:{ 'apikey': anon, 'Authorization':'Bearer ' + anon }
-    });
-    var evs = await r.json();
+    var { data: evs, error: _smsHistErr } = await _authClient().from('activity_events')
+      .select('*')
+      .eq('contact_id', cid)
+      .eq('type', 'sms')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (_smsHistErr) throw _smsHistErr;
     smsRenderHistory(Array.isArray(evs) ? evs : []);
   } catch(e) { hist.innerHTML = '<div style="text-align:center;color:#f87171;font-size:11px;padding:12px">Could not load history</div>'; }
 }
