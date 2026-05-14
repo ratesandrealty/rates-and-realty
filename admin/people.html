@@ -551,6 +551,16 @@ var hdrs = function() {
   return { apikey: ANON_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=representation' };
 };
 
+// Authenticated client helper (Tier 1 auth migration C4).
+// Returns window._supabaseClient set up by admin/js/auth-guard.js. Falls back to a
+// fresh anon client if not ready — logs an error because the call will fail on
+// RLS-locked tables.
+function _authClient() {
+  if (window._supabaseClient) return window._supabaseClient;
+  console.error('[auth] window._supabaseClient not ready — falling back to anon. Call will fail on RLS-locked tables.');
+  return window.supabase ? window.supabase.createClient(SB_URL, ANON_KEY) : null;
+}
+
 // people-admin edge function helper
 async function peopleApi(action, payload) {
   payload = payload || {};
@@ -680,8 +690,9 @@ async function loadPeople() {
 }
 
 async function loadTags() {
-  var r = await fetch(SB_URL + '/rest/v1/tags?order=name', { headers: { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY } });
-  _allTags = await r.json();
+  var { data, error } = await _authClient().from('tags').select('*').order('name');
+  if (error) { console.warn('[loadTags]', error); _allTags = []; }
+  else { _allTags = data || []; }
   renderFilterPanelTags();
 }
 
@@ -1082,9 +1093,10 @@ function toggleTempFilter(val) {
 var _referralPartners = [];
 async function loadReferralPartners() {
   try {
-    var res = await fetch(SB_URL + '/rest/v1/referral_partners?select=id,first_name,last_name,company&order=first_name', { headers: { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY } });
-    _referralPartners = await res.json();
-  } catch(e) { _referralPartners = []; }
+    var { data, error } = await _authClient().from('referral_partners').select('id,first_name,last_name,company').order('first_name');
+    if (error) throw error;
+    _referralPartners = data || [];
+  } catch(e) { console.warn('[loadReferralPartners]', e); _referralPartners = []; }
 }
 
 function renderReferralPartnerPills() {
@@ -1338,8 +1350,10 @@ function updateBulkBar() { var bar = document.getElementById('bulkBar'); var n =
 function openPerson(contactId) { window.location.href = 'lead-detail.html?contact_id=' + contactId; }
 
 async function updateStageInline(contactId, status) {
-  await fetch(SB_URL + '/rest/v1/contacts?id=eq.' + contactId, { method: 'PATCH', headers: hdrs(), body: JSON.stringify({ pipeline_status: status, updated_at: new Date().toISOString() }) });
-  await fetch(SB_URL + '/rest/v1/leads?contact_id=eq.' + contactId, { method: 'PATCH', headers: hdrs(), body: JSON.stringify({ status: status, updated_at: new Date().toISOString() }) });
+  var { error: _c1Err } = await _authClient().from('contacts').update({ pipeline_status: status, updated_at: new Date().toISOString() }).eq('id', contactId);
+  if (_c1Err) console.warn('[stage-update contacts]', _c1Err);
+  var { error: _l1Err } = await _authClient().from('leads').update({ status: status, updated_at: new Date().toISOString() }).eq('contact_id', contactId);
+  if (_l1Err) console.warn('[stage-update leads]', _l1Err);
   var p = _allPeople.find(function(x) { return x.id === contactId; });
   if (p) { p.lead_status = status; p.pipeline_status = status; }
   showToast('Stage updated to ' + status);
@@ -1453,8 +1467,11 @@ function apmToggleTag(tag, btn) {
 async function apmSearchReferral(q) {
   var box = document.getElementById('apm-referral-results');
   if (!q || q.length < 2) { box.style.display = 'none'; return; }
-  var r = await fetch(SB_URL + '/rest/v1/contacts?select=id,first_name,last_name,email,phone&or=(first_name.ilike.*' + encodeURIComponent(q) + '*,last_name.ilike.*' + encodeURIComponent(q) + '*,email.ilike.*' + encodeURIComponent(q) + '*)&limit=8', { headers: hdrs() });
-  var data = await r.json();
+  var r = await _authClient().from('contacts')
+    .select('id,first_name,last_name,email,phone')
+    .or('first_name.ilike.*' + q + '*,last_name.ilike.*' + q + '*,email.ilike.*' + q + '*')
+    .limit(8);
+  var data = r.data || [];
   box.style.display = 'block';
   box.innerHTML = (data||[]).map(function(c) {
     return '<div onclick="apmSelectReferral(\'' + c.id + '\',\'' + (c.first_name + ' ' + (c.last_name||'')).trim().replace(/'/g,"\\'") + '\')" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #1a1a1a;transition:background .1s;" onmouseover="this.style.background=\'#1a1a1a\'" onmouseout="this.style.background=\'transparent\'"><div style="color:#e0e0e0;font-size:13px;font-weight:500;">' + c.first_name + ' ' + (c.last_name||'') + '</div><div style="color:#555;font-size:11px;">' + (c.email||c.phone||'') + '</div></div>';
@@ -1500,17 +1517,18 @@ async function savePerson() {
   };
   // Strip nulls to avoid overwriting DB defaults
   Object.keys(payload).forEach(function(k) { if (payload[k] === null) delete payload[k]; });
-  var r = await fetch(SB_URL + '/rest/v1/contacts', { method:'POST', headers:hdrs(), body:JSON.stringify(payload) });
-  if (r.ok) {
-    var nc = await r.json();
+  var r = await _authClient().from('contacts').insert(payload).select();
+  if (!r.error) {
+    var nc = r.data || [];
     if (nc && nc[0]) {
-      await fetch(SB_URL + '/rest/v1/leads', { method:'POST', headers:hdrs(), body:JSON.stringify({ contact_id:nc[0].id, status:payload.pipeline_status||'New Lead', source:payload.source, loan_type:payload.loan_type, created_at:new Date().toISOString(), updated_at:new Date().toISOString() }) });
+      var { error: _ldNewErr } = await _authClient().from('leads').insert({ contact_id:nc[0].id, status:payload.pipeline_status||'New Lead', source:payload.source, loan_type:payload.loan_type, created_at:new Date().toISOString(), updated_at:new Date().toISOString() });
+      if (_ldNewErr) console.warn('[new-lead insert]', _ldNewErr);
     }
     closeNewModal();
     await loadPeople();
     showToast('Person added!');
   } else {
-    var errText = ''; try { errText = (await r.json()).message || ''; } catch(_){}
+    var errText = (r.error && r.error.message) || '';
     showToast('Failed to add: ' + (errText || 'check fields'));
   }
 }
@@ -1776,9 +1794,9 @@ async function repairMismoImports() {
   if (sessionStorage.getItem('mismo_repair_done')) return;
   sessionStorage.setItem('mismo_repair_done','1');
   try {
-    var res = await fetch(SB_URL + '/rest/v1/mortgage_applications?first_name=is.null&mismo_raw_xml=not.is.null&select=id,mismo_raw_xml', { headers: hdrs() });
-    if (!res.ok) return;
-    var records = await res.json();
+    var res = await _authClient().from('mortgage_applications').select('id,mismo_raw_xml').is('first_name', null).not('mismo_raw_xml', 'is', null);
+    if (res.error) return;
+    var records = res.data || [];
     if (!records || !records.length) return;
     console.log('[mismo-repair] re-parsing', records.length, 'records with null first_name');
     for (var i = 0; i < records.length; i++) {
@@ -1815,13 +1833,9 @@ async function repairMismoImports() {
         };
         Object.keys(update).forEach(function(k){ if (update[k] === '' || update[k] == null) delete update[k]; });
         if (Object.keys(update).length <= 1) { console.warn('[mismo-repair] no fields extracted for', rec.id); continue; }
-        var r = await fetch(SB_URL + '/rest/v1/mortgage_applications?id=eq.' + rec.id, {
-          method:'PATCH',
-          headers: Object.assign({}, hdrs(), {'Prefer':'return=minimal'}),
-          body: JSON.stringify(update)
-        });
-        if (r.ok) console.log('[mismo-repair] fixed', rec.id, b.firstName, b.lastName, '('+Object.keys(update).length+' fields)');
-        else console.warn('[mismo-repair] PATCH', r.status, 'for', rec.id);
+        var { error: _mrErr } = await _authClient().from('mortgage_applications').update(update).eq('id', rec.id);
+        if (!_mrErr) console.log('[mismo-repair] fixed', rec.id, b.firstName, b.lastName, '('+Object.keys(update).length+' fields)');
+        else console.warn('[mismo-repair] PATCH error for', rec.id, _mrErr);
       } catch(e) { console.warn('[mismo-repair] failed for', rec.id, e.message); }
     }
   } catch(e) { console.warn('[mismo-repair] fetch error:', e); }
@@ -1850,17 +1864,12 @@ async function saveMismoImport() {
   try {
     var b = _mismoData.borrower || {}, l = _mismoData.loan || {}, cb = _mismoData.coBorrower, d = _mismoData.decl || {};
     // Create contact
-    var cRes = await fetch(SB_URL+'/rest/v1/contacts', {
-      method:'POST', headers:Object.assign({},hdrs(),{'Prefer':'return=representation'}),
-      body:JSON.stringify({first_name:b.firstName,last_name:b.lastName,middle_name:b.middleName,email:b.email,phone:b.phone,address:b.street,city:b.city,state:b.state,zip:b.zip,date_of_birth:b.dob||null,loan_amount:l.loanAmount?parseFloat(l.loanAmount):null,loan_type:l.loanType||null,source:'MISMO Import',pipeline_status:'New Lead',contact_type:'borrower',temperature:'Cold',lead_temperature:'Cold'})
-    });
-    if (!cRes.ok) throw new Error('Failed to create contact');
-    var nc = (await cRes.json())[0]; var cid = nc.id;
+    var { data: _ncData, error: _ncErr } = await _authClient().from('contacts').insert({first_name:b.firstName,last_name:b.lastName,middle_name:b.middleName,email:b.email,phone:b.phone,address:b.street,city:b.city,state:b.state,zip:b.zip,date_of_birth:b.dob||null,loan_amount:l.loanAmount?parseFloat(l.loanAmount):null,loan_type:l.loanType||null,source:'MISMO Import',pipeline_status:'New Lead',contact_type:'borrower',temperature:'Cold',lead_temperature:'Cold'}).select().single();
+    if (_ncErr) throw new Error('Failed to create contact: ' + _ncErr.message);
+    var cid = _ncData.id;
     // Create mortgage application
-    await fetch(SB_URL+'/rest/v1/mortgage_applications', {
-      method:'POST', headers:hdrs(),
-      body:JSON.stringify({contact_id:cid,first_name:b.firstName,middle_name:b.middleName,last_name:b.lastName,suffix:b.suffix,ssn:b.ssn,date_of_birth:b.dob||null,marital_status:b.marital,citizenship:b.citizenship,cell_phone:b.phone,email:b.email,current_address_street:b.street,current_address_city:b.city,current_address_state:b.state,current_address_zip:b.zip,employer_name:b.empName,position_title:b.empTitle,base_income:b.baseIncome?parseFloat(b.baseIncome):null,total_monthly_income:b.totalIncome?parseFloat(b.totalIncome):null,loan_amount:l.loanAmount?parseFloat(l.loanAmount):null,loan_purpose:l.loanPurpose,loan_type:l.loanType,property_address_street:l.propStreet,property_address_city:l.propCity,property_address_state:l.propState,property_address_zip:l.propZip,property_address_county:l.propCounty,property_value:l.propValue?parseFloat(l.propValue):null,occupancy_type:l.occupancy,declaration_primary_residence:d.primary,declaration_judgments:d.judgments,declaration_delinquent:d.delinquent,declaration_foreclosure:d.foreclosure,declaration_bankruptcy:d.bankruptcy,military_service:_mismoData.military,co_borrower_first_name:cb?.firstName||null,co_borrower_last_name:cb?.lastName||null,co_borrower_ssn:cb?.ssn||null,co_borrower_email:cb?.email||null,mismo_raw_xml:_mismoRawXml,mismo_file_name:_mismoFileName,mismo_imported_at:new Date().toISOString(),lo_name:'Rene Duarte',lo_nmls:'1795044',lo_email:'rene@ratesandrealty.com',lo_phone:'714-472-8508'})
-    });
+    var { error: _maErr } = await _authClient().from('mortgage_applications').insert({contact_id:cid,first_name:b.firstName,middle_name:b.middleName,last_name:b.lastName,suffix:b.suffix,ssn:b.ssn,date_of_birth:b.dob||null,marital_status:b.marital,citizenship:b.citizenship,cell_phone:b.phone,email:b.email,current_address_street:b.street,current_address_city:b.city,current_address_state:b.state,current_address_zip:b.zip,employer_name:b.empName,position_title:b.empTitle,base_income:b.baseIncome?parseFloat(b.baseIncome):null,total_monthly_income:b.totalIncome?parseFloat(b.totalIncome):null,loan_amount:l.loanAmount?parseFloat(l.loanAmount):null,loan_purpose:l.loanPurpose,loan_type:l.loanType,property_address_street:l.propStreet,property_address_city:l.propCity,property_address_state:l.propState,property_address_zip:l.propZip,property_address_county:l.propCounty,property_value:l.propValue?parseFloat(l.propValue):null,occupancy_type:l.occupancy,declaration_primary_residence:d.primary,declaration_judgments:d.judgments,declaration_delinquent:d.delinquent,declaration_foreclosure:d.foreclosure,declaration_bankruptcy:d.bankruptcy,military_service:_mismoData.military,co_borrower_first_name:cb?.firstName||null,co_borrower_last_name:cb?.lastName||null,co_borrower_ssn:cb?.ssn||null,co_borrower_email:cb?.email||null,mismo_raw_xml:_mismoRawXml,mismo_file_name:_mismoFileName,mismo_imported_at:new Date().toISOString(),lo_name:'Rene Duarte',lo_nmls:'1795044',lo_email:'rene@ratesandrealty.com',lo_phone:'714-472-8508'});
+    if (_maErr) throw new Error('Failed to create mortgage application: ' + _maErr.message);
     closeMismoModal();
     showToast('\u2713 Contact created from MISMO import');
     setTimeout(function(){ window.location.href='lead-detail.html?contact_id='+cid; }, 1200);
@@ -1951,14 +1960,10 @@ function closeBulkStage() { document.getElementById('bulkStageModal').style.disp
 async function applyBulkStage() {
   if (!window._bulkNewStage) return;
   var ids = Array.from(_selected);
-  var SB = window.APP_CONFIG?.SUPABASE_URL || SB_URL;
-  var KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || ANON_KEY;
+  var newStatus = window._bulkNewStage.toLowerCase().replace(/ /g, '_');
   for (var i = 0; i < ids.length; i++) {
-    await fetch(SB + '/rest/v1/contacts?id=eq.' + ids[i], {
-      method: 'PATCH',
-      headers: { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ pipeline_status: window._bulkNewStage.toLowerCase().replace(/ /g, '_') })
-    });
+    var { error: _bsErr } = await _authClient().from('contacts').update({ pipeline_status: newStatus }).eq('id', ids[i]);
+    if (_bsErr) console.warn('[bulk-stage] failed for', ids[i], _bsErr);
   }
   closeBulkStage();
   showToast('Updated ' + ids.length + ' contacts to ' + window._bulkNewStage);
