@@ -1227,6 +1227,8 @@ const quoteId = genQuoteId();
 
 // ── Render ──
 function render(inp, results) {
+    // Single mode: limit scenarios to first element so headers/pills/columns match results.
+    const displayedScenarios = (inp.mode === 'single') ? scenarios.slice(0, 1) : scenarios;
     const recIdx = (inp.mode === 'property')
         ? (propertyScenarios || []).findIndex(p => p.recommended)
         : scenarios.findIndex(s => s.recommended);
@@ -1315,7 +1317,7 @@ function render(inp, results) {
                             'LTV: <strong>' + colInp.ltv.toFixed(1) + '%</strong>' +
                         '</div>' +
                     '</div>';
-                }).join('') : scenarios.map((s, i) => {
+                }).join('') : displayedScenarios.map((s, i) => {
                     const isRec = i === recIdx;
                     const ptsAmt = Math.abs(s.points / 100 * inp.loanAmount);
                     let pillClass, pillText;
@@ -1334,7 +1336,7 @@ function render(inp, results) {
         <table class="fee-table">
             <thead><tr>
                 <th>Fee Description</th>
-                ${results.map((r, i) => `<th class="${thClass(i)}">${(inp.mode === 'property') ? (r.headerLabel.split(' · ')[0]) : ('Option ' + scenarios[i].id)}</th>`).join('')}
+                ${results.map((r, i) => `<th class="${thClass(i)}">${(inp.mode === 'property') ? (r.headerLabel.split(' · ')[0]) : ('Option ' + displayedScenarios[i].id)}</th>`).join('')}
             </tr></thead>
             <tbody>
                 ${catHeader('A. Origination Charges')}
@@ -1422,7 +1424,7 @@ function render(inp, results) {
             <table class="fee-table">
                 <thead><tr>
                     <th></th>
-                    ${scenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}</th>`).join('')}
+                    ${displayedScenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}</th>`).join('')}
                 </tr></thead>
                 <tbody>
                     ${row('Down Payment', r => (inp.mode === 'property' && r.inp) ? r.inp.downPayment : inp.downPayment)}
