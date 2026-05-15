@@ -604,6 +604,7 @@
         <div class="mode-toggle-label">Comparison Mode</div>
         <div class="mode-toggle">
             <button id="modeBtnRate" type="button" onclick="setMode('rate')" class="active">Rate Comparison</button>
+            <button id="modeBtnSingle" type="button" onclick="setMode('single')">Single Rate</button>
             <button id="modeBtnProperty" type="button" onclick="setMode('property')">Property Comparison</button>
         </div>
     </div>
@@ -897,22 +898,33 @@ function renderCards() {
     if (_currentMode === 'property') {
         buildPropertyCards();
     } else {
+        // Both 'rate' and 'single' use the rate-mode card builder.
+        // buildScenarioCards reads the global scenarios array; single mode hides
+        // cards B and C via CSS-class injection after the build.
         buildScenarioCards();
+        if (_currentMode === 'single') {
+            const cont = document.getElementById('scenarioCards');
+            if (cont) {
+                const cards = cont.querySelectorAll('.scenario-card');
+                // Hide all except the first card. Display:none so toggleRecommend won't fire on them.
+                cards.forEach(function(card, i) { card.style.display = (i === 0) ? '' : 'none'; });
+            }
+        }
     }
 }
 
 // Mode toggle handler. Wired to the toggle pill buttons.
 function setMode(newMode) {
-    if (newMode !== 'rate' && newMode !== 'property') return;
+    if (newMode !== 'rate' && newMode !== 'single' && newMode !== 'property') return;
     if (_currentMode === newMode) return;
     _currentMode = newMode;
     // Update toggle button visuals.
     const rateBtn = document.getElementById('modeBtnRate');
+    const singleBtn = document.getElementById('modeBtnSingle');
     const propBtn = document.getElementById('modeBtnProperty');
-    if (rateBtn && propBtn) {
-        rateBtn.classList.toggle('active', newMode === 'rate');
-        propBtn.classList.toggle('active', newMode === 'property');
-    }
+    if (rateBtn) rateBtn.classList.toggle('active', newMode === 'rate');
+    if (singleBtn) singleBtn.classList.toggle('active', newMode === 'single');
+    if (propBtn) propBtn.classList.toggle('active', newMode === 'property');
     renderCards();
     recalc();
     notifyParentOfChange();
@@ -1585,8 +1597,10 @@ function recalc() {
         render(baseInp, results);
     } else {
         const inp = getInputs();
-        inp.mode = 'rate';
-        const results = scenarios.map(sc => {
+        // Single mode reuses rate-mode calc but only renders Option A (first scenario).
+        inp.mode = (_currentMode === 'single') ? 'single' : 'rate';
+        const scenariosToRender = (_currentMode === 'single') ? scenarios.slice(0, 1) : scenarios;
+        const results = scenariosToRender.map(sc => {
             const r = calcScenario(inp, sc);
             r.headerLabel = 'Option ' + sc.id + ': ' + sc.rate + '%';
             r.monthlyHoa = 0;
@@ -1613,7 +1627,8 @@ function generate() {
 // ── Copy to Clipboard ──
 function copyToClipboard() {
     const inp = getInputs();
-    const results = scenarios.map(sc => calcScenario(inp, sc));
+    const scenariosToCopy = (_currentMode === 'single') ? scenarios.slice(0, 1) : scenarios;
+    const results = scenariosToCopy.map(sc => calcScenario(inp, sc));
     const pad = (s, w) => s.toString().padEnd(w);
     const rpad = (s, w) => s.toString().padStart(w);
 
@@ -1624,7 +1639,7 @@ function copyToClipboard() {
     txt += `${'='.repeat(80)}\n\n`;
 
     const w1 = 35, w2 = 14;
-    txt += pad('', w1) + scenarios.map(s => rpad(`Opt ${s.id}: ${s.rate}%`, w2)).join('') + '\n';
+    txt += pad('', w1) + scenariosToCopy.map(s => rpad(`Opt ${s.id}: ${s.rate}%`, w2)).join('') + '\n';
     txt += '-'.repeat(w1 + w2 * 3) + '\n';
 
     const addRow = (label, getter) => {
@@ -1868,7 +1883,7 @@ recalc();
             if (c.annualTax) $('annualTax').value = '$' + Number(c.annualTax).toLocaleString('en-US');
             if (c.annualInsurance) $('annualInsurance').value = '$' + Number(c.annualInsurance).toLocaleString('en-US');
             // Restore mode (v2+). Default to 'rate' for v1 blobs.
-            if (d.mode === 'property' || d.mode === 'rate') {
+            if (d.mode === 'rate' || d.mode === 'single' || d.mode === 'property') {
                 _currentMode = d.mode;
             } else {
                 _currentMode = 'rate';
@@ -1932,6 +1947,8 @@ recalc();
             const propBtn = document.getElementById('modeBtnProperty');
             if (rateBtn && propBtn) {
                 rateBtn.classList.toggle('active', _currentMode === 'rate');
+                const singleBtnR = document.getElementById('modeBtnSingle');
+                if (singleBtnR) singleBtnR.classList.toggle('active', _currentMode === 'single');
                 propBtn.classList.toggle('active', _currentMode === 'property');
             }
             _origRecalc(); // don't trigger auto-save back
