@@ -606,21 +606,11 @@ function loanTypeChipsHtml(loanTypes) {
 // ── LOAD LENDERS ─────────────────────────────────
 async function loadLenders() {
   try {
-    const res = await fetch(
-      `${SB_URL}/rest/v1/lenders?order=name&limit=200`,
-      {
-        headers: {
-          'apikey': SB_KEY,
-          'Authorization': `Bearer ${SB_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    allLenders = await res.json();
-    if (!Array.isArray(allLenders)) {
-      console.error('Unexpected response:', allLenders);
-      allLenders = [];
+    const { data: _ldData, error: _ldErr } = await _authClient().from('lenders').select('*').order('name').limit(200);
+    if (_ldErr) throw new Error('loadLenders: ' + (_ldErr.message || 'unknown error'));
+    allLenders = Array.isArray(_ldData) ? _ldData : [];
+    if (!Array.isArray(_ldData)) {
+      console.error('Unexpected response:', _ldData);
     }
     filteredLenders = [...allLenders];
     const countEl = document.getElementById('lenderCount');
@@ -1503,14 +1493,14 @@ async function loadLenderDocs(lenderId) {
     return;
   }
   try {
-    const r = await fetch(
-      `${SB_URL}/rest/v1/lender_guidelines?select=id,file_name,file_url,source_type,ocr_status,created_at,title,category&lender_id=eq.${lenderId}&is_active=neq.false&order=created_at.desc`,
-      { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
-    );
-    const data = await r.json();
-    if (!r.ok) {
-      console.error('[loadLenderDocs] HTTP', r.status, data);
-      container.innerHTML = '<div style="font-size:12px;color:#f87171;padding:8px 0;">Failed to load: ' + (data?.message || r.status) + '</div>';
+    const { data, error: _docsErr } = await _authClient().from('lender_guidelines')
+      .select('id,file_name,file_url,source_type,ocr_status,created_at,title,category')
+      .eq('lender_id', lenderId)
+      .neq('is_active', false)
+      .order('created_at', { ascending: false });
+    if (_docsErr) {
+      console.error('[loadLenderDocs]', _docsErr);
+      container.innerHTML = '<div style="font-size:12px;color:#f87171;padding:8px 0;">Failed to load: ' + (_docsErr.message || 'error') + '</div>';
       return;
     }
     if (!Array.isArray(data) || data.length === 0) {
