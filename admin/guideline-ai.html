@@ -481,6 +481,16 @@ const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.
 const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
 window._supabase = supabase.createClient(SB_URL, SB_KEY);
 
+// Authenticated client helper (Tier 1 auth migration C5b-part2).
+// Returns window._supabaseClient set up by admin/js/auth-guard.js. Falls back to
+// window._supabase (the anon client above) when not ready — logs an error because
+// the call will fail on RLS-locked tables.
+function _authClient() {
+  if (window._supabaseClient) return window._supabaseClient;
+  console.error('[auth] window._supabaseClient not ready — falling back to anon. Call will fail on RLS-locked tables.');
+  return window._supabase;
+}
+
 const LOAN_TYPE_COLORS = {
   'Conventional': '#4A90E2', 'FHA': '#E67E22', 'VA': '#27AE60',
   'USDA': '#8E44AD', 'Jumbo': '#C0392B', 'Non-QM': '#16A085',
@@ -528,11 +538,9 @@ function getInitials(name) {
 // ── LOAD LENDERS ────────────────────────────────
 async function loadLenders() {
   try {
-    var res = await fetch(SB_URL + '/rest/v1/lenders?order=name&limit=200', {
-      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' }
-    });
-    allLenders = await res.json();
-    if (!Array.isArray(allLenders)) allLenders = [];
+    var { data: _llData, error: _llErr } = await _authClient().from('lenders').select('*').order('name').limit(200);
+    if (_llErr) throw _llErr;
+    allLenders = Array.isArray(_llData) ? _llData : [];
     filteredLenders = allLenders.slice();
     renderLenderList();
   } catch(e) { console.error('Load error:', e); }
@@ -623,16 +631,17 @@ function selectLender(id) {
 // ── LENDER INFO POPUP (SLIDE-IN) ────────────────
 function showLenderInfoPopup(lender) {
   if (!lender.contact_email && !lender.revenue_notes) {
-    fetch(SB_URL + '/rest/v1/lenders?id=eq.' + lender.id + '&limit=1', {
-      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
-    }).then(function(r){ return r.json(); }).then(function(d) {
-      if (d && d[0]) {
-        Object.assign(lender, d[0]);
-        var idx = allLenders.findIndex(function(x){ return x.id === lender.id; });
-        if (idx >= 0) Object.assign(allLenders[idx], d[0]);
-      }
-      renderLenderPopup(lender);
-    }).catch(function() { renderLenderPopup(lender); });
+    _authClient().from('lenders').select('*').eq('id', lender.id).limit(1)
+      .then(function(r) {
+        var d = r.data || [];
+        if (d && d[0]) {
+          Object.assign(lender, d[0]);
+          var idx = allLenders.findIndex(function(x){ return x.id === lender.id; });
+          if (idx >= 0) Object.assign(allLenders[idx], d[0]);
+        }
+        renderLenderPopup(lender);
+      })
+      .catch(function() { renderLenderPopup(lender); });
   } else {
     renderLenderPopup(lender);
   }
@@ -755,7 +764,7 @@ async function loadLenderGuidelinesList(lenderId) {
   var container = document.getElementById('lenderGuidelinesList_' + lenderId);
   if (!container) return;
   try {
-    var result = await window._supabase
+    var result = await _authClient()
       .from('lender_guidelines')
       .select('id, title, file_name, file_url, category, created_at, ocr_status')
       .eq('lender_id', lenderId)
@@ -799,7 +808,7 @@ function triggerLenderGuidelineUpload(lenderId, lenderName, buttonEl) {
       if (uploadResult.error) throw uploadResult.error;
       var urlData = window._supabase.storage.from('lender-guidelines').getPublicUrl(fileName);
       var publicUrl = urlData.data.publicUrl;
-      var dbResult = await window._supabase.from('lender_guidelines').insert({
+      var dbResult = await _authClient().from('lender_guidelines').insert({
         lender_id: lenderId, title: file.name.replace('.pdf', ''),
         file_name: file.name, file_url: publicUrl, file_size: file.size,
         file_type: 'application/pdf', category: 'General Guidelines',
@@ -884,12 +893,13 @@ async function renderReferenceLibrary() {
   if (!grid) return;
   var counts = {};
   try {
-    var res = await fetch(SB_URL + '/rest/v1/lender_guidelines?lender_id=is.null&is_active=eq.true&select=source_type', {
-      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
-    });
-    var rows = await res.json();
+    var { data: rows, error: _refErr } = await _authClient().from('lender_guidelines')
+      .select('source_type')
+      .is('lender_id', null)
+      .eq('is_active', true);
+    if (_refErr) throw _refErr;
     (rows || []).forEach(function(r) { counts[r.source_type] = (counts[r.source_type] || 0) + 1; });
-  } catch(e) {}
+  } catch(e) { console.warn('[ref-counts]', e); }
   grid.innerHTML = REFERENCE_SOURCES.map(function(src) {
     var c = counts[src.key] || 0;
     return '<div style="background:#161616;border:1px solid #222;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
@@ -909,10 +919,13 @@ async function renderReferenceLibrary() {
 
 async function showGlobalGuidelinesList(sourceType, sourceName) {
   try {
-    var res = await fetch(SB_URL + '/rest/v1/lender_guidelines?lender_id=is.null&source_type=eq.' + sourceType + '&is_active=eq.true&order=created_at.desc&select=id,title,file_name,file_url,ocr_status', {
-      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
-    });
-    var docs = await res.json();
+    var { data: docs, error: _refDocsErr } = await _authClient().from('lender_guidelines')
+      .select('id,title,file_name,file_url,ocr_status')
+      .is('lender_id', null)
+      .eq('source_type', sourceType)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+    if (_refDocsErr) { console.warn('[ref-docs]', _refDocsErr); docs = []; }
     var list = (docs || []).map(function(d) {
       return '<div style="display:flex;align-items:center;gap:8px;padding:8px;background:#0d0d0d;border-radius:6px;margin-bottom:4px;">' +
         '<span>📄</span>' +
@@ -955,7 +968,7 @@ function renderAgencyCards() {
 
 async function loadGlobalGuidelineCounts() {
   try {
-    var result = await window._supabase
+    var result = await _authClient()
       .from('lender_guidelines')
       .select('source_type')
       .is('lender_id', null)
@@ -985,7 +998,7 @@ function uploadGlobalGuideline(sourceType, sourceName, buttonEl) {
       if (uploadResult.error) throw uploadResult.error;
       var urlData = window._supabase.storage.from('lender-guidelines').getPublicUrl(fileName);
       var publicUrl = urlData.data.publicUrl;
-      await window._supabase.from('lender_guidelines').insert({
+      await _authClient().from('lender_guidelines').insert({
         lender_id: null, title: file.name.replace('.pdf', ''),
         file_name: file.name, file_url: publicUrl, file_size: file.size,
         file_type: 'application/pdf', category: sourceName,
@@ -1554,10 +1567,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function loadLendersList() {
     try {
-      const res = await fetch(SUPABASE_URL + '/rest/v1/lenders?select=id,name&order=name.asc&limit=500', {
-        headers: { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY }
-      });
-      lenders = await res.json();
+      const { data, error } = await _authClient().from('lenders').select('id,name').order('name').limit(500);
+      if (error) throw error;
+      lenders = data || [];
     } catch (e) { console.error('lenders load', e); }
   }
 
