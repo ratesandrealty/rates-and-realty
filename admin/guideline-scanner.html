@@ -540,6 +540,16 @@
 <script>
   const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const SB_ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
+
+  // Authenticated client helper (Tier 1 auth migration C5b).
+  // Returns window._supabaseClient set up by admin/js/auth-guard.js. Falls back to a
+  // fresh anon client if not ready — logs an error because the call will fail on
+  // RLS-locked tables.
+  function _authClient() {
+    if (window._supabaseClient) return window._supabaseClient;
+    console.error('[auth] window._supabaseClient not ready — falling back to anon. Call will fail on RLS-locked tables.');
+    return window.supabase ? window.supabase.createClient(SB_URL, SB_ANON) : null;
+  }
   const EDGE = SB_URL + '/functions/v1/guidelines-ai';
 
   let allLenders = [];
@@ -559,10 +569,12 @@
 
   async function loadLenders() {
     try {
-      const r = await fetch(SB_URL + '/rest/v1/lenders?select=id,name,nmlsr_id,channel,min_credit_score,max_ltv,loan_programs,is_preferred,is_active,key_overlays,specialty_notes,states_licensed,compensation_bps,compensation_type,epo_policy,guidelines_url,gdrive_folder_url,gdrive_folder_id,rep_name,rep_email,rep_phone,submission_count,funded_count,underwriting_turn_time&is_active=eq.true&order=name', {
-        headers: { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON }
-      });
-      allLenders = await r.json();
+      const { data, error: _llErr } = await _authClient().from('lenders')
+        .select('id,name,nmlsr_id,channel,min_credit_score,max_ltv,loan_programs,is_preferred,is_active,key_overlays,specialty_notes,states_licensed,compensation_bps,compensation_type,epo_policy,guidelines_url,gdrive_folder_url,gdrive_folder_id,rep_name,rep_email,rep_phone,submission_count,funded_count,underwriting_turn_time')
+        .eq('is_active', true)
+        .order('name');
+      if (_llErr) throw _llErr;
+      allLenders = data || [];
       document.getElementById('lenderCountBadge').textContent = allLenders.length + ' Lenders';
       renderLenders(allLenders);
     } catch(e) { console.error(e); }
@@ -570,15 +582,15 @@
 
   async function loadGuidelineCounts() {
     try {
-      const r = await fetch(SB_URL + '/rest/v1/lender_guidelines?select=lender_id&is_active=neq.false', {
-        headers: { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON }
-      });
-      const rows = await r.json();
+      const { data: rows, error: _gcErr } = await _authClient().from('lender_guidelines')
+        .select('lender_id')
+        .neq('is_active', false);
+      if (_gcErr) throw _gcErr;
       guidelineCounts = {};
       (rows || []).forEach(g => { guidelineCounts[g.lender_id] = (guidelineCounts[g.lender_id] || 0) + 1; });
       // Re-render to show doc badges
       filterLenders();
-    } catch(e) {}
+    } catch(e) { console.warn('[loadGuidelineCounts]', e); }
   }
 
   function renderLenders(list) {
@@ -668,10 +680,12 @@
     // Load guidelines for this lender
     let guidelineHtml = '';
     if (docCount > 0) {
-      const r = await fetch(SB_URL + '/rest/v1/lender_guidelines?select=id,title,category,file_name,file_url,external_url,gdrive_file_url,ai_summary,version,effective_date,source_type,upload_source,ocr_status&lender_id=eq.' + lenderId + '&is_active=neq.false&order=created_at.desc', {
-        headers: { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON }
-      });
-      const docs = await r.json();
+      const { data: docs, error: _gdocsErr } = await _authClient().from('lender_guidelines')
+        .select('id,title,category,file_name,file_url,external_url,gdrive_file_url,ai_summary,version,effective_date,source_type,upload_source,ocr_status')
+        .eq('lender_id', lenderId)
+        .neq('is_active', false)
+        .order('created_at', { ascending: false });
+      if (_gdocsErr) { console.warn('[guideline-docs]', _gdocsErr); }
       guidelineHtml = '<div class="detail-section"><div class="detail-section-title">📄 Guideline Documents</div>' +
         docs.map(d => {
           const pdfLink = d.file_url ? `<a class="doc-link pdf" href="${d.file_url}" target="_blank"><i class="fa-solid fa-file-pdf"></i> PDF</a>` : '';
@@ -971,17 +985,10 @@
         upload_source: 'admin',
         updated_at: new Date().toISOString()
       };
-      const insR = await fetch(SB_URL + '/rest/v1/lender_guidelines?on_conflict=lender_id,file_name', {
-        method: 'POST',
-        headers: {
-          'Content-Type':'application/json',
-          apikey: SB_ANON,
-          Authorization: 'Bearer ' + SB_ANON,
-          Prefer: 'return=representation,resolution=merge-duplicates'
-        },
-        body: JSON.stringify(payload)
-      });
-      const insData = await insR.json();
+      const { data: insData, error: _insErr } = await _authClient().from('lender_guidelines')
+        .upsert(payload, { onConflict: 'lender_id,file_name' })
+        .select();
+      if (_insErr) { console.warn('[lender_guidelines upsert]', _insErr); }
       const newId = Array.isArray(insData) ? insData[0]?.id : insData?.id;
 
       // Trigger AI indexing
