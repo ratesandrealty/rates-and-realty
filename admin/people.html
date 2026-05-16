@@ -1764,9 +1764,21 @@ function parseMismoXml(xml) {
   // ── DECLARATIONS ───────────────────────────────────────────────────
   var declRoot = findOne('DECLARATION') || findOne('DECLARATIONS') || findOne('BORROWER_DECLARATIONS') || doc;
 
+  // Build full array of borrowers (primary first, then co-borrowers, then any 3rd+)
+  var allBorrowers = [];
+  if (primaryBorr) {
+    var pb = bd(primaryBorr);
+    if (pb && (pb.firstName || pb.lastName)) allBorrowers.push(pb);
+  }
+  borrowerEls.forEach(function(el) {
+    if (el === primaryBorr) return;
+    var b = bd(el);
+    if (b && (b.firstName || b.lastName)) allBorrowers.push(b);
+  });
   return {
-    borrower: bd(primaryBorr),
-    coBorrower: coBorrEl ? bd(coBorrEl) : null,
+    borrower: bd(primaryBorr),  // kept for backward compat with repairMismoImports()
+    coBorrower: coBorrEl ? bd(coBorrEl) : null,  // kept for backward compat
+    borrowers: allBorrowers,  // NEW: full array, all N borrowers
     loan: {
       loanAmount: loanAmount,
       loanPurpose: txt('LoanPurposeType'),
@@ -1844,38 +1856,86 @@ async function repairMismoImports() {
 if (typeof window !== 'undefined') setTimeout(repairMismoImports, 2000);
 
 function renderMismoReview(data) {
-  var b = data.borrower || {}, l = data.loan || {}, cb = data.coBorrower;
+  var borrs = (data.borrowers && data.borrowers.length) ? data.borrowers : [data.borrower].filter(Boolean);
+  var l = data.loan || {};
   function f(label, val) { return val ? '<div><div style="font-size:10px;color:#555;margin-bottom:2px;">' + label + '</div><div style="font-size:12.5px;color:#C8C5BC;font-weight:500;">' + val + '</div></div>' : ''; }
+
+  // Render the primary borrower in the existing slots (back-compat with modal markup)
+  var b = borrs[0] || {};
   document.getElementById('mismoRevBorrower').innerHTML =
     f('First Name',b.firstName)+f('Last Name',b.lastName)+f('SSN',b.ssn?'***-**-'+b.ssn.slice(-4):'')+f('DOB',b.dob)+f('Phone',b.phone)+f('Email',b.email)+f('Address',b.street)+f('City',b.city)+f('State',b.state)+f('ZIP',b.zip);
   document.getElementById('mismoRevLoan').innerHTML =
     f('Loan Amount',l.loanAmount?'$'+Number(l.loanAmount).toLocaleString():'')+f('Purpose',l.loanPurpose)+f('Type',l.loanType)+f('Property',l.propStreet)+f('City',l.propCity)+f('State',l.propState)+f('Value',l.propValue?'$'+Number(l.propValue).toLocaleString():'')+f('Rate',l.noteRate?l.noteRate+'%':'');
   document.getElementById('mismoRevEmp').innerHTML =
     f('Employer',b.empName)+f('Title',b.empTitle)+f('Base Income',b.baseIncome?'$'+Number(b.baseIncome).toLocaleString():'')+f('Total Income',b.totalIncome?'$'+Number(b.totalIncome).toLocaleString():'');
+
+  // Render co-borrowers (2nd, 3rd, etc.) into the existing coBorrower slot, stacked
   var cbSec = document.getElementById('mismoCoBSec');
-  if (cb && (cb.firstName || cb.lastName)) {
+  if (borrs.length > 1) {
     cbSec.style.display = 'block';
-    document.getElementById('mismoRevCB').innerHTML = f('Name',cb.firstName+' '+cb.lastName)+f('Email',cb.email)+f('Phone',cb.phone);
-  } else cbSec.style.display = 'none';
+    var cbHtml = borrs.slice(1).map(function(cb, idx) {
+      var roleLabel = 'Co-Borrower #' + (idx + 1);
+      return '<div style="border-top:1px solid #2a2a2a;padding-top:10px;margin-top:10px;">' +
+        '<div style="font-size:10px;color:#C9A84C;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">' + roleLabel + '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+        f('Name', [cb.firstName, cb.lastName].filter(Boolean).join(' ')) +
+        f('SSN', cb.ssn ? '***-**-' + cb.ssn.slice(-4) : '') +
+        f('Email', cb.email) + f('Phone', cb.phone) +
+        f('DOB', cb.dob) + f('Marital', cb.marital) +
+        f('Address', cb.street) + f('City', cb.city) +
+        f('Employer', cb.empName) + f('Income', cb.baseIncome?'$'+Number(cb.baseIncome).toLocaleString():'') +
+        '</div></div>';
+    }).join('');
+    document.getElementById('mismoRevCB').innerHTML = cbHtml;
+  } else {
+    cbSec.style.display = 'none';
+  }
+
+  // Update the import button label to reflect count
+  var btn = document.getElementById('mismoSaveBtn');
+  if (btn && !btn.disabled) {
+    btn.textContent = borrs.length > 1
+      ? '✓ Create ' + borrs.length + ' Linked Contacts & Import'
+      : '✓ Create Contact & Import';
+  }
 }
 
 async function saveMismoImport() {
-  var btn = document.getElementById('mismoSaveBtn'); btn.disabled = true; btn.textContent = '\u23F3 Saving...';
+  var btn = document.getElementById('mismoSaveBtn');
+  var originalLabel = btn.textContent;
+  btn.disabled = true; btn.textContent = '\u23F3 Importing...';
   try {
-    var b = _mismoData.borrower || {}, l = _mismoData.loan || {}, cb = _mismoData.coBorrower, d = _mismoData.decl || {};
-    // Create contact
-    var { data: _ncData, error: _ncErr } = await _authClient().from('contacts').insert({first_name:b.firstName,last_name:b.lastName,middle_name:b.middleName,email:b.email,phone:b.phone,address:b.street,city:b.city,state:b.state,zip:b.zip,date_of_birth:b.dob||null,loan_amount:l.loanAmount?parseFloat(l.loanAmount):null,loan_type:l.loanType||null,source:'MISMO Import',pipeline_status:'New Lead',contact_type:'borrower',temperature:'Cold',lead_temperature:'Cold'}).select().single();
-    if (_ncErr) throw new Error('Failed to create contact: ' + _ncErr.message);
-    var cid = _ncData.id;
-    // Create mortgage application
-    var { error: _maErr } = await _authClient().from('mortgage_applications').insert({contact_id:cid,first_name:b.firstName,middle_name:b.middleName,last_name:b.lastName,suffix:b.suffix,ssn:b.ssn,date_of_birth:b.dob||null,marital_status:b.marital,citizenship:b.citizenship,cell_phone:b.phone,email:b.email,current_address_street:b.street,current_address_city:b.city,current_address_state:b.state,current_address_zip:b.zip,employer_name:b.empName,position_title:b.empTitle,base_income:b.baseIncome?parseFloat(b.baseIncome):null,total_monthly_income:b.totalIncome?parseFloat(b.totalIncome):null,loan_amount:l.loanAmount?parseFloat(l.loanAmount):null,loan_purpose:l.loanPurpose,loan_type:l.loanType,property_address_street:l.propStreet,property_address_city:l.propCity,property_address_state:l.propState,property_address_zip:l.propZip,property_address_county:l.propCounty,property_value:l.propValue?parseFloat(l.propValue):null,occupancy_type:l.occupancy,declaration_primary_residence:d.primary,declaration_judgments:d.judgments,declaration_delinquent:d.delinquent,declaration_foreclosure:d.foreclosure,declaration_bankruptcy:d.bankruptcy,military_service:_mismoData.military,co_borrower_first_name:cb?.firstName||null,co_borrower_last_name:cb?.lastName||null,co_borrower_ssn:cb?.ssn||null,co_borrower_email:cb?.email||null,mismo_raw_xml:_mismoRawXml,mismo_file_name:_mismoFileName,mismo_imported_at:new Date().toISOString(),lo_name:'Rene Duarte',lo_nmls:'1795044',lo_email:'rene@ratesandrealty.com',lo_phone:'714-472-8508'});
-    if (_maErr) throw new Error('Failed to create mortgage application: ' + _maErr.message);
+    // Call mismo-import edge function \u2014 it handles multi-borrower parsing,
+    // contact creation (with dedup), loan_borrowers linking, mortgage_application
+    // upsert, liability insertion, and co_borrower_contact_id linkage.
+    var SB_URL = window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL ? window.APP_CONFIG.SUPABASE_URL : 'https://ljywhvbmsibwnssxpesh.supabase.co';
+    var ANON   = window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY ? window.APP_CONFIG.SUPABASE_ANON_KEY : '';
+    // Get the user's session JWT so the edge function call carries auth (consistent with C5)
+    var session = null;
+    try {
+      var sc = (typeof _authClient === 'function') ? _authClient() : null;
+      if (sc && sc.auth && sc.auth.getSession) {
+        var sr = await sc.auth.getSession();
+        session = (sr && sr.data && sr.data.session) || null;
+      }
+    } catch(e) {}
+    var bearer = session && session.access_token ? session.access_token : ANON;
+    var res = await fetch(SB_URL + '/functions/v1/mismo-import', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + bearer, 'apikey':ANON },
+      body: JSON.stringify({ xml: _mismoRawXml, file_name: _mismoFileName || 'import.xml' })
+    });
+    var result = await res.json();
+    if (!res.ok || !result.success) throw new Error(result.error || ('HTTP '+res.status));
+    var primaryCid = result.primary_contact_id;
+    var bcount = result.borrower_count || (result.borrowers ? result.borrowers.length : 1);
     closeMismoModal();
-    showToast('\u2713 Contact created from MISMO import');
-    setTimeout(function(){ window.location.href='lead-detail.html?contact_id='+cid; }, 1200);
+    showToast('\u2713 Imported ' + bcount + ' borrower' + (bcount===1?'':'s') + ' \u2014 opening primary\u2026');
+    setTimeout(function(){ window.location.href = 'lead-detail.html?contact_id=' + primaryCid; }, 1500);
   } catch(err) {
-    btn.disabled = false; btn.textContent = '\u2713 Create Contact & Import';
-    showToast('Import failed: '+err.message);
+    console.error('[mismo-import]', err);
+    btn.disabled = false; btn.textContent = originalLabel || '\u2713 Create Contact & Import';
+    showToast('Import failed: ' + (err.message || 'unknown error'));
   }
 }
 
