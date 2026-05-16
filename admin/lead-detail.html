@@ -9960,9 +9960,10 @@ async function handleMismoImportSuccess(result) {
 
   // Fetch the freshly-written application
   try {
-    const appRes = await fetch(SB_URL+'/rest/v1/mortgage_applications?contact_id=eq.'+primaryCid+'&order=created_at.desc&limit=1', { headers: hdr });
-    const apps = appRes.ok ? (await appRes.json() || []) : [];
-    const app = apps[0];
+    const { data: apps, error: _appsErr } = await _authClient().from('mortgage_applications')
+      .select('*').eq('contact_id', primaryCid).order('created_at', { ascending: false }).limit(1);
+    if (_appsErr) console.warn('[mismo-post-sync]', _appsErr);
+    const app = (apps && apps[0]) || null;
     if (app) {
       // Sync key fields to contacts table (what the Lead Details form reads)
       const patch = { source: 'MISMO Import', updated_at: new Date().toISOString() };
@@ -9999,9 +10000,11 @@ async function reparseMismoXml() {
   const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
   const hdr = { 'Authorization':'Bearer '+ANON, 'apikey':ANON };
   try {
-    const appRes = await fetch(SB_URL+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&select=id,mismo_raw_xml,mismo_file_name&order=created_at.desc&limit=1', { headers: hdr });
-    const apps = appRes.ok ? (await appRes.json() || []) : [];
-    const app = apps[0];
+    const { data: apps, error: _reparseErr } = await _authClient().from('mortgage_applications')
+      .select('id,mismo_raw_xml,mismo_file_name').eq('contact_id', cid)
+      .order('created_at', { ascending: false }).limit(1);
+    if (_reparseErr) console.warn('[mismo-reparse]', _reparseErr);
+    const app = (apps && apps[0]) || null;
     if (!app || !app.mismo_raw_xml) { toast('No MISMO XML on file for this contact', true); return; }
     toast('Re-parsing stored XML…');
     const res = await fetch(SB_URL+'/functions/v1/mismo-import', {
@@ -10025,8 +10028,10 @@ async function _checkMismoReparseAvailable() {
   const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
   try {
-    const r = await fetch(SB_URL+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&select=mismo_raw_xml&order=created_at.desc&limit=1', { headers:{'Authorization':'Bearer '+ANON,'apikey':ANON} });
-    const rows = r.ok ? await r.json() : [];
+    const { data: rows, error: _btnErr } = await _authClient().from('mortgage_applications')
+      .select('mismo_raw_xml').eq('contact_id', cid)
+      .order('created_at', { ascending: false }).limit(1);
+    if (_btnErr) return;
     if (rows && rows[0] && rows[0].mismo_raw_xml) {
       const btn = document.getElementById('mismoReparseBtn');
       if (btn) btn.style.display = 'inline-block';
@@ -10455,7 +10460,7 @@ async function loadLiabilities1003() {
 
   // Get application ID for this contact
   if (!_appId1003 && contactId) {
-    const { data: apps } = await sb.from('mortgage_applications').select('id').eq('contact_id', contactId).limit(1);
+    const { data: apps } = await _authClient().from('mortgage_applications').select('id').eq('contact_id', contactId).limit(1);
     if (apps?.length) _appId1003 = apps[0].id;
   }
 
