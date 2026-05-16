@@ -10521,7 +10521,7 @@ async function saveLiability1003() {
 
   // Ensure we have an application_id
   if (!_appId1003 && contactId) {
-    const { data: apps } = await sb.from('mortgage_applications').select('id').eq('contact_id', contactId).limit(1);
+    const { data: apps } = await _authClient().from('mortgage_applications').select('id').eq('contact_id', contactId).limit(1);
     if (apps?.length) _appId1003 = apps[0].id;
   }
   if (!_appId1003) { if (typeof toast === 'function') toast('No application found — save the 1003 first'); return; }
@@ -11035,11 +11035,10 @@ async function switchToBorrower(cid) {
   });
   // Load this borrower's own mortgage_applications row.
   try {
-    var r = await fetch(
-      window.APP_CONFIG.SUPABASE_URL + '/rest/v1/mortgage_applications?contact_id=eq.' + encodeURIComponent(cid) + '&select=*&order=created_at.desc&limit=1',
-      { headers: { apikey: window.APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY } }
-    );
-    var rows = await r.json();
+    var { data: rows, error: _switchErr } = await _authClient().from('mortgage_applications')
+      .select('*').eq('contact_id', cid)
+      .order('created_at', { ascending: false }).limit(1);
+    if (_switchErr) throw _switchErr;
     _activeBorrowerApp = (rows && rows[0]) || {};
   } catch (e) {
     console.warn('[1003] switchToBorrower fetch failed:', e);
@@ -11234,12 +11233,10 @@ async function saveLoanDashboard() {
     mi_overridden: !!(_activeBorrowerApp && _activeBorrowerApp.mi_overridden),
     tax_pct: parseFloat(document.getElementById('ld-tax-pct')?.value) || 1.2
   };
-  var r = await fetch(
-    window.APP_CONFIG.SUPABASE_URL + '/rest/v1/mortgage_applications?id=eq.' + encodeURIComponent(_activeBorrowerApp.id),
-    { method: 'PATCH', headers: { apikey: window.APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' }, body: JSON.stringify(payload) }
-  );
+  var { error: _saveDashErr } = await _authClient().from('mortgage_applications')
+    .update(payload).eq('id', _activeBorrowerApp.id);
   var btn = document.querySelector('[onclick="saveLoanDashboard()"]');
-  if (r.ok) {
+  if (!_saveDashErr) {
     Object.assign(_activeBorrowerApp, payload);
     if (btn) { btn.textContent = '✓ Saved'; btn.style.background = '#22c55e'; setTimeout(function() { btn.textContent = '💾 Save Loan Terms'; btn.style.background = '#C9A84C'; }, 2000); }
   } else {
@@ -11585,7 +11582,7 @@ async function save1003() {
     // Check-then-update pattern. Upsert with onConflict:'contact_id' fails without a
     // matching UNIQUE constraint on mortgage_applications(contact_id) — a contact can
     // legitimately have multiple applications, so we manually look up + update.
-    const { data: existingApps } = await sb
+    const { data: existingApps } = await _authClient()
       .from('mortgage_applications')
       .select('id, borrower_id')
       .eq('contact_id', cid)
@@ -11607,13 +11604,13 @@ async function save1003() {
     if (existingAppId) {
       cleanData.updated_at = new Date().toISOString();
       delete cleanData.contact_id; // don't re-write immutable FK
-      const r = await sb.from('mortgage_applications').update(cleanData).eq('id', existingAppId).select();
+      const r = await _authClient().from('mortgage_applications').update(cleanData).eq('id', existingAppId).select();
       upsertResult = r.data; error = r.error;
     } else {
       cleanData.contact_id = cid;
       cleanData.created_at = new Date().toISOString();
       cleanData.updated_at = new Date().toISOString();
-      const r = await sb.from('mortgage_applications').insert([cleanData]).select();
+      const r = await _authClient().from('mortgage_applications').insert([cleanData]).select();
       upsertResult = r.data; error = r.error;
     }
 
@@ -11647,7 +11644,7 @@ async function load1003(overrideCid) {
   if (!cid) return;
 
   try {
-    const { data } = await sb
+    const { data } = await _authClient()
       .from('mortgage_applications')
       .select('*')
       .eq('contact_id', cid)
@@ -12197,10 +12194,10 @@ async function lsGeneratePreApproval() {
     var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
     var app = {};
     try {
-      var ar = await fetch(base+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&select=first_name,last_name,co_borrower_first_name,co_borrower_last_name,credit_score,property_address_street,property_address_city,property_address_state,property_address_zip,occupancy_type,loan_purpose&order=created_at.desc&limit=1', {
-        headers:{'Authorization':'Bearer '+anon,'apikey':anon}
-      });
-      var rows = await ar.json(); if (rows && rows[0]) app = rows[0];
+      var { data: rows } = await _authClient().from('mortgage_applications')
+        .select('first_name,last_name,co_borrower_first_name,co_borrower_last_name,credit_score,property_address_street,property_address_city,property_address_state,property_address_zip,occupancy_type,loan_purpose')
+        .eq('contact_id', cid).order('created_at', { ascending: false }).limit(1);
+      if (rows && rows[0]) app = rows[0];
     } catch(e) {}
     var payload = {
       borrower_name: ((app.first_name||'')+' '+(app.last_name||'')).trim(),
@@ -12321,10 +12318,11 @@ async function initLoanSummary() {
 
   // Seed from mortgage_applications (loan amount, rate, etc.)
   try {
-    var mar = await fetch(base + '/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&order=created_at.desc&limit=1', { headers: hdrs });
-    if (mar.ok) {
-      var apps = await mar.json();
-      if (apps && apps[0]) {
+    var { data: apps } = await _authClient().from('mortgage_applications')
+      .select('*').eq('contact_id', cid)
+      .order('created_at', { ascending: false }).limit(1);
+    if (apps && apps[0]) {
+      {
         var a = apps[0];
         if (!document.getElementById('ls_loan_amount').value) _lsSetNum('ls_loan_amount', a.loan_amount);
         if (!document.getElementById('ls_appraised_value').value) _lsSetNum('ls_appraised_value', a.appraised_value || a.purchase_price || a.property_value);
@@ -12361,9 +12359,10 @@ async function initLoanSummary() {
 
   // Pull total debt from loan_liabilities (non-omitted)
   try {
-    var lr = await fetch(base + "/rest/v1/loan_liabilities?contact_id=eq."+cid+"&is_omitted=eq.false&select=monthly_payment,is_payoff,balance", { headers: hdrs });
-    if (lr.ok) {
-      var liabs = await lr.json();
+    var { data: liabs } = await _authClient().from('loan_liabilities')
+      .select('monthly_payment,is_payoff,balance')
+      .eq('contact_id', cid).eq('is_omitted', false);
+    {
       var totalDebt = 0, totalPayoffs = 0;
       (liabs||[]).forEach(function(l){
         var pmt = parseFloat(l.monthly_payment) || 0;
@@ -12378,9 +12377,10 @@ async function initLoanSummary() {
 
   // Pull total income from loan_income (active)
   try {
-    var ir = await fetch(base + "/rest/v1/loan_income?contact_id=eq."+cid+"&is_active=eq.true&select=monthly_amount", { headers: hdrs });
-    if (ir.ok) {
-      var incRows = await ir.json();
+    var { data: incRows } = await _authClient().from('loan_income')
+      .select('monthly_amount')
+      .eq('contact_id', cid).eq('is_active', true);
+    {
       var totalInc = (incRows||[]).reduce(function(s,r){ return s + (parseFloat(r.monthly_amount)||0); }, 0);
       if (totalInc && !document.getElementById('ls_total_monthly_income').value) _lsSetNum('ls_total_monthly_income', totalInc);
     }
@@ -12436,9 +12436,12 @@ function losEscape(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,
 async function losLoadLiabilities(overrideCid) {
   var cid = overrideCid || losCid(); if (!cid) return;
   try {
-    var r = await fetch(losBase()+'/rest/v1/loan_liabilities?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
-    if (!r.ok) { console.warn('[liab] HTTP', r.status); losLiabilities = []; }
-    else losLiabilities = await r.json() || [];
+    var { data, error: _liabErr } = await _authClient().from('loan_liabilities')
+      .select('*').eq('contact_id', cid)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (_liabErr) { console.warn('[liab]', _liabErr); losLiabilities = []; }
+    else losLiabilities = data || [];
   } catch(e) { console.warn('[liab] load:', e); losLiabilities = []; }
   losRenderLiabilities();
 }
@@ -12495,14 +12498,14 @@ function losCalcLiabTotal() {
 async function losAddLiability() {
   var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
-    var r = await fetch(losBase()+'/rest/v1/loan_liabilities', {
-      method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
-      body: JSON.stringify({ contact_id: cid, account_owner:'Borrower', liability_type:'Revolving',
+    var { data: _addData, error: _addErr } = await _authClient().from('loan_liabilities')
+      .insert({ contact_id: cid, account_owner:'Borrower', liability_type:'Revolving',
         creditor_name:'', account_number:'', balance:0, monthly_payment:0,
         is_omitted:false, is_payoff:false, sort_order: losLiabilities.length,
         created_at:new Date().toISOString(), updated_at:new Date().toISOString() })
-    });
-    if (!r.ok) { showToast('Add failed: ' + r.status); return; }
+      .select();
+    if (_addErr) { showToast('Add failed: ' + _addErr.message); return; }
+    var r = { ok: true, json: function() { return Promise.resolve(_addData); } };
     var rows = await r.json();
     if (rows && rows[0]) losLiabilities.push(rows[0]);
     losRenderLiabilities();
