@@ -13750,7 +13750,7 @@ async function exportMISMO() {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 
-  await sb.from('mortgage_applications')
+  await _authClient().from('mortgage_applications')
     .update({ mismo_exported_at: new Date().toISOString(), mismo_version: '3.4' })
     .eq('contact_id', contactId);
 
@@ -15218,7 +15218,7 @@ async function loadLenderMatches() {
   document.getElementById('lb-ltv').textContent = ltv ? ltv + '%' : '—';
 
   // Fetch all active lenders
-  const { data: lenders } = await sb.from('lenders').select('*').eq('is_active', true).order('priority', { ascending: false });
+  const { data: lenders } = await _authClient().from('lenders').select('*').eq('is_active', true).order('priority', { ascending: false });
   _allLenders = lenders || [];
 
   // Fetch existing submissions for this lead
@@ -15324,8 +15324,12 @@ async function loadLenders() {
   var grid = document.getElementById('lenderGrid');
   if (grid) grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#555">Loading lenders…</div>';
   try {
-    var r = await fetch(_lhBase()+'/rest/v1/lenders?is_active=eq.true&order=is_preferred.desc,name.asc&limit=500', { headers: _lhHdr() });
-    window._allLenders = r.ok ? (await r.json() || []) : [];
+    var { data } = await _authClient().from('lenders')
+      .select('*').eq('is_active', true)
+      .order('is_preferred', { ascending: false })
+      .order('name', { ascending: true })
+      .limit(500);
+    window._allLenders = data || [];
   } catch(e) { console.warn('[lenders] load:', e); window._allLenders = []; }
   buildLenderSidebarFilters();
   filterLenders();
@@ -15538,10 +15542,9 @@ function renderLenderTableNew() {
 // Rate / favorite actions
 async function rateLender(lenderId, stars) {
   try {
-    await fetch(_lhBase()+'/rest/v1/lenders?id=eq.'+lenderId, {
-      method:'PATCH', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json','Prefer':'return=minimal'}),
-      body: JSON.stringify({ rating: stars, updated_at: new Date().toISOString() })
-    });
+    await _authClient().from('lenders')
+      .update({ rating: stars, updated_at: new Date().toISOString() })
+      .eq('id', lenderId);
     var l = (window._allLenders||[]).find(function(x){return x.id===lenderId;});
     if (l) { l.rating = stars; filterLenders(); }
     if (typeof showToast==='function') showToast('Rated '+stars+' \u2605');
@@ -15550,10 +15553,9 @@ async function rateLender(lenderId, stars) {
 
 async function toggleLenderFavorite(lenderId, isFav, btn) {
   try {
-    await fetch(_lhBase()+'/rest/v1/lenders?id=eq.'+lenderId, {
-      method:'PATCH', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json','Prefer':'return=minimal'}),
-      body: JSON.stringify({ is_favorite: isFav, updated_at: new Date().toISOString() })
-    });
+    await _authClient().from('lenders')
+      .update({ is_favorite: isFav, updated_at: new Date().toISOString() })
+      .eq('id', lenderId);
     var l = (window._allLenders||[]).find(function(x){return x.id===lenderId;});
     if (l) { l.is_favorite = isFav; }
     if (btn) btn.style.color = isFav ? '#ef4444' : '#444';
@@ -15597,18 +15599,15 @@ function sendScenarioEmail(lenderId) {
   // Open native mailto as fallback — no dependency on email composer modal
   if (toEmail) window.location.href = 'mailto:'+toEmail+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
   // Log the submission
-  fetch(_lhBase()+'/rest/v1/lender_submissions', {
-    method:'POST', headers:Object.assign({},_lhHdr(),{'Content-Type':'application/json','Prefer':'return=minimal'}),
-    body: JSON.stringify({
-      lender_id: lenderId,
-      contact_id: new URLSearchParams(location.search).get('contact_id'),
-      borrower_name: borrowerName,
-      loan_amount: parseFloat(loanAmt) || null,
-      scenario_notes: 'LTV: '+ltv+'% | Credit: '+creditScore+' | Rate: '+rate+'%',
-      status: 'sent',
-      created_at: new Date().toISOString()
-    })
-  }).catch(function(e){ console.warn('[lender] submission log:', e); });
+  _authClient().from('lender_submissions').insert({
+    lender_id: lenderId,
+    contact_id: new URLSearchParams(location.search).get('contact_id'),
+    borrower_name: borrowerName,
+    loan_amount: parseFloat(loanAmt) || null,
+    scenario_notes: 'LTV: '+ltv+'% | Credit: '+creditScore+' | Rate: '+rate+'%',
+    status: 'sent',
+    created_at: new Date().toISOString()
+  }).then(function(r) { if (r.error) console.warn('[lender_submissions]', r.error); });
 }
 
 /* ═══ LENDER DETAIL MODAL ═══ */
@@ -15645,14 +15644,12 @@ async function ldLoadAITab(lenderId, lenderName) {
   listEl.innerHTML = '<div style="padding:24px;text-align:center;color:#555;font-size:11px">Loading...</div>';
 
   try {
-    var SURL = window.APP_CONFIG.SUPABASE_URL;
-    var SKEY = window.APP_CONFIG.SUPABASE_ANON_KEY;
-    var resp = await fetch(
-      SURL + '/rest/v1/lender_guidelines?lender_id=eq.' + lenderId +
-      '&select=id,title,category,file_url,file_type,gdrive_file_url,ai_summary,effective_date&order=created_at.desc',
-      { headers: { 'apikey': SKEY, 'Authorization': 'Bearer ' + SKEY } }
-    );
-    var guidelines = await resp.json();
+    var { data: gdData, error: _gdErr } = await _authClient().from('lender_guidelines')
+      .select('id,title,category,file_url,file_type,gdrive_file_url,ai_summary,effective_date')
+      .eq('lender_id', lenderId)
+      .order('created_at', { ascending: false });
+    if (_gdErr) console.warn('[ld-guidelines]', _gdErr);
+    var guidelines = gdData || [];
     if (!Array.isArray(guidelines) || !guidelines.length) {
       listEl.innerHTML = '<div style="padding:24px;text-align:center;color:#555;font-size:11px;line-height:1.6">No guidelines uploaded yet.<br><span style="color:#777;font-size:10px">Go to the Docs tab to upload.</span></div>';
       return;
@@ -19245,7 +19242,7 @@ async function saveNewLender() {
   };
 
   try {
-    const { data, error } = await sb
+    const { data, error } = await _authClient()
       .from('lenders')
       .insert([payload])
       .select()
