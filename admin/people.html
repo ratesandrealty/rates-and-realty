@@ -1764,21 +1764,69 @@ function parseMismoXml(xml) {
   // ── DECLARATIONS ───────────────────────────────────────────────────
   var declRoot = findOne('DECLARATION') || findOne('DECLARATIONS') || findOne('BORROWER_DECLARATIONS') || doc;
 
-  // Build full array of borrowers (primary first, then co-borrowers, then any 3rd+)
-  var allBorrowers = [];
-  if (primaryBorr) {
-    var pb = bd(primaryBorr);
-    if (pb && (pb.firstName || pb.lastName)) allBorrowers.push(pb);
+  // Build full array of borrowers (primary first, then co-borrowers, then any 3rd+).
+  // CRITICAL: <FirstName>/<LastName> live in a sibling <INDIVIDUAL>/<NAME> subtree of
+  // each <PARTY>, NOT inside <BORROWER>. bd() only searches descendants of the
+  // <BORROWER> element, so name fields come back empty. We walk up each <BORROWER>
+  // to its containing <PARTY>, parse with bd(), then patch the name from the PARTY's
+  // <INDIVIDUAL>/<NAME>. Order: primary first (the <PARTY> whose ROLE points to
+  // primaryBorr's BORROWER), then the rest.
+  function _enrichBorrowerWithName(borrowerEl) {
+    if (!borrowerEl) return null;
+    var b = bd(borrowerEl);
+    if (!b) return null;
+    // Walk up to the containing <PARTY>
+    var party = borrowerEl;
+    while (party && party.localName !== 'PARTY') party = party.parentElement;
+    if (party) {
+      // Name is inside <INDIVIDUAL>/<NAME>
+      var individual = findOne('INDIVIDUAL', party);
+      var nameEl = individual ? findOne('NAME', individual) : null;
+      if (nameEl) {
+        if (!b.firstName)  b.firstName  = txt('FirstName',  nameEl);
+        if (!b.middleName) b.middleName = txt('MiddleName', nameEl);
+        if (!b.lastName)   b.lastName   = txt('LastName',   nameEl);
+        if (!b.suffix)     b.suffix     = txt('SuffixName', nameEl);
+      }
+      // Email/phone might also be on <INDIVIDUAL>/<CONTACT_POINTS> rather than on <BORROWER>
+      if (individual && (!b.email || !b.phone)) {
+        var partyContacts = findAll('CONTACT_POINT', individual);
+        partyContacts.forEach(function(cp) {
+          var role = (txt('ContactPointRoleType', cp) || '').toLowerCase();
+          var tel = txt('ContactPointTelephoneValue', cp);
+          var eml = txt('ContactPointEmailValue', cp);
+          if (eml && !b.email) b.email = eml;
+          if (tel && !b.phone) b.phone = tel;
+          if (role.indexOf('mobile') >= 0 || role.indexOf('cell') >= 0) { if (tel) b.phone = tel; }
+        });
+      }
+    }
+    return b;
   }
+
+  var allBorrowers = [];
+  // Primary first
+  var primaryEnriched = _enrichBorrowerWithName(primaryBorr);
+  if (primaryEnriched && (primaryEnriched.firstName || primaryEnriched.lastName)) {
+    allBorrowers.push(primaryEnriched);
+  }
+  // Then the rest, skipping primary
   borrowerEls.forEach(function(el) {
     if (el === primaryBorr) return;
-    var b = bd(el);
-    if (b && (b.firstName || b.lastName)) allBorrowers.push(b);
+    var enriched = _enrichBorrowerWithName(el);
+    if (enriched && (enriched.firstName || enriched.lastName)) {
+      allBorrowers.push(enriched);
+    }
   });
+
+  // ALSO patch the legacy data.borrower / data.coBorrower keys so the existing
+  // primary card AND back-compat repair function get proper names.
+  var legacyPrimary = allBorrowers[0] || null;
+  var legacyCoBorrower = allBorrowers[1] || null;
   return {
-    borrower: bd(primaryBorr),  // kept for backward compat with repairMismoImports()
-    coBorrower: coBorrEl ? bd(coBorrEl) : null,  // kept for backward compat
-    borrowers: allBorrowers,  // NEW: full array, all N borrowers
+    borrower: legacyPrimary || bd(primaryBorr),  // enriched primary (back-compat)
+    coBorrower: legacyCoBorrower || (coBorrEl ? bd(coBorrEl) : null),  // enriched co-borrower (back-compat)
+    borrowers: allBorrowers,  // NEW: full array, all N enriched borrowers
     loan: {
       loanAmount: loanAmount,
       loanPurpose: txt('LoanPurposeType'),
