@@ -10594,15 +10594,17 @@ function saveEarnings() {
       const loanAmt = parseFloat(
         (document.getElementById('f-loan-amount')?.value || '').replace(/[$,]/g, '')
       ) || null;
-      await sb.from('closed_deals').upsert({
-        contact_id:       targetId,
-        loan_amount:      loanAmt,
-        commission_earned: actVal,
-        outcome:          outcome === 'won' ? 'closed' : 'lost',
-        lost_reason:      lostReason,
-        close_date:       closedDate || new Date().toISOString().split('T')[0],
-        updated_at:       new Date().toISOString()
-      }, { onConflict: 'contact_id' }).catch(() => {});
+      try {
+        await _authClient().from('closed_deals').upsert({
+          contact_id:       targetId,
+          loan_amount:      loanAmt,
+          commission_earned: actVal,
+          outcome:          outcome === 'won' ? 'closed' : 'lost',
+          lost_reason:      lostReason,
+          close_date:       closedDate || new Date().toISOString().split('T')[0],
+          updated_at:       new Date().toISOString()
+        }, { onConflict: 'contact_id' });
+      } catch (e) { /* silent: closed_deals autosave is best-effort */ }
     }
 
     const ind = document.getElementById('autoSaveIndicator');
@@ -12516,10 +12518,7 @@ async function losUpdateLiab(id, field, value) {
   losLiabilities = losLiabilities.map(function(l){ return l.id === id ? Object.assign({}, l, {[field]:value}) : l; });
   try {
     var body = {}; body[field] = value; body.updated_at = new Date().toISOString();
-    await fetch(losBase()+'/rest/v1/loan_liabilities?id=eq.'+id, {
-      method:'PATCH', headers:Object.assign({},losHeaders(),{'Prefer':'return=minimal'}),
-      body: JSON.stringify(body)
-    });
+    await _authClient().from('loan_liabilities').update(body).eq('id', id);
   } catch(e) { console.warn('[liab] patch', field, e); }
 }
 
@@ -12543,7 +12542,7 @@ async function losToggleLiabPayoff(id, isPayoff) {
 async function losDeleteLiab(id) {
   if (!confirm('Delete this liability?')) return;
   try {
-    await fetch(losBase()+'/rest/v1/loan_liabilities?id=eq.'+id, { method:'DELETE', headers: losHeaders() });
+    await _authClient().from('loan_liabilities').delete().eq('id', id);
     losLiabilities = losLiabilities.filter(function(l){ return l.id !== id; });
     losRenderLiabilities();
   } catch(e) { showToast('Delete failed: '+e.message); }
@@ -12558,8 +12557,11 @@ var _incSaveTimers = {};
 async function losLoadIncome(overrideCid) {
   var cid = overrideCid || losCid(); if (!cid) return;
   try {
-    var r = await fetch(losBase()+'/rest/v1/loan_income?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
-    losIncome = r.ok ? (await r.json() || []) : [];
+    var { data } = await _authClient().from('loan_income')
+      .select('*').eq('contact_id', cid)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    losIncome = data || [];
   } catch(e) { console.warn('[income] load:', e); losIncome = []; }
   losRenderIncome();
 }
@@ -12613,10 +12615,9 @@ function losUpdateIncomePaired(id, field, value, inputEl) {
     var rec = losIncome.find(function(i){ return i.id===id; });
     if (!rec) return;
     try {
-      await fetch(losBase()+'/rest/v1/loan_income?id=eq.'+id, {
-        method:'PATCH', headers:Object.assign({},losHeaders(),{'Prefer':'return=minimal'}),
-        body: JSON.stringify({ monthly_amount: rec.monthly_amount, annual_amount: rec.annual_amount, updated_at: new Date().toISOString() })
-      });
+      await _authClient().from('loan_income')
+        .update({ monthly_amount: rec.monthly_amount, annual_amount: rec.annual_amount, updated_at: new Date().toISOString() })
+        .eq('id', id);
     } catch(e) { console.warn('[income] save', e); }
   }, 800);
 }
@@ -12625,10 +12626,7 @@ async function losUpdateIncome(id, field, value) {
   losIncome = losIncome.map(function(i){ return i.id===id ? Object.assign({},i,{[field]:value}) : i; });
   try {
     var body = {}; body[field] = value; body.updated_at = new Date().toISOString();
-    await fetch(losBase()+'/rest/v1/loan_income?id=eq.'+id, {
-      method:'PATCH', headers:Object.assign({},losHeaders(),{'Prefer':'return=minimal'}),
-      body: JSON.stringify(body)
-    });
+    await _authClient().from('loan_income').update(body).eq('id', id);
   } catch(e) { console.warn('[income] patch', field, e); }
 }
 
@@ -12642,15 +12640,13 @@ async function losToggleIncome(id, active) {
 async function losAddIncome() {
   var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
-    var r = await fetch(losBase()+'/rest/v1/loan_income', {
-      method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
-      body: JSON.stringify({ contact_id: cid, income_owner:'Borrower', income_type:'Base Salary',
+    var { data: _addIncData, error: _addIncErr } = await _authClient().from('loan_income')
+      .insert({ contact_id: cid, income_owner:'Borrower', income_type:'Base Salary',
         employer_name:'', monthly_amount:0, annual_amount:0, is_active:true,
         sort_order: losIncome.length, created_at:new Date().toISOString(), updated_at:new Date().toISOString() })
-    });
-    if (!r.ok) { showToast('Add failed: '+r.status); return; }
-    var rows = await r.json();
-    if (rows && rows[0]) losIncome.push(rows[0]);
+      .select();
+    if (_addIncErr) { showToast('Add failed: '+_addIncErr.message); return; }
+    if (_addIncData && _addIncData[0]) losIncome.push(_addIncData[0]);
     losRenderIncome();
   } catch(e) { showToast('Error: '+e.message); }
 }
@@ -12658,7 +12654,7 @@ async function losAddIncome() {
 async function losDeleteIncome(id) {
   if (!confirm('Delete this income entry?')) return;
   try {
-    await fetch(losBase()+'/rest/v1/loan_income?id=eq.'+id, { method:'DELETE', headers: losHeaders() });
+    await _authClient().from('loan_income').delete().eq('id', id);
     losIncome = losIncome.filter(function(i){ return i.id !== id; });
     losRenderIncome();
   } catch(e) { showToast('Delete failed: '+e.message); }
@@ -12672,8 +12668,11 @@ var ASSET_OWNERS = ['Borrower','CoBorrower','Joint'];
 async function losLoadAssets(overrideCid) {
   var cid = overrideCid || losCid(); if (!cid) return;
   try {
-    var r = await fetch(losBase()+'/rest/v1/loan_assets?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
-    losAssets = r.ok ? (await r.json() || []) : [];
+    var { data } = await _authClient().from('loan_assets')
+      .select('*').eq('contact_id', cid)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    losAssets = data || [];
   } catch(e) { console.warn('[assets] load:', e); losAssets = []; }
   losRenderAssets();
 }
@@ -12706,9 +12705,7 @@ async function losUpdateAsset(id, field, value) {
   losAssets = losAssets.map(function(a){ return a.id===id ? Object.assign({},a,{[field]:value}) : a; });
   try {
     var body = {}; body[field] = value; body.updated_at = new Date().toISOString();
-    await fetch(losBase()+'/rest/v1/loan_assets?id=eq.'+id, {
-      method:'PATCH', headers:Object.assign({},losHeaders(),{'Prefer':'return=minimal'}), body: JSON.stringify(body)
-    });
+    await _authClient().from('loan_assets').update(body).eq('id', id);
   } catch(e) { console.warn('[assets] patch', field, e); }
 }
 async function losUpdateAssetAndRecalc(id, field, value) { await losUpdateAsset(id, field, value); losCalcAssetsTotal(); }
@@ -12716,22 +12713,20 @@ async function losUpdateAssetAndRecalc(id, field, value) { await losUpdateAsset(
 async function losAddAsset() {
   var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
-    var r = await fetch(losBase()+'/rest/v1/loan_assets', {
-      method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
-      body: JSON.stringify({ contact_id: cid, asset_owner:'Borrower', asset_type:'Checking',
+    var { data: _addAssetData, error: _addAssetErr } = await _authClient().from('loan_assets')
+      .insert({ contact_id: cid, asset_owner:'Borrower', asset_type:'Checking',
         institution_name:'', account_number:'', current_value:0,
         sort_order: losAssets.length, created_at:new Date().toISOString(), updated_at:new Date().toISOString() })
-    });
-    if (!r.ok) { showToast('Add failed: '+r.status); return; }
-    var rows = await r.json();
-    if (rows && rows[0]) losAssets.push(rows[0]);
+      .select();
+    if (_addAssetErr) { showToast('Add failed: '+_addAssetErr.message); return; }
+    if (_addAssetData && _addAssetData[0]) losAssets.push(_addAssetData[0]);
     losRenderAssets();
   } catch(e) { showToast('Error: '+e.message); }
 }
 async function losDeleteAsset(id) {
   if (!confirm('Delete this asset?')) return;
   try {
-    await fetch(losBase()+'/rest/v1/loan_assets?id=eq.'+id, { method:'DELETE', headers: losHeaders() });
+    await _authClient().from('loan_assets').delete().eq('id', id);
     losAssets = losAssets.filter(function(a){ return a.id !== id; });
     losRenderAssets();
   } catch(e) { showToast('Delete failed: '+e.message); }
@@ -12745,8 +12740,11 @@ var REO_DISPOSITIONS = ['Retain','Pending Sale','Sold'];
 async function losLoadREO(overrideCid) {
   var cid = overrideCid || losCid(); if (!cid) return;
   try {
-    var r = await fetch(losBase()+'/rest/v1/loan_reo?contact_id=eq.'+cid+'&order=sort_order.asc,created_at.asc', { headers: losHeaders() });
-    losReo = r.ok ? (await r.json() || []) : [];
+    var { data } = await _authClient().from('loan_reo')
+      .select('*').eq('contact_id', cid)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    losReo = data || [];
   } catch(e) { console.warn('[reo] load:', e); losReo = []; }
   losRenderREO();
 }
@@ -12786,9 +12784,7 @@ async function losUpdateREO(id, field, value) {
   losReo = losReo.map(function(p){ return p.id===id ? Object.assign({},p,{[field]:value}) : p; });
   try {
     var body = {}; body[field] = value; body.updated_at = new Date().toISOString();
-    await fetch(losBase()+'/rest/v1/loan_reo?id=eq.'+id, {
-      method:'PATCH', headers:Object.assign({},losHeaders(),{'Prefer':'return=minimal'}), body: JSON.stringify(body)
-    });
+    await _authClient().from('loan_reo').update(body).eq('id', id);
   } catch(e) { console.warn('[reo] patch', field, e); }
 }
 async function losUpdateREOAndRecalc(id, field, value) { await losUpdateREO(id, field, value); losCalcReoEquity(); }
@@ -12796,22 +12792,20 @@ async function losUpdateREOAndRecalc(id, field, value) { await losUpdateREO(id, 
 async function losAddREO() {
   var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
-    var r = await fetch(losBase()+'/rest/v1/loan_reo', {
-      method:'POST', headers:Object.assign({},losHeaders(),{'Prefer':'return=representation'}),
-      body: JSON.stringify({ contact_id: cid, property_address:'', current_usage:'Investment', disposition:'Retain',
+    var { data: _addReoData, error: _addReoErr } = await _authClient().from('loan_reo')
+      .insert({ contact_id: cid, property_address:'', current_usage:'Investment', disposition:'Retain',
         market_value:0, mortgage_balance:0, monthly_payment:0, gross_rental_income:0, taxes:0, insurance:0, hoa:0,
         sort_order: losReo.length, created_at:new Date().toISOString(), updated_at:new Date().toISOString() })
-    });
-    if (!r.ok) { showToast('Add failed: '+r.status); return; }
-    var rows = await r.json();
-    if (rows && rows[0]) losReo.push(rows[0]);
+      .select();
+    if (_addReoErr) { showToast('Add failed: '+_addReoErr.message); return; }
+    if (_addReoData && _addReoData[0]) losReo.push(_addReoData[0]);
     losRenderREO();
   } catch(e) { showToast('Error: '+e.message); }
 }
 async function losDeleteREO(id) {
   if (!confirm('Delete this property?')) return;
   try {
-    await fetch(losBase()+'/rest/v1/loan_reo?id=eq.'+id, { method:'DELETE', headers: losHeaders() });
+    await _authClient().from('loan_reo').delete().eq('id', id);
     losReo = losReo.filter(function(p){ return p.id !== id; });
     losRenderREO();
   } catch(e) { showToast('Delete failed: '+e.message); }
@@ -12834,8 +12828,10 @@ async function losLoadBorrowers() {
   var cid = losCid(); if (!cid) { losBorrowers = []; return; }
   var base = losBase(), hdrs = losHeaders();
   try {
-    var appRes = await fetch(base+'/rest/v1/mortgage_applications?contact_id=eq.'+cid+'&select=id,co_borrower_contact_id,co_borrower_first_name,co_borrower_last_name&order=created_at.desc&limit=1', { headers: hdrs });
-    var apps = appRes.ok ? await appRes.json() : [];
+    var { data: apps } = await _authClient().from('mortgage_applications')
+      .select('id,co_borrower_contact_id,co_borrower_first_name,co_borrower_last_name')
+      .eq('contact_id', cid)
+      .order('created_at', { ascending: false }).limit(1);
     var app = apps && apps[0];
     if (!app) { losBorrowers = []; return; }
     // Try loan_borrowers table first
@@ -12982,10 +12978,12 @@ async function losLoadBorrowerData() {
     var ids = losBorrowers.map(function(b){return b.contact_id;}).filter(Boolean);
     if (!ids.length) return;
     try {
-      var incRes = await fetch(base+'/rest/v1/loan_income?contact_id=in.('+ids.join(',')+')&order=sort_order.asc', { headers: hdrs });
-      losIncome = incRes.ok ? (await incRes.json() || []) : [];
-      var liabRes = await fetch(base+'/rest/v1/loan_liabilities?contact_id=in.('+ids.join(',')+')&order=sort_order.asc', { headers: hdrs });
-      losLiabilities = liabRes.ok ? (await liabRes.json() || []) : [];
+      var incRes = await _authClient().from('loan_income')
+        .select('*').in('contact_id', ids).order('sort_order', { ascending: true });
+      losIncome = incRes.data || [];
+      var liabRes = await _authClient().from('loan_liabilities')
+        .select('*').in('contact_id', ids).order('sort_order', { ascending: true });
+      losLiabilities = liabRes.data || [];
     } catch(e) { console.warn('[borrowers] combined load:', e); }
     losRenderIncome();
     losRenderLiabilities();
@@ -13005,10 +13003,12 @@ async function renderBorrowerIncomeDebtCards() {
   var cardData = await Promise.all(losBorrowers.map(async function(b, i) {
     if (!b.contact_id) return { name: _borrName(b, i), income: 0, debt: 0, role: _borrRoleLabel(b, i) };
     try {
-      var incRes = await fetch(base+'/rest/v1/loan_income?contact_id=eq.'+b.contact_id+'&is_active=eq.true', { headers: hdrs });
-      var liabRes = await fetch(base+'/rest/v1/loan_liabilities?contact_id=eq.'+b.contact_id+'&is_omitted=eq.false', { headers: hdrs });
-      var incRows = incRes.ok ? (await incRes.json() || []) : [];
-      var liabRows = liabRes.ok ? (await liabRes.json() || []) : [];
+      var incRes = await _authClient().from('loan_income')
+        .select('*').eq('contact_id', b.contact_id).eq('is_active', true);
+      var liabRes = await _authClient().from('loan_liabilities')
+        .select('*').eq('contact_id', b.contact_id).eq('is_omitted', false);
+      var incRows = incRes.data || [];
+      var liabRows = liabRes.data || [];
       var income = incRows.reduce(function(s,r){return s+(parseFloat(r.monthly_amount)||0);}, 0);
       var debt = liabRows.filter(function(l){return !l.is_payoff;}).reduce(function(s,l){return s+(parseFloat(l.monthly_payment)||0);}, 0);
       return { name: _borrName(b, i), income: income, debt: debt, role: _borrRoleLabel(b, i) };
@@ -13297,7 +13297,7 @@ async function exportMISMO() {
 
   await save1003();
 
-  const { data } = await sb
+  const { data } = await _authClient()
     .from('mortgage_applications')
     .select('*')
     .eq('contact_id', contactId)
