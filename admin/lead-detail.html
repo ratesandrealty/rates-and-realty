@@ -11746,7 +11746,8 @@ async function load1003(overrideCid) {
           sv(id + '_phone', emp.phone);
           sv(id + '_street', emp.street);
           sv(id + '_city', emp.city);
-          sv(id + '_state_zip', emp.state_zip);
+          sv(id + '_state', emp.state);
+          sv(id + '_zip', emp.zip);
           sv(id + '_title', emp.title);
           sv(id + '_start_date', emp.start_date);
           sv(id + '_end_date', emp.end_date);
@@ -11760,7 +11761,8 @@ async function load1003(overrideCid) {
           sv(id + '_phone', emp.phone);
           sv(id + '_street', emp.street);
           sv(id + '_city', emp.city);
-          sv(id + '_state_zip', emp.state_zip);
+          sv(id + '_state', emp.state);
+          sv(id + '_zip', emp.zip);
           sv(id + '_title', emp.title);
           sv(id + '_start_date', emp.start_date);
           sv(id + '_years_work', emp.years_work);
@@ -11774,6 +11776,51 @@ async function load1003(overrideCid) {
       });
       if (!employmentCount) {
         empContainer.innerHTML = createEmploymentBlock('current', 0, false);
+      }
+    } else if (data.employer_name || data.position_title || data.base_income) {
+      // Fallback: MISMO importer (and other flat-column writes) populates
+      // employment fields directly on mortgage_applications rather than in an
+      // employments array. Render a single current_emp_0 block from those columns.
+      const empContainer = document.getElementById('employment-container');
+      if (empContainer) {
+        empContainer.innerHTML = createEmploymentBlock('current', 0, false);
+        employmentCount = 1;
+        const id = 'current_emp_0';
+        sv(id + '_employer',   data.employer_name);
+        sv(id + '_phone',      data.employer_phone);
+        sv(id + '_street',     data.employer_street);
+        sv(id + '_city',       data.employer_city);
+        sv(id + '_state',      data.employer_state);
+        sv(id + '_zip',        data.employer_zip);
+        sv(id + '_title',      data.position_title);
+        sv(id + '_start_date', data.employment_start_date);
+        if (data.months_in_line_of_work != null) {
+          sv(id + '_years_work', Math.round(Number(data.months_in_line_of_work) / 12));
+        }
+        // is_self_employed boolean → enum (no / lt25 / gt25). True defaults to gt25
+        // since most self-employed MISMO entries indicate ≥25% ownership; users can
+        // change to lt25 if needed. False maps to "no".
+        if (data.is_self_employed === true) {
+          sv(id + '_self_employed', 'gt25');
+        } else if (data.is_self_employed === false) {
+          sv(id + '_self_employed', 'no');
+        }
+        sv(id + '_base', data.base_income);
+      }
+      // Previous employment fallback (also flat columns)
+      if (data.prev_employer_name || data.prev_position_title) {
+        const prevContainer = document.getElementById('prev-employment-container');
+        if (prevContainer) {
+          prevContainer.innerHTML = '';
+          prevEmploymentCount = 1;
+          prevContainer.insertAdjacentHTML('beforeend', createEmploymentBlock('prev', 1, true));
+          const pid = 'prev_emp_1';
+          sv(pid + '_employer',   data.prev_employer_name);
+          sv(pid + '_title',      data.prev_position_title);
+          sv(pid + '_start_date', data.prev_employment_start_date);
+          sv(pid + '_end_date',   data.prev_employment_end_date);
+          sv(pid + '_prev_income', data.prev_monthly_income);
+        }
       }
     }
 
