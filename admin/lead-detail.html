@@ -10458,19 +10458,39 @@ async function loadLiabilities1003() {
   const totals = document.getElementById('liabilitiesTotals1003');
   if (!el) return;
 
-  // Get application ID for this contact
-  if (!_appId1003 && contactId) {
-    const { data: apps } = await _authClient().from('mortgage_applications').select('id').eq('contact_id', contactId).limit(1);
-    if (apps?.length) _appId1003 = apps[0].id;
-  }
-
-  if (!_appId1003) {
+  if (!contactId) {
     el.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:12px;">No liabilities on file. Import a MISMO 3.4 file or add manually.</div>';
     totals.style.display = 'none';
     return;
   }
 
-  const { data: liabs } = await sb.from('liabilities').select('*').eq('application_id', _appId1003).order('monthly_payment', { ascending: false });
+  // Resolve every borrower's contact_id on this application so the panel
+  // shows liabilities for ALL borrowers (canonical loan_liabilities is keyed
+  // on contact_id, one row per borrower per liability).
+  let contactIds = [contactId];
+  try {
+    const { data: apps } = await _authClient().from('mortgage_applications')
+      .select('id').eq('contact_id', contactId)
+      .order('created_at', { ascending: false }).limit(1);
+    const appId = apps && apps[0] && apps[0].id;
+    if (appId) {
+      _appId1003 = appId;
+      const { data: lbRows } = await _authClient().from('loan_borrowers')
+        .select('contact_id').eq('application_id', appId);
+      const extra = (lbRows || []).map(r => r.contact_id).filter(Boolean);
+      contactIds = Array.from(new Set([contactId, ...extra]));
+    }
+  } catch (e) { console.warn('[liab1003] borrower lookup', e); }
+
+  // Ensure REO list is loaded for the Linked REO dropdown options.
+  if ((typeof losReo === 'undefined' || !losReo || !losReo.length) && typeof losLoadREO === 'function') {
+    try { await losLoadREO(); } catch (e) { console.warn('[liab1003] losLoadREO', e); }
+  }
+  const reoList = (typeof losReo !== 'undefined' && Array.isArray(losReo)) ? losReo : [];
+
+  const { data: liabs } = await _authClient().from('loan_liabilities')
+    .select('*').in('contact_id', contactIds)
+    .order('monthly_payment', { ascending: false });
   _liabilities1003 = liabs || [];
 
   if (!_liabilities1003.length) {
@@ -10480,6 +10500,13 @@ async function loadLiabilities1003() {
   }
 
   const fmtMoney = n => '$' + (n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const reoOptions = (selected) => {
+    const none = `<option value=""${!selected ? ' selected' : ''}>— None —</option>`;
+    const rest = reoList.map(p => `<option value="${esc(p.id)}"${selected === p.id ? ' selected' : ''}>${esc(p.property_address) || '(no address)'}</option>`).join('');
+    return none + rest;
+  };
+  const inputStyle = 'width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:6px;color:#e0e0e0;padding:6px 8px;font-size:12px;font-family:inherit;outline:none;box-sizing:border-box;';
 
   el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr>
@@ -10488,15 +10515,17 @@ async function loadLiabilities1003() {
       <th style="text-align:right;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Monthly</th>
       <th style="text-align:right;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Balance</th>
       <th style="text-align:center;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Payoff?</th>
+      <th style="text-align:left;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Linked REO</th>
       <th style="width:30px;border-bottom:1px solid rgba(255,255,255,0.06);"></th>
     </tr></thead>
     <tbody>${_liabilities1003.map(l => `<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">
-      <td style="padding:9px 10px;font-weight:600;">${l.creditor_name || '—'}</td>
-      <td style="padding:9px 10px;color:rgba(255,255,255,0.5);">${l.liability_type || '—'}</td>
-      <td style="padding:9px 10px;text-align:right;font-weight:600;">${fmtMoney(l.monthly_payment)}</td>
-      <td style="padding:9px 10px;text-align:right;color:rgba(255,255,255,0.6);">${fmtMoney(l.balance)}</td>
-      <td style="padding:9px 10px;text-align:center;">${l.payoff ? '<span style="color:#50c878;font-weight:700;font-size:11px;">Yes</span>' : '<span style="color:rgba(255,255,255,0.25);font-size:11px;">No</span>'}</td>
-      <td style="padding:9px 4px;"><button onclick="deleteLiability1003('${l.id}')" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:12px;" title="Remove">✕</button></td>
+      <td style="padding:6px 8px;"><input type="text" value="${esc(l.creditor_name)}" onchange="updateLiability1003('${l.id}','creditor_name',this.value)" style="${inputStyle}font-weight:600;"></td>
+      <td style="padding:6px 8px;"><input type="text" value="${esc(l.liability_type)}" onchange="updateLiability1003('${l.id}','liability_type',this.value)" style="${inputStyle}"></td>
+      <td style="padding:6px 8px;"><input type="number" step="0.01" value="${l.monthly_payment || 0}" onchange="updateLiability1003('${l.id}','monthly_payment',parseFloat(this.value)||0)" style="${inputStyle}text-align:right;font-weight:600;"></td>
+      <td style="padding:6px 8px;"><input type="number" step="0.01" value="${l.balance || 0}" onchange="updateLiability1003('${l.id}','balance',parseFloat(this.value)||0)" style="${inputStyle}text-align:right;"></td>
+      <td style="padding:6px 8px;text-align:center;"><input type="checkbox"${l.is_payoff ? ' checked' : ''} onchange="updateLiability1003('${l.id}','is_payoff',this.checked)"></td>
+      <td style="padding:6px 8px;"><select onchange="updateLiability1003('${l.id}','reo_id',this.value||null)" style="${inputStyle}">${reoOptions(l.reo_id)}</select></td>
+      <td style="padding:9px 4px;text-align:center;"><button onclick="deleteLiability1003('${l.id}')" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:12px;" title="Remove">✕</button></td>
     </tr>`).join('')}</tbody>
   </table>`;
 
@@ -10519,14 +10548,18 @@ async function saveLiability1003() {
   const balance = parseFloat(document.getElementById('newLiabBalance').value) || 0;
   if (!creditor) { if (typeof toast === 'function') toast('Enter a creditor name'); return; }
 
-  // Ensure we have an application_id
-  if (!_appId1003 && contactId) {
-    const { data: apps } = await _authClient().from('mortgage_applications').select('id').eq('contact_id', contactId).limit(1);
-    if (apps?.length) _appId1003 = apps[0].id;
-  }
-  if (!_appId1003) { if (typeof toast === 'function') toast('No application found — save the 1003 first'); return; }
+  if (!contactId) { if (typeof toast === 'function') toast('No contact loaded'); return; }
 
-  await sb.from('liabilities').insert({ application_id: _appId1003, contact_id: contactId, creditor_name: creditor, monthly_payment: monthly, balance, created_at: new Date().toISOString() });
+  const now = new Date().toISOString();
+  const { error } = await _authClient().from('loan_liabilities').insert({
+    contact_id: contactId,
+    creditor_name: creditor,
+    monthly_payment: monthly,
+    balance,
+    created_at: now,
+    updated_at: now,
+  });
+  if (error) { if (typeof toast === 'function') toast('Add failed: ' + error.message); return; }
 
   // Clear form
   document.getElementById('newLiabCreditor').value = '';
@@ -10540,8 +10573,16 @@ async function saveLiability1003() {
 
 async function deleteLiability1003(id) {
   if (!confirm('Remove this liability?')) return;
-  await sb.from('liabilities').delete().eq('id', id);
+  await _authClient().from('loan_liabilities').delete().eq('id', id);
   await loadLiabilities1003();
+}
+
+async function updateLiability1003(id, field, value) {
+  try {
+    const body = {}; body[field] = value; body.updated_at = new Date().toISOString();
+    await _authClient().from('loan_liabilities').update(body).eq('id', id);
+    await loadLiabilities1003();
+  } catch (e) { console.warn('[liab1003] patch', field, e); }
 }
 
 /* ── DEAL EARNINGS ── */
