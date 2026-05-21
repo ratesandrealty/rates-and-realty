@@ -11646,13 +11646,59 @@ async function load1003(overrideCid) {
   if (!cid) return;
 
   try {
-    const { data } = await _authClient()
+    let { data } = await _authClient()
       .from('mortgage_applications')
       .select('*')
       .eq('contact_id', cid)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+
+    // Co-borrower fallback: when this cid has no mortgage_applications row of its
+    // own (co-borrowers usually don't), build a synthetic row from loan_borrowers
+    // (employment) + contacts (personal info) so the form populates from THIS
+    // borrower's data instead of bailing and leaving the primary's data on screen.
+    if (!data && cid !== getContactId()) {
+      const [_lbRes, _cRes] = await Promise.all([
+        _authClient().from('loan_borrowers').select('*').eq('contact_id', cid).order('borrower_order', { ascending: true }).limit(1).maybeSingle(),
+        _authClient().from('contacts').select('*').eq('id', cid).maybeSingle()
+      ]);
+      const lb = _lbRes && _lbRes.data;
+      const c  = _cRes  && _cRes.data;
+      if (lb || c) {
+        data = {
+          // personal info from contacts
+          first_name: c && c.first_name,
+          last_name:  c && c.last_name,
+          email:      c && c.email,
+          cell_phone: c && c.phone,
+          current_address_street: c && c.address,
+          current_address_city:   c && c.city,
+          current_address_state:  c && c.state,
+          current_address_zip:    c && c.zip,
+          date_of_birth:          c && c.date_of_birth,
+          // employment from loan_borrowers (flat columns — picked up by the
+          // else-if (employer_name || position_title || base_income) branch)
+          employer_name:           lb && lb.employer_name,
+          employer_phone:          lb && lb.employer_phone,
+          employer_street:         lb && lb.employer_street,
+          employer_city:           lb && lb.employer_city,
+          employer_state:          lb && lb.employer_state,
+          employer_zip:            lb && lb.employer_zip,
+          position_title:          lb && lb.position_title,
+          employment_start_date:   lb && lb.employment_start_date,
+          is_self_employed:        lb && lb.is_self_employed,
+          base_income:             lb && lb.base_income,
+          months_in_line_of_work:  lb && lb.months_in_line_of_work,
+          prev_employer_name:          lb && lb.prev_employer_name,
+          prev_position_title:         lb && lb.prev_position_title,
+          prev_employment_start_date:  lb && lb.prev_employment_start_date,
+          prev_employment_end_date:    lb && lb.prev_employment_end_date,
+          prev_monthly_income:         lb && lb.prev_monthly_income,
+        };
+      }
+    }
+
     _activeBorrowerApp = data || {};
     // Render the collapsible summary + loan bar.
     if (typeof render1003Summary === 'function') render1003Summary(data);
