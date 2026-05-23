@@ -10464,9 +10464,12 @@ async function loadLiabilities1003() {
     return;
   }
 
-  // Resolve every borrower's contact_id on this application so the panel
-  // shows liabilities for ALL borrowers (canonical loan_liabilities is keyed
-  // on contact_id, one row per borrower per liability).
+  // Individual tab = only the active borrower's rows; Combined View = union of all borrowers.
+  const _combined = (typeof losViewMode !== 'undefined' && losViewMode === 'combined');
+  const activeCid = (typeof losGetActiveContactId === 'function' && losGetActiveContactId()) || contactId;
+
+  // Resolve every borrower's contact_id on this application (used in combined mode;
+  // also keeps the _appId1003 side-effect for downstream callers).
   let contactIds = [contactId];
   try {
     const { data: apps } = await _authClient().from('mortgage_applications')
@@ -10488,9 +10491,9 @@ async function loadLiabilities1003() {
   }
   const reoList = (typeof losReo !== 'undefined' && Array.isArray(losReo)) ? losReo : [];
 
-  const { data: liabs } = await _authClient().from('loan_liabilities')
-    .select('*').in('contact_id', contactIds)
-    .order('monthly_payment', { ascending: false });
+  let _liabQuery = _authClient().from('loan_liabilities').select('*');
+  _liabQuery = _combined ? _liabQuery.in('contact_id', contactIds) : _liabQuery.eq('contact_id', activeCid);
+  const { data: liabs } = await _liabQuery.order('monthly_payment', { ascending: false });
   _liabilities1003 = liabs || [];
 
   if (!_liabilities1003.length) {
@@ -10511,6 +10514,7 @@ async function loadLiabilities1003() {
   el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr>
       <th style="text-align:left;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Creditor</th>
+      ${_combined ? '<th style="text-align:left;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Owner</th>' : ''}
       <th style="text-align:left;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Type</th>
       <th style="text-align:right;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Monthly</th>
       <th style="text-align:right;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);border-bottom:1px solid rgba(255,255,255,0.06);">Balance</th>
@@ -10520,6 +10524,7 @@ async function loadLiabilities1003() {
     </tr></thead>
     <tbody>${_liabilities1003.map(l => `<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">
       <td style="padding:6px 8px;"><input type="text" value="${esc(l.creditor_name)}" onchange="updateLiability1003('${l.id}','creditor_name',this.value)" style="${inputStyle}font-weight:600;"></td>
+      ${_combined ? `<td style="padding:6px 8px;color:rgba(255,255,255,0.6);font-size:11px;">${esc(l.account_owner)}</td>` : ''}
       <td style="padding:6px 8px;"><input type="text" value="${esc(l.liability_type)}" onchange="updateLiability1003('${l.id}','liability_type',this.value)" style="${inputStyle}"></td>
       <td style="padding:6px 8px;"><input type="number" step="0.01" value="${l.monthly_payment || 0}" onchange="updateLiability1003('${l.id}','monthly_payment',parseFloat(this.value)||0)" style="${inputStyle}text-align:right;font-weight:600;"></td>
       <td style="padding:6px 8px;"><input type="number" step="0.01" value="${l.balance || 0}" onchange="updateLiability1003('${l.id}','balance',parseFloat(this.value)||0)" style="${inputStyle}text-align:right;"></td>
