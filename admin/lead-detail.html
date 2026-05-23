@@ -13083,7 +13083,18 @@ function applyViewModeSections() {
   // sec-assets and loanSummaryPanel always stay visible.
 }
 
+// Re-apply the page-swap to id but suppress the slide animation. Calls
+// scrollToSection (so the sec-assets wrapper at 11330 still fires renderAssetsContent),
+// then strips the slide classes in the same JS tick before the browser paints.
+function _restoreSectionNoSlide(id) {
+  if (typeof scrollToSection !== 'function') return;
+  scrollToSection(id);
+  var scroll = document.getElementById('app-content-scroll');
+  if (scroll) scroll.classList.remove('app-slide-r', 'app-slide-l');
+}
+
 async function losSwitchBorrower(idx) {
+  var _preservedSecId = (typeof _appSectionOrder !== 'undefined' && _appCurrentSecIdx != null) ? _appSectionOrder[_appCurrentSecIdx] : null;
   if (idx === -1) losViewMode = 'combined';
   else { losViewMode = 'individual'; losActiveBorrowerIdx = idx; }
   renderBorrowerTabs();
@@ -13117,6 +13128,13 @@ async function losSwitchBorrower(idx) {
     console.log('[borrower-switch] reload complete for ' + formCid);
     renderBorrowerIncomeDebtCards();
   } catch(e) { console.warn('[switch] reload error:', e); }
+  // Restore whichever section the user was on before the switch.
+  // If they were on a section that's hidden in Combined View, fall back to Assets & Debts.
+  if (_preservedSecId) {
+    var _hiddenInCombined = ['sec-borrower-info','sec-employment','sec-loan-property','sec-declarations'];
+    var _target = (losViewMode === 'combined' && _hiddenInCombined.indexOf(_preservedSecId) !== -1) ? 'sec-assets' : _preservedSecId;
+    _restoreSectionNoSlide(_target);
+  }
   if (panel) { panel.style.opacity = '1'; panel.style.pointerEvents = ''; }
 }
 
