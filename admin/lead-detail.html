@@ -16094,6 +16094,120 @@ async function refreshLenderRow(lenderId) {
   if (typeof renderLenderTableNew === 'function') renderLenderTableNew();
 }
 
+// Read-only label/value row helper for the Lender Details section. Returns '' for empty values
+// so callers can concatenate freely without producing blank rows.
+function _lhRow(label, val, opts) {
+  if (val == null || val === '') return '';
+  opts = opts || {};
+  var safeVal = _relEscHtml(val);
+  var rendered;
+  if (opts.link) {
+    rendered = '<a href="' + _relEscHtml(opts.link) + '" target="_blank" rel="noopener" style="color:#C9A84C;text-decoration:none;">' + safeVal + ' ↗</a>';
+  } else if (opts.mailto) {
+    rendered = '<a href="mailto:' + safeVal + '" style="color:#C9A84C;text-decoration:none;">' + safeVal + '</a>';
+  } else if (opts.tel) {
+    var telHref = String(val).replace(/[^\d+]/g, '');
+    rendered = '<a href="tel:' + _relEscHtml(telHref) + '" style="color:#C9A84C;text-decoration:none;">' + safeVal + '</a>';
+  } else {
+    rendered = safeVal;
+  }
+  var valStyle = opts.pre ? 'white-space:pre-wrap;line-height:1.5;' : '';
+  return '<div style="display:grid;grid-template-columns:140px 1fr;gap:8px;padding:4px 0;font-size:12px;">' +
+           '<div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.4px;">' + _relEscHtml(label) + '</div>' +
+           '<div style="color:var(--text);' + valStyle + '">' + rendered + '</div>' +
+         '</div>';
+}
+
+// Mirrors the live clickup-lender-sync edge function's buildDesc field order, labels, and emojis.
+// Each line is conditional — empty fields are skipped (no "N/A" placeholders). DB-column fallbacks
+// applied for the known drifts: min_credit_score||min_credit, contact_*||rep_*, specialty_notes||notes,
+// loan_programs||programs. CRM Sync footer omitted (display-only — no actual sync happens here).
+function lhBuildClickupNotes(l) {
+  if (!l) return '';
+  var minCredit    = l.min_credit_score || l.min_credit;
+  var aeName       = l.contact_name  || l.rep_name;
+  var aeEmail      = l.contact_email || l.rep_email;
+  var aePhone      = l.contact_phone || l.rep_phone;
+  var specialty    = l.specialty_notes || l.notes;
+  var loanTypes    = Array.isArray(l.loan_types) ? l.loan_types : (l.loan_types ? [l.loan_types] : []);
+  var loanPrograms = Array.isArray(l.loan_programs) ? l.loan_programs
+                    : (Array.isArray(l.programs) ? l.programs : []);
+
+  var lines = [];
+
+  // Header block — name + blank line, then conditional facts
+  lines.push('🏦 ' + (l.name || '') + '\n');
+  if (l.website)          lines.push('🌐 Website: ' + l.website);
+  if (l.lender_portal)    lines.push('🔗 Portal: ' + l.lender_portal);
+  if (l.nmlsr_id)         lines.push('🪪 NMLS: ' + l.nmlsr_id);
+  if (l.channel)          lines.push('📡 Channel: ' + l.channel);
+  if (minCredit)          lines.push('📊 Min Credit: ' + minCredit);
+  if (l.avg_app_to_fund)  lines.push('⏱️ Avg Fund: ' + l.avg_app_to_fund);
+  if (l.rating)           lines.push('⭐ Rating: ' + l.rating);
+  if (l.is_preferred)     lines.push('✅ Preferred Lender');
+  if (l.submission_count) lines.push('📁 Submissions: ' + l.submission_count);
+
+  // Loan info — leading \n on Loan Types creates a blank-line separator
+  if (loanTypes.length)    lines.push('\n💳 Loan Types: ' + loanTypes.join(', '));
+  if (loanPrograms.length) lines.push('📋 Programs: ' + loanPrograms.join(', '));
+  if (specialty)           lines.push('🎯 Specialty: ' + specialty);
+  if (l.key_overlays)      lines.push('\n⚠️ Key Overlays:\n' + l.key_overlays);
+
+  // Account Executive — header always printed (per spec); sub-fields conditional
+  lines.push('\n👤 Account Executive');
+  if (aeName)  lines.push('Name: ' + aeName);
+  if (aeEmail) lines.push('Email: ' + aeEmail);
+  if (aePhone) lines.push('Phone: ' + aePhone);
+
+  // Product Specialist — whole block only if name OR email
+  if (l.product_specialist_name || l.product_specialist_email) {
+    lines.push('\n👤 Product Specialist');
+    if (l.product_specialist_name)  lines.push('Name: ' + l.product_specialist_name);
+    if (l.product_specialist_email) lines.push('Email: ' + l.product_specialist_email);
+  }
+
+  // Department Contacts — block only if at least one of the six
+  if (l.lock_desk_email || l.submission_email || l.conditions_email
+      || l.underwriting_email || l.closing_email || l.funding_email) {
+    lines.push('\n📧 Department Contacts');
+    if (l.lock_desk_email)    lines.push('Lock Desk: ' + l.lock_desk_email);
+    if (l.submission_email)   lines.push('Submissions: ' + l.submission_email);
+    if (l.conditions_email)   lines.push('Conditions: ' + l.conditions_email);
+    if (l.underwriting_email) lines.push('Underwriting: ' + l.underwriting_email);
+    if (l.closing_email)      lines.push('Closing: ' + l.closing_email);
+    if (l.funding_email)      lines.push('Funding: ' + l.funding_email);
+  }
+
+  // Compensation — header always; sub-fields conditional
+  lines.push('\n💰 Compensation');
+  if (l.compensation_type) lines.push('Type: ' + l.compensation_type);
+  if (l.compensation_bps)  lines.push('BPS: ' + l.compensation_bps);
+  if (l.revenue_notes)     lines.push(l.revenue_notes);
+
+  // Fees — block only if fee_notes
+  if (l.fee_notes) {
+    lines.push('\n🧾 Fees');
+    lines.push(l.fee_notes);
+  }
+
+  // Clauses & IDs — block only if any of three
+  if (l.cpl_clause || l.mortgagee_clause || l.broker_id) {
+    lines.push('\n📄 Clauses & IDs');
+    if (l.cpl_clause)       lines.push('CPL: ' + l.cpl_clause);
+    if (l.mortgagee_clause) lines.push('Mortgagee: ' + l.mortgagee_clause);
+    if (l.broker_id)        lines.push('Broker ID: ' + l.broker_id);
+  }
+
+  // Notes — block only if scenario_notes OR notes
+  if (l.scenario_notes || l.notes) {
+    lines.push('\n📝 Notes');
+    if (l.scenario_notes) lines.push(l.scenario_notes);
+    if (l.notes)          lines.push(l.notes);
+  }
+
+  return lines.filter(Boolean).join('\n');
+}
+
 // Render the clean lender detail view into the modal body. Adapted from admin/lenders.html showLenderDetail.
 // Omits: editable Lender Details form + Save & Sync to ClickUp button (kept read-only per spec).
 function lhRenderLenderDetail(lender) {
@@ -16210,6 +16324,90 @@ function lhRenderLenderDetail(lender) {
 
       <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Call History</div>
       <div id="callLogList"><div style="font-size:12px;color:var(--muted);padding:10px 0;">Loading…</div></div>
+    </div>
+
+    <!-- Lender Details (read-only) -->
+    <div style="background:#1e1e1e;border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Lender Details</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">
+        📝 Read-only — edit lender info in the <a href="/admin/lenders.html" target="_blank" rel="noopener" style="color:#C9A84C;text-decoration:none;">Lender Database ↗</a>.
+      </div>
+
+      ${(lender.contact_name||lender.rep_name||lender.contact_email||lender.rep_email||lender.contact_phone||lender.rep_phone||lender.nmlsr_id||lender.channel) ? `
+      <div class="detail-card" style="margin-bottom:10px;">
+        <div class="detail-card-label">Contact</div>
+        ${_lhRow('Name', lender.contact_name || lender.rep_name)}
+        ${_lhRow('Email', lender.contact_email || lender.rep_email, {mailto:true})}
+        ${_lhRow('Phone', lender.contact_phone || lender.rep_phone, {tel:true})}
+        ${_lhRow('NMLS', lender.nmlsr_id)}
+        ${_lhRow('Channel', lender.channel)}
+      </div>` : ''}
+
+      ${(lender.product_specialist_name || lender.product_specialist_email || lender.product_specialist_phone) ? `
+      <div class="detail-card" style="margin-bottom:10px;">
+        <div class="detail-card-label">Product Specialist</div>
+        ${_lhRow('Name', lender.product_specialist_name)}
+        ${_lhRow('Email', lender.product_specialist_email, {mailto:true})}
+        ${_lhRow('Phone', lender.product_specialist_phone, {tel:true})}
+      </div>` : ''}
+
+      ${((lender.min_credit_score||lender.min_credit) || lender.max_ltv || lender.avg_app_to_fund || lender.key_overlays || lender.specialty_notes || lender.notes) ? `
+      <div class="detail-card" style="margin-bottom:10px;">
+        <div class="detail-card-label">Guidelines</div>
+        ${_lhRow('Min Credit', lender.min_credit_score || lender.min_credit)}
+        ${_lhRow('Max LTV', lender.max_ltv ? lender.max_ltv + '%' : '')}
+        ${_lhRow('Avg App to Fund', lender.avg_app_to_fund ? lender.avg_app_to_fund + ' days' : '')}
+        ${_lhRow('Key Overlays', lender.key_overlays, {pre:true})}
+        ${_lhRow('Specialty Notes', lender.specialty_notes || lender.notes, {pre:true})}
+      </div>` : ''}
+
+      ${(lender.lock_desk_email||lender.lock_desk_phone||lender.submission_email||lender.conditions_email||lender.underwriting_email||lender.closing_email||lender.funding_email) ? `
+      <div class="detail-card" style="margin-bottom:10px;">
+        <div class="detail-card-label">Department Contacts</div>
+        ${_lhRow('Lock Desk', lender.lock_desk_email, {mailto:true})}
+        ${_lhRow('Lock Phone', lender.lock_desk_phone, {tel:true})}
+        ${_lhRow('Submissions', lender.submission_email, {mailto:true})}
+        ${_lhRow('Conditions', lender.conditions_email, {mailto:true})}
+        ${_lhRow('Underwriting', lender.underwriting_email, {mailto:true})}
+        ${_lhRow('Closing', lender.closing_email, {mailto:true})}
+        ${_lhRow('Funding', lender.funding_email, {mailto:true})}
+      </div>` : ''}
+
+      ${(lender.compensation_type||lender.compensation_bps||lender.compensation_min||lender.compensation_max||lender.revenue_notes||lender.fee_notes) ? `
+      <div class="detail-card" style="margin-bottom:10px;">
+        <div class="detail-card-label">Compensation</div>
+        ${_lhRow('Type', lender.compensation_type)}
+        ${_lhRow('BPS', lender.compensation_bps)}
+        ${_lhRow('Min', lender.compensation_min ? '$' + Number(lender.compensation_min).toLocaleString() : '')}
+        ${_lhRow('Max', lender.compensation_max ? '$' + Number(lender.compensation_max).toLocaleString() : '')}
+        ${_lhRow('Revenue Notes', lender.revenue_notes, {pre:true})}
+        ${_lhRow('Fees', lender.fee_notes, {pre:true})}
+      </div>` : ''}
+
+      ${((Array.isArray(lender.loan_programs) && lender.loan_programs.length) || (Array.isArray(lender.programs) && lender.programs.length)) ? `
+      <div class="detail-card" style="margin-bottom:10px;">
+        <div class="detail-card-label">Loan Programs</div>
+        <div style="font-size:12px;color:var(--text);padding:4px 0;line-height:1.6;">
+          ${(Array.isArray(lender.loan_programs) ? lender.loan_programs : (Array.isArray(lender.programs) ? lender.programs : [])).map(p => _relEscHtml(p)).join(', ')}
+        </div>
+      </div>` : ''}
+
+      ${(lender.website || lender.lender_portal || lender.guidelines_url) ? `
+      <div class="detail-card">
+        <div class="detail-card-label">Links</div>
+        ${_lhRow('Website', lender.website, {link: lender.website})}
+        ${_lhRow('Portal', lender.lender_portal, {link: lender.lender_portal})}
+        ${_lhRow('Guidelines', lender.guidelines_url, {link: lender.guidelines_url})}
+      </div>` : ''}
+    </div>
+
+    <!-- ClickUp Notes (read-only — mirrors the synced ClickUp task description) -->
+    <div style="background:#1e1e1e;border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:13px;font-weight:700;color:#fff;">📋 ClickUp Notes</div>
+        <div style="font-size:10px;color:var(--muted);">Synced description — sourced from DB</div>
+      </div>
+      <pre style="white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:#cfc8b8;background:#0f0f0f;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:14px;margin:0;max-height:360px;overflow-y:auto;line-height:1.55;">${_relEscHtml(lhBuildClickupNotes(lender))}</pre>
     </div>
   `;
 }
@@ -18901,22 +19099,8 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
 <!-- ═══ LENDER DETAIL MODAL ═══ -->
 <div id="lenderDetailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:99998;overflow-y:auto">
   <div style="max-width:1100px;margin:24px auto;background:#111;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden">
-    <!-- Header -->
-    <div style="padding:18px 22px;border-bottom:1px solid #1e1e1e;background:linear-gradient(135deg,#1a1408,#111);display:flex;align-items:center;gap:14px">
-      <div id="ldLogoContainer" style="position:relative;width:52px;height:52px;flex-shrink:0;cursor:pointer" onclick="document.getElementById('ldLogoInput').click()" title="Click to upload logo">
-        <img id="ldLogoImg" style="display:none;width:100%;height:100%;border-radius:10px;object-fit:contain;background:#2a2a2a;border:1px solid #3a3a3a">
-        <div id="ldLogoInitials" style="width:100%;height:100%;border-radius:10px;background:#2a2a2a;border:1px solid #3a3a3a;display:flex;align-items:center;justify-content:center;font-weight:800;color:#C9A84C;font-size:.9rem">—</div>
-        <div style="position:absolute;inset:0;border-radius:10px;background:rgba(0,0,0,0.6);color:#C9A84C;font-size:.52rem;font-weight:700;display:none;align-items:center;justify-content:center;pointer-events:none" onmouseover="this.style.display='flex'" class="ld-logo-hover">📷</div>
-        <input id="ldLogoInput" type="file" accept="image/*" style="display:none" onchange="uploadLenderLogo(this)">
-      </div>
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <h2 id="ldName" style="font-size:1.1rem;color:#eee;margin:0;font-weight:700">Loading…</h2>
-          <span id="ldPreferredBadge" style="display:none;background:rgba(201,168,76,0.15);color:#C9A84C;border-radius:10px;padding:2px 8px;font-size:.58rem;font-weight:700;letter-spacing:.04em">⭐ PREFERRED</span>
-          <span id="ldSaveIndicator" style="font-size:.64rem;color:#666;opacity:0;transition:opacity .3s">Saved ✓</span>
-        </div>
-        <div id="ldMeta" style="font-size:.72rem;color:#888;margin-top:3px"></div>
-      </div>
+    <!-- Header — name/avatar are rendered in #lhLenderBody by lhRenderLenderDetail. Header keeps only action buttons. -->
+    <div style="padding:14px 22px;border-bottom:1px solid #1e1e1e;background:linear-gradient(135deg,#1a1408,#111);display:flex;align-items:center;justify-content:flex-end;gap:8px">
       <button id="ldClickUpSyncBtn" onclick="ldSyncClickUp()" style="background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:8px;padding:8px 14px;font-size:.72rem;cursor:pointer;font-family:inherit;font-weight:600">⚡ Sync ClickUp</button>
       <button onclick="closeLenderDetail()" style="background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:8px;padding:8px 14px;font-size:.74rem;cursor:pointer;font-family:inherit;font-weight:600">Close ✕</button>
     </div>
