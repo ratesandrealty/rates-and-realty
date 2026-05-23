@@ -385,6 +385,13 @@
         <div class="filter-chip" onclick="setFilter('commercial', this)">Comm</div>
         <div class="filter-chip" onclick="setFilter('dscr', this)">DSCR</div>
       </div>
+      <div class="filter-row" style="margin-top:6px;">
+        <div class="filter-chip" onclick="setStageFilter('all', this)">All</div>
+        <div class="filter-chip active" onclick="setStageFilter('Prospect', this)">Prospect</div>
+        <div class="filter-chip" onclick="setStageFilter('Contacted', this)">Contacted</div>
+        <div class="filter-chip" onclick="setStageFilter('Active', this)">Active</div>
+        <div class="filter-chip" onclick="setStageFilter('Preferred', this)">Preferred</div>
+      </div>
     </div>
     <div class="lender-list" id="lenderList">
       <div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">
@@ -568,6 +575,7 @@ function _authClient() {
 let allLenders = [];
 let filteredLenders = [];
 let selectedFilter = 'all';
+let selectedStageFilter = 'Prospect'; // defaults page to the prospect call-list; NULL stages treated as Prospect
 let selectedLender = null;
 let selectedScopes = ['all'];
 let chatHistory = [];
@@ -636,6 +644,26 @@ function getInitials(name) {
   return name.split(/\s+/).slice(0,2).map(w => w[0]).join('').toUpperCase();
 }
 
+function stageColor(stage) {
+  switch (stage) {
+    case 'Preferred': return { bg: 'rgba(201,168,76,0.15)', fg: '#C9A84C', border: 'rgba(201,168,76,0.35)' };
+    case 'Active':    return { bg: 'rgba(77,255,153,0.12)', fg: '#4dff99', border: 'rgba(77,255,153,0.3)' };
+    case 'Contacted': return { bg: 'rgba(77,166,255,0.12)', fg: '#4da6ff', border: 'rgba(77,166,255,0.3)' };
+    default:          return { bg: 'rgba(255,255,255,0.06)', fg: 'rgba(255,255,255,0.5)', border: 'rgba(255,255,255,0.12)' };
+  }
+}
+
+function formatShortDate(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+function _relEscHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+}
+
 function renderLenderList(lenders) {
   const list = document.getElementById('lenderList');
   if (!lenders.length) {
@@ -646,6 +674,10 @@ function renderLenderList(lenders) {
     const color = getAvatarColor(l.name);
     const initials = getInitials(l.name);
     const isSelected = selectedLender?.id === l.id;
+    const stage = l.relationship_stage || 'Prospect';
+    const sc = stageColor(stage);
+    const lastStr = formatShortDate(l.last_contacted_at) || 'never';
+    const nextStr = formatShortDate(l.next_follow_up_date) || '—';
     return `
       <div class="lender-row ${isSelected ? 'selected' : ''}" onclick="selectLender('${l.id}')">
         <div class="lender-avatar" style="background:${color}22;border:1px solid ${color}44;color:${color};">
@@ -655,6 +687,10 @@ function renderLenderList(lenders) {
           <div class="lender-name">${l.name}</div>
           <div style="margin-top:3px;line-height:1.6;">
             ${loanTypeChipsHtml(l.loan_types)}
+          </div>
+          <div style="margin-top:4px;display:flex;align-items:center;gap:8px;font-size:10px;color:rgba(255,255,255,0.4);">
+            <span style="padding:2px 7px;border-radius:8px;background:${sc.bg};color:${sc.fg};border:1px solid ${sc.border};font-weight:600;font-size:9px;text-transform:uppercase;letter-spacing:0.4px;">${stage}</span>
+            <span>Last: ${lastStr} · Next: ${nextStr}</span>
           </div>
         </div>
         <div class="lender-priority" style="color:${l.priority==='high'?'#ff9966':l.priority==='low'?'rgba(255,255,255,0.2)':'var(--muted)'};display:flex;align-items:center;gap:6px;">
@@ -695,7 +731,15 @@ function renderLendersTable(lenders) {
 // ── FILTERS ─────────────────────────────────────
 function setFilter(tag, el) {
   selectedFilter = tag;
-  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  // Scope active toggling to this row so the stage row's active chip isn't cleared.
+  el.parentElement.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  filterLenders(document.getElementById('lenderSearch').value);
+}
+
+function setStageFilter(stage, el) {
+  selectedStageFilter = stage;
+  el.parentElement.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
   el.classList.add('active');
   filterLenders(document.getElementById('lenderSearch').value);
 }
@@ -704,7 +748,9 @@ function filterLenders(query) {
   filteredLenders = allLenders.filter(l => {
     const matchQuery = !query || l.name.toLowerCase().includes(query.toLowerCase());
     const matchFilter = selectedFilter === 'all' || (l.loan_types && l.loan_types.some(t => t.toLowerCase().replace(/[\s-]+/g, '-') === selectedFilter || t.toLowerCase().startsWith(selectedFilter)));
-    return matchQuery && matchFilter;
+    const stage = l.relationship_stage || 'Prospect'; // NULL treated as Prospect
+    const matchStage = selectedStageFilter === 'all' || stage === selectedStageFilter;
+    return matchQuery && matchFilter && matchStage;
   });
   updateLenderCountBadge();
   renderLenderList(filteredLenders);
@@ -785,6 +831,76 @@ function showLenderDetail(lender) {
         <div class="detail-card-label">Loan Types</div>
         <div id="loanTypeChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;"></div>
       </div>
+    </div>
+
+    <!-- Relationship & Activity -->
+    <div style="background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:700;color:#fff;">Relationship & Activity</div>
+        <button onclick="toggleLogCallForm()" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">+ Log Call</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Stage</label>
+          <select id="rel_stage" onchange="setLenderStage('${lender.id}', this.value)" class="detail-input" style="margin-top:4px;">
+            ${['Prospect','Contacted','Active','Preferred'].map(s => `<option value="${s}"${(lender.relationship_stage||'Prospect')===s?' selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Last Contacted</label>
+          <div id="rel_last_contacted" style="font-size:13px;color:#eee;padding:9px 0;">${formatShortDate(lender.last_contacted_at) || '—'}</div>
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Next Follow-Up</label>
+          <div id="rel_next_followup" style="font-size:13px;color:#eee;padding:9px 0;">${formatShortDate(lender.next_follow_up_date) || '—'}</div>
+        </div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Relationship Notes</label>
+        <textarea id="rel_notes" class="detail-textarea" rows="3" placeholder="Pricing tier, contact preferences, history...">${_relEscHtml(lender.relationship_notes||'')}</textarea>
+        <button onclick="saveRelNotes('${lender.id}')" style="margin-top:6px;background:#1a1a1a;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;font-family:inherit;">Save Notes</button>
+      </div>
+
+      <div id="logCallForm" style="display:none;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Log a Call</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+          <div>
+            <label style="font-size:10px;color:var(--muted);">Date</label>
+            <input type="date" id="lc_date" class="detail-input" value="${new Date().toISOString().slice(0,10)}">
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--muted);">Type</label>
+            <select id="lc_type" class="detail-input">
+              <option>Call</option><option>Email</option><option>Meeting</option><option>Text</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--muted);">Spoke With</label>
+            <input type="text" id="lc_spoke_with" class="detail-input" placeholder="Rep name">
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--muted);">Outcome</label>
+            <select id="lc_outcome" class="detail-input">
+              <option>Spoke</option><option>Left voicemail</option><option>No answer</option><option>Follow-up needed</option>
+            </select>
+          </div>
+          <div style="grid-column:span 2;">
+            <label style="font-size:10px;color:var(--muted);">Next Follow-Up</label>
+            <input type="date" id="lc_next_followup" class="detail-input">
+          </div>
+          <div style="grid-column:span 3;">
+            <label style="font-size:10px;color:var(--muted);">Notes</label>
+            <textarea id="lc_notes" class="detail-textarea" rows="2" placeholder="What was discussed..."></textarea>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button onclick="toggleLogCallForm()" style="background:none;border:1px solid #333;color:#888;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>
+          <button onclick="saveLogCall('${lender.id}')" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Save</button>
+        </div>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Call History</div>
+      <div id="callLogList"><div style="font-size:12px;color:var(--muted);padding:10px 0;">Loading…</div></div>
     </div>
 
     <!-- Editable fields -->
@@ -954,6 +1070,9 @@ function showLenderDetail(lender) {
   // Load existing docs for this lender (single source of truth: lender_guidelines)
   loadLenderDocs(lender.id);
 
+  // Load call/contact history for this lender (DB trigger keeps lenders.last_contacted_at + next_follow_up_date in sync on insert/update/delete).
+  loadCallLog(lender.id);
+
   // Initialize loan type chips from lender.loan_types
   const rawTypes = lender.loan_types;
   let activeTypes = [];
@@ -977,6 +1096,86 @@ function showLenderDetail(lender) {
     document.getElementById('lenderFormLinkText').textContent = 'Generating link…';
     generateTokenForCurrent(lender.id);
   }
+}
+
+async function setLenderStage(lenderId, stage) {
+  const { error } = await _authClient().from('lenders').update({ relationship_stage: stage, updated_at: new Date().toISOString() }).eq('id', lenderId);
+  if (error) { console.error('[stage] save failed', error); if (typeof showToast === 'function') showToast('Stage update failed: ' + error.message); return; }
+  await refreshLenderRow(lenderId);
+}
+
+async function saveRelNotes(lenderId) {
+  const el = document.getElementById('rel_notes');
+  if (!el) return;
+  const { error } = await _authClient().from('lenders').update({ relationship_notes: el.value, updated_at: new Date().toISOString() }).eq('id', lenderId);
+  if (error) { console.error('[notes] save failed', error); if (typeof showToast === 'function') showToast('Notes save failed: ' + error.message); return; }
+  await refreshLenderRow(lenderId);
+  if (typeof showToast === 'function') showToast('✅ Notes saved');
+}
+
+function toggleLogCallForm() {
+  const f = document.getElementById('logCallForm');
+  if (!f) return;
+  f.style.display = (f.style.display === 'none' || !f.style.display) ? 'block' : 'none';
+}
+
+async function saveLogCall(lenderId) {
+  const dateVal = document.getElementById('lc_date').value;
+  // contact_date is timestamptz — append midnight UTC so date-only input becomes a valid timestamp.
+  const payload = {
+    lender_id: lenderId,
+    contact_date: dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : new Date().toISOString(),
+    contact_type: document.getElementById('lc_type').value,
+    spoke_with: document.getElementById('lc_spoke_with').value || null,
+    outcome: document.getElementById('lc_outcome').value,
+    notes: document.getElementById('lc_notes').value || null,
+    next_follow_up_date: document.getElementById('lc_next_followup').value || null,
+  };
+  const { error } = await _authClient().from('lender_contacts').insert(payload);
+  if (error) { console.error('[call-log] save failed', error); alert('Save failed: ' + error.message); return; }
+  // Clear the form's transient fields for the next entry.
+  document.getElementById('lc_spoke_with').value = '';
+  document.getElementById('lc_notes').value = '';
+  document.getElementById('lc_next_followup').value = '';
+  toggleLogCallForm();
+  await loadCallLog(lenderId);
+  // The DB trigger has just updated lenders.last_contacted_at + next_follow_up_date — refetch to display.
+  await refreshLenderRow(lenderId);
+  if (typeof showToast === 'function') showToast('✅ Call logged');
+}
+
+async function loadCallLog(lenderId) {
+  const target = document.getElementById('callLogList');
+  if (!target) return;
+  const { data, error } = await _authClient().from('lender_contacts').select('*').eq('lender_id', lenderId).order('contact_date', { ascending: false });
+  if (error) { target.innerHTML = '<div style="color:#ff6666;font-size:12px;padding:8px 0;">Failed to load call log: ' + _relEscHtml(error.message) + '</div>'; return; }
+  if (!data || !data.length) { target.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0;">No contact history yet.</div>'; return; }
+  target.innerHTML = data.map(c => `
+    <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+      <div style="display:flex;gap:10px;font-size:12px;color:#eee;align-items:center;flex-wrap:wrap;">
+        <span style="color:#C9A84C;font-weight:600;">${formatShortDate(c.contact_date) || ''}</span>
+        <span style="color:rgba(255,255,255,0.5);">${_relEscHtml(c.contact_type || '')}</span>
+        ${c.spoke_with ? '<span>with <b>' + _relEscHtml(c.spoke_with) + '</b></span>' : ''}
+        ${c.outcome ? '<span style="margin-left:auto;font-size:10px;padding:2px 7px;border-radius:8px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.6);">' + _relEscHtml(c.outcome) + '</span>' : ''}
+      </div>
+      ${c.notes ? '<div style="margin-top:4px;font-size:12px;color:rgba(255,255,255,0.6);line-height:1.4;">' + _relEscHtml(c.notes) + '</div>' : ''}
+      ${c.next_follow_up_date ? '<div style="margin-top:4px;font-size:11px;color:rgba(255,255,255,0.4);">Next follow-up: ' + formatShortDate(c.next_follow_up_date) + '</div>' : ''}
+    </div>
+  `).join('');
+}
+
+async function refreshLenderRow(lenderId) {
+  const { data, error } = await _authClient().from('lenders').select('*').eq('id', lenderId).single();
+  if (error || !data) return;
+  const idx = allLenders.findIndex(x => x.id === lenderId);
+  if (idx >= 0) allLenders[idx] = data;
+  if (selectedLender && selectedLender.id === lenderId) selectedLender = data;
+  filterLenders(document.getElementById('lenderSearch').value);
+  // Update detail-panel live fields driven by the trigger (last_contacted_at / next_follow_up_date).
+  const lc = document.getElementById('rel_last_contacted');
+  if (lc) lc.textContent = formatShortDate(data.last_contacted_at) || '—';
+  const nfu = document.getElementById('rel_next_followup');
+  if (nfu) nfu.textContent = formatShortDate(data.next_follow_up_date) || '—';
 }
 
 async function generateTokenForCurrent(lenderId) {
