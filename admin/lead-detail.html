@@ -15952,12 +15952,273 @@ function ldSaveStates(raw) {
   ldSaveField('states_licensed', arr);
 }
 
+/* ── Lender relationship helpers (ported from admin/lenders.html for the lh* modal view) ── */
+const LOAN_TYPE_COLORS = {
+  'Conventional': '#4A90E2', 'FHA': '#E67E22', 'VA': '#27AE60',
+  'USDA': '#8E44AD', 'Jumbo': '#C0392B', 'Non-QM': '#16A085',
+  'DSCR': '#2980B9', 'Bank Statement': '#D35400', 'Commercial': '#7F8C8D',
+  'Hard Money': '#BDC3C7', 'Bridge': '#95A5A6', 'Heloc': '#1ABC9C',
+  'Heloan': '#3498DB', 'Reverse': '#9B59B6', 'ITIN': '#E74C3C',
+  'CalHFA': '#F39C12', 'DPA': '#27AE60', 'Commercial - Residential': '#7F8C8D',
+};
+const TYPE_COLORS = {
+  conventional: { bg: 'rgba(0,102,204,0.15)', color: '#4da6ff', border: 'rgba(0,102,204,0.3)' },
+  government:   { bg: 'rgba(0,153,76,0.15)',  color: '#4dff99', border: 'rgba(0,153,76,0.3)' },
+  non_qm:       { bg: 'rgba(201,168,76,0.15)', color: '#c9a84c', border: 'rgba(201,168,76,0.3)' },
+  commercial:   { bg: 'rgba(204,0,0,0.15)',   color: '#ff6666', border: 'rgba(204,0,0,0.3)' },
+};
+
+function getAvatarColor(name) {
+  const colors = ['#c9a84c','#4da6ff','#4dff99','#cc99ff','#ff6666','#ffcc66','#ff9966'];
+  let hash = 0;
+  for (let i = 0; i < (name||'').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function getInitials(name) {
+  return (name||'').split(/\s+/).slice(0,2).map(w => w[0]).join('').toUpperCase();
+}
+
+function loanTypeChipsHtml(loanTypes) {
+  if (!loanTypes || !Array.isArray(loanTypes) || loanTypes.length === 0) return '';
+  return loanTypes.map(function(type) {
+    var color = LOAN_TYPE_COLORS[type] || '#555';
+    return '<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;margin:1px 2px;background:'+color+'22;border:1px solid '+color+'55;color:'+color+';white-space:nowrap;">'+type+'</span>';
+  }).join('');
+}
+
+function stageColor(stage) {
+  switch (stage) {
+    case 'Preferred': return { bg: 'rgba(201,168,76,0.15)', fg: '#C9A84C', border: 'rgba(201,168,76,0.35)' };
+    case 'Active':    return { bg: 'rgba(77,255,153,0.12)', fg: '#4dff99', border: 'rgba(77,255,153,0.3)' };
+    case 'Contacted': return { bg: 'rgba(77,166,255,0.12)', fg: '#4da6ff', border: 'rgba(77,166,255,0.3)' };
+    default:          return { bg: 'rgba(255,255,255,0.06)', fg: 'rgba(255,255,255,0.5)', border: 'rgba(255,255,255,0.12)' };
+  }
+}
+
+function formatShortDate(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+function _relEscHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+}
+
+async function setLenderStage(lenderId, stage) {
+  const { error } = await _authClient().from('lenders').update({ relationship_stage: stage, updated_at: new Date().toISOString() }).eq('id', lenderId);
+  if (error) { console.error('[stage] save failed', error); if (typeof showToast === 'function') showToast('Stage update failed: ' + error.message); return; }
+  await refreshLenderRow(lenderId);
+}
+
+async function saveRelNotes(lenderId) {
+  const el = document.getElementById('rel_notes');
+  if (!el) return;
+  const { error } = await _authClient().from('lenders').update({ relationship_notes: el.value, updated_at: new Date().toISOString() }).eq('id', lenderId);
+  if (error) { console.error('[notes] save failed', error); if (typeof showToast === 'function') showToast('Notes save failed: ' + error.message); return; }
+  await refreshLenderRow(lenderId);
+  if (typeof showToast === 'function') showToast('✅ Notes saved');
+}
+
+function toggleLogCallForm() {
+  const f = document.getElementById('logCallForm');
+  if (!f) return;
+  f.style.display = (f.style.display === 'none' || !f.style.display) ? 'block' : 'none';
+}
+
+async function saveLogCall(lenderId) {
+  const dateVal = document.getElementById('lc_date').value;
+  // contact_date is timestamptz — append midnight UTC so date-only input becomes a valid timestamp.
+  const payload = {
+    lender_id: lenderId,
+    contact_date: dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : new Date().toISOString(),
+    contact_type: document.getElementById('lc_type').value,
+    spoke_with: document.getElementById('lc_spoke_with').value || null,
+    outcome: document.getElementById('lc_outcome').value,
+    notes: document.getElementById('lc_notes').value || null,
+    next_follow_up_date: document.getElementById('lc_next_followup').value || null,
+  };
+  const { error } = await _authClient().from('lender_contacts').insert(payload);
+  if (error) { console.error('[call-log] save failed', error); alert('Save failed: ' + error.message); return; }
+  document.getElementById('lc_spoke_with').value = '';
+  document.getElementById('lc_notes').value = '';
+  document.getElementById('lc_next_followup').value = '';
+  toggleLogCallForm();
+  await loadCallLog(lenderId);
+  // The DB trigger has updated lenders.last_contacted_at + next_follow_up_date — refetch to display.
+  await refreshLenderRow(lenderId);
+  if (typeof showToast === 'function') showToast('✅ Call logged');
+}
+
+async function loadCallLog(lenderId) {
+  const target = document.getElementById('callLogList');
+  if (!target) return;
+  const { data, error } = await _authClient().from('lender_contacts').select('*').eq('lender_id', lenderId).order('contact_date', { ascending: false });
+  if (error) { target.innerHTML = '<div style="color:#ff6666;font-size:12px;padding:8px 0;">Failed to load call log: ' + _relEscHtml(error.message) + '</div>'; return; }
+  if (!data || !data.length) { target.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0;">No contact history yet.</div>'; return; }
+  target.innerHTML = data.map(c => `
+    <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+      <div style="display:flex;gap:10px;font-size:12px;color:#eee;align-items:center;flex-wrap:wrap;">
+        <span style="color:#C9A84C;font-weight:600;">${formatShortDate(c.contact_date) || ''}</span>
+        <span style="color:rgba(255,255,255,0.5);">${_relEscHtml(c.contact_type || '')}</span>
+        ${c.spoke_with ? '<span>with <b>' + _relEscHtml(c.spoke_with) + '</b></span>' : ''}
+        ${c.outcome ? '<span style="margin-left:auto;font-size:10px;padding:2px 7px;border-radius:8px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.6);">' + _relEscHtml(c.outcome) + '</span>' : ''}
+      </div>
+      ${c.notes ? '<div style="margin-top:4px;font-size:12px;color:rgba(255,255,255,0.6);line-height:1.4;">' + _relEscHtml(c.notes) + '</div>' : ''}
+      ${c.next_follow_up_date ? '<div style="margin-top:4px;font-size:11px;color:rgba(255,255,255,0.4);">Next follow-up: ' + formatShortDate(c.next_follow_up_date) + '</div>' : ''}
+    </div>
+  `).join('');
+}
+
+// Lead-detail adapter: targets window._allLenders + _currentLenderData (NOT lenders.html's allLenders/selectedLender state).
+async function refreshLenderRow(lenderId) {
+  const { data, error } = await _authClient().from('lenders').select('*').eq('id', lenderId).single();
+  if (error || !data) return;
+  // Mutate in place so window._filteredLenders sees the change via the shared object reference.
+  const list = window._allLenders || [];
+  const target = list.find(x => x.id === lenderId);
+  if (target) Object.assign(target, data);
+  // Merge into _currentLenderData (don't replace — the edge-function fetch may have added fields not on the DB row).
+  if (_currentLenderData && _currentLenderData.id === lenderId) {
+    Object.assign(_currentLenderData, data);
+  }
+  // Update the modal's trigger-driven live fields.
+  const lc = document.getElementById('rel_last_contacted');
+  if (lc) lc.textContent = formatShortDate(data.last_contacted_at) || '—';
+  const nfu = document.getElementById('rel_next_followup');
+  if (nfu) nfu.textContent = formatShortDate(data.next_follow_up_date) || '—';
+  // Re-render whichever list view is visible.
+  if (typeof renderLenderGridNew === 'function') renderLenderGridNew();
+  if (typeof renderLenderTableNew === 'function') renderLenderTableNew();
+}
+
+// Render the clean lender detail view into the modal body. Adapted from admin/lenders.html showLenderDetail.
+// Omits: editable Lender Details form + Save & Sync to ClickUp button (kept read-only per spec).
+function lhRenderLenderDetail(lender) {
+  if (!lender) return;
+  const body = document.getElementById('lhLenderBody');
+  if (!body) return;
+  const color = getAvatarColor(lender.name);
+  const initials = getInitials(lender.name);
+  const typeC = TYPE_COLORS[lender.lender_type] || { bg: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)' };
+  const stage = lender.relationship_stage || 'Prospect';
+
+  body.innerHTML = `
+    <!-- Action bar -->
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:14px;">
+      <button onclick="ldSendScenario()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 14px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit">✉ Send Scenario</button>
+      <button onclick="ldCopyFormLink()" style="background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit">🔗 Copy Form Link</button>
+      ${lender.clickup_url ? `<a href="${_relEscHtml(lender.clickup_url)}" target="_blank" class="clickup-link">View in ClickUp</a>` : ''}
+    </div>
+
+    <div class="detail-header">
+      <div class="detail-avatar" style="background:${color}22;border:1px solid ${color}44;color:${color};">${initials}</div>
+      <div>
+        <div class="detail-name">${_relEscHtml(lender.name||'')}</div>
+        <div class="detail-meta">${_relEscHtml(lender.list_name || lender.channel || '')}${lender.last_synced_at ? ' · Last synced: ' + new Date(lender.last_synced_at).toLocaleDateString() : ''}</div>
+      </div>
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-card">
+        <div class="detail-card-label">Lender Type</div>
+        <div class="detail-card-value" style="display:flex;flex-wrap:wrap;gap:4px;">
+          <span style="padding:4px 10px;border-radius:8px;font-size:13px;background:${typeC.bg};color:${typeC.color};">${_relEscHtml(lender.lender_type || 'conventional')}</span>
+        </div>
+      </div>
+      <div class="detail-card">
+        <div class="detail-card-label">Priority</div>
+        <div class="detail-card-value" style="color:${lender.priority==='high'?'#ff9966':'var(--text)'};">
+          ${_relEscHtml(lender.priority || 'normal')}
+        </div>
+      </div>
+      <div class="detail-card" style="grid-column:span 2;">
+        <div class="detail-card-label">Loan Types</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
+          ${loanTypeChipsHtml(lender.loan_types) || '<span style="font-size:12px;color:var(--muted);">None listed</span>'}
+        </div>
+      </div>
+    </div>
+
+    <!-- Relationship & Activity -->
+    <div style="background:#1e1e1e;border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:700;color:#fff;">Relationship & Activity</div>
+        <button onclick="toggleLogCallForm()" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">+ Log Call</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Stage</label>
+          <select id="rel_stage" onchange="setLenderStage('${lender.id}', this.value)" class="detail-input" style="margin-top:4px;">
+            ${['Prospect','Contacted','Active','Preferred'].map(s => `<option value="${s}"${stage===s?' selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Last Contacted</label>
+          <div id="rel_last_contacted" style="font-size:13px;color:#eee;padding:9px 0;">${formatShortDate(lender.last_contacted_at) || '—'}</div>
+        </div>
+        <div>
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Next Follow-Up</label>
+          <div id="rel_next_followup" style="font-size:13px;color:#eee;padding:9px 0;">${formatShortDate(lender.next_follow_up_date) || '—'}</div>
+        </div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Relationship Notes</label>
+        <textarea id="rel_notes" class="detail-textarea" rows="3" placeholder="Pricing tier, contact preferences, history...">${_relEscHtml(lender.relationship_notes||'')}</textarea>
+        <button onclick="saveRelNotes('${lender.id}')" style="margin-top:6px;background:#1a1a1a;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;font-family:inherit;">Save Notes</button>
+      </div>
+
+      <div id="logCallForm" style="display:none;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Log a Call</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+          <div>
+            <label style="font-size:10px;color:var(--muted);">Date</label>
+            <input type="date" id="lc_date" class="detail-input" value="${new Date().toISOString().slice(0,10)}">
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--muted);">Type</label>
+            <select id="lc_type" class="detail-input">
+              <option>Call</option><option>Email</option><option>Meeting</option><option>Text</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--muted);">Spoke With</label>
+            <input type="text" id="lc_spoke_with" class="detail-input" placeholder="Rep name">
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--muted);">Outcome</label>
+            <select id="lc_outcome" class="detail-input">
+              <option>Spoke</option><option>Left voicemail</option><option>No answer</option><option>Follow-up needed</option>
+            </select>
+          </div>
+          <div style="grid-column:span 2;">
+            <label style="font-size:10px;color:var(--muted);">Next Follow-Up</label>
+            <input type="date" id="lc_next_followup" class="detail-input">
+          </div>
+          <div style="grid-column:span 3;">
+            <label style="font-size:10px;color:var(--muted);">Notes</label>
+            <textarea id="lc_notes" class="detail-textarea" rows="2" placeholder="What was discussed..."></textarea>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button onclick="toggleLogCallForm()" style="background:none;border:1px solid #333;color:#888;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>
+          <button onclick="saveLogCall('${lender.id}')" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Save</button>
+        </div>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Call History</div>
+      <div id="callLogList"><div style="font-size:12px;color:var(--muted);padding:10px 0;">Loading…</div></div>
+    </div>
+  `;
+}
+
 async function openLenderDetail(lenderId) {
   _currentLenderId = lenderId;
   var modal = document.getElementById('lenderDetailModal');
   if (modal) modal.style.display = 'block';
   document.body.style.overflow = 'hidden';
-  ldShowTab('overview', document.querySelector('#lenderDetailModal .ld-tab'));
 
   // Fallback: use cached card data if edge function fails
   var cached = (window._allLenders||[]).find(function(x){return x.id===lenderId;}) || {};
@@ -15972,148 +16233,9 @@ async function openLenderDetail(lenderId) {
   } catch(e) { console.warn('[lender-detail] fetch:', e); }
   _currentLenderData = l;
 
-  var val = function(v, f){ return v != null && v !== '' ? v : (f || '—'); };
-  var link = function(url, text){ return url ? '<a href="'+_lhEsc(url)+'" target="_blank" rel="noopener">'+_lhEsc(text||url)+'</a>' : 'Not set'; };
-  var boolIco = function(v){ return v ? '<span style="color:#22c55e">✓ Yes</span>' : '<span style="color:#666">— No</span>'; };
-  var usd = function(n){ return n ? '$'+Number(n).toLocaleString() : '—'; };
-  var pills = function(arr){ return (arr||[]).length ? arr.map(function(t){return '<span class="ld-type-pill">'+_lhEsc(t)+'</span>';}).join('') : '<span style="color:#666">None listed</span>'; };
-
-  // Header
-  document.getElementById('ldName').textContent = l.name || '—';
-  var initialsEl = document.getElementById('ldLogoInitials');
-  var logoImg = document.getElementById('ldLogoImg');
-  if (l.logo_url && logoImg) {
-    logoImg.src = l.logo_url + (l.logo_url.indexOf('?')<0?'?t='+Date.now():'');
-    logoImg.style.display = 'block';
-    if (initialsEl) initialsEl.style.display = 'none';
-  } else {
-    if (logoImg) logoImg.style.display = 'none';
-    if (initialsEl) { initialsEl.style.display = 'flex'; initialsEl.textContent = (l.name||'L').replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase(); }
-  }
-  document.getElementById('ldMeta').textContent = [l.lender_type, l.channel, l.nmlsr_id ? 'NMLS #'+l.nmlsr_id : null].filter(Boolean).join(' · ');
-  document.getElementById('ldPreferredBadge').style.display = l.is_preferred ? 'inline-block' : 'none';
-
-  // Stats
-  document.getElementById('ldStatCredit').textContent = l.min_credit || '—';
-  document.getElementById('ldStatLTV').textContent = l.max_ltv ? l.max_ltv+'%' : '—';
-  document.getElementById('ldStatFund').textContent = l.avg_app_to_fund ? l.avg_app_to_fund+' days' : '—';
-  document.getElementById('ldStatSubs').textContent = l.submission_count || submissions.length || 0;
-  document.getElementById('ldStatRating').textContent = l.rating ? Number(l.rating).toFixed(1)+'★' : '—';
-
-  // Overview — editable
-  ldBuildMultiGrid('ldOvLoanTypesGrid', LD_LOAN_TYPES, l.loan_types || [], 'loan_types');
-  ldBuildMultiGrid('ldOvLoanProgramsGrid', LD_LOAN_PROGRAMS, [].concat(l.loan_programs||[], l.programs||[]), 'loan_programs');
-  var setInp0 = function(id, v){ var e=document.getElementById(id); if(e) e.value = v==null?'':v; };
-  var setChk0 = function(id, v){ var e=document.getElementById(id); if(e) e.checked = !!v; };
-  setInp0('ldOvChannel', l.channel);
-  setInp0('ldOvMinCredit', l.min_credit);
-  setInp0('ldOvMaxLTV', l.max_ltv);
-  setInp0('ldOvMinLoan', l.min_loan_amount);
-  setInp0('ldOvMaxLoan', l.max_loan_amount);
-  setInp0('ldOvAvgFund', l.avg_app_to_fund);
-  setInp0('ldOvStates', Array.isArray(l.states_licensed) ? l.states_licensed.join(', ') : (l.states_licensed||''));
-  setChk0('ldOvNonWarr', l.non_warrantable_condo);
-  setChk0('ldOvManufactured', l.manufactured_home);
-  setChk0('ldOvRural', l.rural_properties);
-  setChk0('ldOv500', l.down_to_500_credit);
-  setChk0('ldOvBK', l.recent_bk_ok);
-  setChk0('ldOvFC', l.recent_foreclosure_ok);
-  setChk0('ldOvITIN', l.itin_ok);
-  setChk0('ldOvDBA', l.dba_ok);
-  setChk0('ldOvEscrow', l.escrow_waiver_allowed);
-  setChk0('ldOvDeskReview', l.appraisal_desk_review);
-  var spec = document.getElementById('ldSpecialtyNotesInput'); if (spec) spec.value = l.specialty_notes || '';
-
-  // Rating stars
-  var rating = parseFloat(l.rating)||0;
-  document.getElementById('ldRatingStars').innerHTML = [1,2,3,4,5].map(function(n){
-    return '<span class="ld-rating-star" onclick="ldRateLender('+n+')" style="color:'+(n<=rating?'#C9A84C':'#333')+'">★</span>';
-  }).join('') + (rating ? '<span style="margin-left:8px;font-size:.76rem;color:#C9A84C;font-weight:700">'+rating.toFixed(1)+'</span>' : '');
-
-  document.getElementById('ldScenarioNotes').value = l.scenario_notes || '';
-
-  // Contacts — all editable inputs
-  var setInp = function(id, v){ var e=document.getElementById(id); if(e) e.value = v||''; };
-  var setChk = function(id, v){ var e=document.getElementById(id); if(e) e.checked = !!v; };
-  setInp('ldAEName', l.contact_name || l.rep_name);
-  setInp('ldAEEmail', l.contact_email || l.rep_email);
-  setInp('ldAEPhone', l.contact_phone || l.rep_phone);
-  setInp('ldNMLSR', l.nmlsr_id);
-  setInp('ldPSName', l.product_specialist_name);
-  setInp('ldPSEmail', l.product_specialist_email);
-  setInp('ldPSPhone', l.product_specialist_phone);
-  setInp('ldLockDeskEmail', l.lock_desk_email);
-  setInp('ldLockDeskPhone', l.lock_desk_phone);
-  setInp('ldSubmissionEmail', l.submission_email);
-  setInp('ldConditionsEmail', l.conditions_email);
-  setInp('ldUWEmail', l.underwriting_email);
-  setInp('ldClosingEmail', l.closing_email);
-  setInp('ldFundingEmail', l.funding_email);
-  setInp('ldWebsite', l.website);
-  setInp('ldPortal', l.lender_portal);
-  setInp('ldGuidelinesUrl', l.guidelines_url);
-
-  // Guidelines — editable
-  setInp('ldMinCredit2', l.min_credit);
-  setInp('ldMaxLTV2', l.max_ltv);
-  setInp('ldUWTurn', l.underwriting_turn_time);
-  setInp('ldFundTime', l.avg_app_to_fund);
-  setInp('ldMinDaysClose', l.min_days_to_close);
-  setInp('ldMaxDaysClose', l.max_days_to_close);
-  setInp('ldAMC', l.appraisal_management);
-  setInp('ldKeyOverlays', l.key_overlays);
-  setInp('ldExceptionProcess', l.exception_process);
-  setInp('ldSubmissionChecklist', l.submission_checklist);
-  setChk('ldDeskReviewCheck', l.appraisal_desk_review);
-  setChk('ldEscrowCheck', l.escrow_waiver_allowed);
-  setChk('ldNonWarrCheck', l.non_warrantable_condo);
-  setChk('ldManufacturedCheck', l.manufactured_home);
-  setChk('ldRuralCheck', l.rural_properties);
-  setChk('ld500CreditCheck', l.down_to_500_credit);
-  setChk('ldBKCheck', l.recent_bk_ok);
-  setChk('ldForeclosureCheck', l.recent_foreclosure_ok);
-  setChk('ldITINCheck', l.itin_ok);
-  setChk('ldDBACheck', l.dba_ok);
-
-  // Compensation — editable
-  setInp('ldCompType', l.compensation_type);
-  setInp('ldCompBPS', l.compensation_bps);
-  setInp('ldCompMin', l.compensation_min);
-  setInp('ldCompMax', l.compensation_max);
-  setInp('ldRevenueNotesInput', l.revenue_notes);
-  setInp('ldFeeNotesInput', l.fee_notes);
-  setInp('ldEPOInput', l.epo_policy);
-  setInp('ldBrokerIdInput', l.broker_id);
-
-  // Clauses — editable
-  setInp('ldCPLInput', l.cpl_clause);
-  setInp('ldMortgageeInput', l.mortgagee_clause);
-  setInp('ldPhysStreet', l.physical_address);
-  setInp('ldPhysCity', l.physical_city);
-  setInp('ldPhysState', l.physical_state);
-  setInp('ldPhysZip', l.physical_zip);
-
-  // History
-  var subsEl = document.getElementById('ldSubmissions');
-  if (submissions.length) {
-    subsEl.innerHTML = submissions.map(function(s){
-      return '<div style="background:#0a0a0a;border:1px solid #1e1e1e;border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;gap:10px;align-items:flex-start">'+
-        '<div style="flex:1;min-width:0"><div style="font-size:.78rem;font-weight:700;color:#eee">'+_lhEsc(s.borrower_name||'Unknown borrower')+'</div>'+
-        '<div style="font-size:.66rem;color:#888;margin-top:2px">'+new Date(s.submitted_at || s.created_at).toLocaleDateString()+
-        (s.loan_amount?' · $'+Number(s.loan_amount).toLocaleString():'')+(s.loan_type?' · '+_lhEsc(s.loan_type):'')+'</div>'+
-        (s.scenario_notes?'<div style="font-size:.68rem;color:#aaa;margin-top:4px;font-style:italic">'+_lhEsc(s.scenario_notes)+'</div>':'')+
-        '</div><span style="background:rgba(201,168,76,0.1);color:#C9A84C;border-radius:4px;padding:2px 8px;font-size:.58rem;font-weight:700;letter-spacing:.04em">'+String(s.status||'SENT').toUpperCase()+'</span></div>';
-    }).join('');
-  } else {
-    subsEl.innerHTML = '<div style="padding:24px;text-align:center;color:#555;font-size:.78rem">No submissions yet</div>';
-  }
-
-  // Notes
-  document.getElementById('ldLastSubNotes').value = l.last_submission_notes || '';
-  document.getElementById('ldPriceSheetNotes').textContent = l.price_sheet_notes || '—';
-  document.getElementById('ldClickUpNotes').textContent = l.clickup_notes || l.notes || '—';
-  var cuLink = document.getElementById('ldClickUpLink');
-  if (cuLink) { cuLink.href = l.clickup_url || '#'; cuLink.style.display = l.clickup_url ? 'inline-block' : 'none'; }
+  // Render the clean lender view + load call history.
+  lhRenderLenderDetail(l);
+  loadCallLog(l.id);
 }
 
 /* ═══ LENDER GUIDELINES LIBRARY ═══ */
@@ -18798,277 +18920,7 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
       <button id="ldClickUpSyncBtn" onclick="ldSyncClickUp()" style="background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:8px;padding:8px 14px;font-size:.72rem;cursor:pointer;font-family:inherit;font-weight:600">⚡ Sync ClickUp</button>
       <button onclick="closeLenderDetail()" style="background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:8px;padding:8px 14px;font-size:.74rem;cursor:pointer;font-family:inherit;font-weight:600">Close ✕</button>
     </div>
-    <!-- Stats strip -->
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid #1e1e1e;background:#0f0f0f">
-      <div class="ld-stat"><div class="ld-stat-label">Min Credit</div><div id="ldStatCredit" class="ld-stat-val">—</div></div>
-      <div class="ld-stat"><div class="ld-stat-label">Max LTV</div><div id="ldStatLTV" class="ld-stat-val">—</div></div>
-      <div class="ld-stat"><div class="ld-stat-label">Avg Fund</div><div id="ldStatFund" class="ld-stat-val">—</div></div>
-      <div class="ld-stat"><div class="ld-stat-label">Submissions</div><div id="ldStatSubs" class="ld-stat-val">—</div></div>
-      <div class="ld-stat"><div class="ld-stat-label">Rating</div><div id="ldStatRating" class="ld-stat-val">—</div></div>
-    </div>
-    <!-- Tab nav -->
-    <div style="display:flex;gap:0;border-bottom:1px solid #1e1e1e;background:#0a0a0a;overflow-x:auto">
-      <button class="ld-tab active" onclick="ldShowTab('overview',this)">Overview</button>
-      <button class="ld-tab" onclick="ldShowTab('contacts',this)">Contacts</button>
-      <button class="ld-tab" onclick="ldShowTab('docs',this)">📚 Docs</button>
-      <button class="ld-tab" onclick="ldShowTab('guidelines',this)">Underwriting</button>
-      <button class="ld-tab" onclick="ldShowTab('compensation',this)">Compensation</button>
-      <button class="ld-tab" onclick="ldShowTab('clauses',this)">Clauses</button>
-      <button class="ld-tab" onclick="ldShowTab('history',this)">History</button>
-      <button class="ld-tab" onclick="ldShowTab('notes',this)">Notes</button>
-      <button class="ld-tab" onclick="ldShowTab('ai',this)">🤖 AI Chat</button>
-      <div style="margin-left:auto;display:flex;gap:6px;padding:8px 14px">
-        <button onclick="ldSendScenario()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 14px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit">✉ Send Scenario</button>
-        <button onclick="ldCopyFormLink()" style="background:rgba(201,168,76,0.1);border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit">🔗 Copy Form Link</button>
-      </div>
-    </div>
-    <!-- Tab panels -->
-    <div style="padding:18px 22px;max-height:calc(100vh - 260px);overflow-y:auto">
-      <style>
-        .ld-edit-input{width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:6px 9px;color:#eee;font-size:.76rem;font-family:inherit;outline:none;box-sizing:border-box;margin-top:3px}
-        .ld-edit-input:focus{border-color:#C9A84C}
-        .ld-edit-textarea{width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:.76rem;font-family:inherit;outline:none;box-sizing:border-box;margin-top:3px;resize:vertical;line-height:1.5;min-height:56px}
-        .ld-edit-textarea:focus{border-color:#C9A84C}
-        .ld-checkbox-row{display:flex;align-items:center;gap:7px;background:#111;border:1px solid #1e1e1e;border-radius:6px;padding:7px 10px;cursor:pointer}
-        .ld-checkbox-row:hover{border-color:#C9A84C55}
-        .ld-checkbox-row input{accent-color:#C9A84C;width:15px;height:15px;cursor:pointer;margin:0}
-        .ld-checkbox-row label{font-size:.7rem;color:#ccc;font-weight:500;cursor:pointer;flex:1}
-        .ld-multi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 12px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 12px;max-height:160px;overflow-y:auto}
-        .ld-multi-grid label{display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0;font-size:.72rem;color:#ccc;font-weight:500}
-        .ld-multi-grid input[type="checkbox"]{accent-color:#C9A84C;width:14px;height:14px;margin:0;flex-shrink:0;cursor:pointer}
-      </style>
-      <!-- OVERVIEW (fully editable) -->
-      <div id="ldTab-overview" class="ld-tab-body">
-        <!-- Loan Types -->
-        <div class="ld-info-card" style="margin-bottom:12px">
-          <div class="ld-info-label" style="margin-bottom:8px">Loan Types</div>
-          <div id="ldOvLoanTypesGrid" class="ld-multi-grid"></div>
-        </div>
-        <!-- Loan Programs -->
-        <div class="ld-info-card" style="margin-bottom:12px">
-          <div class="ld-info-label" style="margin-bottom:8px">Loan Programs / Specialties</div>
-          <div id="ldOvLoanProgramsGrid" class="ld-multi-grid"></div>
-        </div>
-        <!-- Lender Info -->
-        <div class="ld-info-card" style="margin-bottom:12px">
-          <div class="ld-info-label" style="margin-bottom:8px">Lender Info</div>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-            <div><div class="ld-info-label">Channel</div>
-              <select id="ldOvChannel" class="ld-edit-input" onchange="ldSaveField('channel',this.value)">
-                <option value="">Select...</option>
-                <option>Wholesale</option><option>Correspondent</option>
-                <option>Wholesale, Correspondent</option><option>Retail</option><option>Direct</option>
-              </select>
-            </div>
-            <div><div class="ld-info-label">Min Credit Score</div><input id="ldOvMinCredit" type="number" class="ld-edit-input" onblur="ldSaveField('min_credit',parseInt(this.value)||null)"></div>
-            <div><div class="ld-info-label">Max LTV (%)</div><input id="ldOvMaxLTV" type="number" step="0.01" class="ld-edit-input" onblur="ldSaveField('max_ltv',parseFloat(this.value)||null)"></div>
-            <div><div class="ld-info-label">Min Loan Amount</div><input id="ldOvMinLoan" type="number" class="ld-edit-input" onblur="ldSaveField('min_loan_amount',parseFloat(this.value)||null)"></div>
-            <div><div class="ld-info-label">Max Loan Amount</div><input id="ldOvMaxLoan" type="number" class="ld-edit-input" onblur="ldSaveField('max_loan_amount',parseFloat(this.value)||null)"></div>
-            <div><div class="ld-info-label">Avg App to Fund (days)</div><input id="ldOvAvgFund" type="number" class="ld-edit-input" onblur="ldSaveField('avg_app_to_fund',parseInt(this.value)||null)"></div>
-          </div>
-          <div style="margin-top:10px"><div class="ld-info-label">States Licensed</div><input id="ldOvStates" class="ld-edit-input" placeholder="CA, TX, FL (comma-separated)" onblur="ldSaveStates(this.value)"></div>
-        </div>
-        <!-- Features -->
-        <div class="ld-info-card" style="margin-bottom:12px">
-          <div class="ld-info-label" style="margin-bottom:8px">Features &amp; Specialty Programs</div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvNonWarr" onchange="ldSaveField('non_warrantable_condo',this.checked)"><label for="ldOvNonWarr">Non-Warrantable Condo</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvManufactured" onchange="ldSaveField('manufactured_home',this.checked)"><label for="ldOvManufactured">Manufactured Home</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvRural" onchange="ldSaveField('rural_properties',this.checked)"><label for="ldOvRural">Rural Properties</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOv500" onchange="ldSaveField('down_to_500_credit',this.checked)"><label for="ldOv500">Down to 500 Credit</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvBK" onchange="ldSaveField('recent_bk_ok',this.checked)"><label for="ldOvBK">Recent BK OK</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvFC" onchange="ldSaveField('recent_foreclosure_ok',this.checked)"><label for="ldOvFC">Recent Foreclosure OK</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvITIN" onchange="ldSaveField('itin_ok',this.checked)"><label for="ldOvITIN">ITIN OK</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvDBA" onchange="ldSaveField('dba_ok',this.checked)"><label for="ldOvDBA">Close in LLC/DBA</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvEscrow" onchange="ldSaveField('escrow_waiver_allowed',this.checked)"><label for="ldOvEscrow">Escrow Waiver</label></div>
-            <div class="ld-checkbox-row"><input type="checkbox" id="ldOvDeskReview" onchange="ldSaveField('appraisal_desk_review',this.checked)"><label for="ldOvDeskReview">Desk Review Appraisal</label></div>
-          </div>
-        </div>
-        <!-- Specialty Notes -->
-        <div class="ld-info-card" style="margin-bottom:12px">
-          <div class="ld-info-label" style="margin-bottom:8px">Specialty Notes</div>
-          <textarea id="ldSpecialtyNotesInput" rows="3" class="ld-edit-textarea" onblur="ldSaveField('specialty_notes',this.value)" placeholder="What makes this lender unique"></textarea>
-        </div>
-        <!-- Rating -->
-        <div class="ld-info-card" style="margin-bottom:12px">
-          <div class="ld-info-label" style="margin-bottom:8px">Your Rating</div>
-          <div id="ldRatingStars" style="display:flex;gap:4px;align-items:center"></div>
-        </div>
-        <!-- Scenario Notes -->
-        <div class="ld-info-card">
-          <div class="ld-info-label" style="margin-bottom:8px">Scenario Notes (Internal)</div>
-          <textarea id="ldScenarioNotes" rows="3" onblur="ldSaveField('scenario_notes',this.value)" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;padding:9px 12px;color:#eee;font-size:.78rem;font-family:inherit;outline:none;resize:vertical;box-sizing:border-box"></textarea>
-        </div>
-      </div>
-      <!-- CONTACTS -->
-      <div id="ldTab-contacts" class="ld-tab-body" style="display:none">
-        <div class="ld-info-label" style="margin-bottom:10px">Primary AE</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
-          <div class="ld-info-card"><div class="ld-info-label">Name</div><input id="ldAEName" class="ld-edit-input" onblur="ldSaveField('contact_name',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Email</div><input id="ldAEEmail" type="email" class="ld-edit-input" onblur="ldSaveField('contact_email',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Phone</div><input id="ldAEPhone" class="ld-edit-input" onblur="ldSaveField('contact_phone',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">NMLS ID</div><input id="ldNMLSR" class="ld-edit-input" onblur="ldSaveField('nmlsr_id',this.value)"></div>
-        </div>
-        <div class="ld-info-label" style="margin-bottom:10px">Product Specialist</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-          <div class="ld-info-card"><div class="ld-info-label">Name</div><input id="ldPSName" class="ld-edit-input" onblur="ldSaveField('product_specialist_name',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Email</div><input id="ldPSEmail" type="email" class="ld-edit-input" onblur="ldSaveField('product_specialist_email',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Phone</div><input id="ldPSPhone" class="ld-edit-input" onblur="ldSaveField('product_specialist_phone',this.value)"></div>
-        </div>
-        <div class="ld-info-label" style="margin-bottom:10px">Departments</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
-          <div class="ld-info-card"><div class="ld-info-label">Lock Desk Email</div><input id="ldLockDeskEmail" type="email" class="ld-edit-input" onblur="ldSaveField('lock_desk_email',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Lock Desk Phone</div><input id="ldLockDeskPhone" class="ld-edit-input" onblur="ldSaveField('lock_desk_phone',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Submissions</div><input id="ldSubmissionEmail" type="email" class="ld-edit-input" onblur="ldSaveField('submission_email',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Conditions</div><input id="ldConditionsEmail" type="email" class="ld-edit-input" onblur="ldSaveField('conditions_email',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Underwriting</div><input id="ldUWEmail" type="email" class="ld-edit-input" onblur="ldSaveField('underwriting_email',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Closing</div><input id="ldClosingEmail" type="email" class="ld-edit-input" onblur="ldSaveField('closing_email',this.value)"></div>
-          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Funding</div><input id="ldFundingEmail" type="email" class="ld-edit-input" onblur="ldSaveField('funding_email',this.value)"></div>
-        </div>
-        <div class="ld-info-label" style="margin-bottom:10px">Links</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div class="ld-info-card"><div class="ld-info-label">Website</div><input id="ldWebsite" type="url" class="ld-edit-input" onblur="ldSaveField('website',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Lender Portal</div><input id="ldPortal" type="url" class="ld-edit-input" onblur="ldSaveField('lender_portal',this.value)"></div>
-          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">Guidelines Doc URL</div><input id="ldGuidelinesUrl" type="url" class="ld-edit-input" onblur="ldSaveField('guidelines_url',this.value)"></div>
-        </div>
-      </div>
-      <!-- DOCS (Guidelines Library) -->
-      <div id="ldTab-docs" class="ld-tab-body" style="display:none">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button onclick="ldShowAddGuideline('file')" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:7px 12px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit">⬆️ Upload</button>
-            <button onclick="ldShowAddGuideline('link')" style="background:rgba(255,255,255,0.05);border:1px solid #333;color:#ccc;border-radius:6px;padding:7px 12px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit">🔗 Link</button>
-            <button onclick="ldShowAddGuideline('note')" style="background:rgba(255,255,255,0.05);border:1px solid #333;color:#ccc;border-radius:6px;padding:7px 12px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit">📝 Note</button>
-          </div>
-          <select id="ldGuideFilter" onchange="ldFilterGuidelines()" class="ld-edit-input" style="width:auto;padding:6px 10px;margin:0">
-            <option value="">All Categories</option>
-            <option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option>
-            <option>DSCR</option><option>Non-QM</option><option>Bank Statement</option><option>ITIN</option>
-            <option>DPA</option><option>Jumbo</option><option>Commercial</option><option>SBA</option>
-            <option>Hard Money</option><option>203K</option><option>Reverse</option><option>General</option>
-          </select>
-        </div>
-        <!-- Add form (hidden by default) -->
-        <div id="ldAddGuidelineForm" style="display:none;background:#0f0f0f;border:1px solid #C9A84C55;border-radius:8px;padding:14px;margin-bottom:12px">
-          <div id="ldAddGuidelineTitle" style="font-size:.74rem;color:#C9A84C;font-weight:700;margin-bottom:10px">Add Guideline</div>
-          <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
-            <input id="ldGlTitle" type="text" class="ld-edit-input" placeholder="Title" style="margin:0">
-            <select id="ldGlCategory" class="ld-edit-input" style="margin:0"><option>General</option><option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option><option>DSCR</option><option>Non-QM</option><option>Bank Statement</option><option>ITIN</option><option>DPA</option><option>Jumbo</option><option>Commercial</option><option>SBA</option><option>Hard Money</option><option>203K</option><option>Reverse</option></select>
-            <input id="ldGlVersion" type="text" class="ld-edit-input" placeholder="Version (v2.1)" style="margin:0">
-            <input id="ldGlDate" type="date" class="ld-edit-input" style="margin:0">
-          </div>
-          <div id="ldGlFileArea" style="display:block;margin-bottom:8px"><input id="ldGlFile" type="file" accept=".pdf,.docx,.xlsx,.doc,.xls,.txt" class="ld-edit-input" style="margin:0"></div>
-          <div id="ldGlUrlArea" style="display:none;margin-bottom:8px"><input id="ldGlUrl" type="url" class="ld-edit-input" placeholder="https://guidelines.example.com/..." style="margin:0"></div>
-          <textarea id="ldGlNotes" rows="2" class="ld-edit-textarea" placeholder="Notes / summary (optional)" style="margin-bottom:8px"></textarea>
-          <div style="display:flex;gap:6px;justify-content:flex-end">
-            <button onclick="document.getElementById('ldAddGuidelineForm').style.display='none'" style="background:transparent;border:1px solid #333;color:#888;border-radius:6px;padding:6px 14px;font-size:.7rem;cursor:pointer;font-family:inherit">Cancel</button>
-            <button id="ldSaveGlBtn" onclick="ldSaveGuideline()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:6px 18px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit">Save</button>
-          </div>
-        </div>
-        <div id="ldGuidelinesList"><div style="padding:24px;text-align:center;color:#555;font-size:.78rem">Loading…</div></div>
-      </div>
-
-      <!-- GUIDELINES (Underwriting tab - renamed) -->
-      <div id="ldTab-guidelines" class="ld-tab-body" style="display:none">
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
-          <div class="ld-info-card"><div class="ld-info-label">Min Credit</div><input id="ldMinCredit2" type="number" class="ld-edit-input" onblur="ldSaveField('min_credit',parseInt(this.value)||null)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Max LTV (%)</div><input id="ldMaxLTV2" type="number" step="0.01" class="ld-edit-input" onblur="ldSaveField('max_ltv',parseFloat(this.value)||null)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Avg Fund (days)</div><input id="ldFundTime" type="number" class="ld-edit-input" onblur="ldSaveField('avg_app_to_fund',parseInt(this.value)||null)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">UW Turn</div><input id="ldUWTurn" class="ld-edit-input" onblur="ldSaveField('underwriting_turn_time',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Min Days Close</div><input id="ldMinDaysClose" type="number" class="ld-edit-input" onblur="ldSaveField('min_days_to_close',parseInt(this.value)||null)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Max Days Close</div><input id="ldMaxDaysClose" type="number" class="ld-edit-input" onblur="ldSaveField('max_days_to_close',parseInt(this.value)||null)"></div>
-          <div class="ld-info-card" style="grid-column:1/-1"><div class="ld-info-label">AMC / Appraisal Management</div><input id="ldAMC" class="ld-edit-input" onblur="ldSaveField('appraisal_management',this.value)"></div>
-        </div>
-        <div class="ld-info-label" style="margin-bottom:8px">Features</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;margin-bottom:14px">
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldDeskReviewCheck" onchange="ldSaveField('appraisal_desk_review',this.checked)"><label for="ldDeskReviewCheck">Desk Review Appraisal</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldEscrowCheck" onchange="ldSaveField('escrow_waiver_allowed',this.checked)"><label for="ldEscrowCheck">Escrow Waiver</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldNonWarrCheck" onchange="ldSaveField('non_warrantable_condo',this.checked)"><label for="ldNonWarrCheck">Non-Warrantable Condo</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldManufacturedCheck" onchange="ldSaveField('manufactured_home',this.checked)"><label for="ldManufacturedCheck">Manufactured Home</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldRuralCheck" onchange="ldSaveField('rural_properties',this.checked)"><label for="ldRuralCheck">Rural Properties</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ld500CreditCheck" onchange="ldSaveField('down_to_500_credit',this.checked)"><label for="ld500CreditCheck">Down to 500 Credit</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldBKCheck" onchange="ldSaveField('recent_bk_ok',this.checked)"><label for="ldBKCheck">Recent BK OK</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldForeclosureCheck" onchange="ldSaveField('recent_foreclosure_ok',this.checked)"><label for="ldForeclosureCheck">Recent Foreclosure OK</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldITINCheck" onchange="ldSaveField('itin_ok',this.checked)"><label for="ldITINCheck">ITIN OK</label></div>
-          <div class="ld-checkbox-row"><input type="checkbox" id="ldDBACheck" onchange="ldSaveField('dba_ok',this.checked)"><label for="ldDBACheck">Close in LLC/DBA</label></div>
-        </div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Key Overlays</div><textarea id="ldKeyOverlays" rows="3" class="ld-edit-textarea" onblur="ldSaveField('key_overlays',this.value)"></textarea></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Exception Process</div><textarea id="ldExceptionProcess" rows="2" class="ld-edit-textarea" onblur="ldSaveField('exception_process',this.value)"></textarea></div>
-        <div class="ld-info-card"><div class="ld-info-label">Submission Checklist</div><textarea id="ldSubmissionChecklist" rows="3" class="ld-edit-textarea" onblur="ldSaveField('submission_checklist',this.value)"></textarea></div>
-      </div>
-      <!-- COMPENSATION -->
-      <div id="ldTab-compensation" class="ld-tab-body" style="display:none">
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
-          <div class="ld-info-card"><div class="ld-info-label">Comp Type</div><select id="ldCompType" class="ld-edit-input" onchange="ldSaveField('compensation_type',this.value)"><option value="">—</option><option>LPC (Lender Paid)</option><option>BPC (Borrower Paid)</option><option>Both LPC &amp; BPC</option></select></div>
-          <div class="ld-info-card"><div class="ld-info-label">BPS</div><input id="ldCompBPS" type="number" step="0.01" class="ld-edit-input" onblur="ldSaveField('compensation_bps',parseFloat(this.value)||null)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Min ($)</div><input id="ldCompMin" type="number" class="ld-edit-input" onblur="ldSaveField('compensation_min',parseFloat(this.value)||null)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">Max ($)</div><input id="ldCompMax" type="number" class="ld-edit-input" onblur="ldSaveField('compensation_max',parseFloat(this.value)||null)"></div>
-        </div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Revenue Notes</div><textarea id="ldRevenueNotesInput" rows="2" class="ld-edit-textarea" onblur="ldSaveField('revenue_notes',this.value)"></textarea></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Fee Notes</div><textarea id="ldFeeNotesInput" rows="2" class="ld-edit-textarea" onblur="ldSaveField('fee_notes',this.value)"></textarea></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">EPO Policy</div><textarea id="ldEPOInput" rows="2" class="ld-edit-textarea" onblur="ldSaveField('epo_policy',this.value)"></textarea></div>
-        <div class="ld-info-card"><div class="ld-info-label">Broker ID (our account)</div><input id="ldBrokerIdInput" type="text" class="ld-edit-input" onblur="ldSaveField('broker_id',this.value)"></div>
-      </div>
-      <!-- CLAUSES -->
-      <div id="ldTab-clauses" class="ld-tab-body" style="display:none">
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">CPL Clause</div><textarea id="ldCPLInput" rows="2" class="ld-edit-textarea" onblur="ldSaveField('cpl_clause',this.value)"></textarea></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Mortgagee Clause</div><textarea id="ldMortgageeInput" rows="3" class="ld-edit-textarea" onblur="ldSaveField('mortgagee_clause',this.value)"></textarea></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Physical Street Address</div><input id="ldPhysStreet" class="ld-edit-input" onblur="ldSaveField('physical_address',this.value)"></div>
-        <div style="display:grid;grid-template-columns:1fr 120px 140px;gap:10px">
-          <div class="ld-info-card"><div class="ld-info-label">City</div><input id="ldPhysCity" class="ld-edit-input" onblur="ldSaveField('physical_city',this.value)"></div>
-          <div class="ld-info-card"><div class="ld-info-label">State</div><input id="ldPhysState" maxlength="2" class="ld-edit-input" style="text-transform:uppercase" onblur="ldSaveField('physical_state',this.value.toUpperCase())"></div>
-          <div class="ld-info-card"><div class="ld-info-label">ZIP</div><input id="ldPhysZip" maxlength="10" class="ld-edit-input" onblur="ldSaveField('physical_zip',this.value)"></div>
-        </div>
-      </div>
-      <!-- HISTORY -->
-      <div id="ldTab-history" class="ld-tab-body" style="display:none">
-        <div class="ld-info-label" style="margin-bottom:10px">Scenario Submissions</div>
-        <div id="ldSubmissions"><div style="padding:24px;text-align:center;color:#555;font-size:.78rem">No submissions yet</div></div>
-      </div>
-      <!-- NOTES -->
-      <div id="ldTab-notes" class="ld-tab-body" style="display:none">
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label" style="margin-bottom:6px">Last Submission Notes (internal)</div><textarea id="ldLastSubNotes" rows="3" onblur="ldSaveField('last_submission_notes',this.value)" style="width:100%;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px;color:#eee;font-size:.78rem;font-family:inherit;outline:none;resize:vertical;box-sizing:border-box"></textarea></div>
-        <div class="ld-info-card" style="margin-bottom:10px"><div class="ld-info-label">Price Sheet Notes</div><div id="ldPriceSheetNotes" class="ld-info-val" style="white-space:pre-wrap">—</div></div>
-        <div class="ld-info-card"><div class="ld-info-label" style="margin-bottom:6px">ClickUp Notes</div><div id="ldClickUpNotes" class="ld-info-val" style="white-space:pre-wrap">—</div><a id="ldClickUpLink" href="#" target="_blank" rel="noopener" style="display:none;color:#C9A84C;font-size:.7rem;text-decoration:none;margin-top:6px">Open in ClickUp ↗</a></div>
-      </div>
-      <!-- AI CHAT -->
-      <div id="ldTab-ai" class="ld-tab-body" style="display:none;height:520px;overflow:hidden;padding:0">
-        <div style="display:flex;height:100%">
-          <!-- LEFT: Guidelines Library -->
-          <div style="width:38%;border-right:1px solid #222;display:flex;flex-direction:column;height:100%">
-            <div style="padding:12px 16px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
-              <span style="font-weight:600;font-size:13px;color:#C9A84C">Guidelines Library</span>
-              <button type="button" onclick="ldShowTab('docs', document.querySelector('#lenderDetailModal .ld-tab:nth-child(3)'))" style="background:#1a1a1a;border:1px solid #333;color:#aaa;border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;font-family:inherit">Go to Docs</button>
-            </div>
-            <div id="ldGuidelinesList" style="overflow-y:auto;flex:1;padding:8px 12px">
-              <div style="padding:24px;text-align:center;color:#555;font-size:11px">Loading...</div>
-            </div>
-          </div>
-          <!-- RIGHT: AI Chat -->
-          <div style="width:62%;display:flex;flex-direction:column;height:100%">
-            <div style="padding:12px 16px;border-bottom:1px solid #222;flex-shrink:0">
-              <span id="ldAIChatHeader" style="font-weight:600;font-size:13px;color:#e8e8e8">Ask AI about Guidelines</span>
-              <span style="font-size:10px;color:#888;margin-left:8px">Powered by Claude</span>
-            </div>
-            <div id="ldAIChatArea" style="flex:1;overflow-y:auto;padding:12px 16px;background:#0d0d0d">
-              <div style="display:flex;justify-content:flex-start;margin:8px 0">
-                <div style="max-width:75%;padding:10px 14px;border-radius:16px 16px 16px 4px;font-size:12px;line-height:1.6;background:#1e1e1e;color:#e8e8e8;border:1px solid #333">Hi! I have access to all lender data and uploaded guidelines. Ask me anything about this lender's programs, overlays, FICO requirements, or submission guidelines.</div>
-              </div>
-            </div>
-            <div style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid #1a1a1a;flex-shrink:0">
-              <span onclick="ldAIStarter('What are the min FICO requirements?')" style="cursor:pointer;background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:4px 10px;font-size:11px;color:#aaa">Min FICO requirements?</span>
-              <span onclick="ldAIStarter('What loan programs do they offer?')" style="cursor:pointer;background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:4px 10px;font-size:11px;color:#aaa">Loan programs offered?</span>
-              <span onclick="ldAIStarter('What are the key overlays?')" style="cursor:pointer;background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:4px 10px;font-size:11px;color:#aaa">Key overlays?</span>
-              <span onclick="ldAIStarter('What states are they licensed in?')" style="cursor:pointer;background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:4px 10px;font-size:11px;color:#aaa">Licensed states?</span>
-            </div>
-            <div style="padding:10px 16px;border-top:1px solid #222;display:flex;gap:8px;flex-shrink:0">
-              <input id="ldAIChatInput" type="text" placeholder="Ask about guidelines, overlays, requirements..." onkeydown="if(event.key==='Enter')ldAISend()" style="flex:1;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:8px 12px;color:#e8e8e8;font-size:12px;outline:none;font-family:inherit">
-              <button type="button" onclick="ldAISend()" style="background:#C9A84C;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:600;font-size:12px;cursor:pointer;font-family:inherit">Send</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div id="lhLenderBody" style="padding:24px;max-height:calc(100vh - 110px);overflow-y:auto;"></div>
   </div>
 </div>
 <style>
@@ -19089,6 +18941,19 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
   .ld-type-pill{background:rgba(201,168,76,0.08);border:1px solid #C9A84C33;color:#C9A84C;border-radius:8px;padding:2px 7px;font-size:.62rem;font-weight:600;display:inline-block;margin:2px}
   .ld-rating-star{font-size:1.1rem;color:#333;cursor:pointer;transition:color .1s}
   .ld-rating-star:hover{color:#C9A84C88}
+  /* Lender detail view — ported from admin/lenders.html showLenderDetail */
+  #lhLenderBody .detail-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+  #lhLenderBody .detail-avatar { width: 56px; height: 56px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #fff; flex-shrink: 0; }
+  #lhLenderBody .detail-name { font-size: 22px; color: #fff; font-weight: 600; }
+  #lhLenderBody .detail-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  #lhLenderBody .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+  #lhLenderBody .detail-card { background: #1e1e1e; border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  #lhLenderBody .detail-card-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); font-weight: 600; margin-bottom: 8px; }
+  #lhLenderBody .detail-card-value { font-size: 14px; font-weight: 600; color: var(--text); }
+  #lhLenderBody .detail-input { width: 100%; padding: 9px 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--text); font-size: 13px; outline: none; font-family: inherit; margin-top: 4px; box-sizing: border-box; }
+  #lhLenderBody .detail-input:focus { border-color: rgba(201,168,76,0.4); }
+  #lhLenderBody .detail-textarea { width: 100%; padding: 9px 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--text); font-size: 13px; outline: none; font-family: inherit; resize: vertical; min-height: 80px; margin-top: 4px; box-sizing: border-box; }
+  #lhLenderBody .clickup-link { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; background: rgba(122,100,224,0.1); border: 1px solid rgba(122,100,224,0.3); border-radius: 8px; color: #a78bfa; font-size: 12px; font-weight: 600; text-decoration: none; }
 </style>
 
 <!-- ═══ ADOBE ACROBAT-STYLE PDF VIEWER MODAL ═══ -->
@@ -19252,13 +19117,22 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
         <select id="al_type"
           style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
                  color:#fff; padding:9px 11px; font-size:13px;">
+          <option value="conventional">Conventional</option>
+          <option value="bank">Bank</option>
+          <option value="credit_union">Credit Union</option>
+          <option value="retail">Retail</option>
+          <option value="broker">Broker / Wholesale</option>
           <option value="wholesale">Wholesale</option>
           <option value="correspondent">Correspondent</option>
-          <option value="retail">Retail</option>
+          <option value="non_qm">Non-QM</option>
+          <option value="dscr">DSCR</option>
+          <option value="government">Government (FHA/VA/USDA)</option>
+          <option value="jumbo">Jumbo</option>
           <option value="hard_money">Hard Money</option>
           <option value="private">Private</option>
           <option value="commercial">Commercial</option>
-          <option value="credit_union">Credit Union</option>
+          <option value="heloc">HELOC</option>
+          <option value="reverse">Reverse</option>
         </select>
       </div>
 
@@ -19302,6 +19176,18 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
         <input id="al_website" type="url" placeholder="https://lender.com"
           style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
                  color:#fff; padding:9px 11px; font-size:13px;">
+      </div>
+
+      <div>
+        <label style="font-size:11px; color:#888; display:block; margin-bottom:4px;">Relationship Stage</label>
+        <select id="al_stage"
+          style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                 color:#fff; padding:9px 11px; font-size:13px;">
+          <option value="Prospect" selected>Prospect</option>
+          <option value="Contacted">Contacted</option>
+          <option value="Active">Active</option>
+          <option value="Preferred">Preferred</option>
+        </select>
       </div>
 
       <!-- Loan Types -->
@@ -19373,7 +19259,8 @@ function closeAddLenderModal() {
     .forEach(function(id) { document.getElementById(id).value = ''; });
   document.querySelectorAll('.al_loan_type').forEach(function(cb) { cb.checked = false; });
   document.getElementById('al_preferred').checked = false;
-  document.getElementById('al_type').value = 'wholesale';
+  document.getElementById('al_type').value = 'conventional';
+  document.getElementById('al_stage').value = 'Prospect';
 }
 
 async function saveNewLender() {
@@ -19399,9 +19286,10 @@ async function saveNewLender() {
     rep_email:        document.getElementById('al_rep_email').value.trim() || null,
     rep_phone:        document.getElementById('al_rep_phone').value.trim() || null,
     website:          document.getElementById('al_website').value.trim() || null,
-    min_credit_score: parseInt(document.getElementById('al_credit').value) || null,
-    max_ltv:          parseFloat(document.getElementById('al_ltv').value) || null,
-    is_preferred:     document.getElementById('al_preferred').checked,
+    min_credit_score:   parseInt(document.getElementById('al_credit').value) || null,
+    max_ltv:            parseFloat(document.getElementById('al_ltv').value) || null,
+    relationship_stage: document.getElementById('al_stage').value || 'Prospect',
+    is_preferred:       document.getElementById('al_preferred').checked,
     is_active:        true,
     created_at:       new Date().toISOString(),
     updated_at:       new Date().toISOString()
