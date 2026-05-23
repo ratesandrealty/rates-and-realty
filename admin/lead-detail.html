@@ -7108,7 +7108,7 @@ function switchTab(name, btn) {
   const panel = document.getElementById('tab-' + name);
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
-  if (name === 'application') { load1003(); loadLiabilities1003(); loadApp1003Borrowers(); buildBorrowerSwitcher(); setTimeout(initSectionPageSwap, 100); }
+  if (name === 'application') { load1003(); loadLiabilities1003(); loadApp1003Borrowers(); buildBorrowerSwitcher(); applyViewModeSections(); setTimeout(initSectionPageSwap, 100); }
   if (name === 'lenders') loadLenderMatches();
   if (name === 'documents') loadDocumentsGrid();
   if (name === 'conditions') loadConditions();
@@ -13078,11 +13078,26 @@ function losRenderBorrowerBanner() {
   }
 }
 
+function applyViewModeSections() {
+  var combined = (typeof losViewMode !== 'undefined' && losViewMode === 'combined');
+  // Sections hidden in Combined View (per-borrower or loan-level, don't aggregate meaningfully):
+  var hideInCombined = ['sec-borrower-info','sec-employment','sec-loan-property','sec-declarations'];
+  hideInCombined.forEach(function(secId){
+    var anchor = document.getElementById(secId);
+    var content = anchor && anchor.nextElementSibling; // the .ld-section sibling
+    if (content) content.style.display = combined ? 'none' : '';
+    var nav = document.querySelector('.app-nav-item[data-sec="'+secId+'"]');
+    if (nav) nav.style.display = combined ? 'none' : '';
+  });
+  // sec-assets and loanSummaryPanel always stay visible.
+}
+
 async function losSwitchBorrower(idx) {
   if (idx === -1) losViewMode = 'combined';
   else { losViewMode = 'individual'; losActiveBorrowerIdx = idx; }
   renderBorrowerTabs();
   losRenderBorrowerBanner();
+  applyViewModeSections();
 
   var activeCid = losGetActiveContactId();
   var panel = document.getElementById('tab-application');
