@@ -2792,17 +2792,6 @@
             <div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:12px;">Loading liabilities…</div>
           </div>
 
-          <!-- Totals -->
-          <div id="liabilitiesTotals1003" style="display:none;margin-top:12px;padding:12px 16px;background:rgba(201,168,76,0.04);border:1px solid rgba(201,168,76,0.12);border-radius:10px;">
-            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
-              <span style="color:rgba(255,255,255,0.5);">Total Monthly Payments</span>
-              <span id="liabTotalMonthly" style="font-weight:700;color:var(--gold,#c9a84c);">$0</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:13px;">
-              <span style="color:rgba(255,255,255,0.5);">Total Balance</span>
-              <span id="liabTotalBalance" style="font-weight:700;color:var(--gold,#c9a84c);">$0</span>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -10455,12 +10444,10 @@ let _liabilities1003 = [];
 
 async function loadLiabilities1003() {
   const el = document.getElementById('liabilitiesTable1003');
-  const totals = document.getElementById('liabilitiesTotals1003');
   if (!el) return;
 
   if (!contactId) {
     el.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:12px;">No liabilities on file. Import a MISMO 3.4 file or add manually.</div>';
-    totals.style.display = 'none';
     return;
   }
 
@@ -10498,7 +10485,6 @@ async function loadLiabilities1003() {
 
   if (!_liabilities1003.length) {
     el.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:12px;">No liabilities on file. Import a MISMO 3.4 file or add manually.</div>';
-    totals.style.display = 'none';
     return;
   }
 
@@ -10510,6 +10496,9 @@ async function loadLiabilities1003() {
     return none + rest;
   };
   const inputStyle = 'width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:6px;color:#e0e0e0;padding:6px 8px;font-size:12px;font-family:inherit;outline:none;box-sizing:border-box;';
+
+  const totalMonthly = _liabilities1003.reduce((s, l) => s + (l.monthly_payment || 0), 0);
+  const totalBalance = _liabilities1003.reduce((s, l) => s + (l.balance || 0), 0);
 
   el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr>
@@ -10532,13 +10521,15 @@ async function loadLiabilities1003() {
       <td style="padding:6px 8px;"><select onchange="updateLiability1003('${l.id}','reo_id',this.value||null)" style="${inputStyle}">${reoOptions(l.reo_id)}</select></td>
       <td style="padding:9px 4px;text-align:center;"><button onclick="deleteLiability1003('${l.id}')" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:12px;" title="Remove">✕</button></td>
     </tr>`).join('')}</tbody>
+    <tfoot>
+      <tr style="border-top:1px solid rgba(201,168,76,0.2);background:rgba(201,168,76,0.04);">
+        <td colspan="${2 + (_combined ? 1 : 0)}" style="padding:10px 10px;font-size:11px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Total</td>
+        <td id="liabTotalMonthly" style="padding:10px 10px;text-align:right;font-weight:700;color:var(--gold,#c9a84c);font-size:13px;">${fmtMoney(totalMonthly)}</td>
+        <td id="liabTotalBalance" style="padding:10px 10px;text-align:right;font-weight:700;color:var(--gold,#c9a84c);font-size:13px;">${fmtMoney(totalBalance)}</td>
+        <td></td><td></td><td></td>
+      </tr>
+    </tfoot>
   </table>`;
-
-  const totalMonthly = _liabilities1003.reduce((s, l) => s + (l.monthly_payment || 0), 0);
-  const totalBalance = _liabilities1003.reduce((s, l) => s + (l.balance || 0), 0);
-  document.getElementById('liabTotalMonthly').textContent = fmtMoney(totalMonthly);
-  document.getElementById('liabTotalBalance').textContent = fmtMoney(totalBalance);
-  totals.style.display = 'block';
 }
 
 function toggleAddLiabilityForm() {
