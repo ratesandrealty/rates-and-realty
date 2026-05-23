@@ -281,6 +281,8 @@
       margin-top: 4px;
     }
     .detail-input:focus { border-color: rgba(201,168,76,0.4); }
+    /* Native <option> elements ignore parent select bg/color in some browsers — force dark, readable styling. */
+    .detail-input option, #addLenderModal select option { background:#1a1a1a; color:#eee; }
     .detail-textarea {
       width: 100%; padding: 9px 12px; background: rgba(255,255,255,0.05);
       border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
@@ -571,6 +573,21 @@ function _authClient() {
   return window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
 }
 
+// Race-safe gate for on-load fetches: DOMContentLoaded can fire before auth-guard's
+// async IIFE has set window._supabaseClient. Prefers the canonical promise-based getter
+// from /admin/js/supabase-client.js (same pattern admin/people.html uses); polls as fallback.
+async function _waitForAuthClient(maxMs) {
+  if (maxMs == null) maxMs = 5000;
+  if (typeof window.getSupabaseClient === 'function') {
+    try { return await window.getSupabaseClient(); } catch (e) { console.warn('[lenders] getSupabaseClient threw:', e); }
+  }
+  const start = Date.now();
+  while (!window._supabaseClient && Date.now() - start < maxMs) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return window._supabaseClient || null;
+}
+
 // ── STATE ────────────────────────────────────────
 let allLenders = [];
 let filteredLenders = [];
@@ -613,8 +630,17 @@ function loanTypeChipsHtml(loanTypes) {
 
 // ── LOAD LENDERS ─────────────────────────────────
 async function loadLenders() {
+  const client = await _waitForAuthClient();
+  if (!client) {
+    console.error('[lenders] auth client never ready');
+    const list = document.getElementById('lenderList');
+    if (list) list.innerHTML = '<div style="padding:20px;text-align:center;color:#ff6666;font-size:13px;">Auth client failed to initialize. <button onclick="loadLenders()" style="margin-left:8px;background:#C9A84C;color:#000;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;font-family:inherit;">Retry</button></div>';
+    const countEl = document.getElementById('lenderCount');
+    if (countEl) countEl.textContent = 'Auth not ready';
+    return;
+  }
   try {
-    const { data: _ldData, error: _ldErr } = await _authClient().from('lenders').select('*').order('name').limit(200);
+    const { data: _ldData, error: _ldErr } = await client.from('lenders').select('*').order('name').limit(200);
     if (_ldErr) throw new Error('loadLenders: ' + (_ldErr.message || 'unknown error'));
     allLenders = Array.isArray(_ldData) ? _ldData : [];
     if (!Array.isArray(_ldData)) {
@@ -2098,12 +2124,15 @@ function showAddLenderModal() {
         '<select id="newLenderType" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;">' +
           '<option value="conventional">Conventional</option><option value="non_qm">Non-QM</option><option value="government">Government (FHA/VA/USDA)</option><option value="jumbo">Jumbo</option><option value="hard_money">Hard Money</option><option value="commercial">Commercial</option><option value="heloc">HELOC</option><option value="reverse">Reverse</option></select></div>' +
       '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px;">' +
         '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Channel</label>' +
         '<select id="newLenderChannel" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;">' +
           '<option value="Wholesale">Wholesale</option><option value="Correspondent">Correspondent</option><option value="Correspondent, Wholesale">Correspondent &amp; Wholesale</option></select></div>' +
         '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">NMLS ID</label>' +
         '<input id="newLenderNMLS" placeholder="e.g. 123456" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;"></div>' +
+        '<div><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Relationship Stage</label>' +
+        '<select id="new_lender_stage" style="width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:13px;box-sizing:border-box;font-family:inherit;">' +
+          '<option value="Prospect" selected>Prospect</option><option value="Contacted">Contacted</option><option value="Active">Active</option><option value="Preferred">Preferred</option></select></div>' +
       '</div>' +
       '<div style="margin-bottom:16px;"><label style="display:block;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Loan Types</label>' +
         '<div style="display:flex;flex-wrap:wrap;gap:8px;" id="newLenderLoanTypeChips">' + chipsHtml + '</div></div>' +
@@ -2192,6 +2221,7 @@ async function submitNewLender() {
     min_credit_score: parseInt(document.getElementById('newLenderMinCredit').value) || null,
     specialty_notes: document.getElementById('newLenderSpecialty').value.trim() || null,
     loan_types: loanTypes.length > 0 ? loanTypes : null,
+    relationship_stage: document.getElementById('new_lender_stage').value || 'Prospect',
     is_active: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
