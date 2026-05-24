@@ -1964,19 +1964,47 @@ async function loadLenderDocs(lenderId) {
       const badge = doc.ocr_status === 'completed' ? '✅' : (doc.ocr_status === 'pending' ? '⏳' : '📄');
       const label = doc.title || doc.file_name || 'Untitled';
       const meta = [doc.category, doc.source_type].filter(Boolean).join(' · ');
-      return `<a href="${url}" target="_blank" style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:6px;text-decoration:none;color:inherit;transition:border-color 0.15s;" onmouseover="this.style.borderColor='rgba(201,168,76,0.35)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.06)'">
-        <span style="font-size:16px;">${badge}</span>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:12px;font-weight:600;color:#f0ebe0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${label}</div>
-          ${meta ? `<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">${meta}</div>` : ''}
-        </div>
-        <span style="font-size:10px;color:rgba(255,255,255,0.3);">↗</span>
-      </a>`;
+      // Escape title for inline onclick JS string + HTML attr (outer "..." attr, inner '...' JS literal).
+      const safeTitle = String(label).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      return `<div style="display:flex;align-items:stretch;gap:0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:6px;transition:border-color 0.15s;" onmouseover="this.style.borderColor='rgba(201,168,76,0.35)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.06)'">
+        <a href="${url}" target="_blank" style="flex:1;display:flex;align-items:center;gap:10px;padding:9px 12px;text-decoration:none;color:inherit;min-width:0;">
+          <span style="font-size:16px;">${badge}</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:600;color:#f0ebe0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${label}</div>
+            ${meta ? `<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">${meta}</div>` : ''}
+          </div>
+          <span style="font-size:10px;color:rgba(255,255,255,0.3);">↗</span>
+        </a>
+        <button onclick="deleteGuideline('${doc.id}', '${safeTitle}', '${lenderId}')" title="Delete" style="background:none;border:none;border-left:1px solid rgba(255,255,255,0.06);color:rgba(255,255,255,0.25);cursor:pointer;font-size:14px;padding:0 12px;transition:color 0.15s;" onmouseover="this.style.color='#f87171'" onmouseout="this.style.color='rgba(255,255,255,0.25)'">🗑</button>
+      </div>`;
     }).join('');
   } catch (err) {
     console.error('[loadLenderDocs] error:', err);
     container.innerHTML = '<div style="font-size:12px;color:#f87171;padding:8px 0;">Error: ' + (err.message || err) + '</div>';
   }
+}
+
+// Hard-delete a lender-uploaded guideline (cards). FK ON DELETE CASCADE on
+// guideline_chunks.guideline_id → lender_guidelines.id clears the RAG index automatically.
+// Best-effort: remove the stored object from Supabase storage if file_url points there.
+// Never touch the Google Drive copy (system of record).
+async function deleteGuideline(id, title, lenderId) {
+  if (!confirm('Delete "' + title + '"? This permanently removes the document and its AI index. This cannot be undone.')) return;
+  let storagePath = null;
+  try {
+    const pre = await _authClient().from('lender_guidelines').select('file_url').eq('id', id).maybeSingle();
+    if (pre && pre.data && pre.data.file_url) {
+      const m = pre.data.file_url.match(/\/storage\/v1\/object\/public\/lender-guidelines\/(.+)$/);
+      if (m) storagePath = decodeURIComponent(m[1]);
+    }
+  } catch (_) { /* ignore — pre-fetch is best-effort */ }
+  const { error } = await _authClient().from('lender_guidelines').delete().eq('id', id);
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  if (storagePath) {
+    try { await _authClient().storage.from('lender-guidelines').remove([storagePath]); }
+    catch (_) { /* orphan storage file is acceptable */ }
+  }
+  if (typeof loadLenderDocs === 'function') loadLenderDocs(lenderId);
 }
 
 // ── DRAG & DROP MULTI-PDF UPLOADER ──────────────────────────────────

@@ -816,6 +816,7 @@ async function loadLenderGuidelinesList(lenderId) {
       return;
     }
     container.innerHTML = data.map(function(g) {
+      var safeTitle = String(g.title || g.file_name || 'this document').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
       return '<div style="display:flex;align-items:center;gap:8px;padding:8px;background:#161616;border:1px solid #222;border-radius:6px;margin-bottom:6px;">' +
         '<span style="font-size:18px;">📄</span>' +
         '<div style="flex:1;min-width:0;">' +
@@ -823,11 +824,35 @@ async function loadLenderGuidelinesList(lenderId) {
           '<div style="font-size:10px;color:#555;margin-top:1px;">' + (g.category || 'General') + ' · ' + (g.ocr_status === 'completed' ? '✅ Indexed' : '⏳ Processing') + '</div>' +
         '</div>' +
         (g.file_url ? '<a href="' + g.file_url + '" target="_blank" style="color:#C9A84C;font-size:11px;text-decoration:none;flex-shrink:0;">View</a>' : '') +
+        '<button onclick="deleteGuideline(\'' + g.id + '\', \'' + safeTitle + '\', \'' + lenderId + '\')" title="Delete" style="background:none;border:none;color:#555;cursor:pointer;font-size:13px;padding:2px 6px;flex-shrink:0;transition:color 0.15s;" onmouseover="this.style.color=\'#f87171\'" onmouseout="this.style.color=\'#555\'">🗑</button>' +
       '</div>';
     }).join('');
   } catch(e) {
     container.innerHTML = '<div style="color:#555;font-size:12px;">Could not load guidelines</div>';
   }
+}
+
+// Hard-delete a lender-uploaded guideline (cards). FK ON DELETE CASCADE on
+// guideline_chunks.guideline_id → lender_guidelines.id clears the RAG index automatically.
+// Best-effort: remove the stored object from Supabase storage if file_url points there.
+// Never touch the Google Drive copy (system of record).
+async function deleteGuideline(id, title, lenderId) {
+  if (!confirm('Delete "' + title + '"? This permanently removes the document and its AI index. This cannot be undone.')) return;
+  var storagePath = null;
+  try {
+    var pre = await _authClient().from('lender_guidelines').select('file_url').eq('id', id).maybeSingle();
+    if (pre && pre.data && pre.data.file_url) {
+      var m = pre.data.file_url.match(/\/storage\/v1\/object\/public\/lender-guidelines\/(.+)$/);
+      if (m) storagePath = decodeURIComponent(m[1]);
+    }
+  } catch (_) { /* ignore — pre-fetch is best-effort */ }
+  var result = await _authClient().from('lender_guidelines').delete().eq('id', id);
+  if (result.error) { alert('Delete failed: ' + result.error.message); return; }
+  if (storagePath) {
+    try { await _authClient().storage.from('lender-guidelines').remove([storagePath]); }
+    catch (_) { /* orphan storage file is acceptable */ }
+  }
+  if (typeof loadLenderGuidelinesList === 'function') loadLenderGuidelinesList(lenderId);
 }
 
 // ── LENDER GUIDELINE UPLOAD ─────────────────────
