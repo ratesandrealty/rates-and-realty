@@ -16016,9 +16016,31 @@ async function setLenderStage(lenderId, stage) {
 async function saveRelNotes(lenderId) {
   const el = document.getElementById('rel_notes');
   if (!el) return;
+  const btn = document.getElementById('saveRelNotesBtn');
+  const origText = btn ? btn.textContent : '';
+  const origBg   = btn ? btn.style.background : '';
+  const origCol  = btn ? btn.style.color : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const { error } = await _authClient().from('lenders').update({ relationship_notes: el.value, updated_at: new Date().toISOString() }).eq('id', lenderId);
-  if (error) { console.error('[notes] save failed', error); if (typeof showToast === 'function') showToast('Notes save failed: ' + error.message); return; }
+  if (error) {
+    console.error('[notes] save failed', error);
+    if (btn) { btn.disabled = false; btn.textContent = origText || 'Save Notes'; btn.style.background = '#5a1a1a'; btn.style.color = '#ff9999'; }
+    if (typeof showToast === 'function') showToast('Notes save failed: ' + error.message);
+    else alert('Notes save failed: ' + error.message);
+    return;
+  }
   await refreshLenderRow(lenderId);
+  if (btn) {
+    btn.textContent = 'Saved ✓';
+    btn.style.background = '#1a3a1a';
+    btn.style.color = '#7fdc7f';
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = origText || 'Save Notes';
+      btn.style.background = origBg;
+      btn.style.color = origCol;
+    }, 1500);
+  }
   if (typeof showToast === 'function') showToast('✅ Notes saved');
 }
 
@@ -16040,15 +16062,27 @@ async function saveLogCall(lenderId) {
     notes: document.getElementById('lc_notes').value || null,
     next_follow_up_date: document.getElementById('lc_next_followup').value || null,
   };
+  const btn = document.getElementById('saveLogCallBtn');
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const { error } = await _authClient().from('lender_contacts').insert(payload);
-  if (error) { console.error('[call-log] save failed', error); alert('Save failed: ' + error.message); return; }
+  if (error) {
+    console.error('[call-log] save failed', error);
+    if (btn) { btn.disabled = false; btn.textContent = origText || 'Save'; }
+    alert('Save failed: ' + error.message);
+    return;
+  }
+  // Hold "Saved ✓" on the button briefly so the user sees confirmation BEFORE the form closes.
+  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#1a3a1a'; btn.style.color = '#7fdc7f'; }
   document.getElementById('lc_spoke_with').value = '';
   document.getElementById('lc_notes').value = '';
   document.getElementById('lc_next_followup').value = '';
-  toggleLogCallForm();
-  await loadCallLog(lenderId);
-  // The DB trigger has updated lenders.last_contacted_at + next_follow_up_date — refetch to display.
-  await refreshLenderRow(lenderId);
+  setTimeout(async () => {
+    toggleLogCallForm();
+    await loadCallLog(lenderId);
+    // The DB trigger has updated lenders.last_contacted_at + next_follow_up_date — refetch to display.
+    await refreshLenderRow(lenderId);
+  }, 800);
   if (typeof showToast === 'function') showToast('✅ Call logged');
 }
 
@@ -16057,19 +16091,108 @@ async function loadCallLog(lenderId) {
   if (!target) return;
   const { data, error } = await _authClient().from('lender_contacts').select('*').eq('lender_id', lenderId).order('contact_date', { ascending: false });
   if (error) { target.innerHTML = '<div style="color:#ff6666;font-size:12px;padding:8px 0;">Failed to load call log: ' + _relEscHtml(error.message) + '</div>'; return; }
+  // Cache the rows so editCallLog can prefill without a refetch.
+  window._lhCallLogCache = data || [];
   if (!data || !data.length) { target.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0;">No contact history yet.</div>'; return; }
   target.innerHTML = data.map(c => `
-    <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+    <div id="callRow-${c.id}" style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
       <div style="display:flex;gap:10px;font-size:12px;color:#eee;align-items:center;flex-wrap:wrap;">
         <span style="color:#C9A84C;font-weight:600;">${formatShortDate(c.contact_date) || ''}</span>
         <span style="color:rgba(255,255,255,0.5);">${_relEscHtml(c.contact_type || '')}</span>
         ${c.spoke_with ? '<span>with <b>' + _relEscHtml(c.spoke_with) + '</b></span>' : ''}
         ${c.outcome ? '<span style="margin-left:auto;font-size:10px;padding:2px 7px;border-radius:8px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.6);">' + _relEscHtml(c.outcome) + '</span>' : ''}
+        <span style="display:inline-flex;gap:4px;${c.outcome ? '' : 'margin-left:auto;'}">
+          <button title="Edit" onclick="editCallLog('${c.id}','${lenderId}')" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;">✎</button>
+          <button title="Delete" onclick="deleteCallLog('${c.id}','${lenderId}')" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;">🗑</button>
+        </span>
       </div>
       ${c.notes ? '<div style="margin-top:4px;font-size:12px;color:rgba(255,255,255,0.6);line-height:1.4;">' + _relEscHtml(c.notes) + '</div>' : ''}
       ${c.next_follow_up_date ? '<div style="margin-top:4px;font-size:11px;color:rgba(255,255,255,0.4);">Next follow-up: ' + formatShortDate(c.next_follow_up_date) + '</div>' : ''}
     </div>
   `).join('');
+}
+
+async function deleteCallLog(contactId, lenderId) {
+  if (!window.confirm('Delete this call entry?')) return;
+  const { error } = await _authClient().from('lender_contacts').delete().eq('id', contactId);
+  if (error) { console.error('[call-log] delete failed', error); alert('Delete failed: ' + error.message); return; }
+  await loadCallLog(lenderId);
+  // Trigger recalculates lenders.last_contacted_at + next_follow_up_date after the delete.
+  await refreshLenderRow(lenderId);
+}
+
+function editCallLog(contactId, lenderId) {
+  const row = (window._lhCallLogCache || []).find(c => c.id === contactId);
+  const container = document.getElementById('callRow-' + contactId);
+  if (!row || !container) return;
+  const dateStr  = row.contact_date ? new Date(row.contact_date).toISOString().slice(0,10) : '';
+  const followUp = row.next_follow_up_date || '';
+  container.innerHTML = `
+    <div style="background:#0d0d0d;border:1px solid #C9A84C44;border-radius:8px;padding:12px;margin:6px 0;">
+      <div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Edit Call</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div>
+          <label style="font-size:10px;color:var(--muted);">Date</label>
+          <input type="date" id="lce_date_${contactId}" class="detail-input" value="${dateStr}">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--muted);">Type</label>
+          <select id="lce_type_${contactId}" class="detail-input">
+            ${['Call','Email','Meeting','Text'].map(t => `<option${row.contact_type===t?' selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--muted);">Spoke With</label>
+          <input type="text" id="lce_spoke_with_${contactId}" class="detail-input" value="${_relEscHtml(row.spoke_with||'')}" placeholder="Rep name">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--muted);">Outcome</label>
+          <select id="lce_outcome_${contactId}" class="detail-input">
+            ${['Spoke','Left voicemail','No answer','Follow-up needed'].map(o => `<option${row.outcome===o?' selected':''}>${o}</option>`).join('')}
+          </select>
+        </div>
+        <div style="grid-column:span 2;">
+          <label style="font-size:10px;color:var(--muted);">Next Follow-Up</label>
+          <input type="date" id="lce_next_followup_${contactId}" class="detail-input" value="${followUp}">
+        </div>
+        <div style="grid-column:span 3;">
+          <label style="font-size:10px;color:var(--muted);">Notes</label>
+          <textarea id="lce_notes_${contactId}" class="detail-textarea" rows="2">${_relEscHtml(row.notes||'')}</textarea>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button onclick="loadCallLog('${lenderId}')" style="background:none;border:1px solid #333;color:#888;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>
+        <button id="lce_save_${contactId}" onclick="saveEditCallLog('${contactId}','${lenderId}')" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Save</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveEditCallLog(contactId, lenderId) {
+  const dateVal = document.getElementById('lce_date_' + contactId).value;
+  const payload = {
+    contact_date: dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : new Date().toISOString(),
+    contact_type: document.getElementById('lce_type_' + contactId).value,
+    spoke_with: document.getElementById('lce_spoke_with_' + contactId).value || null,
+    outcome: document.getElementById('lce_outcome_' + contactId).value,
+    notes: document.getElementById('lce_notes_' + contactId).value || null,
+    next_follow_up_date: document.getElementById('lce_next_followup_' + contactId).value || null,
+    updated_at: new Date().toISOString(),
+  };
+  const btn = document.getElementById('lce_save_' + contactId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  const { error } = await _authClient().from('lender_contacts').update(payload).eq('id', contactId);
+  if (error) {
+    console.error('[call-log] edit failed', error);
+    alert('Save failed: ' + error.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    return;
+  }
+  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#1a3a1a'; btn.style.color = '#7fdc7f'; }
+  setTimeout(async () => {
+    await loadCallLog(lenderId);
+    await refreshLenderRow(lenderId);
+  }, 700);
 }
 
 // Lead-detail adapter: targets window._allLenders + _currentLenderData (NOT lenders.html's allLenders/selectedLender state).
@@ -16281,7 +16404,7 @@ function lhRenderLenderDetail(lender) {
       <div style="margin-bottom:14px;">
         <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Relationship Notes</label>
         <textarea id="rel_notes" class="detail-textarea" rows="3" placeholder="Pricing tier, contact preferences, history...">${_relEscHtml(lender.relationship_notes||'')}</textarea>
-        <button onclick="saveRelNotes('${lender.id}')" style="margin-top:6px;background:#1a1a1a;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;font-family:inherit;">Save Notes</button>
+        <button id="saveRelNotesBtn" onclick="saveRelNotes('${lender.id}')" style="margin-top:6px;background:#1a1a1a;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;font-family:inherit;">Save Notes</button>
       </div>
 
       <div id="logCallForm" style="display:none;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:14px;">
@@ -16318,7 +16441,7 @@ function lhRenderLenderDetail(lender) {
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;">
           <button onclick="toggleLogCallForm()" style="background:none;border:1px solid #333;color:#888;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>
-          <button onclick="saveLogCall('${lender.id}')" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Save</button>
+          <button id="saveLogCallBtn" onclick="saveLogCall('${lender.id}')" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Save</button>
         </div>
       </div>
 
