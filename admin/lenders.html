@@ -883,8 +883,9 @@ function showLenderDetail(lender) {
       </div>
       <div style="margin-bottom:14px;">
         <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Relationship Notes</label>
-        <textarea id="rel_notes" class="detail-textarea" rows="3" placeholder="Pricing tier, contact preferences, history...">${_relEscHtml(lender.relationship_notes||'')}</textarea>
-        <button id="saveRelNotesBtn" onclick="saveRelNotes('${lender.id}')" style="margin-top:6px;background:#1a1a1a;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;font-family:inherit;">Save Notes</button>
+        <textarea id="newNoteText" class="detail-textarea" rows="2" placeholder="Add a note (timestamped)…"></textarea>
+        <button id="addNoteBtn" onclick="addNote('${lender.id}')" style="margin-top:6px;background:#1a1a1a;border:1px solid #333;color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;font-family:inherit;">+ Add Note</button>
+        <div id="notesList" style="margin-top:10px;"><div style="font-size:12px;color:var(--muted);padding:8px 0;">Loading…</div></div>
       </div>
 
       <div id="logCallForm" style="display:none;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:14px;">
@@ -1098,6 +1099,7 @@ function showLenderDetail(lender) {
 
   // Load call/contact history for this lender (DB trigger keeps lenders.last_contacted_at + next_follow_up_date in sync on insert/update/delete).
   loadCallLog(lender.id);
+  loadNotes(lender.id);
 
   // Initialize loan type chips from lender.loan_types
   const rawTypes = lender.loan_types;
@@ -1311,6 +1313,108 @@ async function saveEditCallLog(contactId, lenderId) {
     await loadCallLog(lenderId);
     await refreshLenderRow(lenderId);
   }, 700);
+}
+
+// ── Timestamped notes (mirrors the call-log pattern, but on lender_notes) ──
+function formatNoteTime(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  return formatShortDate(s) + ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+async function loadNotes(lenderId) {
+  const target = document.getElementById('notesList');
+  if (!target) return;
+  const { data, error } = await _authClient().from('lender_notes').select('*').eq('lender_id', lenderId).order('created_at', { ascending: false });
+  if (error) { target.innerHTML = '<div style="color:#ff6666;font-size:12px;padding:8px 0;">Failed to load notes: ' + _relEscHtml(error.message) + '</div>'; return; }
+  window._lhNotesCache = data || [];
+  if (!data || !data.length) { target.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0;">No notes yet.</div>'; return; }
+  target.innerHTML = data.map(n => `
+    <div id="noteRow-${n.id}" style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+      <div style="display:flex;gap:10px;font-size:11px;color:rgba(255,255,255,0.5);align-items:center;margin-bottom:4px;">
+        <span style="color:#C9A84C;font-weight:600;">${formatNoteTime(n.created_at) || ''}</span>
+        ${n.updated_at && n.updated_at !== n.created_at ? '<span style="font-size:10px;color:rgba(255,255,255,0.3);">(edited)</span>' : ''}
+        <span style="display:inline-flex;gap:4px;margin-left:auto;">
+          <button title="Edit" onclick="editNote('${n.id}','${lenderId}')" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;">✎</button>
+          <button title="Delete" onclick="deleteNote('${n.id}','${lenderId}')" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;">🗑</button>
+        </span>
+      </div>
+      <div style="font-size:12px;color:#ddd;line-height:1.5;white-space:pre-wrap;word-break:break-word;">${_relEscHtml(n.note || '')}</div>
+    </div>
+  `).join('');
+}
+
+async function addNote(lenderId) {
+  const ta = document.getElementById('newNoteText');
+  if (!ta) return;
+  const text = (ta.value || '').trim();
+  if (!text) return;
+  const btn = document.getElementById('addNoteBtn');
+  const origText = btn ? btn.textContent : '';
+  const origBg   = btn ? btn.style.background : '';
+  const origCol  = btn ? btn.style.color : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  // created_by auto-populates via auth.uid() default; do NOT set created_at/updated_at (DB defaults handle them).
+  const { error } = await _authClient().from('lender_notes').insert({ lender_id: lenderId, note: text });
+  if (error) {
+    console.error('[notes] add failed', error);
+    if (btn) { btn.disabled = false; btn.textContent = origText || '+ Add Note'; btn.style.background = '#5a1a1a'; btn.style.color = '#ff9999'; }
+    alert('Add note failed: ' + error.message);
+    return;
+  }
+  ta.value = '';
+  if (btn) {
+    btn.textContent = 'Saved ✓';
+    btn.style.background = '#1a3a1a';
+    btn.style.color = '#7fdc7f';
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = origText || '+ Add Note';
+      btn.style.background = origBg;
+      btn.style.color = origCol;
+    }, 1500);
+  }
+  await loadNotes(lenderId);
+}
+
+function editNote(noteId, lenderId) {
+  const row = (window._lhNotesCache || []).find(n => n.id === noteId);
+  const container = document.getElementById('noteRow-' + noteId);
+  if (!row || !container) return;
+  container.innerHTML = `
+    <div style="background:#0d0d0d;border:1px solid #C9A84C44;border-radius:8px;padding:12px;margin:6px 0;">
+      <div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Edit Note</div>
+      <textarea id="note_edit_${noteId}" class="detail-textarea" rows="3">${_relEscHtml(row.note || '')}</textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <button onclick="loadNotes('${lenderId}')" style="background:none;border:1px solid #333;color:#888;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>
+        <button id="note_save_${noteId}" onclick="saveEditNote('${noteId}','${lenderId}')" style="background:#C9A84C;color:#000;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Save</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveEditNote(noteId, lenderId) {
+  const ta = document.getElementById('note_edit_' + noteId);
+  if (!ta) return;
+  const btn = document.getElementById('note_save_' + noteId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  const { error } = await _authClient().from('lender_notes').update({ note: ta.value, updated_at: new Date().toISOString() }).eq('id', noteId);
+  if (error) {
+    console.error('[notes] edit failed', error);
+    alert('Save failed: ' + error.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    return;
+  }
+  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#1a3a1a'; btn.style.color = '#7fdc7f'; }
+  setTimeout(async () => { await loadNotes(lenderId); }, 700);
+}
+
+async function deleteNote(noteId, lenderId) {
+  if (!window.confirm('Delete this note?')) return;
+  const { error } = await _authClient().from('lender_notes').delete().eq('id', noteId);
+  if (error) { console.error('[notes] delete failed', error); alert('Delete failed: ' + error.message); return; }
+  await loadNotes(lenderId);
 }
 
 async function refreshLenderRow(lenderId) {
