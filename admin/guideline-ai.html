@@ -127,6 +127,30 @@
     }
     .chat-input-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    /* Scenario quick-fill bar (migrated from guideline-scanner.html, restyled native) */
+    .scenario-bar {
+      padding: 10px 24px; border-top: 1px solid var(--border); background: #111;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0;
+    }
+    .scenario-label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--muted);
+    }
+    .scenario-input {
+      background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+      border-radius: 7px; padding: 5px 9px; font-size: 12px;
+      color: var(--text); font-family: inherit; outline: none; transition: border-color 0.15s;
+    }
+    .scenario-input:focus { border-color: var(--gold); }
+    .scenario-input::placeholder { color: var(--muted); }
+    .scenario-divider { width: 1px; height: 18px; background: var(--border); }
+    .quick-ask-btn {
+      padding: 5px 11px; border-radius: 7px; font-size: 11px; font-weight: 600;
+      border: 1px solid var(--border); background: rgba(255,255,255,0.04);
+      color: var(--text); cursor: pointer; font-family: inherit; transition: all 0.15s;
+    }
+    .quick-ask-btn:hover { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.08); }
+
     /* RIGHT: Reference library panel */
     .right-panel {
       width: 320px; flex-shrink: 0; border-left: 1px solid var(--border);
@@ -451,6 +475,21 @@
             <button class="qp-btn" onclick="askQuestion('Bank statement loan qualifying?')">Bank statement qualifying?</button>
           </div>
         </div>
+      </div>
+      <!-- Scenario quick-fill bar — composes lender-intent questions; submits via existing sendQuestion() -->
+      <div class="scenario-bar">
+        <span class="scenario-label">Scenario:</span>
+        <input class="scenario-input" id="sFico" placeholder="FICO" style="width:70px;">
+        <input class="scenario-input" id="sLtv" placeholder="LTV%" style="width:65px;">
+        <input class="scenario-input" id="sLoan" placeholder="Loan $" style="width:90px;">
+        <div class="scenario-divider"></div>
+        <input class="scenario-input" id="sType" placeholder="Loan type" style="width:110px;">
+        <input class="scenario-input" id="sState" placeholder="State" style="width:55px;">
+        <div class="scenario-divider"></div>
+        <button class="quick-ask-btn" onclick="quickAsk('max_dti')">Max DTI?</button>
+        <button class="quick-ask-btn" onclick="quickAsk('qualify')">Can they qualify?</button>
+        <button class="quick-ask-btn" onclick="quickAsk('overlays')">Overlays?</button>
+        <button class="quick-ask-btn" onclick="quickAsk('best_lender')">Best lender?</button>
       </div>
       <div class="chat-input-bar">
         <textarea id="aiInput" rows="1" placeholder="Ask a guideline question..."
@@ -1024,6 +1063,42 @@ function uploadGlobalGuideline(sourceType, sourceName, buttonEl) {
 // ── CHAT ────────────────────────────────────────
 function askQuestion(q) {
   document.getElementById('aiInput').value = q;
+  sendQuestion();
+}
+
+// Scenario quick-fill (migrated from guideline-scanner.html). Composes a natural-language
+// question from the scenario fields and submits through the existing sendQuestion() path
+// — edge fn guideline-ai (v51+) will inject the lender roster automatically.
+function buildScenarioContext() {
+  var fico  = (document.getElementById('sFico').value  || '').trim();
+  var ltv   = (document.getElementById('sLtv').value   || '').trim();
+  var loan  = (document.getElementById('sLoan').value  || '').trim();
+  var type  = (document.getElementById('sType').value  || '').trim();
+  var state = (document.getElementById('sState').value || '').trim();
+  var parts = [];
+  if (fico)  parts.push('FICO: ' + fico);
+  if (ltv)   parts.push('LTV: ' + ltv + '%');
+  if (loan)  parts.push('Loan amount: $' + loan);
+  if (type)  parts.push('Loan type: ' + type);
+  if (state) parts.push('State: ' + state);
+  return parts.length ? '\n\nBorrower scenario: ' + parts.join(' | ') : '';
+}
+
+function quickAsk(kind) {
+  var scenario = buildScenarioContext();
+  var fico = (document.getElementById('sFico').value || '').trim() || '?';
+  var loanType = (document.getElementById('sType').value || '').trim() || 'the loan';
+  var prompts = {
+    max_dti:     'What is the maximum DTI allowed for ' + loanType + ' with ' + fico + ' FICO?' + scenario,
+    qualify:     'Based on this scenario, can this borrower qualify and which lenders are the best fit?' + scenario,
+    overlays:    'What are the key overlays and restrictions I should know about for ' + loanType + '?' + scenario,
+    best_lender: 'Which lender is the best fit for this scenario and why?' + scenario,
+  };
+  var input = document.getElementById('aiInput');
+  input.value = prompts[kind] || '';
+  // Trigger the textarea's autoresize the same way user typing does.
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   sendQuestion();
 }
 
