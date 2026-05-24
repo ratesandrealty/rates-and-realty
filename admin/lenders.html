@@ -588,6 +588,17 @@ async function _waitForAuthClient(maxMs) {
   return window._supabaseClient || null;
 }
 
+// Pulls the current user's access_token so JWT-gated edge fns (e.g. textract-ocr) accept the call.
+// Phase 2 dedup candidate: lift to a shared module (also in admin/guideline-ai.html).
+async function _getUserAccessToken() {
+  const c = await _waitForAuthClient();
+  if (!c) return null;
+  try {
+    const { data } = await c.auth.getSession();
+    return data && data.session ? data.session.access_token : null;
+  } catch (_) { return null; }
+}
+
 // ── STATE ────────────────────────────────────────
 let allLenders = [];
 let filteredLenders = [];
@@ -2138,10 +2149,12 @@ async function docUploadAll() {
       if (uploadFn) {
         result = await uploadFn(file, base64, { category, version, notes, title: file.name.replace(/\.pdf$/i,'') });
       } else {
-        // Direct call to textract-ocr
+        // Direct call to textract-ocr. verify_jwt=true on the edge fn — must send a real user JWT.
+        const jwt = await _getUserAccessToken();
+        if (!jwt) throw new Error('Session expired — please sign in and retry.');
         const res = await fetch(`${SB_URL}/functions/v1/textract-ocr`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SB_KEY}`, 'apikey': SB_KEY },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}`, 'apikey': SB_KEY },
           body: JSON.stringify({
             action: 'start',
             file_base64: base64,
@@ -2153,6 +2166,9 @@ async function docUploadAll() {
           })
         });
         result = await res.json();
+        if (!res.ok || !result || !result.success) {
+          throw new Error((result && result.error) || ('OCR failed (' + res.status + ')'));
+        }
       }
 
       if (result && result.success) {

@@ -530,6 +530,30 @@ function _authClient() {
   return window._supabase;
 }
 
+// Race-safe gate for JWT-gated edge-fn calls. Copied verbatim from admin/lenders.html:579.
+// Phase 2 dedup candidate: lift to a shared module.
+async function _waitForAuthClient(maxMs) {
+  if (maxMs == null) maxMs = 5000;
+  if (typeof window.getSupabaseClient === 'function') {
+    try { return await window.getSupabaseClient(); } catch (e) { console.warn('[guideline-ai] getSupabaseClient threw:', e); }
+  }
+  const start = Date.now();
+  while (!window._supabaseClient && Date.now() - start < maxMs) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return window._supabaseClient || null;
+}
+
+// Pulls the current user's access_token so JWT-gated edge fns (e.g. textract-ocr) accept the call.
+async function _getUserAccessToken() {
+  const c = await _waitForAuthClient();
+  if (!c) return null;
+  try {
+    const { data } = await c.auth.getSession();
+    return data && data.session ? data.session.access_token : null;
+  } catch (_) { return null; }
+}
+
 const LOAN_TYPE_COLORS = {
   'Conventional': '#4A90E2', 'FHA': '#E67E22', 'VA': '#27AE60',
   'USDA': '#8E44AD', 'Jumbo': '#C0392B', 'Non-QM': '#16A085',
@@ -867,30 +891,50 @@ function triggerLenderGuidelineUpload(lenderId, lenderName, buttonEl) {
     buttonEl.textContent = 'Uploading...';
     buttonEl.disabled = true;
     try {
-      var fileName = lenderId + '/' + Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      var uploadResult = await window._supabase.storage.from('lender-guidelines').upload(fileName, file, { contentType: 'application/pdf', upsert: false });
-      if (uploadResult.error) throw uploadResult.error;
-      var urlData = window._supabase.storage.from('lender-guidelines').getPublicUrl(fileName);
-      var publicUrl = urlData.data.publicUrl;
-      var dbResult = await _authClient().from('lender_guidelines').insert({
-        lender_id: lenderId, title: file.name.replace('.pdf', ''),
-        file_name: file.name, file_url: publicUrl, file_size: file.size,
-        file_type: 'application/pdf', category: 'General Guidelines',
-        is_active: true, upload_source: 'crm_manual', source_type: 'lender',
-        ocr_status: 'pending', created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+      // textract-ocr has verify_jwt=true — must send a real user JWT (anon key 401s).
+      var jwt = await _getUserAccessToken();
+      if (!jwt) {
+        alert('Session expired — please sign in and retry.');
+        buttonEl.textContent = origText; buttonEl.disabled = false; return;
+      }
+      // Read file to base64. Edge fn v76 owns BOTH the storage upload AND the lender_guidelines
+      // upsert — do NOT pre-insert or pre-upload here (would create duplicate row/file).
+      var base64 = await new Promise(function(res, rej) {
+        var r = new FileReader();
+        r.onload = function() { res(r.result.split(',')[1]); };
+        r.onerror = rej;
+        r.readAsDataURL(file);
       });
-      if (dbResult.error) throw dbResult.error;
-      buttonEl.textContent = '✅ Uploaded!';
-      loadLenderGuidelinesList(lenderId);
-      fetch(SB_URL + '/functions/v1/textract-ocr', {
+      var resp = await fetch(SB_URL + '/functions/v1/textract-ocr', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
-        body: JSON.stringify({ file_url: publicUrl, lender_id: lenderId, file_name: file.name })
-      }).catch(function() {});
+        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + jwt },
+        body: JSON.stringify({
+          action: 'start',
+          file_base64: base64,
+          file_name: file.name,
+          file_type: 'application/pdf',
+          lender_id: lenderId,
+          category: 'General Guidelines',
+          title: file.name.replace(/\.pdf$/i, '')
+          // source_type omitted → edge fn defaults to 'lender' (correct for per-lender docs)
+        })
+      });
+      var result = await resp.json().catch(function() { return null; });
+      if (!resp.ok || !result || !result.success) {
+        var msg = (result && result.error) || ('OCR failed (' + resp.status + ')');
+        console.error('[lender-guideline-upload] non-OK response:', resp.status, result);
+        buttonEl.textContent = '❌ Failed';
+        alert('Guideline upload failed: ' + msg);
+        setTimeout(function() { buttonEl.textContent = origText; buttonEl.disabled = false; }, 3000);
+        return;
+      }
+      buttonEl.textContent = '✅ Indexed!';
+      loadLenderGuidelinesList(lenderId);
       setTimeout(function() { buttonEl.textContent = origText; buttonEl.disabled = false; }, 3000);
     } catch(err) {
-      console.error('Upload failed:', err);
+      console.error('[lender-guideline-upload] threw:', err);
       buttonEl.textContent = '❌ Failed';
+      alert('Guideline upload failed: ' + (err && err.message ? err.message : err));
       setTimeout(function() { buttonEl.textContent = origText; buttonEl.disabled = false; }, 3000);
     }
   };
@@ -1057,27 +1101,49 @@ function uploadGlobalGuideline(sourceType, sourceName, buttonEl) {
     buttonEl.textContent = '...';
     buttonEl.disabled = true;
     try {
-      var fileName = 'global/' + sourceType + '/' + Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      var uploadResult = await window._supabase.storage.from('lender-guidelines').upload(fileName, file, { contentType: 'application/pdf', upsert: false });
-      if (uploadResult.error) throw uploadResult.error;
-      var urlData = window._supabase.storage.from('lender-guidelines').getPublicUrl(fileName);
-      var publicUrl = urlData.data.publicUrl;
-      await _authClient().from('lender_guidelines').insert({
-        lender_id: null, title: file.name.replace('.pdf', ''),
-        file_name: file.name, file_url: publicUrl, file_size: file.size,
-        file_type: 'application/pdf', category: sourceName,
-        source_type: sourceType, is_active: true, upload_source: 'crm_manual',
-        ocr_status: 'pending', created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+      // textract-ocr has verify_jwt=true — must send a real user JWT.
+      var jwt = await _getUserAccessToken();
+      if (!jwt) {
+        alert('Session expired — please sign in and retry.');
+        buttonEl.textContent = origText; buttonEl.disabled = false; return;
+      }
+      // Read file to base64 (edge fn v76 owns storage upload + lender_guidelines upsert).
+      var base64 = await new Promise(function(res, rej) {
+        var r = new FileReader();
+        r.onload = function() { res(r.result.split(',')[1]); };
+        r.onerror = rej;
+        r.readAsDataURL(file);
       });
+      // Multi-agency safety: edge fn computes safeFileName from file_name with no agency
+      // awareness, and storage upload uses upsert:true — two agencies uploading the same
+      // filename would silently overwrite each other. Prefix file_name with sourceType
+      // to keep storage paths unique per agency. Title stays clean (original filename).
+      var scopedName = sourceType + '__' + file.name;
+      var resp = await fetch(SB_URL + '/functions/v1/textract-ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + jwt },
+        body: JSON.stringify({
+          action: 'start',
+          file_base64: base64,
+          file_name: scopedName,
+          file_type: 'application/pdf',
+          source_type: sourceType,    // v76 edge fn now persists this; agency stays visible in Reference Library
+          category: sourceName,
+          title: file.name.replace(/\.pdf$/i, '')
+        })
+      });
+      var result = await resp.json().catch(function() { return null; });
+      if (!resp.ok || !result || !result.success) {
+        var msg = (result && result.error) || ('OCR failed (' + resp.status + ')');
+        console.error('[global-guideline-upload] non-OK response:', resp.status, result);
+        showToast('❌ Upload failed: ' + msg);
+        buttonEl.textContent = origText; buttonEl.disabled = false; return;
+      }
       showToast('✅ ' + file.name + ' uploaded to ' + sourceName);
       loadGlobalGuidelineCounts();
-      fetch(SB_URL + '/functions/v1/textract-ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
-        body: JSON.stringify({ file_url: publicUrl, source_type: sourceType, file_name: file.name })
-      }).catch(function() {});
     } catch(err) {
-      showToast('❌ Upload failed: ' + err.message);
+      console.error('[global-guideline-upload] threw:', err);
+      showToast('❌ Upload failed: ' + (err && err.message ? err.message : err));
     }
     buttonEl.textContent = origText;
     buttonEl.disabled = false;
