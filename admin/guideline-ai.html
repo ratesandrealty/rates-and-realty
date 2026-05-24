@@ -1034,25 +1034,47 @@ async function showGlobalGuidelinesList(sourceType, sourceName) {
       .eq('is_active', true)
       .order('created_at', { ascending: false });
     if (_refDocsErr) { console.warn('[ref-docs]', _refDocsErr); docs = []; }
+    var safeSourceName = String(sourceName || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     var list = (docs || []).map(function(d) {
+      var safeTitle = String(d.title || d.file_name || 'this document').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
       return '<div style="display:flex;align-items:center;gap:8px;padding:8px;background:#0d0d0d;border-radius:6px;margin-bottom:4px;">' +
         '<span>📄</span>' +
         '<div style="flex:1;min-width:0;font-size:12px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (d.title || d.file_name) + '</div>' +
         (d.file_url ? '<a href="' + d.file_url + '" target="_blank" style="color:#C9A84C;font-size:11px;text-decoration:none;">View</a>' : '') +
+        '<button onclick="agencyDocDeleteThenRefresh(\'' + d.id + '\', \'' + safeTitle + '\', \'' + sourceType + '\', \'' + safeSourceName + '\')" title="Delete" style="background:none;border:none;color:#555;cursor:pointer;font-size:13px;padding:2px 6px;flex-shrink:0;transition:color 0.15s;" onmouseover="this.style.color=\'#f87171\'" onmouseout="this.style.color=\'#555\'">🗑</button>' +
       '</div>';
     }).join('') || '<div style="color:#444;font-size:12px;padding:8px;">No docs yet</div>';
-    var m = document.createElement('div');
-    m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;';
-    m.innerHTML = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:12px;padding:20px;width:420px;max-height:60vh;overflow-y:auto;">' +
+    var inner = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:12px;padding:20px;width:420px;max-height:60vh;overflow-y:auto;">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
         '<div style="font-size:14px;font-weight:700;color:#fff;">' + sourceName + ' Guidelines</div>' +
-        '<button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:none;border:none;color:#555;font-size:20px;cursor:pointer;">×</button>' +
+        '<button onclick="document.getElementById(\'agencyGuidelinesPopup\').remove()" style="background:none;border:none;color:#555;font-size:20px;cursor:pointer;">×</button>' +
       '</div>' + list + '</div>';
-    m.addEventListener('click', function(e) { if (e.target === m) m.remove(); });
-    document.body.appendChild(m);
+    // Re-use existing popup overlay if open (so an in-place refresh after delete doesn't flicker);
+    // otherwise create one. Stable id lets agencyDocDeleteThenRefresh re-render in place.
+    var m = document.getElementById('agencyGuidelinesPopup');
+    if (!m) {
+      m = document.createElement('div');
+      m.id = 'agencyGuidelinesPopup';
+      m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;';
+      m.addEventListener('click', function(e) { if (e.target === m) m.remove(); });
+      document.body.appendChild(m);
+    }
+    m.dataset.sourceType = sourceType;
+    m.dataset.sourceName = sourceName;
+    m.innerHTML = inner;
   } catch(e) {
     showToast('Error loading guidelines');
   }
+}
+
+// Reuses deleteGuideline's existing confirm + DB delete + storage cleanup; then refreshes
+// the agency card count AND the popup itself (in place via showGlobalGuidelinesList's
+// reuse-existing-element path). If the user cancels the confirm, the in-place refresh
+// just redraws the same content — harmless.
+async function agencyDocDeleteThenRefresh(id, title, sourceType, sourceName) {
+  await deleteGuideline(id, title, null);
+  if (typeof loadGlobalGuidelineCounts === 'function') loadGlobalGuidelineCounts();
+  showGlobalGuidelinesList(sourceType, sourceName);
 }
 
 // ── GLOBAL REFERENCE LIBRARY (RIGHT PANEL) ──────
