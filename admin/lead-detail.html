@@ -4212,6 +4212,29 @@ function _authClient() {
   return sb;
 }
 
+// Race-safe gate for JWT-gated edge-fn calls (e.g. textract-ocr verify_jwt=true).
+// Phase 2 dedup candidate — identical helpers live in admin/lenders.html and admin/guideline-ai.html.
+async function _waitForAuthClient(maxMs) {
+  if (maxMs == null) maxMs = 5000;
+  if (typeof window.getSupabaseClient === 'function') {
+    try { return await window.getSupabaseClient(); } catch (e) { console.warn('[lead-detail] getSupabaseClient threw:', e); }
+  }
+  const start = Date.now();
+  while (!window._supabaseClient && Date.now() - start < maxMs) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return window._supabaseClient || null;
+}
+
+async function _getUserAccessToken() {
+  const c = await _waitForAuthClient();
+  if (!c) return null;
+  try {
+    const { data } = await c.auth.getSession();
+    return data && data.session ? data.session.access_token : null;
+  } catch (_) { return null; }
+}
+
 /* ── STATE ── */
 let contactId = null;
 let leadId = null;
@@ -14717,6 +14740,10 @@ async function startOCR(file) {
       r.readAsDataURL(file);
     });
 
+    // textract-ocr has verify_jwt=true — must send a real user JWT (anon key 401s).
+    const jwt = await _getUserAccessToken();
+    if (!jwt) throw new Error('Session expired — please sign in and retry.');
+
     const ocrAbort = new AbortController();
     const ocrFetchTimeout = setTimeout(() => ocrAbort.abort(), 30000);
     let resp;
@@ -14727,7 +14754,8 @@ async function startOCR(file) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
+            'Authorization': `Bearer ${jwt}`,
+            'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
           },
           body: JSON.stringify({
             action: 'start',
@@ -14810,17 +14838,36 @@ async function startOCR(file) {
         return;
       }
       try {
+        // verify_jwt=true on textract-ocr — refresh JWT each tick so an expired session
+        // surfaces immediately instead of being masked by the existing silent catch.
+        const jwt = await _getUserAccessToken();
+        if (!jwt) {
+          clearTimeout(window._ocrHardTimeout);
+          clearInterval(window._ocrPollTimer);
+          overlay.style.display = 'none';
+          document.getElementById('ocrHeaderSub').textContent = 'Session expired — please sign in and retry.';
+          return;
+        }
         const r = await fetch(
           'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/textract-ocr',
           {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`
+              'Authorization': `Bearer ${jwt}`,
+              'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
             },
             body: JSON.stringify({action:'result', job_id:_ocrJobId})
           }
         );
+        if (r.status === 401) {
+          // Token expired mid-poll — stop loudly instead of churning until hard timeout.
+          clearTimeout(window._ocrHardTimeout);
+          clearInterval(window._ocrPollTimer);
+          overlay.style.display = 'none';
+          document.getElementById('ocrHeaderSub').textContent = 'Session expired — please sign in and retry.';
+          return;
+        }
         const d = await r.json();
         if (d.status==='completed') {
           clearTimeout(window._ocrHardTimeout);
@@ -15238,6 +15285,15 @@ async function scanSelectedDocs() {
   let allFields = {};
   let scannedCount = 0;
 
+  // textract-ocr has verify_jwt=true — need a real user JWT once before the batch; if the
+  // session is gone, abort up front rather than letting every doc silently fail with 401.
+  const jwt = await _getUserAccessToken();
+  if (!jwt) {
+    document.getElementById('docScanResultsSub').textContent = 'Session expired — please sign in and retry.';
+    document.getElementById('docScanResultsList').innerHTML = '<div style="text-align:center;padding:40px;color:#f87171;">Could not scan: session expired.</div>';
+    return;
+  }
+
   for (const doc of docs) {
     try {
       document.getElementById('docScanResultsSub').textContent = `Scanning ${++scannedCount} of ${docs.length}: ${doc.name}…`;
@@ -15252,10 +15308,10 @@ async function scanSelectedDocs() {
         reader.readAsDataURL(blob);
       });
 
-      // Call OCR edge function
+      // Call OCR edge function (verify_jwt=true — send the pre-fetched user JWT).
       const ocrResp = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/textract-ocr`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}`, 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
         body: JSON.stringify({ action: 'start', file_base64: base64, file_name: doc.name, file_type: blob.type, contact_id: contactId })
       });
 
@@ -15267,6 +15323,11 @@ async function scanSelectedDocs() {
           });
           _docScanResults[doc.name] = ocrData.fields;
         }
+      } else {
+        // Surface non-OK status to console (don't silently swallow). Loop continues so one
+        // bad doc doesn't kill the whole batch.
+        const errText = await ocrResp.text().catch(() => '');
+        console.error('[doc-scan] Non-OK for', doc.name, ocrResp.status, errText.slice(0, 200));
       }
     } catch(e) { console.error('Scan error for', doc.name, e); }
   }
