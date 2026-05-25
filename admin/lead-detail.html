@@ -649,6 +649,53 @@
     .ld-subtab-panel { display: none; }
     .ld-subtab-panel.active { display: block; }
 
+    /* ── DEAL ANALYZER (tab: deal-analyzer) ── */
+    .da-strategy-toggle {
+      display: inline-flex; gap: 4px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px;
+      margin-bottom: 18px;
+    }
+    .da-strategy-pill {
+      padding: 7px 22px; border-radius: 999px;
+      background: none; border: none;
+      color: var(--muted); font-size: .82rem; font-weight: 700;
+      cursor: pointer; transition: all .18s;
+      font-family: inherit;
+    }
+    .da-strategy-pill:hover { color: var(--text); }
+    .da-strategy-pill.active {
+      background: linear-gradient(135deg, #f2cf85, #C9A84C);
+      color: #111;
+      box-shadow: 0 1px 6px rgba(201,168,76,0.35);
+    }
+    .da-brrrr-only { display: none; }
+    body.da-mode-brrrr .da-brrrr-only { display: grid; }
+    body.da-mode-brrrr .ld-section.da-brrrr-only { display: block; }
+    .da-result-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 0;
+      font-size: .88rem;
+    }
+    .da-result-label { color: var(--muted); font-size: .78rem; }
+    .da-result-val { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .da-result-val.da-neg { color: #ef6a6a; }
+    .da-result-val.da-pos { color: #2ecc71; }
+    .da-70-chip {
+      display: inline-block;
+      padding: 8px 18px; border-radius: 999px;
+      font-size: .82rem; font-weight: 800; letter-spacing: .5px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .da-70-pass { background: rgba(46,204,113,0.12); border-color: rgba(46,204,113,0.45); color: #2ecc71; }
+    .da-70-fail { background: rgba(239,106,106,0.12); border-color: rgba(239,106,106,0.45); color: #ef6a6a; }
+    .da-70-neutral { /* default */ }
+
     /* ── DOCUMENTS ── */
     .doc-row {
       display: flex; align-items: center; gap: 14px;
@@ -1759,6 +1806,7 @@
       <button class="ld-tab-btn active" onclick="switchTab('lead-details', this)">Lead Details</button>
       <button class="ld-tab-btn" onclick="switchTab('application', this)" id="tab-btn-application">1003 Application</button>
       <button class="ld-tab-btn" onclick="switchTab('fee-sheet', this)" id="tab-btn-fee-sheet"><i class="fas fa-file-invoice-dollar" style="margin-right:4px"></i>Fee Sheet</button>
+      <button class="ld-tab-btn" onclick="switchTab('deal-analyzer', this)" id="tab-btn-deal-analyzer">📊 Deal Analyzer</button>
       <button class="ld-tab-btn" onclick="switchTab('lenders', this)">Lenders</button>
       <button class="ld-tab-btn" onclick="switchTab('commercial', this)">🏢 Commercial</button>
       <button class="ld-tab-btn" onclick="switchTab('documents', this)">Documents</button>
@@ -3866,6 +3914,158 @@
           </div>
         </div>
         <iframe id="feeSheetIframe" src="about:blank" style="width:100%;height:calc(100vh - 200px);border:1px solid #222;border-radius:10px;background:#1a1a1a;"></iframe>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════
+         TAB: DEAL ANALYZER (fix & flip / BRRRR)
+    ═══════════════════════════════════════════ -->
+    <div class="ld-tab-panel" id="tab-deal-analyzer">
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px;">
+        <div>
+          <h3 style="font-size:1.05rem;font-weight:700;color:var(--text);margin:0 0 4px;">📊 Deal Analyzer</h3>
+          <div style="font-size:.78rem;color:var(--muted);" id="da-header-sub">Investment deal calculator — Fix &amp; Flip / BRRRR</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span id="dealAnalyzerSaveStatus" style="font-size:.7rem;min-width:60px;text-align:right;"></span>
+          <button onclick="exportDealAnalyzerPDF()" class="ld-btn-sm" style="padding:6px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:var(--gold);border:1px solid rgba(201,168,76,.3);border-radius:6px;cursor:pointer;font-weight:700;">
+            <i class="fas fa-file-pdf" style="margin-right:4px"></i>Export PDF
+          </button>
+        </div>
+      </div>
+
+      <!-- Strategy toggle -->
+      <div class="da-strategy-toggle" role="tablist" aria-label="Strategy">
+        <button type="button" class="da-strategy-pill active" id="da-strat-flip" onclick="dealAnalyzerSetStrategy('flip')">Fix &amp; Flip</button>
+        <button type="button" class="da-strategy-pill" id="da-strat-brrrr" onclick="dealAnalyzerSetStrategy('brrrr')">BRRRR</button>
+      </div>
+
+      <!-- INPUTS -->
+      <div class="ld-section">
+        <div class="ld-section-title">📥 Acquisition</div>
+        <div class="ld-form-grid cols-4">
+          <div class="ld-field">
+            <label class="ld-label">Purchase Price</label>
+            <input class="ld-input da-input" type="text" id="da-purchase" inputmode="decimal" placeholder="$0">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Renovation Cost</label>
+            <input class="ld-input da-input" type="text" id="da-reno" inputmode="decimal" placeholder="$0">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">ARV (After-Repair Value)</label>
+            <input class="ld-input da-input" type="text" id="da-arv" inputmode="decimal" placeholder="$0">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Holding (months × $/mo)</label>
+            <div style="display:flex;gap:6px;">
+              <input class="ld-input da-input" type="text" id="da-hold-months" inputmode="decimal" placeholder="mo" style="width:38%;">
+              <input class="ld-input da-input" type="text" id="da-hold-monthly" inputmode="decimal" placeholder="$/mo" style="width:62%;">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ld-section">
+        <div class="ld-section-title">💼 Closing &amp; Fees</div>
+        <div class="ld-form-grid cols-3">
+          <div class="ld-field">
+            <label class="ld-label">Lender Fees ($)</label>
+            <input class="ld-input da-input" type="text" id="da-lender-fees" inputmode="decimal" placeholder="$0">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Realtor (% of ARV)</label>
+            <input class="ld-input da-input" type="text" id="da-realtor-pct" inputmode="decimal" placeholder="6">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Other Closing ($)</label>
+            <input class="ld-input da-input" type="text" id="da-other-closing" inputmode="decimal" placeholder="$0">
+          </div>
+        </div>
+      </div>
+
+      <!-- BRRRR-only inputs -->
+      <div class="ld-section da-brrrr-only" id="da-brrrr-inputs">
+        <div class="ld-section-title">🏠 BRRRR — Rent &amp; Refinance</div>
+        <div class="ld-form-grid cols-3">
+          <div class="ld-field">
+            <label class="ld-label">Monthly Rent ($)</label>
+            <input class="ld-input da-input" type="text" id="da-rent" inputmode="decimal" placeholder="$0">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Vacancy %</label>
+            <input class="ld-input da-input" type="text" id="da-vacancy" inputmode="decimal" placeholder="8">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Operating Expenses %</label>
+            <input class="ld-input da-input" type="text" id="da-opex" inputmode="decimal" placeholder="10">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Refi LTV %</label>
+            <input class="ld-input da-input" type="text" id="da-refi-ltv" inputmode="decimal" placeholder="75">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Refi Rate %</label>
+            <input class="ld-input da-input" type="text" id="da-refi-rate" inputmode="decimal" placeholder="7.5">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Refi Term (yrs)</label>
+            <input class="ld-input da-input" type="text" id="da-refi-term" inputmode="decimal" placeholder="30">
+          </div>
+        </div>
+      </div>
+
+      <!-- RESULTS -->
+      <div class="ld-form-grid cols-2" style="grid-template-columns:1fr 1fr!important;gap:14px;">
+        <div class="ld-section da-result-card" style="margin-bottom:0;">
+          <div class="ld-section-title">🧮 Project Cost</div>
+          <div class="da-result-row"><span class="da-result-label">Total Project Cost</span><span class="da-result-val" id="da-out-total-cost">—</span></div>
+          <div class="da-result-row"><span class="da-result-label">Cash Needed</span><span class="da-result-val" id="da-out-cash-needed">—</span></div>
+        </div>
+        <div class="ld-section da-result-card" style="margin-bottom:0;">
+          <div class="ld-section-title">💰 Profit</div>
+          <div class="da-result-row"><span class="da-result-label">Gross Profit (ARV − Cost)</span><span class="da-result-val" id="da-out-gross-profit">—</span></div>
+          <div class="da-result-row"><span class="da-result-label">ROI</span><span class="da-result-val" id="da-out-roi">—</span></div>
+        </div>
+      </div>
+
+      <!-- 70% Rule -->
+      <div class="ld-section" style="margin-top:14px;">
+        <div class="ld-section-title">⚖️ 70 % Rule Check</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:14px;align-items:center;">
+          <div>
+            <div class="da-result-label">Max Buy (ARV × 70% − Reno)</div>
+            <div class="da-result-val" id="da-out-max-buy" style="font-size:1.1rem;">—</div>
+          </div>
+          <div>
+            <div class="da-result-label">Your Purchase</div>
+            <div class="da-result-val" id="da-out-your-purchase" style="font-size:1.1rem;">—</div>
+          </div>
+          <div>
+            <span id="da-out-70-chip" class="da-70-chip da-70-neutral">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- BRRRR-only results -->
+      <div class="ld-form-grid cols-2 da-brrrr-only" id="da-brrrr-results" style="grid-template-columns:1fr 1fr!important;gap:14px;margin-top:14px;">
+        <div class="ld-section da-result-card" style="margin-bottom:0;">
+          <div class="ld-section-title">🏦 Refinance</div>
+          <div class="da-result-row"><span class="da-result-label">New Loan (ARV × LTV)</span><span class="da-result-val" id="da-out-new-loan">—</span></div>
+          <div class="da-result-row"><span class="da-result-label">Cash Left in Deal</span><span class="da-result-val" id="da-out-cash-left">—</span></div>
+          <div class="da-result-row"><span class="da-result-label">Cash-on-Cash Return</span><span class="da-result-val" id="da-out-coc">—</span></div>
+        </div>
+        <div class="ld-section da-result-card" style="margin-bottom:0;">
+          <div class="ld-section-title">📅 Monthly</div>
+          <div class="da-result-row"><span class="da-result-label">Effective Rent</span><span class="da-result-val" id="da-out-eff-rent">—</span></div>
+          <div class="da-result-row"><span class="da-result-label">Refi Payment (P&amp;I)</span><span class="da-result-val da-neg" id="da-out-refi-pmt">—</span></div>
+          <div class="da-result-row"><span class="da-result-label">Op-Ex Reserve</span><span class="da-result-val da-neg" id="da-out-opex-amt">—</span></div>
+          <div class="da-result-row" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px;">
+            <span class="da-result-label" style="font-weight:700;">Monthly Cash Flow</span>
+            <span class="da-result-val" id="da-out-cash-flow" style="font-weight:800;">—</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -7134,6 +7334,7 @@ function switchTab(name, btn) {
   }
   if (name === 'showings') loadContactShowings();
   if (name === 'fee-sheet') prefillFeeSheet();
+  if (name === 'deal-analyzer') initDealAnalyzer();
 }
 
 /* ═══ FEE SHEET ═══ */
@@ -7382,6 +7583,259 @@ async function saveFeeSheetQuote() {
     }
     alert('Fee sheet quote saved!');
   } catch(e) { alert('Error saving: ' + e.message); }
+}
+
+/* ═══ DEAL ANALYZER (fix & flip / BRRRR) ═══ */
+let _dealAnalyzerInited = false;
+let _dealAnalyzerSaveTimer = null;
+let _dealAnalyzerLoaded = false;
+let _dealAnalyzerStrategy = 'flip';
+
+const DA_INPUT_IDS = [
+  'da-purchase','da-reno','da-arv','da-hold-months','da-hold-monthly',
+  'da-lender-fees','da-realtor-pct','da-other-closing',
+  'da-rent','da-vacancy','da-opex','da-refi-ltv','da-refi-rate','da-refi-term'
+];
+const DA_DEFAULTS = { 'da-vacancy': 8, 'da-opex': 10, 'da-refi-ltv': 75, 'da-refi-rate': 7.5, 'da-refi-term': 30, 'da-realtor-pct': 6 };
+
+function _daParseNum(v) {
+  if (v == null) return 0;
+  var s = String(v).replace(/[$,\s]/g, '').replace(/%/g, '');
+  var n = parseFloat(s);
+  return isFinite(n) ? n : 0;
+}
+function _daFmt$(n) {
+  if (!isFinite(n)) return '—';
+  var neg = n < 0; n = Math.abs(n);
+  var s = '$' + Math.round(n).toLocaleString('en-US');
+  return neg ? '−' + s : s;
+}
+function _daFmtPct(n) {
+  if (!isFinite(n)) return '—';
+  return (Math.round(n * 10) / 10).toFixed(1) + ' %';
+}
+function _daGet(id) { var el = document.getElementById(id); return el ? _daParseNum(el.value) : 0; }
+function _daSet(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
+
+function dealAnalyzerSetStrategy(s) {
+  _dealAnalyzerStrategy = (s === 'brrrr') ? 'brrrr' : 'flip';
+  var flip = document.getElementById('da-strat-flip');
+  var brr  = document.getElementById('da-strat-brrrr');
+  if (flip) flip.classList.toggle('active', _dealAnalyzerStrategy === 'flip');
+  if (brr)  brr.classList.toggle('active',  _dealAnalyzerStrategy === 'brrrr');
+  document.body.classList.toggle('da-mode-brrrr', _dealAnalyzerStrategy === 'brrrr');
+  dealAnalyzerRecalc();
+  dealAnalyzerScheduleSave();
+}
+
+function dealAnalyzerRecalc() {
+  var purchase = _daGet('da-purchase');
+  var reno     = _daGet('da-reno');
+  var arv      = _daGet('da-arv');
+  var holdMo   = _daGet('da-hold-months');
+  var holdAmt  = _daGet('da-hold-monthly');
+  var lenderF  = _daGet('da-lender-fees');
+  var realtorP = _daGet('da-realtor-pct');
+  var otherC   = _daGet('da-other-closing');
+
+  var holding   = holdMo * holdAmt;
+  var realtorFee = arv * (realtorP / 100);
+  var totalCost = purchase + reno + holding + lenderF + realtorFee + otherC;
+  var cashNeeded = totalCost;
+  var grossProfit = arv - totalCost;
+  var roi = cashNeeded > 0 ? (grossProfit / cashNeeded) * 100 : NaN;
+
+  _daSet('da-out-total-cost',  _daFmt$(totalCost));
+  _daSet('da-out-cash-needed', _daFmt$(cashNeeded));
+  _daSet('da-out-gross-profit', _daFmt$(grossProfit));
+  var profitEl = document.getElementById('da-out-gross-profit');
+  if (profitEl) {
+    profitEl.classList.remove('da-pos','da-neg');
+    if (grossProfit > 0) profitEl.classList.add('da-pos');
+    else if (grossProfit < 0) profitEl.classList.add('da-neg');
+  }
+  _daSet('da-out-roi', isFinite(roi) ? _daFmtPct(roi) : '—');
+
+  // 70 % rule
+  var maxBuy = arv > 0 ? (arv * 0.70 - reno) : 0;
+  _daSet('da-out-max-buy', arv > 0 ? _daFmt$(maxBuy) : '—');
+  _daSet('da-out-your-purchase', purchase > 0 ? _daFmt$(purchase) : '—');
+  var chip = document.getElementById('da-out-70-chip');
+  if (chip) {
+    chip.classList.remove('da-70-pass','da-70-fail','da-70-neutral');
+    if (arv <= 0 || purchase <= 0) {
+      chip.textContent = '—';
+      chip.classList.add('da-70-neutral');
+    } else if (purchase <= maxBuy) {
+      chip.textContent = '✅ PASS';
+      chip.classList.add('da-70-pass');
+    } else {
+      chip.textContent = '⚠️ FAIL';
+      chip.classList.add('da-70-fail');
+    }
+  }
+
+  // BRRRR
+  var rent     = _daGet('da-rent');
+  var vacancy  = _daGet('da-vacancy');
+  var opex     = _daGet('da-opex');
+  var refiLtv  = _daGet('da-refi-ltv');
+  var refiRate = _daGet('da-refi-rate');
+  var refiTerm = _daGet('da-refi-term');
+
+  var newLoan = arv * (refiLtv / 100);
+  var cashLeft = totalCost - newLoan;
+  // Monthly P&I — standard amortization
+  var nMonths = refiTerm * 12;
+  var i = (refiRate / 100) / 12;
+  var refiPmt = 0;
+  if (newLoan > 0 && nMonths > 0) {
+    if (i > 0) {
+      var pow = Math.pow(1 + i, nMonths);
+      refiPmt = newLoan * (i * pow) / (pow - 1);
+    } else {
+      refiPmt = newLoan / nMonths;
+    }
+  }
+  var effRent = rent * (1 - vacancy / 100);
+  var opexAmt = rent * (opex / 100);
+  var cashFlow = effRent - refiPmt - opexAmt;
+  var coc = cashLeft > 0 ? (cashFlow * 12) / cashLeft * 100 : NaN;
+
+  _daSet('da-out-new-loan',  newLoan > 0 ? _daFmt$(newLoan) : '—');
+  _daSet('da-out-cash-left', _daFmt$(cashLeft));
+  _daSet('da-out-coc',       isFinite(coc) ? _daFmtPct(coc) : '—');
+  _daSet('da-out-eff-rent',  rent > 0 ? _daFmt$(effRent) : '—');
+  _daSet('da-out-refi-pmt',  refiPmt > 0 ? '−' + _daFmt$(refiPmt) : '—');
+  _daSet('da-out-opex-amt',  opexAmt > 0 ? '−' + _daFmt$(opexAmt) : '—');
+  _daSet('da-out-cash-flow', (rent > 0 || refiPmt > 0) ? _daFmt$(cashFlow) : '—');
+  var cfEl = document.getElementById('da-out-cash-flow');
+  if (cfEl) {
+    cfEl.classList.remove('da-pos','da-neg');
+    if (cashFlow > 0) cfEl.classList.add('da-pos');
+    else if (cashFlow < 0) cfEl.classList.add('da-neg');
+  }
+}
+
+function dealAnalyzerCollect() {
+  var out = { strategy: _dealAnalyzerStrategy, inputs: {} };
+  DA_INPUT_IDS.forEach(function(id) {
+    var el = document.getElementById(id);
+    out.inputs[id] = el ? (el.value || '') : '';
+  });
+  return out;
+}
+
+function dealAnalyzerScheduleSave() {
+  // Don't overwrite saved row until we've loaded what's in the DB
+  if (!_dealAnalyzerLoaded) return;
+  var saveIndicator = document.getElementById('dealAnalyzerSaveStatus');
+  if (saveIndicator) { saveIndicator.textContent = 'Saving…'; saveIndicator.style.color = '#888'; }
+  clearTimeout(_dealAnalyzerSaveTimer);
+  _dealAnalyzerSaveTimer = setTimeout(async function() {
+    var cid = new URLSearchParams(window.location.search).get('contact_id');
+    if (!cid) return;
+    var payload = dealAnalyzerCollect();
+    try {
+      var _c = _authClient();
+      var { error: _upErr } = await _c.from('contacts').update({
+        deal_analyzer_data: payload,
+        deal_analyzer_updated_at: new Date().toISOString()
+      }).eq('id', cid);
+      if (_upErr) throw new Error(_upErr.message);
+      if (saveIndicator) { saveIndicator.textContent = '✓ Saved'; saveIndicator.style.color = '#2ecc71'; }
+    } catch (err) {
+      console.error('[deal analyzer] save error:', err);
+      if (saveIndicator) { saveIndicator.textContent = 'Save failed'; saveIndicator.style.color = '#e74c3c'; }
+    }
+    setTimeout(function() { if (saveIndicator) saveIndicator.textContent = ''; }, 2500);
+  }, 600);
+}
+
+async function initDealAnalyzer() {
+  if (_dealAnalyzerInited) {
+    // refresh header (borrower/address may have changed) but keep typed values
+    _dealAnalyzerUpdateHeader();
+    return;
+  }
+  _dealAnalyzerInited = true;
+
+  // Wire input listeners (recalc + auto-save)
+  DA_INPUT_IDS.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', function() { dealAnalyzerRecalc(); dealAnalyzerScheduleSave(); });
+  });
+
+  // Apply defaults
+  Object.keys(DA_DEFAULTS).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el && !el.value) el.value = String(DA_DEFAULTS[id]);
+  });
+
+  // Prefill from lead
+  try {
+    var ppEl = document.getElementById('f-purchase-price');
+    var ppVal = (ppEl && ppEl.value) ? ppEl.value : (window.leadData && leadData.purchase_price ? leadData.purchase_price : '');
+    if (ppVal) {
+      var ppNum = _daParseNum(ppVal);
+      var daPp = document.getElementById('da-purchase');
+      if (daPp && !daPp.value && ppNum > 0) daPp.value = String(Math.round(ppNum));
+    }
+  } catch(_e) {}
+
+  _dealAnalyzerUpdateHeader();
+
+  // Load saved data (if any)
+  var cid = new URLSearchParams(window.location.search).get('contact_id');
+  if (cid) {
+    try {
+      var _c = _authClient();
+      var { data: row, error: _selErr } = await _c.from('contacts')
+        .select('deal_analyzer_data').eq('id', cid).maybeSingle();
+      if (_selErr) console.warn('[deal analyzer] load error:', _selErr);
+      if (row && row.deal_analyzer_data) {
+        var saved = row.deal_analyzer_data;
+        if (saved.inputs) {
+          Object.keys(saved.inputs).forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.value = saved.inputs[id] || '';
+          });
+        }
+        if (saved.strategy === 'brrrr') dealAnalyzerSetStrategy('brrrr');
+        else dealAnalyzerSetStrategy('flip');
+      } else {
+        // Default state — Flip mode, run first calc
+        dealAnalyzerSetStrategy('flip');
+      }
+    } catch (e) {
+      console.warn('[deal analyzer] load exception:', e);
+      dealAnalyzerSetStrategy('flip');
+    }
+  } else {
+    dealAnalyzerSetStrategy('flip');
+  }
+
+  _dealAnalyzerLoaded = true;
+  dealAnalyzerRecalc();
+}
+
+function _dealAnalyzerUpdateHeader() {
+  var sub = document.getElementById('da-header-sub');
+  if (!sub) return;
+  var first = (document.getElementById('f-first-name') || {}).value || (window.contactData && contactData.first_name) || '';
+  var last  = (document.getElementById('f-last-name')  || {}).value || (window.contactData && contactData.last_name)  || '';
+  var name  = [first, last].filter(Boolean).join(' ') || 'Unnamed lead';
+  var addr  = (document.getElementById('f-property')   || {}).value || (window.leadData && leadData.property_address) || '';
+  sub.textContent = addr ? (name + ' • ' + addr) : name;
+}
+
+function exportDealAnalyzerPDF() {
+  if (typeof showToast === 'function') {
+    showToast('Branded PDF coming in step 2.');
+  } else {
+    alert('Branded PDF coming in step 2.');
+  }
 }
 
 /* ═══ CONDITIONS ═══ */
