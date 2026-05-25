@@ -720,6 +720,15 @@
       letter-spacing: 0.4px;
       min-height: 0;
     }
+    .da-compare-cell.head .da-head-sub {
+      font-size: 0.68rem;
+      font-weight: 500;
+      color: var(--muted);
+      margin-top: 6px;
+      line-height: 1.35;
+      text-transform: none;
+      letter-spacing: 0;
+    }
     .da-compare-cell .da-cmp-label {
       font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
       color: var(--muted); font-weight: 600; margin-bottom: 4px;
@@ -4029,6 +4038,25 @@
         </div>
       </div>
 
+      <!-- INPUTS — Flip Financing (hard-money loan; Fix & Flip only) -->
+      <div class="ld-section">
+        <div class="ld-section-title">🔨 Flip Financing <span style="font-size:.7rem;font-weight:500;color:var(--muted);margin-left:6px;">hard-money loan · Fix &amp; Flip only</span></div>
+        <div class="ld-form-grid cols-3">
+          <div class="ld-field">
+            <label class="ld-label">Flip Loan-to-Cost % <span class="da-est-hint">of (Purchase + Reno)</span></label>
+            <input class="ld-input da-input" type="text" id="da-flip-ltc-pct" inputmode="decimal" placeholder="90">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Hard-Money Rate % <span class="da-est-hint">annual · interest-only</span></label>
+            <input class="ld-input da-input" type="text" id="da-flip-hm-rate" inputmode="decimal" placeholder="10">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Hard-Money Points % <span class="da-est-hint">of loan · upfront</span></label>
+            <input class="ld-input da-input" type="text" id="da-flip-points" inputmode="decimal" placeholder="2">
+          </div>
+        </div>
+      </div>
+
       <!-- INPUTS — Rental & Financing (shared by BRRRR + Buy & Hold) -->
       <div class="ld-section">
         <div class="ld-section-title">🏠 Rental &amp; Financing <span style="font-size:.7rem;font-weight:500;color:var(--muted);margin-left:6px;">used by BRRRR + Buy &amp; Hold</span></div>
@@ -4086,15 +4114,24 @@
       <!-- ═══ 3-STRATEGY COMPARISON GRID ═══ -->
       <div class="da-compare-grid" id="da-compare-grid">
         <!-- Header row -->
-        <div class="da-compare-cell head">🔨 FIX &amp; FLIP</div>
-        <div class="da-compare-cell head">🏠 BRRRR</div>
-        <div class="da-compare-cell head">🏘 BUY &amp; HOLD</div>
+        <div class="da-compare-cell head">
+          <div>🔨 FIX &amp; FLIP</div>
+          <div class="da-head-sub">Buy, renovate, and sell. Financed with hard-money; Cash to Close is what you bring.</div>
+        </div>
+        <div class="da-compare-cell head">
+          <div>🏠 BRRRR</div>
+          <div class="da-head-sub">Buy, renovate, rent, refinance out. Cash Left is your money still in after the refi.</div>
+        </div>
+        <div class="da-compare-cell head">
+          <div>🏘 BUY &amp; HOLD</div>
+          <div class="da-head-sub">Buy and rent long-term on a standard mortgage. Cash Invested is your down + costs.</div>
+        </div>
 
         <!-- Row 1: Cash position -->
         <div class="da-compare-cell">
-          <div class="da-cmp-label">Cash Needed</div>
+          <div class="da-cmp-label">Cash to Close</div>
           <div class="da-cmp-val" id="da-out-cash-flip">—</div>
-          <div class="da-cmp-sub">all-cash acquisition</div>
+          <div class="da-cmp-sub" id="da-out-cash-flip-sub"></div>
         </div>
         <div class="da-compare-cell">
           <div class="da-cmp-label">Cash Left in Deal</div>
@@ -7780,6 +7817,7 @@ let _dealAnalyzerStrategy = 'flip';
 const DA_INPUT_IDS = [
   'da-purchase','da-reno','da-arv','da-hold-months','da-hold-monthly',
   'da-lender-fees','da-buy-closing','da-sell-closing','da-realtor-pct',
+  'da-flip-ltc-pct','da-flip-hm-rate','da-flip-points',
   'da-rent','da-vacancy','da-opex',
   'da-refi-rate','da-refi-term','da-refi-ltv','da-bh-down-pct',
   'da-appreciation-pct'
@@ -7788,7 +7826,8 @@ const DA_DEFAULTS = {
   'da-vacancy': 8, 'da-opex': 10,
   'da-refi-ltv': 75, 'da-refi-rate': 7.5, 'da-refi-term': 30,
   'da-realtor-pct': 6, 'da-bh-down-pct': 25,
-  'da-appreciation-pct': 4
+  'da-appreciation-pct': 4,
+  'da-flip-ltc-pct': 90, 'da-flip-hm-rate': 10, 'da-flip-points': 2
 };
 
 function _daParseNum(v) {
@@ -7865,6 +7904,10 @@ function dealAnalyzerRecalc() {
   var loanTerm = _daGet('da-refi-term');   // shared long-term loan term
   var refiLtv  = _daGet('da-refi-ltv');    // BRRRR-only
   var bhDownP  = _daGet('da-bh-down-pct'); // Buy & Hold-only
+  // Flip financing (hard-money) — Step 4a
+  var ltcPct   = _daGet('da-flip-ltc-pct');
+  var hmRate   = _daGet('da-flip-hm-rate');
+  var hmPoints = _daGet('da-flip-points');
 
   var holding    = holdMo * holdAmt;
   var realtorFee = arv * (realtorP / 100);
@@ -7889,21 +7932,28 @@ function dealAnalyzerRecalc() {
   _daSet('da-out-equity-base',
     arv > 0 ? ('@ ' + apprPct.toFixed(1) + '% on ARV ' + _daFmt$(arv)) : '');
 
-  // ╔════════ FIX & FLIP ════════╗
-  // Includes sell-side closing + realtor (we sell)
-  var flipCost   = purchase + reno + holding + lenderF + buyClose + sellClose + realtorFee;
-  var flipCash   = flipCost;
-  var flipProfit = arv - flipCost;
-  var flipROI    = flipCash > 0 ? (flipProfit / flipCash) * 100 : NaN;
-  var flipAnnROI = (isFinite(flipROI) && holdMo > 0) ? flipROI * (12 / holdMo) : NaN;
-  // For a flip, CoC = annualized cash-on-cash deployed (= Annualized ROI)
-  var flipCoC    = isFinite(flipAnnROI) ? flipAnnROI : (isFinite(flipROI) ? flipROI : NaN);
+  // ╔════════ FIX & FLIP (Step 4a — financed with hard-money) ════════╗
+  // Loan funds % of (purchase + reno). Borrower brings the rest at close,
+  // plus buy-side closing, lender fees, and upfront points. Sell-side costs
+  // and realtor come out of the sale proceeds (not Cash to Close).
+  var ltcLoan       = (purchase + reno) * (ltcPct / 100);
+  var pointsDollar  = ltcLoan * (hmPoints / 100);
+  var interestCarry = ltcLoan * (hmRate / 100 / 12) * holdMo; // interest-only on full loan over full hold
+  var flipCost      = purchase + reno + holding + buyClose + sellClose + realtorFee
+                      + lenderF + pointsDollar + interestCarry;
+  var cashToClose   = (purchase + reno) - ltcLoan + buyClose + lenderF + pointsDollar;
+  var flipProfit    = arv - flipCost;
+  var flipROI       = cashToClose > 0 ? (flipProfit / cashToClose) * 100 : NaN;
+  var flipAnnROI    = (isFinite(flipROI) && holdMo > 0) ? flipROI * (12 / holdMo) : NaN;
+  // For a flip, CoC = annualized return on cash actually deployed (= Annualized ROI)
+  var flipCoC       = isFinite(flipAnnROI) ? flipAnnROI : (isFinite(flipROI) ? flipROI : NaN);
 
-  _daSet('da-out-cash-flip',      flipCash > 0 ? _daFmt$(flipCash) : '—');
+  _daSet('da-out-cash-flip',        cashToClose > 0 ? _daFmt$(cashToClose) : '—');
+  _daSet('da-out-cash-flip-sub',    flipCost > 0 ? ('Total Project Cost ' + _daFmt$(flipCost)) : '');
   _daSetSigned('da-out-gross-profit', flipProfit, arv > 0);
-  _daSet('da-out-roi',            isFinite(flipROI)    ? _daFmtPct(flipROI)    : '—');
-  _daSet('da-out-annualized-roi', isFinite(flipAnnROI) ? _daFmtPct(flipAnnROI) : '—');
-  _daSet('da-out-coc-flip',       isFinite(flipCoC)    ? _daFmtPct(flipCoC)    : '—');
+  _daSet('da-out-roi',              isFinite(flipROI)    ? _daFmtPct(flipROI)    : '—');
+  _daSet('da-out-annualized-roi',   isFinite(flipAnnROI) ? _daFmtPct(flipAnnROI) : '—');
+  _daSet('da-out-coc-flip',         isFinite(flipCoC)    ? _daFmtPct(flipCoC)    : '—');
 
   // 70 % rule (Flip-only callout)
   var maxBuy = arv > 0 ? (arv * 0.70 - reno) : 0;
@@ -8112,7 +8162,10 @@ async function exportDealAnalyzerPDF() {
     loan_term:        _daGet('da-refi-term'),       // shared long-term loan term
     refi_ltv:         _daGet('da-refi-ltv'),        // BRRRR-only
     bh_down_pct:      _daGet('da-bh-down-pct'),     // Buy & Hold-only
-    appreciation_pct: _daGet('da-appreciation-pct') // Step 3d — equity projection
+    appreciation_pct: _daGet('da-appreciation-pct'),// Step 3d — equity projection
+    flip_ltc_pct:     _daGet('da-flip-ltc-pct'),    // Step 4a — Flip hard-money LTC
+    flip_hm_rate:     _daGet('da-flip-hm-rate'),    // Step 4a — Flip hard-money rate
+    flip_points:      _daGet('da-flip-points')      // Step 4a — Flip hard-money points
   };
 
   // ── Mirror dealAnalyzerRecalc() exactly — frontend is single source of truth ──
@@ -8135,15 +8188,24 @@ async function exportDealAnalyzerPDF() {
     return principal * (r * p) / (p - 1);
   }
 
-  // FIX & FLIP — includes sell-side closing + realtor (we sell)
-  var flipCost   = inputs.purchase + inputs.reno + holding + inputs.lender_fees
-                   + inputs.buy_closing + inputs.sell_closing + realtorFee;
-  var flipProfit = inputs.arv - flipCost;
-  var flipROI    = flipCost > 0 ? (flipProfit / flipCost) * 100 : 0;
-  var flipAnnROI = (inputs.hold_months > 0) ? flipROI * (12 / inputs.hold_months) : flipROI;
-  var flipCoC    = flipAnnROI; // for a flip, cash-on-cash = annualized return on cash deployed
-  var maxBuy     = inputs.arv > 0 ? (inputs.arv * 0.70 - inputs.reno) : 0;
-  var rule70Pass = (inputs.purchase > 0 && inputs.arv > 0 && inputs.purchase <= maxBuy);
+  // FIX & FLIP (Step 4a — financed with hard-money)
+  // Loan funds % of (purchase + reno). Borrower's cash-to-close is the rest +
+  // buy-side closing + lender fees + upfront points. Sell-side + realtor + carry
+  // come out of sale proceeds.
+  var ltcLoan       = (inputs.purchase + inputs.reno) * (inputs.flip_ltc_pct / 100);
+  var pointsDollar  = ltcLoan * (inputs.flip_points / 100);
+  var interestCarry = ltcLoan * (inputs.flip_hm_rate / 100 / 12) * inputs.hold_months;
+  var flipCost      = inputs.purchase + inputs.reno + holding + inputs.buy_closing
+                      + inputs.sell_closing + realtorFee
+                      + inputs.lender_fees + pointsDollar + interestCarry;
+  var cashToClose   = (inputs.purchase + inputs.reno) - ltcLoan
+                      + inputs.buy_closing + inputs.lender_fees + pointsDollar;
+  var flipProfit    = inputs.arv - flipCost;
+  var flipROI       = cashToClose > 0 ? (flipProfit / cashToClose) * 100 : 0;
+  var flipAnnROI    = (cashToClose > 0 && inputs.hold_months > 0) ? flipROI * (12 / inputs.hold_months) : flipROI;
+  var flipCoC       = flipAnnROI; // for a flip, cash-on-cash = annualized return on cash deployed
+  var maxBuy        = inputs.arv > 0 ? (inputs.arv * 0.70 - inputs.reno) : 0;
+  var rule70Pass    = (inputs.purchase > 0 && inputs.arv > 0 && inputs.purchase <= maxBuy);
 
   // BRRRR — buy-only cost (no sell-side, no realtor — we hold)
   var brrrrCost     = inputs.purchase + inputs.reno + holding + inputs.lender_fees + inputs.buy_closing;
@@ -8178,7 +8240,10 @@ async function exportDealAnalyzerPDF() {
       equity_y1: eqY1, equity_y5: eqY5, equity_y10: eqY10
     },
     results: {
-      flip:     { cash_needed: flipCost, gross_profit: flipProfit, roi: flipROI,
+      flip:     { cash_needed: cashToClose,           // Step 4a — headline = cash-to-close (was total cost)
+                  total_project_cost: flipCost,       // Step 4a — secondary cell for 4b PDF render
+                  hm_loan: ltcLoan, hm_points_amt: pointsDollar, hm_interest_carry: interestCarry,
+                  gross_profit: flipProfit, roi: flipROI,
                   annualized_roi: flipAnnROI, coc: flipCoC,
                   max_buy: maxBuy, rule_70_pass: rule70Pass },
       brrrr:    { cash_left: brrrrCashLeft, new_loan: brrrrNewLoan, refi_pmt: brrrrRefiPmt,
