@@ -8094,24 +8094,25 @@ async function exportDealAnalyzerPDF() {
   var propertyAddress = (document.getElementById('f-property') || {}).value
               || (window.leadData && leadData.property_address) || '';
 
-  // Raw inputs — keys match the edge fn d.inputs shape (Step 3c)
+  // Raw inputs — keys match the edge fn d.inputs shape (Step 3c+3d)
   var inputs = {
-    purchase:      _daGet('da-purchase'),
-    reno:          _daGet('da-reno'),
-    arv:           _daGet('da-arv'),
-    hold_months:   _daGet('da-hold-months'),
-    hold_monthly:  _daGet('da-hold-monthly'),
-    lender_fees:   _daGet('da-lender-fees'),
-    buy_closing:   _daGet('da-buy-closing'),
-    sell_closing:  _daGet('da-sell-closing'),
-    realtor_pct:   _daGet('da-realtor-pct'),
-    rent:          _daGet('da-rent'),
-    vacancy_pct:   _daGet('da-vacancy'),
-    opex_pct:      _daGet('da-opex'),
-    loan_rate:     _daGet('da-refi-rate'),     // shared long-term loan rate
-    loan_term:     _daGet('da-refi-term'),     // shared long-term loan term
-    refi_ltv:      _daGet('da-refi-ltv'),      // BRRRR-only
-    bh_down_pct:   _daGet('da-bh-down-pct')    // Buy & Hold-only
+    purchase:         _daGet('da-purchase'),
+    reno:             _daGet('da-reno'),
+    arv:              _daGet('da-arv'),
+    hold_months:      _daGet('da-hold-months'),
+    hold_monthly:     _daGet('da-hold-monthly'),
+    lender_fees:      _daGet('da-lender-fees'),
+    buy_closing:      _daGet('da-buy-closing'),
+    sell_closing:     _daGet('da-sell-closing'),
+    realtor_pct:      _daGet('da-realtor-pct'),
+    rent:             _daGet('da-rent'),
+    vacancy_pct:      _daGet('da-vacancy'),
+    opex_pct:         _daGet('da-opex'),
+    loan_rate:        _daGet('da-refi-rate'),       // shared long-term loan rate
+    loan_term:        _daGet('da-refi-term'),       // shared long-term loan term
+    refi_ltv:         _daGet('da-refi-ltv'),        // BRRRR-only
+    bh_down_pct:      _daGet('da-bh-down-pct'),     // Buy & Hold-only
+    appreciation_pct: _daGet('da-appreciation-pct') // Step 3d — equity projection
   };
 
   // ── Mirror dealAnalyzerRecalc() exactly — frontend is single source of truth ──
@@ -8162,11 +8163,20 @@ async function exportDealAnalyzerPDF() {
   var bhDscr         = bhPmt > 0 ? noiAnnual / (bhPmt * 12) : 0;
   var bhCoC          = bhCashInvested > 0 ? (bhCF * 12) / bhCashInvested * 100 : 0;
 
+  // Step 3d — equity projection (appreciation-only on ARV; no loan paydown). arv>0 guard.
+  var eqY1  = (inputs.arv > 0) ? inputs.arv * Math.pow(1 + inputs.appreciation_pct / 100,  1) - inputs.arv : 0;
+  var eqY5  = (inputs.arv > 0) ? inputs.arv * Math.pow(1 + inputs.appreciation_pct / 100,  5) - inputs.arv : 0;
+  var eqY10 = (inputs.arv > 0) ? inputs.arv * Math.pow(1 + inputs.appreciation_pct / 100, 10) - inputs.arv : 0;
+
   var payload = {
     borrower_name: borrowerName,
     property_address: propertyAddress,
     inputs: inputs,
-    property: { noi_annual: noiAnnual, cap_rate: capRate },
+    property: {
+      noi_annual: noiAnnual, cap_rate: capRate,
+      appreciation_pct: inputs.appreciation_pct,
+      equity_y1: eqY1, equity_y5: eqY5, equity_y10: eqY10
+    },
     results: {
       flip:     { cash_needed: flipCost, gross_profit: flipProfit, roi: flipROI,
                   annualized_roi: flipAnnROI, coc: flipCoC,

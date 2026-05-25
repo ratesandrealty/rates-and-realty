@@ -80,6 +80,11 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   // Property-level (shared, financing-independent)
   const noiAnnual = num(prop.noi_annual);
   const capRate   = num(prop.cap_rate);
+  // Equity projection (Step 3d) — appreciation-only on ARV; no loan paydown
+  const apprPct   = num(prop.appreciation_pct);
+  const eqY1      = num(prop.equity_y1);
+  const eqY5      = num(prop.equity_y5);
+  const eqY10     = num(prop.equity_y10);
 
   // FLIP results
   const fCash    = num(flipR.cash_needed);
@@ -351,6 +356,89 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     ],
     hHasResult,
   );
+
+  // ── 6. EQUITY PROJECTION STRIP (appreciation-only — assumption printed for transparency) ──
+  y -= 4;
+  const eqH = 22;
+  rect(M, y - eqH, CW, eqH, BGRAY);
+  page.drawRectangle({ x: M, y: y - eqH, width: CW, height: eqH, borderColor: LGRAY, borderWidth: 0.5 });
+  {
+    const ey = y - eqH + 7;
+    T('PROJECTED EQUITY', M + 10, ey, B, 7, GRAY);
+    const showVals = arv > 0;
+    // Three year cells (label + value)
+    const yrCells: Array<{ lbl: string; val: number; x: number }> = [
+      { lbl: 'Yr 1: ',  val: eqY1,  x: M + 130 },
+      { lbl: 'Yr 5: ',  val: eqY5,  x: M + 250 },
+      { lbl: 'Yr 10: ', val: eqY10, x: M + 370 },
+    ];
+    yrCells.forEach((c) => {
+      T(c.lbl, c.x, ey, R, 7, GRAY);
+      const lw = R.widthOfTextAtSize(c.lbl, 7);
+      const txt = showVals ? '+' + fmtD(c.val) : '-';
+      T(txt, c.x + lw, ey, B, 8, showVals ? POS : DARK);
+    });
+    // Right-aligned assumption caption (italic)
+    const note = showVals
+      ? '@ ' + apprPct.toFixed(1) + '% annual on ARV ' + fmtD(arv) + '  -  no loan paydown'
+      : 'appreciation-only on ARV  -  no loan paydown';
+    T(note, M + CW - R.widthOfTextAtSize(note, 6) - 10, ey + 1, RI, 6, GRAY);
+  }
+  y -= eqH;
+
+  // ── 6b. STANDARDS BLOCK — "What Investors Typically Look For" ─────────────
+  y -= 8;
+  const stdH = 90;
+  rect(M, y - stdH, CW, stdH, WHITE);
+  page.drawRectangle({ x: M, y: y - stdH, width: CW, height: stdH, borderColor: LGRAY, borderWidth: 0.5 });
+  {
+    // Title row
+    const titleY = y - 14;
+    T('WHAT INVESTORS TYPICALLY LOOK FOR', M + 10, titleY, B, 8, DARK);
+    const titleW = B.widthOfTextAtSize('WHAT INVESTORS TYPICALLY LOOK FOR', 8);
+    T('General investor guidelines, not Rates & Realty guarantees.',
+      M + 10 + titleW + 10, titleY, RI, 6.5, GRAY);
+
+    // 3 mini-columns
+    const stdColW = CW / 3;
+    const stdCols: Array<{ title: string; bullets: string[] }> = [
+      { title: 'FIX & FLIP', bullets: [
+        'ROI >= 10-15% on the deal',
+        'Passes the 70% rule',
+        'Target profit ~$25k-$50k+',
+      ]},
+      { title: 'BRRRR', bullets: [
+        'DSCR >= 1.20',
+        'Positive monthly cash flow',
+        'Most/all capital recovered on refi',
+      ]},
+      { title: 'BUY & HOLD', bullets: [
+        'Cap rate >= 5-6%',
+        'DSCR >= 1.25',
+        'Positive cash flow',
+        'Cash-on-cash >= 8%',
+      ]},
+    ];
+    stdCols.forEach((col, i) => {
+      const cx = M + stdColW * i;
+      if (i > 0) {
+        page.drawLine({
+          start: { x: cx, y: y - 22 },
+          end:   { x: cx, y: y - stdH + 6 },
+          thickness: 0.5, color: LGRAY,
+        });
+      }
+      // Column heading (gold)
+      T(col.title, cx + 12, y - 32, B, 7.5, GOLD);
+      // Bullets
+      let by = y - 46;
+      col.bullets.forEach((b) => {
+        T('-  ' + b, cx + 12, by, R, 7, DARK);
+        by -= 11;
+      });
+    });
+  }
+  y -= stdH;
 
   // ── 7. DISCLAIMER (5pt italic gray, left-aligned, wrapped) ─────────────────
   y -= 6;
