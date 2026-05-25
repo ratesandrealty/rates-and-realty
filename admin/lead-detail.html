@@ -7830,11 +7830,165 @@ function _dealAnalyzerUpdateHeader() {
   sub.textContent = addr ? (name + ' • ' + addr) : name;
 }
 
-function exportDealAnalyzerPDF() {
-  if (typeof showToast === 'function') {
-    showToast('Branded PDF coming in step 2.');
-  } else {
-    alert('Branded PDF coming in step 2.');
+async function exportDealAnalyzerPDF() {
+  var cid = new URLSearchParams(window.location.search).get('contact_id');
+  var strategy = _dealAnalyzerStrategy;
+
+  // Borrower + property — pull live from dashboard inputs, fall back to row data
+  var first = (document.getElementById('f-first-name') || {}).value
+              || (window.contactData && contactData.first_name) || '';
+  var last  = (document.getElementById('f-last-name')  || {}).value
+              || (window.contactData && contactData.last_name)  || '';
+  var borrowerName = [first, last].filter(Boolean).join(' ') || 'Borrower';
+  var propertyAddress = (document.getElementById('f-property') || {}).value
+              || (window.leadData && leadData.property_address) || '';
+
+  // Raw inputs (numeric, parsed by _daGet which strips $ , % spaces)
+  var inputs = {
+    purchase:      _daGet('da-purchase'),
+    reno:          _daGet('da-reno'),
+    arv:           _daGet('da-arv'),
+    hold_months:   _daGet('da-hold-months'),
+    hold_monthly:  _daGet('da-hold-monthly'),
+    lender_fees:   _daGet('da-lender-fees'),
+    realtor_pct:   _daGet('da-realtor-pct'),
+    other_closing: _daGet('da-other-closing'),
+    rent:          _daGet('da-rent'),
+    vacancy_pct:   _daGet('da-vacancy'),
+    opex_pct:      _daGet('da-opex'),
+    refi_ltv:      _daGet('da-refi-ltv'),
+    refi_rate:     _daGet('da-refi-rate'),
+    refi_term:     _daGet('da-refi-term')
+  };
+
+  // Re-derive results from inputs — keeps PDF in lock-step with on-screen calc.
+  // Mirrors dealAnalyzerRecalc() exactly; frontend is single source of truth.
+  var holding    = inputs.hold_months * inputs.hold_monthly;
+  var realtorFee = inputs.arv * (inputs.realtor_pct / 100);
+  var totalCost  = inputs.purchase + inputs.reno + holding + inputs.lender_fees + realtorFee + inputs.other_closing;
+  var grossProfit = inputs.arv - totalCost;
+  var roi = totalCost > 0 ? (grossProfit / totalCost) * 100 : 0;
+  var maxBuy = inputs.arv > 0 ? (inputs.arv * 0.70 - inputs.reno) : 0;
+  var rule70Pass = (inputs.purchase > 0 && inputs.arv > 0 && inputs.purchase <= maxBuy);
+  var newLoan = inputs.arv * (inputs.refi_ltv / 100);
+  var cashLeft = totalCost - newLoan;
+  var nMo = inputs.refi_term * 12, monthlyR = (inputs.refi_rate / 100) / 12;
+  var refiPmt = 0;
+  if (newLoan > 0 && nMo > 0) {
+    if (monthlyR > 0) {
+      var pow = Math.pow(1 + monthlyR, nMo);
+      refiPmt = newLoan * (monthlyR * pow) / (pow - 1);
+    } else {
+      refiPmt = newLoan / nMo;
+    }
+  }
+  var effRent  = inputs.rent * (1 - inputs.vacancy_pct / 100);
+  var opexAmt  = inputs.rent * (inputs.opex_pct / 100);
+  var cashFlow = effRent - refiPmt - opexAmt;
+  var coc = cashLeft > 0 ? (cashFlow * 12) / cashLeft * 100 : 0;
+
+  var payload = {
+    borrower_name: borrowerName,
+    property_address: propertyAddress,
+    strategy: strategy,
+    inputs: inputs,
+    results: {
+      total_cost: totalCost, cash_needed: totalCost,
+      gross_profit: grossProfit, roi: roi,
+      max_buy: maxBuy, rule_70_pass: rule70Pass,
+      new_loan: newLoan, cash_left: cashLeft, refi_pmt: refiPmt,
+      eff_rent: effRent, opex_amt: opexAmt, cash_flow: cashFlow, coc: coc
+    }
+  };
+
+  var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  if (typeof showToast === 'function') showToast('Generating PDF…');
+
+  try {
+    var res = await fetch(base + '/functions/v1/generate-deal-analysis', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon, 'apikey': anon },
+      body: JSON.stringify(payload)
+    });
+    var result = await res.json();
+    if (!result.success || !result.pdf) throw new Error(result.error || 'PDF generation failed');
+
+    // Decode base64 -> blob (mirror openPreApprovalPDF popup pattern)
+    var byteChars = atob(result.pdf);
+    var byteArray = new Uint8Array(byteChars.length);
+    for (var k = 0; k < byteChars.length; k++) byteArray[k] = byteChars.charCodeAt(k);
+    var blob = new Blob([byteArray], { type: 'application/pdf' });
+    var blobUrl = URL.createObjectURL(blob);
+    var fileName = 'Deal Analysis — ' + borrowerName + '.pdf';
+
+    var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
+    if (!popup) {
+      var a = document.createElement('a');
+      a.href = blobUrl; a.download = fileName; a.click();
+      if (typeof showToast === 'function') showToast('Deal Analysis PDF downloaded ✓');
+    } else {
+      popup.document.write('<!DOCTYPE html>'
+        + '<html><head><meta charset="UTF-8"><title>' + fileName + '</title>'
+        + '<style>'
+        + '* { margin:0; padding:0; box-sizing:border-box; }'
+        + 'html, body { height:100%; background:#404040; font-family:sans-serif; display:flex; flex-direction:column; }'
+        + '.toolbar { background:#111; border-bottom:2px solid #C9A84C; padding:10px 20px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }'
+        + '.title { color:#C9A84C; font-weight:700; font-size:14px; }'
+        + '.sub { color:#888; font-size:12px; margin-top:2px; }'
+        + '.btns { display:flex; gap:10px; }'
+        + '.btn { padding:8px 18px; border-radius:6px; border:none; font-weight:700; font-size:13px; cursor:pointer; }'
+        + '.btn-print { background:#2a2a2a; color:#eee; border:1px solid #444; }'
+        + '.btn-dl { background:#C9A84C; color:#111; }'
+        + '.btn-close { background:transparent; color:#888; border:1px solid #444; }'
+        + 'iframe { flex:1; border:none; width:100%; }'
+        + '</style></head><body>'
+        + '<div class="toolbar">'
+        +   '<div><div class="title">📊 Deal Analysis — ' + borrowerName + '</div>'
+        +   '<div class="sub">' + new Date().toLocaleDateString() + ' · ' + (strategy === 'brrrr' ? 'BRRRR' : 'Fix &amp; Flip') + '</div></div>'
+        +   '<div class="btns">'
+        +     '<button class="btn btn-print" onclick="document.getElementById(\'pf\').contentWindow.print()">🖨️ Print</button>'
+        +     '<button class="btn btn-dl" onclick="dl()">⬇️ Download PDF</button>'
+        +     '<button class="btn btn-close" onclick="window.close()">✕ Close</button>'
+        +   '</div>'
+        + '</div>'
+        + '<iframe id="pf" src="' + blobUrl + '" type="application/pdf"></iframe>'
+        + '<script>function dl(){var a=document.createElement(\'a\');a.href=\'' + blobUrl + '\';a.download=\'' + fileName + '\';a.click();}<\/script>'
+        + '</body></html>');
+      popup.document.close();
+      setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 600000);
+      if (typeof showToast === 'function') showToast('Deal Analysis PDF ready ✓');
+    }
+
+    // ── Lead-score engagement hook (fire-and-forget, success path only) ──
+    // Dedup per contact per DAY — mirrors fee-sheet pattern at ~line 7411.
+    // Gate ONLY the scorer fetch; the PDF itself always generates.
+    if (cid) {
+      try {
+        var _evtKey = 'event_fired_deal_analysis_' + cid + '_' + new Date().toISOString().slice(0, 10);
+        if (!sessionStorage.getItem(_evtKey)) {
+          sessionStorage.setItem(_evtKey, '1');
+          fetch(base + '/functions/v1/lead-scorer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon, 'apikey': anon },
+            body: JSON.stringify({
+              action: 'record_event',
+              contact_id: cid,
+              event_type: 'deal_analysis_generated',
+              metadata: { channel: 'system', title: 'Generated deal analysis PDF', strategy: strategy }
+            })
+          }).then(function(r) {
+            if (!r.ok) console.warn('[deal-analyzer] scorer event non-2xx:', r.status);
+          }).catch(function(err) {
+            console.warn('[deal-analyzer] scorer event failed:', err);
+          });
+        }
+      } catch(_e) {}
+    }
+  } catch (e) {
+    console.error('[deal-analyzer] PDF error:', e);
+    if (typeof showToast === 'function') showToast('PDF generation failed: ' + e.message, true);
+    else alert('PDF generation failed: ' + e.message);
   }
 }
 
