@@ -235,37 +235,46 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   {
     const py = y - propH + 7;
     T('PROPERTY METRICS', M + 10, py, B, 7, GRAY);
-    // NOI
+    // Purchase — anchor value (always shows when purchase set; '-' otherwise)
+    const purLbl = 'Purchase: ';
+    const purX = M + 130;
+    T(purLbl, purX, py, R, 7, GRAY);
+    T(purchase > 0 ? fmtD(purchase) : '-',
+      purX + R.widthOfTextAtSize(purLbl, 7), py, B, 8, DARK);
+    // Annual NOI
     const noiLbl = 'Annual NOI: ';
-    const noiX = M + 130;
+    const noiX = M + 280;
     T(noiLbl, noiX, py, R, 7, GRAY);
     T(rent > 0 ? fmtD(noiAnnual) : '-',
       noiX + R.widthOfTextAtSize(noiLbl, 7), py, B, 8, DARK);
     // Cap rate
     const capLbl = 'Cap Rate: ';
-    const capX = M + 290;
+    const capX = M + 440;
     T(capLbl, capX, py, R, 7, GRAY);
     T((purchase > 0 && rent > 0) ? (capRate.toFixed(1) + '%') : '-',
       capX + R.widthOfTextAtSize(capLbl, 7), py, B, 8, DARK);
-    // Caption (right-aligned)
+    // Caption (right-aligned) — formula reminder for Cap
     const cap = 'NOI / Purchase  -  financing-independent property metric';
     T(cap, M + CW - R.widthOfTextAtSize(cap, 6) - 10, py + 1, RI, 6, GRAY);
   }
   y -= propH;
   y -= 8;
 
-  // ── 4b. DEAL INPUTS (compact 3-row reference — every result is substantiated) ─
-  const inHdrH  = 14;
-  const inRowH  = 14;
-  const inBodyH = inRowH * 3 + 6;
-  const inH     = inHdrH + inBodyH;
+  // ── 4b. DEAL INPUTS (Step 3f: real section title, larger rows, generous spacing) ─
+  const inHdrH    = 22;                       // taller header to fit 11pt title
+  const inRowH    = 20;                       // generous spacing between rows
+  const inTopPad  = 14;                       // gap from header bottom to first row baseline
+  const inBotPad  = 10;                       // gap from last row baseline to box bottom
+  const inBodyH   = inTopPad + inRowH * 2 + inBotPad; // 14 + 20 + 20 + 10 = 64
+  const inH       = inHdrH + inBodyH;         // 22 + 64 = 86
   // Container border
   page.drawRectangle({ x: M, y: y - inH, width: CW, height: inH, borderColor: LGRAY, borderWidth: 0.5 });
-  // Header strip (BGRAY like the property strip)
+  // Header strip (BGRAY) — bumped to a real section title at 11pt
   rect(M, y - inHdrH, CW, inHdrH, BGRAY);
-  T('DEAL INPUTS', M + 10, y - 10, B, 7, GRAY);
+  T('DEAL INPUTS', M + 12, y - 15, B, 11, DARK);
+  const titleW = B.widthOfTextAtSize('DEAL INPUTS', 11);
   T('inputs feeding all calculations below',
-    M + 10 + B.widthOfTextAtSize('DEAL INPUTS', 7) + 8, y - 10, RI, 6, GRAY);
+    M + 12 + titleW + 10, y - 14, RI, 7, GRAY);
 
   // ── Compose row strings (ASCII-only; 'x' not '×', '|' separators, '-' dashes) ──
   // Acquisition row
@@ -291,15 +300,15 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     '  |  Refi LTV ' + refiLtv.toFixed(0) + '%' +
     '  |  B&H Down ' + bhDownPct.toFixed(0) + '%';
 
-  // Draw rows — bold prefix label, regular details
+  // Draw rows — bold prefix label, regular details (both bumped from 7pt to 9pt)
   const drawInRow = (label: string, content: string, ry: number) => {
-    T(label, M + 12, ry, B, 7, GRAY);
-    const lw = B.widthOfTextAtSize(label, 7);
-    T(content, M + 12 + lw + 4, ry, R, 7, DARK);
+    T(label, M + 14, ry, B, 9, GRAY);
+    const lw = B.widthOfTextAtSize(label, 9);
+    T(content, M + 14 + lw + 6, ry, R, 9, DARK);
   };
-  const r1y = y - inHdrH - 10;
-  const r2y = r1y - inRowH;
-  const r3y = r2y - inRowH;
+  const r1y = y - inHdrH - inTopPad;          // y - 22 - 14 = y - 36
+  const r2y = r1y - inRowH;                   // y - 56
+  const r3y = r2y - inRowH;                   // y - 76
   drawInRow('Acquisition:',         acqRow,  r1y);
   drawInRow('Fees:',                feesRow, r2y);
   drawInRow('Rental & Financing:',  rentRow, r3y);
