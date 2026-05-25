@@ -4202,7 +4202,7 @@
 
         <!-- Row 6: Cash-on-Cash — COMMON COMPARISON ROW (gold-tinted) -->
         <div class="da-compare-cell da-compare-coc">
-          <div class="da-cmp-label">Cash-on-Cash</div>
+          <div class="da-cmp-label">Profit Margin</div>
           <div class="da-cmp-val" id="da-out-coc-flip">—</div>
         </div>
         <div class="da-compare-cell da-compare-coc">
@@ -7948,12 +7948,17 @@ function dealAnalyzerRecalc() {
   // For a flip, CoC = annualized return on cash actually deployed (= Annualized ROI)
   var flipCoC       = isFinite(flipAnnROI) ? flipAnnROI : (isFinite(flipROI) ? flipROI : NaN);
 
+  // Step 4b: Flip's bottom cell is Profit Margin (gross profit as % of ARV) —
+  // the old CoC was a duplicate of Annualized ROI. Element id kept (da-out-coc-flip)
+  // for code-churn minimisation; the metric it carries is now Profit Margin.
+  var profitMargin = arv > 0 ? (flipProfit / arv) * 100 : NaN;
+
   _daSet('da-out-cash-flip',        cashToClose > 0 ? _daFmt$(cashToClose) : '—');
   _daSet('da-out-cash-flip-sub',    flipCost > 0 ? ('Total Project Cost ' + _daFmt$(flipCost)) : '');
   _daSetSigned('da-out-gross-profit', flipProfit, arv > 0);
-  _daSet('da-out-roi',              isFinite(flipROI)    ? _daFmtPct(flipROI)    : '—');
-  _daSet('da-out-annualized-roi',   isFinite(flipAnnROI) ? _daFmtPct(flipAnnROI) : '—');
-  _daSet('da-out-coc-flip',         isFinite(flipCoC)    ? _daFmtPct(flipCoC)    : '—');
+  _daSet('da-out-roi',              isFinite(flipROI)      ? _daFmtPct(flipROI)      : '—');
+  _daSet('da-out-annualized-roi',   isFinite(flipAnnROI)   ? _daFmtPct(flipAnnROI)   : '—');
+  _daSet('da-out-coc-flip',         isFinite(profitMargin) ? _daFmtPct(profitMargin) : '—');
 
   // 70 % rule (Flip-only callout)
   var maxBuy = arv > 0 ? (arv * 0.70 - reno) : 0;
@@ -8203,7 +8208,9 @@ async function exportDealAnalyzerPDF() {
   var flipProfit    = inputs.arv - flipCost;
   var flipROI       = cashToClose > 0 ? (flipProfit / cashToClose) * 100 : 0;
   var flipAnnROI    = (cashToClose > 0 && inputs.hold_months > 0) ? flipROI * (12 / inputs.hold_months) : flipROI;
-  var flipCoC       = flipAnnROI; // for a flip, cash-on-cash = annualized return on cash deployed
+  var flipCoC       = flipAnnROI; // for a flip, cash-on-cash = annualized return on cash deployed (kept for back-compat)
+  // Step 4b — Profit Margin replaces Flip's CoC cell on-screen + in the PDF (4b v7)
+  var profitMargin  = inputs.arv > 0 ? (flipProfit / inputs.arv) * 100 : 0;
   var maxBuy        = inputs.arv > 0 ? (inputs.arv * 0.70 - inputs.reno) : 0;
   var rule70Pass    = (inputs.purchase > 0 && inputs.arv > 0 && inputs.purchase <= maxBuy);
 
@@ -8244,7 +8251,9 @@ async function exportDealAnalyzerPDF() {
                   total_project_cost: flipCost,       // Step 4a — secondary cell for 4b PDF render
                   hm_loan: ltcLoan, hm_points_amt: pointsDollar, hm_interest_carry: interestCarry,
                   gross_profit: flipProfit, roi: flipROI,
-                  annualized_roi: flipAnnROI, coc: flipCoC,
+                  annualized_roi: flipAnnROI,
+                  profit_margin: profitMargin,        // Step 4b — Flip's bottom cell metric
+                  coc: flipCoC,                       // kept for back-compat (pre-v7 edge fn read this)
                   max_buy: maxBuy, rule_70_pass: rule70Pass },
       brrrr:    { cash_left: brrrrCashLeft, new_loan: brrrrNewLoan, refi_pmt: brrrrRefiPmt,
                   cash_flow: brrrrCF, dscr: brrrrDscr, coc: brrrrCoC },

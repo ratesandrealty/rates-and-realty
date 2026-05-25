@@ -99,14 +99,15 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const eqY10     = num(prop.equity_y10);
 
   // FLIP results
-  const fCash    = num(flipR.cash_needed);
-  const fProfit  = num(flipR.gross_profit);
-  const fRoi     = num(flipR.roi);
-  const fAnnRoi  = num(flipR.annualized_roi);
-  const fCoc     = num(flipR.coc);
-  const fMaxBuy  = num(flipR.max_buy);
-  const fPass    = !!flipR.rule_70_pass;
-  const fHasResult = (purchase > 0 || arv > 0);
+  const fCash         = num(flipR.cash_needed);            // = cashToClose since 4a
+  const fTotalCost    = num(flipR.total_project_cost);     // 4a — secondary cell
+  const fProfit       = num(flipR.gross_profit);
+  const fRoi          = num(flipR.roi);
+  const fAnnRoi       = num(flipR.annualized_roi);
+  const fProfitMargin = num(flipR.profit_margin);          // 4b — replaces coc in Flip card
+  const fMaxBuy       = num(flipR.max_buy);
+  const fPass         = !!flipR.rule_70_pass;
+  const fHasResult    = (purchase > 0 || arv > 0);
 
   // BRRRR results
   const bCashLeft = num(brrrrR.cash_left);
@@ -319,21 +320,30 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   // ── 5. THREE STACKED STRATEGY CARDS (Fix & Flip · BRRRR · Buy & Hold) ─────
   // Each card: dark header band (22px gold-text title; optional right-side chip)
   //            + body band (88px) with N metric cells separated by light dividers.
-  type CardMetric = { label: string; value: string; color?: any };
+  // Step 4b — CardMetric supports an optional `sub` (small italic line below the value).
+  // Step 4b — drawCard takes a `subtitle` (plain-English clarity line under the title);
+  //          when present, header band grows from 22px to 30px to fit two lines.
+  type CardMetric = { label: string; value: string; color?: any; sub?: string };
   const drawCard = (
     title: string,
+    subtitle: string | null,
     drawRightChip: ((rightX: number, ty: number) => void) | null,
     metrics: CardMetric[],
     hasResult: boolean,
   ) => {
-    const hdrH = 22;
+    const hdrH = subtitle ? 30 : 22;
     const bodyH = 88;
     const cardH = hdrH + bodyH;
+    // Title baseline (kept consistent so the chip always aligns to it)
+    const titleY = subtitle ? (y - 13) : (y - hdrH + 7);
 
     // Header band
     rect(M, y - hdrH, CW, hdrH, DARK);
-    T(title, M + 12, y - hdrH + 7, B, 12, GOLD);
-    if (drawRightChip) drawRightChip(M + CW, y - hdrH + 7);
+    T(title, M + 12, titleY, B, 12, GOLD);
+    if (subtitle) {
+      T(subtitle, M + 12, y - 25, RI, 7, LGRAY);
+    }
+    if (drawRightChip) drawRightChip(M + CW, titleY);
 
     // Body band
     rect(M, y - cardH, CW, bodyH, WHITE);
@@ -342,6 +352,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     const cellW = CW / metrics.length;
     const bLbl = y - hdrH - 18;
     const bVal = y - hdrH - 50;
+    const bSub = y - hdrH - 64;        // Step 4b — secondary sub-line under value (e.g. Total Project Cost)
 
     metrics.forEach((m, i) => {
       const cx = M + cellW * i;
@@ -356,6 +367,9 @@ async function buildPDF(d: any): Promise<Uint8Array> {
       const valColor = hasResult ? (m.color || DARK) : LGRAY;
       const valText  = hasResult ? m.value : '-';
       T(valText, cx + 12, bVal, B, 13, valColor);
+      if (m.sub && hasResult) {
+        T(m.sub, cx + 12, bSub, RI, 7, GRAY);
+      }
     });
 
     y -= cardH;
@@ -372,11 +386,14 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     n > 0 ? POS : (n < 0 ? NEG : DARK);
 
   // ── Card A: FIX & FLIP ──
+  // Step 4b: subtitle, label "CASH TO CLOSE" (was CASH NEEDED), sub "Total Project Cost $X",
+  //          bottom metric is now PROFIT MARGIN (was duplicate of Annualized ROI).
   drawCard(
     'FIX & FLIP',
+    'Buy, renovate, and sell. Financed with hard-money; Cash to Close is what you bring.',
     (rightX, ty) => {
       if (!(purchase > 0 && arv > 0)) return;
-      // 70 % rule chip + sub-text
+      // 70 % rule chip + sub-text (right side of header band)
       const chipText = fPass ? '70% Rule: PASS' : '70% Rule: FAIL';
       const chipColor = fPass ? POS : NEG;
       const chipBg = fPass ? rgb(0.86, 0.95, 0.86) : rgb(0.97, 0.85, 0.85);
@@ -392,11 +409,12 @@ async function buildPDF(d: any): Promise<Uint8Array> {
       T(sub, chipX - R.widthOfTextAtSize(sub, 7) - 8, chipY + 3, R, 7, LGRAY);
     },
     [
-      { label: 'CASH NEEDED',    value: fmtD(fCash) },
+      { label: 'CASH TO CLOSE',  value: fmtD(fCash),
+        sub: fTotalCost > 0 ? ('Total Project Cost ' + fmtD(fTotalCost)) : undefined },
       { label: 'GROSS PROFIT',   value: fmtSigned(fProfit),  color: colorForSigned(fProfit) },
       { label: 'ROI (DEAL)',     value: fRoi.toFixed(1) + '%' },
       { label: 'ANNUALIZED ROI', value: fAnnRoi.toFixed(1) + '%' },
-      { label: 'CASH-ON-CASH',   value: fCoc.toFixed(1) + '%', color: GOLD },
+      { label: 'PROFIT MARGIN',  value: fProfitMargin.toFixed(1) + '%', color: GOLD },
     ],
     fHasResult,
   );
@@ -404,6 +422,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   // ── Card B: BRRRR ──
   drawCard(
     'BRRRR',
+    'Buy, renovate, rent, refinance out. Cash Left is your money still in after the refi.',
     null,
     [
       { label: 'CASH LEFT IN DEAL',    value: fmtSigned(bCashLeft) },
@@ -419,6 +438,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   // ── Card C: BUY & HOLD ──
   drawCard(
     'BUY & HOLD',
+    'Buy and rent long-term on a standard mortgage. Cash Invested is your down + costs.',
     null,
     [
       { label: 'CASH INVESTED', value: fmtD(hCashInv) },
