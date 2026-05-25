@@ -59,45 +59,59 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const B = await doc.embedFont(StandardFonts.HelveticaBold);
   const RI = await doc.embedFont(StandardFonts.HelveticaOblique);
 
-  // ── Parse inputs (deal-analysis payload) ──
+  // ── Parse inputs (3-strategy comparison payload — Step 3c) ──
   const borrowerName    = san(d.borrower_name || 'Borrower');
   const propertyAddress = san(d.property_address || '');
-  const strategy        = (d.strategy === 'brrrr') ? 'brrrr' : 'flip';
-  const isBrrrr         = strategy === 'brrrr';
 
-  const inp = d.inputs  || {};
-  const res = d.results || {};
+  const inp  = d.inputs   || {};
+  const prop = d.property || {};
+  const res  = d.results  || {};
+  const flipR  = res.flip     || {};
+  const brrrrR = res.brrrr    || {};
+  const bhR    = res.buy_hold || {};
   const num = (v: any) => Number(v) || 0;
 
+  // Inputs (used as context for headers + the inputs summary line)
   const purchase     = num(inp.purchase);
   const reno         = num(inp.reno);
   const arv          = num(inp.arv);
-  const holdMonths   = num(inp.hold_months);
-  const holdMonthly  = num(inp.hold_monthly);
-  const lenderFees   = num(inp.lender_fees);
-  const realtorPct   = num(inp.realtor_pct);
-  const otherClosing = num(inp.other_closing);
   const rent         = num(inp.rent);
-  const vacancyPct   = num(inp.vacancy_pct);
-  const opexPct      = num(inp.opex_pct);
-  const refiLtv      = num(inp.refi_ltv);
-  const refiRate     = num(inp.refi_rate);
-  const refiTerm     = num(inp.refi_term);
 
-  // Frontend is single source of truth — these are computed there and passed through
-  const totalCost   = num(res.total_cost);
-  const cashNeeded  = num(res.cash_needed);
-  const grossProfit = num(res.gross_profit);
-  const roi         = num(res.roi);
-  const maxBuy      = num(res.max_buy);
-  const rule70Pass  = !!res.rule_70_pass;
-  const newLoan     = num(res.new_loan);
-  const cashLeft    = num(res.cash_left);
-  const refiPmt     = num(res.refi_pmt);
-  const effRent     = num(res.eff_rent);
-  const opexAmt     = num(res.opex_amt);
-  const cashFlow    = num(res.cash_flow);
-  const coc         = num(res.coc);
+  // Property-level (shared, financing-independent)
+  const noiAnnual = num(prop.noi_annual);
+  const capRate   = num(prop.cap_rate);
+
+  // FLIP results
+  const fCash    = num(flipR.cash_needed);
+  const fProfit  = num(flipR.gross_profit);
+  const fRoi     = num(flipR.roi);
+  const fAnnRoi  = num(flipR.annualized_roi);
+  const fCoc     = num(flipR.coc);
+  const fMaxBuy  = num(flipR.max_buy);
+  const fPass    = !!flipR.rule_70_pass;
+  const fHasResult = (purchase > 0 || arv > 0);
+
+  // BRRRR results
+  const bCashLeft = num(brrrrR.cash_left);
+  const bNewLoan  = num(brrrrR.new_loan);
+  const bRefiPmt  = num(brrrrR.refi_pmt);
+  const bCF       = num(brrrrR.cash_flow);
+  const bDscr     = num(brrrrR.dscr);
+  const bCoc      = num(brrrrR.coc);
+  const bHasResult = (rent > 0 || bNewLoan > 0 || bRefiPmt > 0);
+
+  // BUY & HOLD results
+  const hCashInv  = num(bhR.cash_invested);
+  const hDownPmt  = num(bhR.down_pmt);
+  const hPmt      = num(bhR.bh_pmt);
+  const hCF       = num(bhR.cash_flow);
+  const hDscr     = num(bhR.dscr);
+  const hCoc      = num(bhR.coc);
+  const hHasResult = (rent > 0 || hPmt > 0 || hCashInv > 0);
+
+  // Cash-flow / profit color palette (WinAnsi-safe RGB)
+  const POS = rgb(0.10, 0.55, 0.20);
+  const NEG = rgb(0.75, 0.15, 0.15);
 
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const quoteNum = 'DA-' + Date.now().toString(36).toUpperCase();
@@ -197,157 +211,146 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   T(infoRight, rX - R.widthOfTextAtSize(infoRight, 7), iy, R, 7, DARK);
   y -= infoH;
 
-  // ── 4. SUMMARY STRIP (16px) ────────────────────────────────────────────────
-  const stripH = 16;
-  rect(0, y - stripH, W, stripH, WHITE);
-  hLine(0, y, W, LGRAY);
-  hLine(0, y - stripH, W, LGRAY);
-  const summaryItems = isBrrrr ? [
-    { label: 'Strategy',     value: 'BRRRR' },
-    { label: 'Purchase',     value: fmtD(purchase) },
-    { label: 'ARV',          value: fmtD(arv) },
-    { label: 'Cash Left',    value: fmtD(cashLeft) },
-    { label: 'Cash-on-Cash', value: coc.toFixed(1) + '%' },
-  ] : [
-    { label: 'Strategy',   value: 'Fix & Flip' },
-    { label: 'Purchase',   value: fmtD(purchase) },
-    { label: 'ARV',        value: fmtD(arv) },
-    { label: 'Total Cost', value: fmtD(totalCost) },
-    { label: 'ROI',        value: roi.toFixed(1) + '%' },
-  ];
-  const sumColW = CW / summaryItems.length;
-  const sy = y - stripH + 4;
-  summaryItems.forEach((item, i) => {
-    const cx = M + sumColW * i;
-    T(item.label + ': ', cx + 4, sy, R, 6.5, GRAY);
-    const lw = R.widthOfTextAtSize(item.label + ': ', 6.5);
-    T(item.value, cx + 4 + lw, sy, B, 6.5, DARK);
-    if (i > 0) page.drawLine({ start: { x: cx, y }, end: { x: cx, y: y - stripH }, thickness: 0.5, color: LGRAY });
-  });
-  y -= stripH;
-
-  // ── 5. INPUTS / RESULTS — two-column table ─────────────────────────────────
+  // ── 4. PROPERTY METRICS STRIP (shared NOI + Cap Rate, shown ONCE) ─────────
+  const propH = 22;
+  rect(M, y - propH, CW, propH, BGRAY);
+  page.drawRectangle({ x: M, y: y - propH, width: CW, height: propH, borderColor: LGRAY, borderWidth: 0.5 });
+  {
+    const py = y - propH + 7;
+    T('PROPERTY METRICS', M + 10, py, B, 7, GRAY);
+    // NOI
+    const noiLbl = 'Annual NOI: ';
+    const noiX = M + 130;
+    T(noiLbl, noiX, py, R, 7, GRAY);
+    T(rent > 0 ? fmtD(noiAnnual) : '-',
+      noiX + R.widthOfTextAtSize(noiLbl, 7), py, B, 8, DARK);
+    // Cap rate
+    const capLbl = 'Cap Rate: ';
+    const capX = M + 290;
+    T(capLbl, capX, py, R, 7, GRAY);
+    T((purchase > 0 && rent > 0) ? (capRate.toFixed(1) + '%') : '-',
+      capX + R.widthOfTextAtSize(capLbl, 7), py, B, 8, DARK);
+    // Caption (right-aligned)
+    const cap = 'NOI / Purchase  -  financing-independent property metric';
+    T(cap, M + CW - R.widthOfTextAtSize(cap, 6) - 10, py + 1, RI, 6, GRAY);
+  }
+  y -= propH;
   y -= 10;
-  const tableX = M;
-  const colW = CW / 2;
-  const colInputsX  = tableX;
-  const colResultsX = tableX + colW;
-  const sHdrH = 16;
-  const rowH = 14;
 
-  const drawTwoColHeader = (leftTitle: string, rightTitle: string) => {
-    rect(colInputsX,  y - sHdrH, colW, sHdrH, SEC_HDR);
-    rect(colResultsX, y - sHdrH, colW, sHdrH, SEC_HDR);
-    T(leftTitle,  colInputsX  + 10, y - sHdrH + 5, B, 8, GOLD);
-    T(rightTitle, colResultsX + 10, y - sHdrH + 5, B, 8, GOLD);
-    y -= sHdrH;
-  };
-  const drawTwoColRow = (
-    leftLabel: string, leftValue: string,
-    rightLabel: string, rightValue: string,
-    alt: boolean
+  // ── 5. THREE STACKED STRATEGY CARDS (Fix & Flip · BRRRR · Buy & Hold) ─────
+  // Each card: dark header band (22px gold-text title; optional right-side chip)
+  //            + body band (88px) with N metric cells separated by light dividers.
+  type CardMetric = { label: string; value: string; color?: any };
+  const drawCard = (
+    title: string,
+    drawRightChip: ((rightX: number, ty: number) => void) | null,
+    metrics: CardMetric[],
+    hasResult: boolean,
   ) => {
-    const bg = alt ? ALT_ROW : WHITE;
-    rect(colInputsX,  y - rowH, colW, rowH, bg);
-    rect(colResultsX, y - rowH, colW, rowH, bg);
-    if (leftLabel) {
-      T(leftLabel, colInputsX + 10, y - rowH + 4, R, 7, GRAY);
-      T(leftValue, colInputsX + colW - 10 - B.widthOfTextAtSize(leftValue, 7.5), y - rowH + 4, B, 7.5, DARK);
-    }
-    if (rightLabel) {
-      T(rightLabel, colResultsX + 10, y - rowH + 4, R, 7, GRAY);
-      T(rightValue, colResultsX + colW - 10 - B.widthOfTextAtSize(rightValue, 7.5), y - rowH + 4, B, 7.5, DARK);
-    }
-    y -= rowH;
+    const hdrH = 22;
+    const bodyH = 88;
+    const cardH = hdrH + bodyH;
+
+    // Header band
+    rect(M, y - hdrH, CW, hdrH, DARK);
+    T(title, M + 12, y - hdrH + 7, B, 12, GOLD);
+    if (drawRightChip) drawRightChip(M + CW, y - hdrH + 7);
+
+    // Body band
+    rect(M, y - cardH, CW, bodyH, WHITE);
+    page.drawRectangle({ x: M, y: y - cardH, width: CW, height: cardH, borderColor: LGRAY, borderWidth: 0.5 });
+
+    const cellW = CW / metrics.length;
+    const bLbl = y - hdrH - 18;
+    const bVal = y - hdrH - 50;
+
+    metrics.forEach((m, i) => {
+      const cx = M + cellW * i;
+      if (i > 0) {
+        page.drawLine({
+          start: { x: cx, y: y - hdrH - 6 },
+          end:   { x: cx, y: y - cardH + 6 },
+          thickness: 0.5, color: LGRAY,
+        });
+      }
+      T(m.label, cx + 12, bLbl, B, 6.5, GRAY);
+      const valColor = hasResult ? (m.color || DARK) : LGRAY;
+      const valText  = hasResult ? m.value : '-';
+      T(valText, cx + 12, bVal, B, 13, valColor);
+    });
+
+    y -= cardH;
+    y -= 8; // gap between cards
   };
 
-  drawTwoColHeader('DEAL INPUTS', 'COMPUTED RESULTS');
+  // Helper: sign-prefixed currency for cash flow / profit cells
+  const fmtSigned = (n: number) => {
+    if (n > 0)  return '+' + fmtD(n);
+    if (n < 0)  return '-' + fmtD(Math.abs(n));
+    return fmtD(0);
+  };
+  const colorForSigned = (n: number) =>
+    n > 0 ? POS : (n < 0 ? NEG : DARK);
 
-  const inputRows: Array<[string, string]> = [
-    ['Purchase Price',                              fmtD(purchase)],
-    ['Renovation Cost',                             fmtD(reno)],
-    ['ARV (After-Repair Value)',                    fmtD(arv)],
-    ['Holding (' + holdMonths + ' mo × ' + fmtD(holdMonthly) + '/mo)', fmtD(holdMonths * holdMonthly)],
-    ['Lender Fees',                                 fmtD(lenderFees)],
-    ['Realtor (' + realtorPct + '% of ARV)',        fmtD(arv * realtorPct / 100)],
-    ['Other Closing',                               fmtD(otherClosing)],
-  ];
-  const resultRows: Array<[string, string]> = [
-    ['Total Project Cost',        fmtD(totalCost)],
-    ['Cash Needed',               fmtD(cashNeeded)],
-    ['Gross Profit (ARV - Cost)', fmtD(grossProfit)],
-    ['ROI',                       roi.toFixed(1) + '%'],
-    ['', ''],
-    ['', ''],
-    ['', ''],
-  ];
-  const nRows = Math.max(inputRows.length, resultRows.length);
-  for (let i = 0; i < nRows; i++) {
-    const li = inputRows[i]  || ['', ''];
-    const ri = resultRows[i] || ['', ''];
-    drawTwoColRow(li[0], li[1], ri[0], ri[1], i % 2 === 1);
-  }
-  hLine(tableX, y, CW, DARK);
+  // ── Card A: FIX & FLIP ──
+  drawCard(
+    'FIX & FLIP',
+    (rightX, ty) => {
+      if (!(purchase > 0 && arv > 0)) return;
+      // 70 % rule chip + sub-text
+      const chipText = fPass ? '70% Rule: PASS' : '70% Rule: FAIL';
+      const chipColor = fPass ? POS : NEG;
+      const chipBg = fPass ? rgb(0.86, 0.95, 0.86) : rgb(0.97, 0.85, 0.85);
+      const chipPad = 8;
+      const chipW = B.widthOfTextAtSize(chipText, 9) + chipPad * 2;
+      const chipH = 13;
+      const chipX = rightX - 12 - chipW;
+      const chipY = ty - 2;
+      rect(chipX, chipY, chipW, chipH, chipBg);
+      T(chipText, chipX + chipPad, chipY + 3, B, 9, chipColor);
+      // Sub: Max Buy vs Your purchase
+      const sub = 'Max Buy ' + fmtD(fMaxBuy) + '  vs  Your ' + fmtD(purchase);
+      T(sub, chipX - R.widthOfTextAtSize(sub, 7) - 8, chipY + 3, R, 7, LGRAY);
+    },
+    [
+      { label: 'CASH NEEDED',    value: fmtD(fCash) },
+      { label: 'GROSS PROFIT',   value: fmtSigned(fProfit),  color: colorForSigned(fProfit) },
+      { label: 'ROI (DEAL)',     value: fRoi.toFixed(1) + '%' },
+      { label: 'ANNUALIZED ROI', value: fAnnRoi.toFixed(1) + '%' },
+      { label: 'CASH-ON-CASH',   value: fCoc.toFixed(1) + '%', color: GOLD },
+    ],
+    fHasResult,
+  );
 
-  // ── 6. 70% RULE BAND ───────────────────────────────────────────────────────
-  y -= 12;
-  const ruleH = 30;
-  const passColor = rgb(0.10, 0.55, 0.20);
-  const failColor = rgb(0.75, 0.15, 0.15);
-  const ruleBg  = rule70Pass ? GOLD_TINT : rgb(0.99, 0.93, 0.93);
-  const ruleBdr = rule70Pass ? GOLD : failColor;
-  rect(tableX, y - ruleH, CW, ruleH, ruleBg);
-  page.drawRectangle({ x: tableX, y: y - ruleH, width: CW, height: ruleH, borderColor: ruleBdr, borderWidth: 1 });
-  T('70 % RULE CHECK', tableX + 12, y - 13, B, 9, DARK);
+  // ── Card B: BRRRR ──
+  drawCard(
+    'BRRRR',
+    null,
+    [
+      { label: 'CASH LEFT IN DEAL',    value: fmtSigned(bCashLeft) },
+      { label: 'NEW LOAN (ARV x LTV)', value: fmtD(bNewLoan) },
+      { label: 'REFI PMT / MO',        value: bRefiPmt > 0 ? '-' + fmtD(bRefiPmt) : fmtD(0) },
+      { label: 'CASH FLOW / MO',       value: fmtSigned(bCF), color: colorForSigned(bCF) },
+      { label: 'DSCR',                 value: bDscr.toFixed(2) },
+      { label: 'CASH-ON-CASH',         value: bCoc.toFixed(1) + '%', color: GOLD },
+    ],
+    bHasResult,
+  );
 
-  const cellY = y - 24;
-  const maxBuyLabel = 'Max Buy (ARV × 70% - Reno): ';
-  T(maxBuyLabel, tableX + 12, cellY, R, 7, GRAY);
-  const lw1 = R.widthOfTextAtSize(maxBuyLabel, 7);
-  T(arv > 0 ? fmtD(maxBuy) : '-', tableX + 12 + lw1, cellY, B, 8, DARK);
-
-  const mid = tableX + CW * 0.55;
-  const purchLabel = 'Your Purchase: ';
-  T(purchLabel, mid, cellY, R, 7, GRAY);
-  const lw2 = R.widthOfTextAtSize(purchLabel, 7);
-  T(purchase > 0 ? fmtD(purchase) : '-', mid + lw2, cellY, B, 8, DARK);
-
-  const chipText = (arv <= 0 || purchase <= 0) ? 'N/A' : (rule70Pass ? 'PASS' : 'FAIL');
-  const chipColor = (arv <= 0 || purchase <= 0) ? GRAY : (rule70Pass ? passColor : failColor);
-  const chipX = tableX + CW - 14 - B.widthOfTextAtSize(chipText, 10);
-  T(chipText, chipX, y - 16, B, 10, chipColor);
-
-  y -= ruleH;
-
-  // ── 6b. BRRRR — Refinance + Monthly (only when strategy === 'brrrr') ──────
-  if (isBrrrr) {
-    y -= 14;
-    drawTwoColHeader('REFINANCE', 'MONTHLY');
-
-    const brrrrInputRows: Array<[string, string]> = [
-      ['Monthly Rent',                      fmtD(rent)],
-      ['Vacancy / Op-Ex',                   vacancyPct + '% / ' + opexPct + '%'],
-      ['Refi LTV / Rate / Term',            refiLtv + '% / ' + refiRate + '% / ' + refiTerm + 'y'],
-      ['New Loan (ARV × LTV)',              fmtD(newLoan)],
-      ['Cash Left in Deal',                 fmtD(cashLeft)],
-      ['Cash-on-Cash Return',               coc.toFixed(1) + '%'],
-    ];
-    const brrrrResultRows: Array<[string, string]> = [
-      ['Effective Rent',     fmtD(effRent)],
-      ['Refi Payment (P&I)', '-' + fmtD(refiPmt)],
-      ['Op-Ex Reserve',      '-' + fmtD(opexAmt)],
-      ['', ''],
-      ['', ''],
-      ['Monthly Cash Flow',  (cashFlow >= 0 ? '+' : '') + fmtD(cashFlow)],
-    ];
-    const nB = Math.max(brrrrInputRows.length, brrrrResultRows.length);
-    for (let i = 0; i < nB; i++) {
-      const li = brrrrInputRows[i]  || ['', ''];
-      const ri = brrrrResultRows[i] || ['', ''];
-      drawTwoColRow(li[0], li[1], ri[0], ri[1], i % 2 === 1);
-    }
-    hLine(tableX, y, CW, DARK);
-  }
+  // ── Card C: BUY & HOLD ──
+  drawCard(
+    'BUY & HOLD',
+    null,
+    [
+      { label: 'CASH INVESTED', value: fmtD(hCashInv) },
+      { label: 'DOWN PAYMENT',  value: fmtD(hDownPmt) },
+      { label: 'LOAN PMT / MO', value: hPmt > 0 ? '-' + fmtD(hPmt) : fmtD(0) },
+      { label: 'CASH FLOW / MO', value: fmtSigned(hCF), color: colorForSigned(hCF) },
+      { label: 'DSCR',          value: hDscr.toFixed(2) },
+      { label: 'CASH-ON-CASH',  value: hCoc.toFixed(1) + '%', color: GOLD },
+    ],
+    hHasResult,
+  );
 
   // ── 7. DISCLAIMER (5pt italic gray, left-aligned, wrapped) ─────────────────
   y -= 6;

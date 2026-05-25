@@ -8008,6 +8008,7 @@ function _dealAnalyzerUpdateHeader() {
 
 async function exportDealAnalyzerPDF() {
   var cid = new URLSearchParams(window.location.search).get('contact_id');
+  // strategy: vestigial — still referenced by popup title + scorer hook metadata (kept as-is)
   var strategy = _dealAnalyzerStrategy;
 
   // Borrower + property — pull live from dashboard inputs, fall back to row data
@@ -8019,7 +8020,7 @@ async function exportDealAnalyzerPDF() {
   var propertyAddress = (document.getElementById('f-property') || {}).value
               || (window.leadData && leadData.property_address) || '';
 
-  // Raw inputs (numeric, parsed by _daGet which strips $ , % spaces)
+  // Raw inputs — keys match the edge fn d.inputs shape (Step 3c)
   var inputs = {
     purchase:      _daGet('da-purchase'),
     reno:          _daGet('da-reno'),
@@ -8027,53 +8028,79 @@ async function exportDealAnalyzerPDF() {
     hold_months:   _daGet('da-hold-months'),
     hold_monthly:  _daGet('da-hold-monthly'),
     lender_fees:   _daGet('da-lender-fees'),
+    buy_closing:   _daGet('da-buy-closing'),
+    sell_closing:  _daGet('da-sell-closing'),
     realtor_pct:   _daGet('da-realtor-pct'),
-    other_closing: _daGet('da-other-closing'),
     rent:          _daGet('da-rent'),
     vacancy_pct:   _daGet('da-vacancy'),
     opex_pct:      _daGet('da-opex'),
-    refi_ltv:      _daGet('da-refi-ltv'),
-    refi_rate:     _daGet('da-refi-rate'),
-    refi_term:     _daGet('da-refi-term')
+    loan_rate:     _daGet('da-refi-rate'),     // shared long-term loan rate
+    loan_term:     _daGet('da-refi-term'),     // shared long-term loan term
+    refi_ltv:      _daGet('da-refi-ltv'),      // BRRRR-only
+    bh_down_pct:   _daGet('da-bh-down-pct')    // Buy & Hold-only
   };
 
-  // Re-derive results from inputs — keeps PDF in lock-step with on-screen calc.
-  // Mirrors dealAnalyzerRecalc() exactly; frontend is single source of truth.
+  // ── Mirror dealAnalyzerRecalc() exactly — frontend is single source of truth ──
   var holding    = inputs.hold_months * inputs.hold_monthly;
   var realtorFee = inputs.arv * (inputs.realtor_pct / 100);
-  var totalCost  = inputs.purchase + inputs.reno + holding + inputs.lender_fees + realtorFee + inputs.other_closing;
-  var grossProfit = inputs.arv - totalCost;
-  var roi = totalCost > 0 ? (grossProfit / totalCost) * 100 : 0;
-  var maxBuy = inputs.arv > 0 ? (inputs.arv * 0.70 - inputs.reno) : 0;
-  var rule70Pass = (inputs.purchase > 0 && inputs.arv > 0 && inputs.purchase <= maxBuy);
-  var newLoan = inputs.arv * (inputs.refi_ltv / 100);
-  var cashLeft = totalCost - newLoan;
-  var nMo = inputs.refi_term * 12, monthlyR = (inputs.refi_rate / 100) / 12;
-  var refiPmt = 0;
-  if (newLoan > 0 && nMo > 0) {
-    if (monthlyR > 0) {
-      var pow = Math.pow(1 + monthlyR, nMo);
-      refiPmt = newLoan * (monthlyR * pow) / (pow - 1);
-    } else {
-      refiPmt = newLoan / nMo;
-    }
+
+  // Property-level metrics (financing-independent; shared by BRRRR & Buy & Hold)
+  var effRent   = inputs.rent * (1 - inputs.vacancy_pct / 100);
+  var opexAmt   = inputs.rent * (inputs.opex_pct / 100);
+  var noiAnnual = (effRent - opexAmt) * 12;
+  var capRate   = inputs.purchase > 0 ? noiAnnual / inputs.purchase * 100 : 0;
+
+  // P&I amortization (BRRRR refi + Buy & Hold loan use the same long-term rate/term)
+  function _pi(principal, annualPct, years) {
+    if (!(principal > 0) || !(years > 0)) return 0;
+    var n = years * 12;
+    var r = (annualPct / 100) / 12;
+    if (r <= 0) return principal / n;
+    var p = Math.pow(1 + r, n);
+    return principal * (r * p) / (p - 1);
   }
-  var effRent  = inputs.rent * (1 - inputs.vacancy_pct / 100);
-  var opexAmt  = inputs.rent * (inputs.opex_pct / 100);
-  var cashFlow = effRent - refiPmt - opexAmt;
-  var coc = cashLeft > 0 ? (cashFlow * 12) / cashLeft * 100 : 0;
+
+  // FIX & FLIP — includes sell-side closing + realtor (we sell)
+  var flipCost   = inputs.purchase + inputs.reno + holding + inputs.lender_fees
+                   + inputs.buy_closing + inputs.sell_closing + realtorFee;
+  var flipProfit = inputs.arv - flipCost;
+  var flipROI    = flipCost > 0 ? (flipProfit / flipCost) * 100 : 0;
+  var flipAnnROI = (inputs.hold_months > 0) ? flipROI * (12 / inputs.hold_months) : flipROI;
+  var flipCoC    = flipAnnROI; // for a flip, cash-on-cash = annualized return on cash deployed
+  var maxBuy     = inputs.arv > 0 ? (inputs.arv * 0.70 - inputs.reno) : 0;
+  var rule70Pass = (inputs.purchase > 0 && inputs.arv > 0 && inputs.purchase <= maxBuy);
+
+  // BRRRR — buy-only cost (no sell-side, no realtor — we hold)
+  var brrrrCost     = inputs.purchase + inputs.reno + holding + inputs.lender_fees + inputs.buy_closing;
+  var brrrrNewLoan  = inputs.arv * (inputs.refi_ltv / 100);
+  var brrrrCashLeft = brrrrCost - brrrrNewLoan;
+  var brrrrRefiPmt  = _pi(brrrrNewLoan, inputs.loan_rate, inputs.loan_term);
+  var brrrrCF       = effRent - brrrrRefiPmt - opexAmt;
+  var brrrrDscr     = brrrrRefiPmt > 0 ? noiAnnual / (brrrrRefiPmt * 12) : 0;
+  var brrrrCoC      = brrrrCashLeft > 0 ? (brrrrCF * 12) / brrrrCashLeft * 100 : 0;
+
+  // BUY & HOLD — original purchase mortgage (NOT a refi)
+  var bhDownPmt      = inputs.purchase * (inputs.bh_down_pct / 100);
+  var bhLoan         = inputs.purchase - bhDownPmt;
+  var bhCashInvested = bhDownPmt + inputs.reno + holding + inputs.lender_fees + inputs.buy_closing;
+  var bhPmt          = _pi(bhLoan, inputs.loan_rate, inputs.loan_term);
+  var bhCF           = effRent - bhPmt - opexAmt;
+  var bhDscr         = bhPmt > 0 ? noiAnnual / (bhPmt * 12) : 0;
+  var bhCoC          = bhCashInvested > 0 ? (bhCF * 12) / bhCashInvested * 100 : 0;
 
   var payload = {
     borrower_name: borrowerName,
     property_address: propertyAddress,
-    strategy: strategy,
     inputs: inputs,
+    property: { noi_annual: noiAnnual, cap_rate: capRate },
     results: {
-      total_cost: totalCost, cash_needed: totalCost,
-      gross_profit: grossProfit, roi: roi,
-      max_buy: maxBuy, rule_70_pass: rule70Pass,
-      new_loan: newLoan, cash_left: cashLeft, refi_pmt: refiPmt,
-      eff_rent: effRent, opex_amt: opexAmt, cash_flow: cashFlow, coc: coc
+      flip:     { cash_needed: flipCost, gross_profit: flipProfit, roi: flipROI,
+                  annualized_roi: flipAnnROI, coc: flipCoC,
+                  max_buy: maxBuy, rule_70_pass: rule70Pass },
+      brrrr:    { cash_left: brrrrCashLeft, new_loan: brrrrNewLoan, refi_pmt: brrrrRefiPmt,
+                  cash_flow: brrrrCF, dscr: brrrrDscr, coc: brrrrCoC },
+      buy_hold: { cash_invested: bhCashInvested, down_pmt: bhDownPmt, bh_pmt: bhPmt,
+                  cash_flow: bhCF, dscr: bhDscr, coc: bhCoC }
     }
   };
 
