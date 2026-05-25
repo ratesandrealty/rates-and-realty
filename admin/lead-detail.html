@@ -650,30 +650,6 @@
     .ld-subtab-panel.active { display: block; }
 
     /* ── DEAL ANALYZER (tab: deal-analyzer) ── */
-    .da-strategy-toggle {
-      display: inline-flex; gap: 4px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 4px;
-      margin-bottom: 18px;
-    }
-    .da-strategy-pill {
-      padding: 7px 22px; border-radius: 999px;
-      background: none; border: none;
-      color: var(--muted); font-size: .82rem; font-weight: 700;
-      cursor: pointer; transition: all .18s;
-      font-family: inherit;
-    }
-    .da-strategy-pill:hover { color: var(--text); }
-    .da-strategy-pill.active {
-      background: linear-gradient(135deg, #f2cf85, #C9A84C);
-      color: #111;
-      box-shadow: 0 1px 6px rgba(201,168,76,0.35);
-    }
-    .da-brrrr-only { display: none; }
-    body.da-mode-brrrr .da-brrrr-only { display: grid; }
-    body.da-mode-brrrr .ld-section.da-brrrr-only { display: block; }
     .da-result-row {
       display: flex; align-items: center; justify-content: space-between;
       padding: 7px 0;
@@ -695,6 +671,75 @@
     .da-70-pass { background: rgba(46,204,113,0.12); border-color: rgba(46,204,113,0.45); color: #2ecc71; }
     .da-70-fail { background: rgba(239,106,106,0.12); border-color: rgba(239,106,106,0.45); color: #ef6a6a; }
     .da-70-neutral { /* default */ }
+
+    /* ── DEAL ANALYZER — 3-strategy comparison grid (Step 3b) ── */
+    .da-est-hint {
+      font-size: 10px; color: rgba(201,168,76,0.7);
+      font-weight: 500; margin-left: 6px; letter-spacing: 0.2px;
+    }
+    .da-property-strip {
+      display: flex; gap: 28px; flex-wrap: wrap;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 16px;
+      margin-bottom: 14px;
+    }
+    .da-property-strip .pm {
+      display: flex; align-items: baseline; gap: 8px;
+    }
+    .da-property-strip .pm-label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--muted); font-weight: 600;
+    }
+    .da-property-strip .pm-val {
+      font-size: 1rem; font-weight: 700; color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .da-compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .da-compare-cell {
+      background: var(--surface);
+      padding: 12px 14px;
+      min-height: 64px;
+    }
+    .da-compare-cell.head {
+      background: var(--surface2);
+      text-align: center;
+      padding: 14px 12px;
+      font-size: 0.88rem;
+      font-weight: 800;
+      color: var(--gold);
+      letter-spacing: 0.4px;
+      min-height: 0;
+    }
+    .da-compare-cell .da-cmp-label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--muted); font-weight: 600; margin-bottom: 4px;
+    }
+    .da-compare-cell .da-cmp-val {
+      font-size: 1.05rem; font-weight: 700; color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .da-compare-cell .da-cmp-sub {
+      font-size: 10px; color: var(--muted); margin-top: 3px;
+      font-variant-numeric: tabular-nums;
+    }
+    .da-compare-cell.na .da-cmp-label { opacity: 0.35; }
+    .da-compare-cell.na .da-cmp-val { color: rgba(255,255,255,0.22); font-weight: 600; }
+    body.light .da-compare-cell.na .da-cmp-val { color: rgba(0,0,0,0.22); }
+    .da-compare-coc {
+      background: var(--gold-bg) !important;
+    }
+    .da-compare-coc .da-cmp-label { color: var(--gold); font-weight: 700; }
+    .da-compare-coc .da-cmp-val { font-size: 1.25rem; font-weight: 800; }
 
     /* ── DOCUMENTS ── */
     .doc-row {
@@ -3918,14 +3963,14 @@
     </div>
 
     <!-- ═══════════════════════════════════════════
-         TAB: DEAL ANALYZER (fix & flip / BRRRR)
+         TAB: DEAL ANALYZER (Fix & Flip · BRRRR · Buy & Hold — 3-strategy comparison)
     ═══════════════════════════════════════════ -->
     <div class="ld-tab-panel" id="tab-deal-analyzer">
       <!-- Header -->
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px;">
         <div>
           <h3 style="font-size:1.05rem;font-weight:700;color:var(--text);margin:0 0 4px;">📊 Deal Analyzer</h3>
-          <div style="font-size:.78rem;color:var(--muted);" id="da-header-sub">Investment deal calculator — Fix &amp; Flip / BRRRR</div>
+          <div style="font-size:.78rem;color:var(--muted);" id="da-header-sub">Investment comparison — Fix &amp; Flip · BRRRR · Buy &amp; Hold</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
           <span id="dealAnalyzerSaveStatus" style="font-size:.7rem;min-width:60px;text-align:right;"></span>
@@ -3935,13 +3980,7 @@
         </div>
       </div>
 
-      <!-- Strategy toggle -->
-      <div class="da-strategy-toggle" role="tablist" aria-label="Strategy">
-        <button type="button" class="da-strategy-pill active" id="da-strat-flip" onclick="dealAnalyzerSetStrategy('flip')">Fix &amp; Flip</button>
-        <button type="button" class="da-strategy-pill" id="da-strat-brrrr" onclick="dealAnalyzerSetStrategy('brrrr')">BRRRR</button>
-      </div>
-
-      <!-- INPUTS -->
+      <!-- INPUTS — Acquisition (shared) -->
       <div class="ld-section">
         <div class="ld-section-title">📥 Acquisition</div>
         <div class="ld-form-grid cols-4">
@@ -3967,27 +4006,32 @@
         </div>
       </div>
 
+      <!-- INPUTS — Closing & Fees (shared; sell-side + realtor are Flip-only) -->
       <div class="ld-section">
         <div class="ld-section-title">💼 Closing &amp; Fees</div>
-        <div class="ld-form-grid cols-3">
+        <div class="ld-form-grid cols-4">
           <div class="ld-field">
             <label class="ld-label">Lender Fees ($)</label>
             <input class="ld-input da-input" type="text" id="da-lender-fees" inputmode="decimal" placeholder="$0">
           </div>
           <div class="ld-field">
-            <label class="ld-label">Realtor (% of ARV)</label>
-            <input class="ld-input da-input" type="text" id="da-realtor-pct" inputmode="decimal" placeholder="6">
+            <label class="ld-label">Buy-side Closing ($) <span class="da-est-hint">est. 3% × Purchase</span></label>
+            <input class="ld-input da-input" type="text" id="da-buy-closing" inputmode="decimal" placeholder="$0">
           </div>
           <div class="ld-field">
-            <label class="ld-label">Other Closing ($)</label>
-            <input class="ld-input da-input" type="text" id="da-other-closing" inputmode="decimal" placeholder="$0">
+            <label class="ld-label">Sell-side Closing ($) <span class="da-est-hint">est. 1.5% × ARV · Flip-only</span></label>
+            <input class="ld-input da-input" type="text" id="da-sell-closing" inputmode="decimal" placeholder="$0">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Realtor (% of ARV) <span class="da-est-hint">Flip-only</span></label>
+            <input class="ld-input da-input" type="text" id="da-realtor-pct" inputmode="decimal" placeholder="6">
           </div>
         </div>
       </div>
 
-      <!-- BRRRR-only inputs -->
-      <div class="ld-section da-brrrr-only" id="da-brrrr-inputs">
-        <div class="ld-section-title">🏠 BRRRR — Rent &amp; Refinance</div>
+      <!-- INPUTS — Rental & Financing (shared by BRRRR + Buy & Hold) -->
+      <div class="ld-section">
+        <div class="ld-section-title">🏠 Rental &amp; Financing <span style="font-size:.7rem;font-weight:500;color:var(--muted);margin-left:6px;">used by BRRRR + Buy &amp; Hold</span></div>
         <div class="ld-form-grid cols-3">
           <div class="ld-field">
             <label class="ld-label">Monthly Rent ($)</label>
@@ -4002,37 +4046,137 @@
             <input class="ld-input da-input" type="text" id="da-opex" inputmode="decimal" placeholder="10">
           </div>
           <div class="ld-field">
-            <label class="ld-label">Refi LTV %</label>
-            <input class="ld-input da-input" type="text" id="da-refi-ltv" inputmode="decimal" placeholder="75">
-          </div>
-          <div class="ld-field">
-            <label class="ld-label">Refi Rate %</label>
+            <label class="ld-label">Long-term Loan Rate %</label>
             <input class="ld-input da-input" type="text" id="da-refi-rate" inputmode="decimal" placeholder="7.5">
           </div>
           <div class="ld-field">
-            <label class="ld-label">Refi Term (yrs)</label>
+            <label class="ld-label">Long-term Loan Term (yrs)</label>
             <input class="ld-input da-input" type="text" id="da-refi-term" inputmode="decimal" placeholder="30">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">BRRRR Refi LTV % <span class="da-est-hint">of ARV</span></label>
+            <input class="ld-input da-input" type="text" id="da-refi-ltv" inputmode="decimal" placeholder="75">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Buy &amp; Hold Down Pmt % <span class="da-est-hint">of Purchase</span></label>
+            <input class="ld-input da-input" type="text" id="da-bh-down-pct" inputmode="decimal" placeholder="25">
           </div>
         </div>
       </div>
 
-      <!-- RESULTS -->
-      <div class="ld-form-grid cols-2" style="grid-template-columns:1fr 1fr!important;gap:14px;">
-        <div class="ld-section da-result-card" style="margin-bottom:0;">
-          <div class="ld-section-title">🧮 Project Cost</div>
-          <div class="da-result-row"><span class="da-result-label">Total Project Cost</span><span class="da-result-val" id="da-out-total-cost">—</span></div>
-          <div class="da-result-row"><span class="da-result-label">Cash Needed</span><span class="da-result-val" id="da-out-cash-needed">—</span></div>
+      <!-- Property metrics strip (single source: NOI + Cap Rate) -->
+      <div class="da-property-strip">
+        <div class="pm">
+          <span class="pm-label">Annual NOI</span>
+          <span class="pm-val" id="da-out-noi-annual">—</span>
         </div>
-        <div class="ld-section da-result-card" style="margin-bottom:0;">
-          <div class="ld-section-title">💰 Profit</div>
-          <div class="da-result-row"><span class="da-result-label">Gross Profit (ARV − Cost)</span><span class="da-result-val" id="da-out-gross-profit">—</span></div>
-          <div class="da-result-row"><span class="da-result-label">ROI</span><span class="da-result-val" id="da-out-roi">—</span></div>
+        <div class="pm">
+          <span class="pm-label">Cap Rate</span>
+          <span class="pm-val" id="da-out-cap-rate">—</span>
+        </div>
+        <div class="pm" style="margin-left:auto;font-size:11px;color:var(--muted);">
+          NOI = (Rent × (1−Vacancy) − Op-Ex) × 12 · Cap = NOI / Purchase
         </div>
       </div>
 
-      <!-- 70% Rule -->
+      <!-- ═══ 3-STRATEGY COMPARISON GRID ═══ -->
+      <div class="da-compare-grid" id="da-compare-grid">
+        <!-- Header row -->
+        <div class="da-compare-cell head">🔨 FIX &amp; FLIP</div>
+        <div class="da-compare-cell head">🏠 BRRRR</div>
+        <div class="da-compare-cell head">🏘 BUY &amp; HOLD</div>
+
+        <!-- Row 1: Cash position -->
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Cash Needed</div>
+          <div class="da-cmp-val" id="da-out-cash-flip">—</div>
+          <div class="da-cmp-sub">all-cash acquisition</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Cash Left in Deal</div>
+          <div class="da-cmp-val" id="da-out-cash-brrrr">—</div>
+          <div class="da-cmp-sub" id="da-out-cash-brrrr-sub"></div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Cash Invested</div>
+          <div class="da-cmp-val" id="da-out-cash-bh">—</div>
+          <div class="da-cmp-sub" id="da-out-cash-bh-sub"></div>
+        </div>
+
+        <!-- Row 2: Profit / New Loan / Down Payment -->
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Gross Profit (ARV − Cost)</div>
+          <div class="da-cmp-val" id="da-out-gross-profit">—</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">New Loan (ARV × LTV)</div>
+          <div class="da-cmp-val" id="da-out-new-loan">—</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Down Payment</div>
+          <div class="da-cmp-val" id="da-out-down-pmt">—</div>
+        </div>
+
+        <!-- Row 3: ROI / Monthly P&I -->
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">ROI (deal)</div>
+          <div class="da-cmp-val" id="da-out-roi">—</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Refi Payment / mo</div>
+          <div class="da-cmp-val da-neg" id="da-out-refi-pmt">—</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Loan Payment / mo</div>
+          <div class="da-cmp-val da-neg" id="da-out-bh-pmt">—</div>
+        </div>
+
+        <!-- Row 4: Annualized ROI / Cash flow / Cash flow -->
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Annualized ROI</div>
+          <div class="da-cmp-val" id="da-out-annualized-roi">—</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Cash Flow / mo</div>
+          <div class="da-cmp-val" id="da-out-cash-flow-brrrr">—</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">Cash Flow / mo</div>
+          <div class="da-cmp-val" id="da-out-cash-flow-bh">—</div>
+        </div>
+
+        <!-- Row 5: DSCR (not applicable to Flip) -->
+        <div class="da-compare-cell na">
+          <div class="da-cmp-label">DSCR</div>
+          <div class="da-cmp-val">—</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">DSCR <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);">(NOI / debt service)</span></div>
+          <div class="da-cmp-val" id="da-out-dscr-brrrr">—</div>
+        </div>
+        <div class="da-compare-cell">
+          <div class="da-cmp-label">DSCR <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);">(NOI / debt service)</span></div>
+          <div class="da-cmp-val" id="da-out-dscr-bh">—</div>
+        </div>
+
+        <!-- Row 6: Cash-on-Cash — COMMON COMPARISON ROW (gold-tinted) -->
+        <div class="da-compare-cell da-compare-coc">
+          <div class="da-cmp-label">Cash-on-Cash</div>
+          <div class="da-cmp-val" id="da-out-coc-flip">—</div>
+        </div>
+        <div class="da-compare-cell da-compare-coc">
+          <div class="da-cmp-label">Cash-on-Cash</div>
+          <div class="da-cmp-val" id="da-out-coc-brrrr">—</div>
+        </div>
+        <div class="da-compare-cell da-compare-coc">
+          <div class="da-cmp-label">Cash-on-Cash</div>
+          <div class="da-cmp-val" id="da-out-coc-bh">—</div>
+        </div>
+      </div>
+
+      <!-- 70% Rule (Flip-only callout) -->
       <div class="ld-section" style="margin-top:14px;">
-        <div class="ld-section-title">⚖️ 70 % Rule Check</div>
+        <div class="ld-section-title">⚖️ 70 % Rule Check <span style="font-size:.7rem;font-weight:500;color:var(--muted);margin-left:6px;">Fix &amp; Flip only</span></div>
         <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:14px;align-items:center;">
           <div>
             <div class="da-result-label">Max Buy (ARV × 70% − Reno)</div>
@@ -4044,26 +4188,6 @@
           </div>
           <div>
             <span id="da-out-70-chip" class="da-70-chip da-70-neutral">—</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- BRRRR-only results -->
-      <div class="ld-form-grid cols-2 da-brrrr-only" id="da-brrrr-results" style="grid-template-columns:1fr 1fr!important;gap:14px;margin-top:14px;">
-        <div class="ld-section da-result-card" style="margin-bottom:0;">
-          <div class="ld-section-title">🏦 Refinance</div>
-          <div class="da-result-row"><span class="da-result-label">New Loan (ARV × LTV)</span><span class="da-result-val" id="da-out-new-loan">—</span></div>
-          <div class="da-result-row"><span class="da-result-label">Cash Left in Deal</span><span class="da-result-val" id="da-out-cash-left">—</span></div>
-          <div class="da-result-row"><span class="da-result-label">Cash-on-Cash Return</span><span class="da-result-val" id="da-out-coc">—</span></div>
-        </div>
-        <div class="ld-section da-result-card" style="margin-bottom:0;">
-          <div class="ld-section-title">📅 Monthly</div>
-          <div class="da-result-row"><span class="da-result-label">Effective Rent</span><span class="da-result-val" id="da-out-eff-rent">—</span></div>
-          <div class="da-result-row"><span class="da-result-label">Refi Payment (P&amp;I)</span><span class="da-result-val da-neg" id="da-out-refi-pmt">—</span></div>
-          <div class="da-result-row"><span class="da-result-label">Op-Ex Reserve</span><span class="da-result-val da-neg" id="da-out-opex-amt">—</span></div>
-          <div class="da-result-row" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px;">
-            <span class="da-result-label" style="font-weight:700;">Monthly Cash Flow</span>
-            <span class="da-result-val" id="da-out-cash-flow" style="font-weight:800;">—</span>
           </div>
         </div>
       </div>
@@ -7585,18 +7709,25 @@ async function saveFeeSheetQuote() {
   } catch(e) { alert('Error saving: ' + e.message); }
 }
 
-/* ═══ DEAL ANALYZER (fix & flip / BRRRR) ═══ */
+/* ═══ DEAL ANALYZER — 3-strategy comparison (Fix & Flip · BRRRR · Buy & Hold) ═══ */
 let _dealAnalyzerInited = false;
 let _dealAnalyzerSaveTimer = null;
 let _dealAnalyzerLoaded = false;
+// Legacy: kept for exportDealAnalyzerPDF() compatibility until Step 3c pass.
+// The strategy toggle UI was removed in 3b — _dealAnalyzerStrategy stays 'flip'.
 let _dealAnalyzerStrategy = 'flip';
 
 const DA_INPUT_IDS = [
   'da-purchase','da-reno','da-arv','da-hold-months','da-hold-monthly',
-  'da-lender-fees','da-realtor-pct','da-other-closing',
-  'da-rent','da-vacancy','da-opex','da-refi-ltv','da-refi-rate','da-refi-term'
+  'da-lender-fees','da-buy-closing','da-sell-closing','da-realtor-pct',
+  'da-rent','da-vacancy','da-opex',
+  'da-refi-rate','da-refi-term','da-refi-ltv','da-bh-down-pct'
 ];
-const DA_DEFAULTS = { 'da-vacancy': 8, 'da-opex': 10, 'da-refi-ltv': 75, 'da-refi-rate': 7.5, 'da-refi-term': 30, 'da-realtor-pct': 6 };
+const DA_DEFAULTS = {
+  'da-vacancy': 8, 'da-opex': 10,
+  'da-refi-ltv': 75, 'da-refi-rate': 7.5, 'da-refi-term': 30,
+  'da-realtor-pct': 6, 'da-bh-down-pct': 25
+};
 
 function _daParseNum(v) {
   if (v == null) return 0;
@@ -7617,48 +7748,92 @@ function _daFmtPct(n) {
 function _daGet(id) { var el = document.getElementById(id); return el ? _daParseNum(el.value) : 0; }
 function _daSet(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
 
-function dealAnalyzerSetStrategy(s) {
-  _dealAnalyzerStrategy = (s === 'brrrr') ? 'brrrr' : 'flip';
-  var flip = document.getElementById('da-strat-flip');
-  var brr  = document.getElementById('da-strat-brrrr');
-  if (flip) flip.classList.toggle('active', _dealAnalyzerStrategy === 'flip');
-  if (brr)  brr.classList.toggle('active',  _dealAnalyzerStrategy === 'brrrr');
-  document.body.classList.toggle('da-mode-brrrr', _dealAnalyzerStrategy === 'brrrr');
-  dealAnalyzerRecalc();
-  dealAnalyzerScheduleSave();
+// Standard P&I amortization helper (shared by BRRRR refi + Buy & Hold loan)
+function _daAmortPI(principal, annualRatePct, years) {
+  if (!(principal > 0) || !(years > 0)) return 0;
+  var n = years * 12;
+  var r = (annualRatePct / 100) / 12;
+  if (r <= 0) return principal / n;
+  var pow = Math.pow(1 + r, n);
+  return principal * (r * pow) / (pow - 1);
+}
+
+// Color a cell green (>0) / red (<0) — only when the value is "real" (gate=true)
+function _daSetSigned(id, val, gate) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = gate ? _daFmt$(val) : '—';
+  el.classList.remove('da-pos','da-neg');
+  if (!gate) return;
+  if (val > 0) el.classList.add('da-pos');
+  else if (val < 0) el.classList.add('da-neg');
+}
+
+// Buy-side closing = 3% × Purchase; Sell-side = 1.5% × ARV.
+// Auto-fill ONLY when the field is empty (never overwrite user values).
+// Idempotent — safe to call on every input event.
+function _daAutoFillClosing() {
+  var purchase = _daGet('da-purchase');
+  var arv      = _daGet('da-arv');
+  var buyEl  = document.getElementById('da-buy-closing');
+  var sellEl = document.getElementById('da-sell-closing');
+  if (buyEl && !buyEl.value.trim() && purchase > 0) {
+    buyEl.value = String(Math.round(purchase * 0.03));
+  }
+  if (sellEl && !sellEl.value.trim() && arv > 0) {
+    sellEl.value = String(Math.round(arv * 0.015));
+  }
 }
 
 function dealAnalyzerRecalc() {
+  // ── Shared inputs ──
   var purchase = _daGet('da-purchase');
   var reno     = _daGet('da-reno');
   var arv      = _daGet('da-arv');
   var holdMo   = _daGet('da-hold-months');
   var holdAmt  = _daGet('da-hold-monthly');
   var lenderF  = _daGet('da-lender-fees');
+  var buyClose = _daGet('da-buy-closing');
+  var sellClose= _daGet('da-sell-closing');
   var realtorP = _daGet('da-realtor-pct');
-  var otherC   = _daGet('da-other-closing');
+  var rent     = _daGet('da-rent');
+  var vacancy  = _daGet('da-vacancy');
+  var opex     = _daGet('da-opex');
+  var loanRate = _daGet('da-refi-rate');   // shared long-term loan rate
+  var loanTerm = _daGet('da-refi-term');   // shared long-term loan term
+  var refiLtv  = _daGet('da-refi-ltv');    // BRRRR-only
+  var bhDownP  = _daGet('da-bh-down-pct'); // Buy & Hold-only
 
-  var holding   = holdMo * holdAmt;
+  var holding    = holdMo * holdAmt;
   var realtorFee = arv * (realtorP / 100);
-  var totalCost = purchase + reno + holding + lenderF + realtorFee + otherC;
-  var cashNeeded = totalCost;
-  var grossProfit = arv - totalCost;
-  var roi = cashNeeded > 0 ? (grossProfit / cashNeeded) * 100 : NaN;
 
-  _daSet('da-out-total-cost',  _daFmt$(totalCost));
-  _daSet('da-out-cash-needed', _daFmt$(cashNeeded));
-  _daSet('da-out-gross-profit', _daFmt$(grossProfit));
-  var profitEl = document.getElementById('da-out-gross-profit');
-  if (profitEl) {
-    profitEl.classList.remove('da-pos','da-neg');
-    if (grossProfit > 0) profitEl.classList.add('da-pos');
-    else if (grossProfit < 0) profitEl.classList.add('da-neg');
-  }
-  _daSet('da-out-roi', isFinite(roi) ? _daFmtPct(roi) : '—');
+  // ── Property-level metrics (financing-independent; same for BRRRR & Buy & Hold) ──
+  var effRent   = rent * (1 - vacancy / 100);
+  var opexAmt   = rent * (opex / 100);
+  var noiAnnual = (effRent - opexAmt) * 12;
+  var capRate   = purchase > 0 ? noiAnnual / purchase * 100 : NaN;
+  _daSet('da-out-noi-annual', rent > 0 ? _daFmt$(noiAnnual) : '—');
+  _daSet('da-out-cap-rate',   (purchase > 0 && rent > 0) ? _daFmtPct(capRate) : '—');
 
-  // 70 % rule
+  // ╔════════ FIX & FLIP ════════╗
+  // Includes sell-side closing + realtor (we sell)
+  var flipCost   = purchase + reno + holding + lenderF + buyClose + sellClose + realtorFee;
+  var flipCash   = flipCost;
+  var flipProfit = arv - flipCost;
+  var flipROI    = flipCash > 0 ? (flipProfit / flipCash) * 100 : NaN;
+  var flipAnnROI = (isFinite(flipROI) && holdMo > 0) ? flipROI * (12 / holdMo) : NaN;
+  // For a flip, CoC = annualized cash-on-cash deployed (= Annualized ROI)
+  var flipCoC    = isFinite(flipAnnROI) ? flipAnnROI : (isFinite(flipROI) ? flipROI : NaN);
+
+  _daSet('da-out-cash-flip',      flipCash > 0 ? _daFmt$(flipCash) : '—');
+  _daSetSigned('da-out-gross-profit', flipProfit, arv > 0);
+  _daSet('da-out-roi',            isFinite(flipROI)    ? _daFmtPct(flipROI)    : '—');
+  _daSet('da-out-annualized-roi', isFinite(flipAnnROI) ? _daFmtPct(flipAnnROI) : '—');
+  _daSet('da-out-coc-flip',       isFinite(flipCoC)    ? _daFmtPct(flipCoC)    : '—');
+
+  // 70 % rule (Flip-only callout)
   var maxBuy = arv > 0 ? (arv * 0.70 - reno) : 0;
-  _daSet('da-out-max-buy', arv > 0 ? _daFmt$(maxBuy) : '—');
+  _daSet('da-out-max-buy',       arv > 0      ? _daFmt$(maxBuy)   : '—');
   _daSet('da-out-your-purchase', purchase > 0 ? _daFmt$(purchase) : '—');
   var chip = document.getElementById('da-out-70-chip');
   if (chip) {
@@ -7675,46 +7850,42 @@ function dealAnalyzerRecalc() {
     }
   }
 
-  // BRRRR
-  var rent     = _daGet('da-rent');
-  var vacancy  = _daGet('da-vacancy');
-  var opex     = _daGet('da-opex');
-  var refiLtv  = _daGet('da-refi-ltv');
-  var refiRate = _daGet('da-refi-rate');
-  var refiTerm = _daGet('da-refi-term');
+  // ╔════════ BRRRR ════════╗
+  // Buy-only cost — NO sell-side closing, NO realtor (we hold, not sell)
+  var brrrrCost    = purchase + reno + holding + lenderF + buyClose;
+  var newLoan      = arv * (refiLtv / 100);
+  var brrrrCashLeft= brrrrCost - newLoan;
+  var refiPmt      = _daAmortPI(newLoan, loanRate, loanTerm);
+  var brrrrCF      = effRent - refiPmt - opexAmt;
+  var brrrrDSCR    = refiPmt > 0 ? noiAnnual / (refiPmt * 12) : NaN;
+  // CoC: guard non-positive denominator (cash-left can go ≤0 in great BRRRR deals — show "—" there)
+  var brrrrCoC     = (brrrrCashLeft > 0) ? (brrrrCF * 12) / brrrrCashLeft * 100 : NaN;
 
-  var newLoan = arv * (refiLtv / 100);
-  var cashLeft = totalCost - newLoan;
-  // Monthly P&I — standard amortization
-  var nMonths = refiTerm * 12;
-  var i = (refiRate / 100) / 12;
-  var refiPmt = 0;
-  if (newLoan > 0 && nMonths > 0) {
-    if (i > 0) {
-      var pow = Math.pow(1 + i, nMonths);
-      refiPmt = newLoan * (i * pow) / (pow - 1);
-    } else {
-      refiPmt = newLoan / nMonths;
-    }
-  }
-  var effRent = rent * (1 - vacancy / 100);
-  var opexAmt = rent * (opex / 100);
-  var cashFlow = effRent - refiPmt - opexAmt;
-  var coc = cashLeft > 0 ? (cashFlow * 12) / cashLeft * 100 : NaN;
+  _daSet('da-out-cash-brrrr',     (purchase > 0 || newLoan > 0) ? _daFmt$(brrrrCashLeft) : '—');
+  _daSet('da-out-cash-brrrr-sub', newLoan > 0 ? ('after ' + _daFmt$(newLoan) + ' refi') : '');
+  _daSet('da-out-new-loan',       newLoan > 0 ? _daFmt$(newLoan) : '—');
+  _daSet('da-out-refi-pmt',       refiPmt > 0 ? '−' + _daFmt$(refiPmt) : '—');
+  _daSetSigned('da-out-cash-flow-brrrr', brrrrCF, rent > 0 || refiPmt > 0);
+  _daSet('da-out-dscr-brrrr',     isFinite(brrrrDSCR) ? brrrrDSCR.toFixed(2) : '—');
+  _daSet('da-out-coc-brrrr',      isFinite(brrrrCoC)  ? _daFmtPct(brrrrCoC)  : '—');
 
-  _daSet('da-out-new-loan',  newLoan > 0 ? _daFmt$(newLoan) : '—');
-  _daSet('da-out-cash-left', _daFmt$(cashLeft));
-  _daSet('da-out-coc',       isFinite(coc) ? _daFmtPct(coc) : '—');
-  _daSet('da-out-eff-rent',  rent > 0 ? _daFmt$(effRent) : '—');
-  _daSet('da-out-refi-pmt',  refiPmt > 0 ? '−' + _daFmt$(refiPmt) : '—');
-  _daSet('da-out-opex-amt',  opexAmt > 0 ? '−' + _daFmt$(opexAmt) : '—');
-  _daSet('da-out-cash-flow', (rent > 0 || refiPmt > 0) ? _daFmt$(cashFlow) : '—');
-  var cfEl = document.getElementById('da-out-cash-flow');
-  if (cfEl) {
-    cfEl.classList.remove('da-pos','da-neg');
-    if (cashFlow > 0) cfEl.classList.add('da-pos');
-    else if (cashFlow < 0) cfEl.classList.add('da-neg');
-  }
+  // ╔════════ BUY & HOLD ════════╗
+  // Original purchase mortgage (NOT a refi). Cash invested = down + reno + holding + lender + buy-closing
+  var bhDownPmt      = purchase * (bhDownP / 100);
+  var bhLoan         = purchase - bhDownPmt;
+  var bhCashInvested = bhDownPmt + reno + holding + lenderF + buyClose;
+  var bhPmt          = _daAmortPI(bhLoan, loanRate, loanTerm);
+  var bhCF           = effRent - bhPmt - opexAmt;
+  var bhDSCR         = bhPmt > 0 ? noiAnnual / (bhPmt * 12) : NaN;
+  var bhCoC          = bhCashInvested > 0 ? (bhCF * 12) / bhCashInvested * 100 : NaN;
+
+  _daSet('da-out-cash-bh',        bhCashInvested > 0 ? _daFmt$(bhCashInvested) : '—');
+  _daSet('da-out-cash-bh-sub',    bhDownPmt > 0 ? ('incl. ' + _daFmt$(bhDownPmt) + ' down') : '');
+  _daSet('da-out-down-pmt',       bhDownPmt > 0 ? _daFmt$(bhDownPmt) : '—');
+  _daSet('da-out-bh-pmt',         bhPmt > 0 ? '−' + _daFmt$(bhPmt) : '—');
+  _daSetSigned('da-out-cash-flow-bh', bhCF, rent > 0 || bhPmt > 0);
+  _daSet('da-out-dscr-bh',        isFinite(bhDSCR) ? bhDSCR.toFixed(2) : '—');
+  _daSet('da-out-coc-bh',         isFinite(bhCoC)  ? _daFmtPct(bhCoC)  : '—');
 }
 
 function dealAnalyzerCollect() {
@@ -7760,11 +7931,15 @@ async function initDealAnalyzer() {
   }
   _dealAnalyzerInited = true;
 
-  // Wire input listeners (recalc + auto-save)
+  // Wire input listeners — every input change: auto-fill closing (idempotent), recalc, save
   DA_INPUT_IDS.forEach(function(id) {
     var el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('input', function() { dealAnalyzerRecalc(); dealAnalyzerScheduleSave(); });
+    el.addEventListener('input', function() {
+      _daAutoFillClosing();
+      dealAnalyzerRecalc();
+      dealAnalyzerScheduleSave();
+    });
   });
 
   // Apply defaults
@@ -7773,7 +7948,7 @@ async function initDealAnalyzer() {
     if (el && !el.value) el.value = String(DA_DEFAULTS[id]);
   });
 
-  // Prefill from lead
+  // Prefill purchase from lead
   try {
     var ppEl = document.getElementById('f-purchase-price');
     var ppVal = (ppEl && ppEl.value) ? ppEl.value : (window.leadData && leadData.purchase_price ? leadData.purchase_price : '');
@@ -7797,24 +7972,25 @@ async function initDealAnalyzer() {
       if (row && row.deal_analyzer_data) {
         var saved = row.deal_analyzer_data;
         if (saved.inputs) {
+          // Legacy migration: pre-3b "da-other-closing" → new "da-buy-closing"
+          if (saved.inputs['da-other-closing'] && !saved.inputs['da-buy-closing']) {
+            saved.inputs['da-buy-closing'] = saved.inputs['da-other-closing'];
+          }
+          delete saved.inputs['da-other-closing'];
           Object.keys(saved.inputs).forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.value = saved.inputs[id] || '';
           });
         }
-        if (saved.strategy === 'brrrr') dealAnalyzerSetStrategy('brrrr');
-        else dealAnalyzerSetStrategy('flip');
-      } else {
-        // Default state — Flip mode, run first calc
-        dealAnalyzerSetStrategy('flip');
+        // Legacy strategy field: ignored — toggle UI removed in 3b
       }
     } catch (e) {
       console.warn('[deal analyzer] load exception:', e);
-      dealAnalyzerSetStrategy('flip');
     }
-  } else {
-    dealAnalyzerSetStrategy('flip');
   }
+
+  // Auto-fill closing fields if still empty after prefill/load (initial open with prefilled purchase)
+  _daAutoFillClosing();
 
   _dealAnalyzerLoaded = true;
   dealAnalyzerRecalc();
