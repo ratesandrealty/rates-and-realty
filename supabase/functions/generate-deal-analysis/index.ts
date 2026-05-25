@@ -71,11 +71,23 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const bhR    = res.buy_hold || {};
   const num = (v: any) => Number(v) || 0;
 
-  // Inputs (used as context for headers + the inputs summary line)
+  // Inputs (full set — used by DEAL INPUTS section in Step 3e + headers/strips)
   const purchase     = num(inp.purchase);
   const reno         = num(inp.reno);
   const arv          = num(inp.arv);
   const rent         = num(inp.rent);
+  const holdMo       = num(inp.hold_months);
+  const holdMonthly  = num(inp.hold_monthly);
+  const lenderFees   = num(inp.lender_fees);
+  const buyClosing   = num(inp.buy_closing);
+  const sellClosing  = num(inp.sell_closing);
+  const realtorPct   = num(inp.realtor_pct);
+  const vacancyPct   = num(inp.vacancy_pct);
+  const opexPct      = num(inp.opex_pct);
+  const loanRate     = num(inp.loan_rate);
+  const loanTerm     = num(inp.loan_term);
+  const refiLtv      = num(inp.refi_ltv);
+  const bhDownPct    = num(inp.bh_down_pct);
 
   // Property-level (shared, financing-independent)
   const noiAnnual = num(prop.noi_annual);
@@ -240,6 +252,59 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     T(cap, M + CW - R.widthOfTextAtSize(cap, 6) - 10, py + 1, RI, 6, GRAY);
   }
   y -= propH;
+  y -= 8;
+
+  // ── 4b. DEAL INPUTS (compact 3-row reference — every result is substantiated) ─
+  const inHdrH  = 14;
+  const inRowH  = 14;
+  const inBodyH = inRowH * 3 + 6;
+  const inH     = inHdrH + inBodyH;
+  // Container border
+  page.drawRectangle({ x: M, y: y - inH, width: CW, height: inH, borderColor: LGRAY, borderWidth: 0.5 });
+  // Header strip (BGRAY like the property strip)
+  rect(M, y - inHdrH, CW, inHdrH, BGRAY);
+  T('DEAL INPUTS', M + 10, y - 10, B, 7, GRAY);
+  T('inputs feeding all calculations below',
+    M + 10 + B.widthOfTextAtSize('DEAL INPUTS', 7) + 8, y - 10, RI, 6, GRAY);
+
+  // ── Compose row strings (ASCII-only; 'x' not '×', '|' separators, '-' dashes) ──
+  // Acquisition row
+  const acqRow =
+    'Purchase ' + fmtD(purchase) +
+    '  |  Renovation ' + fmtD(reno) +
+    '  |  ARV ' + fmtD(arv) +
+    '  |  Holding ' + holdMo + ' mo x ' + fmtD(holdMonthly) +
+    '/mo = ' + fmtD(holdMo * holdMonthly);
+  // Fees row — show realtor as % and derived $ for transparency
+  const realtorAmt = arv * realtorPct / 100;
+  const feesRow =
+    'Lender ' + fmtD(lenderFees) +
+    '  |  Buy-side ' + fmtD(buyClosing) +
+    '  |  Sell-side ' + fmtD(sellClosing) +
+    '  |  Realtor ' + realtorPct.toFixed(1) + '% (= ' + fmtD(realtorAmt) + ')';
+  // Rental & Financing row — single line of all the rate inputs
+  const rentRow =
+    'Rent ' + fmtD(rent) + '/mo' +
+    '  |  Vacancy ' + vacancyPct.toFixed(1) + '%' +
+    '  |  Op-Ex ' + opexPct.toFixed(1) + '%' +
+    '  |  Loan ' + loanRate.toFixed(2) + '% / ' + loanTerm + 'yr' +
+    '  |  Refi LTV ' + refiLtv.toFixed(0) + '%' +
+    '  |  B&H Down ' + bhDownPct.toFixed(0) + '%';
+
+  // Draw rows — bold prefix label, regular details
+  const drawInRow = (label: string, content: string, ry: number) => {
+    T(label, M + 12, ry, B, 7, GRAY);
+    const lw = B.widthOfTextAtSize(label, 7);
+    T(content, M + 12 + lw + 4, ry, R, 7, DARK);
+  };
+  const r1y = y - inHdrH - 10;
+  const r2y = r1y - inRowH;
+  const r3y = r2y - inRowH;
+  drawInRow('Acquisition:',         acqRow,  r1y);
+  drawInRow('Fees:',                feesRow, r2y);
+  drawInRow('Rental & Financing:',  rentRow, r3y);
+
+  y -= inH;
   y -= 10;
 
   // ── 5. THREE STACKED STRATEGY CARDS (Fix & Flip · BRRRR · Buy & Hold) ─────
