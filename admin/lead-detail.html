@@ -15850,7 +15850,10 @@ async function startOCR(file, docType) {
       }
 
       console.log('Final OCR fields before render:', JSON.stringify(_ocrFields));
-      renderOCRFields(_ocrFields, data.doc_type || "Driver's License");
+      // Open the Review & Assign modal (Pass 1: shell only — no DB writes).
+      // Legacy renderOCRFields + applyOCRFields are kept for back-compat but no
+      // longer driven from this success path.
+      openOCRReviewModal(_ocrFields, data.doc_type || "Driver's License");
       return;
     }
     if (data.error) throw new Error(data.error);
@@ -15916,7 +15919,8 @@ async function startOCR(file, docType) {
           overlay.style.display = 'none';
           _ocrFields = d.fields || {};
           console.log('Final OCR fields before render:', JSON.stringify(_ocrFields));
-          renderOCRFields(_ocrFields, d.doc_type);
+          // Open the Review & Assign modal (Pass 1: shell only — no DB writes).
+          openOCRReviewModal(_ocrFields, d.doc_type);
         } else if (d.status==='failed') {
           clearTimeout(window._ocrHardTimeout);
           clearInterval(window._ocrPollTimer);
@@ -16036,6 +16040,289 @@ function applyOCRFields() {
 document.addEventListener('click', function(e) {
   const modal = document.getElementById('ocrModal');
   if (e.target === modal) closeOCRModal();
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OCR REVIEW & ASSIGN MODAL (Pass 1 — shell only, NO DB writes)
+
+   Replaces the legacy renderOCRFields → applyOCRFields blind-write path that
+   caused the "Kaylajo into Santana's middle name" bug (no target picker, no
+   review step, hard-wired to f_* primary-borrower inputs).
+
+   Pass 1 (this): picker, editable rows, dynamic Apply label, payload log.
+   Pass 2 (next): wire real DB writes — UPDATE contacts (name fields) +
+                  UPSERT mortgage_applications (other ~12 fields) for the
+                  chosen target.
+   Pass 3 (last): "Add new borrower" insert (contacts + contact_relationships)
+                  + post-apply switchToBorrower(cid) + load1003(cid) so the
+                  user can immediately verify in the form.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let _ocrReviewTargetId = null;     // currently-picked target contact id; null when "Add new" picked
+let _ocrReviewIsAddNew = false;    // true when "+ Add new borrower" picked
+let _ocrReviewFields   = {};       // {ocrKey: extractedValue} — frozen at modal open
+let _ocrReviewDocType  = '';       // human-readable doc type from edge fn
+
+async function openOCRReviewModal(fields, docType) {
+  _ocrReviewFields  = fields || {};
+  _ocrReviewDocType = String(docType || '');
+
+  // Hide the legacy scanner modal + spinner so we don't stack two modals.
+  const ocrModal = document.getElementById('ocrModal');
+  if (ocrModal) ocrModal.style.display = 'none';
+  const spinner = document.getElementById('ocrScanOverlay');
+  if (spinner) spinner.style.display = 'none';
+
+  // Lazy-load co-borrower list (the Application tab may never have been opened).
+  if (!Array.isArray(window._app1003Borrowers)) {
+    if (typeof loadApp1003Borrowers === 'function') {
+      try { await loadApp1003Borrowers(); }
+      catch (_) { window._app1003Borrowers = window._app1003Borrowers || []; }
+    } else {
+      window._app1003Borrowers = [];
+    }
+  }
+
+  // Default target: the active borrower if set (chip selected on Application tab),
+  // else the primary borrower (contactData).
+  const primaryId = (window.contactData && contactData.id) || null;
+  const defaultTargetId = (typeof _activeBorrowerId !== 'undefined' && _activeBorrowerId) || primaryId;
+  _ocrReviewTargetId = defaultTargetId || null;
+  _ocrReviewIsAddNew = false;
+
+  // Prefill the add-new mini-form's name fields from the scan (in case user picks "Add new").
+  const f = _ocrReviewFields;
+  _ocrReviewSetVal('ocrReviewNewFirst',   f.first_name  || '');
+  _ocrReviewSetVal('ocrReviewNewMiddle',  f.middle_name || '');
+  _ocrReviewSetVal('ocrReviewNewLast',    f.last_name   || '');
+  const relSel = document.getElementById('ocrReviewNewRelType');
+  if (relSel) relSel.value = 'Co-Borrower';
+
+  // Header sub: show what was scanned.
+  const sub = document.getElementById('ocrReviewSub');
+  if (sub) {
+    sub.textContent = (_ocrReviewDocType ? (_ocrReviewDocType + ' — ') : '')
+      + 'pick the borrower, edit any field, then apply.';
+  }
+
+  _ocrReviewRenderTargetPicker();
+  _ocrReviewRenderFieldRows();
+  _ocrReviewUpdateApplyLabel();
+
+  const modal = document.getElementById('ocrReviewAssignModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeOCRReviewModal() {
+  const modal = document.getElementById('ocrReviewAssignModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function _ocrReviewSetVal(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val == null ? '' : String(val);
+}
+
+function _ocrReviewEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Primary first, then co-borrowers from window._app1003Borrowers.
+function _ocrReviewBorrowerList() {
+  const primary = window.contactData || null;
+  const cos     = Array.isArray(window._app1003Borrowers) ? window._app1003Borrowers : [];
+  const list = [];
+  if (primary && primary.id) {
+    list.push({
+      id:   primary.id,
+      role: 'PRIMARY',
+      name: [(primary.first_name||'').trim(), (primary.last_name||'').trim()].filter(Boolean).join(' ') || 'Primary'
+    });
+  }
+  cos.forEach(function(c) {
+    if (!c || !c.id) return;
+    list.push({
+      id:   c.id,
+      role: 'CO-BORROWER',
+      name: [(c.first_name||'').trim(), (c.last_name||'').trim()].filter(Boolean).join(' ') || 'Co-Borrower'
+    });
+  });
+  return list;
+}
+
+function _ocrReviewRenderTargetPicker() {
+  const container = document.getElementById('ocrReviewTargetPicker');
+  if (!container) return;
+  const list = _ocrReviewBorrowerList();
+
+  const chips = list.map(function(b) {
+    const isActive = !_ocrReviewIsAddNew && _ocrReviewTargetId === b.id;
+    const ring = isActive ? '#C9A84C' : 'rgba(255,255,255,0.12)';
+    const bg   = isActive ? 'rgba(201,168,76,0.18)' : 'rgba(255,255,255,0.04)';
+    const txt  = isActive ? '#fff' : 'rgba(255,255,255,0.7)';
+    const init = ((b.name || '?').trim().split(/\s+/).map(function(p) { return (p||'')[0] || ''; }).join('').slice(0,2)).toUpperCase();
+    return '<button type="button" onclick="_ocrReviewSelectTarget(\'' + _ocrReviewEsc(b.id) + '\')" '
+         + 'style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;'
+         + 'border:1px solid ' + ring + ';background:' + bg + ';color:' + txt + ';'
+         + 'cursor:pointer;font-size:12px;font-family:inherit;">'
+         + '<span style="width:24px;height:24px;border-radius:50%;background:rgba(201,168,76,0.18);'
+         + 'color:#c9a84c;font-size:10px;font-weight:700;display:flex;align-items:center;'
+         + 'justify-content:center;flex-shrink:0;">' + _ocrReviewEsc(init) + '</span>'
+         + '<span style="font-weight:600;">' + _ocrReviewEsc(b.name) + '</span>'
+         + '<span style="font-size:9px;opacity:0.6;text-transform:uppercase;letter-spacing:0.5px;">'
+         + _ocrReviewEsc(b.role) + '</span>'
+         + '</button>';
+  }).join('');
+
+  const addRing = _ocrReviewIsAddNew ? '#C9A84C' : 'rgba(201,168,76,0.4)';
+  const addBg   = _ocrReviewIsAddNew ? 'rgba(201,168,76,0.18)' : 'rgba(255,255,255,0.02)';
+  const addBtn = '<button type="button" onclick="_ocrReviewSelectTarget(null)" '
+               + 'style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:999px;'
+               + 'border:1px dashed ' + addRing + ';background:' + addBg + ';color:rgba(201,168,76,0.95);'
+               + 'cursor:pointer;font-size:12px;font-family:inherit;font-weight:700;">'
+               + '+ Add new borrower</button>';
+
+  container.innerHTML = chips + addBtn;
+
+  // Show/hide add-new mini-form
+  const addForm = document.getElementById('ocrReviewAddNewForm');
+  if (addForm) addForm.style.display = _ocrReviewIsAddNew ? 'block' : 'none';
+}
+
+function _ocrReviewSelectTarget(targetId) {
+  // null (or 'null') = "+ Add new borrower"
+  if (targetId === null || targetId === 'null') {
+    _ocrReviewIsAddNew = true;
+    _ocrReviewTargetId = null;
+  } else {
+    _ocrReviewIsAddNew = false;
+    _ocrReviewTargetId = targetId;
+  }
+  _ocrReviewRenderTargetPicker();
+  _ocrReviewUpdateApplyLabel();
+}
+
+function _ocrReviewRenderFieldRows() {
+  const container = document.getElementById('ocrReviewFieldsList');
+  if (!container) return;
+
+  // Same filter as legacy renderOCRFields: skip underscore-prefixed keys, only
+  // include keys we have labels for, and only when value is non-empty.
+  const entries = Object.entries(_ocrReviewFields).filter(function(kv) {
+    const k = kv[0], v = kv[1];
+    return !String(k).startsWith('_')
+        && (typeof OCR_FIELD_LABELS === 'object' && OCR_FIELD_LABELS[k])
+        && v !== null && v !== undefined && String(v).trim() !== '';
+  });
+
+  if (!entries.length) {
+    container.innerHTML = '<div style="padding:24px;text-align:center;color:rgba(255,255,255,0.4);'
+      + 'font-size:12px;">No extractable fields in this scan.</div>';
+    return;
+  }
+
+  container.innerHTML = entries.map(function(kv) {
+    const k = kv[0], v = kv[1];
+    const label = (OCR_FIELD_LABELS && OCR_FIELD_LABELS[k]) || k;
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;'
+         + 'margin-bottom:6px;background:rgba(255,255,255,0.03);'
+         + 'border:1px solid rgba(255,255,255,0.07);border-radius:10px;">'
+         + '<input type="checkbox" id="ocrRev_chk_' + _ocrReviewEsc(k) + '" checked '
+         + 'onchange="_ocrReviewUpdateApplyLabel()" '
+         + 'style="width:16px;height:16px;cursor:pointer;accent-color:#c9a84c;flex-shrink:0;">'
+         + '<label for="ocrRev_chk_' + _ocrReviewEsc(k) + '" '
+         + 'style="min-width:140px;font-size:10.5px;text-transform:uppercase;letter-spacing:0.4px;'
+         + 'color:rgba(255,255,255,0.55);font-weight:600;cursor:pointer;">'
+         + _ocrReviewEsc(label) + '</label>'
+         + '<input type="text" id="ocrRev_val_' + _ocrReviewEsc(k) + '" '
+         + 'value="' + _ocrReviewEsc(v) + '" '
+         + 'style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);'
+         + 'border-radius:6px;color:#fff;padding:7px 10px;font-size:13px;outline:none;">'
+         + '</div>';
+  }).join('');
+}
+
+function _ocrReviewCountChecked() {
+  let n = 0;
+  Object.keys(_ocrReviewFields).forEach(function(k) {
+    const chk = document.getElementById('ocrRev_chk_' + k);
+    if (chk && chk.checked) n++;
+  });
+  return n;
+}
+
+function _ocrReviewTargetDisplayName() {
+  if (_ocrReviewIsAddNew) {
+    const first  = (document.getElementById('ocrReviewNewFirst')  || {}).value || '';
+    const middle = (document.getElementById('ocrReviewNewMiddle') || {}).value || '';
+    const last   = (document.getElementById('ocrReviewNewLast')   || {}).value || '';
+    const nm = [first.trim(), middle.trim(), last.trim()].filter(Boolean).join(' ');
+    return nm ? ('new borrower ' + nm) : 'new borrower';
+  }
+  const list = _ocrReviewBorrowerList();
+  const b = list.find(function(x) { return x.id === _ocrReviewTargetId; });
+  return b ? b.name : 'borrower';
+}
+
+function _ocrReviewUpdateApplyLabel() {
+  const btn = document.getElementById('ocrReviewApplyBtn');
+  if (!btn) return;
+  const n = _ocrReviewCountChecked();
+  const targetName = _ocrReviewTargetDisplayName();
+  btn.textContent = 'Apply ' + n + ' field' + (n === 1 ? '' : 's') + ' to ' + targetName;
+  const disabled = (n === 0) || (!_ocrReviewIsAddNew && !_ocrReviewTargetId);
+  btn.disabled = disabled;
+  btn.style.opacity = disabled ? '0.45' : '1';
+  btn.style.cursor  = disabled ? 'not-allowed' : 'pointer';
+}
+
+// Pass 1: collect the payload, console.log it, toast — DO NOT WRITE TO DB.
+// Pass 2 will replace this body with the real contacts UPDATE + mortgage_applications UPSERT.
+function confirmOCRReview() {
+  const fields = {};
+  Object.keys(_ocrReviewFields).forEach(function(k) {
+    const chk = document.getElementById('ocrRev_chk_' + k);
+    if (!chk || !chk.checked) return;
+    const inp = document.getElementById('ocrRev_val_' + k);
+    if (!inp) return;
+    const val = (inp.value == null ? '' : String(inp.value)).trim();
+    if (val === '') return;
+    fields[k] = val;
+  });
+
+  let newBorrower = null;
+  if (_ocrReviewIsAddNew) {
+    newBorrower = {
+      first_name:        ((document.getElementById('ocrReviewNewFirst')   || {}).value || '').trim(),
+      middle_name:       ((document.getElementById('ocrReviewNewMiddle')  || {}).value || '').trim(),
+      last_name:         ((document.getElementById('ocrReviewNewLast')    || {}).value || '').trim(),
+      relationship_type: ((document.getElementById('ocrReviewNewRelType') || {}).value || 'Co-Borrower')
+    };
+  }
+
+  const payload = {
+    targetContactId: _ocrReviewIsAddNew ? null : _ocrReviewTargetId,
+    targetName:      _ocrReviewTargetDisplayName(),
+    isNewBorrower:   _ocrReviewIsAddNew,
+    newBorrower:     newBorrower,
+    fields:          fields,
+    docType:         _ocrReviewDocType
+  };
+
+  console.log('[ocrReview] Pass 1 shell — would apply payload:', payload);
+  const n = Object.keys(fields).length;
+  if (typeof toast === 'function') {
+    toast('Pass 1 shell — would apply ' + n + ' field' + (n === 1 ? '' : 's') + ' to ' + payload.targetName + ' (see console)');
+  }
+  closeOCRReviewModal();
+}
+
+// Click-outside-to-close
+document.addEventListener('click', function(e) {
+  const modal = document.getElementById('ocrReviewAssignModal');
+  if (modal && e.target === modal) closeOCRReviewModal();
 });
 
 /* ── GUIDELINE AI (embedded in lead-detail) ── */
@@ -18337,6 +18624,118 @@ async function updateLenderStatus(lenderId, status) {
   to { transform: rotate(360deg); }
 }
 </style>
+
+<!-- OCR Review & Assign Modal (Pass 1 shell — opens after scan-success, replaces the blind
+     auto-write path. Pass 1 wires the picker + editable rows + payload log; Pass 2 wires DB
+     writes; Pass 3 adds add-new borrower creation + post-apply form repaint.) -->
+<div id="ocrReviewAssignModal" style="
+  display:none; position:fixed; inset:0; z-index:10001;
+  background:rgba(0,0,0,0.85); backdrop-filter:blur(6px);
+  align-items:center; justify-content:center; padding:16px;">
+  <div style="
+    background:#141414; border:1px solid rgba(201,168,76,0.25);
+    border-radius:20px; width:100%; max-width:780px;
+    max-height:90vh; display:flex; flex-direction:column;
+    box-shadow:0 32px 80px rgba(0,0,0,0.7); overflow:hidden;">
+
+    <!-- Header -->
+    <div style="display:flex; align-items:center; justify-content:space-between;
+      padding:16px 24px; border-bottom:1px solid rgba(255,255,255,0.08); background:#1a1a1a;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:36px; height:36px; border-radius:9px;
+          background:linear-gradient(135deg,#c9a84c,#a07830);
+          display:flex; align-items:center; justify-content:center; font-size:16px;">📝</div>
+        <div>
+          <div style="font-size:15px; font-weight:700; color:#fff;">Review &amp; Assign Scan Results</div>
+          <div id="ocrReviewSub" style="font-size:11px; color:rgba(255,255,255,0.4);">Pick the borrower, edit any field, then apply.</div>
+        </div>
+      </div>
+      <button onclick="closeOCRReviewModal()" style="
+        width:32px; height:32px; border-radius:50%; border:none;
+        background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.5);
+        font-size:18px; cursor:pointer; display:flex;
+        align-items:center; justify-content:center;">×</button>
+    </div>
+
+    <!-- Scrollable body -->
+    <div style="flex:1; overflow:auto; padding:20px 24px;">
+
+      <!-- Target picker -->
+      <div style="margin-bottom:18px;">
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;
+          color:rgba(201,168,76,0.7); margin-bottom:10px;">📌 Apply to which borrower?</div>
+        <div id="ocrReviewTargetPicker" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+      </div>
+
+      <!-- Add-new mini-form (hidden unless "Add new" picked) -->
+      <div id="ocrReviewAddNewForm" style="display:none; margin-bottom:18px;
+        padding:14px; background:rgba(201,168,76,0.05);
+        border:1px dashed rgba(201,168,76,0.3); border-radius:10px;">
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;
+          color:rgba(201,168,76,0.8); margin-bottom:10px;">New Borrower</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:8px;">
+          <div>
+            <label style="display:block; font-size:10px; color:rgba(255,255,255,0.45);
+              text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">First</label>
+            <input id="ocrReviewNewFirst" type="text" oninput="_ocrReviewUpdateApplyLabel()"
+              style="width:100%; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12);
+              border-radius:6px; color:#fff; padding:7px 10px; font-size:12px; outline:none; box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10px; color:rgba(255,255,255,0.45);
+              text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Middle</label>
+            <input id="ocrReviewNewMiddle" type="text" oninput="_ocrReviewUpdateApplyLabel()"
+              style="width:100%; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12);
+              border-radius:6px; color:#fff; padding:7px 10px; font-size:12px; outline:none; box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10px; color:rgba(255,255,255,0.45);
+              text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Last</label>
+            <input id="ocrReviewNewLast" type="text" oninput="_ocrReviewUpdateApplyLabel()"
+              style="width:100%; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12);
+              border-radius:6px; color:#fff; padding:7px 10px; font-size:12px; outline:none; box-sizing:border-box;">
+          </div>
+        </div>
+        <div>
+          <label style="display:block; font-size:10px; color:rgba(255,255,255,0.45);
+            text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Relationship to primary</label>
+          <select id="ocrReviewNewRelType" style="background:rgba(255,255,255,0.05);
+            border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:#fff;
+            padding:7px 10px; font-size:12px; outline:none;">
+            <option value="Co-Borrower">Co-Borrower</option>
+            <option value="Spouse">Spouse</option>
+            <option value="Co-Signer">Co-Signer</option>
+            <option value="Partner">Partner</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Editable field rows -->
+      <div>
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;
+          color:rgba(201,168,76,0.7); margin-bottom:10px;">
+          📋 Extracted fields
+          <span style="color:rgba(255,255,255,0.35); font-weight:500; text-transform:none; letter-spacing:0;">— uncheck or edit before applying</span>
+        </div>
+        <div id="ocrReviewFieldsList"></div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:14px 24px; border-top:1px solid rgba(255,255,255,0.08);
+      background:#1a1a1a; display:flex; justify-content:space-between;
+      align-items:center; gap:10px;">
+      <button onclick="closeOCRReviewModal()" style="
+        padding:10px 18px; background:rgba(255,255,255,0.06);
+        border:1px solid rgba(255,255,255,0.12); border-radius:8px;
+        color:#fff; font-size:13px; cursor:pointer;">Cancel</button>
+      <button id="ocrReviewApplyBtn" onclick="confirmOCRReview()" style="
+        padding:10px 22px; background:linear-gradient(135deg,#f2cf85,#C9A84C);
+        border:none; border-radius:8px; color:#111;
+        font-size:13px; font-weight:800; cursor:pointer; letter-spacing:0.3px;">Apply 0 fields</button>
+    </div>
+  </div>
+</div>
 
 <input type="file" id="ocrFileInput" accept=".pdf,.jpg,.jpeg,.png"
   style="display:none" onchange="previewOCRFile(this.files[0])">
