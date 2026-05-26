@@ -6387,9 +6387,12 @@ function renderDocsGrid() {
         <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${safeName}</div>
         <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:8px;">${typeLabel}${size ? ' · ' + size : ''}</div>
         <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:10px;">${date}</div>
-        <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <span style="font-size:10px;font-weight:700;color:${docType ? 'rgba(201,168,76,0.9)' : 'rgba(255,255,255,0.35)'};background:${docType ? 'rgba(201,168,76,0.12)' : 'rgba(255,255,255,0.05)'};padding:3px 10px;border-radius:10px;text-transform:uppercase;letter-spacing:.4px;">${docType || 'No type'}</span>
-          ${isPdf ? '<span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);background:rgba(255,255,255,0.06);padding:3px 8px;border-radius:6px;">PDF</span>' : ''}
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button onclick="scanDriveDoc('${_ldDriveEsc(f.id)}', event)" title="Scan with AI" style="font-size:10px;font-weight:700;color:#1a1a1a;background:linear-gradient(135deg,#f2cf85,#C9A84C);border:none;padding:3px 10px;border-radius:6px;cursor:pointer;letter-spacing:.3px;">🔍 Scan</button>
+            ${isPdf ? '<span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);background:rgba(255,255,255,0.06);padding:3px 8px;border-radius:6px;">PDF</span>' : ''}
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -6399,6 +6402,52 @@ function guessMimeFromName(name) {
   const ext = (name || '').split('.').pop().toLowerCase();
   const map = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp', bmp:'image/bmp', tiff:'image/tiff', tif:'image/tiff', txt:'text/plain' };
   return map[ext] || 'application/octet-stream';
+}
+
+// ── Per-card Scan button: fetch Drive bytes (mirrors _docViewerOpen at L6620),
+//    wrap as File, then hand off to startOCR(file, docType). The card's known
+//    appProperties.docType is passed as the second arg so the edge fn skips its
+//    filename guess. event.stopPropagation prevents the card-open viewer click
+//    from also firing.
+async function scanDriveDoc(driveFileId, ev) {
+  if (ev) {
+    ev.stopPropagation();
+    if (ev.preventDefault) ev.preventDefault();
+  }
+  const file = (_allDocs || []).find(f => f.id === driveFileId);
+  if (!file) {
+    if (typeof toast === 'function') toast('File not found in current grid', true);
+    return;
+  }
+  const docType = (file.appProperties && file.appProperties.docType) || '';
+  const overlay = document.getElementById('ocrScanOverlay');
+  try {
+    if (overlay) overlay.style.display = 'flex';
+    const sub = document.getElementById('ocrHeaderSub');
+    if (sub) sub.textContent = 'Fetching from Drive…';
+
+    const token = await _ldEnsureToken();
+    const res = await fetch(
+      'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.id) + '?alt=media',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) _ldClearToken();
+      throw new Error('Drive fetch failed: HTTP ' + res.status);
+    }
+    const buf = await res.arrayBuffer();
+    const blob = new File([buf], file.name, { type: file.mimeType || guessMimeFromName(file.name) });
+    // Hand off to existing startOCR (already JWT-fixed in commit 4ed90fc).
+    // Second arg = explicit doc_type (skip the edge fn's filename heuristic).
+    return startOCR(blob, docType);
+  } catch (e) {
+    console.error('[scanDriveDoc]', e);
+    if (overlay) overlay.style.display = 'flex';
+    const sub = document.getElementById('ocrHeaderSub');
+    if (sub) sub.textContent = 'Scan failed: ' + (e.message || 'unknown error');
+    const btn = document.getElementById('ocrScanBtn');
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function convertDocToPdf(doc) {
@@ -15692,7 +15741,7 @@ function scanSelectedFile() {
   if (_selectedOCRFile) startOCR(_selectedOCRFile);
 }
 
-async function startOCR(file) {
+async function startOCR(file, docType) {
   if (!file) return;
 
   const overlay = document.getElementById('ocrScanOverlay');
@@ -15731,7 +15780,10 @@ async function startOCR(file) {
             file_base64: base64,
             file_name: file.name,
             file_type: file.type,
-            contact_id: typeof getContactId === 'function' ? getContactId() : null
+            contact_id: typeof getContactId === 'function' ? getContactId() : null,
+            // Optional explicit doc_type (Step: per-card Scan from Drive cards).
+            // When omitted, the edge fn falls back to its filename heuristic.
+            ...(docType ? { doc_type: docType } : {})
           }),
           signal: ocrAbort.signal
         }

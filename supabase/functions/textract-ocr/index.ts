@@ -33,7 +33,8 @@ serve(async (req) => {
 
     const {
       file_base64, file_name, file_type, contact_id,
-      lender_id, category, version, notes, title
+      lender_id, category, version, notes, title,
+      doc_type
     } = body
 
     if (!file_base64 || typeof file_base64 !== 'string') {
@@ -192,11 +193,48 @@ Rules:
     // ─────────────────────────────────────────────────────────
     const nameLower = (file_name || '').toLowerCase()
     let docType = 'Document'
-    if (nameLower.includes('id') || nameLower.includes('license') || nameLower.includes('dl')) docType = "Driver's License"
-    else if (nameLower.includes('w2') || nameLower.includes('w-2')) docType = 'W-2'
-    else if (nameLower.includes('pay') || nameLower.includes('stub')) docType = 'Pay Stub'
-    else if (nameLower.includes('bank')) docType = 'Bank Statement'
-    else if (nameLower.includes('tax') || nameLower.includes('1040')) docType = 'Tax Return'
+
+    // Optional explicit doc_type from caller (e.g. per-card Scan button passing
+    // the Drive file's appProperties.docType). Maps to a display label; if
+    // missing / empty / 'other' / 'unknown', fall through to the filename
+    // heuristic below (backward-compatible — existing callers don't send doc_type).
+    // Note: gov_id -> "Identification Document" (NOT "Driver's License") because
+    // it's a generic key — could be passport / state ID / DL.
+    const docTypeKey = String(doc_type || '').trim().toLowerCase()
+    const DOC_TYPE_LABELS: Record<string, string> = {
+      gov_id:            'Identification Document',
+      drivers_license:   "Driver's License",
+      license:           "Driver's License",
+      dl:                "Driver's License",
+      w2:                'W-2',
+      'w-2':             'W-2',
+      pay_stubs:         'Pay Stub',
+      pay_stub:          'Pay Stub',
+      paystub:           'Pay Stub',
+      bank_statements:   'Bank Statement',
+      bank_statement:    'Bank Statement',
+      tax_returns:       'Tax Return',
+      tax_return:        'Tax Return',
+      '1040':            'Tax Return',
+      purchase_contract: 'Purchase Contract',
+    }
+    const mapped = (docTypeKey && docTypeKey !== 'other' && docTypeKey !== 'unknown')
+      ? (DOC_TYPE_LABELS[docTypeKey]
+         || (docTypeKey.charAt(0).toUpperCase() + docTypeKey.slice(1).replace(/_/g, ' ')))
+      : ''
+    if (mapped) {
+      docType = mapped
+    } else if (nameLower.includes('id') || nameLower.includes('license') || nameLower.includes('dl')) {
+      docType = "Driver's License"
+    } else if (nameLower.includes('w2') || nameLower.includes('w-2')) {
+      docType = 'W-2'
+    } else if (nameLower.includes('pay') || nameLower.includes('stub')) {
+      docType = 'Pay Stub'
+    } else if (nameLower.includes('bank')) {
+      docType = 'Bank Statement'
+    } else if (nameLower.includes('tax') || nameLower.includes('1040')) {
+      docType = 'Tax Return'
+    }
 
     let claudeResp: Response
     try {
