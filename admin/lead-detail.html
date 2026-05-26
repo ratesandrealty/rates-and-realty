@@ -6409,6 +6409,13 @@ function guessMimeFromName(name) {
 //    appProperties.docType is passed as the second arg so the edge fn skips its
 //    filename guess. event.stopPropagation prevents the card-open viewer click
 //    from also firing.
+//
+//    DOM dep: startOCR + previewOCRFile + clearOCRFile expect the elements
+//    inside #ocrModal (scanning overlay, preview pane, fields list) to be in
+//    the DOM. They are — but the parent modal is display:none by default.
+//    We open the modal first (same pattern as openOCRUpload), then hydrate
+//    the preview pane with our fetched blob, then run startOCR which shows
+//    the spinner overlay + writes results into the same modal's right panel.
 async function scanDriveDoc(driveFileId, ev) {
   if (ev) {
     ev.stopPropagation();
@@ -6420,12 +6427,16 @@ async function scanDriveDoc(driveFileId, ev) {
     return;
   }
   const docType = (file.appProperties && file.appProperties.docType) || '';
-  const overlay = document.getElementById('ocrScanOverlay');
-  try {
-    if (overlay) overlay.style.display = 'flex';
-    const sub = document.getElementById('ocrHeaderSub');
-    if (sub) sub.textContent = 'Fetching from Drive…';
 
+  // Open the OCR modal so the scanning overlay + results panel are visible.
+  // Mirrors openOCRUpload() (L15648) but skips clearOCRFile() — we're about
+  // to hydrate the preview ourselves via previewOCRFile(blob).
+  const modal = document.getElementById('ocrModal');
+  if (modal) modal.style.display = 'flex';
+  const sub = document.getElementById('ocrHeaderSub');
+  if (sub) sub.textContent = 'Fetching from Drive…';
+
+  try {
     const token = await _ldEnsureToken();
     const res = await fetch(
       'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.id) + '?alt=media',
@@ -6437,14 +6448,20 @@ async function scanDriveDoc(driveFileId, ev) {
     }
     const buf = await res.arrayBuffer();
     const blob = new File([buf], file.name, { type: file.mimeType || guessMimeFromName(file.name) });
+
+    // Hydrate the modal's preview pane (image/PDF thumbnail) so the user sees
+    // the file they scanned, not an empty "Drop document here" placeholder.
+    if (typeof previewOCRFile === 'function') previewOCRFile(blob);
+
     // Hand off to existing startOCR (already JWT-fixed in commit 4ed90fc).
     // Second arg = explicit doc_type (skip the edge fn's filename heuristic).
     return startOCR(blob, docType);
   } catch (e) {
     console.error('[scanDriveDoc]', e);
-    if (overlay) overlay.style.display = 'flex';
-    const sub = document.getElementById('ocrHeaderSub');
-    if (sub) sub.textContent = 'Scan failed: ' + (e.message || 'unknown error');
+    const sub2 = document.getElementById('ocrHeaderSub');
+    if (sub2) sub2.textContent = 'Scan failed: ' + (e.message || 'unknown error');
+    const overlay = document.getElementById('ocrScanOverlay');
+    if (overlay) overlay.style.display = 'none';
     const btn = document.getElementById('ocrScanBtn');
     if (btn) btn.disabled = false;
   }
@@ -15796,8 +15813,11 @@ async function startOCR(file, docType) {
     console.log('OCR start response:', JSON.stringify(data));
     // Sync response — completed immediately
     if (data.status === 'completed' && data.fields) {
+      // Hide (don't remove) the overlay — keeping it in the DOM so future
+      // scans (manual OR per-card) find #ocrScanOverlay still present.
+      // Matches the polling path which also uses display:none.
       const overlay = document.getElementById('ocrScanOverlay');
-      if (overlay) overlay.remove();
+      if (overlay) overlay.style.display = 'none';
       _ocrFields = data.fields || {};
 
       // Auto-save scanned document to Documents tab
@@ -15910,8 +15930,10 @@ async function startOCR(file, docType) {
     console.error('OCR start error full:', err);
     // Show the actual error not just generic message
     document.querySelector('#ocrModal .ocr-header-sub, #ocrModal [id*="header"]').textContent = 'Error: ' + err.message;
+    // Hide (don't remove) the overlay — keeping it in the DOM so the next
+    // scan attempt can find it. Matches polling/success paths.
     const overlay = document.getElementById('ocrScanOverlay');
-    if (overlay) overlay.remove();
+    if (overlay) overlay.style.display = 'none';
     const scanBtn = document.getElementById('ocrScanBtn') || document.querySelector('#ocrModal button[onclick*="scan"]');
     if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = 'Scan'; }
   }
