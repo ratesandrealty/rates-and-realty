@@ -16263,16 +16263,23 @@ function _ocrReviewTargetDisplayName() {
   }
   const list = _ocrReviewBorrowerList();
   const b = list.find(function(x) { return x.id === _ocrReviewTargetId; });
-  return b ? b.name : 'borrower';
+  // Fallback wording made explicit so any stray "to selected borrower" is at
+  // least informative; in normal flow the Apply label short-circuits to
+  // "Pick a borrower" when no target is set (see _ocrReviewUpdateApplyLabel).
+  return b ? b.name : 'selected borrower';
 }
 
 function _ocrReviewUpdateApplyLabel() {
   const btn = document.getElementById('ocrReviewApplyBtn');
   if (!btn) return;
   const n = _ocrReviewCountChecked();
-  const targetName = _ocrReviewTargetDisplayName();
-  btn.textContent = 'Apply ' + n + ' field' + (n === 1 ? '' : 's') + ' to ' + targetName;
-  const disabled = (n === 0) || (!_ocrReviewIsAddNew && !_ocrReviewTargetId);
+  const noTarget = (!_ocrReviewIsAddNew && !_ocrReviewTargetId);
+  if (noTarget) {
+    btn.textContent = 'Pick a borrower';
+  } else {
+    btn.textContent = 'Apply ' + n + ' field' + (n === 1 ? '' : 's') + ' to ' + _ocrReviewTargetDisplayName();
+  }
+  const disabled = (n === 0) || noTarget;
   btn.disabled = disabled;
   btn.style.opacity = disabled ? '0.45' : '1';
   btn.style.cursor  = disabled ? 'not-allowed' : 'pointer';
@@ -16341,8 +16348,86 @@ const _OCR_APP_NUMERIC_COLS = new Set(['base_income']);
 //   to the target so user can verify (load1003 is what actually writes f_*
 //   inputs; switchToBorrower alone does not — confirmed in Pass 1 trace).
 // - Pass 3 will handle isNewBorrower (insert contacts + contact_relationships).
+// Pass 3 — shared write helper used by both the existing-target path AND the
+// add-new-borrower path (once the new contact + relationship are inserted).
+// Splits the OCR fields into contactsPatch (3 name cols) + appPatch (~12 cols
+// on mortgage_applications), runs the contacts UPDATE + the mortgage_applications
+// fetch-or-create (mirrors save1003 L12678-12711). Throws on DB error so the
+// caller chooses how to surface it. Returns the non-metadata patch keys for
+// logging.
+async function _ocrApplyPatchesToTarget(targetId, fields) {
+  const contactsPatch = {};
+  const appPatch = {};
+  Object.entries(fields).forEach(function(kv) {
+    const k = kv[0];
+    let val = kv[1];
+    const col = _OCR_TO_APP_COLUMN[k];
+    if (!col) return; // unmapped key — skip silently (defensive)
+
+    if (_OCR_APP_DATE_COLS.has(col)) {
+      const iso = (typeof toISODate === 'function') ? toISODate(val) : null;
+      if (!iso) return; // skip unparseable dates rather than write garbage
+      val = iso;
+    }
+    if (_OCR_APP_NUMERIC_COLS.has(col)) {
+      const n = parseFloat(String(val).replace(/[$,\s]/g, ''));
+      if (!isFinite(n)) return;
+      val = n;
+    }
+
+    appPatch[col] = val;
+    if (col === 'first_name' || col === 'middle_name' || col === 'last_name') {
+      contactsPatch[col] = val;
+    }
+  });
+
+  if (Object.keys(contactsPatch).length === 0 && Object.keys(appPatch).length === 0) {
+    throw new Error('Selected fields could not be mapped to any column');
+  }
+
+  // (1) contacts: name fields (only if any)
+  if (Object.keys(contactsPatch).length) {
+    contactsPatch.updated_at = new Date().toISOString();
+    const { error: cErr } = await _authClient()
+      .from('contacts').update(contactsPatch).eq('id', targetId);
+    if (cErr) throw new Error('contacts update failed: ' + (cErr.message || JSON.stringify(cErr)));
+  }
+
+  // (2) mortgage_applications: fetch-or-create (no UNIQUE on contact_id; mirrors save1003)
+  const { data: existingApps, error: selErr } = await _authClient()
+    .from('mortgage_applications').select('id').eq('contact_id', targetId)
+    .order('created_at', { ascending: false }).limit(1);
+  if (selErr) throw new Error('mortgage_applications lookup failed: ' + (selErr.message || JSON.stringify(selErr)));
+  const existingAppId = (existingApps && existingApps[0]) ? existingApps[0].id : null;
+
+  if (Object.keys(appPatch).length) {
+    if (existingAppId) {
+      appPatch.updated_at = new Date().toISOString();
+      const { error: uErr } = await _authClient()
+        .from('mortgage_applications').update(appPatch).eq('id', existingAppId);
+      if (uErr) throw new Error('mortgage_applications update failed: ' + (uErr.message || JSON.stringify(uErr)));
+    } else {
+      const ins = Object.assign({
+        contact_id: targetId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }, appPatch);
+      const { error: iErr } = await _authClient()
+        .from('mortgage_applications').insert([ins]);
+      if (iErr) throw new Error('mortgage_applications insert failed: ' + (iErr.message || JSON.stringify(iErr)));
+    }
+  }
+
+  return {
+    contactsKeys: Object.keys(contactsPatch).filter(function(k){ return k !== 'updated_at'; }),
+    appKeys:      Object.keys(appPatch).filter(function(k){ return k !== 'updated_at'; })
+  };
+}
+
+// Pass 3 — top-level entry. Collects checked rows, then dispatches to the
+// existing-target or add-new-borrower branch.
 async function confirmOCRReview() {
-  // Collect checked + non-empty rows (unchanged from Pass 1)
+  // Collect checked + non-empty rows (unchanged from Pass 1/2)
   const fields = {};
   Object.keys(_ocrReviewFields).forEach(function(k) {
     const chk = document.getElementById('ocrRev_chk_' + k);
@@ -16354,69 +16439,26 @@ async function confirmOCRReview() {
     fields[k] = val;
   });
 
-  // Pass 3 will handle the add-new branch — for now, log + toast, keep modal open.
-  if (_ocrReviewIsAddNew) {
-    const newBorrower = {
-      first_name:        ((document.getElementById('ocrReviewNewFirst')   || {}).value || '').trim(),
-      middle_name:       ((document.getElementById('ocrReviewNewMiddle')  || {}).value || '').trim(),
-      last_name:         ((document.getElementById('ocrReviewNewLast')    || {}).value || '').trim(),
-      relationship_type: ((document.getElementById('ocrReviewNewRelType') || {}).value || 'Co-Borrower')
-    };
-    console.log('[ocrReview] Pass 3 will handle new borrower:', { newBorrower, fields, docType: _ocrReviewDocType });
-    if (typeof toast === 'function') {
-      toast('"Add new borrower" coming in Pass 3 — pick an existing borrower for now (payload in console)');
-    }
-    return;
-  }
-
-  const targetId = _ocrReviewTargetId;
-  if (!targetId) {
-    if (typeof toast === 'function') toast('No borrower selected', true);
-    return;
-  }
   const fieldCount = Object.keys(fields).length;
   if (fieldCount === 0) {
     if (typeof toast === 'function') toast('No fields selected to apply', true);
     return;
   }
 
-  // ── Split into contactsPatch (3 name fields) + appPatch (all mappable fields) ──
-  const contactsPatch = {};
-  const appPatch = {};
-  Object.entries(fields).forEach(function(kv) {
-    const k = kv[0];
-    let val = kv[1];
-    const col = _OCR_TO_APP_COLUMN[k];
-    if (!col) return; // unmapped key — skip silently (defensive)
+  if (_ocrReviewIsAddNew) {
+    return _confirmAddNewBorrowerAndApply(fields, fieldCount);
+  }
+  return _confirmExistingTargetAndApply(fields, fieldCount);
+}
 
-    // Date conversion (date_of_birth / dl_expiry expect YYYY-MM-DD)
-    if (_OCR_APP_DATE_COLS.has(col)) {
-      const iso = (typeof toISODate === 'function') ? toISODate(val) : null;
-      if (!iso) return; // skip unparseable dates rather than write garbage
-      val = iso;
-    }
-    // Numeric conversion (base_income)
-    if (_OCR_APP_NUMERIC_COLS.has(col)) {
-      const n = parseFloat(String(val).replace(/[$,\s]/g, ''));
-      if (!isFinite(n)) return;
-      val = n;
-    }
-
-    // mortgage_applications always gets it
-    appPatch[col] = val;
-
-    // contacts gets only the 3 shared name columns
-    if (col === 'first_name' || col === 'middle_name' || col === 'last_name') {
-      contactsPatch[col] = val;
-    }
-  });
-
-  if (Object.keys(contactsPatch).length === 0 && Object.keys(appPatch).length === 0) {
-    if (typeof toast === 'function') toast('Selected fields could not be mapped to any column', true);
+// Pass 2 logic, now extracted into its own function. Behavior unchanged.
+async function _confirmExistingTargetAndApply(fields, fieldCount) {
+  const targetId = _ocrReviewTargetId;
+  if (!targetId) {
+    if (typeof toast === 'function') toast('No borrower selected', true);
     return;
   }
 
-  // Lock the Apply button (visual + prevent double-fire)
   const applyBtn = document.getElementById('ocrReviewApplyBtn');
   const origLabel = applyBtn ? applyBtn.textContent : '';
   if (applyBtn) {
@@ -16429,78 +16471,152 @@ async function confirmOCRReview() {
   const targetName = _ocrReviewTargetDisplayName();
 
   try {
-    // ── (1) contacts: name fields ──
-    if (Object.keys(contactsPatch).length) {
-      contactsPatch.updated_at = new Date().toISOString();
-      const { error: cErr } = await _authClient()
-        .from('contacts')
-        .update(contactsPatch)
-        .eq('id', targetId);
-      if (cErr) throw new Error('contacts update failed: ' + (cErr.message || JSON.stringify(cErr)));
-    }
-
-    // ── (2) mortgage_applications: fetch-or-create (mirrors save1003 L12678-12711) ──
-    const { data: existingApps, error: selErr } = await _authClient()
-      .from('mortgage_applications')
-      .select('id')
-      .eq('contact_id', targetId)
-      .order('created_at', { ascending: false })
-      .limit(1);
-    if (selErr) throw new Error('mortgage_applications lookup failed: ' + (selErr.message || JSON.stringify(selErr)));
-    const existingAppId = (existingApps && existingApps[0]) ? existingApps[0].id : null;
-
-    if (Object.keys(appPatch).length) {
-      if (existingAppId) {
-        appPatch.updated_at = new Date().toISOString();
-        const { error: uErr } = await _authClient()
-          .from('mortgage_applications')
-          .update(appPatch)
-          .eq('id', existingAppId);
-        if (uErr) throw new Error('mortgage_applications update failed: ' + (uErr.message || JSON.stringify(uErr)));
-      } else {
-        const ins = Object.assign({
-          contact_id: targetId,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }, appPatch);
-        const { error: iErr } = await _authClient()
-          .from('mortgage_applications')
-          .insert([ins]);
-        if (iErr) throw new Error('mortgage_applications insert failed: ' + (iErr.message || JSON.stringify(iErr)));
-      }
-    }
-
-    // Success
+    const r = await _ocrApplyPatchesToTarget(targetId, fields);
     console.log('[ocrReview] Applied to', targetId,
-      '— contacts patch:', Object.keys(contactsPatch).filter(function(k){ return k !== 'updated_at'; }),
-      '— mortgage_applications patch:', Object.keys(appPatch).filter(function(k){ return k !== 'updated_at'; }));
+      '— contacts patch:', r.contactsKeys, '— mortgage_applications patch:', r.appKeys);
     if (typeof toast === 'function') {
       toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓');
     }
     closeOCRReviewModal();
-
-    // Repaint the form to the target so user can verify. Both calls guarded —
-    // a repaint failure should NOT look like a write failure.
-    try {
-      if (typeof switchToBorrower === 'function') await switchToBorrower(targetId);
-    } catch (e) {
-      console.warn('[ocrReview] switchToBorrower after apply failed:', e);
-    }
-    try {
-      if (typeof load1003 === 'function') await load1003(targetId);
-    } catch (e) {
-      console.warn('[ocrReview] load1003 after apply failed:', e);
-    }
+    try { if (typeof switchToBorrower === 'function') await switchToBorrower(targetId); }
+    catch (e) { console.warn('[ocrReview] switchToBorrower after apply failed:', e); }
+    try { if (typeof load1003 === 'function') await load1003(targetId); }
+    catch (e) { console.warn('[ocrReview] load1003 after apply failed:', e); }
   } catch (err) {
     console.error('[ocrReview] write failed:', err);
     if (typeof toast === 'function') toast('Apply failed: ' + (err.message || 'unknown error'), true);
-    // Re-enable button so the user can retry; DO NOT close the modal.
     if (applyBtn) {
       applyBtn.disabled = false;
       applyBtn.textContent = origLabel || 'Apply';
       applyBtn.style.opacity = '1';
       applyBtn.style.cursor = 'pointer';
     }
+  }
+}
+
+// Pass 3 NEW — create a brand-new contact + co-borrower relationship + apply.
+//
+// Directionality is load-bearing: loadApp1003Borrowers (L12408) queries
+//   contact_relationships WHERE contact_id=eq.<PRIMARY>
+//   SELECT related_contact_id, ...
+// → so the row MUST be inserted as:
+//   { contact_id: <PRIMARY id>, related_contact_id: <NEW id>, relationship_type }
+// Reversed = new borrower saves but never appears in the picker. We use the
+// URL/page primary id (window.contactData.id or the `contactId` global),
+// NOT _activeBorrowerId — the relationship is always anchored to the lead.
+//
+// Mini-form values win over OCR row values for the name fields: when the user
+// edits the mini-form (e.g. fixes Middle to "Kaylajo"), we don't want the OCR
+// row's stale "K" to clobber it via the helper's UPDATE. We do this by
+// stripping name keys from `fields` before handing off to the helper.
+async function _confirmAddNewBorrowerAndApply(fields, fieldCount) {
+  const firstName  = ((document.getElementById('ocrReviewNewFirst')   || {}).value || '').trim();
+  const middleName = ((document.getElementById('ocrReviewNewMiddle')  || {}).value || '').trim();
+  const lastName   = ((document.getElementById('ocrReviewNewLast')    || {}).value || '').trim();
+  const relType    = ((document.getElementById('ocrReviewNewRelType') || {}).value || 'Co-Borrower');
+
+  // Require at least a last name — matches investor norms + prevents creating
+  // ghost contacts. First name optional (some IDs only show full name in last_name).
+  if (!lastName) {
+    if (typeof toast === 'function') toast('Enter at least a last name for the new borrower', true);
+    return;
+  }
+
+  const primaryId = (window.contactData && contactData.id)
+                  || (typeof contactId !== 'undefined' ? contactId : null);
+  if (!primaryId) {
+    if (typeof toast === 'function') toast('Primary contact id missing — refresh the page', true);
+    return;
+  }
+
+  const fullName = [firstName, middleName, lastName].filter(Boolean).join(' ');
+  const applyBtn = document.getElementById('ocrReviewApplyBtn');
+  const origLabel = applyBtn ? applyBtn.textContent : '';
+  if (applyBtn) {
+    applyBtn.disabled = true;
+    applyBtn.textContent = 'Creating…';
+    applyBtn.style.opacity = '0.65';
+    applyBtn.style.cursor = 'not-allowed';
+  }
+
+  let newContactId = null;
+  try {
+    // (1) INSERT contacts — mini-form names are the source of truth for naming.
+    const contactsRow = {
+      first_name:  firstName  || null,
+      middle_name: middleName || null,
+      last_name:   lastName,
+      created_at:  new Date().toISOString(),
+      updated_at:  new Date().toISOString()
+    };
+    const { data: insRow, error: insErr } = await _authClient()
+      .from('contacts').insert([contactsRow]).select('id').single();
+    if (insErr || !insRow || !insRow.id) {
+      throw new Error('contacts insert failed: ' +
+        ((insErr && (insErr.message || JSON.stringify(insErr))) || 'no id returned'));
+    }
+    newContactId = insRow.id;
+
+    // (2) INSERT contact_relationships — directionality confirmed against
+    //     loadApp1003Borrowers (L12408): contact_id = PRIMARY, related_contact_id = NEW.
+    const { error: relErr } = await _authClient()
+      .from('contact_relationships').insert([{
+        contact_id:         primaryId,
+        related_contact_id: newContactId,
+        relationship_type:  relType
+      }]);
+    if (relErr) {
+      // Contact exists but isn't linked — surface clearly so user can either retry
+      // (will create another contact) or link manually via the Connections section.
+      throw new Error('Created contact ' + (fullName || newContactId) +
+        ' but failed to link as ' + relType + ': ' +
+        (relErr.message || JSON.stringify(relErr)) +
+        ' — link manually via Connected People');
+    }
+
+    // (3) Apply OCR patches to the new contact. Strip name keys: the INSERT
+    //     above used the mini-form values, which we treat as authoritative.
+    const fieldsForApply = Object.assign({}, fields);
+    delete fieldsForApply.first_name;
+    delete fieldsForApply.middle_name;
+    delete fieldsForApply.last_name;
+
+    const r = await _ocrApplyPatchesToTarget(newContactId, fieldsForApply);
+    console.log('[ocrReview] Created + applied — newContactId:', newContactId,
+      '— relationship:', relType,
+      '— contacts patch:', r.contactsKeys,
+      '— mortgage_applications patch:', r.appKeys);
+
+    // (4) Refresh the borrower list + switcher so the new co-borrower appears.
+    try { if (typeof loadApp1003Borrowers === 'function') await loadApp1003Borrowers(); }
+    catch (e) { console.warn('[ocrReview] loadApp1003Borrowers after add-new failed:', e); }
+    try { if (typeof buildBorrowerSwitcher === 'function') buildBorrowerSwitcher(); }
+    catch (e) { console.warn('[ocrReview] buildBorrowerSwitcher after add-new failed:', e); }
+
+    // (5) Toast + close + switch + reload form to the new borrower
+    if (typeof toast === 'function') {
+      const display = fullName || 'new borrower';
+      toast('Created ' + display + ' and applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' ✓');
+    }
+    closeOCRReviewModal();
+    try { if (typeof switchToBorrower === 'function') await switchToBorrower(newContactId); }
+    catch (e) { console.warn('[ocrReview] switchToBorrower after add-new failed:', e); }
+    try { if (typeof load1003 === 'function') await load1003(newContactId); }
+    catch (e) { console.warn('[ocrReview] load1003 after add-new failed:', e); }
+  } catch (err) {
+    console.error('[ocrReview] add-new flow failed:', err);
+    if (typeof toast === 'function') {
+      toast(err.message || 'Add-new failed: unknown error', true);
+    }
+    if (applyBtn) {
+      applyBtn.disabled = false;
+      applyBtn.textContent = origLabel || 'Apply';
+      applyBtn.style.opacity = '1';
+      applyBtn.style.cursor = 'pointer';
+    }
+    // If contacts insert succeeded but a later step failed, we intentionally
+    // leave the orphan contact in the system rather than auto-deleting it
+    // (delete has RLS + cascade risk). The error message tells the user.
   }
 }
 
