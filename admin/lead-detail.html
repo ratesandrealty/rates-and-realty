@@ -16073,7 +16073,16 @@ async function openOCRReviewModal(fields, docType) {
   const spinner = document.getElementById('ocrScanOverlay');
   if (spinner) spinner.style.display = 'none';
 
-  // Lazy-load co-borrower list (the Application tab may never have been opened).
+  // Lazy-load borrowers from BOTH sources. losBorrowers (loan_borrowers) feeds
+  // the picker now (see _ocrReviewBorrowerList); _app1003Borrowers stays loaded
+  // as a safety net since other code paths still reference it. The user may
+  // never have opened the 1003 tab, so neither is guaranteed populated yet.
+  if (!Array.isArray(window.losBorrowers) || window.losBorrowers.length === 0) {
+    if (typeof losLoadBorrowers === 'function') {
+      try { await losLoadBorrowers(); }
+      catch (_) { /* leave losBorrowers as-is — picker will show only + Add new */ }
+    }
+  }
   if (!Array.isArray(window._app1003Borrowers)) {
     if (typeof loadApp1003Borrowers === 'function') {
       try { await loadApp1003Borrowers(); }
@@ -16083,10 +16092,21 @@ async function openOCRReviewModal(fields, docType) {
     }
   }
 
-  // Default target: the active borrower if set (chip selected on Application tab),
-  // else the primary borrower (contactData).
+  // Default target precedence:
+  //   1. _activeBorrowerId (Application tab chip) — existing behavior, kept
+  //   2. losBorrowers[losActiveBorrowerIdx].contact_id — match the visible 1003
+  //      switcher's selection so scanning while viewing Aned targets Aned.
+  //      Guard against losActiveBorrowerIdx === -1 (Combined View mode).
+  //   3. primary contact id
   const primaryId = (window.contactData && contactData.id) || null;
-  const defaultTargetId = (typeof _activeBorrowerId !== 'undefined' && _activeBorrowerId) || primaryId;
+  let defaultTargetId = (typeof _activeBorrowerId !== 'undefined' && _activeBorrowerId) || null;
+  if (!defaultTargetId && Array.isArray(window.losBorrowers) && window.losBorrowers.length) {
+    const idx = (typeof losActiveBorrowerIdx === 'number' && losActiveBorrowerIdx >= 0)
+              ? losActiveBorrowerIdx : 0;
+    const activeB = window.losBorrowers[idx];
+    if (activeB && activeB.contact_id) defaultTargetId = activeB.contact_id;
+  }
+  if (!defaultTargetId) defaultTargetId = primaryId;
   _ocrReviewTargetId = defaultTargetId || null;
   _ocrReviewIsAddNew = false;
 
@@ -16129,25 +16149,29 @@ function _ocrReviewEsc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// Primary first, then co-borrowers from window._app1003Borrowers.
+// Source from losBorrowers (loan_borrowers) — the same data feeding the
+// VISIBLE 1003 switcher (renderBorrowerTabs / #los1003BorrowerBar). The
+// previous source (_app1003Borrowers / contact_relationships) was stale for
+// loans whose co-borrowers were added via loan_borrowers only, leaving the
+// picker empty and forcing users into "+ Add new" every scan (which created
+// duplicate contacts). _confirmExistingTargetAndApply takes a contact_id, so
+// switching the read source is transparent to the write path.
 function _ocrReviewBorrowerList() {
-  const primary = window.contactData || null;
-  const cos     = Array.isArray(window._app1003Borrowers) ? window._app1003Borrowers : [];
+  const lb = Array.isArray(window.losBorrowers) ? window.losBorrowers : [];
   const list = [];
-  if (primary && primary.id) {
-    list.push({
-      id:   primary.id,
-      role: 'PRIMARY',
-      name: [(primary.first_name||'').trim(), (primary.last_name||'').trim()].filter(Boolean).join(' ') || 'Primary'
-    });
-  }
-  cos.forEach(function(c) {
-    if (!c || !c.id) return;
-    list.push({
-      id:   c.id,
-      role: 'CO-BORROWER',
-      name: [(c.first_name||'').trim(), (c.last_name||'').trim()].filter(Boolean).join(' ') || 'Co-Borrower'
-    });
+  lb.forEach(function(b, i) {
+    if (!b) return;
+    const c   = b.contact || {};
+    const cid = b.contact_id || c.id;
+    if (!cid) return; // skip legacy app-row co-borrower w/ no contact_id — picker needs an id to target
+    const name = [(c.first_name||'').trim(), (c.last_name||'').trim()].filter(Boolean).join(' ')
+              || ('Borrower ' + (i + 1));
+    let role = (typeof _borrRoleLabel === 'function')
+      ? _borrRoleLabel(b, i)
+      : ((b.is_primary || i === 0) ? 'Primary' : 'Co-Borrower');
+    // Uppercase Primary for visual emphasis (matches the old picker's PRIMARY chip).
+    if (role === 'Primary') role = 'PRIMARY';
+    list.push({ id: cid, name: name, role: role });
   });
   return list;
 }
