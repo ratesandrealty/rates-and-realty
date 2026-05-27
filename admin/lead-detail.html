@@ -13866,7 +13866,22 @@ var ASSET_TYPES = ['Checking','Savings','Money Market','CD','Stocks/Bonds','401k
 var ASSET_OWNERS = ['Borrower','CoBorrower','Joint'];
 
 async function losLoadAssets(overrideCid) {
-  var cid = overrideCid || losCid(); if (!cid) return;
+  // Default to the active borrower's cid (not the URL primary's). Two callers
+  // race during a borrower switch: the explicit losLoadAssets(formCid) call
+  // in losSwitchBorrower (L14192) AND the unparameterized losLoadAssets() in
+  // initLoanSummary (L13607, fired transitively from load1003 → initLoanSummary).
+  // If the unparameterized one resolves last and defaults to URL primary,
+  // it overwrites the active borrower's rows with the primary's (often
+  // empty) rows. losGetActiveContactId() reads losBorrowers[losActiveBorrowerIdx]
+  // which is correctly set by losSwitchBorrower BEFORE the Promise.all runs,
+  // so both racers converge on the same cid → no clobber. losCid() remains
+  // the final fallback for the initial-bootstrap moment when losBorrowers
+  // hasn't loaded yet (losGetActiveContactId returns losCid() in that case
+  // too, so the chain degrades cleanly).
+  var cid = overrideCid
+         || (typeof losGetActiveContactId === 'function' ? losGetActiveContactId() : null)
+         || losCid();
+  if (!cid) return;
   try {
     var { data } = await _authClient().from('loan_assets')
       .select('*').eq('contact_id', cid)
