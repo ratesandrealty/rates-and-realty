@@ -12409,7 +12409,7 @@ async function loadApp1003Borrowers() {
   try {
     var r = await fetch(
       window.APP_CONFIG.SUPABASE_URL + '/rest/v1/contact_relationships?contact_id=eq.' + encodeURIComponent(contactId) +
-      '&relationship_type=in.(Co-Borrower,Spouse,Co-Signer,Partner)&select=related_contact_id,relationship_type,contacts!contact_relationships_related_contact_id_fkey(id,first_name,last_name)',
+      '&relationship_type=in.(Co-Borrower,Spouse,Partner)&select=related_contact_id,relationship_type,contacts!contact_relationships_related_contact_id_fkey(id,first_name,last_name)',
       { headers: { apikey: window.APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY } }
     );
     var rels = await r.json();
@@ -19003,9 +19003,16 @@ async function updateLenderStatus(lenderId, status) {
           <select id="ocrReviewNewRelType" style="background:rgba(255,255,255,0.05);
             border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:#fff;
             padding:7px 10px; font-size:12px; outline:none;">
+            <!-- Only the relationship_type values that are BOTH allowed by the
+                 contact_relationships_relationship_type_check CHECK constraint AND
+                 surfaced by loadApp1003Borrowers as borrower roles. "Co-Signer" was
+                 here originally but the CHECK rejects it (allowed set: Spouse,
+                 Co-Borrower, Parent, Child, Sibling, Partner, Employer, Other) and
+                 the kin-only types aren't borrowers. Result of leaving Co-Signer in
+                 was the contacts row created + relationship insert rejected =
+                 orphan contact left behind. -->
             <option value="Co-Borrower">Co-Borrower</option>
             <option value="Spouse">Spouse</option>
-            <option value="Co-Signer">Co-Signer</option>
             <option value="Partner">Partner</option>
           </select>
         </div>
