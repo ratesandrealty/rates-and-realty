@@ -12841,10 +12841,18 @@ async function save1003() {
 }
 
 /* ── 1003 — LOAD FROM SUPABASE ── */
-async function load1003(overrideCid) {
-  const cid = overrideCid || getContactId();
-  if (!cid) return;
-
+// Fetch the mortgage_applications row for a given contact_id. If the contact
+// has no app row of their own (typical for co-borrowers — they're linked via
+// loan_borrowers to the primary's app), synthesize a row from loan_borrowers
+// (employment) + contacts (personal info) so callers can render this
+// borrower's actual data instead of falling back to the primary's.
+//
+// Returns the row (real or synthetic) or null when both fetches fail / return
+// nothing. Does NOT touch _activeBorrowerApp — callers decide what to do with
+// the result. Extracted from load1003 so the OCR Review diff path (Item 3)
+// can fetch a borrower's data WITHOUT setting the global active state.
+async function _fetchAppRowForContact(cid) {
+  if (!cid) return null;
   try {
     let { data } = await _authClient()
       .from('mortgage_applications')
@@ -12854,10 +12862,6 @@ async function load1003(overrideCid) {
       .limit(1)
       .maybeSingle();
 
-    // Co-borrower fallback: when this cid has no mortgage_applications row of its
-    // own (co-borrowers usually don't), build a synthetic row from loan_borrowers
-    // (employment) + contacts (personal info) so the form populates from THIS
-    // borrower's data instead of bailing and leaving the primary's data on screen.
     if (!data && cid !== getContactId()) {
       const [_lbRes, _cRes] = await Promise.all([
         _authClient().from('loan_borrowers').select('*').eq('contact_id', cid).order('borrower_order', { ascending: true }).limit(1).maybeSingle(),
@@ -12898,6 +12902,20 @@ async function load1003(overrideCid) {
         };
       }
     }
+
+    return data || null;
+  } catch (err) {
+    console.warn('[fetchAppRow] failed for cid', cid, err);
+    return null;
+  }
+}
+
+async function load1003(overrideCid) {
+  const cid = overrideCid || getContactId();
+  if (!cid) return;
+
+  try {
+    const data = await _fetchAppRowForContact(cid);
 
     _activeBorrowerApp = data || {};
     // Render the collapsible summary + loan bar.
@@ -16291,7 +16309,21 @@ async function openOCRReviewModal(fields, docType, sourceFile) {
   }
 
   _ocrReviewRenderTargetPicker();
-  _ocrReviewRenderFieldRows();
+  // Item 3 Pass 1 — dispatcher picks the right renderer based on
+  // _ocrReviewIsAddNew (false at modal open). For existing-target opens,
+  // also kick off the existing-data fetch async; the dispatcher re-renders
+  // once the data resolves so the middle column populates without blocking.
+  _ocrReviewRenderRightPane();
+  if (!_ocrReviewIsAddNew && _ocrReviewTargetId
+      && _ocrReviewExistingCache[_ocrReviewTargetId] === undefined
+      && !_ocrReviewExistingLoading[_ocrReviewTargetId]) {
+    const tid = _ocrReviewTargetId;
+    _ocrReviewFetchExisting(tid).then(function() {
+      if (_ocrReviewTargetId === tid && !_ocrReviewIsAddNew) {
+        _ocrReviewRenderRightPane();
+      }
+    });
+  }
   _ocrReviewUpdateApplyLabel();
 
   const modal = document.getElementById('ocrReviewAssignModal');
@@ -16316,6 +16348,10 @@ function closeOCRReviewModal() {
   _ocrReviewSrcState = { pdfDoc: null, objectUrl: null };
   const pane = document.getElementById('ocrReviewSourcePane');
   if (pane) pane.innerHTML = '';
+  // Item 3 Pass 1 — drop the existing-data cache so the next open re-fetches
+  // (the user may have edited the borrower's 1003 between modal opens).
+  _ocrReviewExistingCache = {};
+  _ocrReviewExistingLoading = {};
 }
 
 function _ocrReviewSetVal(id, val) {
@@ -16458,7 +16494,354 @@ function _ocrReviewSelectTarget(targetId) {
     _ocrReviewTargetId = targetId;
   }
   _ocrReviewRenderTargetPicker();
+  // Item 3 Pass 1 — re-render right pane via dispatcher (diff for existing
+  // target, mini-form for add-new). Kick off existing-data fetch async for
+  // the new target; render again when it resolves so the middle column
+  // populates without blocking the modal.
+  _ocrReviewRenderRightPane();
+  if (!_ocrReviewIsAddNew && targetId
+      && _ocrReviewExistingCache[targetId] === undefined
+      && !_ocrReviewExistingLoading[targetId]) {
+    _ocrReviewFetchExisting(targetId).then(function() {
+      // Only re-render if the user hasn't switched away in the meantime.
+      if (_ocrReviewTargetId === targetId && !_ocrReviewIsAddNew) {
+        _ocrReviewRenderRightPane();
+      }
+    });
+  }
   _ocrReviewUpdateApplyLabel();
+}
+
+// ─── Item 3 Pass 1 — Discrepancy diff state + helpers ───────────────────
+// Cache of fetched mortgage_applications rows keyed by contact_id. Populated
+// lazily when the user picks a target chip; cleared on modal close. Memory
+// footprint is negligible (one row per borrower switched to within a single
+// modal session) and skipping re-fetches keeps target-chip switching snappy.
+let _ocrReviewExistingCache = {};
+let _ocrReviewExistingLoading = {}; // { [cid]: true } while a fetch is in-flight
+
+async function _ocrReviewFetchExisting(cid) {
+  if (!cid) return null;
+  if (_ocrReviewExistingCache[cid] !== undefined) return _ocrReviewExistingCache[cid];
+  if (_ocrReviewExistingLoading[cid]) return null; // re-render will happen when in-flight fetch resolves
+  _ocrReviewExistingLoading[cid] = true;
+  try {
+    const row = await _fetchAppRowForContact(cid);
+    _ocrReviewExistingCache[cid] = row || {};
+    return _ocrReviewExistingCache[cid];
+  } finally {
+    delete _ocrReviewExistingLoading[cid];
+  }
+}
+
+// Type classifier for OCR keys — drives which normalizer to use when comparing
+// scanned vs existing values. Keys not handled here fall through to 'string'.
+// SSN is special-cased to 'ssn' so we skip comparison (DB has raw 9 digits;
+// the form displays "***-**-1234"; a string compare would always flag a
+// discrepancy. Pass 1 hides the row entirely for now).
+function _ocrFieldNormType(ocrKey) {
+  if (ocrKey === 'date_of_birth' || ocrKey === 'dob'
+   || ocrKey === 'id_expiration_date' || ocrKey === 'id_expiration') return 'date';
+  if (ocrKey === 'base_income' || ocrKey === 'monthly_income'
+   || ocrKey === 'gross_monthly_income') return 'number';
+  if (ocrKey === 'ssn' || ocrKey === 'social_security_number') return 'ssn';
+  return 'string';
+}
+
+// Normalize for case-insensitive trim equality. Used for names, addresses,
+// employer fields, dl_state, etc. "GARDEN GROVE" === "Garden Grove" ✓.
+function _ocrNormString(v) {
+  return String(v == null ? '' : v).trim().toLowerCase();
+}
+
+// Normalize date values to YYYY-MM-DD. Scanned values arrive as MM/DD/YYYY
+// (per textract-ocr's prompt convention); existing rows store ISO YYYY-MM-DD.
+// Returns '' for empty/unparseable input (treated as "no value, no diff").
+function _ocrNormDate(v) {
+  if (v == null || v === '') return '';
+  const s = String(v).trim();
+  if (!s) return '';
+  if (typeof toISODate === 'function') {
+    const iso = toISODate(s);
+    if (iso) return iso;
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+  return s;
+}
+
+// Normalize monetary / numeric values. Strips $, commas, whitespace.
+// Returns null if not finite — caller treats null as "no comparable value".
+function _ocrNormNumber(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).replace(/[$,\s]/g, '');
+  const n = parseFloat(s);
+  return isFinite(n) ? n : null;
+}
+
+// Compare two values using the type appropriate to the OCR key. Returns true
+// if equivalent (match), false if different (discrepancy).
+function _ocrValuesMatch(ocrKey, scanned, existing) {
+  const t = _ocrFieldNormType(ocrKey);
+  if (t === 'ssn') return true; // not comparable — caller hides the row
+  if (t === 'date') {
+    return _ocrNormDate(scanned) === _ocrNormDate(existing);
+  }
+  if (t === 'number') {
+    const s = _ocrNormNumber(scanned);
+    const e = _ocrNormNumber(existing);
+    if (s == null && e == null) return true;
+    return s === e;
+  }
+  return _ocrNormString(scanned) === _ocrNormString(existing);
+}
+
+// Format an existing-column value for the read-only middle column. Dates
+// are rendered MM/DD/YYYY (matching the scanned-value format the user is
+// comparing against). Numbers as plain numeric strings; falsy → "—".
+function _ocrFormatExistingDisplay(ocrKey, v) {
+  if (v == null || v === '') return '—';
+  const t = _ocrFieldNormType(ocrKey);
+  if (t === 'date') {
+    if (typeof fromISODate === 'function') {
+      const formatted = fromISODate(v);
+      return formatted || '—';
+    }
+  }
+  if (t === 'number') {
+    const n = _ocrNormNumber(v);
+    return (n == null) ? '—' : String(n);
+  }
+  return String(v);
+}
+
+// Set of OCR keys treated as "bank-only" — rendered in a separate Bank
+// Account block at the top (no flat-column diff). Pass 3 will add the
+// replace-vs-add choice block above this set.
+const _OCR_BANK_KEYS = new Set([
+  'bank_name', 'account_type', 'account_number', 'total_balance'
+]);
+
+// Set of OCR keys treated as "display-only" on the existing-target diff —
+// no flat column to compare against AND not bank-asset data. Hidden in the
+// diff for cleanliness (user spec decision 4); the add-new path keeps them
+// visible since there's no existing record to diff against anyway.
+const _OCR_DISPLAY_ONLY_KEYS = new Set([
+  'statement_start_date', 'statement_end_date',
+  'account_holder_first_name', 'account_holder_last_name',
+  // W-2 / paystub (no persistence target yet — Item 2c). Hidden in diff
+  // for now since they don't map to anything writeable.
+  'wages', 'federal_tax_withheld', 'tax_year',
+  'employee_first_name', 'employee_last_name',
+  'gross_pay', 'net_pay', 'pay_period_start', 'pay_period_end', 'ytd_gross'
+]);
+
+// Item 3 Pass 1 renderer for the EXISTING-target path: 3-column comparison
+// table (label / scanned-editable / existing-readonly) with checkbox.
+//
+// Pass 1 scope: pure additive display. Checkboxes default CHECKED for every
+// rendered row (matches AND discrepancies), so Apply writes the same set as
+// today. Pass 2 will flip the default for discrepancies + wire "Update all".
+//
+// Hidden rows (per locked decisions 3+4):
+//   - Scanned value empty (no meaningful comparison)
+//   - Display-only keys (statement_*, account_holder_*, W-2, paystub)
+//   - SSN (DB raw vs form-masked — not comparably renderable)
+//
+// Bank keys (bank_name / account_type / account_number / total_balance):
+//   - Rendered in a SEPARATE "Bank Account" sub-section at the top, using
+//     the existing scanned-only row layout (no diff). Pass 3 will add the
+//     replace-vs-add choice block above this section.
+//
+// Multi-key collisions (e.g. address + street_address + current_address_street
+// all → current_address_street): the renderer iterates over UNIQUE columns
+// and picks the highest-priority scanned key with a non-empty value for
+// each column. Prevents duplicate rows.
+function _ocrReviewRenderDiffRows() {
+  const container = document.getElementById('ocrReviewFieldsList');
+  if (!container) return;
+
+  const fields   = _ocrReviewFields || {};
+  const targetId = _ocrReviewTargetId;
+  const existing = targetId ? _ocrReviewExistingCache[targetId] : null;
+  const isLoading = targetId ? !!_ocrReviewExistingLoading[targetId] : false;
+
+  // Step 1 — classify each scanned key into one of three buckets:
+  //   bankKey  : in _OCR_BANK_KEYS → top "Bank Account" block (no diff)
+  //   diffKey  : maps to a flat column via _OCR_TO_APP_COLUMN → 3-column diff
+  //   hidden   : display-only / SSN / empty-scanned → drop
+  const bankRows = []; // [{ key, label, value }]
+  const colsSeen = {}; // dedup by mapped column: keep highest-priority scanned key
+  Object.keys(fields).forEach(function(k) {
+    if (String(k).startsWith('_')) return;
+    const v = fields[k];
+    if (v == null || String(v).trim() === '') return; // hide empty scanned
+    if (!OCR_FIELD_LABELS || !OCR_FIELD_LABELS[k]) return; // hide unknown labels
+    if (_OCR_DISPLAY_ONLY_KEYS.has(k)) return; // hide display-only
+    if (_ocrFieldNormType(k) === 'ssn') return; // hide SSN (not comparable)
+    if (_OCR_BANK_KEYS.has(k)) {
+      bankRows.push({ key: k, label: OCR_FIELD_LABELS[k], value: v });
+      return;
+    }
+    const col = _OCR_TO_APP_COLUMN && _OCR_TO_APP_COLUMN[k];
+    if (!col) return; // unmapped non-bank — hide
+    // First scanned key wins for any given column (alphabetical iteration of
+    // fields object is implementation-dependent but stable per-call in
+    // practice; for tighter determinism we'd sort, but textract-ocr returns
+    // ONE key per concept per scan so collisions in real data don't occur).
+    if (colsSeen[col]) return;
+    colsSeen[col] = { key: k, col: col, label: OCR_FIELD_LABELS[k], value: v };
+  });
+  const diffRows = Object.keys(colsSeen).map(function(c) { return colsSeen[c]; });
+
+  // Step 2 — for each diff row, look up the existing value + classify.
+  let discrepancyCount = 0;
+  const renderedDiffRows = diffRows.map(function(row) {
+    const existingVal = existing ? existing[row.col] : null;
+    const scannedHasValue = row.value != null && String(row.value).trim() !== '';
+    const existingHasValue = existingVal != null && String(existingVal).trim() !== '';
+    // Decision 3: scanned empty + existing has value → hide. But we already
+    // filtered scanned-empty above. This branch only fires if scanned was
+    // numeric-zero or similar edge — treat as match (no diff).
+    const isMatch = !existingHasValue
+      ? !scannedHasValue // both empty → match (rare given the filter above)
+      : _ocrValuesMatch(row.key, row.value, existingVal);
+    if (!isMatch) discrepancyCount++;
+    return Object.assign({}, row, {
+      existingVal: existingVal,
+      existingDisplay: _ocrFormatExistingDisplay(row.key, existingVal),
+      isMatch: isMatch
+    });
+  });
+
+  // Step 3 — render HTML. Header (count + Update all stub) → optional loading
+  // strip → optional Bank Account block → 3-column diff rows.
+  let html = '';
+
+  // Header
+  const countLabel = discrepancyCount === 0
+    ? 'No discrepancies detected.'
+    : discrepancyCount + ' discrepanc' + (discrepancyCount === 1 ? 'y' : 'ies') + ' detected.';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;'
+       +  'gap:10px;margin-bottom:12px;padding:10px 12px;'
+       +  'background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.18);border-radius:8px;">'
+       +  '<div style="font-size:12px;color:rgba(255,255,255,0.75);">' + _ocrReviewEsc(countLabel) + '</div>'
+       +  '<button type="button" onclick="_ocrReviewUpdateAllStub()" '
+       +    'style="padding:5px 12px;background:rgba(201,168,76,0.12);'
+       +    'border:1px solid rgba(201,168,76,0.35);border-radius:6px;'
+       +    'color:#c9a84c;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.3px;">'
+       +    'UPDATE ALL'
+       +  '</button>'
+       +  '</div>';
+
+  // Loading strip (existing data fetch in flight)
+  if (isLoading && !existing) {
+    html += '<div style="margin-bottom:12px;padding:8px 12px;font-size:11px;'
+         +  'color:rgba(255,255,255,0.4);font-style:italic;text-align:center;">'
+         +  'Loading current 1003 data…</div>';
+  }
+
+  // Bank Account block (no diff in Pass 1; Pass 3 adds replace/add/skip choice)
+  if (bankRows.length) {
+    html += '<div style="margin:14px 0 8px;font-size:10.5px;font-weight:700;'
+         +  'text-transform:uppercase;letter-spacing:0.5px;color:rgba(201,168,76,0.7);">'
+         +  '🏦 Bank Account'
+         +  '</div>';
+    html += bankRows.map(function(r) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;'
+           +  'margin-bottom:6px;background:rgba(255,255,255,0.03);'
+           +  'border:1px solid rgba(255,255,255,0.07);border-radius:10px;">'
+           +  '<input type="checkbox" id="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" checked '
+           +    'onchange="_ocrReviewUpdateApplyLabel()" '
+           +    'style="width:16px;height:16px;cursor:pointer;accent-color:#c9a84c;flex-shrink:0;">'
+           +  '<label for="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" '
+           +    'style="min-width:140px;font-size:10.5px;text-transform:uppercase;'
+           +    'letter-spacing:0.4px;color:rgba(255,255,255,0.55);font-weight:600;cursor:pointer;">'
+           +    _ocrReviewEsc(r.label) + '</label>'
+           +  '<input type="text" id="ocrRev_val_' + _ocrReviewEsc(r.key) + '" '
+           +    'value="' + _ocrReviewEsc(r.value) + '" '
+           +    'style="flex:1;background:rgba(255,255,255,0.05);'
+           +    'border:1px solid rgba(255,255,255,0.12);border-radius:6px;'
+           +    'color:#fff;padding:7px 10px;font-size:13px;outline:none;">'
+           +  '</div>';
+    }).join('');
+  }
+
+  // Diff rows (label / scanned-editable / existing-readonly / checkbox)
+  if (renderedDiffRows.length) {
+    if (bankRows.length) {
+      html += '<div style="margin:16px 0 8px;font-size:10.5px;font-weight:700;'
+           +  'text-transform:uppercase;letter-spacing:0.5px;color:rgba(201,168,76,0.7);">'
+           +  '📋 Identification &amp; 1003 Fields'
+           +  '</div>';
+    }
+    html += renderedDiffRows.map(function(r) {
+      const matchVisuals = r.isMatch
+        ? 'background:rgba(255,255,255,0.015);opacity:0.55;'
+        : 'background:rgba(255,255,255,0.03);';
+      const labelStyle = r.isMatch
+        ? 'font-style:italic;color:rgba(255,255,255,0.45);'
+        : 'color:rgba(255,255,255,0.7);';
+      const matchTick = r.isMatch
+        ? '<span style="color:#22c55e;font-size:11px;font-weight:700;flex-shrink:0;" title="Match">✓</span>'
+        : '<span style="width:10px;flex-shrink:0;"></span>';
+      const existingValCell = existing
+        ? '<div style="flex:1 1 0;min-width:0;font-size:12px;color:rgba(255,255,255,0.55);'
+          +    'background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);'
+          +    'border-radius:6px;padding:7px 10px;white-space:nowrap;overflow:hidden;'
+          +    'text-overflow:ellipsis;" title="' + _ocrReviewEsc(r.existingDisplay) + '">'
+          +    _ocrReviewEsc(r.existingDisplay)
+          + '</div>'
+        : '<div style="flex:1 1 0;min-width:0;font-size:11px;color:rgba(255,255,255,0.25);'
+          +    'font-style:italic;padding:7px 10px;">…</div>';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;'
+           +  'margin-bottom:6px;border:1px solid rgba(255,255,255,0.07);border-radius:10px;'
+           +  matchVisuals + '">'
+           +  '<input type="checkbox" id="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" checked '
+           +    'onchange="_ocrReviewUpdateApplyLabel()" '
+           +    'style="width:16px;height:16px;cursor:pointer;accent-color:#c9a84c;flex-shrink:0;">'
+           +  matchTick
+           +  '<label for="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" '
+           +    'style="min-width:120px;font-size:10.5px;text-transform:uppercase;'
+           +    'letter-spacing:0.4px;font-weight:600;cursor:pointer;flex-shrink:0;'
+           +    labelStyle + '">'
+           +    _ocrReviewEsc(r.label) + '</label>'
+           +  '<input type="text" id="ocrRev_val_' + _ocrReviewEsc(r.key) + '" '
+           +    'value="' + _ocrReviewEsc(r.value) + '" '
+           +    'style="flex:1 1 0;min-width:0;background:rgba(255,255,255,0.05);'
+           +    'border:1px solid rgba(255,255,255,0.12);border-radius:6px;'
+           +    'color:#fff;padding:7px 10px;font-size:13px;outline:none;">'
+           +  existingValCell
+           +  '</div>';
+    }).join('');
+  }
+
+  if (!bankRows.length && !renderedDiffRows.length) {
+    html += '<div style="padding:24px;text-align:center;color:rgba(255,255,255,0.4);'
+         +  'font-size:12px;">No extractable fields in this scan.</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+// Pass 2 will replace this stub with the real "check all unchecked
+// discrepancy rows" action. For Pass 1 it just re-renders so the button
+// looks responsive — no behavior change since all rows are already checked
+// by default.
+function _ocrReviewUpdateAllStub() {
+  // No-op for now. Pass 2 will: collect all unchecked discrepancy rows +
+  // tick their checkboxes + update the count label. For Pass 1 the
+  // checkboxes start checked so there's nothing to do.
+}
+
+// Dispatcher: existing-target → diff renderer; add-new → original mini-form
+// renderer. Other call sites use this single entry point so we don't have to
+// thread the IsAddNew flag through.
+function _ocrReviewRenderRightPane() {
+  if (_ocrReviewIsAddNew) {
+    _ocrReviewRenderFieldRows();
+  } else {
+    _ocrReviewRenderDiffRows();
+  }
 }
 
 function _ocrReviewRenderFieldRows() {
@@ -19631,7 +20014,7 @@ async function updateLenderStatus(lenderId, status) {
         <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;
           color:rgba(201,168,76,0.7); margin-bottom:10px;">
           📋 Extracted fields
-          <span style="color:rgba(255,255,255,0.35); font-weight:500; text-transform:none; letter-spacing:0;">— uncheck or edit before applying</span>
+          <span style="color:rgba(255,255,255,0.35); font-weight:500; text-transform:none; letter-spacing:0;">— compare and uncheck any you don't want to overwrite</span>
         </div>
         <div id="ocrReviewFieldsList"></div>
       </div>
