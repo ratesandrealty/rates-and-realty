@@ -13890,6 +13890,18 @@ async function losLoadAssets(overrideCid) {
     losAssets = data || [];
   } catch(e) { console.warn('[assets] load:', e); losAssets = []; }
   losRenderAssets();
+  // Also repaint the read-only Assets summary card (#assets-summary-content)
+  // which renderAssetsContent reads from window.losAssets (per commit 6d87e77).
+  // Hooking here guarantees every losLoadAssets caller (initLoanSummary
+  // bootstrap at L13607, losSwitchBorrower's Promise.all at L14207, OCR
+  // post-insert refresh at L16710 / L16937) synchronizes BOTH renderers
+  // atomically — no dependency on the losSwitchBorrower tail hook at L14217
+  // running, which gets skipped if an unrelated upstream call in the same
+  // outer try (renderBorrowerIncomeDebtCards / loadLiabilities1003) throws.
+  // Own try/catch since renderAssetsContent reads other globals
+  // (_activeBorrowerApp) that may be null very early in bootstrap.
+  try { if (typeof renderAssetsContent === 'function') renderAssetsContent(); }
+  catch (e) { console.warn('[assets] renderAssetsContent failed:', e); }
 }
 
 function losRenderAssets() {
