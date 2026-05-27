@@ -16587,7 +16587,66 @@ async function _confirmAddNewBorrowerAndApply(fields, fieldCount) {
       '— contacts patch:', r.contactsKeys,
       '— mortgage_applications patch:', r.appKeys);
 
-    // (4) Refresh the borrower list + switcher so the new co-borrower appears.
+    // (3.5) INSERT loan_borrowers — the actual source of truth for the VISIBLE
+    //       switcher (#los1003BorrowerBar / renderBorrowerTabs / losBorrowers).
+    //       contact_relationships is read by the OLDER buildBorrowerSwitcher
+    //       (which writes to a different DOM container, often not the one users
+    //       see). Without this insert, the new co-borrower stays invisible in
+    //       the 1003 tabs even though everything else worked. See Pass 3.5
+    //       investigation report.
+    //
+    //       Edge case: if the primary has no mortgage_applications row yet
+    //       (extremely rare for a working lead but possible), skip the insert
+    //       and toast a warning — we can't safely auto-create the primary's
+    //       app row (too many required fields beyond what OCR captures).
+    let loanBorrowerWarning = '';
+    try {
+      const { data: primaryApps, error: lbSelErr } = await _authClient()
+        .from('mortgage_applications').select('id')
+        .eq('contact_id', primaryId)
+        .order('created_at', { ascending: false }).limit(1);
+      if (lbSelErr) throw new Error('primary app lookup failed: ' + (lbSelErr.message || JSON.stringify(lbSelErr)));
+      const primaryAppId = (primaryApps && primaryApps[0]) ? primaryApps[0].id : null;
+
+      if (!primaryAppId) {
+        loanBorrowerWarning = " — they won't show in the 1003 borrower tabs until you save the primary's application first";
+        console.warn('[ocrReview] skipping loan_borrowers insert: primary has no mortgage_applications row');
+      } else {
+        // Compute next borrower_order. Primary is order 1, so default to 2 when
+        // there are no existing rows. Otherwise max+1.
+        const { data: lbRows, error: maxErr } = await _authClient()
+          .from('loan_borrowers').select('borrower_order')
+          .eq('application_id', primaryAppId)
+          .order('borrower_order', { ascending: false }).limit(1);
+        if (maxErr) throw new Error('loan_borrowers order lookup failed: ' + (maxErr.message || JSON.stringify(maxErr)));
+        const nextOrder = (lbRows && lbRows[0] && Number(lbRows[0].borrower_order))
+          ? Number(lbRows[0].borrower_order) + 1
+          : 2;
+
+        const { error: lbInsErr } = await _authClient()
+          .from('loan_borrowers').insert([{
+            application_id:  primaryAppId,
+            contact_id:      newContactId,
+            borrower_role:   'CoBorrower',
+            borrower_order:  nextOrder,
+            is_primary:      false
+          }]);
+        if (lbInsErr) throw new Error('loan_borrowers insert failed: ' + (lbInsErr.message || JSON.stringify(lbInsErr)));
+        console.log('[ocrReview] loan_borrowers row inserted — application_id:', primaryAppId, 'borrower_order:', nextOrder);
+      }
+    } catch (lbErr) {
+      // The contact + relationship + mortgage_applications writes already
+      // succeeded; the loan_borrowers step is the visibility hook. Surface
+      // clearly but don't roll back the others.
+      console.error('[ocrReview] loan_borrowers step failed (contact + relationship + app row already saved):', lbErr);
+      loanBorrowerWarning = " — saved, but won't appear in 1003 borrower tabs (loan_borrowers: " + (lbErr.message || 'unknown error') + ")";
+    }
+
+    // (4) Refresh BOTH switcher data sources so the new co-borrower appears
+    //     in the visible one (losBorrowers) and stays consistent in the older
+    //     one (_app1003Borrowers). losLoadBorrowers auto-calls renderBorrowerTabs.
+    try { if (typeof losLoadBorrowers === 'function') await losLoadBorrowers(); }
+    catch (e) { console.warn('[ocrReview] losLoadBorrowers after add-new failed:', e); }
     try { if (typeof loadApp1003Borrowers === 'function') await loadApp1003Borrowers(); }
     catch (e) { console.warn('[ocrReview] loadApp1003Borrowers after add-new failed:', e); }
     try { if (typeof buildBorrowerSwitcher === 'function') buildBorrowerSwitcher(); }
@@ -16596,11 +16655,26 @@ async function _confirmAddNewBorrowerAndApply(fields, fieldCount) {
     // (5) Toast + close + switch + reload form to the new borrower
     if (typeof toast === 'function') {
       const display = fullName || 'new borrower';
-      toast('Created ' + display + ' and applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' ✓');
+      toast('Created ' + display + ' and applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' ✓' + loanBorrowerWarning);
     }
     closeOCRReviewModal();
-    try { if (typeof switchToBorrower === 'function') await switchToBorrower(newContactId); }
-    catch (e) { console.warn('[ocrReview] switchToBorrower after add-new failed:', e); }
+
+    // Switch the VISIBLE tab to the new co-borrower. losSwitchBorrower takes
+    // an index into losBorrowers (which was just refreshed in step 4) — find
+    // where the new contact landed (likely last by borrower_order). If
+    // loan_borrowers insert was skipped/failed, the contact won't be in
+    // losBorrowers and we silently skip the switch.
+    try {
+      if (typeof losSwitchBorrower === 'function' && Array.isArray(window.losBorrowers)) {
+        const newIdx = window.losBorrowers.findIndex(function(b) { return b && b.contact_id === newContactId; });
+        if (newIdx >= 0) await losSwitchBorrower(newIdx);
+      }
+    } catch (e) { console.warn('[ocrReview] losSwitchBorrower after add-new failed:', e); }
+
+    // Belt-and-suspenders form repaint. losSwitchBorrower already calls
+    // load1003 internally (L14180), so this is redundant on the happy path,
+    // but it ensures the form repaints even if losSwitchBorrower was skipped
+    // above (no loan_borrowers row → newIdx === -1).
     try { if (typeof load1003 === 'function') await load1003(newContactId); }
     catch (e) { console.warn('[ocrReview] load1003 after add-new failed:', e); }
   } catch (err) {
