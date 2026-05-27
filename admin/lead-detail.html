@@ -6700,8 +6700,10 @@ async function openDocViewerForFile(file) {
     } else if (isImage) {
       _docViewerState.type = 'image';
       const blob = new Blob([buf], { type: file.mimeType || 'image/jpeg' });
-      _docViewerState.objectUrl = URL.createObjectURL(blob);
-      body.innerHTML = '<img id="_docViewerImg" src="' + _ldDriveEsc(_docViewerState.objectUrl) + '" alt="" style="display:block;margin:20px auto;max-width:100%;transform-origin:center center;transition:transform .15s;">';
+      // Delegate to shared helper. imageId is preserved so _applyImageTransform
+      // (L6759) can still locate the <img> by id to apply zoom/rotation.
+      const result = await _renderFileBlobToContainer(body, blob, { imageId: '_docViewerImg' });
+      _docViewerState.objectUrl = result.objectUrl;
     } else {
       _docViewerState.type = 'other';
       body.innerHTML =
@@ -6724,36 +6726,104 @@ async function openDocViewerForFile(file) {
 }
 
 // Render every page of the current PDF with the current scale+rotation.
-async function _renderPdfAllPages() {
-  const body = document.getElementById('doc-viewer-body');
-  if (!body || !_docViewerState.pdfDoc) return;
-  const pdfDoc   = _docViewerState.pdfDoc;
-  const scale    = _docViewerState.scale;
-  const rotation = _docViewerState.rotation;
-  const baseScale = 1.5; // crisp baseline; user zoom multiplies this
-  body.innerHTML = '';
-  body.style.position = 'relative';
-  body.style.cursor = '';
+// ─── Shared PDF/image render helpers ────────────────────────────────────
+// Single source of truth used by:
+//   - _renderPdfAllPages  (Drive doc viewer — re-render on zoom/rotation,
+//                          pdfDoc already parsed once at open)
+//   - _renderFileBlobToContainer's PDF branch (one-shot file → container,
+//                                              parses from Blob)
+//   - _ocrReviewRenderSource  (OCR Review left pane preview)
+// Refactor rationale: avoid the parallel-renderer anti-pattern that bit us
+// repeatedly during the Item 2 Assets series — two callers + one piece of
+// logic = single source of truth.
+//
+// Renders an already-parsed pdfDoc into containerEl page-by-page as stacked
+// canvases. Clears the container first, sets position:relative so callers can
+// overlay (e.g. doc viewer's crop selection). Each canvas gets dataset.page=N
+// for crop targeting. Per-page render errors are caught + logged at warn
+// level so one bad page doesn't abort the rest of the document.
+async function _renderPdfDocToContainer(containerEl, pdfDoc, options) {
+  options = options || {};
+  const baseScale = (options.baseScale != null) ? options.baseScale : 1.5;
+  const rotation  = (options.rotation  != null) ? options.rotation  : 0;
+  if (!containerEl || !pdfDoc) return;
+  containerEl.innerHTML = '';
+  containerEl.style.position = 'relative';
+  containerEl.style.cursor = '';
   for (let i = 1; i <= pdfDoc.numPages; i++) {
     const page = await pdfDoc.getPage(i);
-    const viewport = page.getViewport({ scale: scale * baseScale, rotation: rotation });
+    const viewport = page.getViewport({ scale: baseScale, rotation: rotation });
     const canvas = document.createElement('canvas');
     canvas.dataset.page = String(i);
     canvas.width  = viewport.width;
     canvas.height = viewport.height;
-    canvas.style.display = 'block';
-    canvas.style.margin = '0 auto 12px';
-    canvas.style.boxShadow = '0 4px 16px rgba(0,0,0,0.5)';
-    canvas.style.maxWidth = '100%';
-    canvas.style.height = 'auto';
+    canvas.style.display    = 'block';
+    canvas.style.margin     = '0 auto 12px';
+    canvas.style.boxShadow  = '0 4px 16px rgba(0,0,0,0.5)';
+    canvas.style.maxWidth   = '100%';
+    canvas.style.height     = 'auto';
     canvas.style.background = '#fff';
-    body.appendChild(canvas);
+    containerEl.appendChild(canvas);
     try {
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
     } catch (err) {
-      console.warn('[docViewer] page render failed:', i, err);
+      console.warn('[pdfRender] page render failed:', i, err);
     }
   }
+}
+
+// One-shot: take a Blob/File, detect type, render into containerEl. PDF →
+// parses via pdf.js + calls _renderPdfDocToContainer. Image → object URL +
+// <img>. Other → throws so caller can render its own error UI.
+//
+// Returns { pdfDoc, objectUrl } — the CALLER owns cleanup (destroy pdfDoc,
+// revokeObjectURL) on its own close path. This split exists because the doc
+// viewer pre-parses pdfDoc once at open and re-renders many times on zoom/
+// rotation — it needs to keep the pdfDoc alive across renders; we can't
+// destroy it inside this helper.
+async function _renderFileBlobToContainer(containerEl, file, options) {
+  options = options || {};
+  if (!containerEl) throw new Error('containerEl required');
+  if (!file) throw new Error('file required');
+  const mime = String(file.type || file.mimeType || '').toLowerCase();
+  const name = String(file.name || '').toLowerCase();
+  const isPdf   = mime.indexOf('pdf') !== -1 || name.endsWith('.pdf');
+  const isImage = mime.indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|bmp)$/.test(name);
+
+  if (isPdf) {
+    const buf = await file.arrayBuffer();
+    const pdfjsLib = await _ensurePdfJs();
+    const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    await _renderPdfDocToContainer(containerEl, pdfDoc, options);
+    return { pdfDoc: pdfDoc, objectUrl: null };
+  }
+  if (isImage) {
+    const objectUrl = URL.createObjectURL(file);
+    containerEl.innerHTML = '';
+    containerEl.style.position = 'relative';
+    const img = document.createElement('img');
+    if (options.imageId) img.id = options.imageId;
+    img.src = objectUrl;
+    img.alt = '';
+    img.style.cssText = 'display:block; margin:20px auto; max-width:100%; transform-origin:center center; transition:transform .15s;';
+    containerEl.appendChild(img);
+    return { pdfDoc: null, objectUrl: objectUrl };
+  }
+  throw new Error('Unsupported file type for preview');
+}
+
+// Doc viewer's per-render entry point. Thin wrapper now — delegates to the
+// shared low-level helper using the doc viewer's stateful scale/rotation
+// (driven by its zoom/rotate buttons). Called from openDocViewerForFile on
+// initial open AND from the zoom/rotate handlers for re-renders without
+// re-parsing the pdfDoc.
+async function _renderPdfAllPages() {
+  const body = document.getElementById('doc-viewer-body');
+  if (!body || !_docViewerState.pdfDoc) return;
+  await _renderPdfDocToContainer(body, _docViewerState.pdfDoc, {
+    baseScale: _docViewerState.scale * 1.5,
+    rotation:  _docViewerState.rotation
+  });
 }
 
 function _applyImageTransform() {
@@ -15946,7 +16016,7 @@ async function startOCR(file, docType) {
       // Open the Review & Assign modal (Pass 1: shell only — no DB writes).
       // Legacy renderOCRFields + applyOCRFields are kept for back-compat but no
       // longer driven from this success path.
-      openOCRReviewModal(_ocrFields, data.doc_type || "Driver's License");
+      openOCRReviewModal(_ocrFields, data.doc_type || "Driver's License", file);
       return;
     }
     if (data.error) throw new Error(data.error);
@@ -16013,7 +16083,9 @@ async function startOCR(file, docType) {
           _ocrFields = d.fields || {};
           console.log('Final OCR fields before render:', JSON.stringify(_ocrFields));
           // Open the Review & Assign modal (Pass 1: shell only — no DB writes).
-          openOCRReviewModal(_ocrFields, d.doc_type);
+          // `file` is captured from startOCR's outer scope — gives the modal a
+          // reference to the source PDF/image for the left preview pane.
+          openOCRReviewModal(_ocrFields, d.doc_type, file);
         } else if (d.status==='failed') {
           clearTimeout(window._ocrHardTimeout);
           clearInterval(window._ocrPollTimer);
@@ -16156,7 +16228,7 @@ let _ocrReviewIsAddNew = false;    // true when "+ Add new borrower" picked
 let _ocrReviewFields   = {};       // {ocrKey: extractedValue} — frozen at modal open
 let _ocrReviewDocType  = '';       // human-readable doc type from edge fn
 
-async function openOCRReviewModal(fields, docType) {
+async function openOCRReviewModal(fields, docType, sourceFile) {
   _ocrReviewFields  = fields || {};
   _ocrReviewDocType = String(docType || '');
 
@@ -16224,11 +16296,26 @@ async function openOCRReviewModal(fields, docType) {
 
   const modal = document.getElementById('ocrReviewAssignModal');
   if (modal) modal.style.display = 'flex';
+
+  // Source preview runs async — the modal is visible immediately with the
+  // right-side fields ready to review/apply; the left pane shows a spinner
+  // while pdf.js parses + renders. Errors surface as "Preview unavailable"
+  // without blocking the apply flow. Backward-compatible: sourceFile is
+  // optional, so any caller that doesn't plumb it through just sees the
+  // placeholder.
+  _ocrReviewRenderSource(sourceFile);
 }
 
 function closeOCRReviewModal() {
   const modal = document.getElementById('ocrReviewAssignModal');
   if (modal) modal.style.display = 'none';
+  // Release the source preview's pdf.js doc + image object URL to prevent
+  // memory leaks across re-opens. Mirrors closeDocViewer's cleanup pattern.
+  if (_ocrReviewSrcState.objectUrl) { try { URL.revokeObjectURL(_ocrReviewSrcState.objectUrl); } catch (_) {} }
+  if (_ocrReviewSrcState.pdfDoc)    { try { _ocrReviewSrcState.pdfDoc.destroy(); } catch (_) {} }
+  _ocrReviewSrcState = { pdfDoc: null, objectUrl: null };
+  const pane = document.getElementById('ocrReviewSourcePane');
+  if (pane) pane.innerHTML = '';
 }
 
 function _ocrReviewSetVal(id, val) {
@@ -16240,6 +16327,59 @@ function _ocrReviewEsc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// State for the OCR Review modal's left-side source preview pane. Holds the
+// pdf.js doc + the image object URL so closeOCRReviewModal can revoke/destroy
+// on close (prevents leaks across re-opens).
+let _ocrReviewSrcState = { pdfDoc: null, objectUrl: null };
+
+// Render the source file (the scanned PDF or image) into the modal's left
+// preview pane. Called async from openOCRReviewModal — the modal is already
+// visible by the time this runs, so the loading placeholder is briefly
+// visible while pdf.js parses big docs. Errors are caught + surfaced as
+// "Preview unavailable" so the right pane (target picker + fields + Apply)
+// remains fully functional even when preview fails.
+async function _ocrReviewRenderSource(file) {
+  const pane = document.getElementById('ocrReviewSourcePane');
+  if (!pane) return;
+
+  // Cleanup any prior state from a previous open. _ocrReviewSrcState is a
+  // module-scope global so reopens with a different file don't leak the prior
+  // pdfDoc / objectUrl. The closeOCRReviewModal cleanup runs on explicit
+  // close; this runs on reopens-without-close too.
+  if (_ocrReviewSrcState.objectUrl) { try { URL.revokeObjectURL(_ocrReviewSrcState.objectUrl); } catch (_) {} }
+  if (_ocrReviewSrcState.pdfDoc)    { try { _ocrReviewSrcState.pdfDoc.destroy(); } catch (_) {} }
+  _ocrReviewSrcState = { pdfDoc: null, objectUrl: null };
+
+  // No source file (e.g. future caller hasn't plumbed it through, or the
+  // upstream path lost it). Show placeholder — right pane still works.
+  if (!file) {
+    pane.innerHTML = '<div style="padding:60px 20px;text-align:center;color:rgba(255,255,255,0.35);font-size:13px;">'
+      + '<div style="font-size:32px;margin-bottom:10px;opacity:0.5;">📄</div>'
+      + 'Preview unavailable</div>';
+    return;
+  }
+
+  // Loading state visible immediately while pdf.js parses + renders async.
+  pane.innerHTML = '<div style="padding:60px 20px;text-align:center;color:rgba(255,255,255,0.55);font-size:13px;">'
+    + '<div style="width:32px;height:32px;border-radius:50%;border:3px solid rgba(201,168,76,0.2);border-top-color:#c9a84c;animation:ocrSpin 0.8s linear infinite;margin:0 auto 14px;"></div>'
+    + 'Loading preview…</div>';
+
+  try {
+    // baseScale 1.0 — readable at half-modal width (~480px). Doc viewer uses
+    // 1.5 because its full-screen modal is much wider; we don't want pages
+    // wider than the pane.
+    const result = await _renderFileBlobToContainer(pane, file, { baseScale: 1.0 });
+    _ocrReviewSrcState = result;
+  } catch (err) {
+    console.warn('[ocrReview] source render failed:', err);
+    const safeName = _ocrReviewEsc(file.name || 'document');
+    pane.innerHTML = '<div style="padding:60px 20px;text-align:center;color:rgba(255,255,255,0.4);font-size:13px;">'
+      + '<div style="font-size:32px;margin-bottom:10px;">⚠️</div>'
+      + 'Preview unavailable<br>'
+      + '<span style="font-size:11px;color:rgba(255,255,255,0.3);">' + safeName + '</span></div>';
+  }
 }
 
 // Source from losBorrowers (loan_borrowers) — the same data feeding the
@@ -19345,13 +19485,54 @@ async function updateLenderStatus(lenderId, status) {
 <!-- OCR Review & Assign Modal (Pass 1 shell — opens after scan-success, replaces the blind
      auto-write path. Pass 1 wires the picker + editable rows + payload log; Pass 2 wires DB
      writes; Pass 3 adds add-new borrower creation + post-apply form repaint.) -->
+<!-- OCR Review & Assign modal — split-pane (PDF/image preview on left,
+     target picker + extracted fields on right). Responsive stacking via the
+     media query below: side-by-side at ≥960px, stacked (preview on top,
+     fields below) at <960px. The .ocr-review-body class scopes the layout
+     so existing inline-style modal pattern stays consistent elsewhere. -->
+<style>
+  .ocr-review-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .ocr-review-body > .ocr-review-source-pane,
+  .ocr-review-body > .ocr-review-fields-pane {
+    overflow-y: auto;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .ocr-review-body > .ocr-review-source-pane {
+    flex: 1 1 50%;
+    background: #0d0d0d;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 14px;
+  }
+  .ocr-review-body > .ocr-review-fields-pane {
+    flex: 1 1 50%;
+    padding: 20px 24px;
+  }
+  @media (max-width: 959px) {
+    .ocr-review-body { flex-direction: column; }
+    .ocr-review-body > .ocr-review-source-pane {
+      flex: 0 0 auto;
+      max-height: 40vh;
+      border-right: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .ocr-review-body > .ocr-review-fields-pane {
+      flex: 1 1 auto;
+    }
+  }
+</style>
 <div id="ocrReviewAssignModal" style="
   display:none; position:fixed; inset:0; z-index:10001;
   background:rgba(0,0,0,0.85); backdrop-filter:blur(6px);
   align-items:center; justify-content:center; padding:16px;">
   <div style="
     background:#141414; border:1px solid rgba(201,168,76,0.25);
-    border-radius:20px; width:100%; max-width:780px;
+    border-radius:20px; width:100%; max-width:min(1400px, 95vw);
     max-height:90vh; display:flex; flex-direction:column;
     box-shadow:0 32px 80px rgba(0,0,0,0.7); overflow:hidden;">
 
@@ -19374,8 +19555,19 @@ async function updateLenderStatus(lenderId, status) {
         align-items:center; justify-content:center;">×</button>
     </div>
 
-    <!-- Scrollable body -->
-    <div style="flex:1; overflow:auto; padding:20px 24px;">
+    <!-- Split-pane body: left = source preview (PDF/image), right = review.
+         Layout + responsive stacking come from the .ocr-review-body class
+         declared in the <style> block above the modal. -->
+    <div class="ocr-review-body">
+
+      <!-- LEFT: source document preview. Populated async by
+           _ocrReviewRenderSource(file) — see openOCRReviewModal. Shows a
+           spinner while pdf.js renders; falls back to "Preview unavailable"
+           if the source file isn't provided or fails to load. -->
+      <div id="ocrReviewSourcePane" class="ocr-review-source-pane"></div>
+
+      <!-- RIGHT: existing target picker + add-new form + extracted fields -->
+      <div class="ocr-review-fields-pane">
 
       <!-- Target picker -->
       <div style="margin-bottom:18px;">
@@ -19443,7 +19635,9 @@ async function updateLenderStatus(lenderId, status) {
         </div>
         <div id="ocrReviewFieldsList"></div>
       </div>
-    </div>
+
+      </div><!-- /.ocr-review-fields-pane -->
+    </div><!-- /.ocr-review-body -->
 
     <!-- Footer -->
     <div style="padding:14px 24px; border-top:1px solid rgba(255,255,255,0.08);
