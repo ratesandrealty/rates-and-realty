@@ -16430,8 +16430,17 @@ async function _ocrApplyPatchesToTarget(targetId, fields) {
     }
   });
 
+  // Empty patches are LEGITIMATE for bank-statement scans: after the caller
+  // strips account-opening address fields (_ocrStripBankAddressFields), the
+  // remaining keys (bank_name / total_balance / account_type / account_number /
+  // statement_* / account_holder_*) are not in _OCR_TO_APP_COLUMN — they
+  // route to loan_assets via _ocrMaybeInsertBankAsset which runs AFTER this
+  // helper returns. Don't throw — let the caller's bank-asset insert run.
+  // The Apply button is gated on fieldCount > 0 in confirmOCRReview (L16467),
+  // so an "all-unchecked" scenario can't reach here anyway. (Original throw
+  // was defensive but was firing on the bank-scan happy path → bug.)
   if (Object.keys(contactsPatch).length === 0 && Object.keys(appPatch).length === 0) {
-    throw new Error('Selected fields could not be mapped to any column');
+    return { contactsKeys: [], appKeys: [] };
   }
 
   // (1) contacts: name fields (only if any)
@@ -16596,14 +16605,23 @@ async function _ocrMaybeInsertBankAsset(targetContactId, fields) {
   return ins;
 }
 
-// Formats a "+ saved $X.XX at Bank ✓" suffix for the success toast. Defensive:
-// returns '' for null input so the caller can blindly concatenate.
-function _ocrBankAssetToastSuffix(inserted) {
+// Bare summary, e.g. "$2,082.58 at Bank of America" — composable. Used by
+// both the normal "+ saved bank account..." suffix AND the pure-asset-save
+// toast in _confirmExistingTargetAndApply (where flat-column writes were
+// empty and "Applied 0 fields" would read awkwardly).
+function _ocrBankAssetSummary(inserted) {
   if (!inserted) return '';
   const amt = Number(inserted.current_value) || 0;
   const dollarFmt = '$' + amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const inst = (inserted.institution_name || '').trim();
-  return ' + saved bank account (' + dollarFmt + (inst ? ' at ' + inst : '') + ') ✓';
+  return inst ? (dollarFmt + ' at ' + inst) : dollarFmt;
+}
+
+// Suffix for the "applied N fields ✓ + saved bank account ✓" toast. Empty
+// string for null input so callers can concatenate blindly.
+function _ocrBankAssetToastSuffix(inserted) {
+  const s = _ocrBankAssetSummary(inserted);
+  return s ? (' + saved bank account (' + s + ') ✓') : '';
 }
 
 // Pass 3 — top-level entry. Collects checked rows, then dispatches to the
@@ -16668,21 +16686,33 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
     // Item 2b — if this was a bank statement, INSERT a loan_assets row. Own
     // try/catch: an asset insert failure must NOT roll back the name/DOB/app
     // writes that already succeeded above. Surfaced as a toast suffix.
-    let assetToastSuffix = '';
+    let bankInserted = null;
+    let assetErrorSuffix = '';
     try {
-      const inserted = await _ocrMaybeInsertBankAsset(targetId, fields);
-      assetToastSuffix = _ocrBankAssetToastSuffix(inserted);
-      if (inserted && typeof losLoadAssets === 'function') {
+      bankInserted = await _ocrMaybeInsertBankAsset(targetId, fields);
+      if (bankInserted && typeof losLoadAssets === 'function') {
         try { await losLoadAssets(targetId); }
         catch (e) { console.warn('[ocrReview] losLoadAssets after asset insert failed:', e); }
       }
     } catch (assetErr) {
       console.error('[ocrReview] bank asset insert failed (name/app writes already saved):', assetErr);
-      assetToastSuffix = ' — but bank asset save failed (' + (assetErr.message || 'unknown error') + ')';
+      assetErrorSuffix = ' — but bank asset save failed (' + (assetErr.message || 'unknown error') + ')';
     }
 
     if (typeof toast === 'function') {
-      toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓' + assetToastSuffix);
+      // Pure-asset-save UX polish: when the helper wrote 0 flat columns (e.g.
+      // a bank statement with addresses stripped and no other mappable keys
+      // checked) and the asset insert succeeded, "Applied 0 fields ✓" would
+      // read awkwardly. Lead with the asset summary instead.
+      const flatWriteCount = (r.contactsKeys || []).length + (r.appKeys || []).length;
+      if (flatWriteCount === 0 && bankInserted) {
+        toast('Saved bank account (' + _ocrBankAssetSummary(bankInserted) + ') to ' + targetName + ' ✓');
+      } else {
+        const suffix = bankInserted
+          ? _ocrBankAssetToastSuffix(bankInserted)
+          : assetErrorSuffix;
+        toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓' + suffix);
+      }
     }
     closeOCRReviewModal();
     try { if (typeof switchToBorrower === 'function') await switchToBorrower(targetId); }
