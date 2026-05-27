@@ -16448,6 +16448,139 @@ async function _ocrApplyPatchesToTarget(targetId, fields) {
   };
 }
 
+// ─── Item 2b — Bank-statement → loan_assets helpers ────────────────────────
+// textract-ocr v78 (Branch B) returns bank-specific fields (bank_name,
+// account_type, account_number, total_balance, statement_*, account_holder_*,
+// address) for doc_type=bank_statements. None are mapped in _OCR_TO_APP_COLUMN
+// (intentional — bank data does not belong in flat mortgage_applications
+// columns), so the helper above silently drops them. These three helpers
+// detect a bank scan, strip the account-opening address fields (so we don't
+// silently overwrite the borrower's residence), and INSERT a row into the
+// loan_assets table (the LIVE table the 1003 Assets section reads from via
+// losLoadAssets — NOT the orphan public.assets table from the original brief).
+
+// True iff the fields look like a bank-statement scan. Any of bank_name /
+// total_balance / account_type / account_number triggers — non-bank doc
+// types (gov_id, w2, pay_stubs, etc.) return none of these in v78, so this
+// is a clean discriminator.
+function _ocrIsBankScan(fields) {
+  return !!(fields && (fields.bank_name || fields.total_balance ||
+                       fields.account_type || fields.account_number));
+}
+
+// Strips street_address / city / state / zip_code from the OCR fields (in
+// place). Used before _ocrApplyPatchesToTarget on bank-statement scans —
+// _OCR_TO_APP_COLUMN maps those keys to mortgage_applications.current_address_*,
+// and bank-statement addresses are the account-opening address (often 1-3
+// years stale), so without this strip a bank scan would silently overwrite
+// the borrower's residence. Name fields are kept (the helper either ignores
+// them, in the bank case the keys aren't in _OCR_TO_APP_COLUMN at all, or
+// passes them through for non-bank scans).
+function _ocrStripBankAddressFields(fields) {
+  if (!fields) return fields;
+  delete fields.street_address;
+  delete fields.city;
+  delete fields.state;
+  delete fields.zip_code;
+  return fields;
+}
+
+// INSERTs a loan_assets row scoped to targetContactId when the fields look
+// like a bank-statement scan. Mirrors losAddAsset (L13903) row shape:
+//   contact_id (LOAD-BEARING — losLoadAssets filters by this column),
+//   application_id (populated from losBorrowers when resolvable; existing
+//     losAddAsset rows have null and losLoadAssets ignores this column,
+//     but populating it is cleaner data going forward),
+//   asset_owner ('Borrower' if target is primary on the loan, else
+//     'CoBorrower'; fallback 'Borrower' if target isn't in losBorrowers),
+//   asset_type (normalized against ASSET_TYPES at L13855; fallback 'Other'),
+//   institution_name, account_number, current_value (parseFloat after $/comma
+//     strip — skip insert if not finite, an empty $0 asset row is noise),
+//   sort_order (max existing for this contact + 1; fallback 0).
+//
+// Returns the inserted row's {id, institution_name, current_value} on success,
+// null if non-bank or unparseable balance, or throws on DB error. Caller is
+// responsible for try/catch — an asset failure must NOT roll back the
+// name/DOB/app writes that already succeeded.
+async function _ocrMaybeInsertBankAsset(targetContactId, fields) {
+  if (!_ocrIsBankScan(fields)) return null;
+  if (!targetContactId) throw new Error('targetContactId required for asset insert');
+
+  const rawBalance = (fields.total_balance == null ? '' : String(fields.total_balance)).replace(/[$,\s]/g, '');
+  const currentValue = parseFloat(rawBalance);
+  if (!isFinite(currentValue)) {
+    console.warn('[ocrReview] bank asset insert skipped — no parseable total_balance:', fields.total_balance);
+    return null;
+  }
+
+  // Look up target in losBorrowers for application_id + asset_owner.
+  let applicationId = null;
+  let assetOwner    = 'Borrower';
+  if (Array.isArray(window.losBorrowers)) {
+    const match = window.losBorrowers.find(function(b) { return b && b.contact_id === targetContactId; });
+    if (match) {
+      if (match.application_id) applicationId = match.application_id;
+      const isPrimary = !!match.is_primary || match.borrower_role === 'Borrower';
+      assetOwner = isPrimary ? 'Borrower' : 'CoBorrower';
+    }
+  }
+
+  // Normalize account_type case-insensitively against ASSET_TYPES so we never
+  // write a value the dropdown can't render. Claude typically returns
+  // "Checking" or "Savings" verbatim; this is defensive against variants.
+  const rawType = String(fields.account_type || '').trim();
+  let assetType = 'Other';
+  if (rawType && typeof ASSET_TYPES !== 'undefined' && Array.isArray(ASSET_TYPES)) {
+    const norm = rawType.toLowerCase();
+    const matched = ASSET_TYPES.find(function(t) { return String(t).toLowerCase() === norm; });
+    if (matched) assetType = matched;
+  }
+
+  // sort_order = max existing for this contact + 1. Fallback 0 on lookup
+  // failure — RLS or transient error; better to insert at order 0 than skip.
+  let nextSortOrder = 0;
+  try {
+    const { data: existing } = await _authClient().from('loan_assets')
+      .select('sort_order').eq('contact_id', targetContactId)
+      .order('sort_order', { ascending: false }).limit(1);
+    if (existing && existing[0] && Number.isFinite(Number(existing[0].sort_order))) {
+      nextSortOrder = Number(existing[0].sort_order) + 1;
+    }
+  } catch (sortErr) {
+    console.warn('[ocrReview] sort_order lookup failed, defaulting to 0:', sortErr);
+  }
+
+  const row = {
+    contact_id:       targetContactId,
+    application_id:   applicationId,
+    asset_owner:      assetOwner,
+    asset_type:       assetType,
+    institution_name: String(fields.bank_name || '').trim(),
+    account_number:   String(fields.account_number || '').trim(),
+    current_value:    currentValue,
+    sort_order:       nextSortOrder,
+    created_at:       new Date().toISOString(),
+    updated_at:       new Date().toISOString()
+  };
+
+  const { data: ins, error: insErr } = await _authClient()
+    .from('loan_assets').insert([row]).select('id,institution_name,current_value').single();
+  if (insErr) throw new Error('loan_assets insert failed: ' + (insErr.message || JSON.stringify(insErr)));
+  console.log('[ocrReview] loan_assets row inserted — id:', ins && ins.id, 'contact_id:', targetContactId,
+              'application_id:', applicationId, 'asset_owner:', assetOwner, 'value:', currentValue);
+  return ins;
+}
+
+// Formats a "+ saved $X.XX at Bank ✓" suffix for the success toast. Defensive:
+// returns '' for null input so the caller can blindly concatenate.
+function _ocrBankAssetToastSuffix(inserted) {
+  if (!inserted) return '';
+  const amt = Number(inserted.current_value) || 0;
+  const dollarFmt = '$' + amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const inst = (inserted.institution_name || '').trim();
+  return ' + saved bank account (' + dollarFmt + (inst ? ' at ' + inst : '') + ') ✓';
+}
+
 // Pass 3 — top-level entry. Collects checked rows, then dispatches to the
 // existing-target or add-new-borrower branch.
 async function confirmOCRReview() {
@@ -16495,11 +16628,36 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
   const targetName = _ocrReviewTargetDisplayName();
 
   try {
+    // Item 2b — bank-statement scans: strip account-opening address from the
+    // apply patch BEFORE writing (it would otherwise silently overwrite the
+    // borrower's current_address_* on mortgage_applications). The bank-only
+    // keys (bank_name / account_type / total_balance / account_number /
+    // statement_* / account_holder_*) aren't in _OCR_TO_APP_COLUMN so they're
+    // ignored by the apply helper — the asset insert below picks them up.
+    if (_ocrIsBankScan(fields)) _ocrStripBankAddressFields(fields);
+
     const r = await _ocrApplyPatchesToTarget(targetId, fields);
     console.log('[ocrReview] Applied to', targetId,
       '— contacts patch:', r.contactsKeys, '— mortgage_applications patch:', r.appKeys);
+
+    // Item 2b — if this was a bank statement, INSERT a loan_assets row. Own
+    // try/catch: an asset insert failure must NOT roll back the name/DOB/app
+    // writes that already succeeded above. Surfaced as a toast suffix.
+    let assetToastSuffix = '';
+    try {
+      const inserted = await _ocrMaybeInsertBankAsset(targetId, fields);
+      assetToastSuffix = _ocrBankAssetToastSuffix(inserted);
+      if (inserted && typeof losLoadAssets === 'function') {
+        try { await losLoadAssets(targetId); }
+        catch (e) { console.warn('[ocrReview] losLoadAssets after asset insert failed:', e); }
+      }
+    } catch (assetErr) {
+      console.error('[ocrReview] bank asset insert failed (name/app writes already saved):', assetErr);
+      assetToastSuffix = ' — but bank asset save failed (' + (assetErr.message || 'unknown error') + ')';
+    }
+
     if (typeof toast === 'function') {
-      toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓');
+      toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓' + assetToastSuffix);
     }
     closeOCRReviewModal();
     try { if (typeof switchToBorrower === 'function') await switchToBorrower(targetId); }
@@ -16616,6 +16774,13 @@ async function _confirmAddNewBorrowerAndApply(fields, fieldCount) {
     if (_resolvedMiddle) fieldsForApply.middle_name = _resolvedMiddle; else delete fieldsForApply.middle_name;
     fieldsForApply.last_name = lastName; // required + validated above (always non-empty)
 
+    // Item 2b — bank-statement scans: strip account-opening address from the
+    // apply patch BEFORE writing. Same reasoning as the existing-target path:
+    // bank-statement addresses are 1-3 years stale and would silently rewrite
+    // the new borrower's residence. The asset insert below picks the bank
+    // fields up directly from `fields` (untouched).
+    if (_ocrIsBankScan(fields)) _ocrStripBankAddressFields(fieldsForApply);
+
     const r = await _ocrApplyPatchesToTarget(newContactId, fieldsForApply);
     console.log('[ocrReview] Created + applied — newContactId:', newContactId,
       '— relationship:', relType,
@@ -16687,10 +16852,29 @@ async function _confirmAddNewBorrowerAndApply(fields, fieldCount) {
     try { if (typeof buildBorrowerSwitcher === 'function') buildBorrowerSwitcher(); }
     catch (e) { console.warn('[ocrReview] buildBorrowerSwitcher after add-new failed:', e); }
 
+    // (4.5) Item 2b — if this was a bank statement, INSERT a loan_assets row
+    //       scoped to the new co-borrower. losBorrowers was refreshed in (4)
+    //       above so the helper can resolve application_id + assetOwner from
+    //       there. Own try/catch: an asset failure must NOT roll back the
+    //       contact + relationship + app + loan_borrowers writes — surfaced
+    //       as a toast suffix instead.
+    let assetToastSuffix = '';
+    try {
+      const inserted = await _ocrMaybeInsertBankAsset(newContactId, fields);
+      assetToastSuffix = _ocrBankAssetToastSuffix(inserted);
+      if (inserted && typeof losLoadAssets === 'function') {
+        try { await losLoadAssets(newContactId); }
+        catch (e) { console.warn('[ocrReview] losLoadAssets after add-new asset insert failed:', e); }
+      }
+    } catch (assetErr) {
+      console.error('[ocrReview] bank asset insert (add-new path) failed:', assetErr);
+      assetToastSuffix = ' — but bank asset save failed (' + (assetErr.message || 'unknown error') + ')';
+    }
+
     // (5) Toast + close + switch + reload form to the new borrower
     if (typeof toast === 'function') {
       const display = fullName || 'new borrower';
-      toast('Created ' + display + ' and applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' ✓' + loanBorrowerWarning);
+      toast('Created ' + display + ' and applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' ✓' + loanBorrowerWarning + assetToastSuffix);
     }
     closeOCRReviewModal();
 
