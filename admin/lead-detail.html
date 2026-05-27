@@ -12472,6 +12472,31 @@ function render1003Summary(app) {
   const dt = fromISODate;
   const $ = (v) => v ? '$' + Number(v).toLocaleString() : '';
 
+  // Item 2 finalizer (3rd renderer) — prefer live-table aggregations over the
+  // flat columns on mortgage_applications, which are out of sync with the
+  // editable per-row tables (loan_assets, loan_income, loan_liabilities). Same
+  // data-store mismatch fixed for renderAssetsContent in commit 6d87e77 and
+  // synchronized via losLoadAssets's dual-renderer hook in commit 8d8b2eb.
+  // Fall back to the flat column when the live global isn't loaded (very
+  // early bootstrap before losLoadX has resolved) so any existing manually-
+  // entered DTI calculator values aren't surfaced as $0.
+  //
+  // Liabilities note: live-table columns are `is_payoff` + `monthly_payment`
+  // (the JSONB blob format used `omit` + `monthly`; the live-table fields
+  // are the equivalents — see L13565-13570 for the same aggregation pattern
+  // in loadLiabilities1003).
+  const losAssetsTotal = (Array.isArray(window.losAssets) ? window.losAssets : [])
+    .reduce(function(s, a) { return s + (parseFloat(a && a.current_value) || 0); }, 0);
+  const effectiveTotalAssets = losAssetsTotal || app.total_assets || 0;
+
+  const losIncomeTotal = (Array.isArray(window.losIncome) ? window.losIncome : [])
+    .reduce(function(s, i) { return s + (i && i.is_active ? (parseFloat(i.monthly_amount) || 0) : 0); }, 0);
+  const effectiveTotalMonthlyIncome = losIncomeTotal || app.total_monthly_income || 0;
+
+  const losDebtTotal = (Array.isArray(window.losLiabilities) ? window.losLiabilities : [])
+    .reduce(function(s, l) { return s + (l && !l.is_payoff ? (parseFloat(l.monthly_payment) || 0) : 0); }, 0);
+  const effectiveMonthlyDebt = losDebtTotal || app.monthly_debt || 0;
+
   el.innerHTML = `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:12px 16px;background:#161616;border-radius:8px;border:1px solid #1e1e1e;">
       <div><div style="color:#555;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Borrower ID</div><div style="color:#C9A84C;font-size:14px;font-weight:600;font-family:monospace;">${app.borrower_id || 'Not assigned'}</div></div>
@@ -12496,7 +12521,7 @@ function render1003Summary(app) {
         ${f('Employer',app.employer_name)}${f('Phone',app.employer_phone)}${f('Position',app.position_title)}
         ${f('Start Date',dt(app.employment_start_date))}${f('Self-Employed',app.is_self_employed?'Yes':'No')}
         ${f('Years in Field',app.years_in_line_of_work)}${f('Base/mo',$(app.base_income))}${f('Overtime/mo',$(app.overtime_income))}
-        ${f('Bonus/mo',$(app.bonus_income))}${f('Commission/mo',$(app.commission_income))}${f('Total Monthly',$(app.total_monthly_income))}
+        ${f('Bonus/mo',$(app.bonus_income))}${f('Commission/mo',$(app.commission_income))}${f('Total Monthly',$(effectiveTotalMonthlyIncome))}
       </div>
       ${app.employer_street ? `<div class="app-grid" style="margin-top:8px;">${f('Address',[app.employer_street,app.employer_city,app.employer_state,app.employer_zip].filter(Boolean).join(', '))}</div>` : ''}
       ${app.prev_employer_name ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e1e1e;">
@@ -12509,7 +12534,7 @@ function render1003Summary(app) {
       </div>` : ''}
     `)}
     ${s('3. Assets & Liabilities', `<div class="app-grid">
-      ${f('Total Assets',$(app.total_assets))}${f('Monthly Debt',$(app.monthly_debt))}${f('Credit Score',app.credit_score)}
+      ${f('Total Assets',$(effectiveTotalAssets))}${f('Monthly Debt',$(effectiveMonthlyDebt))}${f('Credit Score',app.credit_score)}
     </div>`)}
     ${s('4. Loan & Property', `<div class="app-grid">
       ${f('Purpose',app.loan_purpose)}${f('Loan Type',app.loan_type)}${f('Amount',$(app.loan_amount))}
