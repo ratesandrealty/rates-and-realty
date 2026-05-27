@@ -12346,8 +12346,18 @@ function renderAssetsContent() {
   var el = document.getElementById('assets-summary-content');
   if (!el) return;
   var app = _activeBorrowerApp || {};
-  var banks = [];
-  try { banks = typeof app.bank_accounts === 'string' ? JSON.parse(app.bank_accounts) : (Array.isArray(app.bank_accounts) ? app.bank_accounts : []); } catch(_) {}
+  // Bank accounts come from window.losAssets — the loan_assets-backed global
+  // kept fresh by losLoadBorrowers / losSwitchBorrower / losLoadAssets / the
+  // Item 2b OCR post-insert refresh. The legacy app.bank_accounts JSONB
+  // column is no longer authoritative: losAddAsset writes to loan_assets,
+  // and the editable table (losRenderAssets) also renders from loan_assets,
+  // so this unifies the summary card with the editable table on one store.
+  var banks = (Array.isArray(window.losAssets) ? window.losAssets : []).map(function(a) {
+    return {
+      institution: a.institution_name || a.asset_type || '—',
+      balance:     parseFloat(a.current_value) || 0
+    };
+  });
   var liabs = Array.isArray(app.liabilities) ? app.liabilities : [];
 
   var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px 20px;margin-bottom:20px;">';
@@ -14185,6 +14195,12 @@ async function losSwitchBorrower(idx) {
     await loadLiabilities1003();   // refresh consolidated Assets & Debts liabilities panel (after REO loads for dropdown options)
     console.log('[borrower-switch] reload complete for ' + formCid);
     renderBorrowerIncomeDebtCards();
+    // Repaint the Assets summary card now that losAssets reflects the new
+    // active borrower. The existing scrollToSection('sec-assets') hook only
+    // fires on nav-click, so without this the summary stays stale when the
+    // user switches borrowers without re-clicking Assets in the side nav.
+    try { if (typeof renderAssetsContent === 'function') renderAssetsContent(); }
+    catch (e) { console.warn('[switch] renderAssetsContent failed:', e); }
   } catch(e) { console.warn('[switch] reload error:', e); }
   // Restore whichever section the user was on before the switch.
   // If they were on a section that's hidden in Combined View, fall back to Assets & Debts.
