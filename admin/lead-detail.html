@@ -16574,12 +16574,23 @@ async function _confirmAddNewBorrowerAndApply(fields, fieldCount) {
         ' — link manually via Connected People');
     }
 
-    // (3) Apply OCR patches to the new contact. Strip name keys: the INSERT
-    //     above used the mini-form values, which we treat as authoritative.
+    // (3) Apply OCR patches to the new contact. Name precedence: mini-form
+    //     value if non-empty, else fall back to the OCR-extracted value, else
+    //     omit the key entirely (let the column stay NULL — never write an
+    //     empty string, since _ocrApplyPatchesToTarget would otherwise pass
+    //     "" straight to appPatch[col]). _ocrApplyPatchesToTarget writes the
+    //     resolved names to BOTH contacts AND the new mortgage_applications
+    //     row, which is what the 1003 form reads — so the form name fields
+    //     now populate. The existing-target path is untouched (its names come
+    //     from the user's editable rows on the form, no merge needed).
     const fieldsForApply = Object.assign({}, fields);
-    delete fieldsForApply.first_name;
-    delete fieldsForApply.middle_name;
-    delete fieldsForApply.last_name;
+    const _ocrFirst       = (fields.first_name  || '').toString().trim();
+    const _ocrMiddle      = (fields.middle_name || '').toString().trim();
+    const _resolvedFirst  = firstName  || _ocrFirst;
+    const _resolvedMiddle = middleName || _ocrMiddle;
+    if (_resolvedFirst)  fieldsForApply.first_name  = _resolvedFirst;  else delete fieldsForApply.first_name;
+    if (_resolvedMiddle) fieldsForApply.middle_name = _resolvedMiddle; else delete fieldsForApply.middle_name;
+    fieldsForApply.last_name = lastName; // required + validated above (always non-empty)
 
     const r = await _ocrApplyPatchesToTarget(newContactId, fieldsForApply);
     console.log('[ocrReview] Created + applied — newContactId:', newContactId,
