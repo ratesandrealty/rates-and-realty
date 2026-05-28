@@ -16694,22 +16694,46 @@ function _ocrReviewRenderDiffRows() {
   const diffRows = Object.keys(colsSeen).map(function(c) { return colsSeen[c]; });
 
   // Step 2 — for each diff row, look up the existing value + classify.
+  // Pass 2: also derives default checked/disabled state per row, encoding
+  // the opt-in policy:
+  //   - loading (existing not yet fetched) → unchecked + disabled
+  //   - match (existing has value AND scanned equals)      → unchecked + disabled
+  //                                                          (no-op write — don't offer)
+  //   - both empty (existing blank AND scanned blank)      → unchecked + disabled
+  //                                                          (rare; we already filtered scanned-empty)
+  //   - was-empty (scanned has value, existing is blank)   → CHECKED   + enabled
+  //                                                          (filling a blank is friendly)
+  //   - real discrepancy (both have value, different)      → unchecked + enabled
+  //                                                          (user must opt in to overwrite)
   let discrepancyCount = 0;
   const renderedDiffRows = diffRows.map(function(row) {
     const existingVal = existing ? existing[row.col] : null;
     const scannedHasValue = row.value != null && String(row.value).trim() !== '';
     const existingHasValue = existingVal != null && String(existingVal).trim() !== '';
-    // Decision 3: scanned empty + existing has value → hide. But we already
-    // filtered scanned-empty above. This branch only fires if scanned was
-    // numeric-zero or similar edge — treat as match (no diff).
     const isMatch = !existingHasValue
-      ? !scannedHasValue // both empty → match (rare given the filter above)
+      ? !scannedHasValue // both empty → match
       : _ocrValuesMatch(row.key, row.value, existingVal);
     if (!isMatch) discrepancyCount++;
+
+    let pass2Checked, pass2Disabled, pass2State;
+    if (!existing) {
+      pass2Checked = false; pass2Disabled = true;  pass2State = 'loading';
+    } else if (isMatch) {
+      pass2Checked = false; pass2Disabled = true;  pass2State = existingHasValue ? 'match' : 'both-empty';
+    } else if (!existingHasValue) {
+      pass2Checked = true;  pass2Disabled = false; pass2State = 'was-empty';
+    } else {
+      pass2Checked = false; pass2Disabled = false; pass2State = 'discrepancy';
+    }
+
     return Object.assign({}, row, {
       existingVal: existingVal,
       existingDisplay: _ocrFormatExistingDisplay(row.key, existingVal),
-      isMatch: isMatch
+      existingHasValue: existingHasValue,
+      isMatch: isMatch,
+      pass2Checked: pass2Checked,
+      pass2Disabled: pass2Disabled,
+      pass2State: pass2State
     });
   });
 
@@ -16725,7 +16749,7 @@ function _ocrReviewRenderDiffRows() {
        +  'gap:10px;margin-bottom:12px;padding:10px 12px;'
        +  'background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.18);border-radius:8px;">'
        +  '<div style="font-size:12px;color:rgba(255,255,255,0.75);">' + _ocrReviewEsc(countLabel) + '</div>'
-       +  '<button type="button" onclick="_ocrReviewUpdateAllStub()" '
+       +  '<button type="button" onclick="_ocrReviewUpdateAll()" '
        +    'style="padding:5px 12px;background:rgba(201,168,76,0.12);'
        +    'border:1px solid rgba(201,168,76,0.35);border-radius:6px;'
        +    'color:#c9a84c;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.3px;">'
@@ -16793,12 +16817,23 @@ function _ocrReviewRenderDiffRows() {
           + '</div>'
         : '<div style="flex:1 1 0;min-width:0;font-size:11px;color:rgba(255,255,255,0.25);'
           +    'font-style:italic;padding:7px 10px;">…</div>';
+      // Pass 2: checkbox attributes + styling are driven by pass2Checked /
+      // pass2Disabled. Disabled checkboxes use opacity + not-allowed cursor
+      // to communicate "you can't opt into this row" (match: no-op write;
+      // loading: data not yet fetched).
+      const chkAttrs = (r.pass2Checked ? 'checked ' : '')
+                     + (r.pass2Disabled ? 'disabled ' : '');
+      const chkStyle = 'width:16px;height:16px;accent-color:#c9a84c;flex-shrink:0;'
+                     + (r.pass2Disabled
+                          ? 'cursor:not-allowed;opacity:0.45;'
+                          : 'cursor:pointer;');
       return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;'
            +  'margin-bottom:6px;border:1px solid rgba(255,255,255,0.07);border-radius:10px;'
            +  matchVisuals + '">'
-           +  '<input type="checkbox" id="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" checked '
+           +  '<input type="checkbox" id="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" '
+           +    chkAttrs
            +    'onchange="_ocrReviewUpdateApplyLabel()" '
-           +    'style="width:16px;height:16px;cursor:pointer;accent-color:#c9a84c;flex-shrink:0;">'
+           +    'style="' + chkStyle + '">'
            +  matchTick
            +  '<label for="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" '
            +    'style="min-width:120px;font-size:10.5px;text-transform:uppercase;'
@@ -16823,14 +16858,21 @@ function _ocrReviewRenderDiffRows() {
   container.innerHTML = html;
 }
 
-// Pass 2 will replace this stub with the real "check all unchecked
-// discrepancy rows" action. For Pass 1 it just re-renders so the button
-// looks responsive — no behavior change since all rows are already checked
-// by default.
-function _ocrReviewUpdateAllStub() {
-  // No-op for now. Pass 2 will: collect all unchecked discrepancy rows +
-  // tick their checkboxes + update the count label. For Pass 1 the
-  // checkboxes start checked so there's nothing to do.
+// Pass 2 — UPDATE ALL ticks every ENABLED checkbox in the right pane
+// (was-empty rows + real discrepancies + bank rows). Disabled rows
+// (matches, loading-state) are left unchecked — writing the same value
+// back is a no-op we never offer. After ticking, refresh the Apply
+// button label so the count + enabled state reflect the new state.
+//
+// Toggle behavior intentionally NOT implemented (per user spec: keep it
+// dead simple — UPDATE ALL just selects everything enabled, no "DESELECT
+// ALL" toggle). Users uncheck individual rows manually if they want.
+function _ocrReviewUpdateAll() {
+  Object.keys(_ocrReviewFields).forEach(function(k) {
+    const chk = document.getElementById('ocrRev_chk_' + k);
+    if (chk && !chk.disabled) chk.checked = true;
+  });
+  _ocrReviewUpdateApplyLabel();
 }
 
 // Dispatcher: existing-target → diff renderer; add-new → original mini-form
@@ -17232,7 +17274,16 @@ async function confirmOCRReview() {
 
   const fieldCount = Object.keys(fields).length;
   if (fieldCount === 0) {
-    if (typeof toast === 'function') toast('No fields selected to apply', true);
+    // Pass 2 toast wording: in the existing-target diff path, hitting zero
+    // checked means every row was a match (or the user manually unchecked
+    // everything, including any was-empty rows). Make the message specific
+    // so the user understands no overwrites were needed. Add-new path keeps
+    // the original generic wording — different mental model (mini-form, no
+    // diff against existing).
+    const msg = _ocrReviewIsAddNew
+      ? 'No fields selected to apply'
+      : 'Nothing selected to update — all values match';
+    if (typeof toast === 'function') toast(msg, true);
     return;
   }
 
