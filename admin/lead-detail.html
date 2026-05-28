@@ -16313,6 +16313,8 @@ async function openOCRReviewModal(fields, docType, sourceFile) {
   // _ocrReviewIsAddNew (false at modal open). For existing-target opens,
   // also kick off the existing-data fetch async; the dispatcher re-renders
   // once the data resolves so the middle column populates without blocking.
+  // Item 3 Pass 3 — also kick off the bank-asset match fetch for bank scans
+  // so the choice block can appear if a duplicate is detected.
   _ocrReviewRenderRightPane();
   if (!_ocrReviewIsAddNew && _ocrReviewTargetId
       && _ocrReviewExistingCache[_ocrReviewTargetId] === undefined
@@ -16324,6 +16326,7 @@ async function openOCRReviewModal(fields, docType, sourceFile) {
       }
     });
   }
+  _ocrReviewMaybeLoadBankMatch(_ocrReviewTargetId);
   _ocrReviewUpdateApplyLabel();
 
   const modal = document.getElementById('ocrReviewAssignModal');
@@ -16352,6 +16355,10 @@ function closeOCRReviewModal() {
   // (the user may have edited the borrower's 1003 between modal opens).
   _ocrReviewExistingCache = {};
   _ocrReviewExistingLoading = {};
+  // Item 3 Pass 3 — reset bank match state so the next open re-evaluates
+  // (the user may have added/removed loan_assets rows between opens, or be
+  // applying a different statement entirely).
+  _ocrReviewResetBankMatch();
 }
 
 function _ocrReviewSetVal(id, val) {
@@ -16493,11 +16500,16 @@ function _ocrReviewSelectTarget(targetId) {
     _ocrReviewIsAddNew = false;
     _ocrReviewTargetId = targetId;
   }
+  // Item 3 Pass 3 — reset bank match state on target switch. Each target
+  // has its own loan_assets; a match for Aned doesn't carry over to Jose.
+  _ocrReviewResetBankMatch();
   _ocrReviewRenderTargetPicker();
   // Item 3 Pass 1 — re-render right pane via dispatcher (diff for existing
   // target, mini-form for add-new). Kick off existing-data fetch async for
   // the new target; render again when it resolves so the middle column
   // populates without blocking the modal.
+  // Item 3 Pass 3 — also kick off the bank-asset match fetch for the new
+  // target on bank scans.
   _ocrReviewRenderRightPane();
   if (!_ocrReviewIsAddNew && targetId
       && _ocrReviewExistingCache[targetId] === undefined
@@ -16509,6 +16521,7 @@ function _ocrReviewSelectTarget(targetId) {
       }
     });
   }
+  _ocrReviewMaybeLoadBankMatch(targetId);
   _ocrReviewUpdateApplyLabel();
 }
 
@@ -16770,6 +16783,64 @@ function _ocrReviewRenderDiffRows() {
          +  'text-transform:uppercase;letter-spacing:0.5px;color:rgba(201,168,76,0.7);">'
          +  '🏦 Bank Account'
          +  '</div>';
+
+    // Item 3 Pass 3 — choice block: shown when a loan_assets row for the
+    // target already matches the scanned (institution, account_number).
+    // Loading line during the fetch window so the user knows we're checking
+    // before they Apply (prevents racing the fetch and getting a duplicate).
+    if (_ocrReviewBankMatch && _ocrReviewBankMatch.loading) {
+      html += '<div style="margin-bottom:8px;padding:8px 12px;font-size:11px;'
+           +  'color:rgba(255,255,255,0.4);font-style:italic;text-align:center;">'
+           +  'Checking for existing account…</div>';
+    } else if (_ocrReviewBankMatch && _ocrReviewBankMatch.existingRow) {
+      const existRow = _ocrReviewBankMatch.existingRow;
+      const choice   = _ocrReviewBankMatch.choice || 'add';
+      const existInst = (existRow.institution_name || '').trim();
+      const existAcct = (existRow.account_number || '').trim();
+      const existValN = Number(existRow.current_value) || 0;
+      const existValStr = '$' + existValN.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      // Scanned new balance for the "Replace …" label preview
+      const rawNew = String(_ocrReviewFields.total_balance || '').replace(/[$,\s]/g, '');
+      const newValN = parseFloat(rawNew);
+      const newValStr = isFinite(newValN)
+        ? ('$' + newValN.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+        : '(unparseable)';
+      const radioStyle = 'accent-color:#c9a84c;margin:0;flex-shrink:0;';
+      const optStyle = 'display:flex;align-items:center;gap:8px;padding:5px 0;'
+                     + 'font-size:12px;color:rgba(255,255,255,0.85);cursor:pointer;';
+      html += '<div style="margin-bottom:10px;padding:12px 14px;'
+           +  'background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.28);border-radius:10px;">'
+           +  '<div style="font-size:11px;font-weight:700;color:#f59e0b;'
+           +    'margin-bottom:6px;letter-spacing:0.3px;">'
+           +    '⚠️ Account already on file</div>'
+           +  '<div style="font-size:12px;color:rgba(255,255,255,0.6);margin-bottom:10px;">'
+           +    _ocrReviewEsc(existInst) + ' ' + _ocrReviewEsc(existAcct)
+           +    ' (current: ' + _ocrReviewEsc(existValStr) + ')</div>'
+           +  '<label style="' + optStyle + '">'
+           +    '<input type="radio" name="ocrReviewBankChoice" value="replace" '
+           +      (choice === 'replace' ? 'checked ' : '')
+           +      'onchange="_ocrReviewSetBankChoice(\'replace\')" '
+           +      'style="' + radioStyle + '">'
+           +    'Replace existing balance (' + _ocrReviewEsc(existValStr)
+           +    ' → ' + _ocrReviewEsc(newValStr) + ')'
+           +  '</label>'
+           +  '<label style="' + optStyle + '">'
+           +    '<input type="radio" name="ocrReviewBankChoice" value="add" '
+           +      (choice === 'add' ? 'checked ' : '')
+           +      'onchange="_ocrReviewSetBankChoice(\'add\')" '
+           +      'style="' + radioStyle + '">'
+           +    'Add as new account'
+           +  '</label>'
+           +  '<label style="' + optStyle + '">'
+           +    '<input type="radio" name="ocrReviewBankChoice" value="skip" '
+           +      (choice === 'skip' ? 'checked ' : '')
+           +      'onchange="_ocrReviewSetBankChoice(\'skip\')" '
+           +      'style="' + radioStyle + '">'
+           +    'Skip bank account'
+           +  '</label>'
+           +  '</div>';
+    }
+
     html += bankRows.map(function(r) {
       return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;'
            +  'margin-bottom:6px;background:rgba(255,255,255,0.03);'
@@ -17250,11 +17321,128 @@ function _ocrBankAssetSummary(inserted) {
   return inst ? (dollarFmt + ' at ' + inst) : dollarFmt;
 }
 
-// Suffix for the "applied N fields ✓ + saved bank account ✓" toast. Empty
-// string for null input so callers can concatenate blindly.
-function _ocrBankAssetToastSuffix(inserted) {
-  const s = _ocrBankAssetSummary(inserted);
-  return s ? (' + saved bank account (' + s + ') ✓') : '';
+// Suffix for the "applied N fields ✓ + saved/updated bank account ✓" toast.
+// Pass 3 adds the optional `isUpdate` flag so the existing-target replace
+// path can read "updated bank balance" instead of "saved bank account".
+// Defaults preserve add-new path behavior unchanged.
+function _ocrBankAssetToastSuffix(written, isUpdate) {
+  const s = _ocrBankAssetSummary(written);
+  if (!s) return '';
+  return isUpdate
+    ? (' + updated bank balance (' + s + ') ✓')
+    : (' + saved bank account (' + s + ') ✓');
+}
+
+// ─── Item 3 Pass 3 — Bank Account replace / add / skip choice ───────────
+// When a bank-statement scan applies to an EXISTING borrower whose
+// loan_assets already contains a row with the same institution_name +
+// account_number, we surface a 3-way choice instead of blindly INSERTing
+// a duplicate. State is reset on modal close + target switch.
+let _ocrReviewBankMatch = {
+  existingRowId: null,
+  existingRow:   null,
+  choice:        'add',   // 'add' (default) | 'replace' | 'skip'
+  loading:       false
+};
+
+function _ocrReviewResetBankMatch() {
+  _ocrReviewBankMatch = { existingRowId: null, existingRow: null, choice: 'add', loading: false };
+}
+
+// Fired by the choice block's radio inputs. State-only update — radios
+// manage their own checked state via shared `name`. Apply reads the
+// choice at click time.
+function _ocrReviewSetBankChoice(choice) {
+  if (choice === 'replace' || choice === 'add' || choice === 'skip') {
+    _ocrReviewBankMatch.choice = choice;
+  }
+}
+
+// Look up the target borrower's loan_assets for a row matching the scanned
+// (institution_name, account_number). Match heuristic: institution_name
+// trim+lowercase AND account_number with ALL whitespace stripped (handles
+// "4440 0622 2891" vs "44400622 2891" — bank/user formatting drift).
+// Returns the matched loan_assets row or null.
+async function _ocrReviewFetchBankMatch(cid, fields) {
+  if (!cid || !_ocrIsBankScan(fields)) return null;
+  const scanInst = String(fields.bank_name || '').trim().toLowerCase();
+  const scanAcct = String(fields.account_number || '').replace(/\s+/g, '');
+  if (!scanInst || !scanAcct) return null;
+  try {
+    const { data } = await _authClient().from('loan_assets')
+      .select('id,institution_name,account_number,current_value,asset_type')
+      .eq('contact_id', cid);
+    const matchRow = (data || []).find(function(r) {
+      return r
+        && String(r.institution_name || '').trim().toLowerCase() === scanInst
+        && String(r.account_number || '').replace(/\s+/g, '') === scanAcct;
+    });
+    return matchRow || null;
+  } catch (e) {
+    console.warn('[ocrReview] bank-match fetch failed:', e);
+    return null;
+  }
+}
+
+// Kick off the bank-match fetch for the given target. Updates state +
+// re-renders when complete so the choice block appears. No-op if not a
+// bank scan or add-new path. Best-effort: ignores its own result if the
+// user switches target mid-flight (the picker handler resets state).
+async function _ocrReviewMaybeLoadBankMatch(cid) {
+  if (!cid || _ocrReviewIsAddNew) return;
+  if (!_ocrIsBankScan(_ocrReviewFields)) return;
+  _ocrReviewBankMatch = { existingRowId: null, existingRow: null, choice: 'add', loading: true };
+  const targetAtFetch = cid;
+  const row = await _ocrReviewFetchBankMatch(cid, _ocrReviewFields);
+  if (_ocrReviewTargetId !== targetAtFetch || _ocrReviewIsAddNew) return;
+  _ocrReviewBankMatch = {
+    existingRowId: row ? row.id : null,
+    existingRow:   row || null,
+    choice:        'add',
+    loading:       false
+  };
+  if (typeof _ocrReviewRenderRightPane === 'function') _ocrReviewRenderRightPane();
+}
+
+// UPDATE counterpart to _ocrMaybeInsertBankAsset. Targets a SINGLE existing
+// loan_assets row by id and updates current_value + asset_type (when
+// normalizable). Does NOT touch institution_name / account_number — those
+// matched the scan by definition, so changing them would be wrong. Returns
+// the updated row (same shape as the INSERT helper) for toast use. Throws
+// on DB error; caller wraps in try/catch like the INSERT helper.
+async function _ocrMaybeUpdateBankAsset(existingRowId, fields) {
+  if (!_ocrIsBankScan(fields)) return null;
+  if (!existingRowId) throw new Error('existingRowId required for asset update');
+
+  const rawBalance = (fields.total_balance == null ? '' : String(fields.total_balance)).replace(/[$,\s]/g, '');
+  const currentValue = parseFloat(rawBalance);
+  if (!isFinite(currentValue)) {
+    console.warn('[ocrReview] bank asset update skipped — no parseable total_balance:', fields.total_balance);
+    return null;
+  }
+
+  // Normalize asset_type the same way the INSERT helper does. Null result
+  // = leave the existing column alone (don't downgrade a known type to 'Other').
+  const rawType = String(fields.account_type || '').trim();
+  let assetType = null;
+  if (rawType && typeof ASSET_TYPES !== 'undefined' && Array.isArray(ASSET_TYPES)) {
+    const norm = rawType.toLowerCase();
+    const matched = ASSET_TYPES.find(function(t) { return String(t).toLowerCase() === norm; });
+    if (matched) assetType = matched;
+  }
+
+  const patch = {
+    current_value: currentValue,
+    updated_at:    new Date().toISOString()
+  };
+  if (assetType) patch.asset_type = assetType;
+
+  const { data: upd, error: updErr } = await _authClient()
+    .from('loan_assets').update(patch).eq('id', existingRowId)
+    .select('id,institution_name,current_value').single();
+  if (updErr) throw new Error('loan_assets update failed: ' + (updErr.message || JSON.stringify(updErr)));
+  console.log('[ocrReview] loan_assets row updated — id:', existingRowId, 'newValue:', currentValue);
+  return upd;
 }
 
 // Pass 3 — top-level entry. Collects checked rows, then dispatches to the
@@ -17325,34 +17513,68 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
     console.log('[ocrReview] Applied to', targetId,
       '— contacts patch:', r.contactsKeys, '— mortgage_applications patch:', r.appKeys);
 
-    // Item 2b — if this was a bank statement, INSERT a loan_assets row. Own
-    // try/catch: an asset insert failure must NOT roll back the name/DOB/app
-    // writes that already succeeded above. Surfaced as a toast suffix.
+    // Item 2b + Item 3 Pass 3 — bank asset handling. Pass 3 branches based on
+    // _ocrReviewBankMatch.choice (only meaningful when a match was found):
+    //   'replace' + existingRowId  → UPDATE existing row's current_value
+    //   'add'                      → INSERT new loan_assets row (current behavior)
+    //   'skip'                     → write neither
+    // If user unchecked ALL bank field checkboxes, treat as skip regardless
+    // of radio (no data to write). Own try/catch — asset failure does NOT
+    // roll back name/DOB/app writes that already succeeded.
     let bankInserted = null;
+    let bankUpdated  = null;
     let assetErrorSuffix = '';
+
+    const anyBankChecked = ['bank_name', 'total_balance', 'account_type', 'account_number'].some(function(k) {
+      const chk = document.getElementById('ocrRev_chk_' + k);
+      return chk && chk.checked;
+    });
+    const bankChoice    = (_ocrReviewBankMatch && _ocrReviewBankMatch.choice) || 'add';
+    const matchedRowId  = _ocrReviewBankMatch ? _ocrReviewBankMatch.existingRowId : null;
+
     try {
-      bankInserted = await _ocrMaybeInsertBankAsset(targetId, fields);
-      if (bankInserted && typeof losLoadAssets === 'function') {
-        try { await losLoadAssets(targetId); }
-        catch (e) { console.warn('[ocrReview] losLoadAssets after asset insert failed:', e); }
+      if (!anyBankChecked) {
+        // user unchecked all bank rows — no-op for loan_assets
+      } else if (bankChoice === 'skip') {
+        // explicit skip from the radio
+      } else if (bankChoice === 'replace' && matchedRowId) {
+        bankUpdated = await _ocrMaybeUpdateBankAsset(matchedRowId, fields);
+        if (bankUpdated && typeof losLoadAssets === 'function') {
+          try { await losLoadAssets(targetId); }
+          catch (e) { console.warn('[ocrReview] losLoadAssets after asset update failed:', e); }
+        }
+      } else {
+        // 'add' (default) OR 'replace' without matchedRowId (degenerate —
+        // no match was actually found; fall back to add)
+        bankInserted = await _ocrMaybeInsertBankAsset(targetId, fields);
+        if (bankInserted && typeof losLoadAssets === 'function') {
+          try { await losLoadAssets(targetId); }
+          catch (e) { console.warn('[ocrReview] losLoadAssets after asset insert failed:', e); }
+        }
       }
     } catch (assetErr) {
-      console.error('[ocrReview] bank asset insert failed (name/app writes already saved):', assetErr);
-      assetErrorSuffix = ' — but bank asset save failed (' + (assetErr.message || 'unknown error') + ')';
+      console.error('[ocrReview] bank asset write failed (name/app writes already saved):', assetErr);
+      const verb = (bankChoice === 'replace' && matchedRowId) ? 'update' : 'save';
+      assetErrorSuffix = ' — but bank asset ' + verb + ' failed (' + (assetErr.message || 'unknown error') + ')';
     }
 
     if (typeof toast === 'function') {
-      // Pure-asset-save UX polish: when the helper wrote 0 flat columns (e.g.
-      // a bank statement with addresses stripped and no other mappable keys
-      // checked) and the asset insert succeeded, "Applied 0 fields ✓" would
-      // read awkwardly. Lead with the asset summary instead.
+      // Pure-asset-save UX polish: when the helper wrote 0 flat columns
+      // and only the asset write happened, lead with the asset summary
+      // instead of the awkward "Applied 0 fields ✓".
       const flatWriteCount = (r.contactsKeys || []).length + (r.appKeys || []).length;
-      if (flatWriteCount === 0 && bankInserted) {
-        toast('Saved bank account (' + _ocrBankAssetSummary(bankInserted) + ') to ' + targetName + ' ✓');
+      const bankWritten = bankInserted || bankUpdated;
+      if (flatWriteCount === 0 && bankWritten) {
+        const leadVerb = bankUpdated ? 'Updated bank balance' : 'Saved bank account';
+        const leadPrep = bankUpdated ? 'for' : 'to';
+        toast(leadVerb + ' (' + _ocrBankAssetSummary(bankWritten) + ') ' + leadPrep + ' ' + targetName + ' ✓');
       } else {
-        const suffix = bankInserted
-          ? _ocrBankAssetToastSuffix(bankInserted)
-          : assetErrorSuffix;
+        let suffix;
+        if (bankWritten) {
+          suffix = _ocrBankAssetToastSuffix(bankWritten, !!bankUpdated);
+        } else {
+          suffix = assetErrorSuffix; // possibly empty (skip / unchecked)
+        }
         toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓' + suffix);
       }
     }
