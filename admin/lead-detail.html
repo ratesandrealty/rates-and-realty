@@ -13749,7 +13749,17 @@ function losCid() { return new URLSearchParams(location.search).get('contact_id'
 function losEscape(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
 
 async function losLoadLiabilities(overrideCid) {
-  var cid = overrideCid || losCid(); if (!cid) return;
+  // Quick-wins Fix 4: same race-fix as losLoadAssets (commit 8d8b2eb).
+  // initLoanSummary's L13607 Promise.all calls these loaders with no
+  // override; defaulting to losCid() = URL primary races against
+  // losSwitchBorrower's parameterized calls and can clobber the active
+  // borrower's data. losGetActiveContactId reads losBorrowers[idx], which
+  // losSwitchBorrower sets BEFORE its Promise.all runs, so both racers
+  // converge on the same cid.
+  var cid = overrideCid
+         || (typeof losGetActiveContactId === 'function' ? losGetActiveContactId() : null)
+         || losCid();
+  if (!cid) return;
   try {
     var { data, error: _liabErr } = await _authClient().from('loan_liabilities')
       .select('*').eq('contact_id', cid)
@@ -13868,7 +13878,12 @@ var INCOME_OWNERS = ['Borrower','CoBorrower','Joint'];
 var _incSaveTimers = {};
 
 async function losLoadIncome(overrideCid) {
-  var cid = overrideCid || losCid(); if (!cid) return;
+  // Quick-wins Fix 4: same race-fix as losLoadAssets. See losLoadLiabilities
+  // above for the full rationale.
+  var cid = overrideCid
+         || (typeof losGetActiveContactId === 'function' ? losGetActiveContactId() : null)
+         || losCid();
+  if (!cid) return;
   try {
     var { data } = await _authClient().from('loan_income')
       .select('*').eq('contact_id', cid)
@@ -14047,6 +14062,14 @@ async function losUpdateAsset(id, field, value) {
     var body = {}; body[field] = value; body.updated_at = new Date().toISOString();
     await _authClient().from('loan_assets').update(body).eq('id', id);
   } catch(e) { console.warn('[assets] patch', field, e); }
+  // Quick-wins Fix 2: keep the summary card + Loan-Summary section 3 in
+  // sync with the inline edit. The editable table is already up-to-date
+  // (the input's own value mutation is what triggered this). Both
+  // downstream renderers read window.losAssets which we just mutated above.
+  try { if (typeof renderAssetsContent === 'function') renderAssetsContent(); }
+  catch (e) { console.warn('[assets] renderAssetsContent after update failed:', e); }
+  try { if (typeof render1003Summary === 'function') render1003Summary(_activeBorrowerApp); }
+  catch (e) { console.warn('[assets] render1003Summary after update failed:', e); }
 }
 async function losUpdateAssetAndRecalc(id, field, value) { await losUpdateAsset(id, field, value); losCalcAssetsTotal(); }
 
@@ -14069,6 +14092,13 @@ async function losDeleteAsset(id) {
     await _authClient().from('loan_assets').delete().eq('id', id);
     losAssets = losAssets.filter(function(a){ return a.id !== id; });
     losRenderAssets();
+    // Quick-wins Fix 2: same summary-sync as losUpdateAsset — keep
+    // renderAssetsContent + render1003Summary in step with the editable
+    // table when a row is removed.
+    try { if (typeof renderAssetsContent === 'function') renderAssetsContent(); }
+    catch (e) { console.warn('[assets] renderAssetsContent after delete failed:', e); }
+    try { if (typeof render1003Summary === 'function') render1003Summary(_activeBorrowerApp); }
+    catch (e) { console.warn('[assets] render1003Summary after delete failed:', e); }
   } catch(e) { showToast('Delete failed: '+e.message); }
 }
 
@@ -14078,7 +14108,12 @@ var REO_USAGES = ['Primary Residence','Second Home','Investment','Rental','Vacat
 var REO_DISPOSITIONS = ['Retain','Pending Sale','Sold'];
 
 async function losLoadREO(overrideCid) {
-  var cid = overrideCid || losCid(); if (!cid) return;
+  // Quick-wins Fix 4: same race-fix as losLoadAssets. See losLoadLiabilities
+  // above for the full rationale.
+  var cid = overrideCid
+         || (typeof losGetActiveContactId === 'function' ? losGetActiveContactId() : null)
+         || losCid();
+  if (!cid) return;
   try {
     var { data } = await _authClient().from('loan_reo')
       .select('*').eq('contact_id', cid)
@@ -17027,12 +17062,22 @@ function _ocrReviewUpdateApplyLabel() {
   if (!btn) return;
   const n = _ocrReviewCountChecked();
   const noTarget = (!_ocrReviewIsAddNew && !_ocrReviewTargetId);
+  // Quick-wins Fix 1: gate Apply on bank-match fetch loading. Closes the
+  // Pass 3 race window: if user clicks Apply during the ~100ms loan_assets
+  // match query, _ocrReviewBankMatch.existingRowId is still null so the
+  // choice would fall through to INSERT and duplicate a row that the fetch
+  // is about to discover. Only blocks on bank scans (loading flag is only
+  // set true by _ocrReviewMaybeLoadBankMatch, which early-returns on
+  // non-bank scans + add-new path).
+  const bankLoading = !!(_ocrReviewBankMatch && _ocrReviewBankMatch.loading);
   if (noTarget) {
     btn.textContent = 'Pick a borrower';
+  } else if (bankLoading) {
+    btn.textContent = 'Checking for existing account…';
   } else {
     btn.textContent = 'Apply ' + n + ' field' + (n === 1 ? '' : 's') + ' to ' + _ocrReviewTargetDisplayName();
   }
-  const disabled = (n === 0) || noTarget;
+  const disabled = (n === 0) || noTarget || bankLoading;
   btn.disabled = disabled;
   btn.style.opacity = disabled ? '0.45' : '1';
   btn.style.cursor  = disabled ? 'not-allowed' : 'pointer';
@@ -17263,16 +17308,10 @@ async function _ocrMaybeInsertBankAsset(targetContactId, fields) {
     }
   }
 
-  // Normalize account_type case-insensitively against ASSET_TYPES so we never
-  // write a value the dropdown can't render. Claude typically returns
-  // "Checking" or "Savings" verbatim; this is defensive against variants.
-  const rawType = String(fields.account_type || '').trim();
-  let assetType = 'Other';
-  if (rawType && typeof ASSET_TYPES !== 'undefined' && Array.isArray(ASSET_TYPES)) {
-    const norm = rawType.toLowerCase();
-    const matched = ASSET_TYPES.find(function(t) { return String(t).toLowerCase() === norm; });
-    if (matched) assetType = matched;
-  }
+  // Normalize account_type via the shared _ocrNormalizeAssetType helper
+  // (exact match → substring inference → null). INSERT defaults to 'Other'
+  // when the helper returns null so we always have a valid dropdown value.
+  const assetType = _ocrNormalizeAssetType(fields.account_type) || 'Other';
 
   // sort_order = max existing for this contact + 1. Fallback 0 on lookup
   // failure — RLS or transient error; better to insert at order 0 than skip.
@@ -17392,6 +17431,9 @@ async function _ocrReviewMaybeLoadBankMatch(cid) {
   if (!cid || _ocrReviewIsAddNew) return;
   if (!_ocrIsBankScan(_ocrReviewFields)) return;
   _ocrReviewBankMatch = { existingRowId: null, existingRow: null, choice: 'add', loading: true };
+  // Quick-wins Fix 1: refresh Apply label so the button disables itself
+  // immediately during the fetch window (not just when it resolves).
+  if (typeof _ocrReviewUpdateApplyLabel === 'function') _ocrReviewUpdateApplyLabel();
   const targetAtFetch = cid;
   const row = await _ocrReviewFetchBankMatch(cid, _ocrReviewFields);
   if (_ocrReviewTargetId !== targetAtFetch || _ocrReviewIsAddNew) return;
@@ -17402,6 +17444,51 @@ async function _ocrReviewMaybeLoadBankMatch(cid) {
     loading:       false
   };
   if (typeof _ocrReviewRenderRightPane === 'function') _ocrReviewRenderRightPane();
+  // Re-enable Apply now that the choice block (or its absence) is settled.
+  if (typeof _ocrReviewUpdateApplyLabel === 'function') _ocrReviewUpdateApplyLabel();
+}
+
+// Quick-wins Fix 3: normalize a raw scanned account_type string to the
+// EXACT label expected by ASSET_TYPES (the editable Assets table dropdown).
+// First tries exact case-insensitive match (handles "Checking" / "Savings"
+// when Claude returns them cleanly). Falls through to a substring pass that
+// handles real-world bank account labels like "Bank of America Adv Plus
+// Banking" (→ 'Checking') or "WF Way2Save Savings" (→ 'Savings'). Substring
+// targets are validated against the actual ASSET_TYPES array so we never
+// return a value the dropdown can't render. Returns null when no match —
+// caller decides whether to default to 'Other' (INSERT) or leave existing
+// value alone (UPDATE).
+//
+// ASSET_TYPES (L13978):
+//   ['Checking','Savings','Money Market','CD','Stocks/Bonds',
+//    '401k/Retirement','Business Account','Gift Funds',
+//    'Bridge Loan Proceeds','Sale of Asset','Other']
+function _ocrNormalizeAssetType(rawType) {
+  const raw = String(rawType == null ? '' : rawType).trim();
+  if (!raw) return null;
+  if (typeof ASSET_TYPES === 'undefined' || !Array.isArray(ASSET_TYPES)) return null;
+
+  // Pass 1: exact case-insensitive match.
+  const norm = raw.toLowerCase();
+  const exact = ASSET_TYPES.find(function(t) { return String(t).toLowerCase() === norm; });
+  if (exact) return exact;
+
+  // Pass 2: substring inference. Each branch's target label is verified
+  // to exist in ASSET_TYPES before returning (defensive against future
+  // ASSET_TYPES edits that drop a label).
+  const has = function(label) { return ASSET_TYPES.indexOf(label) !== -1 ? label : null; };
+  if (norm.indexOf('savings') !== -1)                              return has('Savings')          || null;
+  if (norm.indexOf('checking') !== -1 || norm.indexOf('banking') !== -1) return has('Checking')   || null;
+  if (norm.indexOf('money market') !== -1)                         return has('Money Market')     || null;
+  if (norm.indexOf('certificate') !== -1
+      || /\bcd\b/.test(norm))                                      return has('CD')               || null;
+  if (norm.indexOf('401') !== -1
+      || norm.indexOf('ira') !== -1
+      || norm.indexOf('retire') !== -1)                            return has('401k/Retirement')  || null;
+  if (norm.indexOf('business') !== -1)                             return has('Business Account') || null;
+  if (norm.indexOf('stock') !== -1 || norm.indexOf('bond') !== -1) return has('Stocks/Bonds')     || null;
+  if (norm.indexOf('gift') !== -1)                                 return has('Gift Funds')       || null;
+  return null;
 }
 
 // UPDATE counterpart to _ocrMaybeInsertBankAsset. Targets a SINGLE existing
@@ -17421,15 +17508,11 @@ async function _ocrMaybeUpdateBankAsset(existingRowId, fields) {
     return null;
   }
 
-  // Normalize asset_type the same way the INSERT helper does. Null result
-  // = leave the existing column alone (don't downgrade a known type to 'Other').
-  const rawType = String(fields.account_type || '').trim();
-  let assetType = null;
-  if (rawType && typeof ASSET_TYPES !== 'undefined' && Array.isArray(ASSET_TYPES)) {
-    const norm = rawType.toLowerCase();
-    const matched = ASSET_TYPES.find(function(t) { return String(t).toLowerCase() === norm; });
-    if (matched) assetType = matched;
-  }
+  // Normalize asset_type via the shared _ocrNormalizeAssetType helper.
+  // Null result = leave the existing column alone (don't downgrade a known
+  // type to 'Other'). UPDATE intentionally NEVER falls back to 'Other' so
+  // a re-scan of an account already correctly typed stays that way.
+  const assetType = _ocrNormalizeAssetType(fields.account_type);
 
   const patch = {
     current_value: currentValue,
