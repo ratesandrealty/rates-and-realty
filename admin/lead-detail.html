@@ -16669,18 +16669,30 @@ const _OCR_BANK_KEYS = new Set([
   'bank_name', 'account_type', 'account_number', 'total_balance'
 ]);
 
+// Item 2c — set of OCR keys treated as "income side-write" — rendered in a
+// separate Income Information block (no flat-column diff), mirroring the
+// bank-account block layout. These fields drive _ocrMaybeInsertIncomeRow
+// (loan_income INSERT). Hidden from the flat-column diff because none of
+// them map to a mortgage_applications column. employer_name + position
+// stay in the flat-column diff (they DO have flat-column targets).
+const _OCR_INCOME_KEYS = new Set([
+  'wages', 'federal_tax_withheld', 'tax_year',           // W-2 fields
+  'gross_pay', 'net_pay', 'ytd_gross',                    // Paystub fields
+  'pay_period_start', 'pay_period_end'                    // Paystub period
+]);
+
 // Set of OCR keys treated as "display-only" on the existing-target diff —
-// no flat column to compare against AND not bank-asset data. Hidden in the
-// diff for cleanliness (user spec decision 4); the add-new path keeps them
-// visible since there's no existing record to diff against anyway.
+// no flat column to compare against AND not a side-write target (bank /
+// income). Hidden in the diff for cleanliness (user spec decision 4); the
+// add-new path keeps them visible since there's no existing record to diff
+// against anyway.
 const _OCR_DISPLAY_ONLY_KEYS = new Set([
   'statement_start_date', 'statement_end_date',
   'account_holder_first_name', 'account_holder_last_name',
-  // W-2 / paystub (no persistence target yet — Item 2c). Hidden in diff
-  // for now since they don't map to anything writeable.
-  'wages', 'federal_tax_withheld', 'tax_year',
-  'employee_first_name', 'employee_last_name',
-  'gross_pay', 'net_pay', 'pay_period_start', 'pay_period_end', 'ytd_gross'
+  // Employee name on W-2/paystub — not used by the existing-target income
+  // insert (the borrower target is already chosen via the picker). Add-new
+  // path uses the mini-form, which has its own name inputs.
+  'employee_first_name', 'employee_last_name'
 ]);
 
 // Item 3 Pass 1 renderer for the EXISTING-target path: 3-column comparison
@@ -16692,13 +16704,19 @@ const _OCR_DISPLAY_ONLY_KEYS = new Set([
 //
 // Hidden rows (per locked decisions 3+4):
 //   - Scanned value empty (no meaningful comparison)
-//   - Display-only keys (statement_*, account_holder_*, W-2, paystub)
+//   - Display-only keys (statement_*, account_holder_*, employee_first/last_name)
 //   - SSN (DB raw vs form-masked — not comparably renderable)
 //
 // Bank keys (bank_name / account_type / account_number / total_balance):
 //   - Rendered in a SEPARATE "Bank Account" sub-section at the top, using
 //     the existing scanned-only row layout (no diff). Pass 3 will add the
 //     replace-vs-add choice block above this section.
+//
+// Item 2c — Income keys (wages / federal_tax_withheld / tax_year /
+// gross_pay / net_pay / ytd_gross / pay_period_start / pay_period_end):
+//   - Rendered in a SEPARATE "Income Information" sub-section, mirroring
+//     the Bank block layout. Drives _ocrMaybeInsertIncomeRow via the
+//     anyIncomeChecked gate in _confirmExistingTargetAndApply.
 //
 // Multi-key collisions (e.g. address + street_address + current_address_street
 // all → current_address_street): the renderer iterates over UNIQUE columns
@@ -16713,12 +16731,14 @@ function _ocrReviewRenderDiffRows() {
   const existing = targetId ? _ocrReviewExistingCache[targetId] : null;
   const isLoading = targetId ? !!_ocrReviewExistingLoading[targetId] : false;
 
-  // Step 1 — classify each scanned key into one of three buckets:
-  //   bankKey  : in _OCR_BANK_KEYS → top "Bank Account" block (no diff)
-  //   diffKey  : maps to a flat column via _OCR_TO_APP_COLUMN → 3-column diff
-  //   hidden   : display-only / SSN / empty-scanned → drop
-  const bankRows = []; // [{ key, label, value }]
-  const colsSeen = {}; // dedup by mapped column: keep highest-priority scanned key
+  // Step 1 — classify each scanned key into one of four buckets:
+  //   bankKey   : in _OCR_BANK_KEYS   → "Bank Account" block    (no diff)
+  //   incomeKey : in _OCR_INCOME_KEYS → "Income Information" block (no diff)
+  //   diffKey   : maps to a flat column via _OCR_TO_APP_COLUMN → 3-column diff
+  //   hidden    : display-only / SSN / empty-scanned → drop
+  const bankRows   = []; // [{ key, label, value }]
+  const incomeRows = []; // [{ key, label, value }]
+  const colsSeen   = {}; // dedup by mapped column: keep highest-priority scanned key
   Object.keys(fields).forEach(function(k) {
     if (String(k).startsWith('_')) return;
     const v = fields[k];
@@ -16730,8 +16750,12 @@ function _ocrReviewRenderDiffRows() {
       bankRows.push({ key: k, label: OCR_FIELD_LABELS[k], value: v });
       return;
     }
+    if (_OCR_INCOME_KEYS.has(k)) {
+      incomeRows.push({ key: k, label: OCR_FIELD_LABELS[k], value: v });
+      return;
+    }
     const col = _OCR_TO_APP_COLUMN && _OCR_TO_APP_COLUMN[k];
-    if (!col) return; // unmapped non-bank — hide
+    if (!col) return; // unmapped non-bank / non-income — hide
     // First scanned key wins for any given column (alphabetical iteration of
     // fields object is implementation-dependent but stable per-call in
     // practice; for tighter determinism we'd sort, but textract-ocr returns
@@ -16896,9 +16920,38 @@ function _ocrReviewRenderDiffRows() {
     }).join('');
   }
 
+  // Item 2c — Income Information block (W-2 / paystub side-write fields).
+  // Mirrors the Bank Account block layout: checkbox + label + editable
+  // input, no flat-column diff column. Drives _ocrMaybeInsertIncomeRow via
+  // the anyIncomeChecked gate in _confirmExistingTargetAndApply.
+  if (incomeRows.length) {
+    html += '<div style="margin:14px 0 8px;font-size:10.5px;font-weight:700;'
+         +  'text-transform:uppercase;letter-spacing:0.5px;color:rgba(201,168,76,0.7);">'
+         +  '💼 Income Information'
+         +  '</div>';
+    html += incomeRows.map(function(r) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;'
+           +  'margin-bottom:6px;background:rgba(255,255,255,0.03);'
+           +  'border:1px solid rgba(255,255,255,0.07);border-radius:10px;">'
+           +  '<input type="checkbox" id="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" checked '
+           +    'onchange="_ocrReviewUpdateApplyLabel()" '
+           +    'style="width:16px;height:16px;cursor:pointer;accent-color:#c9a84c;flex-shrink:0;">'
+           +  '<label for="ocrRev_chk_' + _ocrReviewEsc(r.key) + '" '
+           +    'style="min-width:140px;font-size:10.5px;text-transform:uppercase;'
+           +    'letter-spacing:0.4px;color:rgba(255,255,255,0.55);font-weight:600;cursor:pointer;">'
+           +    _ocrReviewEsc(r.label) + '</label>'
+           +  '<input type="text" id="ocrRev_val_' + _ocrReviewEsc(r.key) + '" '
+           +    'value="' + _ocrReviewEsc(r.value) + '" '
+           +    'style="flex:1;background:rgba(255,255,255,0.05);'
+           +    'border:1px solid rgba(255,255,255,0.12);border-radius:6px;'
+           +    'color:#fff;padding:7px 10px;font-size:13px;outline:none;">'
+           +  '</div>';
+    }).join('');
+  }
+
   // Diff rows (label / scanned-editable / existing-readonly / checkbox)
   if (renderedDiffRows.length) {
-    if (bankRows.length) {
+    if (bankRows.length || incomeRows.length) {
       html += '<div style="margin:16px 0 8px;font-size:10.5px;font-weight:700;'
            +  'text-transform:uppercase;letter-spacing:0.5px;color:rgba(201,168,76,0.7);">'
            +  '📋 Identification &amp; 1003 Fields'
@@ -16956,7 +17009,7 @@ function _ocrReviewRenderDiffRows() {
     }).join('');
   }
 
-  if (!bankRows.length && !renderedDiffRows.length) {
+  if (!bankRows.length && !incomeRows.length && !renderedDiffRows.length) {
     html += '<div style="padding:24px;text-align:center;color:rgba(255,255,255,0.4);'
          +  'font-size:12px;">No extractable fields in this scan.</div>';
   }
