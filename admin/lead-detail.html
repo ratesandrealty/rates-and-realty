@@ -13779,7 +13779,7 @@ function losRenderLiabilities() {
     return;
   }
   body.innerHTML = losLiabilities.map(function(l, i) {
-    var ownerOpts = LIAB_OWNERS.map(function(o){ return '<option'+(l.account_owner===o?' selected':'')+'>'+o+'</option>'; }).join('');
+    var ownerOpts = _losBorrowerOwnerOptions(l.account_owner);
     var typeOpts = LIAB_TYPES.map(function(t){ return '<option'+(l.liability_type===t?' selected':'')+'>'+t+'</option>'; }).join('');
     return '<tr id="liab-row-'+l.id+'"'+(l.is_omitted?' class="omitted"':'')+'>'+
       '<td style="text-align:center;color:#555;font-size:.66rem">'+(i+1)+'</td>'+
@@ -13898,7 +13898,7 @@ function losRenderIncome() {
   var body = document.getElementById('losIncomeBody'); if (!body) return;
   if (!losIncome.length) { body.innerHTML = '<tr><td colspan="7" style="padding:18px;text-align:center;color:#555;font-style:italic">No income entries yet</td></tr>'; losCalcIncomeTotal(); return; }
   body.innerHTML = losIncome.map(function(inc) {
-    var ownerOpts = INCOME_OWNERS.map(function(o){ return '<option'+(inc.income_owner===o?' selected':'')+'>'+o+'</option>'; }).join('');
+    var ownerOpts = _losBorrowerOwnerOptions(inc.income_owner);
     var typeOpts = INCOME_TYPES.map(function(t){ return '<option'+(inc.income_type===t?' selected':'')+'>'+t+'</option>'; }).join('');
     var active = inc.is_active !== false;
     return '<tr id="inc-row-'+inc.id+'"'+(!active?' class="inactive"':'')+'>'+
@@ -14036,7 +14036,7 @@ function losRenderAssets() {
   var body = document.getElementById('losAssetsBody'); if (!body) return;
   if (!losAssets.length) { body.innerHTML = '<tr><td colspan="6" style="padding:18px;text-align:center;color:#555;font-style:italic">No assets yet</td></tr>'; losCalcAssetsTotal(); return; }
   body.innerHTML = losAssets.map(function(a) {
-    var ownerOpts = ASSET_OWNERS.map(function(o){ return '<option'+(a.asset_owner===o?' selected':'')+'>'+o+'</option>'; }).join('');
+    var ownerOpts = _losBorrowerOwnerOptions(a.asset_owner);
     var typeOpts = ASSET_TYPES.map(function(t){ return '<option'+(a.asset_type===t?' selected':'')+'>'+t+'</option>'; }).join('');
     return '<tr>'+
       '<td><select onchange="losUpdateAsset(\''+a.id+'\',\'asset_owner\',this.value)">'+ownerOpts+'</select></td>'+
@@ -14197,6 +14197,43 @@ function _borrRoleLabel(b, idx) {
   if (b.borrower_role === 'Borrower' || idx === 0) return 'Primary';
   if (b.borrower_order === 2 || idx === 1) return 'Co-Borrower';
   return 'Co-Borrower ' + (b.borrower_order || (idx+1)-1);
+}
+
+// Build the <option> list for OWNER dropdowns in the editable Income /
+// Liabilities / Assets tables. Replaces the legacy ['Borrower','CoBorrower',
+// 'Joint'] hardcode with actual borrower names from losBorrowers.
+//
+// - One option per borrower, label = _borrName(b, i) ('first last' or
+//   'Borrower N' fallback).
+// - Selected = the borrower whose display name matches selectedValue
+//   case-insensitively (trimmed).
+// - If selectedValue doesn't match any borrower AND is non-empty, prepend
+//   a LEGACY option with the raw value (italic/grey) so existing rows with
+//   stored 'Borrower' / 'CoBorrower' / 'Joint' / other strings keep their
+//   display until the user explicitly picks a borrower. No data migration.
+// - If losBorrowers is empty/undefined, fall back to the legacy hardcode
+//   so the page doesn't render a blank dropdown.
+function _losBorrowerOwnerOptions(selectedValue) {
+  var borrowers = Array.isArray(window.losBorrowers) ? window.losBorrowers : [];
+  if (borrowers.length === 0) {
+    var fallback = ['Borrower', 'CoBorrower', 'Joint'];
+    return fallback.map(function(o) {
+      return '<option' + (selectedValue === o ? ' selected' : '') + '>' + losEscape(o) + '</option>';
+    }).join('');
+  }
+  var sel = String(selectedValue == null ? '' : selectedValue).trim().toLowerCase();
+  var matched = false;
+  var opts = borrowers.map(function(b, i) {
+    var name = _borrName(b, i);
+    var isSel = !matched && name.trim().toLowerCase() === sel;
+    if (isSel) matched = true;
+    return '<option' + (isSel ? ' selected' : '') + '>' + losEscape(name) + '</option>';
+  }).join('');
+  if (!matched && selectedValue != null && String(selectedValue).trim() !== '') {
+    opts = '<option selected style="font-style:italic;color:#888">' +
+           losEscape(selectedValue) + '</option>' + opts;
+  }
+  return opts;
 }
 
 async function losLoadBorrowers() {
@@ -16924,7 +16961,25 @@ function _ocrReviewRenderDiffRows() {
   // Mirrors the Bank Account block layout: checkbox + label + editable
   // input, no flat-column diff column. Drives _ocrMaybeInsertIncomeRow via
   // the anyIncomeChecked gate in _confirmExistingTargetAndApply.
-  if (incomeRows.length) {
+  //
+  // Pass A — v81 edge fn adds a `pay_elements` array of per-line earnings
+  // {name, current, ytd}. Rendered as a READ-ONLY breakdown table below the
+  // flat-key rows. Pass A leaves apply-behavior unchanged (still INSERTs
+  // ONE loan_income row from gross_pay); Pass B will add per-row checkboxes
+  // and multi-row INSERTs.
+  const _payElementsRaw = (_ocrReviewFields && _ocrReviewFields.pay_elements);
+  const payElements = Array.isArray(_payElementsRaw)
+    ? _payElementsRaw.filter(function(el) {
+        if (!el || typeof el !== 'object') return false;
+        const nm = String(el.name == null ? '' : el.name).trim();
+        if (!nm) return false;
+        const cN = parseFloat(String(el.current == null ? '' : el.current).replace(/[$,\s]/g, ''));
+        const yN = parseFloat(String(el.ytd     == null ? '' : el.ytd    ).replace(/[$,\s]/g, ''));
+        return (isFinite(cN) && cN !== 0) || (isFinite(yN) && yN !== 0);
+      })
+    : [];
+
+  if (incomeRows.length || payElements.length) {
     html += '<div style="margin:14px 0 8px;font-size:10.5px;font-weight:700;'
          +  'text-transform:uppercase;letter-spacing:0.5px;color:rgba(201,168,76,0.7);">'
          +  '💼 Income Information'
@@ -16947,6 +17002,60 @@ function _ocrReviewRenderDiffRows() {
            +    'color:#fff;padding:7px 10px;font-size:13px;outline:none;">'
            +  '</div>';
     }).join('');
+
+    if (payElements.length) {
+      const fmt = function(n) {
+        const v = parseFloat(String(n == null ? '' : n).replace(/[$,\s]/g, ''));
+        return isFinite(v)
+          ? ('$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+          : '—';
+      };
+      html += '<div style="margin:14px 0 6px;font-size:10.5px;font-weight:700;'
+           +  'text-transform:uppercase;letter-spacing:0.5px;color:rgba(201,168,76,0.7);">'
+           +  '📊 Pay Element Breakdown'
+           +  '</div>';
+      html += '<div style="background:rgba(255,255,255,0.03);'
+           +  'border:1px solid rgba(255,255,255,0.07);border-radius:10px;overflow:hidden;'
+           +  'margin-bottom:6px;">'
+           +  '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
+           +  '<thead><tr style="background:rgba(201,168,76,0.06);">'
+           +    '<th style="text-align:left;padding:8px 12px;font-size:10px;font-weight:700;'
+           +      'text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.55);">Type</th>'
+           +    '<th style="text-align:right;padding:8px 12px;font-size:10px;font-weight:700;'
+           +      'text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.55);">Current</th>'
+           +    '<th style="text-align:right;padding:8px 12px;font-size:10px;font-weight:700;'
+           +      'text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.55);">YTD</th>'
+           +  '</tr></thead><tbody>';
+      html += payElements.map(function(el) {
+        return '<tr style="border-top:1px solid rgba(255,255,255,0.05);">'
+             +   '<td style="padding:8px 12px;color:rgba(255,255,255,0.85);">' + _ocrReviewEsc(el.name) + '</td>'
+             +   '<td style="padding:8px 12px;text-align:right;color:#fff;font-variant-numeric:tabular-nums;">'
+             +     _ocrReviewEsc(fmt(el.current)) + '</td>'
+             +   '<td style="padding:8px 12px;text-align:right;color:rgba(255,255,255,0.85);font-variant-numeric:tabular-nums;">'
+             +     _ocrReviewEsc(fmt(el.ytd)) + '</td>'
+             + '</tr>';
+      }).join('');
+      html += '</tbody></table></div>';
+
+      // Optional diagnostic: sum-of-current vs gross_pay total when they
+      // disagree by more than $1 (extraction mismatch worth surfacing).
+      const sumCurrent = payElements.reduce(function(acc, el) {
+        const n = parseFloat(String(el.current == null ? '' : el.current).replace(/[$,\s]/g, ''));
+        return acc + (isFinite(n) ? n : 0);
+      }, 0);
+      const grossTotal = parseFloat(String(_ocrReviewFields.gross_pay || '').replace(/[$,\s]/g, ''));
+      if (isFinite(grossTotal) && Math.abs(sumCurrent - grossTotal) > 1) {
+        const diff = sumCurrent - grossTotal;
+        const diffStr = (diff >= 0 ? '+' : '−') + '$' +
+          Math.abs(diff).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        html += '<div style="margin:0 0 8px 2px;font-size:10.5px;font-style:italic;'
+             +  'color:rgba(255,255,255,0.45);">'
+             +  'Sum: ' + _ocrReviewEsc(fmt(sumCurrent))
+             +  ' (gross_pay: ' + _ocrReviewEsc(fmt(grossTotal)) + ') — diff '
+             +  _ocrReviewEsc(diffStr)
+             +  '</div>';
+      }
+    }
   }
 
   // Diff rows (label / scanned-editable / existing-readonly / checkbox)
