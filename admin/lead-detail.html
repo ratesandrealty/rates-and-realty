@@ -17055,6 +17055,59 @@ function _ocrReviewRenderDiffRows() {
              +  _ocrReviewEsc(diffStr)
              +  '</div>';
       }
+
+      // Item 2c Pass B′ — Computed Monthlies preview. Per-category rows
+      // (Base/Overtime/Bonus/Commission), each with a default-checked
+      // checkbox so user can opt out. The apply path reads these via
+      // _ocrBuildEmploymentMonthliesPatch(monthlies).
+      const monthlies = _ocrComputeEmploymentMonthlies(
+        payElements,
+        _ocrReviewFields.pay_period_end,
+        _ocrReviewFields.ytd_gross
+      );
+      const catRow = function(cat, label) {
+        const v   = monthlies[cat];
+        const has = isFinite(v) && v > 0;
+        const basis = monthlies._meta.basisByCategory[cat] || '';
+        const checked = has ? 'checked' : 'disabled';
+        const opacity = has ? '1' : '0.35';
+        return '<tr style="border-top:1px solid rgba(255,255,255,0.05);opacity:' + opacity + ';">'
+             +   '<td style="padding:6px 12px;width:24px;">'
+             +     '<input type="checkbox" id="ocrRev_chk_monthly_' + cat + '" ' + checked + ' '
+             +       'onchange="_ocrReviewUpdateApplyLabel()" '
+             +       'style="width:14px;height:14px;cursor:pointer;accent-color:#c9a84c;">'
+             +   '</td>'
+             +   '<td style="padding:6px 12px;color:rgba(255,255,255,0.85);font-size:12px;">' + label + '</td>'
+             +   '<td style="padding:6px 12px;text-align:right;color:#fff;font-variant-numeric:tabular-nums;font-size:12px;">'
+             +     _ocrReviewEsc(has ? fmt(v) + '/mo' : '—') + '</td>'
+             +   '<td style="padding:6px 12px;color:rgba(255,255,255,0.45);font-size:10.5px;font-style:italic;">'
+             +     _ocrReviewEsc(basis)
+             +   '</td>'
+             + '</tr>';
+      };
+      html += '<div style="margin:10px 0 6px;font-size:10.5px;font-weight:700;'
+           +  'text-transform:uppercase;letter-spacing:0.5px;color:rgba(201,168,76,0.7);">'
+           +  '🧮 Computed Monthlies '
+           +    '<span style="font-weight:500;font-size:9.5px;color:rgba(255,255,255,0.45);'
+           +      'text-transform:none;letter-spacing:0;">'
+           +      '(will populate Employment fields on Apply)</span>'
+           +  '</div>';
+      html += '<div style="background:rgba(255,255,255,0.03);'
+           +  'border:1px solid rgba(255,255,255,0.07);border-radius:10px;overflow:hidden;'
+           +  'margin-bottom:6px;">'
+           +  '<table style="width:100%;border-collapse:collapse;">'
+           +    '<tbody>'
+           +    catRow('base',       'Base')
+           +    catRow('overtime',   'Overtime')
+           +    catRow('bonus',      'Bonus')
+           +    catRow('commission', 'Commission')
+           +    '</tbody>'
+           +  '</table>'
+           +  '</div>';
+      if (monthlies._meta.confidence === 'low' && monthlies._meta.warning) {
+        html += '<div style="margin:0 0 8px 2px;font-size:10.5px;font-style:italic;'
+             +  'color:#f59e0b;">⚠️ ' + _ocrReviewEsc(monthlies._meta.warning) + '</div>';
+      }
     }
   }
 
@@ -17315,7 +17368,7 @@ const _OCR_APP_NUMERIC_COLS = new Set(['base_income']);
 // fetch-or-create (mirrors save1003 L12678-12711). Throws on DB error so the
 // caller chooses how to surface it. Returns the non-metadata patch keys for
 // logging.
-async function _ocrApplyPatchesToTarget(targetId, fields) {
+async function _ocrApplyPatchesToTarget(targetId, fields, extraAppPatch) {
   const contactsPatch = {};
   const appPatch = {};
   Object.entries(fields).forEach(function(kv) {
@@ -17340,6 +17393,21 @@ async function _ocrApplyPatchesToTarget(targetId, fields) {
       contactsPatch[col] = val;
     }
   });
+
+  // Item 2c Pass B′ — caller-supplied extra columns (e.g. Employment
+  // monthlies from pay_elements). Merged AFTER the fields-loop so an
+  // explicit caller value wins over an OCR-extracted one for the same
+  // column. Caller is responsible for type/validity (already numeric
+  // for monthlies); we accept finite numbers and non-empty strings.
+  if (extraAppPatch && typeof extraAppPatch === 'object') {
+    Object.keys(extraAppPatch).forEach(function(col) {
+      const v = extraAppPatch[col];
+      if (v == null) return;
+      if (typeof v === 'number') { if (!isFinite(v)) return; }
+      else if (String(v).trim() === '') return;
+      appPatch[col] = v;
+    });
+  }
 
   // Empty patches are LEGITIMATE for bank-statement scans: after the caller
   // strips account-opening address fields (_ocrStripBankAddressFields), the
@@ -17701,6 +17769,135 @@ function _ocrIncomeToastSuffix(written) {
   return s ? (' + saved income row (' + s + ') ✓') : '';
 }
 
+// ─── Item 2c Pass B′ — paystub pay_elements → Employment monthlies ──────
+// Categorize each pay_element by name (regex pattern match), then compute
+// a per-category MONTHLY estimate from YTD ÷ months_elapsed. Drives both
+// the OCR Review modal preview AND the mortgage_applications patch that
+// populates base_income / overtime_income / bonus_income / commission_income.
+//
+// Categorization regexes (case-insensitive):
+//   BASE       — regular | base | salary | hourly | straight
+//   OVERTIME   — overtime | ^o.t.$ | o.t. pay
+//   BONUS      — bonus | incentive(?!.*ot) | performance
+//   COMMISSION — commission
+//   else       — skipped this pass (no military / other categorization yet)
+//
+// monthly = ytd ÷ months_elapsed, where
+//   months_elapsed = (pay_period_end.month - 1) + (day / days_in_month)
+//   floored at 0.5 (avoid divide-by-tiny for early-January paystubs).
+// Fallback when ytd is 0 / missing: current × 2.17 (biweekly assumption),
+// flagged as low-confidence so the UI shows a "verify with W-2" hint and
+// the apply path (per category) can still proceed if user opts in.
+//
+// Returns:
+//   { base, overtime, bonus, commission,
+//     _meta: { months_elapsed, confidence: 'high'|'low', warning, basisByCategory: {base: 'YTD ÷ N', overtime: 'biweekly est', ...} } }
+function _ocrComputeEmploymentMonthlies(payElements, payPeriodEnd, ytdGrossTotal) {
+  const result = {
+    base: 0, overtime: 0, bonus: 0, commission: 0,
+    _meta: { months_elapsed: 0, confidence: 'high', warning: '', basisByCategory: {} }
+  };
+  if (!Array.isArray(payElements) || payElements.length === 0) {
+    result._meta.confidence = 'low';
+    return result;
+  }
+
+  // months_elapsed from pay_period_end (MM/DD/YYYY).
+  let monthsElapsed = 0;
+  const endStr = String(payPeriodEnd == null ? '' : payPeriodEnd).trim();
+  const m = endStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const mm = parseInt(m[1], 10);
+    const dd = parseInt(m[2], 10);
+    const yy = parseInt(m[3], 10);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      const dim = new Date(yy, mm, 0).getDate(); // day 0 of next month = last day of this month
+      monthsElapsed = (mm - 1) + (dd / dim);
+    }
+  }
+  if (monthsElapsed < 0.5) monthsElapsed = 0.5;
+  result._meta.months_elapsed = Math.round(monthsElapsed * 100) / 100;
+
+  const round2 = function(n) { return Math.round(n * 100) / 100; };
+  const parseN = function(v) {
+    const n = parseFloat(String(v == null ? '' : v).replace(/[$,\s]/g, ''));
+    return isFinite(n) ? n : 0;
+  };
+
+  let anyYtdMissing = false;
+  payElements.forEach(function(el) {
+    if (!el || !el.name) return;
+    const name = String(el.name);
+    const ytd     = parseN(el.ytd);
+    const current = parseN(el.current);
+
+    let category = null;
+    if      (/regular|base|salary|hourly|straight/i.test(name)) category = 'base';
+    else if (/overtime|^o\.?t\.?$|o\.?t\.? pay/i.test(name))    category = 'overtime';
+    else if (/bonus|incentive(?!.*ot)|performance/i.test(name)) category = 'bonus';
+    else if (/commission/i.test(name))                          category = 'commission';
+    if (!category) return; // skipped 'other' bucket this pass
+
+    if (ytd > 0) {
+      result[category] += ytd / monthsElapsed;
+      if (!result._meta.basisByCategory[category]) {
+        result._meta.basisByCategory[category] = 'YTD ÷ ' + result._meta.months_elapsed + ' mo';
+      }
+    } else if (current > 0) {
+      result[category] += current * 2.17;
+      result._meta.basisByCategory[category] = 'Current × 2.17 (biweekly est)';
+      anyYtdMissing = true;
+    }
+  });
+
+  result.base       = round2(result.base);
+  result.overtime   = round2(result.overtime);
+  result.bonus      = round2(result.bonus);
+  result.commission = round2(result.commission);
+
+  if (anyYtdMissing) {
+    result._meta.confidence = 'low';
+    result._meta.warning = 'Some categories used a biweekly estimate (no YTD). Verify with a W-2 or longer pay history.';
+  }
+  return result;
+}
+
+// Build the {column: value} patch for mortgage_applications from the
+// computed monthlies, honoring the per-category checkboxes in the OCR
+// Review modal. Reads ocrRev_chk_monthly_<cat> for each of base /
+// overtime / bonus / commission. Default-checked is implicit (the
+// renderer creates them with `checked`). Returns null if nothing
+// to write.
+function _ocrBuildEmploymentMonthliesPatch(monthlies) {
+  if (!monthlies) return null;
+  const patch = {};
+  ['base', 'overtime', 'bonus', 'commission'].forEach(function(cat) {
+    const chk = document.getElementById('ocrRev_chk_monthly_' + cat);
+    const v   = monthlies[cat];
+    if (chk && chk.checked && isFinite(v) && v > 0) {
+      patch[cat + '_income'] = v;
+    }
+  });
+  return Object.keys(patch).length ? patch : null;
+}
+
+// Toast suffix when the apply wrote any employment monthlies.
+function _ocrEmploymentMonthliesToastSuffix(patch) {
+  if (!patch) return '';
+  const fmtCol = function(col) {
+    const v = patch[col]; if (!isFinite(v) || v <= 0) return null;
+    const label = col === 'base_income' ? 'Base'
+                : col === 'overtime_income' ? 'OT'
+                : col === 'bonus_income' ? 'Bonus'
+                : col === 'commission_income' ? 'Comm'
+                : col;
+    return label + ' $' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  };
+  const parts = ['base_income','overtime_income','bonus_income','commission_income']
+    .map(fmtCol).filter(Boolean);
+  return parts.length ? (' + Employment monthlies: ' + parts.join(' / ') + ' ✓') : '';
+}
+
 // ─── Item 3 Pass 3 — Bank Account replace / add / skip choice ───────────
 // When a bank-statement scan applies to an EXISTING borrower whose
 // loan_assets already contains a row with the same institution_name +
@@ -17921,9 +18118,38 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
     // ignored by the apply helper — the asset insert below picks them up.
     if (_ocrIsBankScan(fields)) _ocrStripBankAddressFields(fields);
 
-    const r = await _ocrApplyPatchesToTarget(targetId, fields);
+    // Item 2c Pass B′ — detect doc type ONCE up front (it gates both the
+    // employment-monthlies patch below + the loan_income insert further
+    // down). Detection logic mirrors the previous in-line block: prefer
+    // edge fn's doc_type, fall back to field-presence.
+    const docTypeFromEdge = String(_ocrReviewDocType || '').toLowerCase();
+    let incomeDocType = null;
+    if (docTypeFromEdge.indexOf('w-2') !== -1 || docTypeFromEdge.indexOf('w2') !== -1) {
+      incomeDocType = 'W-2';
+    } else if (docTypeFromEdge.indexOf('pay') !== -1) {
+      incomeDocType = 'Pay Stub';
+    } else if (_ocrIsW2Scan(fields)) {
+      incomeDocType = 'W-2';
+    } else if (_ocrIsPaystubScan(fields)) {
+      incomeDocType = 'Pay Stub';
+    }
+
+    // Item 2c Pass B′ — paystub-only: compute per-category Employment
+    // monthlies from pay_elements + pay_period_end + ytd_gross. The patch
+    // honors per-category checkboxes in the OCR Review modal (default
+    // checked when a category has a parseable monthly). W-2 path skipped
+    // (W-2s don't itemize by category — single Box 1 total).
+    let monthliesPreview = null;
+    let monthliesPatch   = null;
+    if (incomeDocType === 'Pay Stub' && Array.isArray(fields.pay_elements) && fields.pay_elements.length) {
+      monthliesPreview = _ocrComputeEmploymentMonthlies(fields.pay_elements, fields.pay_period_end, fields.ytd_gross);
+      monthliesPatch   = _ocrBuildEmploymentMonthliesPatch(monthliesPreview);
+    }
+
+    const r = await _ocrApplyPatchesToTarget(targetId, fields, monthliesPatch);
     console.log('[ocrReview] Applied to', targetId,
-      '— contacts patch:', r.contactsKeys, '— mortgage_applications patch:', r.appKeys);
+      '— contacts patch:', r.contactsKeys, '— mortgage_applications patch:', r.appKeys,
+      '— monthlies patch:', monthliesPatch);
 
     // Item 2b + Item 3 Pass 3 — bank asset handling. Pass 3 branches based on
     // _ocrReviewBankMatch.choice (only meaningful when a match was found):
@@ -17974,24 +18200,10 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
     // so an income write failure does NOT roll back flat-column writes (or
     // the bank-asset write) that already succeeded. INSERT-only this pass
     // (no dedupe / replace-or-add UX — multiple W-2s across tax years are
-    // legitimate, unlike duplicate bank accounts).
+    // legitimate, unlike duplicate bank accounts). incomeDocType was
+    // detected up-front above (Pass B′ hoist).
     let incomeInserted   = null;
     let incomeErrorSuffix = '';
-    // Prefer the edge fn's doc_type (set in openOCRReviewModal) — it knows what
-    // the user picked in the upload UI. Field-based detection is the fallback
-    // when doc_type is missing or ambiguous (e.g. paystub with a YTD wages
-    // figure could falsely trip _ocrIsW2Scan).
-    const docTypeFromEdge = String(_ocrReviewDocType || '').toLowerCase();
-    let incomeDocType = null;
-    if (docTypeFromEdge.indexOf('w-2') !== -1 || docTypeFromEdge.indexOf('w2') !== -1) {
-      incomeDocType = 'W-2';
-    } else if (docTypeFromEdge.indexOf('pay') !== -1) {
-      incomeDocType = 'Pay Stub';
-    } else if (_ocrIsW2Scan(fields)) {
-      incomeDocType = 'W-2';
-    } else if (_ocrIsPaystubScan(fields)) {
-      incomeDocType = 'Pay Stub';
-    }
     const anyIncomeChecked = ['wages', 'gross_pay', 'ytd_gross', 'employer_name', 'position'].some(function(k) {
       const chk = document.getElementById('ocrRev_chk_' + k);
       return chk && chk.checked;
@@ -18016,7 +18228,13 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
       const flatWriteCount = (r.contactsKeys || []).length + (r.appKeys || []).length;
       const bankWritten   = bankInserted || bankUpdated;
       const incomeWritten = incomeInserted;
-      if (flatWriteCount === 0 && (bankWritten || incomeWritten)) {
+      // Item 2c Pass B′ — distinguish flat-employer-only keys from monthly
+      // columns so the "0 fields" lead-with-summary branch fires even when
+      // ONLY monthlies got written (no name/dob/employer keys checked).
+      const monthlyCols = ['base_income','overtime_income','bonus_income','commission_income'];
+      const monthlyWriteKeys = (r.appKeys || []).filter(function(k) { return monthlyCols.indexOf(k) !== -1; });
+      const nonMonthlyFlatCount = flatWriteCount - monthlyWriteKeys.length;
+      if (nonMonthlyFlatCount === 0 && (bankWritten || incomeWritten || monthlyWriteKeys.length)) {
         const parts = [];
         if (bankWritten) {
           const leadVerb = bankUpdated ? 'Updated bank balance' : 'Saved bank account';
@@ -18026,13 +18244,18 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
         if (incomeWritten) {
           parts.push('Saved income row (' + _ocrIncomeRowSummary(incomeWritten) + ') to ' + targetName);
         }
+        if (monthlyWriteKeys.length) {
+          const suf = _ocrEmploymentMonthliesToastSuffix(monthliesPatch).replace(/^ \+ /, '');
+          if (suf) parts.push(suf + ' for ' + targetName);
+        }
         toast(parts.join(' + ') + ' ✓');
       } else {
         let bankSuffix;
         if (bankWritten) bankSuffix = _ocrBankAssetToastSuffix(bankWritten, !!bankUpdated);
         else             bankSuffix = assetErrorSuffix;   // possibly empty
-        const incomeSuffix = incomeWritten ? _ocrIncomeToastSuffix(incomeWritten) : incomeErrorSuffix;
-        toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓' + bankSuffix + incomeSuffix);
+        const incomeSuffix    = incomeWritten ? _ocrIncomeToastSuffix(incomeWritten) : incomeErrorSuffix;
+        const monthliesSuffix = monthlyWriteKeys.length ? _ocrEmploymentMonthliesToastSuffix(monthliesPatch) : '';
+        toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓' + bankSuffix + incomeSuffix + monthliesSuffix);
       }
     }
     closeOCRReviewModal();
