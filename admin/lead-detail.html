@@ -18141,8 +18141,20 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
     // (W-2s don't itemize by category — single Box 1 total).
     let monthliesPreview = null;
     let monthliesPatch   = null;
-    if (incomeDocType === 'Pay Stub' && Array.isArray(fields.pay_elements) && fields.pay_elements.length) {
-      monthliesPreview = _ocrComputeEmploymentMonthlies(fields.pay_elements, fields.pay_period_end, fields.ytd_gross);
+    // Bug fix: read from _ocrReviewFields (modal-level cache), NOT `fields`.
+    // confirmOCRReview strips any key without an ocrRev_chk_<k> + ocrRev_val_<k>
+    // pair — pay_elements has neither (it's rendered as a breakdown table), and
+    // pay_period_end / ytd_gross can also be stripped if the user unchecks
+    // their flat-key checkboxes. The cache preserves the original extraction
+    // regardless of UI state, so the monthlies calc stays stable.
+    if (incomeDocType === 'Pay Stub'
+        && Array.isArray(_ocrReviewFields.pay_elements)
+        && _ocrReviewFields.pay_elements.length) {
+      monthliesPreview = _ocrComputeEmploymentMonthlies(
+        _ocrReviewFields.pay_elements,
+        _ocrReviewFields.pay_period_end,
+        _ocrReviewFields.ytd_gross
+      );
       monthliesPatch   = _ocrBuildEmploymentMonthliesPatch(monthliesPreview);
     }
 
