@@ -12778,6 +12778,28 @@ async function save1003() {
   );
   cleanData.employments = employments;
 
+  // Item 2c Pass B′ follow-up — mirror the first current employer's income
+  // into the flat mortgage_applications columns so they stay coherent with
+  // the JSON array. OCR Pass B′ writes the flat columns directly; manual
+  // form edits used to write only the JSON, leaving the flat columns
+  // stale for downstream consumers (qualifying calculator, MISMO export).
+  // employments[1..N] (additional current + previous employers) remain
+  // JSON-only — flat columns intentionally hold ONLY employments[0].
+  const _emp0 = employments.find(function(e) { return e && e.type === 'current'; });
+  if (_emp0) {
+    cleanData.base_income       = parseFloat(_emp0.base)       || null;
+    cleanData.overtime_income   = parseFloat(_emp0.overtime)   || null;
+    cleanData.bonus_income      = parseFloat(_emp0.bonus)      || null;
+    cleanData.commission_income = parseFloat(_emp0.commission) || null;
+  } else {
+    // No current employment — clear flat columns so they don't keep stale
+    // Pass B′ data after the user removes all current employer blocks.
+    cleanData.base_income = null;
+    cleanData.overtime_income = null;
+    cleanData.bonus_income = null;
+    cleanData.commission_income = null;
+  }
+
   console.log('Saving 1003 with fields:', Object.keys(cleanData));
 
   try {
