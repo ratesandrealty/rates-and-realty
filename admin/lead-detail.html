@@ -17722,11 +17722,18 @@ async function _ocrMaybeInsertIncomeRow(targetContactId, fields, docType) {
   let applicationId = null;
   let incomeOwner   = 'Borrower';
   if (Array.isArray(window.losBorrowers)) {
-    const match = window.losBorrowers.find(function(b) { return b && b.contact_id === targetContactId; });
+    const idx   = window.losBorrowers.findIndex(function(b) { return b && b.contact_id === targetContactId; });
+    const match = idx >= 0 ? window.losBorrowers[idx] : null;
     if (match) {
       if (match.application_id) applicationId = match.application_id;
-      const isPrimary = !!match.is_primary || match.borrower_role === 'Borrower';
-      incomeOwner = isPrimary ? 'Borrower' : 'CoBorrower';
+      // Write the borrower's display name (e.g. 'Kage Sanderson') instead
+      // of the legacy 'Borrower'/'CoBorrower' role string. Same source of
+      // truth as _losBorrowerOwnerOptions (which also uses _borrName), so
+      // the stored value matches an existing <option> in the Income Sources
+      // OWNER dropdown — no legacy italic/grey fallback option needed on
+      // next render. Falls back to _borrName's own 'Borrower N' default if
+      // first/last names are missing.
+      incomeOwner = _borrName(match, idx);
     }
   }
 
