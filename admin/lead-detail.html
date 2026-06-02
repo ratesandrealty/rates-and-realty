@@ -4662,6 +4662,7 @@ let leadId = null;
 let contactData = {};
 let leadData = {};
 let notesData = [];
+let contactNotesData = []; // rows from public.contact_notes (new table; SMS bot + manual web notes)
 let tasksData = [];
 let liabilitiesData = [];
 let _autoSaveTimer = null;
@@ -4714,7 +4715,7 @@ async function loadData() {
     liabilitiesData = Array.isArray(contactData.liabilities) ? [...contactData.liabilities] : [];
     populateUI();
     renderLiabilities();
-    await Promise.all([loadNotes(), loadTasks(), loadCreditApps().catch(function(e){ console.warn('Credit apps skipped:', e.message); }), loadRelatedContacts(contactId)]);
+    await Promise.all([loadNotes(), loadContactNotes(contactId), loadTasks(), loadCreditApps().catch(function(e){ console.warn('Credit apps skipped:', e.message); }), loadRelatedContacts(contactId)]);
     if (typeof window.loadActivityTab === 'function') window.loadActivityTab();
   } catch (err) {
     console.error(err);
@@ -5188,26 +5189,108 @@ async function loadNotes() {
 }
 window.loadNotes = loadNotes;
 
+// New contact_notes table (RLS-locked → must use the authenticated client, not anon `sb`).
+// Primary source for the sidebar Notes panel; legacy `notes` rows still shown as fallback.
+async function loadContactNotes(cid) {
+  cid = cid || contactId || leadId;
+  if (!cid) return [];
+  try {
+    const client = (await _waitForAuthClient()) || _authClient();
+    const { data, error } = await client
+      .from('contact_notes')
+      .select('id, note_text, source, author_display, created_at')
+      .eq('contact_id', cid)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    contactNotesData = data || [];
+  } catch (e) {
+    console.warn('loadContactNotes failed:', e.message || e);
+    contactNotesData = [];
+  }
+  renderNotes();
+  return contactNotesData;
+}
+window.loadContactNotes = loadContactNotes;
+
+// Friendly "via …" badge for a contact_notes.source value.
+function noteSourceBadge(source) {
+  if (source === 'sms') return { label: 'via SMS', cls: 'tag-credit' };
+  if (source === 'lead-detail') return { label: 'via web', cls: 'tag-general' };
+  return { label: 'via ' + (source || 'note'), cls: 'tag-general' };
+}
+
+function renderContactNoteItem(n) {
+  const b = noteSourceBadge(n.source);
+  const who = (n.author_display || 'Web user').trim();
+  const avatar = n.source === 'sms' ? '🤖' : (who[0] || 'R').toUpperCase();
+  const dateLine = `<span class="ld-note-date" style="margin-left:auto;">${esc(fmtDateShort(n.created_at))}</span>`;
+  return `
+    <div class="ld-note-item">
+      <div class="ld-note-header">
+        <div class="ld-note-avatar">${esc(avatar)}</div>
+        <span class="ld-note-tag ${b.cls}">${b.label}</span>
+        ${dateLine}
+      </div>
+      <div class="ld-note-text">${esc(n.note_text || '')}</div>
+      ${who ? `<div class="ld-note-date" style="margin-top:4px;">${esc(who)}</div>` : ''}
+    </div>`;
+}
+
+function renderLegacyNoteItem(n) {
+  const tag = n.tag || 'general';
+  const tagLabel = { general: 'General', tasks: 'Tasks & Events', credit: 'Credit', loan: 'Loan' }[tag] || tag;
+  return `
+    <div class="ld-note-item">
+      <div class="ld-note-header">
+        <div class="ld-note-avatar">R</div>
+        <span class="ld-note-tag tag-${tag}">${tagLabel}</span>
+        <span class="ld-note-date">${fmtDateShort(n.created_at)}</span>
+      </div>
+      <div class="ld-note-text">${esc(n.body || '')}</div>
+    </div>`;
+}
+
 function renderNotes() {
   const el = document.getElementById('notes-list');
-  if (!notesData.length) {
+  if (!el) return;
+  // Merge new contact_notes (primary) with legacy `notes` rows, newest first.
+  const merged = (contactNotesData || []).map(n => ({ kind: 'contact_note', created_at: n.created_at, data: n }))
+    .concat((notesData || []).map(n => ({ kind: 'legacy', created_at: n.created_at, data: n })))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  if (!merged.length) {
     el.innerHTML = '<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:0.8rem;">No notes yet. Add the first one!</div>';
     return;
   }
-  el.innerHTML = notesData.map(n => {
-    const tag = n.tag || 'general';
-    const tagLabel = { general: 'General', tasks: 'Tasks & Events', credit: 'Credit', loan: 'Loan' }[tag] || tag;
-    return `
-      <div class="ld-note-item">
-        <div class="ld-note-header">
-          <div class="ld-note-avatar">R</div>
-          <span class="ld-note-tag tag-${tag}">${tagLabel}</span>
-          <span class="ld-note-date">${fmtDateShort(n.created_at)}</span>
-        </div>
-        <div class="ld-note-text">${esc(n.body || '')}</div>
-      </div>`;
-  }).join('');
+  el.innerHTML = merged.map(m => m.kind === 'contact_note' ? renderContactNoteItem(m.data) : renderLegacyNoteItem(m.data)).join('');
 }
+
+// Shared insert path for the +Note buttons → writes to contact_notes, then refreshes
+// the sidebar panel AND the Activity Timeline.
+async function insertContactNote(text, tags) {
+  const cid = contactId || leadId;
+  if (!cid) { toast('No contact associated', true); return false; }
+  const client = (await _waitForAuthClient()) || _authClient();
+  let user = null;
+  try { const r = await client.auth.getUser(); user = r && r.data ? r.data.user : null; } catch (_) {}
+  try {
+    const { error } = await client.from('contact_notes').insert({
+      contact_id: cid,
+      note_text: text,
+      source: 'lead-detail',
+      author_user_id: (user && user.id) || null,
+      author_display: (user && user.email) || (user && user.user_metadata && user.user_metadata.full_name) || 'Web user',
+      tags: (tags && tags.length) ? tags : null,
+    });
+    if (error) throw error;
+  } catch (err) {
+    toast('Error saving note: ' + (err.message || err), true);
+    return false;
+  }
+  await loadContactNotes(cid);
+  if (typeof window.loadActivityTab === 'function') { try { window.loadActivityTab(); } catch (_) {} }
+  return true;
+}
+window.insertContactNote = insertContactNote;
 
 function toggleNoteForm() {
   document.getElementById('note-form').classList.toggle('open');
@@ -5217,31 +5300,17 @@ function toggleNoteForm() {
 }
 
 async function saveNote() {
-  const body = document.getElementById('note-textarea').value.trim();
-  const tag = document.getElementById('note-tag').value;
+  const ta = document.getElementById('note-textarea');
+  const body = (ta && ta.value || '').trim();
+  const tagEl = document.getElementById('note-tag');
+  const tag = tagEl && tagEl.value;
   if (!body) { toast('Note cannot be empty', true); return; }
-  if (!leadId && !contactId) { toast('No contact associated', true); return; }
-  try {
-    const { data, error } = await sb.from('notes').insert({
-      related_table: leadId ? 'leads' : 'contacts',
-      related_id: leadId || contactId,
-      contact_id: contactId || null,
-      lead_id: leadId || null,
-      body,
-      content: body,
-      tag: tag || 'general',
-      created_by: 'Rene'
-    }).select().single();
-    if (error) throw error;
-    notesData.unshift(data);
-    renderNotes();
-    document.getElementById('note-textarea').value = '';
-    toggleNoteForm();
-    toast('✓ Note saved');
-    await logActivity('note_added', `Note added: ${body.substring(0, 60)}`);
-  } catch (err) {
-    toast('Error saving note: ' + err.message, true);
-  }
+  // Writes to contact_notes (source='lead-detail') and refreshes sidebar + timeline.
+  const ok = await insertContactNote(body, tag ? [tag] : null);
+  if (!ok) return;
+  if (ta) ta.value = '';
+  toggleNoteForm();
+  toast('✓ Note saved');
 }
 
 /* ── TASKS ── */
@@ -5535,11 +5604,10 @@ function loadMoreActivity() { loadActivity(false); }
 
 async function logManualNote() {
   var note = prompt('Add a note to this contact\'s activity:');
-  if (!note) return;
-  try {
-    await sb.from('activity_events').insert({ lead_id: leadId, contact_id: contactId, type: 'note_added', channel: 'system', title: 'Manual Note', description: note, status: 'sent', created_at: new Date().toISOString() });
-    loadActivity();
-  } catch(e) { console.error(e); }
+  if (!note || !note.trim()) return;
+  // Writes to contact_notes (source='lead-detail') and refreshes sidebar + timeline.
+  const ok = await insertContactNote(note.trim(), null);
+  if (ok) toast('✓ Note saved');
 }
 
 const ADMIN_TOKEN = 'rr-admin-28230b361fc0915fd1599c7cd52444d4658990098a120adf';
@@ -24240,6 +24308,48 @@ async function recordNewVoicemail() {
     });
   }
 
+  // contact_notes is RLS-locked → must use the authenticated supabase client
+  // (window._supabaseClient), not the anon restGet() used for the other feeds.
+  function waitAuthClient(ms) {
+    ms = ms || 3000;
+    var start = Date.now();
+    return new Promise(function(res) {
+      (function chk() {
+        if (window._supabaseClient) return res(window._supabaseClient);
+        if (Date.now() - start > ms) return res(null);
+        setTimeout(chk, 50);
+      })();
+    });
+  }
+
+  function fetchContactNotes() {
+    var cid = getContactId();
+    if (!cid) return Promise.resolve([]);
+    return waitAuthClient().then(function(client) {
+      if (!client) return [];
+      return client.from('contact_notes')
+        .select('id, note_text, source, author_display, created_at')
+        .eq('contact_id', cid)
+        .order('created_at', { ascending: false })
+        .then(function(res) {
+          var rows = (res && res.data) || [];
+          return rows.map(function(n) {
+            return {
+              id: 'cnote_' + n.id,
+              type: 'note',
+              title: 'Note',
+              description: n.note_text || '',
+              direction: 'internal',
+              channel: 'note',
+              status: 'active',
+              created_at: n.created_at,
+              metadata: { source: n.source, created_by: n.author_display }
+            };
+          });
+        });
+    }).catch(function() { return []; });
+  }
+
   function fetchEmailStats() {
     var cid = getContactId();
     if (!cid) return Promise.resolve({ sent: 0, opened: 0, openRate: 0 });
@@ -24354,6 +24464,7 @@ async function recordNewVoicemail() {
         body = escHtml(e.description || '');
         if (meta.is_pinned) badges.push({ cls: 'gold', text: '📌 pinned' });
         if (meta.tag) badges.push({ cls: '', text: meta.tag });
+        if (meta.source) badges.push({ cls: 'info', text: meta.source === 'sms' ? 'via SMS' : (meta.source === 'lead-detail' ? 'via web' : 'via ' + meta.source) });
         if (meta.created_by) badges.push({ cls: '', text: 'by ' + meta.created_by });
         break;
       }
@@ -24455,10 +24566,11 @@ async function recordNewVoicemail() {
   function loadActivityTab() {
     var tl = document.getElementById('actTimeline');
     if (tl) tl.innerHTML = '<div class="act-loading">Loading activity...</div>';
-    return Promise.all([fetchEvents(), fetchNotes()]).then(function(out) {
+    return Promise.all([fetchEvents(), fetchNotes(), fetchContactNotes()]).then(function(out) {
       var events = Array.isArray(out[0]) ? out[0] : [];
       var notes = Array.isArray(out[1]) ? out[1] : [];
-      allEvents = events.concat(notes).sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+      var contactNotes = Array.isArray(out[2]) ? out[2] : [];
+      allEvents = events.concat(notes).concat(contactNotes).sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
       updateCounts();
       updateStats();
       renderTimeline();
