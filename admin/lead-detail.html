@@ -390,8 +390,8 @@
     #pricingLenderResults::-webkit-scrollbar { width: 6px; }
     #pricingLenderResults::-webkit-scrollbar-thumb { background: #C9A84C; border-radius: 3px; }
     #pricingLenderResults::-webkit-scrollbar-track { background: #1a1a1a; }
-    .lock-quickset:hover { background: rgba(201,168,76,0.25) !important; }
-    #pricingQuotedDate, #pricingLockedDate, #pricingLockExpiry, #pricingClosedDate { cursor: pointer; }
+    .lock-quickset:hover, .doc-quickset:hover { background: rgba(201,168,76,0.25) !important; }
+    #pricingQuotedDate, #pricingLockedDate, #pricingLockExpiry, #pricingClosedDate, #docPreapprovalExpiry, #docCreditPulledDate { cursor: pointer; }
     .ld-add-note-btn {
       width: 100%; padding: 9px;
       border-radius: 10px;
@@ -1993,6 +1993,33 @@
             <input id="pricingDiscountFee" type="number" step="0.001" placeholder="1.000" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Origination Fee %</label>
             <input id="pricingOriginationFee" type="number" step="0.001" placeholder="0.500" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+        </div>
+      </div>
+
+      <!-- ═══ DOCUMENT EXPIRATIONS ═══ -->
+      <!-- Two date fields the daily 8am proactive-followups cron watches:
+           preapproval_expiry (stale_lead at 30d out, urgent at 48h) and
+           credit_report_pulled_date (alert when >90d old; reports valid ~120d).
+           Read/written by save1003 / load1003 by id; auto-save + showPicker wired
+           in _wirePricingAutoSave() alongside the Pricing & Lender fields. -->
+      <div class="ld-section" style="padding:24px; border-bottom:1px solid rgba(255,255,255,0.06);">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#C9A84C;padding:16px 0 10px;border-bottom:1px solid rgba(201,168,76,0.2);margin-bottom:16px;">Document Expirations</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:14px;">Watched by the daily 8am follow-up digest. The bot will alert when these are expiring or aging out.</div>
+
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
+          <div>
+            <label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Preapproval Expiry</label>
+            <input id="docPreapprovalExpiry" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+            <div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px;">Alerts at 30 days out.</div>
+          </div>
+          <div>
+            <label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Credit Pulled Date</label>
+            <input id="docCreditPulledDate" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+            <div style="display:flex;gap:6px;margin-top:6px;">
+              <button type="button" id="docCreditPulledToday" class="doc-quickset" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;cursor:pointer;letter-spacing:0.5px;">Today</button>
+            </div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px;">Alerts when older than 90 days (reports valid ~120d).</div>
+          </div>
         </div>
       </div>
 
@@ -12910,6 +12937,9 @@ async function save1003() {
     closed_rate_date: toISODate(gv('pricingClosedDate')),
     discount_fee_pct: gnum('pricingDiscountFee'),
     origination_fee_pct: gnum('pricingOriginationFee'),
+    // ── Document Expirations ── (watched by the proactive-followups cron)
+    preapproval_expiry: toISODate(gv('docPreapprovalExpiry')),
+    credit_report_pulled_date: toISODate(gv('docCreditPulledDate')),
     updated_at: new Date().toISOString()
   };
 
@@ -13140,7 +13170,7 @@ async function loadPricingLenders() {
 // reach these inputs. Wire them explicitly with a 600ms debounced save1003().
 // Idempotent via the data-pricingWired guard.
 function _wirePricingAutoSave() {
-  const ids = ['pricingQuotedRate','pricingQuotedDate','pricingLockedRate','pricingLockedDate','pricingLockExpiry','pricingClosedRate','pricingClosedDate','pricingDiscountFee','pricingOriginationFee','pricingLenderSelect'];
+  const ids = ['pricingQuotedRate','pricingQuotedDate','pricingLockedRate','pricingLockedDate','pricingLockExpiry','pricingClosedRate','pricingClosedDate','pricingDiscountFee','pricingOriginationFee','pricingLenderSelect','docPreapprovalExpiry','docCreditPulledDate'];
   let debounceTimer = null;
   const fire = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(() => { if (typeof save1003 === 'function') save1003(); }, 600); };
   for (const id of ids) {
@@ -13190,10 +13220,27 @@ function _wirePricingAutoSave() {
     });
   });
 
+  // "Today" quick-set for Credit Pulled Date (local-time, no UTC off-by-one).
+  const todayBtn = document.getElementById('docCreditPulledToday');
+  if (todayBtn && todayBtn.dataset.wired !== 'true') {
+    todayBtn.dataset.wired = 'true';
+    todayBtn.addEventListener('click', function() {
+      const el = document.getElementById('docCreditPulledDate');
+      if (!el) return;
+      const t = new Date();
+      const y = t.getFullYear();
+      const m = String(t.getMonth() + 1).padStart(2, '0');
+      const d = String(t.getDate()).padStart(2, '0');
+      el.value = `${y}-${m}-${d}`;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
   // Make the whole date field a click target for the native calendar (not just
   // the tiny icon). showPicker() opens it programmatically; the input stays
   // type="date" so it's still keyboard/mobile/locale-friendly.
-  const dateIds = ['pricingQuotedDate', 'pricingLockedDate', 'pricingLockExpiry', 'pricingClosedDate'];
+  const dateIds = ['pricingQuotedDate', 'pricingLockedDate', 'pricingLockExpiry', 'pricingClosedDate', 'docPreapprovalExpiry', 'docCreditPulledDate'];
   for (const id of dateIds) {
     const el = document.getElementById(id);
     if (!el || el.dataset.pickerWired === 'true') continue;
@@ -13325,6 +13372,8 @@ async function load1003(overrideCid) {
     sv('pricingClosedDate', data.closed_rate_date);
     sv('pricingDiscountFee', data.discount_fee_pct);
     sv('pricingOriginationFee', data.origination_fee_pct);
+    sv('docPreapprovalExpiry', data.preapproval_expiry);
+    sv('docCreditPulledDate', data.credit_report_pulled_date);
 
     sv('f_first_name', data.first_name);
     sv('f_middle_name', data.middle_name);
