@@ -391,6 +391,7 @@
     #pricingLenderResults::-webkit-scrollbar-thumb { background: #C9A84C; border-radius: 3px; }
     #pricingLenderResults::-webkit-scrollbar-track { background: #1a1a1a; }
     .lock-quickset:hover { background: rgba(201,168,76,0.25) !important; }
+    #pricingQuotedDate, #pricingLockedDate, #pricingLockExpiry, #pricingClosedDate { cursor: pointer; }
     .ld-add-note-btn {
       width: 100%; padding: 9px;
       border-radius: 10px;
@@ -13188,6 +13189,24 @@ function _wirePricingAutoSave() {
       expiryEl.dispatchEvent(new Event('change', { bubbles: true }));
     });
   });
+
+  // Make the whole date field a click target for the native calendar (not just
+  // the tiny icon). showPicker() opens it programmatically; the input stays
+  // type="date" so it's still keyboard/mobile/locale-friendly.
+  const dateIds = ['pricingQuotedDate', 'pricingLockedDate', 'pricingLockExpiry', 'pricingClosedDate'];
+  for (const id of dateIds) {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.pickerWired === 'true') continue;
+    el.dataset.pickerWired = 'true';
+    el.addEventListener('click', function() {
+      // showPicker is supported in Chrome 99+ / Firefox 101+ / Safari 16+.
+      // It can throw NotAllowedError outside a user gesture (we're inside one
+      // here), so wrap in try/catch and silently fall back to the native icon.
+      if (typeof this.showPicker === 'function') {
+        try { this.showPicker(); } catch (_) { /* fall back to native icon */ }
+      }
+    });
+  }
 }
 
 // Render filtered lender rows into #pricingLenderResults. Case-insensitive
