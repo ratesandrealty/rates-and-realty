@@ -1923,6 +1923,70 @@
         </div>
       </div>
 
+      <!-- ═══ PRICING & LENDER ═══ -->
+      <!-- First thing an LO updates: which lender we're submitting to, the rate
+           lifecycle (quoted → locked → closed), and the discount/origination fee
+           paid to buy that rate. Distinct from the borrower's pre-existing refi
+           loan (current_lender / current_interest_rate) — do not conflate.
+           Lives on the Lead Details tab; inputs are read/written by save1003 /
+           load1003 by id (getElementById finds them across tabs). Auto-save is
+           wired explicitly via _wirePricingAutoSave() since these inputs are no
+           longer inside tab-application. -->
+      <div class="ld-section" style="padding:24px; border-bottom:1px solid rgba(255,255,255,0.06);">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#C9A84C;padding:16px 0 10px;border-bottom:1px solid rgba(201,168,76,0.2);margin-bottom:16px;">Pricing &amp; Lender</div>
+
+        <!-- Row 1: Lender -->
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px;">
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Lender</label>
+            <div class="lender-combobox" style="position:relative;">
+              <input type="text" id="pricingLenderSearch" autocomplete="off" placeholder="Search lenders..."
+                     style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 36px 9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+              <input type="hidden" id="pricingLenderSelect"><!-- holds the uuid, unchanged contract -->
+              <button type="button" id="pricingLenderClear" title="Clear"
+                      style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:rgba(255,255,255,0.4);font-size:16px;cursor:pointer;padding:4px 8px;display:none;">&#10005;</button>
+              <div id="pricingLenderResults"
+                   style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;max-height:260px;overflow-y:auto;background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:8px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,0.5);">
+                <!-- results injected by JS -->
+              </div>
+            </div></div>
+          <div></div>
+        </div>
+
+        <!-- Row 2: Quoted Rate / Quoted Date -->
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Quoted Rate %</label>
+            <input id="pricingQuotedRate" type="number" step="0.001" placeholder="6.875" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Quoted Date</label>
+            <input id="pricingQuotedDate" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+        </div>
+
+        <!-- Row 2b: Locked Rate / Locked Date / Lock Expires (rate-lock lifecycle) -->
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px;">
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Locked Rate %</label>
+            <input id="pricingLockedRate" type="number" step="0.001" placeholder="6.750" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Locked Date</label>
+            <input id="pricingLockedDate" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Lock Expires</label>
+            <input id="pricingLockExpiry" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+        </div>
+
+        <!-- Row 3: Closed Rate / Closed Date -->
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Closed Rate %</label>
+            <input id="pricingClosedRate" type="number" step="0.001" placeholder="6.625" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Closed Date</label>
+            <input id="pricingClosedDate" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+        </div>
+
+        <!-- Row 4: Discount Fee % / Origination Fee % -->
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Discount Fee %</label>
+            <input id="pricingDiscountFee" type="number" step="0.001" placeholder="1.000" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Origination Fee %</label>
+            <input id="pricingOriginationFee" type="number" step="0.001" placeholder="0.500" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+        </div>
+      </div>
+
       <div class="ld-section">
         <div class="ld-section-title">Lead Information</div>
         <div class="ld-form-grid cols-3" style="grid-template-columns:repeat(3,1fr)!important;">
@@ -2528,56 +2592,6 @@
           <button class="ld-btn-save" onclick="save1003()">Save Application</button>
           <button type="button" id="download1003Btn" onclick="openForm1003Modal()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:#C9A84C;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">&#128065; View 1003 PDF</button>
           <button class="ld-btn-cancel" onclick="exportMISMO()" style="border-color:var(--gold-bdr);color:var(--gold);">Export MISMO 3.4</button>
-        </div>
-      </div>
-
-      <!-- ═══ PRICING & LENDER ═══ -->
-      <!-- First thing an LO updates: which lender we're submitting to, the rate
-           lifecycle (quoted → closed), and the discount/origination fee paid to
-           buy that rate. Distinct from the borrower's pre-existing refi loan
-           (current_lender / current_interest_rate) — do not conflate. -->
-      <div class="ld-section" style="padding:24px; border-bottom:1px solid rgba(255,255,255,0.06);">
-        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#C9A84C;padding:16px 0 10px;border-bottom:1px solid rgba(201,168,76,0.2);margin-bottom:16px;">Pricing &amp; Lender</div>
-
-        <!-- Row 1: Lender -->
-        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px;">
-          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Lender</label>
-            <div class="lender-combobox" style="position:relative;">
-              <input type="text" id="pricingLenderSearch" autocomplete="off" placeholder="Search lenders..."
-                     style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 36px 9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
-              <input type="hidden" id="pricingLenderSelect"><!-- holds the uuid, unchanged contract -->
-              <button type="button" id="pricingLenderClear" title="Clear"
-                      style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:rgba(255,255,255,0.4);font-size:16px;cursor:pointer;padding:4px 8px;display:none;">&#10005;</button>
-              <div id="pricingLenderResults"
-                   style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;max-height:260px;overflow-y:auto;background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:8px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,0.5);">
-                <!-- results injected by JS -->
-              </div>
-            </div></div>
-          <div></div>
-        </div>
-
-        <!-- Row 2: Quoted Rate / Quoted Date -->
-        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
-          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Quoted Rate %</label>
-            <input id="pricingQuotedRate" type="number" step="0.001" placeholder="6.875" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
-          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Quoted Date</label>
-            <input id="pricingQuotedDate" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
-        </div>
-
-        <!-- Row 3: Closed Rate / Closed Date -->
-        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
-          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Closed Rate %</label>
-            <input id="pricingClosedRate" type="number" step="0.001" placeholder="6.625" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
-          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Closed Date</label>
-            <input id="pricingClosedDate" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
-        </div>
-
-        <!-- Row 4: Discount Fee % / Origination Fee % -->
-        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
-          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Discount Fee %</label>
-            <input id="pricingDiscountFee" type="number" step="0.001" placeholder="1.000" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
-          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Origination Fee %</label>
-            <input id="pricingOriginationFee" type="number" step="0.001" placeholder="0.500" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
         </div>
       </div>
 
@@ -12880,6 +12894,9 @@ async function save1003() {
     assigned_lender_id: gv('pricingLenderSelect'),
     quoted_rate: gnum('pricingQuotedRate'),
     quoted_rate_date: toISODate(gv('pricingQuotedDate')),
+    locked_rate: gnum('pricingLockedRate'),
+    locked_rate_date: toISODate(gv('pricingLockedDate')),
+    rate_lock_expiry: toISODate(gv('pricingLockExpiry')),
     closed_rate: gnum('pricingClosedRate'),
     closed_rate_date: toISODate(gv('pricingClosedDate')),
     discount_fee_pct: gnum('pricingDiscountFee'),
@@ -13105,7 +13122,27 @@ async function loadPricingLenders() {
     _lenderCache = lenders || [];
     _renderLenderResults('');   // initially shows full list
     _wireLenderCombobox();      // attaches handlers (idempotent)
+    _wirePricingAutoSave();     // auto-save wiring (section lives outside tab-application now)
   } catch (e) { console.warn('[pricingLenders]', e.message); }
+}
+
+// The Pricing & Lender section lives on the Lead Details tab, not inside
+// tab-application, so attachAutoSave (which only scans tab-application) won't
+// reach these inputs. Wire them explicitly with a 600ms debounced save1003().
+// Idempotent via the data-pricingWired guard.
+function _wirePricingAutoSave() {
+  const ids = ['pricingQuotedRate','pricingQuotedDate','pricingLockedRate','pricingLockedDate','pricingLockExpiry','pricingClosedRate','pricingClosedDate','pricingDiscountFee','pricingOriginationFee','pricingLenderSelect'];
+  let debounceTimer = null;
+  const fire = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(() => { if (typeof save1003 === 'function') save1003(); }, 600); };
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.pricingWired === 'true') continue;
+    el.dataset.pricingWired = 'true';
+    // pricingLenderSelect is a hidden input the combobox updates by dispatching
+    // change+input — the 'input'/'change' listeners below catch both.
+    el.addEventListener('input', fire);
+    el.addEventListener('change', fire);
+  }
 }
 
 // Render filtered lender rows into #pricingLenderResults. Case-insensitive
@@ -13217,6 +13254,9 @@ async function load1003(overrideCid) {
     }
     sv('pricingQuotedRate', data.quoted_rate);
     sv('pricingQuotedDate', data.quoted_rate_date);
+    sv('pricingLockedRate', data.locked_rate);
+    sv('pricingLockedDate', data.locked_rate_date);
+    sv('pricingLockExpiry', data.rate_lock_expiry);
     sv('pricingClosedRate', data.closed_rate);
     sv('pricingClosedDate', data.closed_rate_date);
     sv('pricingDiscountFee', data.discount_fee_pct);
