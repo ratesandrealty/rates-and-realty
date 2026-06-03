@@ -390,6 +390,7 @@
     #pricingLenderResults::-webkit-scrollbar { width: 6px; }
     #pricingLenderResults::-webkit-scrollbar-thumb { background: #C9A84C; border-radius: 3px; }
     #pricingLenderResults::-webkit-scrollbar-track { background: #1a1a1a; }
+    .lock-quickset:hover { background: rgba(201,168,76,0.25) !important; }
     .ld-add-note-btn {
       width: 100%; padding: 9px;
       border-radius: 10px;
@@ -1967,7 +1968,14 @@
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Locked Date</label>
             <input id="pricingLockedDate" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Lock Expires</label>
-            <input id="pricingLockExpiry" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+            <input id="pricingLockExpiry" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+            <!-- Quick-set lock duration: sets Lock Expires = Locked Date + N days (additive — the date picker stays editable). -->
+            <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+              <button type="button" class="lock-quickset" data-days="30" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;cursor:pointer;letter-spacing:0.5px;">30d</button>
+              <button type="button" class="lock-quickset" data-days="45" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;cursor:pointer;letter-spacing:0.5px;">45d</button>
+              <button type="button" class="lock-quickset" data-days="60" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;cursor:pointer;letter-spacing:0.5px;">60d</button>
+              <button type="button" class="lock-quickset" data-days="90" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;cursor:pointer;letter-spacing:0.5px;">90d</button>
+            </div></div>
         </div>
 
         <!-- Row 3: Closed Rate / Closed Date -->
@@ -13143,6 +13151,43 @@ function _wirePricingAutoSave() {
     el.addEventListener('input', fire);
     el.addEventListener('change', fire);
   }
+
+  // Lock-expiry quick-set pills: set Lock Expires = Locked Date + N days. Purely
+  // sets values on the existing inputs and fires input+change, so the debounced
+  // save above picks them up. The date picker stays fully editable afterward.
+  document.querySelectorAll('.lock-quickset').forEach(btn => {
+    if (btn.dataset.wired === 'true') return;
+    btn.dataset.wired = 'true';
+    btn.addEventListener('click', function() {
+      const days = parseInt(this.dataset.days, 10);
+      const lockedDateEl = document.getElementById('pricingLockedDate');
+      const expiryEl = document.getElementById('pricingLockExpiry');
+      if (!lockedDateEl || !expiryEl || !days) return;
+      // If Locked Date is empty, fall back to today (and populate it so the LO sees the basis).
+      let lockedDateStr = lockedDateEl.value;
+      if (!lockedDateStr) {
+        const today = new Date();
+        const ty = today.getFullYear();
+        const tm = String(today.getMonth() + 1).padStart(2, '0');
+        const td = String(today.getDate()).padStart(2, '0');
+        lockedDateStr = `${ty}-${tm}-${td}`;
+        lockedDateEl.value = lockedDateStr;
+        lockedDateEl.dispatchEvent(new Event('input', { bubbles: true }));
+        lockedDateEl.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      // Compute expiry = lockedDate + days. Build a local-midnight Date from the
+      // YYYY-MM-DD parts so there's no UTC-parsing off-by-one.
+      const parts = lockedDateStr.split('-').map(n => parseInt(n, 10));
+      const base = new Date(parts[0], parts[1] - 1, parts[2]);
+      base.setDate(base.getDate() + days);
+      const yyyy = base.getFullYear();
+      const mm = String(base.getMonth() + 1).padStart(2, '0');
+      const dd = String(base.getDate()).padStart(2, '0');
+      expiryEl.value = `${yyyy}-${mm}-${dd}`;
+      expiryEl.dispatchEvent(new Event('input', { bubbles: true }));
+      expiryEl.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
 }
 
 // Render filtered lender rows into #pricingLenderResults. Case-insensitive
