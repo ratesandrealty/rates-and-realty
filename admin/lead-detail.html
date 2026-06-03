@@ -2023,6 +2023,21 @@
         </div>
       </div>
 
+      <!-- ═══ DOCUMENTS ═══ -->
+      <!-- Read-only list of borrower documents the SMS assistant uploaded
+           (texted photos → borrower-documents bucket + an uploaded_documents
+           row). The LO downloads via a short-lived signed URL or opens the
+           Drive copy. Populated by loadDocuments(cid) from load1003 once the
+           contact id is known; re-fetches on every lead load (the bot adds docs
+           out-of-band via SMS, so a page reload is the refresh path). The
+           delegated click handler is bound once via the data-docsWired guard. -->
+      <div class="ld-section" style="padding:24px; border-bottom:1px solid rgba(255,255,255,0.06);">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#C9A84C;padding:16px 0 10px;border-bottom:1px solid rgba(201,168,76,0.2);margin-bottom:16px;">Documents</div>
+        <div id="documentsList" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);">Loading documents&hellip;</div>
+        </div>
+      </div>
+
       <div class="ld-section">
         <div class="ld-section-title">Lead Information</div>
         <div class="ld-form-grid cols-3" style="grid-template-columns:repeat(3,1fr)!important;">
@@ -13330,6 +13345,133 @@ function _wireLenderCombobox() {
   });
 }
 
+// ── Documents ──
+// Read-only list of borrower documents the SMS assistant uploaded
+// (borrower-documents bucket + uploaded_documents row). loadDocuments(cid) is
+// called from load1003 once the contact id is known and re-fetches on every
+// lead load. Download/preview links are short-lived signed URLs so they expire;
+// the Drive button (only when gdrive_file_url is set) opens the synced copy.
+async function loadDocuments(cid) {
+  const list = document.getElementById('documentsList');
+  if (!list || !cid) return;
+  try {
+    const { data: docs, error } = await _authClient()
+      .from('uploaded_documents')
+      .select('id, document_type, file_name, file_size, file_path, storage_path, gdrive_file_id, gdrive_file_url, uploaded_at')
+      .eq('contact_id', cid)
+      .order('uploaded_at', { ascending: false });
+    if (error) { console.warn('[documents]', error.message); return; }
+    _renderDocuments(docs || []);
+    _wireDocumentsHandlers();
+  } catch (e) { console.warn('[documents]', e.message); }
+}
+
+// Human-readable byte size: 722 KB, 1.4 MB.
+function _docSize(bytes) {
+  const n = Number(bytes);
+  if (!n || n < 0) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return Math.round(n / 1024) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+// Relative upload time; switches to an absolute date once older than 30 days.
+function _docWhen(dateStr) {
+  if (!dateStr) return '';
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diff < 60) return 'Just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  if (diff < 2592000) return Math.floor(diff / 86400) + 'd ago';
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Render the document rows (or the empty state) into #documentsList. Each row:
+// type badge · file name + size · relative time · Drive/Preview/Download buttons.
+function _renderDocuments(docs) {
+  const list = document.getElementById('documentsList');
+  if (!list) return;
+  if (!docs.length) {
+    list.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.4);line-height:1.5;">No documents uploaded yet. Text photos to the assistant with the borrower&rsquo;s name to add documents.</div>`;
+    return;
+  }
+  const BTN = 'background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer;text-decoration:none;white-space:nowrap;line-height:1;display:inline-flex;align-items:center;';
+  list.innerHTML = docs.map(d => {
+    const path = d.file_path || d.storage_path || '';
+    const size = _docSize(d.file_size);
+    const isPdf = (d.file_name || '').toLowerCase().endsWith('.pdf');
+    const drive = d.gdrive_file_url
+      ? `<a href="${esc(d.gdrive_file_url)}" target="_blank" rel="noopener" style="${BTN}">Drive</a>` : '';
+    const preview = (isPdf && path)
+      ? `<button type="button" class="doc-preview" data-path="${esc(path)}" title="Preview" style="${BTN}">&#128065;</button>` : '';
+    const download = path
+      ? `<button type="button" class="doc-download" data-path="${esc(path)}" style="${BTN}">Download</button>` : '';
+    return `
+      <div style="display:flex;align-items:center;gap:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 12px;">
+        <span style="flex:0 0 auto;background:rgba(201,168,76,0.12);color:#C9A84C;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;letter-spacing:0.3px;white-space:nowrap;">${esc(d.document_type || 'Document')}</span>
+        <div style="flex:1 1 auto;min-width:0;">
+          <div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(d.file_name || 'Untitled')}</div>
+          ${size ? `<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:2px;">${esc(size)}</div>` : ''}
+        </div>
+        <span style="flex:0 0 auto;font-size:11px;color:rgba(255,255,255,0.4);white-space:nowrap;">${esc(_docWhen(d.uploaded_at))}</span>
+        <div style="flex:0 0 auto;display:flex;gap:6px;">${drive}${preview}${download}</div>
+      </div>`;
+  }).join('');
+}
+
+// Generate a 5-minute signed URL for a storage object in borrower-documents.
+async function _signedDocUrl(path) {
+  try {
+    const { data, error } = await _authClient().storage
+      .from('borrower-documents')
+      .createSignedUrl(path, 300);
+    if (error) { console.warn('[documents] signed url', error.message); return null; }
+    return data ? data.signedUrl : null;
+  } catch (e) { console.warn('[documents] signed url', e.message); return null; }
+}
+
+// Bind the delegated click handler once (Download → open signed URL in a new
+// tab; Preview → open the signed URL in an inline iframe modal). Idempotent via
+// the data-docsWired guard so a double orchestrator run won't double-bind.
+function _wireDocumentsHandlers() {
+  const list = document.getElementById('documentsList');
+  if (!list || list.dataset.docsWired === 'true') return;
+  list.dataset.docsWired = 'true';
+  list.addEventListener('click', async function(e) {
+    const pv = e.target.closest('.doc-preview');
+    const dl = e.target.closest('.doc-download');
+    const btn = pv || dl;
+    if (!btn) return;
+    const path = btn.dataset.path;
+    if (!path) return;
+    const url = await _signedDocUrl(path);
+    if (!url) { alert('Could not generate a download link. Please retry.'); return; }
+    if (pv) _openDocPreview(url);
+    else window.open(url, '_blank', 'noopener');
+  });
+}
+
+// Lazily-built inline PDF preview modal (one shared instance, reused per click).
+function _openDocPreview(url) {
+  let modal = document.getElementById('docPreviewModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'docPreviewModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;';
+    modal.innerHTML = `
+      <div style="position:relative;width:min(900px,95vw);height:90vh;background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:10px;overflow:hidden;">
+        <button type="button" id="docPreviewClose" title="Close" style="position:absolute;top:8px;right:8px;z-index:1;background:rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.2);color:#fff;font-size:18px;width:32px;height:32px;border-radius:6px;cursor:pointer;line-height:1;">&times;</button>
+        <iframe id="docPreviewFrame" style="width:100%;height:100%;border:none;background:#fff;"></iframe>
+      </div>`;
+    document.body.appendChild(modal);
+    const close = () => { modal.style.display = 'none'; const f = document.getElementById('docPreviewFrame'); if (f) f.src = 'about:blank'; };
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    modal.querySelector('#docPreviewClose').addEventListener('click', close);
+  }
+  modal.style.display = 'flex';
+  document.getElementById('docPreviewFrame').src = url;
+}
+
 async function load1003(overrideCid) {
   const cid = overrideCid || getContactId();
   if (!cid) return;
@@ -13343,6 +13485,9 @@ async function load1003(overrideCid) {
     if (typeof updateLoanBar === 'function') updateLoanBar(data);
     // Lender dropdown loads regardless of whether app data exists yet.
     await loadPricingLenders();
+    // Documents list loads regardless of whether app data exists yet (the docs
+    // live in uploaded_documents keyed by contact_id, not in the 1003 row).
+    loadDocuments(cid);
     if (!data) return;
 
     const sv = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
