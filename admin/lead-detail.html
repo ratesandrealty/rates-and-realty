@@ -385,6 +385,11 @@
     #notes-list::-webkit-scrollbar { width: 6px; }
     #notes-list::-webkit-scrollbar-thumb { background: #C9A84C; border-radius: 3px; }
     #notes-list::-webkit-scrollbar-track { background: #1a1a1a; }
+    /* Lender combobox results — same gold-on-dark scrollbar pattern */
+    #pricingLenderResults { scrollbar-width: thin; scrollbar-color: #C9A84C #1a1a1a; }
+    #pricingLenderResults::-webkit-scrollbar { width: 6px; }
+    #pricingLenderResults::-webkit-scrollbar-thumb { background: #C9A84C; border-radius: 3px; }
+    #pricingLenderResults::-webkit-scrollbar-track { background: #1a1a1a; }
     .ld-add-note-btn {
       width: 100%; padding: 9px;
       border-radius: 10px;
@@ -2537,9 +2542,17 @@
         <!-- Row 1: Lender -->
         <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px;">
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Lender</label>
-            <select id="pricingLenderSelect" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
-              <option value="">&mdash; Select Lender &mdash;</option>
-            </select></div>
+            <div class="lender-combobox" style="position:relative;">
+              <input type="text" id="pricingLenderSearch" autocomplete="off" placeholder="Search lenders..."
+                     style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 36px 9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+              <input type="hidden" id="pricingLenderSelect"><!-- holds the uuid, unchanged contract -->
+              <button type="button" id="pricingLenderClear" title="Clear"
+                      style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:rgba(255,255,255,0.4);font-size:16px;cursor:pointer;padding:4px 8px;display:none;">&#10005;</button>
+              <div id="pricingLenderResults"
+                   style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;max-height:260px;overflow-y:auto;background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:8px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,0.5);">
+                <!-- results injected by JS -->
+              </div>
+            </div></div>
           <div></div>
         </div>
 
@@ -13071,27 +13084,102 @@ async function _fetchAppRowForContact(cid) {
   }
 }
 
-// Populate the Pricing & Lender dropdown from the lenders table (active only,
-// preferred first, alpha within). Idempotent — preserves the current selection
-// across refreshes. RLS-locked table, so uses the authenticated client.
+// ── Pricing & Lender searchable combobox ──
+// The lenders table has 100+ active rows, so instead of a flat <select> we cache
+// the full list and filter client-side as the LO types. The uuid lives in the
+// hidden #pricingLenderSelect input — save1003/load1003 read/write that id
+// unchanged. RLS-locked table, so all fetches use the authenticated client.
+let _lenderCache = [];
+
+// Fetch + cache the active lender list (preferred first, alpha within), then do
+// an initial render and wire the combobox handlers (both idempotent).
 async function loadPricingLenders() {
-  const sel = document.getElementById('pricingLenderSelect');
-  if (!sel) return;
   try {
     const { data: lenders, error } = await _authClient()
       .from('lenders')
-      .select('id, name, is_preferred')
+      .select('id, name, is_preferred, lender_type, nmlsr_id')
       .eq('is_active', true)
       .order('is_preferred', { ascending: false })
       .order('name', { ascending: true });
     if (error) { console.warn('[pricingLenders]', error.message); return; }
-    const prev = sel.value;
-    sel.innerHTML = '<option value="">— Select Lender —</option>' +
-      (lenders || []).map(l =>
-        `<option value="${esc(l.id)}">${l.is_preferred ? '★ ' : ''}${esc(l.name || '')}</option>`
-      ).join('');
-    sel.value = prev;
+    _lenderCache = lenders || [];
+    _renderLenderResults('');   // initially shows full list
+    _wireLenderCombobox();      // attaches handlers (idempotent)
   } catch (e) { console.warn('[pricingLenders]', e.message); }
+}
+
+// Render filtered lender rows into #pricingLenderResults. Case-insensitive
+// substring match against name + nmlsr_id. Caps display at 50 matches.
+function _renderLenderResults(query) {
+  const box = document.getElementById('pricingLenderResults');
+  if (!box) return;
+  const q = (query || '').trim().toLowerCase();
+  const matches = q
+    ? _lenderCache.filter(l =>
+        (l.name || '').toLowerCase().includes(q) ||
+        String(l.nmlsr_id || '').toLowerCase().includes(q))
+    : _lenderCache;
+  if (!matches.length) {
+    box.innerHTML = `<div style="padding:9px 12px;font-size:13px;color:rgba(255,255,255,0.4);">No lenders match &lsquo;${esc(query)}&rsquo;</div>`;
+    return;
+  }
+  box.innerHTML = matches.slice(0, 50).map(l => `
+    <div class="lender-result" data-id="${esc(l.id)}" data-name="${esc(l.name || '')}"
+         style="padding:9px 12px;cursor:pointer;font-size:13px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);"
+         onmouseover="this.style.background='rgba(201,168,76,0.1)'" onmouseout="this.style.background='transparent'">
+      ${l.is_preferred ? '★ ' : ''}${esc(l.name || '')}
+      ${l.lender_type ? `<span style="color:rgba(255,255,255,0.4);font-size:11px;margin-left:6px;">${esc(l.lender_type)}</span>` : ''}
+    </div>`).join('');
+}
+
+// Wire combobox event handlers. Idempotent — guards via data-wired on the wrapper.
+function _wireLenderCombobox() {
+  const wrap = document.querySelector('.lender-combobox');
+  if (!wrap || wrap.dataset.wired === 'true') return;
+  wrap.dataset.wired = 'true';
+
+  const search = document.getElementById('pricingLenderSearch');
+  const hidden = document.getElementById('pricingLenderSelect');
+  const clearBtn = document.getElementById('pricingLenderClear');
+  const box = document.getElementById('pricingLenderResults');
+  if (!search || !hidden || !box) return;
+
+  const showPanel = () => { box.style.display = 'block'; };
+  const hidePanel = () => { box.style.display = 'none'; };
+
+  search.addEventListener('input', function() { _renderLenderResults(this.value); showPanel(); });
+  search.addEventListener('focus', function() { _renderLenderResults(this.value); showPanel(); });
+  search.addEventListener('keydown', function(e) { if (e.key === 'Escape') hidePanel(); });
+
+  // Click a result → commit the selection.
+  box.addEventListener('click', function(e) {
+    const row = e.target.closest('.lender-result');
+    if (!row) return;
+    hidden.value = row.dataset.id;
+    search.value = row.dataset.name;
+    hidePanel();
+    if (clearBtn) clearBtn.style.display = 'inline-block';
+    // 'change' for the documented contract; 'input' because attachAutoSave wires
+    // an input-listener to <input> elements (a hidden input never gets the
+    // <select> 'change' path), so 'input' is what actually fires auto-save.
+    hidden.dispatchEvent(new Event('change', { bubbles: true }));
+    hidden.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  // Clear the selection.
+  if (clearBtn) clearBtn.addEventListener('click', function() {
+    hidden.value = '';
+    search.value = '';
+    clearBtn.style.display = 'none';
+    hidden.dispatchEvent(new Event('change', { bubbles: true })); // fire auto-save (null)
+    hidden.dispatchEvent(new Event('input', { bubbles: true }));
+    search.focus();
+  });
+
+  // Click outside the combobox → hide the panel.
+  document.addEventListener('click', function(e) {
+    if (!wrap.contains(e.target)) hidePanel();
+  });
 }
 
 async function load1003(overrideCid) {
@@ -13112,8 +13200,21 @@ async function load1003(overrideCid) {
     const sv = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
     const sr = (name, val) => { const el = document.querySelector(`input[name="${name}"][value="${val}"]`); if (el) el.checked = true; };
 
-    // ── Pricing & Lender ── (dropdown is already populated above)
+    // ── Pricing & Lender ── (lender cache is already loaded above)
     sv('pricingLenderSelect', data.assigned_lender_id);
+    // Reflect the saved lender in the search display + reveal the clear button.
+    if (data.assigned_lender_id) {
+      const found = _lenderCache.find(l => l.id === data.assigned_lender_id);
+      const searchEl = document.getElementById('pricingLenderSearch');
+      const clearEl = document.getElementById('pricingLenderClear');
+      if (searchEl) searchEl.value = found ? found.name : '(loading…)';
+      if (clearEl) clearEl.style.display = 'inline-block';
+      // Cache miss (e.g. lender no longer active) — fetch the name directly.
+      if (!found) {
+        _authClient().from('lenders').select('name').eq('id', data.assigned_lender_id).maybeSingle()
+          .then(({ data: l }) => { if (l && searchEl) searchEl.value = l.name; });
+      }
+    }
     sv('pricingQuotedRate', data.quoted_rate);
     sv('pricingQuotedDate', data.quoted_rate_date);
     sv('pricingClosedRate', data.closed_rate);
