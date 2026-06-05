@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <script src="/api/env.js?v=20260412b"></script>
+  <title>SMS Activity | Rates &amp; Realty CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/public/css/responsive.css?v=2026033001">
+  <script src="/admin/js/auth-guard.js?v=2026033001"></script>
+  <script>if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
+  <style>
+    html.light-preload body, html.light-preload { background: #f5f5f5 !important; }
+
+    /* ── CSS VARIABLES (matched to qualifying.html / lead-detail.html) ── */
+    :root {
+      --bg:        #050505;
+      --surface:   rgba(13,13,13,0.98);
+      --surface2:  rgba(18,18,18,0.98);
+      --border:    rgba(255,255,255,0.08);
+      --border2:   rgba(255,255,255,0.05);
+      --text:      #f6f1e8;
+      --text2:     #d4cbb8;
+      --muted:     #b6ab93;
+      --gold:      #C9A84C;
+      --gold-bg:   rgba(201,168,76,0.08);
+      --gold-bdr:  rgba(201,168,76,0.25);
+      --input-bg:  rgba(20,20,20,0.98);
+      --topbar-h:  48px;
+      --green:     #4ade80;
+      --green-bg:  rgba(74,222,128,0.07);
+      --yellow:    #fbbf24;
+      --yellow-bg: rgba(251,191,36,0.06);
+      --red:       #f87171;
+      --red-bg:    rgba(248,113,113,0.06);
+    }
+    body.light {
+      --bg:       #f4f2ee;
+      --surface:  #ffffff;
+      --surface2: #f8f6f2;
+      --border:   rgba(0,0,0,0.09);
+      --border2:  rgba(0,0,0,0.05);
+      --text:     #1a1410;
+      --text2:    #3d3427;
+      --muted:    #7a6f5c;
+      --input-bg: #ffffff;
+      --green-bg:  rgba(34,160,90,0.08);
+      --yellow-bg: rgba(180,130,10,0.08);
+      --red-bg:    rgba(200,60,60,0.07);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 14px; }
+    body {
+      font-family: 'Manrope', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+    a { color: inherit; text-decoration: none; }
+    button, select, input { font-family: 'Manrope', sans-serif; font-size: 0.85rem; }
+
+    /* ── ACTION BAR (same chrome as qualifying.html) ── */
+    .action-bar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: var(--topbar-h);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 6px;
+      padding: 0 12px; z-index: 200;
+      white-space: nowrap;
+    }
+    .ab-back {
+      display: flex; align-items: center; gap: 4px;
+      padding: 3px 8px; border-radius: 999px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      color: var(--muted); font-size: 11px; font-weight: 600;
+      cursor: pointer; transition: all .18s; white-space: nowrap;
+      flex-shrink: 0; text-decoration: none;
+    }
+    .ab-back:hover { color: var(--text); background: rgba(255,255,255,0.09); }
+    .ab-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 18px; font-weight: 600;
+      color: var(--text); white-space: nowrap; flex-shrink: 0;
+      margin-left: 4px;
+    }
+    .ab-divider { flex: 1; min-width: 8px; }
+    .ab-controls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .ab-btn {
+      padding: 4px 10px; border-radius: 6px;
+      font-size: 11px; font-weight: 700;
+      cursor: pointer; transition: all .18s;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .ab-btn-danger {
+      background: rgba(248,113,113,0.1);
+      border: 1px solid rgba(248,113,113,0.25);
+      color: #f87171;
+    }
+    .ab-btn-danger:hover { background: rgba(248,113,113,0.18); }
+    .ab-theme {
+      width: 28px; height: 28px; border-radius: 6px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--muted); font-size: .85rem; flex-shrink: 0;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: all .18s;
+    }
+    .ab-theme:hover { color: var(--gold); border-color: var(--gold-bdr); }
+
+    /* ── PAGE WRAP ── */
+    .page {
+      max-width: 1320px; margin: 0 auto;
+      padding: calc(var(--topbar-h) + 22px) 22px 60px;
+    }
+    .page-sub { color: var(--muted); font-size: 12px; margin: 2px 0 22px; }
+
+    /* ── STATS BANNER ── */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px; margin-bottom: 18px;
+    }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 16px 18px;
+    }
+    .stat-card.accent { border-color: var(--gold-bdr); background: var(--gold-bg); }
+    .stat-card.warn { border-color: rgba(248,113,113,0.3); background: var(--red-bg); }
+    .stat-label {
+      font-size: 10.5px; font-weight: 700; letter-spacing: .07em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .stat-value {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 30px; font-weight: 700; color: var(--text);
+      margin-top: 6px; line-height: 1;
+    }
+    .stat-card.accent .stat-value { color: var(--gold); }
+    .stat-card.warn .stat-value { color: var(--red); }
+    .stat-note { font-size: 11px; color: var(--muted); margin-top: 5px; }
+
+    /* ── FILTER ROW ── */
+    .filter-row {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      margin-bottom: 14px;
+    }
+    .flt-select, .flt-input {
+      background: var(--input-bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 7px 11px; color: var(--text2);
+      font-size: 12px; outline: none; transition: border-color .15s;
+    }
+    .flt-select:focus, .flt-input:focus { border-color: var(--gold-bdr); }
+    .flt-input { min-width: 170px; }
+    .flt-select option { background: #1a1a1a; }
+    .toggle {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 999px; padding: 6px 13px;
+      font-size: 12px; font-weight: 600; color: var(--muted);
+      cursor: pointer; transition: all .15s; user-select: none;
+    }
+    .toggle:hover { color: var(--text); border-color: var(--gold-bdr); }
+    .toggle.on { background: var(--gold-bg); border-color: var(--gold-bdr); color: var(--gold); }
+    .toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .35; }
+    .toggle.on .dot { opacity: 1; }
+
+    /* ── FILTER CHIPS ── */
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .chip {
+      padding: 6px 14px; border-radius: 999px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--muted); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all .15s;
+    }
+    .chip:hover { color: var(--text); border-color: var(--gold-bdr); }
+    .chip.active { background: var(--gold-bg); border-color: var(--gold-bdr); color: var(--gold); }
+
+    /* ── TABLE ── */
+    .table-wrap {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; overflow: hidden; margin-bottom: 34px;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      text-align: left; font-size: 10.5px; font-weight: 700;
+      letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+      cursor: pointer; user-select: none; white-space: nowrap;
+      position: sticky; top: var(--topbar-h); background: var(--surface); z-index: 5;
+    }
+    thead th:hover { color: var(--text2); }
+    thead th.nosort { cursor: default; }
+    thead th.nosort:hover { color: var(--muted); }
+    thead th .arrow { color: var(--gold); margin-left: 4px; font-size: 9px; }
+    thead th.num, tbody td.num { text-align: right; }
+    tbody td {
+      padding: 11px 14px; font-size: 13px; color: var(--text2);
+      border-bottom: 1px solid var(--border2); vertical-align: middle;
+    }
+    .row-main { cursor: pointer; transition: background .12s; }
+    .row-main:hover { background: rgba(255,255,255,0.025); }
+    .row-main.open { background: rgba(201,168,76,0.05); }
+    .row-main td:first-child { border-left: 3px solid transparent; }
+    .row-main.s-green  td:first-child { border-left-color: var(--green); }
+    .row-main.s-yellow td:first-child { border-left-color: var(--yellow); }
+    .row-main.s-red    td:first-child { border-left-color: var(--red); }
+    .time-cell { font-weight: 700; color: var(--text); white-space: nowrap; }
+    .time-cell .caret { color: var(--muted); font-size: 10px; margin-right: 6px; display: inline-block; transition: transform .15s; }
+    .row-main.open .time-cell .caret { transform: rotate(90deg); color: var(--gold); }
+    .time-cell .sub { display: block; font-size: 10px; font-weight: 500; color: var(--muted); margin-left: 16px; }
+    .phone { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .msg-trunc { color: var(--text2); max-width: 240px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+    .msg-trunc.out { color: var(--muted); }
+    .dur { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .dur.slow { color: var(--yellow); font-weight: 700; }
+
+    .badge {
+      padding: 2px 8px; border-radius: 999px;
+      font-size: 10px; font-weight: 700; letter-spacing: .04em;
+      white-space: nowrap; display: inline-block;
+    }
+    .b-path { background: rgba(96,165,250,.12); border:1px solid rgba(96,165,250,.3); color:#60a5fa; }
+    .b-path.p-mms   { background: rgba(167,139,250,.12); border-color:rgba(167,139,250,.3); color:#a78bfa; }
+    .b-path.p-voice { background: rgba(232,121,249,.12); border-color:rgba(232,121,249,.3); color:#e879f9; }
+    .b-path.p-pending_resolve, .b-path.p-pending_cancel { background: rgba(251,191,36,.12); border-color:rgba(251,191,36,.3); color:#fbbf24; }
+    .b-ok  { background: var(--green-bg); border:1px solid rgba(74,222,128,.35); color: var(--green); }
+    .b-warn{ background: var(--yellow-bg); border:1px solid rgba(251,191,36,.35); color: var(--yellow); }
+    .b-err { background: var(--red-bg); border:1px solid rgba(248,113,113,.35); color: var(--red); }
+    .b-muted { background: var(--surface2); border:1px solid var(--border); color: var(--muted); }
+    .tc-count { font-variant-numeric: tabular-nums; font-weight: 700; }
+    .tc-count.zero { color: var(--muted); font-weight: 400; }
+
+    /* ── DETAIL PANEL ── */
+    .detail-row td { padding: 0; border-bottom: 1px solid var(--border2); }
+    .detail-inner {
+      padding: 20px 22px; display: grid; gap: 22px;
+      grid-template-columns: 1.3fr 1fr; background: var(--surface2);
+    }
+    @media (max-width: 880px) { .detail-inner { grid-template-columns: 1fr; } }
+    .detail-block h4 {
+      font-size: 11px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--gold); margin-bottom: 10px;
+    }
+    .detail-block h4:not(:first-child) { margin-top: 20px; }
+    .msg-block {
+      font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+      font-size: 12px; line-height: 1.5; color: var(--text2);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 14px;
+      white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto;
+    }
+    .msg-block.inbound { border-left: 3px solid #60a5fa; }
+    .msg-block.outbound { border-left: 3px solid var(--gold); margin-top: 8px; }
+    .msg-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 10px 0 4px; }
+
+    /* meta key/value list */
+    .kv { display: grid; grid-template-columns: 130px 1fr; gap: 4px 10px; font-size: 12px; }
+    .kv dt { color: var(--muted); }
+    .kv dd { color: var(--text); word-break: break-word; }
+    .kv dd a { color: var(--gold); }
+
+    /* tool calls */
+    .tool-item {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+    }
+    .tool-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+    .tool-name { font-weight: 700; color: var(--text); font-size: 12px; }
+    .tool-name code { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--gold); }
+    .tool-dur { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .tool-item details { margin-top: 6px; }
+    .tool-item summary { cursor: pointer; font-size: 11px; color: var(--muted); }
+    .tool-item summary:hover { color: var(--text2); }
+    .tool-item pre {
+      font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+      color: var(--text2); background: var(--bg); border: 1px solid var(--border2);
+      border-radius: 6px; padding: 8px; margin-top: 6px;
+      white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto;
+    }
+    .tool-out { font-size: 11px; color: var(--text2); margin-top: 6px; font-family: ui-monospace, Menlo, Consolas, monospace; word-break: break-word; }
+
+    .related-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 14px; font-size: 12px; color: var(--text2);
+    }
+    .related-box .rb-title { font-weight: 700; color: var(--text); margin-bottom: 6px; }
+
+    .detail-foot { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+    .detail-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: linear-gradient(135deg, #f2cf85, #C9A84C);
+      color: #111; font-weight: 800; font-size: 12px;
+      padding: 8px 16px; border-radius: 8px; transition: opacity .15s;
+    }
+    .detail-link:hover { opacity: .88; }
+    .detail-link.ghost { background: var(--surface); border: 1px solid var(--border); color: var(--text2); }
+
+    /* ── SECTION TITLE ── */
+    .section-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 22px; font-weight: 600; color: var(--text);
+      margin: 8px 0 12px;
+    }
+    .section-title small { font-family: 'Manrope', sans-serif; font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 8px; }
+
+    .empty-state { padding: 50px 20px; text-align: center; color: var(--muted); }
+    .empty-state .big { font-size: 2.5rem; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+
+<!-- ── ACTION BAR ── -->
+<div class="action-bar">
+  <a href="people.html" class="ab-back" title="People">&#128101;</a>
+  <a href="pipeline.html" class="ab-back" title="Pipeline">&#127937;</a>
+  <a href="guideline-ai.html" class="ab-back" title="Guideline AI">&#128270;</a>
+  <a href="qualifying.html" class="ab-back" title="Qualifying Analyzer">&#128202;</a>
+  <div class="ab-name">&#128172; SMS Activity</div>
+  <div class="ab-divider"></div>
+  <div class="ab-controls">
+    <button class="ab-btn ab-btn-danger" onclick="(window.adminLogout||function(){location.href='/admin-login.html'})()">Logout</button>
+    <button class="ab-theme" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">&#127769;</button>
+  </div>
+</div>
+
+<div class="page">
+  <div class="page-sub">SMS assistant activity log — inbound/outbound messages, Claude tool calls, MMS document OCR, and numbered-reply clarification state. <span id="updated"></span></div>
+
+  <!-- stats banner -->
+  <div class="stats" id="statsBanner"></div>
+
+  <!-- filter row -->
+  <div class="filter-row">
+    <select class="flt-select" id="rangeSelect" onchange="setRange(this.value)">
+      <option value="24h">Last 24h</option>
+      <option value="7d" selected>Last 7 days</option>
+      <option value="30d">Last 30 days</option>
+      <option value="all">All time</option>
+    </select>
+    <input class="flt-input" id="phoneInput" type="text" placeholder="Filter by phone…" oninput="setPhone(this.value)">
+    <div class="toggle" id="authToggle" onclick="toggleAuth()"><span class="dot"></span><span>Authorized only</span></div>
+  </div>
+
+  <!-- path chips -->
+  <div class="chips" id="pathChips"></div>
+
+  <!-- main table -->
+  <div class="table-wrap">
+    <table>
+      <thead><tr id="headRow"></tr></thead>
+      <tbody id="tbody">
+        <tr><td colspan="8" class="empty-state">Loading SMS activity…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- recent OCR jobs -->
+  <div class="section-title">Recent OCR Jobs <small id="ocrCount"></small></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="nosort">Time</th>
+          <th class="nosort">Borrower</th>
+          <th class="nosort">Doc Type</th>
+          <th class="nosort">Status</th>
+          <th class="nosort">Extracted Summary</th>
+        </tr>
+      </thead>
+      <tbody id="ocrBody">
+        <tr><td colspan="5" class="empty-state">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+/* ── INIT (same Supabase setup pattern as qualifying.html) ── */
+const { createClient } = window.supabase;
+const sb = createClient(
+  window.APP_CONFIG.SUPABASE_URL,
+  window.APP_CONFIG.SUPABASE_ANON_KEY
+);
+
+// Prefer the session-aware client set up by admin/js/auth-guard.js; fall back to anon.
+async function _waitForAuthClient(maxMs) {
+  if (maxMs == null) maxMs = 5000;
+  if (typeof window.getSupabaseClient === 'function') {
+    try { return await window.getSupabaseClient(); } catch (e) { /* fall through */ }
+  }
+  const start = Date.now();
+  while (!window._supabaseClient && Date.now() - start < maxMs) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return window._supabaseClient || sb;
+}
+
+/* ── THEME ── */
+function toggleTheme() {
+  const light = document.body.classList.toggle('light');
+  document.documentElement.classList.toggle('light-preload', light);
+  localStorage.setItem('rr-theme', light ? 'light' : 'dark');
+  document.getElementById('theme-toggle').textContent = light ? '☀️' : '🌙';
+}
+if (localStorage.getItem('rr-theme') === 'light') {
+  document.body.classList.add('light');
+  document.getElementById('theme-toggle').textContent = '☀️';
+}
+
+/* ── HELPERS ── */
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function fmtTime(d) {
+  if (!d) return '—';
+  const dt = new Date(d); if (isNaN(dt)) return '—';
+  return dt.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+function fmtTimeSub(d) {
+  if (!d) return '';
+  const dt = new Date(d); if (isNaN(dt)) return '';
+  return dt.getFullYear() + ' · ' + dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function fmtDur(ms) {
+  ms = Number(ms);
+  if (!ms && ms !== 0) return '—';
+  if (ms < 1000) return ms + 'ms';
+  return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
+}
+function fmtPhone(p) {
+  if (!p) return '—';
+  const m = String(p).match(/^\+?1?(\d{3})(\d{3})(\d{4})$/);
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : p;
+}
+function truncate(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s; }
+function safeParse(v) { if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch (_) { return v; } }
+function prettyJson(v) {
+  const obj = safeParse(v);
+  if (typeof obj === 'object' && obj !== null) { try { return JSON.stringify(obj, null, 2); } catch (_) { return String(v); } }
+  return String(v == null ? '' : v);
+}
+function toolCount(r) { return Array.isArray(r.tool_calls) ? r.tool_calls.length : 0; }
+
+const MS_DAY = 86400000;
+const RANGES = { '24h': MS_DAY, '7d': 7 * MS_DAY, '30d': 30 * MS_DAY, 'all': null };
+
+// row status: red = rejected/error, yellow = rate-limited or slow (>10s), green = authorized + ok
+function rowStatus(r) {
+  const reason = `${r.reject_reason || ''} ${r.error_message || ''}`;
+  const isRate = /rate[\s_-]?limit/i.test(reason);
+  const hasProblem = r.authorized === false || !!r.reject_reason || !!r.error_message;
+  if (isRate) return { cls: 's-yellow', badge: 'b-warn', label: 'rate limited' };
+  if (hasProblem) {
+    const lbl = r.reject_reason || r.error_message || (r.authorized === false ? 'rejected' : 'error');
+    return { cls: 's-red', badge: 'b-err', label: truncate(lbl, 22) };
+  }
+  if (Number(r.duration_ms) > 10000) return { cls: 's-yellow', badge: 'b-warn', label: 'slow' };
+  return { cls: 's-green', badge: 'b-ok', label: 'auth ok' };
+}
+function meta(r) { return (r.metadata && typeof r.metadata === 'object') ? r.metadata : {}; }
+function rowPath(r) { return meta(r).path || (r.error_message ? 'error' : 'sms'); }
+
+/* ── STATE ── */
+let SMS = [];                 // sms_assistant_log rows
+let OCR = [];                 // ocr_jobs rows
+let PC = [];                  // pending_clarifications rows
+let CONTACTS = {};            // id -> "First Last"
+let OCR_BY_ID = {};           // ocr id / document_id -> job
+let OCR_BY_CONTACT = {};      // contact_id -> [jobs]
+let PC_BY_ID = {};            // pending id -> clarification
+
+let activeRange = '7d';
+let phoneFilter = '';
+let authorizedOnly = false;
+let activePath = 'all';
+let sortKey = 'created_at';
+let sortDir = 'desc';
+let openId = null;
+
+const COLUMNS = [
+  { key: 'created_at',  label: 'Time',     num: false },
+  { key: 'from_phone',  label: 'From',     num: false },
+  { key: '_path',       label: 'Path',     num: false },
+  { key: 'inbound_text',label: 'Inbound',  num: false },
+  { key: 'outbound_text', label: 'Outbound', num: false },
+  { key: '_tools',      label: 'Tools',    num: true  },
+  { key: 'duration_ms', label: 'Duration', num: true  },
+  { key: '_status',     label: 'Status',   num: false },
+];
+
+const PATHS = [
+  { id: 'all', label: 'All' },
+  { id: 'sms', label: 'sms' },
+  { id: 'mms', label: 'mms' },
+  { id: 'voice', label: 'voice' },
+  { id: 'pending_resolve', label: 'pending_resolve' },
+  { id: 'pending_cancel', label: 'pending_cancel' },
+];
+
+/* ── LOAD ── */
+async function loadData() {
+  try {
+    const client = await _waitForAuthClient();
+    const [smsRes, ocrRes, pcRes] = await Promise.all([
+      client.from('sms_assistant_log').select('*').order('created_at', { ascending: false }).limit(1000),
+      client.from('ocr_jobs').select('*').order('created_at', { ascending: false }).limit(500),
+      client.from('pending_clarifications').select('*').order('created_at', { ascending: false }).limit(500),
+    ]);
+    if (smsRes.error) throw smsRes.error;
+    SMS = smsRes.data || [];
+    OCR = ocrRes.error ? [] : (ocrRes.data || []);
+    PC  = pcRes.error ? [] : (pcRes.data || []);
+
+    // index OCR + pending
+    OCR.forEach(j => {
+      if (j.id) OCR_BY_ID[j.id] = j;
+      if (j.document_id) OCR_BY_ID[j.document_id] = j;
+      if (j.contact_id) (OCR_BY_CONTACT[j.contact_id] = OCR_BY_CONTACT[j.contact_id] || []).push(j);
+    });
+    PC.forEach(p => { if (p.id) PC_BY_ID[p.id] = p; });
+
+    // resolve contact names for the OCR table (ocr_jobs has no name column)
+    const ids = [...new Set(OCR.map(j => j.contact_id).filter(Boolean))];
+    if (ids.length) {
+      const { data: cs } = await client.from('contacts').select('id, first_name, last_name').in('id', ids);
+      (cs || []).forEach(c => {
+        CONTACTS[c.id] = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || '—';
+      });
+    }
+
+    document.getElementById('updated').textContent = '· ' + SMS.length + ' messages logged';
+    renderStats();
+    renderPathChips();
+    renderHead();
+    renderTable();
+    renderOcrTable();
+  } catch (e) {
+    console.error('[sms-activity] load failed:', e);
+    document.getElementById('tbody').innerHTML =
+      `<tr><td colspan="8" class="empty-state"><div class="big">⚠️</div>
+        Could not load SMS activity.<br><span style="font-size:12px;">${esc((e && e.message) || e)}</span></td></tr>`;
+  }
+}
+
+/* ── STATS BANNER ── */
+function renderStats() {
+  const now = Date.now();
+  const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+  const t0 = startToday.getTime();
+  const w7 = now - 7 * MS_DAY;
+
+  const today = SMS.filter(r => new Date(r.created_at).getTime() >= t0).length;
+  const week  = SMS.filter(r => new Date(r.created_at).getTime() >= w7);
+  const durs  = week.map(r => Number(r.duration_ms)).filter(n => n > 0);
+  const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length) : 0;
+  const toolInv = week.reduce((s, r) => s + toolCount(r), 0);
+  const ocr7 = OCR.filter(j => new Date(j.created_at).getTime() >= w7).length;
+  const probs = week.filter(r => r.authorized === false || r.reject_reason || r.error_message).length;
+
+  const cards = [
+    { label: 'Messages Today',        value: today,           note: 'since local midnight', accent: true },
+    { label: 'Messages (7d)',         value: week.length,     note: 'last 7 days' },
+    { label: 'Avg Response',          value: fmtDur(avgDur),  note: 'Claude turnaround (7d)' },
+    { label: 'Tool Calls (7d)',       value: toolInv,         note: 'assistant tool invocations', accent: true },
+    { label: 'OCR Jobs (7d)',         value: ocr7,            note: 'MMS docs processed' },
+    { label: 'Rejected / Errors (7d)',value: probs,           note: 'needs review', warn: probs > 0 },
+  ];
+  document.getElementById('statsBanner').innerHTML = cards.map(c => `
+    <div class="stat-card${c.accent ? ' accent' : ''}${c.warn ? ' warn' : ''}">
+      <div class="stat-label">${c.label}</div>
+      <div class="stat-value">${c.value}</div>
+      <div class="stat-note">${c.note}</div>
+    </div>`).join('');
+}
+
+/* ── PATH CHIPS ── */
+function renderPathChips() {
+  const counts = {};
+  SMS.forEach(r => { const p = meta(r).path; if (p) counts[p] = (counts[p] || 0) + 1; });
+  document.getElementById('pathChips').innerHTML = PATHS.map(p => {
+    const n = p.id === 'all' ? SMS.length : (counts[p.id] || 0);
+    return `<div class="chip${activePath === p.id ? ' active' : ''}" onclick="setPath('${p.id}')">${p.label} <span style="opacity:.6">${n}</span></div>`;
+  }).join('');
+}
+function setPath(id) { activePath = id; openId = null; renderPathChips(); renderTable(); }
+function setRange(v) { activeRange = v; openId = null; renderTable(); }
+function setPhone(v) { phoneFilter = (v || '').replace(/[^\d]/g, ''); openId = null; renderTable(); }
+function toggleAuth() {
+  authorizedOnly = !authorizedOnly;
+  document.getElementById('authToggle').classList.toggle('on', authorizedOnly);
+  openId = null; renderTable();
+}
+
+/* ── FILTER ── */
+function passesFilter(r) {
+  const ms = RANGES[activeRange];
+  if (ms != null && (Date.now() - new Date(r.created_at).getTime()) > ms) return false;
+  if (activePath !== 'all' && meta(r).path !== activePath) return false;
+  if (authorizedOnly && r.authorized !== true) return false;
+  if (phoneFilter) {
+    const hay = `${r.from_phone || ''}${r.to_phone || ''}`.replace(/[^\d]/g, '');
+    if (!hay.includes(phoneFilter)) return false;
+  }
+  return true;
+}
+
+/* ── TABLE HEAD ── */
+function renderHead() {
+  document.getElementById('headRow').innerHTML = COLUMNS.map(c => {
+    const arrow = sortKey === c.key ? `<span class="arrow">${sortDir === 'asc' ? '▲' : '▼'}</span>` : '';
+    return `<th class="${c.num ? 'num' : ''}" onclick="setSort('${c.key}')">${c.label}${arrow}</th>`;
+  }).join('');
+}
+function setSort(key) {
+  if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  else { sortKey = key; sortDir = (key === 'from_phone' || key === '_path') ? 'asc' : 'desc'; }
+  renderHead(); renderTable();
+}
+function sortVal(r, key) {
+  if (key === '_tools') return toolCount(r);
+  if (key === '_path') return rowPath(r);
+  if (key === '_status') return rowStatus(r).label;
+  if (key === 'created_at') return new Date(r.created_at).getTime() || 0;
+  if (key === 'duration_ms') return Number(r.duration_ms) || 0;
+  return (r[key] || '').toString().toLowerCase();
+}
+
+/* ── TABLE BODY ── */
+function renderTable() {
+  const rows = SMS.filter(passesFilter).sort((a, b) => {
+    const va = sortVal(a, sortKey), vb = sortVal(b, sortKey);
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  if (!rows.length) {
+    document.getElementById('tbody').innerHTML =
+      `<tr><td colspan="8" class="empty-state"><div class="big">🔍</div>No messages match these filters.</td></tr>`;
+    return;
+  }
+
+  document.getElementById('tbody').innerHTML = rows.map(r => {
+    const st = rowStatus(r);
+    const path = rowPath(r);
+    const tc = toolCount(r);
+    const slow = Number(r.duration_ms) > 10000;
+    const isOpen = openId === r.id;
+    const main = `
+      <tr class="row-main ${st.cls}${isOpen ? ' open' : ''}" onclick="toggleRow('${r.id}')">
+        <td class="time-cell"><span class="caret">▶</span>${esc(fmtTime(r.created_at))}<span class="sub">${esc(fmtTimeSub(r.created_at))}</span></td>
+        <td class="phone">${esc(fmtPhone(r.from_phone))}</td>
+        <td><span class="badge b-path p-${esc(path)}">${esc(path)}</span></td>
+        <td><span class="msg-trunc" title="${esc(r.inbound_text || '')}">${esc(truncate(r.inbound_text || '—', 48))}</span></td>
+        <td><span class="msg-trunc out" title="${esc(r.outbound_text || '')}">${esc(truncate(r.outbound_text || '—', 48))}</span></td>
+        <td class="num"><span class="tc-count${tc ? '' : ' zero'}">${tc}</span></td>
+        <td class="num dur${slow ? ' slow' : ''}">${esc(fmtDur(r.duration_ms))}</td>
+        <td><span class="badge ${st.badge}">${esc(st.label)}</span></td>
+      </tr>`;
+    return main + (isOpen ? detailRow(r) : '');
+  }).join('');
+}
+function toggleRow(id) { openId = (openId === id) ? null : id; renderTable(); }
+
+/* ── DETAIL PANEL ── */
+function findRelatedOcr(r) {
+  const m = meta(r);
+  if (m.uploaded_id && OCR_BY_ID[m.uploaded_id]) return OCR_BY_ID[m.uploaded_id];
+  const cid = m.contact_id || m.picked_contact_id;
+  if (cid && OCR_BY_CONTACT[cid] && OCR_BY_CONTACT[cid].length) {
+    const t = new Date(r.created_at).getTime();
+    return OCR_BY_CONTACT[cid].slice().sort((a, b) =>
+      Math.abs(new Date(a.created_at).getTime() - t) - Math.abs(new Date(b.created_at).getTime() - t))[0];
+  }
+  return null;
+}
+function deriveDocType(j) {
+  const s = `${j.file_name || ''} ${j.textract_job_id || ''}`.toLowerCase();
+  if (/pay.?stub/.test(s)) return 'Pay Stub';
+  if (/w-?2/.test(s)) return 'W-2';
+  if (/bank/.test(s)) return 'Bank Statement';
+  if (/1099/.test(s)) return '1099';
+  if (/tax|1040/.test(s)) return 'Tax Return';
+  return 'Document';
+}
+function ocrSummary(j) {
+  const ef = (j.extracted_fields && typeof j.extracted_fields === 'object') ? j.extracted_fields : {};
+  const keys = Object.keys(ef);
+  if (!keys.length) return '<span style="color:var(--muted)">—</span>';
+  const parts = [];
+  if (ef.employer_name) parts.push(esc(ef.employer_name));
+  if (ef.gross_pay) parts.push('gross $' + esc(ef.gross_pay));
+  if (ef.net_pay) parts.push('net $' + esc(ef.net_pay));
+  if (ef.ytd_gross) parts.push('YTD $' + esc(ef.ytd_gross));
+  if (!parts.length) {
+    if (ef.first_name || ef.last_name) parts.push(esc([ef.first_name, ef.last_name].filter(Boolean).join(' ')));
+    keys.slice(0, 2).forEach(k => { if (parts.length < 3 && typeof ef[k] !== 'object') parts.push(esc(k) + ': ' + esc(truncate(ef[k], 18))); });
+  }
+  return parts.join(' · ') + ` <span style="color:var(--muted)">(${keys.length} fields)</span>`;
+}
+
+function detailRow(r) {
+  const m = meta(r);
+  const cid = m.contact_id || m.picked_contact_id;
+  const cname = m.contact_name || m.picked_name;
+
+  // metadata key/value list (curated)
+  const metaPairs = [
+    ['Path', m.path],
+    ['Contact', cname ? (cid ? `<a href="lead-detail.html?contact_id=${esc(cid)}">${esc(cname)} →</a>` : esc(cname)) : null],
+    ['Category', m.category],
+    ['Media count', m.media_count],
+    ['Has image', m.has_image === true ? 'yes' : (m.has_image === false ? 'no' : null)],
+    ['Has audio', m.has_audio === true ? 'yes' : (m.has_audio === false ? 'no' : null)],
+    ['Iterations', m.iterations],
+    ['History msgs', m.history_messages],
+    ['GDrive file', m.gdrive_file_url ? `<a href="${esc(m.gdrive_file_url)}" target="_blank" rel="noopener">open ↗</a>` : null],
+    ['Claude model', r.claude_model],
+    ['Tokens', (r.claude_input_tokens || r.claude_output_tokens) ? `${r.claude_input_tokens || 0} in / ${r.claude_output_tokens || 0} out` : null],
+  ].filter(p => p[1] != null && p[1] !== '');
+  const metaList = metaPairs.map(p => `<dt>${esc(p[0])}</dt><dd>${p[1]}</dd>`).join('');
+
+  // voice transcript
+  const transcriptBlock = m.transcript
+    ? `<div class="msg-label">Voice transcript</div><div class="msg-block">${esc(m.transcript)}</div>` : '';
+
+  // tool calls
+  const tools = Array.isArray(r.tool_calls) ? r.tool_calls : [];
+  const toolsHtml = tools.length ? tools.map(t => {
+    const out = typeof t.output === 'string' ? t.output : JSON.stringify(t.output);
+    return `<div class="tool-item">
+      <div class="tool-head">
+        <span class="tool-name"><code>${esc(t.name || 'tool')}</code></span>
+        <span class="tool-dur">${esc(fmtDur(t.duration_ms))}</span>
+      </div>
+      <details><summary>input</summary><pre>${esc(prettyJson(t.input))}</pre></details>
+      <div class="tool-out">→ ${esc(truncate(out || '', 200))}</div>
+    </div>`;
+  }).join('') : '<div style="font-size:12px;color:var(--muted)">No tool calls on this turn.</div>';
+
+  // related OCR job
+  const oj = findRelatedOcr(r);
+  const ocrBox = oj ? `
+    <div class="related-box">
+      <div class="rb-title">📄 Related OCR job <span class="badge ${oj.status === 'completed' ? 'b-ok' : 'b-muted'}">${esc(oj.status || '?')}</span></div>
+      <div>${esc(deriveDocType(oj))} · ${esc(oj.file_name || oj.id)}</div>
+      <div style="margin-top:5px">${ocrSummary(oj)}</div>
+      <div style="margin-top:5px;color:var(--muted);font-size:11px">${esc(fmtTime(oj.completed_at || oj.created_at))}</div>
+    </div>` : '';
+
+  // related pending clarification
+  const pc = m.pending_id ? PC_BY_ID[m.pending_id] : null;
+  const pcBox = pc ? `
+    <div class="related-box" style="margin-top:8px">
+      <div class="rb-title">🔢 Pending clarification <span class="badge ${pc.resolved_at ? 'b-ok' : 'b-warn'}">${pc.resolved_at ? 'resolved' : 'open'}</span></div>
+      <div>kind: <b>${esc(pc.kind || '—')}</b>${pc.resolved_with ? ` · resolved with “${esc(pc.resolved_with)}”` : ''}</div>
+      <div style="margin-top:5px;color:var(--muted);font-size:11px">created ${esc(fmtTime(pc.created_at))}${pc.expires_at ? ` · expires ${esc(fmtTime(pc.expires_at))}` : ''}</div>
+    </div>` : '';
+
+  // twilio console link
+  const sid = r.twilio_message_sid;
+  const twilio = sid
+    ? (/^(SM|MM)[a-z0-9]+$/i.test(sid)
+        ? `<a href="https://console.twilio.com/us1/monitor/logs/sms/${esc(sid)}" target="_blank" rel="noopener">${esc(sid)} ↗</a>`
+        : esc(sid))
+    : '<span style="color:var(--muted)">—</span>';
+
+  return `
+    <tr class="detail-row"><td colspan="8">
+      <div class="detail-inner">
+        <div class="detail-block">
+          <h4>Conversation</h4>
+          <div class="msg-label">Inbound — ${esc(fmtPhone(r.from_phone))}</div>
+          <div class="msg-block inbound">${esc(r.inbound_text || '(no inbound text)')}</div>
+          <div class="msg-label">Outbound — ${esc(fmtPhone(r.to_phone))}${r.outbound_sent_at ? ' · sent ' + esc(fmtTime(r.outbound_sent_at)) : ''}</div>
+          <div class="msg-block outbound">${esc(r.outbound_text || '(no outbound text)')}</div>
+          ${transcriptBlock}
+          <h4>Tool Calls <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(${tools.length})</span></h4>
+          ${toolsHtml}
+        </div>
+        <div class="detail-block">
+          <h4>Metadata</h4>
+          <dl class="kv">${metaList || '<dd style="color:var(--muted)">No metadata.</dd>'}</dl>
+          <h4>Twilio</h4>
+          <div style="font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all">${twilio}</div>
+          ${(ocrBox || pcBox) ? '<h4>Related Records</h4>' + ocrBox + pcBox : ''}
+        </div>
+        <div class="detail-foot">
+          ${cid ? `<a class="detail-link" href="lead-detail.html?contact_id=${esc(cid)}">Open borrower →</a>` : ''}
+        </div>
+      </div>
+    </td></tr>`;
+}
+
+/* ── RECENT OCR JOBS TABLE ── */
+function renderOcrTable() {
+  const rows = OCR.slice(0, 20);
+  document.getElementById('ocrCount').textContent = OCR.length ? `last 20 of ${OCR.length}` : '';
+  if (!rows.length) {
+    document.getElementById('ocrBody').innerHTML =
+      `<tr><td colspan="5" class="empty-state">No OCR jobs found.</td></tr>`;
+    return;
+  }
+  document.getElementById('ocrBody').innerHTML = rows.map(j => {
+    const name = CONTACTS[j.contact_id] || (j.contact_id ? truncate(j.contact_id, 8) : '—');
+    const stCls = j.error_message ? 'b-err' : (j.status === 'completed' ? 'b-ok' : 'b-muted');
+    const nameCell = j.contact_id
+      ? `<a href="lead-detail.html?contact_id=${esc(j.contact_id)}" style="color:var(--gold)">${esc(name)}</a>`
+      : esc(name);
+    return `
+      <tr>
+        <td class="time-cell" style="font-weight:600">${esc(fmtTime(j.completed_at || j.created_at))}</td>
+        <td>${nameCell}</td>
+        <td><span class="badge b-muted">${esc(deriveDocType(j))}</span></td>
+        <td><span class="badge ${stCls}">${esc(j.error_message ? 'error' : (j.status || '?'))}</span></td>
+        <td style="font-size:12px">${ocrSummary(j)}</td>
+      </tr>`;
+  }).join('');
+}
+
+loadData();
+</script>
+</body>
+</html>
