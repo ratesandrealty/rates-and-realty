@@ -15841,10 +15841,15 @@ async function openForm1003Modal() {
     if (!res.ok) { var err = await res.json(); throw new Error(err.error || 'Generation failed'); }
     var data = await res.json();
     _form1003FileName = data.file_name;
-    var binaryStr = atob(data.pdf_base64);
+    // generate-1003-pdf returns base64-encoded HTML under `html` (not `pdf_base64`).
+    // Read `html` first, keep a `pdf_base64` fallback, and guard against a missing payload
+    // so atob() never gets undefined (which decodes "undefined" and throws InvalidCharacterError).
+    var b64 = data.html || data.pdf_base64;
+    if (!b64) throw new Error('No document payload returned by generator');
+    var binaryStr = atob(b64);
     var bytes = new Uint8Array(binaryStr.length);
     for (var i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-    var blob = new Blob([bytes], { type:'application/pdf' });
+    var blob = new Blob([bytes], { type:'text/html;charset=utf-8' });
     _form1003BlobUrl = URL.createObjectURL(blob);
     iframe.src = _form1003BlobUrl;
     loader.style.display = 'none';
