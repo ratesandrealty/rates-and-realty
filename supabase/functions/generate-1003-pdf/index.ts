@@ -78,6 +78,54 @@ const CSS_OVERRIDE = `
 
 /* Recolor legacy navy accents (TOTAL boxes, total rows, cash row) to black */
 [style*="1a1a2e"]{ background:#000 !important; }
+
+/* ===== v49 print pagination: one section per physical Letter sheet (match official 1003) =====
+   Root cause of the 11-logical -> 13-physical page spill: dense sections (esp. Section 1 =
+   1a+1b) were taller than one sheet, so they overflowed onto a second sheet. Fix: in print,
+   widen the usable area (8.5in page, was 7.5in on screen -> less wrapping -> shorter) and
+   tighten spacing so each .page fits one sheet. page-break-inside:avoid + height:auto means
+   if a section is still marginally too tall it SPLITS to a new sheet rather than clipping
+   data -- form content is never lost. */
+@media print {
+  @page { size: letter; margin: 0; }
+  html, body { width: 8.5in !important; margin: 0 !important; padding: 0 !important; }
+
+  .page {
+    width: 8.5in !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 0.3in 0.35in 0.4in !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    page-break-after: always !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid-page !important;
+  }
+  .page:last-child { page-break-after: avoid !important; }
+
+  /* Tighten so each section fits a single sheet */
+  body { font-size: 8pt !important; line-height: 1.12 !important; }
+  .form-title { font-size: 17pt !important; margin: 0 0 1px !important; }
+  .form-subtitle { margin-bottom: 4px !important; }
+  .instructions { margin-bottom: 4px !important; font-size: 7pt !important; line-height: 1.2 !important; }
+  .lender-bar { margin-bottom: 5px !important; padding: 3px 8px !important; }
+  .section-header { margin: 5px 0 1px !important; font-size: 11pt !important; }
+  .subsection-bar.light { margin: 4px 0 0 !important; padding: 2px 11px 3px !important; font-size: 8pt !important; }
+  .subsection-bar:not(.light) { margin: 1px 0 3px !important; font-size: 7.7pt !important; line-height: 1.2 !important; }
+  .form-table td, .form-table th { padding: 1px 5px !important; font-size: 7.7pt !important; }
+  .form-table .lbl { font-size: 6.5pt !important; }
+  .form-table .val { min-height: 11px !important; font-size: 8pt !important; }
+  .form-table .val.empty { min-height: 13px !important; }
+  .opt, .opt-block { font-size: 7.7pt !important; }
+  .opt-block { padding: 0 !important; line-height: 1.12 !important; }
+  .cb { font-size: 8.5pt !important; }
+  .decl { padding: 2px 8px !important; font-size: 7.3pt !important; }
+  .ack { font-size: 6.2pt !important; line-height: 1.25 !important; padding: 5px 8px !important; }
+  .sig-row { margin-top: 7px !important; }
+  .page-footer { font-size: 6pt !important; bottom: 0.16in !important; }
+}
 `;
 
 function buildUrlaData(app: any, c: any) {
