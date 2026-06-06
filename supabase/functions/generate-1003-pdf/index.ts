@@ -10,22 +10,76 @@ const cors = {
 };
 const hdrs = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` };
 
-// ─── URLA template assets ──────────────────────────────────────────────
-// urla/embed.ts is auto-generated from urla/{style.css,index.html,script.js}
-// (the human-editable canonical sources). Regenerate with:
-//   cd supabase/functions/generate-1003-pdf && {
-//     printf 'export const URLA_CSS = String.raw\x60';  cat urla/style.css;  printf '\x60;\n';
-//     printf 'export const URLA_HTML = String.raw\x60'; cat urla/index.html; printf '\x60;\n';
-//     printf 'export const URLA_JS = String.raw\x60';   cat urla/script.js;  printf '\x60;\n';
-//   } > urla/embed.ts
 import { URLA_CSS, URLA_HTML, URLA_JS } from './urla/embed.ts';
 
-// Extract just the <body> contents of urla/index.html (drop <html>/<head>/<link>/external script tag)
 const BODY_MATCH = URLA_HTML.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
 const URLA_BODY = (BODY_MATCH ? BODY_MATCH[1] : URLA_HTML)
   .replace(/<script[^>]*src=["']script\.js["'][^>]*>\s*<\/script>/gi, '');
 
-// ─── Build the URLA_DATA JSON structure from the DB row ────────────────
+// v47 (restored v46 print button after v46 stub-embed regression):
+// Floating print button injected by buildHtml(). Uses the existing `.no-print`
+// class (already in URLA_CSS) so it auto-hides during browser print/PDF export.
+// Works in modal iframe AND in downloaded .html file.
+// v48: moved from top-right to BOTTOM-right so it never overlaps the in-app
+// viewer's own gold Print/Save toolbar (which lives along the top of the page).
+const PRINT_TOOLBAR = `<div class="no-print" style="position:fixed;bottom:16px;right:16px;z-index:9999;display:flex;gap:8px;">
+<button onclick="window.print()" style="padding:9px 16px;background:#000;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-family:Arial,Helvetica,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,0.30);font-weight:600;">📄 Save as PDF / Print</button>
+</div>`;
+
+// v48: appended after URLA_CSS in buildHtml() so it wins on cascade order.
+// Restyles the embedded template to match the official Fannie/Freddie URLA look
+// WITHOUT editing the 11-page embed.ts template:
+//  - Section description sentences (.subsection-bar without .light) -> plain text
+//    (these were rendered as dark navy bars, which is backwards from the real form).
+//    NOTE: the lender L1-L4 labels share this selector and will render as plain
+//    bold text rather than black tabs -- an accepted trade-off to avoid template edits.
+//  - Subsection labels 1a/1b/2a/... (.subsection-bar.light) -> solid black rounded tabs.
+//  - Legacy navy (#1a1a2e) accents -> black, for a consistent official palette.
+//  - Field cells -> white background (the real form is not shaded gray).
+const CSS_OVERRIDE = `
+/* ===== v48 official-URLA look overrides (after base URLA_CSS) ===== */
+
+/* Section intro sentences: plain text, not dark bars */
+.subsection-bar:not(.light){
+  background:transparent !important;
+  color:#000 !important;
+  border:0 !important;
+  padding:1px 0 4px !important;
+  margin:1px 0 6px !important;
+  font-weight:400 !important;
+  font-size:8.5pt !important;
+  letter-spacing:0 !important;
+  line-height:1.3 !important;
+}
+
+/* Subsection labels (1a, 1b, 2a, ... and named tabs): solid black rounded tabs */
+.subsection-bar.light{
+  display:inline-block !important;
+  background:#000 !important;
+  color:#fff !important;
+  border:0 !important;
+  border-radius:7px 7px 0 0 !important;
+  padding:4px 14px 5px !important;
+  margin:9px 0 0 !important;
+  font-size:8.5pt !important;
+  font-weight:bold !important;
+  letter-spacing:0.2px !important;
+  line-height:1.15 !important;
+}
+.subsection-bar.light .cb{ color:#fff !important; }
+
+/* Section headings: bold black, snug to their description */
+.section-header{ font-size:12.5pt !important; font-weight:bold !important; margin:12px 0 1px !important; }
+.form-title{ margin-top:2px !important; }
+
+/* Field cells white like the official form (were gray) */
+.form-table .lbl{ background:#fff !important; }
+.form-table th{ background:#f0f0f0 !important; }
+
+/* Recolor legacy navy accents (TOTAL boxes, total rows, cash row) to black */
+[style*="1a1a2e"]{ background:#000 !important; }
+`;
+
 function buildUrlaData(app: any, c: any) {
   const firstName = app.first_name || c.first_name || '';
   const middleName = app.middle_name || '';
@@ -48,16 +102,9 @@ function buildUrlaData(app: any, c: any) {
   const totalIncome = parseFloat(app.total_monthly_income) || (baseIncome + overtime + bonus + commission + military + other);
 
   return {
-    lender: {
-      loanNo: app.lender_loan_no || '',
-      agencyCaseNo: app.agency_case_no || '',
-    },
+    lender: { loanNo: app.lender_loan_no || '', agencyCaseNo: app.agency_case_no || '' },
     borrower: {
-      fullName,
-      firstName,
-      middleName,
-      lastName,
-      suffix,
+      fullName, firstName, middleName, lastName, suffix,
       alternateNames: app.alternate_names || '',
       ssn: app.ssn || '',
       dob: app.date_of_birth || c.date_of_birth || '',
@@ -98,11 +145,7 @@ function buildUrlaData(app: any, c: any) {
       race: app.demographic_race || '',
       sex: app.demographic_sex || '',
     },
-    coBorrower: {
-      fullName: coFullName,
-      firstName: coFirst,
-      lastName: coLast,
-    },
+    coBorrower: { fullName: coFullName, firstName: coFirst, lastName: coLast },
     employment: {
       current: {
         employerName: app.employer_name || c.employer_name || '',
@@ -119,13 +162,7 @@ function buildUrlaData(app: any, c: any) {
         months: app.months_in_line_of_work || 0,
         selfEmployed: !!app.is_self_employed,
         familyEmployer: !!app.family_member_employer,
-        baseIncome,
-        overtime,
-        bonus,
-        commission,
-        military,
-        other,
-        total: totalIncome,
+        baseIncome, overtime, bonus, commission, military, other, total: totalIncome,
       },
     },
     loan: {
@@ -189,9 +226,11 @@ function buildHtml(urlaData: any): string {
 <head>
 <meta charset="utf-8"/>
 <title>Uniform Residential Loan Application — ${fullName.replace(/[<>]/g, '')}</title>
-<style>${URLA_CSS}</style>
+<style>${URLA_CSS}
+${CSS_OVERRIDE}</style>
 </head>
 <body>
+${PRINT_TOOLBAR}
 ${URLA_BODY}
 <script>
 window.URLA_DATA = ${dataJson};
@@ -201,10 +240,8 @@ ${URLA_JS}
 </html>`;
 }
 
-// ─── Request handler ───────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
-
   try {
     const body = await req.json().catch(() => ({}));
     const contact_id = body.contact_id;
@@ -220,7 +257,6 @@ Deno.serve(async (req: Request) => {
     const urlaData = buildUrlaData(app, c);
     const html = buildHtml(urlaData);
 
-    // btoa only handles latin-1; encode utf-8 → bytes → base64
     const bytes = new TextEncoder().encode(html);
     let bin = '';
     for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);

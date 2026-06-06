@@ -24,7 +24,7 @@ td, th, div, p, span { word-wrap: break-word !important; overflow-wrap: break-wo
 }
 .page:last-child { page-break-after: auto; }
 
-/* ── Header blocks ─────────────────────────────────────────────────── */
+/* ── Header blocks ─────────────────────────────────────────── */
 .lender-bar { background: #f0f0f0; border: 1px solid #999; padding: 5px 10px; font-size: 8pt; display: flex; gap: 20px; margin-bottom: 8px; }
 .lender-bar .fld { flex: 1; }
 .lender-bar .fld b { display: block; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.2px; color: #333; }
@@ -70,12 +70,12 @@ table { page-break-inside: auto; }
 .form-table .val { font-size: 9pt; min-height: 16px; }
 .form-table .val.empty::after { content: '\00a0'; }
 
-/* ── Checkboxes ────────────────────────────────────────────────────── */
+/* ── Checkboxes ─────────────────────────────────────────────── */
 .cb { font-family: 'Segoe UI Symbol', 'DejaVu Sans', 'Arial Unicode MS', sans-serif; font-size: 10pt; margin-right: 3px; }
 .opt { display: inline-block; margin-right: 12px; font-size: 8.5pt; white-space: nowrap; }
 .opt-block { display: block; font-size: 8.5pt; padding: 1px 0; }
 
-/* ── NO/YES declaration rows ───────────────────────────────────────── */
+/* ── NO/YES declaration rows ─────────────────────────────────── */
 .decl {
   border: 0.5pt solid #000;
   border-top: 0;
@@ -90,26 +90,26 @@ table { page-break-inside: auto; }
 .decl > span:first-child { flex: 1; }
 .decl .yn { white-space: nowrap; min-width: 90px; text-align: right; }
 
-/* ── Acknowledgements (2-col legal text) ───────────────────────────── */
+/* ── Acknowledgements (2-col legal text) ──────────────────────── */
 .ack { border: 0.5pt solid #000; padding: 7px 10px; font-size: 6.8pt; text-align: justify; line-height: 1.4; }
 .ack p { margin: 0 0 4px 0; }
 .ack .cols { column-count: 2; column-gap: 16px; }
 
-/* ── Signatures ────────────────────────────────────────────────────── */
+/* ── Signatures ─────────────────────────────────────────────── */
 .sig-row { display: flex; gap: 16px; margin-top: 10px; }
 .sig-box { flex: 1; }
 .sig-box .line { border-bottom: 1px solid #000; height: 24px; }
 .sig-box .lbl2 { font-size: 7pt; color: #333; margin-top: 2px; }
 .sig-line { border-bottom: 1px solid #000; min-width: 280px; display: inline-block; min-height: 14px; }
 
-/* ── 2-column / grid helpers ───────────────────────────────────────── */
+/* ── 2-column / grid helpers ───────────────────────────────── */
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
 .two-col > * { border: 0.5pt solid #000; padding: 5px 8px; }
 .two-col > *:first-child { border-right: 0; }
 
 .gray-box { background: #f5f5f5; border: 0.5pt solid #999; padding: 6px 8px; }
 
-/* ── Page footer ───────────────────────────────────────────────────── */
+/* ── Page footer ───────────────────────────────────────────── */
 .page-footer {
   position: absolute;
   bottom: 0.3in;
@@ -123,7 +123,7 @@ table { page-break-inside: auto; }
   padding-top: 3px;
 }
 
-/* ── Print ─────────────────────────────────────────────────────────── */
+/* ── Print ────────────────────────────────────────────────── */
 @media print {
   body { background: #fff; margin: 0; }
   .page { margin: 0; box-shadow: none; width: auto; min-height: auto; padding: 0.3in; }
@@ -140,7 +140,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
 </head>
 <body>
 
-<!-- ══════════════════════ PAGE 1 ══════════════════════ -->
+<!-- PAGE 1 -->
 <div class="page" id="page-1">
   <div class="lender-bar">
     <div class="fld"><b>To be completed by the Lender:</b></div>
@@ -206,9 +206,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </table>
 
   <table class="form-table">
-    <tr>
-      <td class="lbl" colspan="4">Current Address</td>
-    </tr>
+    <tr><td class="lbl" colspan="4">Current Address</td></tr>
     <tr>
       <td class="lbl" style="width:55%">Street<div class="val" data-field="borrower.currentAddress.street">&nbsp;</div></td>
       <td class="lbl" style="width:15%">Unit #<div class="val" data-field="borrower.currentAddress.unit">&nbsp;</div></td>
@@ -233,18 +231,14 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </table>
 
   <table class="form-table">
-    <tr>
-      <td class="lbl" colspan="4">If at Current Address for LESS than 2 years, list Former Address &nbsp;&nbsp;<span class="cb">&#9744;</span>Does not apply</td>
-    </tr>
+    <tr><td class="lbl" colspan="4">If at Current Address for LESS than 2 years, list Former Address &nbsp;&nbsp;<span class="cb">&#9744;</span>Does not apply</td></tr>
     <tr>
       <td class="lbl" style="width:55%">Street<div class="val" data-field="borrower.formerAddress.street">&nbsp;</div></td>
       <td class="lbl" style="width:15%">Unit #<div class="val" data-field="borrower.formerAddress.unit">&nbsp;</div></td>
       <td class="lbl" style="width:15%">City<div class="val" data-field="borrower.formerAddress.city">&nbsp;</div></td>
       <td class="lbl" style="width:15%">State/ZIP<div class="val"><span data-field="borrower.formerAddress.state">&nbsp;</span> <span data-field="borrower.formerAddress.zip">&nbsp;</span></div></td>
     </tr>
-    <tr>
-      <td class="lbl" colspan="4">How Long at Former Address? <span data-field="borrower.formerAddress.years">0</span> Years <span data-field="borrower.formerAddress.months">0</span> Months &nbsp;&nbsp; Housing: <span class="opt"><span class="cb">&#9744;</span>No primary housing expense</span><span class="opt"><span class="cb">&#9744;</span>Own</span><span class="opt"><span class="cb">&#9744;</span>Rent</span></td>
-    </tr>
+    <tr><td class="lbl" colspan="4">How Long at Former Address? <span data-field="borrower.formerAddress.years">0</span> Years <span data-field="borrower.formerAddress.months">0</span> Months &nbsp;&nbsp; Housing: <span class="opt"><span class="cb">&#9744;</span>No primary housing expense</span><span class="opt"><span class="cb">&#9744;</span>Own</span><span class="opt"><span class="cb">&#9744;</span>Rent</span></td></tr>
   </table>
 
   <table class="form-table">
@@ -259,9 +253,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
       <td class="lbl">Employer or Business Name<div class="val" data-field="employment.current.employerName">&nbsp;</div></td>
       <td class="lbl">Phone<div class="val" data-field="employment.current.phone">&nbsp;</div></td>
     </tr>
-    <tr>
-      <td class="lbl" colspan="2">Street<div class="val" data-field="employment.current.street">&nbsp;</div> &nbsp; Unit #<span data-field="employment.current.unit">&nbsp;</span></td>
-    </tr>
+    <tr><td class="lbl" colspan="2">Street<div class="val" data-field="employment.current.street">&nbsp;</div> &nbsp; Unit #<span data-field="employment.current.unit">&nbsp;</span></td></tr>
     <tr>
       <td class="lbl">City <span data-field="employment.current.city">&nbsp;</span>&nbsp;&nbsp;State <span data-field="employment.current.state">&nbsp;</span>&nbsp;&nbsp;ZIP <span data-field="employment.current.zip">&nbsp;</span></td>
       <td class="lbl">Country <span data-field="employment.current.country">USA</span></td>
@@ -279,9 +271,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
         <div style="background:#1a1a2e;color:#fff;padding:3px 4px;margin-top:3px"><b>TOTAL: $<span data-field="employment.current.total" data-format="currency">&nbsp;</span> /mo</b></div>
       </td>
     </tr>
-    <tr>
-      <td class="lbl">Start Date <span data-field="employment.current.startDate" data-format="date">&nbsp;</span></td>
-    </tr>
+    <tr><td class="lbl">Start Date <span data-field="employment.current.startDate" data-format="date">&nbsp;</span></td></tr>
     <tr>
       <td class="lbl">How long in this line of work? <span data-field="employment.current.years">0</span> Yrs <span data-field="employment.current.months">0</span> Mos
         <div><span class="cb" id="cb-emp-family">&#9744;</span> Check if you are the Business Owner or Self-Employed</div>
@@ -297,7 +287,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 2 — 1c, 1d, 1e ══════════════════════ -->
+<!-- PAGE 2 -->
 <div class="page" id="page-2">
   <div class="subsection-bar light">1c. IF APPLICABLE, Complete Information for Additional Employment/Self-Employment and Income &nbsp;&nbsp;<span class="cb">&#9744;</span>Does not apply</div>
   <table class="form-table">
@@ -333,26 +323,10 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   <div style="border:0.5pt solid #000;padding:5px 8px;font-size:7pt;background:#fafafa">
     <b>NOTE:</b> Reveal alimony, child support, separate maintenance, or other income ONLY IF you want it considered in repaying this loan.
     <div style="column-count:5;column-gap:14px;margin-top:3px">
-      <div>&bull; Alimony</div>
-      <div>&bull; Automobile Allowance</div>
-      <div>&bull; Boarder Income</div>
-      <div>&bull; Capital Gains</div>
-      <div>&bull; Child Support</div>
-      <div>&bull; Disability</div>
-      <div>&bull; Foster Care</div>
-      <div>&bull; Housing or Parsonage</div>
-      <div>&bull; Interest and Dividends</div>
-      <div>&bull; Mortgage Credit Certificate</div>
-      <div>&bull; Mortgage Differential Payments</div>
-      <div>&bull; Notes Receivable</div>
-      <div>&bull; Public Assistance</div>
-      <div>&bull; Retirement (e.g. Pension, IRA)</div>
-      <div>&bull; Royalty Payments</div>
-      <div>&bull; Separate Maintenance</div>
-      <div>&bull; Social Security</div>
-      <div>&bull; Trust</div>
-      <div>&bull; Unemployment Benefits</div>
-      <div>&bull; VA Compensation</div>
+      <div>&bull; Alimony</div><div>&bull; Automobile Allowance</div><div>&bull; Boarder Income</div><div>&bull; Capital Gains</div><div>&bull; Child Support</div>
+      <div>&bull; Disability</div><div>&bull; Foster Care</div><div>&bull; Housing or Parsonage</div><div>&bull; Interest and Dividends</div><div>&bull; Mortgage Credit Certificate</div>
+      <div>&bull; Mortgage Differential Payments</div><div>&bull; Notes Receivable</div><div>&bull; Public Assistance</div><div>&bull; Retirement (e.g. Pension, IRA)</div><div>&bull; Royalty Payments</div>
+      <div>&bull; Separate Maintenance</div><div>&bull; Social Security</div><div>&bull; Trust</div><div>&bull; Unemployment Benefits</div><div>&bull; VA Compensation</div>
       <div>&bull; Other</div>
     </div>
   </div>
@@ -373,7 +347,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 3 — Section 2 Assets & Liabilities ══════════════════════ -->
+<!-- PAGE 3 -->
 <div class="page" id="page-3">
   <div class="section-header">Section 2: Financial Information &mdash; Assets and Liabilities.</div>
   <div class="subsection-bar">This section asks about things you own that are worth money and that you want considered to qualify for this loan. It then asks about your liabilities (or debts) that you pay each month, such as credit cards, alimony, or other expenses.</div>
@@ -440,7 +414,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 4 — Section 3 Real Estate ══════════════════════ -->
+<!-- PAGE 4 -->
 <div class="page" id="page-4">
   <div class="section-header">Section 3: Financial Information &mdash; Real Estate.</div>
   <div class="subsection-bar">This section asks you to list all properties you currently own and what you owe on them. &nbsp;&nbsp;<span class="cb">&#9744;</span>I do not own any real estate</div>
@@ -450,12 +424,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     <tr><td class="lbl" colspan="6">Address &mdash; Street <span class="val" style="display:inline-block;min-width:200pt">&nbsp;</span> Unit # <span class="val" style="display:inline-block;min-width:40pt">&nbsp;</span></td></tr>
     <tr><td class="lbl" colspan="6">City <span class="val" style="display:inline-block;min-width:100pt">&nbsp;</span> State <span class="val" style="display:inline-block;min-width:30pt">&nbsp;</span> ZIP <span class="val" style="display:inline-block;min-width:50pt">&nbsp;</span> Country <span class="val" style="display:inline-block;min-width:60pt">&nbsp;</span></td></tr>
     <tr>
-      <th>Property Value</th>
-      <th>Status: Sold, Pending Sale, or Retained</th>
-      <th>Intended Occupancy: Investment, Primary Residence, Second Home, Other</th>
-      <th>Monthly Insurance, Taxes, Association Dues, etc. (if not included in mortgage)</th>
-      <th>For 2-4 Unit Primary or Investment Property &mdash; Monthly Rental Income</th>
-      <th>For LENDER to calculate: Net Monthly Rental Income</th>
+      <th>Property Value</th><th>Status: Sold, Pending Sale, or Retained</th><th>Intended Occupancy: Investment, Primary Residence, Second Home, Other</th><th>Monthly Insurance, Taxes, Association Dues, etc. (if not included in mortgage)</th><th>For 2-4 Unit Primary or Investment Property &mdash; Monthly Rental Income</th><th>For LENDER to calculate: Net Monthly Rental Income</th>
     </tr>
     <tr><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td></tr>
   </table>
@@ -486,7 +455,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 5 — Section 4 Loan & Property ══════════════════════ -->
+<!-- PAGE 5 -->
 <div class="page" id="page-5">
   <div class="section-header">Section 4: Loan and Property Information.</div>
   <div class="subsection-bar">This section asks about the loan's purpose and the property you want to purchase or refinance.</div>
@@ -502,9 +471,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
         <span class="opt"><span class="cb" id="cb-purpose-other">&#9744;</span>Other (specify): ______</span>
       </td>
     </tr>
-    <tr>
-      <td class="lbl" colspan="2">Property Address &mdash; Street <span data-field="loan.property.street">&nbsp;</span> &nbsp; Unit # <span data-field="loan.property.unit">&nbsp;</span></td>
-    </tr>
+    <tr><td class="lbl" colspan="2">Property Address &mdash; Street <span data-field="loan.property.street">&nbsp;</span> &nbsp; Unit # <span data-field="loan.property.unit">&nbsp;</span></td></tr>
     <tr>
       <td class="lbl">City <span data-field="loan.property.city">&nbsp;</span></td>
       <td class="lbl">State <span data-field="loan.property.state">&nbsp;</span> &nbsp; ZIP <span data-field="loan.property.zip">&nbsp;</span> &nbsp; County <span data-field="loan.property.county">&nbsp;</span> &nbsp; Country <span data-field="loan.property.country">USA</span></td>
@@ -567,7 +534,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 6 — Section 5 Declarations ══════════════════════ -->
+<!-- PAGE 6 -->
 <div class="page" id="page-6">
   <div class="section-header">Section 5: Declarations.</div>
   <div class="subsection-bar">This section asks you specific questions about the property, your funding, and your past financial history.</div>
@@ -605,7 +572,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 7 — Section 6 Acknowledgements ══════════════════════ -->
+<!-- PAGE 7 -->
 <div class="page" id="page-7">
   <div class="section-header">Section 6: Acknowledgements and Agreements.</div>
   <div class="subsection-bar">This section tells you about your legal obligations when you sign this application.</div>
@@ -641,7 +608,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 8 — Section 7 Military + Section 8 Demographics ══════════════════════ -->
+<!-- PAGE 8 -->
 <div class="page" id="page-8">
   <div class="section-header">Section 7: Military Service.</div>
   <div class="subsection-bar">This section asks questions about your (or your deceased spouse's) military service.</div>
@@ -667,18 +634,11 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
 
   <table class="form-table">
     <colgroup><col style="width:50%"/><col style="width:50%"/></colgroup>
-    <tr>
-      <th>Ethnicity &mdash; Check one or more</th>
-      <th>Race &mdash; Check one or more</th>
-    </tr>
+    <tr><th>Ethnicity &mdash; Check one or more</th><th>Race &mdash; Check one or more</th></tr>
     <tr>
       <td class="val">
         <div class="opt-block"><span class="cb">&#9744;</span>Hispanic or Latino</div>
-        <div style="padding-left:14pt">
-          <span class="opt"><span class="cb">&#9744;</span>Mexican</span>
-          <span class="opt"><span class="cb">&#9744;</span>Puerto Rican</span>
-          <span class="opt"><span class="cb">&#9744;</span>Cuban</span>
-        </div>
+        <div style="padding-left:14pt"><span class="opt"><span class="cb">&#9744;</span>Mexican</span><span class="opt"><span class="cb">&#9744;</span>Puerto Rican</span><span class="opt"><span class="cb">&#9744;</span>Cuban</span></div>
         <div style="padding-left:14pt"><span class="cb">&#9744;</span>Other Hispanic or Latino &mdash; Print origin: ______</div>
         <div class="opt-block"><span class="cb">&#9744;</span>Not Hispanic or Latino</div>
         <div class="opt-block"><span class="cb">&#9744;</span>I do not wish to provide this information</div>
@@ -686,24 +646,12 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
       <td class="val">
         <div class="opt-block"><span class="cb">&#9744;</span>American Indian or Alaska Native &mdash; Enrolled or principal tribe: ______</div>
         <div class="opt-block"><span class="cb">&#9744;</span>Asian</div>
-        <div style="padding-left:14pt">
-          <span class="opt"><span class="cb">&#9744;</span>Asian Indian</span>
-          <span class="opt"><span class="cb">&#9744;</span>Chinese</span>
-          <span class="opt"><span class="cb">&#9744;</span>Filipino</span>
-        </div>
-        <div style="padding-left:14pt">
-          <span class="opt"><span class="cb">&#9744;</span>Japanese</span>
-          <span class="opt"><span class="cb">&#9744;</span>Korean</span>
-          <span class="opt"><span class="cb">&#9744;</span>Vietnamese</span>
-        </div>
+        <div style="padding-left:14pt"><span class="opt"><span class="cb">&#9744;</span>Asian Indian</span><span class="opt"><span class="cb">&#9744;</span>Chinese</span><span class="opt"><span class="cb">&#9744;</span>Filipino</span></div>
+        <div style="padding-left:14pt"><span class="opt"><span class="cb">&#9744;</span>Japanese</span><span class="opt"><span class="cb">&#9744;</span>Korean</span><span class="opt"><span class="cb">&#9744;</span>Vietnamese</span></div>
         <div style="padding-left:14pt"><span class="cb">&#9744;</span>Other Asian &mdash; Print race: ______</div>
         <div class="opt-block"><span class="cb">&#9744;</span>Black or African American</div>
         <div class="opt-block"><span class="cb">&#9744;</span>Native Hawaiian or Other Pacific Islander</div>
-        <div style="padding-left:14pt">
-          <span class="opt"><span class="cb">&#9744;</span>Native Hawaiian</span>
-          <span class="opt"><span class="cb">&#9744;</span>Guamanian or Chamorro</span>
-          <span class="opt"><span class="cb">&#9744;</span>Samoan</span>
-        </div>
+        <div style="padding-left:14pt"><span class="opt"><span class="cb">&#9744;</span>Native Hawaiian</span><span class="opt"><span class="cb">&#9744;</span>Guamanian or Chamorro</span><span class="opt"><span class="cb">&#9744;</span>Samoan</span></div>
         <div class="opt-block"><span class="cb">&#9744;</span>White</div>
         <div class="opt-block"><span class="cb">&#9744;</span>I do not wish to provide this information</div>
       </td>
@@ -737,7 +685,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 9 — Section 9 LO Info ══════════════════════ -->
+<!-- PAGE 9 -->
 <div class="page" id="page-9">
   <div class="section-header">Section 9: Loan Originator Information.</div>
   <div class="subsection-bar">To be completed by your Loan Originator.</div>
@@ -770,7 +718,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 10 — Lender Loan Information (L1, L2, L3) ══════════════════════ -->
+<!-- PAGE 10 -->
 <div class="page" id="page-10">
   <div class="lender-bar">
     <div class="fld"><b>To be completed by the Lender:</b></div>
@@ -793,27 +741,13 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
       <div class="opt-block"><span class="cb">&#9744;</span>Construction-Conversion / Construction-to-Permanent &mdash; <span class="opt"><span class="cb">&#9744;</span>Single-Closing</span><span class="opt"><span class="cb">&#9744;</span>Two-Closing</span></div>
       <div class="opt-block"><span class="cb">&#9744;</span>Construction / Renovation &mdash; Construction/Improvement Costs $______ &nbsp; Lot Acquired Date _____ &nbsp; Original Cost $______</div>
     </td></tr>
-    <tr><td class="lbl">Refinance Type</td><td class="val">
-      <span class="opt"><span class="cb">&#9744;</span>No Cash Out</span>
-      <span class="opt"><span class="cb">&#9744;</span>Limited Cash Out</span>
-      <span class="opt"><span class="cb">&#9744;</span>Cash Out</span>
-    </td></tr>
-    <tr><td class="lbl">Refinance Program</td><td class="val">
-      <span class="opt"><span class="cb">&#9744;</span>Full Documentation</span>
-      <span class="opt"><span class="cb">&#9744;</span>Interest Rate Reduction</span>
-      <span class="opt"><span class="cb">&#9744;</span>Streamlined without Appraisal</span>
-      <span class="opt"><span class="cb">&#9744;</span>Other: ______</span>
-    </td></tr>
+    <tr><td class="lbl">Refinance Type</td><td class="val"><span class="opt"><span class="cb">&#9744;</span>No Cash Out</span><span class="opt"><span class="cb">&#9744;</span>Limited Cash Out</span><span class="opt"><span class="cb">&#9744;</span>Cash Out</span></td></tr>
+    <tr><td class="lbl">Refinance Program</td><td class="val"><span class="opt"><span class="cb">&#9744;</span>Full Documentation</span><span class="opt"><span class="cb">&#9744;</span>Interest Rate Reduction</span><span class="opt"><span class="cb">&#9744;</span>Streamlined without Appraisal</span><span class="opt"><span class="cb">&#9744;</span>Other: ______</span></td></tr>
     <tr><td class="lbl">Energy Improvement</td><td class="val">
       <div class="opt-block"><span class="cb">&#9744;</span>Mortgage loan will finance energy-related improvements.</div>
       <div class="opt-block"><span class="cb">&#9744;</span>Property is currently subject to a lien that could take priority over the first mortgage lien for energy-related improvements.</div>
     </td></tr>
-    <tr><td class="lbl">Project Type</td><td class="val">
-      <span class="opt"><span class="cb">&#9744;</span>Condominium</span>
-      <span class="opt"><span class="cb">&#9744;</span>Cooperative</span>
-      <span class="opt"><span class="cb">&#9744;</span>Planned Unit Development (PUD)</span>
-      <span class="opt"><span class="cb">&#9744;</span>Property is not located in a project</span>
-    </td></tr>
+    <tr><td class="lbl">Project Type</td><td class="val"><span class="opt"><span class="cb">&#9744;</span>Condominium</span><span class="opt"><span class="cb">&#9744;</span>Cooperative</span><span class="opt"><span class="cb">&#9744;</span>Planned Unit Development (PUD)</span><span class="opt"><span class="cb">&#9744;</span>Property is not located in a project</span></td></tr>
   </table>
 
   <div class="subsection-bar">L2. Title Information</div>
@@ -821,29 +755,10 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     <colgroup><col style="width:22%"/><col style="width:78%"/></colgroup>
     <tr><td class="lbl">Title to the Property Will be Held In What Name(s)</td><td class="val"><span data-field="borrower.fullName"></span> <span data-field="coBorrower.fullName"></span></td></tr>
     <tr><td class="lbl">For Refinance: Title to the Property is Currently Held In What Name(s)</td><td class="val">&nbsp;</td></tr>
-    <tr><td class="lbl">Estate Will be Held In</td><td class="val">
-      <span class="opt"><span class="cb">&#9744;</span>Fee Simple</span>
-      <span class="opt"><span class="cb">&#9744;</span>Leasehold &mdash; Expiration Date: ______</span>
-    </td></tr>
-    <tr><td class="lbl">Manner in Which Title Will be Held</td><td class="val">
-      <span class="opt"><span class="cb">&#9744;</span>Sole Ownership</span>
-      <span class="opt"><span class="cb">&#9744;</span>Joint Tenancy with Right of Survivorship</span>
-      <span class="opt"><span class="cb">&#9744;</span>Tenancy by the Entirety</span>
-      <span class="opt"><span class="cb">&#9744;</span>Tenancy in Common</span>
-      <span class="opt"><span class="cb">&#9744;</span>Life Estate</span>
-      <span class="opt"><span class="cb">&#9744;</span>Other: ______</span>
-    </td></tr>
-    <tr><td class="lbl">Trust Information</td><td class="val">
-      <span class="opt"><span class="cb">&#9744;</span>Title Will be Held in a Land Trust</span>
-      <span class="opt"><span class="cb">&#9744;</span>Title Will be Held in an Inter Vivos (Living) Trust</span>
-    </td></tr>
-    <tr><td class="lbl">Indian Country Land Tenure</td><td class="val">
-      <span class="opt"><span class="cb">&#9744;</span>Fee Simple On a Reservation</span>
-      <span class="opt"><span class="cb">&#9744;</span>Individual Trust Land (Allotted/Restricted)</span>
-      <span class="opt"><span class="cb">&#9744;</span>Tribal Trust Land On a Reservation</span>
-      <span class="opt"><span class="cb">&#9744;</span>Tribal Trust Land Off Reservation</span>
-      <span class="opt"><span class="cb">&#9744;</span>Alaska Native Corporation Land</span>
-    </td></tr>
+    <tr><td class="lbl">Estate Will be Held In</td><td class="val"><span class="opt"><span class="cb">&#9744;</span>Fee Simple</span><span class="opt"><span class="cb">&#9744;</span>Leasehold &mdash; Expiration Date: ______</span></td></tr>
+    <tr><td class="lbl">Manner in Which Title Will be Held</td><td class="val"><span class="opt"><span class="cb">&#9744;</span>Sole Ownership</span><span class="opt"><span class="cb">&#9744;</span>Joint Tenancy with Right of Survivorship</span><span class="opt"><span class="cb">&#9744;</span>Tenancy by the Entirety</span><span class="opt"><span class="cb">&#9744;</span>Tenancy in Common</span><span class="opt"><span class="cb">&#9744;</span>Life Estate</span><span class="opt"><span class="cb">&#9744;</span>Other: ______</span></td></tr>
+    <tr><td class="lbl">Trust Information</td><td class="val"><span class="opt"><span class="cb">&#9744;</span>Title Will be Held in a Land Trust</span><span class="opt"><span class="cb">&#9744;</span>Title Will be Held in an Inter Vivos (Living) Trust</span></td></tr>
+    <tr><td class="lbl">Indian Country Land Tenure</td><td class="val"><span class="opt"><span class="cb">&#9744;</span>Fee Simple On a Reservation</span><span class="opt"><span class="cb">&#9744;</span>Individual Trust Land (Allotted/Restricted)</span><span class="opt"><span class="cb">&#9744;</span>Tribal Trust Land On a Reservation</span><span class="opt"><span class="cb">&#9744;</span>Tribal Trust Land Off Reservation</span><span class="opt"><span class="cb">&#9744;</span>Alaska Native Corporation Land</span></td></tr>
   </table>
 
   <div class="subsection-bar">L3. Mortgage Loan Information</div>
@@ -851,13 +766,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     <colgroup><col style="width:22%"/><col style="width:48%"/><col style="width:30%"/></colgroup>
     <tr>
       <td class="lbl">Mortgage Type Applied For</td>
-      <td class="val">
-        <span class="opt"><span class="cb" id="cb-conventional">&#9744;</span>Conventional</span>
-        <span class="opt"><span class="cb" id="cb-usda">&#9744;</span>USDA-RD</span>
-        <span class="opt"><span class="cb" id="cb-fha">&#9744;</span>FHA</span>
-        <span class="opt"><span class="cb" id="cb-va">&#9744;</span>VA</span>
-        <span class="opt"><span class="cb">&#9744;</span>Other: ______</span>
-      </td>
+      <td class="val"><span class="opt"><span class="cb" id="cb-conventional">&#9744;</span>Conventional</span><span class="opt"><span class="cb" id="cb-usda">&#9744;</span>USDA-RD</span><span class="opt"><span class="cb" id="cb-fha">&#9744;</span>FHA</span><span class="opt"><span class="cb" id="cb-va">&#9744;</span>VA</span><span class="opt"><span class="cb">&#9744;</span>Other: ______</span></td>
       <td class="lbl" rowspan="4">
         <b>Proposed Monthly Payment for Property</b>
         <div>First Mortgage (P&amp;I): $______</div>
@@ -877,29 +786,15 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     </tr>
     <tr>
       <td class="lbl">Mortgage Lien Type</td>
-      <td class="val">
-        <span class="opt"><span class="cb">&#9744;</span>First Lien</span>
-        <span class="opt"><span class="cb">&#9744;</span>Subordinate Lien</span>
-      </td>
+      <td class="val"><span class="opt"><span class="cb">&#9744;</span>First Lien</span><span class="opt"><span class="cb">&#9744;</span>Subordinate Lien</span></td>
     </tr>
     <tr>
       <td class="lbl">Amortization Type</td>
-      <td class="val">
-        <span class="opt"><span class="cb">&#9744;</span>Fixed Rate</span>
-        <span class="opt"><span class="cb">&#9744;</span>Adjustable Rate — initial period prior to first adjustment ___ months</span>
-        <span class="opt"><span class="cb">&#9744;</span>Other</span>
-      </td>
+      <td class="val"><span class="opt"><span class="cb">&#9744;</span>Fixed Rate</span><span class="opt"><span class="cb">&#9744;</span>Adjustable Rate — initial period prior to first adjustment ___ months</span><span class="opt"><span class="cb">&#9744;</span>Other</span></td>
     </tr>
     <tr>
       <td class="lbl">Loan Features</td>
-      <td class="val" colspan="2">
-        <span class="opt"><span class="cb">&#9744;</span>Balloon / Term ___</span>
-        <span class="opt"><span class="cb">&#9744;</span>Interest Only / Term ___</span>
-        <span class="opt"><span class="cb">&#9744;</span>Negative Amortization</span>
-        <span class="opt"><span class="cb">&#9744;</span>Prepayment Penalty / Term ___</span>
-        <span class="opt"><span class="cb">&#9744;</span>Temporary Interest Rate Buydown / Initial Rate ___%</span>
-        <span class="opt"><span class="cb">&#9744;</span>Other: ______</span>
-      </td>
+      <td class="val" colspan="2"><span class="opt"><span class="cb">&#9744;</span>Balloon / Term ___</span><span class="opt"><span class="cb">&#9744;</span>Interest Only / Term ___</span><span class="opt"><span class="cb">&#9744;</span>Negative Amortization</span><span class="opt"><span class="cb">&#9744;</span>Prepayment Penalty / Term ___</span><span class="opt"><span class="cb">&#9744;</span>Temporary Interest Rate Buydown / Initial Rate ___%</span><span class="opt"><span class="cb">&#9744;</span>Other: ______</span></td>
     </tr>
   </table>
 
@@ -910,7 +805,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ══════════════════════ PAGE 11 — L4 Qualifying the Borrower ══════════════════════ -->
+<!-- PAGE 11 -->
 <div class="page" id="page-11">
   <div class="subsection-bar">L4. Qualifying the Borrower &mdash; Minimum Required Funds or Cash Back</div>
   <table class="form-table">
@@ -920,13 +815,13 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     <tr><td class="val" style="text-align:center">B.</td><td class="val">Improvements, Renovations, and Repairs</td><td class="val empty"></td></tr>
     <tr><td class="val" style="text-align:center">C.</td><td class="val">Land (if acquired separately)</td><td class="val empty"></td></tr>
     <tr><td class="val" style="text-align:center">D.</td><td class="val">For Refinance: Balance of Mortgage Loans on the Property to be paid off in the Transaction (See Table 3a. Property You Own)</td><td class="val empty"></td></tr>
-    <tr><td class="val" style="text-align:center">E.</td><td class="val">Credit Cards and Other Debts Paid Off (See Table 2c. Liabilities &mdash; Credit Cards, Other Debts, and Leases that You Owe)</td><td class="val empty"></td></tr>
+    <tr><td class="val" style="text-align:center">E.</td><td class="val">Credit Cards and Other Debts Paid Off (See Table 2c. Liabilities — Credit Cards, Other Debts, and Leases that You Owe)</td><td class="val empty"></td></tr>
     <tr><td class="val" style="text-align:center">F.</td><td class="val">Borrower Closing Costs (including Prepaid Items)</td><td class="val empty"></td></tr>
     <tr><td class="val" style="text-align:center">G.</td><td class="val">Discount Points</td><td class="val empty"></td></tr>
     <tr style="background:#eaeaea;font-weight:bold"><td class="val" style="text-align:center"><b>H.</b></td><td class="val"><b>TOTAL DUE FROM BORROWER(s)</b> (Total of A thru G)</td><td class="val">&nbsp;</td></tr>
 
     <tr><td class="lbl" colspan="3">TOTAL MORTGAGE LOANS</td></tr>
-    <tr><td class="val" style="text-align:center">I.</td><td class="val">Loan Amount &mdash; Loan Amount Excluding Financed Mortgage Insurance (or Mortgage Insurance Equivalent) $<span data-field="loan.amount" data-format="currency"></span> &nbsp; Financed Mortgage Insurance (or Mortgage Insurance Equivalent) Amount $______</td><td class="val" data-field="loan.amount" data-format="currency">&nbsp;</td></tr>
+    <tr><td class="val" style="text-align:center">I.</td><td class="val">Loan Amount — Loan Amount Excluding Financed Mortgage Insurance (or Mortgage Insurance Equivalent) $<span data-field="loan.amount" data-format="currency"></span> &nbsp; Financed Mortgage Insurance (or Mortgage Insurance Equivalent) Amount $______</td><td class="val" data-field="loan.amount" data-format="currency">&nbsp;</td></tr>
     <tr><td class="val" style="text-align:center">J.</td><td class="val">Other New Mortgage Loans on the Property the Borrower(s) is Buying or Refinancing (See Table 4b. Other New Mortgage Loans)</td><td class="val empty"></td></tr>
     <tr style="background:#eaeaea;font-weight:bold"><td class="val" style="text-align:center"><b>K.</b></td><td class="val"><b>TOTAL MORTGAGE LOANS</b> (Total of I and J)</td><td class="val" data-field="loan.amount" data-format="currency">&nbsp;</td></tr>
 
@@ -940,7 +835,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     <tr><td class="val">&nbsp;</td><td class="val">LESS TOTAL MORTGAGE LOANS (Line K) AND TOTAL CREDITS (Line N)</td><td class="val" data-field="loan.amount" data-format="currency">&nbsp;</td></tr>
     <tr style="background:#1a1a2e;color:#fff;font-weight:bold">
       <td class="val" style="text-align:center;background:#1a1a2e;color:#fff"><b></b></td>
-      <td class="val" style="background:#1a1a2e;color:#fff"><b>Cash From/To the Borrower</b> (Line H minus Line K and Line N) &mdash; <i>NOTE: This amount does not include reserves or other funds that may be required by the Lender to be verified.</i></td>
+      <td class="val" style="background:#1a1a2e;color:#fff"><b>Cash From/To the Borrower</b> (Line H minus Line K and Line N) — <i>NOTE: This amount does not include reserves or other funds that may be required by the Lender to be verified.</i></td>
       <td class="val" style="background:#f5f5f5;color:#000">&nbsp;</td>
     </tr>
   </table>
@@ -965,24 +860,18 @@ export const URLA_JS = String.raw`/* URLA 1003 — Client-side fill logic
 const URLA = {
   fill(data) {
     if (!data) return;
-
-    // Populate data-field targets — supports nested paths like "borrower.fullName"
     document.querySelectorAll('[data-field]').forEach((el) => {
       const path = el.getAttribute('data-field');
       let val = this.getPath(data, path);
       if (val === undefined || val === null) val = '';
-
-      // Apply formatting hints
       const fmt = el.getAttribute('data-format');
       if (fmt === 'currency') val = this.formatCurrency(val);
       else if (fmt === 'date') val = this.formatDate(val);
       else if (fmt === 'ssn') val = this.formatSSN(val);
       else if (fmt === 'percent' && val) val = val + '%';
-
       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = val;
       else el.textContent = val;
     });
-
     this.fillCheckboxes(data);
   },
 
@@ -992,7 +881,7 @@ const URLA = {
 
   setCb(id, on) {
     const el = document.getElementById(id);
-    if (el) el.textContent = on ? '\u2611' : '\u2610'; // ☑ / ☐
+    if (el) el.textContent = on ? '\u2611' : '\u2610';
   },
 
   fillCheckboxes(data) {
@@ -1000,62 +889,52 @@ const URLA = {
     const l = data.loan || {};
     const decl = data.declarations || {};
 
-    // Citizenship
     const cit = String(b.citizenship || '').toLowerCase().replace(/[^a-z]/g, '');
     this.setCb('cb-citizen', cit === 'uscitizen' || cit === 'usacitizen');
     this.setCb('cb-perm', cit === 'permanentresidentalien' || cit === 'permanentresident');
     this.setCb('cb-nonperm', cit === 'nonpermanentresidentalien' || cit === 'nonpermanentresident');
 
-    // Credit type (individual/joint)
     const hasCoBorrower = !!(data.coBorrower && data.coBorrower.fullName);
     this.setCb('cb-credit-individual', !hasCoBorrower);
     this.setCb('cb-credit-joint', hasCoBorrower);
 
-    // Marital Status
     const ms = String(b.maritalStatus || '').toLowerCase();
     this.setCb('cb-married', ms === 'married');
     this.setCb('cb-separated', ms === 'separated');
     this.setCb('cb-unmarried', ms.includes('unmarried') || ms.includes('single') || ms.includes('divorced'));
 
-    // Housing (current address)
     const housing = String((b.currentAddress || {}).housing || '').toLowerCase();
     this.setCb('cb-housing-noexpense', housing.includes('no primary') || housing.includes('noexpense'));
     this.setCb('cb-housing-own', housing === 'own');
     this.setCb('cb-housing-rent', housing === 'rent');
 
-    // Loan Purpose
     const lp = String(l.purpose || '').toLowerCase();
     this.setCb('cb-purchase', lp === 'purchase');
     this.setCb('cb-refinance', lp === 'refinance');
     this.setCb('cb-purpose-other', lp === 'other');
 
-    // Occupancy
     const occ = String((l.property || {}).occupancy || '').toLowerCase();
     this.setCb('cb-primary', occ.includes('primary'));
     this.setCb('cb-second', occ.includes('second'));
     this.setCb('cb-investment', occ.includes('invest'));
     this.setCb('cb-fha-secondary', occ.includes('fha secondary'));
 
-    // Mixed use / Manufactured
     this.setCb('cb-mixed-yes', !!(l.property && l.property.mixedUse));
     this.setCb('cb-mixed-no', !(l.property && l.property.mixedUse));
     this.setCb('cb-manufactured-yes', !!(l.property && l.property.manufactured));
     this.setCb('cb-manufactured-no', !(l.property && l.property.manufactured));
 
-    // Loan Type
     const lt = String(l.type || '');
     this.setCb('cb-conventional', lt === 'Conventional');
     this.setCb('cb-fha', lt === 'FHA');
     this.setCb('cb-va', lt === 'VA');
     this.setCb('cb-usda', lt === 'USDA-RD' || lt === 'USDA');
 
-    // Employment status (current)
     const emp = (data.employment || {}).current || {};
     this.setCb('cb-emp-company', !emp.selfEmployed);
     this.setCb('cb-emp-self', !!emp.selfEmployed);
     this.setCb('cb-emp-family', !!emp.familyEmployer);
 
-    // Military
     const mil = !!b.militaryService;
     this.setCb('cb-military-no', !mil);
     this.setCb('cb-military-yes', mil);
@@ -1065,14 +944,12 @@ const URLA = {
     this.setCb('cb-mil-reserve', milSt === 'Reserve/National Guard');
     this.setCb('cb-mil-surviving', milSt === 'Surviving spouse');
 
-    // Declarations A through M (including D.1 and D.2)
     ['a','b','c','d1','d2','e','f','g','h','i','j','k','l','m'].forEach((key) => {
       const v = decl[key];
       this.setCb('decl-' + key + '-yes', !!v);
       this.setCb('decl-' + key + '-no', !v);
     });
 
-    // Bankruptcy chapters
     const bk = String(decl.bankruptcyType || '');
     this.setCb('cb-bk-7', bk.includes('7'));
     this.setCb('cb-bk-11', bk.includes('11'));
@@ -1101,7 +978,6 @@ const URLA = {
   },
 };
 
-// Auto-fill from window.URLA_DATA if present
 (function () {
   if (typeof window !== 'undefined' && window.URLA_DATA) {
     try { URLA.fill(window.URLA_DATA); } catch (e) { console.error('[URLA] fill error', e); }
