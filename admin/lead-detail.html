@@ -5275,32 +5275,21 @@ function wireLeadInfoAutoSave(cId) {
     const saveField = async () => {
       const val = el.value?.trim() || null;
       try {
-        const res = await fetch(
-          `${cfg.SUPABASE_URL}/rest/v1/contacts?id=eq.${cId}`,
-          {
-            method: 'PATCH',
-            headers: {
-              'apikey': cfg.SUPABASE_ANON_KEY,
-              'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=minimal'
-            },
-            body: JSON.stringify({ [col]: val })
-          }
-        );
-        if (res.ok) {
+        const client = (await _waitForAuthClient()) || _authClient();
+        const { error } = await client.from('contacts')
+          .update({ [col]: val, updated_at: new Date().toISOString() })
+          .eq('id', cId);
+        if (!error) {
           el.style.borderColor = '#27AE60';
           setTimeout(() => el.style.borderColor = '', 1000);
-          if (typeof showToast === 'function') showToast('Saved', 'success');
-          // Sync score display if lead_score changed
-          if (col === 'lead_score') {
-            const scNum = document.getElementById('sc-num');
-            if (scNum) scNum.textContent = val || '0';
-          }
+          if (typeof showToast === 'function') showToast('Saved');   // was showToast('Saved','success') — 2nd arg is isError, so it rendered as an error
+        } else {
+          el.style.borderColor = '#E5484D';
+          setTimeout(() => el.style.borderColor = '', 1500);
+          if (typeof showToast === 'function') showToast('Save failed', true);
+          console.error('Auto-save failed:', error);
         }
-      } catch(e) {
-        console.error('Auto-save failed:', e);
-      }
+      } catch(e) { console.error('Auto-save failed:', e); }
     };
 
     if (el.tagName === 'SELECT') {
@@ -10635,10 +10624,13 @@ async function setTemperature(temp) {
   // 4. PATCH DB
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
   if (contactId) {
-    await fetch(
-      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/contacts?id=eq.' + contactId,
-      { method:'PATCH', headers:{'Content-Type':'application/json','apikey':window.APP_CONFIG?.SUPABASE_ANON_KEY||'','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||''),'Prefer':'return=minimal'}, body:JSON.stringify({temperature:normalized,lead_temperature:normalized}) }
-    );
+    try {
+      var client = (await _waitForAuthClient()) || _authClient();
+      var { error } = await client.from('contacts')
+        .update({ temperature: normalized, lead_temperature: normalized, updated_at: new Date().toISOString() })
+        .eq('id', contactId);
+      if (error) { showToast('Temperature save failed', true); console.error('[temp]', error); return; }
+    } catch(e) { showToast('Temperature save failed', true); console.error('[temp]', e); return; }
   }
   showToast('Temperature: ' + normalized);
 }
@@ -10669,6 +10661,7 @@ function toggleStatusMenu() {
 async function updatePipelineStage(newStage) {
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
   if (!contactId) return;
+  var prevStage = (contactData && contactData.pipeline_status) || (leadData && leadData.status) || 'New Lead';
   renderTimeline(newStage);
   var sm = document.getElementById('statusMenu'); if (sm) sm.style.display = 'none';
   // Sync Lead Info select
@@ -10682,19 +10675,26 @@ async function updatePipelineStage(newStage) {
   if (contactData) contactData.pipeline_status = newStage;
   if (leadData) leadData.status = newStage;
   try {
-    var res = await fetch(
-      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/contacts?id=eq.' + contactId,
-      { method:'PATCH', headers:{'Content-Type':'application/json','apikey':window.APP_CONFIG?.SUPABASE_ANON_KEY||'','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||''),'Prefer':'return=minimal'}, body:JSON.stringify({pipeline_status:newStage,updated_at:new Date().toISOString()}) }
-    );
-    if (res.ok) {
+    var client = (await _waitForAuthClient()) || _authClient();
+    var { error } = await client.from('contacts')
+      .update({ pipeline_status: newStage, updated_at: new Date().toISOString() })
+      .eq('id', contactId);
+    if (!error) {
       showToast('Stage: ' + newStage);
       fetch((window.APP_CONFIG?.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co')+'/functions/v1/activity-tracker',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'track_event',contact_id:contactId,type:'STAGE_CHANGE',description:'Stage \u2192 '+newStage,metadata:{stage:newStage}})}).catch(function(){});
     } else {
-      var prev = contactData?.pipeline_status || 'New Lead';
-      renderTimeline(prev);
+      if (contactData) contactData.pipeline_status = prevStage;
+      if (leadData) leadData.status = prevStage;
+      renderTimeline(prevStage);
       showToast('Failed to update stage', true);
+      console.error('[stage] update failed:', error);
     }
-  } catch(err) { renderTimeline(contactData?.pipeline_status||'New Lead'); showToast('Update failed',true); }
+  } catch(err) {
+    if (contactData) contactData.pipeline_status = prevStage;
+    renderTimeline(prevStage);
+    showToast('Update failed', true);
+    console.error('[stage]', err);
+  }
 }
 
 // Close menus on outside click
@@ -22664,20 +22664,10 @@ async function saveSig() {
   payload.updated_at = new Date().toISOString();
 
   try {
-    await fetch(
-      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/email_settings?lo_id=eq.rene',
-      {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY || '',
-          'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || ''),
-          'Prefer': 'return=representation'
-        },
-        body: JSON.stringify(payload)
-      }
-    );
-  } catch(e) { console.error('Sig save error:', e); }
+    var client = (await _waitForAuthClient()) || _authClient();
+    var { error } = await client.from('email_settings').update(payload).eq('lo_id', 'rene');
+    if (error) { showToast('Signature save failed', true); console.error('Sig save error:', error); return; }
+  } catch(e) { showToast('Signature save failed', true); console.error('Sig save error:', e); return; }
 
   window._loadedSignature = Object.assign(window._loadedSignature || {}, payload);
   var ed = document.getElementById('sigEditorOverlay');
