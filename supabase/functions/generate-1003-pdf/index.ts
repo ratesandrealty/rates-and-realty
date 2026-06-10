@@ -128,7 +128,7 @@ const CSS_OVERRIDE = `
 }
 `;
 
-function buildUrlaData(app: any, c: any) {
+function buildUrlaData(app: any, c: any, loanAssets: any[] = [], loanLiabs: any[] = [], loanReo: any[] = [], loanIncome: any[] = []) {
   const firstName = app.first_name || c.first_name || '';
   const middleName = app.middle_name || '';
   const lastName = app.last_name || c.last_name || '';
@@ -141,13 +141,53 @@ function buildUrlaData(app: any, c: any) {
   const coSuffix = app.co_borrower_suffix || '';
   const coFullName = [coFirst, coMiddle, coLast, coSuffix].filter(Boolean).join(' ');
 
-  const baseIncome = parseFloat(app.base_income) || 0;
-  const overtime = parseFloat(app.overtime_income) || 0;
-  const bonus = parseFloat(app.bonus_income) || 0;
-  const commission = parseFloat(app.commission_income) || 0;
-  const military = parseFloat(app.military_income) || 0;
-  const other = parseFloat(app.other_income) || 0;
-  const totalIncome = parseFloat(app.total_monthly_income) || (baseIncome + overtime + bonus + commission + military + other);
+  // normalization helpers
+  const _normYM = (y: any, m: any) => { const tm = (parseInt(y) || 0) * 12 + (parseInt(m) || 0); return { years: Math.floor(tm / 12), months: tm % 12 }; };
+  const _monthsSince = (d: any) => { if (!d) return 0; const s = new Date(d); if (isNaN(s.getTime())) return 0; const n = new Date(); return Math.max(0, (n.getFullYear() - s.getFullYear()) * 12 + (n.getMonth() - s.getMonth())); };
+  const _fmtPhone = (p: any) => { const x = String(p || '').replace(/\D/g, ''); return x.length === 10 ? `(${x.slice(0,3)}) ${x.slice(3,6)}-${x.slice(6)}` : (p || ''); };
+  const _curTenure = _normYM(app.current_address_years, app.current_address_months);
+  const _formerTenure = _normYM(app.former_address_years, app.former_address_months);
+  const _lowMonths = (parseInt(app.months_in_line_of_work) || 0) || (parseInt(app.years_in_line_of_work) || 0) * 12 || _monthsSince(app.employment_start_date);
+  const _lowTenure = _normYM(0, _lowMonths);
+
+  // Income: prefer live loan_income rows (active only); fall back to application columns.
+  const _inc = (loanIncome || []).filter((r: any) => r.is_active !== false);
+  const _ity = (r: any) => String(r.income_type || '').toLowerCase().replace(/[^a-z]/g, '');
+  const _sum = (...keys: string[]) => _inc.filter((r: any) => keys.includes(_ity(r))).reduce((s: number, r: any) => s + (parseFloat(r.monthly_amount) || 0), 0);
+  const _hasInc = _inc.length > 0;
+  const EMP_TYPES = ['base', 'basesalary', 'basepay', 'overtime', 'ot', 'bonus', 'commission', 'military', 'militaryentitlements'];
+  const baseIncome = _hasInc ? _sum('base', 'basesalary', 'basepay') : (parseFloat(app.base_income) || 0);
+  const overtime = _hasInc ? _sum('overtime', 'ot') : (parseFloat(app.overtime_income) || 0);
+  const bonus = _hasInc ? _sum('bonus') : (parseFloat(app.bonus_income) || 0);
+  const commission = _hasInc ? _sum('commission') : (parseFloat(app.commission_income) || 0);
+  const military = _hasInc ? _sum('military', 'militaryentitlements') : (parseFloat(app.military_income) || 0);
+  const other = 0; // 1b "Other" employment line; non-employment income goes to 1e
+  const employmentTotal = baseIncome + overtime + bonus + commission + military + other;
+  const otherIncomeRows = _hasInc
+    ? _inc.filter((r: any) => !EMP_TYPES.includes(_ity(r))).map((r: any) => ({ source: String(r.income_type || '').replace(/([a-z])([A-Z])/g, '$1 $2'), amount: parseFloat(r.monthly_amount) || 0 }))
+    : [];
+  const otherIncomeTotal = otherIncomeRows.reduce((s: number, r: any) => s + r.amount, 0);
+  const totalIncome = _hasInc ? (employmentTotal + otherIncomeTotal) : (parseFloat(app.total_monthly_income) || employmentTotal);
+
+  // ===== Section 2 (Assets/Liabilities) + Section 3 (Real Estate) =====
+  const num = (v: any) => parseFloat(v) || 0;
+  const LIAB_LABELS: Record<string, string> = { Revolving: 'Revolving', Installment: 'Installment', MortgageLoan: 'Mortgage Loan', Open30DayChargeAccount: 'Open 30-Day', HELOC: 'HELOC', Lease: 'Lease', LineOfCredit: 'Line of Credit' };
+  const humanize = (t: any) => LIAB_LABELS[t] || String(t || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+
+  const assetRows = (loanAssets || []).map((a: any) => ({
+    type: humanize(a.asset_type), institution: a.institution_name || '', account: a.account_number || '', value: num(a.current_value),
+  }));
+  const assetsTotal = assetRows.reduce((s: number, r: any) => s + r.value, 0);
+
+  const liabilityRows = (loanLiabs || []).map((l: any) => ({
+    type: humanize(l.liability_type), company: l.creditor_name || '', account: l.account_number || '',
+    balance: num(l.balance), payment: num(l.monthly_payment), paidOff: !!l.will_be_paid_off,
+  }));
+
+  const reoRows = (loanReo || []).map((r: any) => ({
+    address: r.property_address || '', value: num(r.market_value), status: humanize(r.disposition), occupancy: humanize(r.current_usage),
+    expenses: num(r.taxes) + num(r.insurance) + num(r.hoa), rental: num(r.gross_rental_income), mtgPayment: num(r.monthly_payment), mtgBalance: num(r.mortgage_balance),
+  }));
 
   return {
     lender: { loanNo: app.lender_loan_no || '', agencyCaseNo: app.agency_case_no || '' },
@@ -161,9 +201,9 @@ function buildUrlaData(app: any, c: any) {
       dependentsCount: app.dependents_count || '',
       dependentsAges: app.dependents_ages || '',
       totalBorrowers: coFullName ? 2 : 1,
-      homePhone: app.home_phone || c.secondary_phone || '',
-      cellPhone: app.cell_phone || c.phone || '',
-      workPhone: app.work_phone || '',
+      homePhone: _fmtPhone(app.home_phone || c.secondary_phone || ''),
+      cellPhone: _fmtPhone(app.cell_phone || c.phone || ''),
+      workPhone: _fmtPhone(app.work_phone || ''),
       email: app.email || c.email || '',
       currentAddress: {
         street: app.current_address_street || c.address || '',
@@ -172,8 +212,8 @@ function buildUrlaData(app: any, c: any) {
         state: app.current_address_state || c.state || '',
         zip: app.current_address_zip || c.zip || '',
         country: app.current_address_country || 'USA',
-        years: app.current_address_years || 0,
-        months: app.current_address_months || 0,
+        years: _curTenure.years,
+        months: _curTenure.months,
         housing: app.current_housing || app.current_housing_type || '',
         rent: app.current_rent_amount || '',
       },
@@ -183,8 +223,8 @@ function buildUrlaData(app: any, c: any) {
         city: app.former_address_city || '',
         state: app.former_address_state || '',
         zip: app.former_address_zip || '',
-        years: app.former_address_years || 0,
-        months: app.former_address_months || 0,
+        years: _formerTenure.years,
+        months: _formerTenure.months,
       },
       mailingAddress: app.mailing_address || [app.mailing_address_street, app.mailing_address_unit, app.mailing_address_city, app.mailing_address_state, app.mailing_address_zip].filter(Boolean).join(', '),
       militaryService: !!app.military_service,
@@ -197,7 +237,7 @@ function buildUrlaData(app: any, c: any) {
     employment: {
       current: {
         employerName: app.employer_name || c.employer_name || '',
-        phone: app.employer_phone || '',
+        phone: _fmtPhone(app.employer_phone || ''),
         street: app.employer_street || '',
         unit: app.employer_unit || '',
         city: app.employer_city || '',
@@ -206,11 +246,11 @@ function buildUrlaData(app: any, c: any) {
         country: app.employer_country || 'USA',
         position: app.position_title || c.job_title || '',
         startDate: app.employment_start_date || '',
-        years: app.years_in_line_of_work || c.years_employed || (app.months_in_line_of_work ? Math.floor(app.months_in_line_of_work / 12) : 0),
-        months: (app.months_in_line_of_work || 0) % 12,
+        years: _lowTenure.years,
+        months: _lowTenure.months,
         selfEmployed: !!app.is_self_employed,
         familyEmployer: !!app.family_member_employer,
-        baseIncome, overtime, bonus, commission, military, other, total: totalIncome,
+        baseIncome, overtime, bonus, commission, military, other, total: employmentTotal,
       },
     },
     loan: {
@@ -235,25 +275,25 @@ function buildUrlaData(app: any, c: any) {
       },
     },
     declarations: {
-      a: !!(app.declaration_primary_residence ?? app.decl_primary_residence),
-      b: !!(app.declaration_family_relationship ?? app.decl_family_relationship_seller),
-      c: !!(app.declaration_borrowed_funds ?? app.decl_borrowed_funds),
-      d1: !!(app.declaration_other_mortgage ?? app.decl_applying_other_mortgage),
-      d2: !!(app.declaration_new_credit ?? app.decl_new_credit),
-      e: !!(app.declaration_lien_priority ?? app.decl_lien_priority),
-      f: !!(app.declaration_cosigner ?? app.decl_cosigner),
-      g: !!(app.declaration_judgments ?? app.decl_outstanding_judgments),
-      h: !!(app.declaration_delinquent ?? app.decl_delinquent_federal),
-      i: !!(app.declaration_lawsuit ?? app.decl_lawsuit),
-      j: !!(app.declaration_deed_in_lieu ?? app.decl_deed_in_lieu),
-      k: !!(app.declaration_short_sale ?? app.decl_short_sale),
-      l: !!(app.declaration_foreclosure ?? app.decl_foreclosure),
-      m: !!(app.declaration_bankruptcy ?? app.decl_bankruptcy),
+      a: !!(app.declaration_primary_residence || app.decl_primary_residence) || /primary/i.test(String(app.occupancy_type || app.occupancy || '')),
+      b: !!(app.declaration_family_relationship || app.decl_family_relationship_seller),
+      c: !!(app.declaration_borrowed_funds || app.decl_borrowed_funds),
+      d1: !!(app.declaration_other_mortgage || app.decl_applying_other_mortgage),
+      d2: !!(app.declaration_new_credit || app.decl_new_credit),
+      e: !!(app.declaration_lien_priority || app.decl_lien_priority),
+      f: !!(app.declaration_cosigner || app.decl_cosigner),
+      g: !!(app.declaration_judgments || app.decl_outstanding_judgments),
+      h: !!(app.declaration_delinquent || app.decl_delinquent_federal),
+      i: !!(app.declaration_lawsuit || app.decl_lawsuit),
+      j: !!(app.declaration_deed_in_lieu || app.decl_deed_in_lieu),
+      k: !!(app.declaration_short_sale || app.decl_short_sale),
+      l: !!(app.declaration_foreclosure || app.decl_foreclosure),
+      m: !!(app.declaration_bankruptcy || app.decl_bankruptcy),
       bankruptcyType: app.bankruptcy_type || (Array.isArray(app.decl_bankruptcy_types) ? app.decl_bankruptcy_types.join(', ') : (app.decl_bankruptcy_types || '')),
     },
     lo: {
       orgName: 'E Mortgage Capital, Inc. / Rates & Realty',
-      orgAddress: 'Huntington Beach, CA',
+      orgAddress: '3750 S Susan Street, Santa Ana, CA 92704',
       orgNmls: '1416824',
       orgLicense: '',
       loName: 'Rene Duarte',
@@ -262,6 +302,10 @@ function buildUrlaData(app: any, c: any) {
       email: 'rene@ratesandrealty.com',
       phone: '(714) 472-8508',
     },
+    assets: { rows: assetRows, total: assetsTotal },
+    liabilities: { rows: liabilityRows },
+    realEstate: { owns: reoRows.length > 0, rows: reoRows },
+    otherIncome: { rows: otherIncomeRows, total: otherIncomeTotal },
   };
 }
 
@@ -302,7 +346,22 @@ Deno.serve(async (req: Request) => {
     const app = ((await appRes.json()) || [])[0] || {};
     const c = ((await cRes.json()) || [])[0] || {};
 
-    const urlaData = buildUrlaData(app, c);
+    // Section 2/3 sources, keyed by application_id (fallback contact_id)
+    const scope = app.id
+      ? `or=(application_id.eq.${app.id},and(application_id.is.null,contact_id.eq.${contact_id}))`
+      : `contact_id=eq.${contact_id}`;
+    const [assetsRes, liabRes, reoRes, incomeRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/loan_assets?${scope}&order=sort_order.asc`, { headers: hdrs }),
+      fetch(`${SUPABASE_URL}/rest/v1/loan_liabilities?${scope}&order=sort_order.asc`, { headers: hdrs }),
+      fetch(`${SUPABASE_URL}/rest/v1/loan_reo?${scope}&order=sort_order.asc`, { headers: hdrs }),
+      fetch(`${SUPABASE_URL}/rest/v1/loan_income?${scope}&order=sort_order.asc`, { headers: hdrs }),
+    ]);
+    const loanAssets = (await assetsRes.json().catch(() => [])) || [];
+    const loanLiabs = (await liabRes.json().catch(() => [])) || [];
+    const loanReo = (await reoRes.json().catch(() => [])) || [];
+    const loanIncome = (await incomeRes.json().catch(() => [])) || [];
+
+    const urlaData = buildUrlaData(app, c, loanAssets, loanLiabs, loanReo, loanIncome);
     const html = buildHtml(urlaData);
 
     const bytes = new TextEncoder().encode(html);

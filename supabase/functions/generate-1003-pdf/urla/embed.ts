@@ -262,13 +262,13 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
       <td class="lbl">Position or Title<div class="val" data-field="employment.current.position">&nbsp;</div></td>
       <td class="lbl" rowspan="3">
         <b>Gross Monthly Income</b>
-        <div>Base: $<span data-field="employment.current.baseIncome" data-format="currency">&nbsp;</span> /mo</div>
-        <div>Overtime: $<span data-field="employment.current.overtime" data-format="currency">&nbsp;</span> /mo</div>
-        <div>Bonus: $<span data-field="employment.current.bonus" data-format="currency">&nbsp;</span> /mo</div>
-        <div>Commission: $<span data-field="employment.current.commission" data-format="currency">&nbsp;</span> /mo</div>
-        <div>Military Entitlements: $<span data-field="employment.current.military" data-format="currency">&nbsp;</span> /mo</div>
-        <div>Other: $<span data-field="employment.current.other" data-format="currency">&nbsp;</span> /mo</div>
-        <div style="background:#1a1a2e;color:#fff;padding:3px 4px;margin-top:3px"><b>TOTAL: $<span data-field="employment.current.total" data-format="currency">&nbsp;</span> /mo</b></div>
+        <div>Base: <span data-field="employment.current.baseIncome" data-format="currency">&nbsp;</span> /mo</div>
+        <div>Overtime: <span data-field="employment.current.overtime" data-format="currency">&nbsp;</span> /mo</div>
+        <div>Bonus: <span data-field="employment.current.bonus" data-format="currency">&nbsp;</span> /mo</div>
+        <div>Commission: <span data-field="employment.current.commission" data-format="currency">&nbsp;</span> /mo</div>
+        <div>Military Entitlements: <span data-field="employment.current.military" data-format="currency">&nbsp;</span> /mo</div>
+        <div>Other: <span data-field="employment.current.other" data-format="currency">&nbsp;</span> /mo</div>
+        <div style="background:#1a1a2e;color:#fff;padding:3px 4px;margin-top:3px"><b>TOTAL: <span data-field="employment.current.total" data-format="currency">&nbsp;</span> /mo</b></div>
       </td>
     </tr>
     <tr><td class="lbl">Start Date <span data-field="employment.current.startDate" data-format="date">&nbsp;</span></td></tr>
@@ -330,7 +330,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
       <div>&bull; Other</div>
     </div>
   </div>
-  <table class="form-table">
+  <table class="form-table" id="urla-other-income">
     <colgroup><col style="width:70%"/><col style="width:30%"/></colgroup>
     <tr><th>Income Source &mdash; use list above</th><th>Monthly Income</th></tr>
     <tr><td class="val empty"></td><td class="val empty"></td></tr>
@@ -356,7 +356,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   <div style="border:0.5pt solid #000;border-top:0;padding:4px 8px;font-size:7pt;background:#fafafa">
     <b>Account Types:</b> Checking &bull; Savings &bull; Money Market &bull; Certificate of Deposit &bull; Mutual Fund &bull; Stocks &bull; Stock Options &bull; Bonds &bull; Retirement (e.g. 401k, IRA) &bull; Bridge Loan Proceeds &bull; Individual Development Account &bull; Trust Account &bull; Cash Value of Life Insurance (used for the transaction) &bull; Other
   </div>
-  <table class="form-table">
+  <table class="form-table" id="urla-assets">
     <colgroup><col style="width:24%"/><col style="width:32%"/><col style="width:24%"/><col style="width:20%"/></colgroup>
     <tr><th>Account Type &mdash; use list above</th><th>Financial Institution</th><th>Account Number</th><th>Cash or Market Value</th></tr>
     <tr><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td></tr>
@@ -385,7 +385,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   <div style="border:0.5pt solid #000;border-top:0;padding:4px 8px;font-size:7pt;background:#fafafa">
     <b>Account Types:</b> Revolving (e.g. Credit Cards) &bull; Installment (e.g. Car, Student, Personal Loans) &bull; Open 30-Day (balance paid monthly) &bull; Lease (not real estate) &bull; Other
   </div>
-  <table class="form-table">
+  <table class="form-table" id="urla-liabilities">
     <colgroup><col style="width:18%"/><col style="width:25%"/><col style="width:17%"/><col style="width:20%"/><col style="width:20%"/></colgroup>
     <tr><th>Account Type</th><th>Company Name</th><th>Account Number</th><th>Unpaid Balance</th><th>Monthly Payment</th></tr>
     <tr><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td></tr>
@@ -417,21 +417,21 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
 <!-- PAGE 4 -->
 <div class="page" id="page-4">
   <div class="section-header">Section 3: Financial Information &mdash; Real Estate.</div>
-  <div class="subsection-bar">This section asks you to list all properties you currently own and what you owe on them. &nbsp;&nbsp;<span class="cb">&#9744;</span>I do not own any real estate</div>
+  <div class="subsection-bar">This section asks you to list all properties you currently own and what you owe on them. &nbsp;&nbsp;<span class="cb" id="cb-no-reo">&#9744;</span>I do not own any real estate</div>
 
   <div class="subsection-bar light">3a. Property You Own &mdash; If you are refinancing, list the property you are refinancing FIRST.</div>
   <table class="form-table">
-    <tr><td class="lbl" colspan="6">Address &mdash; Street <span class="val" style="display:inline-block;min-width:200pt">&nbsp;</span> Unit # <span class="val" style="display:inline-block;min-width:40pt">&nbsp;</span></td></tr>
+    <tr><td class="lbl" colspan="6">Address &mdash; Street <span class="val" style="display:inline-block;min-width:200pt" data-field="realEstate.rows.0.address">&nbsp;</span> Unit # <span class="val" style="display:inline-block;min-width:40pt">&nbsp;</span></td></tr>
     <tr><td class="lbl" colspan="6">City <span class="val" style="display:inline-block;min-width:100pt">&nbsp;</span> State <span class="val" style="display:inline-block;min-width:30pt">&nbsp;</span> ZIP <span class="val" style="display:inline-block;min-width:50pt">&nbsp;</span> Country <span class="val" style="display:inline-block;min-width:60pt">&nbsp;</span></td></tr>
     <tr>
       <th>Property Value</th><th>Status: Sold, Pending Sale, or Retained</th><th>Intended Occupancy: Investment, Primary Residence, Second Home, Other</th><th>Monthly Insurance, Taxes, Association Dues, etc. (if not included in mortgage)</th><th>For 2-4 Unit Primary or Investment Property &mdash; Monthly Rental Income</th><th>For LENDER to calculate: Net Monthly Rental Income</th>
     </tr>
-    <tr><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td></tr>
+    <tr><td class="val" data-field="realEstate.rows.0.value" data-format="currency"></td><td class="val" data-field="realEstate.rows.0.status"></td><td class="val" data-field="realEstate.rows.0.occupancy"></td><td class="val" data-field="realEstate.rows.0.expenses" data-format="currency"></td><td class="val" data-field="realEstate.rows.0.rental" data-format="currency"></td><td class="val empty"></td></tr>
   </table>
   <div class="subsection-bar light">Mortgage Loans on this Property &nbsp;&nbsp;<span class="cb">&#9744;</span>Does not apply</div>
   <table class="form-table">
     <tr><th>Creditor Name</th><th>Account Number</th><th>Monthly Mortgage Payment</th><th>Unpaid Balance</th><th>To be paid off at or before closing</th><th>Type (FHA, VA, Conventional, USDA-RD)</th><th>Credit Limit (if applicable)</th></tr>
-    <tr><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val empty"></td><td class="val"><span class="cb">&#9744;</span></td><td class="val empty"></td><td class="val empty"></td></tr>
+    <tr><td class="val empty"></td><td class="val empty"></td><td class="val" data-field="realEstate.rows.0.mtgPayment" data-format="currency"></td><td class="val" data-field="realEstate.rows.0.mtgBalance" data-format="currency"></td><td class="val"><span class="cb">&#9744;</span></td><td class="val empty"></td><td class="val empty"></td></tr>
   </table>
 
   <div class="subsection-bar light">3b. IF APPLICABLE, Complete Information for Additional Property &nbsp;&nbsp;<span class="cb">&#9744;</span>Does not apply</div>
@@ -464,7 +464,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
   <table class="form-table">
     <colgroup><col style="width:30%"/><col style="width:70%"/></colgroup>
     <tr>
-      <td class="lbl">Loan Amount $<span data-field="loan.amount" data-format="currency">&nbsp;</span></td>
+      <td class="lbl">Loan Amount <span data-field="loan.amount" data-format="currency">&nbsp;</span></td>
       <td class="lbl">Loan Purpose
         <span class="opt"><span class="cb" id="cb-purchase">&#9744;</span>Purchase</span>
         <span class="opt"><span class="cb" id="cb-refinance">&#9744;</span>Refinance</span>
@@ -478,7 +478,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     </tr>
     <tr>
       <td class="lbl">Number of Units <span data-field="loan.property.units">1</span></td>
-      <td class="lbl">Property Value $<span data-field="loan.property.value" data-format="currency">&nbsp;</span></td>
+      <td class="lbl">Property Value <span data-field="loan.property.value" data-format="currency">&nbsp;</span></td>
     </tr>
     <tr>
       <td class="lbl" colspan="2">Occupancy
@@ -769,14 +769,14 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
       <td class="val"><span class="opt"><span class="cb" id="cb-conventional">&#9744;</span>Conventional</span><span class="opt"><span class="cb" id="cb-usda">&#9744;</span>USDA-RD</span><span class="opt"><span class="cb" id="cb-fha">&#9744;</span>FHA</span><span class="opt"><span class="cb" id="cb-va">&#9744;</span>VA</span><span class="opt"><span class="cb">&#9744;</span>Other: ______</span></td>
       <td class="lbl" rowspan="4">
         <b>Proposed Monthly Payment for Property</b>
-        <div>First Mortgage (P&amp;I): $______</div>
-        <div>Subordinate Lien(s) (P&amp;I): $______</div>
-        <div>Homeowner's Insurance: $______</div>
-        <div>Supplemental Property Insurance: $______</div>
-        <div>Property Taxes: $______</div>
-        <div>Mortgage Insurance: $______</div>
-        <div>Association/Project Dues (Condo, Co-Op, PUD): $______</div>
-        <div>Other: $______</div>
+        <div style="padding:2px 0">First Mortgage (P&amp;I): $______</div>
+        <div style="padding:2px 0">Subordinate Lien(s) (P&amp;I): $______</div>
+        <div style="padding:2px 0">Homeowner's Insurance: $______</div>
+        <div style="padding:2px 0">Supplemental Property Insurance: $______</div>
+        <div style="padding:2px 0">Property Taxes: $______</div>
+        <div style="padding:2px 0">Mortgage Insurance: $______</div>
+        <div style="padding:2px 0">Association/Project Dues (Condo, Co-Op, PUD): $______</div>
+        <div style="padding:2px 0">Other: $______</div>
         <div style="background:#1a1a2e;color:#fff;padding:3px;margin-top:3px"><b>TOTAL: $______</b></div>
       </td>
     </tr>
@@ -821,7 +821,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     <tr style="background:#eaeaea;font-weight:bold"><td class="val" style="text-align:center"><b>H.</b></td><td class="val"><b>TOTAL DUE FROM BORROWER(s)</b> (Total of A thru G)</td><td class="val">&nbsp;</td></tr>
 
     <tr><td class="lbl" colspan="3">TOTAL MORTGAGE LOANS</td></tr>
-    <tr><td class="val" style="text-align:center">I.</td><td class="val">Loan Amount — Loan Amount Excluding Financed Mortgage Insurance (or Mortgage Insurance Equivalent) $<span data-field="loan.amount" data-format="currency"></span> &nbsp; Financed Mortgage Insurance (or Mortgage Insurance Equivalent) Amount $______</td><td class="val" data-field="loan.amount" data-format="currency">&nbsp;</td></tr>
+    <tr><td class="val" style="text-align:center">I.</td><td class="val">Loan Amount — Loan Amount Excluding Financed Mortgage Insurance (or Mortgage Insurance Equivalent) <span data-field="loan.amount" data-format="currency"></span> &nbsp; Financed Mortgage Insurance (or Mortgage Insurance Equivalent) Amount $______</td><td class="val" data-field="loan.amount" data-format="currency">&nbsp;</td></tr>
     <tr><td class="val" style="text-align:center">J.</td><td class="val">Other New Mortgage Loans on the Property the Borrower(s) is Buying or Refinancing (See Table 4b. Other New Mortgage Loans)</td><td class="val empty"></td></tr>
     <tr style="background:#eaeaea;font-weight:bold"><td class="val" style="text-align:center"><b>K.</b></td><td class="val"><b>TOTAL MORTGAGE LOANS</b> (Total of I and J)</td><td class="val" data-field="loan.amount" data-format="currency">&nbsp;</td></tr>
 
@@ -873,6 +873,7 @@ const URLA = {
       else el.textContent = val;
     });
     this.fillCheckboxes(data);
+    this.fillTables(data);
   },
 
   getPath(obj, path) {
@@ -955,6 +956,57 @@ const URLA = {
     this.setCb('cb-bk-11', bk.includes('11'));
     this.setCb('cb-bk-12', bk.includes('12'));
     this.setCb('cb-bk-13', bk.includes('13'));
+
+    var _hasMtgLiab = (((data.liabilities || {}).rows) || []).some(function (l) { return /mortgage|heloc/i.test(l.type || ''); });
+    this.setCb('cb-no-reo', !_hasMtgLiab && !(data.realEstate && data.realEstate.owns));
+  },
+
+  fillTables(data) {
+    // 2c — Liabilities (all types render here; REO mortgages live in Section 3)
+    this.fillTable('urla-liabilities', (data.liabilities || {}).rows, [
+      { key: 'type' }, { key: 'company' }, { key: 'account' },
+      { key: 'balance', fmt: 'currency' }, { key: 'payment', fmt: 'currency' },
+    ], { minRows: 3 });
+
+    // 2a — Assets (bank/retirement/other accounts) + TOTAL
+    this.fillTable('urla-assets', (data.assets || {}).rows, [
+      { key: 'type' }, { key: 'institution' }, { key: 'account' }, { key: 'value', fmt: 'currency' },
+    ], { minRows: 5, total: { key: 'value', span: 3, label: 'Provide TOTAL Amount Here' } });
+
+    // 1e — Income from Other Sources
+    this.fillTable('urla-other-income', (data.otherIncome || {}).rows, [
+      { key: 'source' }, { key: 'amount', fmt: 'currency' },
+    ], { minRows: 4, total: { key: 'amount', span: 1, label: 'Provide TOTAL Amount Here' } });
+  },
+
+  fillTable(tableId, rows, cols, opts) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    opts = opts || {};
+    Array.from(table.querySelectorAll('tr')).forEach((tr) => { if (!tr.querySelector('th')) tr.remove(); });
+    const list = Array.isArray(rows) ? rows : [];
+    const cell = (v, col) => {
+      let out = v;
+      if (col.fmt === 'currency') out = (v || v === 0) ? this.formatCurrency(v) : '';
+      if (out === undefined || out === null) out = '';
+      return '<td class="val' + (out === '' ? ' empty' : '') + '">' + out + '</td>';
+    };
+    list.forEach((r) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = cols.map((col) => cell(r[col.key], col)).join('');
+      table.appendChild(tr);
+    });
+    for (let i = list.length; i < (opts.minRows || 0); i++) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = cols.map(() => '<td class="val empty"></td>').join('');
+      table.appendChild(tr);
+    }
+    if (opts.total) {
+      const sum = list.reduce((s, r) => s + (parseFloat(r[opts.total.key]) || 0), 0);
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td colspan="' + (opts.total.span || (cols.length - 1)) + '" style="background:#000;color:#fff;font-weight:bold">' + (opts.total.label || 'Provide TOTAL Amount Here') + '</td><td class="val">' + this.formatCurrency(sum) + '</td>';
+      table.appendChild(tr);
+    }
   },
 
   formatCurrency(val) {
