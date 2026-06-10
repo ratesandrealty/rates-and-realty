@@ -15341,6 +15341,130 @@ document.addEventListener('click', function(e) {
 });
 
 /* ── MISMO 3.4 EXPORT ── */
+// ── MISMO export: custom "missing required fields" modal ──────────────
+// Replaces the plain alert() with a dark, gold-accented modal whose rows are
+// clickable: clicking a row switches to that field's 1003 section (same
+// mechanism the SECTIONS sidebar uses), scrolls the input into view, focuses
+// it, and briefly highlights it.
+function showMismoMissingFieldsModal(messages, fieldTargets) {
+  const SECTION_LABELS = {
+    'loanSummaryPanel':  'Loan & DTI',
+    'sec-borrower-info': 'Borrower',
+    'sec-employment':    'Employment',
+    'sec-assets':        'Assets & Debts',
+    'sec-loan-property': 'Property',
+    'sec-declarations':  'Declarations'
+  };
+
+  // Remove any stale instance.
+  const stale = document.getElementById('mismoMissingModal');
+  if (stale) stale.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'mismoMissingModal';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.66);display:flex;align-items:center;justify-content:center;padding:20px;font-family:inherit;';
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:#141414;border:1px solid rgba(201,168,76,0.35);border-radius:14px;width:100%;max-width:460px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,0.6);overflow:hidden;';
+
+  // Header
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px 14px;border-bottom:1px solid rgba(201,168,76,0.18);';
+  const title = document.createElement('div');
+  title.textContent = 'Complete these before exporting';
+  title.style.cssText = 'color:#C9A84C;font-size:15px;font-weight:700;letter-spacing:0.3px;';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.innerHTML = '&times;';
+  closeBtn.style.cssText = 'background:transparent;border:none;color:#888;font-size:22px;line-height:1;cursor:pointer;padding:0 4px;font-family:inherit;';
+  closeBtn.onmouseover = function(){ this.style.color = '#fff'; };
+  closeBtn.onmouseout  = function(){ this.style.color = '#888'; };
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+
+  // Intro line
+  const intro = document.createElement('div');
+  intro.textContent = 'Click a field to jump straight to it:';
+  intro.style.cssText = 'color:rgba(255,255,255,0.5);font-size:12px;padding:12px 20px 6px;';
+
+  // Scrollable list
+  const list = document.createElement('div');
+  list.style.cssText = 'padding:4px 14px 16px;overflow:auto;';
+
+  function close() { overlay.remove(); }
+
+  function gotoField(target) {
+    close();
+    const sectionId = target && target.section;
+    const inputId = target && target.input;
+    if (sectionId && typeof scrollToSection === 'function') scrollToSection(sectionId);
+    // Wait for the section swap to render, then scroll/focus/highlight.
+    setTimeout(function() {
+      const el = inputId ? document.getElementById(inputId) : null;
+      const scrollTarget = el || (sectionId ? document.getElementById(sectionId) : null);
+      if (scrollTarget && scrollTarget.scrollIntoView) {
+        scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      if (el) {
+        try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+        const prev = { outline: el.style.outline, boxShadow: el.style.boxShadow, transition: el.style.transition };
+        el.style.transition = 'outline .15s ease, box-shadow .15s ease';
+        el.style.outline = '2px solid #C9A84C';
+        el.style.boxShadow = '0 0 0 4px rgba(201,168,76,0.28)';
+        setTimeout(function() {
+          el.style.outline = prev.outline;
+          el.style.boxShadow = prev.boxShadow;
+          el.style.transition = prev.transition;
+        }, 2000);
+      }
+    }, 160);
+  }
+
+  messages.forEach(function(msg) {
+    const target = fieldTargets[msg] || null;
+    const sectionLabel = target && SECTION_LABELS[target.section] ? SECTION_LABELS[target.section] : '';
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;margin:6px 0;border:1px solid rgba(255,255,255,0.08);border-radius:9px;cursor:pointer;transition:all .15s;background:rgba(255,255,255,0.02);';
+    row.onmouseover = function(){ this.style.background = 'rgba(201,168,76,0.10)'; this.style.borderColor = 'rgba(201,168,76,0.45)'; };
+    row.onmouseout  = function(){ this.style.background = 'rgba(255,255,255,0.02)'; this.style.borderColor = 'rgba(255,255,255,0.08)'; };
+
+    const textWrap = document.createElement('div');
+    const label = document.createElement('div');
+    label.textContent = msg;
+    label.style.cssText = 'color:#fff;font-size:13px;font-weight:500;';
+    textWrap.appendChild(label);
+    if (sectionLabel) {
+      const sub = document.createElement('div');
+      sub.textContent = sectionLabel;
+      sub.style.cssText = 'color:rgba(255,255,255,0.4);font-size:11px;margin-top:2px;text-transform:uppercase;letter-spacing:0.5px;';
+      textWrap.appendChild(sub);
+    }
+
+    const arrow = document.createElement('span');
+    arrow.innerHTML = '&rarr;';
+    arrow.style.cssText = 'color:#C9A84C;font-size:15px;flex-shrink:0;';
+
+    row.appendChild(textWrap);
+    row.appendChild(arrow);
+    row.addEventListener('click', function(){ gotoField(target); });
+    list.appendChild(row);
+  });
+
+  modal.appendChild(header);
+  modal.appendChild(intro);
+  modal.appendChild(list);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', function(e){ if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function onEsc(e){
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); }
+  });
+}
+
 async function exportMISMO() {
   const contactId = getContactId();
   if (!contactId) return alert('No contact ID found.');
@@ -15370,7 +15494,22 @@ async function exportMISMO() {
   if (!data.current_housing_type) errors.push('Current housing type (own/rent) is required');
 
   if (errors.length > 0) {
-    alert('Please complete these required fields before exporting:\n\n' + errors.map(e => '• ' + e).join('\n'));
+    // Map each validation message -> the input it refers to + the section it lives in.
+    // (Checks above are unchanged; this only controls how the list is presented.)
+    const fieldTargets = {
+      'Borrower name is required':                    { input: 'f_first_name',     section: 'sec-borrower-info' },
+      'SSN is required':                              { input: 'f_ssn',            section: 'sec-borrower-info' },
+      'Date of birth is required':                    { input: 'f_dob',            section: 'sec-borrower-info' },
+      'Loan amount is required':                      { input: 'f_loan_amount',    section: 'sec-loan-property' },
+      'Loan purpose is required':                     { input: 'f_loan_purpose',   section: 'sec-loan-property' },
+      'Property address is required':                 { input: 'f_prop_street',    section: 'sec-loan-property' },
+      'Property city is required':                    { input: 'f_prop_city',      section: 'sec-loan-property' },
+      'Property state is required':                   { input: 'f_prop_state',     section: 'sec-loan-property' },
+      'Property ZIP is required':                     { input: 'f_prop_zip',       section: 'sec-loan-property' },
+      'Borrower current address is required':         { input: 'f_current_street', section: 'sec-borrower-info' },
+      'Current housing type (own/rent) is required':  { input: 'f_current_housing',section: 'sec-borrower-info' }
+    };
+    showMismoMissingFieldsModal(errors, fieldTargets);
     return;
   }
 
