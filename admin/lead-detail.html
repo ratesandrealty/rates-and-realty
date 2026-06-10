@@ -2644,6 +2644,7 @@
           <span id="autoSaveIndicator" style="font-size:11px;color:rgba(255,255,255,0.4);opacity:0;transition:opacity 0.3s;margin-right:12px;"></span>
           <button class="ld-btn-save" onclick="save1003()">Save Application</button>
           <button type="button" id="download1003Btn" onclick="openForm1003Modal()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:#C9A84C;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">&#128065; View 1003 PDF</button>
+          <button type="button" id="exportMismoLpBtn" onclick="exportMismoLendingPad()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:#C9A84C;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">&#128228; Export MISMO (LendingPad)</button>
           <button class="ld-btn-cancel" onclick="exportMISMO()" style="border-color:var(--gold-bdr);color:var(--gold);">Export MISMO 3.4</button>
         </div>
       </div>
@@ -15858,6 +15859,35 @@ async function openForm1003Modal() {
   } catch(err) {
     loader.innerHTML = '<div style="color:#E05252;font-size:13px;">\u26A0 ' + err.message + '</div>';
     console.error('1003 generation error:', err);
+  }
+}
+
+// Export MISMO 3.4 XML for LendingPad. Calls the generate-mismo edge function the same
+// way openForm1003Modal calls generate-1003-pdf (same SUPABASE_URL + anon-key auth/headers),
+// passing the current lead's contact_id. On success, decodes the base64 XML and downloads it.
+async function exportMismoLendingPad() {
+  var contactId = new URLSearchParams(window.location.search).get('contact_id');
+  try {
+    var res = await fetch(
+      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/generate-mismo',
+      { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||'')}, body:JSON.stringify({contact_id:contactId}) }
+    );
+    var resp = await res.json();
+    if (!res.ok || resp.error) {
+      showToast(resp.message || resp.error || 'MISMO export failed', true);
+      return;
+    }
+    const bin = atob(resp.xml);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const blob = new Blob([arr], { type: "application/xml" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = resp.file_name || "loan.xml";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+  } catch(e) {
+    showToast('MISMO export error: ' + e.message, true);
   }
 }
 
