@@ -790,7 +790,7 @@ export const URLA_HTML = String.raw`<!DOCTYPE html>
     </tr>
     <tr>
       <td class="lbl">Amortization Type</td>
-      <td class="val"><span class="opt"><span class="cb">&#9744;</span>Fixed Rate</span><span class="opt"><span class="cb">&#9744;</span>Adjustable Rate — initial period prior to first adjustment ___ months</span><span class="opt"><span class="cb">&#9744;</span>Other</span></td>
+      <td class="val"><span class="opt-block"><span class="cb">&#9744;</span>Fixed Rate</span><span class="opt-block"><span class="cb">&#9744;</span>Adjustable Rate — initial period prior to first adjustment ___ months</span><span class="opt-block"><span class="cb">&#9744;</span>Other</span></td>
     </tr>
     <tr>
       <td class="lbl">Loan Features</td>
