@@ -151,7 +151,8 @@ function buildUrlaData(app: any, c: any, loanAssets: any[] = [], loanLiabs: any[
   const _lowTenure = _normYM(0, _lowMonths);
 
   // Income: prefer live loan_income rows (active only); fall back to application columns.
-  const _inc = (loanIncome || []).filter((r: any) => r.is_active !== false);
+  const _primaryContact = app.contact_id || c.id || null;
+  const _inc = (loanIncome || []).filter((r: any) => r.is_active !== false && (r.contact_id == null || r.contact_id === _primaryContact));
   const _ity = (r: any) => String(r.income_type || '').toLowerCase().replace(/[^a-z]/g, '');
   const _sum = (...keys: string[]) => _inc.filter((r: any) => keys.includes(_ity(r))).reduce((s: number, r: any) => s + (parseFloat(r.monthly_amount) || 0), 0);
   const _hasInc = _inc.length > 0;
