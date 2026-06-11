@@ -2255,8 +2255,11 @@
 
       <!-- ═══ BORROWER SWITCHER + LOAN BAR + LEFT NAV ═══ -->
       <div style="padding:16px 22px 0;">
-        <!-- Borrower switcher pills -->
-        <div id="app-borrower-switcher" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;"></div>
+        <!-- Borrower switcher pills (legacy standalone bar) — hidden: the visible
+             multi-borrower switcher is #los1003BorrowerBar (renderBorrowerTabs).
+             Kept in the DOM so buildBorrowerSwitcher()/.app-borrower-pill handlers
+             stay intact; just no longer shown to avoid a duplicate primary pill. -->
+        <div id="app-borrower-switcher" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;"></div>
 
         <!-- ═══ LOAN + DTI DASHBOARD ═══ -->
         <style>.ld-chip{background:#1a1a1a;border:1px solid #2a2a2a;color:#888;font-size:12px;font-weight:600;padding:4px 12px;border-radius:20px;white-space:nowrap;}</style>
@@ -2487,7 +2490,7 @@
       </div>
 
       <!-- ═══ LOAN TERMS / INCOME & DEBT / PITIA / CASH-TO-CLOSE (moved below data-entry panels) ═══ -->
-      <div style="padding:18px 22px;border-bottom:1px solid rgba(201,168,76,0.2);background:linear-gradient(180deg,rgba(201,168,76,0.04),transparent 100%)">
+      <div id="loanTermsGridWrap" style="padding:18px 22px;border-bottom:1px solid rgba(201,168,76,0.2);background:linear-gradient(180deg,rgba(201,168,76,0.04),transparent 100%)">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
           <!-- LOAN + PITIA -->
           <div style="background:#0f0f0f;border:1px solid #1e1e1e;border-radius:10px;padding:14px">
@@ -12370,8 +12373,34 @@ function scrollToSection(id, navEl) {
   });
 }
 
+// Enforce the canonical top-to-bottom order of the Loan & DTI editor blocks
+// inside #app-content-scroll. On-screen order == DOM order here: scrollToSection
+// only toggles display:none and nothing else re-appends these blocks, so the
+// order is whatever sequence the nodes sit in. We make that deterministic in JS
+// (rather than relying on raw HTML order alone) so a redeploy can't be defeated
+// by any stray re-insertion, and so the intended order is documented in code.
+// Idempotent: insertBefore on an existing node just moves it; re-running is a
+// no-op once the order already matches.
+function enforceLoanEditorOrder() {
+  var scroll = document.getElementById('app-content-scroll');
+  if (!scroll) return;
+  var order = ['loanSummaryPanel','liabilitiesPanel','incomePanel','assetsPanel','reoPanel','loanTermsGridWrap'];
+  var ref = document.getElementById(order[0]);
+  if (!ref || ref.parentNode !== scroll) return;
+  var moved = false;
+  for (var i = 1; i < order.length; i++) {
+    var el = document.getElementById(order[i]);
+    if (!el || el.parentNode !== scroll) continue;
+    var next = ref.nextSibling;       // desired slot: immediately after ref
+    if (next !== el) { scroll.insertBefore(el, next); moved = true; }
+    ref = el;
+  }
+  if (moved) _appSectionMap = null;   // DOM order changed → rebuild section grouping lazily
+}
+
 // On first 1003 tab load, default to showing only the Loan & DTI section.
 function initSectionPageSwap() {
+  enforceLoanEditorOrder(); // lock the editor block order before grouping
   _appSectionMap = null; // force rebuild
   scrollToSection(_appSectionOrder[0]);
 }
@@ -15035,6 +15064,7 @@ async function losSwitchBorrower(idx) {
     try { if (typeof renderAssetsContent === 'function') renderAssetsContent(); }
     catch (e) { console.warn('[switch] renderAssetsContent failed:', e); }
   } catch(e) { console.warn('[switch] reload error:', e); }
+  enforceLoanEditorOrder(); // keep editor block order locked after any reload
   // Restore whichever section the user was on before the switch.
   // If they were on a section that's hidden in Combined View, fall back to Assets & Debts.
   if (_preservedSecId) {
