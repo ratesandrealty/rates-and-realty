@@ -2360,8 +2360,11 @@
         <!-- Content (scrollable, holds the entire existing form) -->
         <div id="app-content-scroll" style="flex:1;overflow-y:auto;min-width:0;padding:0 22px;">
 
-      <!-- 1003 Summary (collapsible read-only display, populated by render1003Summary) -->
-      <div id="app-1003-summary" style="padding:20px 22px 0;"></div>
+      <!-- 1003 Summary (collapsible read-only display, populated by render1003Summary).
+           Hidden: it duplicates the live editors (incl. "4. Loan & Property" + "5.
+           Declarations") and was rendering a redundant read-only block at the top of
+           the Loan & DTI view. Kept in the DOM so render1003Summary()/handlers stay intact. -->
+      <div id="app-1003-summary" style="display:none;padding:20px 22px 0;"></div>
       <style>
         .borr-tab{display:inline-flex;align-items:center;gap:8px;padding:7px 12px 7px 9px;border:1px solid #2a2a2a;border-radius:24px;background:#151515;color:#888;cursor:pointer;font-size:.72rem;font-weight:600;font-family:inherit;white-space:nowrap;transition:all .15s;flex-shrink:0}
         .borr-tab:hover{border-color:#C9A84C55;color:#ccc}
@@ -2387,6 +2390,28 @@
         .borr-card-metric-label{font-size:.54rem;color:#555;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:1px}
         .borr-card-metric-val{font-size:.8rem;color:#C9A84C;font-weight:800;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
       </style>
+
+      <!-- TOP ACTION BUTTONS (global 1003 header — moved to the top of the editor,
+           above #loanSummaryPanel, so Save/Scan/PDF aren't stranded after Cash to Close) -->
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:20px; border-bottom:1px solid rgba(201,168,76,0.15);">
+        <h2 style="color:var(--gold); font-size:18px; margin:0; font-family:'Cormorant Garamond',serif;">
+          Uniform Residential Loan Application (1003)
+        </h2>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button onclick="openOCRUpload()" style="
+            display:inline-flex; align-items:center; gap:8px;
+            padding:10px 18px; border-radius:10px;
+            background:rgba(201,168,76,0.1);
+            border:1px solid rgba(201,168,76,0.35);
+            color:#c9a84c; font-size:13px; font-weight:700;
+            cursor:pointer; transition:all 0.2s; white-space:nowrap;">
+            Scan Doc → Auto-fill
+          </button>
+          <span id="autoSaveIndicator" style="font-size:11px;color:rgba(255,255,255,0.4);opacity:0;transition:opacity 0.3s;margin-right:12px;"></span>
+          <button class="ld-btn-save" onclick="save1003()">Save Application</button>
+          <button type="button" id="download1003Btn" onclick="openForm1003Modal()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:#C9A84C;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">&#128065; View 1003 PDF</button>
+        </div>
+      </div>
 
       <!-- ═══ LOAN SUMMARY / DTI CALCULATOR (keystone section) ═══ -->
       <div id="loanSummaryPanel" style="padding:18px 22px;border-bottom:1px solid rgba(201,168,76,0.2);background:linear-gradient(180deg,rgba(201,168,76,0.04),transparent 100%)">
@@ -2638,27 +2663,6 @@
         #losLiabBody .liab-del{background:none;border:none;color:#666;cursor:pointer;font-size:.9rem;padding:2px 6px}
         #losLiabBody .liab-del:hover{color:#ef4444}
       </style>
-
-      <!-- TOP ACTION BUTTONS -->
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:20px; border-bottom:1px solid rgba(201,168,76,0.15);">
-        <h2 style="color:var(--gold); font-size:18px; margin:0; font-family:'Cormorant Garamond',serif;">
-          Uniform Residential Loan Application (1003)
-        </h2>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button onclick="openOCRUpload()" style="
-            display:inline-flex; align-items:center; gap:8px;
-            padding:10px 18px; border-radius:10px;
-            background:rgba(201,168,76,0.1);
-            border:1px solid rgba(201,168,76,0.35);
-            color:#c9a84c; font-size:13px; font-weight:700;
-            cursor:pointer; transition:all 0.2s; white-space:nowrap;">
-            Scan Doc → Auto-fill
-          </button>
-          <span id="autoSaveIndicator" style="font-size:11px;color:rgba(255,255,255,0.4);opacity:0;transition:opacity 0.3s;margin-right:12px;"></span>
-          <button class="ld-btn-save" onclick="save1003()">Save Application</button>
-          <button type="button" id="download1003Btn" onclick="openForm1003Modal()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:#C9A84C;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">&#128065; View 1003 PDF</button>
-        </div>
-      </div>
 
       <!-- ═══ SECTION 1a: PERSONAL INFORMATION ═══ -->
       <div id="sec-borrower-info"></div>
@@ -15001,14 +15005,24 @@ function losRenderBorrowerBanner() {
 
 function applyViewModeSections() {
   var combined = (typeof losViewMode !== 'undefined' && losViewMode === 'combined');
-  // Sections hidden in Combined View (per-borrower or loan-level, don't aggregate meaningfully):
-  var hideInCombined = ['sec-borrower-info','sec-employment','sec-loan-property','sec-declarations'];
-  hideInCombined.forEach(function(secId){
-    var anchor = document.getElementById(secId);
-    var content = anchor && anchor.nextElementSibling; // the .ld-section sibling
-    if (content) content.style.display = combined ? 'none' : '';
+  // Per-borrower / loan-level sections that don't aggregate in Combined View.
+  var perBorrowerSections = ['sec-borrower-info','sec-employment','sec-loan-property','sec-declarations'];
+  perBorrowerSections.forEach(function(secId){
+    // Nav entries: hidden in Combined (can't navigate there), restored in Individual.
     var nav = document.querySelector('.app-nav-item[data-sec="'+secId+'"]');
     if (nav) nav.style.display = combined ? 'none' : '';
+    // Content visibility:
+    //  - Combined: force-hide these sections (they don't aggregate).
+    //  - Individual: do NOT blanket-show them — that overrode scrollToSection's
+    //    display:none and leaked these editors into the Loan & DTI view. Leave
+    //    content alone and let the page-swap own visibility; the caller re-runs
+    //    scrollToSection for the active section (e.g. _restoreSectionNoSlide in
+    //    losSwitchBorrower, or initSectionPageSwap on load) when leaving Combined.
+    if (combined) {
+      var anchor = document.getElementById(secId);
+      var content = anchor && anchor.nextElementSibling; // the .ld-section sibling
+      if (content) content.style.display = 'none';
+    }
   });
   // sec-assets and loanSummaryPanel always stay visible.
 }
