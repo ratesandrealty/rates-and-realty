@@ -14445,12 +14445,17 @@ function losCalcLiabTotal() {
     if (payoffs.length) parts.push(payoffs.length + ' payoff');
     note.textContent = parts.length ? '('+parts.join(' · ')+')' : '';
   }
-  // Sync to DTI calculator (auto-fills Total Monthly Debt + Payoffs)
+  // Sync to DTI. Payoffs are loan-level. Debt: single-borrower pushes directly;
+  // multi-borrower defers to renderBorrowerIncomeDebtCards for the combined total.
   var debtInput = document.getElementById('ls_total_monthly_debt');
   var payoffInput = document.getElementById('ls_payoffs');
-  if (debtInput) { debtInput.value = total.toFixed(2); }
   if (payoffInput) { payoffInput.value = payoffTotal.toFixed(2); }
-  if (typeof lsRecalc === 'function') lsRecalc();
+  if (losBorrowers.length <= 1) {
+    if (debtInput) { debtInput.value = total.toFixed(2); }
+    if (typeof lsRecalc === 'function') lsRecalc();
+  } else if (typeof renderBorrowerIncomeDebtCards === 'function') {
+    renderBorrowerIncomeDebtCards();
+  }
 }
 
 async function losAddLiability() {
@@ -14552,9 +14557,13 @@ function losCalcIncomeTotal() {
   var fmt = function(n){ return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
   var e1 = document.getElementById('losIncomeTotal'); if (e1) e1.textContent = fmt(total);
   var e2 = document.getElementById('losIncomeAnnual'); if (e2) e2.textContent = fmt(total*12);
-  // Push into DTI calculator
+  // DTI income is loan-level. Single-borrower: push directly. Multi-borrower: let
+  // renderBorrowerIncomeDebtCards own the combined total so we don't overwrite it.
   var incomeInput = document.getElementById('ls_total_monthly_income');
-  if (incomeInput) { incomeInput.value = total.toFixed(2); if (typeof lsRecalc === 'function') lsRecalc(); }
+  if (incomeInput) {
+    if (losBorrowers.length <= 1) { incomeInput.value = total.toFixed(2); if (typeof lsRecalc === 'function') lsRecalc(); }
+    else if (typeof renderBorrowerIncomeDebtCards === 'function') { renderBorrowerIncomeDebtCards(); }
+  }
 }
 
 function losUpdateIncomePaired(id, field, value, inputEl) {
@@ -15092,12 +15101,12 @@ async function losToggleBorrowerIncluded(idx) {
   if (losExcludedBorrowerIds.has(b.contact_id)) losExcludedBorrowerIds.delete(b.contact_id);
   else losExcludedBorrowerIds.add(b.contact_id);
   renderBorrowerTabs(); // refresh ON/OFF label + dim/strike
-  if (losViewMode === 'combined') {
-    try {
-      await losLoadBorrowerData();           // re-query income/liabilities for included-only ids
-      await renderBorrowerIncomeDebtCards(); // recompute combined fill + lsRecalc()
-    } catch (e) { console.warn('[borrower-toggle] combined refresh failed:', e); }
-  }
+  try {
+    if (losViewMode === 'combined') {
+      await losLoadBorrowerData();           // re-query income/liabilities panels for included-only ids
+    }
+    await renderBorrowerIncomeDebtCards();   // recompute combined totals -> push into DTI + lsRecalc()
+  } catch (e) { console.warn('[borrower-toggle] refresh failed:', e); }
 }
 
 async function losLoadBorrowerData() {
@@ -15169,14 +15178,12 @@ async function renderBorrowerIncomeDebtCards() {
       '<div><div class="borr-card-metric-label">Debt</div><div class="borr-card-metric-val">'+fmt(combinedDebt)+'</div></div>'+
     '</div>'+
   '</div>';
-  // In combined view, push totals into the DTI calculator inputs
-  if (losViewMode === 'combined') {
-    var incInput = document.getElementById('ls_total_monthly_income');
-    var debtInput = document.getElementById('ls_total_monthly_debt');
-    if (incInput) incInput.value = combinedInc.toFixed(2);
-    if (debtInput) debtInput.value = combinedDebt.toFixed(2);
-    if (typeof lsRecalc === 'function') lsRecalc();
-  }
+  // Loan-level DTI always uses the combined totals of every borrower toggled ON.
+  var incInput = document.getElementById('ls_total_monthly_income');
+  var debtInput = document.getElementById('ls_total_monthly_debt');
+  if (incInput) incInput.value = combinedInc.toFixed(2);
+  if (debtInput) debtInput.value = combinedDebt.toFixed(2);
+  if (typeof lsRecalc === 'function') lsRecalc();
   // Update DTI mode note
   var note = document.getElementById('losDTIModeNote');
   if (note) {
