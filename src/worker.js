@@ -210,17 +210,17 @@ export default {
     if (/^\/areas\/[a-z0-9-]+$/.test(path)) {
       const newUrl = new URL(request.url);
       newUrl.pathname = path + '.html';
-      return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)));
+      return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
     }
 
-    return withCsp(await env.ASSETS.fetch(request));
+    return withCsp(await env.ASSETS.fetch(request), path);
   }
 };
 
 // Inject a relaxed CSP into HTML responses so pdf.js can spawn its worker
 // from a blob: URL. The asset bundler doesn't let us set per-page headers,
 // so we layer it on at the worker. Non-HTML responses pass through unchanged.
-function withCsp(res) {
+function withCsp(res, path) {
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('text/html')) return res;
   const headers = new Headers(res.headers);
@@ -228,5 +228,13 @@ function withCsp(res) {
     'Content-Security-Policy',
     "script-src * 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob: *; child-src blob: *;"
   );
+  // Admin app HTML must never be cached (browser or Cloudflare edge) so deploys
+  // take effect immediately without a manual purge or clear-site-data. Public
+  // marketing pages keep their default caching.
+  if (path && path.indexOf('/admin/') === 0) {
+    headers.set('Cache-Control', 'no-store, must-revalidate');
+    headers.set('Pragma', 'no-cache');
+    headers.set('Expires', '0');
+  }
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
