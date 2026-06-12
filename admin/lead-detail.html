@@ -4131,6 +4131,56 @@
         </div>
       </div>
 
+      <!-- ═══ COMPS / CMA (RentCast) ═══ -->
+      <div class="ld-section" id="da-cma-section">
+        <div class="ld-section-title">🏘️ Comps &amp; CMA <span style="font-size:.7rem;font-weight:500;color:var(--muted);margin-left:6px;">sold &amp; active comps within radius · powered by RentCast</span></div>
+        <div class="ld-form-grid cols-4">
+          <div class="ld-field" style="grid-column:span 2;">
+            <label class="ld-label">Subject Address <span class="da-est-hint">blank = use this lead's property</span></label>
+            <input class="ld-input" type="text" id="da-cma-address" placeholder="Street, City, State, Zip">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Property Type</label>
+            <select class="ld-input" id="da-cma-type">
+              <option value="">Auto-detect</option>
+              <option value="Single Family">Single Family</option>
+              <option value="Condo">Condo</option>
+              <option value="Townhouse">Townhouse</option>
+              <option value="Multi-Family">Multi-Family (Duplex+)</option>
+              <option value="Manufactured">Manufactured</option>
+              <option value="Apartment">Apartment</option>
+              <option value="Land">Land</option>
+            </select>
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Radius (mi)</label>
+            <input class="ld-input" type="text" id="da-cma-radius" inputmode="decimal" placeholder="1" value="1">
+          </div>
+          <div class="ld-field"><label class="ld-label">Beds <span class="da-est-hint">optional</span></label><input class="ld-input" type="text" id="da-cma-beds" inputmode="decimal" placeholder="auto"></div>
+          <div class="ld-field"><label class="ld-label">Baths <span class="da-est-hint">optional</span></label><input class="ld-input" type="text" id="da-cma-baths" inputmode="decimal" placeholder="auto"></div>
+          <div class="ld-field"><label class="ld-label">Sq Ft <span class="da-est-hint">optional</span></label><input class="ld-input" type="text" id="da-cma-sqft" inputmode="decimal" placeholder="auto"></div>
+          <div class="ld-field"><label class="ld-label"># Comps</label><input class="ld-input" type="text" id="da-cma-count" inputmode="decimal" placeholder="8" value="8"></div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+          <button onclick="daPullComps()" id="da-cma-btn" class="ld-btn-sm" style="padding:8px 18px;font-size:.82rem;background:var(--gold);color:#111;border:none;border-radius:6px;cursor:pointer;font-weight:700;"><i class="fas fa-magnifying-glass-location" style="margin-right:5px"></i>Pull Comps</button>
+          <span id="da-cma-status" style="font-size:.75rem;color:var(--muted);"></span>
+        </div>
+        <div id="da-cma-results" style="display:none;margin-top:16px;">
+          <div id="da-cma-summary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+            <button onclick="daUseAvmAsArv()" class="ld-btn-sm" style="padding:6px 14px;font-size:.76rem;background:rgba(201,168,76,.12);color:var(--gold);border:1px solid rgba(201,168,76,.3);border-radius:6px;cursor:pointer;font-weight:700;">→ Use AVM as ARV</button>
+            <button onclick="daPrintCMA()" class="ld-btn-sm" style="padding:6px 14px;font-size:.76rem;background:rgba(128,128,128,.1);color:var(--text);border:1px solid rgba(128,128,128,.25);border-radius:6px;cursor:pointer;font-weight:700;"><i class="fas fa-print" style="margin-right:4px"></i>Print CMA</button>
+          </div>
+          <div style="overflow-x:auto;border:1px solid rgba(128,128,128,.2);border-radius:8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:.78rem;min-width:760px;">
+              <thead><tr style="background:rgba(128,128,128,.08);text-align:left;color:var(--muted);">
+                <th style="padding:8px 10px;">Address</th><th style="padding:8px;">Type</th><th style="padding:8px;">Bd/Ba</th><th style="padding:8px;">SqFt</th><th style="padding:8px;">Price</th><th style="padding:8px;">$/SqFt</th><th style="padding:8px;">Dist</th><th style="padding:8px;">Status</th><th style="padding:8px;">Last Seen</th>
+              </tr></thead>
+              <tbody id="da-cma-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <!-- INPUTS — Acquisition (shared) -->
       <div class="ld-section">
         <div class="ld-section-title">📥 Acquisition</div>
@@ -8219,6 +8269,54 @@ function _daAutoFillClosing() {
   if (sellEl && !sellEl.value.trim() && arv > 0) {
     sellEl.value = String(Math.round(arv * 0.015));
   }
+}
+
+/* ═══ COMPS / CMA (RentCast) ═══ */
+function _daNum(id){var el=document.getElementById(id);var v=el&&el.value!==''?parseFloat(String(el.value).replace(/[,$%]/g,'')):null;return (v==null||isNaN(v))?null:v;}
+function _daMoney(v){return (v==null)?'—':'$'+Math.round(v).toLocaleString();}
+function _daDate(s){if(!s)return '—';var d=new Date(s);return isNaN(d.getTime())?'—':((d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2));}
+window._daCmaData = null;
+async function daPullComps(){
+  var btn=document.getElementById('da-cma-btn');var status=document.getElementById('da-cma-status');
+  var addr=(document.getElementById('da-cma-address').value||'').trim();
+  var contactId=(typeof getContactId==='function')?getContactId():(new URLSearchParams(location.search).get('contact_id'));
+  var payload={contact_id:contactId||undefined,address:addr||undefined,propertyType:document.getElementById('da-cma-type').value||undefined,bedrooms:_daNum('da-cma-beds'),bathrooms:_daNum('da-cma-baths'),squareFootage:_daNum('da-cma-sqft'),radius:_daNum('da-cma-radius')||1,compCount:_daNum('da-cma-count')||8};
+  btn.disabled=true;var orig=btn.innerHTML;btn.innerHTML='Pulling…';status.textContent='';
+  try{
+    var res=await fetch((window.APP_CONFIG?.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co')+'/functions/v1/pull-comps',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||'')},body:JSON.stringify(payload)});
+    var d=await res.json();
+    if(!res.ok||d.error){status.style.color='#e05252';status.textContent=d.error||'Comps lookup failed';return;}
+    window._daCmaData=d;daRenderComps(d);
+    status.style.color='var(--muted)';status.textContent=(d.stats.compCount||0)+' comps · '+(d.subject.address||'');
+  }catch(e){status.style.color='#e05252';status.textContent='Error: '+e.message;}
+  finally{btn.disabled=false;btn.innerHTML=orig;}
+}
+function daRenderComps(d){
+  var addrEl=document.getElementById('da-cma-address');if(addrEl&&!addrEl.value&&d.subject&&d.subject.address)addrEl.value=d.subject.address;
+  var v=d.value||{},s=d.stats||{};
+  function card(label,val){return '<div style="flex:1;min-width:120px;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.18);border-radius:8px;padding:10px 12px;"><div style="font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">'+label+'</div><div style="font-size:1rem;font-weight:700;color:var(--text);margin-top:2px;">'+val+'</div></div>';}
+  document.getElementById('da-cma-summary').innerHTML=card('Est. Value',_daMoney(v.estimate))+card('Range',_daMoney(v.low)+' – '+_daMoney(v.high))+card('Avg $/SqFt',s.avgPricePerSqft!=null?'$'+s.avgPricePerSqft:'—')+card('Median Price',_daMoney(s.medianPrice))+card('Comps',String(s.compCount||0));
+  var tb=document.getElementById('da-cma-tbody');tb.innerHTML='';
+  (d.comps||[]).forEach(function(c){
+    var sold=c.status&&c.status.indexOf('Sold')>-1;
+    var badge='<span style="padding:2px 7px;border-radius:999px;font-size:.66rem;font-weight:700;background:'+(sold?'rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3)':'rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.3)')+';">'+(sold?'Sold':'Active')+'</span>';
+    var tr=document.createElement('tr');tr.style.borderTop='1px solid rgba(128,128,128,.15)';
+    tr.innerHTML='<td style="padding:8px 10px;color:var(--text);">'+(c.address||'—')+'</td><td style="padding:8px;color:var(--muted);">'+(c.propertyType||'—')+'</td><td style="padding:8px;color:var(--muted);">'+(c.bedrooms!=null?c.bedrooms:'—')+'/'+(c.bathrooms!=null?c.bathrooms:'—')+'</td><td style="padding:8px;color:var(--muted);">'+(c.squareFootage!=null?c.squareFootage.toLocaleString():'—')+'</td><td style="padding:8px;color:var(--text);font-weight:600;">'+_daMoney(c.price)+'</td><td style="padding:8px;color:var(--muted);">'+(c.pricePerSqft!=null?'$'+c.pricePerSqft:'—')+'</td><td style="padding:8px;color:var(--muted);">'+(c.distance!=null?c.distance.toFixed(2)+'mi':'—')+'</td><td style="padding:8px;">'+badge+'</td><td style="padding:8px;color:var(--muted);">'+_daDate(c.removedDate||c.lastSeenDate)+'</td>';
+    tb.appendChild(tr);
+  });
+  document.getElementById('da-cma-results').style.display='block';
+}
+function daUseAvmAsArv(){
+  var d=window._daCmaData;if(!d||!d.value||d.value.estimate==null)return;
+  var arv=document.getElementById('da-arv');if(arv){arv.value=Math.round(d.value.estimate);if(typeof dealAnalyzerRecalc==='function')dealAnalyzerRecalc();}
+  var st=document.getElementById('da-cma-status');if(st){st.style.color='var(--muted)';st.textContent='ARV set to '+_daMoney(d.value.estimate);}
+}
+function daPrintCMA(){
+  var d=window._daCmaData;if(!d)return;var v=d.value||{},s=d.stats||{};
+  var rows=(d.comps||[]).map(function(c){var sold=c.status&&c.status.indexOf('Sold')>-1;return '<tr><td>'+(c.address||'')+'</td><td>'+(c.propertyType||'')+'</td><td>'+(c.bedrooms!=null?c.bedrooms:'')+'/'+(c.bathrooms!=null?c.bathrooms:'')+'</td><td>'+(c.squareFootage!=null?c.squareFootage.toLocaleString():'')+'</td><td>'+_daMoney(c.price)+'</td><td>'+(c.pricePerSqft!=null?'$'+c.pricePerSqft:'')+'</td><td>'+(c.distance!=null?c.distance.toFixed(2)+' mi':'')+'</td><td>'+(sold?'Sold':'Active')+'</td><td>'+_daDate(c.removedDate||c.lastSeenDate)+'</td></tr>';}).join('');
+  var w=window.open('','_blank');if(!w)return;
+  w.document.write('<html><head><title>CMA — '+(d.subject.address||'')+'</title><style>body{font-family:Arial,Helvetica,sans-serif;color:#222;margin:32px;}h1{font-size:18px;margin:0 0 4px;}h2{font-size:13px;color:#666;font-weight:normal;margin:0 0 18px;}.cards{display:flex;gap:12px;margin:0 0 20px;flex-wrap:wrap;}.card{border:1px solid #ddd;border-radius:8px;padding:10px 14px;}.card .l{font-size:10px;color:#888;text-transform:uppercase;}.card .v{font-size:15px;font-weight:bold;}table{width:100%;border-collapse:collapse;font-size:12px;}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;}th{background:#f5f5f5;}.foot{margin-top:18px;font-size:10px;color:#999;}</style></head><body><h1>Comparative Market Analysis</h1><h2>'+(d.subject.address||'')+' — comps within '+(s.radiusMiles||1)+' mile'+(((s.radiusMiles||1)==1)?'':'s')+'</h2><div class="cards"><div class="card"><div class="l">Estimated Value</div><div class="v">'+_daMoney(v.estimate)+'</div></div><div class="card"><div class="l">Range</div><div class="v">'+_daMoney(v.low)+' – '+_daMoney(v.high)+'</div></div><div class="card"><div class="l">Avg $/SqFt</div><div class="v">'+(s.avgPricePerSqft!=null?'$'+s.avgPricePerSqft:'—')+'</div></div><div class="card"><div class="l">Median Price</div><div class="v">'+_daMoney(s.medianPrice)+'</div></div></div><table><thead><tr><th>Address</th><th>Type</th><th>Bd/Ba</th><th>SqFt</th><th>Price</th><th>$/SqFt</th><th>Dist</th><th>Status</th><th>Date</th></tr></thead><tbody>'+rows+'</tbody></table><div class="foot">Generated '+new Date().toLocaleDateString()+' · Data: RentCast · Informational only, not an appraisal.</div></body></html>');
+  w.document.close();w.focus();setTimeout(function(){try{w.print();}catch(e){}},350);
 }
 
 function dealAnalyzerRecalc() {
