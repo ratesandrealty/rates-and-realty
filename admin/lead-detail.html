@@ -4216,6 +4216,11 @@
         .da-fee-btn.active{background:var(--gold);color:#111;}
         .da-fee-pct{margin-bottom:6px;}
         .da-input[readonly]{opacity:.6;cursor:not-allowed;}
+        .da-rent-comps{display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;}
+        .da-rent-lbl{font-size:.7rem;color:var(--muted);}
+        .da-rent-chip{background:transparent;border:1px solid rgba(201,168,76,.3);border-radius:6px;color:var(--text);padding:2px 8px;font-size:.72rem;cursor:pointer;}
+        .da-rent-chip b{font-weight:700;margin-left:3px;}
+        .da-rent-chip.active{background:var(--gold);color:#111;border-color:var(--gold);}
       </style>
       <div class="ld-section">
         <div class="ld-section-title">💼 Closing &amp; Fees</div>
@@ -4286,6 +4291,12 @@
           <div class="ld-field">
             <label class="ld-label">Monthly Rent ($)</label>
             <input class="ld-input da-input" type="text" id="da-rent" inputmode="decimal" placeholder="$0">
+            <div id="da-rent-comps" class="da-rent-comps" style="display:none;">
+              <span class="da-rent-lbl">Rental comps:</span>
+              <button type="button" class="da-rent-chip" data-band="low"  onclick="daUseRent('low')">Low <b></b></button>
+              <button type="button" class="da-rent-chip" data-band="est"  onclick="daUseRent('est')">Avg <b></b></button>
+              <button type="button" class="da-rent-chip" data-band="high" onclick="daUseRent('high')">High <b></b></button>
+            </div>
           </div>
           <div class="ld-field">
             <label class="ld-label">Vacancy %</label>
@@ -8411,11 +8422,43 @@ async function daPullComps(){
   }catch(e){status.style.color='#e05252';status.textContent='Error: '+e.message;}
   finally{btn.disabled=false;btn.innerHTML=orig;}
 }
+function daRenderRentBands(rental){
+  var box=document.getElementById('da-rent-comps'); if(!box) return;
+  var est = rental && rental.estimate!=null ? Math.round(rental.estimate) : null;
+  if(est==null){ box.style.display='none'; return; }       // no rent AVM → hide whole row
+  var low = rental.low!=null ? Math.round(rental.low) : null;
+  var high= rental.high!=null? Math.round(rental.high): null;
+  function setChip(band,val){
+    var b=box.querySelector('.da-rent-chip[data-band="'+band+'"]'); if(!b) return;
+    if(val==null){ b.style.display='none'; return; }
+    b.style.display=''; b.querySelector('b').textContent='$'+val.toLocaleString(); b.dataset.val=String(val);
+  }
+  setChip('low',low); setChip('est',est); setChip('high',high);
+  box.style.display='flex'; daSyncRentChips();
+}
+function daUseRent(band){
+  var box=document.getElementById('da-rent-comps');
+  var b=box&&box.querySelector('.da-rent-chip[data-band="'+band+'"]');
+  if(!b||!b.dataset.val) return;
+  var rentEl=document.getElementById('da-rent'); if(!rentEl) return;
+  rentEl.value=b.dataset.val;
+  rentEl.dispatchEvent(new Event('input',{bubbles:true}));   // fires recalc + save
+  daSyncRentChips();
+}
+function daSyncRentChips(){
+  var box=document.getElementById('da-rent-comps'); if(!box) return;
+  var cur=_daParseNum((document.getElementById('da-rent')||{}).value);
+  var chips=box.querySelectorAll('.da-rent-chip');
+  for(var i=0;i<chips.length;i++){
+    chips[i].classList.toggle('active', !!chips[i].dataset.val && Math.round(cur)===parseInt(chips[i].dataset.val,10));
+  }
+}
 function daRenderComps(d){
   var addrEl=document.getElementById('da-cma-address');if(addrEl&&!addrEl.value&&d.subject&&d.subject.address)addrEl.value=d.subject.address;
   var e = d?.rental?.estimate ? Math.round(d.rental.estimate) : 0;
   var rentEl = document.getElementById('da-rent');
   if (rentEl && !rentEl.value.trim() && e>0){ rentEl.value=String(e); rentEl.dispatchEvent(new Event('input',{bubbles:true})); }
+  daRenderRentBands(d && d.rental);
   var av = d?.value?.estimate ? Math.round(d.value.estimate) : 0;
   var arvEl = document.getElementById('da-arv');
   if (arvEl && !arvEl.value.trim() && av>0){ arvEl.value=String(av); arvEl.dispatchEvent(new Event('input',{bubbles:true})); }
