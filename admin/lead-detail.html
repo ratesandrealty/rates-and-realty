@@ -4224,7 +4224,7 @@
       </style>
       <div class="ld-section">
         <div class="ld-section-title">💼 Closing &amp; Fees</div>
-        <div class="ld-form-grid cols-4">
+        <div class="ld-form-grid cols-3">
           <div class="ld-field">
             <label class="ld-label">Lender Fees ($)</label>
             <input class="ld-input da-input" type="text" id="da-lender-fees" inputmode="decimal" placeholder="$0">
@@ -4250,17 +4250,6 @@
             </label>
             <input class="ld-input da-input da-fee-pct" type="text" id="da-sell-closing-pct" inputmode="decimal" placeholder="%">
             <input class="ld-input da-input" type="text" id="da-sell-closing" inputmode="decimal" placeholder="$0">
-          </div>
-          <div class="ld-field">
-            <label class="ld-label">Realtor
-              <span class="da-fee-pill">
-                <button type="button" data-fee="realtor" data-mode="pct" onclick="daSetFeeMode('realtor','pct')" class="da-fee-btn">%</button>
-                <button type="button" data-fee="realtor" data-mode="fixed" onclick="daSetFeeMode('realtor','fixed')" class="da-fee-btn">$</button>
-              </span>
-              <span class="da-est-hint" id="da-realtor-hint">% of ARV · Flip-only</span>
-            </label>
-            <input class="ld-input da-input da-fee-pct" type="text" id="da-realtor-fixed" inputmode="decimal" placeholder="$0" style="display:none;">
-            <input class="ld-input da-input" type="text" id="da-realtor-pct" inputmode="decimal" placeholder="6">
           </div>
         </div>
       </div>
@@ -8242,12 +8231,12 @@ let _dealAnalyzerStrategy = 'flip';
 
 // Per-row % ↔ fixed-$ mode for buy/sell closing + realtor (frontend-only).
 // Fresh deals default to '%'; legacy saved deals (no fee_modes) handled in load.
-window.daFeeMode = window.daFeeMode || { buy: 'pct', sell: 'pct', realtor: 'pct' };
+window.daFeeMode = window.daFeeMode || { buy: 'pct', sell: 'pct' };
 
 const DA_INPUT_IDS = [
   'da-purchase','da-reno','da-arv','da-hold-months','da-hold-monthly',
-  'da-lender-fees','da-buy-closing','da-sell-closing','da-realtor-pct',
-  'da-buy-closing-pct','da-sell-closing-pct','da-realtor-fixed',
+  'da-lender-fees','da-buy-closing','da-sell-closing',
+  'da-buy-closing-pct','da-sell-closing-pct',
   'da-flip-ltc-pct','da-flip-hm-rate','da-flip-points',
   'da-rent','da-vacancy','da-opex',
   'da-refi-rate','da-refi-term','da-refi-ltv','da-bh-down-pct',
@@ -8256,7 +8245,7 @@ const DA_INPUT_IDS = [
 const DA_DEFAULTS = {
   'da-vacancy': 8, 'da-opex': 10,
   'da-refi-ltv': 75, 'da-refi-rate': 7.5, 'da-refi-term': 30,
-  'da-realtor-pct': 6, 'da-bh-down-pct': 25,
+  'da-bh-down-pct': 25,
   'da-appreciation-pct': 4,
   'da-flip-ltc-pct': 90, 'da-flip-hm-rate': 10, 'da-flip-points': 2
 };
@@ -8314,7 +8303,6 @@ function _daAutoFillClosing() {
     var sp = document.getElementById('da-sell-closing-pct');
     if (sp && !sp.value.trim()) sp.value = '1';
   }
-  // realtor % default (6) is seeded via DA_DEFAULTS on da-realtor-pct
   daResolveFees();
 }
 
@@ -8353,20 +8341,6 @@ function daResolveFees() {
     }
   }
 
-  // Realtor: canonical % = da-realtor-pct
-  var realPct = document.getElementById('da-realtor-pct');
-  var realFix = document.getElementById('da-realtor-fixed');
-  if (realPct) {
-    if (window.daFeeMode.realtor === 'pct') {
-      realPct.readOnly = false;
-    } else {
-      var fixed = realFix ? _daParseNum(realFix.value) : 0;
-      // keep canonical % in sync as effective % so the PDF still renders "Realtor X% (= $…)"
-      realPct.value = arv > 0 ? String(Math.round((fixed / arv) * 10000) / 100) : '0';
-      realPct.readOnly = true;
-    }
-  }
-
   daUpdateFeeUI();
 }
 
@@ -8387,14 +8361,11 @@ function daUpdateFeeUI() {
   vis('da-sell-closing-pct', m.sell === 'pct');
   hint('da-sell-hint',       m.sell === 'pct' ? '1% × ARV · Flip-only' : 'flat fee · Flip-only');
   pills('sell');
-  vis('da-realtor-fixed',    m.realtor === 'fixed');
-  hint('da-realtor-hint',    m.realtor === 'pct' ? '% of ARV · Flip-only' : 'flat fee · Flip-only');
-  pills('realtor');
 }
 
 // Pill click — switch a row's mode, re-seed/derive, then recalc + save.
 function daSetFeeMode(fee, mode) {
-  if (!window.daFeeMode) window.daFeeMode = { buy: 'pct', sell: 'pct', realtor: 'pct' };
+  if (!window.daFeeMode) window.daFeeMode = { buy: 'pct', sell: 'pct' };
   if (window.daFeeMode[fee] === mode) return;
   window.daFeeMode[fee] = mode;
   if (mode === 'pct') _daAutoFillClosing(); else daResolveFees();
@@ -8494,7 +8465,7 @@ async function daPrintCMA(){
   var payload={subject:d.subject,value:d.value,stats:d.stats,comps:d.comps,include_acquisition:includeAcq,include_rentals:document.getElementById('da-cma-include-rentals')?.checked || false,borrower_name:borrowerName,property_address:propertyAddress};
   if(includeAcq){
     var g=function(id){var el=document.getElementById(id);var n=el?parseFloat(String(el.value).replace(/[,$%]/g,'')):0;return isNaN(n)?0:n;};
-    payload.da_inputs={purchase:g('da-purchase'),reno:g('da-reno'),arv:g('da-arv'),hold_months:g('da-hold-months'),hold_monthly:g('da-hold-monthly'),lender_fees:g('da-lender-fees'),buy_closing:g('da-buy-closing'),sell_closing:g('da-sell-closing'),realtor_pct:g('da-realtor-pct'),rent:g('da-rent'),vacancy_pct:g('da-vacancy'),opex_pct:g('da-opex'),loan_rate:g('da-refi-rate'),loan_term:g('da-refi-term'),refi_ltv:g('da-refi-ltv'),bh_down_pct:g('da-bh-down-pct'),appreciation_pct:g('da-appreciation-pct'),flip_ltc_pct:g('da-flip-ltc-pct'),flip_hm_rate:g('da-flip-hm-rate'),flip_points:g('da-flip-points')};
+    payload.da_inputs={purchase:g('da-purchase'),reno:g('da-reno'),arv:g('da-arv'),hold_months:g('da-hold-months'),hold_monthly:g('da-hold-monthly'),lender_fees:g('da-lender-fees'),buy_closing:g('da-buy-closing'),sell_closing:g('da-sell-closing'),realtor_pct:0,rent:g('da-rent'),vacancy_pct:g('da-vacancy'),opex_pct:g('da-opex'),loan_rate:g('da-refi-rate'),loan_term:g('da-refi-term'),refi_ltv:g('da-refi-ltv'),bh_down_pct:g('da-bh-down-pct'),appreciation_pct:g('da-appreciation-pct'),flip_ltc_pct:g('da-flip-ltc-pct'),flip_hm_rate:g('da-flip-hm-rate'),flip_points:g('da-flip-points')};
   }
   var st=document.getElementById('da-cma-status');if(st){st.style.color='var(--muted)';st.textContent='Generating CMA PDF…';}
   try{
@@ -8651,7 +8622,7 @@ function dealAnalyzerCollect() {
     out.inputs[id] = el ? (el.value || '') : '';
   });
   out.inputs.fee_modes = {
-    buy: window.daFeeMode.buy, sell: window.daFeeMode.sell, realtor: window.daFeeMode.realtor
+    buy: window.daFeeMode.buy, sell: window.daFeeMode.sell
   };
   return out;
 }
@@ -8737,17 +8708,15 @@ async function initDealAnalyzer() {
           }
           delete saved.inputs['da-other-closing'];
           // Restore per-row fee modes. No fee_modes = legacy deal: buy/sell were saved as
-          // dollars → default to '$' (fixed) so we never reinterpret them as percentages;
-          // realtor was saved as a percent → keep '%' so its value isn't lost.
+          // dollars → default to '$' (fixed) so we never reinterpret them as percentages.
           var fm = saved.inputs.fee_modes;
           if (fm && typeof fm === 'object') {
             window.daFeeMode = {
-              buy:     fm.buy     === 'fixed' ? 'fixed' : 'pct',
-              sell:    fm.sell    === 'fixed' ? 'fixed' : 'pct',
-              realtor: fm.realtor === 'fixed' ? 'fixed' : 'pct'
+              buy:  fm.buy  === 'fixed' ? 'fixed' : 'pct',
+              sell: fm.sell === 'fixed' ? 'fixed' : 'pct'
             };
           } else {
-            window.daFeeMode = { buy: 'fixed', sell: 'fixed', realtor: 'pct' };
+            window.daFeeMode = { buy: 'fixed', sell: 'fixed' };
           }
           delete saved.inputs.fee_modes;
           Object.keys(saved.inputs).forEach(function(id) {
@@ -8803,7 +8772,7 @@ async function exportDealAnalyzerPDF() {
     lender_fees:      _daGet('da-lender-fees'),
     buy_closing:      _daGet('da-buy-closing'),
     sell_closing:     _daGet('da-sell-closing'),
-    realtor_pct:      _daGet('da-realtor-pct'),
+    realtor_pct:      0,
     rent:             _daGet('da-rent'),
     vacancy_pct:      _daGet('da-vacancy'),
     opex_pct:         _daGet('da-opex'),
