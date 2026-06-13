@@ -4210,6 +4210,13 @@
       </div>
 
       <!-- INPUTS — Closing & Fees (shared; sell-side + realtor are Flip-only) -->
+      <style>
+        .da-fee-pill{display:inline-flex;border:1px solid rgba(128,128,128,.3);border-radius:6px;overflow:hidden;margin-left:4px;vertical-align:middle;}
+        .da-fee-btn{background:transparent;color:var(--muted);border:none;padding:1px 8px;font-size:.72rem;font-weight:700;cursor:pointer;line-height:1.5;}
+        .da-fee-btn.active{background:var(--gold);color:#111;}
+        .da-fee-pct{margin-bottom:6px;}
+        .da-input[readonly]{opacity:.6;cursor:not-allowed;}
+      </style>
       <div class="ld-section">
         <div class="ld-section-title">💼 Closing &amp; Fees</div>
         <div class="ld-form-grid cols-4">
@@ -4218,15 +4225,36 @@
             <input class="ld-input da-input" type="text" id="da-lender-fees" inputmode="decimal" placeholder="$0">
           </div>
           <div class="ld-field">
-            <label class="ld-label">Buy-side Closing ($) <span class="da-est-hint">est. 3% × Purchase</span></label>
+            <label class="ld-label">Buy-side Closing
+              <span class="da-fee-pill">
+                <button type="button" data-fee="buy" data-mode="pct" onclick="daSetFeeMode('buy','pct')" class="da-fee-btn">%</button>
+                <button type="button" data-fee="buy" data-mode="fixed" onclick="daSetFeeMode('buy','fixed')" class="da-fee-btn">$</button>
+              </span>
+              <span class="da-est-hint" id="da-buy-hint">2% × purchase</span>
+            </label>
+            <input class="ld-input da-input da-fee-pct" type="text" id="da-buy-closing-pct" inputmode="decimal" placeholder="%">
             <input class="ld-input da-input" type="text" id="da-buy-closing" inputmode="decimal" placeholder="$0">
           </div>
           <div class="ld-field">
-            <label class="ld-label">Sell-side Closing ($) <span class="da-est-hint">est. 1.5% × ARV · Flip-only</span></label>
+            <label class="ld-label">Sell-side Closing
+              <span class="da-fee-pill">
+                <button type="button" data-fee="sell" data-mode="pct" onclick="daSetFeeMode('sell','pct')" class="da-fee-btn">%</button>
+                <button type="button" data-fee="sell" data-mode="fixed" onclick="daSetFeeMode('sell','fixed')" class="da-fee-btn">$</button>
+              </span>
+              <span class="da-est-hint" id="da-sell-hint">1% × ARV · Flip-only</span>
+            </label>
+            <input class="ld-input da-input da-fee-pct" type="text" id="da-sell-closing-pct" inputmode="decimal" placeholder="%">
             <input class="ld-input da-input" type="text" id="da-sell-closing" inputmode="decimal" placeholder="$0">
           </div>
           <div class="ld-field">
-            <label class="ld-label">Realtor (% of ARV) <span class="da-est-hint">Flip-only</span></label>
+            <label class="ld-label">Realtor
+              <span class="da-fee-pill">
+                <button type="button" data-fee="realtor" data-mode="pct" onclick="daSetFeeMode('realtor','pct')" class="da-fee-btn">%</button>
+                <button type="button" data-fee="realtor" data-mode="fixed" onclick="daSetFeeMode('realtor','fixed')" class="da-fee-btn">$</button>
+              </span>
+              <span class="da-est-hint" id="da-realtor-hint">% of ARV · Flip-only</span>
+            </label>
+            <input class="ld-input da-input da-fee-pct" type="text" id="da-realtor-fixed" inputmode="decimal" placeholder="$0" style="display:none;">
             <input class="ld-input da-input" type="text" id="da-realtor-pct" inputmode="decimal" placeholder="6">
           </div>
         </div>
@@ -8201,9 +8229,14 @@ let _dealAnalyzerLoaded = false;
 // The strategy toggle UI was removed in 3b — _dealAnalyzerStrategy stays 'flip'.
 let _dealAnalyzerStrategy = 'flip';
 
+// Per-row % ↔ fixed-$ mode for buy/sell closing + realtor (frontend-only).
+// Fresh deals default to '%'; legacy saved deals (no fee_modes) handled in load.
+window.daFeeMode = window.daFeeMode || { buy: 'pct', sell: 'pct', realtor: 'pct' };
+
 const DA_INPUT_IDS = [
   'da-purchase','da-reno','da-arv','da-hold-months','da-hold-monthly',
   'da-lender-fees','da-buy-closing','da-sell-closing','da-realtor-pct',
+  'da-buy-closing-pct','da-sell-closing-pct','da-realtor-fixed',
   'da-flip-ltc-pct','da-flip-hm-rate','da-flip-points',
   'da-rent','da-vacancy','da-opex',
   'da-refi-rate','da-refi-term','da-refi-ltv','da-bh-down-pct',
@@ -8257,20 +8290,105 @@ function _daSetSigned(id, val, gate) {
   else if (val < 0) el.classList.add('da-neg');
 }
 
-// Buy-side closing = 2% × Purchase; Sell-side = 1% × ARV.
-// Auto-fill ONLY when the field is empty (never overwrite user values).
-// Idempotent — safe to call on every input event.
+// Auto-fill closing/realtor defaults — mode-aware, empty-only, idempotent.
+//   % mode: seed the % entry empty-only (buy 2 / sell 1 / realtor 6), then derive $.
+//   $ mode: do nothing — preserve a typed flat fee.
+// Safe to call on every input event.
 function _daAutoFillClosing() {
+  if (window.daFeeMode.buy === 'pct') {
+    var bp = document.getElementById('da-buy-closing-pct');
+    if (bp && !bp.value.trim()) bp.value = '2';
+  }
+  if (window.daFeeMode.sell === 'pct') {
+    var sp = document.getElementById('da-sell-closing-pct');
+    if (sp && !sp.value.trim()) sp.value = '1';
+  }
+  // realtor % default (6) is seeded via DA_DEFAULTS on da-realtor-pct
+  daResolveFees();
+}
+
+// Derive canonical fields from the active per-row mode. Canonical values
+// (da-buy-closing $, da-sell-closing $, da-realtor-pct %) stay the single source
+// of truth consumed by recalc / payload / PDF. Never dispatches events (callers
+// fire recalc + save) — avoids re-entrant input loops.
+function daResolveFees() {
+  if (!window.daFeeMode) return;
   var purchase = _daGet('da-purchase');
   var arv      = _daGet('da-arv');
-  var buyEl  = document.getElementById('da-buy-closing');
-  var sellEl = document.getElementById('da-sell-closing');
-  if (buyEl && !buyEl.value.trim() && purchase > 0) {
-    buyEl.value = String(Math.round(purchase * 0.02));
+
+  // Buy-side: canonical $ = da-buy-closing
+  var buyDol = document.getElementById('da-buy-closing');
+  var buyPct = document.getElementById('da-buy-closing-pct');
+  if (buyDol) {
+    if (window.daFeeMode.buy === 'pct') {
+      var bp = buyPct ? _daParseNum(buyPct.value) : 0;
+      buyDol.value = String(Math.round(purchase * bp / 100)); // always write, even 0
+      buyDol.readOnly = true;
+    } else {
+      buyDol.readOnly = false;
+    }
   }
-  if (sellEl && !sellEl.value.trim() && arv > 0) {
-    sellEl.value = String(Math.round(arv * 0.01));
+
+  // Sell-side: canonical $ = da-sell-closing
+  var sellDol = document.getElementById('da-sell-closing');
+  var sellPct = document.getElementById('da-sell-closing-pct');
+  if (sellDol) {
+    if (window.daFeeMode.sell === 'pct') {
+      var sp = sellPct ? _daParseNum(sellPct.value) : 0;
+      sellDol.value = String(Math.round(arv * sp / 100));
+      sellDol.readOnly = true;
+    } else {
+      sellDol.readOnly = false;
+    }
   }
+
+  // Realtor: canonical % = da-realtor-pct
+  var realPct = document.getElementById('da-realtor-pct');
+  var realFix = document.getElementById('da-realtor-fixed');
+  if (realPct) {
+    if (window.daFeeMode.realtor === 'pct') {
+      realPct.readOnly = false;
+    } else {
+      var fixed = realFix ? _daParseNum(realFix.value) : 0;
+      // keep canonical % in sync as effective % so the PDF still renders "Realtor X% (= $…)"
+      realPct.value = arv > 0 ? String(Math.round((fixed / arv) * 10000) / 100) : '0';
+      realPct.readOnly = true;
+    }
+  }
+
+  daUpdateFeeUI();
+}
+
+// Sync pill active-state, entry visibility, and hint text to the current modes.
+function daUpdateFeeUI() {
+  function vis(id, show) { var el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
+  function hint(id, txt) { var el = document.getElementById(id); if (el) el.textContent = txt; }
+  function pills(fee) {
+    var btns = document.querySelectorAll('.da-fee-btn[data-fee="' + fee + '"]');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active', btns[i].getAttribute('data-mode') === window.daFeeMode[fee]);
+    }
+  }
+  var m = window.daFeeMode;
+  vis('da-buy-closing-pct',  m.buy === 'pct');
+  hint('da-buy-hint',        m.buy === 'pct' ? '2% × purchase' : 'flat fee');
+  pills('buy');
+  vis('da-sell-closing-pct', m.sell === 'pct');
+  hint('da-sell-hint',       m.sell === 'pct' ? '1% × ARV · Flip-only' : 'flat fee · Flip-only');
+  pills('sell');
+  vis('da-realtor-fixed',    m.realtor === 'fixed');
+  hint('da-realtor-hint',    m.realtor === 'pct' ? '% of ARV · Flip-only' : 'flat fee · Flip-only');
+  pills('realtor');
+}
+
+// Pill click — switch a row's mode, re-seed/derive, then recalc + save.
+function daSetFeeMode(fee, mode) {
+  if (!window.daFeeMode) window.daFeeMode = { buy: 'pct', sell: 'pct', realtor: 'pct' };
+  if (window.daFeeMode[fee] === mode) return;
+  window.daFeeMode[fee] = mode;
+  if (mode === 'pct') _daAutoFillClosing(); else daResolveFees();
+  if (typeof dealAnalyzerRecalc === 'function') dealAnalyzerRecalc();
+  if (typeof dealAnalyzerScheduleSave === 'function') dealAnalyzerScheduleSave();
 }
 
 /* ═══ COMPS / CMA (RentCast) ═══ */
@@ -8489,6 +8607,9 @@ function dealAnalyzerCollect() {
     var el = document.getElementById(id);
     out.inputs[id] = el ? (el.value || '') : '';
   });
+  out.inputs.fee_modes = {
+    buy: window.daFeeMode.buy, sell: window.daFeeMode.sell, realtor: window.daFeeMode.realtor
+  };
   return out;
 }
 
@@ -8572,6 +8693,20 @@ async function initDealAnalyzer() {
             saved.inputs['da-buy-closing'] = saved.inputs['da-other-closing'];
           }
           delete saved.inputs['da-other-closing'];
+          // Restore per-row fee modes. No fee_modes = legacy deal: buy/sell were saved as
+          // dollars → default to '$' (fixed) so we never reinterpret them as percentages;
+          // realtor was saved as a percent → keep '%' so its value isn't lost.
+          var fm = saved.inputs.fee_modes;
+          if (fm && typeof fm === 'object') {
+            window.daFeeMode = {
+              buy:     fm.buy     === 'fixed' ? 'fixed' : 'pct',
+              sell:    fm.sell    === 'fixed' ? 'fixed' : 'pct',
+              realtor: fm.realtor === 'fixed' ? 'fixed' : 'pct'
+            };
+          } else {
+            window.daFeeMode = { buy: 'fixed', sell: 'fixed', realtor: 'pct' };
+          }
+          delete saved.inputs.fee_modes;
           Object.keys(saved.inputs).forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.value = saved.inputs[id] || '';
