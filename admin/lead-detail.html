@@ -16575,10 +16575,12 @@ async function crmCreatePortalAccount() {
     const contacts = await cRes.json();
     const c = contacts?.[0];
     if (!c) { alert('Contact not found'); return; }
+    const { data: _sess } = await sb.auth.getSession();
+    const _ajwt = _sess && _sess.session ? _sess.session.access_token : '';
     const res2 = await fetch(`${SB_P}/functions/v1/portal-auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SK_P },
-      body: JSON.stringify({ action: 'signup', email: crmContactEmail, first_name: c.first_name || 'Borrower', last_name: c.last_name || '', phone: c.phone || '' })
+      body: JSON.stringify({ action: 'signup', email: crmContactEmail, first_name: c.first_name || 'Borrower', last_name: c.last_name || '', phone: c.phone || '', admin_jwt: _ajwt })
     });
     const data = await res2.json();
     if (data.success || data.code === 'EXISTS') {
