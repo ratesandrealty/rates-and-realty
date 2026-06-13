@@ -3627,6 +3627,7 @@
             <div>
               <div style="font-size:16px;font-weight:700;color:#f0ebe0;">📎 Upload Documents</div>
               <div style="font-size:12px;color:#888;margin-top:2px;">Set type for each file, then upload all at once</div>
+              <div style="font-size:12px;color:#888;margin-top:2px;">Uploading to: <span id="doc-upload-target" style="color:#C9A84C;font-weight:600;">All Documents</span></div>
             </div>
             <button onclick="closeDocUploadModal()" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#888;padding:6px 12px;cursor:pointer;font-size:13px;">✕ Close</button>
           </div>
@@ -6141,6 +6142,10 @@ function handleDocUpload(docType) {
 let _pendingDocFiles = [];
 let _currentDocFilter = 'all';
 let _allDocs = []; // now holds GDrive file objects (was borrower_documents rows)
+// Folder navigation state for the Documents grid
+let _docRootId = null;   // contact's gdrive_folder_id (the "All Documents" root)
+let _docCwd    = null;   // folder currently being viewed
+let _docTrail  = [];     // [{id,name}] breadcrumb incl. root
 
 // ── GDrive OAuth (shared pattern with File Vault) ─────────────────
 const LD_OAUTH_CLIENT_ID = "17691954677-9e7d3rjur37pt5uvb3joordt5qs1usl1.apps.googleusercontent.com";
@@ -6256,6 +6261,8 @@ function handleDocDrop(e) {
 function showDocUploadModal() {
   const modal = document.getElementById('doc-upload-modal');
   modal.style.display = 'flex';
+  const tgt = document.getElementById('doc-upload-target');
+  if (tgt) tgt.textContent = (_docTrail && _docTrail.length) ? _docTrail[_docTrail.length - 1].name : 'All Documents';
   document.getElementById('bulk-upload-status').textContent = '';
   document.getElementById('bulk-type-all').value = '';
   const btn = document.getElementById('bulk-upload-btn');
@@ -6338,7 +6345,7 @@ async function confirmDocUpload() {
     return;
   }
 
-  const folderId = (typeof contactData !== 'undefined' && contactData && contactData.gdrive_folder_id) || null;
+  const folderId = _docCwd || (typeof contactData !== 'undefined' && contactData && contactData.gdrive_folder_id) || null;
   if (!folderId) {
     toast('No Drive folder linked. Click "+ Create Folder" in the header first.', true);
     return;
@@ -6463,8 +6470,8 @@ async function confirmDocUpload() {
 }
 
 async function syncAllDocsToDrive() {
-  const folderId = window._leadDriveFolderId;
-  const folderUrl = window._leadDriveFolderUrl;
+  const folderId = _docCwd || window._leadDriveFolderId;
+  const folderUrl = _docCwd ? ('https://drive.google.com/drive/folders/' + _docCwd) : window._leadDriveFolderUrl;
 
   if (!folderId && !folderUrl) {
     showToast('⚠️ No Drive folder linked to this contact. Use "View Drive Folder" to link one first.', 'warning');
@@ -6548,9 +6555,10 @@ async function loadDocumentsGrid() {
   // and the header "View Drive Folder" pill both read from). Everything on
   // this tab now reads straight from Google Drive via OAuth — no more
   // borrower_documents table — so both CRM views show the same files.
-  const folderId = (typeof contactData !== "undefined" && contactData && contactData.gdrive_folder_id) || null;
-  if (!folderId) {
+  _docRootId = (typeof contactData !== "undefined" && contactData && contactData.gdrive_folder_id) || null;
+  if (!_docRootId) {
     _allDocs = [];
+    _docCwd = null; _docTrail = [];
     window._currentContactDocs = [];
     container.innerHTML = `
       <div style="grid-column:1/-1;text-align:center;padding:48px 20px;color:rgba(255,255,255,0.5);">
@@ -6561,6 +6569,9 @@ async function loadDocumentsGrid() {
     `;
     return;
   }
+  // First view (or after the root just appeared) → start at the root folder.
+  if (!_docCwd) { _docCwd = _docRootId; _docTrail = [{ id: _docRootId, name: 'All Documents' }]; }
+  const folderId = _docCwd;
 
   container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:32px;color:rgba(255,255,255,0.3);">Loading Drive files…</div>';
   try {
@@ -6629,17 +6640,48 @@ function _ldFormatSize(bytes) {
   return (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
 }
 
+const LD_FOLDER_MIME = 'application/vnd.google-apps.folder';
+
 function renderDocsGrid() {
   const container = document.getElementById('docs-list');
   if (!container) return;
-  const filtered = _allDocs.filter((f) => _ldDocMatches(f, _currentDocFilter));
 
-  if (!filtered.length) {
-    container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:rgba(255,255,255,0.3);"><div style="font-size:40px;margin-bottom:8px;">📁</div><p>No documents found</p></div>';
-    return;
-  }
+  const folders = _allDocs.filter((f) => f.mimeType === LD_FOLDER_MIME);
+  const files   = _allDocs
+    .filter((f) => f.mimeType !== LD_FOLDER_MIME)
+    .filter((f) => _ldDocMatches(f, _currentDocFilter));
+  const showFolders = _currentDocFilter === 'all'; // hide folders when a type filter is active
 
-  container.innerHTML = filtered.map((f) => {
+  // a) Breadcrumb row (always shown) + New Folder button
+  const trail = _docTrail || [];
+  const crumbs = trail.map((c, i) => {
+    const last = i === trail.length - 1;
+    return `<span onclick="_ldDocNavTo(${i})" style="cursor:pointer;color:${last ? '#f0ebe0' : 'rgba(201,168,76,0.9)'};font-weight:${last ? '700' : '500'};">${_ldDriveEsc(c.name)}</span>`;
+  }).join('<span style="color:rgba(255,255,255,0.25);margin:0 6px;">/</span>');
+  const breadcrumb = `
+    <div style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px;">
+      <div style="font-size:13px;display:flex;align-items:center;flex-wrap:wrap;">📂 ${crumbs}</div>
+      <button onclick="_ldDocNewFolder(event)" title="Create a subfolder here" style="font-size:11px;font-weight:700;color:#1a1a1a;background:linear-gradient(135deg,#f2cf85,#C9A84C);border:none;padding:5px 12px;border-radius:6px;cursor:pointer;letter-spacing:.3px;">＋ New Folder</button>
+    </div>`;
+
+  // b) Folder cards (only when no type filter is active) — no Scan button
+  const foldersHtml = showFolders ? folders.map((f) => {
+    const safeName = (f.name || 'Folder').replace(/"/g, '&quot;');
+    return `
+      <div onclick="_ldDocOpenFolder('${_ldDriveEsc(f.id)}')" style="background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.18);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
+        onmouseenter="this.style.borderColor='rgba(201,168,76,0.45)';this.style.background='rgba(201,168,76,0.09)'"
+        onmouseleave="this.style.borderColor='rgba(201,168,76,0.18)';this.style.background='rgba(201,168,76,0.05)'">
+        <div style="font-size:32px;margin-bottom:10px;text-align:center;">📁</div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${safeName}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:10px;">Folder</div>
+        <div style="display:flex;justify-content:flex-end;align-items:center;">
+          <button onclick="_ldDocMenu(event,'${_ldDriveEsc(f.id)}','folder')" title="Actions" style="font-size:14px;line-height:1;color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.06);border:none;padding:3px 10px;border-radius:6px;cursor:pointer;">⋯</button>
+        </div>
+      </div>`;
+  }).join('') : '';
+
+  // c) File cards (today's card + ⋯ actions menu)
+  const filesHtml = files.map((f) => {
     const icon = _ldFileIconEmoji(f.mimeType, f.name);
     const size = _ldFormatSize(f.size);
     const date = f.modifiedTime
@@ -6648,7 +6690,6 @@ function renderDocsGrid() {
     const docType = (f.appProperties && f.appProperties.docType) || '';
     const typeLabel = docType || 'Untagged';
     const safeName = (f.name || 'Untitled').replace(/"/g, '&quot;');
-    const viewLink = f.webViewLink || '#';
     const isPdf = (f.mimeType || '').includes('pdf');
     const isImage = (f.mimeType || '').indexOf('image/') === 0;
     const thumbLink = f.thumbnailLink || '';
@@ -6671,10 +6712,164 @@ function renderDocsGrid() {
           <div style="display:flex;gap:6px;align-items:center;">
             <button onclick="scanDriveDoc('${_ldDriveEsc(f.id)}', event)" title="Scan with AI" style="font-size:10px;font-weight:700;color:#1a1a1a;background:linear-gradient(135deg,#f2cf85,#C9A84C);border:none;padding:3px 10px;border-radius:6px;cursor:pointer;letter-spacing:.3px;">🔍 Scan</button>
             ${isPdf ? '<span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);background:rgba(255,255,255,0.06);padding:3px 8px;border-radius:6px;">PDF</span>' : ''}
+            <button onclick="_ldDocMenu(event,'${_ldDriveEsc(f.id)}','file')" title="Actions" style="font-size:14px;line-height:1;color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.06);border:none;padding:2px 9px;border-radius:6px;cursor:pointer;">⋯</button>
           </div>
         </div>
       </div>`;
   }).join('');
+
+  let body = breadcrumb + foldersHtml + filesHtml;
+  if (!foldersHtml && !filesHtml) {
+    body += '<div style="grid-column:1/-1;text-align:center;padding:40px;color:rgba(255,255,255,0.3);"><div style="font-size:40px;margin-bottom:8px;">📁</div><p>This folder is empty</p></div>';
+  }
+  container.innerHTML = body;
+}
+
+// ── Folder navigation ─────────────────────────────────────────────
+function _ldDocResetFilterButtons() {
+  document.querySelectorAll('.doc-filter-btn').forEach((b) => {
+    const isAll = (b.textContent || '').trim().toLowerCase() === 'all';
+    b.style.background = isAll ? 'var(--gold)' : 'transparent';
+    b.style.color = isAll ? '#000' : 'rgba(255,255,255,0.6)';
+    b.style.border = isAll ? '1px solid var(--gold)' : '1px solid rgba(255,255,255,0.15)';
+  });
+}
+function _ldDocOpenFolder(id) {
+  const f = (_allDocs || []).find((x) => x.id === id);
+  const name = (f && f.name) || 'Folder';
+  _docCwd = id;
+  _docTrail.push({ id: id, name: name });
+  _currentDocFilter = 'all';
+  _ldDocResetFilterButtons();
+  loadDocumentsGrid();
+}
+function _ldDocNavTo(i) {
+  if (i < 0 || i >= _docTrail.length) return;
+  _docTrail = _docTrail.slice(0, i + 1);
+  _docCwd = _docTrail[i].id;
+  loadDocumentsGrid();
+}
+
+// ── Actions menu (⋯) ──────────────────────────────────────────────
+function _ldDocCloseMenu() { const m = document.getElementById('ld-doc-menu'); if (m) m.style.display = 'none'; }
+function _ldDocEnsureMenu() {
+  let m = document.getElementById('ld-doc-menu');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'ld-doc-menu';
+    m.style.cssText = 'position:fixed;z-index:10000;background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:4px;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.5);display:none;';
+    document.body.appendChild(m);
+    document.addEventListener('click', _ldDocCloseMenu);
+  }
+  return m;
+}
+function _ldDocMenu(ev, id, kind) {
+  ev.stopPropagation();
+  const m = _ldDocEnsureMenu();
+  const it = (label, call) => `<div onclick="event.stopPropagation();_ldDocCloseMenu();${call}" style="padding:7px 12px;font-size:12.5px;color:#eee;cursor:pointer;border-radius:5px;white-space:nowrap;" onmouseenter="this.style.background='#2a2a2a'" onmouseleave="this.style.background='transparent'">${label}</div>`;
+  m.innerHTML = (kind === 'folder')
+    ? it('📂 Open', `_ldDocOpenFolder('${id}')`) + it('✏️ Rename', `_ldDocRename('${id}')`) + it('🗑️ Delete', `_ldDocDelete('${id}')`)
+    : it('👁️ Quick View', `_ldDocQuickView('${id}')`) + it('⬇️ Download', `_ldDocDownload('${id}')`) + it('✏️ Rename', `_ldDocRename('${id}')`) + it('📦 Move…', `_ldDocMove('${id}')`) + it('🗑️ Delete', `_ldDocDelete('${id}')`);
+  const r = ev.currentTarget.getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 180)) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+  m.style.display = 'block';
+}
+
+// ── Drive action helper: auth header + standard error handling ────
+async function _ldDocDriveFetch(url, opts) {
+  const token = await _ldEnsureToken();
+  opts = opts || {};
+  opts.headers = Object.assign({ Authorization: 'Bearer ' + token }, opts.headers || {});
+  const res = await fetch(url, opts);
+  if (res.status === 401 || res.status === 403) { _ldClearToken(); throw new Error('Drive auth failed — open the Documents tab again to re-auth'); }
+  if (res.status === 404) { if (typeof toast === 'function') toast('Folder not found — reload the page', true); throw new Error('not-found'); }
+  if (!res.ok) throw new Error('Drive HTTP ' + res.status);
+  return res;
+}
+function _ldDocActionErr(e, verb) {
+  if (e && e.message === 'not-found') return; // already toasted
+  if (typeof toast === 'function') toast(verb + ' failed: ' + (e && e.message || 'error'), true);
+}
+function _ldDocQuickView(id) {
+  const f = (_allDocs || []).find((x) => x.id === id);
+  if (f && typeof openDocViewerForFile === 'function') openDocViewerForFile(f);
+}
+function _ldDocDownload(id) {
+  const f = (_allDocs || []).find((x) => x.id === id);
+  if (f && typeof downloadDocument === 'function') downloadDocument(f.webContentLink || f.webViewLink, f.name);
+}
+async function _ldDocRename(id) {
+  const f = (_allDocs || []).find((x) => x.id === id); if (!f) return;
+  const isFolder = f.mimeType === LD_FOLDER_MIME;
+  const input = prompt('Rename ' + (isFolder ? 'folder' : 'file') + ':', f.name || '');
+  if (input == null) return;
+  const nm = input.trim();
+  if (!nm || nm === f.name) return;
+  try {
+    await _ldDocDriveFetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nm })
+    });
+    if (typeof toast === 'function') toast('Renamed');
+    loadDocumentsGrid();
+  } catch (e) { _ldDocActionErr(e, 'Rename'); }
+}
+async function _ldDocDelete(id) {
+  const f = (_allDocs || []).find((x) => x.id === id); if (!f) return;
+  const isFolder = f.mimeType === LD_FOLDER_MIME;
+  const msg = isFolder
+    ? 'Move folder "' + (f.name || '') + '" to Trash?\n\nThis trashes the folder AND everything inside it.'
+    : 'Move "' + (f.name || '') + '" to Trash?';
+  if (!confirm(msg)) return;
+  try {
+    await _ldDocDriveFetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true })
+    });
+    if (typeof toast === 'function') toast('Moved to Trash');
+    loadDocumentsGrid();
+  } catch (e) { _ldDocActionErr(e, 'Delete'); }
+}
+async function _ldDocNewFolder(ev) {
+  if (ev) ev.stopPropagation();
+  if (!_docCwd) { if (typeof toast === 'function') toast('No Drive folder linked yet', true); return; }
+  const input = prompt('New folder name:', '');
+  if (input == null) return;
+  const nm = input.trim(); if (!nm) return;
+  try {
+    await _ldDocDriveFetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: nm, mimeType: LD_FOLDER_MIME, parents: [_docCwd] })
+    });
+    if (typeof toast === 'function') toast('Folder created');
+    loadDocumentsGrid();
+  } catch (e) { _ldDocActionErr(e, 'Create folder'); }
+}
+async function _ldDocMove(id) {
+  const f = (_allDocs || []).find((x) => x.id === id); if (!f) return;
+  let subs = [];
+  try {
+    const q = encodeURIComponent(`'${_docRootId}' in parents and mimeType='${LD_FOLDER_MIME}' and trashed=false`);
+    const res = await _ldDocDriveFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=' + encodeURIComponent('files(id,name)') + '&pageSize=200');
+    const data = await res.json();
+    subs = Array.isArray(data.files) ? data.files : [];
+  } catch (e) { _ldDocActionErr(e, 'List folders'); return; }
+  // Candidate destinations: root + its subfolders, minus the current folder and the item itself.
+  const dests = [{ id: _docRootId, name: 'All Documents (root)' }].concat(subs)
+    .filter((o) => o.id !== _docCwd && o.id !== id);
+  if (!dests.length) { if (typeof toast === 'function') toast('No other folder to move into'); return; }
+  const m = _ldDocEnsureMenu();
+  m.innerHTML = '<div style="padding:6px 12px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Move to…</div>'
+    + dests.map((o) => `<div onclick="event.stopPropagation();_ldDocCloseMenu();_ldDocMoveTo('${id}','${_ldDriveEsc(o.id)}')" style="padding:7px 12px;font-size:12.5px;color:#eee;cursor:pointer;border-radius:5px;white-space:nowrap;" onmouseenter="this.style.background='#2a2a2a'" onmouseleave="this.style.background='transparent'">📁 ${_ldDriveEsc(o.name)}</div>`).join('');
+  m.style.display = 'block'; // reuse the menu's existing position
+}
+async function _ldDocMoveTo(id, destId) {
+  if (destId === _docCwd) return;
+  try {
+    await _ldDocDriveFetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id)
+      + '?addParents=' + encodeURIComponent(destId) + '&removeParents=' + encodeURIComponent(_docCwd), { method: 'PATCH' });
+    if (typeof toast === 'function') toast('Moved');
+    loadDocumentsGrid();
+  } catch (e) { _ldDocActionErr(e, 'Move'); }
 }
 
 function guessMimeFromName(name) {
