@@ -264,16 +264,16 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   // ── 4b. DEAL INPUTS (Step 3f: real section title, larger rows, generous spacing) ─
   const inHdrH    = 22;                       // taller header to fit 11pt title
   const inRowH    = 20;                       // generous spacing between rows
-  const inTopPad  = 14;                       // gap from header bottom to first row baseline
-  const inBotPad  = 10;                       // gap from last row baseline to box bottom
+  const inTopPad  = 15;                       // gap from header bottom to first row baseline
+  const inBotPad  = 9;                        // gap from last row baseline to box bottom
   const inBodyH   = inTopPad + inRowH * 2 + inBotPad; // 14 + 20 + 20 + 10 = 64
   const inH       = inHdrH + inBodyH;         // 22 + 64 = 86
   // Container border
   page.drawRectangle({ x: M, y: y - inH, width: CW, height: inH, borderColor: LGRAY, borderWidth: 0.5 });
   // Header strip (BGRAY) — bumped to a real section title at 11pt
   rect(M, y - inHdrH, CW, inHdrH, BGRAY);
-  T('DEAL INPUTS', M + 12, y - 15, B, 11, DARK);
-  const titleW = B.widthOfTextAtSize('DEAL INPUTS', 11);
+  T('DEAL INPUTS', M + 12, y - 16, B, 12, DARK);
+  const titleW = B.widthOfTextAtSize('DEAL INPUTS', 12);
   T('inputs feeding all calculations below',
     M + 12 + titleW + 10, y - 14, RI, 7, GRAY);
 
@@ -303,9 +303,9 @@ async function buildPDF(d: any): Promise<Uint8Array> {
 
   // Draw rows — bold prefix label, regular details (both bumped from 7pt to 9pt)
   const drawInRow = (label: string, content: string, ry: number) => {
-    T(label, M + 14, ry, B, 9, GRAY);
-    const lw = B.widthOfTextAtSize(label, 9);
-    T(content, M + 14 + lw + 6, ry, R, 9, DARK);
+    T(label, M + 14, ry, B, 11, GOLD);
+    const lw = B.widthOfTextAtSize(label, 11);
+    T(content, M + 14 + lw + 8, ry, R, 12, DARK);
   };
   const r1y = y - inHdrH - inTopPad;          // y - 22 - 14 = y - 36
   const r2y = r1y - inRowH;                   // y - 56
