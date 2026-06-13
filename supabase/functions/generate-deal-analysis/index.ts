@@ -81,7 +81,6 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const lenderFees   = num(inp.lender_fees);
   const buyClosing   = num(inp.buy_closing);
   const sellClosing  = num(inp.sell_closing);
-  const realtorPct   = num(inp.realtor_pct);
   const vacancyPct   = num(inp.vacancy_pct);
   const opexPct      = num(inp.opex_pct);
   const loanRate     = num(inp.loan_rate);
@@ -285,13 +284,11 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     '  |  ARV ' + fmtD(arv) +
     '  |  Holding ' + holdMo + ' mo x ' + fmtD(holdMonthly) +
     '/mo = ' + fmtD(holdMo * holdMonthly);
-  // Fees row — show realtor as % and derived $ for transparency
-  const realtorAmt = arv * realtorPct / 100;
+  // Fees row
   const feesRow =
     'Lender ' + fmtD(lenderFees) +
     '  |  Buy-side ' + fmtD(buyClosing) +
-    '  |  Sell-side ' + fmtD(sellClosing) +
-    '  |  Realtor ' + realtorPct.toFixed(1) + '% (= ' + fmtD(realtorAmt) + ')';
+    '  |  Sell-side ' + fmtD(sellClosing);
   // Rental & Financing row — single line of all the rate inputs
   const rentRow =
     'Rent ' + fmtD(rent) + '/mo' +
