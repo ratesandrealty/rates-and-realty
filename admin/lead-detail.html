@@ -5822,8 +5822,6 @@ async function logManualNote() {
   if (ok) toast('✓ Note saved');
 }
 
-const ADMIN_TOKEN = 'rr-admin-28230b361fc0915fd1599c7cd52444d4658990098a120adf';
-
 async function adminViewPortal() {
   if (!crmContactEmail) { alert('No contact email found'); return; }
   const btn = document.querySelector('[onclick="adminViewPortal()"]');
@@ -5831,10 +5829,12 @@ async function adminViewPortal() {
   try {
     const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
     const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+    const { data: _sess } = await sb.auth.getSession();
+    const _ajwt = _sess && _sess.session ? _sess.session.access_token : '';
     const res = await fetch(`${SB_P}/functions/v1/portal-auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SK_P },
-      body: JSON.stringify({ action: 'admin_impersonate', token: ADMIN_TOKEN, email: crmContactEmail })
+      body: JSON.stringify({ action: 'admin_impersonate', admin_jwt: _ajwt, email: crmContactEmail })
     });
     const data = await res.json();
     if (!data.success || !data.user) {
