@@ -83,6 +83,12 @@
   }
 
   function injectHTML() {
+    if (!document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
+      var ts = document.createElement('script');
+      ts.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+      ts.async = true; ts.defer = true;
+      document.head.appendChild(ts);
+    }
     const div = document.createElement('div');
     div.innerHTML = `
       <div id="pa-overlay">
@@ -115,6 +121,7 @@
               <input type="checkbox" id="pa-alerts" checked>
               <label for="pa-alerts">I agree to receive property alerts and mortgage updates</label>
             </div>
+            <div class="cf-turnstile" data-sitekey="0x4AAAAAADj25vOJQ6mnClMb" style="margin:4px 0 12px;"></div>
             <div id="pa-err-signup" class="pa-error"></div>
             <button type="submit" class="pa-btn" id="pa-btn-signup">Create My Account</button>
             <div class="pa-link" id="pa-to-login">Already have an account? <span>Sign In</span></div>
@@ -125,6 +132,7 @@
             <input class="pa-input" name="email" type="email" required placeholder="you@example.com">
             <label class="pa-label">Password</label>
             <input class="pa-input" name="password" type="password" required placeholder="Password">
+            <div class="cf-turnstile" data-sitekey="0x4AAAAAADj25vOJQ6mnClMb" style="margin:4px 0 12px;"></div>
             <div id="pa-err-login" class="pa-error"></div>
             <button type="submit" class="pa-btn" id="pa-btn-login">Sign In</button>
             <div class="pa-link" id="pa-to-signup">Don't have an account? <span>Create one free</span></div>
@@ -280,6 +288,11 @@
         showError(_errSignup, 'First name and email are required.');
         return;
       }
+      var turnstileToken = fd.get('cf-turnstile-response');
+      if (!turnstileToken) {
+        showError(_errSignup, 'Please complete the verification box.');
+        return;
+      }
       _btnSignup.disabled = true;
       _btnSignup.textContent = 'Creating account...';
       try {
@@ -289,21 +302,25 @@
           first_name: first_name,
           last_name: (fd.get('last_name') || '').trim(),
           phone: (fd.get('phone') || '').trim(),
-          password: (fd.get('password') || '').trim() || undefined
+          password: (fd.get('password') || '').trim() || undefined,
+          turnstileToken: turnstileToken
         };
         var data = await apiCall(body);
         if (data.error) {
+          if (window.turnstile) turnstile.reset(_formSignup.querySelector('.cf-turnstile'));
           showError(_errSignup, data.error);
           _btnSignup.disabled = false;
           _btnSignup.textContent = 'Create My Account';
         } else if (data.success && data.user) {
           onAuthSuccess(data.user, true);
         } else {
+          if (window.turnstile) turnstile.reset(_formSignup.querySelector('.cf-turnstile'));
           showError(_errSignup, 'Unexpected response. Please try again.');
           _btnSignup.disabled = false;
           _btnSignup.textContent = 'Create My Account';
         }
       } catch (err) {
+        if (window.turnstile) turnstile.reset(_formSignup.querySelector('.cf-turnstile'));
         showError(_errSignup, 'Network error. Please try again.');
         _btnSignup.disabled = false;
         _btnSignup.textContent = 'Create My Account';
@@ -321,22 +338,30 @@
         showError(_errLogin, 'Email and password are required.');
         return;
       }
+      var turnstileToken = fd.get('cf-turnstile-response');
+      if (!turnstileToken) {
+        showError(_errLogin, 'Please complete the verification box.');
+        return;
+      }
       _btnLogin.disabled = true;
       _btnLogin.textContent = 'Signing in...';
       try {
-        var data = await apiCall({ action: 'login', email: email, password: password });
+        var data = await apiCall({ action: 'login', email: email, password: password, turnstileToken: turnstileToken });
         if (data.error) {
+          if (window.turnstile) turnstile.reset(_formLogin.querySelector('.cf-turnstile'));
           showError(_errLogin, data.error);
           _btnLogin.disabled = false;
           _btnLogin.textContent = 'Sign In';
         } else if (data.success && data.user) {
           onAuthSuccess(data.user, false);
         } else {
+          if (window.turnstile) turnstile.reset(_formLogin.querySelector('.cf-turnstile'));
           showError(_errLogin, 'Unexpected response. Please try again.');
           _btnLogin.disabled = false;
           _btnLogin.textContent = 'Sign In';
         }
       } catch (err) {
+        if (window.turnstile) turnstile.reset(_formLogin.querySelector('.cf-turnstile'));
         showError(_errLogin, 'Network error. Please try again.');
         _btnLogin.disabled = false;
         _btnLogin.textContent = 'Sign In';
