@@ -1825,6 +1825,7 @@
                 <label>Scenario Notes (optional)</label>
                 <textarea name="notes" rows="3" placeholder="Tell us about your scenario — property type, loan amount, questions..."></textarea>
               </div>
+              <div class="cf-turnstile" data-sitekey="YOUR_TURNSTILE_SITE_KEY" style="margin:8px 0 14px;"></div>
               <button type="submit" class="btn-submit" id="homepage-submit-btn">
                 Get My Free Consultation →
               </button>
@@ -2002,6 +2003,8 @@
         msg.textContent = "Please fill in your name and email.";
         return;
       }
+      const cfToken = fd.get("cf-turnstile-response");
+      if (!cfToken) { msg.className = "form-message-box error"; msg.textContent = "Please complete the verification box."; return; }
       btn.disabled = true;
       btn.textContent = "Submitting...";
       msg.className = "form-message-box";
@@ -2016,13 +2019,15 @@
           timeline: fd.get("timeline") || "",
           notes: fd.get("notes") || "",
           source: "homepage",
-          funnelTag: "homepage-hero"
+          funnelTag: "homepage-hero",
+          turnstileToken: cfToken
         });
         msg.className = "form-message-box success";
         msg.textContent = "✓ Thank you! A loan officer will reach out within a few hours.";
         e.target.reset();
         loadLoanTypes();
       } catch (err) {
+        if (window.turnstile) turnstile.reset();
         msg.className = "form-message-box error";
         msg.textContent = err.message || "Something went wrong. Please try again or call us directly.";
       } finally {
@@ -2031,6 +2036,7 @@
       }
     });
   </script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <script src="public/js/chat-widget.js"></script>
   <script>
     function hswGo() {

@@ -232,6 +232,7 @@
                 <label>Message *</label>
                 <textarea name="message" required placeholder="Tell us about your situation or question..."></textarea>
               </div>
+              <div class="cf-turnstile" data-sitekey="YOUR_TURNSTILE_SITE_KEY" style="margin:8px 0 14px;"></div>
               <button type="submit" class="cf-submit" id="cf-submit-btn">Send Message →</button>
               <div class="cf-success" id="cf-success">
                 <h4>Message Sent!</h4>
@@ -269,13 +270,9 @@
       }
     });
   </script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <script type="module" src="/components/layout.js"></script>
   <script type="module">
-    import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
-    const supabase = createClient(
-      "https://ljywhvbmsibwnssxpesh.supabase.co",
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjU4MjQsImV4cCI6MjA2MzM0MTgyNH0.qdWFlFmCpFEepEoZ6v3BOKJdGvhkIpuJa5OxJSTSMTg"
-    );
     const form = document.getElementById("contact-form");
     const btn = document.getElementById("cf-submit-btn");
     const successEl = document.getElementById("cf-success");
@@ -284,37 +281,27 @@
       const fd = new FormData(form);
       const data = Object.fromEntries(fd.entries());
       if (!data.first_name || !data.email || !data.message) { alert("Please fill in required fields."); return; }
+      const token = fd.get("cf-turnstile-response");
+      if (!token) { alert("Please complete the verification box."); return; }
       btn.disabled = true; btn.textContent = "Sending...";
       try {
-        await supabase.from("contact_inquiries").insert([{
-          first_name: data.first_name, last_name: data.last_name,
-          email: data.email, phone: data.phone || null,
-          inquiry_type: data.inquiry_type || null, message: data.message,
-          created_at: new Date().toISOString()
-        }]);
-        // Add to MailerLite and assign to New Leads group (triggers welcome sequence)
-        try {
-          await fetch("https://connect.mailerlite.com/api/subscribers", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiI0IiwianRpIjoiZjQzNzYxZmQ5YWJhZGZiMDY4Y2MzZDdiZjkwMTg2YjI1ODY4YTY4NGEwOWY3MzNmNWNmMTgwNjljYjI1NDdlYmFiOWE0MTFhZDAyYzJhMTgiLCJpYXQiOjE3NzQyNDE1OTAuNzk5NjI4LCJuYmYiOjE3NzQyNDE1OTAuNzk5NjMsImV4cCI6NDkyOTkxNTE5MC43OTMyMDQsInN1YiI6IjIyMzMxNDYiLCJzY29wZXMiOltdfQ.iFjY8qqinfWlDGiV5Igl9a5H-LxS9_VMY-DsS_jezbmfxgU6kmbX7qpkKbMkncsNxxublJpRS7z7BSkkGf-S0Onw53WllPszYZ-pmorKv3tyPBS5Bb51AmpJ6rSOB0q2o_Zhyo_y4xxxVuIlOuIjjOuFEkI9WugVlZtMKyMq5qhmqN053-eDMjdWvT-hzSq8e2Nn9P5GM-ZxRJjNkfLi7i2bq_I_PJrSkOZmRZoUvkH5NK10WcY-iXx93ZZWxA-Ytp_ZYiTPe8gZj5H9x8TpoCgydh2zx-G3XvK5Xyv-MZlFXvlGNVM9uN4O5ZTdxixa5gDvzYhmJogcCKuK0DL4S5CjIp5kJQejiOsXLOZrN7vaSQBXawzf4qaiQpve2RhpAkDjxKTj3IUcVBb2hXgx1n5ZcjSX4egPO1UWWzJVOf0981cKONQAojxLnp_D-X_FPOx6ZBtRi7RvXY27372HrpfAENFROUig4ucUVAqS8ldYl3zWvT7o26uoOQEY2FTQR_A9Nzk16I89B_em32Rj3UlzJIhUijYEVKMyuE_4FtHJVEgX9OY0Fz-RJ2AX4yiJiiP-5PPbHL7Xx2eX7wLC7-veKR7xgaZ0qsEj4PvUcymZXpKN-thPRW3kM0oNxXssseUPnL6G2fXyimbgY4ogscqRSAKIIqbrBSkZCdeErpo"
-            },
-            body: JSON.stringify({
-              email: data.email,
-              fields: {
-                name: data.first_name,
-                last_name: data.last_name || "",
-                phone: data.phone || ""
-              },
-              groups: ["182704876024759829"]
-            })
-          });
-        } catch (_) { /* MailerLite failure is non-blocking */ }
+        const res = await fetch("https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/submit-lead", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind: "inquiry",
+            first_name: data.first_name, last_name: data.last_name,
+            email: data.email, phone: data.phone || null,
+            inquiry_type: data.inquiry_type || null, message: data.message,
+            turnstileToken: token
+          })
+        });
+        if (!res.ok) throw new Error("submit failed");
         gtag('event', 'contact_form_submit', {inquiry_type: data.inquiry_type || 'general'});
         form.style.display = "none"; successEl.style.display = "block";
       } catch (err) {
         btn.disabled = false; btn.textContent = "Send Message →";
+        if (window.turnstile) turnstile.reset();
         alert("Something went wrong. Please try again or email us directly.");
       }
     });
