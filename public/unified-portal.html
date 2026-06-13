@@ -285,6 +285,7 @@ input,select,textarea{font-family:inherit}
 html,body{overflow-x:hidden}
 </style>
 <script src="/api/env.js"></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -336,6 +337,7 @@ html,body{overflow-x:hidden}
             <label>Password</label>
             <input type="password" id="loginPassword" required placeholder="Your password"/>
           </div>
+          <div class="cf-turnstile" data-sitekey="0x4AAAAAADj25vOJQ6mnClMb" style="margin:4px 0 12px;"></div>
           <div class="auth-error" id="loginError"></div>
           <button type="submit" class="auth-btn" id="loginBtn">Sign In</button>
           <button type="button" class="auth-forgot" onclick="handleForgotPassword()">Forgot password?</button>
@@ -365,6 +367,7 @@ html,body{overflow-x:hidden}
             <label>Password <span style="color:var(--muted);font-weight:400">(optional)</span></label>
             <input type="password" id="signupPassword" placeholder="Create a password"/>
           </div>
+          <div class="cf-turnstile" data-sitekey="0x4AAAAAADj25vOJQ6mnClMb" style="margin:4px 0 12px;"></div>
           <div class="auth-error" id="signupError"></div>
           <button type="submit" class="auth-btn" id="signupBtn">Create Account</button>
         </form>
@@ -1075,11 +1078,11 @@ function getUser() {
   return null;
 }
 
-function portalLogin(email, password, onSuccess, onError) {
+function portalLogin(email, password, turnstileToken, onSuccess, onError) {
   fetch(SB+'/functions/v1/portal-auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'apikey': SK },
-    body: JSON.stringify({ action: 'login', email: email.trim().toLowerCase(), password: password })
+    body: JSON.stringify({ action: 'login', email: email.trim().toLowerCase(), password: password, turnstileToken: turnstileToken })
   }).then(function(res) { return res.json().then(function(d) { return { ok: res.ok, data: d }; }); })
   .then(function(r) {
     if (!r.ok || r.data.error) throw new Error(r.data.error || 'Login failed');
@@ -1093,16 +1096,15 @@ function portalLogin(email, password, onSuccess, onError) {
   }).catch(function(e) { if (onError) onError(e.message); });
 }
 
-function portalSignup(firstName, lastName, email, phone, password, onSuccess, onError) {
+function portalSignup(firstName, lastName, email, phone, password, turnstileToken, onSuccess, onError) {
   fetch(SB+'/functions/v1/portal-auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'apikey': SK },
-    body: JSON.stringify({ action: 'signup', first_name: firstName, last_name: lastName || '', email: email.trim().toLowerCase(), phone: phone || '', password: password || undefined })
+    body: JSON.stringify({ action: 'signup', first_name: firstName, last_name: lastName || '', email: email.trim().toLowerCase(), phone: phone || '', password: password || undefined, turnstileToken: turnstileToken })
   }).then(function(res) { return res.json().then(function(d) { return { ok: res.ok, data: d }; }); })
   .then(function(r) {
     if (r.data.error && r.data.code !== 'EXISTS') throw new Error(r.data.error);
-    if (r.data.code === 'EXISTS' && password) return portalLogin(email, password, onSuccess, onError);
-    if (r.data.code === 'EXISTS') throw new Error('Account exists. Please sign in.');
+    if (r.data.code === 'EXISTS') throw new Error('You already have an account — please use the Sign In tab.');
     var user = r.data.user || { id: r.data.user_id, email: email, first_name: firstName };
     localStorage.setItem('portal_user', JSON.stringify(user));
     localStorage.setItem('borrower_user', JSON.stringify(user));
@@ -1185,14 +1187,18 @@ function handleLogin(e) {
   var pw = document.getElementById('loginPassword').value;
   var btn = document.getElementById('loginBtn');
   var err = document.getElementById('loginError');
+  var tokenEl = document.querySelector('#loginForm [name="cf-turnstile-response"]');
+  var token = tokenEl ? tokenEl.value : '';
+  if (!token) { err.textContent = 'Please complete the verification box.'; err.style.display = 'block'; return; }
   err.style.display = 'none';
   btn.disabled = true;
   btn.textContent = 'Signing in...';
-  portalLogin(email, pw, function(user) {
+  portalLogin(email, pw, token, function(user) {
     btn.disabled = false;
     btn.textContent = 'Sign In';
     initPortal(user);
   }, function(msg) {
+    if (window.turnstile) turnstile.reset(document.querySelector('#loginForm .cf-turnstile'));
     btn.disabled = false;
     btn.textContent = 'Sign In';
     err.textContent = msg;
@@ -1209,14 +1215,18 @@ function handleSignup(e) {
   var pw = document.getElementById('signupPassword').value;
   var btn = document.getElementById('signupBtn');
   var err = document.getElementById('signupError');
+  var tokenEl = document.querySelector('#signupForm [name="cf-turnstile-response"]');
+  var token = tokenEl ? tokenEl.value : '';
+  if (!token) { err.textContent = 'Please complete the verification box.'; err.style.display = 'block'; return; }
   err.style.display = 'none';
   btn.disabled = true;
   btn.textContent = 'Creating account...';
-  portalSignup(first, last, email, phone, pw, function(user) {
+  portalSignup(first, last, email, phone, pw, token, function(user) {
     btn.disabled = false;
     btn.textContent = 'Create Account';
     initPortal(user);
   }, function(msg) {
+    if (window.turnstile) turnstile.reset(document.querySelector('#signupForm .cf-turnstile'));
     btn.disabled = false;
     btn.textContent = 'Create Account';
     err.textContent = msg;
