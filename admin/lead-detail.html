@@ -6667,15 +6667,20 @@ function renderDocsGrid() {
   // b) Folder cards (only when no type filter is active) — no Scan button
   const foldersHtml = showFolders ? folders.map((f) => {
     const safeName = (f.name || 'Folder').replace(/"/g, '&quot;');
+    const fid = _ldDriveEsc(f.id);
     return `
-      <div onclick="_ldDocOpenFolder('${_ldDriveEsc(f.id)}')" style="background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.18);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
+      <div onclick="_ldDocOpenFolder('${fid}')"
+        ondragover="_ldFolderDragOver(event,this)" ondragleave="_ldFolderDragLeave(event,this)" ondrop="_ldFolderDrop(event,'${fid}',this)"
+        title="Drop files here to upload into ${safeName}"
+        style="background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.18);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
         onmouseenter="this.style.borderColor='rgba(201,168,76,0.45)';this.style.background='rgba(201,168,76,0.09)'"
         onmouseleave="this.style.borderColor='rgba(201,168,76,0.18)';this.style.background='rgba(201,168,76,0.05)'">
-        <div style="font-size:32px;margin-bottom:10px;text-align:center;">📁</div>
+        <div style="font-size:32px;margin-bottom:6px;text-align:center;">📁</div>
+        <div data-folder-pages="${fid}" style="text-align:center;min-height:20px;line-height:1.5;font-size:15px;margin-bottom:6px;word-break:break-word;"></div>
         <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${safeName}</div>
         <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:10px;">Folder</div>
         <div style="display:flex;justify-content:flex-end;align-items:center;">
-          <button onclick="_ldDocMenu(event,'${_ldDriveEsc(f.id)}','folder')" title="Actions" style="font-size:14px;line-height:1;color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.06);border:none;padding:3px 10px;border-radius:6px;cursor:pointer;">⋯</button>
+          <button onclick="_ldDocMenu(event,'${fid}','folder')" title="Actions" style="font-size:14px;line-height:1;color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.06);border:none;padding:3px 10px;border-radius:6px;cursor:pointer;">⋯</button>
         </div>
       </div>`;
   }).join('') : '';
@@ -6723,6 +6728,82 @@ function renderDocsGrid() {
     body += '<div style="grid-column:1/-1;text-align:center;padding:40px;color:rgba(255,255,255,0.3);"><div style="font-size:40px;margin-bottom:8px;">📁</div><p>This folder is empty</p></div>';
   }
   container.innerHTML = body;
+  try { _ldPopulateFolderPageBadges(); } catch (_) {}
+}
+
+// ── Drag-drop upload into a subfolder + PDF page badges ───────────
+function _ldFolderDragOver(e, el) {
+  e.preventDefault(); e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  el.style.borderColor = 'var(--gold)';
+  el.style.background = 'rgba(201,168,76,0.18)';
+}
+function _ldFolderDragLeave(e, el) {
+  e.preventDefault(); e.stopPropagation();
+  el.style.borderColor = 'rgba(201,168,76,0.18)';
+  el.style.background = 'rgba(201,168,76,0.05)';
+}
+async function _ldFolderDrop(e, folderId, el) {
+  e.preventDefault(); e.stopPropagation();
+  el.style.borderColor = 'rgba(201,168,76,0.18)';
+  el.style.background = 'rgba(201,168,76,0.05)';
+  const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  if (!files.length) return;
+  await _ldUploadFilesToFolder(files, folderId);
+}
+async function _ldUploadFilesToFolder(files, folderId) {
+  if (!folderId) { if (typeof toast === 'function') toast('No folder to upload into', true); return; }
+  let token;
+  try { token = await _ldEnsureToken(); }
+  catch (err) { if (typeof toast === 'function') toast('Google Drive sign-in required', true); return; }
+  let done = 0, fail = 0;
+  if (typeof toast === 'function') toast('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…');
+  for (const file of files) {
+    try {
+      let finalFile = file;
+      if (typeof _convertToPdfIfNeeded === 'function') { const r = await _convertToPdfIfNeeded(file); finalFile = r.file; }
+      const boundary = 'docupload_' + Math.random().toString(36).slice(2);
+      const metadata = JSON.stringify({ name: finalFile.name, parents: [folderId] });
+      const fileBytes = new Uint8Array(await finalFile.arrayBuffer());
+      const enc = new TextEncoder();
+      const head = enc.encode('--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + metadata + '\r\n--' + boundary + '\r\nContent-Type: ' + (finalFile.type || 'application/octet-stream') + '\r\n\r\n');
+      const tail = enc.encode('\r\n--' + boundary + '--');
+      const body = new Uint8Array(head.length + fileBytes.length + tail.length);
+      body.set(head, 0); body.set(fileBytes, head.length); body.set(tail, head.length + fileBytes.length);
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'multipart/related; boundary=' + boundary },
+        body: body
+      });
+      if (res.status === 401 || res.status === 403) { _ldClearToken(); throw new Error('Drive auth failed (HTTP ' + res.status + ')'); }
+      if (!res.ok) throw new Error('GDrive HTTP ' + res.status);
+      done++;
+      if (typeof logActivity === 'function') { logActivity('document_uploaded', 'Document uploaded to Drive: ' + finalFile.name).catch(function(){}); }
+    } catch (err) { console.error('[FolderDrop] failed for', file.name, err); fail++; }
+  }
+  if (typeof toast === 'function') toast('✓ ' + done + ' uploaded' + (fail ? (' · ' + fail + ' failed') : ''), fail > 0);
+  loadDocumentsGrid();
+}
+async function _ldPopulateFolderPageBadges() {
+  const els = document.querySelectorAll('[data-folder-pages]');
+  if (!els.length) return;
+  let token;
+  try { token = await _ldEnsureToken(); } catch (err) { return; }
+  await Promise.all(Array.from(els).map(async (el) => {
+    const fid = el.getAttribute('data-folder-pages');
+    try {
+      const q = encodeURIComponent("'" + fid + "' in parents and mimeType='application/pdf' and trashed=false");
+      const res = await fetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id)&pageSize=1000', { headers: { Authorization: 'Bearer ' + token } });
+      if (!res.ok) return;
+      const data = await res.json();
+      const n = (data.files || []).length;
+      const MAX = 12;
+      if (n > 0) {
+        el.innerHTML = '📄'.repeat(Math.min(n, MAX)) + (n > MAX ? (' <span style="font-size:10px;color:rgba(255,255,255,0.5);">+' + (n - MAX) + '</span>') : '');
+        el.title = n + ' PDF' + (n > 1 ? 's' : '');
+      } else { el.innerHTML = ''; }
+    } catch (_) {}
+  }));
 }
 
 // ── Folder navigation ─────────────────────────────────────────────
