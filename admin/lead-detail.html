@@ -25337,7 +25337,7 @@ async function recordNewVoicemail() {
     var badgeHtml = badges.map(function(b) { return '<span class="act-badge ' + (b.cls || '') + '">' + escHtml(b.text) + '</span>'; }).join('');
     var metaHtml = badgeHtml ? '<div class="act-item-meta">' + badgeHtml + '</div>' : '';
 
-    return '<div class="act-item">' +
+    return '<div class="act-item" data-event-idx="' + (e._idx != null ? e._idx : '') + '" style="cursor:pointer;">' +
       '<div class="act-item-dot ' + (e.type || '') + '"></div>' +
       '<div class="act-item-head">' +
         '<div class="act-item-title">' + title + '</div>' +
@@ -25346,6 +25346,66 @@ async function recordNewVoicemail() {
       (body ? '<div class="act-item-body">' + body + '</div>' : '') +
       metaHtml +
     '</div>';
+  }
+
+  function actDetailModal() {
+    var m = document.getElementById('actDetailOverlay');
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = 'actDetailOverlay';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);padding:20px;';
+    m.innerHTML = '<div style="background:#111;border:1px solid rgba(201,168,76,0.25);border-radius:14px;max-width:680px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.6);">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);">' +
+          '<div id="actDetailTitle" style="font-size:15px;font-weight:700;color:#fff;padding-right:12px;"></div>' +
+          '<button id="actDetailClose" style="background:none;border:none;color:#888;font-size:24px;line-height:1;cursor:pointer;flex-shrink:0;">&times;</button>' +
+        '</div>' +
+        '<div id="actDetailMeta" style="padding:10px 20px;display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid rgba(255,255,255,0.05);"></div>' +
+        '<div id="actDetailBody" style="padding:18px 20px;overflow:auto;color:#ddd;font-size:13px;line-height:1.6;"></div>' +
+      '</div>';
+    document.body.appendChild(m);
+    function closeM() { m.style.display = 'none'; var b = document.getElementById('actDetailBody'); if (b) b.innerHTML = ''; }
+    m.addEventListener('click', function(ev) { if (ev.target === m) closeM(); });
+    m.querySelector('#actDetailClose').addEventListener('click', closeM);
+    document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && m.style.display !== 'none') closeM(); });
+    return m;
+  }
+
+  function openActivityDetail(e) {
+    if (!e) return;
+    var meta = (typeof e.metadata === 'string') ? (function(){ try { return JSON.parse(e.metadata); } catch(_) { return {}; } })() : (e.metadata || {});
+    var m = actDetailModal();
+    var bodyEl = m.querySelector('#actDetailBody');
+    m.querySelector('#actDetailTitle').innerHTML = escHtml(e.email_subject || e.title || (e.type || 'Activity'));
+    var chips = [];
+    function chip(label, val) { if (val) chips.push('<span style="font-size:11px;color:#C9A84C;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.25);padding:3px 9px;border-radius:20px;">' + escHtml(label) + ': ' + escHtml(String(val)) + '</span>'); }
+    chip('When', fmtTime(e.created_at) + ' · ' + timeAgo(e.created_at));
+    if (e.status) chip('Status', e.status);
+
+    var body = '', isEmail = false;
+    if (e.type === 'email' && e.email_html) {
+      isEmail = true;
+      chip('To', e.email_to || meta.to);
+      if (meta.open_count) chip('Opens', meta.open_count);
+      body = '<iframe id="actEmailFrame" sandbox="allow-same-origin" style="width:100%;height:55vh;border:1px solid rgba(255,255,255,0.1);border-radius:8px;background:#fff;"></iframe>';
+    } else if (e.type === 'sms' || e.sms_body) {
+      chip('To', e.sms_to || meta.to); chip('From', meta.from);
+      body = '<div style="white-space:pre-wrap;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:14px;">' + escHtml(e.sms_body || e.description || '') + '</div>';
+    } else {
+      if (e.email_to) chip('To', e.email_to);
+      if (meta.outcome) chip('Outcome', String(meta.outcome).replace(/_/g, ' '));
+      if (meta.duration || e.duration_seconds) chip('Duration', fmtDuration(meta.duration || e.duration_seconds));
+      var parts = [];
+      if (e.description) parts.push('<div style="white-space:pre-wrap;">' + escHtml(e.description) + '</div>');
+      if (meta.notes) parts.push('<div style="margin-top:10px;color:#aaa;"><em>' + escHtml(meta.notes) + '</em></div>');
+      if (e.page_url) parts.push('<div style="margin-top:10px;"><a href="' + escHtml(e.page_url) + '" target="_blank" style="color:#C9A84C;">' + escHtml(e.page_url) + '</a></div>');
+      if (meta.recording_url) parts.push('<div style="margin-top:10px;"><a href="' + escHtml(meta.recording_url) + '" target="_blank" style="color:#C9A84C;">▶ Listen to recording</a></div>');
+      if (meta.filenames && meta.filenames.length) parts.push('<div style="margin-top:10px;">' + escHtml(meta.filenames.join(', ')) + '</div>');
+      body = parts.join('') || '<div style="color:#777;">No additional detail recorded for this event.</div>';
+    }
+    m.querySelector('#actDetailMeta').innerHTML = chips.join('');
+    bodyEl.innerHTML = body;
+    if (isEmail) { var f = bodyEl.querySelector('#actEmailFrame'); if (f) f.srcdoc = e.email_html; }
+    m.style.display = 'flex';
   }
 
   function renderTimeline() {
@@ -25431,6 +25491,7 @@ async function recordNewVoicemail() {
       var notes = Array.isArray(out[1]) ? out[1] : [];
       var contactNotes = Array.isArray(out[2]) ? out[2] : [];
       allEvents = events.concat(notes).concat(contactNotes).sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+      allEvents.forEach(function(e, i) { e._idx = i; });
       updateCounts();
       updateStats();
       renderTimeline();
@@ -25461,6 +25522,18 @@ async function recordNewVoicemail() {
         updateStats();
       });
     });
+    var tlEl = document.getElementById('actTimeline');
+    if (tlEl) {
+      tlEl.addEventListener('click', function(ev) {
+        if (ev.target.closest('a')) return;
+        var item = ev.target.closest('.act-item');
+        if (!item) return;
+        var idx = parseInt(item.dataset.eventIdx, 10);
+        if (isNaN(idx)) return;
+        var e = allEvents[idx];
+        if (e) openActivityDetail(e);
+      });
+    }
     var search = document.getElementById('actSearch');
     if (search) {
       var debounce;
