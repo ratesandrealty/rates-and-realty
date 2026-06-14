@@ -8425,6 +8425,7 @@ async function lpRefreshTimeline(){
 }
 function lpCid(){ return (typeof contactId!=='undefined'&&contactId) || (typeof getContactId==='function'?getContactId():null); }
 function lpEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'); if(s.length!==3) return ''; const d=new Date(+s[0],+s[1]-1,+s[2]); return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
 function lpAction(name){ if(typeof showToast==='function') showToast('“'+name+'” — wiring in Phase 2', false); }
 async function lpLoadProcessing(){
   const cid = lpCid(); if(!cid) return;
@@ -8482,9 +8483,9 @@ function lpRenderItems(kind, body, items){
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;';
   body.innerHTML = items.map(it=>{
     const done = it.completed;
-    const cdate = it.completed_at ? new Date(it.completed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+    const cdate = lpFmtDate(it.completed_at);
     const completedLine = done
-      ? '<div style="display:flex;align-items:center;gap:5px;margin-top:4px;font-size:10px;color:#27AE60;">✓ by <select onchange="lpEdit(\''+it.id+'\',\'completed_by\',this.value)" style="background:rgba(39,174,96,.08);border:1px solid rgba(39,174,96,.3);border-radius:5px;color:#27AE60;font-size:10px;padding:1px 4px;">'+lpPersonSel(it.completed_by||'', '—')+'</select>'+(cdate?'<span style="color:#777;">· '+cdate+'</span>':'')+'</div>'
+      ? '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px;color:#27AE60;font-weight:600;">✓ Completed'+(cdate?' '+cdate:'')+' <span style="color:rgba(255,255,255,.45);font-weight:400;">· by</span> <select onchange="lpEdit(\''+it.id+'\',\'completed_by\',this.value)" style="background:rgba(39,174,96,.08);border:1px solid rgba(39,174,96,.3);border-radius:5px;color:#27AE60;font-size:10px;padding:1px 4px;">'+lpPersonSel(it.completed_by||'', '—')+'</select></div>'
       : '';
     return '<div class="lp-item" data-id="'+it.id+'" style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
       +'<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr;gap:8px;align-items:start;">'
