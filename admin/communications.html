@@ -113,6 +113,15 @@ async function loadCommunications() {
   document.getElementById('commEmpty').style.display = 'none';
   document.getElementById('commFeed').innerHTML = '';
 
+  // Use the logged-in admin session (auth-guard.js) instead of the anon key so
+  // RLS-protected tables (email_log, call_log, contacts) return data. Falls back
+  // to anon if the session isn't ready yet.
+  try {
+    var _cli = window._supabaseClient || (typeof window.getSupabaseClient === 'function' ? await window.getSupabaseClient() : null);
+    var _sess = _cli && _cli.auth ? (await _cli.auth.getSession()).data.session : null;
+    if (_sess && _sess.access_token) H = { apikey: SB_KEY, Authorization: 'Bearer ' + _sess.access_token };
+  } catch (e) { console.warn('[communications] auth session unavailable, using anon', e); }
+
   var [emailRes, smsRes, callRes] = await Promise.all([
     fetch(SB_URL+'/rest/v1/email_log?select=id,subject,to_email,direction,status,created_at,contact_id&order=created_at.desc&limit=100',{headers:H}),
     fetch(SB_URL+'/rest/v1/sms_log?select=id,body,to_phone,to_name,direction,status,trigger_type,contact_id,created_at&order=created_at.desc&limit=100',{headers:H}),
