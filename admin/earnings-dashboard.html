@@ -235,7 +235,26 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <script>
 const SB = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
 const KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
-const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
+// Start with the anon key, then upgrade to the logged-in admin's session token
+// before any data loads. contacts/referral_partners are readable only when
+// authenticated, so anon reads return empty and the whole page shows 0.
+let H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
+
+async function _applyAuthHeader() {
+  try {
+    let client = window._supabaseClient;
+    const start = Date.now();
+    while (!client && Date.now() - start < 5000) {
+      if (typeof window.getSupabaseClient === 'function') { client = await window.getSupabaseClient(); }
+      if (!client) { await new Promise(r => setTimeout(r, 50)); client = window._supabaseClient; }
+    }
+    if (client) {
+      const { data } = await client.auth.getSession();
+      const token = data && data.session && data.session.access_token;
+      if (token) H = { apikey: KEY, Authorization: `Bearer ${token}` };
+    }
+  } catch (e) { console.error('[earnings] auth header setup failed:', e); }
+}
 
 let _leads = [], _partnerMap = {}, _timeFilter = 'ytd';
 let _earningsChart = null, _outcomeChart = null;
@@ -450,8 +469,11 @@ function exportEarnings() {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download = 'earnings.csv'; a.click();
 }
 
-loadData();
-loadPipelineContacts();
+(async () => {
+  await _applyAuthHeader();
+  loadData();
+  loadPipelineContacts();
+})();
 </script>
 </body>
 </html>
