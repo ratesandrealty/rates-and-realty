@@ -118,7 +118,7 @@
   }
 
   function rowHtml(c) {
-    var name = TRIGGER_NAMES[c.trigger_type] || c.trigger_type;
+    var name = c.display_name || TRIGGER_NAMES[c.trigger_type] || c.trigger_type;
     var pri = (c.default_priority || 'normal').toLowerCase();
     var priLabel = (PRIORITY_OPTIONS.find(function (o) { return o.v === pri; }) || PRIORITY_OPTIONS[2]).label;
     var offset = parseInt(c.due_offset_days, 10);
@@ -239,7 +239,8 @@
     logById = {};
     var body = rows.map(function (r) {
       logById[r.id] = r;
-      var trigger = TRIGGER_NAMES[r.trigger_type] || r.trigger_type || '—';
+      var cfgMatch = configs.find(function (x) { return x.trigger_type === r.trigger_type; });
+      var trigger = (cfgMatch && cfgMatch.display_name) || TRIGGER_NAMES[r.trigger_type] || r.trigger_type || '—';
       var contactCell;
       if (r.contact_id) {
         var c = contactCache[r.contact_id];
