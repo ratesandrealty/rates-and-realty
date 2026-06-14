@@ -2352,6 +2352,7 @@
   <script src="/dashboard/utils/clickup-automations.js?v=2026061305"></script>
   <script type="module">
     import { supabase } from "/api/supabase-client.js";
+    window._dashSupabase = supabase;
 
     let _apptContactSearchTimer;
 
@@ -2633,14 +2634,18 @@ function switchDealsTab(tab) {
 }
 
 async function loadEarnings() {
-  const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-  const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/closed_deals?select=id,outcome,loan_amount,loan_type,commission_earned,commission_rate,close_date,lost_reason,notes,created_at,contacts(id,first_name,last_name,email,phone)&order=close_date.desc&limit=50`, {
-      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
-    });
-    const deals = await res.json();
-    if (!Array.isArray(deals)) { console.error('Earnings load error:', deals); return; }
+    // Read closed_deals over the authenticated admin session (not the public anon key).
+    let sb = window._dashSupabase || window._pipelineSupabase;
+    let waited = 0;
+    while (!sb && waited < 5000) { await new Promise(r => setTimeout(r, 100)); waited += 100; sb = window._dashSupabase || window._pipelineSupabase; }
+    if (!sb) { console.error('Earnings load error: supabase client not ready'); return; }
+    const { data: deals, error } = await sb
+      .from('closed_deals')
+      .select('id,outcome,loan_amount,loan_type,commission_earned,commission_rate,close_date,lost_reason,notes,created_at,contacts(id,first_name,last_name,email,phone)')
+      .order('close_date', { ascending: false })
+      .limit(50);
+    if (error || !Array.isArray(deals)) { console.error('Earnings load error:', error); return; }
 
     const wonDeals  = deals.filter(d => d.outcome === 'closed');
     const lostDeals = deals.filter(d => d.outcome === 'lost');
