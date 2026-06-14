@@ -1225,6 +1225,41 @@
           <div id="lead-pipeline" class="pipeline-grid"></div>
         </div>
 
+        <!-- Market Watch (live mortgage rates from MND) -->
+        <div class="panel dashboard-section" data-section-id="market-rates" draggable="true" style="margin-bottom:24px;padding:20px 24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
+          <div class="crm-section-title">
+            <div><p class="kicker">Market Watch</p><h3 style="margin:0;font-size:1.1rem;">Today's Mortgage Rates</h3></div>
+            <a href="https://www.mortgagenewsdaily.com/mortgage-rates" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none">Mortgage News Daily →</a>
+          </div>
+          <div id="market-rates-body" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:6px;">
+            <div style="color:#888;">Loading rates…</div>
+          </div>
+        </div>
+        <script>
+        (function(){
+          function fmtRate(v){ return (v==null||v==='') ? '—' : Number(v).toFixed(2)+'%'; }
+          async function loadMarketRates(retry){
+            var cfg = window.APP_CONFIG||{};
+            var SB = cfg.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+            var KEY = cfg.SUPABASE_ANON_KEY;
+            var body = document.getElementById('market-rates-body');
+            if(!body) return;
+            if(!KEY){ if((retry||0)<10){ return setTimeout(function(){loadMarketRates((retry||0)+1);},400);} body.innerHTML='<div style="color:#888;">Rates unavailable.</div>'; return; }
+            try{
+              var r = await fetch(SB+'/rest/v1/market_rates?select=rate_date,rate_30yr,rate_15yr&order=rate_date.desc&limit=1',{headers:{apikey:KEY,Authorization:'Bearer '+KEY}});
+              var rows = await r.json();
+              var d = rows && rows[0];
+              if(!d){ body.innerHTML='<div style="color:#888;">No rate data yet.</div>'; return; }
+              var asOf = d.rate_date ? new Date(d.rate_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+              function card(label,val,gold){ return '<div style="background:#141414;border:1px solid '+(gold?'rgba(201,168,76,0.35)':'#2a2a2a')+';border-radius:8px;padding:14px 16px;"><div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;font-weight:600;">'+label+'</div><div style="font-size:26px;font-weight:700;margin-top:4px;color:'+(gold?'#C9A84C':'#fff')+';letter-spacing:-0.02em;">'+fmtRate(val)+'</div></div>'; }
+              body.innerHTML = card('30-Yr Fixed', d.rate_30yr, true) + card('15-Yr Fixed', d.rate_15yr, false) + '<div style="display:flex;align-items:flex-end;color:#666;font-size:11px;padding:0 4px 6px;">National avg · as of '+asOf+'</div>';
+            }catch(e){ body.innerHTML='<div style="color:#888;">Could not load rates.</div>'; }
+          }
+          if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){loadMarketRates(0);}); } else { loadMarketRates(0); }
+        })();
+        </script>
+
         <!-- Charts row -->
         <div class="dashboard-section" data-section-id="charts" draggable="true" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
           <div class="drag-handle" title="Drag to reorder">⠿</div>
