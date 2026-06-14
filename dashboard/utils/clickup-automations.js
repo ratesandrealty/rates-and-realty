@@ -215,19 +215,15 @@
     var unique = Array.from(new Set(ids));
     if (!unique.length) return;
     try {
-      var token = await getAuthToken();
-      var url = SUPABASE_URL + '/rest/v1/contacts?id=in.(' + unique.map(encodeURIComponent).join(',') +
-                ')&select=id,first_name,last_name,phone,email,pipeline_status,lead_status';
-      var res = await fetch(url, { headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + token } });
+      var res = await fetch(SUPABASE_URL + '/functions/v1/clickup-bridge/resolve-contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY },
+        body: JSON.stringify({ ids: unique })
+      });
       if (!res.ok) return;
       var data = await res.json();
-      (data || []).forEach(function (c) {
-        var name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || ('Contact ' + String(c.id).slice(0, 6));
-        contactCache[c.id] = {
-          name: name, phone: c.phone || '', email: c.email || '',
-          stage: c.pipeline_status || c.lead_status || ''
-        };
-      });
+      var map = (data && data.contacts) || {};
+      Object.keys(map).forEach(function (id) { contactCache[id] = map[id]; });
     } catch (e) {
       // Silent — activity table falls back to "Contact xxxxxx".
     }
