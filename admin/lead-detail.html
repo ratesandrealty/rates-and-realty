@@ -2288,7 +2288,7 @@
         #tab-processing .lp-tl-stage span { color:#C9A84C; }
         #tab-processing .lp-tl-meta { font-size:11px; color:rgba(255,255,255,.5); text-transform:uppercase; letter-spacing:.5px; }
         #tab-processing .lp-tl-track { position:relative; overflow-x:auto; padding-bottom:4px; }
-        #tab-processing .lp-tl-inner { position:relative; min-width:640px; padding-top:2px; }
+        #tab-processing .lp-tl-inner { position:relative; min-width:780px; padding-top:2px; }
         #tab-processing .lp-tl-line, #tab-processing .lp-tl-fill { position:absolute; top:14px; height:3px; border-radius:3px; }
         #tab-processing .lp-tl-line { background:rgba(255,255,255,.10); }
         #tab-processing .lp-tl-fill { background:linear-gradient(90deg,#C9A84C,#e6c86a); transition:width .7s cubic-bezier(.4,0,.2,1); box-shadow:0 0 10px rgba(201,168,76,.4); }
@@ -8357,12 +8357,16 @@ const LP_INTAKE_TEMPLATE = [
   {key:'disclosures_sent',label:'Initial disclosures sent',category:'Disclosures'},
   {key:'disclosures_signed',label:'Initial disclosures signed',category:'Disclosures'},
   {key:'submit_processing',label:'Submit file to processing',category:'Processing'},
-  {key:'order_appraisal',label:'Order appraisal',category:'Orders'},
   {key:'order_title',label:'Order title',category:'Orders'},
   {key:'order_hoi',label:'Order homeowners insurance (HOI)',category:'Orders'},
   {key:'request_escrow',label:'Request escrow / closing docs',category:'Orders'},
   {key:'submit_lender',label:'Submit to lender / upload package',category:'Lender'},
-  {key:'clear_conditions',label:'Clear underwriting conditions',category:'Lender'},
+  {key:'order_appraisal',label:'Order appraisal',category:'Appraisal'},
+  {key:'appraisal_received',label:'Appraisal received / reviewed',category:'Appraisal'},
+  {key:'initial_conditions_in',label:'Initial approval / conditions received',category:'Initial Conditions'},
+  {key:'clear_conditions',label:'Clear initial conditions',category:'Initial Conditions'},
+  {key:'final_conditions_in',label:'Final conditions received',category:'Final Conditions'},
+  {key:'clear_final_conditions',label:'Clear final conditions',category:'Final Conditions'},
   {key:'ctc',label:'Clear to Close (CTC)',category:'Closing'},
   {key:'schedule_signing',label:'Schedule signing',category:'Closing'},
   {key:'funded',label:'Funded',category:'Closing'}
@@ -8385,9 +8389,11 @@ const LP_TIMELINE = [
   { label:'Docs In', keys:['verify_income','verify_assets'] },
   { label:'Disclosures', keys:['disclosures_sent','disclosures_signed'] },
   { label:'Processing', keys:['submit_processing'] },
-  { label:'Orders', keys:['order_appraisal','order_title','order_hoi','request_escrow'] },
+  { label:'Orders', keys:['order_title','order_hoi','request_escrow'] },
   { label:'Submitted', keys:['submit_lender'] },
-  { label:'Approval', keys:['clear_conditions'] },
+  { label:'Appraisal', keys:['order_appraisal','appraisal_received'] },
+  { label:'Initial Conditions', keys:['initial_conditions_in','clear_conditions'] },
+  { label:'Final Conditions', keys:['final_conditions_in','clear_final_conditions'] },
   { label:'Clear to Close', keys:['ctc','schedule_signing'] },
   { label:'Funded', keys:['funded'] }
 ];
@@ -8444,32 +8450,48 @@ async function lpRenderSnapshot(cid){
   const cell = (label,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+val+'</div></div>';
   el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')))+cell('Lender',lpEsc(c.closing_lender||'—'))+cell(rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
 }
+const LP_PERSON_LABEL = { admin:'Rene Duarte (Admin)', va:'Virtual Assistant' };
+function lpPersonSel(cur, blank){
+  return '<option value="">'+(blank||'Unassigned')+'</option>' + Object.keys(LP_PERSON_LABEL).map(k=>'<option value="'+k+'"'+(k===cur?' selected':'')+'>'+LP_PERSON_LABEL[k]+'</option>').join('');
+}
+function lpOrderItems(items, template){
+  const idx = {}; template.forEach((t,i)=>idx[t.key]=i);
+  return items.slice().sort((a,b)=>{
+    const ai = (a.template_key!=null && idx[a.template_key]!=null) ? idx[a.template_key] : 1000+(a.sort_order||0);
+    const bi = (b.template_key!=null && idx[b.template_key]!=null) ? idx[b.template_key] : 1000+(b.sort_order||0);
+    return ai-bi;
+  });
+}
 async function lpLoadChecklist(kind, bodyId, template){
   const cid = lpCid(); const body = document.getElementById(bodyId); if(!cid||!body) return;
   body.innerHTML = '<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
   try{
-    let { data: items, error } = await _authClient().from('processing_items').select('*').eq('contact_id',cid).eq('kind',kind).order('sort_order',{ascending:true});
+    // Ensure every template item exists for this file (adds newly-introduced steps to existing
+    // loans). ignoreDuplicates relies on the (contact_id,kind,template_key) unique index.
+    const seed = template.map((t,i)=>({contact_id:cid,kind:kind,label:t.label,category:t.category||null,template_key:t.key,sort_order:i}));
+    await _authClient().from('processing_items').upsert(seed, { onConflict:'contact_id,kind,template_key', ignoreDuplicates:true });
+    let { data: items, error } = await _authClient().from('processing_items').select('*').eq('contact_id',cid).eq('kind',kind);
     if(error) throw error;
-    if(!items||!items.length){
-      const rows = template.map((t,i)=>({contact_id:cid,kind:kind,label:t.label,category:t.category||null,template_key:t.key,sort_order:i}));
-      const ins = await _authClient().from('processing_items').insert(rows).select();
-      items = ins.data||[];
-      items.sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
-    }
+    items = lpOrderItems(items||[], template);
     lpRenderItems(kind, body, items);
     if(kind==='intake') lpRenderTimeline(items);
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load checklist.</div>'; console.warn('[lp '+kind+']', e.message); }
 }
 function lpRenderItems(kind, body, items){
   const statusSel = cur => LP_STATUSES.map(s=>'<option value="'+s+'"'+(s===(cur||'not_started')?' selected':'')+'>'+LP_STATUS_LABEL[s]+'</option>').join('');
+  const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;';
   body.innerHTML = items.map(it=>{
     const done = it.completed;
-    return '<div class="lp-item" data-id="'+it.id+'" style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1fr;gap:8px;align-items:center;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
-      +'<input type="checkbox" '+(done?'checked':'')+' onchange="lpToggle(\''+it.id+'\',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#C9A84C;">'
-      +'<input type="text" value="'+lpEsc(it.label||'')+'" onchange="lpEdit(\''+it.id+'\',\'label\',this.value)" style="background:transparent;border:none;color:'+(done?'rgba(255,255,255,.4)':'#fff')+';font-size:13px;'+(done?'text-decoration:line-through;':'')+'outline:none;width:100%;">'
-      +'<select onchange="lpEdit(\''+it.id+'\',\'status\',this.value)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;">'+statusSel(it.status)+'</select>'
-      +'<input type="date" value="'+(it.due_date||'')+'" onchange="lpEdit(\''+it.id+'\',\'due_date\',this.value)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;">'
-      +'<input type="text" placeholder="Assigned to" value="'+lpEsc(it.assigned_to||'')+'" onchange="lpEdit(\''+it.id+'\',\'assigned_to\',this.value)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;">'
+    const cdate = it.completed_at ? new Date(it.completed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+    const completedLine = done
+      ? '<div style="display:flex;align-items:center;gap:5px;margin-top:4px;font-size:10px;color:#27AE60;">✓ by <select onchange="lpEdit(\''+it.id+'\',\'completed_by\',this.value)" style="background:rgba(39,174,96,.08);border:1px solid rgba(39,174,96,.3);border-radius:5px;color:#27AE60;font-size:10px;padding:1px 4px;">'+lpPersonSel(it.completed_by||'', '—')+'</select>'+(cdate?'<span style="color:#777;">· '+cdate+'</span>':'')+'</div>'
+      : '';
+    return '<div class="lp-item" data-id="'+it.id+'" style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr;gap:8px;align-items:start;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
+      +'<input type="checkbox" '+(done?'checked':'')+' onchange="lpToggle(\''+it.id+'\',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#C9A84C;margin-top:3px;">'
+      +'<div><input type="text" value="'+lpEsc(it.label||'')+'" onchange="lpEdit(\''+it.id+'\',\'label\',this.value)" style="background:transparent;border:none;color:'+(done?'rgba(255,255,255,.4)':'#fff')+';font-size:13px;'+(done?'text-decoration:line-through;':'')+'outline:none;width:100%;">'+completedLine+'</div>'
+      +'<select onchange="lpEdit(\''+it.id+'\',\'status\',this.value)" style="'+inp+'">'+statusSel(it.status)+'</select>'
+      +'<input type="date" value="'+(it.due_date||'')+'" onchange="lpEdit(\''+it.id+'\',\'due_date\',this.value)" style="'+inp+'">'
+      +'<select onchange="lpEdit(\''+it.id+'\',\'assigned_to\',this.value)" style="'+inp+'">'+lpPersonSel(it.assigned_to||'', 'Unassigned')+'</select>'
       +'</div>';
   }).join('') + '<button onclick="lpAddItem(\''+kind+'\')" style="margin-top:10px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.4);color:#C9A84C;font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;cursor:pointer;">+ Add item</button>';
 }
@@ -8483,7 +8505,15 @@ function lpEdit(id, field, value){
   }, 500);
 }
 async function lpToggle(id, checked){
-  await _authClient().from('processing_items').update({completed:checked,status:checked?'done':'not_started',updated_at:new Date().toISOString()}).eq('id',id);
+  const patch = {completed:checked, status:checked?'done':'not_started', updated_at:new Date().toISOString()};
+  if(checked){
+    patch.completed_at = new Date().toISOString();
+    let assigned = '';
+    const row = document.querySelector('.lp-item[data-id="'+id+'"]');
+    if(row){ const sel = row.querySelector('select[onchange*="assigned_to"]'); if(sel) assigned = sel.value; }
+    patch.completed_by = assigned || 'admin';   // default: whoever it's assigned to (Admin if unassigned)
+  } else { patch.completed_at = null; patch.completed_by = null; }
+  await _authClient().from('processing_items').update(patch).eq('id',id);
   lpLoadProcessing();
 }
 async function lpAddItem(kind){
