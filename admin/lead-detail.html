@@ -5302,7 +5302,7 @@ async function populateUI() {
   });
 
   setSelectVal('f-loan-type', leadData.loan_type || '');
-  setSelectVal('pricingLoanType', contactData.closing_loan_type || '');
+  setSelectVal('pricingLoanType', contactData.closing_loan_type || contactData.loan_type || '');
   setSelectVal('pricingLoanPurpose', contactData.loan_purpose || '');
   { const _pls = document.getElementById('pricingLenderSearch'); if (_pls && contactData.closing_lender) _pls.value = contactData.closing_lender; }
   setVal('f-loan-amount', leadData.loan_amount ? fmt$(leadData.loan_amount) : '');
@@ -5407,6 +5407,17 @@ function wireLeadInfoAutoSave(cId) {
       el.addEventListener('blur', saveField);
       el.addEventListener('change', saveField);
     }
+  });
+
+  // Autosave Contact Info + Loan Details (these previously saved only via "Save Changes").
+  let _ldDebounce = null;
+  const _ldAutoSave = () => { clearTimeout(_ldDebounce); _ldDebounce = setTimeout(() => { if (typeof saveLeadDetails === 'function') saveLeadDetails(); }, 700); };
+  ['f-first-name','f-last-name','f-email','f-phone','f-best-time','f-loan-amount','f-purchase-price','f-down-payment','f-ltv','f-timeline','f-property','f-loan-type'].forEach(id => {
+    const e = document.getElementById(id);
+    if (!e || e._ldAutoWired) return;
+    e._ldAutoWired = true;
+    e.addEventListener('blur', _ldAutoSave);
+    e.addEventListener('change', _ldAutoSave);
   });
 }
 
@@ -12527,8 +12538,8 @@ function savePricingMeta(lenderName) {
     const patch = { updated_at: new Date().toISOString() };
     const lp = document.getElementById('pricingLoanPurpose');
     const lt = document.getElementById('pricingLoanType');
-    if (lp) patch.loan_purpose = lp.value || null;
-    if (lt) patch.closing_loan_type = lt.value || null;
+    if (lp && lp.value) patch.loan_purpose = lp.value;
+    if (lt && lt.value) patch.closing_loan_type = lt.value;
     if (typeof lenderName === 'string' && lenderName.trim()) patch.closing_lender = lenderName.trim();
     const { error } = await _authClient().from('contacts').update(patch).eq('id', targetId);
     if (error) console.error('[savePricingMeta] error:', error.message);
@@ -13701,13 +13712,19 @@ async function save1003() {
       toast('Error saving: ' + (error.message || error.details || JSON.stringify(error)), true);
       return;
     }
-    // Sync loan_type to contacts table (fire-and-forget)
-    var loanTypeVal = cleanData.loan_type;
-    if (loanTypeVal && cid) {
+    // Sync loan_type + mirror Pricing & Lender selections (closing_loan_type, loan_purpose)
+    // so they persist no matter which pricing field triggered the save.
+    if (cid) {
+      var _cpatch = { updated_at: new Date().toISOString() };
+      if (cleanData.loan_type) _cpatch.loan_type = cleanData.loan_type;
+      var _plt = document.getElementById('pricingLoanType');
+      if (_plt && _plt.value) _cpatch.closing_loan_type = _plt.value;
+      var _plp = document.getElementById('pricingLoanPurpose');
+      if (_plp && _plp.value) _cpatch.loan_purpose = _plp.value;
       _authClient().from('contacts')
-        .update({ loan_type: loanTypeVal, updated_at: new Date().toISOString() })
+        .update(_cpatch)
         .eq('id', cid)
-        .then(function(r) { if (r.error) console.warn('[loan_type sync 1003]', r.error); });
+        .then(function(r) { if (r.error) console.warn('[contacts sync 1003]', r.error); });
     }
     toast('Application saved!');
     // Sync updated data to fee sheet iframe if loaded
