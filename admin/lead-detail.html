@@ -1992,6 +1992,29 @@
           <div></div>
         </div>
 
+        <!-- Row 1b: Loan Purpose / Loan Type (powers Earnings charts) -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Loan Purpose</label>
+            <select id="pricingLoanPurpose" onchange="savePricingMeta()" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+              <option value="">Select…</option>
+              <option value="purchase">Purchase</option>
+              <option value="refinance">Refinance</option>
+              <option value="construction">Construction</option>
+              <option value="other">Other</option>
+            </select></div>
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Loan Type</label>
+            <select id="pricingLoanType" onchange="savePricingMeta()" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+              <option value="">Select…</option>
+              <option value="Conventional">Conventional</option>
+              <option value="FHA">FHA</option>
+              <option value="VA">VA</option>
+              <option value="USDA">USDA</option>
+              <option value="Jumbo">Jumbo</option>
+              <option value="Non-QM">Non-QM</option>
+              <option value="Other">Other</option>
+            </select></div>
+        </div>
+
         <!-- Row 2: Quoted Rate / Quoted Date -->
         <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Quoted Rate %</label>
@@ -5279,6 +5302,8 @@ async function populateUI() {
   });
 
   setSelectVal('f-loan-type', leadData.loan_type || '');
+  setSelectVal('pricingLoanType', leadData.loan_type || '');
+  setSelectVal('pricingLoanPurpose', contactData.loan_purpose || '');
   setVal('f-loan-amount', leadData.loan_amount ? fmt$(leadData.loan_amount) : '');
   setVal('f-purchase-price', leadData.purchase_price ? fmt$(leadData.purchase_price) : '');
   setVal('f-down-payment', leadData.down_payment ? fmt$(leadData.down_payment) : '');
@@ -12492,6 +12517,23 @@ function setOutcome(outcome) {
   saveEarnings();
 }
 
+let _pricingMetaTimer;
+function savePricingMeta(lenderName) {
+  clearTimeout(_pricingMetaTimer);
+  _pricingMetaTimer = setTimeout(async () => {
+    const targetId = contactId || leadId;
+    if (!targetId) return;
+    const patch = { updated_at: new Date().toISOString() };
+    const lp = document.getElementById('pricingLoanPurpose');
+    const lt = document.getElementById('pricingLoanType');
+    if (lp) patch.loan_purpose = lp.value || null;
+    if (lt) patch.loan_type = lt.value || null;
+    if (typeof lenderName === 'string' && lenderName.trim()) patch.closing_lender = lenderName.trim();
+    const { error } = await sb.from('contacts').update(patch).eq('id', targetId);
+    if (error) console.error('[savePricingMeta] error:', error.message);
+  }, 500);
+}
+
 function saveEarnings() {
   clearTimeout(_earningsSaveTimer);
   _earningsSaveTimer = setTimeout(async () => {
@@ -13910,6 +13952,7 @@ function _wireLenderCombobox() {
     if (!row) return;
     hidden.value = row.dataset.id;
     search.value = row.dataset.name;
+    if (typeof savePricingMeta === 'function') savePricingMeta(row.dataset.name);
     hidePanel();
     if (clearBtn) clearBtn.style.display = 'inline-block';
     // 'change' for the documented contract; 'input' because attachAutoSave wires
