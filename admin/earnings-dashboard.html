@@ -329,7 +329,7 @@ function buildPendingWidget(contacts) {
 
 async function loadData() {
   const [contactsRes, partnersRes] = await Promise.all([
-    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,loan_amount,loan_type,loan_purpose,closing_lender,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,referral_partner_id&order=created_at.desc`, { headers: H }),
+    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,loan_amount,loan_type,closing_loan_type,loan_purpose,closing_lender,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,referral_partner_id&order=created_at.desc`, { headers: H }),
     fetch(`${SB}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type`, { headers: H })
   ]);
 
@@ -346,6 +346,7 @@ async function loadData() {
     loan_type: c.loan_type,
     loan_purpose: c.loan_purpose,
     closing_lender: c.closing_lender,
+    closing_loan_type: c.closing_loan_type,
     estimated_earnings: c.estimated_earnings || 0,
     actual_earnings: c.actual_earnings || 0,
     deal_outcome: c.deal_outcome || 'pending',
@@ -497,7 +498,7 @@ function buildLoanTypeChart(won) {
     return t.charAt(0).toUpperCase() + t.slice(1);
   };
   const map = {};
-  won.forEach(l => { const k = norm(l.loan_type); map[k] = (map[k] || 0) + 1; });
+  won.forEach(l => { const k = norm(l.closing_loan_type || l.loan_type); map[k] = (map[k] || 0) + 1; });
   const labels = Object.keys(map), data = labels.map(k => map[k]);
   if (_loanTypeChart) _loanTypeChart.destroy();
   _loanTypeChart = new Chart(document.getElementById('loanTypeChart').getContext('2d'), {
