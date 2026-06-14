@@ -113,10 +113,15 @@ async function loadCommunications() {
   document.getElementById('commEmpty').style.display = 'none';
   document.getElementById('commFeed').innerHTML = '';
 
-  // Use the logged-in admin session (auth-guard.js) instead of the anon key so
-  // RLS-protected tables (email_log, call_log, contacts) return data. Falls back
-  // to anon if the session isn't ready yet.
+  // Wait for the admin session client (auth-guard.js sets window._supabaseClient
+  // asynchronously; this function runs before it's ready). Then read over the
+  // session so RLS-protected tables (email_log, call_log, contacts) return data.
+  // Falls back to anon after 5s so nothing hard-breaks.
   try {
+    var _start = Date.now();
+    while (!window._supabaseClient && Date.now() - _start < 5000) {
+      await new Promise(function(r){ setTimeout(r, 50); });
+    }
     var _cli = window._supabaseClient || (typeof window.getSupabaseClient === 'function' ? await window.getSupabaseClient() : null);
     var _sess = _cli && _cli.auth ? (await _cli.auth.getSession()).data.session : null;
     if (_sess && _sess.access_token) H = { apikey: SB_KEY, Authorization: 'Bearer ' + _sess.access_token };
