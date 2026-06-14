@@ -2283,6 +2283,25 @@
         #tab-processing .lp-h a { font-size:11px; color:rgba(201,168,76,0.8); cursor:pointer; text-decoration:none; }
         #tab-processing .lp-action { background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.35); color:#C9A84C; font-size:12px; font-weight:600; padding:7px 12px; border-radius:8px; cursor:pointer; }
         #tab-processing .lp-action:hover { background:rgba(201,168,76,0.16); }
+        #tab-processing .lp-tl-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:16px; flex-wrap:wrap; gap:6px; }
+        #tab-processing .lp-tl-stage { font-size:15px; font-weight:700; color:#fff; }
+        #tab-processing .lp-tl-stage span { color:#C9A84C; }
+        #tab-processing .lp-tl-meta { font-size:11px; color:rgba(255,255,255,.5); text-transform:uppercase; letter-spacing:.5px; }
+        #tab-processing .lp-tl-track { position:relative; overflow-x:auto; padding-bottom:4px; }
+        #tab-processing .lp-tl-inner { position:relative; min-width:640px; padding-top:2px; }
+        #tab-processing .lp-tl-line, #tab-processing .lp-tl-fill { position:absolute; top:14px; height:3px; border-radius:3px; }
+        #tab-processing .lp-tl-line { background:rgba(255,255,255,.10); }
+        #tab-processing .lp-tl-fill { background:linear-gradient(90deg,#C9A84C,#e6c86a); transition:width .7s cubic-bezier(.4,0,.2,1); box-shadow:0 0 10px rgba(201,168,76,.4); }
+        #tab-processing .lp-tl-nodes { position:relative; display:flex; }
+        #tab-processing .lp-tl-node { flex:1; display:flex; flex-direction:column; align-items:center; gap:7px; }
+        #tab-processing .lp-tl-dot { width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; background:#161616; border:2px solid rgba(255,255,255,.15); color:rgba(255,255,255,.4); transition:all .4s; }
+        #tab-processing .lp-tl-lbl { font-size:9.5px; text-transform:uppercase; letter-spacing:.4px; color:rgba(255,255,255,.4); text-align:center; max-width:76px; line-height:1.2; transition:color .4s; }
+        #tab-processing .lp-tl-node.done .lp-tl-dot { background:linear-gradient(135deg,#C9A84C,#e6c86a); border-color:#C9A84C; color:#1a1a1a; }
+        #tab-processing .lp-tl-node.done .lp-tl-lbl { color:rgba(255,255,255,.65); }
+        #tab-processing .lp-tl-node.active .lp-tl-dot { background:#1a1a1a; border-color:#C9A84C; color:#C9A84C; box-shadow:0 0 0 4px rgba(201,168,76,.18); animation:lpPulse 1.8s infinite; }
+        #tab-processing .lp-tl-node.active .lp-tl-lbl { color:#C9A84C; font-weight:700; }
+        #tab-processing .lp-tl-node.funded .lp-tl-dot { background:linear-gradient(135deg,#27AE60,#34d877); border-color:#27AE60; color:#062b14; box-shadow:0 0 14px rgba(39,174,96,.5); animation:none; }
+        @keyframes lpPulse { 0%,100%{ box-shadow:0 0 0 4px rgba(201,168,76,.18);} 50%{ box-shadow:0 0 0 8px rgba(201,168,76,.04);} }
         #tab-processing .lp-stub { opacity:0.6; }
         #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
       </style>
@@ -2298,6 +2317,7 @@
           <button class="lp-action" onclick="lpAction('Send Realtor Update')">📨 Send Realtor Update</button>
           <button class="lp-action" onclick="lpAction('Upload to Lender')">⬆️ Upload to Lender</button>
         </div>
+        <div class="lp-card"><div class="lp-h">🚦 Processing Timeline</div><div id="lpTimelineBody"></div></div>
         <div class="lp-card"><div class="lp-h">📌 Loan Snapshot</div>
           <div id="lpSnapshotBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;"></div></div>
         <div class="lp-card"><div class="lp-h">✅ Intake / Setup Checklist</div><div id="lpIntakeBody"></div></div>
@@ -8360,6 +8380,43 @@ const LP_DOC_TEMPLATE = [
 const LP_STATUSES = ['not_started','in_progress','waiting','done','na'];
 const LP_STATUS_LABEL = {not_started:'Not started',in_progress:'In progress',waiting:'Waiting',done:'Done',na:'N/A'};
 let _lpSaveTimers = {};
+const LP_TIMELINE = [
+  { label:'Intake', keys:['welcome_call','send_needs_list','order_credit','drive_folder'] },
+  { label:'Docs In', keys:['verify_income','verify_assets'] },
+  { label:'Disclosures', keys:['disclosures_sent','disclosures_signed'] },
+  { label:'Processing', keys:['submit_processing'] },
+  { label:'Orders', keys:['order_appraisal','order_title','order_hoi','request_escrow'] },
+  { label:'Submitted', keys:['submit_lender'] },
+  { label:'Approval', keys:['clear_conditions'] },
+  { label:'Clear to Close', keys:['ctc','schedule_signing'] },
+  { label:'Funded', keys:['funded'] }
+];
+function lpRenderTimeline(items){
+  const el = document.getElementById('lpTimelineBody'); if(!el) return;
+  const done = {}; (items||[]).forEach(it=>{ if(it.template_key) done[it.template_key] = !!(it.completed || it.status==='done'); });
+  const stages = LP_TIMELINE.map(s=>{ const present = s.keys.filter(k=> k in done); return { label:s.label, complete: present.length>0 && present.every(k=>done[k]) }; });
+  const n = stages.length;
+  let activeIdx = stages.findIndex(s=>!s.complete);
+  const allDone = activeIdx === -1; if(allDone) activeIdx = n-1;
+  const completedCount = stages.filter(s=>s.complete).length;
+  const pct = Math.round((completedCount/n)*100);
+  const inset = 50/n, span = 100 - inset*2;
+  const fillW = allDone ? span : (activeIdx/(n-1))*span;
+  const nodesHtml = stages.map((s,i)=>{
+    let cls='lp-tl-node', inner;
+    if(s.complete){ cls += (s.label==='Funded'?' funded':' done'); inner='✓'; }
+    else if(i===activeIdx){ cls += ' active'; inner='●'; }
+    else { inner = (i+1); }
+    return '<div class="'+cls+'"><div class="lp-tl-dot">'+inner+'</div><div class="lp-tl-lbl">'+s.label+'</div></div>';
+  }).join('');
+  const activeLabel = allDone ? 'Funded 🎉' : stages[activeIdx].label;
+  el.innerHTML = '<div class="lp-tl-head"><div class="lp-tl-stage">Stage '+(allDone?n:activeIdx+1)+' of '+n+': <span>'+activeLabel+'</span></div><div class="lp-tl-meta">'+pct+'% to funding</div></div>'
+    + '<div class="lp-tl-track"><div class="lp-tl-inner"><div class="lp-tl-line" style="left:'+inset+'%;right:'+inset+'%;"></div><div class="lp-tl-fill" style="left:'+inset+'%;width:'+fillW+'%;"></div><div class="lp-tl-nodes">'+nodesHtml+'</div></div></div>';
+}
+async function lpRefreshTimeline(){
+  const cid = lpCid(); if(!cid) return;
+  try{ const { data } = await _authClient().from('processing_items').select('template_key,completed,status').eq('contact_id',cid).eq('kind','intake'); lpRenderTimeline(data||[]); }catch(_){}
+}
 function lpCid(){ return (typeof contactId!=='undefined'&&contactId) || (typeof getContactId==='function'?getContactId():null); }
 function lpEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function lpAction(name){ if(typeof showToast==='function') showToast('“'+name+'” — wiring in Phase 2', false); }
@@ -8400,6 +8457,7 @@ async function lpLoadChecklist(kind, bodyId, template){
       items.sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
     }
     lpRenderItems(kind, body, items);
+    if(kind==='intake') lpRenderTimeline(items);
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load checklist.</div>'; console.warn('[lp '+kind+']', e.message); }
 }
 function lpRenderItems(kind, body, items){
@@ -8421,6 +8479,7 @@ function lpEdit(id, field, value){
     const patch = { updated_at:new Date().toISOString() }; patch[field] = value||null;
     const { error } = await _authClient().from('processing_items').update(patch).eq('id',id);
     if(error) console.warn('[lpEdit]', error.message);
+    else if(field==='status') lpRefreshTimeline();
   }, 500);
 }
 async function lpToggle(id, checked){
