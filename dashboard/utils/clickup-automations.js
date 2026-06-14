@@ -229,7 +229,7 @@
         };
       });
     } catch (e) {
-      // Silent — activity table will fall back to "Contact xxxxxx".
+      // Silent — activity table falls back to "Contact xxxxxx".
     }
   }
 
@@ -295,7 +295,8 @@
     var c = r.contact_id ? contactCache[r.contact_id] : null;
     var meta = r.metadata || {};
     var title = meta.title || meta.attempted_title || '—';
-    var trigger = TRIGGER_NAMES[r.trigger_type] || r.trigger_type || '—';
+    var cfgMatch = configs.find(function (x) { return x.trigger_type === r.trigger_type; });
+    var trigger = (cfgMatch && cfgMatch.display_name) || TRIGGER_NAMES[r.trigger_type] || r.trigger_type || '—';
     var statusKey = r.status || 'failed';
     var statusLabel = STATUS_LABELS[statusKey] || statusKey;
     var due = fmtDue(meta.due_date);
