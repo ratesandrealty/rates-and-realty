@@ -16,6 +16,27 @@
   var SUPABASE_URL = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   var ANON_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
 
+  var supabaseClient = null;
+  function getClient() {
+    if (supabaseClient) return supabaseClient;
+    if (window.supabase && SUPABASE_URL && ANON_KEY) {
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, ANON_KEY);
+    }
+    return supabaseClient;
+  }
+  async function getAuthToken() {
+    var client = getClient();
+    if (client) {
+      try {
+        var sess = await client.auth.getSession();
+        var token = sess && sess.data && sess.data.session && sess.data.session.access_token;
+        if (token) return token;
+      } catch (e) { /* fall through */ }
+    }
+    return ANON_KEY;
+  }
+  var logById = {}; // log_id -> full log row, for the activity popup
+
   var TRIGGER_NAMES = {
     new_lead: 'New lead created',
     cold_lead_3d: 'Cold lead (3+ days no contact)',
@@ -194,11 +215,18 @@
     var unique = Array.from(new Set(ids));
     if (!unique.length) return;
     try {
-      var url = 'contacts?id=in.(' + unique.map(encodeURIComponent).join(',') + ')&select=id,first_name,last_name';
-      var data = await rest(url);
+      var token = await getAuthToken();
+      var url = SUPABASE_URL + '/rest/v1/contacts?id=in.(' + unique.map(encodeURIComponent).join(',') +
+                ')&select=id,first_name,last_name,phone,email,pipeline_status,lead_status';
+      var res = await fetch(url, { headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + token } });
+      if (!res.ok) return;
+      var data = await res.json();
       (data || []).forEach(function (c) {
         var name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || ('Contact ' + String(c.id).slice(0, 6));
-        contactCache[c.id] = { name: name };
+        contactCache[c.id] = {
+          name: name, phone: c.phone || '', email: c.email || '',
+          stage: c.pipeline_status || c.lead_status || ''
+        };
       });
     } catch (e) {
       // Silent — activity table will fall back to "Contact xxxxxx".
@@ -208,13 +236,15 @@
   function renderActivity(rows) {
     var host = document.querySelector('[data-target=auto-activity-wrap]');
     if (!host) return;
+    logById = {};
     var body = rows.map(function (r) {
+      logById[r.id] = r;
       var trigger = TRIGGER_NAMES[r.trigger_type] || r.trigger_type || '—';
       var contactCell;
       if (r.contact_id) {
         var c = contactCache[r.contact_id];
         var label = (c && c.name) || ('Contact ' + String(r.contact_id).slice(0, 6));
-        contactCell = '<a href="#leads?lead=' + esc(r.contact_id) + '" class="auto-contact-link">' + esc(label) + '</a>';
+        contactCell = '<span class="auto-contact-link">' + esc(label) + '</span>';
       } else {
         contactCell = '<span class="auto-contact-empty">—</span>';
       }
@@ -229,7 +259,7 @@
         taskCell = '<span class="auto-task-link-empty">—</span>';
       }
       return '' +
-        '<tr>' +
+        '<tr class="auto-activity-row" data-action="auto-activity-open" data-log-id="' + esc(r.id) + '">' +
           '<td><span class="auto-time-rel">' + esc(relTime(r.fired_at)) + '</span></td>' +
           '<td><span class="auto-trigger-name">' + esc(trigger) + '</span></td>' +
           '<td>' + contactCell + '</td>' +
@@ -244,6 +274,68 @@
       '</table>';
   }
 
+  function fmtDue(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (!isFinite(d.getTime())) return '';
+    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) +
+           ', ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function closeActivityPopover() {
+    var p = document.getElementById('auto-activity-pop');
+    if (p) p.remove();
+  }
+
+  function showActivityPopover(logId) {
+    var r = logById[logId];
+    if (!r) return;
+    closeActivityPopover();
+    var c = r.contact_id ? contactCache[r.contact_id] : null;
+    var meta = r.metadata || {};
+    var title = meta.title || meta.attempted_title || '—';
+    var trigger = TRIGGER_NAMES[r.trigger_type] || r.trigger_type || '—';
+    var statusKey = r.status || 'failed';
+    var statusLabel = STATUS_LABELS[statusKey] || statusKey;
+    var due = fmtDue(meta.due_date);
+    var priority = meta.priority || '';
+    var contactName = c ? c.name : (r.contact_id ? ('Contact ' + String(r.contact_id).slice(0, 6)) : 'No contact');
+
+    var rowsHtml = '';
+    rowsHtml += '<div class="aap-row"><span class="aap-k">Task</span><span class="aap-v">' + esc(title) + '</span></div>';
+    rowsHtml += '<div class="aap-row"><span class="aap-k">Trigger</span><span class="aap-v">' + esc(trigger) + '</span></div>';
+    rowsHtml += '<div class="aap-row"><span class="aap-k">Status</span><span class="aap-v"><span class="auto-status-chip" data-s="' + esc(statusKey) + '">' + esc(statusLabel) + '</span></span></div>';
+    if (due) rowsHtml += '<div class="aap-row"><span class="aap-k">Due</span><span class="aap-v">' + esc(due) + '</span></div>';
+    if (priority) rowsHtml += '<div class="aap-row"><span class="aap-k">Priority</span><span class="aap-v">' + esc(priority) + '</span></div>';
+    if (r.error) rowsHtml += '<div class="aap-row"><span class="aap-k">Error</span><span class="aap-v aap-err">' + esc(String(r.error).slice(0, 160)) + '</span></div>';
+
+    var contactSub = '';
+    if (c && (c.phone || c.email || c.stage)) {
+      var bits = [];
+      if (c.stage) bits.push(esc(c.stage));
+      if (c.phone) bits.push(esc(c.phone));
+      if (c.email) bits.push(esc(c.email));
+      contactSub = '<div class="aap-sub">' + bits.join(' · ') + '</div>';
+    }
+
+    var actions = '';
+    if (r.contact_id) actions += '<a class="aap-btn" href="#leads?lead=' + esc(r.contact_id) + '" data-action="aap-nav">View lead →</a>';
+    if (r.clickup_task_id) actions += '<a class="aap-btn" href="https://app.clickup.com/t/' + esc(r.clickup_task_id) + '" target="_blank" rel="noopener">Open in ClickUp ↗</a>';
+
+    var pop = document.createElement('div');
+    pop.id = 'auto-activity-pop';
+    pop.innerHTML =
+      '<div class="aap-backdrop" data-action="aap-close"></div>' +
+      '<div class="aap-card" role="dialog" aria-modal="true">' +
+        '<button class="aap-x" data-action="aap-close" aria-label="Close">×</button>' +
+        '<div class="aap-name">' + esc(contactName) + '</div>' +
+        contactSub +
+        '<div class="aap-body">' + rowsHtml + '</div>' +
+        (actions ? '<div class="aap-actions">' + actions + '</div>' : '') +
+      '</div>';
+    document.body.appendChild(pop);
+  }
+
   // ── Wiring ───────────────────────────────────────────────────────
   function getRow(el) {
     return el && el.closest ? el.closest('.auto-row') : null;
@@ -254,6 +346,37 @@
     var panel = document.querySelector('[data-subpanel=automations]');
     if (!panel) return;
     initialized = true;
+
+    if (!document.getElementById('auto-activity-pop-css')) {
+      var st = document.createElement('style');
+      st.id = 'auto-activity-pop-css';
+      st.textContent = [
+        '#auto-activity-pop{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;}',
+        '#auto-activity-pop .aap-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.55);}',
+        '#auto-activity-pop .aap-card{position:relative;width:min(420px,92vw);max-height:84vh;overflow:auto;background:#15161a;border:1px solid rgba(212,175,90,0.28);border-radius:14px;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,0.55);}',
+        '#auto-activity-pop .aap-x{position:absolute;top:8px;right:12px;background:none;border:none;color:#8a8f98;font-size:20px;cursor:pointer;}',
+        '#auto-activity-pop .aap-x:hover{color:#fff;}',
+        '#auto-activity-pop .aap-name{font-size:17px;font-weight:600;color:#f3f4f6;padding-right:24px;}',
+        '#auto-activity-pop .aap-sub{margin-top:3px;font-size:12.5px;color:#9aa0aa;word-break:break-word;}',
+        '#auto-activity-pop .aap-body{margin-top:14px;display:flex;flex-direction:column;gap:9px;}',
+        '#auto-activity-pop .aap-row{display:flex;gap:12px;font-size:13.5px;}',
+        '#auto-activity-pop .aap-k{flex:0 0 70px;color:#7f8590;text-transform:uppercase;font-size:11px;letter-spacing:.04em;padding-top:2px;}',
+        '#auto-activity-pop .aap-v{flex:1;color:#e6e8ec;}',
+        '#auto-activity-pop .aap-err{color:#ff8b8b;}',
+        '#auto-activity-pop .aap-actions{margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;}',
+        '#auto-activity-pop .aap-btn{flex:1;text-align:center;padding:9px 12px;border-radius:9px;border:1px solid rgba(212,175,90,0.35);color:#e9c46a;text-decoration:none;font-size:13px;white-space:nowrap;}',
+        '#auto-activity-pop .aap-btn:hover{background:rgba(212,175,90,0.10);}',
+        '.auto-activity-row{cursor:pointer;}',
+        '.auto-activity-row:hover{background:rgba(255,255,255,0.03);}',
+        '.auto-contact-link{color:#e9c46a;}'
+      ].join('');
+      document.head.appendChild(st);
+    }
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('[data-action=aap-close]')) { closeActivityPopover(); return; }
+      if (e.target.closest('[data-action=aap-nav]')) { closeActivityPopover(); }
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeActivityPopover(); });
 
     // Click delegation for toggles, priority buttons, offset steppers.
     panel.addEventListener('click', function (e) {
@@ -293,6 +416,12 @@
       if (inc) {
         var inputI = inc.parentElement.querySelector('input');
         bumpOffset(inputI, +1);
+        return;
+      }
+
+      var openEl = e.target.closest('[data-action=auto-activity-open]');
+      if (openEl && !e.target.closest('a')) {
+        showActivityPopover(openEl.getAttribute('data-log-id'));
         return;
       }
     });
