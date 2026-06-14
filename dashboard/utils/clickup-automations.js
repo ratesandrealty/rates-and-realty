@@ -117,6 +117,106 @@
     host.innerHTML = html;
   }
 
+  var AE_EVENTS = [
+    { v:'new_lead', label:'New lead created' }, { v:'cold_lead_3d', label:'Cold lead (3+ days no contact)' },
+    { v:'tour_sent', label:'Tour sent to lead' }, { v:'tour_confirmed', label:'Tour confirmed by lead' },
+    { v:'tour_completed', label:'Tour completed' }, { v:'app_submitted', label:'Mortgage application submitted' },
+    { v:'doc_uploaded', label:'Borrower uploaded document' }, { v:'closed_won', label:'Pipeline -> Closed Won' },
+    { v:'approval_letter', label:'Pre-approval letter generated' }, { v:'lender_submitted', label:'Submitted to lender' },
+    { v:'lender_conditions', label:'Conditions issued' }, { v:'lender_cleared', label:'Approved / clear-to-close' },
+    { v:'lender_denied', label:'Suspended or denied' }
+  ];
+  function closeAutomationEditor() { var m = document.getElementById('auto-editor'); if (m) m.remove(); }
+  function showAutomationEditor(cfg) {
+    closeAutomationEditor();
+    if (!document.getElementById('auto-editor-css')) {
+      var st = document.createElement('style'); st.id = 'auto-editor-css';
+      st.textContent = [
+        '#auto-editor{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;}',
+        '#auto-editor .ae-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.6);}',
+        '#auto-editor .ae-card{position:relative;width:min(460px,94vw);max-height:88vh;overflow:auto;background:#15161a;border:1px solid rgba(212,175,90,0.3);border-radius:14px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,0.6);}',
+        '#auto-editor .ae-x{position:absolute;top:8px;right:12px;background:none;border:none;color:#8a8f98;font-size:20px;cursor:pointer;}',
+        '#auto-editor .ae-title{font-size:17px;font-weight:600;color:#f3f4f6;margin-bottom:6px;}',
+        '#auto-editor .ae-label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#7f8590;margin:12px 0 4px;}',
+        '#auto-editor .ae-hint{text-transform:none;letter-spacing:0;color:#6b7280;}',
+        '#auto-editor .ae-input{width:100%;box-sizing:border-box;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:8px;color:#e6e8ec;padding:9px 10px;font-size:13.5px;font-family:inherit;}',
+        '#auto-editor textarea.ae-input{resize:vertical;}',
+        '#auto-editor .ae-static{background:#0e0e0e;border:1px solid #2a2a2a;border-radius:8px;color:#9aa0aa;padding:9px 10px;font-size:13.5px;}',
+        '#auto-editor .ae-row2{display:flex;gap:12px;}#auto-editor .ae-row2>div{flex:1;}',
+        '#auto-editor .ae-check{display:flex;align-items:center;gap:8px;margin-top:14px;color:#e6e8ec;font-size:13.5px;}',
+        '#auto-editor .ae-actions{display:flex;justify-content:space-between;align-items:center;margin-top:18px;}',
+        '#auto-editor .ae-right{display:flex;gap:8px;margin-left:auto;}',
+        '#auto-editor .ae-btn{padding:9px 16px;border-radius:9px;border:1px solid rgba(212,175,90,0.35);background:none;color:#e9c46a;font-size:13px;cursor:pointer;}',
+        '#auto-editor .ae-save{background:rgba(212,175,90,0.15);}',
+        '#auto-editor .ae-cancel{color:#9aa0aa;border-color:#2a2a2a;}',
+        '#auto-editor .ae-del{color:#ff8b8b;border-color:rgba(255,139,139,0.4);}',
+        '.auto-edit-btn{background:none;border:none;color:#7f8590;font-size:15px;cursor:pointer;padding:4px 8px;}',
+        '.auto-edit-btn:hover{color:#e9c46a;}'
+      ].join('');
+      document.head.appendChild(st);
+    }
+    var isEdit = !!(cfg && cfg.id);
+    var eventField = isEdit
+      ? '<div class="ae-static">' + esc((AE_EVENTS.find(function(o){return o.v===cfg.trigger_type;})||{}).label || cfg.trigger_type) + '</div>'
+      : '<select class="ae-input" id="ae-event">' + AE_EVENTS.map(function(o){return '<option value="'+esc(o.v)+'">'+esc(o.label)+'</option>';}).join('') + '<option value="__custom">Custom (fires only once wired)</option></select>';
+    var pri = (cfg && cfg.default_priority) || 'normal';
+    var priOpts = ['urgent','high','normal','low'].map(function(p){ return '<option value="'+p+'"'+(p===pri?' selected':'')+'>'+p.charAt(0).toUpperCase()+p.slice(1)+'</option>'; }).join('');
+    var off = (cfg && isFinite(parseInt(cfg.due_offset_days,10))) ? parseInt(cfg.due_offset_days,10) : 1;
+    var m = document.createElement('div');
+    m.id = 'auto-editor';
+    m.setAttribute('data-edit-id', isEdit ? cfg.id : '');
+    m.innerHTML =
+      '<div class="ae-backdrop" data-action="ae-close"></div>' +
+      '<div class="ae-card" role="dialog" aria-modal="true">' +
+        '<button class="ae-x" data-action="ae-close" aria-label="Close">×</button>' +
+        '<div class="ae-title">' + (isEdit ? 'Edit automation' : 'New automation') + '</div>' +
+        '<label class="ae-label">Fires on</label>' + eventField +
+        '<label class="ae-label">Name</label><input class="ae-input" id="ae-name" value="' + esc((cfg && cfg.display_name) || '') + '" placeholder="e.g. Welcome call" />' +
+        '<label class="ae-label">Task title <span class="ae-hint">{full_name} {first_name} {lender} {stage}</span></label>' +
+        '<input class="ae-input" id="ae-title" value="' + esc((cfg && cfg.title_template) || '') + '" placeholder="Follow up with {full_name}" />' +
+        '<label class="ae-label">Description</label><textarea class="ae-input" id="ae-desc" rows="2" placeholder="optional">' + esc((cfg && cfg.description_template) || '') + '</textarea>' +
+        '<div class="ae-row2"><div><label class="ae-label">Priority</label><select class="ae-input" id="ae-pri">' + priOpts + '</select></div>' +
+        '<div><label class="ae-label">Due (days)</label><input class="ae-input" id="ae-off" type="number" min="-7" max="30" value="' + off + '" /></div></div>' +
+        '<label class="ae-check"><input type="checkbox" id="ae-enabled" ' + ((!cfg || cfg.enabled) ? 'checked' : '') + ' /> Enabled</label>' +
+        '<div class="ae-actions">' + (isEdit ? '<button class="ae-btn ae-del" data-action="ae-delete">Delete</button>' : '<span></span>') +
+        '<div class="ae-right"><button class="ae-btn ae-cancel" data-action="ae-close">Cancel</button><button class="ae-btn ae-save" data-action="ae-save">Save</button></div></div>' +
+      '</div>';
+    document.body.appendChild(m);
+  }
+  async function aeApi(path, payload) {
+    var res = await fetch(SUPABASE_URL + '/functions/v1/automation-config/' + path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+  async function saveFromEditor() {
+    var m = document.getElementById('auto-editor'); if (!m) return;
+    var id = m.getAttribute('data-edit-id') || '';
+    var title = (document.getElementById('ae-title').value || '').trim();
+    if (!title) { alert('Task title is required.'); return; }
+    var payload = {
+      display_name: (document.getElementById('ae-name').value || '').trim(),
+      title_template: title,
+      description_template: (document.getElementById('ae-desc').value || '').trim() || null,
+      default_priority: document.getElementById('ae-pri').value,
+      due_offset_days: parseInt(document.getElementById('ae-off').value, 10) || 0,
+      enabled: document.getElementById('ae-enabled').checked
+    };
+    if (id) payload.id = id;
+    else { var ev = document.getElementById('ae-event').value; if (ev !== '__custom') payload.trigger_type = ev; }
+    try { await aeApi('save', payload); closeAutomationEditor(); await loadConfigs(); }
+    catch (err) { alert('Save failed: ' + (err && err.message || err)); }
+  }
+  async function deleteFromEditor() {
+    var m = document.getElementById('auto-editor'); if (!m) return;
+    var id = m.getAttribute('data-edit-id'); if (!id) return;
+    if (!confirm('Delete this automation? This cannot be undone.')) return;
+    try { await aeApi('delete', { id: id }); closeAutomationEditor(); await loadConfigs(); }
+    catch (err) { alert('Delete failed: ' + (err && err.message || err)); }
+  }
+
   function rowHtml(c) {
     var name = c.display_name || TRIGGER_NAMES[c.trigger_type] || c.trigger_type;
     var pri = (c.default_priority || 'normal').toLowerCase();
@@ -126,7 +226,7 @@
     var template = c.title_template || '';
     var enabled = !!c.enabled;
     return '' +
-      '<div class="auto-row" data-trigger="' + esc(c.trigger_type) + '">' +
+      '<div class="auto-row" data-id="' + esc(c.id) + '" data-trigger="' + esc(c.trigger_type) + '">' +
         '<button class="auto-toggle" role="switch" aria-checked="' + (enabled ? 'true' : 'false') + '" data-action="auto-toggle" aria-label="Enable trigger"></button>' +
         '<div class="auto-row-meta">' +
           '<div class="auto-row-name">' + esc(name) + '</div>' +
@@ -143,6 +243,7 @@
           '<button type="button" data-action="auto-offset-inc" aria-label="Increase">+</button>' +
           '<span class="auto-offset-suffix">d</span>' +
         '</div>' +
+        '<button class="auto-edit-btn" data-action="auto-edit" title="Edit or delete">✎</button>' +
       '</div>';
   }
 
@@ -163,25 +264,24 @@
     });
   }
 
-  async function patchConfig(triggerType, patch, row) {
+  async function patchConfig(id, patch, row) {
     setBusy(row, true);
     try {
-      var data = await rest('clickup_automation_config?trigger_type=eq.' + encodeURIComponent(triggerType), {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
+      var res = await fetch(SUPABASE_URL + '/functions/v1/automation-config/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY },
+        body: JSON.stringify(Object.assign({ id: id }, patch))
       });
-      if (Array.isArray(data) && data[0]) {
-        // Update local cache
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      if (data && data.config) {
         for (var i = 0; i < configs.length; i++) {
-          if (configs[i].trigger_type === triggerType) {
-            configs[i] = Object.assign({}, configs[i], data[0]);
-            break;
-          }
+          if (configs[i].id === id) { configs[i] = Object.assign({}, configs[i], data.config); break; }
         }
       }
       flashRow(row, true);
     } catch (err) {
-      console.warn('[automations] PATCH failed:', err);
+      console.warn('[automations] save failed:', err);
       flashRow(row, false);
     } finally {
       setBusy(row, false);
@@ -376,15 +476,30 @@
     });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeActivityPopover(); });
 
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('[data-action=ae-close]')) { closeAutomationEditor(); return; }
+      if (e.target.closest('[data-action=ae-save]')) { saveFromEditor(); return; }
+      if (e.target.closest('[data-action=ae-delete]')) { deleteFromEditor(); return; }
+    });
+
     // Click delegation for toggles, priority buttons, offset steppers.
     panel.addEventListener('click', function (e) {
+      var newBtn = e.target.closest('[data-action=auto-new]');
+      if (newBtn) { showAutomationEditor(null); return; }
+      var editBtn = e.target.closest('[data-action=auto-edit]');
+      if (editBtn) {
+        var rowE = getRow(editBtn);
+        var cfgE = configs.find(function (c) { return c.id === rowE.dataset.id; });
+        if (cfgE) showAutomationEditor(cfgE);
+        return;
+      }
       var toggleBtn = e.target.closest('[data-action=auto-toggle]');
       if (toggleBtn) {
         var row = getRow(toggleBtn);
         if (!row) return;
         var nowOn = toggleBtn.getAttribute('aria-checked') !== 'true';
         toggleBtn.setAttribute('aria-checked', nowOn ? 'true' : 'false');
-        patchConfig(row.dataset.trigger, { enabled: nowOn }, row);
+        patchConfig(row.dataset.id, { enabled: nowOn }, row);
         return;
       }
       var priBtn = e.target.closest('[data-action=auto-priority]');
@@ -400,7 +515,7 @@
             priBtn.querySelector('.pri-label').textContent = opt.label;
             priBtn.dataset.current = chosen;
           }
-          patchConfig(rowP.dataset.trigger, { default_priority: chosen }, rowP);
+          patchConfig(rowP.dataset.id, { default_priority: chosen }, rowP);
         });
         return;
       }
@@ -464,9 +579,9 @@
     if (!isFinite(raw)) raw = 0;
     var clamped = Math.max(-7, Math.min(14, raw));
     if (clamped !== raw) input.value = clamped;
-    var existing = configs.find(function (c) { return c.trigger_type === row.dataset.trigger; });
+    var existing = configs.find(function (c) { return c.id === row.dataset.id; });
     if (existing && existing.due_offset_days === clamped) return; // no-op
-    patchConfig(row.dataset.trigger, { due_offset_days: clamped }, row);
+    patchConfig(row.dataset.id, { due_offset_days: clamped }, row);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────
