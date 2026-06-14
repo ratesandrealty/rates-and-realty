@@ -199,6 +199,17 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
   </div>
 
+  <div class="charts-row">
+    <div class="chart-card">
+      <div class="chart-title">🏷️ Loan Purpose <span style="font-size:11px;color:var(--muted)">Closed deals</span></div>
+      <div class="chart-wrap" style="height:200px;display:flex;align-items:center;justify-content:center"><canvas id="purposeChart" style="max-width:200px;max-height:200px"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">🏦 Loan Type <span style="font-size:11px;color:var(--muted)">Closed deals</span></div>
+      <div class="chart-wrap" style="height:200px;display:flex;align-items:center;justify-content:center"><canvas id="loanTypeChart" style="max-width:200px;max-height:200px"></canvas></div>
+    </div>
+  </div>
+
   <!-- ── PIPELINE PENDING WIDGET ── -->
   <div class="pending-widget">
     <div class="pending-hdr">
@@ -222,6 +233,11 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       <div class="table-hdr"><h3 style="color:var(--red)">❌ Lost Deals</h3><span id="lostCount" style="font-size:11px;color:var(--muted)"></span></div>
       <table class="deal-table"><thead><tr><th>Borrower</th><th>Loan</th><th>Est. Earnings</th><th>Reason</th></tr></thead><tbody id="lostTable"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
     </div>
+  </div>
+
+  <div class="chart-card" style="margin-bottom:24px">
+    <div class="chart-title">🏆 Top Lenders <span style="font-size:11px;color:var(--muted)">By closed deal — units &amp; volume</span></div>
+    <div id="topLenders"><div style="text-align:center;padding:24px;color:var(--muted);font-size:13px;">Loading lenders…</div></div>
   </div>
 
   <div class="chart-card" style="margin-bottom:24px">
@@ -257,7 +273,7 @@ async function _applyAuthHeader() {
 }
 
 let _leads = [], _partnerMap = {}, _timeFilter = 'ytd';
-let _earningsChart = null, _outcomeChart = null;
+let _earningsChart = null, _outcomeChart = null, _purposeChart = null, _loanTypeChart = null;
 
 function fmt$(n) { if(!n) return '$0'; if(n>=1000000) return '$'+(n/1000000).toFixed(1)+'M'; if(n>=1000) return '$'+(n/1000).toFixed(0)+'K'; return '$'+Math.round(n); }
 function getTimeAgo(d) { const diff=Math.floor((Date.now()-new Date(d))/86400000); return diff===0?'Today':diff===1?'1d ago':diff<30?diff+'d ago':Math.floor(diff/30)+'mo ago'; }
@@ -313,7 +329,7 @@ function buildPendingWidget(contacts) {
 
 async function loadData() {
   const [contactsRes, partnersRes] = await Promise.all([
-    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,loan_amount,loan_type,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,referral_partner_id&order=created_at.desc`, { headers: H }),
+    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,loan_amount,loan_type,loan_purpose,closing_lender,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,referral_partner_id&order=created_at.desc`, { headers: H }),
     fetch(`${SB}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type`, { headers: H })
   ]);
 
@@ -328,6 +344,8 @@ async function loadData() {
     contact_id: c.id,
     loan_amount: c.loan_amount,
     loan_type: c.loan_type,
+    loan_purpose: c.loan_purpose,
+    closing_lender: c.closing_lender,
     estimated_earnings: c.estimated_earnings || 0,
     actual_earnings: c.actual_earnings || 0,
     deal_outcome: c.deal_outcome || 'pending',
@@ -384,6 +402,9 @@ function updateAll() {
   buildWonTable(won);
   buildLostTable(lost);
   buildPartnerEarnings(leads);
+  buildTopLenders(won);
+  buildPurposeChart(won);
+  buildLoanTypeChart(won);
 }
 
 function buildEarningsChart(leads) {
@@ -425,6 +446,65 @@ function buildLostTable(lost) {
     const c = l.contacts; const name = c ? `${c.first_name||''} ${c.last_name||''}`.trim() : 'Unknown';
     return `<tr onclick="window.location.href='lead-detail.html?contact_id=${l.contact_id}'" style="cursor:pointer"><td style="font-weight:600">${name}</td><td style="color:rgba(255,255,255,0.5);font-size:11px">${l.loan_type||'—'}</td><td class="earn-lost">${fmt$(l.estimated_earnings||0)}</td><td style="color:rgba(255,255,255,0.4);font-size:11px;max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.lost_reason||'—'}</td></tr>`;
   }).join('');
+}
+
+function buildTopLenders(won) {
+  const map = {};
+  won.forEach(l => {
+    const name = (l.closing_lender || '').trim() || 'Unspecified';
+    if (!map[name]) map[name] = { name, units: 0, volume: 0, earnings: 0 };
+    map[name].units++;
+    map[name].volume += (l.loan_amount || 0);
+    map[name].earnings += (l.actual_earnings || 0);
+  });
+  const rows = Object.values(map).sort((a,b) => b.units - a.units || b.volume - a.volume);
+  const el = document.getElementById('topLenders');
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px;">No closed-deal lenders yet — set the Lender on a closed deal to populate this.</div>'; return; }
+  el.innerHTML = '<table class="deal-table"><thead><tr><th>Lender</th><th>Units</th><th>Volume</th><th>Earnings</th></tr></thead><tbody>'
+    + rows.map(r => `<tr><td style="font-weight:600">${r.name}</td><td>${r.units}</td><td>${fmt$(r.volume)}</td><td class="earn-won">${fmt$(r.earnings)}</td></tr>`).join('')
+    + '</tbody></table>';
+}
+
+const _DONUT_COLORS = ['rgba(201,168,76,0.85)','rgba(96,160,255,0.85)','rgba(80,200,120,0.8)','rgba(192,132,240,0.8)','rgba(248,113,113,0.75)','rgba(251,146,60,0.7)','rgba(45,90,160,0.85)'];
+
+function buildPurposeChart(won) {
+  const map = {};
+  won.forEach(l => {
+    let p = (l.loan_purpose || '').trim();
+    p = p ? (p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()) : 'Unspecified';
+    map[p] = (map[p] || 0) + 1;
+  });
+  const labels = Object.keys(map), data = labels.map(k => map[k]);
+  if (_purposeChart) _purposeChart.destroy();
+  _purposeChart = new Chart(document.getElementById('purposeChart').getContext('2d'), {
+    type: 'doughnut',
+    data: { labels: labels.length ? labels : ['No data'], datasets: [{ data: data.length ? data : [1], backgroundColor: _DONUT_COLORS, borderColor: 'transparent', borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '72%', plugins: { legend: { position: 'bottom', labels: { color: 'rgba(255,255,255,0.5)', font: { size: 11 }, padding: 12, boxWidth: 10 } } } }
+  });
+}
+
+function buildLoanTypeChart(won) {
+  const norm = s => {
+    const t = (s || '').trim(); if (!t) return 'Unspecified';
+    const low = t.toLowerCase();
+    if (low === 'conventional') return 'Conventional';
+    if (low === 'fha') return 'FHA';
+    if (low === 'va') return 'VA';
+    if (low === 'usda' || low === 'usda-rd') return 'USDA';
+    if (low === 'jumbo') return 'Jumbo';
+    if (low === 'non-qm' || low === 'nonqm' || low === 'bank_statement') return 'Non-QM';
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+  const map = {};
+  won.forEach(l => { const k = norm(l.loan_type); map[k] = (map[k] || 0) + 1; });
+  const labels = Object.keys(map), data = labels.map(k => map[k]);
+  if (_loanTypeChart) _loanTypeChart.destroy();
+  _loanTypeChart = new Chart(document.getElementById('loanTypeChart').getContext('2d'), {
+    type: 'doughnut',
+    data: { labels: labels.length ? labels : ['No data'], datasets: [{ data: data.length ? data : [1], backgroundColor: _DONUT_COLORS, borderColor: 'transparent', borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '72%', plugins: { legend: { position: 'bottom', labels: { color: 'rgba(255,255,255,0.5)', font: { size: 11 }, padding: 12, boxWidth: 10 } } } }
+  });
 }
 
 function buildPartnerEarnings(leads) {
