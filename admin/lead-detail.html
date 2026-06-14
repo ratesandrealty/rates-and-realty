@@ -1885,6 +1885,7 @@
     <!-- Main tab nav -->
     <nav class="ld-tabs-nav">
       <button class="ld-tab-btn active" onclick="switchTab('lead-details', this)">Lead Details</button>
+      <button class="ld-tab-btn" onclick="switchTab('processing', this)" id="tab-btn-processing">🗂️ Loan Processing</button>
       <button class="ld-tab-btn" onclick="switchTab('application', this)" id="tab-btn-application">1003 Application</button>
       <button class="ld-tab-btn" onclick="switchTab('fee-sheet', this)" id="tab-btn-fee-sheet"><i class="fas fa-file-invoice-dollar" style="margin-right:4px"></i>Fee Sheet</button>
       <button class="ld-tab-btn" onclick="switchTab('deal-analyzer', this)" id="tab-btn-deal-analyzer">📊 Deal Analyzer &amp; CMA</button>
@@ -2274,6 +2275,43 @@
     <!-- ═══════════════════════════════════════════
          TAB 2: APPLICATION
     ═══════════════════════════════════════════ -->
+    <!-- ═══ TAB: LOAN PROCESSING (command center) — Phase 1 ═══ -->
+    <div class="ld-tab-panel" id="tab-processing">
+      <style>
+        #tab-processing .lp-card { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:16px 18px; margin-bottom:16px; }
+        #tab-processing .lp-h { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.7px; color:#C9A84C; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+        #tab-processing .lp-h a { font-size:11px; color:rgba(201,168,76,0.8); cursor:pointer; text-decoration:none; }
+        #tab-processing .lp-action { background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.35); color:#C9A84C; font-size:12px; font-weight:600; padding:7px 12px; border-radius:8px; cursor:pointer; }
+        #tab-processing .lp-action:hover { background:rgba(201,168,76,0.16); }
+        #tab-processing .lp-stub { opacity:0.6; }
+        #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
+      </style>
+      <div style="padding:18px 22px;">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;">
+          <button class="lp-action" onclick="lpAction('Send Needs List')">📤 Send Needs List</button>
+          <button class="lp-action" onclick="lpAction('Email HOI Agent')">🏠 Email HOI Agent</button>
+          <button class="lp-action" onclick="lpAction('Order Title')">📜 Order Title</button>
+          <button class="lp-action" onclick="lpAction('Request Escrow Docs')">🗃️ Request Escrow Docs</button>
+          <button class="lp-action" onclick="lpAction('Create LOE')">✍️ Create LOE</button>
+          <button class="lp-action" onclick="lpAction('Send for Signature')">🖊️ Send for Signature</button>
+          <button class="lp-action" onclick="lpAction('Assign Task to VA')">👤 Assign Task to VA</button>
+          <button class="lp-action" onclick="lpAction('Send Realtor Update')">📨 Send Realtor Update</button>
+          <button class="lp-action" onclick="lpAction('Upload to Lender')">⬆️ Upload to Lender</button>
+        </div>
+        <div class="lp-card"><div class="lp-h">📌 Loan Snapshot</div>
+          <div id="lpSnapshotBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;"></div></div>
+        <div class="lp-card"><div class="lp-h">✅ Intake / Setup Checklist</div><div id="lpIntakeBody"></div></div>
+        <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
+        <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
+        <div class="lp-card"><div class="lp-h">🗂️ Tasks <a onclick="switchTab('tasks', document.querySelector('.ld-tab-btn[onclick*=tasks]'))">Manage →</a></div><div id="lpTasksBody"></div></div>
+        <div class="lp-card lp-stub"><div class="lp-h">🧾 Third-Party Orders</div><div class="lp-soon">Title / HOI / Escrow order tracking — wiring in Phase 2.</div></div>
+        <div class="lp-card lp-stub"><div class="lp-h">📇 Contacts (HOI · Title · Escrow · Realtor)</div><div class="lp-soon">Third-party party directory — wiring in Phase 2.</div></div>
+        <div class="lp-card lp-stub"><div class="lp-h">✍️ LOE Center</div><div class="lp-soon">Letter-of-explanation builder + e-sign — wiring in Phase 2.</div></div>
+        <div class="lp-card lp-stub"><div class="lp-h">🖊️ E-Signature Status</div><div class="lp-soon">Reads signature_requests — wiring in Phase 2.</div></div>
+        <div class="lp-card lp-stub"><div class="lp-h">🌅 VA Daily Tasks</div><div class="lp-soon">Per-assignee ClickUp queue — wiring in Phase 2.</div></div>
+      </div>
+    </div>
+
     <div class="ld-tab-panel" id="tab-application">
 
       <!-- ═══ BORROWER SWITCHER + LOAN BAR + LEFT NAV ═══ -->
@@ -8288,6 +8326,131 @@ function togglePortalPanel() {
   }
 }
 
+/* ═══ LOAN PROCESSING (command center) — Phase 1. Self-contained, lp* namespaced. ═══ */
+const LP_INTAKE_TEMPLATE = [
+  {key:'welcome_call',label:'Welcome call to borrower',category:'Setup'},
+  {key:'send_needs_list',label:'Send needs list / document request',category:'Setup'},
+  {key:'order_credit',label:'Pull / review credit',category:'Setup'},
+  {key:'drive_folder',label:'Create loan file + Google Drive folder',category:'Setup'},
+  {key:'verify_income',label:'Verify income documents',category:'Docs'},
+  {key:'verify_assets',label:'Verify assets / bank statements',category:'Docs'},
+  {key:'disclosures_sent',label:'Initial disclosures sent',category:'Disclosures'},
+  {key:'disclosures_signed',label:'Initial disclosures signed',category:'Disclosures'},
+  {key:'submit_processing',label:'Submit file to processing',category:'Processing'},
+  {key:'order_appraisal',label:'Order appraisal',category:'Orders'},
+  {key:'order_title',label:'Order title',category:'Orders'},
+  {key:'order_hoi',label:'Order homeowners insurance (HOI)',category:'Orders'},
+  {key:'request_escrow',label:'Request escrow / closing docs',category:'Orders'},
+  {key:'submit_lender',label:'Submit to lender / upload package',category:'Lender'},
+  {key:'clear_conditions',label:'Clear underwriting conditions',category:'Lender'},
+  {key:'ctc',label:'Clear to Close (CTC)',category:'Closing'},
+  {key:'schedule_signing',label:'Schedule signing',category:'Closing'},
+  {key:'funded',label:'Funded',category:'Closing'}
+];
+const LP_DOC_TEMPLATE = [
+  {key:'id',label:"Driver's License / ID",category:'Identity'},
+  {key:'paystubs',label:'Paystubs (most recent 30 days)',category:'Income'},
+  {key:'w2',label:'W-2s (2 years)',category:'Income'},
+  {key:'tax_returns',label:'Tax returns (2 years)',category:'Income'},
+  {key:'bank_statements',label:'Bank statements (2 months)',category:'Assets'},
+  {key:'hoi',label:'Homeowners insurance declaration',category:'Property'},
+  {key:'purchase_contract',label:'Purchase contract (if purchase)',category:'Property'},
+  {key:'other_income',label:'Award letters / other income',category:'Income'}
+];
+const LP_STATUSES = ['not_started','in_progress','waiting','done','na'];
+const LP_STATUS_LABEL = {not_started:'Not started',in_progress:'In progress',waiting:'Waiting',done:'Done',na:'N/A'};
+let _lpSaveTimers = {};
+function lpCid(){ return (typeof contactId!=='undefined'&&contactId) || (typeof getContactId==='function'?getContactId():null); }
+function lpEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function lpAction(name){ if(typeof showToast==='function') showToast('“'+name+'” — wiring in Phase 2', false); }
+async function lpLoadProcessing(){
+  const cid = lpCid(); if(!cid) return;
+  lpRenderSnapshot(cid);
+  lpLoadChecklist('intake','lpIntakeBody',LP_INTAKE_TEMPLATE);
+  lpLoadChecklist('doc','lpDocBody',LP_DOC_TEMPLATE);
+  lpLoadConditions(cid);
+  lpLoadTasks(cid);
+}
+async function lpRenderSnapshot(cid){
+  const el = document.getElementById('lpSnapshotBody'); if(!el) return;
+  let app = {};
+  try { app = (typeof _fetchAppRowForContact==='function') ? (await _fetchAppRowForContact(cid))||{} : {}; } catch(_){}
+  const c = (typeof contactData!=='undefined'&&contactData)?contactData:{};
+  const money = v => (v||v===0)?'$'+Number(v).toLocaleString():'—';
+  const pct = v => (v||v===0)?Number(v).toFixed(3)+'%':'—';
+  const dd = v => v?new Date(String(v).length<=10?v+'T00:00:00':v).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+  let lockChip='';
+  if(app.rate_lock_expiry){ const days=Math.ceil((new Date(app.rate_lock_expiry+'T00:00:00')-new Date())/86400000); const col=days<0?'#E5484D':(days<=7?'#C9A84C':'#27AE60'); lockChip=' <span style="color:'+col+';font-weight:600;">('+(days<0?Math.abs(days)+'d ago':days+'d left')+')</span>'; }
+  const name = ((c.first_name||'')+' '+(c.last_name||'')).trim()||c.full_name||'—';
+  const rate = app.closed_rate||app.locked_rate||app.quoted_rate;
+  const rateLabel = app.closed_rate?'Closed':(app.locked_rate?'Locked':(app.quoted_rate?'Quoted':'Rate'));
+  const cell = (label,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+val+'</div></div>';
+  el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')))+cell('Lender',lpEsc(c.closing_lender||'—'))+cell(rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
+}
+async function lpLoadChecklist(kind, bodyId, template){
+  const cid = lpCid(); const body = document.getElementById(bodyId); if(!cid||!body) return;
+  body.innerHTML = '<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
+  try{
+    let { data: items, error } = await _authClient().from('processing_items').select('*').eq('contact_id',cid).eq('kind',kind).order('sort_order',{ascending:true});
+    if(error) throw error;
+    if(!items||!items.length){
+      const rows = template.map((t,i)=>({contact_id:cid,kind:kind,label:t.label,category:t.category||null,template_key:t.key,sort_order:i}));
+      const ins = await _authClient().from('processing_items').insert(rows).select();
+      items = ins.data||[];
+      items.sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+    }
+    lpRenderItems(kind, body, items);
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load checklist.</div>'; console.warn('[lp '+kind+']', e.message); }
+}
+function lpRenderItems(kind, body, items){
+  const statusSel = cur => LP_STATUSES.map(s=>'<option value="'+s+'"'+(s===(cur||'not_started')?' selected':'')+'>'+LP_STATUS_LABEL[s]+'</option>').join('');
+  body.innerHTML = items.map(it=>{
+    const done = it.completed;
+    return '<div class="lp-item" data-id="'+it.id+'" style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1fr;gap:8px;align-items:center;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
+      +'<input type="checkbox" '+(done?'checked':'')+' onchange="lpToggle(\''+it.id+'\',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#C9A84C;">'
+      +'<input type="text" value="'+lpEsc(it.label||'')+'" onchange="lpEdit(\''+it.id+'\',\'label\',this.value)" style="background:transparent;border:none;color:'+(done?'rgba(255,255,255,.4)':'#fff')+';font-size:13px;'+(done?'text-decoration:line-through;':'')+'outline:none;width:100%;">'
+      +'<select onchange="lpEdit(\''+it.id+'\',\'status\',this.value)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;">'+statusSel(it.status)+'</select>'
+      +'<input type="date" value="'+(it.due_date||'')+'" onchange="lpEdit(\''+it.id+'\',\'due_date\',this.value)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;">'
+      +'<input type="text" placeholder="Assigned to" value="'+lpEsc(it.assigned_to||'')+'" onchange="lpEdit(\''+it.id+'\',\'assigned_to\',this.value)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;">'
+      +'</div>';
+  }).join('') + '<button onclick="lpAddItem(\''+kind+'\')" style="margin-top:10px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.4);color:#C9A84C;font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;cursor:pointer;">+ Add item</button>';
+}
+function lpEdit(id, field, value){
+  clearTimeout(_lpSaveTimers[id+field]);
+  _lpSaveTimers[id+field] = setTimeout(async ()=>{
+    const patch = { updated_at:new Date().toISOString() }; patch[field] = value||null;
+    const { error } = await _authClient().from('processing_items').update(patch).eq('id',id);
+    if(error) console.warn('[lpEdit]', error.message);
+  }, 500);
+}
+async function lpToggle(id, checked){
+  await _authClient().from('processing_items').update({completed:checked,status:checked?'done':'not_started',updated_at:new Date().toISOString()}).eq('id',id);
+  lpLoadProcessing();
+}
+async function lpAddItem(kind){
+  const cid = lpCid(); if(!cid) return;
+  await _authClient().from('processing_items').insert([{contact_id:cid,kind:kind,label:'New item',sort_order:999}]);
+  lpLoadChecklist(kind, kind==='intake'?'lpIntakeBody':'lpDocBody', kind==='intake'?LP_INTAKE_TEMPLATE:LP_DOC_TEMPLATE);
+}
+async function lpLoadConditions(cid){
+  const body = document.getElementById('lpConditionsBody'); if(!body) return;
+  try{
+    const { data } = await _authClient().from('loan_conditions').select('condition_text,category,status').eq('contact_id',cid).order('sort_order',{ascending:true});
+    if(!data||!data.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No conditions yet.</div>'; return; }
+    const badge = s => { const col = s==='cleared'?'#27AE60':(s==='pending'?'#C9A84C':'#888'); return '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:'+col+'22;color:'+col+';text-transform:uppercase;letter-spacing:.5px;">'+lpEsc(s||'open')+'</span>'; };
+    body.innerHTML = data.map(c=>'<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);"><span style="font-size:12px;color:#ddd;">'+lpEsc(c.condition_text||'')+(c.category?' <span style="color:#777;">· '+lpEsc(c.category)+'</span>':'')+'</span>'+badge(c.status)+'</div>').join('');
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load conditions.</div>'; }
+}
+async function lpLoadTasks(cid){
+  const body = document.getElementById('lpTasksBody'); if(!body) return;
+  try{
+    const { data } = await _authClient().from('tasks').select('title,due_date,status,clickup_url').eq('contact_id',cid).order('due_date',{ascending:true});
+    if(!data||!data.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No tasks yet.</div>'; return; }
+    const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+    body.innerHTML = data.map(t=>'<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);"><span style="font-size:12px;color:#ddd;">'+(t.clickup_url?'<a href="'+lpEsc(t.clickup_url)+'" target="_blank" style="color:#ddd;text-decoration:none;">':'')+lpEsc(t.title||'')+(t.clickup_url?'</a>':'')+'</span><span style="font-size:11px;color:#888;">'+lpEsc(t.status||'')+(t.due_date?' · '+dd(t.due_date):'')+'</span></div>').join('');
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; }
+}
+
 function switchTab(name, btn) {
   document.querySelectorAll('.ld-tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.ld-tab-btn').forEach(b => b.classList.remove('active'));
@@ -8295,6 +8458,7 @@ function switchTab(name, btn) {
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
   if (name === 'application') { load1003(); loadLiabilities1003(); loadApp1003Borrowers(); buildBorrowerSwitcher(); applyViewModeSections(); setTimeout(initSectionPageSwap, 100); }
+  if (name === 'processing') lpLoadProcessing();
   if (name === 'lenders') loadLenderMatches();
   if (name === 'documents') loadDocumentsGrid();
   if (name === 'conditions') loadConditions();
