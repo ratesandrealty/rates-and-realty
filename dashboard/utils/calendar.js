@@ -326,6 +326,9 @@
       +   '<div class="popover-actions">'
       +     (e.link ? '<a class="cal-btn-secondary" href="' + esc(e.link) + '">Open in CRM →</a>' : '')
       +     (e.lead_facing_link ? '<a class="cal-btn-secondary" href="' + esc(e.lead_facing_link) + '" target="_blank" rel="noopener">Public link ↗</a>' : '')
+      +     (e.external_link ? '<a class="cal-btn-secondary" href="' + esc(e.external_link) + '" target="_blank" rel="noopener">Open in ClickUp ↗</a>' : '')
+      +     ((e.source === 'clickup' || e.source === 'task') ? '<button class="cal-btn-secondary" data-cal-action="complete" data-cal-evid="' + esc(e.id) + '">✓ Mark complete</button>' : '')
+      +     ((e.source === 'clickup' || e.source === 'task' || e.source === 'appointment' || e.source === 'google') ? '<button class="cal-btn-secondary" style="color:#ff8888;border-color:rgba(255,136,136,0.4)" data-cal-action="delete" data-cal-evid="' + esc(e.id) + '">🗑 Delete</button>' : '')
       +   '</div>'
       + '</div>';
     var rect = anchor.getBoundingClientRect();
@@ -338,6 +341,50 @@
   function closePopover() {
     var pop = document.querySelector('[data-target=cal-popover]');
     if (pop) pop.hidden = true;
+  }
+
+  // ── Event actions: complete / delete (delegated from popover) ─────
+  async function handleCalAction(action, evid) {
+    var ev = allEvents.find(function (x) { return x.id === evid; });
+    if (!ev) return;
+    var md = ev.metadata || {};
+    var token = await getAuthToken();
+    var baseHeaders = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'apikey': ANON_KEY };
+    var fn = SUPABASE_URL + '/functions/v1/';
+    function req(url, method, body, extra) {
+      var opts = { method: method, headers: extra ? Object.assign({}, baseHeaders, extra) : baseHeaders };
+      if (body != null) opts.body = JSON.stringify(body);
+      return fetch(url, opts).then(function (r) {
+        if (!r.ok) return r.text().catch(function () { return ''; }).then(function (t) {
+          throw new Error('HTTP ' + r.status + (t ? ': ' + t.slice(0, 120) : ''));
+        });
+        return r;
+      });
+    }
+    try {
+      if (action === 'complete') {
+        if (ev.source === 'clickup') {
+          await req(fn + 'clickup-bridge/task/complete', 'POST', { clickup_task_id: md.clickup_task_id });
+        } else if (ev.source === 'task') {
+          await req(SUPABASE_URL + '/rest/v1/tasks?id=eq.' + encodeURIComponent(md.task_id), 'PATCH', { status: 'completed' }, { 'Prefer': 'return=minimal' });
+        } else { return; }
+      } else if (action === 'delete') {
+        if (!confirm('Delete "' + (ev.title || 'this item') + '"? This cannot be undone.')) return;
+        if (ev.source === 'clickup') {
+          await req(fn + 'clickup-bridge/task/delete', 'POST', { clickup_task_id: md.clickup_task_id });
+        } else if (ev.source === 'appointment') {
+          await req(fn + 'calendar-data/event/appt:' + md.appointment_id, 'DELETE', null);
+        } else if (ev.source === 'google') {
+          await req(fn + 'calendar-data/event/google:' + md.google_event_id, 'DELETE', null);
+        } else if (ev.source === 'task') {
+          await req(SUPABASE_URL + '/rest/v1/tasks?id=eq.' + encodeURIComponent(md.task_id), 'DELETE', null, { 'Prefer': 'return=minimal' });
+        } else { return; }
+      }
+      closePopover();
+      await refresh();
+    } catch (err) {
+      alert('Action failed: ' + (err && err.message ? err.message : 'unknown'));
+    }
   }
 
   // ── New event modal ──────────────────────────────────────────────
@@ -527,6 +574,13 @@
 
       var closer = e.target.closest('[data-action=popover-close]');
       if (closer) { closePopover(); return; }
+
+      var actBtn = e.target.closest('[data-cal-action]');
+      if (actBtn) {
+        e.stopPropagation();
+        handleCalAction(actBtn.getAttribute('data-cal-action'), actBtn.getAttribute('data-cal-evid'));
+        return;
+      }
 
       var ev = e.target.closest('[data-event-id]');
       if (ev && calSection.contains(ev)) {
