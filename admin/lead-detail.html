@@ -8486,12 +8486,15 @@ function lpRenderItems(kind, body, items){
     const completedLine = done
       ? '<div style="display:flex;align-items:center;gap:5px;margin-top:4px;font-size:10px;color:#27AE60;">✓ by <select onchange="lpEdit(\''+it.id+'\',\'completed_by\',this.value)" style="background:rgba(39,174,96,.08);border:1px solid rgba(39,174,96,.3);border-radius:5px;color:#27AE60;font-size:10px;padding:1px 4px;">'+lpPersonSel(it.completed_by||'', '—')+'</select>'+(cdate?'<span style="color:#777;">· '+cdate+'</span>':'')+'</div>'
       : '';
-    return '<div class="lp-item" data-id="'+it.id+'" style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr;gap:8px;align-items:start;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
+    return '<div class="lp-item" data-id="'+it.id+'" style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
+      +'<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr;gap:8px;align-items:start;">'
       +'<input type="checkbox" '+(done?'checked':'')+' onchange="lpToggle(\''+it.id+'\',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#C9A84C;margin-top:3px;">'
       +'<div><input type="text" value="'+lpEsc(it.label||'')+'" onchange="lpEdit(\''+it.id+'\',\'label\',this.value)" style="background:transparent;border:none;color:'+(done?'rgba(255,255,255,.4)':'#fff')+';font-size:13px;'+(done?'text-decoration:line-through;':'')+'outline:none;width:100%;">'+completedLine+'</div>'
-      +'<select onchange="lpEdit(\''+it.id+'\',\'status\',this.value)" style="'+inp+'">'+statusSel(it.status)+'</select>'
+      +'<select onchange="lpStatus(\''+it.id+'\',this.value)" style="'+inp+'">'+statusSel(it.status)+'</select>'
       +'<input type="date" value="'+(it.due_date||'')+'" onchange="lpEdit(\''+it.id+'\',\'due_date\',this.value)" style="'+inp+'">'
       +'<select onchange="lpEdit(\''+it.id+'\',\'assigned_to\',this.value)" style="'+inp+'">'+lpPersonSel(it.assigned_to||'', 'Unassigned')+'</select>'
+      +'</div>'
+      +'<div style="margin-left:32px;margin-top:6px;"><input type="text" placeholder="💬 Add comment / note…" value="'+lpEsc(it.notes||'')+'" onchange="lpEdit(\''+it.id+'\',\'notes\',this.value)" style="width:100%;max-width:680px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:#bbb;font-size:11px;padding:5px 9px;"></div>'
       +'</div>';
   }).join('') + '<button onclick="lpAddItem(\''+kind+'\')" style="margin-top:10px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.4);color:#C9A84C;font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;cursor:pointer;">+ Add item</button>';
 }
@@ -8506,13 +8509,16 @@ function lpEdit(id, field, value){
 }
 async function lpToggle(id, checked){
   const patch = {completed:checked, status:checked?'done':'not_started', updated_at:new Date().toISOString()};
-  if(checked){
-    patch.completed_at = new Date().toISOString();
-    let assigned = '';
-    const row = document.querySelector('.lp-item[data-id="'+id+'"]');
-    if(row){ const sel = row.querySelector('select[onchange*="assigned_to"]'); if(sel) assigned = sel.value; }
-    patch.completed_by = assigned || 'admin';   // default: whoever it's assigned to (Admin if unassigned)
-  } else { patch.completed_at = null; patch.completed_by = null; }
+  if(checked){ patch.completed_at = new Date().toISOString(); patch.completed_by = 'admin'; }
+  else { patch.completed_at = null; patch.completed_by = null; }
+  await _authClient().from('processing_items').update(patch).eq('id',id);
+  lpLoadProcessing();
+}
+async function lpStatus(id, value){
+  // Status dropdown mirrors completion: 'Done' auto-stamps date + completer; anything else clears it.
+  const patch = { status:value, updated_at:new Date().toISOString() };
+  if(value==='done'){ patch.completed = true; patch.completed_at = new Date().toISOString(); patch.completed_by = 'admin'; }
+  else { patch.completed = false; patch.completed_at = null; patch.completed_by = null; }
   await _authClient().from('processing_items').update(patch).eq('id',id);
   lpLoadProcessing();
 }
