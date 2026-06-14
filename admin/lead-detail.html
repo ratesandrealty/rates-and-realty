@@ -5277,7 +5277,7 @@ async function populateUI() {
   // Pull fresh earnings directly from contacts (single source of truth)
   if (contactId) {
     try {
-      const { data: cData } = await sb.from('contacts')
+      const { data: cData } = await _authClient().from('contacts')
         .select('actual_earnings, estimated_earnings, deal_outcome, closed_date, lost_reason')
         .eq('id', contactId).single();
       if (cData) {
@@ -7882,11 +7882,11 @@ async function saveLeadDetails() {
     };
 
     if (contactId) {
-      const { error } = await sb.from('contacts').update(cFields).eq('id', contactId);
+      const { error } = await _authClient().from('contacts').update(cFields).eq('id', contactId);
       if (error) throw error;
     }
     if (leadId) {
-      const { error } = await sb.from('leads').update(lFields).eq('id', leadId);
+      const { error } = await _authClient().from('leads').update(lFields).eq('id', leadId);
       if (error) throw error;
     }
     Object.assign(contactData, cFields);
@@ -7914,7 +7914,7 @@ async function saveBorrowerInfo() {
       ssn_last4:         getVal('b-ssn') || null,
     };
     if (contactId) {
-      const { error } = await sb.from('contacts').update(cFields).eq('id', contactId);
+      const { error } = await _authClient().from('contacts').update(cFields).eq('id', contactId);
       if (error) throw error;
     }
     Object.assign(contactData, cFields);
@@ -7947,7 +7947,7 @@ async function saveLoanProperty() {
       updated_at:       new Date().toISOString(),
     };
     if (leadId) {
-      const { error } = await sb.from('leads').update(lFields).eq('id', leadId);
+      const { error } = await _authClient().from('leads').update(lFields).eq('id', leadId);
       if (error) throw error;
     }
     Object.assign(leadData, lFields);
@@ -7981,7 +7981,7 @@ async function saveFinancialInfo() {
       cFields.years_employed = yrs;
     }
     if (contactId) {
-      const { error } = await sb.from('contacts').update(cFields).eq('id', contactId);
+      const { error } = await _authClient().from('contacts').update(cFields).eq('id', contactId);
       if (error) throw error;
     }
     Object.assign(contactData, cFields);
@@ -7995,7 +7995,7 @@ async function saveFinancialInfo() {
 async function saveTopField(field, value) {
   if (!leadId) return;
   try {
-    const { error } = await sb.from('leads').update({ [field]: value, updated_at: new Date().toISOString() }).eq('id', leadId);
+    const { error } = await _authClient().from('leads').update({ [field]: value, updated_at: new Date().toISOString() }).eq('id', leadId);
     if (error) throw error;
     leadData[field] = value;
     if (field === 'status') { setStatusBadge(value); renderScoreCard(leadData, contactData); }
@@ -8018,14 +8018,14 @@ async function updateStatus(value) {
     if (temps.includes(value)) {
       // Temperature update on contacts table
       if (contactId) {
-        const { error } = await sb.from('contacts').update({ temperature: value, updated_at: new Date().toISOString() }).eq('id', contactId);
+        const { error } = await _authClient().from('contacts').update({ temperature: value, updated_at: new Date().toISOString() }).eq('id', contactId);
         if (error) throw error;
         contactData.temperature = value;
       }
     } else {
       // Pipeline status update on leads table
       if (leadId) {
-        const { error } = await sb.from('leads').update({ status: value, updated_at: new Date().toISOString() }).eq('id', leadId);
+        const { error } = await _authClient().from('leads').update({ status: value, updated_at: new Date().toISOString() }).eq('id', leadId);
         if (error) throw error;
         leadData.status = value;
         setStatusBadge(value);
@@ -8042,7 +8042,7 @@ async function updateSource(value) {
   if (!value) return;
   try {
     if (leadId) {
-      const { error } = await sb.from('leads').update({ source: value, updated_at: new Date().toISOString() }).eq('id', leadId);
+      const { error } = await _authClient().from('leads').update({ source: value, updated_at: new Date().toISOString() }).eq('id', leadId);
       if (error) throw error;
       leadData.source = value;
       setSelectVal('f-source', value);
@@ -8060,7 +8060,7 @@ function showToast(msg, isError = false) {
 async function loadContactMeta() {
   if (!contactId) return;
   try {
-    const { data, error } = await sb.from('contacts').select('first_name, last_name, temperature').eq('id', contactId).single();
+    const { data, error } = await _authClient().from('contacts').select('first_name, last_name, temperature').eq('id', contactId).single();
     if (error) throw error;
     if (data) {
       const name = [data.first_name, data.last_name].filter(Boolean).join(' ') || 'Unknown';
@@ -8121,7 +8121,7 @@ async function addLiability() {
     try {
       const existing = contactData.liabilities || [];
       const updated = [...existing, entry];
-      const { error } = await sb.from('contacts').update({ liabilities: updated }).eq('id', contactId);
+      const { error } = await _authClient().from('contacts').update({ liabilities: updated }).eq('id', contactId);
       if (!error) contactData.liabilities = updated;
     } catch (_) {}
   }
@@ -8137,7 +8137,7 @@ async function removeLiability(idx) {
   liabilitiesData.splice(idx, 1);
   if (contactId) {
     try {
-      await sb.from('contacts').update({ liabilities: liabilitiesData }).eq('id', contactId);
+      await _authClient().from('contacts').update({ liabilities: liabilitiesData }).eq('id', contactId);
       contactData.liabilities = [...liabilitiesData];
     } catch (_) {}
   }
@@ -12157,7 +12157,7 @@ async function applyMISMOData() {
     // Strip undefined
     Object.keys(contactFields).forEach(k => contactFields[k] === undefined && delete contactFields[k]);
     if (contactId && Object.keys(contactFields).length) {
-      await sb.from('contacts').update(contactFields).eq('id', contactId);
+      await _authClient().from('contacts').update(contactFields).eq('id', contactId);
       Object.assign(contactData, contactFields);
     }
 
@@ -12171,7 +12171,7 @@ async function applyMISMOData() {
     };
     Object.keys(leadFields).forEach(k => (leadFields[k] === undefined || leadFields[k] === null) && delete leadFields[k]);
     if (leadId && Object.keys(leadFields).length > 1) {
-      await sb.from('leads').update(leadFields).eq('id', leadId);
+      await _authClient().from('leads').update(leadFields).eq('id', leadId);
       Object.assign(leadData, leadFields);
     }
 
@@ -12529,7 +12529,7 @@ function savePricingMeta(lenderName) {
     if (lp) patch.loan_purpose = lp.value || null;
     if (lt) patch.loan_type = lt.value || null;
     if (typeof lenderName === 'string' && lenderName.trim()) patch.closing_lender = lenderName.trim();
-    const { error } = await sb.from('contacts').update(patch).eq('id', targetId);
+    const { error } = await _authClient().from('contacts').update(patch).eq('id', targetId);
     if (error) console.error('[savePricingMeta] error:', error.message);
   }, 500);
 }
@@ -12549,7 +12549,7 @@ function saveEarnings() {
     const closedDate = outcome === 'won' ? new Date().toISOString().split('T')[0] : null;
 
     // Save directly to contacts table (single source of truth)
-    const { error } = await sb.from('contacts').update({
+    const { error } = await _authClient().from('contacts').update({
       estimated_earnings: estVal,
       actual_earnings:    actVal,
       deal_outcome:       outcome,
@@ -12714,7 +12714,7 @@ function closeAddRelModal() { document.getElementById('addRelModal').style.displ
 
 async function searchRelContacts(q) {
   if (!q.trim()) { document.getElementById('relSearchResults').style.display = 'none'; return; }
-  const { data: contacts } = await sb.from('contacts').select('id,first_name,last_name,email,phone').or(`first_name.ilike.*${q}*,last_name.ilike.*${q}*,email.ilike.*${q}*`).limit(8);
+  const { data: contacts } = await _authClient().from('contacts').select('id,first_name,last_name,email,phone').or(`first_name.ilike.*${q}*,last_name.ilike.*${q}*,email.ilike.*${q}*`).limit(8);
   const el = document.getElementById('relSearchResults');
   if (!contacts?.length) { el.style.display = 'none'; return; }
   el.innerHTML = contacts.map(c => `
@@ -12796,7 +12796,7 @@ function clearReferralPartner() {
 
 async function saveReferralPartnerToContact(partnerId) {
   if (!contactId) return;
-  await sb.from('contacts').update({ referral_partner_id: partnerId, updated_at: new Date().toISOString() }).eq('id', contactId);
+  await _authClient().from('contacts').update({ referral_partner_id: partnerId, updated_at: new Date().toISOString() }).eq('id', contactId);
 }
 
 document.addEventListener('click', (e) => {
