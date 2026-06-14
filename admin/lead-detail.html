@@ -5305,6 +5305,31 @@ async function populateUI() {
   setSelectVal('pricingLoanType', contactData.closing_loan_type || contactData.loan_type || '');
   setSelectVal('pricingLoanPurpose', contactData.loan_purpose || '');
   { const _pls = document.getElementById('pricingLenderSearch'); if (_pls && contactData.closing_lender) _pls.value = contactData.closing_lender; }
+  // Populate Pricing & Lender rate/date/fee fields from the mortgage_applications row.
+  // These otherwise fill only via load1003() on the Application tab, so on the Lead Details
+  // tab they appear blank on refresh even though the values are saved. Programmatic .value
+  // assignment does NOT fire input/change, so this won't re-trigger an auto-save.
+  (async () => {
+    try {
+      const _cid = contactId || (typeof getContactId === 'function' ? getContactId() : null);
+      if (!_cid || typeof _fetchAppRowForContact !== 'function') return;
+      const _app = await _fetchAppRowForContact(_cid);
+      if (!_app) return;
+      const _sv = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
+      _sv('pricingLenderSelect', _app.assigned_lender_id);
+      _sv('pricingQuotedRate', _app.quoted_rate);
+      _sv('pricingQuotedDate', _app.quoted_rate_date);
+      _sv('pricingLockedRate', _app.locked_rate);
+      _sv('pricingLockedDate', _app.locked_rate_date);
+      _sv('pricingLockExpiry', _app.rate_lock_expiry);
+      _sv('pricingClosedRate', _app.closed_rate);
+      _sv('pricingClosedDate', _app.closed_rate_date);
+      _sv('pricingDiscountFee', _app.discount_fee_pct);
+      _sv('pricingOriginationFee', _app.origination_fee_pct);
+      _sv('docPreapprovalExpiry', _app.preapproval_expiry);
+      _sv('docCreditPulledDate', _app.credit_report_pulled_date);
+    } catch (e) { console.warn('[pricing populate]', e && e.message); }
+  })();
   setVal('f-loan-amount', leadData.loan_amount ? fmt$(leadData.loan_amount) : '');
   setVal('f-purchase-price', leadData.purchase_price ? fmt$(leadData.purchase_price) : '');
   setVal('f-down-payment', leadData.down_payment ? fmt$(leadData.down_payment) : '');
