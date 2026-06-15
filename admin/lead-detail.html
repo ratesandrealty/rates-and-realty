@@ -8476,7 +8476,22 @@ async function lpLoadChecklist(kind, bodyId, template){
     await _authClient().from('processing_items').upsert(seed, { onConflict:'contact_id,kind,template_key', ignoreDuplicates:true });
     let { data: items, error } = await _authClient().from('processing_items').select('*').eq('contact_id',cid).eq('kind',kind).eq('dismissed',false);
     if(error) throw error;
-    items = lpOrderItems(items||[], template);
+    items = items || [];
+    // Auto-complete the "Create loan file + Google Drive folder" step when the lead
+    // already has a Google Drive folder (gdrive_folder_id is set at lead creation).
+    if(kind==='intake'){
+      try{
+        const _gd = (contactData && (contactData.gdrive_folder_id || contactData.google_drive_folder_id)) || '';
+        const _df = items.find(i=>i.template_key==='drive_folder');
+        if(_gd && _df && !_df.completed){
+          const _now = new Date().toISOString();
+          _df.completed=true; _df.status='done'; _df.completed_at=_now; _df.completed_by=null;
+          if(!_df.notes) _df.notes='✓ Auto-detected — Google Drive folder already exists';
+          _authClient().from('processing_items').update({ completed:true, status:'done', completed_at:_now, completed_by:null, notes:_df.notes, updated_at:_now }).eq('id', _df.id);
+        }
+      }catch(_e){ console.warn('[lp drive auto]', _e && _e.message); }
+    }
+    items = lpOrderItems(items, template);
     lpRenderItems(kind, body, items);
     if(kind==='intake') lpRenderTimeline(items);
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load checklist.</div>'; console.warn('[lp '+kind+']', e.message); }
