@@ -157,8 +157,6 @@
         'earnings-dashboard.html': ['admin'],
         'reports.html':            ['admin'],
         'insights.html':           ['admin'],
-        'email-marketing.html':    ['admin'],
-        'drip-builder.html':       ['admin'],
         'emc-import.html':         ['admin'],
       };
       const filename = window.location.pathname.split('/').pop();
