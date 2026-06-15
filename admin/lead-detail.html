@@ -13953,12 +13953,19 @@ function toISODate(val) {
   if (!val) return null;
   val = String(val).trim();
   if (!val) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(val)) {
+  let iso = null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) iso = val;
+  else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(val)) {
     const [m, d, y] = val.split('/');
-    return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
   }
-  return null;
+  if (!iso) return null;
+  // Guard: a native date input can emit a 2-digit year as 00YY (e.g. 0022-03-22).
+  let [yy, mm, dd] = iso.split('-');
+  let yn = parseInt(yy, 10);
+  if (yn < 100) yn += 2000;                 // 0022 -> 2022
+  if (yn < 1900 || yn > 2200) return null;  // implausible year -> reject
+  return String(yn).padStart(4, '0') + '-' + mm + '-' + dd;
 }
 function fromISODate(val) {
   if (!val) return '';

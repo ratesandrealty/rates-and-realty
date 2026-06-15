@@ -159,6 +159,17 @@ async function loadCommunications() {
   document.getElementById('statEmails').querySelector('.stat-num').textContent = emails.length;
   document.getElementById('statSMS').querySelector('.stat-num').textContent = sms.length;
   document.getElementById('statCalls').querySelector('.stat-num').textContent = calls.length;
+  // True totals (the lists above are capped at 100; show the real count in the header).
+  (function(){
+    function _exactCount(table, elId){
+      fetch(SB_URL+'/rest/v1/'+table+'?select=id', { headers: Object.assign({}, H, { 'Prefer':'count=exact', 'Range':'0-0' }) })
+        .then(function(r){ var cr = r.headers.get('content-range')||''; var t = cr.split('/')[1]; if(t && t!=='*'){ var el=document.getElementById(elId); if(el) el.querySelector('.stat-num').textContent = parseInt(t,10); } })
+        .catch(function(){});
+    }
+    _exactCount('email_log','statEmails');
+    _exactCount('sms_log','statSMS');
+    _exactCount('call_log','statCalls');
+  })();
   var today = new Date().toDateString();
   document.getElementById('statToday').querySelector('.stat-num').textContent = _allComms.filter(function(c){return new Date(c.ts).toDateString()===today;}).length;
 
