@@ -2015,7 +2015,11 @@ var LEAD_TARGET_FIELDS = [
   ['property_address','Property address'], ['property_city','Property city'], ['property_state','Property state'], ['property_zip','Property zip'],
   ['notes','Notes'], ['assigned_to','Assigned to'], ['loan_type','Loan type'], ['loan_purpose','Loan purpose'],
   ['occupancy_type','Occupancy type'], ['property_type','Property type'], ['credit_score','Credit score'],
-  ['annual_income','Annual income'], ['lofty_id','Lofty ID']
+  ['annual_income','Annual income'], ['lofty_id','Lofty ID'],
+  ['co_borrower_first_name','Co-borrower first name'],
+  ['co_borrower_last_name','Co-borrower last name'],
+  ['co_borrower_email','Co-borrower email'],
+  ['co_borrower_phone','Co-borrower phone']
 ];
 
 function _lmEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -2023,6 +2027,14 @@ function _lmEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/<
 function _leadGuessField(h){
   var s = (h||'').toLowerCase().trim();
   if (!s) return '__skip__';
+  // Family Member 1 → co-borrower (checked before the generic "family member" skip below).
+  if (s.indexOf('family member1') !== -1) {
+    if (s.indexOf('first name') !== -1) return 'co_borrower_first_name';
+    if (s.indexOf('last name') !== -1) return 'co_borrower_last_name';
+    if (s.indexOf('email') !== -1) return 'co_borrower_email';
+    if (s.indexOf('country code') === -1 && s.indexOf('phone') !== -1) return 'co_borrower_phone';
+    return '__skip__';
+  }
   if (/country code|owner|selling property|family member|assistant/.test(s)) return '__skip__';
   if (s.indexOf('lead id') !== -1) return 'lofty_id';
   if (s === 'first name') return 'first_name';
@@ -2132,11 +2144,12 @@ async function doLeadImport(){
   var moneyFields = { pref_min_price:1, pref_max_price:1, annual_income:1, credit_score:1 };
 
   var rows = [];
+  var coBorrowerSpecs = [];
   for (var idx=0; idx<_leadCsvRows.length; idx++){
     var src = _leadCsvRows[idx];
     var raw = _leadCsvRaw[idx] || src;
     var payload = { import_source:'lofty_csv', imported_at: nowIso, import_raw: raw, updated_at: nowIso };
-    var tagsSet = [], notesArr = [];
+    var tagsSet = [], notesArr = [], cob = {};
     _leadCsvFields.forEach(function(h){
       var field = map[h];
       if (!field || field==='__skip__') return;
@@ -2147,12 +2160,16 @@ async function doLeadImport(){
       if (field==='created_at'){ var d=_leadParseDate(val); if (d) payload.created_at=d.iso; return; }
       if (field==='date_of_birth'){ var d2=_leadParseDate(val); if (d2) payload.date_of_birth=d2.ymd; return; }
       if (moneyFields[field]){ var n=Number(String(val).replace(/[$,]/g,'')); if (!isNaN(n)) payload[field]=n; return; }
+      if (field.indexOf('co_borrower_')===0){ cob[field.slice(12)] = val; return; } // co-borrower → own contact, not the primary
       payload[field]=val;
     });
     if (tagsSet.length) payload.tags = tagsSet;
     if (notesArr.length) payload.notes = notesArr.join('\n');
     if (!payload.created_at) payload.created_at = nowIso;
     Object.keys(payload).forEach(function(k){ var v=payload[k]; if (v===null || v==='' || (Array.isArray(v)&&v.length===0)) delete payload[k]; });
+    if (cob.first_name || cob.email || cob.phone){
+      coBorrowerSpecs.push({ primaryLoftyId: payload.lofty_id || null, first_name: cob.first_name||null, last_name: cob.last_name||null, email: cob.email||null, phone: cob.phone||null, raw: raw });
+    }
     rows.push(payload);
   }
 
@@ -2161,7 +2178,7 @@ async function doLeadImport(){
   btn.disabled = true;
   document.getElementById('lmProgressWrap').style.display='block';
   _lmUpdateProgress(0, total);
-  var inserted=0, updated=0, skipped=0, errors=0;
+  var inserted=0, updated=0, skipped=0, errors=0, coborrowers=0;
 
   try {
     if (loftyMapped){
@@ -2199,8 +2216,62 @@ async function doLeadImport(){
     }
   } finally { btn.disabled = false; }
 
+  // ── Co-borrower phase (Family Member 1 → its own contact, linked via contact_relationships) ──
+  if (coBorrowerSpecs.length) {
+    if (!loftyMapped) {
+      console.warn('[lead-import] co-borrowers skipped — no column mapped to lofty_id (needed to link reliably)');
+    } else {
+      try {
+        // a. Resolve primary contact ids by lofty_id.
+        var pIds = Array.from(new Set(coBorrowerSpecs.map(function(s){ return s.primaryLoftyId; }).filter(Boolean)));
+        var primaryMap = {};
+        if (pIds.length) {
+          var pq = await _authClient().from('contacts').select('id,lofty_id').in('lofty_id', pIds);
+          (pq.data||[]).forEach(function(c){ if (c.lofty_id!=null) primaryMap[String(c.lofty_id)] = c.id; });
+        }
+        // b. Build co-borrower contact rows (skip any whose primary isn't found).
+        var cobRows = [];
+        coBorrowerSpecs.forEach(function(s){
+          if (!s.primaryLoftyId || !primaryMap[String(s.primaryLoftyId)]) return;
+          var row = {
+            first_name: s.first_name, last_name: s.last_name, email: s.email, phone: s.phone,
+            is_co_borrower: true,
+            primary_borrower_contact_id: primaryMap[String(s.primaryLoftyId)],
+            lofty_id: s.primaryLoftyId + '-cob1',
+            import_source: 'lofty_csv', imported_at: nowIso,
+            import_raw: { co_borrower_of: s.primaryLoftyId, first_name: s.first_name, last_name: s.last_name, email: s.email, phone: s.phone },
+            created_at: nowIso, updated_at: nowIso
+          };
+          Object.keys(row).forEach(function(k){ var v=row[k]; if (v===null || v==='') delete row[k]; });
+          cobRows.push(row);
+        });
+        // c. Upsert co-borrowers — always ignore duplicates (re-import safe via synthetic lofty_id).
+        if (cobRows.length) {
+          await _authClient().from('contacts').upsert(cobRows, { onConflict:'lofty_id', ignoreDuplicates:true }).select('id');
+          // d. Resolve co-borrower ids by their synthetic lofty_id.
+          var cobIds = cobRows.map(function(r){ return r.lofty_id; });
+          var cobMap = {};
+          var cq = await _authClient().from('contacts').select('id,lofty_id').in('lofty_id', cobIds);
+          (cq.data||[]).forEach(function(c){ if (c.lofty_id!=null) cobMap[String(c.lofty_id)] = c.id; });
+          // e. Build relationship rows where both ids resolved.
+          var relRows = [];
+          coBorrowerSpecs.forEach(function(s){
+            var pid = primaryMap[String(s.primaryLoftyId)];
+            var cid = cobMap[String(s.primaryLoftyId) + '-cob1'];
+            if (pid && cid) relRows.push({ contact_id: pid, related_contact_id: cid, relationship_type: 'Co-Borrower' });
+          });
+          // f. Link, deduped by the table's unique (contact_id, related_contact_id).
+          if (relRows.length) {
+            await _authClient().from('contact_relationships').upsert(relRows, { onConflict:'contact_id,related_contact_id', ignoreDuplicates:true });
+            coborrowers = relRows.length;
+          }
+        }
+      } catch(e) { console.warn('[lead-import] co-borrower phase failed:', e.message); }
+    }
+  }
+
   closeImportModal();
-  showToast('Imported '+inserted+', updated '+updated+', skipped '+skipped+', '+errors+' errors');
+  showToast('Imported '+inserted+', updated '+updated+', skipped '+skipped+', '+coborrowers+' co-borrowers linked, '+errors+' errors');
   loadPeople();
 }
 
