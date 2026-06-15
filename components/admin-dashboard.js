@@ -2183,11 +2183,21 @@ async function _fvHandleImageFile(file, folderId) {
   }
 }
 
-async function _fvUploadFiles(contact, files) {
+async function _fvUploadFiles(contact, files, targetFolderId) {
   if (!contact.gdrive_folder_id) { _fvShowToast("No folder yet — create one first"); return; }
   if (!files || !files.length) return;
 
-  const folderId = contact.gdrive_folder_id;
+  // Destination priority: explicit target (folder-row drop) → folder currently open → borrower root.
+  const folderId = targetFolderId || window._fvCurrentFolderId || contact.gdrive_folder_id;
+
+  // Acquire the Google Drive token now, while we still have the user gesture from the
+  // drop/click, so a blocked or expired consent popup fails loudly instead of silently per file.
+  try {
+    await _fvEnsureToken();
+  } catch (e) {
+    _fvShowToast("Google Drive access needed — allow the popup, then drop again");
+    return;
+  }
   // Single upload-status element in the left panel.
   const status = document.getElementById("fv-upload-status");
 
@@ -2408,11 +2418,53 @@ function _fvMimeIconEmoji(mime) {
   return "\uD83D\uDCC4";
 }
 
+// Resolve the borrower currently selected in the left column.
+function _fvCurrentContact() {
+  return _fvContacts.find((c) => String(c.id) === String(_fvSelectedContactId)) || null;
+}
+
+// Attach file drag-and-drop to any element. getFolderId() decides where the files land;
+// getContact() supplies the borrower. Highlights with a gold inset ring while hovering.
+function _fvBindDrop(el, getFolderId, getContact) {
+  if (!el) return;
+  el.addEventListener("dragover", (e) => {
+    const types = (e.dataTransfer && e.dataTransfer.types) || [];
+    if (Array.prototype.indexOf.call(types, "Files") === -1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.dataTransfer.dropEffect = "copy"; } catch (_) {}
+    el.style.boxShadow = "inset 0 0 0 2px #C9A84C";
+  });
+  el.addEventListener("dragleave", (e) => {
+    if (e.relatedTarget && el.contains(e.relatedTarget)) return;
+    el.style.boxShadow = "";
+  });
+  el.addEventListener("drop", (e) => {
+    el.style.boxShadow = "";
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const contact = getContact && getContact();
+    if (!contact) { _fvShowToast("Select a borrower first"); return; }
+    _fvUploadFiles(contact, files, getFolderId ? getFolderId() : undefined);
+  });
+}
+
 // Render the file list into Panel 2 (#fv-file-list). Filter pills + dropzone
 // are permanent siblings and never re-rendered.
 function _fvRenderFileListPanel(contact) {
   const host = document.getElementById("fv-file-list");
   if (!host) return;
+  // Whole panel is a drop target → files land in the folder currently open. Bound once.
+  if (!host.dataset.fvDropBound) {
+    _fvBindDrop(
+      host,
+      () => (window._fvCurrentFolderId || (_fvCurrentContact() && _fvCurrentContact().gdrive_folder_id)),
+      () => _fvCurrentContact()
+    );
+    host.dataset.fvDropBound = "1";
+  }
   // Read from the CURRENT folder (which may be a subfolder, not the root).
   const currentFolderId = window._fvCurrentFolderId || contact.gdrive_folder_id;
   const allItems = _fvFiles[currentFolderId] || [];
@@ -2427,7 +2479,7 @@ function _fvRenderFileListPanel(contact) {
   const sorted = [...folders, ...filteredDocs];
 
   if (!sorted.length) {
-    host.innerHTML = `<div style="padding:40px 20px;text-align:center;color:#555;font-size:12px;">${allItems.length ? "No files match this filter" : "No files yet — drop files below"}</div>`;
+    host.innerHTML = `<div style="padding:40px 20px;text-align:center;color:#555;font-size:12px;">${allItems.length ? "No files match this filter" : "No files yet — drop files here"}</div>`;
     return;
   }
   host.innerHTML = sorted.map((f) => _fvFileRowHtml(f)).join("");
@@ -2441,6 +2493,8 @@ function _fvRenderFileListPanel(contact) {
     if (isFolder(f)) {
       // Folder click — navigate into it.
       row.onclick = () => _fvNavigateIntoFolder(f);
+      // Drop files onto this row → upload straight into this folder.
+      _fvBindDrop(row, () => f.id, () => contact);
       return;
     }
 
