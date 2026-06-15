@@ -130,6 +130,38 @@ select.inp option{background:#1a1a1a;color:#fff}
 .modal .modal-sub{font-size:11.5px;color:var(--muted);margin-bottom:16px;line-height:1.5}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 
+/* Automations */
+.section-head{display:flex;align-items:baseline;gap:10px;margin:30px 0 14px;max-width:1100px}
+.section-head h2{font-size:16px;font-weight:800;letter-spacing:-0.2px}
+.section-count{font-size:11px;color:var(--muted);font-weight:600}
+.auto-list{max-width:1100px}
+.auto-row{display:flex;align-items:center;gap:16px;padding:14px 18px;border-bottom:1px solid var(--border)}
+.auto-row:last-child{border-bottom:none}
+.auto-info{flex:1;min-width:0}
+.auto-name{font-size:13px;font-weight:700;margin-bottom:2px}
+.auto-desc{font-size:11.5px;color:var(--muted);line-height:1.5}
+.auto-err{font-size:11px;color:var(--red);margin-top:4px;display:none}
+.auto-err.show{display:block}
+.auto-ctrl{flex-shrink:0}
+
+/* Toggle switch */
+.switch{position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.switch .slider{position:absolute;cursor:pointer;inset:0;background:rgba(255,255,255,0.12);border:1px solid var(--border2);border-radius:24px;transition:.18s}
+.switch .slider::before{content:'';position:absolute;height:18px;width:18px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.18s}
+.switch input:checked + .slider{background:var(--gold);border-color:var(--gold)}
+.switch input:checked + .slider::before{transform:translateX(18px);background:#000}
+.switch input:disabled + .slider{opacity:0.5;cursor:default}
+
+/* Launcher cards */
+.launchers{display:flex;gap:14px;flex-wrap:wrap;max-width:1100px}
+.launcher{display:flex;align-items:center;gap:12px;flex:1;min-width:240px;text-decoration:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;transition:all .15s}
+.launcher:hover{border-color:rgba(201,168,76,0.35);background:var(--surface2)}
+.launcher .l-icon{font-size:22px;flex-shrink:0}
+.launcher .l-title{font-size:13px;font-weight:700;color:#fff}
+.launcher .l-sub{font-size:11px;color:var(--muted);margin-top:2px}
+.launcher .l-arrow{margin-left:auto;color:var(--muted);font-size:15px}
+
 #toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
 #toast.show{opacity:1}
 </style>
@@ -153,6 +185,7 @@ select.inp option{background:#1a1a1a;color:#fff}
   <div class="settings-sidebar">
     <div class="ss-label">Settings</div>
     <div class="ss-item active" id="navUsers">👥 Users &amp; Roles</div>
+    <div class="ss-item" onclick="document.getElementById('navAutomations').scrollIntoView({behavior:'smooth'})">⚡ Automations</div>
     <div class="ss-item disabled" title="Coming soon">🖥️ VA View <span class="ss-soon">Soon</span></div>
   </div>
 
@@ -217,6 +250,36 @@ select.inp option{background:#1a1a1a;color:#fff}
             <tr><td colspan="5" class="tbl-empty">Loading…</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- Automations -->
+      <div class="section-head" id="navAutomations">
+        <h2>Automations</h2>
+        <span class="section-count" id="autoCount"></span>
+      </div>
+      <div class="card-sub" style="max-width:1100px;margin:-6px 0 12px;">Turn the ClickUp automation workflows on or off. This mirrors the dashboard’s Automations tab — flip a switch here and it takes effect everywhere. Full editing (timing, lists) stays on the dashboard.</div>
+      <div class="card" style="padding:6px 0;">
+        <div class="auto-list" id="autoList">
+          <div class="auto-row"><div class="auto-info"><div class="auto-desc">Loading automations…</div></div></div>
+        </div>
+      </div>
+
+      <!-- Other settings -->
+      <div class="section-head">
+        <h2>Other settings</h2>
+      </div>
+      <div class="card-sub" style="max-width:1100px;margin:-6px 0 12px;">Jump to the tools that live elsewhere in the app.</div>
+      <div class="launchers">
+        <a class="launcher" href="/dashboard/admin.html">
+          <span class="l-icon">🤖</span>
+          <span><span class="l-title">AI Bot &amp; Conversations</span><span class="l-sub" style="display:block">Manage the assistant and message threads</span></span>
+          <span class="l-arrow">→</span>
+        </a>
+        <a class="launcher" href="/admin/email-marketing.html">
+          <span class="l-icon">📣</span>
+          <span><span class="l-title">Email &amp; SMS Marketing</span><span class="l-sub" style="display:block">Campaigns, drips, and broadcasts</span></span>
+          <span class="l-arrow">→</span>
+        </a>
       </div>
 
     </div>
@@ -528,6 +591,94 @@ document.getElementById('resetModal').addEventListener('click', function (e) {
   if (e.target === this) closeReset();
 });
 
+/* ─── Automations (ClickUp automation toggles) ─────────────────────────────
+   Uses the automation-config edge function directly with the anon key (no
+   session required) — same data the dashboard's Automations tab uses. */
+var _automations = [];
+
+function _autoHeaders() {
+  var key = (window.APP_CONFIG && APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  return { apikey: key, Authorization: 'Bearer ' + key };
+}
+
+function prettifyTrigger(t) {
+  return String(t || '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+}
+
+function renderAutomations() {
+  var list = document.getElementById('autoList');
+  var count = document.getElementById('autoCount');
+  if (!_automations.length) {
+    list.innerHTML = '<div class="auto-row"><div class="auto-info"><div class="auto-desc">No automations configured.</div></div></div>';
+    count.textContent = '';
+    return;
+  }
+  count.textContent = _automations.length + (_automations.length === 1 ? ' automation' : ' automations');
+  list.innerHTML = _automations.map(function (a, idx) {
+    var name = (a.display_name && String(a.display_name).trim()) ? a.display_name : prettifyTrigger(a.trigger_type);
+    var checked = a.enabled ? ' checked' : '';
+    return '<div class="auto-row">' +
+        '<div class="auto-info">' +
+          '<div class="auto-name">' + esc(name) + '</div>' +
+          (a.description ? '<div class="auto-desc">' + esc(a.description) + '</div>' : '') +
+          '<div class="auto-err" id="auto-err-' + idx + '">Couldn’t save — try again.</div>' +
+        '</div>' +
+        '<div class="auto-ctrl"><label class="switch">' +
+          '<input type="checkbox"' + checked + ' id="auto-sw-' + idx + '" onchange="toggleAutomation(' + idx + ', this.checked)">' +
+          '<span class="slider"></span>' +
+        '</label></div>' +
+      '</div>';
+  }).join('');
+}
+
+async function loadAutomations() {
+  var list = document.getElementById('autoList');
+  try {
+    var res = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/automation-config', { headers: _autoHeaders() });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var data = await res.json();
+    _automations = (data && data.configs) ? data.configs : [];
+    renderAutomations();
+  } catch (e) {
+    _automations = [];
+    document.getElementById('autoCount').textContent = '';
+    list.innerHTML = '<div class="auto-row"><div class="auto-info"><div class="auto-desc" style="color:var(--red)">Couldn’t load automations.</div></div></div>';
+  }
+}
+
+async function toggleAutomation(idx, enabled) {
+  var a = _automations[idx];
+  if (!a) return;
+  var sw = document.getElementById('auto-sw-' + idx);
+  var errEl = document.getElementById('auto-err-' + idx);
+  if (errEl) errEl.classList.remove('show');
+  // Optimistic update.
+  var prev = a.enabled;
+  a.enabled = enabled;
+  if (sw) sw.disabled = true;
+  try {
+    var res = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/automation-config/save', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, _autoHeaders()),
+      body: JSON.stringify({ id: a.id, enabled: enabled })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var out = await res.json();
+    if (out && out.config && typeof out.config.enabled === 'boolean') {
+      a.enabled = out.config.enabled;
+      if (sw) sw.checked = out.config.enabled;
+    }
+    showToast(enabled ? 'Automation enabled.' : 'Automation disabled.');
+  } catch (e) {
+    // Revert and surface an inline error.
+    a.enabled = prev;
+    if (sw) sw.checked = prev;
+    if (errEl) errEl.classList.add('show');
+  } finally {
+    if (sw) sw.disabled = false;
+  }
+}
+
 async function init() {
   // Populate the Add-User role select (default: VA).
   populateRoleSelect(document.getElementById('newRole'), 'va');
@@ -558,6 +709,7 @@ async function init() {
   document.getElementById('denyNotice').style.display = 'none';
   document.getElementById('mainScroll').style.display = '';
   await loadUsers();
+  loadAutomations();
 }
 
 init();
