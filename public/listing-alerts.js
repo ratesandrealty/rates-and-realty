@@ -91,7 +91,7 @@ const LA = window.ListingAlerts = {
         await this._call(Object.assign({ action:'update_alert', alert_id: editId,
           updates: { name:form.name, frequency:form.frequency, county:form.county, counties:counties, cities:form.cities, min_price:form.min_price, max_price:form.max_price, min_beds:form.min_beds, min_baths:form.min_baths } }, this._ctxOwner()));
       } else {
-        await this._call(Object.assign({ action:'create_alert',
+        await this._call(Object.assign({ action:'create_alert', skip_notify: true,
           alert: { name:form.name, frequency:form.frequency, counties:counties, cities:form.cities, min_price:form.min_price, max_price:form.max_price, min_beds:form.min_beds, min_baths:form.min_baths } }, this._ctxOwner()));
       }
     } catch(e) {
