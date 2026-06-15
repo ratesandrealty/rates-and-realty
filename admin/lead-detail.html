@@ -8474,7 +8474,7 @@ async function lpLoadChecklist(kind, bodyId, template){
     // loans). ignoreDuplicates relies on the (contact_id,kind,template_key) unique index.
     const seed = template.map((t,i)=>({contact_id:cid,kind:kind,label:t.label,category:t.category||null,template_key:t.key,sort_order:i}));
     await _authClient().from('processing_items').upsert(seed, { onConflict:'contact_id,kind,template_key', ignoreDuplicates:true });
-    let { data: items, error } = await _authClient().from('processing_items').select('*').eq('contact_id',cid).eq('kind',kind);
+    let { data: items, error } = await _authClient().from('processing_items').select('*').eq('contact_id',cid).eq('kind',kind).eq('dismissed',false);
     if(error) throw error;
     items = lpOrderItems(items||[], template);
     lpRenderItems(kind, body, items);
@@ -8484,7 +8484,7 @@ async function lpLoadChecklist(kind, bodyId, template){
 function lpRenderItems(kind, body, items){
   const statusSel = cur => LP_STATUSES.map(s=>'<option value="'+s+'"'+(s===(cur||'not_started')?' selected':'')+'>'+LP_STATUS_LABEL[s]+'</option>').join('');
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;';
-  const lpHeader = '<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr;gap:8px;padding:2px 6px 9px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.35);"><div></div><div>Task</div><div>Status</div><div>Due</div><div>Assigned to</div></div>';
+  const lpHeader = '<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr 22px;gap:8px;padding:2px 6px 9px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.35);"><div></div><div>Task</div><div>Status</div><div>Due</div><div>Assigned to</div><div></div></div>';
   body.innerHTML = lpHeader + items.map(it=>{
     const done = it.completed;
     const cdate = lpFmtDate(it.completed_at);
@@ -8492,12 +8492,13 @@ function lpRenderItems(kind, body, items){
       ? '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px;color:#27AE60;font-weight:600;">✓ Completed'+(cdate?' '+cdate:'')+' <span style="color:rgba(255,255,255,.45);font-weight:400;">· by</span> <select onchange="lpEdit(\''+it.id+'\',\'completed_by\',this.value)" style="background:rgba(39,174,96,.08);border:1px solid rgba(39,174,96,.3);border-radius:5px;color:#27AE60;font-size:10px;padding:1px 4px;">'+lpPersonSel(it.completed_by||'', '—')+'</select></div>'
       : '';
     return '<div class="lp-item" data-id="'+it.id+'" style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
-      +'<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr;gap:8px;align-items:start;">'
+      +'<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr 22px;gap:8px;align-items:start;">'
       +'<input type="checkbox" '+(done?'checked':'')+' onchange="lpToggle(\''+it.id+'\',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#C9A84C;margin-top:3px;">'
       +'<div><input type="text" value="'+lpEsc(it.label||'')+'" onchange="lpEdit(\''+it.id+'\',\'label\',this.value)" style="background:transparent;border:none;color:'+(done?'rgba(255,255,255,.4)':'#fff')+';font-size:13px;'+(done?'text-decoration:line-through;':'')+'outline:none;width:100%;">'+completedLine+'</div>'
       +'<select onchange="lpStatus(\''+it.id+'\',this.value)" style="'+inp+'">'+statusSel(it.status)+'</select>'
       +'<input type="date" value="'+(it.due_date||'')+'" onchange="lpEdit(\''+it.id+'\',\'due_date\',this.value)" style="'+inp+'">'
       +'<select onchange="lpEdit(\''+it.id+'\',\'assigned_to\',this.value)" style="'+inp+'">'+lpPersonSel(it.assigned_to||'', 'Unassigned')+'</select>'
+      +'<button onclick="lpDeleteItem(\''+it.id+'\',\''+kind+'\','+(it.template_key?'true':'false')+')" title="Remove this item" style="background:transparent;border:none;color:rgba(255,255,255,.25);font-size:16px;line-height:1;cursor:pointer;padding:0;margin-top:2px;">×</button>'
       +'</div>'
       +'<div style="margin-left:32px;margin-top:6px;"><input type="text" placeholder="💬 Add comment / note…" value="'+lpEsc(it.notes||'')+'" onchange="lpEdit(\''+it.id+'\',\'notes\',this.value)" style="width:100%;max-width:680px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:#bbb;font-size:11px;padding:5px 9px;"></div>'
       +'</div>';
@@ -8530,6 +8531,14 @@ async function lpStatus(id, value){
 async function lpAddItem(kind){
   const cid = lpCid(); if(!cid) return;
   await _authClient().from('processing_items').insert([{contact_id:cid,kind:kind,label:'New item',sort_order:999}]);
+  lpLoadChecklist(kind, kind==='intake'?'lpIntakeBody':'lpDocBody', kind==='intake'?LP_INTAKE_TEMPLATE:LP_DOC_TEMPLATE);
+}
+async function lpDeleteItem(id, kind, isTemplate){
+  if(!confirm('Remove this checklist item from this loan?')) return;
+  try{
+    if(isTemplate){ await _authClient().from('processing_items').update({ dismissed:true, updated_at:new Date().toISOString() }).eq('id', id); }
+    else { await _authClient().from('processing_items').delete().eq('id', id); }
+  }catch(e){ console.warn('[lpDeleteItem]', e.message); }
   lpLoadChecklist(kind, kind==='intake'?'lpIntakeBody':'lpDocBody', kind==='intake'?LP_INTAKE_TEMPLATE:LP_DOC_TEMPLATE);
 }
 async function lpLoadConditions(cid){
