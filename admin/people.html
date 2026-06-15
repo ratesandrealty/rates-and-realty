@@ -465,7 +465,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       <div style="margin-bottom:14px;">
         <label class="apm-label">Referral Partner</label>
         <div style="position:relative;">
-          <input id="nf_referral_search" type="text" class="apm-input" placeholder="Search contacts by name..." autocomplete="off" oninput="apmSearchReferral(this.value)">
+          <input id="nf_referral_search" type="text" class="apm-input" placeholder="Search referral partners..." autocomplete="off" oninput="apmSearchReferral(this.value)">
           <div id="apm-referral-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;max-height:180px;overflow-y:auto;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,0.5);margin-top:2px;"></div>
           <input id="nf_referral_id" type="hidden">
           <div id="apm-referral-selected" style="display:none;margin-top:6px;padding:6px 10px;background:#C9A84C11;border:1px solid #C9A84C44;border-radius:6px;align-items:center;gap:8px;">
@@ -1466,16 +1466,24 @@ function apmToggleTag(tag, btn) {
 
 async function apmSearchReferral(q) {
   var box = document.getElementById('apm-referral-results');
-  if (!q || q.length < 2) { box.style.display = 'none'; return; }
-  var r = await _authClient().from('contacts')
-    .select('id,first_name,last_name,email,phone')
-    .or('first_name.ilike.*' + q + '*,last_name.ilike.*' + q + '*,email.ilike.*' + q + '*')
-    .limit(8);
-  var data = r.data || [];
+  if (!q || !q.trim()) { box.style.display = 'none'; return; }
+  // Search the referral_partners list (loaded on page init); lazy-load if not ready yet.
+  if (!_referralPartners || !_referralPartners.length) {
+    try {
+      var rr = await _authClient().from('referral_partners').select('id,first_name,last_name,company').order('first_name');
+      _referralPartners = rr.data || [];
+    } catch (e) { console.warn('[apmSearchReferral] partner load failed', e); }
+  }
+  var needle = q.toLowerCase();
+  var matches = (_referralPartners || []).filter(function(p) {
+    return ((p.first_name || '') + ' ' + (p.last_name || '') + ' ' + (p.company || '')).toLowerCase().indexOf(needle) !== -1;
+  }).slice(0, 8);
   box.style.display = 'block';
-  box.innerHTML = (data||[]).map(function(c) {
-    return '<div onclick="apmSelectReferral(\'' + c.id + '\',\'' + (c.first_name + ' ' + (c.last_name||'')).trim().replace(/'/g,"\\'") + '\')" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #1a1a1a;transition:background .1s;" onmouseover="this.style.background=\'#1a1a1a\'" onmouseout="this.style.background=\'transparent\'"><div style="color:#e0e0e0;font-size:13px;font-weight:500;">' + c.first_name + ' ' + (c.last_name||'') + '</div><div style="color:#555;font-size:11px;">' + (c.email||c.phone||'') + '</div></div>';
-  }).join('') || '<div style="padding:10px 12px;color:#555;font-size:13px;">No results</div>';
+  box.innerHTML = matches.map(function(p) {
+    var name = ((p.first_name || '') + ' ' + (p.last_name || '')).trim();
+    var sub = p.company || '';
+    return '<div onclick="apmSelectReferral(\'' + p.id + '\',\'' + name.replace(/'/g,"\\'") + '\')" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #1a1a1a;transition:background .1s;" onmouseover="this.style.background=\'#1a1a1a\'" onmouseout="this.style.background=\'transparent\'"><div style="color:#e0e0e0;font-size:13px;font-weight:500;">' + name + '</div><div style="color:#555;font-size:11px;">' + sub + '</div></div>';
+  }).join('') || '<div style="padding:10px 12px;color:#555;font-size:13px;">No matching partners</div>';
 }
 function apmSelectReferral(id, name) {
   document.getElementById('nf_referral_id').value = id;
@@ -1506,7 +1514,7 @@ async function savePerson() {
     preferred_language: document.getElementById('nf_language').value || null,
     loan_type: document.getElementById('nf_loan').value || null,
     pipeline_status: document.getElementById('nf_stage').value || 'New Lead',
-    referred_by_contact_id: document.getElementById('nf_referral_id').value || null,
+    referral_partner_id: document.getElementById('nf_referral_id').value || null,
     address: document.getElementById('nf_street').value.trim() || null,
     city: document.getElementById('nf_city').value.trim() || null,
     state: document.getElementById('nf_state').value.trim() || null,
@@ -1519,11 +1527,9 @@ async function savePerson() {
   Object.keys(payload).forEach(function(k) { if (payload[k] === null) delete payload[k]; });
   var r = await _authClient().from('contacts').insert(payload).select();
   if (!r.error) {
-    var nc = r.data || [];
-    if (nc && nc[0]) {
-      var { error: _ldNewErr } = await _authClient().from('leads').insert({ contact_id:nc[0].id, status:payload.pipeline_status||'New Lead', source:payload.source, loan_type:payload.loan_type, created_at:new Date().toISOString(), updated_at:new Date().toISOString() });
-      if (_ldNewErr) console.warn('[new-lead insert]', _ldNewErr);
-    }
+    // `leads` is a VIEW over `contacts` whose INSTEAD OF INSERT trigger always inserts a
+    // NEW contacts row — so the insert above already created the lead. Inserting into
+    // `leads` here was minting a second, empty "Unknown" contact. Removed.
     closeNewModal();
     await loadPeople();
     showToast('Person added!');
