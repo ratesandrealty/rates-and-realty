@@ -14861,6 +14861,30 @@ async function load1003(overrideCid) {
     if (data.co_borrower_decl_foreclosure) sr('cb_foreclosure', 'yes');
     if (data.co_borrower_decl_bankruptcy) sr('cb_bankruptcy', 'yes');
 
+    // Read SSN back from the secure admin-only vault (application_ssn).
+    // RLS decides who sees the row; non-permitted users get nothing and the
+    // fields stay blank. Fire-and-forget so it never blocks rendering.
+    try {
+      if (data && data.id) {
+        _authClient()
+          .from('application_ssn')
+          .select('ssn,co_borrower_ssn')
+          .eq('application_id', data.id)
+          .maybeSingle()
+          .then(function (res) {
+            var v = res && res.data ? res.data : null;
+            if (!v) return; // not permitted to see SSN, or none on file
+            if (v.ssn) { try { sv('f_ssn', v.ssn); } catch (e) {} }
+            if (v.co_borrower_ssn) { try { sv('cb_ssn', v.co_borrower_ssn); } catch (e) {} }
+            // also refresh the read-only "SSN (last 4)" summary if present
+            try {
+              var el = document.getElementById('f_ssn');
+              if (el) el.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (e) {}
+          });
+      }
+    } catch (e) { /* ignore */ }
+
     // Attach auto-save after fields are populated
     attachAutoSave();
     // Hydrate the Loan Summary panel + compute initial DTI/LTV
