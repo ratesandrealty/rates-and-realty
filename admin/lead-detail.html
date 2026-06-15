@@ -2301,6 +2301,7 @@
         <div class="lp-card"><div class="lp-h">🗂️ Tasks <a onclick="switchTab('tasks', document.querySelector('.ld-tab-btn[onclick*=tasks]'))">Manage →</a></div><div id="lpTasksBody"></div></div>
         <div class="lp-card lp-stub"><div class="lp-h">🧾 Third-Party Orders</div><div class="lp-soon">Title / HOI / Escrow order tracking — wiring in Phase 2.</div></div>
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
+        <div class="lp-card"><div class="lp-h">🏠 Appraisal Order</div><div id="lpApOrderBody"></div></div>
         <div class="lp-card"><div class="lp-h">🔑 Appraisal Portal</div><div id="lpAppraisalPortalBody"></div></div>
         <div class="lp-card lp-stub"><div class="lp-h">✍️ LOE Center</div><div class="lp-soon">Letter-of-explanation builder + e-sign — wiring in Phase 2.</div></div>
         <div class="lp-card lp-stub"><div class="lp-h">🖊️ E-Signature Status</div><div class="lp-soon">Reads signature_requests — wiring in Phase 2.</div></div>
@@ -8412,6 +8413,7 @@ async function lpLoadProcessing(){
   lpLoadTasks(cid);
   lpLoadKeyDates(cid);
   lpLoadContacts(cid);
+  lpLoadApOrder(cid);
   lpLoadAppraisalPortal(cid);
 }
 function lpGoToLender(name){
@@ -8613,6 +8615,42 @@ async function lpSaveAppraisalPortal(){
 }
 function lpOpenAppraisalSite(){ const e = document.getElementById('lpApWebsite'); let u = e && e.value ? e.value.trim() : ''; if(!u) return; if(!/^https?:\/\//i.test(u)) u = 'https://'+u; window.open(u, '_blank', 'noopener'); }
 function lpTogglePass(){ const e = document.getElementById('lpApPass'); if(e) e.type = e.type==='password' ? 'text' : 'password'; }
+const LP_APPR_TYPES = ['Conventional','FHA','VA','USDA','Other'];
+const LP_APPR_FORMS = [
+  ['1004','1004 — Single-Family (URAR)'],
+  ['1073','1073 — Condominium'],
+  ['1025','1025 — 2–4 Unit (multi-family)'],
+  ['1004C','1004C — Manufactured Home'],
+  ['2055','2055 — Exterior-Only (drive-by)'],
+  ['PIW','PIW / Appraisal Waiver']
+];
+async function lpLoadApOrder(cid){
+  const el = document.getElementById('lpApOrderBody'); if(!el) return;
+  let r = {};
+  try{ const { data } = await _authClient().from('loan_contacts').select('appraisal_type,appraisal_form,appraisal_rent_1007,appraisal_oper_216,appraisal_rush,appraisal_instructions').eq('contact_id',cid).eq('role','appraisal_company').limit(1); r = (data && data[0]) || {}; }catch(_){}
+  const lbl = 'font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;';
+  const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:6px 9px;width:100%;box-sizing:border-box;';
+  const typeOpts = '<option value="">— Select —</option>'+LP_APPR_TYPES.map(t=>'<option'+(r.appraisal_type===t?' selected':'')+'>'+t+'</option>').join('');
+  const formOpts = '<option value="">— Select form —</option>'+LP_APPR_FORMS.map(f=>'<option value="'+f[0]+'"'+(r.appraisal_form===f[0]?' selected':'')+'>'+lpEsc(f[1])+'</option>').join('');
+  const ck = on => on ? ' checked' : '';
+  el.innerHTML =
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;align-items:end;">'
+    +'<div><div style="'+lbl+'">Appraisal Type</div><select id="lpApType" onchange="lpSaveApOrder()" style="'+inp+'">'+typeOpts+'</select></div>'
+    +'<div><div style="'+lbl+'">Report Form</div><select id="lpApForm" onchange="lpSaveApOrder()" style="'+inp+'">'+formOpts+'</select></div>'
+    +'</div>'
+    +'<div style="display:flex;gap:18px;flex-wrap:wrap;margin:12px 0 2px;font-size:12px;color:#ccc;">'
+    +'<label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="checkbox" id="lpApRent" onchange="lpSaveApOrder()"'+ck(r.appraisal_rent_1007)+'> + 1007 Rent Schedule</label>'
+    +'<label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="checkbox" id="lpApOper" onchange="lpSaveApOrder()"'+ck(r.appraisal_oper_216)+'> + 216 Operating Income</label>'
+    +'<label style="display:flex;gap:6px;align-items:center;cursor:pointer;color:#E0B84C;font-weight:600;"><input type="checkbox" id="lpApRush" onchange="lpSaveApOrder()"'+ck(r.appraisal_rush)+'> 🚨 Rush</label>'
+    +'</div>'
+    +'<div style="margin-top:10px;"><div style="'+lbl+'">Special Instructions (gate code, contact, value concerns…)</div><textarea id="lpApInstr" rows="2" onchange="lpSaveApOrder()" placeholder="Anything the appraiser / AMC needs to know" style="'+inp+'resize:vertical;">'+lpEsc(r.appraisal_instructions||'')+'</textarea></div>';
+}
+async function lpSaveApOrder(){
+  const cid = lpCid(); if(!cid) return;
+  const g = id => { const e = document.getElementById(id); return e ? (e.value||null) : null; };
+  const ck = id => { const e = document.getElementById(id); return e ? !!e.checked : false; };
+  try{ await _authClient().from('loan_contacts').upsert({ contact_id:cid, role:'appraisal_company', appraisal_type:g('lpApType'), appraisal_form:g('lpApForm'), appraisal_rent_1007:ck('lpApRent'), appraisal_oper_216:ck('lpApOper'), appraisal_rush:ck('lpApRush'), appraisal_instructions:g('lpApInstr'), updated_at:new Date().toISOString() }, { onConflict:'contact_id,role' }); }catch(e){ console.warn('[lpSaveApOrder]', e.message); }
+}
 async function lpLoadKeyDates(cid){
   const el = document.getElementById('lpDatesBody'); if(!el) return;
   let map = {};
