@@ -1466,6 +1466,7 @@ let _fvSelectedContactId = null;  // currently-selected borrower in left column
 let _fvFolderStack = [];          // breadcrumb: [{id, name}, ...]
 let _fvFileCounts = {};
 let _fvFiles = {};
+let _fvFolderCounts = {};          // subfolderId → document count (lazy-loaded, shown as 📄 N)
 let _fvViewerState = null; // { contactId, files, index, keyHandler }
 
 // ── OAUTH (Google Identity Services) ──────────────────────────────
@@ -2189,6 +2190,7 @@ async function _fvUploadFiles(contact, files, targetFolderId) {
 
   // Destination priority: explicit target (folder-row drop) → folder currently open → borrower root.
   const folderId = targetFolderId || window._fvCurrentFolderId || contact.gdrive_folder_id;
+  delete _fvFolderCounts[folderId]; // force the 📄 badge to refresh after this upload
 
   // Acquire the Google Drive token now, while we still have the user gesture from the
   // drop/click, so a blocked or expired consent popup fails loudly instead of silently per file.
@@ -2352,6 +2354,49 @@ async function _fvRefreshCount(contactId, folderId) {
   await _fvLoadFiles(folderId);
   const countSpan = document.querySelector(`[data-fv-count="${contactId}"]`);
   if (countSpan) countSpan.textContent = (_fvFileCounts[folderId] || 0) + " files";
+}
+
+// Label for a folder row's subtitle: 📄 N once counted, "Folder" until then.
+function _fvFolderCountLabel(n) {
+  if (typeof n !== "number") return "Folder";
+  return "📄 " + n; // 📄 N
+}
+
+// Count the documents inside each given subfolder in ONE Drive query, then paint badges.
+async function _fvLoadFolderCounts(folderIds) {
+  // Never trigger an OAuth popup from a render — only run if a token is already cached.
+  if (typeof _fvCachedToken === "function" && !_fvCachedToken()) return;
+  const ids = (folderIds || []).filter((id) => id && typeof _fvFolderCounts[id] !== "number");
+  if (!ids.length) return;
+  try {
+    const headers = await _fvAuthHeaders();
+    const clause = ids.map((id) => `'${id}' in parents`).join(" or ");
+    const q = encodeURIComponent(`(${clause}) and trashed = false`);
+    const fields = encodeURIComponent("files(id,parents,mimeType)");
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&pageSize=1000`,
+      { headers }
+    );
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const files = Array.isArray(data.files) ? data.files : [];
+    ids.forEach((id) => { _fvFolderCounts[id] = 0; }); // empty folders resolve to 0, not a spinner
+    files.forEach((file) => {
+      if (file.mimeType === "application/vnd.google-apps.folder") return; // count documents only
+      (file.parents || []).forEach((p) => {
+        if (typeof _fvFolderCounts[p] === "number" && ids.indexOf(p) !== -1) _fvFolderCounts[p]++;
+      });
+    });
+  } catch (e) {
+    console.error("[FileVault] folder counts failed:", e);
+  }
+  // Paint badges for every folder we now have a number for.
+  Object.keys(_fvFolderCounts).forEach((id) => {
+    if (typeof _fvFolderCounts[id] !== "number") return;
+    document.querySelectorAll(`[data-fv-foldercount="${id}"]`).forEach((el) => {
+      el.textContent = _fvFolderCountLabel(_fvFolderCounts[id]);
+    });
+  });
 }
 
 function _fvFileIcon(mime) {
@@ -2518,6 +2563,10 @@ function _fvRenderFileListPanel(contact) {
     }
   });
 
+  // Lazy-load document counts for the subfolders shown, then fill in their 📄 badges.
+  const _fvSubIds = folders.map((f) => f.id);
+  if (_fvSubIds.length) _fvLoadFolderCounts(_fvSubIds);
+
   // Highlight the active viewer row if still in this folder.
   if (_fvViewerState && String(_fvViewerState.contactId) === String(contact.id)) {
     const activeId = _fvViewerState.files[_fvViewerState.index]?.id;
@@ -2538,7 +2587,7 @@ function _fvFileRowHtml(f) {
         <div style="font-size:18px;flex-shrink:0;">&#128193;</div>
         <div style="flex:1;min-width:0;">
           <div class="fv-name" style="color:#C9A84C;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</div>
-          <div style="color:#555;font-size:11px;margin-top:1px;">Folder</div>
+          <div data-fv-foldercount="${_fvEscape(f.id)}" style="color:#7a6a3a;font-size:11px;margin-top:1px;">${_fvFolderCountLabel(_fvFolderCounts[f.id])}</div>
         </div>
         <div style="color:#C9A84C44;font-size:11px;flex-shrink:0;">&#8594;</div>
       </div>
