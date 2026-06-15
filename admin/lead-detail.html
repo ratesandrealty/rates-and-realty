@@ -2058,33 +2058,6 @@
         </div>
       </div>
 
-      <!-- ═══ DOCUMENT EXPIRATIONS ═══ -->
-      <!-- Two date fields the daily 8am proactive-followups cron watches:
-           preapproval_expiry (stale_lead at 30d out, urgent at 48h) and
-           credit_report_pulled_date (alert when >90d old; reports valid ~120d).
-           Read/written by save1003 / load1003 by id; auto-save + showPicker wired
-           in _wirePricingAutoSave() alongside the Pricing & Lender fields. -->
-      <div class="ld-section" style="padding:24px; border-bottom:1px solid rgba(255,255,255,0.06);">
-        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#C9A84C;padding:16px 0 10px;border-bottom:1px solid rgba(201,168,76,0.2);margin-bottom:16px;">Document Expirations</div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:14px;">Watched by the daily 8am follow-up digest. The bot will alert when these are expiring or aging out.</div>
-
-        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
-          <div>
-            <label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Preapproval Expiry</label>
-            <input id="docPreapprovalExpiry" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
-            <div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px;">Alerts at 30 days out.</div>
-          </div>
-          <div>
-            <label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Credit Pulled Date</label>
-            <input id="docCreditPulledDate" type="date" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
-            <div style="display:flex;gap:6px;margin-top:6px;">
-              <button type="button" id="docCreditPulledToday" class="doc-quickset" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;cursor:pointer;letter-spacing:0.5px;">Today</button>
-            </div>
-            <div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px;">Alerts when older than 90 days (reports valid ~120d).</div>
-          </div>
-        </div>
-      </div>
-
       <!-- ═══ DOCUMENTS ═══ -->
       <!-- Read-only list of borrower documents the SMS assistant uploaded
            (texted photos → borrower-documents bucket + an uploaded_documents
@@ -8562,7 +8535,9 @@ const LP_KEY_DATES = [
   {key:'cd_out',label:'CD Out'},
   {key:'signing',label:'Signing'},
   {key:'funding',label:'Funding'},
-  {key:'coe',label:'Close of Escrow'}
+  {key:'coe',label:'Close of Escrow'},
+  {key:'preapproval_expiry',label:'Preapproval Expiry',app:'preapproval_expiry'},
+  {key:'credit_pulled',label:'Credit Pulled Date',app:'credit_report_pulled_date'}
 ];
 const LP_CONTACT_ROLES = [
   {key:'listing_agent',label:'Listing Agent'},
@@ -8642,11 +8617,21 @@ async function lpLoadKeyDates(cid){
   const el = document.getElementById('lpDatesBody'); if(!el) return;
   let map = {};
   try{ const { data } = await _authClient().from('loan_key_dates').select('date_key,date_value').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.date_key]=r.date_value; }); }catch(_){}
+  // App-backed dates live on mortgage_applications — the daily proactive-followups cron watches them there.
+  try{ const app = await _fetchAppRowForContact(cid); if(app){ if(app.preapproval_expiry) map['preapproval_expiry']=String(app.preapproval_expiry).slice(0,10); if(app.credit_report_pulled_date) map['credit_pulled']=String(app.credit_report_pulled_date).slice(0,10); } }catch(_){}
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:5px 7px;width:100%;';
-  el.innerHTML = LP_KEY_DATES.map(d=>'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div><input type="date" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value)" style="'+inp+'"></div>').join('');
+  el.innerHTML = LP_KEY_DATES.map(d=>'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div><input type="date" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value,\''+(d.app||'')+'\')" style="'+inp+'"></div>').join('');
 }
-async function lpSaveDate(key, value){
+async function lpSaveDate(key, value, appcol){
   const cid = lpCid(); if(!cid) return;
+  if(appcol){
+    try{
+      const app = await _fetchAppRowForContact(cid);
+      if(app && app.id){ await _authClient().from('mortgage_applications').update({[appcol]:value||null, updated_at:new Date().toISOString()}).eq('id',app.id); }
+      else { await _authClient().from('mortgage_applications').insert({contact_id:cid,[appcol]:value||null}); }
+    }catch(e){ console.warn('[lpSaveDate app]', e.message); }
+    return;
+  }
   try{ await _authClient().from('loan_key_dates').upsert({contact_id:cid,date_key:key,date_value:value||null,updated_at:new Date().toISOString()}, {onConflict:'contact_id,date_key'}); }catch(e){ console.warn('[lpSaveDate]', e.message); }
 }
 async function lpLoadContacts(cid){
@@ -14017,9 +14002,8 @@ async function save1003() {
     closed_rate_date: toISODate(gv('pricingClosedDate')),
     discount_fee_pct: gnum('pricingDiscountFee'),
     origination_fee_pct: gnum('pricingOriginationFee'),
-    // ── Document Expirations ── (watched by the proactive-followups cron)
-    preapproval_expiry: toISODate(gv('docPreapprovalExpiry')),
-    credit_report_pulled_date: toISODate(gv('docCreditPulledDate')),
+    // Document Expirations (preapproval_expiry, credit_report_pulled_date) are now
+    // edited in Loan Processing -> Critical Dates, which writes them directly.
     updated_at: new Date().toISOString()
   };
 
