@@ -12,12 +12,20 @@
 // read window.APP_CONFIG once and reuse the result.
 let _cachedSupabaseConfig = null;
 function getSupabaseConfig() {
-  if (_cachedSupabaseConfig && _cachedSupabaseConfig.key) return _cachedSupabaseConfig;
-  _cachedSupabaseConfig = {
-    url: window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co',
-    key: window.APP_CONFIG?.SUPABASE_ANON_KEY
-  };
-  return _cachedSupabaseConfig;
+  if (!_cachedSupabaseConfig || !_cachedSupabaseConfig.key) {
+    _cachedSupabaseConfig = {
+      url: window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co',
+      key: window.APP_CONFIG?.SUPABASE_ANON_KEY
+    };
+  }
+  // contacts/uploaded_documents are RLS-locked to logged-in users, so reads must carry
+  // the user's session JWT (stored by the login page), not the anon key.
+  var _auth = _cachedSupabaseConfig.key;
+  try {
+    var _s = JSON.parse(localStorage.getItem('sb_session') || 'null');
+    if (_s && _s.access_token) _auth = _s.access_token;
+  } catch (e) {}
+  return { url: _cachedSupabaseConfig.url, key: _cachedSupabaseConfig.key, auth: _auth };
 }
 
 import { requireAdmin } from "/api/auth-api.js";
@@ -1843,11 +1851,11 @@ function _fvBindPanels() {
 }
 
 async function _fvLoadContacts() {
-  const { url, key } = getSupabaseConfig();
+  const { url, key, auth } = getSupabaseConfig();
   try {
     const res = await fetch(
       `${url}/rest/v1/contacts?select=id,first_name,last_name,email,pipeline_status,gdrive_folder_id,gdrive_folder_url&order=last_name.asc.nullslast`,
-      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      { headers: { apikey: key, Authorization: `Bearer ${auth}` } }
     );
     const data = await res.json();
     _fvContacts = Array.isArray(data) ? data : [];
@@ -2265,13 +2273,13 @@ async function _fvCreateFolder(contact, btn) {
     if (!res.ok) throw new Error("Webhook failed: HTTP " + res.status);
 
     // Poll for the writeback — n8n creates the folder and PATCHes contacts.
-    const { url, key } = getSupabaseConfig();
+    const { url, key, auth } = getSupabaseConfig();
     let folderId = null, folderUrl = null;
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       const pollRes = await fetch(
         `${url}/rest/v1/contacts?id=eq.${encodeURIComponent(contact.id)}&select=gdrive_folder_id,gdrive_folder_url`,
-        { headers: { apikey: key, Authorization: "Bearer " + key } }
+        { headers: { apikey: key, Authorization: "Bearer " + auth } }
       );
       const rows = await pollRes.json();
       if (rows && rows[0] && rows[0].gdrive_folder_id) {
