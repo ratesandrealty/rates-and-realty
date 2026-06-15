@@ -67,6 +67,33 @@
     window.location.replace('/auth/admin-login.html?redirect=' + encodeURIComponent(path + search));
   }
 
+  // Full-screen overlay shown when a non-admin hits an admin-only page.
+  function denyAccess() {
+    const overlay = document.createElement('div');
+    overlay.setAttribute('style', [
+      'position:fixed', 'inset:0', 'z-index:999999',
+      'background:#0a0a0a', 'color:#fff',
+      'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',
+      'text-align:center', 'gap:14px', 'padding:24px',
+      "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+    ].join(';'));
+    overlay.innerHTML =
+      '<div style="font-size:38px">🔒</div>' +
+      '<div style="font-size:20px;font-weight:800;letter-spacing:-0.3px">Access restricted</div>' +
+      '<div style="font-size:13px;color:rgba(255,255,255,0.55);max-width:360px;line-height:1.5">' +
+        'This page is limited to administrators.</div>' +
+      '<a href="/admin/people.html" style="margin-top:6px;text-decoration:none;background:#c9a84c;color:#000;' +
+        'font-size:12px;font-weight:700;padding:9px 18px;border-radius:8px">Go to my workspace</a>';
+    function mount() {
+      document.body.appendChild(overlay);
+    }
+    if (document.body) {
+      mount();
+    } else {
+      document.addEventListener('DOMContentLoaded', mount);
+    }
+  }
+
   // Run the guard immediately (do not wait for DOMContentLoaded — we want to redirect
   // before unauthenticated page scripts start firing fetches).
   (async () => {
@@ -107,6 +134,40 @@
       }
       window.location.replace('/auth/admin-login.html');
     };
+
+    // ── Role-based page gating ──────────────────────────────────────────────
+    // Resolve the user's app role (cached per-session). Admin is always allowed
+    // everywhere; any page not listed in PAGE_ACCESS is open to all staff.
+    let role = sessionStorage.getItem('rnr_app_role');
+    if (!role) {
+      try {
+        const { data: r } = await client.rpc('current_app_role');
+        role = r || 'none';
+        sessionStorage.setItem('rnr_app_role', role);
+      } catch (err) {
+        // Transient failure: never strand the user (especially admins). Allow.
+        console.warn('[auth-guard] current_app_role failed, allowing page:', err);
+        role = null;
+      }
+    }
+
+    if (role && role !== 'admin') {
+      const PAGE_ACCESS = {
+        'settings.html':           ['admin'],
+        'earnings-dashboard.html': ['admin'],
+        'reports.html':            ['admin'],
+        'insights.html':           ['admin'],
+        'email-marketing.html':    ['admin'],
+        'drip-builder.html':       ['admin'],
+        'emc-import.html':         ['admin'],
+      };
+      const filename = window.location.pathname.split('/').pop();
+      const allowed = PAGE_ACCESS[filename];
+      if (allowed && allowed.indexOf(role) === -1) {
+        denyAccess();
+        return;
+      }
+    }
 
     // Fill #adminUserEmail when the DOM is ready.
     function fillEmail() {
