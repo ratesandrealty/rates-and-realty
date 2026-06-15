@@ -2320,12 +2320,14 @@
         <div class="lp-card"><div class="lp-h">🚦 Processing Timeline</div><div id="lpTimelineBody"></div></div>
         <div class="lp-card"><div class="lp-h">📌 Loan Snapshot</div>
           <div id="lpSnapshotBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;"></div></div>
+        <div class="lp-card"><div class="lp-h">📅 Critical Dates</div>
+          <div id="lpDatesBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;"></div></div>
         <div class="lp-card"><div class="lp-h">✅ Intake / Setup Checklist</div><div id="lpIntakeBody"></div></div>
         <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
         <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
         <div class="lp-card"><div class="lp-h">🗂️ Tasks <a onclick="switchTab('tasks', document.querySelector('.ld-tab-btn[onclick*=tasks]'))">Manage →</a></div><div id="lpTasksBody"></div></div>
         <div class="lp-card lp-stub"><div class="lp-h">🧾 Third-Party Orders</div><div class="lp-soon">Title / HOI / Escrow order tracking — wiring in Phase 2.</div></div>
-        <div class="lp-card lp-stub"><div class="lp-h">📇 Contacts (HOI · Title · Escrow · Realtor)</div><div class="lp-soon">Third-party party directory — wiring in Phase 2.</div></div>
+        <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
         <div class="lp-card lp-stub"><div class="lp-h">✍️ LOE Center</div><div class="lp-soon">Letter-of-explanation builder + e-sign — wiring in Phase 2.</div></div>
         <div class="lp-card lp-stub"><div class="lp-h">🖊️ E-Signature Status</div><div class="lp-soon">Reads signature_requests — wiring in Phase 2.</div></div>
         <div class="lp-card lp-stub"><div class="lp-h">🌅 VA Daily Tasks</div><div class="lp-soon">Per-assignee ClickUp queue — wiring in Phase 2.</div></div>
@@ -8434,6 +8436,8 @@ async function lpLoadProcessing(){
   lpLoadChecklist('doc','lpDocBody',LP_DOC_TEMPLATE);
   lpLoadConditions(cid);
   lpLoadTasks(cid);
+  lpLoadKeyDates(cid);
+  lpLoadContacts(cid);
 }
 async function lpRenderSnapshot(cid){
   const el = document.getElementById('lpSnapshotBody'); if(!el) return;
@@ -8537,6 +8541,63 @@ async function lpLoadConditions(cid){
     const badge = s => { const col = s==='cleared'?'#27AE60':(s==='pending'?'#C9A84C':'#888'); return '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:'+col+'22;color:'+col+';text-transform:uppercase;letter-spacing:.5px;">'+lpEsc(s||'open')+'</span>'; };
     body.innerHTML = data.map(c=>'<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);"><span style="font-size:12px;color:#ddd;">'+lpEsc(c.condition_text||'')+(c.category?' <span style="color:#777;">· '+lpEsc(c.category)+'</span>':'')+'</span>'+badge(c.status)+'</div>').join('');
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load conditions.</div>'; }
+}
+const LP_KEY_DATES = [
+  {key:'contract_acceptance',label:'Contract Acceptance'},
+  {key:'emd_due',label:'Earnest Money Due'},
+  {key:'inspection_deadline',label:'Inspection Deadline'},
+  {key:'appraisal_due',label:'Appraisal Due'},
+  {key:'loan_contingency',label:'Loan Contingency'},
+  {key:'disclosures_due',label:'Disclosures Due'},
+  {key:'cd_out',label:'CD Out'},
+  {key:'signing',label:'Signing'},
+  {key:'funding',label:'Funding'},
+  {key:'coe',label:'Close of Escrow'}
+];
+const LP_CONTACT_ROLES = [
+  {key:'listing_agent',label:'Listing Agent'},
+  {key:'buyer_agent',label:'Buyer Agent'},
+  {key:'hoi_agent',label:'HOI Agent'},
+  {key:'title_officer',label:'Title Officer'},
+  {key:'escrow_officer',label:'Escrow Officer'},
+  {key:'lender_ae',label:'Lender AE'},
+  {key:'underwriter',label:'Underwriter'},
+  {key:'appraisal_company',label:'Appraisal Company'}
+];
+async function lpLoadKeyDates(cid){
+  const el = document.getElementById('lpDatesBody'); if(!el) return;
+  let map = {};
+  try{ const { data } = await _authClient().from('loan_key_dates').select('date_key,date_value').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.date_key]=r.date_value; }); }catch(_){}
+  const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:5px 7px;width:100%;';
+  el.innerHTML = LP_KEY_DATES.map(d=>'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div><input type="date" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value)" style="'+inp+'"></div>').join('');
+}
+async function lpSaveDate(key, value){
+  const cid = lpCid(); if(!cid) return;
+  try{ await _authClient().from('loan_key_dates').upsert({contact_id:cid,date_key:key,date_value:value||null,updated_at:new Date().toISOString()}, {onConflict:'contact_id,date_key'}); }catch(e){ console.warn('[lpSaveDate]', e.message); }
+}
+async function lpLoadContacts(cid){
+  const el = document.getElementById('lpContactsBody'); if(!el) return;
+  let map = {};
+  try{ const { data } = await _authClient().from('loan_contacts').select('*').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.role]=r; }); }catch(_){}
+  const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;width:100%;';
+  const grid = 'display:grid;grid-template-columns:150px 1fr 1fr 120px 1.4fr;gap:8px;min-width:760px;';
+  const header = '<div style="'+grid+'padding:0 4px 8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);"><div>Role</div><div>Name</div><div>Company</div><div>Phone</div><div>Email</div></div>';
+  el.innerHTML = header + LP_CONTACT_ROLES.map(r=>{
+    const c = map[r.key]||{};
+    return '<div class="lp-contact" data-role="'+r.key+'" style="'+grid+'align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+      +'<div style="font-size:11px;font-weight:600;color:#C9A84C;">'+r.label+'</div>'
+      +'<input data-f="name" type="text" placeholder="Name" value="'+lpEsc(c.name||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'<input data-f="company" type="text" placeholder="Company" value="'+lpEsc(c.company||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'<input data-f="phone" type="text" placeholder="Phone" value="'+lpEsc(c.phone||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'<input data-f="email" type="email" placeholder="Email" value="'+lpEsc(c.email||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'</div>';
+  }).join('');
+}
+async function lpSaveContact(role){
+  const cid = lpCid(); if(!cid) return;
+  const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
+  const g = f => { const e = row.querySelector('input[data-f="'+f+'"]'); return e ? (e.value||null) : null; };
+  try{ await _authClient().from('loan_contacts').upsert({contact_id:cid,role:role,name:g('name'),company:g('company'),phone:g('phone'),email:g('email'),updated_at:new Date().toISOString()}, {onConflict:'contact_id,role'}); }catch(e){ console.warn('[lpSaveContact]', e.message); }
 }
 async function lpLoadTasks(cid){
   const body = document.getElementById('lpTasksBody'); if(!body) return;
