@@ -889,30 +889,16 @@
           phone,
           source: 'apply_now_page',
           contact_type: 'lead',
+          loan_type: selectedLoanType || null,
           notes,
           created_at: new Date().toISOString()
         })
       });
 
-      const contactData = await contactRes.json();
-      const contactId = Array.isArray(contactData) ? contactData[0]?.id : contactData?.id;
-
-      // Save to leads table
-      await fetch(`${SB_URL}/rest/v1/leads`, {
-        method: 'POST',
-        headers: {
-          'apikey': SB_KEY,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal'
-        },
-        body: JSON.stringify({
-          contact_id: contactId || null,
-          loan_type: selectedLoanType,
-          notes,
-          source: 'apply_now_page',
-          created_at: new Date().toISOString()
-        })
-      });
+      // NOTE: `leads` is a VIEW over `contacts` whose INSTEAD OF INSERT trigger always creates
+      // a NEW contacts row. The insert above already creates the lead, so inserting into
+      // `leads` here was minting a duplicate empty "Unknown" contact on every application.
+      // Removed; loan_type is now captured on the contact above.
 
       // Show success
       document.querySelector('.form-body').style.display = 'none';

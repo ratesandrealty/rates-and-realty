@@ -1652,15 +1652,10 @@
           contact_type: 'borrower'
         }, { onConflict: 'email' }).select('id').single();
 
-        // 3. Insert leads
-        await sb.from('leads').insert({
-          lead_type: 'purchase',
-          source: 'dpa-page',
-          lead_source: 'down-payment-assistance',
-          county,
-          status: 'new',
-          contact_id: contactData?.id || null
-        });
+        // NOTE: `leads` is a VIEW over `contacts` whose INSTEAD OF INSERT trigger always creates
+        // a NEW contacts row. The contacts upsert above already creates/updates the lead, and
+        // dpa_leads (step 1) captures the DPA detail — so inserting into `leads` here was minting
+        // a duplicate empty "Unknown" contact. Removed.
 
         if (typeof gtag !== 'undefined') {
           gtag('event', 'dpa_lead_submit', { event_category: 'lead', event_label: 'dpa_form' });
