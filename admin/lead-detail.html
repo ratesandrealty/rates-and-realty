@@ -4913,6 +4913,20 @@ function _authClient() {
   console.error('[auth] window._supabaseClient not ready — falling back to anon. Call will fail on RLS-locked tables.');
   return sb;
 }
+// Returns REST headers carrying the current user's session JWT (falls back to anon
+// if somehow not signed in). Used for raw fetch() calls to RLS-locked tables.
+async function _rnrAuthHeaders(extra){
+  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  var jwt = null;
+  try {
+    var c = window._supabaseClient || (window.supabase && window.supabase.auth ? window.supabase : sb);
+    var s = (c && c.auth) ? await c.auth.getSession() : null;
+    if (s && s.data && s.data.session) jwt = s.data.session.access_token;
+  } catch(e){}
+  var h = { 'Content-Type':'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + (jwt || anon) };
+  if (extra) for (var k in extra) h[k] = extra[k];
+  return h;
+}
 
 // Race-safe gate for JWT-gated edge-fn calls (e.g. textract-ocr verify_jwt=true).
 // Phase 2 dedup candidate — identical helpers live in admin/lenders.html and admin/guideline-ai.html.
@@ -9895,12 +9909,7 @@ async function updateConditionStage(conditionId, stage) {
     (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/loan_conditions?id=eq.' + conditionId,
     {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': window.APP_CONFIG?.SUPABASE_ANON_KEY || '',
-        'Authorization': 'Bearer ' + (window.APP_CONFIG?.SUPABASE_ANON_KEY || ''),
-        'Prefer': 'return=minimal'
-      },
+      headers: await _rnrAuthHeaders({ 'Prefer': 'return=minimal' }),
       body: JSON.stringify({ stage: stage })
     }
   );
@@ -13124,8 +13133,8 @@ let _selectedRelContactId = null;
 
 async function loadRelatedContacts(cId) {
   const [relA, relB] = await Promise.all([
-    sb.from('contact_relationships').select('id,relationship_type,related_contact_id,contacts!contact_relationships_related_contact_id_fkey(id,first_name,last_name,email,phone)').eq('contact_id', cId),
-    sb.from('contact_relationships').select('id,relationship_type,contact_id,contacts!contact_relationships_contact_id_fkey(id,first_name,last_name,email,phone)').eq('related_contact_id', cId)
+    _authClient().from('contact_relationships').select('id,relationship_type,related_contact_id,contacts!contact_relationships_related_contact_id_fkey(id,first_name,last_name,email,phone)').eq('contact_id', cId),
+    _authClient().from('contact_relationships').select('id,relationship_type,contact_id,contacts!contact_relationships_contact_id_fkey(id,first_name,last_name,email,phone)').eq('related_contact_id', cId)
   ]);
   const all = [
     ...(relA.data||[]).map(r => ({ id:r.id, relationship_type:r.relationship_type, person:r.contacts })),
@@ -13194,7 +13203,7 @@ function selectRelContact(id, name, email, phone) {
 
 async function saveRelationship() {
   if (!_selectedRelContactId || !contactId) return;
-  await sb.from('contact_relationships').insert({ contact_id: contactId, related_contact_id: _selectedRelContactId, relationship_type: document.getElementById('relType').value });
+  await _authClient().from('contact_relationships').insert({ contact_id: contactId, related_contact_id: _selectedRelContactId, relationship_type: document.getElementById('relType').value });
   closeAddRelModal();
   loadRelatedContacts(contactId);
   if (typeof toast === 'function') toast('Connection added');
@@ -13202,7 +13211,7 @@ async function saveRelationship() {
 
 async function removeRelationship(relId) {
   if (!confirm('Remove this connection?')) return;
-  await sb.from('contact_relationships').delete().eq('id', relId);
+  await _authClient().from('contact_relationships').delete().eq('id', relId);
   loadRelatedContacts(contactId);
 }
 
@@ -13784,7 +13793,7 @@ async function loadApp1003Borrowers() {
     var r = await fetch(
       window.APP_CONFIG.SUPABASE_URL + '/rest/v1/contact_relationships?contact_id=eq.' + encodeURIComponent(contactId) +
       '&relationship_type=in.(Co-Borrower,Spouse,Partner)&select=related_contact_id,relationship_type,contacts!contact_relationships_related_contact_id_fkey(id,first_name,last_name)',
-      { headers: { apikey: window.APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY } }
+      { headers: await _rnrAuthHeaders() }
     );
     var rels = await r.json();
     window._app1003Borrowers = (rels || []).map(function(r) { return r.contacts; }).filter(Boolean);
@@ -14946,7 +14955,7 @@ function _lsAutoSave(updates) {
       var r;
       if (_lsScenarioId) {
         r = await fetch(base + '/rest/v1/loan_scenarios?id=eq.' + _lsScenarioId, {
-          method:'PATCH', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon,'Prefer':'return=minimal'},
+          method:'PATCH', headers: await _rnrAuthHeaders({'Prefer':'return=minimal'}),
           body: JSON.stringify(updates)
         });
       } else {
@@ -14954,7 +14963,7 @@ function _lsAutoSave(updates) {
         updates.is_primary = true;
         updates.created_at = new Date().toISOString();
         r = await fetch(base + '/rest/v1/loan_scenarios', {
-          method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon,'Prefer':'return=representation'},
+          method:'POST', headers: await _rnrAuthHeaders({'Prefer':'return=representation'}),
           body: JSON.stringify(updates)
         });
         if (r.ok) { var rows = await r.json(); if (rows && rows[0]) _lsScenarioId = rows[0].id; }
