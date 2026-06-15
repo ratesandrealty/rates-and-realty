@@ -2328,6 +2328,7 @@
         <div class="lp-card"><div class="lp-h">🗂️ Tasks <a onclick="switchTab('tasks', document.querySelector('.ld-tab-btn[onclick*=tasks]'))">Manage →</a></div><div id="lpTasksBody"></div></div>
         <div class="lp-card lp-stub"><div class="lp-h">🧾 Third-Party Orders</div><div class="lp-soon">Title / HOI / Escrow order tracking — wiring in Phase 2.</div></div>
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
+        <div class="lp-card"><div class="lp-h">🔑 Appraisal Portal</div><div id="lpAppraisalPortalBody"></div></div>
         <div class="lp-card lp-stub"><div class="lp-h">✍️ LOE Center</div><div class="lp-soon">Letter-of-explanation builder + e-sign — wiring in Phase 2.</div></div>
         <div class="lp-card lp-stub"><div class="lp-h">🖊️ E-Signature Status</div><div class="lp-soon">Reads signature_requests — wiring in Phase 2.</div></div>
         <div class="lp-card lp-stub"><div class="lp-h">🌅 VA Daily Tasks</div><div class="lp-soon">Per-assignee ClickUp queue — wiring in Phase 2.</div></div>
@@ -8438,6 +8439,15 @@ async function lpLoadProcessing(){
   lpLoadTasks(cid);
   lpLoadKeyDates(cid);
   lpLoadContacts(cid);
+  lpLoadAppraisalPortal(cid);
+}
+function lpGoToLender(name){
+  const btn = document.querySelector('.ld-tab-btn[onclick*="lenders"]');
+  if(typeof switchTab==='function') switchTab('lenders', btn);
+  if(!name) return;
+  let tries = 0;
+  const apply = () => { const s = document.getElementById('lender-search'); if(s){ s.value = name; if(typeof filterLenders==='function') filterLenders(); } if(++tries < 3) setTimeout(apply, 300); };
+  setTimeout(apply, 200);
 }
 async function lpRenderSnapshot(cid){
   const el = document.getElementById('lpSnapshotBody'); if(!el) return;
@@ -8453,7 +8463,7 @@ async function lpRenderSnapshot(cid){
   const rate = app.closed_rate||app.locked_rate||app.quoted_rate;
   const rateLabel = app.closed_rate?'Closed':(app.locked_rate?'Locked':(app.quoted_rate?'Quoted':'Rate'));
   const cell = (label,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+val+'</div></div>';
-  el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')))+cell('Lender',lpEsc(c.closing_lender||'—'))+cell(rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
+  el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')))+cell('Lender', c.closing_lender ? '<a onclick="lpGoToLender(this.dataset.lender)" data-lender="'+lpEsc(c.closing_lender)+'" style="color:#C9A84C;cursor:pointer;text-decoration:none;border-bottom:1px dashed rgba(201,168,76,.5);">'+lpEsc(c.closing_lender)+' ↗</a>' : '—')+cell(rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
 }
 const LP_PERSON_LABEL = { admin:'Rene Duarte (Admin)', va:'Virtual Assistant' };
 function lpPersonSel(cur, blank){
@@ -8564,6 +8574,27 @@ const LP_CONTACT_ROLES = [
   {key:'underwriter',label:'Underwriter'},
   {key:'appraisal_company',label:'Appraisal Company'}
 ];
+async function lpLoadAppraisalPortal(cid){
+  const el = document.getElementById('lpAppraisalPortalBody'); if(!el) return;
+  let r = {};
+  try{ const { data } = await _authClient().from('loan_contacts').select('website,portal_login,portal_password').eq('contact_id',cid).eq('role','appraisal_company').limit(1); r = (data && data[0]) || {}; }catch(_){}
+  const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:6px 9px;width:100%;';
+  const lbl = 'font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;';
+  const gbtn = 'background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:0 11px;cursor:pointer;font-size:13px;';
+  el.innerHTML =
+    '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end;">'
+    +'<div><div style="'+lbl+'">Website</div><div style="display:flex;gap:6px;"><input id="lpApWebsite" type="text" placeholder="https://amc-portal.com" value="'+lpEsc(r.website||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"><button onclick="lpOpenAppraisalSite()" title="Open site" style="'+gbtn+'">↗</button></div></div>'
+    +'<div><div style="'+lbl+'">Login</div><input id="lpApLogin" type="text" placeholder="username" value="'+lpEsc(r.portal_login||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
+    +'<div><div style="'+lbl+'">Password</div><div style="display:flex;gap:6px;"><input id="lpApPass" type="password" placeholder="password" value="'+lpEsc(r.portal_password||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"><button onclick="lpTogglePass()" title="Show / hide" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:6px;padding:0 11px;cursor:pointer;">👁</button></div></div>'
+    +'</div>';
+}
+async function lpSaveAppraisalPortal(){
+  const cid = lpCid(); if(!cid) return;
+  const g = id => { const e = document.getElementById(id); return e ? (e.value||null) : null; };
+  try{ await _authClient().from('loan_contacts').upsert({ contact_id:cid, role:'appraisal_company', website:g('lpApWebsite'), portal_login:g('lpApLogin'), portal_password:g('lpApPass'), updated_at:new Date().toISOString() }, { onConflict:'contact_id,role' }); }catch(e){ console.warn('[lpSaveAppraisalPortal]', e.message); }
+}
+function lpOpenAppraisalSite(){ const e = document.getElementById('lpApWebsite'); let u = e && e.value ? e.value.trim() : ''; if(!u) return; if(!/^https?:\/\//i.test(u)) u = 'https://'+u; window.open(u, '_blank', 'noopener'); }
+function lpTogglePass(){ const e = document.getElementById('lpApPass'); if(e) e.type = e.type==='password' ? 'text' : 'password'; }
 async function lpLoadKeyDates(cid){
   const el = document.getElementById('lpDatesBody'); if(!el) return;
   let map = {};
