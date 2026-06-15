@@ -1,19 +1,32 @@
 // Listing Alerts Module — used by portal + CRM contact page
 const LA = window.ListingAlerts = {
   SB: 'https://ljywhvbmsibwnssxpesh.supabase.co',
+  FN: 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/listing-alert-actions',
   SK: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4',
   COUNTIES: {'Orange County':['Westminster','Garden Grove','Huntington Beach','Anaheim','Santa Ana','Irvine','Fountain Valley','Costa Mesa','Fullerton','Buena Park','Cypress','La Habra','Placentia','Brea','Yorba Linda','Orange','Tustin','Lake Forest','Mission Viejo','Laguna Niguel','Newport Beach','Dana Point','Aliso Viejo'],'Los Angeles County':['Long Beach','Los Angeles','Torrance','Compton','Inglewood','Hawthorne','Carson','El Monte','West Covina','Pomona','Norwalk','Burbank','Pasadena','Whittier','Downey','Glendale','Alhambra','Cerritos','Bellflower'],'Riverside County':['Riverside','Moreno Valley','Corona','Temecula','Murrieta','Hemet','Perris','Indio','Palm Springs','Menifee','Beaumont','Lake Elsinore'],'San Bernardino County':['San Bernardino','Fontana','Rancho Cucamonga','Ontario','Victorville','Rialto','Colton','Chino','Redlands','Highland','Chino Hills','Upland']},
+
+  async _call(payload) {
+    var res = await fetch(this.FN, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error('listing-alert-actions ' + res.status);
+    return res.json();
+  },
+
+  _ctxOwner(ctx) {
+    ctx = ctx || this._ctx || {};
+    var o = {};
+    if (ctx.portal_user_id) o.portal_user_id = ctx.portal_user_id;
+    if (ctx.contact_id) o.contact_id = ctx.contact_id;
+    if (ctx.borrower_id) o.borrower_id = ctx.borrower_id;
+    return o;
+  },
 
   async renderAlertsList(containerId, ctx) {
     var c = document.getElementById(containerId); if (!c) return;
     this._containerId = containerId; this._ctx = ctx;
     c.innerHTML = '<div style="color:#888;font-size:.85rem;padding:20px">Loading alerts...</div>';
-    var q = this.SB + '/rest/v1/listing_alerts?order=created_at.desc';
-    if (ctx.portal_user_id) q += '&portal_user_id=eq.' + ctx.portal_user_id;
-    else if (ctx.contact_id) q += '&contact_id=eq.' + ctx.contact_id;
     try {
-      var res = await fetch(q, {headers:{'apikey':this.SK,'Authorization':'Bearer '+this.SK}});
-      var alerts = await res.json();
+      var result = await this._call(Object.assign({ action:'get_alerts' }, this._ctxOwner(ctx)));
+      var alerts = result.alerts || [];
       if (!Array.isArray(alerts)) alerts = [];
       var ctxStr = JSON.stringify(ctx).replace(/"/g,'&quot;');
       var btn = '<button onclick="ListingAlerts.showBuilder(\''+containerId+'\','+ctxStr+')" style="display:flex;align-items:center;gap:7px;background:#C9A84C;color:#000;border:none;border-radius:9px;padding:10px 18px;font-weight:700;font-size:.85rem;cursor:pointer;margin-bottom:16px"><i class="fas fa-plus"></i> Create New Alert</button>';
@@ -71,11 +84,20 @@ const LA = window.ListingAlerts = {
   async saveAlert(editId) {
     var btn = document.getElementById('laSaveBtn');
     if (btn) {btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Saving...';}
-    var data = Object.assign({}, this.getFormData(), this._ctx, {is_active:true});
-    if (editId) {
-      await fetch(this.SB+'/rest/v1/listing_alerts?id=eq.'+editId, {method:'PATCH',headers:{'Content-Type':'application/json','apikey':this.SK,'Authorization':'Bearer '+this.SK},body:JSON.stringify(data)});
-    } else {
-      await fetch(this.SB+'/rest/v1/listing_alerts', {method:'POST',headers:{'Content-Type':'application/json','apikey':this.SK,'Authorization':'Bearer '+this.SK,'Prefer':'return=representation'},body:JSON.stringify(data)});
+    var form = this.getFormData();
+    var counties = form.county ? [form.county] : [];
+    try {
+      if (editId) {
+        await this._call(Object.assign({ action:'update_alert', alert_id: editId,
+          updates: { name:form.name, frequency:form.frequency, county:form.county, counties:counties, cities:form.cities, min_price:form.min_price, max_price:form.max_price, min_beds:form.min_beds, min_baths:form.min_baths } }, this._ctxOwner()));
+      } else {
+        await this._call(Object.assign({ action:'create_alert',
+          alert: { name:form.name, frequency:form.frequency, counties:counties, cities:form.cities, min_price:form.min_price, max_price:form.max_price, min_beds:form.min_beds, min_baths:form.min_baths } }, this._ctxOwner()));
+      }
+    } catch(e) {
+      if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-bell"></i> '+(editId?'Update':'Create')+' Alert'; }
+      if (window.showToast) window.showToast('Could not save alert', true);
+      return;
     }
     document.getElementById('laModal')?.remove();
     await this.renderAlertsList(this._containerId, this._ctx);
@@ -83,11 +105,11 @@ const LA = window.ListingAlerts = {
   },
 
   async loadAlertForEdit(alertId) {
-    var res = await fetch(this.SB+'/rest/v1/listing_alerts?id=eq.'+alertId, {headers:{'apikey':this.SK,'Authorization':'Bearer '+this.SK}});
-    var arr = await res.json(); var a = arr[0]; if (!a) return;
+    var result = await this._call(Object.assign({ action:'get_alerts' }, this._ctxOwner()));
+    var a = (result.alerts||[]).find(function(x){ return String(x.id)===String(alertId); }); if (!a) return;
     if (document.getElementById('laName')) document.getElementById('laName').value = a.name||'';
     if (document.getElementById('laFreq')) document.getElementById('laFreq').value = a.frequency||'daily';
-    if (document.getElementById('laCounty')) {document.getElementById('laCounty').value = a.county||'Orange County'; this.renderCityChecks();}
+    if (document.getElementById('laCounty')) {document.getElementById('laCounty').value = a.county||(a.counties&&a.counties[0])||'Orange County'; this.renderCityChecks();}
     if (a.min_price) document.getElementById('laMinPrice').value = a.min_price;
     if (a.max_price) document.getElementById('laMaxPrice').value = a.max_price;
     if (a.min_beds) document.getElementById('laBeds').value = a.min_beds;
@@ -96,13 +118,13 @@ const LA = window.ListingAlerts = {
   },
 
   async toggleAlert(alertId, newState) {
-    await fetch(this.SB+'/rest/v1/listing_alerts?id=eq.'+alertId, {method:'PATCH',headers:{'Content-Type':'application/json','apikey':this.SK,'Authorization':'Bearer '+this.SK},body:JSON.stringify({is_active:newState==='true'||newState===true})});
+    await this._call(Object.assign({ action:'toggle_alert', alert_id: alertId, is_active: (newState==='true'||newState===true) }, this._ctxOwner()));
     await this.renderAlertsList(this._containerId, this._ctx);
   },
 
   async deleteAlert(alertId) {
     if (!confirm('Delete this alert?')) return;
-    await fetch(this.SB+'/rest/v1/listing_alerts?id=eq.'+alertId, {method:'DELETE',headers:{'apikey':this.SK,'Authorization':'Bearer '+this.SK}});
+    await this._call(Object.assign({ action:'delete_alert', alert_id: alertId }, this._ctxOwner()));
     await this.renderAlertsList(this._containerId, this._ctx);
   }
 };
