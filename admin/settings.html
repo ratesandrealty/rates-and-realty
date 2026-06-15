@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>Settings — Rates & Realty CRM</title>
+<script src="/api/env.js?v=2026033003"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/admin/js/supabase-client.js?v=2026050601"></script>
+<script src="/admin/js/auth-guard.js?v=2026033001"></script>
+<style>
+:root {
+  --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
+  --surface2: #181818; --surface3: #222; --border: rgba(255,255,255,0.06);
+  --border2: rgba(255,255,255,0.12); --text: #fff; --muted: rgba(255,255,255,0.38);
+  --green: #50c878; --red: #f87171; --blue: #60a0ff; --orange: #fb923c;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+.topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;z-index:10}
+.topbar-brand{font-weight:800;font-size:14px;color:var(--gold);letter-spacing:-0.3px;flex-shrink:0}
+.topbar-sep{width:1px;height:18px;background:var(--border2);margin:0 2px}
+.topbar-title{font-size:13px;font-weight:600;color:var(--muted)}
+.topbar-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.topbar-email{font-size:11px;color:var(--muted);margin-right:4px}
+
+.btn{padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
+.btn:disabled{opacity:0.4;cursor:not-allowed}
+.btn-gold{background:var(--gold);color:#000}
+.btn-gold:hover:not(:disabled){background:var(--gold2)}
+.btn-ghost{background:rgba(255,255,255,0.06);color:#fff;border:1px solid var(--border2)}
+.btn-ghost:hover:not(:disabled){background:rgba(255,255,255,0.1)}
+.btn-sm{padding:5px 10px;font-size:11px}
+.btn-red{background:rgba(248,113,113,0.1);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
+.btn-red:hover:not(:disabled){background:rgba(248,113,113,0.18)}
+
+a.btn{text-decoration:none;display:inline-flex;align-items:center}
+
+.layout{display:flex;flex:1;overflow:hidden}
+
+/* Settings section list (left) */
+.settings-sidebar{width:208px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;padding:14px 12px}
+.ss-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--muted);margin:6px 4px 8px}
+.ss-item{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--muted);border:1px solid transparent;transition:all .15s;margin-bottom:3px}
+.ss-item:hover{background:rgba(255,255,255,0.04);color:#fff}
+.ss-item.active{background:rgba(201,168,76,0.08);border-color:rgba(201,168,76,0.18);color:var(--gold);font-weight:600;border-left:3px solid var(--gold)}
+.ss-item.disabled{opacity:0.5;cursor:default}
+.ss-item.disabled:hover{background:transparent;color:var(--muted)}
+.ss-soon{margin-left:auto;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--muted);background:rgba(255,255,255,0.06);border-radius:10px;padding:2px 7px}
+
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.main-scroll{flex:1;overflow:auto;padding:24px 28px}
+
+.page-head{margin-bottom:18px}
+.page-head h1{font-size:18px;font-weight:800;letter-spacing:-0.3px}
+.page-head p{font-size:12px;color:var(--muted);margin-top:5px;max-width:760px;line-height:1.55}
+
+/* Centered access notice */
+.notice-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;color:var(--muted)}
+.notice-center .nc-icon{font-size:34px}
+.notice-center h2{font-size:17px;color:#fff;font-weight:700}
+.notice-center p{font-size:12.5px;max-width:360px;line-height:1.5}
+
+/* Cards */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:18px;max-width:1100px}
+.card h3{font-size:13px;font-weight:700;margin-bottom:4px}
+.card .card-sub{font-size:11.5px;color:var(--muted);margin-bottom:14px;line-height:1.5}
+
+.form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)}
+.inp{padding:8px 11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:12.5px;outline:none;transition:border-color .15s;min-width:200px}
+.inp:focus{border-color:rgba(201,168,76,0.4);background:rgba(255,255,255,0.07)}
+select.inp{cursor:pointer;min-width:130px}
+select.inp option{background:#1a1a1a;color:#fff}
+.inp-pw{min-width:230px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:0.5px}
+
+.pw-group{display:flex;gap:6px}
+
+.helper-note{font-size:11.5px;color:var(--muted);line-height:1.55;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-left:3px solid rgba(201,168,76,0.4);border-radius:8px;padding:11px 14px;margin-bottom:16px;max-width:1100px}
+.helper-note strong{color:rgba(255,255,255,0.7)}
+.helper-note + .helper-note{margin-top:-6px}
+
+/* New-user success banner */
+.success-banner{display:none;align-items:center;gap:12px;flex-wrap:wrap;background:rgba(80,200,120,0.08);border:1px solid rgba(80,200,120,0.25);border-radius:9px;padding:11px 14px;margin-top:14px;font-size:12px}
+.success-banner.show{display:flex}
+.success-banner .sb-pw{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;font-weight:700;color:#fff;background:rgba(0,0,0,0.3);border-radius:6px;padding:4px 10px;letter-spacing:0.5px}
+.success-banner .sb-note{color:var(--muted);font-size:11px;flex-basis:100%}
+
+/* Users table */
+.table-wrap{border:1px solid var(--border);border-radius:12px;overflow:auto;max-width:1100px}
+.users-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.users-table th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--muted);background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap}
+.users-table td{padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.03);vertical-align:middle}
+.users-table tr:last-child td{border-bottom:none}
+.users-table tr:hover td{background:rgba(255,255,255,0.02)}
+.u-email{font-weight:600}
+.u-self-tag{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--gold);background:rgba(201,168,76,0.12);border-radius:10px;padding:2px 7px;margin-left:7px}
+.role-select{padding:5px 9px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:7px;color:#fff;font-size:11.5px;cursor:pointer;outline:none}
+.role-select:disabled{opacity:0.55;cursor:not-allowed}
+.role-select option{background:#1a1a1a;color:#fff}
+
+.status-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px}
+.status-badge::before{content:'';width:6px;height:6px;border-radius:50%}
+.status-active{color:var(--green);background:rgba(80,200,120,0.1)}
+.status-active::before{background:var(--green)}
+.status-never{color:var(--blue);background:rgba(96,160,255,0.1)}
+.status-never::before{background:var(--blue)}
+.status-off{color:var(--muted);background:rgba(255,255,255,0.05)}
+.status-off::before{background:var(--muted)}
+
+.pw-cell{display:flex;flex-direction:column;gap:3px}
+.pw-cell .pw-line{display:flex;align-items:center;gap:6px}
+.pw-cell .pw-val{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;letter-spacing:0.5px;color:#fff}
+.pw-cell .pw-cap{font-size:10px;color:var(--muted)}
+.icon-btn{background:rgba(255,255,255,0.06);border:1px solid var(--border2);color:#fff;border-radius:6px;cursor:pointer;font-size:11px;padding:3px 7px;transition:all .15s;line-height:1}
+.icon-btn:hover{background:rgba(255,255,255,0.12)}
+.dash{color:var(--muted)}
+
+.actions-cell{display:flex;gap:6px;flex-wrap:wrap}
+
+.tbl-empty{padding:26px;text-align:center;color:var(--muted);font-size:12px}
+
+/* Modal (reset password) */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:#141414;border:1px solid var(--border2);border-radius:14px;padding:20px 22px;width:420px;max-width:92vw}
+.modal h3{font-size:14px;font-weight:700;margin-bottom:4px}
+.modal .modal-sub{font-size:11.5px;color:var(--muted);margin-bottom:16px;line-height:1.5}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
+#toast.show{opacity:1}
+</style>
+<link rel="stylesheet" href="/public/css/responsive-global.css">
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar-brand">Rates &amp; Realty</span>
+  <div class="topbar-sep"></div>
+  <span class="topbar-title">⚙ Settings</span>
+  <div class="topbar-right">
+    <span class="topbar-email" id="adminUserEmail"></span>
+    <a href="people.html" class="btn btn-ghost btn-sm">People</a>
+    <a href="../dashboard/admin.html" class="btn btn-ghost btn-sm">Dashboard</a>
+    <button class="btn btn-ghost btn-sm" onclick="(window.adminLogout||function(){location.href='/auth/admin-login.html'})()">Logout</button>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="settings-sidebar">
+    <div class="ss-label">Settings</div>
+    <div class="ss-item active" id="navUsers">👥 Users &amp; Roles</div>
+    <div class="ss-item disabled" title="Coming soon">🖥️ VA View <span class="ss-soon">Soon</span></div>
+  </div>
+
+  <div class="main">
+    <!-- Admin-only content lives here; replaced with an access notice for non-admins -->
+    <div class="main-scroll" id="mainScroll" style="display:none">
+
+      <div class="page-head">
+        <h1>Users &amp; Roles</h1>
+        <p>Add and manage staff logins (VA, LOA, agents, lenders, and admins). New users get a temporary password you set here.</p>
+      </div>
+
+      <div class="helper-note">
+        <strong>Temporary passwords:</strong> Passwords are set by you and shown here only until that person signs in for the first time. After they sign in, use <strong>Reset password</strong> to issue a new temporary one.
+      </div>
+      <div class="helper-note">
+        <strong>Privacy:</strong> The SSN field is automatically hidden from everyone except admins.
+      </div>
+
+      <!-- Add user -->
+      <div class="card">
+        <h3>Add User</h3>
+        <div class="card-sub">Create a new staff login. Pick a role and set a temporary password to share with them.</div>
+        <div class="form-row">
+          <div class="field">
+            <label>Email</label>
+            <input type="text" class="inp" id="newEmail" placeholder="person@ratesandrealty.com" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Role</label>
+            <select class="inp" id="newRole"></select>
+          </div>
+          <div class="field">
+            <label>Temporary password</label>
+            <div class="pw-group">
+              <input type="text" class="inp inp-pw" id="newPassword" placeholder="Set or generate" autocomplete="off">
+              <button class="btn btn-ghost btn-sm" type="button" onclick="fillGenerated('newPassword')">Generate</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button class="btn btn-gold" id="createBtn" onclick="createUser()">Create user</button>
+          </div>
+        </div>
+        <div class="success-banner" id="createSuccess">
+          <span>✓ User created. Temporary password:</span>
+          <span class="sb-pw" id="createPw"></span>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="copyText(document.getElementById('createPw').textContent)">Copy</button>
+          <span class="sb-note">Share this with the user. You can re-reveal or reset it until they sign in.</span>
+        </div>
+      </div>
+
+      <!-- Users table -->
+      <div class="table-wrap">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Email</th><th>Role</th><th>Status</th><th>Temp password</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            <tr><td colspan="5" class="tbl-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- Non-admin / access-denied notice -->
+    <div class="notice-center" id="denyNotice" style="display:none">
+      <div class="nc-icon">🔒</div>
+      <h2>Admins only</h2>
+      <p>This page is restricted to administrators. If you think you should have access, contact an admin.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Reset password modal -->
+<div class="modal-overlay" id="resetModal">
+  <div class="modal">
+    <h3>Reset password</h3>
+    <div class="modal-sub" id="resetSub">Issue a new temporary password.</div>
+    <div class="field">
+      <label>New temporary password</label>
+      <div class="pw-group">
+        <input type="text" class="inp inp-pw" id="resetPassword" autocomplete="off" style="flex:1">
+        <button class="btn btn-ghost btn-sm" type="button" onclick="fillGenerated('resetPassword')">Generate</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" type="button" onclick="closeReset()">Cancel</button>
+      <button class="btn btn-gold btn-sm" type="button" id="resetConfirmBtn" onclick="confirmReset()">Reset password</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+var ROLE_OPTIONS = [
+  { value: 'va', label: 'VA' },
+  { value: 'loa', label: 'LOA' },
+  { value: 'agent', label: 'Agent' },
+  { value: 'lender', label: 'Lender' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'admin', label: 'Admin' }
+];
+
+var _client = null;
+var _users = [];          // last loaded list (keeps temp_password in memory for reveal)
+var _resetUserId = null;
+
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function () { t.classList.remove('show'); }, 2800);
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function copyText(txt) {
+  if (!txt) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(function () { showToast('Copied to clipboard'); },
+      function () { showToast('Copy failed'); });
+  } else {
+    showToast('Copy not supported');
+  }
+}
+
+// Strong 14-char password: A-Z a-z 0-9 + a few symbols, guaranteed one of each class.
+function genPassword() {
+  var upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  var lower = 'abcdefghijkmnpqrstuvwxyz';
+  var digits = '23456789';
+  var sym = '!@#$%*?';
+  var all = upper + lower + digits + sym;
+  var len = 14;
+  var rnd = new Uint32Array(len);
+  (window.crypto || window.msCrypto).getRandomValues(rnd);
+  var sets = [upper, lower, digits, sym];
+  var chars = [];
+  var i;
+  for (i = 0; i < sets.length; i++) chars.push(sets[i][rnd[i] % sets[i].length]);
+  for (i = sets.length; i < len; i++) chars.push(all[rnd[i] % all.length]);
+  // Fisher–Yates shuffle so the guaranteed chars aren't all up front.
+  for (i = chars.length - 1; i > 0; i--) {
+    var j = rnd[i] % (i + 1);
+    var tmp = chars[i]; chars[i] = chars[j]; chars[j] = tmp;
+  }
+  return chars.join('');
+}
+
+function fillGenerated(inputId) {
+  document.getElementById(inputId).value = genPassword();
+}
+
+function populateRoleSelect(sel, current) {
+  sel.innerHTML = ROLE_OPTIONS.map(function (o) {
+    var s = (o.value === current) ? ' selected' : '';
+    return '<option value="' + o.value + '"' + s + '>' + o.label + '</option>';
+  }).join('');
+}
+
+function roleLabel(v) {
+  for (var i = 0; i < ROLE_OPTIONS.length; i++) if (ROLE_OPTIONS[i].value === v) return ROLE_OPTIONS[i].label;
+  return v || '—';
+}
+
+// Friendly messages for known edge-function error codes.
+function friendlyError(code) {
+  return {
+    email_exists: 'A user with that email already exists.',
+    weak_password: 'That password is too weak. Use at least 8 characters.',
+    invalid_email: 'That email address is not valid.',
+    invalid_role: 'That role is not valid.',
+    last_admin: 'You can’t change or remove the last remaining admin.',
+    self_action: 'You can’t perform that action on your own account.'
+  }[code] || null;
+}
+
+// Invoke the admin-users edge function with the session client (JWT auto-attached).
+// Normalizes both transport errors and in-body { error } codes into one shape.
+async function adminUsers(action, args) {
+  var body = Object.assign({ action: action }, args || {});
+  var res;
+  try {
+    res = await _client.functions.invoke('admin-users', { body: body });
+  } catch (e) {
+    return { ok: false, code: null, message: (e && e.message) || 'Request failed.' };
+  }
+  var error = res.error, data = res.data;
+  if (error) {
+    var code = null, msg = error.message;
+    try {
+      if (error.context && typeof error.context.json === 'function') {
+        var b = await error.context.json();
+        if (b) { code = b.error || null; msg = b.message || code || msg; }
+      }
+    } catch (e2) { /* ignore body parse failure */ }
+    return { ok: false, code: code, message: friendlyError(code) || msg || 'Request failed.' };
+  }
+  if (data && data.error) {
+    return { ok: false, code: data.error, message: friendlyError(data.error) || data.message || data.error };
+  }
+  return { ok: true, data: data || {} };
+}
+
+function statusBadge(u) {
+  if (u.banned) return '<span class="status-badge status-off">Deactivated</span>';
+  if (!u.has_logged_in) return '<span class="status-badge status-never">Never signed in</span>';
+  return '<span class="status-badge status-active">Active</span>';
+}
+
+function pwCell(u, idx) {
+  if (u.temp_password && typeof u.temp_password === 'string') {
+    return '<div class="pw-cell">' +
+      '<div class="pw-line">' +
+        '<span class="pw-val" id="pwv-' + idx + '">••••••••</span>' +
+        '<button class="icon-btn" type="button" title="Show / hide" onclick="togglePw(' + idx + ')">👁</button>' +
+        '<button class="icon-btn" type="button" title="Copy" onclick="copyText(_users[' + idx + '].temp_password)">Copy</button>' +
+      '</div>' +
+      '<span class="pw-cap">visible until they sign in</span>' +
+    '</div>';
+  }
+  return '<div class="pw-cell"><span class="dash">—</span><span class="pw-cap">user manages their own</span></div>';
+}
+
+function togglePw(idx) {
+  var el = document.getElementById('pwv-' + idx);
+  if (!el) return;
+  var u = _users[idx];
+  if (!u) return;
+  if (el.dataset.shown === '1') {
+    el.textContent = '••••••••';
+    el.dataset.shown = '0';
+  } else {
+    el.textContent = u.temp_password;
+    el.dataset.shown = '1';
+  }
+}
+
+function renderUsers() {
+  var body = document.getElementById('usersBody');
+  if (!_users.length) {
+    body.innerHTML = '<tr><td colspan="5" class="tbl-empty">No users yet.</td></tr>';
+    return;
+  }
+  body.innerHTML = _users.map(function (u, idx) {
+    var roleSel = '<select class="role-select" onchange="changeRole(\'' + u.user_id + '\', this.value)"' +
+      (u.is_self ? ' disabled title="You can’t change your own role"' : '') + ' id="role-' + idx + '"></select>';
+
+    var deactivateLabel = u.banned ? 'Reactivate' : 'Deactivate';
+    var deactivateClass = u.banned ? 'btn-ghost' : 'btn-red';
+    var selfDisabled = u.is_self ? ' disabled title="Not allowed on your own account"' : '';
+
+    var actions = '<div class="actions-cell">' +
+      '<button class="btn btn-ghost btn-sm" type="button" onclick="openReset(\'' + u.user_id + '\', \'' + esc(u.email).replace(/'/g, "\\'") + '\')">Reset password</button>' +
+      '<button class="btn ' + deactivateClass + ' btn-sm" type="button"' + selfDisabled +
+        ' onclick="setActive(\'' + u.user_id + '\', ' + (u.banned ? 'true' : 'false') + ')">' + deactivateLabel + '</button>' +
+      '<button class="btn btn-red btn-sm" type="button"' + selfDisabled +
+        ' onclick="deleteUser(\'' + u.user_id + '\', \'' + esc(u.email).replace(/'/g, "\\'") + '\')">Delete</button>' +
+    '</div>';
+
+    return '<tr>' +
+      '<td><span class="u-email">' + esc(u.email) + '</span>' + (u.is_self ? '<span class="u-self-tag">You</span>' : '') + '</td>' +
+      '<td>' + roleSel + '</td>' +
+      '<td>' + statusBadge(u) + '</td>' +
+      '<td>' + pwCell(u, idx) + '</td>' +
+      '<td>' + actions + '</td>' +
+    '</tr>';
+  }).join('');
+
+  // Populate role selects after insertion (avoids quoting selected attr inline).
+  _users.forEach(function (u, idx) {
+    var sel = document.getElementById('role-' + idx);
+    if (sel) populateRoleSelect(sel, u.role);
+  });
+}
+
+async function loadUsers() {
+  var body = document.getElementById('usersBody');
+  body.innerHTML = '<tr><td colspan="5" class="tbl-empty">Loading…</td></tr>';
+  var r = await adminUsers('list');
+  if (!r.ok) {
+    body.innerHTML = '<tr><td colspan="5" class="tbl-empty">' + esc(r.message) + '</td></tr>';
+    showToast(r.message);
+    return;
+  }
+  _users = (r.data && r.data.users) ? r.data.users : [];
+  renderUsers();
+}
+
+async function createUser() {
+  var email = document.getElementById('newEmail').value.trim();
+  var role = document.getElementById('newRole').value;
+  var pw = document.getElementById('newPassword').value;
+  if (!email) { showToast('Enter an email address.'); return; }
+  if (!pw) { showToast('Set or generate a temporary password.'); return; }
+
+  var btn = document.getElementById('createBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  var r = await adminUsers('create', { email: email, role: role, temp_password: pw });
+  btn.disabled = false; btn.textContent = 'Create user';
+
+  if (!r.ok) { showToast(r.message); return; }
+
+  // Keep the temp password visible/copyable.
+  document.getElementById('createPw').textContent = pw;
+  document.getElementById('createSuccess').classList.add('show');
+  document.getElementById('newEmail').value = '';
+  document.getElementById('newPassword').value = '';
+  showToast('User created.');
+  await loadUsers();
+}
+
+async function changeRole(userId, role) {
+  var r = await adminUsers('update_role', { user_id: userId, role: role });
+  if (!r.ok) { showToast(r.message); await loadUsers(); return; }
+  showToast('Role updated.');
+  await loadUsers();
+}
+
+async function setActive(userId, active) {
+  var r = await adminUsers('set_active', { user_id: userId, active: active });
+  if (!r.ok) { showToast(r.message); return; }
+  showToast(active ? 'User reactivated.' : 'User deactivated.');
+  await loadUsers();
+}
+
+async function deleteUser(userId, email) {
+  if (!confirm('Delete the login for ' + email + '? This cannot be undone.')) return;
+  var r = await adminUsers('delete', { user_id: userId });
+  if (!r.ok) { showToast(r.message); return; }
+  showToast('User deleted.');
+  await loadUsers();
+}
+
+/* Reset password modal */
+function openReset(userId, email) {
+  _resetUserId = userId;
+  document.getElementById('resetSub').textContent = 'Issue a new temporary password for ' + email + '.';
+  document.getElementById('resetPassword').value = genPassword();
+  document.getElementById('resetModal').classList.add('open');
+}
+function closeReset() {
+  _resetUserId = null;
+  document.getElementById('resetModal').classList.remove('open');
+}
+async function confirmReset() {
+  if (!_resetUserId) return;
+  var pw = document.getElementById('resetPassword').value;
+  if (!pw) { showToast('Set or generate a password.'); return; }
+  var btn = document.getElementById('resetConfirmBtn');
+  btn.disabled = true; btn.textContent = 'Resetting…';
+  var r = await adminUsers('reset_password', { user_id: _resetUserId, temp_password: pw });
+  btn.disabled = false; btn.textContent = 'Reset password';
+  if (!r.ok) { showToast(r.message); return; }
+  closeReset();
+  showToast('Password reset.');
+  await loadUsers();
+}
+
+// Close modal on overlay click.
+document.getElementById('resetModal').addEventListener('click', function (e) {
+  if (e.target === this) closeReset();
+});
+
+async function init() {
+  // Populate the Add-User role select (default: VA).
+  populateRoleSelect(document.getElementById('newRole'), 'va');
+
+  try {
+    _client = await getSupabaseClient();
+  } catch (e) {
+    document.getElementById('denyNotice').style.display = '';
+    return;
+  }
+
+  // Admin-only gate via RLS-backed RPC.
+  var role = null;
+  try {
+    var res = await _client.rpc('current_app_role');
+    role = res && res.data;
+  } catch (e) {
+    role = null;
+  }
+
+  if (role !== 'admin') {
+    // Render only the access notice + nav. Do not fetch any user data.
+    document.getElementById('mainScroll').style.display = 'none';
+    document.getElementById('denyNotice').style.display = '';
+    return;
+  }
+
+  document.getElementById('denyNotice').style.display = 'none';
+  document.getElementById('mainScroll').style.display = '';
+  await loadUsers();
+}
+
+init();
+</script>
+</body>
+</html>
