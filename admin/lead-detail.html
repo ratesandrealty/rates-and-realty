@@ -8574,24 +8574,67 @@ const LP_CONTACT_ROLES = [
   {key:'underwriter',label:'Underwriter'},
   {key:'appraisal_company',label:'Appraisal Company'}
 ];
+let _lpVendors = [];
+let _lpVendorId = '';
 async function lpLoadAppraisalPortal(cid){
   const el = document.getElementById('lpAppraisalPortalBody'); if(!el) return;
-  let r = {};
-  try{ const { data } = await _authClient().from('loan_contacts').select('website,portal_login,portal_password').eq('contact_id',cid).eq('role','appraisal_company').limit(1); r = (data && data[0]) || {}; }catch(_){}
+  let vendors = [], selectedId = '';
+  try {
+    const vr = await _authClient().from('vendor_logins').select('*').eq('vendor_type','appraisal').order('company',{ascending:true});
+    vendors = vr.data || [];
+    const lr = await _authClient().from('loan_contacts').select('vendor_login_id').eq('contact_id',cid).eq('role','appraisal_company').limit(1);
+    selectedId = (lr.data && lr.data[0] && lr.data[0].vendor_login_id) || '';
+  } catch(_){}
+  _lpVendors = vendors;
+  lpRenderAppraisalPortal(cid, selectedId);
+}
+function lpRenderAppraisalPortal(cid, selectedId){
+  const el = document.getElementById('lpAppraisalPortalBody'); if(!el) return;
+  _lpVendorId = selectedId || '';
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:6px 9px;width:100%;';
   const lbl = 'font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;';
   const gbtn = 'background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:0 11px;cursor:pointer;font-size:13px;';
-  el.innerHTML =
-    '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end;">'
-    +'<div><div style="'+lbl+'">Website</div><div style="display:flex;gap:6px;"><input id="lpApWebsite" type="text" placeholder="https://amc-portal.com" value="'+lpEsc(r.website||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"><button onclick="lpOpenAppraisalSite()" title="Open site" style="'+gbtn+'">↗</button></div></div>'
-    +'<div><div style="'+lbl+'">Login</div><input id="lpApLogin" type="text" placeholder="username" value="'+lpEsc(r.portal_login||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
-    +'<div><div style="'+lbl+'">Password</div><div style="display:flex;gap:6px;"><input id="lpApPass" type="password" placeholder="password" value="'+lpEsc(r.portal_password||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"><button onclick="lpTogglePass()" title="Show / hide" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:6px;padding:0 11px;cursor:pointer;">👁</button></div></div>'
-    +'</div>';
+  const opts = '<option value="">— Select vendor —</option>' + _lpVendors.map(v=>'<option value="'+v.id+'"'+(v.id===selectedId?' selected':'')+'>'+lpEsc(v.company)+'</option>').join('') + '<option value="__new">＋ Add new vendor…</option>';
+  let html = '<div style="margin-bottom:14px;"><div style="'+lbl+'">Appraisal Vendor (shared across all loans)</div><select id="lpVendorSelect" onchange="lpVendorPick(\''+cid+'\',this.value)" style="'+inp+'max-width:380px;">'+opts+'</select></div>';
+  const v = _lpVendors.find(x=>x.id===selectedId);
+  if(v){
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end;">'
+      +'<div style="grid-column:1/-1;max-width:380px;"><div style="'+lbl+'">Website</div><div style="display:flex;gap:6px;"><input id="lpApWebsite" type="text" placeholder="https://amc-portal.com" value="'+lpEsc(v.website||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"><button onclick="lpOpenAppraisalSite()" title="Open site" style="'+gbtn+'">↗</button></div></div>'
+      +'<div><div style="'+lbl+'">Login</div><input id="lpApLogin" type="text" placeholder="username" value="'+lpEsc(v.login||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
+      +'<div><div style="'+lbl+'">Password</div><div style="display:flex;gap:6px;"><input id="lpApPass" type="password" placeholder="password" value="'+lpEsc(v.password||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"><button onclick="lpTogglePass()" title="Show / hide" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:6px;padding:0 11px;cursor:pointer;">👁</button></div></div>'
+      +'<div><div style="'+lbl+'">Phone</div><input id="lpApPhone" type="text" placeholder="phone" value="'+lpEsc(v.phone||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
+      +'<div><div style="'+lbl+'">Email</div><input id="lpApEmail" type="email" placeholder="email" value="'+lpEsc(v.email||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
+      +'</div><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:9px;">🔓 Shared vendor record — editing updates it for every loan. Visible to your VA.</div>';
+  } else {
+    html += '<div style="font-size:11px;color:#888;">Pick an appraisal vendor, or add a new one. The login is stored once and reused on every loan using this vendor.</div>';
+  }
+  el.innerHTML = html;
+}
+async function lpVendorPick(cid, val){
+  const el = document.getElementById('lpAppraisalPortalBody');
+  if(val === '__new'){
+    const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:6px 9px;';
+    el.innerHTML = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="lpNewVendor" type="text" placeholder="New appraisal vendor / company name" style="'+inp+'min-width:260px;"><button onclick="lpVendorCreate(\''+cid+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.5);color:#C9A84C;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;">Create</button><button onclick="lpLoadAppraisalPortal(\''+cid+'\')" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:8px;padding:7px 12px;cursor:pointer;">Cancel</button></div>';
+    const f = document.getElementById('lpNewVendor'); if(f) f.focus();
+    return;
+  }
+  try{ await _authClient().from('loan_contacts').upsert({ contact_id:cid, role:'appraisal_company', vendor_login_id: val||null, updated_at:new Date().toISOString() }, { onConflict:'contact_id,role' }); }catch(e){ console.warn('[lpVendorPick]', e.message); }
+  lpRenderAppraisalPortal(cid, val||'');
+}
+async function lpVendorCreate(cid){
+  const f = document.getElementById('lpNewVendor'); const company = f && f.value ? f.value.trim() : '';
+  if(!company){ if(f) f.focus(); return; }
+  try{
+    const ins = await _authClient().from('vendor_logins').insert({ vendor_type:'appraisal', company }).select().limit(1);
+    const v = ins.data && ins.data[0];
+    if(v){ await _authClient().from('loan_contacts').upsert({ contact_id:cid, role:'appraisal_company', vendor_login_id:v.id, updated_at:new Date().toISOString() }, { onConflict:'contact_id,role' }); }
+  }catch(e){ console.warn('[lpVendorCreate]', e.message); }
+  lpLoadAppraisalPortal(cid);
 }
 async function lpSaveAppraisalPortal(){
-  const cid = lpCid(); if(!cid) return;
+  if(!_lpVendorId) return;
   const g = id => { const e = document.getElementById(id); return e ? (e.value||null) : null; };
-  try{ await _authClient().from('loan_contacts').upsert({ contact_id:cid, role:'appraisal_company', website:g('lpApWebsite'), portal_login:g('lpApLogin'), portal_password:g('lpApPass'), updated_at:new Date().toISOString() }, { onConflict:'contact_id,role' }); }catch(e){ console.warn('[lpSaveAppraisalPortal]', e.message); }
+  try{ await _authClient().from('vendor_logins').update({ website:g('lpApWebsite'), login:g('lpApLogin'), password:g('lpApPass'), phone:g('lpApPhone'), email:g('lpApEmail'), updated_at:new Date().toISOString() }).eq('id', _lpVendorId); }catch(e){ console.warn('[lpSaveAppraisalPortal]', e.message); }
 }
 function lpOpenAppraisalSite(){ const e = document.getElementById('lpApWebsite'); let u = e && e.value ? e.value.trim() : ''; if(!u) return; if(!/^https?:\/\//i.test(u)) u = 'https://'+u; window.open(u, '_blank', 'noopener'); }
 function lpTogglePass(){ const e = document.getElementById('lpApPass'); if(e) e.type = e.type==='password' ? 'text' : 'password'; }
