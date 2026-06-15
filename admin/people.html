@@ -617,33 +617,37 @@ function normStatus(s) {
 
 /* ====== DATA LOADING ====== */
 
+// Fetch ALL rows from a table/view in pages of 1000 (Supabase caps a single response
+// at ~1000). Orders by created_at desc + a unique tiebreaker so paging is stable even
+// when many rows share a created_at (e.g. bulk imports). Returns null on error.
+async function _fetchAllRows(client, table, selectStr, tiebreak) {
+  tiebreak = tiebreak || 'id';
+  var all = [], pageSize = 1000, from = 0;
+  while (true) {
+    var res = await client.from(table).select(selectStr)
+      .order('created_at', { ascending: false })
+      .order(tiebreak, { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (res.error) { console.error('[_fetchAllRows] ' + table + ' failed:', res.error); return null; }
+    var rows = res.data || [];
+    all = all.concat(rows);
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
 async function loadPeople() {
   // Use the canonical Supabase client so supabase-js auto-attaches the session JWT.
   // RLS sees us as the authenticated admin user instead of anon. (Replaces the old
   // raw-fetch + hdrs() path that fell back to ANON_KEY when _sessJWT wasn't ready.)
   var client = await getSupabaseClient();
 
-  var contactsRes = await client
-    .from('contacts')
-    .select('*,contact_tags(tag_id,tags(id,name,color)),mortgage_applications(loan_type)')
-    .order('created_at', { ascending: false })
-    .limit(2000);
-  if (contactsRes.error) {
-    console.error('[loadPeople] contacts query failed:', contactsRes.error);
-    return;
-  }
-  var contacts = contactsRes.data || [];
+  var contacts = await _fetchAllRows(client, 'contacts', '*,contact_tags(tag_id,tags(id,name,color)),mortgage_applications(loan_type)');
+  if (contacts === null) return;
 
-  var leadsRes = await client
-    .from('leads')
-    .select('contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at')
-    .order('created_at', { ascending: false })
-    .limit(2000);
-  if (leadsRes.error) {
-    console.error('[loadPeople] leads query failed:', leadsRes.error);
-    return;
-  }
-  var leads = leadsRes.data || [];
+  var leads = await _fetchAllRows(client, 'leads', 'contact_id,status,loan_type,loan_amount,score,score_tier,source,created_at', 'contact_id');
+  if (leads === null) return;
   var leadMap = {};
   leads.forEach(function(l) { if (!leadMap[l.contact_id]) leadMap[l.contact_id] = l; });
 
