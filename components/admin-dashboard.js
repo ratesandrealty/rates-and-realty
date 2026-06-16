@@ -200,9 +200,10 @@ function bindSidebarNav() {
     await supabase.auth.signOut();
     // Clear any leftover borrower/portal session so staff don't inherit it.
     try {
-      localStorage.removeItem("portal_user");
+      // Clear borrower-portal keys (portal_ or portal-) AND any leftover
+      // Supabase auth token so staff never inherit a stale session.
       Object.keys(localStorage)
-        .filter((k) => k.startsWith("portal_"))
+        .filter((k) => /^portal[_-]/.test(k) || /^sb-.*-auth-token$/.test(k))
         .forEach((k) => localStorage.removeItem(k));
     } catch (e) { /* ignore storage errors */ }
     window.location.href = "/auth/admin-login.html";
