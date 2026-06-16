@@ -198,7 +198,14 @@ function bindSidebarNav() {
   document.getElementById("sidebar-signout-btn")?.addEventListener("click", async () => {
     const { supabase } = await import("/api/supabase-client.js");
     await supabase.auth.signOut();
-    window.location.href = "/public/unified-portal.html";
+    // Clear any leftover borrower/portal session so staff don't inherit it.
+    try {
+      localStorage.removeItem("portal_user");
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith("portal_"))
+        .forEach((k) => localStorage.removeItem(k));
+    } catch (e) { /* ignore storage errors */ }
+    window.location.href = "/auth/admin-login.html";
   });
 }
 
