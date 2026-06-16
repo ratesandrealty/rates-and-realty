@@ -197,21 +197,26 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <body>
 
 <div class="topbar">
-  <span class="topbar-brand">People</span>
+  <span class="topbar-brand" id="peopleBrand">People</span>
+  <!-- VA-only two-item nav (revealed by applyVaMode for non-admins) -->
+  <div id="vaNav" style="display:none;align-items:center;gap:4px;margin-left:6px;">
+    <button id="vaNavLeads" class="btn btn-ghost btn-sm" onclick="setVaView('leads')">My Leads</button>
+    <button id="vaNavProcessing" class="btn btn-ghost btn-sm" onclick="setVaView('processing')">Loan Processing</button>
+  </div>
   <div class="topbar-sep"></div>
   <div class="search-wrap">
     <span class="si">&#128269;</span>
     <input type="text" id="searchInput" placeholder="Search name, email, phone..." oninput="onSearch()">
   </div>
   <div class="topbar-right">
-    <a href="settings.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">&#9881; Settings</a>
-    <a href="../dashboard/admin.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">Dashboard</a>
+    <a href="settings.html" id="vahideSettings" class="btn btn-ghost btn-sm" style="text-decoration:none;">&#9881; Settings</a>
+    <a href="../dashboard/admin.html" id="vahideDashboard" class="btn btn-ghost btn-sm" style="text-decoration:none;">Dashboard</a>
     <button class="btn btn-ghost btn-sm" onclick="loadPeople()" title="Refresh">&#x21bb; Refresh</button>
     <input type="file" id="mismoFileInput" accept=".xml" style="display:none;" onchange="handleMismoUpload(event)">
-    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('mismoFileInput').click()" style="border-color:rgba(201,168,76,0.35);color:#C9A84C;">&#11014; MISMO Import</button>
+    <button id="vahideMismo" class="btn btn-ghost btn-sm" onclick="document.getElementById('mismoFileInput').click()" style="border-color:rgba(201,168,76,0.35);color:#C9A84C;">&#11014; MISMO Import</button>
     <input type="file" id="leadImportInput" accept=".csv,.tsv" style="display:none;" onchange="handleLeadImport(event)">
-    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('leadImportInput').click()" style="border-color:rgba(201,168,76,0.35);color:#C9A84C;">&#11014; Import Leads</button>
-    <button class="btn btn-gold btn-sm" onclick="openNewModal()">+ Add Person</button>
+    <button id="vahideImport" class="btn btn-ghost btn-sm" onclick="document.getElementById('leadImportInput').click()" style="border-color:rgba(201,168,76,0.35);color:#C9A84C;">&#11014; Import Leads</button>
+    <button id="vahideAdd" class="btn btn-gold btn-sm" onclick="openNewModal()">+ Add Person</button>
   </div>
 </div>
 
@@ -593,6 +598,9 @@ var _sortCol = 'created_at';
 var _sortDir = 'desc';
 var _searchQ = '';
 var _activeViewId = null;
+// VA limited-workspace view: 'leads' (all shared) or 'processing' (active pipeline only).
+// Stays 'leads' for admins (poller never switches it), so the processing filter is a no-op.
+var _vaMode = 'leads';
 
 // Advanced filters state
 var _filterSources = [];
@@ -878,6 +886,12 @@ function applyFilters() {
     // Advanced: Pipeline
     if (_filterPipelines.length > 0) {
       if (_filterPipelines.indexOf(p.lead_status || p.pipeline_status) < 0) return false;
+    }
+    // VA "Loan Processing" view — keep only active/in-process pipeline stages,
+    // dropping closed/dead. No-op for admins (_vaMode stays 'leads').
+    if (_vaMode === 'processing') {
+      var _st = (p.lead_status || p.pipeline_status || '').toLowerCase();
+      if (_st.indexOf('closed') >= 0 || _st.indexOf('lost') >= 0 || _st.indexOf('dead') >= 0) return false;
     }
     // Advanced: Tags
     if (_filterTagIds.length > 0) {
@@ -1632,6 +1646,72 @@ if (_rpFilterId && _rpFilterName) {
   if (topbar) topbar.insertAdjacentElement('afterend', banner);
 }
 
+/* ====== VA LIMITED WORKSPACE (role-aware) ======
+   Role is published to sessionStorage('rnr_app_role') asynchronously by auth-guard.js.
+   We poll until it's resolved, then apply a scoped view for any non-admin (e.g. 'va').
+   Admins are left completely untouched. */
+var _vaModeApplied = false;
+
+// Returns true once the role is resolved (admin => no-op; non-admin => limited view
+// applied). Returns false while the role is still empty so the caller can retry.
+function applyVaMode() {
+  var role = (sessionStorage.getItem('rnr_app_role') || '').toLowerCase();
+  if (!role) return false;            // auth-guard hasn't published it yet
+  if (role === 'admin') return true;  // admin UI untouched
+  if (_vaModeApplied) return true;
+  _vaModeApplied = true;
+
+  // a. Hide global (book-wide) stats bar
+  var statsBar = document.getElementById('peopleStatsBar');
+  if (statsBar) statsBar.style.display = 'none';
+
+  // b. Hide admin-only topbar actions
+  ['vahideSettings','vahideDashboard','vahideMismo','vahideImport','vahideAdd'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
+
+  // c. Brand => "My Leads"
+  var brand = document.getElementById('peopleBrand');
+  if (brand) brand.textContent = 'My Leads';
+
+  // d. Hide sidebar links to earnings-dashboard.html / settings.html
+  try {
+    document.querySelectorAll('.views-sidebar a[href*="earnings-dashboard.html"], .views-sidebar a[href*="settings.html"]')
+      .forEach(function(a) { a.style.display = 'none'; });
+  } catch (e) {}
+
+  // e. Reveal the VA two-item nav and default to "My Leads"
+  var nav = document.getElementById('vaNav');
+  if (nav) nav.style.display = 'inline-flex';
+  setVaView('leads');
+  return true;
+}
+
+// Switch the VA in-memory view. 'leads' = all shared leads; 'processing' = active
+// pipeline only (closed/dead excluded). Re-filters the already-loaded list — no fetch.
+function setVaView(view) {
+  _vaMode = (view === 'processing') ? 'processing' : 'leads';
+  var leadsBtn = document.getElementById('vaNavLeads');
+  var procBtn = document.getElementById('vaNavProcessing');
+  function _setActive(btn, on) {
+    if (!btn) return;
+    btn.style.background = on ? 'var(--gold)' : '';
+    btn.style.color = on ? '#000' : '';
+    btn.style.fontWeight = on ? '800' : '';
+  }
+  _setActive(leadsBtn, _vaMode === 'leads');
+  _setActive(procBtn, _vaMode === 'processing');
+  if (typeof applyFilters === 'function') applyFilters();
+}
+
+// Poll until auth-guard publishes the role, then apply the limited view once.
+function _ensureVaMode(attempt) {
+  attempt = attempt || 0;
+  if (applyVaMode()) return;
+  if (attempt >= 40) return; // ~6s ceiling
+  setTimeout(function() { _ensureVaMode(attempt + 1); }, 150);
+}
+
 /* ====== BOOT ====== */
 Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners(), loadPeopleStats()]).then(function() {
   if (_rpFilterId) {
@@ -1639,6 +1719,9 @@ Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners(),
     updateTabCounts();
     applyFilters();
   }
+  // Apply VA limited view once contacts are loaded; poller re-checks if role was
+  // still empty on this first pass.
+  _ensureVaMode();
 });
 
 // Auto-refresh stats every 60 seconds

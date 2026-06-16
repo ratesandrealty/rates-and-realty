@@ -68,7 +68,7 @@ export async function requireAdmin() {
   const user = await requireUser();
 
   if (!isAdminUser(user)) {
-    window.location.href = "/public/unified-portal.html";
+    window.location.href = "/admin/people.html";
     throw new Error("Admin access required.");
   }
 
