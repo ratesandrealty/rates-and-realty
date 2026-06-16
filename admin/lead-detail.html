@@ -1474,6 +1474,18 @@
   </div>
   <!-- Pipeline timeline (fills remaining space) -->
   <div id="pipelineTimeline" style="flex:1;min-width:0;height:26px;display:flex;align-items:stretch;background:rgba(0,0,0,0.35);border-radius:16px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;margin:0 6px;"></div>
+  <!-- Share with VA toggle (admin-only; revealed by initShareWithVa() once share_targets() resolves) -->
+  <div id="shareVaWrap" style="display:none;align-items:center;gap:8px;flex-shrink:0;padding:3px 10px;border-radius:20px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.18);">
+    <label for="shareVaToggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;font-size:11px;font-weight:600;color:#C9A84C;white-space:nowrap;user-select:none;">
+      <span>Share with VA</span>
+      <span style="position:relative;display:inline-block;width:34px;height:18px;flex-shrink:0;">
+        <input type="checkbox" id="shareVaToggle" style="opacity:0;width:0;height:0;position:absolute;margin:0;">
+        <span id="shareVaTrack" style="position:absolute;inset:0;background:#333;border-radius:18px;transition:background .2s;"></span>
+        <span id="shareVaKnob" style="position:absolute;top:2px;left:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:transform .2s;pointer-events:none;"></span>
+      </span>
+    </label>
+    <span id="shareVaMsg" style="font-size:10px;color:#888;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;"></span>
+  </div>
   <!-- Right actions -->
   <div class="ab-controls" style="flex-shrink:0;">
     <button class="ab-btn ab-btn-primary" onclick="toast('Convert to application — coming soon')" title="Convert" style="flex-shrink:0;">Convert</button>
@@ -5013,9 +5025,102 @@ async function loadData() {
     renderLiabilities();
     await Promise.all([loadNotes(), loadContactNotes(contactId), loadTasks(), loadCreditApps().catch(function(e){ console.warn('Credit apps skipped:', e.message); }), loadRelatedContacts(contactId), loadPricingLenders()]);
     if (typeof window.loadActivityTab === 'function') window.loadActivityTab();
+    initShareWithVa();
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
+  }
+}
+
+/* ── SHARE WITH VA (admin grants/revokes a VA's access to this lead) ──
+   Data layer is pre-built: RPC share_targets() returns shareable users only
+   for admins (empty otherwise); table lead_shares is admin-insert/delete via RLS. */
+let _shareVa = null;          // chosen VA target { user_id, role, label }
+let _shareRowExists = false;  // does a lead_shares row currently exist?
+let _shareBusy = false;
+
+function _renderShareToggle(on) {
+  const cb = document.getElementById('shareVaToggle');
+  const track = document.getElementById('shareVaTrack');
+  const knob = document.getElementById('shareVaKnob');
+  if (cb) cb.checked = !!on;
+  if (track) track.style.background = on ? '#C9A84C' : '#333';
+  if (knob) knob.style.transform = on ? 'translateX(16px)' : 'translateX(0)';
+}
+
+function _shareMsg(text, isError) {
+  const m = document.getElementById('shareVaMsg');
+  if (!m) return;
+  m.textContent = text || '';
+  m.style.color = isError ? '#F07878' : '#888';
+}
+
+async function initShareWithVa() {
+  try {
+    if (!contactId) return;
+    const client = await _waitForAuthClient();
+    if (!client) return;
+    // share_targets() returns rows only for admins; empty/null => not admin => no toggle.
+    const { data: targets, error: tErr } = await client.rpc('share_targets');
+    if (tErr) { console.warn('[share] share_targets failed:', tErr.message); return; }
+    if (!Array.isArray(targets) || !targets.length) return;
+    const va = targets.find(t => t.role === 'va');
+    if (!va) return; // no VA configured — leave toggle hidden
+    _shareVa = va;
+
+    const { data: existing, error: eErr } = await client
+      .from('lead_shares')
+      .select('id')
+      .eq('contact_id', contactId)
+      .eq('shared_with_user_id', va.user_id)
+      .maybeSingle();
+    if (eErr) { console.warn('[share] state lookup failed:', eErr.message); return; }
+    _shareRowExists = !!existing;
+
+    const wrap = document.getElementById('shareVaWrap');
+    if (wrap) wrap.style.display = 'inline-flex';
+    _renderShareToggle(_shareRowExists);
+    _shareMsg(_shareRowExists && va.label ? ('Shared with ' + va.label) : '', false);
+
+    const cb = document.getElementById('shareVaToggle');
+    if (cb && !cb._shareWired) { cb.addEventListener('change', onShareVaToggle); cb._shareWired = true; }
+  } catch (e) {
+    console.warn('[share] init error:', e);
+  }
+}
+
+async function onShareVaToggle(e) {
+  if (_shareBusy || !_shareVa) return;
+  const wantOn = !!(e.target && e.target.checked);
+  _shareBusy = true;
+  _shareMsg('Saving…', false);
+  try {
+    const client = await _waitForAuthClient();
+    if (!client) throw new Error('Not signed in');
+    if (wantOn) {
+      const { data: { user } } = await client.auth.getUser();
+      const { error } = await client.from('lead_shares')
+        .insert({ contact_id: contactId, shared_with_user_id: _shareVa.user_id, shared_by: user.id });
+      if (error) throw error;
+      _shareRowExists = true;
+      _renderShareToggle(true);
+      _shareMsg(_shareVa.label ? ('Shared with ' + _shareVa.label) : 'Shared', false);
+    } else {
+      const { error } = await client.from('lead_shares')
+        .delete()
+        .eq('contact_id', contactId)
+        .eq('shared_with_user_id', _shareVa.user_id);
+      if (error) throw error;
+      _shareRowExists = false;
+      _renderShareToggle(false);
+      _shareMsg('', false);
+    }
+  } catch (err) {
+    console.error('[share] toggle error:', err);
+    _renderShareToggle(_shareRowExists); // revert to last-known-good state
+    _shareMsg('Error — try again', true);
+  } finally {
+    _shareBusy = false;
   }
 }
 
