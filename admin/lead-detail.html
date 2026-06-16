@@ -1488,7 +1488,7 @@
   </div>
   <!-- Right actions -->
   <div class="ab-controls" style="flex-shrink:0;">
-    <button class="ab-btn ab-btn-primary" onclick="toast('Convert to application — coming soon')" title="Convert" style="flex-shrink:0;">Convert</button>
+    <button id="vahideConvert" class="ab-btn ab-btn-primary" onclick="toast('Convert to application — coming soon')" title="Convert" style="flex-shrink:0;">Convert</button>
     <button class="ab-btn ab-btn-danger" onclick="adminLogout()" style="flex-shrink:0;">Logout</button>
     <button class="ab-theme" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme" style="flex-shrink:0;">&#127769;</button>
   </div>
@@ -1545,7 +1545,7 @@
           <div style="font-size:.68rem;color:#666;margin-bottom:3px">Portal Status</div>
           <div id="crmPortalStatus" style="font-size:.82rem;color:#888">Not registered</div>
         </div>
-        <div>
+        <div id="vahidePwBlock">
           <div style="font-size:.68rem;color:#666;margin-bottom:3px">Current Password</div>
           <div style="display:flex;align-items:center;gap:6px">
             <div id="crmPassword" style="font-size:.82rem;color:#888;font-family:monospace">—</div>
@@ -1563,7 +1563,7 @@
         <button id="crmResetPwBtn" onclick="crmSendPasswordReset()" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:7px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-weight:600">
           <i class="fas fa-key"></i> Send Password Reset
         </button>
-        <button onclick="adminViewPortal()" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:7px 12px;font-size:.75rem;cursor:pointer;text-decoration:none">
+        <button id="vahideViewPortal" onclick="adminViewPortal()" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:7px;padding:7px 12px;font-size:.75rem;cursor:pointer;text-decoration:none">
           <i class="fas fa-external-link-alt"></i> View Portal
         </button>
       </div>
@@ -1902,8 +1902,8 @@
       <button class="ld-tab-btn" onclick="switchTab('application', this)" id="tab-btn-application">1003 Application</button>
       <button class="ld-tab-btn" onclick="switchTab('fee-sheet', this)" id="tab-btn-fee-sheet"><i class="fas fa-file-invoice-dollar" style="margin-right:4px"></i>Fee Sheet</button>
       <button class="ld-tab-btn" onclick="switchTab('deal-analyzer', this)" id="tab-btn-deal-analyzer">📊 Deal Analyzer &amp; CMA</button>
-      <button class="ld-tab-btn" onclick="switchTab('lenders', this)">Lenders</button>
-      <button class="ld-tab-btn" onclick="switchTab('commercial', this)">🏢 Commercial</button>
+      <button class="ld-tab-btn" onclick="switchTab('lenders', this)" id="tab-btn-lenders">Lenders</button>
+      <button class="ld-tab-btn" onclick="switchTab('commercial', this)" id="tab-btn-commercial">🏢 Commercial</button>
       <button class="ld-tab-btn" onclick="switchTab('documents', this)">Documents</button>
       <button class="ld-tab-btn" onclick="switchTab('conditions', this)">Conditions</button>
       <button class="ld-tab-btn" onclick="switchTab('tasks', this)">Tasks</button>
@@ -1918,7 +1918,7 @@
     <div class="ld-tab-panel active" id="tab-lead-details">
 
       <!-- Deal Earnings -->
-      <div style="background:rgba(201,168,76,0.04);border:1px solid rgba(201,168,76,0.12);border-radius:12px;padding:16px 18px;margin-top:14px;">
+      <div id="dealEarningsCard" style="background:rgba(201,168,76,0.04);border:1px solid rgba(201,168,76,0.12);border-radius:12px;padding:16px 18px;margin-top:14px;">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:rgba(201,168,76,0.7);margin-bottom:14px;">💰 Deal Earnings</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
           <div>
@@ -5003,7 +5003,7 @@ async function loadData() {
     // Fetch contact
     if (contactId) {
       const { data, error } = await sb
-        .from('contacts')
+        .from('contacts_secure')
         .select('*')
         .eq('id', contactId)
         .single();
@@ -5026,6 +5026,7 @@ async function loadData() {
     await Promise.all([loadNotes(), loadContactNotes(contactId), loadTasks(), loadCreditApps().catch(function(e){ console.warn('Credit apps skipped:', e.message); }), loadRelatedContacts(contactId), loadPricingLenders()]);
     if (typeof window.loadActivityTab === 'function') window.loadActivityTab();
     initShareWithVa();
+    _ldEnsureVaMode();
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
@@ -5122,6 +5123,68 @@ async function onShareVaToggle(e) {
   } finally {
     _shareBusy = false;
   }
+}
+
+/* ── VA LIMITED VIEW (role-gate admin-only UI on lead-detail) ──
+   Role is published to sessionStorage('rnr_app_role') asynchronously by auth-guard.js;
+   poll until present (same pattern as people.html). For any non-admin, hide (don't
+   delete) the admin-only surfaces. Admin sees no change. Data is already masked at the
+   source via the contacts_secure view — this is defense-in-depth on the UI. */
+window._ldVaApplied = false;
+
+function _ldApplyVaMode() {
+  var role = (sessionStorage.getItem('rnr_app_role') || '').toLowerCase();
+  if (!role) return false;            // auth-guard hasn't published it yet
+  if (role === 'admin') return true;  // admin UI untouched
+  if (window._ldVaApplied) return true;
+  window._ldVaApplied = true;
+
+  function hide(el) { if (el) el.style.display = 'none'; }
+  function hideId(id) { hide(document.getElementById(id)); }
+
+  // Deal Earnings section (estimated/actual + Won/Pending/Lost outcome buttons)
+  hideId('dealEarningsCard');
+
+  // SSN (#b-ssn) / DOB (#b-dob) fields — hide field + its containing row/label.
+  // Defensive: these inputs aren't currently rendered in this page (the borrower
+  // card was refactored out), so this is a no-op now but stays correct if re-added.
+  ['b-ssn', 'b-dob'].forEach(function (fid) {
+    var el = document.getElementById(fid);
+    if (el) hide(el.closest('div') || el);
+  });
+
+  // Borrower-portal credential controls
+  hideId('vahidePwBlock');     // "Current Password" value + label
+  hideId('crmResetPwBtn');     // Send Password Reset
+  hideId('vahideViewPortal');  // View Portal
+
+  // Convert button
+  hideId('vahideConvert');
+
+  // Admin-only tabs — keep Lead Details / Loan Processing / 1003 / Documents /
+  // Conditions / Tasks / Activity visible for VA.
+  var adminTabs = ['tab-btn-fee-sheet', 'tab-btn-deal-analyzer', 'tab-btn-lenders', 'tab-btn-commercial'];
+  var activeHidden = false;
+  adminTabs.forEach(function (id) {
+    var btn = document.getElementById(id);
+    if (!btn) return;
+    if (btn.classList.contains('active')) activeHidden = true;
+    btn.style.display = 'none';
+  });
+  // If a now-hidden tab was the active one, fall back to Lead Details.
+  if (activeHidden && typeof switchTab === 'function') {
+    var ldBtn = document.querySelector('.ld-tab-btn[onclick*="lead-details"]');
+    switchTab('lead-details', ldBtn);
+  }
+  return true;
+}
+
+// Poll until auth-guard publishes the role, then apply the limited view once.
+function _ldEnsureVaMode(attempt) {
+  attempt = attempt || 0;
+  if (_ldApplyVaMode()) return;
+  if (attempt >= 40) return; // ~6s ceiling
+  setTimeout(function () { _ldEnsureVaMode(attempt + 1); }, 150);
 }
 
 /* ── DRIVE FOLDER STATUS PILL + SMART MATCH MODAL ── */
@@ -5432,7 +5495,7 @@ async function populateUI() {
   // Pull fresh earnings directly from contacts (single source of truth)
   if (contactId) {
     try {
-      const { data: cData } = await _authClient().from('contacts')
+      const { data: cData } = await _authClient().from('contacts_secure')
         .select('actual_earnings, estimated_earnings, deal_outcome, closed_date, lost_reason')
         .eq('id', contactId).single();
       if (cData) {
@@ -5548,9 +5611,9 @@ async function populateUI() {
   try {
     if (contactId) {
       _authClient()
-        .from('contact_financials')
+        .from('contacts_secure')
         .select('annual_income,monthly_income,credit_score,credit_score_range')
-        .eq('contact_id', contactId)
+        .eq('id', contactId)
         .maybeSingle()
         .then(function (res) {
           var v = res && res.data ? res.data : null;
@@ -5581,9 +5644,9 @@ async function populateUI() {
   try {
     if (contactId) {
       _authClient()
-        .from('contact_earnings')
+        .from('contacts_secure')
         .select('actual_earnings,estimated_earnings')
-        .eq('contact_id', contactId)
+        .eq('id', contactId)
         .maybeSingle()
         .then(function (res) {
           var v = res && res.data ? res.data : null;
