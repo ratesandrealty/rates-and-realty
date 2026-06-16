@@ -653,8 +653,21 @@ async function loadPeople() {
   var leadMap = {};
   leads.forEach(function(l) { if (!leadMap[l.contact_id]) leadMap[l.contact_id] = l; });
 
+  // credit_score / annual_income / monthly_income moved into the RLS-protected
+  // contact_financials vault; the matching contacts columns are being nulled in a
+  // follow-up DB step. Bulk-fetch the vault once per load and key it by contact_id.
+  // Admins get all rows via RLS; non-admins get an empty map, so these values
+  // simply stay blank. Each row prefers its own value and falls back to the map.
+  var finMap = {};
+  try {
+    var finRes = await client.from('contact_financials')
+      .select('contact_id,annual_income,monthly_income,credit_score,credit_score_range');
+    (finRes && finRes.data ? finRes.data : []).forEach(function(f) { finMap[f.contact_id] = f; });
+  } catch (e) { console.warn('[contact_financials]', e && e.message); }
+
   _allPeople = contacts.map(function(c) {
     var lead = leadMap[c.id] || {};
+    var fin = finMap[c.id] || {};
     var effectiveScore = (c.lead_score != null && c.lead_score !== '') ? parseInt(c.lead_score) : (lead.score != null ? parseInt(lead.score) : 0);
     if (isNaN(effectiveScore)) effectiveScore = 0;
     var effectiveTier = effectiveScore >= 80 ? 'Hot' : effectiveScore >= 50 ? 'Warm' : 'Cold';
@@ -690,6 +703,12 @@ async function loadPeople() {
       effective_score: effectiveScore,
       effective_tier: effectiveTier,
       effective_loan_type: mergedLoanType,
+      // Financials: prefer the contact's own value; fall back to the vault map
+      // when empty (so values survive once contacts columns are nulled).
+      credit_score:       (c.credit_score != null && c.credit_score !== '') ? c.credit_score : (fin.credit_score != null ? fin.credit_score : ''),
+      credit_score_range: (c.credit_score_range != null && c.credit_score_range !== '') ? c.credit_score_range : (fin.credit_score_range != null ? fin.credit_score_range : ''),
+      annual_income:      (c.annual_income != null && c.annual_income !== '') ? c.annual_income : (fin.annual_income != null ? fin.annual_income : ''),
+      monthly_income:     (c.monthly_income != null && c.monthly_income !== '') ? c.monthly_income : (fin.monthly_income != null ? fin.monthly_income : ''),
       has_lead: !!lead.contact_id
     };
   });

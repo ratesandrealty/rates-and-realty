@@ -5432,6 +5432,71 @@ async function populateUI() {
   }
   calcDTI();
 
+  // ── Vault overlay (financials + earnings) ───────────────────────────────
+  // These six values moved into RLS-protected vault tables (contact_financials,
+  // contact_earnings) readable only by admins; the matching contacts columns are
+  // being nulled in a follow-up DB step. Read them back from the vaults and
+  // populate the SAME in-memory contactData props + form fields the code already
+  // uses. Same approach as the SSN overlay (application_ssn). Fire-and-forget so
+  // it never blocks rendering; RLS returns nothing to non-admins (fields stay
+  // blank). Re-runs existing display refreshers only — no computation changes.
+  try {
+    if (contactId) {
+      _authClient()
+        .from('contact_financials')
+        .select('annual_income,monthly_income,credit_score,credit_score_range')
+        .eq('contact_id', contactId)
+        .maybeSingle()
+        .then(function (res) {
+          var v = res && res.data ? res.data : null;
+          if (!v) return; // not permitted, or none on file
+          if (v.credit_score != null) {
+            contactData.credit_score = v.credit_score;
+            setVal('b-credit', contactData.credit_score || '');
+            var score = contactData.credit_score || 0;
+            var csNum = document.getElementById('cs-number');
+            var csRating = document.getElementById('cs-rating');
+            if (csNum) csNum.textContent = score || '—';
+            if (csRating) csRating.textContent = getCreditRating(score);
+          }
+          if (v.credit_score_range != null) contactData.credit_score_range = v.credit_score_range;
+          if (v.monthly_income != null) {
+            contactData.monthly_income = v.monthly_income;
+            setVal('fi-monthly', contactData.monthly_income ? fmt$(contactData.monthly_income) : '');
+          }
+          if (v.annual_income != null) {
+            contactData.annual_income = v.annual_income;
+            setVal('fi-annual', contactData.annual_income ? fmt$(contactData.annual_income) : '');
+          }
+          try { calcDTI(); } catch (e) {}
+        });
+    }
+  } catch (e) { /* ignore */ }
+
+  try {
+    if (contactId) {
+      _authClient()
+        .from('contact_earnings')
+        .select('actual_earnings,estimated_earnings')
+        .eq('contact_id', contactId)
+        .maybeSingle()
+        .then(function (res) {
+          var v = res && res.data ? res.data : null;
+          if (!v) return; // not permitted, or none on file
+          if (v.estimated_earnings != null) {
+            contactData.estimated_earnings = v.estimated_earnings;
+            var ee = document.getElementById('estimatedEarnings');
+            if (ee) ee.value = v.estimated_earnings || '';
+          }
+          if (v.actual_earnings != null) {
+            contactData.actual_earnings = v.actual_earnings;
+            var ae = document.getElementById('actualEarnings');
+            if (ae) ae.value = v.actual_earnings || '';
+          }
+        });
+    }
+  } catch (e) { /* ignore */ }
+
   // Wire auto-save for lead info fields
   wireLeadInfoAutoSave(contactId);
 }

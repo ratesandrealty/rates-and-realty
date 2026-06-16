@@ -332,13 +332,22 @@ function buildPendingWidget(contacts) {
 }
 
 async function loadData() {
-  const [contactsRes, partnersRes] = await Promise.all([
+  const [contactsRes, partnersRes, earningsRes] = await Promise.all([
     fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,loan_amount,loan_type,closing_loan_type,loan_purpose,closing_lender,estimated_earnings,actual_earnings,deal_outcome,closed_date,lost_reason,created_at,referral_partner_id&order=created_at.desc`, { headers: H }),
-    fetch(`${SB}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type`, { headers: H })
+    fetch(`${SB}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type`, { headers: H }),
+    // actual_earnings / estimated_earnings moved into the RLS-protected
+    // contact_earnings vault; the matching contacts columns are being nulled in a
+    // follow-up DB step. Pull the vault (admins get rows via RLS; non-admins get
+    // []) and overlay per contact so totals stay vault-backed.
+    fetch(`${SB}/rest/v1/contact_earnings?select=contact_id,actual_earnings,estimated_earnings`, { headers: H })
   ]);
 
   const contacts = await contactsRes.json();
   const partners = await partnersRes.json();
+  let earnings = [];
+  try { earnings = await earningsRes.json(); } catch (e) { earnings = []; }
+  const earnMap = {};
+  (Array.isArray(earnings) ? earnings : []).forEach(e => { earnMap[e.contact_id] = e; });
 
   // Map contacts into the lead-shaped objects the rest of the page expects
   // Only include contacts that have a deal_outcome set (actual leads with outcomes)
@@ -351,8 +360,8 @@ async function loadData() {
     loan_purpose: c.loan_purpose,
     closing_lender: c.closing_lender,
     closing_loan_type: c.closing_loan_type,
-    estimated_earnings: c.estimated_earnings || 0,
-    actual_earnings: c.actual_earnings || 0,
+    estimated_earnings: ((c.estimated_earnings != null && c.estimated_earnings !== '') ? c.estimated_earnings : (earnMap[c.id] && earnMap[c.id].estimated_earnings)) || 0,
+    actual_earnings: ((c.actual_earnings != null && c.actual_earnings !== '') ? c.actual_earnings : (earnMap[c.id] && earnMap[c.id].actual_earnings)) || 0,
     deal_outcome: c.deal_outcome || 'pending',
     closed_date: c.closed_date,
     lost_reason: c.lost_reason,
