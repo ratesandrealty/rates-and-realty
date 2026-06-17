@@ -8677,7 +8677,73 @@ async function lpRefreshTimeline(){
 function lpCid(){ return (typeof contactId!=='undefined'&&contactId) || (typeof getContactId==='function'?getContactId():null); }
 function lpEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'); if(s.length!==3) return ''; const d=new Date(+s[0],+s[1]-1,+s[2]); return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
-function lpAction(name){ if(typeof showToast==='function') showToast('“'+name+'” — wiring in Phase 2', false); }
+/* ═══ PROCESSING QUICK ACTIONS (wired — Phase 2) ═══ */
+function _lpEscHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _lpBorrowerName(){ var c=(typeof contactData!=='undefined'&&contactData)?contactData:{}; return ((c.first_name||'')+' '+(c.last_name||'')).trim()||'the borrower'; }
+async function _lpLoadContactMap(cid){ var map={}; try{ var r=await _authClient().from('loan_contacts').select('role,name,company,email,phone').eq('contact_id',cid); (r.data||[]).forEach(function(x){ map[x.role]=x; }); }catch(e){} return map; }
+async function lpCreateClickupTask(opts){
+  opts=opts||{};
+  var cid=(typeof lpCid==='function'?lpCid():(new URLSearchParams(location.search).get('contact_id')||''));
+  var base=(window.APP_CONFIG&&window.APP_CONFIG.SUPABASE_URL)||'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var key=(window.APP_CONFIG&&window.APP_CONFIG.SUPABASE_ANON_KEY)||'';
+  var res=await fetch(base+'/functions/v1/clickup-bridge/task',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key,'apikey':key},body:JSON.stringify({title:opts.title,description:opts.description||null,priority:opts.priority||'normal',due_date:opts.due_date||null,contact_id:cid||null})});
+  var data=await res.json().catch(function(){return {};});
+  if(!res.ok||data.error||data.success===false){ throw new Error(data.error||('ClickUp task failed (HTTP '+res.status+')')); }
+  try{ if(cid&&typeof lpLoadTasks==='function') lpLoadTasks(cid); }catch(e){}
+  return data;
+}
+async function lpAction(name){
+  var toastFn=window.showToast||window.toast||function(){};
+  var cid=(typeof lpCid==='function'?lpCid():(new URLSearchParams(location.search).get('contact_id')||''));
+  if(!cid){ toastFn('No contact loaded',true); return; }
+  var borrower=(typeof contactData!=='undefined'&&contactData)?contactData:{};
+  var bName=_lpBorrowerName();
+  var map=await _lpLoadContactMap(cid);
+  var sig='<br><br>Best regards,<br>Rene Duarte<br>Rates &amp; Realty<br>rene@ratesandrealty.com';
+  function emailRole(roleKey,roleLabel,subject,bodyHtml){ var rc=map[roleKey]||{}; var to=(rc.email||'').trim(); if(!to){ toastFn('No '+roleLabel+' email on file — add it under Transaction Contacts below.',true); return false; } openEmailComposer({to:to,toName:rc.name||roleLabel,subject:subject,bodyHtml:bodyHtml}); return true; }
+  function emailBorrower(subject,bodyHtml){ var to=(borrower.email||'').trim(); if(!to){ toastFn('No borrower email on file.',true); return false; } openEmailComposer({to:to,toName:bName,subject:subject,bodyHtml:bodyHtml}); return true; }
+  try{
+    switch(name){
+      case 'Send Needs List':
+        emailBorrower('Outstanding Items — '+bName,'Hi '+_lpEscHtml(borrower.first_name||'there')+',<br><br>To keep your loan moving, here are the items we still need from you:<br><ul><li>Most recent 30 days of pay stubs</li><li>Last 2 months of bank statements (all pages)</li><li>Most recent 2 years W-2s / tax returns</li><li>Copy of your driver\'s license</li></ul>Please reply to this email with the documents at your earliest convenience.'+sig);
+        break;
+      case 'Email HOI Agent':
+        emailRole('hoi_agent','HOI agent','Homeowners Insurance — '+bName,'Hello,<br><br>We are processing the mortgage for '+_lpEscHtml(bName)+'. Please provide the evidence of insurance / insurance binder for the subject property, listing the lender as mortgagee. Let me know if you need the mortgagee clause.'+sig);
+        break;
+      case 'Order Title':
+        emailRole('title_officer','title officer','Title Order — '+bName,'Hello,<br><br>Please open title for '+_lpEscHtml(bName)+' on the subject property and send the preliminary title report / commitment when ready. Reply here with the title order number for our file.'+sig);
+        try{ await lpCreateClickupTask({title:'Order title — '+bName,priority:'high'}); toastFn('ClickUp task created ✓'+((map['title_officer']&&map['title_officer'].email)?' + title email opened':' (add a title officer email to send the request)')); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
+        break;
+      case 'Request Escrow Docs':
+        emailRole('escrow_officer','escrow officer','Escrow Documents Request — '+bName,'Hello,<br><br>We are processing the mortgage for '+_lpEscHtml(bName)+'. Please send the escrow instructions, estimated closing statement / CD, and wiring instructions for our file. Thank you.'+sig);
+        try{ await lpCreateClickupTask({title:'Request escrow docs — '+bName,priority:'high'}); toastFn('ClickUp task created ✓'+((map['escrow_officer']&&map['escrow_officer'].email)?' + escrow email opened':' (add an escrow officer email to send the request)')); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
+        break;
+      case 'Send Realtor Update': {
+        var realtor=(map['buyer_agent']&&map['buyer_agent'].email)?map['buyer_agent']:(map['listing_agent']||{});
+        var to=(realtor.email||'').trim();
+        if(!to){ toastFn('No realtor email on file — add a Buyer/Listing Agent under Transaction Contacts.',true); break; }
+        openEmailComposer({to:to,toName:realtor.name||'Agent',subject:'Loan Status Update — '+bName,bodyHtml:'Hi '+_lpEscHtml((realtor.name||'').split(' ')[0]||'there')+',<br><br>Quick update on '+_lpEscHtml(bName)+'\'s loan — we\'re actively processing and on track. I\'ll let you know as soon as we hit the next milestone. Reach out anytime with questions.'+sig});
+        break;
+      }
+      case 'Assign Task to VA': {
+        var t=window.prompt('Task for the VA on '+bName+':','Follow up on processing items — '+bName);
+        if(t==null) break; t=t.trim(); if(!t){ toastFn('Task cancelled — empty title.',true); break; }
+        try{ await lpCreateClickupTask({title:t,priority:'normal'}); toastFn('ClickUp task created ✓'); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
+        break;
+      }
+      case 'Create LOE':
+        try{ await lpCreateClickupTask({title:'Draft Letter of Explanation — '+bName,priority:'normal',description:'Prepare LOE for borrower signature.'}); toastFn('LOE task created in ClickUp ✓ (builder/e-sign coming later)'); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
+        break;
+      case 'Send for Signature':
+        try{ await lpCreateClickupTask({title:'Send documents for e-signature — '+bName,priority:'high'}); toastFn('Signature task created in ClickUp ✓ (e-sign integration coming later)'); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
+        break;
+      case 'Upload to Lender':
+        try{ await lpCreateClickupTask({title:'Upload docs to lender portal — '+bName,priority:'high'}); toastFn('Upload task created in ClickUp ✓ (lender portals are uploaded manually)'); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
+        break;
+      default: toastFn('Unknown action: '+name,true);
+    }
+  }catch(e){ toastFn('Error: '+(e&&e.message||e),true); }
+}
 async function lpLoadProcessing(){
   const cid = lpCid(); if(!cid) return;
   lpRenderSnapshot(cid);
@@ -23506,9 +23572,9 @@ function _buildEmailComposerHTML(contact) {
   '</div>';
 }
 
-async function openEmailComposer() {
+async function openEmailComposer(opts) {
   var contact = contactData || {};
-  var email = contact.email || '';
+  var email = (opts && opts.to) || contact.email || '';
   if (!email) { showToast('No email on file', true); return; }
 
   // Build contact object with full_name
@@ -23544,6 +23610,11 @@ async function openEmailComposer() {
   // Wire draft + send
   document.getElementById('ecDraftBtn').addEventListener('click', saveEmailDraft);
   document.getElementById('ecSendBtn').addEventListener('click', sendEmailFromComposer);
+  if (opts && (opts.to || opts.subject || opts.bodyHtml)) {
+    if (opts.to) { var _tc = document.getElementById('toChips'); if (_tc) { _tc.innerHTML = '<div class="ec-chip"><span>' + String(opts.to).replace(/</g,'&lt;') + '</span><button onclick="this.parentElement.remove()">✕</button></div><input class="ec-chip-input" id="toInput" placeholder="Add recipient..." onkeydown="handleChipKey(event,\'toChips\')">'; } }
+    if (opts.subject != null) { var _si = document.getElementById('subjectInput'); if (_si) _si.value = opts.subject; }
+    if (opts.bodyHtml != null) { var _ed = document.getElementById('emailEditor'); if (_ed) _ed.innerHTML = opts.bodyHtml; }
+  }
 
   // Editor keyboard shortcuts for undo/redo
   var editorEl = document.getElementById('emailEditor');
