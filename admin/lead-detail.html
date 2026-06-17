@@ -5189,11 +5189,28 @@ function _ldApplyVaMode() {
 }
 
 // Poll until auth-guard publishes the role, then apply the limited view once.
+// Once role-gating has run (or timed out), restore the active tab from the hash —
+// done here so a tab hidden for a VA is never restored.
 function _ldEnsureVaMode(attempt) {
   attempt = attempt || 0;
-  if (_ldApplyVaMode()) return;
-  if (attempt >= 40) return; // ~6s ceiling
+  if (_ldApplyVaMode()) { _ldRestoreTabFromHash(); return; }
+  if (attempt >= 40) { _ldRestoreTabFromHash(); return; } // ~6s ceiling
   setTimeout(function () { _ldEnsureVaMode(attempt + 1); }, 150);
+}
+
+// Restore the active tab from the URL hash on load. Only restores a known tab whose
+// button is currently visible (VA gating may have hidden it); otherwise leaves the
+// default (Lead Details) active. Runs at most once.
+function _ldRestoreTabFromHash() {
+  if (window._ldTabRestored) return;
+  window._ldTabRestored = true;
+  var name = (location.hash || '').replace(/^#/, '');
+  if (!name) return;                                   // no hash → keep default
+  if (!document.getElementById('tab-' + name)) return; // unknown tab
+  var btn = document.querySelector('.ld-tab-btn[onclick*="\'' + name + '\'"]');
+  if (!btn) return;
+  if (btn.offsetParent === null) return;               // hidden (display:none) → skip
+  switchTab(name, btn);
 }
 
 /* ── DRIVE FOLDER STATUS PILL + SMART MATCH MODAL ── */
@@ -8997,7 +9014,12 @@ function switchTab(name, btn) {
   document.querySelectorAll('.ld-tab-btn').forEach(b => b.classList.remove('active'));
   const panel = document.getElementById('tab-' + name);
   if (panel) panel.classList.add('active');
+  // Tolerate a missing btn (e.g. programmatic/hash-restore calls): find it by name.
+  if (!btn) btn = document.querySelector('.ld-tab-btn[onclick*="\'' + name + '\'"]');
   if (btn) btn.classList.add('active');
+  // Persist the active tab in the URL hash so a refresh restores it (replaceState,
+  // not pushState, so it doesn't spam browser history).
+  history.replaceState(null, '', '#' + name);
   if (name === 'application') { load1003(); loadLiabilities1003(); loadApp1003Borrowers(); buildBorrowerSwitcher(); applyViewModeSections(); setTimeout(initSectionPageSwap, 100); }
   if (name === 'processing') lpLoadProcessing();
   if (name === 'lenders') loadLenderMatches();
