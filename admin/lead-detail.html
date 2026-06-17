@@ -2302,6 +2302,7 @@
           <button class="lp-action" onclick="lpAction('Assign Task to VA')">👤 Assign Task to VA</button>
           <button class="lp-action" onclick="lpAction('Send Realtor Update')">📨 Send Realtor Update</button>
           <button class="lp-action" onclick="lpAction('Upload to Lender')">⬆️ Upload to Lender</button>
+          <button class="lp-action" onclick="lpTextBorrower()">📱 Text Borrower</button>
         </div>
         <div class="lp-card"><div class="lp-h">🚦 Processing Timeline</div><div id="lpTimelineBody"></div></div>
         <div class="lp-card"><div class="lp-h">📌 Loan Snapshot</div>
@@ -9041,24 +9042,91 @@ async function lpSaveDate(key, value, appcol){
   }
   try{ await _authClient().from('loan_key_dates').upsert({contact_id:cid,date_key:key,date_value:value||null,updated_at:new Date().toISOString()}, {onConflict:'contact_id,date_key'}); }catch(e){ console.warn('[lpSaveDate]', e.message); }
 }
+function lpTextBorrower(){
+  var b = (typeof contactData!=='undefined' && contactData) ? contactData : {};
+  var phone = (b.phone || b.secondary_phone || '').replace(/\D/g,'');
+  var toastFn = window.showToast || window.toast || function(){};
+  if(!phone){ toastFn('No phone on file for this borrower.', true); return; }
+  if(typeof openSmsComposer==='function'){ openSmsComposer(); }
+  else { var m=document.getElementById('sms-modal'); if(m) m.style.display='flex'; else toastFn('SMS composer not available', true); }
+}
 async function lpLoadContacts(cid){
   const el = document.getElementById('lpContactsBody'); if(!el) return;
   let map = {};
   try{ const { data } = await _authClient().from('loan_contacts').select('*').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.role]=r; }); }catch(_){}
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;width:100%;';
-  const grid = 'display:grid;grid-template-columns:150px 1fr 1fr 120px 1.4fr;gap:8px;min-width:760px;';
-  const header = '<div style="'+grid+'padding:0 4px 8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);"><div>Role</div><div>Name</div><div>Company</div><div>Phone</div><div>Email</div></div>';
+  const grid = 'display:grid;grid-template-columns:150px 1fr 1fr 120px 1.4fr 74px;gap:8px;min-width:834px;';
+  const sbtn = 'background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:4px 0;cursor:pointer;font-size:10px;font-weight:600;';
+  const header = '<div style="'+grid+'padding:0 4px 8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);"><div>Role</div><div>Name</div><div>Company</div><div>Phone</div><div>Email</div><div></div></div>';
   el.innerHTML = header + LP_CONTACT_ROLES.map(r=>{
     const c = map[r.key]||{};
-    return '<div class="lp-contact" data-role="'+r.key+'" style="'+grid+'align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+    return '<div class="lp-contact" data-role="'+r.key+'" style="position:relative;'+grid+'align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
       +'<div style="font-size:11px;font-weight:600;color:#C9A84C;">'+r.label+'</div>'
-      +'<input data-f="name" type="text" placeholder="Name" value="'+lpEsc(c.name||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
-      +'<input data-f="company" type="text" placeholder="Company" value="'+lpEsc(c.company||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'<input data-f="name" type="text" autocomplete="off" placeholder="Name" value="'+lpEsc(c.name||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'<input data-f="company" type="text" autocomplete="off" placeholder="Company" value="'+lpEsc(c.company||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<input data-f="phone" type="text" placeholder="Phone" value="'+lpEsc(c.phone||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
-      +'<input data-f="email" type="email" placeholder="Email" value="'+lpEsc(c.email||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'<input data-f="email" type="email" autocomplete="off" placeholder="Email" value="'+lpEsc(c.email||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'<button type="button" title="Save to vendor directory" onclick="lpVendorSaveRow(\''+r.key+'\')" style="'+sbtn+'">💾 Save</button>'
+      +'<div class="lp-vsuggest" style="display:none;position:absolute;left:158px;top:36px;z-index:40;min-width:300px;max-width:440px;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 14px 34px rgba(0,0,0,.6);overflow:hidden;"></div>'
       +'</div>';
   }).join('');
 }
+let _lpVendorSuggestTimer = null;
+async function lpVendorSuggest(role, inputEl){
+  const row = inputEl.closest('.lp-contact'); if(!row) return;
+  const box = row.querySelector('.lp-vsuggest'); if(!box) return;
+  const q = (inputEl.value||'').trim();
+  if(q.length < 2){ box.style.display='none'; box.innerHTML=''; return; }
+  clearTimeout(_lpVendorSuggestTimer);
+  _lpVendorSuggestTimer = setTimeout(async function(){
+    let rows = [];
+    try{
+      const esc = q.replace(/[%,]/g,' ');
+      const r = await _authClient().from('vendor_directory').select('id,name,company,phone,email,website,usage_count').eq('role', role).or('name.ilike.%'+esc+'%,company.ilike.%'+esc+'%').order('usage_count',{ascending:false}).order('last_used_at',{ascending:false,nullsFirst:false}).limit(6);
+      rows = r.data || [];
+    }catch(e){}
+    if(!rows.length){ box.style.display='none'; box.innerHTML=''; return; }
+    box._vendors = {};
+    box.innerHTML = rows.map(function(v){
+      box._vendors[v.id] = v;
+      const sub = [v.company, v.email, v.phone].filter(Boolean).join(' · ');
+      return '<div onclick="lpVendorDirPick(\''+role+'\',\''+v.id+'\',this)" style="padding:7px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);" onmouseover="this.style.background=\'rgba(201,168,76,.1)\'" onmouseout="this.style.background=\'transparent\'"><div style="font-weight:600;color:#ddd;font-size:12px;">'+lpEsc(v.name||v.company||'(unnamed)')+'</div>'+(sub?'<div style="font-size:10px;color:#888;margin-top:1px;">'+lpEsc(sub)+'</div>':'')+'</div>';
+    }).join('');
+    box.style.display='block';
+  }, 180);
+}
+async function lpVendorDirPick(role, id, optEl){
+  const row = optEl.closest('.lp-contact'); if(!row) return;
+  const box = row.querySelector('.lp-vsuggest');
+  const v = box && box._vendors ? box._vendors[id] : null;
+  if(box) box.style.display='none';
+  if(!v) return;
+  const set = function(f,val){ const e=row.querySelector('input[data-f="'+f+'"]'); if(e) e.value = val||''; };
+  set('name', v.name); set('company', v.company); set('phone', v.phone); set('email', v.email);
+  try{ await lpSaveContact(role); }catch(e){}
+  try{ await _authClient().from('vendor_directory').update({ usage_count:(v.usage_count||0)+1, last_used_at:new Date().toISOString() }).eq('id', id); }catch(e){}
+  (window.showToast||window.toast||function(){})('Filled from directory ✓');
+}
+async function lpVendorSaveRow(role){
+  const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
+  const g = function(f){ const e=row.querySelector('input[data-f="'+f+'"]'); return e?(e.value||'').trim():''; };
+  const name=g('name'), company=g('company'), phone=g('phone'), email=g('email');
+  const toastFn = window.showToast||window.toast||function(){};
+  if(!name && !company){ toastFn('Add a name or company first.', true); return; }
+  try{
+    let existing=null;
+    if(email){ const r=await _authClient().from('vendor_directory').select('id').eq('role',role).ilike('email',email).limit(1); existing=r.data&&r.data[0]; }
+    if(!existing && name && company){ const r=await _authClient().from('vendor_directory').select('id').eq('role',role).ilike('name',name).ilike('company',company).limit(1); existing=r.data&&r.data[0]; }
+    if(existing){ await _authClient().from('vendor_directory').update({ name:name||null, company:company||null, phone:phone||null, email:email||null, updated_at:new Date().toISOString() }).eq('id', existing.id); }
+    else { await _authClient().from('vendor_directory').insert({ role:role, name:name||null, company:company||null, phone:phone||null, email:email||null }); }
+    toastFn('Saved to vendor directory ✓');
+  }catch(e){ toastFn('Save failed: '+(e&&e.message||e), true); }
+}
+document.addEventListener('click', function(e){
+  if(e.target.closest && e.target.closest('.lp-vsuggest')) return;
+  if(e.target.matches && e.target.matches('.lp-contact input[data-f="name"], .lp-contact input[data-f="company"]')) return;
+  document.querySelectorAll('.lp-vsuggest').forEach(function(b){ b.style.display='none'; });
+});
 async function lpSaveContact(role){
   const cid = lpCid(); if(!cid) return;
   const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
