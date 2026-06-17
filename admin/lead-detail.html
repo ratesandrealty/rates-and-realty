@@ -8681,7 +8681,9 @@ function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'
 /* ═══ PROCESSING QUICK ACTIONS (wired — DB templates) ═══ */
 function _lpEscHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function _lpBorrowerName(){ var c=(typeof contactData!=='undefined'&&contactData)?contactData:{}; return ((c.first_name||'')+' '+(c.last_name||'')).trim()||'the borrower'; }
-function _lpSubst(s, borrower, bName){ return String(s==null?'':s).replace(/\{\{\s*first_name\s*\}\}/g,(borrower.first_name||'there')).replace(/\{\{\s*borrower_name\s*\}\}/g,bName).replace(/\{\{\s*loan_amount\s*\}\}/g,(borrower.loan_amount||'')); }
+function _lpFmtDob(v){ if(!v) return ''; var s=String(v).slice(0,10).split('-'); if(s.length!==3) return String(v); return s[1]+'/'+s[2]+'/'+s[0]; }
+function _lpFmtMoney(v){ if(v==null||v==='') return ''; var n=Number(String(v).replace(/[^0-9.]/g,'')); return (!isNaN(n)&&n>0)?('$'+n.toLocaleString('en-US')):String(v); }
+function _lpSubst(s, borrower, bName, vals){ s=String(s==null?'':s).replace(/\{\{\s*first_name\s*\}\}/g,(borrower.first_name||'there')).replace(/\{\{\s*borrower_name\s*\}\}/g,bName).replace(/\{\{\s*loan_amount\s*\}\}/g,(borrower.loan_amount||'')); if(vals){ Object.keys(vals).forEach(function(k){ s=s.replace(new RegExp('\\{\\{\\s*'+k+'\\s*\\}\\}','g'),(vals[k]==null?'':String(vals[k]))); }); } return s; }
 async function _lpLoadContactMap(cid){ var map={}; try{ var r=await _authClient().from('loan_contacts').select('role,name,company,email,phone').eq('contact_id',cid); (r.data||[]).forEach(function(x){ map[x.role]=x; }); }catch(e){} return map; }
 async function lpTemplate(key, defs){
   try{
@@ -8722,8 +8724,27 @@ async function lpAction(name){
         emailBorrower(t,'proc_needs_list'); break;
       }
       case 'Email HOI Agent': {
-        var t2=await lpTemplate('proc_hoi_agent',{subject:'Homeowners Insurance — {{borrower_name}}',body:'Hello,<br><br>We are processing the mortgage for {{borrower_name}}. Please provide the evidence of insurance / insurance binder for the subject property, listing the lender as mortgagee. Let me know if you need the mortgagee clause.'+SIG});
-        emailRole('hoi_agent','HOI agent',t2,'proc_hoi_agent'); break;
+        var rc=map['hoi_agent']||{};
+        var to=(rc.email||'').trim();
+        if(!to){ toastFn('No HOI agent email on file — add it under Transaction Contacts below.',true); break; }
+        var hoiFirst=((rc.name||'').trim().split(/\s+/)[0])||'there';
+        var csec=null, app=null;
+        try{ var cr=await _authClient().from('contacts_secure').select('first_name,last_name,date_of_birth,property_address,purchase_price,property_value').eq('id',cid).maybeSingle(); csec=cr.data||null; }catch(e){}
+        try{ var ar=await _authClient().from('mortgage_applications_secure').select('co_borrower_first_name,co_borrower_last_name,co_borrower_dob,property_address,property_address_street,property_city,property_address_city,property_state,property_address_state,property_zip,property_address_zip,purchase_price,property_value').eq('contact_id',cid).order('created_at',{ascending:false}).limit(1); app=(ar.data&&ar.data[0])||null; }catch(e){}
+        var names=[], dobs=[];
+        var pName=[(csec&&csec.first_name)||borrower.first_name,(csec&&csec.last_name)||borrower.last_name].filter(Boolean).join(' ').trim();
+        if(pName) names.push(pName);
+        var pDob=(csec&&csec.date_of_birth)||'';
+        if(pDob) dobs.push(_lpFmtDob(pDob));
+        if(app){ var coName=[app.co_borrower_first_name,app.co_borrower_last_name].filter(Boolean).join(' ').trim(); if(coName){ names.push(coName); if(app.co_borrower_dob) dobs.push(_lpFmtDob(app.co_borrower_dob)); } }
+        var addr='';
+        if(app){ addr=[app.property_address||app.property_address_street,app.property_city||app.property_address_city,app.property_state||app.property_address_state,app.property_zip||app.property_address_zip].filter(Boolean).join(', '); }
+        if(!addr){ addr=(csec&&csec.property_address)||borrower.property_address||''; }
+        var price=_lpFmtMoney((app&&(app.purchase_price||app.property_value))||(csec&&(csec.purchase_price||csec.property_value))||borrower.purchase_price||borrower.property_value||'');
+        var vals={ hoi_first_name:hoiFirst, property_address:addr||'(see attached)', purchase_price:price||'(see attached)', borrowers:names.length?names.join(', '):bName, birthdates:dobs.length?dobs.join(', '):'(see attached)' };
+        var tH=await lpTemplate('proc_hoi_agent',{subject:'Homeowners Insurance Quote Request — {{borrower_name}}',body:'Hello {{hoi_first_name}},<br><br>Can you provide a homeowners insurance quote for a client of mine? The client\'s information is below. Please let me know if you need anything else.<br><br>Address: {{property_address}}<br>Purchase Price: {{purchase_price}}<br>Borrower: {{borrowers}}<br>Birth Date: {{birthdates}}<br><br><b>Please confirm receipt of this email.</b>'+SIG});
+        openEmailComposer({to:to,toName:rc.name||'HOI agent',subject:_lpSubst(tH.subject,borrower,bName,vals),bodyHtml:_lpSubst(tH.body,borrower,bName,vals),templateKey:'proc_hoi_agent'});
+        break;
       }
       case 'Order Title': {
         var t3=await lpTemplate('proc_order_title',{subject:'Title Order — {{borrower_name}}',body:'Hello,<br><br>Please open title for {{borrower_name}} on the subject property and send the preliminary title report / commitment when ready. Reply here with the title order number for our file.'+SIG});
