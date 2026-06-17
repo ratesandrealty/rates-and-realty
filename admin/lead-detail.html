@@ -9089,7 +9089,7 @@ async function prefillFeeSheet() {
       if (!cid) return;
       try {
         var fsd = null, appRow = null;
-        var { data: _restoreRow, error: _restoreErr } = await _authClient().from('mortgage_applications')
+        var { data: _restoreRow, error: _restoreErr } = await _authClient().from('mortgage_applications_secure')
           .select('fee_sheet_data,purchase_price,loan_amount,property_value,first_name,last_name,property_address_street,property_address_city,property_address_state,property_address_zip')
           .eq('contact_id', cid).order('created_at', { ascending: false }).limit(1).maybeSingle();
         if (_restoreErr) console.error('[fee sheet restore]', _restoreErr);
@@ -9139,7 +9139,7 @@ window.addEventListener('message', function(e) {
     try {
       // Always use the authenticated client (session JWT passes RLS).
       var _c = _authClient();
-      var { data: apps, error: _lookupErr } = await _c.from('mortgage_applications').select('id').eq('contact_id', cid).order('created_at', { ascending: false }).limit(1);
+      var { data: apps, error: _lookupErr } = await _c.from('mortgage_applications_secure').select('id').eq('contact_id', cid).order('created_at', { ascending: false }).limit(1);
       if (_lookupErr) throw new Error(_lookupErr.message);
       if (apps && apps.length) {
         var saveData = { fee_sheet_data: payload, fee_sheet_updated_at: new Date().toISOString() };
@@ -9273,7 +9273,7 @@ async function saveFeeSheetQuote() {
     var contactId = new URLSearchParams(window.location.search).get('contact_id');
     if (!contactId) return alert('No contact loaded');
     var _c = _authClient();
-    var { data: apps, error: _lookupErr } = await _c.from('mortgage_applications').select('id').eq('contact_id', contactId).limit(1);
+    var { data: apps, error: _lookupErr } = await _c.from('mortgage_applications_secure').select('id').eq('contact_id', contactId).limit(1);
     if (_lookupErr) throw new Error(_lookupErr.message);
     if (apps && apps.length) {
       var { error: _updErr } = await _c.from('mortgage_applications').update({ fee_sheet_scenarios: scenarios, fee_sheet_updated_at: new Date().toISOString() }).eq('id', apps[0].id);
@@ -12625,7 +12625,7 @@ async function handleMismoImportSuccess(result) {
 
   // Fetch the freshly-written application
   try {
-    const { data: apps, error: _appsErr } = await _authClient().from('mortgage_applications')
+    const { data: apps, error: _appsErr } = await _authClient().from('mortgage_applications_secure')
       .select('*').eq('contact_id', primaryCid).order('created_at', { ascending: false }).limit(1);
     if (_appsErr) console.warn('[mismo-post-sync]', _appsErr);
     const app = (apps && apps[0]) || null;
@@ -12665,7 +12665,7 @@ async function reparseMismoXml() {
   const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
   const hdr = { 'Authorization':'Bearer '+ANON, 'apikey':ANON };
   try {
-    const { data: apps, error: _reparseErr } = await _authClient().from('mortgage_applications')
+    const { data: apps, error: _reparseErr } = await _authClient().from('mortgage_applications_secure')
       .select('id,mismo_raw_xml,mismo_file_name').eq('contact_id', cid)
       .order('created_at', { ascending: false }).limit(1);
     if (_reparseErr) console.warn('[mismo-reparse]', _reparseErr);
@@ -12693,7 +12693,7 @@ async function _checkMismoReparseAvailable() {
   const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
   try {
-    const { data: rows, error: _btnErr } = await _authClient().from('mortgage_applications')
+    const { data: rows, error: _btnErr } = await _authClient().from('mortgage_applications_secure')
       .select('mismo_raw_xml').eq('contact_id', cid)
       .order('created_at', { ascending: false }).limit(1);
     if (_btnErr) return;
@@ -13135,7 +13135,7 @@ async function loadLiabilities1003() {
   // also keeps the _appId1003 side-effect for downstream callers).
   let contactIds = [contactId];
   try {
-    const { data: apps } = await _authClient().from('mortgage_applications')
+    const { data: apps } = await _authClient().from('mortgage_applications_secure')
       .select('id').eq('contact_id', contactId)
       .order('created_at', { ascending: false }).limit(1);
     const appId = apps && apps[0] && apps[0].id;
@@ -13820,7 +13820,7 @@ async function switchToBorrower(cid) {
   });
   // Load this borrower's own mortgage_applications row.
   try {
-    var { data: rows, error: _switchErr } = await _authClient().from('mortgage_applications')
+    var { data: rows, error: _switchErr } = await _authClient().from('mortgage_applications_secure')
       .select('*').eq('contact_id', cid)
       .order('created_at', { ascending: false }).limit(1);
     if (_switchErr) throw _switchErr;
@@ -14448,7 +14448,7 @@ async function save1003() {
     // matching UNIQUE constraint on mortgage_applications(contact_id) — a contact can
     // legitimately have multiple applications, so we manually look up + update.
     const { data: existingApps } = await _authClient()
-      .from('mortgage_applications')
+      .from('mortgage_applications_secure')
       .select('id, borrower_id')
       .eq('contact_id', cid)
       .order('created_at', { ascending: false })
@@ -14469,13 +14469,13 @@ async function save1003() {
     if (existingAppId) {
       cleanData.updated_at = new Date().toISOString();
       delete cleanData.contact_id; // don't re-write immutable FK
-      const r = await _authClient().from('mortgage_applications').update(cleanData).eq('id', existingAppId).select();
+      const r = await _authClient().from('mortgage_applications').update(cleanData).eq('id', existingAppId).select('id');
       upsertResult = r.data; error = r.error;
     } else {
       cleanData.contact_id = cid;
       cleanData.created_at = new Date().toISOString();
       cleanData.updated_at = new Date().toISOString();
-      const r = await _authClient().from('mortgage_applications').insert([cleanData]).select();
+      const r = await _authClient().from('mortgage_applications').insert([cleanData]).select('id');
       upsertResult = r.data; error = r.error;
     }
 
@@ -14524,7 +14524,7 @@ async function _fetchAppRowForContact(cid) {
   if (!cid) return null;
   try {
     let { data } = await _authClient()
-      .from('mortgage_applications')
+      .from('mortgage_applications_secure')
       .select('*')
       .eq('contact_id', cid)
       .order('created_at', { ascending: false })
@@ -14534,7 +14534,7 @@ async function _fetchAppRowForContact(cid) {
     if (!data && cid !== getContactId()) {
       const [_lbRes, _cRes] = await Promise.all([
         _authClient().from('loan_borrowers').select('*').eq('contact_id', cid).order('borrower_order', { ascending: true }).limit(1).maybeSingle(),
-        _authClient().from('contacts').select('*').eq('id', cid).maybeSingle()
+        _authClient().from('contacts_secure').select('*').eq('id', cid).maybeSingle()
       ]);
       const lb = _lbRes && _lbRes.data;
       const c  = _cRes  && _cRes.data;
@@ -15555,7 +15555,7 @@ async function lsGeneratePreApproval() {
     var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
     var app = {};
     try {
-      var { data: rows } = await _authClient().from('mortgage_applications')
+      var { data: rows } = await _authClient().from('mortgage_applications_secure')
         .select('first_name,last_name,co_borrower_first_name,co_borrower_last_name,credit_score,property_address_street,property_address_city,property_address_state,property_address_zip,occupancy_type,loan_purpose')
         .eq('contact_id', cid).order('created_at', { ascending: false }).limit(1);
       if (rows && rows[0]) app = rows[0];
@@ -15679,7 +15679,7 @@ async function initLoanSummary() {
 
   // Seed from mortgage_applications (loan amount, rate, etc.)
   try {
-    var { data: apps } = await _authClient().from('mortgage_applications')
+    var { data: apps } = await _authClient().from('mortgage_applications_secure')
       .select('*').eq('contact_id', cid)
       .order('created_at', { ascending: false }).limit(1);
     if (apps && apps[0]) {
@@ -16304,7 +16304,7 @@ async function losLoadBorrowers() {
   var cid = losCid(); if (!cid) { losBorrowers = []; return; }
   var base = losBase(), hdrs = losHeaders();
   try {
-    var { data: apps } = await _authClient().from('mortgage_applications')
+    var { data: apps } = await _authClient().from('mortgage_applications_secure')
       .select('id,co_borrower_contact_id,co_borrower_first_name,co_borrower_last_name')
       .eq('contact_id', cid)
       .order('created_at', { ascending: false }).limit(1);
@@ -19256,7 +19256,7 @@ async function _ocrApplyPatchesToTarget(targetId, fields, extraAppPatch) {
 
   // (2) mortgage_applications: fetch-or-create (no UNIQUE on contact_id; mirrors save1003)
   const { data: existingApps, error: selErr } = await _authClient()
-    .from('mortgage_applications').select('id').eq('contact_id', targetId)
+    .from('mortgage_applications_secure').select('id').eq('contact_id', targetId)
     .order('created_at', { ascending: false }).limit(1);
   if (selErr) throw new Error('mortgage_applications lookup failed: ' + (selErr.message || JSON.stringify(selErr)));
   const existingAppId = (existingApps && existingApps[0]) ? existingApps[0].id : null;
@@ -20244,7 +20244,7 @@ async function _confirmAddNewBorrowerAndApply(fields, fieldCount) {
     let loanBorrowerWarning = '';
     try {
       const { data: primaryApps, error: lbSelErr } = await _authClient()
-        .from('mortgage_applications').select('id')
+        .from('mortgage_applications_secure').select('id')
         .eq('contact_id', primaryId)
         .order('created_at', { ascending: false }).limit(1);
       if (lbSelErr) throw new Error('primary app lookup failed: ' + (lbSelErr.message || JSON.stringify(lbSelErr)));
