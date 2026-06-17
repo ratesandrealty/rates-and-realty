@@ -8678,10 +8678,22 @@ async function lpRefreshTimeline(){
 function lpCid(){ return (typeof contactId!=='undefined'&&contactId) || (typeof getContactId==='function'?getContactId():null); }
 function lpEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'); if(s.length!==3) return ''; const d=new Date(+s[0],+s[1]-1,+s[2]); return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
-/* ═══ PROCESSING QUICK ACTIONS (wired — Phase 2) ═══ */
+/* ═══ PROCESSING QUICK ACTIONS (wired — DB templates) ═══ */
 function _lpEscHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function _lpBorrowerName(){ var c=(typeof contactData!=='undefined'&&contactData)?contactData:{}; return ((c.first_name||'')+' '+(c.last_name||'')).trim()||'the borrower'; }
+function _lpSubst(s, borrower, bName){ return String(s==null?'':s).replace(/\{\{\s*first_name\s*\}\}/g,(borrower.first_name||'there')).replace(/\{\{\s*borrower_name\s*\}\}/g,bName).replace(/\{\{\s*loan_amount\s*\}\}/g,(borrower.loan_amount||'')); }
 async function _lpLoadContactMap(cid){ var map={}; try{ var r=await _authClient().from('loan_contacts').select('role,name,company,email,phone').eq('contact_id',cid); (r.data||[]).forEach(function(x){ map[x.role]=x; }); }catch(e){} return map; }
+async function lpTemplate(key, defs){
+  try{
+    if(!window._lpTplCache){
+      window._lpTplCache={};
+      var r=await _authClient().from('email_templates').select('key,subject,body').eq('scope','processing');
+      (r.data||[]).forEach(function(t){ if(t.key) window._lpTplCache[t.key]={subject:t.subject,body:t.body}; });
+    }
+  }catch(e){}
+  var t=(window._lpTplCache&&window._lpTplCache[key])||{};
+  return { subject:(t.subject!=null?t.subject:(defs&&defs.subject)||''), body:(t.body!=null?t.body:(defs&&defs.body)||'') };
+}
 async function lpCreateClickupTask(opts){
   opts=opts||{};
   var cid=(typeof lpCid==='function'?lpCid():(new URLSearchParams(location.search).get('contact_id')||''));
@@ -8700,36 +8712,43 @@ async function lpAction(name){
   var borrower=(typeof contactData!=='undefined'&&contactData)?contactData:{};
   var bName=_lpBorrowerName();
   var map=await _lpLoadContactMap(cid);
-  var sig='<br><br>Best regards,<br>Rene Duarte<br>Rates &amp; Realty<br>rene@ratesandrealty.com';
-  function emailRole(roleKey,roleLabel,subject,bodyHtml){ var rc=map[roleKey]||{}; var to=(rc.email||'').trim(); if(!to){ toastFn('No '+roleLabel+' email on file — add it under Transaction Contacts below.',true); return false; } openEmailComposer({to:to,toName:rc.name||roleLabel,subject:subject,bodyHtml:bodyHtml}); return true; }
-  function emailBorrower(subject,bodyHtml){ var to=(borrower.email||'').trim(); if(!to){ toastFn('No borrower email on file.',true); return false; } openEmailComposer({to:to,toName:bName,subject:subject,bodyHtml:bodyHtml}); return true; }
+  var SIG='<br><br>Best regards,<br>Rene Duarte<br>Rates &amp; Realty<br>rene@ratesandrealty.com';
+  function emailRole(roleKey,roleLabel,tpl,tkey){ var rc=map[roleKey]||{}; var to=(rc.email||'').trim(); if(!to){ toastFn('No '+roleLabel+' email on file — add it under Transaction Contacts below.',true); return false; } openEmailComposer({to:to,toName:rc.name||roleLabel,subject:_lpSubst(tpl.subject,borrower,bName),bodyHtml:_lpSubst(tpl.body,borrower,bName),templateKey:tkey}); return true; }
+  function emailBorrower(tpl,tkey){ var to=(borrower.email||'').trim(); if(!to){ toastFn('No borrower email on file.',true); return false; } openEmailComposer({to:to,toName:bName,subject:_lpSubst(tpl.subject,borrower,bName),bodyHtml:_lpSubst(tpl.body,borrower,bName),templateKey:tkey}); return true; }
   try{
     switch(name){
-      case 'Send Needs List':
-        emailBorrower('Outstanding Items — '+bName,'Hi '+_lpEscHtml(borrower.first_name||'there')+',<br><br>To keep your loan moving, here are the items we still need from you:<br><ul><li>Most recent 30 days of pay stubs</li><li>Last 2 months of bank statements (all pages)</li><li>Most recent 2 years W-2s / tax returns</li><li>Copy of your driver\'s license</li></ul>Please reply to this email with the documents at your earliest convenience.'+sig);
-        break;
-      case 'Email HOI Agent':
-        emailRole('hoi_agent','HOI agent','Homeowners Insurance — '+bName,'Hello,<br><br>We are processing the mortgage for '+_lpEscHtml(bName)+'. Please provide the evidence of insurance / insurance binder for the subject property, listing the lender as mortgagee. Let me know if you need the mortgagee clause.'+sig);
-        break;
-      case 'Order Title':
-        emailRole('title_officer','title officer','Title Order — '+bName,'Hello,<br><br>Please open title for '+_lpEscHtml(bName)+' on the subject property and send the preliminary title report / commitment when ready. Reply here with the title order number for our file.'+sig);
+      case 'Send Needs List': {
+        var t=await lpTemplate('proc_needs_list',{subject:'Outstanding Items — {{borrower_name}}',body:'Hi {{first_name}},<br><br>To keep your loan moving, here are the items we still need from you:<br><ul><li>Most recent 30 days of pay stubs</li><li>Last 2 months of bank statements (all pages)</li><li>Most recent 2 years W-2s / tax returns</li><li>Copy of your driver\'s license</li></ul>Please reply to this email with the documents at your earliest convenience.'+SIG});
+        emailBorrower(t,'proc_needs_list'); break;
+      }
+      case 'Email HOI Agent': {
+        var t2=await lpTemplate('proc_hoi_agent',{subject:'Homeowners Insurance — {{borrower_name}}',body:'Hello,<br><br>We are processing the mortgage for {{borrower_name}}. Please provide the evidence of insurance / insurance binder for the subject property, listing the lender as mortgagee. Let me know if you need the mortgagee clause.'+SIG});
+        emailRole('hoi_agent','HOI agent',t2,'proc_hoi_agent'); break;
+      }
+      case 'Order Title': {
+        var t3=await lpTemplate('proc_order_title',{subject:'Title Order — {{borrower_name}}',body:'Hello,<br><br>Please open title for {{borrower_name}} on the subject property and send the preliminary title report / commitment when ready. Reply here with the title order number for our file.'+SIG});
+        emailRole('title_officer','title officer',t3,'proc_order_title');
         try{ await lpCreateClickupTask({title:'Order title — '+bName,priority:'high'}); toastFn('ClickUp task created ✓'+((map['title_officer']&&map['title_officer'].email)?' + title email opened':' (add a title officer email to send the request)')); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
         break;
-      case 'Request Escrow Docs':
-        emailRole('escrow_officer','escrow officer','Escrow Documents Request — '+bName,'Hello,<br><br>We are processing the mortgage for '+_lpEscHtml(bName)+'. Please send the escrow instructions, estimated closing statement / CD, and wiring instructions for our file. Thank you.'+sig);
+      }
+      case 'Request Escrow Docs': {
+        var t4=await lpTemplate('proc_request_escrow',{subject:'Escrow Documents Request — {{borrower_name}}',body:'Hello,<br><br>We are processing the mortgage for {{borrower_name}}. Please send the escrow instructions, estimated closing statement / CD, and wiring instructions for our file. Thank you.'+SIG});
+        emailRole('escrow_officer','escrow officer',t4,'proc_request_escrow');
         try{ await lpCreateClickupTask({title:'Request escrow docs — '+bName,priority:'high'}); toastFn('ClickUp task created ✓'+((map['escrow_officer']&&map['escrow_officer'].email)?' + escrow email opened':' (add an escrow officer email to send the request)')); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
         break;
+      }
       case 'Send Realtor Update': {
         var realtor=(map['buyer_agent']&&map['buyer_agent'].email)?map['buyer_agent']:(map['listing_agent']||{});
         var to=(realtor.email||'').trim();
         if(!to){ toastFn('No realtor email on file — add a Buyer/Listing Agent under Transaction Contacts.',true); break; }
-        openEmailComposer({to:to,toName:realtor.name||'Agent',subject:'Loan Status Update — '+bName,bodyHtml:'Hi '+_lpEscHtml((realtor.name||'').split(' ')[0]||'there')+',<br><br>Quick update on '+_lpEscHtml(bName)+'\'s loan — we\'re actively processing and on track. I\'ll let you know as soon as we hit the next milestone. Reach out anytime with questions.'+sig});
+        var t5=await lpTemplate('proc_realtor_update',{subject:'Loan Status Update — {{borrower_name}}',body:'Hi there,<br><br>Quick update on {{borrower_name}}\'s loan — we\'re actively processing and on track. I\'ll let you know as soon as we hit the next milestone. Reach out anytime with questions.'+SIG});
+        openEmailComposer({to:to,toName:realtor.name||'Agent',subject:_lpSubst(t5.subject,borrower,bName),bodyHtml:_lpSubst(t5.body,borrower,bName),templateKey:'proc_realtor_update'});
         break;
       }
       case 'Assign Task to VA': {
-        var t=window.prompt('Task for the VA on '+bName+':','Follow up on processing items — '+bName);
-        if(t==null) break; t=t.trim(); if(!t){ toastFn('Task cancelled — empty title.',true); break; }
-        try{ await lpCreateClickupTask({title:t,priority:'normal'}); toastFn('ClickUp task created ✓'); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
+        var tk=window.prompt('Task for the VA on '+bName+':','Follow up on processing items — '+bName);
+        if(tk==null) break; tk=tk.trim(); if(!tk){ toastFn('Task cancelled — empty title.',true); break; }
+        try{ await lpCreateClickupTask({title:tk,priority:'normal'}); toastFn('ClickUp task created ✓'); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
         break;
       }
       case 'Create LOE':
@@ -23545,6 +23564,7 @@ function _buildEmailComposerHTML(contact) {
             '<input class="ec-subject-input" id="subjectInput" placeholder="Subject line...">' +
             '<div class="ec-field-actions">' +
               '<button type="button" class="ec-field-action" onclick="openTemplates()">Templates &#9662;</button>' +
+              '<button type="button" class="ec-field-action" onclick="saveEmailTemplate()" title="Save current subject + body as a template">&#128190; Save Template</button>' +
               '<button type="button" class="ec-field-action" onclick="toggleVarPicker()">Variable &#9662;</button>' +
             '</div>' +
             '<div id="templateDropdown" style="display:none;position:absolute;top:100%;right:0;width:320px;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;z-index:999;max-height:360px;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.6)"></div>' +
@@ -23644,6 +23664,7 @@ async function openEmailComposer(opts) {
   var contact = contactData || {};
   var email = (opts && opts.to) || contact.email || '';
   if (!email) { showToast('No email on file', true); return; }
+  window._ecTemplateKey = (opts && opts.templateKey) || null;
 
   // Build contact object with full_name
   _emailContact = Object.assign({}, contact);
@@ -23684,6 +23705,21 @@ async function openEmailComposer(opts) {
     if (opts.bodyHtml != null) { var _ed = document.getElementById('emailEditor'); if (_ed) _ed.innerHTML = opts.bodyHtml; }
   }
 
+  (function(){
+    var defs = ['rene@ratesandrealty.com','processing@ratesandrealty.com'];
+    var cc = document.getElementById('ccChips'); var ccRow = document.getElementById('ccRow');
+    if (cc) {
+      var have = (typeof getChipEmails==='function') ? getChipEmails('ccChips') : [];
+      var input = document.getElementById('ccInput');
+      defs.forEach(function(addr){
+        if (have.indexOf(addr) !== -1) return;
+        var chip = document.createElement('div'); chip.className = 'ec-chip';
+        chip.innerHTML = '<span>'+addr+'</span><button onclick="this.parentElement.remove()">&times;</button>';
+        if (input) cc.insertBefore(chip, input); else cc.appendChild(chip);
+      });
+      if (ccRow) ccRow.style.display = 'flex';
+    }
+  })();
   // Editor keyboard shortcuts for undo/redo
   var editorEl = document.getElementById('emailEditor');
   editorEl.addEventListener('keydown', function(e) {
@@ -23869,6 +23905,29 @@ var EMAIL_TEMPLATES_LIST = [
   { name:'Refi Analysis Ready', cat:'REFI', subject:'Your Refi Analysis Is Ready', body:'Hi {{first_name}},\n\nI ran a refinance analysis and the numbers look promising.\n\nA refi could lower your payment, reduce your rate, or unlock equity for your goals.\n\nWant to hop on a quick call to review?' }
 ];
 
+async function saveEmailTemplate(){
+  var toastFn = window.showToast || window.toast || function(){};
+  var subjEl = document.getElementById('subjectInput');
+  var subject = (subjEl ? subjEl.value : '').trim();
+  var ed = document.getElementById('emailEditor');
+  var body = ed ? (ed.innerHTML||'').trim() : '';
+  if(!subject && !body){ toastFn('Nothing to save — add a subject or body first.', true); return; }
+  try{
+    var key = window._ecTemplateKey || null;
+    if(key){
+      var u = await _authClient().from('email_templates').update({ subject:subject, body:body, updated_at:new Date().toISOString() }).eq('key', key).select('id');
+      if(u.error) throw u.error;
+      if(window._lpTplCache) window._lpTplCache[key] = { subject:subject, body:body };
+      toastFn('Template updated ✓ — this button will use it next time');
+    } else {
+      var name = window.prompt('Save as a new template — name it:', subject || 'My Template');
+      if(name==null) return; name=name.trim(); if(!name){ toastFn('Cancelled — empty name.', true); return; }
+      var ins = await _authClient().from('email_templates').insert({ name:name, subject:subject, body:body, scope:'general' }).select('id');
+      if(ins.error) throw ins.error;
+      toastFn('Template saved ✓');
+    }
+  }catch(e){ toastFn('Save failed: '+(e&&e.message||e), true); }
+}
 function openTemplates() {
   var dd = document.getElementById('templateDropdown');
   if (!dd) return;
