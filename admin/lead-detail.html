@@ -13265,39 +13265,57 @@ function saveEarnings() {
     const targetId = contactId || leadId;
     if (!targetId) return;
 
-    const estVal = parseFloat(document.getElementById('estimatedEarnings')?.value) || 0;
-    const actVal = parseFloat(document.getElementById('actualEarnings')?.value) || 0;
+    // Strict numeric parse: blank/whitespace/non-numeric => undefined (skip the
+    // column entirely, never write 0). An explicit '0' the user types IS a real
+    // value and saves 0. This stops a blank input from clobbering a stored earning.
+    const numOrSkip = (id) => {
+      const raw = (document.getElementById(id)?.value ?? '').trim();
+      if (raw === '') return undefined;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const estVal = numOrSkip('estimatedEarnings');
+    const actVal = numOrSkip('actualEarnings');
     const outcome = _currentOutcome;
     const lostReason = document.getElementById('lostReason')?.value || null;
     const closedDate = outcome === 'won' ? new Date().toISOString().split('T')[0] : null;
 
-    // Save directly to contacts table (single source of truth)
-    const { error } = await _authClient().from('contacts').update({
-      estimated_earnings: estVal,
-      actual_earnings:    actVal,
-      deal_outcome:       outcome,
-      lost_reason:        lostReason,
-      closed_date:        closedDate,
-      updated_at:         new Date().toISOString()
-    }).eq('id', targetId);
+    // Build the contacts payload from real values only — omit any earnings column
+    // whose input was blank so the stored (vault) value is left untouched.
+    const patch = {};
+    if (estVal !== undefined) patch.estimated_earnings = estVal;
+    if (actVal !== undefined) patch.actual_earnings = actVal;
+    if (outcome) {
+      patch.deal_outcome = outcome;
+      patch.lost_reason  = lostReason;
+      patch.closed_date  = closedDate;
+    }
 
-    if (error) console.error('[saveEarnings] error:', error.message);
+    // Nothing real to persist (no earnings entered, no outcome selected) — skip the write.
+    if (Object.keys(patch).length > 0) {
+      patch.updated_at = new Date().toISOString();
+      const { error } = await _authClient().from('contacts').update(patch).eq('id', targetId);
+      if (error) console.error('[saveEarnings] error:', error.message);
+    }
 
     // Also keep closed_deals in sync
     if (outcome === 'won' || outcome === 'lost') {
       const loanAmt = parseFloat(
         (document.getElementById('f-loan-amount')?.value || '').replace(/[$,]/g, '')
       ) || null;
+      const dealPatch = {
+        contact_id:       targetId,
+        loan_amount:      loanAmt,
+        outcome:          outcome === 'won' ? 'closed' : 'lost',
+        lost_reason:      lostReason,
+        close_date:       closedDate || new Date().toISOString().split('T')[0],
+        updated_at:       new Date().toISOString()
+      };
+      // Same blank-skip: only write commission when a real actual-earnings number
+      // was entered, so closing a deal can't blank out earnings never entered.
+      if (actVal !== undefined) dealPatch.commission_earned = actVal;
       try {
-        await _authClient().from('closed_deals').upsert({
-          contact_id:       targetId,
-          loan_amount:      loanAmt,
-          commission_earned: actVal,
-          outcome:          outcome === 'won' ? 'closed' : 'lost',
-          lost_reason:      lostReason,
-          close_date:       closedDate || new Date().toISOString().split('T')[0],
-          updated_at:       new Date().toISOString()
-        }, { onConflict: 'contact_id' });
+        await _authClient().from('closed_deals').upsert(dealPatch, { onConflict: 'contact_id' });
       } catch (e) { /* silent: closed_deals autosave is best-effort */ }
     }
 
