@@ -1943,9 +1943,9 @@
         <div>
           <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4);display:block;margin-bottom:8px;">Deal Outcome</label>
           <div style="display:flex;gap:8px;">
-            <button id="outcomeWon" onclick="setOutcome('won')" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(80,200,120,0.3);background:rgba(80,200,120,0.06);color:rgba(80,200,120,0.6);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">🏆 Won</button>
-            <button id="outcomePending" onclick="setOutcome('pending')" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:var(--gold,#c9a84c);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">⏳ Pending</button>
-            <button id="outcomeLost" onclick="setOutcome('lost')" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(248,113,113,0.3);background:rgba(248,113,113,0.06);color:rgba(248,113,113,0.6);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">❌ Lost</button>
+            <button id="outcomeWon" onclick="setOutcome('won', true)" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(80,200,120,0.3);background:rgba(80,200,120,0.06);color:rgba(80,200,120,0.6);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">🏆 Won</button>
+            <button id="outcomePending" onclick="setOutcome('pending', true)" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.1);color:var(--gold,#c9a84c);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">⏳ Pending</button>
+            <button id="outcomeLost" onclick="setOutcome('lost', true)" style="flex:1;padding:9px;border-radius:8px;border:2px solid rgba(248,113,113,0.3);background:rgba(248,113,113,0.06);color:rgba(248,113,113,0.6);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;">❌ Lost</button>
           </div>
           <div id="lostReasonWrap" style="display:none;margin-top:8px;">
             <input type="text" id="lostReason" placeholder="Reason lost (optional)..." style="width:100%;padding:8px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(248,113,113,0.2);border-radius:8px;color:#fff;font-size:12px;outline:none;" oninput="saveEarnings()">
@@ -5131,6 +5131,15 @@ async function onShareVaToggle(e) {
    delete) the admin-only surfaces. Admin sees no change. Data is already masked at the
    source via the contacts_secure view — this is defense-in-depth on the UI. */
 window._ldVaApplied = false;
+
+// True when a role is resolved AND it isn't admin. Used to gate admin-only UI
+// affordances (checklist delete/reopen, etc.). Empty role (not yet published by
+// auth-guard) is treated as NOT non-admin so the admin UI never flickers; the DB
+// enforces the same limits regardless.
+function _ldNonAdmin() {
+  var r = (sessionStorage.getItem('rnr_app_role') || '').toLowerCase();
+  return !!r && r !== 'admin';
+}
 
 function _ldApplyVaMode() {
   var role = (sessionStorage.getItem('rnr_app_role') || '').toLowerCase();
@@ -8734,20 +8743,22 @@ function lpRenderItems(kind, body, items){
   const statusSel = cur => LP_STATUSES.map(s=>'<option value="'+s+'"'+(s===(cur||'not_started')?' selected':'')+'>'+LP_STATUS_LABEL[s]+'</option>').join('');
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;';
   const lpHeader = '<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr 22px;gap:8px;padding:2px 6px 9px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.35);"><div></div><div>Task</div><div>Status</div><div>Due</div><div>Assigned to</div><div></div></div>';
+  const nonAdmin = _ldNonAdmin();
   body.innerHTML = lpHeader + items.map(it=>{
     const done = it.completed;
+    const lockDone = nonAdmin && done; // non-admins can't reopen a completed item
     const cdate = lpFmtDate(it.completed_at);
     const completedLine = done
       ? '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px;color:#27AE60;font-weight:600;">✓ Completed'+(cdate?' '+cdate:'')+' <span style="color:rgba(255,255,255,.45);font-weight:400;">· by</span> <select onchange="lpEdit(\''+it.id+'\',\'completed_by\',this.value)" style="background:rgba(39,174,96,.08);border:1px solid rgba(39,174,96,.3);border-radius:5px;color:#27AE60;font-size:10px;padding:1px 4px;">'+lpPersonSel(it.completed_by||'', '—')+'</select></div>'
       : '';
     return '<div class="lp-item" data-id="'+it.id+'" style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
       +'<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr 22px;gap:8px;align-items:start;">'
-      +'<input type="checkbox" '+(done?'checked':'')+' onchange="lpToggle(\''+it.id+'\',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#C9A84C;margin-top:3px;">'
+      +'<input type="checkbox" '+(done?'checked':'')+(lockDone?' disabled':'')+' onchange="lpToggle(\''+it.id+'\',this.checked)" style="width:16px;height:16px;cursor:'+(lockDone?'not-allowed':'pointer')+';accent-color:#C9A84C;margin-top:3px;'+(lockDone?'opacity:.55;':'')+'">'
       +'<div><input type="text" value="'+lpEsc(it.label||'')+'" onchange="lpEdit(\''+it.id+'\',\'label\',this.value)" style="background:transparent;border:none;color:'+(done?'rgba(255,255,255,.4)':'#fff')+';font-size:13px;'+(done?'text-decoration:line-through;':'')+'outline:none;width:100%;">'+completedLine+'</div>'
-      +'<select onchange="lpStatus(\''+it.id+'\',this.value)" style="'+inp+'">'+statusSel(it.status)+'</select>'
+      +'<select onchange="lpStatus(\''+it.id+'\',this.value)" '+(lockDone?'disabled ':'')+'style="'+inp+(lockDone?'opacity:.55;cursor:not-allowed;':'')+'">'+statusSel(it.status)+'</select>'
       +'<input type="date" value="'+(it.due_date||'')+'" onchange="lpEdit(\''+it.id+'\',\'due_date\',this.value)" style="'+inp+'">'
       +'<select onchange="lpEdit(\''+it.id+'\',\'assigned_to\',this.value)" style="'+inp+'">'+lpPersonSel(it.assigned_to||'', 'Unassigned')+'</select>'
-      +'<button onclick="lpDeleteItem(\''+it.id+'\',\''+kind+'\','+(it.template_key?'true':'false')+')" title="Remove this item" style="background:transparent;border:none;color:rgba(255,255,255,.25);font-size:16px;line-height:1;cursor:pointer;padding:0;margin-top:2px;">×</button>'
+      +(nonAdmin ? '<span></span>' : '<button onclick="lpDeleteItem(\''+it.id+'\',\''+kind+'\','+(it.template_key?'true':'false')+')" title="Remove this item" style="background:transparent;border:none;color:rgba(255,255,255,.25);font-size:16px;line-height:1;cursor:pointer;padding:0;margin-top:2px;">×</button>')
       +'</div>'
       +'<div style="margin-left:32px;margin-top:6px;"><input type="text" placeholder="💬 Add comment / note…" value="'+lpEsc(it.notes||'')+'" onchange="lpEdit(\''+it.id+'\',\'notes\',this.value)" style="width:100%;max-width:680px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:#bbb;font-size:11px;padding:5px 9px;"></div>'
       +'</div>';
@@ -8763,6 +8774,8 @@ function lpEdit(id, field, value){
   }, 500);
 }
 async function lpToggle(id, checked){
+  // Non-admins may mark work done but cannot reopen a completed item.
+  if(!checked && _ldNonAdmin()){ toast('Only an admin can remove or reopen checklist items'); lpLoadProcessing(); return; }
   const patch = {completed:checked, status:checked?'done':'not_started', updated_at:new Date().toISOString()};
   if(checked){ patch.completed_at = new Date().toISOString(); patch.completed_by = 'admin'; }
   else { patch.completed_at = null; patch.completed_by = null; }
@@ -8783,6 +8796,7 @@ async function lpAddItem(kind){
   lpLoadChecklist(kind, kind==='intake'?'lpIntakeBody':'lpDocBody', kind==='intake'?LP_INTAKE_TEMPLATE:LP_DOC_TEMPLATE);
 }
 async function lpDeleteItem(id, kind, isTemplate){
+  if(_ldNonAdmin()){ toast('Only an admin can remove or reopen checklist items'); return; }
   if(!confirm('Remove this checklist item from this loan?')) return;
   try{
     if(isTemplate){ await _authClient().from('processing_items').update({ dismissed:true, updated_at:new Date().toISOString() }).eq('id', id); }
@@ -13225,7 +13239,7 @@ async function updateLiability1003(id, field, value) {
 let _currentOutcome = 'pending';
 let _earningsSaveTimer = null;
 
-function setOutcome(outcome) {
+function setOutcome(outcome, fromUser) {
   _currentOutcome = outcome;
   const styles = {
     won:     { active:'border:2px solid #50c878;background:rgba(80,200,120,0.15);color:#50c878;',     inactive:'border:2px solid rgba(80,200,120,0.3);background:rgba(80,200,120,0.06);color:rgba(80,200,120,0.6);' },
@@ -13237,7 +13251,10 @@ function setOutcome(outcome) {
     if (btn) btn.style.cssText = 'flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;' + (o === outcome ? styles[o].active : styles[o].inactive);
   });
   document.getElementById('lostReasonWrap').style.display = outcome === 'lost' ? 'block' : 'none';
-  saveEarnings();
+  // Persist ONLY when the user actually clicked an outcome button. Programmatic
+  // calls during initial render (populateUI / vault overlay) must not write — that
+  // load-time save is what zeroed earnings during the earlier read bug.
+  if (fromUser) saveEarnings();
 }
 
 let _pricingMetaTimer;
