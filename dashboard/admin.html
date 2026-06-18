@@ -2002,7 +2002,22 @@
       <section id="tab-scans" class="crm-tab-panel">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
           <div>
-            <h2 style="margin:0;">System Health Scan</h2>
+            <div style="display:flex;align-items:center;gap:8px;position:relative;">
+              <h2 style="margin:0;">System Health Scan</h2>
+              <button id="crmScanInfoBtn" type="button" aria-label="What to do when a check fails"
+                style="width:22px;height:22px;flex:0 0 22px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:transparent;border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.45);font-size:13px;line-height:1;cursor:pointer;padding:0;transition:color .15s,border-color .15s;"
+                onmouseover="this.style.color='rgba(255,255,255,0.9)';this.style.borderColor='rgba(255,255,255,0.45)';"
+                onmouseout="this.style.color='rgba(255,255,255,0.45)';this.style.borderColor='rgba(255,255,255,0.2)';">&#9432;</button>
+              <div id="crmScanInfoPopover" role="dialog" aria-label="How to fix a failing check"
+                style="display:none;position:absolute;top:calc(100% + 8px);left:0;z-index:9999;max-width:380px;background:#1c1c1e;border:1px solid rgba(255,255,255,0.12);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.45);padding:16px;font-size:13px;line-height:1.55;color:rgba(255,255,255,0.82);text-align:left;font-weight:400;">
+                <div style="color:#C9A84C;font-weight:700;font-size:14px;margin-bottom:8px;">How to fix a failing check</div>
+                <p style="margin:0 0 10px;">Every failing check also opens an urgent task in your Todo list with the recommended fix written inside it. To resolve it, hand it to Claude (with your Supabase + ClickUp tools connected) — easiest first:</p>
+                <p style="margin:0 0 8px;"><span style="color:#C9A84C;font-weight:700;">1.</span> Just ask (best). Open Claude and say &ldquo;fix the failure on the health scan.&rdquo; Claude reads your database live, finds the root cause, and patches it — no copying needed.</p>
+                <p style="margin:0 0 8px;"><span style="color:#C9A84C;font-weight:700;">2.</span> Paste the alert task. Copy the ClickUp task this created (the fix is already inside it) into Claude.</p>
+                <p style="margin:0 0 10px;"><span style="color:#C9A84C;font-weight:700;">3.</span> Screenshot it. Works in a pinch, but the screen cuts off the full error detail, so it&rsquo;s the least reliable.</p>
+                <p style="margin:0;font-style:italic;color:rgba(255,255,255,0.5);">Green means healthy — nothing to do. You&rsquo;ll only be alerted on a real failure, and not more than once a week for the same issue.</p>
+              </div>
+            </div>
             <div id="crmScanSummary" style="margin-top:6px;font-size:13px;"></div>
           </div>
           <button id="crmScanBtn" class="btn" style="background:#C9A84C;color:#1a1a1a;border:none;border-radius:8px;padding:8px 16px;font-weight:600;cursor:pointer;">↻ Run scan</button>
@@ -2727,6 +2742,23 @@ async function runCrmScan(){
 }
 window.runCrmScan = runCrmScan;
 document.addEventListener('DOMContentLoaded',function(){ var b=document.getElementById('crmScanBtn'); if(b) b.onclick=runCrmScan; });
+
+// ── Scans tab: "how to fix a failing check" info popover (display only) ──
+(function(){
+  function closePop(){ var p=document.getElementById('crmScanInfoPopover'); if(p) p.style.display='none'; }
+  document.addEventListener('DOMContentLoaded',function(){
+    var btn=document.getElementById('crmScanInfoBtn'), pop=document.getElementById('crmScanInfoPopover');
+    if(!btn||!pop) return;
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      pop.style.display = (pop.style.display==='block') ? 'none' : 'block';
+    });
+    // Outside-click closes; clicks inside the popover stay open.
+    pop.addEventListener('click',function(e){ e.stopPropagation(); });
+    document.addEventListener('click',closePop);
+    document.addEventListener('keydown',function(e){ if(e.key==='Escape') closePop(); });
+  });
+})();
 
 // ── Won/Lost Deals Table ──────────────────────────────────
 let _dealsTab = 'won';
