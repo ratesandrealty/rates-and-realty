@@ -8820,6 +8820,7 @@ async function lpRenderSnapshot(cid){
   try { app = (typeof _fetchAppRowForContact==='function') ? (await _fetchAppRowForContact(cid))||{} : {}; } catch(_){}
   const c = (typeof contactData!=='undefined'&&contactData)?contactData:{};
   const money = v => (v||v===0)?'$'+Number(v).toLocaleString():'—';
+  const tcase = v => (!v || v==='—') ? (v||'—') : String(v).replace(/_+/g,' ').split(/\s+/).map(w=>({fha:'FHA',va:'VA',usda:'USDA',heloc:'HELOC',arm:'ARM'}[w.toLowerCase()] || (w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()))).join(' ');
   const pct = v => (v||v===0)?Number(v).toFixed(3)+'%':'—';
   const dd = v => v?new Date(String(v).length<=10?v+'T00:00:00':v).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
   let lockChip='';
@@ -8828,10 +8829,11 @@ async function lpRenderSnapshot(cid){
   const rate = app.closed_rate||app.locked_rate||app.quoted_rate;
   const rateLabel = app.closed_rate?'Closed':(app.locked_rate?'Locked':(app.quoted_rate?'Quoted':'Rate'));
   const cell = (label,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+val+'</div></div>';
-  const lenderVal = (c.closing_lender
-    ? '<a onclick="lpGoToLender(this.dataset.lender)" data-lender="'+lpEsc(c.closing_lender)+'" style="color:#C9A84C;cursor:pointer;text-decoration:none;border-bottom:1px dashed rgba(201,168,76,.5);">'+lpEsc(c.closing_lender)+' ↗</a> <span onclick="lpLenderPickerOpen(event)" title="Change lender" style="cursor:pointer;color:rgba(255,255,255,.45);font-size:12px;margin-left:4px;">✎</span>'
-    : '<span onclick="lpLenderPickerOpen(event)" style="cursor:pointer;color:#C9A84C;border:1px dashed rgba(201,168,76,.5);border-radius:6px;padding:1px 8px;font-size:12px;">+ Select lender</span>');
-  el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')))+cell('Lender', lenderVal)+cell(rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
+  const lenderInner = (c.closing_lender
+    ? '<a onclick="lpGoToLender(this.dataset.lender)" data-lender="'+lpEsc(c.closing_lender)+'" style="color:#C9A84C;cursor:pointer;text-decoration:none;border-bottom:1px dashed rgba(201,168,76,.5);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(c.closing_lender)+' ↗</a>'
+    : '<span onclick="lpLenderPickerOpen(event)" style="cursor:pointer;color:#C9A84C;border:1px dashed rgba(201,168,76,.5);border-radius:6px;padding:1px 8px;font-size:12px;white-space:nowrap;">+ Select lender</span>');
+  const lenderCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Lender</div><div style="display:flex;align-items:center;gap:6px;font-size:14px;color:#fff;font-weight:600;">'+lenderInner+(c.closing_lender?'<span onclick="lpLenderPickerOpen(event)" title="Change lender" style="flex-shrink:0;cursor:pointer;color:rgba(255,255,255,.55);font-size:13px;">✎</span>':'')+'</div></div>';
+  el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc(tcase(c.closing_loan_type||c.loan_type||'—')+' · '+tcase(c.loan_purpose||'—')))+lenderCell+cell(rateLabel==='Rate'?'Rate':rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
 }
 const LP_PERSON_LABEL = { admin:'Rene Duarte (Admin)', va:'Virtual Assistant' };
 function lpPersonSel(cur, blank){
