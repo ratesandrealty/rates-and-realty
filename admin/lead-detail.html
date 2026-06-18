@@ -2188,7 +2188,7 @@
           </div>
           <div class="ld-field">
             <label class="ld-label">Purchase Price</label>
-            <input class="ld-input" type="text" id="f-purchase-price" placeholder="$0">
+            <input class="ld-input" type="text" id="f-purchase-price" placeholder="$0" oninput="recalcLoanFromPpLtv()">
           </div>
           <div class="ld-field">
             <label class="ld-label">Down Payment</label>
@@ -2196,7 +2196,7 @@
           </div>
           <div class="ld-field">
             <label class="ld-label">LTV %</label>
-            <input class="ld-input" type="text" id="f-ltv" placeholder="80%">
+            <input class="ld-input" type="text" id="f-ltv" placeholder="80%" oninput="recalcLoanFromPpLtv()">
           </div>
           <div class="ld-field">
             <label class="ld-label">Timeline</label>
@@ -5153,6 +5153,14 @@ function _ldApplyVaMode() {
   if (window._ldVaApplied) return true;
   window._ldVaApplied = true;
   try { if (typeof lpRenderSnapshot === 'function' && typeof lpCid === 'function') { var _c = lpCid(); if (_c) lpRenderSnapshot(_c); } } catch(e){}
+  ['f-loan-type','f-loan-amount','f-purchase-price','f-down-payment','f-ltv','f-timeline','f-property'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(!el) return;
+    if(el.tagName === 'SELECT'){ el.disabled = true; }
+    else { el.readOnly = true; }
+    el.style.opacity = '0.6';
+    el.style.cursor  = 'not-allowed';
+  });
 
   function hide(el) { if (el) el.style.display = 'none'; }
   function hideId(id) { hide(document.getElementById(id)); }
@@ -8208,6 +8216,24 @@ async function loadCreditApps() {
 }
 
 /* ── SAVE FUNCTIONS ── */
+function recalcLoanFromPpLtv(){
+  try {
+    var ppEl  = document.getElementById('f-purchase-price');
+    var ltvEl = document.getElementById('f-ltv');
+    if(!ppEl || !ltvEl) return;
+    var pp  = (typeof parseNum==='function') ? parseNum(ppEl.value)
+            : parseFloat(String(ppEl.value||'').replace(/[^0-9.]/g,''));
+    var ltv = parseFloat(String(ltvEl.value||'').replace(/[^0-9.]/g,''));
+    if(!pp || pp<=0 || isNaN(ltv) || ltv<=0) return;
+    var loan = Math.round(pp * ltv / 100);
+    var down = Math.max(0, Math.round(pp - loan));
+    var f = (typeof fmt$==='function') ? fmt$ : function(n){ return '$'+Number(n).toLocaleString(); };
+    var laEl = document.getElementById('f-loan-amount');
+    var dpEl = document.getElementById('f-down-payment');
+    if(laEl) laEl.value = f(loan);
+    if(dpEl) dpEl.value = f(down);
+  } catch(e){}
+}
 async function saveLeadDetails() {
   try {
     const cFields = {
