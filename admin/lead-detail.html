@@ -9349,7 +9349,7 @@ async function lpDeleteLoe(id){
 async function lpLoadEsign(cid){
   const body = document.getElementById('lpEsignBody'); if(!body) return;
   try{
-    const { data } = await _authClient().from('signature_requests').select('document_title,document_type,status,signed_at,expires_at,created_at').eq('contact_id',cid).order('created_at',{ascending:false});
+    const { data } = await _authClient().from('signature_requests').select('id,document_title,document_type,status,signed_at,expires_at,created_at').eq('contact_id',cid).order('created_at',{ascending:false});
     if(!data || !data.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No signature requests.</div>'; return; }
     const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
     const badge = (st)=>{
@@ -9360,12 +9360,119 @@ async function lpLoadEsign(cid){
     body.innerHTML = data.map(r=>{
       const isSigned = ['signed','completed'].indexOf((r.status||'').toLowerCase())>-1;
       const meta = isSigned ? ('Signed '+dd(r.signed_at)) : (r.expires_at ? ('Expires '+dd(r.expires_at)) : '');
-      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+      return '<div class="lp-esign-row" data-envelope-id="'+lpEsc(String(r.id))+'" data-doc-title="'+lpEsc(r.document_title||r.document_type||'Document')+'" onclick="openEsignPreviewModal(this.getAttribute(\'data-envelope-id\'),this.getAttribute(\'data-doc-title\'))" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;border-radius:6px;transition:background .12s;" onmouseover="this.style.background=\'rgba(201,168,76,0.07)\'" onmouseout="this.style.background=\'transparent\'">'
         +'<span style="min-width:0;"><span style="font-size:12px;color:#ddd;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(r.document_title||r.document_type||'Document')+'</span>'
         +(meta?'<span style="font-size:10px;color:#888;">'+meta+'</span>':'')+'</span>'
-        +badge(r.status)+'</div>';
+        +'<span style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'+badge(r.status)
+        +'<span style="font-size:11px;color:#C9A84C;font-weight:600;white-space:nowrap;">View &rsaquo;</span></span>'
+        +'</div>';
     }).join('');
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load signature requests.</div>'; }
+}
+
+/* ══════════════════════════════════════════════
+   E-SIGNATURE PREVIEW  (signed document + certificate)
+══════════════════════════════════════════════ */
+function _esignPreviewClose(){ var o=document.getElementById('esignPreviewOverlay'); if(o) o.remove(); }
+
+function _esignPreviewTab(which){
+  var doc=document.getElementById('esignPvDoc'), cert=document.getElementById('esignPvCert');
+  var tabD=document.getElementById('esignPvTabDoc'), tabC=document.getElementById('esignPvTabCert');
+  var on='border-bottom:2px solid #C9A84C;color:#E0DDD4;', off='border-bottom:2px solid transparent;color:#888;';
+  var isDoc = which==='document';
+  if(doc) doc.style.display = isDoc?'block':'none';
+  if(cert) cert.style.display = isDoc?'none':'block';
+  if(tabD) tabD.setAttribute('style', _esignPvTabBase + (isDoc?on:off));
+  if(tabC) tabC.setAttribute('style', _esignPvTabBase + (isDoc?off:on));
+}
+var _esignPvTabBase='flex:1;height:38px;background:transparent;border:none;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;outline:none;';
+
+async function openEsignPreviewModal(envelopeId, docTitle){
+  if(!envelopeId){ showToast('Missing envelope id', true); return; }
+  _esignPreviewClose();
+  docTitle = docTitle || 'Document';
+
+  var overlay=document.createElement('div');
+  overlay.id='esignPreviewOverlay';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:20000;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.innerHTML='<div style="width:880px;max-width:100%;height:90vh;display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.6);overflow:hidden;">'
+    // Header
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);">'
+      +'<div style="min-width:0;"><div id="esignPvTitle" style="font-size:15px;font-weight:700;color:#E0DDD4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(docTitle)+'</div>'
+        +'<div id="esignPvStatus" style="font-size:11px;color:#888;margin-top:2px;">Loading…</div></div>'
+      +'<button type="button" onclick="_esignPreviewClose()" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">Close</button>'
+    +'</div>'
+    // Tabs
+    +'<div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.06);">'
+      +'<button type="button" id="esignPvTabDoc" onclick="_esignPreviewTab(\'document\')" style="'+_esignPvTabBase+'border-bottom:2px solid #C9A84C;color:#E0DDD4;">Document</button>'
+      +'<button type="button" id="esignPvTabCert" onclick="_esignPreviewTab(\'certificate\')" style="'+_esignPvTabBase+'border-bottom:2px solid transparent;color:#888;">Certificate</button>'
+    +'</div>'
+    // Content (scrollable)
+    +'<div style="flex:1;overflow-y:auto;background:#0E0E10;padding:18px;">'
+      +'<div id="esignPvLoading" style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;font-size:13px;gap:10px;">'
+        +'<span style="width:18px;height:18px;border:2px solid rgba(201,168,76,0.25);border-top-color:#C9A84C;border-radius:50%;display:inline-block;animation:lpSpin .7s linear infinite;"></span> Loading preview…</div>'
+      +'<div id="esignPvDoc" style="display:none;background:#fff;color:#111;border-radius:6px;padding:32px;box-shadow:0 4px 18px rgba(0,0,0,0.4);"></div>'
+      +'<div id="esignPvCert" style="display:none;background:#fff;color:#111;border-radius:6px;padding:32px;box-shadow:0 4px 18px rgba(0,0,0,0.4);"></div>'
+    +'</div>'
+    // Footer
+    +'<div id="esignPvFooter" style="padding:10px 20px;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;color:#666;word-break:break-all;"></div>'
+  +'</div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', function(e){ if(e.target===overlay) _esignPreviewClose(); });
+
+  // Ensure spinner keyframes exist
+  if(!document.getElementById('lpSpinKeyframes')){
+    var st=document.createElement('style'); st.id='lpSpinKeyframes';
+    st.textContent='@keyframes lpSpin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+  }
+
+  var cfg=window.APP_CONFIG||{};
+  var SUPABASE_URL=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anonKey=cfg.SUPABASE_ANON_KEY||'';
+
+  try{
+    var token=anonKey;
+    try{ var sess=await _authClient().auth.getSession(); if(sess&&sess.data&&sess.data.session) token=sess.data.session.access_token; }catch(_){}
+    var res=await fetch(SUPABASE_URL+'/functions/v1/esign',{
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':anonKey, 'Authorization':'Bearer '+token },
+      body:JSON.stringify({ action:'preview', envelope_id:envelopeId })
+    });
+    var json=null; try{ json=await res.json(); }catch(_){}
+    if(!res.ok){
+      var msg=(json&&(json.error||json.message))||('Request failed ('+res.status+')');
+      throw new Error(msg);
+    }
+    // Modal may have been closed while loading
+    var loading=document.getElementById('esignPvLoading'); if(!loading) return;
+
+    var env=(json&&json.envelope)||{};
+    var titleEl=document.getElementById('esignPvTitle');
+    if(titleEl && env.title) titleEl.textContent=env.title;
+    var statusEl=document.getElementById('esignPvStatus');
+    if(statusEl){
+      var st2=(env.status||'').toString();
+      var when=env.completed_at?(' · '+new Date(env.completed_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})):'';
+      statusEl.textContent = st2 ? (st2.charAt(0).toUpperCase()+st2.slice(1)+when) : '—';
+    }
+
+    var docEl=document.getElementById('esignPvDoc'), certEl=document.getElementById('esignPvCert');
+    if(docEl) docEl.innerHTML=(json&&json.document_html)||'<div style="color:#666;">No document content.</div>';
+    if(certEl) certEl.innerHTML=(json&&json.certificate_html)||'<div style="color:#666;">No certificate available.</div>';
+
+    var foot=document.getElementById('esignPvFooter');
+    if(foot){ foot.textContent = env.document_hash ? ('Integrity (SHA-256): '+env.document_hash) : ''; }
+
+    loading.style.display='none';
+    _esignPreviewTab('document');
+  }catch(e){
+    var loading2=document.getElementById('esignPvLoading');
+    if(loading2){
+      loading2.style.color='#E5484D';
+      loading2.innerHTML=lpEsc((e&&e.message)||'Could not load preview.');
+    }
+  }
 }
 
 /* ══════════════════════════════════════════════
