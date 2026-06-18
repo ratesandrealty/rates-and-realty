@@ -9463,36 +9463,14 @@ async function lpLockSet(days, ev){
     setI('pricingLockedRate', lr); setI('pricingLockedDate', lockDate); setI('pricingLockExpiry', expDate);
     await lpScheduleLockReminders(expDate, days, lr, lockDate);
     if(typeof lpRenderSnapshot==='function') lpRenderSnapshot(cid);
-    (window.showToast||window.toast||function(){})('Rate locked '+lr+'% · expires '+expDate+' · reminders set ✓');
+    (window.showToast||window.toast||function(){})('Rate locked '+lr+'% · expires '+expDate+' · expiry saved ✓');
   }catch(e){ alert('Could not set lock: '+(e&&e.message||e)); }
 }
-async function lpScheduleLockReminders(expDate, days, lr, lockDate){
-  const cid = lpCid(); if(!cid) return;
-  const c = (typeof contactData!=='undefined'&&contactData)?contactData:{};
-  const bName = (typeof _lpBorrowerName==='function')?_lpBorrowerName():(((c.first_name||'')+' '+(c.last_name||'')).trim()||'Borrower');
-  let app = {};
-  try { app = (typeof _fetchAppRowForContact==='function') ? (await _fetchAppRowForContact(cid))||{} : {}; } catch(_){}
-  const money = v => (v||v===0)?'$'+Number(v).toLocaleString():'—';
-  const prop = c.property_address || app.subject_property_address || app.property_address || '—';
-  const leadUrl = location.origin + location.pathname + '?contact_id=' + cid;
-  const details = [
-    '**Rate Lock — '+bName+'**','',
-    '- **Borrower:** '+bName,
-    '- **Loan Amount:** '+money(c.loan_amount),
-    '- **Lender:** '+(c.closing_lender||'—'),
-    '- **Locked Rate:** '+lr+'%',
-    '- **Lock Date:** '+lockDate,
-    '- **Lock Expires:** '+expDate+'  ('+days+'-day lock)',
-    '- **Type / Purpose:** '+((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')),
-    '- **Property:** '+prop,
-    '- **Pipeline:** '+(c.pipeline_status||'—'),
-    '','['+'Open lead in CRM'+']('+leadUrl+')'
-  ].join('\n');
-  const f = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-  const expD = new Date(expDate+'T12:00:00');
-  const five = new Date(expD); five.setDate(five.getDate()-5);
-  await lpCreateClickupTask({ title:'⏰ Rate lock expires in 5 days — '+bName+' ('+expDate+')', description:details, priority:'high',   due_date:f(five)+'T12:00:00Z' });
-  await lpCreateClickupTask({ title:'🔒 Rate lock EXPIRES TODAY — '+bName,                       description:details, priority:'urgent', due_date:expDate+'T12:00:00Z' });
+async function lpScheduleLockReminders(){
+  /* Rate-lock reminders are now handled by the server-side "Rate lock expiring"
+     automations (toggle them in the CRM automation panel). No-op so locking a
+     rate no longer creates duplicate ClickUp tasks from the browser. */
+  return;
 }
 function lpSnapEdit(key, ev){
   try{ ev&&ev.stopPropagation&&ev.stopPropagation(); }catch(_){}
