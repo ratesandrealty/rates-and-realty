@@ -2313,13 +2313,13 @@
         <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
         <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
         <div class="lp-card"><div class="lp-h">🗂️ Tasks <a onclick="switchTab('tasks', document.querySelector('.ld-tab-btn[onclick*=tasks]'))">Manage →</a></div><div id="lpTasksBody"></div></div>
-        <div class="lp-card lp-stub"><div class="lp-h">🧾 Third-Party Orders</div><div class="lp-soon">Title / HOI / Escrow order tracking — wiring in Phase 2.</div></div>
+        <div class="lp-card"><div class="lp-h">🧾 Third-Party Orders</div><div id="lpOrdersBody"></div></div>
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
         <div class="lp-card"><div class="lp-h">🏠 Appraisal Order</div><div id="lpApOrderBody"></div></div>
         <div class="lp-card"><div class="lp-h">🔑 Appraisal Portal</div><div id="lpAppraisalPortalBody"></div></div>
-        <div class="lp-card lp-stub"><div class="lp-h">✍️ LOE Center</div><div class="lp-soon">Letter-of-explanation builder + e-sign — wiring in Phase 2.</div></div>
-        <div class="lp-card lp-stub"><div class="lp-h">🖊️ E-Signature Status</div><div class="lp-soon">Reads signature_requests — wiring in Phase 2.</div></div>
-        <div class="lp-card lp-stub"><div class="lp-h">🌅 VA Daily Tasks</div><div class="lp-soon">Per-assignee ClickUp queue — wiring in Phase 2.</div></div>
+        <div class="lp-card"><div class="lp-h">✍️ LOE Center</div><div id="lpLoeBody"></div></div>
+        <div class="lp-card"><div class="lp-h">🖊️ E-Signature Status</div><div id="lpEsignBody"></div></div>
+        <div class="lp-card"><div class="lp-h">🌅 VA Daily Tasks</div><div id="lpVaTasksBody"></div></div>
       </div>
     </div>
 
@@ -8796,6 +8796,10 @@ async function lpLoadProcessing(){
   lpLoadContacts(cid);
   lpLoadApOrder(cid);
   lpLoadAppraisalPortal(cid);
+  lpLoadOrders(cid);
+  lpLoadLoe(cid);
+  lpLoadEsign(cid);
+  lpLoadVaTasks(cid);
 }
 function lpGoToLender(name){
   const btn = document.querySelector('.ld-tab-btn[onclick*="lenders"]');
@@ -9181,6 +9185,170 @@ async function lpLoadTasks(cid){
     const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
     body.innerHTML = data.map(t=>'<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);"><span style="font-size:12px;color:#ddd;">'+(t.clickup_url?'<a href="'+lpEsc(t.clickup_url)+'" target="_blank" style="color:#ddd;text-decoration:none;">':'')+lpEsc(t.title||'')+(t.clickup_url?'</a>':'')+'</span><span style="font-size:11px;color:#888;">'+lpEsc(t.status||'')+(t.due_date?' · '+dd(t.due_date):'')+'</span></div>').join('');
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; }
+}
+
+/* ═══ PROCESSING TAB — Phase 2 cards: Orders / LOE / E-Sign / VA Tasks ═══ */
+const LP_ORDER_ROWS = [
+  { type:'title',     label:'Title',     role:'title_officer'     },
+  { type:'hoi',       label:'HOI',       role:'hoi_agent'         },
+  { type:'escrow',    label:'Escrow',    role:'escrow_officer'    },
+  { type:'appraisal', label:'Appraisal', role:'appraisal_company' }
+];
+const LP_ORDER_STATUS = [
+  { v:'not_ordered', t:'Not Ordered' },
+  { v:'ordered',     t:'Ordered'     },
+  { v:'received',    t:'Received'    }
+];
+async function lpLoadOrders(cid){
+  const body = document.getElementById('lpOrdersBody'); if(!body) return;
+  try{
+    const cl = _authClient();
+    const [oRes, vRes] = await Promise.all([
+      cl.from('loan_orders').select('order_type,status,ordered_at,received_at').eq('contact_id',cid),
+      cl.from('loan_contacts').select('role,name,company').eq('contact_id',cid)
+    ]);
+    const oMap = {}; (oRes.data||[]).forEach(o=>{ oMap[o.order_type]=o; });
+    const vMap = {}; (vRes.data||[]).forEach(v=>{ vMap[v.role]=v; });
+    const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+    const sel = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:3px 6px;cursor:pointer;';
+    body.innerHTML = LP_ORDER_ROWS.map(row=>{
+      const o = oMap[row.type]||{}; const v = vMap[row.role]||{};
+      const vendor = v.name || v.company || '—';
+      const st = o.status || 'not_ordered';
+      const dateTxt = st==='received' ? dd(o.received_at) : (st==='ordered' ? dd(o.ordered_at) : '');
+      const opts = LP_ORDER_STATUS.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
+      return '<div style="display:grid;grid-template-columns:78px 1fr 116px 52px;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+        +'<span style="font-size:11px;font-weight:600;color:#C9A84C;">'+row.label+'</span>'
+        +'<span style="font-size:11px;color:'+(vendor==='—'?'#666':'#bbb')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(vendor)+'</span>'
+        +'<select onchange="lpSetOrder(\''+row.type+'\',this.value)" style="'+sel+'">'+opts+'</select>'
+        +'<span style="font-size:10px;color:#888;text-align:right;">'+dateTxt+'</span>'
+        +'</div>';
+    }).join('');
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load orders.</div>'; }
+}
+async function lpSetOrder(orderType, status){
+  const cid = lpCid(); if(!cid) return;
+  const now = new Date().toISOString();
+  const patch = { contact_id:cid, order_type:orderType, status:status, updated_at:now };
+  if(status==='ordered'){ patch.ordered_at = now; patch.received_at = null; }
+  else if(status==='received'){ patch.received_at = now; }
+  else { patch.ordered_at = null; patch.received_at = null; }
+  try{
+    await _authClient().from('loan_orders').upsert(patch, { onConflict:'contact_id,order_type' });
+    lpLoadOrders(cid);
+  }catch(e){ alert('Could not save order status.'); }
+}
+
+const LP_LOE_STATUS = { needed:{t:'Needed',c:'#E5984D'}, requested:{t:'Requested',c:'#5B8DEF'}, received:{t:'Received',c:'#3FB950'} };
+const LP_LOE_NEXT   = { needed:'requested', requested:'received', received:'needed' };
+async function lpLoadLoe(cid){
+  const body = document.getElementById('lpLoeBody'); if(!body) return;
+  try{
+    const { data } = await _authClient().from('loe_requests').select('id,topic,status').eq('contact_id',cid).order('created_at',{ascending:true});
+    const inp = 'flex:1;min-width:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:5px 7px;';
+    const addBtn = 'background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:11px;font-weight:600;flex-shrink:0;';
+    let rows;
+    if(!data || !data.length){
+      rows = '<div style="color:#888;font-size:12px;padding:6px 4px;">No letters of explanation yet.</div>';
+    } else {
+      rows = data.map(l=>{
+        const s = LP_LOE_STATUS[l.status]||LP_LOE_STATUS.needed;
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+          +'<span style="font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(l.topic||'')+'</span>'
+          +'<span style="display:flex;gap:6px;align-items:center;flex-shrink:0;">'
+          +'<button onclick="lpCycleLoe(\''+l.id+'\',\''+l.status+'\')" title="Click to advance status" style="background:transparent;border:1px solid '+s.c+'55;color:'+s.c+';border-radius:10px;padding:2px 9px;cursor:pointer;font-size:10px;font-weight:600;">'+s.t+'</button>'
+          +'<button onclick="lpDeleteLoe(\''+l.id+'\')" title="Delete" style="background:transparent;border:none;color:#666;cursor:pointer;font-size:14px;line-height:1;">×</button>'
+          +'</span></div>';
+      }).join('');
+    }
+    body.innerHTML = rows
+      + '<div style="display:flex;gap:6px;margin-top:8px;">'
+      + '<input id="lpLoeNew" type="text" placeholder="New LOE topic (e.g. Large deposit 4/12)" onkeydown="if(event.key===\'Enter\')lpAddLoe()" style="'+inp+'">'
+      + '<button onclick="lpAddLoe()" style="'+addBtn+'">+ Add</button>'
+      + '</div>';
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load LOEs.</div>'; }
+}
+async function lpAddLoe(){
+  const cid = lpCid(); if(!cid) return;
+  const el = document.getElementById('lpLoeNew'); const topic = ((el&&el.value)||'').trim();
+  if(!topic) return;
+  try{
+    await _authClient().from('loe_requests').insert({ contact_id:cid, topic:topic, status:'needed' });
+    lpLoadLoe(cid);
+  }catch(e){ alert('Could not add LOE.'); }
+}
+async function lpCycleLoe(id, cur){
+  const cid = lpCid(); if(!cid) return;
+  const next = LP_LOE_NEXT[cur] || 'needed';
+  const patch = { status:next, updated_at:new Date().toISOString(), completed_at: next==='received'?new Date().toISOString():null };
+  try{
+    await _authClient().from('loe_requests').update(patch).eq('id',id);
+    lpLoadLoe(cid);
+  }catch(e){ alert('Could not update LOE.'); }
+}
+async function lpDeleteLoe(id){
+  const cid = lpCid(); if(!cid) return;
+  if(!confirm('Delete this LOE?')) return;
+  try{
+    await _authClient().from('loe_requests').delete().eq('id',id);
+    lpLoadLoe(cid);
+  }catch(e){ alert('Could not delete LOE.'); }
+}
+
+async function lpLoadEsign(cid){
+  const body = document.getElementById('lpEsignBody'); if(!body) return;
+  try{
+    const { data } = await _authClient().from('signature_requests').select('document_title,document_type,status,signed_at,expires_at,created_at').eq('contact_id',cid).order('created_at',{ascending:false});
+    if(!data || !data.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No signature requests.</div>'; return; }
+    const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+    const badge = (st)=>{
+      const m = { signed:{t:'Signed',c:'#3FB950'}, completed:{t:'Signed',c:'#3FB950'}, pending:{t:'Pending',c:'#E5984D'}, sent:{t:'Sent',c:'#5B8DEF'}, expired:{t:'Expired',c:'#E5484D'}, declined:{t:'Declined',c:'#E5484D'} };
+      const s = m[(st||'').toLowerCase()] || { t:(st||'—'), c:'#888' };
+      return '<span style="border:1px solid '+s.c+'55;color:'+s.c+';border-radius:10px;padding:2px 9px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0;">'+lpEsc(s.t)+'</span>';
+    };
+    body.innerHTML = data.map(r=>{
+      const isSigned = ['signed','completed'].indexOf((r.status||'').toLowerCase())>-1;
+      const meta = isSigned ? ('Signed '+dd(r.signed_at)) : (r.expires_at ? ('Expires '+dd(r.expires_at)) : '');
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+        +'<span style="min-width:0;"><span style="font-size:12px;color:#ddd;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(r.document_title||r.document_type||'Document')+'</span>'
+        +(meta?'<span style="font-size:10px;color:#888;">'+meta+'</span>':'')+'</span>'
+        +badge(r.status)+'</div>';
+    }).join('');
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load signature requests.</div>'; }
+}
+
+async function lpLoadVaTasks(cid){
+  const body = document.getElementById('lpVaTasksBody'); if(!body) return;
+  try{
+    const { data } = await _authClient().from('tasks').select('id,title,due_date,status,clickup_url').eq('contact_id',cid).order('due_date',{ascending:true,nullsFirst:false});
+    const done = ['done','complete','completed','closed','cancelled','canceled'];
+    const open = (data||[]).filter(t=>done.indexOf((t.status||'').toLowerCase())===-1);
+    if(!open.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No open tasks. 🎉</div>'; return; }
+    const today = new Date(); today.setHours(0,0,0,0);
+    body.innerHTML = open.map(t=>{
+      let due='', dueColor='#888';
+      if(t.due_date){
+        const d=new Date(t.due_date); const d0=new Date(d); d0.setHours(0,0,0,0);
+        due = d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+        if(d0 < today){ dueColor='#E5484D'; due='Overdue · '+due; }
+        else if(d0.getTime()===today.getTime()){ dueColor='#E5984D'; due='Today'; }
+      }
+      const title = (t.clickup_url?'<a href="'+lpEsc(t.clickup_url)+'" target="_blank" style="color:#ddd;text-decoration:none;">':'')+lpEsc(t.title||'(untitled)')+(t.clickup_url?' ↗</a>':'');
+      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+        +'<button onclick="lpCompleteTask(\''+t.id+'\')" title="Mark done" style="flex-shrink:0;width:18px;height:18px;border-radius:4px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#3FB950;cursor:pointer;font-size:12px;line-height:1;padding:0;">✓</button>'
+        +'<span style="flex:1;min-width:0;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+title+'</span>'
+        +(due?'<span style="font-size:10px;color:'+dueColor+';font-weight:600;flex-shrink:0;">'+lpEsc(due)+'</span>':'')
+        +'</div>';
+    }).join('');
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; }
+}
+async function lpCompleteTask(id){
+  const cid = lpCid(); if(!cid) return;
+  try{
+    await _authClient().from('tasks').update({ status:'complete', updated_at:new Date().toISOString() }).eq('id',id);
+    lpLoadVaTasks(cid);
+    if(typeof lpLoadTasks==='function') lpLoadTasks(cid);
+  }catch(e){ alert('Could not complete task.'); }
 }
 
 function switchTab(name, btn) {
