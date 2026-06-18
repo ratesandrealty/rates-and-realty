@@ -9589,6 +9589,135 @@ async function _esignTemplatePreview(){
   }
 }
 
+/* ══════════════════════════════════════════════
+   CUSTOM DOCUMENT — UPLOAD + RENDER  (step 1)
+   esign-docs backend; stamping/fields come later.
+══════════════════════════════════════════════ */
+window._esignUploadedDoc = window._esignUploadedDoc || null;
+
+function _esignDocsEndpoint(){
+  var cfg=window.APP_CONFIG||{};
+  return (cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co')+'/functions/v1/esign-docs';
+}
+async function _esignDocsPost(payload){
+  var cfg=window.APP_CONFIG||{};
+  var anonKey=cfg.SUPABASE_ANON_KEY||'';
+  var token=anonKey;
+  try{ var sess=await _authClient().auth.getSession(); if(sess&&sess.data&&sess.data.session) token=sess.data.session.access_token; }catch(_){}
+  var res=await fetch(_esignDocsEndpoint(),{
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'apikey':anonKey, 'Authorization':'Bearer '+token },
+    body:JSON.stringify(payload)
+  });
+  var json=null; try{ json=await res.json(); }catch(_){}
+  if(!res.ok){ throw new Error((json&&(json.error||json.message))||('Request failed ('+res.status+')')); }
+  return json||{};
+}
+
+function _esignSetDropState(label, busy){
+  var dz=document.getElementById('esignDropZone'), lab=document.getElementById('esignDropLabel');
+  if(lab) lab.textContent=label;
+  if(dz){ dz.style.opacity=busy?'0.7':'1'; dz.style.pointerEvents=busy?'none':'auto'; }
+}
+
+function _esignHandlePdfFile(file){
+  if(!file) return;
+  if(file.type!=='application/pdf'){ showToast('Please choose a PDF file', true); return; }
+  _esignSetDropState('Uploading…', true);
+  var reader=new FileReader();
+  reader.onload=async function(){
+    try{
+      var dataUrl=String(reader.result||'');
+      var base64=dataUrl.indexOf(',')>-1 ? dataUrl.slice(dataUrl.indexOf(',')+1) : dataUrl;
+      var json=await _esignDocsPost({ action:'upload', name:file.name, contact_id:(typeof lpCid==='function'?lpCid():null), pdf_base64:base64 });
+      window._esignUploadedDoc={ id:json.document_id, page_count:json.page_count, page_sizes:json.page_sizes };
+      _esignSetDropState('⬆ Upload a PDF', false);
+      _esignOpenDocViewer(json.document_id, json.name||file.name, json.page_count);
+    }catch(e){
+      _esignSetDropState('⬆ Upload a PDF', false);
+      showToast((e&&e.message)||'Upload failed', true);
+    }
+  };
+  reader.onerror=function(){ _esignSetDropState('⬆ Upload a PDF', false); showToast('Could not read file', true); };
+  reader.readAsDataURL(file);
+}
+
+function _esignDocViewerClose(){ var o=document.getElementById('esignDocViewerOverlay'); if(o) o.remove(); }
+
+function _esignEnsurePdfJs(){
+  return new Promise(function(resolve, reject){
+    if(window.pdfjsLib){ resolve(window.pdfjsLib); return; }
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=function(){
+      if(window.pdfjsLib){ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; resolve(window.pdfjsLib); }
+      else reject(new Error('PDF.js failed to load'));
+    };
+    s.onerror=function(){ reject(new Error('PDF.js failed to load')); };
+    document.head.appendChild(s);
+  });
+}
+
+async function _esignOpenDocViewer(documentId, name, pageCount){
+  _esignDocViewerClose();
+  var title=lpEsc(name||'Document')+(pageCount?(' ('+pageCount+' page'+(pageCount===1?'':'s')+')'):'');
+  var overlay=document.createElement('div');
+  overlay.id='esignDocViewerOverlay';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:21000;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.innerHTML='<div style="width:880px;max-width:100%;height:90vh;display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.6);overflow:hidden;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);">'
+      +'<div style="font-size:15px;font-weight:700;color:#E0DDD4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+title+'</div>'
+      +'<button type="button" onclick="_esignDocViewerClose()" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">Close</button>'
+    +'</div>'
+    +'<div style="flex:1;overflow-y:auto;background:#0E0E10;padding:18px;">'
+      +'<div id="esignDocPvLoading" style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;font-size:13px;gap:10px;">'
+        +'<span style="width:18px;height:18px;border:2px solid rgba(201,168,76,0.25);border-top-color:#C9A84C;border-radius:50%;display:inline-block;animation:lpSpin .7s linear infinite;"></span> Rendering…</div>'
+      +'<div id="esignDocPages" style="display:none;flex-direction:column;align-items:center;gap:12px;"></div>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', function(e){ if(e.target===overlay) _esignDocViewerClose(); });
+
+  if(!document.getElementById('lpSpinKeyframes')){
+    var st=document.createElement('style'); st.id='lpSpinKeyframes';
+    st.textContent='@keyframes lpSpin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+  }
+
+  try{
+    var pdfjs=await _esignEnsurePdfJs();
+    var meta=await _esignDocsPost({ action:'doc_url', document_id:documentId });
+    var url=meta&&meta.url; if(!url) throw new Error('No document URL returned');
+    var pdf=await pdfjs.getDocument(url).promise;
+    var loading=document.getElementById('esignDocPvLoading');
+    var pagesWrap=document.getElementById('esignDocPages');
+    if(!pagesWrap){ return; } // viewer closed
+    var dpr=window.devicePixelRatio||1;
+    var targetW=800;
+    for(var p=1;p<=pdf.numPages;p++){
+      var page=await pdf.getPage(p);
+      if(!document.getElementById('esignDocPages')) return; // closed mid-render
+      var base=page.getViewport({ scale:1 });
+      var scale=targetW/base.width;
+      var vp=page.getViewport({ scale:scale*dpr });
+      var canvas=document.createElement('canvas');
+      canvas.width=Math.floor(vp.width); canvas.height=Math.floor(vp.height);
+      canvas.style.width=Math.floor(vp.width/dpr)+'px';
+      canvas.style.height=Math.floor(vp.height/dpr)+'px';
+      canvas.style.background='#fff';
+      canvas.style.boxShadow='0 4px 18px rgba(0,0,0,0.4)';
+      canvas.style.borderRadius='4px';
+      pagesWrap.appendChild(canvas);
+      await page.render({ canvasContext:canvas.getContext('2d'), viewport:vp }).promise;
+    }
+    if(loading) loading.style.display='none';
+    if(pagesWrap) pagesWrap.style.display='flex';
+  }catch(e){
+    var loading2=document.getElementById('esignDocPvLoading');
+    if(loading2){ loading2.style.color='#E5484D'; loading2.innerHTML=lpEsc((e&&e.message)||'Could not render PDF.'); }
+  }
+}
+
 /* ── Type-ahead signer search (loan people first, then CRM) ── */
 function _esignHideSearch(){
   if(_esignSearchTimer){ clearTimeout(_esignSearchTimer); _esignSearchTimer=null; }
@@ -9685,6 +9814,18 @@ async function openEsignSendModal(){
         +'<button type="button" onclick="_esignTemplatePreview()" style="background:transparent;border:none;color:#C9A84C;font-size:11px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;">Preview</button>'
       +'</div>'
       +'<select id="esignTemplate" style="width:100%;height:34px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:13px;padding:0 8px;outline:none;box-sizing:border-box;"><option value="">Loading…</option></select>'
+      // "or" divider
+      +'<div style="display:flex;align-items:center;gap:10px;margin:12px 0 10px;">'
+        +'<span style="flex:1;height:1px;background:rgba(255,255,255,0.08);"></span>'
+        +'<span style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;">or</span>'
+        +'<span style="flex:1;height:1px;background:rgba(255,255,255,0.08);"></span>'
+      +'</div>'
+      // PDF drop zone (doubles as click-to-pick button)
+      +'<div id="esignDropZone" role="button" tabindex="0" onclick="document.getElementById(\'esignPdfInput\').click()" style="border:1.5px dashed rgba(201,168,76,0.4);border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer;color:#C9A84C;font-size:12px;font-weight:600;transition:background .12s,border-color .12s;">'
+        +'<span id="esignDropLabel">⬆ Upload a PDF</span>'
+        +'<div style="font-size:10px;color:#666;font-weight:400;margin-top:3px;">Drag &amp; drop or click to choose</div>'
+      +'</div>'
+      +'<input type="file" id="esignPdfInput" accept="application/pdf" style="display:none;" onchange="_esignHandlePdfFile(this.files&&this.files[0])">'
     +'</div>'
     // Signers
     +'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Signers</div>'
@@ -9722,6 +9863,16 @@ async function openEsignSendModal(){
   +'</div>';
   document.body.appendChild(overlay);
   overlay.addEventListener('click', function(e){ if(e.target===overlay) _esignCloseModal(); });
+
+  // Drag-and-drop wiring for the PDF drop zone
+  var dz=document.getElementById('esignDropZone');
+  if(dz){
+    var hot=function(on){ dz.style.background=on?'rgba(201,168,76,0.12)':'transparent'; dz.style.borderColor=on?'rgba(201,168,76,0.7)':'rgba(201,168,76,0.4)'; };
+    ['dragenter','dragover'].forEach(function(ev){ dz.addEventListener(ev,function(e){ e.preventDefault(); e.stopPropagation(); hot(true); }); });
+    ['dragleave','dragend'].forEach(function(ev){ dz.addEventListener(ev,function(e){ e.preventDefault(); e.stopPropagation(); hot(false); }); });
+    dz.addEventListener('drop',function(e){ e.preventDefault(); e.stopPropagation(); hot(false); var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) _esignHandlePdfFile(f); });
+    dz.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); document.getElementById('esignPdfInput').click(); } });
+  }
 
   _esignRenderSigners();
 
