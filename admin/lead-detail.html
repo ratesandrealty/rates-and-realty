@@ -8833,7 +8833,16 @@ async function lpRenderSnapshot(cid){
     ? '<a onclick="lpGoToLender(this.dataset.lender)" data-lender="'+lpEsc(c.closing_lender)+'" style="color:#C9A84C;cursor:pointer;text-decoration:none;border-bottom:1px dashed rgba(201,168,76,.5);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(c.closing_lender)+' ↗</a>'
     : '<span onclick="lpLenderPickerOpen(event)" style="cursor:pointer;color:#C9A84C;border:1px dashed rgba(201,168,76,.5);border-radius:6px;padding:1px 8px;font-size:12px;white-space:nowrap;">+ Select lender</span>');
   const lenderCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Lender</div><div style="display:flex;align-items:center;gap:6px;font-size:14px;color:#fff;font-weight:600;">'+lenderInner+(c.closing_lender?'<span onclick="lpLenderPickerOpen(event)" title="Change lender" style="flex-shrink:0;cursor:pointer;color:rgba(255,255,255,.55);font-size:13px;">✎</span>':'')+'</div></div>';
-  el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc(tcase(c.closing_loan_type||c.loan_type||'—')+' · '+tcase(c.loan_purpose||'—')))+lenderCell+cell(rateLabel==='Rate'?'Rate':rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
+  const ecell = (label,key,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div onclick="lpSnapEdit(\''+key+'\',event)" title="Click to edit" style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);">'+val+'</div></div>';
+  el.innerHTML = cell('Borrower',lpEsc(name))
+    + ecell('Loan Amount','loan_amount',money(c.loan_amount))
+    + ecell('Type / Purpose','type_purpose',lpEsc(tcase(c.closing_loan_type||c.loan_type||'—')+' · '+tcase(c.loan_purpose||'—')))
+    + lenderCell
+    + lpLockedRateCellHtml(app)
+    + ecell('Lock Expires','rate_lock_expiry',dd(app.rate_lock_expiry)+lockChip)
+    + ecell('Pipeline','pipeline_status',lpEsc(c.pipeline_status||'—'))
+    + ecell('Credit Pulled','credit_report_pulled_date',dd(app.credit_report_pulled_date))
+    + ecell('Pre-Approval Exp','preapproval_expiry',dd(app.preapproval_expiry));
 }
 const LP_PERSON_LABEL = { admin:'Rene Duarte (Admin)', va:'Virtual Assistant' };
 function lpPersonSel(cur, blank){
@@ -9409,6 +9418,131 @@ function lpPickLender(id, name){
   }
   if(typeof contactData!=='undefined' && contactData) contactData.closing_lender = name || null;
   if(typeof lpRenderSnapshot==='function' && typeof lpCid==='function'){ const _c=lpCid(); if(_c) lpRenderSnapshot(_c); }
+}
+
+/* ═══ LOAN SNAPSHOT — inline edit (two-way) + Locked Rate w/ reminders ═══ */
+const LP_SNAP_FIELDS = {
+  loan_amount:               { table:'contacts', col:'loan_amount',                src:'f-loan-amount',     type:'number', step:'1000',  label:'Loan Amount' },
+  locked_rate:               { table:'app',      col:'locked_rate',                src:'pricingLockedRate', type:'number', step:'0.001', label:'Locked Rate' },
+  rate_lock_expiry:          { table:'app',      col:'rate_lock_expiry',           src:'pricingLockExpiry', type:'date',                 label:'Lock Expires' },
+  pipeline_status:           { table:'contacts', col:'pipeline_status',            src:'f-status',          type:'select',               label:'Pipeline' },
+  credit_report_pulled_date: { table:'app',      col:'credit_report_pulled_date',  src:'docCreditPulledDate', type:'date',               label:'Credit Pulled' },
+  preapproval_expiry:        { table:'app',      col:'preapproval_expiry',         src:'docPreapprovalExpiry', type:'date',               label:'Pre-Approval Exp' }
+};
+function lpLockedRateCellHtml(app){
+  const lr = app.locked_rate;
+  const val = (lr||lr===0) ? Number(lr).toFixed(3)+'%' : '—';
+  const pills = [15,30,45].map(function(d){
+    return '<span onclick="lpLockSet('+d+',event)" title="Lock '+d+' days — sets expiry + ClickUp reminders" style="cursor:pointer;font-size:9px;font-weight:700;color:#C9A84C;border:1px solid rgba(201,168,76,.4);border-radius:5px;padding:1px 5px;">'+d+'d</span>';
+  }).join('');
+  return '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Locked Rate</div>'
+    + '<div style="display:flex;align-items:center;gap:6px;font-size:14px;color:#fff;font-weight:600;">'
+    + '<span onclick="lpSnapEdit(\'locked_rate\',event)" title="Click to edit" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);flex-shrink:0;">'+val+'</span>'
+    + '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0;">🔒'+pills+'</span>'
+    + '</div></div>';
+}
+async function lpLockSet(days, ev){
+  try{ ev&&ev.stopPropagation&&ev.stopPropagation(); }catch(_){}
+  const cid = lpCid(); if(!cid) return;
+  const lrEl = document.getElementById('pricingLockedRate');
+  let lr = (lrEl && lrEl.value) ? lrEl.value : '';
+  if(!lr){ lr = prompt('Locked rate % (e.g. 6.750):'); if(!lr) return; }
+  lr = String(lr).trim();
+  const today = new Date();
+  const f = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  const lockDate = f(today);
+  const exp = new Date(today); exp.setDate(exp.getDate()+days);
+  const expDate = f(exp);
+  try{
+    await _authClient().from('mortgage_applications').update({ locked_rate: parseFloat(lr), rate_lock_expiry: expDate, updated_at:new Date().toISOString() }).eq('contact_id',cid);
+    const setI=(id,v)=>{ const e=document.getElementById(id); if(e){ e.value=v; e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); } };
+    setI('pricingLockedRate', lr); setI('pricingLockedDate', lockDate); setI('pricingLockExpiry', expDate);
+    await lpScheduleLockReminders(expDate, days, lr, lockDate);
+    if(typeof lpRenderSnapshot==='function') lpRenderSnapshot(cid);
+    (window.showToast||window.toast||function(){})('Rate locked '+lr+'% · expires '+expDate+' · reminders set ✓');
+  }catch(e){ alert('Could not set lock: '+(e&&e.message||e)); }
+}
+async function lpScheduleLockReminders(expDate, days, lr, lockDate){
+  const cid = lpCid(); if(!cid) return;
+  const c = (typeof contactData!=='undefined'&&contactData)?contactData:{};
+  const bName = (typeof _lpBorrowerName==='function')?_lpBorrowerName():(((c.first_name||'')+' '+(c.last_name||'')).trim()||'Borrower');
+  let app = {};
+  try { app = (typeof _fetchAppRowForContact==='function') ? (await _fetchAppRowForContact(cid))||{} : {}; } catch(_){}
+  const money = v => (v||v===0)?'$'+Number(v).toLocaleString():'—';
+  const prop = c.property_address || app.subject_property_address || app.property_address || '—';
+  const leadUrl = location.origin + location.pathname + '?contact_id=' + cid;
+  const details = [
+    '**Rate Lock — '+bName+'**','',
+    '- **Borrower:** '+bName,
+    '- **Loan Amount:** '+money(c.loan_amount),
+    '- **Lender:** '+(c.closing_lender||'—'),
+    '- **Locked Rate:** '+lr+'%',
+    '- **Lock Date:** '+lockDate,
+    '- **Lock Expires:** '+expDate+'  ('+days+'-day lock)',
+    '- **Type / Purpose:** '+((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')),
+    '- **Property:** '+prop,
+    '- **Pipeline:** '+(c.pipeline_status||'—'),
+    '','['+'Open lead in CRM'+']('+leadUrl+')'
+  ].join('\n');
+  const f = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  const expD = new Date(expDate+'T12:00:00');
+  const five = new Date(expD); five.setDate(five.getDate()-5);
+  await lpCreateClickupTask({ title:'⏰ Rate lock expires in 5 days — '+bName+' ('+expDate+')', description:details, priority:'high',   due_date:f(five)+'T12:00:00Z' });
+  await lpCreateClickupTask({ title:'🔒 Rate lock EXPIRES TODAY — '+bName,                       description:details, priority:'urgent', due_date:expDate+'T12:00:00Z' });
+}
+function lpSnapEdit(key, ev){
+  try{ ev&&ev.stopPropagation&&ev.stopPropagation(); }catch(_){}
+  const old=document.getElementById('lpSnapEditor'); if(old) old.remove();
+  const cid=lpCid(); if(!cid) return;
+  const x=(ev&&ev.clientX)?ev.clientX:200, y=(ev&&ev.clientY)?ev.clientY:200;
+  const panel=document.createElement('div'); panel.id='lpSnapEditor';
+  panel.style.cssText='position:fixed;z-index:9999;left:'+Math.min(x,window.innerWidth-270)+'px;top:'+Math.min(y+8,window.innerHeight-200)+'px;width:248px;background:#15140f;border:1px solid rgba(201,168,76,.4);border-radius:10px;box-shadow:0 18px 44px rgba(0,0,0,.6);padding:10px;display:flex;flex-direction:column;gap:7px;';
+  const inStyle='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:7px;color:#eee;font-size:13px;padding:7px 9px;outline:none;width:100%;box-sizing:border-box;';
+  const lbl='font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.5px;';
+  const c=(typeof contactData!=='undefined'&&contactData)?contactData:{};
+  let bodyHtml='', commit;
+  if(key==='type_purpose'){
+    const tSel=document.getElementById('pricingLoanType'), pSel=document.getElementById('pricingLoanPurpose');
+    bodyHtml='<div style="'+lbl+'">Loan Type</div><select id="lpSnapInT" style="'+inStyle+'">'+(tSel?tSel.innerHTML:'<option value=\"\">—</option>')+'</select>'
+            +'<div style="'+lbl+'">Loan Purpose</div><select id="lpSnapInP" style="'+inStyle+'">'+(pSel?pSel.innerHTML:'<option value=\"\">—</option>')+'</select>';
+    commit=async ()=>{
+      const tv=document.getElementById('lpSnapInT').value, pv=document.getElementById('lpSnapInP').value;
+      await _authClient().from('contacts').update({ closing_loan_type:tv||null, loan_purpose:pv||null, updated_at:new Date().toISOString() }).eq('id',cid);
+      if(c){ c.closing_loan_type=tv||null; c.loan_purpose=pv||null; }
+      if(tSel) tSel.value=tv; if(pSel) pSel.value=pv;
+      lpRenderSnapshot(cid);
+    };
+    setTimeout(()=>{ const t=document.getElementById('lpSnapInT'),p=document.getElementById('lpSnapInP'); if(t)t.value=(c.closing_loan_type||c.loan_type||''); if(p)p.value=(c.loan_purpose||''); },10);
+  } else {
+    const cfg=LP_SNAP_FIELDS[key]; if(!cfg){ return; }
+    const srcEl=cfg.src?document.getElementById(cfg.src):null;
+    let cur='';
+    if(cfg.table==='contacts'){ cur=(c[cfg.col]!=null?c[cfg.col]:''); } else if(srcEl){ cur=srcEl.value||''; }
+    if(cfg.type==='select'){
+      bodyHtml='<div style="'+lbl+'">'+cfg.label+'</div><select id="lpSnapIn" style="'+inStyle+'">'+(srcEl?srcEl.innerHTML:'<option value=\"\">—</option>')+'</select>';
+    } else if(cfg.type==='date'){
+      bodyHtml='<div style="'+lbl+'">'+cfg.label+'</div><input id="lpSnapIn" type="date" value="'+(cur?String(cur).slice(0,10):'')+'" style="'+inStyle+'">';
+    } else {
+      bodyHtml='<div style="'+lbl+'">'+cfg.label+'</div><input id="lpSnapIn" type="number" step="'+(cfg.step||'1')+'" value="'+(cur!==''?cur:'')+'" style="'+inStyle+'">';
+    }
+    commit=async ()=>{
+      const v=document.getElementById('lpSnapIn').value;
+      const valOut = (cfg.type==='number') ? (v===''?null:parseFloat(v)) : (v||null);
+      if(cfg.col==='pipeline_status'){ if(typeof updatePipelineStage==='function') updatePipelineStage(v); }
+      else if(cfg.table==='contacts'){ await _authClient().from('contacts').update({ [cfg.col]:valOut, updated_at:new Date().toISOString() }).eq('id',cid); if(c) c[cfg.col]=valOut; if(srcEl) srcEl.value=(valOut==null?'':v); }
+      else { await _authClient().from('mortgage_applications').update({ [cfg.col]:valOut, updated_at:new Date().toISOString() }).eq('contact_id',cid); if(srcEl){ srcEl.value=(valOut==null?'':v); srcEl.dispatchEvent(new Event('input',{bubbles:true})); srcEl.dispatchEvent(new Event('change',{bubbles:true})); } }
+      lpRenderSnapshot(cid);
+    };
+    if(cfg.type==='select'){ setTimeout(()=>{ const s=document.getElementById('lpSnapIn'); if(s)s.value=cur; },10); }
+  }
+  panel.innerHTML=bodyHtml+'<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:3px;"><button id="lpSnapCancel" style="background:transparent;border:1px solid rgba(255,255,255,.2);color:#aaa;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">Cancel</button><button id="lpSnapSave" style="background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.5);color:#C9A84C;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;font-weight:600;">Save</button></div>';
+  document.body.appendChild(panel);
+  const close=()=>panel.remove();
+  document.getElementById('lpSnapCancel').onclick=close;
+  document.getElementById('lpSnapSave').onclick=async ()=>{ try{ await commit(); }catch(e){ alert('Could not save.'); } close(); };
+  const first=panel.querySelector('input,select'); if(first) setTimeout(()=>first.focus(),30);
+  panel.addEventListener('keydown',function(e){ if(e.key==='Enter' && e.target.tagName!=='SELECT'){ document.getElementById('lpSnapSave').click(); } if(e.key==='Escape') close(); });
+  setTimeout(()=>{ const off=(e)=>{ if(!panel.contains(e.target)){ close(); document.removeEventListener('mousedown',off); } }; document.addEventListener('mousedown',off); },0);
 }
 
 function switchTab(name, btn) {
