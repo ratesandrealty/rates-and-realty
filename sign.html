@@ -7,6 +7,10 @@
 <title>Sign Document · Rates &amp; Realty</title>
 <!-- Shared site config (SUPABASE_URL + public anon key). Fallback inline below if it fails to load. -->
 <script src="/api/env.js"></script>
+<!-- Handwriting fonts for typed signature styles -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Allura&family=Caveat:wght@600&family=Dancing+Script:wght@600&family=Great+Vibes&family=Sacramento&display=swap" rel="stylesheet">
 <style>
   :root{
     --gold:#C9A84C; --gold-dark:#7A5020; --ink:#1f2328; --muted:#6b7280;
@@ -80,13 +84,18 @@
     outline:none;
   }
   .typed-input:focus{border-color:var(--gold);}
-  .typed-preview{
-    margin-top:12px;border:1px dashed #c9ccd1;border-radius:10px;background:#fff;
-    min-height:90px;display:flex;align-items:center;justify-content:center;padding:10px 16px;
-    font-family:"Brush Script MT","Segoe Script","Apple Chancery",cursive;font-size:40px;color:#1a1a1a;
-    word-break:break-word;text-align:center;
+  .style-label{font-size:12px;font-weight:600;color:#374151;margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.03em;}
+  .style-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+  .style-card{
+    border:1.5px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;
+    min-height:78px;display:flex;align-items:center;justify-content:center;padding:8px 12px;
+    color:#1a1a1a;font-size:28px;line-height:1.1;text-align:center;word-break:break-word;overflow:hidden;
+    transition:border-color .12s,background .12s,box-shadow .12s;
   }
-  .typed-preview.empty{color:#b6bac0;font-size:18px;font-family:inherit;}
+  .style-card:hover{border-color:#cbd0d6;}
+  .style-card.selected{border-color:var(--gold);background:#fbf6e9;box-shadow:0 0 0 1px var(--gold);}
+  .style-card.placeholder{color:#b6bac0;font-size:15px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  @media (max-width:420px){ .style-grid{grid-template-columns:1fr;} }
   .text-input{
     width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:10px;font-size:16px;outline:none;
     letter-spacing:0.18em;
@@ -154,6 +163,30 @@
     return { ok:res.ok, status:res.status, json:json||{} };
   }
 
+  // Render a typed name in the given font onto a transparent high-DPI canvas,
+  // shrinking the font size to fit the fixed box, and return a PNG data URL.
+  function renderTypedSignatureImage(name, fontFamily){
+    var W=640, H=180, PAD=40;
+    var ratio = window.devicePixelRatio || 1;
+    var cv = document.createElement("canvas");
+    cv.width = Math.round(W*ratio); cv.height = Math.round(H*ratio);
+    var ctx = cv.getContext("2d");
+    ctx.scale(ratio, ratio);
+    ctx.clearRect(0,0,W,H); // transparent background
+    ctx.fillStyle = "#16213e";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    var size = 96;
+    do {
+      ctx.font = size + "px " + fontFamily;
+      if(ctx.measureText(name).width <= (W - PAD*2)) break;
+      size -= 2;
+    } while(size > 18);
+    ctx.font = size + "px " + fontFamily;
+    ctx.fillText(name, W/2, H/2);
+    return cv.toDataURL("image/png");
+  }
+
   function centerMessage(title, lines, opts){
     opts = opts || {};
     var color = opts.color || "var(--ink)";
@@ -203,7 +236,15 @@
   }
 
   // ── signing UI ─────────────────────────────────────────────
-  var sigState = { tab:"draw", hasDrawing:false, typedName:"", canvas:null, ctx:null };
+  // Preset handwriting styles for the Type tab (loaded via Google Fonts in <head>).
+  var SIG_FONTS = [
+    { id:"dancing",    label:"Dancing Script", family:"'Dancing Script', cursive" },
+    { id:"greatvibes", label:"Great Vibes",    family:"'Great Vibes', cursive" },
+    { id:"sacramento", label:"Sacramento",     family:"'Sacramento', cursive" },
+    { id:"allura",     label:"Allura",         family:"'Allura', cursive" },
+    { id:"caveat",     label:"Caveat",         family:"'Caveat', cursive" }
+  ];
+  var sigState = { tab:"draw", hasDrawing:false, typedName:"", font:SIG_FONTS[0], canvas:null, ctx:null };
 
   function renderSigning(data, alreadySigned){
     var env = data.envelope || {};
@@ -246,7 +287,8 @@
       // type panel
       html +=   '<div id="typePane" style="display:none;">';
       html +=     '<input type="text" class="typed-input" id="typedName" placeholder="Type your full legal name" autocomplete="name">';
-      html +=     '<div class="typed-preview empty" id="typedPreview">Your signature</div>';
+      html +=     '<div class="style-label">Choose your style</div>';
+      html +=     '<div class="style-grid" id="styleGrid"></div>';
       html +=   '</div>';
 
       // ssn
@@ -280,13 +322,13 @@
   }
 
   function wireSigning(token, needSsn){
-    sigState.tab="draw"; sigState.hasDrawing=false; sigState.typedName="";
+    sigState.tab="draw"; sigState.hasDrawing=false; sigState.typedName=""; sigState.font=SIG_FONTS[0];
 
     var tabDraw=document.getElementById("tabDraw"), tabType=document.getElementById("tabType");
     var drawPane=document.getElementById("drawPane"), typePane=document.getElementById("typePane");
     var canvas=document.getElementById("sigCanvas");
     var clearBtn=document.getElementById("clearBtn");
-    var typedName=document.getElementById("typedName"), typedPreview=document.getElementById("typedPreview");
+    var typedName=document.getElementById("typedName"), styleGrid=document.getElementById("styleGrid");
     var ssnInput=document.getElementById("ssnInput");
     var consentChk=document.getElementById("consentChk");
     var signBtn=document.getElementById("signBtn");
@@ -349,18 +391,49 @@
       drawPane.style.display = drawActive ? "" : "none";
       typePane.style.display = drawActive ? "none" : "";
       if(drawActive){ setTimeout(setupCanvas, 0); } // canvas was hidden→may need re-measure
+      else { renderStyleCards(); } // re-render previews now the grid is visible
       refresh();
     }
     tabDraw.addEventListener("click", function(){ selectTab("draw"); });
     tabType.addEventListener("click", function(){ selectTab("type"); });
 
-    // ---- typed ----
+    // ---- typed: preset style cards ----
+    // Renders one selectable card per font, each previewing the typed name.
+    function renderStyleCards(){
+      var name = sigState.typedName;
+      styleGrid.innerHTML = SIG_FONTS.map(function(f){
+        var sel = (sigState.font && sigState.font.id===f.id) ? " selected" : "";
+        if(name){
+          return '<div class="style-card'+sel+'" data-font="'+f.id+'" title="'+f.label+'" '
+            +'style="font-family:'+f.family+';">'+esc(name)+'</div>';
+        }
+        return '<div class="style-card placeholder'+sel+'" data-font="'+f.id+'">Type your name above</div>';
+      }).join("");
+      // wire card clicks
+      Array.prototype.forEach.call(styleGrid.querySelectorAll(".style-card"), function(card){
+        card.addEventListener("click", function(){
+          var id = card.getAttribute("data-font");
+          var f = SIG_FONTS.filter(function(x){ return x.id===id; })[0];
+          if(f){ sigState.font = f; renderStyleCards(); refresh(); }
+        });
+      });
+    }
+    renderStyleCards();
+
     typedName.addEventListener("input", function(){
       sigState.typedName = typedName.value.trim();
-      if(sigState.typedName){ typedPreview.classList.remove("empty"); typedPreview.textContent = sigState.typedName; }
-      else { typedPreview.classList.add("empty"); typedPreview.textContent = "Your signature"; }
+      renderStyleCards();
       refresh();
     });
+
+    // When the web fonts finish loading, re-render cards so previews use the
+    // real handwriting fonts (and re-measure the canvas if it's visible).
+    if(document.fonts && document.fonts.ready){
+      document.fonts.ready.then(function(){
+        renderStyleCards();
+        if(sigState.tab==="draw") setupCanvas();
+      });
+    }
 
     // ---- ssn ----
     if(ssnInput){
@@ -373,7 +446,7 @@
     consentChk.addEventListener("change", refresh);
 
     function hasSignature(){
-      return sigState.tab==="draw" ? sigState.hasDrawing : !!sigState.typedName;
+      return sigState.tab==="draw" ? sigState.hasDrawing : (!!sigState.typedName && !!sigState.font);
     }
     function ssnOk(){ return !needSsn || (ssnInput && /^\d{4}$/.test(ssnInput.value)); }
 
@@ -394,8 +467,11 @@
         body.signature_type = "drawn";
         body.signature_data = canvas.toDataURL("image/png");
       } else {
-        body.signature_type = "typed";
-        body.signature_data = sigState.typedName;
+        // Bake the chosen handwriting style into an image so the signed
+        // document/certificate shows the exact style the signer picked.
+        try{ if(document.fonts && document.fonts.ready){ await document.fonts.ready; } }catch(_){}
+        body.signature_type = "drawn";
+        body.signature_data = renderTypedSignatureImage(sigState.typedName, sigState.font.family);
       }
       if(needSsn && ssnInput){ body.ssn_last4 = ssnInput.value; }
 
