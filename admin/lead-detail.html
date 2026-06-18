@@ -9479,8 +9479,10 @@ async function openEsignPreviewModal(envelopeId, docTitle){
    SEND FOR SIGNATURE  (UI only — calls existing /functions/v1/esign)
 ══════════════════════════════════════════════ */
 var _esignSigners = []; // running list: { name, email, role, person_contact_id? }
+var _esignContactId = null; // lead contact id the modal is open for (used by search)
+var _esignSearchTimer = null;
 
-function _esignCloseModal(){ var o=document.getElementById('esignSendOverlay'); if(o) o.remove(); }
+function _esignCloseModal(){ _esignHideSearch(); var o=document.getElementById('esignSendOverlay'); if(o) o.remove(); }
 
 function _esignAddSigner(name, email, role, personContactId){
   name=(name||'').trim(); email=(email||'').trim(); role=(role||'other').trim();
@@ -9505,7 +9507,7 @@ function _esignRenderSigners(){
       list.innerHTML='<div style="color:#666;font-size:11px;padding:6px 2px;">No signers added yet.</div>';
     } else {
       list.innerHTML=_esignSigners.map(function(s,i){
-        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.12);border-radius:6px;margin-bottom:5px;">'
+        return '<div data-email="'+lpEsc((s.email||'').toLowerCase())+'" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.12);border-radius:6px;margin-bottom:5px;">'
           +'<span style="min-width:0;"><span style="font-size:12px;color:#E0DDD4;">'+lpEsc(s.name)+'</span>'
           +' <span style="font-size:11px;color:#888;">'+lpEsc(s.email)+'</span>'
           +' <span style="font-size:10px;color:#C9A84C;text-transform:uppercase;letter-spacing:0.04em;">'+lpEsc(s.role)+'</span></span>'
@@ -9522,11 +9524,86 @@ function _esignAddManual(){
   if(_esignAddSigner(n.value, e.value, r.value)){ n.value=''; e.value=''; r.value='borrower'; n.focus(); }
 }
 
+/* ── Type-ahead signer search (loan people first, then CRM) ── */
+function _esignHideSearch(){
+  if(_esignSearchTimer){ clearTimeout(_esignSearchTimer); _esignSearchTimer=null; }
+  var dd=document.getElementById('esignSearchDropdown'); if(dd){ dd.style.display='none'; dd.innerHTML=''; }
+  var note=document.getElementById('esignSearchNote'); if(note){ note.style.display='none'; }
+}
+
+function _esignOnSearchInput(val){
+  var q=(val||'').trim();
+  if(_esignSearchTimer){ clearTimeout(_esignSearchTimer); _esignSearchTimer=null; }
+  if(q.length<2){ _esignHideSearch(); return; }
+  var note=document.getElementById('esignSearchNote'); if(note){ note.textContent='Searching…'; note.style.display='block'; }
+  _esignSearchTimer=setTimeout(function(){ _esignDoSearch(q); }, 250);
+}
+
+async function _esignDoSearch(q){
+  try{
+    var resp=await _authClient().rpc('esign_people_search', { p_contact_id: _esignContactId, p_query: q });
+    // Ignore stale results if the query box changed/closed
+    var si=document.getElementById('esignSearchInput');
+    if(!si || (si.value||'').trim()!==q) return;
+    _esignRenderSearchResults((resp&&resp.data)||[], resp&&resp.error);
+  }catch(e){ _esignRenderSearchResults([], e); }
+}
+
+function _esignRenderSearchResults(rows, err){
+  var note=document.getElementById('esignSearchNote'); if(note){ note.style.display='none'; }
+  var dd=document.getElementById('esignSearchDropdown'); if(!dd) return;
+  rows=rows||[];
+  if(err){ dd.innerHTML='<div style="padding:8px 10px;color:#E5484D;font-size:11px;">Search failed.</div>'; dd.style.display='block'; return; }
+  if(!rows.length){ dd.innerHTML='<div style="padding:8px 10px;color:#666;font-size:11px;">No matches.</div>'; dd.style.display='block'; return; }
+  function grp(title, list){
+    if(!list.length) return '';
+    return '<div style="padding:5px 10px 3px;font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">'+title+'</div>'
+      +list.map(function(r){
+        var name=lpEsc(r.name||''), email=lpEsc(r.email||''), role=lpEsc(r.role||'borrower'), source=lpEsc(r.source||'');
+        var pcid=r.person_contact_id?lpEsc(String(r.person_contact_id)):'';
+        var sub=email+(source?' · '+source:'');
+        return '<div onclick="_esignAddFromSearch(this.getAttribute(\'data-n\'),this.getAttribute(\'data-e\'),this.getAttribute(\'data-r\'),this.getAttribute(\'data-p\')||null)" '
+          +'data-n="'+name+'" data-e="'+email+'" data-r="'+role+'" data-p="'+pcid+'" '
+          +'style="padding:6px 10px;cursor:pointer;border-top:1px solid rgba(255,255,255,0.04);" '
+          +'onmouseover="this.style.background=\'rgba(201,168,76,0.12)\'" onmouseout="this.style.background=\'transparent\'">'
+          +'<div style="font-size:12px;color:#E0DDD4;">'+name+'</div>'
+          +'<div style="font-size:10px;color:#888;">'+sub+'</div>'
+        +'</div>';
+      }).join('');
+  }
+  dd.innerHTML = grp('On this loan', rows.filter(function(r){ return r.is_loan===true; }))
+    + grp('From your CRM', rows.filter(function(r){ return r.is_loan!==true; }));
+  dd.style.display='block';
+}
+
+function _esignFlashSigner(idx){
+  var list=document.getElementById('esignSignersList'); if(!list) return;
+  var el=list.children && list.children[idx]; if(!el) return;
+  var orig=el.style.background;
+  el.style.transition='background .2s'; el.style.background='rgba(201,168,76,0.35)';
+  setTimeout(function(){ el.style.background=orig||''; }, 700);
+}
+
+function _esignAddFromSearch(name, email, role, pcid){
+  name=(name||'').trim(); email=(email||'').trim(); role=(role||'borrower').trim()||'borrower';
+  var si=document.getElementById('esignSearchInput'); if(si) si.value='';
+  _esignHideSearch();
+  if(!name || !email) return;
+  var existing=-1;
+  for(var i=0;i<_esignSigners.length;i++){ if(_esignSigners[i].email.toLowerCase()===email.toLowerCase()){ existing=i; break; } }
+  if(existing>-1){ _esignFlashSigner(existing); return; }
+  var s={ name:name, email:email, role:role };
+  if(pcid) s.person_contact_id=pcid;
+  _esignSigners.push(s);
+  _esignRenderSigners();
+}
+
 async function openEsignSendModal(){
   _esignCloseModal();
   _esignSigners=[];
   var cid = lpCid();
   if(!cid){ showToast('No contact loaded', true); return; }
+  _esignContactId = cid;
 
   var roleOpts=['borrower','co_borrower','agent','title','escrow','other']
     .map(function(r){ return '<option value="'+r+'">'+r+'</option>'; }).join('');
@@ -9548,11 +9625,18 @@ async function openEsignSendModal(){
     +'<div id="esignSuggestions" style="margin-bottom:12px;"><div style="color:#666;font-size:11px;padding:4px 2px;">Loading suggestions…</div></div>'
     // Manual add
     +'<div style="font-size:11px;color:#888;margin-bottom:4px;">Add someone else</div>'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'
-      +'<input id="esignManualName" type="text" placeholder="Name" style="flex:1;min-width:120px;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 9px;outline:none;box-sizing:border-box;">'
-      +'<input id="esignManualEmail" type="email" placeholder="Email" style="flex:1;min-width:140px;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 9px;outline:none;box-sizing:border-box;">'
-      +'<select id="esignManualRole" style="height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 6px;outline:none;box-sizing:border-box;">'+roleOpts+'</select>'
-      +'<button type="button" onclick="_esignAddManual()" style="height:32px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;">+ Add</button>'
+    +'<div style="position:relative;margin-bottom:14px;">'
+      // Type-ahead search
+      +'<input id="esignSearchInput" type="text" placeholder="Search name or email" autocomplete="off" oninput="_esignOnSearchInput(this.value)" onblur="setTimeout(_esignHideSearch,150)" style="width:100%;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 9px;outline:none;box-sizing:border-box;">'
+      +'<div id="esignSearchNote" style="display:none;font-size:10px;color:#666;margin-top:4px;">Searching…</div>'
+      +'<div id="esignSearchDropdown" style="display:none;position:absolute;left:0;right:0;top:34px;z-index:5;max-height:260px;overflow-y:auto;background:#161618;border:1px solid rgba(201,168,76,0.3);border-radius:6px;box-shadow:0 12px 30px rgba(0,0,0,0.5);"></div>'
+      // Manual Name / Email / role row (for people not in the system)
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">'
+        +'<input id="esignManualName" type="text" placeholder="Name" style="flex:1;min-width:120px;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 9px;outline:none;box-sizing:border-box;">'
+        +'<input id="esignManualEmail" type="email" placeholder="Email" style="flex:1;min-width:140px;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 9px;outline:none;box-sizing:border-box;">'
+        +'<select id="esignManualRole" style="height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 6px;outline:none;box-sizing:border-box;">'+roleOpts+'</select>'
+        +'<button type="button" onclick="_esignAddManual()" style="height:32px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;">+ Add</button>'
+      +'</div>'
     +'</div>'
     // Current signers
     +'<div style="font-size:11px;color:#888;margin-bottom:4px;">Signers on this document</div>'
