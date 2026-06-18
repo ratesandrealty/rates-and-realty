@@ -228,6 +228,8 @@ function navigateTo(tabKey) {
   const target = document.getElementById(`tab-${tabKey}`);
   if (target) target.classList.add("is-active");
   window.crmNavigateTo = navigateTo;
+  // Scans tab runs the CRM health check on open (defined in admin.html).
+  if (tabKey === "scans" && typeof window.runCrmScan === "function") window.runCrmScan();
   renderActiveTab();
 }
 
