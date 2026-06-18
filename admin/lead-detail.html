@@ -8779,7 +8779,12 @@ async function lpAction(name){
         try{ await lpCreateClickupTask({title:'Send documents for e-signature — '+bName,priority:'high'}); toastFn('Signature task created in ClickUp ✓ (e-sign integration coming later)'); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
         break;
       case 'Upload to Lender':
-        try{ await lpCreateClickupTask({title:'Upload docs to lender portal — '+bName,priority:'high'}); toastFn('Upload task created in ClickUp ✓ (lender portals are uploaded manually)'); }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
+        try{
+          await lpCreateClickupTask({title:'Upload docs to lender portal — '+bName,priority:'high'});
+          var _llName = (typeof contactData!=='undefined' && contactData) ? contactData.closing_lender : '';
+          if(_llName){ toastFn('Upload task created ✓ — opening '+_llName); lpGoToLender(_llName); }
+          else { toastFn('Upload task created in ClickUp ✓ — no lender selected yet (pick one in Loan Snapshot)'); }
+        }catch(e){ toastFn('ClickUp task failed: '+e.message,true); }
         break;
       default: toastFn('Unknown action: '+name,true);
     }
@@ -8823,7 +8828,10 @@ async function lpRenderSnapshot(cid){
   const rate = app.closed_rate||app.locked_rate||app.quoted_rate;
   const rateLabel = app.closed_rate?'Closed':(app.locked_rate?'Locked':(app.quoted_rate?'Quoted':'Rate'));
   const cell = (label,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+val+'</div></div>';
-  el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')))+cell('Lender', c.closing_lender ? '<a onclick="lpGoToLender(this.dataset.lender)" data-lender="'+lpEsc(c.closing_lender)+'" style="color:#C9A84C;cursor:pointer;text-decoration:none;border-bottom:1px dashed rgba(201,168,76,.5);">'+lpEsc(c.closing_lender)+' ↗</a>' : '—')+cell(rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
+  const lenderVal = (c.closing_lender
+    ? '<a onclick="lpGoToLender(this.dataset.lender)" data-lender="'+lpEsc(c.closing_lender)+'" style="color:#C9A84C;cursor:pointer;text-decoration:none;border-bottom:1px dashed rgba(201,168,76,.5);">'+lpEsc(c.closing_lender)+' ↗</a> <span onclick="lpLenderPickerOpen(event)" title="Change lender" style="cursor:pointer;color:rgba(255,255,255,.45);font-size:12px;margin-left:4px;">✎</span>'
+    : '<span onclick="lpLenderPickerOpen(event)" style="cursor:pointer;color:#C9A84C;border:1px dashed rgba(201,168,76,.5);border-radius:6px;padding:1px 8px;font-size:12px;">+ Select lender</span>');
+  el.innerHTML = cell('Borrower',lpEsc(name))+cell('Loan Amount',money(c.loan_amount))+cell('Type / Purpose',lpEsc((c.closing_loan_type||c.loan_type||'—')+' · '+(c.loan_purpose||'—')))+cell('Lender', lenderVal)+cell(rateLabel+' Rate',pct(rate))+cell('Lock Expires',dd(app.rate_lock_expiry)+lockChip)+cell('Pipeline',lpEsc(c.pipeline_status||'—'))+cell('Credit Pulled',dd(app.credit_report_pulled_date))+cell('Pre-Approval Exp',dd(app.preapproval_expiry));
 }
 const LP_PERSON_LABEL = { admin:'Rene Duarte (Admin)', va:'Virtual Assistant' };
 function lpPersonSel(cur, blank){
@@ -9349,6 +9357,56 @@ async function lpCompleteTask(id){
     lpLoadVaTasks(cid);
     if(typeof lpLoadTasks==='function') lpLoadTasks(cid);
   }catch(e){ alert('Could not complete task.'); }
+}
+
+/* ═══ LOAN SNAPSHOT — lender picker (two-way synced with Pricing & Lender box) ═══ */
+async function lpLenderPickerOpen(ev){
+  try{ ev && ev.stopPropagation && ev.stopPropagation(); }catch(_){}
+  const old = document.getElementById('lpLenderPicker'); if(old) old.remove();
+  if((typeof _lenderCache==='undefined' || !_lenderCache || !_lenderCache.length) && typeof loadPricingLenders==='function'){
+    try{ await loadPricingLenders(); }catch(_){}
+  }
+  const cache = (typeof _lenderCache!=='undefined' && _lenderCache) ? _lenderCache : [];
+  const panel = document.createElement('div');
+  panel.id = 'lpLenderPicker';
+  const x = (ev && ev.clientX) ? ev.clientX : 200;
+  const y = (ev && ev.clientY) ? ev.clientY : 200;
+  panel.style.cssText = 'position:fixed;z-index:9999;left:'+Math.min(x,window.innerWidth-320)+'px;top:'+Math.min(y+8,window.innerHeight-360)+'px;width:300px;max-height:340px;display:flex;flex-direction:column;background:#15140f;border:1px solid rgba(201,168,76,.4);border-radius:10px;box-shadow:0 18px 44px rgba(0,0,0,.6);overflow:hidden;';
+  panel.innerHTML = '<input id="lpLenderPickerSearch" type="text" autocomplete="off" placeholder="Search lenders…" style="margin:8px;padding:7px 9px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12px;outline:none;">'
+    + '<div id="lpLenderPickerResults" style="overflow-y:auto;"></div>';
+  document.body.appendChild(panel);
+  const render = (q)=>{
+    const ql = (q||'').trim().toLowerCase();
+    const matches = ql ? cache.filter(l=>(l.name||'').toLowerCase().includes(ql)||String(l.nmlsr_id||'').toLowerCase().includes(ql)) : cache;
+    const box = document.getElementById('lpLenderPickerResults'); if(!box) return;
+    if(!matches.length){ box.innerHTML='<div style="padding:9px 12px;font-size:12px;color:rgba(255,255,255,.4);">No lenders match.</div>'; return; }
+    box.innerHTML = matches.slice(0,50).map(l=>'<div class="lp-lender-row" data-id="'+lpEsc(l.id)+'" data-name="'+lpEsc(l.name||'')+'" style="padding:8px 12px;cursor:pointer;font-size:12px;color:#eee;border-bottom:1px solid rgba(255,255,255,.05);" onmouseover="this.style.background=\'rgba(201,168,76,.12)\'" onmouseout="this.style.background=\'transparent\'">'+(l.is_preferred?'★ ':'')+lpEsc(l.name||'')+(l.lender_type?'<span style="color:rgba(255,255,255,.4);font-size:10px;margin-left:6px;">'+lpEsc(l.lender_type)+'</span>':'')+'</div>').join('');
+  };
+  render('');
+  const si = document.getElementById('lpLenderPickerSearch');
+  if(si){ si.addEventListener('input', function(){ render(this.value); }); setTimeout(()=>si.focus(),30); }
+  const results = document.getElementById('lpLenderPickerResults');
+  if(results){ results.addEventListener('click', function(e){ const row=e.target.closest('.lp-lender-row'); if(!row) return; lpPickLender(row.dataset.id, row.dataset.name); panel.remove(); }); }
+  setTimeout(()=>{ const off=(e)=>{ if(!panel.contains(e.target)){ panel.remove(); document.removeEventListener('mousedown',off); } }; document.addEventListener('mousedown', off); },0);
+  panel.addEventListener('keydown', function(e){ if(e.key==='Escape') panel.remove(); });
+}
+function lpPickLender(id, name){
+  // Drive the existing Pricing & Lender combobox so both controls write one source of truth:
+  // #pricingLenderSelect (uuid) → save1003 writes mortgage_applications.assigned_lender_id;
+  // savePricingMeta(name) → contacts.closing_lender.
+  const hidden = document.getElementById('pricingLenderSelect');
+  const search = document.getElementById('pricingLenderSearch');
+  const clearBtn = document.getElementById('pricingLenderClear');
+  if(search) search.value = name || '';
+  if(typeof savePricingMeta==='function' && name) savePricingMeta(name);
+  if(hidden){
+    hidden.value = id || '';
+    if(clearBtn) clearBtn.style.display = id ? 'inline-block' : 'none';
+    hidden.dispatchEvent(new Event('change',{bubbles:true}));
+    hidden.dispatchEvent(new Event('input',{bubbles:true}));
+  }
+  if(typeof contactData!=='undefined' && contactData) contactData.closing_lender = name || null;
+  if(typeof lpRenderSnapshot==='function' && typeof lpCid==='function'){ const _c=lpCid(); if(_c) lpRenderSnapshot(_c); }
 }
 
 function switchTab(name, btn) {
