@@ -9524,6 +9524,71 @@ function _esignAddManual(){
   if(_esignAddSigner(n.value, e.value, r.value)){ n.value=''; e.value=''; r.value='borrower'; n.focus(); }
 }
 
+/* ── Template preview (read-only, before sending) ── */
+function _esignTplPreviewClose(){ var o=document.getElementById('esignTplPreviewOverlay'); if(o) o.remove(); }
+
+async function _esignTemplatePreview(){
+  var tplKey=(document.getElementById('esignTemplate')||{}).value||'';
+  if(!tplKey){ showToast('Select a document first', true); return; }
+  var signers=_esignSigners.map(function(s){ return { name:s.name }; });
+
+  _esignTplPreviewClose();
+  var overlay=document.createElement('div');
+  overlay.id='esignTplPreviewOverlay';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:21000;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.innerHTML='<div style="width:880px;max-width:100%;height:90vh;display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.6);overflow:hidden;">'
+    // Header
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);">'
+      +'<div id="esignTplPvTitle" style="font-size:15px;font-weight:700;color:#E0DDD4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Preview</div>'
+      +'<button type="button" onclick="_esignTplPreviewClose()" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">Close</button>'
+    +'</div>'
+    // Content (scrollable)
+    +'<div style="flex:1;overflow-y:auto;background:#0E0E10;padding:18px;">'
+      +'<div id="esignTplPvLoading" style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;font-size:13px;gap:10px;">'
+        +'<span style="width:18px;height:18px;border:2px solid rgba(201,168,76,0.25);border-top-color:#C9A84C;border-radius:50%;display:inline-block;animation:lpSpin .7s linear infinite;"></span> Loading preview…</div>'
+      +'<div id="esignTplPvDoc" style="display:none;background:#fff;color:#111;border-radius:6px;padding:32px;box-shadow:0 4px 18px rgba(0,0,0,0.4);"></div>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', function(e){ if(e.target===overlay) _esignTplPreviewClose(); });
+
+  // Ensure spinner keyframes exist (shared with openEsignPreviewModal)
+  if(!document.getElementById('lpSpinKeyframes')){
+    var st=document.createElement('style'); st.id='lpSpinKeyframes';
+    st.textContent='@keyframes lpSpin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+  }
+
+  var cfg=window.APP_CONFIG||{};
+  var SUPABASE_URL=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anonKey=cfg.SUPABASE_ANON_KEY||'';
+
+  try{
+    var token=anonKey;
+    try{ var sess=await _authClient().auth.getSession(); if(sess&&sess.data&&sess.data.session) token=sess.data.session.access_token; }catch(_){}
+    var res=await fetch(SUPABASE_URL+'/functions/v1/esign',{
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':anonKey, 'Authorization':'Bearer '+token },
+      body:JSON.stringify({ action:'template_preview', template_key:tplKey, signers:signers })
+    });
+    var json=null; try{ json=await res.json(); }catch(_){}
+    if(!res.ok){
+      var msg=(json&&(json.error||json.message))||('Request failed ('+res.status+')');
+      throw new Error(msg);
+    }
+    var loading=document.getElementById('esignTplPvLoading'); if(!loading) return; // modal closed
+    var titleEl=document.getElementById('esignTplPvTitle');
+    if(titleEl && json && json.title) titleEl.textContent=json.title;
+    var docEl=document.getElementById('esignTplPvDoc');
+    if(docEl) docEl.innerHTML=(json&&json.document_html)||'<div style="color:#666;">No document content.</div>';
+    loading.style.display='none';
+    if(docEl) docEl.style.display='block';
+  }catch(e){
+    var loading2=document.getElementById('esignTplPvLoading');
+    if(loading2){ loading2.style.color='#E5484D'; loading2.innerHTML=lpEsc((e&&e.message)||'Could not load preview.'); }
+  }
+}
+
 /* ── Type-ahead signer search (loan people first, then CRM) ── */
 function _esignHideSearch(){
   if(_esignSearchTimer){ clearTimeout(_esignSearchTimer); _esignSearchTimer=null; }
@@ -9615,7 +9680,10 @@ async function openEsignSendModal(){
     +'<div style="font-size:15px;font-weight:700;color:#E0DDD4;margin-bottom:16px;">Send for signature</div>'
     // Document
     +'<div style="margin-bottom:16px;">'
-      +'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Document</div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+        +'<span style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;">Document</span>'
+        +'<button type="button" onclick="_esignTemplatePreview()" style="background:transparent;border:none;color:#C9A84C;font-size:11px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;">Preview</button>'
+      +'</div>'
       +'<select id="esignTemplate" style="width:100%;height:34px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:13px;padding:0 8px;outline:none;box-sizing:border-box;"><option value="">Loading…</option></select>'
     +'</div>'
     // Signers
