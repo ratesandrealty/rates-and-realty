@@ -122,11 +122,14 @@
     <!-- Stat tiles -->
     <div class="card"><div class="card-h">Performance</div><div id="tilesBox"><div class="loading"><span class="spin"></span> Loading…</div></div></div>
 
+    <!-- Goal ring -->
+    <div class="card"><div class="card-h">Goal</div><div id="goalBox"><div class="loading"><span class="spin"></span> Loading…</div></div></div>
+
     <!-- Intelligence -->
     <div class="card"><div class="card-h">Pipeline &amp; Intelligence</div><div id="intelBox"><div class="loading"><span class="spin"></span> Loading…</div></div></div>
 
     <!-- Deals graph -->
-    <div class="card"><div class="card-h">Referrals &amp; closings — last 12 months</div><div id="chartBox"><div class="loading"><span class="spin"></span> Loading…</div></div></div>
+    <div class="card"><div class="card-h">Deals over time</div><div id="chartControls"></div><div id="chartBox"><div class="loading"><span class="spin"></span> Loading…</div></div></div>
 
     <!-- Follow-up nudge -->
     <div id="nudgeBox"></div>
@@ -202,6 +205,20 @@
   /* ── state ── */
   var partnerId = new URLSearchParams(location.search).get('partner_id');
   var _partner=null, _activity=[], _overview=null, _monthly=[];
+  var _chartMetric='referrals', _chartWindow=12, _goal=null;
+  var CHART_METRICS=[
+    {key:'referrals', label:'Leads',     money:false},
+    {key:'won',       label:'Closings',  money:false},
+    {key:'volume',    label:'Volume',    money:true},
+    {key:'potential', label:'Potential', money:true},
+    {key:'earnings',  label:'Earnings',  money:true}
+  ];
+  var GOAL_METRICS=[
+    {key:'volume',    label:'Volume',    money:true},
+    {key:'earnings',  label:'Earnings',  money:true},
+    {key:'referrals', label:'Referrals', money:false},
+    {key:'closings',  label:'Closings',  money:false}
+  ];
 
   async function waitClient(ms){ ms=ms||7000; var s=Date.now(); while(!window._supabaseClient && Date.now()-s<ms){ await new Promise(function(r){setTimeout(r,40);}); } return window._supabaseClient; }
 
@@ -212,6 +229,7 @@
     if(!window._supabaseClient) return; // auth-guard will redirect to login
     loadPartner();
     loadOverview();
+    loadGoal();
     loadLeads();
     loadActivity();
   })();
@@ -269,8 +287,8 @@
       renderIntel(o);
       renderRank(o);
       renderNudge(o);
-      chart.innerHTML=renderChart(_monthly);
-      wireChartHover(_monthly);
+      renderChartUI();
+      redrawChart();
     }catch(e){ tiles.innerHTML='<div class="empty">Could not load stats.</div>'; chart.innerHTML='<div class="empty">No data.</div>'; if(intel) intel.innerHTML='<div class="empty">No data.</div>'; }
   }
   function renderTiles(o){
@@ -366,57 +384,91 @@
     return 'M'+x+','+(y+h)+' L'+x+','+(y+r)+' Q'+x+','+y+' '+(x+r)+','+y
       +' L'+(x+w-r)+','+y+' Q'+(x+w)+','+y+' '+(x+w)+','+(y+r)+' L'+(x+w)+','+(y+h)+' Z';
 }
+  function currentMetric(){ for(var i=0;i<CHART_METRICS.length;i++){ if(CHART_METRICS[i].key===_chartMetric) return CHART_METRICS[i]; } return CHART_METRICS[0]; }
+  function chartFmt(v, money){ return money ? fmtMoney(v) : String(Math.round(Number(v)||0)); }
+
+  // Segmented metric pills + range slider
+  function renderChartUI(){
+    var box=document.getElementById('chartControls'); if(!box) return;
+    var pills=CHART_METRICS.map(function(c){
+      return '<button type="button" data-m="'+c.key+'" class="'+(c.key===_chartMetric?'on':'')+'" onclick="setChartMetric(\''+c.key+'\')">'+c.label+'</button>';
+    }).join('');
+    box.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:10px;">'
+      +'<div class="seg" style="flex-wrap:wrap;">'+pills+'</div>'
+      +'<label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);white-space:nowrap;">'
+        +'Last <span id="rangeLbl" style="color:var(--text);font-weight:700;">'+_chartWindow+'</span> months'
+        +'<input type="range" min="3" max="12" step="1" value="'+_chartWindow+'" oninput="onChartRange(this.value)" style="accent-color:var(--gold);width:120px;">'
+      +'</label>'
+    +'</div>';
+  }
+  function setChartMetric(k){
+    _chartMetric=k;
+    var seg=document.querySelector('#chartControls .seg');
+    if(seg) Array.prototype.forEach.call(seg.querySelectorAll('button'),function(b){ b.classList.toggle('on', b.getAttribute('data-m')===k); });
+    redrawChart();
+  }
+  function onChartRange(v){
+    _chartWindow=Math.max(3,Math.min(12,parseInt(v,10)||12));
+    var lbl=document.getElementById('rangeLbl'); if(lbl) lbl.textContent=_chartWindow;
+    redrawChart();
+  }
+  function redrawChart(){
+    var box=document.getElementById('chartBox'); if(!box) return;
+    var data=_monthly.slice(-_chartWindow);
+    box.innerHTML=renderChart(data);
+    wireChartHover(data);
+  }
+
   function renderChart(monthly){
     monthly=monthly||[];
     if(!monthly.length) return '<div class="empty">No deal history yet.</div>';
-    var refs=monthly.map(function(m){return Number(m.referrals)||0;});
-    var maxRef=Math.max.apply(null,refs.concat([1]));
-    var avg=refs.reduce(function(s,v){return s+v;},0)/(refs.length||1);
+    var cfg=currentMetric(), key=cfg.key, money=cfg.money, isVol=(key==='volume');
+    var vals=monthly.map(function(m){return Number(m[key])||0;});
+    var ghost=isVol?monthly.map(function(m){return Number(m.potential)||0;}):null;
+    var maxScale=Math.max.apply(null, vals.concat(isVol?ghost:[]).concat([0]));
+    if(maxScale<=0) maxScale=1;
+    var avg=vals.reduce(function(s,v){return s+v;},0)/(vals.length||1);
     var n=monthly.length, step=28, barW=16, padX=12, topPad=10, barMaxH=84, labelH=18;
     var W=padX*2+n*step, baseY=topPad+barMaxH, H=baseY+labelH, parts=[];
-    // gradient def
     parts.push('<defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">'
       +'<stop offset="0" stop-color="#E9CC74"/><stop offset="1" stop-color="#B5902F"/></linearGradient></defs>');
-    // baseline
     parts.push('<line x1="'+padX+'" y1="'+baseY+'" x2="'+(W-padX)+'" y2="'+baseY+'" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>');
-    // average line
     if(avg>0){
-      var avgY=baseY-(avg/maxRef)*barMaxH;
+      var avgY=baseY-(avg/maxScale)*barMaxH;
       parts.push('<line x1="'+padX+'" y1="'+avgY.toFixed(1)+'" x2="'+(W-padX)+'" y2="'+avgY.toFixed(1)+'" stroke="#C9A84C" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>');
       parts.push('<text x="'+(W-padX)+'" y="'+(avgY-3).toFixed(1)+'" text-anchor="end" font-size="8" fill="#C9A84C" opacity="0.8">avg</text>');
     }
+    var labelEvery=(n<=6)?1:2;
     for(var i=0;i<n;i++){
-      var m=monthly[i], ref=Number(m.referrals)||0, won=Number(m.won)||0; if(won>ref) won=ref;
-      var totalH=maxRef?(ref/maxRef)*barMaxH:0, wonH=maxRef?(won/maxRef)*barMaxH:0, remH=Math.max(0,totalH-wonH);
+      var m=monthly[i], val=vals[i];
+      var h=(val/maxScale)*barMaxH;
       var x=padX+i*step+(step-barW)/2;
-      var delay=(i*0.035).toFixed(3);
-      var grow='class="bar-grow" style="animation-delay:'+delay+'s;"';
-      if(totalH<1){
-        parts.push('<rect '+grow+' x="'+x+'" y="'+(baseY-1.5)+'" width="'+barW+'" height="1.5" rx="0.75" fill="rgba(255,255,255,0.12)"/>');
-      } else if(remH>0){
-        // referred remainder (gradient, rounded top) above the won base
-        parts.push('<path '+grow+' d="'+roundedTopRect(x, baseY-totalH, barW, remH, 3)+'" fill="url(#barGrad)"/>');
-        if(wonH>0) parts.push('<rect '+grow+' x="'+x+'" y="'+(baseY-wonH)+'" width="'+barW+'" height="'+wonH+'" fill="#7A5520"/>');
-      } else {
-        // all closed — single rounded-top darker bar
-        parts.push('<path '+grow+' d="'+roundedTopRect(x, baseY-totalH, barW, totalH, 3)+'" fill="#7A5520"/>');
+      var grow='class="bar-grow" style="animation-delay:'+(i*0.035).toFixed(3)+'s;"';
+      // ghost pipeline bar behind volume bars
+      if(isVol){
+        var gh=(ghost[i]/maxScale)*barMaxH;
+        if(gh>0.6) parts.push('<path d="'+roundedTopRect(x, baseY-gh, barW, gh, 3)+'" fill="#C9A84C" opacity="0.16"/>');
       }
-      // invisible full-height hit target for tooltip
+      if(h<0.6){
+        parts.push('<rect '+grow+' x="'+x+'" y="'+(baseY-1.5)+'" width="'+barW+'" height="1.5" rx="0.75" fill="rgba(255,255,255,0.12)"/>');
+      } else {
+        parts.push('<path '+grow+' d="'+roundedTopRect(x, baseY-h, barW, h, 3)+'" fill="url(#barGrad)"/>');
+      }
       parts.push('<rect class="bar-hit" data-i="'+i+'" x="'+(padX+i*step)+'" y="'+topPad+'" width="'+step+'" height="'+barMaxH+'" fill="transparent"/>');
-      if(i%2===0) parts.push('<text x="'+(x+barW/2)+'" y="'+(H-5)+'" text-anchor="middle" font-size="8" fill="#8a8170">'+monthLabel(m.ym)+'</text>');
+      if(i%labelEvery===0) parts.push('<text x="'+(x+barW/2)+'" y="'+(H-5)+'" text-anchor="middle" font-size="8" fill="#8a8170">'+monthLabel(m.ym)+'</text>');
     }
+    var legend='<span><span style="color:#C9A84C;">▰</span> '+esc(cfg.label)+'</span>';
+    if(isVol) legend+='<span><span style="color:#C9A84C;opacity:.45;">▰</span> Potential</span>';
     return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="120" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible;">'+parts.join('')+'</svg>'
-      +'<div style="display:flex;gap:14px;margin-top:8px;font-size:10px;color:var(--muted);">'
-      +'<span><span style="color:#C9A84C;">▰</span> Referred</span>'
-      +'<span><span style="color:#7A5520;">▰</span> Closed</span>'
-      +'</div>';
+      +'<div style="display:flex;gap:14px;margin-top:8px;font-size:10px;color:var(--muted);">'+legend+'</div>';
   }
   function wireChartHover(monthly){
     var tip=document.getElementById('chartTip');
+    var cfg=currentMetric();
     Array.prototype.forEach.call(document.querySelectorAll('#chartBox .bar-hit'), function(h){
       h.addEventListener('mousemove', function(ev){
         var m=monthly[Number(h.getAttribute('data-i'))]; if(!m||!tip) return;
-        tip.textContent = monthLabelFull(m.ym)+' — '+(Number(m.referrals)||0)+' referred · '+(Number(m.won)||0)+' closed · '+fmtMoney(m.volume||0)+' volume';
+        tip.textContent = monthLabelFull(m.ym)+' — '+cfg.label+': '+chartFmt(Number(m[cfg.key])||0, cfg.money);
         tip.style.display='block';
         var tw=tip.offsetWidth||180;
         var lx=ev.clientX+14; if(lx+tw>window.innerWidth-8) lx=ev.clientX-tw-14;
@@ -425,6 +477,76 @@
       });
       h.addEventListener('mouseleave', function(){ if(tip) tip.style.display='none'; });
     });
+  }
+
+  /* ── goal ring ── */
+  function goalMetricLabel(k){ for(var i=0;i<GOAL_METRICS.length;i++){ if(GOAL_METRICS[i].key===k) return GOAL_METRICS[i].label; } return titleCase(k); }
+  function goalIsMoney(k){ return k==='volume'||k==='earnings'; }
+  function goalFmt(metric,val){ return goalIsMoney(metric)?fmtMoney(val):String(Math.round(Number(val)||0)); }
+
+  async function loadGoal(){
+    var box=document.getElementById('goalBox'); if(!box) return;
+    try{
+      var r=await _authClient().rpc('partner_goal_get',{p_partner_id:partnerId});
+      if(r.error){ box.innerHTML='<div class="empty">Could not load goal.</div>'; return; }
+      _goal=(Array.isArray(r.data)?r.data[0]:r.data)||null;
+      renderGoal(_goal);
+    }catch(e){ box.innerHTML='<div class="empty">Could not load goal.</div>'; }
+  }
+  function renderGoal(g){
+    var box=document.getElementById('goalBox'); if(!box) return;
+    if(!g || g.target==null){
+      box.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+        +'<span class="muted" style="font-size:13px;">No goal set.</span>'
+        +'<button class="btn-ghost" onclick="openGoalForm()">Set goal</button></div>';
+      return;
+    }
+    var metric=String(g.metric||'volume'), period=String(g.period||'annual');
+    var target=Number(g.target)||0, cur=Number(g.current_value)||0;
+    var frac=target>0?(cur/target):0, pct=Math.round(frac*100), done=pct>=100;
+    var ringColor=done?'var(--green)':'var(--gold)';
+    var R=34, C=2*Math.PI*R, off=C*(1-Math.max(0,Math.min(1,frac)));
+    var cap=titleCase(period)+' '+goalMetricLabel(metric).toLowerCase()+' goal';
+    var ring='<svg viewBox="0 0 90 90" width="90" height="90" style="flex-shrink:0;">'
+      +'<circle cx="45" cy="45" r="'+R+'" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="8"/>'
+      +'<circle cx="45" cy="45" r="'+R+'" fill="none" stroke="'+ringColor+'" stroke-width="8" stroke-linecap="round" stroke-dasharray="'+C.toFixed(1)+'" stroke-dashoffset="'+off.toFixed(1)+'" transform="rotate(-90 45 45)" style="transition:stroke-dashoffset .6s ease;"/>'
+      +'<text x="45" y="46" text-anchor="middle" dominant-baseline="middle" font-size="17" font-weight="800" fill="'+(done?'var(--green)':'var(--text)')+'">'+pct+'%</text>'
+    +'</svg>';
+    box.innerHTML='<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">'
+      +ring
+      +'<div style="flex:1;min-width:0;">'
+        +'<div style="font-size:15px;font-weight:800;color:'+(done?'var(--green)':'var(--text)')+';">'+esc(goalFmt(metric,cur))+' <span style="color:var(--muted);font-weight:600;font-size:13px;">of '+esc(goalFmt(metric,target))+'</span></div>'
+        +'<div class="muted" style="font-size:11px;margin-top:3px;">'+esc(cap)+'</div>'
+      +'</div>'
+      +'<button class="btn-ghost" style="flex-shrink:0;" onclick="openGoalForm()">Edit goal</button>'
+    +'</div>';
+  }
+  function openGoalForm(){
+    var box=document.getElementById('goalBox'); if(!box) return;
+    var g=_goal||{};
+    var metric=g.metric||'volume', period=g.period||'annual', target=(g.target!=null?g.target:'');
+    var mOpts=GOAL_METRICS.map(function(c){ return '<option value="'+c.key+'"'+(c.key===metric?' selected':'')+'>'+c.label+'</option>'; }).join('');
+    var pOpts=['monthly','annual'].map(function(p){ return '<option value="'+p+'"'+(p===period?' selected':'')+'>'+titleCase(p)+'</option>'; }).join('');
+    box.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">'
+      +'<div><div class="muted" style="font-size:10px;margin-bottom:3px;">Metric</div><select id="goalMetric" class="fld" style="height:34px;">'+mOpts+'</select></div>'
+      +'<div><div class="muted" style="font-size:10px;margin-bottom:3px;">Period</div><select id="goalPeriod" class="fld" style="height:34px;">'+pOpts+'</select></div>'
+      +'<div style="flex:1;min-width:120px;"><div class="muted" style="font-size:10px;margin-bottom:3px;">Target</div><input id="goalTarget" class="fld" type="number" min="0" step="1" value="'+esc(target)+'" placeholder="Target"></div>'
+      +'<button class="btn-gold" onclick="saveGoal()">Save</button>'
+      +'<button class="btn-ghost" onclick="loadGoal()">Cancel</button>'
+    +'</div>';
+  }
+  async function saveGoal(){
+    var metric=(document.getElementById('goalMetric')||{}).value||'volume';
+    var period=(document.getElementById('goalPeriod')||{}).value||'annual';
+    var target=Number((document.getElementById('goalTarget')||{}).value);
+    if(!(target>0)){ showToast('Enter a target above 0'); return; }
+    var btn=document.querySelector('#goalBox .btn-gold'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+    try{
+      var r=await _authClient().rpc('partner_goal_set',{p_partner_id:partnerId,p_metric:metric,p_period:period,p_target:Number(target)});
+      if(r.error) throw new Error(r.error.message||'failed');
+      await loadGoal();
+      showToast('Goal saved');
+    }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Save'; } showToast((e&&e.message)||'Could not save goal'); }
   }
 
   /* ── shared leads ── */
