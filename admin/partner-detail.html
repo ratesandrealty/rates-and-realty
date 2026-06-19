@@ -22,7 +22,24 @@
     html,body{margin:0;padding:0;}
     body{background:var(--bg);color:var(--text);font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;}
     a{color:inherit;text-decoration:none;}
-    .wrap{max-width:1080px;margin:0 auto;padding:22px 20px 60px;}
+    .wrap{max-width:1600px;margin:0 auto;padding:22px 24px 60px;}
+    .workspace{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(330px,1fr);gap:16px;align-items:start;}
+    .col-left{min-width:0;}
+    .col-right{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow-y:auto;}
+    /* Call queue */
+    .qcard{background:var(--surface2);border:1px solid var(--border);border-left:3px solid transparent;border-radius:10px;padding:11px 12px;margin-bottom:10px;transition:border-color .25s;}
+    .qcard.q-done{border-left-color:var(--green);}
+    .q-name{font-size:14px;font-weight:700;color:var(--text);}
+    .q-phone{display:inline-block;font-size:16px;font-weight:700;color:var(--gold);}
+    .q-copy{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:6px;font-size:10px;cursor:pointer;padding:2px 7px;font-family:inherit;}
+    .q-copy:hover{border-color:var(--gold-bdr);color:var(--gold);}
+    .q-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;align-items:center;}
+    .q-dispo{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:14px;font-size:10px;font-weight:600;cursor:pointer;padding:3px 9px;font-family:inherit;}
+    .q-dispo:hover{border-color:var(--gold-bdr);color:var(--gold);}
+    @media(max-width:1080px){
+      .workspace{grid-template-columns:1fr;}
+      .col-right{position:static;max-height:none;overflow:visible;}
+    }
     .muted{color:var(--muted);}
     .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin-bottom:16px;}
     .card-h{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:12px;}
@@ -116,6 +133,8 @@
   <div class="wrap">
     <a class="back" href="referral-partners.html">← Back to Partners</a>
 
+    <div class="workspace">
+      <div class="col-left">
     <!-- Header -->
     <div class="card" id="hdrCard"><div class="loading"><span class="spin"></span> Loading partner…</div></div>
 
@@ -161,6 +180,12 @@
         <div id="marketingBox"><div class="loading"><span class="spin"></span> Loading…</div></div>
       </div>
     </div>
+      </div><!-- /col-left -->
+
+      <aside class="col-right">
+        <div class="card"><div id="queuePanel"><div class="loading"><span class="spin"></span> Loading queue…</div></div></div>
+      </aside>
+    </div><!-- /workspace -->
   </div>
 
   <div id="toast"></div>
@@ -205,6 +230,7 @@
   /* ── state ── */
   var partnerId = new URLSearchParams(location.search).get('partner_id');
   var _partner=null, _activity=[], _overview=null, _monthly=[];
+  var _leads=[], _queueSort='stale', _loggedToday=0;
   var _chartMetric='referrals', _chartWindow=12, _chartView='bars', _goal=null;
   var CHART_METRICS=[
     {key:'referrals', label:'Leads',     money:false},
@@ -626,12 +652,171 @@
 
   /* ── shared leads ── */
   async function loadLeads(){
-    var box=document.getElementById('leadsBox');
+    var box=document.getElementById('leadsBox'), qpanel=document.getElementById('queuePanel');
     try{
       var r=await _authClient().rpc('partner_leads',{p_partner_id:partnerId});
-      if(r.error){ box.innerHTML='<div class="empty">Could not load leads.</div>'; return; }
-      renderLeads(r.data||[]);
-    }catch(e){ box.innerHTML='<div class="empty">Could not load leads.</div>'; }
+      if(r.error){ box.innerHTML='<div class="empty">Could not load leads.</div>'; if(qpanel) qpanel.innerHTML='<div class="empty">Could not load queue.</div>'; return; }
+      // Store once; render both the Shared Leads tab and the Call Queue from it.
+      _leads=(r.data||[]).map(function(l,i){ l._qid='q'+i; return l; });
+      renderLeads(_leads);
+      renderQueue();
+    }catch(e){ box.innerHTML='<div class="empty">Could not load leads.</div>'; if(qpanel) qpanel.innerHTML='<div class="empty">Could not load queue.</div>'; }
+  }
+
+  /* ── Call Queue (right panel) ── */
+  function _qTms(iso){ var t=iso?new Date(iso).getTime():NaN; return isNaN(t)?0:t; }
+  function findLead(qid){ for(var i=0;i<_leads.length;i++){ if(_leads[i]._qid===qid) return _leads[i]; } return null; }
+  function setQueueSort(v){ _queueSort=v||'stale'; renderQueue(); }
+  function sortedLeads(){
+    var arr=_leads.slice();
+    if(_queueSort==='newest'){
+      arr.sort(function(a,b){ return _qTms(b.created_at)-_qTms(a.created_at); });
+    } else if(_queueSort==='stage'){
+      arr.sort(function(a,b){ return String(a.stage||'').localeCompare(String(b.stage||'')); });
+    } else { // stalest first: last_activity_at ascending, never-contacted (null) on top
+      arr.sort(function(a,b){
+        var av=a.last_activity_at?_qTms(a.last_activity_at):-Infinity;
+        var bv=b.last_activity_at?_qTms(b.last_activity_at):-Infinity;
+        return av-bv;
+      });
+    }
+    return arr;
+  }
+  function recencyInfo(iso){
+    if(!iso) return { text:'Never contacted', amber:true };
+    var days=Math.floor((Date.now()-new Date(iso).getTime())/86400000);
+    return { text:'Last touch: '+timeAgo(iso), amber:days>14 };
+  }
+  function renderQueue(){
+    var panel=document.getElementById('queuePanel'); if(!panel) return;
+    var arr=sortedLeads();
+    var header='<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">'
+      +'<div><div class="card-h" style="margin-bottom:2px;">📞 Call Queue</div>'
+        +'<div class="muted" style="font-size:11px;"><span id="queueCount">'+arr.length+'</span> lead'+(arr.length===1?'':'s')+' · <span id="queueLogged">'+_loggedToday+'</span> logged today</div></div>'
+      +'<select id="queueSort" onchange="setQueueSort(this.value)" class="fld" style="height:30px;width:auto;font-size:11px;padding:0 8px;">'
+        +'<option value="stale"'+(_queueSort==='stale'?' selected':'')+'>Stalest first</option>'
+        +'<option value="newest"'+(_queueSort==='newest'?' selected':'')+'>Newest</option>'
+        +'<option value="stage"'+(_queueSort==='stage'?' selected':'')+'>By stage</option>'
+      +'</select>'
+    +'</div>';
+    if(!arr.length){ panel.innerHTML=header+'<div class="empty">No referred leads yet.</div>'; return; }
+    panel.innerHTML=header+'<div id="queueBody">'+arr.map(queueCardHTML).join('')+'</div>';
+  }
+  function queueCardHTML(l){
+    var qid=l._qid;
+    var name=esc(l.name||'Unknown');
+    var stage=l.stage?'<span class="chip chip-muted">'+esc(l.stage)+'</span>':'';
+    var amt=l.loan_amount?'<span style="font-size:12px;color:var(--text2);white-space:nowrap;flex-shrink:0;">'+esc(fmtMoney(l.loan_amount))+'</span>':'';
+    var rec=recencyInfo(l.last_activity_at), recColor=rec.amber?'#E7B380':'#8FD79A';
+    var phone=l.phone
+      ? '<a class="q-phone" href="tel:'+esc(l.phone)+'">📞 '+esc(l.phone)+'</a>'
+        +' <button class="q-copy" data-phone="'+esc(l.phone)+'" onclick="copyText(this.getAttribute(\'data-phone\'))">Copy</button>'
+      : '<span class="muted" style="font-size:12px;">No phone</span>';
+    var email=l.email?'<div style="margin-top:4px;"><a href="mailto:'+esc(l.email)+'" style="color:var(--gold);font-size:12px;">✉️ '+esc(l.email)+'</a></div>':'';
+    return '<div class="qcard'+(l._done?' q-done':'')+'" id="qcard-'+qid+'" data-qid="'+qid+'">'
+      +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">'
+        +'<div style="min-width:0;flex:1;">'
+          +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span class="q-name">'+name+'</span>'+stage+outcomeChip(l.deal_outcome)+'</div>'
+          +'<div class="q-recency" style="font-size:11px;margin-top:4px;color:'+recColor+';">'+esc(rec.text)+'</div>'
+        +'</div>'+amt
+      +'</div>'
+      +'<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+phone+'</div>'
+      +email
+      +'<div class="q-actions">'
+        +'<button class="btn-ghost" style="padding:5px 10px;" onclick="queueOpenForm(\''+qid+'\',\'call\')">📞 Call</button>'
+        +'<button class="btn-ghost" style="padding:5px 10px;" onclick="queueOpenForm(\''+qid+'\',\'sms\')">💬 SMS</button>'
+        +'<button class="btn-ghost" style="padding:5px 10px;" onclick="queueOpenForm(\''+qid+'\',\'note\')">📝 Note</button>'
+        +'<a class="btn-ghost" style="padding:5px 10px;margin-left:auto;" href="lead-detail.html?contact_id='+encodeURIComponent(l.contact_id||'')+'" target="_blank" rel="noopener">Open ↗</a>'
+      +'</div>'
+      +'<div class="q-form" id="qform-'+qid+'"></div>'
+    +'</div>';
+  }
+  function queueOpenForm(qid, type){
+    var box=document.getElementById('qform-'+qid); if(!box) return;
+    if(box.getAttribute('data-open')===type){ box.innerHTML=''; box.removeAttribute('data-open'); return; } // toggle off
+    var needsDir=(type==='call'||type==='sms'), needsMins=(type==='call');
+    var dispo=['No answer','Left VM','Connected','Not interested','Callback'];
+    var html='<div class="q-formwrap" data-type="'+type+'" data-dir="outbound" style="margin-top:9px;padding-top:9px;border-top:1px solid var(--border);">';
+    if(needsDir){
+      html+='<div class="seg" style="margin-bottom:8px;">'
+        +'<button type="button" data-d="inbound" onclick="queueDir(this)">Inbound</button>'
+        +'<button type="button" class="on" data-d="outbound" onclick="queueDir(this)">Outbound</button>'
+      +'</div>';
+    }
+    if(needsMins){
+      html+='<input class="fld q-mins" type="number" min="0" step="1" placeholder="Minutes (optional)" style="margin-bottom:8px;max-width:170px;">';
+    }
+    html+='<textarea class="fld q-note" rows="2" placeholder="Note…"></textarea>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;">'
+        +dispo.map(function(d){ return '<button type="button" class="q-dispo" onclick="queueDispo(this,\''+d+'\')">'+esc(d)+'</button>'; }).join('')
+      +'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:9px;">'
+        +'<button class="btn-gold" onclick="queueSave(this,\''+qid+'\')">Save '+titleCase(type)+'</button>'
+        +'<button class="btn-ghost" onclick="queueCloseForm(\''+qid+'\')">Cancel</button>'
+      +'</div>'
+    +'</div>';
+    box.innerHTML=html;
+    box.setAttribute('data-open', type);
+    var ta=box.querySelector('.q-note'); if(ta) ta.focus();
+  }
+  function queueCloseForm(qid){ var box=document.getElementById('qform-'+qid); if(box){ box.innerHTML=''; box.removeAttribute('data-open'); } }
+  function queueDir(btn){
+    var seg=btn.closest('.seg'); if(seg) Array.prototype.forEach.call(seg.querySelectorAll('button'),function(b){ b.classList.toggle('on', b===btn); });
+    var wrap=btn.closest('.q-formwrap'); if(wrap) wrap.setAttribute('data-dir', btn.getAttribute('data-d'));
+  }
+  function queueDispo(btn, text){
+    var wrap=btn.closest('.q-formwrap'); if(!wrap) return;
+    var ta=wrap.querySelector('.q-note'); if(!ta) return;
+    var cur=ta.value.trim();
+    ta.value = cur ? (cur+' · '+text) : text;
+    ta.focus();
+  }
+  function markCardDone(qid){
+    var card=document.getElementById('qcard-'+qid); if(!card) return;
+    card.classList.add('q-done');
+    var rec=card.querySelector('.q-recency');
+    if(rec){ rec.textContent='Last touch: just now'; rec.style.color='#8FD79A'; }
+  }
+  function scrollToNextPending(qid){
+    var card=document.getElementById('qcard-'+qid); if(!card) return;
+    var cur=card.nextElementSibling;
+    while(cur){
+      if(cur.classList && cur.classList.contains('qcard') && !cur.classList.contains('q-done')){
+        cur.scrollIntoView({behavior:'smooth', block:'nearest'}); return;
+      }
+      cur=cur.nextElementSibling;
+    }
+  }
+  async function queueSave(btn, qid){
+    var lead=findLead(qid); if(!lead) return;
+    var wrap=btn.closest('.q-formwrap'); if(!wrap) return;
+    var type=wrap.getAttribute('data-type');
+    var note=((wrap.querySelector('.q-note')||{}).value||'').trim();
+    var dir=(type==='call'||type==='sms')?(wrap.getAttribute('data-dir')||'outbound'):null;
+    var dur=null;
+    if(type==='call'){ var mins=parseFloat((wrap.querySelector('.q-mins')||{}).value); if(mins>0) dur=Math.round(mins*60); }
+    btn.disabled=true; btn.textContent='Saving…';
+    try{
+      var r=await _authClient().rpc('contact_log_activity',{p_contact_id:lead.contact_id,p_type:type,p_direction:dir,p_note:note||null,p_duration:dur});
+      if(r.error) throw new Error(r.error.message||'failed');
+      lead.last_activity_at=new Date().toISOString();
+      lead._done=true;
+      _loggedToday++;
+      var cnt=document.getElementById('queueLogged'); if(cnt) cnt.textContent=_loggedToday;
+      queueCloseForm(qid);
+      markCardDone(qid);
+      showToast('Logged');
+      scrollToNextPending(qid);
+    }catch(e){ btn.disabled=false; btn.textContent='Save '+titleCase(type); showToast((e&&e.message)||'Could not log activity'); }
+  }
+  function copyText(t){
+    t=String(t||'');
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(function(){ showToast('Copied'); }, function(){ showToast('Copy failed'); });
+    } else {
+      try{ var ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); showToast('Copied'); }
+      catch(e){ showToast('Copy failed'); }
+    }
   }
   function outcomeChip(o){
     var v=String(o||'').toLowerCase();
