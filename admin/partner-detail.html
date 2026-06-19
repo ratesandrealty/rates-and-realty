@@ -83,11 +83,33 @@
     /* Toast */
     #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#161616;border:1px solid var(--gold-bdr);color:var(--text);font-size:13px;padding:10px 18px;border-radius:10px;opacity:0;pointer-events:none;transition:all .25s;z-index:9999;box-shadow:0 10px 30px rgba(0,0,0,.5);}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+    /* Activity row hover actions */
+    .act-row{position:relative;}
+    .act-actions{position:absolute;top:6px;right:2px;display:none;gap:4px;background:var(--surface);padding:2px;border-radius:8px;}
+    .act-row:hover .act-actions{display:flex;}
+    .act-actions button{background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;cursor:pointer;padding:2px 6px;line-height:1.3;}
+    .act-actions button:hover{border-color:var(--gold-bdr);color:var(--gold);}
+    /* Rank pill */
+    .rank-pill{display:inline-block;font-size:11px;font-weight:800;vertical-align:middle;margin-left:6px;padding:2px 10px;border-radius:11px;color:var(--gold);background:var(--gold-bg);border:1px solid var(--gold-bdr);white-space:nowrap;}
+    .rank-pill.top{color:#1A0E00;background:linear-gradient(135deg,#E6C66A,#C9A84C);border-color:transparent;box-shadow:0 0 0 1px rgba(201,168,76,.4);}
+    /* Intelligence tiles */
+    .tile-sub{font-size:9px;color:var(--muted);opacity:.85;margin-top:2px;}
+    .tiles-5{grid-template-columns:repeat(5,1fr);}
+    /* Follow-up nudge */
+    .nudge{border-radius:10px;padding:11px 14px;font-size:13px;margin-bottom:16px;line-height:1.5;}
+    .nudge-amber{background:rgba(229,152,77,0.10);border:1px solid rgba(229,152,77,0.35);color:#E7B380;}
+    .nudge-green{background:rgba(63,185,80,0.08);border:1px solid rgba(63,185,80,0.30);color:#8FD79A;}
+    /* Chart hover + animation */
+    #chartTip{position:fixed;display:none;pointer-events:none;z-index:9998;background:#1c1c1c;border:1px solid var(--gold-bdr);color:var(--text);font-size:11px;padding:6px 9px;border-radius:7px;white-space:nowrap;box-shadow:0 8px 22px rgba(0,0,0,.55);}
+    .bar-hit{cursor:pointer;}
+    .bar-grow{transform-box:fill-box;transform-origin:center bottom;animation:barGrow .55s cubic-bezier(.2,.8,.2,1) both;}
+    @keyframes barGrow{from{transform:scaleY(0);}to{transform:scaleY(1);}}
     @media(max-width:760px){
       .tiles{grid-template-columns:repeat(3,1fr);}
+      .tiles-5{grid-template-columns:repeat(3,1fr);}
       .hdr-main{flex-wrap:wrap;}
     }
-    @media(max-width:440px){ .tiles{grid-template-columns:repeat(2,1fr);} }
+    @media(max-width:440px){ .tiles,.tiles-5{grid-template-columns:repeat(2,1fr);} }
   </style>
 </head>
 <body>
@@ -100,8 +122,14 @@
     <!-- Stat tiles -->
     <div class="card"><div class="card-h">Performance</div><div id="tilesBox"><div class="loading"><span class="spin"></span> Loading…</div></div></div>
 
+    <!-- Intelligence -->
+    <div class="card"><div class="card-h">Pipeline &amp; Intelligence</div><div id="intelBox"><div class="loading"><span class="spin"></span> Loading…</div></div></div>
+
     <!-- Deals graph -->
     <div class="card"><div class="card-h">Referrals &amp; closings — last 12 months</div><div id="chartBox"><div class="loading"><span class="spin"></span> Loading…</div></div></div>
+
+    <!-- Follow-up nudge -->
+    <div id="nudgeBox"></div>
 
     <!-- Tabs -->
     <div class="card">
@@ -133,6 +161,7 @@
   </div>
 
   <div id="toast"></div>
+  <div id="chartTip"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script>
@@ -142,13 +171,14 @@
   function showToast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._tm); t._tm=setTimeout(function(){ t.classList.remove('show'); },2500); }
 
   function money(n){ n=Number(n)||0; return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0}); }
-  function moneyAbbr(n){
+  // Shared money formatter: <$1K plain (commas), >=1K as $X.XK, >=1M as $X.XM.
+  function fmtMoney(n){
     n=Number(n)||0; var a=Math.abs(n);
-    if(a>=1e9) return '$'+(n/1e9).toFixed(1).replace(/\.0$/,'')+'B';
     if(a>=1e6) return '$'+(n/1e6).toFixed(1).replace(/\.0$/,'')+'M';
     if(a>=1e3) return '$'+(n/1e3).toFixed(1).replace(/\.0$/,'')+'K';
     return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0});
   }
+  var moneyAbbr=fmtMoney; // back-compat alias
   function initials(f,l){ return ((String(f||'').trim()[0]||'')+(String(l||'').trim()[0]||'')).toUpperCase()||'?'; }
   function avatarTint(color){
     var c=color||'';
@@ -171,7 +201,7 @@
 
   /* ── state ── */
   var partnerId = new URLSearchParams(location.search).get('partner_id');
-  var _partner=null, _activity=[];
+  var _partner=null, _activity=[], _overview=null, _monthly=[];
 
   async function waitClient(ms){ ms=ms||7000; var s=Date.now(); while(!window._supabaseClient && Date.now()-s<ms){ await new Promise(function(r){setTimeout(r,40);}); } return window._supabaseClient; }
 
@@ -212,13 +242,15 @@
       '<div class="hdr-main">'
         +'<div class="avatar" style="background:'+av.bg+';color:'+av.fg+';">'+esc(initials(p.first_name,p.last_name))+'</div>'
         +'<div class="hdr-info">'
-          +'<div class="hdr-name">'+esc(name)+'</div>'
+          +'<div class="hdr-name">'+esc(name)+'<span id="rankBadge"></span></div>'
           +(sub?'<div class="hdr-sub">'+sub+'</div>':'')
           +'<div class="hdr-chips">'+statusChip+tagChips+'</div>'
           +(contact.length?'<div class="hdr-contact">'+contact.join('')+'</div>':'')
         +'</div>'
         +'<button class="btn-gold" onclick="editPartner()">Edit Partner</button>'
       +'</div>';
+    // Overview may already be loaded (parallel fetch) — fill rank + nudge now that DOM exists.
+    if(_overview){ renderRank(_overview); renderNudge(_overview); }
   }
   function editPartner(){
     // No reusable cross-page edit modal yet — the edit flow lives inside referral-partners.html.
@@ -227,14 +259,19 @@
 
   /* ── overview: tiles + chart ── */
   async function loadOverview(){
-    var tiles=document.getElementById('tilesBox'), chart=document.getElementById('chartBox');
+    var tiles=document.getElementById('tilesBox'), chart=document.getElementById('chartBox'), intel=document.getElementById('intelBox');
     try{
       var r=await _authClient().rpc('partner_overview',{p_partner_id:partnerId});
-      if(r.error){ tiles.innerHTML='<div class="empty">Could not load stats.</div>'; chart.innerHTML='<div class="empty">No data.</div>'; return; }
+      if(r.error){ tiles.innerHTML='<div class="empty">Could not load stats.</div>'; chart.innerHTML='<div class="empty">No data.</div>'; if(intel) intel.innerHTML='<div class="empty">No data.</div>'; return; }
       var o=(Array.isArray(r.data)?r.data[0]:r.data)||{};
+      _overview=o; _monthly=o.monthly||[];
       renderTiles(o);
-      chart.innerHTML=renderChart(o.monthly||[]);
-    }catch(e){ tiles.innerHTML='<div class="empty">Could not load stats.</div>'; chart.innerHTML='<div class="empty">No data.</div>'; }
+      renderIntel(o);
+      renderRank(o);
+      renderNudge(o);
+      chart.innerHTML=renderChart(_monthly);
+      wireChartHover(_monthly);
+    }catch(e){ tiles.innerHTML='<div class="empty">Could not load stats.</div>'; chart.innerHTML='<div class="empty">No data.</div>'; if(intel) intel.innerHTML='<div class="empty">No data.</div>'; }
   }
   function renderTiles(o){
     var t=[
@@ -242,40 +279,152 @@
       {n:Number(o.won)||0,       l:'Won',       c:'var(--green)'},
       {n:Number(o.lost)||0,      l:'Lost',      c:'var(--red)'},
       {n:Number(o.active)||0,    l:'Active',    c:'var(--text)'},
-      {n:moneyAbbr(o.volume),    l:'Volume',    c:'var(--text)'},
-      {n:moneyAbbr(o.earnings),  l:'Earnings',  c:'var(--gold)'}
+      {n:fmtMoney(o.volume),     l:'Volume',    c:'var(--text)'},
+      {n:fmtMoney(o.earnings),   l:'Earnings',  c:'var(--gold)'}
     ];
     document.getElementById('tilesBox').innerHTML='<div class="tiles">'+t.map(function(x){
       return '<div class="tile"><div class="tile-num" style="color:'+x.c+'">'+esc(x.n)+'</div><div class="tile-lbl">'+x.l+'</div></div>';
     }).join('')+'</div>';
   }
+
+  /* ── intelligence: rank, pipeline tiles, nudge ── */
+  function renderRank(o){
+    var el=document.getElementById('rankBadge'); if(!el) return;
+    var rank=Number(o.rank_by_earnings)||0, total=Number(o.total_partners)||0;
+    if(rank>0){
+      var top=(rank===1);
+      el.className='rank-pill'+(top?' top':'');
+      el.innerHTML='🏆 #'+rank+(total?(' of '+total):'')+(top?' · Top Partner':'');
+    } else { el.className=''; el.innerHTML=''; }
+  }
+  function renderIntel(o){
+    var box=document.getElementById('intelBox'); if(!box) return;
+    var conv=o.conversion_rate, convStr='—', convColor='var(--muted)';
+    if(conv!=null && conv!==''){
+      var pct=Math.round(Number(conv)*100); convStr=pct+'%';
+      convColor = pct>=50 ? 'var(--green)' : (pct>=25 ? '#E5984D' : 'var(--red)');
+    }
+    var t=[
+      {n:fmtMoney(o.potential_volume),    l:'Pipeline',       sub:'open volume',     c:'var(--text)'},
+      {n:'~'+fmtMoney(o.potential_earnings), l:'Potential',   sub:'est. commission', c:'var(--gold)'},
+      {n:convStr,                         l:'Conversion',     sub:'lead → won',      c:convColor},
+      {n:fmtMoney(o.avg_earn_per_won),    l:'Avg Commission', sub:'per won deal',    c:'var(--text)'},
+      {n:fmtMoney(o.avg_loan),            l:'Avg Loan',       sub:'per deal',        c:'var(--text)'}
+    ];
+    box.innerHTML='<div class="tiles tiles-5">'+t.map(function(x){
+      return '<div class="tile"><div class="tile-num" style="color:'+x.c+'">'+esc(x.n)+'</div><div class="tile-lbl">'+x.l+'</div><div class="tile-sub">'+esc(x.sub)+'</div></div>';
+    }).join('')+'</div>';
+  }
+  function renderNudge(o){
+    var box=document.getElementById('nudgeBox'); if(!box) return;
+    var first=esc((_partner&&_partner.first_name)||'this partner');
+    var times=[o.last_activity_at,o.last_referral_at].filter(Boolean).map(function(t){ return new Date(t).getTime(); }).filter(function(t){ return !isNaN(t); });
+    var last = times.length ? Math.max.apply(null,times) : null;
+    var active=Number(o.active)||0;
+    var second = active>0 ? '<div style="margin-top:5px;">🔥 '+active+' open deal'+(active===1?'':'s')+' worth '+esc(fmtMoney(o.potential_volume))+' in motion.</div>' : '';
+    function amber(msg){
+      return '<div class="nudge nudge-amber">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">'
+          +'<span>'+msg+'</span>'
+          +'<button class="btn-gold" style="flex-shrink:0;" onclick="startCallLog()">Log a call</button>'
+        +'</div>'+second+'</div>';
+    }
+    if(last===null){
+      box.innerHTML=amber('👋 You haven’t connected with '+first+' yet — a quick check-in keeps referrals flowing.');
+      return;
+    }
+    var days=Math.max(0,Math.floor((Date.now()-last)/86400000));
+    if(days>14){
+      box.innerHTML=amber('👋 You haven’t connected with '+first+' in '+days+' days — a quick check-in keeps referrals flowing.');
+    } else {
+      box.innerHTML='<div class="nudge nudge-green">✓ In touch — last contact '+days+'d ago.'+second+'</div>';
+    }
+  }
+  function startCallLog(){
+    var tabBtn=document.querySelector('.tab[data-tab="activity"]');
+    switchTab('activity', tabBtn);
+    openLog('call');
+    setTimeout(function(){ var ta=document.getElementById('logNote'); if(ta) ta.focus(); }, 60);
+  }
+
+  /* ── deals graph (inline SVG) ── */
   function monthLabel(ym){
     if(!ym) return '';
     var p=String(ym).split('-'), mi=parseInt(p[1],10)-1;
     var names=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return (mi>=0&&mi<12)?names[mi]:String(ym);
   }
+  function monthLabelFull(ym){
+    if(!ym) return '';
+    var p=String(ym).split('-'), mi=parseInt(p[1],10)-1;
+    var names=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return ((mi>=0&&mi<12)?names[mi]:'')+' '+(p[0]||'');
+  }
+  // Path for a rect with rounded TOP corners only (square bottom — sits on the baseline).
+  function roundedTopRect(x,y,w,h,r){
+    r=Math.max(0,Math.min(r,w/2,h));
+    return 'M'+x+','+(y+h)+' L'+x+','+(y+r)+' Q'+x+','+y+' '+(x+r)+','+y
+      +' L'+(x+w-r)+','+y+' Q'+(x+w)+','+y+' '+(x+w)+','+(y+r)+' L'+(x+w)+','+(y+h)+' Z';
+}
   function renderChart(monthly){
     monthly=monthly||[];
     if(!monthly.length) return '<div class="empty">No deal history yet.</div>';
-    var maxRef=Math.max.apply(null,monthly.map(function(m){return Number(m.referrals)||0;}).concat([1]));
-    var n=monthly.length, step=26, barW=16, padX=10, topPad=8, barMaxH=84, labelH=18;
+    var refs=monthly.map(function(m){return Number(m.referrals)||0;});
+    var maxRef=Math.max.apply(null,refs.concat([1]));
+    var avg=refs.reduce(function(s,v){return s+v;},0)/(refs.length||1);
+    var n=monthly.length, step=28, barW=16, padX=12, topPad=10, barMaxH=84, labelH=18;
     var W=padX*2+n*step, baseY=topPad+barMaxH, H=baseY+labelH, parts=[];
+    // gradient def
+    parts.push('<defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">'
+      +'<stop offset="0" stop-color="#E9CC74"/><stop offset="1" stop-color="#B5902F"/></linearGradient></defs>');
+    // baseline
     parts.push('<line x1="'+padX+'" y1="'+baseY+'" x2="'+(W-padX)+'" y2="'+baseY+'" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>');
+    // average line
+    if(avg>0){
+      var avgY=baseY-(avg/maxRef)*barMaxH;
+      parts.push('<line x1="'+padX+'" y1="'+avgY.toFixed(1)+'" x2="'+(W-padX)+'" y2="'+avgY.toFixed(1)+'" stroke="#C9A84C" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>');
+      parts.push('<text x="'+(W-padX)+'" y="'+(avgY-3).toFixed(1)+'" text-anchor="end" font-size="8" fill="#C9A84C" opacity="0.8">avg</text>');
+    }
     for(var i=0;i<n;i++){
       var m=monthly[i], ref=Number(m.referrals)||0, won=Number(m.won)||0; if(won>ref) won=ref;
       var totalH=maxRef?(ref/maxRef)*barMaxH:0, wonH=maxRef?(won/maxRef)*barMaxH:0, remH=Math.max(0,totalH-wonH);
       var x=padX+i*step+(step-barW)/2;
-      if(remH>0) parts.push('<rect x="'+x+'" y="'+(baseY-totalH)+'" width="'+barW+'" height="'+remH+'" rx="2" fill="#C9A84C" opacity="0.45"/>');
-      if(wonH>0) parts.push('<rect x="'+x+'" y="'+(baseY-wonH)+'" width="'+barW+'" height="'+wonH+'" rx="2" fill="#9A7B2E"/>');
-      if(totalH<1) parts.push('<rect x="'+x+'" y="'+(baseY-1.5)+'" width="'+barW+'" height="1.5" rx="0.75" fill="rgba(255,255,255,0.12)"/>');
+      var delay=(i*0.035).toFixed(3);
+      var grow='class="bar-grow" style="animation-delay:'+delay+'s;"';
+      if(totalH<1){
+        parts.push('<rect '+grow+' x="'+x+'" y="'+(baseY-1.5)+'" width="'+barW+'" height="1.5" rx="0.75" fill="rgba(255,255,255,0.12)"/>');
+      } else if(remH>0){
+        // referred remainder (gradient, rounded top) above the won base
+        parts.push('<path '+grow+' d="'+roundedTopRect(x, baseY-totalH, barW, remH, 3)+'" fill="url(#barGrad)"/>');
+        if(wonH>0) parts.push('<rect '+grow+' x="'+x+'" y="'+(baseY-wonH)+'" width="'+barW+'" height="'+wonH+'" fill="#7A5520"/>');
+      } else {
+        // all closed — single rounded-top darker bar
+        parts.push('<path '+grow+' d="'+roundedTopRect(x, baseY-totalH, barW, totalH, 3)+'" fill="#7A5520"/>');
+      }
+      // invisible full-height hit target for tooltip
+      parts.push('<rect class="bar-hit" data-i="'+i+'" x="'+(padX+i*step)+'" y="'+topPad+'" width="'+step+'" height="'+barMaxH+'" fill="transparent"/>');
       if(i%2===0) parts.push('<text x="'+(x+barW/2)+'" y="'+(H-5)+'" text-anchor="middle" font-size="8" fill="#8a8170">'+monthLabel(m.ym)+'</text>');
     }
-    return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="120" preserveAspectRatio="xMidYMid meet" style="display:block;">'+parts.join('')+'</svg>'
+    return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="120" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible;">'+parts.join('')+'</svg>'
       +'<div style="display:flex;gap:14px;margin-top:8px;font-size:10px;color:var(--muted);">'
-      +'<span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#9A7B2E;vertical-align:middle;"></span> Closed</span>'
-      +'<span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#C9A84C;opacity:.45;vertical-align:middle;"></span> Referred</span>'
+      +'<span><span style="color:#C9A84C;">▰</span> Referred</span>'
+      +'<span><span style="color:#7A5520;">▰</span> Closed</span>'
       +'</div>';
+  }
+  function wireChartHover(monthly){
+    var tip=document.getElementById('chartTip');
+    Array.prototype.forEach.call(document.querySelectorAll('#chartBox .bar-hit'), function(h){
+      h.addEventListener('mousemove', function(ev){
+        var m=monthly[Number(h.getAttribute('data-i'))]; if(!m||!tip) return;
+        tip.textContent = monthLabelFull(m.ym)+' — '+(Number(m.referrals)||0)+' referred · '+(Number(m.won)||0)+' closed · '+fmtMoney(m.volume||0)+' volume';
+        tip.style.display='block';
+        var tw=tip.offsetWidth||180;
+        var lx=ev.clientX+14; if(lx+tw>window.innerWidth-8) lx=ev.clientX-tw-14;
+        tip.style.left=lx+'px';
+        tip.style.top=(ev.clientY-12)+'px';
+      });
+      h.addEventListener('mouseleave', function(){ if(tip) tip.style.display='none'; });
+    });
   }
 
   /* ── shared leads ── */
@@ -331,14 +480,89 @@
     var title=esc(a.title || (titleCase(a.type||'Activity')+(dir?(' · '+dir):'')));
     var dur=a.duration_seconds?(' · '+fmtDuration(a.duration_seconds)):'';
     var bodyText=a.description||a.email_subject||a.sms_body||'';
-    return '<div class="act-row">'
+    var idAttr=esc(String(a.id==null?'':a.id));
+    var actions = (a.editable===true) ?
+      ('<span class="act-actions">'
+        +'<button title="Edit" onclick="editActivity(\''+idAttr+'\',this)">✏️</button>'
+        +'<button title="Delete" onclick="deleteActivity(\''+idAttr+'\',this)">🗑️</button>'
+      +'</span>') : '';
+    return '<div class="act-row" data-id="'+idAttr+'">'
       +'<div class="act-ico">'+icon+'</div>'
       +'<div class="act-body">'
         +'<div class="act-top"><span class="act-title">'+title+'</span>'
         +'<span class="act-when" title="'+esc(fmtDateTime(a.created_at))+'">'+esc(timeAgo(a.created_at))+esc(dur)+'</span></div>'
         +'<div class="act-when" style="margin-top:1px;">'+esc(fmtDateTime(a.created_at))+'</div>'
         +(bodyText?'<div class="act-desc">'+esc(bodyText)+'</div>':'')
+      +'</div>'+actions+'</div>';
+  }
+
+  /* ── activity edit / delete (editable rows only) ── */
+  function findAct(id){ for(var i=0;i<_activity.length;i++){ if(String(_activity[i].id)===String(id)) return _activity[i]; } return null; }
+
+  function editActivity(id, btn){
+    var a=findAct(id); if(!a) return;
+    var row=btn.closest('.act-row'); if(!row) return;
+    var type=String(a.type||'').toLowerCase();
+    var desc=a.description||a.email_subject||a.sms_body||'';
+    var dir=a.direction||'outbound';
+    var mins=a.duration_seconds?Math.round(Number(a.duration_seconds)/60):'';
+    var html='<div style="flex:1;min-width:0;">';
+    if(type==='call'||type==='sms'){
+      html+='<div class="seg" style="margin-bottom:8px;">'
+        +'<button type="button" data-d="inbound" class="'+(dir==='inbound'?'on':'')+'" onclick="actEditDir(this)">Inbound</button>'
+        +'<button type="button" data-d="outbound" class="'+(dir!=='inbound'?'on':'')+'" onclick="actEditDir(this)">Outbound</button>'
+      +'</div>';
+    }
+    if(type==='call'){
+      html+='<div style="margin-bottom:8px;"><input class="fld act-edit-mins" type="number" min="0" step="1" placeholder="Minutes" value="'+esc(mins)+'" style="max-width:160px;"></div>';
+    }
+    html+='<textarea class="fld act-edit-note" rows="3">'+esc(desc)+'</textarea>'
+      +'<div style="display:flex;gap:8px;margin-top:8px;">'
+        +'<button class="btn-gold" onclick="saveActivityEdit(this)">Save</button>'
+        +'<button class="btn-ghost" onclick="cancelActivityEdit(this)">Cancel</button>'
       +'</div></div>';
+    row.dataset.editId=String(id);
+    row.dataset.editType=type;
+    row.dataset.editDir=dir;
+    row.innerHTML=html;
+    var ta=row.querySelector('.act-edit-note'); if(ta) ta.focus();
+  }
+  function actEditDir(btn){
+    var seg=btn.closest('.seg'); if(seg) Array.prototype.forEach.call(seg.querySelectorAll('button'),function(b){ b.classList.toggle('on', b===btn); });
+    var row=btn.closest('.act-row'); if(row) row.dataset.editDir=btn.getAttribute('data-d');
+  }
+  function cancelActivityEdit(btn){
+    var row=btn.closest('.act-row'); if(!row) return;
+    var a=findAct(row.dataset.editId); if(a) row.outerHTML=activityItemHTML(a);
+  }
+  async function saveActivityEdit(btn){
+    var row=btn.closest('.act-row'); if(!row) return;
+    var id=row.dataset.editId, type=row.dataset.editType||'';
+    var a=findAct(id); if(!a) return;
+    var note=((row.querySelector('.act-edit-note')||{}).value||'').trim();
+    var dir=(type==='call'||type==='sms')?(row.dataset.editDir||'outbound'):null;
+    var dur=null;
+    if(type==='call'){ var mins=parseFloat((row.querySelector('.act-edit-mins')||{}).value); if(mins>0) dur=Math.round(mins*60); }
+    btn.disabled=true; btn.textContent='Saving…';
+    try{
+      var r=await _authClient().rpc('partner_activity_update',{p_id:a.id,p_note:note||null,p_direction:dir,p_duration:dur});
+      if(r.error) throw new Error(r.error.message||'failed');
+      a.description=note; a.direction=dir; a.duration_seconds=dur;
+      a.email_subject=null; a.sms_body=null; // description is now the canonical body
+      renderActivity(); renderMarketing();
+      showToast('Updated');
+    }catch(e){ btn.disabled=false; btn.textContent='Save'; showToast((e&&e.message)||'Could not update'); }
+  }
+  async function deleteActivity(id, btn){
+    if(!confirm('Delete this entry?')) return;
+    var a=findAct(id); if(!a) return;
+    try{
+      var r=await _authClient().rpc('partner_activity_delete',{p_id:a.id});
+      if(r.error) throw new Error(r.error.message||'failed');
+      _activity=_activity.filter(function(x){ return String(x.id)!==String(id); });
+      renderActivity(); renderMarketing();
+      showToast('Deleted');
+    }catch(e){ showToast((e&&e.message)||'Could not delete'); }
   }
   function renderActivity(){
     var box=document.getElementById('activityFeed');
@@ -396,7 +620,7 @@
       var r=await _authClient().rpc('partner_log_activity',{p_partner_id:partnerId,p_type:type,p_direction:dir,p_note:note||null,p_duration:dur});
       if(r.error) throw new Error(r.error.message||'failed');
       var newId=(r.data && (r.data.id||r.data))||null;
-      _activity.unshift({ id:newId, type:type, direction:dir, title:null, description:note, email_subject:null, sms_body:null, duration_seconds:dur, created_at:new Date().toISOString() });
+      _activity.unshift({ id:newId, type:type, direction:dir, title:null, description:note, email_subject:null, sms_body:null, duration_seconds:dur, created_at:new Date().toISOString(), editable:true });
       renderActivity(); renderMarketing();
       closeLog();
       showToast(titleCase(type)+' logged');
