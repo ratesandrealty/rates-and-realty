@@ -205,7 +205,7 @@
   /* ── state ── */
   var partnerId = new URLSearchParams(location.search).get('partner_id');
   var _partner=null, _activity=[], _overview=null, _monthly=[];
-  var _chartMetric='referrals', _chartWindow=12, _goal=null;
+  var _chartMetric='referrals', _chartWindow=12, _chartView='bars', _goal=null;
   var CHART_METRICS=[
     {key:'referrals', label:'Leads',     money:false},
     {key:'won',       label:'Closings',  money:false},
@@ -394,7 +394,13 @@
       return '<button type="button" data-m="'+c.key+'" class="'+(c.key===_chartMetric?'on':'')+'" onclick="setChartMetric(\''+c.key+'\')">'+c.label+'</button>';
     }).join('');
     box.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:10px;">'
-      +'<div class="seg" style="flex-wrap:wrap;">'+pills+'</div>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">'
+        +'<div class="seg" style="flex-wrap:wrap;">'+pills+'</div>'
+        +'<div class="seg">'
+          +'<button type="button" data-v="bars" class="'+(_chartView==='bars'?'on':'')+'" onclick="setChartView(\'bars\')">Bars</button>'
+          +'<button type="button" data-v="timeline" class="'+(_chartView==='timeline'?'on':'')+'" onclick="setChartView(\'timeline\')">Timeline</button>'
+        +'</div>'
+      +'</div>'
       +'<label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);white-space:nowrap;">'
         +'Last <span id="rangeLbl" style="color:var(--text);font-weight:700;">'+_chartWindow+'</span> months'
         +'<input type="range" min="3" max="12" step="1" value="'+_chartWindow+'" oninput="onChartRange(this.value)" style="accent-color:var(--gold);width:120px;">'
@@ -403,8 +409,12 @@
   }
   function setChartMetric(k){
     _chartMetric=k;
-    var seg=document.querySelector('#chartControls .seg');
-    if(seg) Array.prototype.forEach.call(seg.querySelectorAll('button'),function(b){ b.classList.toggle('on', b.getAttribute('data-m')===k); });
+    Array.prototype.forEach.call(document.querySelectorAll('#chartControls [data-m]'),function(b){ b.classList.toggle('on', b.getAttribute('data-m')===k); });
+    redrawChart();
+  }
+  function setChartView(v){
+    _chartView=(v==='timeline')?'timeline':'bars';
+    Array.prototype.forEach.call(document.querySelectorAll('#chartControls [data-v]'),function(b){ b.classList.toggle('on', b.getAttribute('data-v')===_chartView); });
     redrawChart();
   }
   function onChartRange(v){
@@ -415,34 +425,50 @@
   function redrawChart(){
     var box=document.getElementById('chartBox'); if(!box) return;
     var data=_monthly.slice(-_chartWindow);
-    box.innerHTML=renderChart(data);
-    wireChartHover(data);
+    if(_chartView==='timeline'){
+      box.innerHTML=renderTimeline(data);
+      var rail=document.getElementById('timelineRail'); if(rail) rail.scrollLeft=rail.scrollWidth; // newest on the right
+    } else {
+      box.innerHTML=renderChart(data);
+      wireChartHover(data);
+    }
   }
 
   function renderChart(monthly){
     monthly=monthly||[];
     if(!monthly.length) return '<div class="empty">No deal history yet.</div>';
     var cfg=currentMetric(), key=cfg.key, money=cfg.money, isVol=(key==='volume');
+    var unit=money?'$':'count';
+    var caption='<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">'+esc(cfg.label)+' per month — '+unit+'</div>';
     var vals=monthly.map(function(m){return Number(m[key])||0;});
     var ghost=isVol?monthly.map(function(m){return Number(m.potential)||0;}):null;
     var maxScale=Math.max.apply(null, vals.concat(isVol?ghost:[]).concat([0]));
     if(maxScale<=0) maxScale=1;
+    var maxVal=Math.max.apply(null, vals.concat([0]));
+    var tallest=-1, tallestV=-1;
+    for(var ti=0;ti<vals.length;ti++){ if(vals[ti]>tallestV){ tallestV=vals[ti]; tallest=ti; } }
     var avg=vals.reduce(function(s,v){return s+v;},0)/(vals.length||1);
-    var n=monthly.length, step=28, barW=16, padX=12, topPad=10, barMaxH=84, labelH=18;
-    var W=padX*2+n*step, baseY=topPad+barMaxH, H=baseY+labelH, parts=[];
+    var n=monthly.length, step=30, barW=16, padL=30, padR=12, topPad=18, barMaxH=84, labelH=16;
+    var W=padL+padR+n*step, baseY=topPad+barMaxH, H=baseY+labelH, parts=[];
     parts.push('<defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">'
       +'<stop offset="0" stop-color="#E9CC74"/><stop offset="1" stop-color="#B5902F"/></linearGradient></defs>');
-    parts.push('<line x1="'+padX+'" y1="'+baseY+'" x2="'+(W-padX)+'" y2="'+baseY+'" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>');
+    // baseline
+    parts.push('<line x1="'+padL+'" y1="'+baseY+'" x2="'+(W-padR)+'" y2="'+baseY+'" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>');
+    // y-scale labels (max top-left, 0 baseline-left)
+    parts.push('<text x="2" y="'+(topPad+2)+'" font-size="8" fill="#8a8170">'+esc(chartFmt(maxVal,money))+'</text>');
+    parts.push('<text x="2" y="'+(baseY+2)+'" font-size="8" fill="#8a8170">0</text>');
+    // average line + value
     if(avg>0){
       var avgY=baseY-(avg/maxScale)*barMaxH;
-      parts.push('<line x1="'+padX+'" y1="'+avgY.toFixed(1)+'" x2="'+(W-padX)+'" y2="'+avgY.toFixed(1)+'" stroke="#C9A84C" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>');
-      parts.push('<text x="'+(W-padX)+'" y="'+(avgY-3).toFixed(1)+'" text-anchor="end" font-size="8" fill="#C9A84C" opacity="0.8">avg</text>');
+      parts.push('<line x1="'+padL+'" y1="'+avgY.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+avgY.toFixed(1)+'" stroke="#C9A84C" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>');
+      parts.push('<text x="'+(W-padR)+'" y="'+(avgY-3).toFixed(1)+'" text-anchor="end" font-size="8" fill="#C9A84C" opacity="0.85">avg '+esc(chartFmt(avg,money))+'</text>');
     }
     var labelEvery=(n<=6)?1:2;
+    var labelAll=(n<=8);
     for(var i=0;i<n;i++){
       var m=monthly[i], val=vals[i];
       var h=(val/maxScale)*barMaxH;
-      var x=padX+i*step+(step-barW)/2;
+      var x=padL+i*step+(step-barW)/2, cx=x+barW/2;
       var grow='class="bar-grow" style="animation-delay:'+(i*0.035).toFixed(3)+'s;"';
       // ghost pipeline bar behind volume bars
       if(isVol){
@@ -450,17 +476,66 @@
         if(gh>0.6) parts.push('<path d="'+roundedTopRect(x, baseY-gh, barW, gh, 3)+'" fill="#C9A84C" opacity="0.16"/>');
       }
       if(h<0.6){
-        parts.push('<rect '+grow+' x="'+x+'" y="'+(baseY-1.5)+'" width="'+barW+'" height="1.5" rx="0.75" fill="rgba(255,255,255,0.12)"/>');
+        // zero month — faint baseline tick, clearly "no activity"
+        parts.push('<rect x="'+x+'" y="'+(baseY-1.5)+'" width="'+barW+'" height="1.5" rx="0.75" fill="rgba(255,255,255,0.12)"/>');
       } else {
         parts.push('<path '+grow+' d="'+roundedTopRect(x, baseY-h, barW, h, 3)+'" fill="url(#barGrad)"/>');
       }
-      parts.push('<rect class="bar-hit" data-i="'+i+'" x="'+(padX+i*step)+'" y="'+topPad+'" width="'+step+'" height="'+barMaxH+'" fill="transparent"/>');
-      if(i%labelEvery===0) parts.push('<text x="'+(x+barW/2)+'" y="'+(H-5)+'" text-anchor="middle" font-size="8" fill="#8a8170">'+monthLabel(m.ym)+'</text>');
+      // per-bar value label (collision-aware): all if N<=8, else non-zero only; always the tallest, in gold
+      var isTall=(i===tallest && val>0);
+      if(isTall || labelAll || val>0){
+        var ly=Math.max(topPad-3, baseY-h-3);
+        var lcolor=isTall?'#C9A84C':'#b6ab93';
+        var lweight=isTall?'700':'600';
+        parts.push('<text x="'+cx+'" y="'+ly.toFixed(1)+'" text-anchor="middle" font-size="8" font-weight="'+lweight+'" fill="'+lcolor+'">'+esc(chartFmt(val,money))+'</text>');
+      }
+      // month label — every other (or every bar small N); zero months always labeled muted
+      var isZero=(val===0);
+      if(i%labelEvery===0 || isZero){
+        parts.push('<text x="'+cx+'" y="'+(H-4)+'" text-anchor="middle" font-size="8" fill="'+(isZero?'#6b6557':'#8a8170')+'">'+monthLabel(m.ym)+'</text>');
+      }
+      parts.push('<rect class="bar-hit" data-i="'+i+'" x="'+(padL+i*step)+'" y="'+topPad+'" width="'+step+'" height="'+barMaxH+'" fill="transparent"/>');
     }
     var legend='<span><span style="color:#C9A84C;">▰</span> '+esc(cfg.label)+'</span>';
     if(isVol) legend+='<span><span style="color:#C9A84C;opacity:.45;">▰</span> Potential</span>';
-    return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="120" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible;">'+parts.join('')+'</svg>'
+    return caption
+      +'<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="128" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible;">'+parts.join('')+'</svg>'
       +'<div style="display:flex;gap:14px;margin-top:8px;font-size:10px;color:var(--muted);">'+legend+'</div>';
+  }
+
+  function monthShortYr(ym){
+    if(!ym) return '';
+    var p=String(ym).split('-'), mi=parseInt(p[1],10)-1;
+    var names=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return ((mi>=0&&mi<12)?names[mi]:'')+" '"+String(p[0]||'').slice(2);
+  }
+  // Cumulative timeline rail (styled like the intelligence tiles)
+  function renderTimeline(monthly){
+    monthly=monthly||[];
+    if(!monthly.length) return '<div class="empty">No deal history yet.</div>';
+    var cfg=currentMetric(), key=cfg.key, money=cfg.money;
+    var caption='<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">'+esc(cfg.label)+' by month, running total — '+(money?'$':'count')+'</div>';
+    var n=monthly.length, cum=0, tiles=[];
+    for(var i=0;i<n;i++){
+      var m=monthly[i], val=Number(m[key])||0; cum+=val;
+      var isLast=(i===n-1);
+      var dotColor=val>0?'var(--gold)':'rgba(255,255,255,0.22)';
+      tiles.push('<div style="position:relative;display:flex;flex-direction:column;align-items:center;flex:0 0 auto;width:108px;">'
+        +'<div style="width:11px;height:11px;border-radius:50%;background:'+dotColor+';border:2px solid var(--bg);margin-bottom:8px;position:relative;z-index:1;"></div>'
+        +'<div class="tile" style="width:100%;'+(isLast?'border-color:var(--gold);box-shadow:0 0 0 1px var(--gold-bdr);':'')+'">'
+          +'<div class="tile-sub" style="margin-top:0;margin-bottom:3px;">'+esc(monthShortYr(m.ym))+'</div>'
+          +'<div class="tile-num" style="color:'+(val>0?'var(--gold)':'var(--muted)')+';">'+esc(chartFmt(val,money))+'</div>'
+          +'<div class="tile-sub">cum: '+esc(chartFmt(cum,money))+'</div>'
+        +'</div>'
+      +'</div>');
+    }
+    return caption
+      +'<div id="timelineRail" style="overflow-x:auto;padding-bottom:6px;">'
+        +'<div style="position:relative;display:inline-flex;gap:8px;padding:14px 4px 4px;min-width:100%;">'
+          +'<div style="position:absolute;left:58px;right:58px;top:19px;height:2px;background:rgba(201,168,76,0.25);"></div>'
+          +tiles.join('')
+        +'</div>'
+      +'</div>';
   }
   function wireChartHover(monthly){
     var tip=document.getElementById('chartTip');
