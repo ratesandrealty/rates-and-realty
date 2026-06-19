@@ -36,6 +36,8 @@
     .q-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;align-items:center;}
     .q-dispo{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:14px;font-size:10px;font-weight:600;cursor:pointer;padding:3px 9px;font-family:inherit;}
     .q-dispo:hover{border-color:var(--gold-bdr);color:var(--gold);}
+    .q-note-text{font-size:11.5px;color:var(--text2);cursor:pointer;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;}
+    .q-note-text.expanded{-webkit-line-clamp:unset;overflow:visible;}
     @media(max-width:1080px){
       .workspace{grid-template-columns:1fr;}
       .col-right{position:static;max-height:none;overflow:visible;}
@@ -230,7 +232,7 @@
   /* ── state ── */
   var partnerId = new URLSearchParams(location.search).get('partner_id');
   var _partner=null, _activity=[], _overview=null, _monthly=[];
-  var _leads=[], _queueSort='stale', _loggedToday=0;
+  var _leads=[], _queueSort='stale', _loggedToday=0, _notesCache={};
   var _chartMetric='referrals', _chartWindow=12, _chartView='bars', _goal=null;
   var CHART_METRICS=[
     {key:'referrals', label:'Leads',     money:false},
@@ -734,9 +736,12 @@
   function queueOpenForm(qid, type){
     var box=document.getElementById('qform-'+qid); if(!box) return;
     if(box.getAttribute('data-open')===type){ box.innerHTML=''; box.removeAttribute('data-open'); return; } // toggle off
+    var lead=findLead(qid);
     var needsDir=(type==='call'||type==='sms'), needsMins=(type==='call');
     var dispo=['No answer','Left VM','Connected','Not interested','Callback'];
     var html='<div class="q-formwrap" data-type="'+type+'" data-dir="outbound" style="margin-top:9px;padding-top:9px;border-top:1px solid var(--border);">';
+    // Recent notes for context (lazily fetched + cached)
+    html+='<div class="q-notes" id="qnotes-'+qid+'" style="margin-bottom:9px;"><div class="muted" style="font-size:10px;">Loading notes…</div></div>';
     if(needsDir){
       html+='<div class="seg" style="margin-bottom:8px;">'
         +'<button type="button" data-d="inbound" onclick="queueDir(this)">Inbound</button>'
@@ -758,6 +763,44 @@
     box.innerHTML=html;
     box.setAttribute('data-open', type);
     var ta=box.querySelector('.q-note'); if(ta) ta.focus();
+    loadQueueNotes(qid, lead && lead.contact_id);
+  }
+
+  /* ── recent notes for a queue card ── */
+  function prettySource(s){
+    s=String(s||'').trim().replace(/^call_console:/,'');
+    var low=s.toLowerCase();
+    var special={ 'sms':'SMS', 'sms_ocr':'SMS OCR', 'call':'Call', 'note':'Note', 'email':'Email', 'manual':'Manual' };
+    if(special[low]) return special[low];
+    return s.replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().replace(/\b\w/g,function(c){ return c.toUpperCase(); }) || '—';
+  }
+  function _currentAuthorName(){
+    var u=window._adminUser||{};
+    return (u.user_metadata && u.user_metadata.full_name) || u.email || 'You';
+  }
+  function renderNotesHTML(rows){
+    rows=rows||[];
+    var head='<div class="card-h" style="margin-bottom:6px;">Recent notes</div>';
+    if(!rows.length) return head+'<div class="muted" style="font-size:11px;">No notes yet for this lead.</div>';
+    var items=rows.map(function(nt){
+      var meta=esc(prettySource(nt.source))+' · '+esc(nt.author_display||'—')+' · '+esc(timeAgo(nt.created_at));
+      return '<div style="padding:5px 0;border-top:1px solid var(--border2);">'
+        +'<div class="q-note-text" onclick="this.classList.toggle(\'expanded\')" title="Click to expand">'+esc(nt.note_text||'')+'</div>'
+        +'<div class="muted" style="font-size:9.5px;margin-top:2px;">'+meta+'</div>'
+      +'</div>';
+    }).join('');
+    return head+'<div style="max-height:140px;overflow-y:auto;">'+items+'</div>';
+  }
+  async function loadQueueNotes(qid, contactId){
+    var box=document.getElementById('qnotes-'+qid); if(!box) return;
+    if(!contactId){ box.innerHTML=renderNotesHTML([]); return; }
+    if(_notesCache[contactId]){ box.innerHTML=renderNotesHTML(_notesCache[contactId]); return; } // instant on reopen
+    try{
+      var r=await _authClient().rpc('contact_recent_notes',{p_contact_id:contactId,p_limit:5});
+      var rows=(r&&!r.error&&r.data)?r.data:[];
+      if(!_notesCache[contactId]) _notesCache[contactId]=rows; // don't clobber a note saved while in flight
+      var b2=document.getElementById('qnotes-'+qid); if(b2) b2.innerHTML=renderNotesHTML(_notesCache[contactId]);
+    }catch(e){ var b3=document.getElementById('qnotes-'+qid); if(b3) b3.innerHTML=renderNotesHTML(_notesCache[contactId]||[]); }
   }
   function queueCloseForm(qid){ var box=document.getElementById('qform-'+qid); if(box){ box.innerHTML=''; box.removeAttribute('data-open'); } }
   function queueDir(btn){
@@ -803,6 +846,12 @@
       lead._done=true;
       _loggedToday++;
       var cnt=document.getElementById('queueLogged'); if(cnt) cnt.textContent=_loggedToday;
+      // Reflect the just-logged note at the top of this lead's cached notes.
+      if(note){
+        if(!_notesCache[lead.contact_id]) _notesCache[lead.contact_id]=[];
+        _notesCache[lead.contact_id].unshift({ id:'local-'+new Date().getTime(), note_text:note, author_display:_currentAuthorName(), source:type, created_at:new Date().toISOString() });
+        var nb=document.getElementById('qnotes-'+qid); if(nb) nb.innerHTML=renderNotesHTML(_notesCache[lead.contact_id]);
+      }
       queueCloseForm(qid);
       markCardDone(qid);
       showToast('Logged');
