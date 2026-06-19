@@ -513,6 +513,13 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
         <label class="apm-label">Notes</label>
         <textarea id="nf_notes" class="apm-input" rows="3" placeholder="Add any notes..." style="resize:vertical;min-height:70px;"></textarea>
       </div>
+
+      <!-- Connected people (co-borrowers, family, etc.) -->
+      <div style="margin-bottom:20px;">
+        <label class="apm-label">Connected People</label>
+        <div id="apm-connected-list"></div>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="apmAddConnected()" style="margin-top:4px;">+ Add another person</button>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeNewModal()">Cancel</button>
@@ -1490,6 +1497,7 @@ function closeNewModal() {
   var srch = document.getElementById('nf_referral_search'); if (srch) srch.style.display = 'block';
   var ab = document.getElementById('apm-address-block'); if (ab) ab.style.display = 'none';
   var at = document.getElementById('apm-addr-toggle'); if (at) at.textContent = '+ Add address';
+  var cl = document.getElementById('apm-connected-list'); if (cl) cl.innerHTML = '';
 }
 
 function apmToggleAddress() {
@@ -1498,6 +1506,108 @@ function apmToggleAddress() {
   var isOpen = block.style.display !== 'none';
   block.style.display = isOpen ? 'none' : 'block';
   toggle.textContent = isOpen ? '+ Add address' : '− Hide';
+  if (!isOpen) apmInitAddressAutocomplete(); // attach Google Places when revealed
+}
+
+/* ====== CONNECTED PEOPLE (repeater) ====== */
+function apmAddConnected() {
+  var list = document.getElementById('apm-connected-list');
+  if (!list) return;
+  var row = document.createElement('div');
+  row.className = 'apm-connected-row';
+  row.style.cssText = 'border:1px solid #2a2a2a;border-radius:8px;padding:10px;margin-bottom:8px;background:#0d0d0d;';
+  row.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+      + '<span style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.6px;">Connected person</span>'
+      + '<button type="button" onclick="this.closest(\'.apm-connected-row\').remove()" title="Remove" style="background:transparent;border:none;color:#888;cursor:pointer;font-size:15px;line-height:1;">&times;</button>'
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
+      + '<input type="text" class="apm-input cp-first" placeholder="First name">'
+      + '<input type="text" class="apm-input cp-last" placeholder="Last name">'
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
+      + '<input type="email" class="apm-input cp-email" placeholder="Email">'
+      + '<input type="tel" class="apm-input cp-phone" placeholder="Phone">'
+    + '</div>'
+    + '<select class="apm-input cp-rel">'
+      + '<option value="Co-borrower">Co-borrower</option>'
+      + '<option value="Spouse">Spouse</option>'
+      + '<option value="Partner">Partner</option>'
+      + '<option value="Parent">Parent</option>'
+      + '<option value="Child">Child</option>'
+      + '<option value="Sibling">Sibling</option>'
+      + '<option value="Other family">Other family</option>'
+      + '<option value="Business partner">Business partner</option>'
+      + '<option value="Other">Other</option>'
+    + '</select>';
+  list.appendChild(row);
+}
+
+function _apmNormalizeRel(t) { return String(t || '').trim().toLowerCase().replace(/[\s-]+/g, '_'); }
+function _apmReciprocalRel(t) {
+  var n = _apmNormalizeRel(t);
+  if (n === 'parent') return 'child';
+  if (n === 'child') return 'parent';
+  return n;
+}
+
+/* ====== GOOGLE PLACES ADDRESS AUTOCOMPLETE ====== */
+var _apmPlacesLoading = null;   // promise guard so the script loads exactly once
+var _apmAutocompleteBound = false;
+
+function _apmGoogleKey() {
+  var cfg = window.APP_CONFIG || {};
+  return cfg.GOOGLE_MAPS_API_KEY || cfg.GOOGLE_PLACES_API_KEY || '';
+}
+
+function _apmLoadPlaces() {
+  if (window.google && window.google.maps && window.google.maps.places) return Promise.resolve();
+  if (_apmPlacesLoading) return _apmPlacesLoading;
+  var key = _apmGoogleKey();
+  if (!key) return Promise.reject(new Error('no key'));
+  _apmPlacesLoading = new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&libraries=places';
+    s.async = true; s.defer = true;
+    s.onload = function() { resolve(); };
+    s.onerror = function() { reject(new Error('places load failed')); };
+    document.head.appendChild(s);
+  });
+  return _apmPlacesLoading;
+}
+
+function apmInitAddressAutocomplete() {
+  if (_apmAutocompleteBound) return;        // attach only once
+  if (!_apmGoogleKey()) return;             // no key → stays a normal text input
+  var input = document.getElementById('nf_street');
+  if (!input) return;
+  _apmLoadPlaces().then(function() {
+    if (_apmAutocompleteBound) return;
+    var ac = new google.maps.places.Autocomplete(input, {
+      types: ['address'],
+      componentRestrictions: { country: 'us' },
+      fields: ['address_components']
+    });
+    ac.addListener('place_changed', function() {
+      var place = ac.getPlace();
+      var comps = (place && place.address_components) || [];
+      var get = function(type, useShort) {
+        var c = comps.find(function(x) { return x.types.indexOf(type) !== -1; });
+        return c ? (useShort ? c.short_name : c.long_name) : '';
+      };
+      var streetNo = get('street_number');
+      var route = get('route');
+      var city = get('locality') || get('sublocality') || get('postal_town');
+      var state = get('administrative_area_level_1', true);
+      var zip = get('postal_code');
+      var addr = (streetNo + ' ' + route).trim();
+      if (addr) input.value = addr;
+      var cityEl = document.getElementById('nf_city'); if (cityEl && city) cityEl.value = city;
+      var stEl = document.getElementById('nf_state'); if (stEl && state) stEl.value = state;
+      var zipEl = document.getElementById('nf_zip'); if (zipEl && zip) zipEl.value = zip;
+    });
+    _apmAutocompleteBound = true;
+  }).catch(function() { /* key missing or load failed → leave as plain input */ });
 }
 function apmToggleTag(tag, btn) {
   var idx = _apmTags.indexOf(tag);
@@ -1581,9 +1691,48 @@ async function savePerson() {
         await _authClient().from('contact_notes').insert({ contact_id: newId, note_text: noteVal, source: 'manual', author_user_id: (u && u.id) || null, author_display: (u && (u.user_metadata && u.user_metadata.full_name)) || (u && u.email) || 'CRM' });
       } catch (e) { /* non-fatal: contacts.notes still has it */ }
     }
+
+    // Connected people (co-borrowers / family) — create each contact and link both ways
+    var connectedCount = 0;
+    if (newId) {
+      var rows = Array.prototype.slice.call(document.querySelectorAll('#apm-connected-list .apm-connected-row'));
+      for (var ci = 0; ci < rows.length; ci++) {
+        var row = rows[ci];
+        var cFirst = (row.querySelector('.cp-first').value || '').trim();
+        if (!cFirst) continue; // skip rows without at least a first name
+        var relLabel = row.querySelector('.cp-rel').value;
+        try {
+          var cobPayload = {
+            first_name: cFirst,
+            last_name: (row.querySelector('.cp-last').value || '').trim() || null,
+            email: (row.querySelector('.cp-email').value || '').trim() || null,
+            phone: (row.querySelector('.cp-phone').value || '').trim() || null,
+            source: payload.source || null,
+            pipeline_status: 'New Lead',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+          Object.keys(cobPayload).forEach(function(k) { if (cobPayload[k] === null) delete cobPayload[k]; });
+          var cr = await _authClient().from('contacts').insert(cobPayload).select().single();
+          if (cr.error || !cr.data) throw new Error((cr.error && cr.error.message) || 'insert failed');
+          var cobId = cr.data.id;
+          var fwd = _apmNormalizeRel(relLabel);
+          var rev = _apmReciprocalRel(relLabel);
+          await _authClient().from('contact_relationships').insert({ contact_id: newId, related_contact_id: cobId, relationship_type: fwd, is_primary: false });
+          await _authClient().from('contact_relationships').insert({ contact_id: cobId, related_contact_id: newId, relationship_type: rev, is_primary: false });
+          if (fwd === 'co_borrower') {
+            await _authClient().from('contacts').update({ is_co_borrower: true, primary_borrower_contact_id: newId }).eq('id', cobId);
+          }
+          connectedCount++;
+        } catch (e) {
+          showToast('Could not add connected person: ' + cFirst);
+        }
+      }
+    }
+
     closeNewModal();
     await loadPeople();
-    showToast('Person added!');
+    showToast('Person added' + (connectedCount ? (' with ' + connectedCount + ' connected') : ''));
   } else {
     var errText = (r.error && r.error.message) || '';
     showToast('Failed to add: ' + (errText || 'check fields'));

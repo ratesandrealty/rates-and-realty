@@ -149,6 +149,7 @@ export default {
       const config = {
         SUPABASE_URL: env.SUPABASE_URL || '',
         SUPABASE_ANON_KEY: env.SUPABASE_ANON_KEY || '',
+        GOOGLE_MAPS_API_KEY: env.GOOGLE_MAPS_API_KEY || '',
         ADMIN_EMAILS: adminEmails,
         ADMIN_USER_IDS: []
       };
