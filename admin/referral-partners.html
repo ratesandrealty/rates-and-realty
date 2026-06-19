@@ -110,6 +110,13 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <a href="settings.html" style="color:var(--muted);text-decoration:none;font-size:12px;margin-right:4px;">⚙ Settings</a>
   <h1>🤝 Referral Partners</h1>
   <div class="topbar-right">
+    <select id="sortSelect" onchange="setSort(this.value)" title="Sort partners" style="background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:8px;font-size:12px;font-family:inherit;padding:6px 9px;cursor:pointer;outline:none;">
+      <option value="volume">Sort: Top Volume</option>
+      <option value="earnings">Sort: Top Earnings</option>
+      <option value="referrals">Sort: Most Referrals</option>
+      <option value="recent">Sort: Recently Active</option>
+      <option value="name">Sort: Name A–Z</option>
+    </select>
     <button class="btn btn-ghost btn-sm" onclick="exportCSV()">📥 Export</button>
     <button class="btn btn-gold" onclick="openAddModal()">+ Add Partner</button>
   </div>
@@ -121,6 +128,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <div class="stat-card"><div class="stat-num" id="statReferrals">—</div><div class="stat-lbl">Total Referrals</div></div>
   <div class="stat-card"><div class="stat-num" id="statClosed">—</div><div class="stat-lbl">Deals Closed</div></div>
   <div class="stat-card"><div class="stat-num" id="statVolume">—</div><div class="stat-lbl">Total Volume</div></div>
+  <div class="stat-card"><div class="stat-num" id="statEarnings" style="color:var(--gold)">—</div><div class="stat-lbl">Total Earnings</div></div>
 </div>
 
 <div class="filter-bar">
@@ -204,7 +212,26 @@ const KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
 const H = () => ({ apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', Prefer: 'return=representation' });
 
 let _partners = [], _filtered = [], _editId = null;
-let _typeFilter = 'all', _statusFilter = 'all';
+let _typeFilter = 'all', _statusFilter = 'all', _sort = 'volume';
+
+// Authenticated Supabase client (set up by auth-guard.js) — needed for the RPC.
+function _authClient() { return window._supabaseClient; }
+async function waitClient(ms) { ms = ms || 7000; const s = Date.now(); while (!window._supabaseClient && Date.now() - s < ms) { await new Promise(r => setTimeout(r, 40)); } return window._supabaseClient; }
+
+// Money: <$1K plain w/ commas, >=1K $X.XK, >=1M $X.XM.
+function fmtMoney(n) {
+  n = Number(n) || 0; const a = Math.abs(n);
+  if (a >= 1e6) return '$' + (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (a >= 1e3) return '$' + (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+  return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+// Normalize tags (array or JSON/comma string) to an array.
+function tagList(t) {
+  if (Array.isArray(t)) return t;
+  if (typeof t === 'string' && t.trim()) { try { const j = JSON.parse(t); return Array.isArray(j) ? j : [t]; } catch (e) { return t.split(',').map(s => s.trim()).filter(Boolean); } }
+  return [];
+}
+function isVip(p) { return /vip/i.test(p.status || '') || tagList(p.tags).some(t => /vip/i.test(String(t))); }
 
 const AV_BG = ['#c9a84c25','#50c87825','#60a0ff25','#c084f025','#fb923c25','#f8717125'];
 const AV_FG = ['#c9a84c','#50c878','#60a0ff','#c084f0','#fb923c','#f87171'];
@@ -215,74 +242,105 @@ function fmt$(n) { if(!n) return '$0'; if(n >= 1000000) return '$'+(n/1000000).t
 function getTimeAgo(d) { const diff = Math.floor((Date.now()-new Date(d))/86400000); return diff===0?'Today':diff===1?'Yesterday':diff<7?diff+'d ago':Math.floor(diff/7)+'w ago'; }
 
 async function loadPartners() {
-  const [pRes, rRes] = await Promise.all([
-    fetch(`${SB}/rest/v1/referral_partners?order=created_at.desc`, { headers: H() }),
-    fetch(`${SB}/rest/v1/contacts?select=id,first_name,last_name,referral_partner_id&not.referral_partner_id.is.null`, { headers: H() })
-  ]);
-  _partners = await pRes.json();
-  const referrals = await rRes.json();
-  const refCount = {};
-  referrals.forEach(r => { refCount[r.referral_partner_id] = (refCount[r.referral_partner_id] || 0) + 1; });
-  _partners.forEach(p => { p._referral_count = refCount[p.id] || p.total_referrals || 0; });
-
-  // Load won/lost counts per partner
+  const grid = document.getElementById('partnersGrid');
   try {
-    const wlRes = await fetch(`${SB}/rest/v1/leads?select=deal_outcome,contacts(referral_partner_id)&not.deal_outcome.is.null`, { headers: H() });
-    const wlData = await wlRes.json();
-    const wonCount = {}, lostCount = {};
-    wlData.forEach(l => { const pid = l.contacts?.referral_partner_id; if (!pid) return; if (l.deal_outcome === 'won') wonCount[pid] = (wonCount[pid]||0)+1; if (l.deal_outcome === 'lost') lostCount[pid] = (lostCount[pid]||0)+1; });
-    _partners.forEach(p => { p._won_count = wonCount[p.id]||0; p._lost_count = lostCount[p.id]||0; });
-  } catch(e) { _partners.forEach(p => { p._won_count = 0; p._lost_count = 0; }); }
-
-  updateStats();
-  filterPartners();
+    await waitClient();
+    if (!_authClient()) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="icon">🔒</div><div>Not signed in.</div></div>`; return; }
+    // Live stats per partner — fixes the stale referral_partners.total_* zero columns.
+    const { data, error } = await _authClient().rpc('partners_overview_all');
+    if (error) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="icon">⚠️</div><div>Could not load partners.</div></div>`; return; }
+    _partners = data || [];
+    updateStats();
+    filterPartners();
+  } catch (e) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="icon">⚠️</div><div>Could not load partners.</div></div>`;
+  }
 }
 
 function updateStats() {
+  const sum = (k) => _partners.reduce((s, p) => s + (Number(p[k]) || 0), 0);
   document.getElementById('statTotal').textContent = _partners.length;
-  document.getElementById('statVIP').textContent = _partners.filter(p => p.status === 'VIP').length;
-  document.getElementById('statReferrals').textContent = _partners.reduce((s,p) => s + (p._referral_count||0), 0);
-  document.getElementById('statClosed').textContent = _partners.reduce((s,p) => s + (p.total_closed||0), 0);
-  document.getElementById('statVolume').textContent = fmt$(_partners.reduce((s,p) => s + (p.total_volume||0), 0));
+  document.getElementById('statVIP').textContent = _partners.filter(isVip).length;
+  document.getElementById('statReferrals').textContent = sum('referrals');
+  document.getElementById('statClosed').textContent = sum('won');
+  document.getElementById('statVolume').textContent = fmtMoney(sum('volume'));
+  document.getElementById('statEarnings').textContent = fmtMoney(sum('earnings'));
 }
 
 function setTypeFilter(type, el) { _typeFilter = type; document.querySelectorAll('[id^="ft-"]').forEach(e => e.classList.remove('active')); el.classList.add('active'); filterPartners(); }
 function setStatusFilter(status, el) { _statusFilter = _statusFilter === status ? 'all' : status; document.querySelectorAll('[id^="fs-"]').forEach(e => e.classList.remove('active')); if (_statusFilter !== 'all') el.classList.add('active'); filterPartners(); }
 
+function setSort(v) { _sort = v || 'volume'; sortFiltered(); renderGrid(); }
+
+function sortFiltered() {
+  const num = (p, k) => Number(p[k]) || 0;
+  const ts = (p) => p.last_activity_at ? new Date(p.last_activity_at).getTime() : -Infinity; // nulls last
+  const nm = (p) => `${p.first_name || ''} ${p.last_name || ''}`.trim().toLowerCase();
+  _filtered.sort((a, b) => {
+    switch (_sort) {
+      case 'earnings':  return num(b, 'earnings') - num(a, 'earnings');
+      case 'referrals': return num(b, 'referrals') - num(a, 'referrals');
+      case 'recent':    return ts(b) - ts(a);
+      case 'name':      return nm(a).localeCompare(nm(b));
+      default:          return num(b, 'volume') - num(a, 'volume'); // Top Volume
+    }
+  });
+}
+
 function filterPartners() {
   const q = document.getElementById('searchInput').value.toLowerCase();
   _filtered = _partners.filter(p => {
-    if (_typeFilter !== 'all' && p.source_type !== _typeFilter) return false;
-    if (_statusFilter !== 'all' && p.status !== _statusFilter) return false;
+    if (_typeFilter !== 'all') {
+      const hay = `${p.source_type || ''} ${p.title || ''}`.toLowerCase();
+      if (!hay.includes(_typeFilter.toLowerCase())) return false;
+    }
+    if (_statusFilter === 'VIP' && !isVip(p)) return false;
+    if (_statusFilter === 'Active' && !/active/i.test(p.status || '')) return false;
     if (q) { const hay = `${p.first_name} ${p.last_name} ${p.company} ${p.email} ${p.phone}`.toLowerCase(); if (!hay.includes(q)) return false; }
     return true;
   });
+  sortFiltered();
   renderGrid();
 }
 
 function renderGrid() {
   const grid = document.getElementById('partnersGrid');
   if (!_filtered.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="icon">🤝</div><div style="font-size:15px;font-weight:700;margin-bottom:6px">No referral partners yet</div><div style="font-size:13px;margin-bottom:16px">Add your first referral partner to start tracking</div><button class="btn btn-gold" onclick="openAddModal()">+ Add Partner</button></div>`; return; }
+  // Rank medals: only when sorting by Volume/Earnings, top 3 partners with volume>0.
+  const medalFor = {};
+  if (_sort === 'volume' || _sort === 'earnings') {
+    const medals = ['🥇', '🥈', '🥉']; let mi = 0;
+    for (const p of _filtered) { if (mi >= 3) break; if ((Number(p.volume) || 0) > 0) medalFor[p.id] = medals[mi++]; }
+  }
   grid.innerHTML = _filtered.map(p => {
     const av = avStyle(p.first_name); const init = initials(p.first_name, p.last_name);
     const name = `${p.first_name||''} ${p.last_name||''}`.trim();
-    const badgeClass = p.status === 'VIP' ? 'badge-vip' : p.status === 'Inactive' ? 'badge-inactive' : 'badge-active';
+    const badgeClass = isVip(p) ? 'badge-vip' : p.status === 'Inactive' ? 'badge-inactive' : 'badge-active';
+    const medal = medalFor[p.id] ? `<span style="margin-right:4px;flex-shrink:0;">${medalFor[p.id]}</span>` : '';
+    // Follow-up dot: green if contacted within 14d, amber if older/never.
+    let dotColor = '#E5984D', dotTitle = 'No contact logged';
+    if (p.last_activity_at) {
+      const days = Math.floor((Date.now() - new Date(p.last_activity_at)) / 86400000);
+      dotColor = days <= 14 ? 'var(--green)' : '#E5984D';
+      dotTitle = 'Last contact: ' + getTimeAgo(p.last_activity_at);
+    }
+    const dot = `<span title="${dotTitle}" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};margin-left:6px;flex-shrink:0;"></span>`;
     return `<div class="partner-card" onclick="goPartnerDetail('${p.id}')">
       <div class="pc-header">
         <div class="pc-av" style="background:${av.bg};color:${av.fg}">${init}</div>
-        <div style="flex:1;min-width:0"><div class="pc-name">${name}</div><div class="pc-title">${p.title||p.source_type||''} ${p.company ? '· '+p.company : ''}</div></div>
-        <span class="pc-badge ${badgeClass}">${p.status === 'VIP' ? '⭐ VIP' : p.status}</span>
+        <div style="flex:1;min-width:0"><div class="pc-name" style="display:flex;align-items:center;min-width:0">${medal}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>${dot}</div><div class="pc-title">${p.title||p.source_type||''} ${p.company ? '· '+p.company : ''}</div></div>
+        <span class="pc-badge ${badgeClass}">${isVip(p) ? '⭐ VIP' : (p.status||'Active')}</span>
       </div>
       <div class="pc-body">
         <span class="type-pill type-${typeClass(p.source_type||'Other')}">${p.source_type||'Other'}</span>
         ${p.email ? `<div class="pc-info-row" style="margin-top:10px"><span class="icon">✉️</span>${p.email}</div>` : ''}
         ${p.phone ? `<div class="pc-info-row"><span class="icon">📞</span>${p.phone}</div>` : ''}
-        ${p.notes ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4">${p.notes.substring(0,80)}${p.notes.length>80?'…':''}</div>` : ''}
-        <div class="pc-stats" style="grid-template-columns:repeat(4,1fr)">
-          <div class="pc-stat"><div class="pc-stat-num">${p._referral_count||0}</div><div class="pc-stat-lbl">Referrals</div></div>
-          <div class="pc-stat"><div class="pc-stat-num" style="color:var(--green)">${p._won_count||0}</div><div class="pc-stat-lbl">Won</div></div>
-          <div class="pc-stat"><div class="pc-stat-num" style="color:var(--red)">${p._lost_count||0}</div><div class="pc-stat-lbl">Lost</div></div>
-          <div class="pc-stat"><div class="pc-stat-num">${fmt$(p.total_volume||0)}</div><div class="pc-stat-lbl">Volume</div></div>
+        <div class="pc-stats" style="grid-template-columns:repeat(5,1fr)">
+          <div class="pc-stat"><div class="pc-stat-num">${Number(p.referrals)||0}</div><div class="pc-stat-lbl">Referrals</div></div>
+          <div class="pc-stat"><div class="pc-stat-num" style="color:var(--green)">${Number(p.won)||0}</div><div class="pc-stat-lbl">Won</div></div>
+          <div class="pc-stat"><div class="pc-stat-num" style="color:var(--red)">${Number(p.lost)||0}</div><div class="pc-stat-lbl">Lost</div></div>
+          <div class="pc-stat"><div class="pc-stat-num">${fmtMoney(p.volume||0)}</div><div class="pc-stat-lbl">Volume</div></div>
+          <div class="pc-stat"><div class="pc-stat-num" style="color:var(--gold)">${fmtMoney(p.earnings||0)}</div><div class="pc-stat-lbl">Earnings</div></div>
         </div>
       </div>
       <div class="pc-actions">
@@ -374,7 +432,9 @@ function viewAllReferrals(partnerId, partnerName) {
 function openAddModal() { _editId = null; document.getElementById('modalTitle').textContent = '🤝 Add Referral Partner'; document.getElementById('savePartnerBtn').textContent = 'Add Partner'; ['pf_first','pf_last','pf_company','pf_title','pf_email','pf_phone','pf_notes'].forEach(id => document.getElementById(id).value = ''); document.getElementById('pf_type').value = 'Realtor'; document.getElementById('pf_status').value = 'Active'; document.getElementById('addModal').classList.add('open'); setTimeout(() => document.getElementById('pf_first').focus(), 50); }
 function closeAddModal() { document.getElementById('addModal').classList.remove('open'); }
 
-function editPartner(id) { const p = _partners.find(x => x.id === id); if (!p) return; _editId = id; document.getElementById('modalTitle').textContent = '✏️ Edit Partner'; document.getElementById('savePartnerBtn').textContent = 'Save Changes'; document.getElementById('pf_first').value = p.first_name || ''; document.getElementById('pf_last').value = p.last_name || ''; document.getElementById('pf_company').value = p.company || ''; document.getElementById('pf_title').value = p.title || ''; document.getElementById('pf_email').value = p.email || ''; document.getElementById('pf_phone').value = p.phone || ''; document.getElementById('pf_type').value = p.source_type || 'Realtor'; document.getElementById('pf_status').value = p.status || 'Active'; document.getElementById('pf_notes').value = p.notes || ''; document.getElementById('addModal').classList.add('open'); }
+async function editPartner(id) { const p = _partners.find(x => x.id === id); if (!p) return; _editId = id; document.getElementById('modalTitle').textContent = '✏️ Edit Partner'; document.getElementById('savePartnerBtn').textContent = 'Save Changes'; document.getElementById('pf_first').value = p.first_name || ''; document.getElementById('pf_last').value = p.last_name || ''; document.getElementById('pf_company').value = p.company || ''; document.getElementById('pf_title').value = p.title || ''; document.getElementById('pf_email').value = p.email || ''; document.getElementById('pf_phone').value = p.phone || ''; document.getElementById('pf_type').value = p.source_type || 'Realtor'; document.getElementById('pf_status').value = p.status || 'Active'; document.getElementById('pf_notes').value = ''; document.getElementById('addModal').classList.add('open');
+  // notes isn't part of the overview RPC — load it so a save doesn't blank it out.
+  try { const r = await fetch(`${SB}/rest/v1/referral_partners?id=eq.${id}&select=notes`, { headers: H() }); const rows = await r.json(); if (rows && rows[0]) document.getElementById('pf_notes').value = rows[0].notes || ''; } catch (e) {} }
 
 async function savePartner() {
   const first = document.getElementById('pf_first').value.trim(); if (!first) { showToast('First name required'); return; }
@@ -387,8 +447,8 @@ async function savePartner() {
 async function deletePartner(id) { await fetch(`${SB}/rest/v1/referral_partners?id=eq.${id}`, { method: 'DELETE', headers: H() }); closeDetail(); await loadPartners(); showToast('Partner deleted'); }
 
 function exportCSV() {
-  const rows = [['Name','Company','Title','Type','Email','Phone','Status','Referrals','Closed','Volume']];
-  _partners.forEach(p => rows.push([`${p.first_name||''} ${p.last_name||''}`.trim(), p.company||'', p.title||'', p.source_type||'', p.email||'', p.phone||'', p.status||'', p._referral_count||0, p.total_closed||0, p.total_volume||0]));
+  const rows = [['Name','Company','Title','Type','Email','Phone','Status','Referrals','Won','Lost','Volume','Earnings']];
+  _partners.forEach(p => rows.push([`${p.first_name||''} ${p.last_name||''}`.trim(), p.company||'', p.title||'', p.source_type||'', p.email||'', p.phone||'', p.status||'', Number(p.referrals)||0, Number(p.won)||0, Number(p.lost)||0, Number(p.volume)||0, Number(p.earnings)||0]));
   const csv = rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download = 'referral-partners.csv'; a.click();
 }
