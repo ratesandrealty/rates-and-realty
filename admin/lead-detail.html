@@ -9595,6 +9595,190 @@ async function _esignTemplatePreview(){
 ══════════════════════════════════════════════ */
 window._esignUploadedDoc = window._esignUploadedDoc || null;
 
+/* ── Field-placement editor state (custom-doc step 2) ── */
+var _esignTool = null; // armed field type, or null
+var _ESIGN_FIELD_TYPES = {
+  signature: { label:'Signature', w:160, h:44 },
+  initials:  { label:'Initials',  w:72,  h:44 },
+  date:      { label:'Date',      w:120, h:32 },
+  name:      { label:'Name',      w:170, h:32 },
+  ssn:       { label:'SSN',       w:90,  h:32 }
+};
+var _ESIGN_PALETTE = [['signature','Signature'],['initials','Initials'],['date','Date'],['name','Name'],['ssn','SSN']];
+var _ESIGN_SIGNER_COLORS = ['#C9A84C','#4C9AC9','#7FB069','#C97FA8','#9A7FC9','#C98A4C'];
+
+function _esignSignerColor(idx){
+  if(!idx || idx<1 || idx>_esignSigners.length) return '#888'; // neutral gray for unknown signer
+  return _ESIGN_SIGNER_COLORS[(idx-1)%_ESIGN_SIGNER_COLORS.length];
+}
+function _esignSignerFirstName(idx){
+  var s=_esignSigners[idx-1];
+  var n=(s&&s.name)||'Signer';
+  return n.split(' ')[0];
+}
+
+var _ESIGN_PALETTE_BASE='border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;padding:5px 10px;font-family:inherit;';
+function _esignPaletteStyle(active){
+  return _ESIGN_PALETTE_BASE + (active
+    ? 'background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;border:1px solid transparent;'
+    : 'background:transparent;color:#C9A84C;border:1px solid rgba(201,168,76,0.3);');
+}
+function _esignUpdatePaletteHighlight(){
+  var btns=document.querySelectorAll('#esignDocToolbar .esign-palette-btn');
+  for(var i=0;i<btns.length;i++){
+    if(btns[i].disabled) continue;
+    btns[i].setAttribute('style', _esignPaletteStyle(btns[i].getAttribute('data-type')===_esignTool));
+  }
+}
+function _esignSetPageCursor(cur){
+  var wraps=document.querySelectorAll('#esignDocPages .esign-page-wrap');
+  for(var i=0;i<wraps.length;i++) wraps[i].style.cursor=cur||'';
+}
+function _esignArmTool(type, btn){
+  if(!_esignSigners.length) return; // palette disabled without signers
+  if(_esignTool===type){ _esignDisarmTool(); return; }
+  _esignTool=type;
+  _esignUpdatePaletteHighlight();
+  _esignSetPageCursor('crosshair');
+  var hint=document.getElementById('esignToolHint');
+  var lab=(_ESIGN_FIELD_TYPES[type]&&_ESIGN_FIELD_TYPES[type].label.toLowerCase())||type;
+  if(hint) hint.textContent='Click on the document to place a '+lab;
+}
+function _esignDisarmTool(){
+  _esignTool=null;
+  _esignUpdatePaletteHighlight();
+  _esignSetPageCursor('');
+  var hint=document.getElementById('esignToolHint'); if(hint) hint.textContent='';
+}
+function _esignUpdateSignerDot(){
+  var sel=document.getElementById('esignFieldSigner'), dot=document.getElementById('esignSignerDot');
+  if(!sel||!dot) return;
+  dot.style.background=_esignSignerColor(Number(sel.value)||1);
+}
+
+function _esignSelectField(box){
+  var all=document.querySelectorAll('#esignDocPages .esign-field');
+  for(var i=0;i<all.length;i++){ all[i].style.zIndex='2'; all[i].style.boxShadow='none'; }
+  box.style.zIndex='5';
+  box.style.boxShadow='0 0 0 2px rgba(255,255,255,0.3)';
+}
+
+function _esignWireFieldBox(box, wrap){
+  var del=box.querySelector('.esign-field-del');
+  var handle=box.querySelector('.esign-field-handle');
+  del.addEventListener('pointerdown', function(e){ e.stopPropagation(); });
+  del.addEventListener('click', function(e){ e.stopPropagation(); box.remove(); });
+
+  // Resize via bottom-right handle
+  handle.addEventListener('pointerdown', function(e){
+    e.preventDefault(); e.stopPropagation();
+    _esignSelectField(box);
+    var sx=e.clientX, sy=e.clientY, sw=box.offsetWidth, sh=box.offsetHeight;
+    function mv(ev){
+      var nw=Math.max(40, Math.min(sw+(ev.clientX-sx), wrap.clientWidth-box.offsetLeft));
+      var nh=Math.max(24, Math.min(sh+(ev.clientY-sy), wrap.clientHeight-box.offsetTop));
+      box.style.width=nw+'px'; box.style.height=nh+'px';
+    }
+    function up(){ document.removeEventListener('pointermove',mv); document.removeEventListener('pointerup',up); }
+    document.addEventListener('pointermove',mv); document.addEventListener('pointerup',up);
+  });
+
+  // Drag the body to move
+  box.addEventListener('pointerdown', function(e){
+    if(e.target===handle || e.target===del) return;
+    e.preventDefault(); e.stopPropagation();
+    _esignSelectField(box);
+    var sx=e.clientX, sy=e.clientY, sl=box.offsetLeft, st=box.offsetTop;
+    function mv(ev){
+      var nl=Math.max(0, Math.min(sl+(ev.clientX-sx), wrap.clientWidth-box.offsetWidth));
+      var nt=Math.max(0, Math.min(st+(ev.clientY-sy), wrap.clientHeight-box.offsetHeight));
+      box.style.left=nl+'px'; box.style.top=nt+'px';
+    }
+    function up(){ document.removeEventListener('pointermove',mv); document.removeEventListener('pointerup',up); }
+    document.addEventListener('pointermove',mv); document.addEventListener('pointerup',up);
+  });
+}
+
+function _esignCreateFieldBox(wrap, type, signerIdx, left, top, w, h){
+  var color=_esignSignerColor(signerIdx);
+  var cfg=_ESIGN_FIELD_TYPES[type]||{ label:type };
+  var box=document.createElement('div');
+  box.className='esign-field';
+  box.dataset.type=type;
+  box.dataset.signer=String(signerIdx);
+  box.style.cssText='position:absolute;left:'+left+'px;top:'+top+'px;width:'+w+'px;height:'+h+'px;'
+    +'border:2px solid '+color+';background:'+color+'1F;border-radius:4px;box-sizing:border-box;cursor:move;z-index:2;';
+  box.innerHTML='<div class="esign-field-label" style="position:absolute;top:-1px;left:-1px;background:'+color+';color:#1A0E00;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px 0 4px 0;white-space:nowrap;pointer-events:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;">'+lpEsc((cfg.label||type)+' · '+_esignSignerFirstName(signerIdx))+'</div>'
+    +'<div class="esign-field-del" title="Delete" style="position:absolute;top:-9px;right:-9px;width:18px;height:18px;border-radius:50%;background:#E5484D;color:#fff;font-size:12px;line-height:18px;text-align:center;cursor:pointer;font-weight:700;z-index:3;">&times;</div>'
+    +'<div class="esign-field-handle" style="position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;background:'+color+';border-radius:3px 0 3px 0;cursor:nwse-resize;z-index:3;"></div>';
+  wrap.appendChild(box);
+  _esignWireFieldBox(box, wrap);
+  return box;
+}
+
+function _esignPageClick(e, wrap){
+  if(!_esignTool) return;
+  if(e.target && e.target.closest && e.target.closest('.esign-field')) return; // ignore clicks on existing boxes
+  var rect=wrap.getBoundingClientRect();
+  var cfg=_ESIGN_FIELD_TYPES[_esignTool]||{ w:120, h:32 };
+  var sel=document.getElementById('esignFieldSigner');
+  var signerIdx=Number(sel&&sel.value)||1;
+  var left=Math.max(0, Math.min(e.clientX-rect.left, wrap.clientWidth-cfg.w));
+  var top=Math.max(0, Math.min(e.clientY-rect.top, wrap.clientHeight-cfg.h));
+  _esignCreateFieldBox(wrap, _esignTool, signerIdx, left, top, cfg.w, cfg.h);
+  // stay armed so several can be dropped; Esc/click-again disarms
+}
+
+function _esignDocKeydown(e){ if(e.key==='Escape' && _esignTool) _esignDisarmTool(); }
+
+async function _esignSaveFields(){
+  var doc=window._esignUploadedDoc;
+  if(!doc||!doc.id){ showToast('No document loaded', true); return; }
+  var wraps=document.querySelectorAll('#esignDocPages .esign-page-wrap');
+  var fields=[];
+  for(var i=0;i<wraps.length;i++){
+    var wrap=wraps[i];
+    var cw=wrap.clientWidth||1, ch=wrap.clientHeight||1;
+    var boxes=wrap.querySelectorAll('.esign-field');
+    for(var j=0;j<boxes.length;j++){
+      var b=boxes[j];
+      fields.push({
+        signer_index:Number(b.dataset.signer),
+        type:b.dataset.type,
+        page:Number(wrap.dataset.page),
+        x:b.offsetLeft/cw, y:b.offsetTop/ch,
+        w:b.offsetWidth/cw, h:b.offsetHeight/ch,
+        required:true
+      });
+    }
+  }
+  var btn=document.getElementById('esignSaveFieldsBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  try{
+    await _esignDocsPost({ action:'save_fields', document_id:doc.id, fields:fields });
+    window._esignUploadedDoc.fieldCount=fields.length;
+    showToast('Saved '+fields.length+' field'+(fields.length===1?'':'s'));
+  }catch(e){
+    showToast((e&&e.message)||'Could not save fields', true);
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='Save fields'; }
+  }
+}
+
+async function _esignLoadFields(documentId){
+  try{
+    var resp=await _esignDocsPost({ action:'get_fields', document_id:documentId });
+    var fields=(resp&&resp.fields)||[];
+    for(var i=0;i<fields.length;i++){
+      var f=fields[i];
+      var wrap=document.querySelector('#esignDocPages .esign-page-wrap[data-page="'+Number(f.page)+'"]');
+      if(!wrap) continue;
+      var cw=wrap.clientWidth, ch=wrap.clientHeight;
+      _esignCreateFieldBox(wrap, f.type, Number(f.signer_index), (f.x||0)*cw, (f.y||0)*ch, (f.w||0)*cw, (f.h||0)*ch);
+    }
+  }catch(e){ /* non-fatal: just show an empty editor */ }
+}
+
 function _esignDocsEndpoint(){
   var cfg=window.APP_CONFIG||{};
   return (cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co')+'/functions/v1/esign-docs';
@@ -9642,7 +9826,11 @@ function _esignHandlePdfFile(file){
   reader.readAsDataURL(file);
 }
 
-function _esignDocViewerClose(){ var o=document.getElementById('esignDocViewerOverlay'); if(o) o.remove(); }
+function _esignDocViewerClose(){
+  document.removeEventListener('keydown', _esignDocKeydown);
+  _esignTool=null;
+  var o=document.getElementById('esignDocViewerOverlay'); if(o) o.remove();
+}
 
 function _esignEnsurePdfJs(){
   return new Promise(function(resolve, reject){
@@ -9660,15 +9848,40 @@ function _esignEnsurePdfJs(){
 
 async function _esignOpenDocViewer(documentId, name, pageCount){
   _esignDocViewerClose();
+  _esignTool=null;
   var title=lpEsc(name||'Document')+(pageCount?(' ('+pageCount+' page'+(pageCount===1?'':'s')+')'):'');
+  var hasSigners=_esignSigners.length>0;
+
+  var paletteHtml=_ESIGN_PALETTE.map(function(p){
+    return '<button type="button" class="esign-palette-btn" data-type="'+p[0]+'" onclick="_esignArmTool(\''+p[0]+'\',this)"'
+      +(hasSigners?'':' disabled')
+      +' style="'+_esignPaletteStyle(false)+(hasSigners?'':'opacity:0.4;cursor:not-allowed;')+'">'+p[1]+'</button>';
+  }).join('');
+  var signerOpts=_esignSigners.map(function(s,i){ return '<option value="'+(i+1)+'">'+lpEsc(s.name||('Signer '+(i+1)))+'</option>'; }).join('');
+
   var overlay=document.createElement('div');
   overlay.id='esignDocViewerOverlay';
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:21000;display:flex;align-items:center;justify-content:center;padding:20px;';
   overlay.innerHTML='<div style="width:880px;max-width:100%;height:90vh;display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.6);overflow:hidden;">'
+    // Header
     +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);">'
       +'<div style="font-size:15px;font-weight:700;color:#E0DDD4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+title+'</div>'
       +'<button type="button" onclick="_esignDocViewerClose()" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">Close</button>'
     +'</div>'
+    // Toolbar
+    +'<div id="esignDocToolbar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid rgba(255,255,255,0.06);background:#141416;">'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'+paletteHtml+'</div>'
+      +'<div style="display:flex;align-items:center;gap:6px;margin-left:6px;">'
+        +'<span style="font-size:11px;color:#888;">Signer:</span>'
+        +'<span id="esignSignerDot" style="width:10px;height:10px;border-radius:50%;background:'+_esignSignerColor(1)+';display:inline-block;flex-shrink:0;"></span>'
+        +'<select id="esignFieldSigner" onchange="_esignUpdateSignerDot()" style="height:28px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 6px;outline:none;">'+(signerOpts||'<option value="">— no signers —</option>')+'</select>'
+      +'</div>'
+      +'<div style="margin-left:auto;display:flex;align-items:center;gap:10px;">'
+        +'<span id="esignToolHint" style="font-size:11px;color:#888;">'+(hasSigners?'':'Add a signer in the Send window first')+'</span>'
+        +'<button type="button" id="esignSaveFieldsBtn" onclick="_esignSaveFields()" style="height:30px;border:none;border-radius:6px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;padding:0 14px;">Save fields</button>'
+      +'</div>'
+    +'</div>'
+    // Scroll area
     +'<div style="flex:1;overflow-y:auto;background:#0E0E10;padding:18px;">'
       +'<div id="esignDocPvLoading" style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;font-size:13px;gap:10px;">'
         +'<span style="width:18px;height:18px;border:2px solid rgba(201,168,76,0.25);border-top-color:#C9A84C;border-radius:50%;display:inline-block;animation:lpSpin .7s linear infinite;"></span> Rendering…</div>'
@@ -9677,6 +9890,7 @@ async function _esignOpenDocViewer(documentId, name, pageCount){
   +'</div>';
   document.body.appendChild(overlay);
   overlay.addEventListener('click', function(e){ if(e.target===overlay) _esignDocViewerClose(); });
+  document.addEventListener('keydown', _esignDocKeydown);
 
   if(!document.getElementById('lpSpinKeyframes')){
     var st=document.createElement('style'); st.id='lpSpinKeyframes';
@@ -9700,18 +9914,26 @@ async function _esignOpenDocViewer(documentId, name, pageCount){
       var base=page.getViewport({ scale:1 });
       var scale=targetW/base.width;
       var vp=page.getViewport({ scale:scale*dpr });
+      var dispW=Math.floor(vp.width/dpr), dispH=Math.floor(vp.height/dpr);
       var canvas=document.createElement('canvas');
       canvas.width=Math.floor(vp.width); canvas.height=Math.floor(vp.height);
-      canvas.style.width=Math.floor(vp.width/dpr)+'px';
-      canvas.style.height=Math.floor(vp.height/dpr)+'px';
+      canvas.style.width=dispW+'px'; canvas.style.height=dispH+'px';
       canvas.style.background='#fff';
+      canvas.style.display='block';
       canvas.style.boxShadow='0 4px 18px rgba(0,0,0,0.4)';
       canvas.style.borderRadius='4px';
-      pagesWrap.appendChild(canvas);
+      var wrap=document.createElement('div');
+      wrap.className='esign-page-wrap';
+      wrap.dataset.page=String(p);
+      wrap.style.cssText='position:relative;margin:0 auto;width:'+dispW+'px;height:'+dispH+'px;';
+      wrap.appendChild(canvas);
+      wrap.addEventListener('click', function(e){ _esignPageClick(e, this); });
+      pagesWrap.appendChild(wrap);
       await page.render({ canvasContext:canvas.getContext('2d'), viewport:vp }).promise;
     }
     if(loading) loading.style.display='none';
     if(pagesWrap) pagesWrap.style.display='flex';
+    _esignLoadFields(documentId); // recreate any previously saved fields
   }catch(e){
     var loading2=document.getElementById('esignDocPvLoading');
     if(loading2){ loading2.style.color='#E5484D'; loading2.innerHTML=lpEsc((e&&e.message)||'Could not render PDF.'); }
