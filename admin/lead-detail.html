@@ -2095,6 +2095,7 @@
               <option value="">Select source</option>
               <option value="website">Website</option>
               <option value="referral">Referral</option>
+              <option value="Business Referral">Business Referral</option>
               <option value="business_partner_referral">Business Partner Referral</option>
               <option value="past_client_referral">Past Client Referral</option>
               <option value="zillow">Zillow</option>
@@ -5511,12 +5512,9 @@ async function populateUI() {
   // Load portal info
   if (contactData.email) loadPortalInfo(contactData.email, contactData.borrower_id || contactData.crm_id);
 
-  // Lead Details tab
-  setVal('f-source', leadData.source || contactData.source);
-  if (contactData.source) {
-    const srcEl = document.getElementById('f-source');
-    if (srcEl) srcEl.value = contactData.source;
-  }
+  // Lead Details tab — Lead Source binds to contacts.source (lead_source is unused).
+  // Tolerant: unknown stored values (e.g. 'business_partner_referral') are injected so they show.
+  setSourceSelect('f-source', contactData.source || leadData.source);
   // f-status is set by renderTimeline init above
   setSelectVal('f-priority', contactData.priority || leadData.priority || 'normal');
   // Sync lead score: use contact.lead_score as source of truth, fall back to leadData.score
@@ -8378,7 +8376,7 @@ async function saveTopField(field, value) {
     if (error) throw error;
     leadData[field] = value;
     if (field === 'status') { setStatusBadge(value); renderScoreCard(leadData, contactData); }
-    if (field === 'source') setSelectVal('f-source', value);
+    if (field === 'source') setSourceSelect('f-source', value);
     toast('✓ Updated');
   } catch (err) {
     toast('Error: ' + err.message, true);
@@ -8424,7 +8422,7 @@ async function updateSource(value) {
       const { error } = await _authClient().from('leads').update({ source: value, updated_at: new Date().toISOString() }).eq('id', leadId);
       if (error) throw error;
       leadData.source = value;
-      setSelectVal('f-source', value);
+      setSourceSelect('f-source', value);
     }
     showToast('Source updated to ' + value);
   } catch (err) {
@@ -13729,6 +13727,27 @@ function setSelectVal(id, v) {
   const el = document.getElementById(id);
   if (!el || !v) return;
   for (const opt of el.options) if (opt.value === v) { opt.selected = true; break; }
+}
+// Prettify a raw stored source value for display (keep the stored value intact).
+function prettySourceLabel(v) {
+  return String(v || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+}
+// Tolerant <select> setter: selects the matching option, or injects the raw
+// stored value as a selected option (prettified label) so unknown values still show.
+function setSourceSelect(id, v) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  // Drop any previously-injected custom option to avoid duplicates on re-render.
+  Array.prototype.slice.call(el.querySelectorAll('option[data-injected="1"]')).forEach(function (o) { o.remove(); });
+  if (!v) { el.value = ''; return; }
+  for (const opt of el.options) { if (opt.value === v) { el.value = v; return; } }
+  const o = document.createElement('option');
+  o.value = v;                       // keep the stored value exactly
+  o.textContent = prettySourceLabel(v);
+  o.setAttribute('data-injected', '1');
+  el.appendChild(o);
+  el.value = v;
 }
 function esc(s) {
   if (!s) return '';
