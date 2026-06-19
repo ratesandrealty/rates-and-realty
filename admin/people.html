@@ -460,7 +460,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
         <div><label class="apm-label">Source</label>
-          <select id="nf_source" class="apm-input"><option value="">Select source...</option><option>Referral</option><option>Website</option><option>Zillow</option><option>Realtor.com</option><option>Social Media</option><option>Open House</option><option>Cold Call</option><option>Email Campaign</option><option>Repeat Client</option><option>Walk-In</option><option>Other</option></select></div>
+          <select id="nf_source" class="apm-input"><option value="">Select source...</option><option>Referral</option><option value="Business Referral">Business Referral</option><option>Website</option><option>Zillow</option><option>Realtor.com</option><option>Social Media</option><option>Open House</option><option>Cold Call</option><option>Email Campaign</option><option>Repeat Client</option><option>Walk-In</option><option>Other</option></select></div>
         <div><label class="apm-label">Language</label>
           <select id="nf_language" class="apm-input"><option value="">Select language...</option><option>English</option><option>Spanish</option><option>Vietnamese</option><option>Mandarin</option><option>Tagalog</option><option>Korean</option><option>Arabic</option><option>French</option><option>Portuguese</option><option>Other</option></select></div>
       </div>
@@ -1572,6 +1572,15 @@ async function savePerson() {
     // `leads` is a VIEW over `contacts` whose INSTEAD OF INSERT trigger always inserts a
     // NEW contacts row — so the insert above already created the lead. Inserting into
     // `leads` here was minting a second, empty "Unknown" contact. Removed.
+    var newId = (r.data && r.data[0] && r.data[0].id) || null;
+    // Notes belong in contact_notes (the lead-detail Notes panel reads that table, not contacts.notes).
+    var noteVal = document.getElementById('nf_notes').value.trim();
+    if (newId && noteVal) {
+      try {
+        const u = (await _authClient().auth.getUser()).data.user;
+        await _authClient().from('contact_notes').insert({ contact_id: newId, note_text: noteVal, source: 'manual', author_user_id: (u && u.id) || null, author_display: (u && (u.user_metadata && u.user_metadata.full_name)) || (u && u.email) || 'CRM' });
+      } catch (e) { /* non-fatal: contacts.notes still has it */ }
+    }
     closeNewModal();
     await loadPeople();
     showToast('Person added!');

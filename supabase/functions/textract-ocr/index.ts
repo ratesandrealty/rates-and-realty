@@ -236,6 +236,46 @@ Rules:
       docType = 'Tax Return'
     }
 
+    // Doc-type-branched extraction template + hint. The downstream parse,
+    // filter (null/N/A drop), and ocr_jobs insert are source-agnostic — they
+    // store whatever keys come back. Frontend wiring per doc type is a
+    // separate pass (Item 2b). Default branch = original ID/employment
+    // field set — preserves behavior for gov_id, drivers_license,
+    // tax_returns, unknown, and any unmapped doc_type.
+    let extractionTemplate: string
+    let extractionHint: string
+    if (docTypeKey === 'bank_statements' || docTypeKey === 'bank_statement') {
+      extractionTemplate = '{"bank_name":"","account_type":"","account_number":"","total_balance":"","statement_start_date":"MM/DD/YYYY","statement_end_date":"MM/DD/YYYY","account_holder_first_name":"","account_holder_last_name":"","street_address":"","city":"","state":"","zip_code":""}'
+      extractionHint = 'total_balance digits only (no $, no commas). Dates MM/DD/YYYY. account_holder name identifies which borrower the statement belongs to. Proper-case names.'
+    } else if (docTypeKey === 'w2' || docTypeKey === 'w-2') {
+      extractionTemplate = '{"employer_name":"","employee_first_name":"","employee_last_name":"","wages":"","federal_tax_withheld":"","tax_year":"","ssn":""}'
+      extractionHint = `IMPORTANT W-2 box-mapping (lender standard):
+- wages = Box 1 ("Wages, tips, other compensation") — federal taxable wages. NOT Box 3 (Social Security wages, capped) and NOT Box 5 (Medicare wages).
+- federal_tax_withheld = Box 2 ("Federal income tax withheld").
+- employer_name = Box c (employer name + address block — name only, no address).
+- employee_first_name + employee_last_name = Box e (employee name; split into first/last).
+- tax_year = the year printed at top of the form (YYYY only).
+- ssn = Box a ("Employee SSN") — digits only, no dashes.
+If the document contains multiple W-2 copies of the SAME W-2 (Copy A, Copy 1, Copy 2, Copy B, Copy C), they have IDENTICAL data — just pick one.
+If the document contains DIFFERENT employers (multiple jobs), extract from the FIRST employer only (caller will re-scan for the second).
+All money fields digits only (no $, no commas, no decimals if whole-dollar).`
+    } else if (docTypeKey === 'pay_stubs' || docTypeKey === 'pay_stub' || docTypeKey === 'paystub') {
+      extractionTemplate = '{"employer_name":"","first_name":"","last_name":"","gross_pay":"","net_pay":"","pay_period_start":"MM/DD/YYYY","pay_period_end":"MM/DD/YYYY","ytd_gross":""}'
+      extractionHint = `IMPORTANT paystub field-mapping (lender standard):
+- gross_pay = THIS PAY PERIOD gross earnings (not YTD). Usually labeled "Current Gross", "Period Gross", "Gross Pay", or "Total Earnings" for this paycheck.
+- net_pay = THIS PAY PERIOD net (take-home) — after taxes/deductions for this period only.
+- ytd_gross = Year-to-date gross earnings (cumulative from Jan 1). Usually in a "YTD" column next to current.
+- pay_period_start + pay_period_end = the dates this paycheck covers (NOT the pay date / check date).
+- employer_name = company name on the stub.
+- first_name + last_name = employee name (split).
+If multiple paystubs in one document, extract the MOST RECENT one (latest pay_period_end).
+All money fields digits only (no $, no commas).`
+    } else {
+      extractionTemplate = '{"first_name":"","last_name":"","middle_name":"","date_of_birth":"MM/DD/YYYY","ssn":"","driver_license_number":"","dl_state":"","id_expiration_date":"MM/DD/YYYY","street_address":"","city":"","state":"","zip_code":"","employer_name":"","position":"","monthly_income":""}'
+      extractionHint = 'CA DL: LN=last name FN=first name. Proper-case names.'
+    }
+    const promptText = `Extract fields from this ${docType}. Return ONLY JSON: ${extractionTemplate}. ${extractionHint} ONLY JSON.`
+
     let claudeResp: Response
     try {
       claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -246,7 +286,7 @@ Rules:
           max_tokens: 1024,
           messages: [{ role: 'user', content: [
             contentBlock,
-            { type: 'text', text: `Extract fields from this ${docType}. Return ONLY JSON: {"first_name":"","last_name":"","middle_name":"","date_of_birth":"MM/DD/YYYY","ssn":"","driver_license_number":"","dl_state":"","id_expiration_date":"MM/DD/YYYY","street_address":"","city":"","state":"","zip_code":"","employer_name":"","position":"","monthly_income":""}. CA DL: LN=last name FN=first name. Proper-case names. ONLY JSON.` }
+            { type: 'text', text: promptText }
           ]}]
         })
       })
