@@ -9375,6 +9375,54 @@ async function lpLoadEsign(cid){
 ══════════════════════════════════════════════ */
 function _esignPreviewClose(){ var o=document.getElementById('esignPreviewOverlay'); if(o) o.remove(); }
 
+async function _esignPvDownload(envelopeId, btn){
+  var cfg=window.APP_CONFIG||{};
+  var SUPABASE_URL=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anonKey=cfg.SUPABASE_ANON_KEY||'';
+  var orig=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='Preparing…'; }
+  try{
+    var token=anonKey;
+    try{ var sess=await _authClient().auth.getSession(); if(sess&&sess.data&&sess.data.session) token=sess.data.session.access_token; }catch(_){}
+    var res=await fetch(SUPABASE_URL+'/functions/v1/esign-docs',{
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':anonKey, 'Authorization':'Bearer '+token },
+      body:JSON.stringify({ action:'download', envelope_id:envelopeId })
+    });
+    var json=null; try{ json=await res.json(); }catch(_){}
+    if(!res.ok){ throw new Error((json&&(json.error||json.message))||('Request failed ('+res.status+')')); }
+    var url=json&&json.url; if(!url) throw new Error('No download URL returned');
+    try{
+      var a=document.createElement('a');
+      a.href=url; a.download=(json&&json.filename)||''; a.target='_blank'; a.rel='noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+    }catch(_){ window.open(url,'_blank'); }
+  }catch(e){ showToast((e&&e.message)||'Could not prepare download', true); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent=orig||'⬇ Download PDF'; } }
+}
+
+async function _esignPvCancel(envelopeId){
+  var reason=prompt('Reason for cancelling (optional) — the signer(s) will be emailed:');
+  if(reason===null) return; // dismissed
+  var cfg=window.APP_CONFIG||{};
+  var SUPABASE_URL=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anonKey=cfg.SUPABASE_ANON_KEY||'';
+  try{
+    var token=anonKey;
+    try{ var sess=await _authClient().auth.getSession(); if(sess&&sess.data&&sess.data.session) token=sess.data.session.access_token; }catch(_){}
+    var res=await fetch(SUPABASE_URL+'/functions/v1/esign',{
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':anonKey, 'Authorization':'Bearer '+token },
+      body:JSON.stringify({ action:'void', envelope_id:envelopeId, reason:(reason||''), notify:true })
+    });
+    var json=null; try{ json=await res.json(); }catch(_){}
+    if(!res.ok){ throw new Error((json&&(json.error||json.message))||('Request failed ('+res.status+')')); }
+    showToast('Request cancelled'+((json&&json.notified)?(' · '+json.notified+' signer(s) emailed'):''));
+    _esignPreviewClose();
+    if(typeof lpLoadEsign==='function') lpLoadEsign(typeof lpCid==='function'?lpCid():null);
+  }catch(e){ showToast((e&&e.message)||'Could not cancel request', true); }
+}
+
 function _esignPreviewTab(which){
   var doc=document.getElementById('esignPvDoc'), cert=document.getElementById('esignPvCert');
   var tabD=document.getElementById('esignPvTabDoc'), tabC=document.getElementById('esignPvTabCert');
@@ -9414,11 +9462,23 @@ async function openEsignPreviewModal(envelopeId, docTitle){
       +'<div id="esignPvDoc" style="display:none;background:#fff;color:#111;border-radius:6px;padding:32px;box-shadow:0 4px 18px rgba(0,0,0,0.4);"></div>'
       +'<div id="esignPvCert" style="display:none;background:#fff;color:#111;border-radius:6px;padding:32px;box-shadow:0 4px 18px rgba(0,0,0,0.4);"></div>'
     +'</div>'
-    // Footer
-    +'<div id="esignPvFooter" style="padding:10px 20px;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;color:#666;word-break:break-all;"></div>'
+    // Footer / action bar
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 20px;border-top:1px solid rgba(255,255,255,0.06);">'
+      +'<div id="esignPvFooter" style="flex:1;min-width:0;font-size:10px;color:#666;word-break:break-all;"></div>'
+      +'<div style="flex-shrink:0;display:flex;align-items:center;gap:8px;">'
+        +'<button type="button" id="esignPvCancelBtn" style="display:none;background:transparent;border:1px solid rgba(229,72,77,0.4);color:#E5484D;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">Cancel request</button>'
+        +'<button type="button" id="esignPvDownloadBtn" style="background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">⬇ Download PDF</button>'
+      +'</div>'
+    +'</div>'
   +'</div>';
   document.body.appendChild(overlay);
   overlay.addEventListener('click', function(e){ if(e.target===overlay) _esignPreviewClose(); });
+
+  // Wire action buttons (envelopeId captured here)
+  var dlBtn=document.getElementById('esignPvDownloadBtn');
+  if(dlBtn) dlBtn.addEventListener('click', function(){ _esignPvDownload(envelopeId, dlBtn); });
+  var cxBtn=document.getElementById('esignPvCancelBtn');
+  if(cxBtn) cxBtn.addEventListener('click', function(){ _esignPvCancel(envelopeId); });
 
   // Ensure spinner keyframes exist
   if(!document.getElementById('lpSpinKeyframes')){
@@ -9455,6 +9515,12 @@ async function openEsignPreviewModal(envelopeId, docTitle){
       var st2=(env.status||'').toString();
       var when=env.completed_at?(' · '+new Date(env.completed_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})):'';
       statusEl.textContent = st2 ? (st2.charAt(0).toUpperCase()+st2.slice(1)+when) : '—';
+    }
+
+    // Cancel only applies to live envelopes (not completed/voided/declined)
+    var cancelBtn=document.getElementById('esignPvCancelBtn');
+    if(cancelBtn && ['sent','in_progress','draft'].indexOf((env.status||'').toString().toLowerCase())>-1){
+      cancelBtn.style.display='';
     }
 
     var docEl=document.getElementById('esignPvDoc'), certEl=document.getElementById('esignPvCert');
