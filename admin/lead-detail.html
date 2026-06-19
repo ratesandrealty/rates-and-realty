@@ -9603,9 +9603,11 @@ var _ESIGN_FIELD_TYPES = {
   initials:  { label:'Initials',  w:72,  h:44 },
   date:      { label:'Date',      w:120, h:32 },
   name:      { label:'Name',      w:170, h:32 },
-  ssn:       { label:'SSN',       w:90,  h:32 }
+  ssn:       { label:'SSN',       w:90,  h:32 },
+  text:      { label:'Text',      w:170, h:32 },
+  number:    { label:'Number',    w:110, h:32 }
 };
-var _ESIGN_PALETTE = [['signature','Signature'],['initials','Initials'],['date','Date'],['name','Name'],['ssn','SSN']];
+var _ESIGN_PALETTE = [['signature','Signature'],['initials','Initials'],['date','Date'],['name','Name'],['ssn','SSN'],['text','Text'],['number','Number']];
 var _ESIGN_SIGNER_COLORS = ['#C9A84C','#4C9AC9','#7FB069','#C97FA8','#9A7FC9','#C98A4C'];
 
 function _esignSignerColor(idx){
@@ -9670,6 +9672,17 @@ function _esignWireFieldBox(box, wrap){
   del.addEventListener('pointerdown', function(e){ e.stopPropagation(); });
   del.addEventListener('click', function(e){ e.stopPropagation(); box.remove(); });
 
+  // Fill-by chip (text/number only): toggle signer ↔ sender
+  var chip=box.querySelector('.esign-field-fillby');
+  if(chip){
+    chip.addEventListener('pointerdown', function(e){ e.stopPropagation(); });
+    chip.addEventListener('click', function(e){
+      e.stopPropagation();
+      box.dataset.fill=(box.dataset.fill==='sender'?'signer':'sender');
+      _esignSyncFieldFill(box);
+    });
+  }
+
   // Resize via bottom-right handle
   handle.addEventListener('pointerdown', function(e){
     e.preventDefault(); e.stopPropagation();
@@ -9687,6 +9700,7 @@ function _esignWireFieldBox(box, wrap){
   // Drag the body to move
   box.addEventListener('pointerdown', function(e){
     if(e.target===handle || e.target===del) return;
+    if(e.target && e.target.closest && (e.target.closest('.esign-field-fillby') || e.target.closest('.esign-field-input'))) return;
     e.preventDefault(); e.stopPropagation();
     _esignSelectField(box);
     var sx=e.clientX, sy=e.clientY, sl=box.offsetLeft, st=box.offsetTop;
@@ -9700,19 +9714,62 @@ function _esignWireFieldBox(box, wrap){
   });
 }
 
-function _esignCreateFieldBox(wrap, type, signerIdx, left, top, w, h){
+function _esignFieldLabelText(box){
+  var cfg=_ESIGN_FIELD_TYPES[box.dataset.type]||{ label:box.dataset.type };
+  var lbl=cfg.label||box.dataset.type;
+  if(box.dataset.fill==='sender') return lbl+' · You';
+  return lbl+' · '+_esignSignerFirstName(Number(box.dataset.signer));
+}
+
+// Sync the fill-by chip / value input UI for text & number fields
+function _esignSyncFieldFill(box){
+  var labelEl=box.querySelector('.esign-field-label');
+  if(labelEl) labelEl.textContent=_esignFieldLabelText(box);
+  var type=box.dataset.type;
+  if(type!=='text' && type!=='number') return;
+  var chip=box.querySelector('.esign-field-fillby');
+  if(chip) chip.textContent=(box.dataset.fill==='sender'?'You':'Signer');
+  var content=box.querySelector('.esign-field-content');
+  if(!content) return;
+  if(box.dataset.fill==='sender'){
+    content.innerHTML='';
+    var input=document.createElement('input');
+    input.type=(type==='number'?'number':'text');
+    input.className='esign-field-input';
+    input.value=box.dataset.value||'';
+    input.placeholder='Type value';
+    input.style.cssText='position:absolute;left:4px;right:4px;top:11px;bottom:4px;width:auto;background:#fff;border:1px solid rgba(0,0,0,0.25);border-radius:3px;color:#111;font-size:11px;padding:0 5px;outline:none;box-sizing:border-box;';
+    input.addEventListener('input', function(){ box.dataset.value=input.value; });
+    input.addEventListener('pointerdown', function(e){ e.stopPropagation(); });
+    input.addEventListener('click', function(e){ e.stopPropagation(); });
+    input.addEventListener('keydown', function(e){ e.stopPropagation(); });
+    content.appendChild(input);
+  } else {
+    content.innerHTML='<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(0,0,0,0.35);font-size:10px;font-style:italic;pointer-events:none;">Signer fills</div>';
+  }
+}
+
+function _esignCreateFieldBox(wrap, type, signerIdx, left, top, w, h, fillBy, value){
   var color=_esignSignerColor(signerIdx);
-  var cfg=_ESIGN_FIELD_TYPES[type]||{ label:type };
+  var isFillable=(type==='text'||type==='number');
   var box=document.createElement('div');
   box.className='esign-field';
   box.dataset.type=type;
   box.dataset.signer=String(signerIdx);
+  box.dataset.fill=(fillBy==='sender'?'sender':'signer');
+  box.dataset.value=value||'';
   box.style.cssText='position:absolute;left:'+left+'px;top:'+top+'px;width:'+w+'px;height:'+h+'px;'
     +'border:2px solid '+color+';background:'+color+'1F;border-radius:4px;box-sizing:border-box;cursor:move;z-index:2;';
-  box.innerHTML='<div class="esign-field-label" style="position:absolute;top:-1px;left:-1px;background:'+color+';color:#1A0E00;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px 0 4px 0;white-space:nowrap;pointer-events:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;">'+lpEsc((cfg.label||type)+' · '+_esignSignerFirstName(signerIdx))+'</div>'
-    +'<div class="esign-field-del" title="Delete" style="position:absolute;top:-9px;right:-9px;width:18px;height:18px;border-radius:50%;background:#E5484D;color:#fff;font-size:12px;line-height:18px;text-align:center;cursor:pointer;font-weight:700;z-index:3;">&times;</div>'
-    +'<div class="esign-field-handle" style="position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;background:'+color+';border-radius:3px 0 3px 0;cursor:nwse-resize;z-index:3;"></div>';
+  var html='<div class="esign-field-label" style="position:absolute;top:-1px;left:-1px;background:'+color+';color:#1A0E00;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px 0 4px 0;white-space:nowrap;pointer-events:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;z-index:4;">'+lpEsc(_esignFieldLabelText(box))+'</div>'
+    +'<div class="esign-field-del" title="Delete" style="position:absolute;top:-9px;right:-9px;width:18px;height:18px;border-radius:50%;background:#E5484D;color:#fff;font-size:12px;line-height:18px;text-align:center;cursor:pointer;font-weight:700;z-index:5;">&times;</div>'
+    +'<div class="esign-field-handle" style="position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;background:'+color+';border-radius:3px 0 3px 0;cursor:nwse-resize;z-index:5;"></div>';
+  if(isFillable){
+    html+='<div class="esign-field-content" style="position:absolute;left:0;top:0;right:0;bottom:0;z-index:2;"></div>'
+      +'<div class="esign-field-fillby" title="Who fills this?" style="position:absolute;top:-9px;right:16px;height:18px;line-height:16px;padding:0 6px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.5);color:#C9A84C;border-radius:9px;font-size:9px;font-weight:700;cursor:pointer;z-index:5;">'+(box.dataset.fill==='sender'?'You':'Signer')+'</div>';
+  }
+  box.innerHTML=html;
   wrap.appendChild(box);
+  if(isFillable) _esignSyncFieldFill(box);
   _esignWireFieldBox(box, wrap);
   return box;
 }
@@ -9749,7 +9806,9 @@ async function _esignSaveFields(){
         page:Number(wrap.dataset.page),
         x:b.offsetLeft/cw, y:b.offsetTop/ch,
         w:b.offsetWidth/cw, h:b.offsetHeight/ch,
-        required:true
+        required:true,
+        fill_by:(b.dataset.fill==='sender'?'sender':'signer'),
+        value:(b.dataset.fill==='sender' ? (b.dataset.value||'') : null)
       });
     }
   }
@@ -9775,7 +9834,7 @@ async function _esignLoadFields(documentId){
       var wrap=document.querySelector('#esignDocPages .esign-page-wrap[data-page="'+Number(f.page)+'"]');
       if(!wrap) continue;
       var cw=wrap.clientWidth, ch=wrap.clientHeight;
-      _esignCreateFieldBox(wrap, f.type, Number(f.signer_index), (f.x||0)*cw, (f.y||0)*ch, (f.w||0)*cw, (f.h||0)*ch);
+      _esignCreateFieldBox(wrap, f.type, Number(f.signer_index), (f.x||0)*cw, (f.y||0)*ch, (f.w||0)*cw, (f.h||0)*ch, f.fill_by, f.value);
     }
   }catch(e){ /* non-fatal: just show an empty editor */ }
 }
