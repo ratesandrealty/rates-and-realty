@@ -9595,12 +9595,14 @@ var _esignRPDoc = null;        // { document_id, name, page_count } currently sh
 var _esignRPMode = 'edit';     // 'edit' | 'preview'
 var _esignActiveDocId = null;  // document_id highlighted in the left DOCUMENTS list
 var _esignAutoSaveTimer = null;
+var _esignTemplateEdit = false; // true while the right pane edits a LIBRARY template's own field layout
+var _esignReturnDocId = null;   // deal doc to restore in the right pane after exiting template-edit
 
 function _esignCloseModal(){
   _esignHideSearch();
   document.removeEventListener('keydown', _esignDocKeydown);
   if(_esignAutoSaveTimer){ clearTimeout(_esignAutoSaveTimer); _esignAutoSaveTimer=null; }
-  _esignTool=null; _esignRPDoc=null; _esignActiveDocId=null;
+  _esignTool=null; _esignRPDoc=null; _esignActiveDocId=null; _esignTemplateEdit=false; _esignReturnDocId=null;
   var o=document.getElementById('esignSendOverlay'); if(o) o.remove();
 }
 
@@ -9733,6 +9735,8 @@ var _ESIGN_PALETTE = [['signature','Signature'],['initials','Initials'],['date',
 var _ESIGN_SIGNER_COLORS = ['#C9A84C','#4C9AC9','#7FB069','#C97FA8','#9A7FC9','#C98A4C'];
 
 function _esignSignerColor(idx){
+  // In template-edit mode there are no deal signers — color by generic slot index.
+  if(_esignTemplateEdit) return (idx&&idx>=1) ? _ESIGN_SIGNER_COLORS[(idx-1)%_ESIGN_SIGNER_COLORS.length] : '#888';
   if(!idx || idx<1 || idx>_esignSigners.length) return '#888'; // neutral gray for unknown signer
   return _ESIGN_SIGNER_COLORS[(idx-1)%_ESIGN_SIGNER_COLORS.length];
 }
@@ -9760,7 +9764,7 @@ function _esignSetPageCursor(cur){
   for(var i=0;i<wraps.length;i++) wraps[i].style.cursor=cur||'';
 }
 function _esignArmTool(type, btn){
-  if(!_esignSigners.length) return; // palette disabled without signers
+  if(!_esignTemplateEdit && !_esignSigners.length) return; // palette disabled without signers (deal mode only)
   if(_esignTool===type){ _esignDisarmTool(); return; }
   _esignTool=type;
   _esignUpdatePaletteHighlight();
@@ -9841,6 +9845,7 @@ function _esignFieldLabelText(box){
   var cfg=_ESIGN_FIELD_TYPES[box.dataset.type]||{ label:box.dataset.type };
   var lbl=cfg.label||box.dataset.type;
   if(box.dataset.fill==='sender') return lbl+' · You';
+  if(_esignTemplateEdit) return lbl+' · Signer '+(Number(box.dataset.signer)||1);
   return lbl+' · '+_esignSignerFirstName(Number(box.dataset.signer));
 }
 
@@ -9957,7 +9962,7 @@ async function _esignSaveFields(silent){
   }catch(e){
     if(!silent) showToast((e&&e.message)||'Could not save fields', true);
   }finally{
-    if(btn){ btn.disabled=false; btn.textContent='Save fields'; }
+    if(btn){ btn.disabled=false; btn.textContent=_esignTemplateEdit?'Save template fields':'Save fields'; }
   }
 }
 
@@ -10188,6 +10193,14 @@ function _esignRPPlaceholderHTML(){
 
 function _esignRPHeaderHTML(mode){
   var d=_esignRPDoc||{};
+  // Template-edit header: clearly labelled, with a Done control and no per-deal actions.
+  if(_esignTemplateEdit){
+    var tname=lpEsc(d.name||'Template')+(d.page_count?(' ('+d.page_count+' page'+(d.page_count===1?'':'s')+')'):'');
+    return '<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(201,168,76,0.35);background:#1A150A;flex-shrink:0;">'
+      +'<div style="font-size:13px;font-weight:700;color:#E0DDD4;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📚 Editing library template: '+tname+'</div>'
+      +'<button type="button" onclick="_esignTemplateEditDone()" title="Save and return to the deal" style="flex-shrink:0;height:28px;padding:0 16px;border:none;border-radius:6px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✓ Done</button>'
+    +'</div>';
+  }
   var title=lpEsc(d.name||'Document')+(d.page_count?(' ('+d.page_count+' page'+(d.page_count===1?'':'s')+')'):'');
   var seg=function(m,label){
     var on=(mode===m);
@@ -10203,13 +10216,40 @@ function _esignRPHeaderHTML(mode){
 function _esignRPOpen(documentId, name, pageCount, mode){
   if(!documentId) return;
   if(_esignAutoSaveTimer){ clearTimeout(_esignAutoSaveTimer); _esignAutoSaveTimer=null; }
+  var isTemplate=(mode==='template');
+  // Remember the deal doc to return to (only when first entering template-edit).
+  if(isTemplate && !_esignTemplateEdit) _esignReturnDocId=_esignActiveDocId;
+  _esignTemplateEdit=isTemplate;
   _esignRPDoc={ document_id:documentId, name:name||'PDF', page_count:Number(pageCount)||0 };
-  window._esignUploadedDoc={ id:documentId, page_count:Number(pageCount)||0 }; // save target
-  _esignActiveDocId=documentId;
-  _esignRPMode=(mode==='preview')?'preview':'edit';
+  window._esignUploadedDoc={ id:documentId, page_count:Number(pageCount)||0 }; // save target (template OR deal doc)
+  _esignActiveDocId=isTemplate?null:documentId; // a template is NOT a deal doc — don't highlight a deal row
+  _esignRPMode=(mode==='preview')?'preview':'edit'; // template edits run through the normal 'edit' engine
   _esignTool=null;
   _esignRenderDocs(); // refresh active-row highlight in the left list
   if(_esignRPMode==='edit') _esignRPRenderEditor(); else _esignRPRenderPreview();
+}
+
+// Exit template-edit: persist edits, refresh the library counts, restore the deal's right pane.
+function _esignTemplateEditDone(){
+  if(_esignAutoSaveTimer){ clearTimeout(_esignAutoSaveTimer); _esignAutoSaveTimer=null; }
+  Promise.resolve(_esignSaveFields(true)).then(function(){
+    _esignTemplateEdit=false;
+    _esignReloadLibrary(); // reflect the template's new field count in the manager
+    var rid=_esignReturnDocId; _esignReturnDocId=null;
+    if(rid){
+      var d=_esignDocs.filter(function(x){ return x.kind==='pdf' && x.document_id===rid; })[0];
+      if(d){ _esignRPOpen(d.document_id, d.name, d.page_count, 'edit'); return; }
+    }
+    _esignRPDoc=null; window._esignUploadedDoc=null; _esignActiveDocId=null;
+    _esignRenderDocs();
+    var pane=document.getElementById('esignRightPane'); if(pane) pane.innerHTML=_esignRPPlaceholderHTML();
+  });
+}
+
+// Open a LIBRARY template's own field layout in the right pane (template-edit mode).
+function _esignEditLibraryTemplate(libDocId, name, pageCount){
+  if(!libDocId) return;
+  _esignRPOpen(libDocId, name||'Template', Number(pageCount)||0, 'template');
 }
 
 function _esignRPSetMode(mode){
@@ -10229,13 +10269,18 @@ function _esignRPSetMode(mode){
 function _esignRPRenderEditor(){
   var pane=document.getElementById('esignRightPane'); if(!pane||!_esignRPDoc) return;
   _esignTool=null;
-  var hasSigners=_esignSigners.length>0;
+  var tmpl=_esignTemplateEdit;
+  var paletteEnabled=tmpl || _esignSigners.length>0; // template mode: always armable (no deal signers needed)
   var paletteHtml=_ESIGN_PALETTE.map(function(p){
     return '<button type="button" class="esign-palette-btn" data-type="'+p[0]+'" onclick="_esignArmTool(\''+p[0]+'\',this)"'
-      +(hasSigners?'':' disabled')
-      +' style="'+_esignPaletteStyle(false)+(hasSigners?'':'opacity:0.4;cursor:not-allowed;')+'">'+p[1]+'</button>';
+      +(paletteEnabled?'':' disabled')
+      +' style="'+_esignPaletteStyle(false)+(paletteEnabled?'':'opacity:0.4;cursor:not-allowed;')+'">'+p[1]+'</button>';
   }).join('');
-  var signerOpts=_esignSigners.map(function(s,i){ return '<option value="'+(i+1)+'">'+lpEsc(s.name||('Signer '+(i+1)))+'</option>'; }).join('');
+  // Template mode offers generic signer slots; deal mode lists the real signers.
+  var signerOpts=tmpl
+    ? '<option value="1">Signer 1</option><option value="2">Signer 2</option><option value="3">Signer 3</option>'
+    : _esignSigners.map(function(s,i){ return '<option value="'+(i+1)+'">'+lpEsc(s.name||('Signer '+(i+1)))+'</option>'; }).join('');
+  var hintText=tmpl ? 'Pick a field type, then click the page to place it' : (paletteEnabled?'':'Add a signer on the left first');
   pane.innerHTML=_esignRPHeaderHTML('edit')
     // Field toolbar (same element IDs the field-placement engine expects)
     +'<div id="esignDocToolbar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.06);background:#141416;flex-shrink:0;">'
@@ -10246,8 +10291,8 @@ function _esignRPRenderEditor(){
         +'<select id="esignFieldSigner" onchange="_esignUpdateSignerDot()" style="height:28px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 6px;outline:none;">'+(signerOpts||'<option value="">— no signers —</option>')+'</select>'
       +'</div>'
       +'<div style="margin-left:auto;display:flex;align-items:center;gap:10px;">'
-        +'<span id="esignToolHint" style="font-size:11px;color:#888;">'+(hasSigners?'':'Add a signer on the left first')+'</span>'
-        +'<button type="button" id="esignSaveFieldsBtn" onclick="_esignSaveFields()" style="height:30px;border:none;border-radius:6px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;padding:0 14px;">Save fields</button>'
+        +'<span id="esignToolHint" style="font-size:11px;color:#888;">'+lpEsc(hintText)+'</span>'
+        +'<button type="button" id="esignSaveFieldsBtn" onclick="_esignSaveFields()" style="height:30px;border:none;border-radius:6px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;padding:0 14px;">'+(tmpl?'Save template fields':'Save fields')+'</button>'
       +'</div>'
     +'</div>'
     // Scroll area with the rendered pages
@@ -10339,6 +10384,7 @@ function _esignRPRenderPreview(){
 
 // Keep the right-pane editor's signer dropdown + field palette in sync as signers change
 function _esignRefreshEditorToolbar(){
+  if(_esignTemplateEdit) return; // template mode uses fixed generic slots — leave them alone
   if(_esignRPMode!=='edit' || !_esignRPDoc) return;
   var sel=document.getElementById('esignFieldSigner'); if(!sel) return;
   var cur=sel.value;
@@ -10385,32 +10431,85 @@ function _esignOpenLibrary(){
   var box=document.getElementById('esignLibraryPicker'); if(!box) return;
   if(box.style.display==='block'){ box.style.display='none'; return; }
   box.style.display='block';
+  // Library MANAGER shell: an upload control + a list container (refreshed independently).
+  box.innerHTML=''
+    +'<div style="margin-bottom:8px;">'
+      +'<button type="button" id="esignLibUploadBtn" onclick="_esignLibraryUploadPick()" style="width:100%;height:32px;border:1px dashed rgba(201,168,76,0.45);background:transparent;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 10px;">⬆ Upload PDF to library</button>'
+      +'<input type="file" id="esignLibFileInput" accept="application/pdf" style="display:none;" onchange="var f=this.files&&this.files[0]; this.value=\'\'; _esignLibraryUpload(f);">'
+    +'</div>'
+    +'<div id="esignLibList"><div style="color:#888;font-size:11px;padding:6px 2px;">Loading library…</div></div>';
   _esignReloadLibrary();
 }
 
+function _esignLibraryUploadPick(){ var inp=document.getElementById('esignLibFileInput'); if(inp) inp.click(); }
+
+function _esignLibraryUpload(file){
+  if(!file) return;
+  if(file.type!=='application/pdf'){ showToast('Please choose a PDF file', true); return; }
+  var btn=document.getElementById('esignLibUploadBtn');
+  var setBusy=function(busy){ if(btn){ btn.disabled=busy; btn.style.opacity=busy?'0.6':'1'; btn.textContent=busy?'Uploading…':'⬆ Upload PDF to library'; } };
+  setBusy(true);
+  var reader=new FileReader();
+  reader.onload=async function(){
+    try{
+      var dataUrl=String(reader.result||'');
+      var base64=dataUrl.indexOf(',')>-1 ? dataUrl.slice(dataUrl.indexOf(',')+1) : dataUrl;
+      var nameNoExt=(file.name||'Template').replace(/\.[a-zA-Z0-9]{1,8}$/,'');
+      // library:true → upload straight into the library (no contact_id / request_id)
+      var json=await _esignDocsPost({ action:'upload', library:true, name:nameNoExt, pdf_base64:base64 });
+      if(!json || !json.document_id) throw new Error('Upload failed');
+      setBusy(false);
+      showToast('Uploaded to library ✓');
+      _esignReloadLibrary();
+      // Jump straight into template-edit so the user can place fields immediately.
+      _esignRPOpen(json.document_id, json.name||nameNoExt, json.page_count||0, 'template');
+    }catch(e){ setBusy(false); showToast((e&&e.message)||'Upload failed', true); }
+  };
+  reader.onerror=function(){ setBusy(false); showToast('Could not read file', true); };
+  reader.readAsDataURL(file);
+}
+
 async function _esignReloadLibrary(){
-  var box=document.getElementById('esignLibraryPicker'); if(!box || box.style.display!=='block') return;
-  box.innerHTML='<div style="color:#888;font-size:11px;padding:6px 2px;">Loading library…</div>';
+  var list=document.getElementById('esignLibList'); if(!list) return;
+  list.innerHTML='<div style="color:#888;font-size:11px;padding:6px 2px;">Loading library…</div>';
   try{
     var resp=await _esignDocsPost({ action:'library_list' });
     _esignRenderLibrary((resp&&resp.documents)||[]);
-  }catch(e){ box.innerHTML='<div style="color:#E5484D;font-size:11px;padding:6px 2px;">'+lpEsc((e&&e.message)||'Could not load library')+'</div>'; }
+  }catch(e){ list.innerHTML='<div style="color:#E5484D;font-size:11px;padding:6px 2px;">'+lpEsc((e&&e.message)||'Could not load library')+'</div>'; }
 }
 
 function _esignRenderLibrary(docs){
-  var box=document.getElementById('esignLibraryPicker'); if(!box) return;
-  if(!docs.length){ box.innerHTML='<div style="color:#666;font-size:11px;padding:6px 2px;">Your library is empty. Place fields on a document, then “☆ Library” to save it here.</div>'; return; }
-  box.innerHTML=docs.map(function(d){
-    var fc=Number(d.field_count)||0, pc=Number(d.page_count)||0, id=lpEsc(String(d.document_id));
-    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 9px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.12);border-radius:6px;margin-bottom:5px;">'
-      +'<span style="min-width:0;"><span style="font-size:12px;color:#E0DDD4;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(d.name||'Document')+'</span>'
-      +'<span style="font-size:10px;color:#888;">'+pc+' page'+(pc===1?'':'s')+' · '+fc+' field'+(fc===1?'':'s')+'</span></span>'
-      +'<span style="flex-shrink:0;display:flex;gap:6px;align-items:center;">'
-        +'<button type="button" onclick="_esignCloneFromLibrary(this.getAttribute(\'data-id\'))" data-id="'+id+'" style="background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;padding:3px 10px;">Use</button>'
-        +'<button type="button" onclick="_esignLibraryRemove(this.getAttribute(\'data-id\'))" data-id="'+id+'" title="Remove from library" style="background:transparent;border:none;color:#E5484D;font-size:15px;line-height:1;cursor:pointer;padding:0 4px;">&times;</button>'
-      +'</span>'
+  var list=document.getElementById('esignLibList'); if(!list) return;
+  if(!docs.length){ list.innerHTML='<div style="color:#666;font-size:11px;padding:6px 2px;">Your library is empty. Upload a PDF above, or save a deal document with “☆ Library”.</div>'; return; }
+  var abtn='border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;padding:3px 9px;font-family:inherit;';
+  list.innerHTML=docs.map(function(d){
+    var fc=Number(d.field_count)||0, pc=Number(d.page_count)||0, id=lpEsc(String(d.document_id)), nm=lpEsc(d.name||'Document');
+    return '<div style="padding:7px 9px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.12);border-radius:6px;margin-bottom:5px;">'
+      +'<div style="font-size:12px;color:#E0DDD4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+nm+'</div>'
+      +'<div style="font-size:10px;color:#888;margin-bottom:6px;">'+pc+' page'+(pc===1?'':'s')+' · '+fc+' field'+(fc===1?'':'s')+'</div>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+        +'<button type="button" onclick="_esignEditLibraryTemplate(this.getAttribute(\'data-id\'),this.getAttribute(\'data-name\'),this.getAttribute(\'data-pc\'))" data-id="'+id+'" data-name="'+nm+'" data-pc="'+pc+'" title="Edit this template’s default fields in place" style="'+abtn+'background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;">✎ Edit fields</button>'
+        +'<button type="button" onclick="_esignCloneFromLibrary(this.getAttribute(\'data-id\'))" data-id="'+id+'" title="Add a copy of this template to the current deal" style="'+abtn+'background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;">Use</button>'
+        +'<button type="button" onclick="_esignRenameLibrary(this.getAttribute(\'data-id\'),this.getAttribute(\'data-name\'))" data-id="'+id+'" data-name="'+nm+'" style="'+abtn+'background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;">Rename</button>'
+        +'<button type="button" onclick="_esignLibraryRemove(this.getAttribute(\'data-id\'))" data-id="'+id+'" style="'+abtn+'background:transparent;border:1px solid rgba(229,72,77,0.4);color:#E5484D;margin-left:auto;">Delete</button>'
+      +'</div>'
     +'</div>';
   }).join('');
+}
+
+function _esignRenameLibrary(libDocId, currentName){
+  if(!libDocId) return;
+  var nm=prompt('Rename library template', currentName||'');
+  if(nm===null) return;
+  nm=(nm||'').trim();
+  if(!nm){ showToast('Name is required', true); return; }
+  _esignDocsPost({ action:'library_save', document_id:libDocId, name:nm })
+    .then(function(){
+      showToast('Renamed ✓');
+      if(_esignTemplateEdit && _esignRPDoc && _esignRPDoc.document_id===libDocId) _esignRPDoc.name=nm; // keep header in sync on next render
+      _esignReloadLibrary();
+    })
+    .catch(function(e){ showToast((e&&e.message)||'Rename failed', true); });
 }
 
 async function _esignCloneFromLibrary(libDocId){
@@ -10428,9 +10527,22 @@ async function _esignCloneFromLibrary(libDocId){
 
 async function _esignLibraryRemove(libDocId){
   if(!libDocId) return;
-  if(!confirm('Remove this document from your library? Documents already added to deals are not affected.')) return;
-  try{ await _esignDocsPost({ action:'library_remove', document_id:libDocId }); _esignReloadLibrary(); }
-  catch(e){ showToast((e&&e.message)||'Could not remove from library', true); }
+  if(!confirm('Delete this library template? This removes the file, its fields and the library entry. Documents already added to deals are not affected.')) return;
+  try{
+    await _esignDocsPost({ action:'library_remove', document_id:libDocId });
+    // If the deleted template is the one currently open in template-edit, drop back to the placeholder/deal doc.
+    if(_esignTemplateEdit && _esignRPDoc && _esignRPDoc.document_id===libDocId){
+      if(_esignAutoSaveTimer){ clearTimeout(_esignAutoSaveTimer); _esignAutoSaveTimer=null; }
+      _esignTemplateEdit=false;
+      var rid=_esignReturnDocId; _esignReturnDocId=null;
+      var d=rid?_esignDocs.filter(function(x){ return x.kind==='pdf' && x.document_id===rid; })[0]:null;
+      if(d){ _esignRPOpen(d.document_id, d.name, d.page_count, 'edit'); }
+      else { _esignRPDoc=null; window._esignUploadedDoc=null; _esignActiveDocId=null;
+        var pane=document.getElementById('esignRightPane'); if(pane) pane.innerHTML=_esignRPPlaceholderHTML(); }
+    }
+    _esignReloadLibrary();
+    showToast('Template deleted ✓');
+  }catch(e){ showToast((e&&e.message)||'Could not remove from library', true); }
 }
 
 /* ── Type-ahead signer search (loan people first, then CRM) ── */
@@ -10557,8 +10669,8 @@ async function openEsignSendModal(){
           +'<div style="font-size:10px;color:#666;font-weight:400;margin-top:3px;">Drag &amp; drop or click to choose</div>'
         +'</div>'
         +'<input type="file" id="esignPdfInput" accept="application/pdf" style="display:none;" onchange="_esignHandlePdfFile(this.files&&this.files[0])">'
-        // Add from library
-        +'<button type="button" onclick="_esignOpenLibrary()" style="width:100%;margin-top:8px;height:34px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;">📚 Add from library</button>'
+        // Document library manager (upload / edit fields / use / rename / delete)
+        +'<button type="button" onclick="_esignOpenLibrary()" style="width:100%;margin-top:8px;height:34px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;">📚 Document library</button>'
         +'<div id="esignLibraryPicker" style="display:none;margin-top:8px;"></div>'
       +'</div>'
     +'</div>'
