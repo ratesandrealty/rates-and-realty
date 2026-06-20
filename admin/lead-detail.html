@@ -2755,7 +2755,10 @@
       <!-- ═══ SECTION 1a: PERSONAL INFORMATION ═══ -->
       <div id="sec-borrower-info"></div>
       <div class="ld-section" style="padding:24px; border-bottom:1px solid rgba(255,255,255,0.06);">
-        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:rgba(255,255,255,0.4);padding:16px 0 10px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:16px;">1a. PERSONAL INFORMATION</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 0 10px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:16px;">
+          <span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:rgba(255,255,255,0.4);">1a. PERSONAL INFORMATION</span>
+          <button type="button" onclick="_lpPrefill1003People(true)" title="Refill name, email, phone and DOB from the linked contacts (won't touch DL / SSN / marital / citizenship)" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.4);color:#C9A84C;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;padding:5px 11px;font-family:inherit;">&#8635; Pull from contact</button>
+        </div>
 
         <!-- Row 1: Name -->
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;">
@@ -2819,10 +2822,10 @@
           <label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:8px;">Type of Credit</label>
           <div style="display:flex; gap:20px;">
             <label style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:14px;cursor:pointer;">
-              <input type="radio" name="credit_type" value="individual" id="f_credit_individual" onchange="toggleCoBorrower(false)" checked> Individual Credit
+              <input type="radio" name="credit_type" value="individual" id="f_credit_individual" onchange="window._lp1003CreditTouched=true;toggleCoBorrower(false)" checked> Individual Credit
             </label>
             <label style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:14px;cursor:pointer;">
-              <input type="radio" name="credit_type" value="joint" id="f_credit_joint" onchange="toggleCoBorrower(true)"> Joint Credit
+              <input type="radio" name="credit_type" value="joint" id="f_credit_joint" onchange="window._lp1003CreditTouched=true;toggleCoBorrower(true)"> Joint Credit
             </label>
           </div>
         </div>
@@ -17416,7 +17419,8 @@ async function load1003(overrideCid) {
     // Documents list loads regardless of whether app data exists yet (the docs
     // live in uploaded_documents keyed by contact_id, not in the 1003 row).
     loadDocuments(cid);
-    if (!data) return;
+    window._lp1003HasSavedCreditType = false;
+    if (!data) { try { await _lpPrefill1003People(false); } catch (_) {} return; }
 
     const sv = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
     const sr = (name, val) => { const el = document.querySelector(`input[name="${name}"][value="${val}"]`); if (el) el.checked = true; };
@@ -17499,7 +17503,7 @@ async function load1003(overrideCid) {
     return map[v.toLowerCase()] || v;
   })());
 
-    if (data.credit_type) sr('credit_type', data.credit_type);
+    if (data.credit_type) { sr('credit_type', data.credit_type); window._lp1003HasSavedCreditType = true; }
     sr('decl_primary', data.decl_primary_residence ? 'yes' : 'no');
     sr('decl_family', data.decl_family_relationship_seller ? 'yes' : 'no');
     sr('decl_borrowed', data.decl_borrowed_funds ? 'yes' : 'no');
@@ -17683,9 +17687,106 @@ async function load1003(overrideCid) {
     attachAutoSave();
     // Hydrate the Loan Summary panel + compute initial DTI/LTV
     initLoanSummary();
+    // Fill any still-empty 1A fields from the linked contacts (never overwrites
+    // app/ID-scan values that load1003 just applied).
+    try { await _lpPrefill1003People(false); } catch (_) {}
   } catch (err) {
     console.warn('load1003:', err.message);
   }
+}
+
+/* ═══ 1A PERSONAL INFORMATION — prefill from linked contacts (get_lead_people) ═══
+   Primary borrower = subject lead (is_primary); co-borrower = first connected
+   person. Fills name/email/phone/DOB (+ masked SSN when empty). Never touches
+   DL / marital / citizenship / suffix. force=true overwrites name/email/phone/DOB
+   (but still never SSN/DL/marital/citizenship). */
+function _lpSetField(id, val, force) {
+  var el = document.getElementById(id);
+  if (!el || val == null) return;
+  var v = String(val).trim();
+  if (!v) return;
+  if (!force && String(el.value || '').trim()) return; // keep user / ID-scan value
+  el.value = v;
+  try { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+}
+function _lpSetDateField(id, val, force) {
+  var el = document.getElementById(id);
+  if (!el || val == null) return;
+  var v = String(val).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+  if (!force && String(el.value || '').trim()) return;
+  el.value = v;
+  try { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+}
+// Map one person row into the primary (f_*) or co-borrower (cb_*) inputs.
+function _lpFillPersonInfo(row, isCo, force) {
+  if (!row) return;
+  var p = isCo ? 'cb_' : 'f_';
+  _lpSetField(p + 'first_name', row.first_name, force);
+  _lpSetField(p + 'middle_name', row.middle_name, force);
+  _lpSetField(p + 'last_name', row.last_name, force);
+  _lpSetField(p + 'email', row.email, force);
+  _lpSetField(p + 'cell_phone', row.phone, force);            // Cell Phone <- phone
+  _lpSetField(p + 'home_phone', row.secondary_phone, force);  // Home Phone <- secondary_phone
+  _lpSetDateField(p + 'dob', row.date_of_birth, force);
+  // SSN: prefill masked from last-4 ONLY when empty — never overwritten, even on force.
+  if (row.ssn_last4) _lpSetField(p + 'ssn', 'XXX-XX-' + String(row.ssn_last4).slice(-4), false);
+}
+
+async function _lpPrefill1003People(force) {
+  var cid = (typeof lpCid === 'function') ? lpCid() : (typeof getContactId === 'function' ? getContactId() : null);
+  if (!cid) return;
+  var rows;
+  try {
+    var resp = await _authClient().rpc('get_lead_people', { p_contact_id: cid });
+    if (resp && resp.error) throw resp.error;
+    rows = (resp && resp.data) || [];
+  } catch (e) {
+    if (force && typeof showToast === 'function') showToast('Could not load contact info', true);
+    return;
+  }
+  if (!Array.isArray(rows) || !rows.length) return;
+
+  // PRIMARY = is_primary (or role_label 'Primary'); fall back to first row.
+  var primary = rows.find(function (r) {
+    return r.is_primary === true || String(r.role_label || '').toLowerCase() === 'primary';
+  }) || rows[0];
+
+  // Connected people = everyone else, ordered by borrower_order then name.
+  var others = rows.filter(function (r) {
+    return r !== primary && String(r.contact_id) !== String(primary && primary.contact_id);
+  });
+  others.sort(function (a, b) {
+    var ao = (a.borrower_order == null ? 9999 : Number(a.borrower_order));
+    var bo = (b.borrower_order == null ? 9999 : Number(b.borrower_order));
+    if (ao !== bo) return ao - bo;
+    return String(a.full_name || '').localeCompare(String(b.full_name || ''));
+  });
+  // CO-BORROWER = first connected person that is_borrower, else first connected person.
+  var co = others.filter(function (r) { return r.is_borrower === true; })[0] || others[0] || null;
+
+  _lpFillPersonInfo(primary, false, force);
+  if (co) _lpFillPersonInfo(co, true, force);
+
+  // Type of Credit default — only when the user hasn't chosen and none was saved.
+  if (!window._lp1003CreditTouched && !window._lp1003HasSavedCreditType) {
+    var joint = document.getElementById('f_credit_joint');
+    var indiv = document.getElementById('f_credit_individual');
+    if (co && joint && !joint.checked) {
+      joint.checked = true;
+      if (typeof toggleCoBorrower === 'function') toggleCoBorrower(true);
+    } else if (!co && indiv && !indiv.checked) {
+      indiv.checked = true;
+      if (typeof toggleCoBorrower === 'function') toggleCoBorrower(false);
+    }
+  } else if (co) {
+    // Credit type already decided — still reveal the panel if it's joint so the
+    // filled co-borrower fields are visible.
+    var jb = document.getElementById('f_credit_joint');
+    if (jb && jb.checked && typeof toggleCoBorrower === 'function') toggleCoBorrower(true);
+  }
+
+  if (force && typeof showToast === 'function') showToast('Pulled contact info.');
 }
 
 /* ═══ LOAN SUMMARY / DTI CALCULATOR ═══ */
