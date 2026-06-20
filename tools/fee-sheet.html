@@ -658,7 +658,7 @@
 
         <div id="heloc_err" style="display:none;color:#ff8080;font-size:11px;margin-top:10px;line-height:1.4;"></div>
         <div class="sidebar-actions">
-            <button class="btn-gold" id="heloc_download_btn" onclick="helocDownloadPdf()">Download PDF</button>
+            <button type="button" class="btn-gold" id="heloc_download_btn" onclick="helocDownloadPdf()">Download PDF</button>
         </div>
     </div>
 </div>
@@ -1966,6 +1966,14 @@ function helocSetCard(i, field, val) {
     else _helocState.cards[i][field] = val;
     helocRecalc();
 }
+// Live rate typing — decimal-safe. Uses parseFloat and the LIGHT recompute so the
+// rate <input> is not torn down and rebuilt on every keystroke (which dropped the
+// decimal point and made it feel like whole-numbers-only).
+function helocSetCardRate(i, val) {
+    if (!_helocState.cards[i]) return;
+    _helocState.cards[i].rate = parseFloat(val) || 0;
+    helocRecalcLight();
+}
 function helocRenderRateEditor() {
     var host = $('heloc_rate_cards'); if (!host) return;
     var sel = 'background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#ddd;font-size:12px;padding:5px 6px;font-family:inherit;';
@@ -1986,7 +1994,7 @@ function helocRenderRateEditor() {
             + '<div style="display:flex;gap:6px;">'
             + '<select onchange="helocSetCard(' + i + ',\'type\',this.value)" style="' + sel + 'flex:1;">' + typeOpts + '</select>'
             + '<select onchange="helocSetCard(' + i + ',\'term\',this.value)" style="' + sel + 'flex:1;">' + termOpts + '</select>'
-            + '<input type="number" step="0.001" min="0" placeholder="Rate %" value="' + (c.rate || '') + '" oninput="helocSetCard(' + i + ',\'rate\',this.value)" style="' + sel + 'width:74px;">'
+            + '<input type="number" step="0.01" min="0" inputmode="decimal" placeholder="Rate %" value="' + (c.rate || '') + '" oninput="helocSetCardRate(' + i + ',this.value)" style="' + sel + 'width:74px;">'
             + '</div>'
             + '</div>';
     }).join('');
@@ -1997,7 +2005,9 @@ function helocSetOrigSelected(i) { _helocState.origSelected = i; helocRecalc(); 
 function helocSetOrigPct(i, val) {
     var v = parseFloat(val);
     _helocState.origOptions[i] = isNaN(v) ? 0 : v;
-    helocRecalc();
+    // Light recompute — do NOT rebuild the input editor mid-type (that wipes the
+    // field and prevents typing decimals like 2.99).
+    helocRecalcLight();
 }
 function helocRenderOrigCards(drawAmount) {
     var host = $('heloc_orig_cards'); if (!host) return;
@@ -2007,9 +2017,9 @@ function helocRenderOrigCards(drawAmount) {
         return '<div onclick="helocSetOrigSelected(' + i + ')" style="flex:1;cursor:pointer;border:1px solid ' + (on ? '#C9A84C' : '#2a2a2a') + ';border-radius:8px;padding:8px;background:' + (on ? 'rgba(201,168,76,0.1)' : 'transparent') + ';">'
             + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">'
             + '<input type="radio" name="helocOrig" ' + (on ? 'checked' : '') + ' onclick="event.stopPropagation();helocSetOrigSelected(' + i + ')" style="accent-color:#C9A84C;">'
-            + '<input type="number" step="0.01" min="0" value="' + pct + '" onclick="event.stopPropagation()" oninput="helocSetOrigPct(' + i + ',this.value)" style="width:60px;background:#1a1a1a;border:1px solid #333;border-radius:5px;color:#ddd;font-size:12px;padding:3px 5px;font-family:inherit;"><span style="font-size:12px;color:#888;">%</span>'
+            + '<input type="number" step="0.01" min="0" inputmode="decimal" value="' + pct + '" onclick="event.stopPropagation()" oninput="helocSetOrigPct(' + i + ',this.value)" style="width:60px;background:#1a1a1a;border:1px solid #333;border-radius:5px;color:#ddd;font-size:12px;padding:3px 5px;font-family:inherit;"><span style="font-size:12px;color:#888;">%</span>'
             + '</div>'
-            + '<div style="font-size:13px;font-weight:600;color:#C9A84C;">' + _helocMoney(dollars) + '</div>'
+            + '<div id="heloc_orig_dollars_' + i + '" style="font-size:13px;font-weight:600;color:#C9A84C;">' + _helocMoney(dollars) + '</div>'
             + '</div>';
     }).join('');
 }
@@ -2043,6 +2053,31 @@ function helocRecalc() {
 
     helocRenderOrigCards(draw);
     helocRenderRateEditor();
+    helocRenderOutput(draw, origPct, autopay);
+    helocValidate(draw);
+}
+
+// Light recompute used while the user is typing in a rate / origination % input:
+// updates equity, slider, the origination $ figures (in place) and the right-side
+// output — but does NOT rebuild the left editor inputs, so decimal typing isn't
+// interrupted (rebuilding the <input> mid-keystroke dropped the decimal point).
+function helocRecalcLight() {
+    var eq = helocAvailableEquity();
+    var eqEl = $('heloc_equity_display');
+    if (eqEl) eqEl.textContent = (eq != null) ? _helocMoney(eq) : '—';
+    var sl = $('heloc_draw_slider');
+    var maxDraw = helocDrawMax();
+    if (sl) { sl.max = String(Math.round(maxDraw)); if (parseFloat(sl.value) > maxDraw) sl.value = String(Math.round(maxDraw)); }
+
+    var draw = _helocNum('heloc_draw');
+    var autopay = !!($('heloc_autopay') && $('heloc_autopay').checked);
+    var origPct = parseFloat(_helocState.origOptions[_helocState.origSelected]) || 0;
+
+    // Update each origination card's $ figure in place (no input rebuild).
+    _helocState.origOptions.forEach(function (pct, i) {
+        var d = $('heloc_orig_dollars_' + i);
+        if (d) d.textContent = _helocMoney(draw * ((parseFloat(pct) || 0) / 100));
+    });
     helocRenderOutput(draw, origPct, autopay);
     helocValidate(draw);
 }
