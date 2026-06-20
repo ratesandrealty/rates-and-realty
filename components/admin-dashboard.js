@@ -1592,6 +1592,8 @@ function _fvRequestWriteToken() {
   });
 }
 
+// Media (content) upload — NOT a metadata update: PATCH the raw bytes to the
+// /upload/ endpoint with uploadType=media so the file's actual content changes.
 function _fvDoDrivePatch(fileId, bytes, token) {
   return fetch(
     `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&supportsAllDrives=true`,
@@ -1599,22 +1601,26 @@ function _fvDoDrivePatch(fileId, bytes, token) {
   );
 }
 
-// PATCH new bytes onto an existing Drive file. On 401/403 (insufficient scope)
-// request write consent once and retry.
+// PATCH new bytes onto an existing Drive file. On 401/403 (insufficient scope /
+// permission) request full-Drive write consent once and retry. Returns the final
+// HTTP status on success; throws "HTTP <status>: <body snippet>" otherwise.
+// Always console.logs the final status so 200 vs 403 is visible.
 async function _fvPatchDriveBytes(fileId, bytes) {
   let token = await _fvEnsureToken();
   let res = await _fvDoDrivePatch(fileId, bytes, token);
   if (res.status === 401 || res.status === 403) {
+    console.log("[FileVault][rotate] Drive PATCH first attempt status:", res.status, "→ requesting write consent and retrying");
     _fvClearToken();
-    token = await _fvRequestWriteToken(); // prompts only if read token lacked write scope
+    token = await _fvRequestWriteToken(); // prompts only if the read token lacked write scope
     res = await _fvDoDrivePatch(fileId, bytes, token);
   }
+  const bodyText = await res.text().catch(() => "");
+  console.log("[FileVault][rotate] Drive PATCH final status:", res.status, res.ok ? "OK" : ("\nbody: " + bodyText));
   if (!res.ok) {
-    let msg = "HTTP " + res.status;
-    try { const j = await res.json(); if (j && j.error) msg = (j.error.message || j.error.status || j.error); } catch (_) {}
-    throw new Error(msg);
+    const snippet = (bodyText || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    throw new Error("HTTP " + res.status + (snippet ? ": " + snippet : ""));
   }
-  return await res.json().catch(() => ({}));
+  return res.status;
 }
 
 // Small inline status pill in the PDF toolbar: "Saving…" / "Saved ✓" / error.
@@ -2996,8 +3002,9 @@ function _fvUpdateSelectionUI() {
 // Download a Drive file's bytes (same alt=media path the viewer uses) as a Blob.
 async function _fvDownloadBlob(fileId) {
   const token = await _fvEnsureToken();
+  const bust = Date.now() + "-" + Math.random().toString(36).slice(2); // unique per call
   const res = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true&t=${Date.now()}`,
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true&t=${bust}`,
     { headers: { Authorization: "Bearer " + token, "Cache-Control": "no-cache", Pragma: "no-cache" }, cache: "no-store" }
   );
   if (res.status === 401 || res.status === 403) _fvClearToken();
@@ -4248,14 +4255,19 @@ async function _fvSaveRotationClientSide() {
       p.setRotation(PDFLib.degrees((((existing + net) % 360) + 360) % 360));
     });
     const out = await pdfDoc.save(); // Uint8Array
+    // Throws unless the PATCH (with retry) returned 2xx — so "Saved ✓" below is truthful.
     await _fvPatchDriveBytes(fileId, out);
 
-    // Baked in now → reset net rotation and re-render from the new bytes.
+    // Confirmed persisted → re-fetch FRESH bytes from Drive (cache-busted) and
+    // render from THOSE, not the in-memory copy. Rendering the in-memory bytes
+    // would hide a stale/failed write and is what made it "snap back".
     if (_fvViewerState && _fvViewerState.index === renderIndex) {
-      _fvViewerState.pdfBytes = out;
+      const blob = await _fvDownloadBlob(fileId); // alt=media + unique cache-bust + cache:no-store
+      const fresh = new Uint8Array(await blob.arrayBuffer());
+      _fvViewerState.pdfBytes = fresh;
       _fvViewerState.rotation = 0;
       _fvViewerState.savedRotation = 0;
-      await _fvReparseAndRender(out, renderIndex);
+      await _fvReparseAndRender(fresh, renderIndex);
     }
     _fvSetRotStatus("Saved ✓", "ok");
     if (btn) { btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8.5 6.5 12 13 4.5"/></svg><span class="fv-tb-label">Saved</span>'; }
