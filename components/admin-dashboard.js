@@ -3236,6 +3236,15 @@ function _fvComputeSuggestedName(docType, fields, contact, category, file) {
     const fn = _fvFirstWord(get("first_name", "full_name", "name")) || borrowerFirst;
     const st = get("dl_state", "state", "issuing_state");
     name = `Gov ID – ${fn} – DL${st ? ` (${st})` : ""}`;
+  } else if (
+    dt === "social security card" || dt === "social_security_card" || dt === "ssn_card" || dt === "ss_card" ||
+    // No driver-license number + an SSN with a name → a Social Security card, not a Gov ID.
+    (get("ssn", "social_security_number") && get("first_name", "last_name", "full_name", "name") && !get("driver_license_number", "dl_number", "license_number", "dl_state"))
+  ) {
+    const fn = get("first_name") || _fvFirstWord(get("full_name", "name")) || borrowerFirst;
+    const ln = get("last_name");
+    name = `Social Security Card – ${(fn + " " + ln).trim()}`;
+    // It read fine (name/ssn extracted) — no "couldn't read" flag, and never the Gov ID template.
   } else if (dt === "tax_returns" || dt === "tax_return" || dt === "1040") {
     const fn = _fvFirstWord(get("first_name", "taxpayer_first_name", "name")) || borrowerFirst;
     const yr = get("tax_year", "year");
@@ -3335,7 +3344,7 @@ function _fvOpenReviewModal() {
   const _last = _rc.last_name || "";
   const _today = _fvFmtDateMDY(new Date());
   const _seedNames = Array.from(new Set([_full, _first, _last].filter(Boolean)));
-  const _chipTokens = ["Paystub", "W2", "Bank Stmt", "Gov ID", "Tax Return"];
+  const _chipTokens = ["Paystub", "W2", "Bank Stmt", "Gov ID", "Social Security Card", "Tax Return"];
   if (_first) _chipTokens.push(_first);
   if (_today) _chipTokens.push(_today);
   const _chipStyle = "background:#1a1a1a;border:1px solid #C9A84C55;color:#C9A84C;font-size:11px;padding:3px 9px;border-radius:14px;cursor:pointer;font-family:inherit;white-space:nowrap;";
