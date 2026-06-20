@@ -90,6 +90,16 @@
     .pd-bchip:hover{border-color:var(--gold-bdr);color:var(--gold);}
     .pd-bchip.on{background:var(--gold-bg);border-color:var(--gold-bdr);color:var(--gold);}
     .pd-empty-amber{background:rgba(229,152,77,.10);border:1px solid rgba(229,152,77,.35);color:#E7B380;font-size:12.5px;border-radius:9px;padding:9px 12px;margin-top:14px;line-height:1.5;}
+    /* Auto-dial */
+    .pd-auto-on{background:linear-gradient(135deg,#7A5020,#C9A84C)!important;color:#1A0E00!important;border-color:transparent!important;}
+    .pd-auto-sec{display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle;}
+    .pd-secbtn{background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;padding:4px 8px;font-family:inherit;}
+    .pd-secbtn.on{background:var(--gold-bg);border-color:var(--gold-bdr);color:var(--gold);}
+    .pd-auto{background:var(--surface2);border:1px solid var(--gold-bdr);border-radius:10px;padding:12px;margin-top:12px;}
+    .pd-auto-bar{height:6px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden;margin-top:8px;}
+    .pd-auto-bar-fill{height:100%;background:var(--gold);transition:width .25s linear;}
+    .pd-auto-paused{border-color:rgba(229,152,77,.4);color:#E7B380;}
+    .pd-auto-help{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.5;}
     /* Live call bar */
     #callBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;align-items:center;gap:12px;background:#161616;border:1px solid var(--gold-bdr);border-radius:12px;padding:9px 16px;z-index:9998;box-shadow:0 12px 36px rgba(0,0,0,.6);font-size:13px;}
     .pd-dispo{background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;padding:9px 13px;font-family:inherit;}
@@ -213,10 +223,15 @@
   var _device=null, _call=null, _voiceReady=false, _callT=null, _callSec=0, _pendingDur=0;
   var _vmTemplates=[], _vmLoaded=false, _vmRec=null, _vmChunks=[];
   var _twNumbers=[];
+  var _autoDial=false, _autoSeconds=3, _autoTimer=null, _autoRemaining=0, _autoSkipped=0, _autoHelpShown=false, _autoHelpVisible=false;
   var DISPOS=['No answer','Left VM','Connected','Not interested','Wrong number'];
   var TABS=[['due','Due','due'],['new','New','new_leads'],['stale','Stale','stale'],['scheduled','Scheduled','scheduled'],['all','All','total_active']];
 
   /* ── boot ── */
+  try{ _autoDial=localStorage.getItem('pd_autodial')==='1'; }catch(e){}
+  try{ var _as=parseInt(localStorage.getItem('pd_autosecs'),10); if([3,5,8].indexOf(_as)>-1) _autoSeconds=_as; }catch(e){}
+  window.addEventListener('beforeunload', function(){ clearAutoTimer(); }); // disarm on navigate away
+
   (async function(){
     await waitClient();
     if(!window._supabaseClient) return; // auth-guard redirects
@@ -299,7 +314,7 @@
       renderList();
       updateFilterSummary();
       if(reset){
-        if(_queue.length){ _currentIdx=0; renderFocus(); scrollCurrentIntoView(); }
+        if(_queue.length){ _currentIdx=0; renderFocus(); scrollCurrentIntoView(); autoDialTick(); }
         else { showCleared(); }
       }
     }catch(e){ document.getElementById('queueList').innerHTML='<div class="empty">Could not load queue.</div>'; }
@@ -345,6 +360,7 @@
   // Empty queue — diagnose WHY (filters vs genuinely caught up) via one RPC, only on empty.
   async function showCleared(){
     _currentIdx=-1;
+    clearAutoTimer(); // disarm any countdown when the queue is empty/exhausted
     var box=document.getElementById('focusBody'); if(!box) return;
     box.innerHTML='<div class="pd-cleared"><span class="spin"></span></div>';
     var help={};
@@ -547,6 +563,16 @@
     var callBtn=(_voiceReady && l.phone)?'<button class="btn-gold" onclick="startCall()">📞 Call</button>':'';
     var vmBtn=l.phone?'<button class="btn-ghost" onclick="dropVMClick()">📩 Drop VM</button>':'';
     var dncBtn='<button class="btn-ghost" onclick="markDNC()" style="border-color:rgba(229,72,77,.4);color:#F2A5A8;">🚫 Do Not Call</button>';
+    var autoBtn;
+    if(_voiceReady){
+      autoBtn='<button class="btn-ghost'+(_autoDial?' pd-auto-on':'')+'" onclick="toggleAutoDial()">⚡ Auto-dial'+(_autoDial?' ON':'')+'</button>';
+      if(_autoDial){ autoBtn+='<span class="pd-auto-sec">'+[3,5,8].map(function(s){ return '<button class="pd-secbtn'+(_autoSeconds===s?' on':'')+'" onclick="setAutoSeconds('+s+')">'+s+'s</button>'; }).join('')+'</span>'; }
+    } else {
+      autoBtn='<button class="btn-ghost" disabled title="Needs in-browser calling — check Twilio setup." style="opacity:.5;cursor:not-allowed;">⚡ Auto-dial</button>';
+    }
+    var helpLine=(_autoDial && _voiceReady && _autoHelpVisible)
+      ? '<div class="pd-auto-help" id="autoHelp">Auto-dial places each call for you. You still tap a disposition after the call to log it and move on. After-hours leads are skipped automatically.</div>'
+      : '<div id="autoHelp"></div>';
     var hoursLine=l.local_time?('<div class="muted" style="font-size:12.5px;margin-top:6px;">🕐 '+esc(l.local_time)+' their time'+(l.tz?(' · '+esc(l.tz)):'')+(l.tz_assumed?' (assumed)':'')+'</div>'):'';
     var hoursBanner=(l.callable_now===false)?'<div class="pd-hours-banner">⛔ Outside legal calling hours (8am–9pm their time)</div>':'';
     var callerLabel=(_voiceReady && l.phone)?'<span class="muted" style="font-size:11px;align-self:center;">Caller: '+esc(callerForLead(l))+'</span>':'';
@@ -566,7 +592,9 @@
       +hoursLine
       +cb
       +hoursBanner
-      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;">'+callBtn+vmBtn+dncBtn+callerLabel+'</div><div id="vmArea"></div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;">'+callBtn+autoBtn+vmBtn+dncBtn+callerLabel+'</div>'
+      +helpLine
+      +'<div id="autoPanel"></div><div id="vmArea"></div>'
       // tags
       +'<div class="pd-section" style="margin-top:14px;"><div class="pd-section-h">Tags</div>'
         +'<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">'+(tagChipsHTML(l.tags,false)||'<span class="muted" style="font-size:11px;">No tags</span>')
@@ -730,6 +758,7 @@
     renderList();
     renderFocus();
     scrollCurrentIntoView();
+    autoDialTick(); // if auto-dial is armed, place the next call (or skip after-hours)
   }
 
   /* ── partner filter ── */
@@ -860,8 +889,10 @@
       _voiceReady=true;
     }catch(e){ _voiceReady=false; }
     if(_currentIdx>=0) renderFocus(); // surface the Call button (or keep tel: fallback)
+    if(_voiceReady && _autoDial) autoDialTick(); // resume auto-dial once browser calling is ready
   }
   async function startCall(){
+    clearAutoTimer(); // a (manual or auto) call supersedes any pending countdown
     var lead=_queue[_currentIdx]; if(!lead||!lead.phone){ showToast('No phone on file'); return; }
     if(!confirmHours(lead)) return; // calling-hours guardrail
     if(!_voiceReady||!_device){ showToast('Browser calling unavailable'); return; }
@@ -1061,11 +1092,98 @@
     catch(e){ showToast((e&&e.message)||'Could not delete'); }
   }
 
+  /* ── auto-dial ── */
+  function callActive(){ return !!_call; } // a Twilio call is live (ringing or connected)
+  function clearAutoTimer(){ if(_autoTimer){ clearInterval(_autoTimer); _autoTimer=null; } _autoRemaining=0; }
+  function hideAutoPanel(){ var b=document.getElementById('autoPanel'); if(b) b.innerHTML=''; }
+  function toggleAutoDial(){
+    if(!_voiceReady){ showToast('Auto-dial needs in-browser calling'); return; }
+    _autoDial=!_autoDial;
+    try{ localStorage.setItem('pd_autodial', _autoDial?'1':'0'); }catch(e){}
+    if(_autoDial){
+      if(!_autoHelpShown){ _autoHelpShown=true; _autoHelpVisible=true; }
+      renderFocus();
+      autoDialTick();
+    } else {
+      clearAutoTimer(); _autoHelpVisible=false; renderFocus();
+    }
+  }
+  function setAutoSeconds(s){
+    if([3,5,8].indexOf(s)<0) s=3;
+    _autoSeconds=s;
+    try{ localStorage.setItem('pd_autosecs', String(s)); }catch(e){}
+    renderFocus();
+    if(_autoTimer) startAutoCountdown(); // restart running countdown at the new length
+  }
+  // Like Skip (no log, no removal): move the cursor to the next lead, paging as needed.
+  async function autoMoveNext(){
+    _currentIdx++;
+    if(!_exhausted && _currentIdx >= _queue.length-5){ await loadMore(); }
+    if(_currentIdx >= _queue.length){
+      if(_exhausted){ renderList(); return false; }
+      _currentIdx=_queue.length-1;
+      if(_currentIdx<0){ renderList(); return false; }
+    }
+    renderList(); renderFocus(); scrollCurrentIntoView();
+    return true;
+  }
+  function pauseAutoNoCallable(){
+    clearAutoTimer();
+    var b=document.getElementById('autoPanel'); if(!b) return;
+    b.innerHTML='<div class="pd-auto pd-auto-paused">⏸ No leads are callable right now — auto-dial paused.'+(_autoSkipped>0?(' <span class="muted">Skipped '+_autoSkipped+' after-hours.</span>'):'')+'</div>';
+  }
+  async function autoDialTick(){
+    if(!_autoDial || !_voiceReady){ clearAutoTimer(); return; }
+    clearAutoTimer();
+    if(callActive()) return;                 // wait until the active call ends (user dispositions to advance)
+    var lead=_queue[_currentIdx];
+    if(!lead) return;                        // empty/exhausted handled by showCleared (which disarms the timer)
+    // skip after-hours leads until we find a callable one (or run out)
+    var guard=0, max=Math.max(1,_queue.length)+2;
+    while(lead && lead.callable_now===false){
+      _autoSkipped++;
+      var moved=await autoMoveNext();
+      if(!moved){ pauseAutoNoCallable(); return; }   // reached the end with no callable lead
+      if(++guard>max){ pauseAutoNoCallable(); return; }
+      lead=_queue[_currentIdx];
+    }
+    lead=_queue[_currentIdx];
+    if(!lead){ return; }
+    if(lead.callable_now===false){ pauseAutoNoCallable(); return; }
+    startAutoCountdown();
+  }
+  function startAutoCountdown(){
+    clearAutoTimer();
+    _autoHelpVisible=false; var h=document.getElementById('autoHelp'); if(h) h.innerHTML=''; // dialing begins → drop the helper line
+    _autoRemaining=Math.max(1, Number(_autoSeconds)||3);
+    renderAutoPanel();
+    _autoTimer=setInterval(function(){
+      _autoRemaining--;
+      if(_autoRemaining<=0){ clearAutoTimer(); autoFire(); }
+      else { renderAutoPanel(); }
+    }, 1000);
+  }
+  function renderAutoPanel(){
+    var box=document.getElementById('autoPanel'); if(!box) return;
+    var lead=_queue[_currentIdx]; if(!lead){ box.innerHTML=''; return; }
+    var pct=Math.max(0, Math.min(100, ((_autoSeconds-_autoRemaining)/_autoSeconds)*100));
+    var skip=_autoSkipped>0?('<div class="muted" style="font-size:11px;margin-top:6px;">Skipped '+_autoSkipped+' after-hours</div>'):'';
+    box.innerHTML='<div class="pd-auto">'
+      +'<div style="font-size:13px;font-weight:700;">⚡ Auto-dialing '+esc(lead.name||'this lead')+' in '+_autoRemaining+'s</div>'
+      +'<div class="pd-auto-bar"><div class="pd-auto-bar-fill" style="width:'+pct.toFixed(0)+'%;"></div></div>'
+      +'<div style="display:flex;gap:8px;margin-top:9px;"><button class="btn-gold" onclick="autoCallNow()">Call now</button><button class="btn-ghost" onclick="autoCancel()">Cancel</button></div>'
+      +skip
+    +'</div>';
+  }
+  function autoFire(){ hideAutoPanel(); if(callActive()) return; startCall(); }   // same in-browser call as the manual button
+  function autoCallNow(){ clearAutoTimer(); autoFire(); }
+  function autoCancel(){ clearAutoTimer(); hideAutoPanel(); } // stay on this lead; auto-dial stays armed for the next advance
+
   /* ── keyboard shortcuts ── */
   document.addEventListener('keydown', function(e){
     var tag=(document.activeElement&&document.activeElement.tagName)||'';
     var typing=(tag==='TEXTAREA'||tag==='INPUT'||tag==='SELECT');
-    if(e.key==='Escape'){ if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); return; }
+    if(e.key==='Escape'){ if(_autoTimer){ e.preventDefault(); autoCancel(); return; } if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); return; }
     if(typing) return;
     if(_currentIdx<0) return;
     if(e.key==='n'||e.key==='N'||e.key==='Enter'){ e.preventDefault(); skipNext(); }
