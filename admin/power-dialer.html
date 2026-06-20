@@ -74,6 +74,12 @@
     .pd-summary strong{color:var(--text2);font-weight:700;}
     .pd-modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9999;padding:20px;}
     .pd-modal-box{background:var(--surface);border:1px solid var(--gold-bdr);border-radius:14px;padding:18px;width:520px;max-width:100%;max-height:85vh;overflow-y:auto;}
+    .pd-tag{display:inline-block;font-size:10px;font-weight:700;border-radius:9px;padding:1px 7px;white-space:nowrap;}
+    .pd-tag-sm{font-size:9px;padding:0 6px;}
+    .pd-tagopt{background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:14px;font-size:11px;cursor:pointer;padding:3px 9px;font-family:inherit;}
+    .pd-tagopt:hover{border-color:var(--gold-bdr);color:var(--gold);}
+    .pd-fpanel{display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:50;background:var(--surface);border:1px solid var(--gold-bdr);border-radius:12px;padding:14px;width:300px;box-shadow:0 12px 36px rgba(0,0,0,.6);}
+    .pd-fpanel.open{display:block;}
     /* Live call bar */
     #callBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;align-items:center;gap:12px;background:#161616;border:1px solid var(--gold-bdr);border-radius:12px;padding:9px 16px;z-index:9998;box-shadow:0 12px 36px rgba(0,0,0,.6);font-size:13px;}
     .pd-dispo{background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;padding:9px 13px;font-family:inherit;}
@@ -121,6 +127,10 @@
     <select id="viewSelect" class="fld" style="width:auto;height:32px;font-size:13px;padding:0 8px;" onchange="applyView(this.value)"><option value="">Saved views…</option></select>
     <button class="btn-ghost" style="padding:5px 10px;" onclick="saveView()">Save view</button>
     <button id="viewDelBtn" class="q-copy" style="display:none;" onclick="deleteView()" title="Delete selected view">×</button>
+    <div style="position:relative;">
+      <button class="btn-ghost" style="padding:5px 10px;" onclick="toggleFilters()">Filters <span id="filtersCount"></span> ▾</button>
+      <div id="filtersPanel" class="pd-fpanel"></div>
+    </div>
     <span class="pd-hint"><kbd>N</kbd>/<kbd>Enter</kbd> next · <kbd>1</kbd>–<kbd>5</kbd> dispositions · <kbd>C</kbd> note</span>
   </div>
   <div id="filterSummary" class="pd-summary">Showing: New · Stage: All · Partner: All · 0 leads</div>
@@ -186,8 +196,9 @@
   async function waitClient(ms){ ms=ms||7000; var s=Date.now(); while(!window._supabaseClient && Date.now()-s<ms){ await new Promise(function(r){setTimeout(r,40);}); } return window._supabaseClient; }
 
   /* ── state ── */
-  var _filter='new', _stage='', _partnerId='', _sort='', _queue=[], _offset=0, _limit=75, _loading=false, _exhausted=false, _currentIdx=-1;
-  var _counts={}, _notesCache={}, _partners=[], _views=[];
+  var _filter='new', _stage='', _partnerId='', _sort='priority', _queue=[], _offset=0, _limit=75, _loading=false, _exhausted=false, _currentIdx=-1;
+  var _source=null, _tagIds=null, _callableOnly=false, _minLoan=null;
+  var _counts={}, _notesCache={}, _partners=[], _views=[], _tagsList=[], _sourcesList=[];
   var _sCalls=0, _sConnects=0, _sCallbacks=0;
   var _device=null, _call=null, _voiceReady=false, _callT=null, _callSec=0, _pendingDur=0;
   var _vmTemplates=[], _vmLoaded=false, _vmRec=null, _vmChunks=[];
@@ -203,6 +214,7 @@
     await loadCounts();
     loadPartners();
     loadViews();
+    loadTags();      // cache lead_tags_list for chips + the + Tag picker + filters
     loadTwNumbers(); // local-presence caller IDs (also used to label the Call button)
     await loadQueue(true);
     initVoice(); // async; re-renders focus when ready (or stays on tel: fallback)
@@ -237,7 +249,17 @@
     var tab=(TABS.filter(function(t){ return t[0]===_filter; })[0]||['','All'])[1]||titleCase(_filter);
     var partnerName='All';
     if(_partnerId){ var p=_partners.filter(function(x){ return String(x.id)===String(_partnerId); })[0]; partnerName=p?(((p.first_name||'')+' '+(p.last_name||'')).trim()||'Partner'):'Partner'; }
-    el.innerHTML='Showing: <strong>'+esc(tab)+'</strong> · Stage: <strong>'+esc(_stage||'All')+'</strong> · Partner: <strong>'+esc(partnerName)+'</strong> · <strong>'+_queue.length+'</strong> lead'+(_queue.length===1?'':'s');
+    var parts=['Showing: <strong>'+esc(tab)+'</strong>','Stage: <strong>'+esc(_stage||'All')+'</strong>','Partner: <strong>'+esc(partnerName)+'</strong>'];
+    if(_source) parts.push('Source: <strong>'+esc(_source)+'</strong>');
+    if(_tagIds&&_tagIds.length){
+      var names=_tagIds.map(function(id){ var t=_tagsList.filter(function(x){ return String(x.id)===String(id); })[0]; return t?t.name:'tag'; });
+      parts.push('Tags: <strong>'+esc(names.join(', '))+'</strong>');
+    }
+    if(_sort&&_sort!=='priority'){ var sl={value:'Highest value',loan:'Highest loan',recent:'Newest',oldest:'Oldest'}[_sort]||_sort; parts.push('Sort: <strong>'+esc(sl)+'</strong>'); }
+    if(_callableOnly) parts.push('<strong>Callable-now</strong>');
+    if(_minLoan!=null) parts.push('Min <strong>'+esc(fmtMoney(_minLoan))+'</strong>');
+    parts.push('<strong>'+_queue.length+'</strong> lead'+(_queue.length===1?'':'s'));
+    el.innerHTML=parts.join(' · ');
   }
   function updateSession(){
     document.getElementById('sessionStrip').textContent =
@@ -251,7 +273,15 @@
     _loading=true;
     if(reset){ _queue=[]; _offset=0; _exhausted=false; _currentIdx=-1; document.getElementById('queueList').innerHTML='<div class="loading"><span class="spin"></span> Loading queue…</div>'; }
     try{
-      var r=await _authClient().rpc('power_dialer_queue',{p_filter:_filter,p_stage:_stage||null,p_partner_id:_partnerId||null,p_limit:_limit,p_offset:_offset});
+      var r=await _authClient().rpc('power_dialer_queue',{
+        p_filter:_filter, p_stage:_stage||null, p_partner_id:_partnerId||null,
+        p_limit:_limit, p_offset:_offset,
+        p_source:_source||null,
+        p_tag_ids:(_tagIds&&_tagIds.length)?_tagIds:null,
+        p_callable_only:!!_callableOnly,
+        p_min_loan:(_minLoan!=null&&_minLoan!=='')?Number(_minLoan):null,
+        p_sort:_sort||'priority'
+      });
       var rows=(r&&!r.error&&r.data)?r.data:[];
       _queue=_queue.concat(rows);
       _offset+=rows.length;
@@ -288,10 +318,12 @@
       var rec=l.last_activity_at?('Last touch '+timeAgo(l.last_activity_at)):'Never contacted';
       var pe=(Number(l.potential_earnings)>0)?'<span class="pd-pe">~'+esc(fmtMoney(l.potential_earnings))+'</span>':'';
       var ah=(l.callable_now===false)?'<span class="pd-after" title="Outside 8am–9pm their time">● after hours</span>':'';
+      var tg=(l.tags&&l.tags.length)?('<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">'+tagChipsHTML(l.tags,true)+'</div>'):'';
       return '<div class="pd-row'+(i===_currentIdx?' active':'')+'" onclick="selectLead('+i+')">'
         +'<div style="flex:1;min-width:0;">'
           +'<div style="display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;"><span class="nm">'+esc(l.name||'Unknown')+'</span>'+bucketBadge(l.bucket)+pe+ah+'</div>'
           +'<div class="sub">'+stage+' '+esc(rec)+(l.phone?(' · '+esc(l.phone)):'')+'</div>'
+          +tg
         +'</div>'
       +'</div>';
     }).join('');
@@ -329,6 +361,73 @@
       if(r&&r.error) throw new Error(r.error.message);
       showToast('Marked Do Not Call'); loadCounts(); advance(true);
     }catch(e){ showToast((e&&e.message)||'Could not set Do Not Call'); }
+  }
+
+  /* ── lead tags ── */
+  async function loadTags(){ try{ var r=await _authClient().rpc('lead_tags_list'); _tagsList=(r&&!r.error&&r.data)?r.data:[]; }catch(e){ _tagsList=[]; } }
+  function hexA(hex, a){
+    var c=String(hex||'#C9A84C').trim();
+    var m=/^#?([0-9a-fA-F]{6})$/.exec(c);
+    if(!m) return c;
+    var n=parseInt(m[1],16);
+    return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')';
+  }
+  function tagChipsHTML(tags, compact){
+    tags=tags||[]; if(!tags.length) return '';
+    return tags.map(function(t){
+      var c=t.color||'#C9A84C';
+      var x=compact?'':' <span style="cursor:pointer;opacity:.7;" onclick="event.stopPropagation();removeTag(\''+esc(String(t.id))+'\')">×</span>';
+      return '<span class="pd-tag'+(compact?' pd-tag-sm':'')+'" style="color:'+c+';background:'+hexA(c,0.18)+';border:1px solid '+hexA(c,0.5)+';">'+esc(t.name||'')+x+'</span>';
+    }).join('');
+  }
+  async function removeTag(tagId){
+    var lead=_queue[_currentIdx]; if(!lead) return;
+    try{
+      var r=await _authClient().rpc('contact_tag_remove',{p_contact_id:lead.contact_id,p_tag_id:tagId});
+      if(r&&r.error) throw new Error(r.error.message);
+      lead.tags=(lead.tags||[]).filter(function(t){ return String(t.id)!==String(tagId); });
+      renderFocus(); renderList();
+    }catch(e){ showToast((e&&e.message)||'Could not remove tag'); }
+  }
+  function openTagPop(){
+    var box=document.getElementById('tagPop'); if(!box) return;
+    if(box.getAttribute('data-open')==='1'){ box.innerHTML=''; box.removeAttribute('data-open'); return; }
+    var lead=_queue[_currentIdx]; if(!lead) return;
+    var have={}; (lead.tags||[]).forEach(function(t){ have[String(t.id)]=true; });
+    var opts=[];
+    _tagsList.forEach(function(t,idx){
+      if(have[String(t.id)]) return;
+      var c=t.color||'#C9A84C';
+      opts.push('<button type="button" class="pd-tagopt" onclick="assignTagByIndex('+idx+')"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:6px;"></span>'+esc(t.name||'')+(t.usage_count!=null?(' <span class="muted" style="font-size:9px;">'+t.usage_count+'</span>'):'')+'</button>');
+    });
+    box.innerHTML='<div style="margin-top:8px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--surface2);">'
+      +'<div style="display:flex;gap:6px;margin-bottom:8px;"><input id="tagInput" class="fld" placeholder="New or existing tag…" style="max-width:200px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addTagTyped();}"><button class="btn-gold" onclick="addTagTyped()">Add</button></div>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:5px;max-height:140px;overflow-y:auto;">'+(opts.join('')||'<span class="muted" style="font-size:11px;">No other tags yet.</span>')+'</div>'
+    +'</div>';
+    box.setAttribute('data-open','1');
+    var inp=document.getElementById('tagInput'); if(inp) inp.focus();
+  }
+  function addTagTyped(){ var inp=document.getElementById('tagInput'); var v=inp?inp.value.trim():''; if(!v){ showToast('Type a tag name'); return; } assignTagByName(v); }
+  function assignTagByIndex(i){ var t=_tagsList[i]; if(t) assignTagByName(t.name); }
+  async function assignTagByName(name){
+    name=String(name||'').trim(); if(!name) return;
+    var lead=_queue[_currentIdx]; if(!lead) return;
+    try{
+      var r=await _authClient().rpc('contact_tag_add',{p_contact_id:lead.contact_id,p_name:name});
+      if(r&&r.error) throw new Error(r.error.message);
+      await loadTags(); // refresh cache so a newly-created tag has its real id + color + counts
+      var tg=_tagsList.filter(function(t){ return String(t.name||'').toLowerCase()===name.toLowerCase(); })[0];
+      if(!tg){ // fall back to whatever the RPC returned
+        var d=r&&r.data; if(Array.isArray(d)) d=d[0];
+        if(d&&(d.id||d.tag_id)) tg={ id:d.id||d.tag_id, name:d.name||name, color:d.color||'#C9A84C' };
+        else if(typeof d==='string') tg={ id:d, name:name, color:'#C9A84C' };
+        else tg={ id:'tmp-'+name, name:name, color:'#C9A84C' };
+      }
+      if(!lead.tags) lead.tags=[];
+      if(!lead.tags.some(function(t){ return String(t.id)===String(tg.id); })) lead.tags.push(tg);
+      var box=document.getElementById('tagPop'); if(box){ box.innerHTML=''; box.removeAttribute('data-open'); }
+      renderFocus(); renderList();
+    }catch(e){ showToast((e&&e.message)||'Could not add tag'); }
   }
 
   function renderFocus(){
@@ -372,6 +471,11 @@
       +cb
       +hoursBanner
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;">'+callBtn+vmBtn+dncBtn+callerLabel+'</div><div id="vmArea"></div>'
+      // tags
+      +'<div class="pd-section" style="margin-top:14px;"><div class="pd-section-h">Tags</div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">'+(tagChipsHTML(l.tags,false)||'<span class="muted" style="font-size:11px;">No tags</span>')
+        +' <button class="q-copy" onclick="openTagPop()">+ Tag</button></div>'
+        +'<div id="tagPop"></div></div>'
       // recent notes
       +'<div class="pd-section"><div class="pd-section-h">Recent notes</div><div id="focusNotes"><div class="muted" style="font-size:11px;">Loading notes…</div></div></div>'
       // dispositions
@@ -543,32 +647,91 @@
     sel.value=_partnerId||'';
   }
 
+  /* ── more filters popover ── */
+  async function loadSources(){ try{ var r=await _authClient().rpc('dialer_sources_list'); _sourcesList=(r&&!r.error&&r.data)?r.data:[]; }catch(e){ _sourcesList=[]; } }
+  function updateFiltersCount(){
+    var n=0; if(_source) n++; if(_tagIds&&_tagIds.length) n++; if(_sort&&_sort!=='priority') n++; if(_callableOnly) n++; if(_minLoan!=null) n++;
+    var b=document.getElementById('filtersCount'); if(b) b.textContent=n?('('+n+')'):'';
+  }
+  async function toggleFilters(){
+    var p=document.getElementById('filtersPanel'); if(!p) return;
+    if(p.classList.contains('open')){ p.classList.remove('open'); return; }
+    await loadSources();
+    if(!_tagsList.length) await loadTags();
+    renderFiltersPanel();
+    p.classList.add('open');
+  }
+  function renderFiltersPanel(){
+    var p=document.getElementById('filtersPanel'); if(!p) return;
+    var hasSrc=_sourcesList.some(function(s){ return String(s.source)===String(_source); });
+    var srcOpts='<option value=""'+(_source==null?' selected':'')+'>All sources</option>'
+      +(_source!=null&&!hasSrc?('<option value="'+esc(String(_source))+'" selected>'+esc(_source)+'</option>'):'')
+      +_sourcesList.map(function(s){ return '<option value="'+esc(String(s.source||''))+'"'+((_source!=null&&String(_source)===String(s.source))?' selected':'')+'>'+esc((s.source||'(none)')+' ('+(s.n!=null?s.n:0)+')')+'</option>'; }).join('');
+    var tagChecks=_tagsList.map(function(t){
+      var checked=(_tagIds&&_tagIds.indexOf(String(t.id))>-1)?'checked':'';
+      var c=t.color||'#C9A84C';
+      return '<label style="display:flex;align-items:center;gap:7px;padding:3px 0;cursor:pointer;font-size:12px;"><input type="checkbox" class="pd-tagck" value="'+esc(String(t.id))+'" '+checked+'><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c+';"></span>'+esc(t.name||'')+'</label>';
+    }).join('')||'<div class="muted" style="font-size:11px;">No tags yet.</div>';
+    var sortOpts=[['priority','Priority (smart)'],['value','Highest value'],['loan','Highest loan'],['recent','Newest'],['oldest','Oldest']]
+      .map(function(o){ return '<option value="'+o[0]+'"'+((_sort||'priority')===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('');
+    p.innerHTML='<div class="pd-section-h">Source</div><select id="fSource" class="fld" style="margin-bottom:10px;">'+srcOpts+'</select>'
+      +'<div class="pd-section-h">Tags</div><div style="max-height:130px;overflow-y:auto;margin-bottom:10px;">'+tagChecks+'</div>'
+      +'<div class="pd-section-h">Sort</div><select id="fSort" class="fld" style="margin-bottom:10px;">'+sortOpts+'</select>'
+      +'<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="fCallable" '+(_callableOnly?'checked':'')+'> Callable now only</label>'
+      +'<div class="pd-section-h">Min loan $</div><input id="fMinLoan" class="fld" type="number" min="0" step="1000" value="'+(_minLoan!=null?esc(String(_minLoan)):'')+'" placeholder="Any" style="margin-bottom:12px;">'
+      +'<div style="display:flex;gap:8px;"><button class="btn-gold" onclick="applyFilters()">Apply</button><button class="btn-ghost" onclick="clearFilters()">Clear filters</button></div>';
+  }
+  function applyFilters(){
+    var s=document.getElementById('fSource'); _source=(s&&s.value)?s.value:null;
+    var ids=[]; Array.prototype.forEach.call(document.querySelectorAll('#filtersPanel .pd-tagck:checked'),function(c){ ids.push(c.value); });
+    _tagIds=ids.length?ids:null;
+    var so=document.getElementById('fSort'); _sort=(so&&so.value)||'priority';
+    var cc=document.getElementById('fCallable'); _callableOnly=!!(cc&&cc.checked);
+    var ml=document.getElementById('fMinLoan'); var mv=ml?ml.value:''; _minLoan=(mv!==''&&mv!=null)?Number(mv):null;
+    var p=document.getElementById('filtersPanel'); if(p) p.classList.remove('open');
+    updateFiltersCount(); updateFilterSummary(); loadQueue(true);
+  }
+  function clearFilters(){
+    _source=null; _tagIds=null; _sort='priority'; _callableOnly=false; _minLoan=null;
+    updateFiltersCount(); updateFilterSummary(); renderFiltersPanel(); loadQueue(true);
+  }
+
   /* ── saved views ── */
   async function loadViews(){
     try{ var r=await _authClient().rpc('dialer_views_list'); _views=(r&&!r.error&&r.data)?r.data:[]; }catch(e){ _views=[]; }
     var sel=document.getElementById('viewSelect'); if(!sel) return;
     var keep=sel.value||'';
-    sel.innerHTML='<option value="">Saved views…</option>'+_views.map(function(v){ return '<option value="'+esc(String(v.id))+'">'+esc(v.name||'View')+'</option>'; }).join('');
+    sel.innerHTML='<option value="">Saved views…</option>'+_views.map(function(v){ var mc=(v.match_count!=null?(' ('+v.match_count+')'):''); return '<option value="'+esc(String(v.id))+'">'+esc(v.name||'View')+mc+'</option>'; }).join('');
     if(keep && _views.some(function(v){ return String(v.id)===keep; })) sel.value=keep;
   }
   function applyView(id){
     var del=document.getElementById('viewDelBtn'); if(del) del.style.display=id?'inline-block':'none';
     if(!id) return;
     var v=_views.filter(function(x){ return String(x.id)===String(id); })[0]; if(!v) return;
-    // Saved views set filter+stage+partner+sort together — no auto-'all' rule here.
-    _filter=v.filter||'all'; _stage=v.stage||''; _partnerId=v.partner_id!=null?String(v.partner_id):''; _sort=v.sort||'';
+    // Saved views set the FULL state together — no auto-'all' rule here.
+    _filter=v.filter||'all'; _stage=v.stage||''; _partnerId=v.partner_id!=null?String(v.partner_id):''; _sort=v.sort||'priority';
+    _source=(v.source!=null&&v.source!=='')?v.source:null;
+    _tagIds=(Array.isArray(v.tag_ids)&&v.tag_ids.length)?v.tag_ids.map(String):null;
+    _callableOnly=!!v.callable_only;
+    _minLoan=(v.min_loan!=null&&v.min_loan!=='')?Number(v.min_loan):null;
     var ss=document.getElementById('stageSelect'); if(ss) ss.value=_stage;
     var ps=document.getElementById('partnerSelect'); if(ps) ps.value=_partnerId;
     renderTabs();
+    renderFiltersPanel();   // sync popover controls to the view (safe even when closed)
+    updateFiltersCount();
     updateFilterSummary();
     loadQueue(true);
   }
   async function saveView(){
     var name=prompt('Name this view:'); if(name==null) return; name=name.trim(); if(!name){ showToast('Name required'); return; }
     try{
-      var r=await _authClient().rpc('dialer_view_save',{p_name:name,p_filter:_filter,p_stage:_stage||null,p_partner_id:_partnerId||null,p_sort:_sort||null});
+      var r=await _authClient().rpc('dialer_view_save',{
+        p_name:name, p_filter:_filter, p_stage:_stage||null, p_partner_id:_partnerId||null, p_sort:_sort||'priority',
+        p_source:_source||null, p_tag_ids:(_tagIds&&_tagIds.length)?_tagIds:null, p_callable_only:!!_callableOnly,
+        p_min_loan:(_minLoan!=null&&_minLoan!=='')?Number(_minLoan):null
+      });
       if(r&&r.error) throw new Error(r.error.message);
-      showToast('View saved'); await loadViews();
+      showToast('View saved'); await loadViews(); // refresh so the new count shows
     }catch(e){ showToast((e&&e.message)||'Could not save view'); }
   }
   async function deleteView(){
