@@ -103,6 +103,10 @@
     .pd-bridge-note{background:var(--surface2);border:1px solid var(--gold-bdr);border-radius:9px;padding:9px 12px;margin-top:10px;font-size:12px;color:var(--text2);line-height:1.5;}
     /* Live call bar */
     #callBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;align-items:center;gap:12px;background:#161616;border:1px solid var(--gold-bdr);border-radius:12px;padding:9px 16px;z-index:9998;box-shadow:0 12px 36px rgba(0,0,0,.6);font-size:13px;}
+    #bridgeBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;align-items:center;gap:14px;flex-wrap:wrap;justify-content:center;background:#15130c;border:1px solid var(--gold-bdr);border-radius:12px;padding:9px 16px;z-index:9998;box-shadow:0 12px 36px rgba(0,0,0,.6);font-size:13px;max-width:94vw;}
+    #bridgeBar .bb-btn{background:transparent;border:1px solid var(--gold-bdr);color:var(--gold);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;padding:6px 12px;font-family:inherit;}
+    #bridgeBar .bb-btn:hover{background:var(--gold-bg);}
+    .dispo-flash{box-shadow:0 0 0 2px var(--gold-bdr);border-radius:9px;transition:box-shadow .3s;}
     .pd-dispo{background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;padding:9px 13px;font-family:inherit;}
     .pd-dispo:hover{border-color:var(--gold-bdr);color:var(--gold);}
     .pd-dispo b{color:var(--muted);font-size:11px;margin-right:3px;}
@@ -171,6 +175,7 @@
   </div>
 
   <div id="callBar"></div>
+  <div id="bridgeBar"></div>
   <div id="callerIdModal" class="pd-modal" onclick="if(event.target===this)closeCallerIds()">
     <div class="pd-modal-box">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -225,6 +230,7 @@
   var _vmTemplates=[], _vmLoaded=false, _vmRec=null, _vmChunks=[];
   var _twNumbers=[];
   var _autoDial=false, _autoSeconds=3, _autoTimer=null, _autoRemaining=0, _autoSkipped=0, _autoHelpShown=false, _autoHelpVisible=false;
+  var _bridgeSid=null, _bridgeName='', _bridgeStart=0, _bridgePhase='ringing', _bridgeTick=null, _bridgePoll=null;
   var DISPOS=['No answer','Left VM','Connected','Not interested','Wrong number'];
   var TABS=[['due','Due','due'],['new','New','new_leads'],['stale','Stale','stale'],['scheduled','Scheduled','scheduled'],['all','All','total_active']];
 
@@ -489,14 +495,77 @@
     var agent=getAgentPhone();
     if(!agent){ agent=promptAgentPhone(); if(!agent) return; }
     if(!confirmHours(lead)) return; // calling-hours guardrail (same as other call actions)
+    endBridgeBar(); // replace any prior bridge bar
     try{
       var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'bridge_call', to:lead.phone, agent_phone:agent, contact_id:lead.contact_id}});
       if(r&&r.error) throw new Error((r.error&&r.error.message)||'Could not start call');
       showToast('📞 Ringing your phone — answer to connect to '+(lead.name||'this lead'));
       var bn=document.getElementById('bridgeNote');
       if(bn) bn.innerHTML='<div class="pd-bridge-note">Your phone is ringing. Pick up, then we’ll dial the lead. Tap a disposition below after the call.</div>';
+      var sid=(r&&r.data&&r.data.callSid)||null;
+      if(sid) startBridgeBar(lead, sid);
     }catch(e){ showToast((e&&e.message)||'Could not start call'); }
     // no auto-advance — the user taps a disposition (1–5) to log + advance, as today
+  }
+
+  /* ── bridge-call "call in progress" bar ── */
+  function _bridgeElapsed(){ var s=Math.max(0,Math.floor((Date.now()-_bridgeStart)/1000)); var m=Math.floor(s/60); return m+':'+((s%60)<10?'0':'')+(s%60); }
+  function startBridgeBar(lead, sid){
+    if(_bridgeTick){ clearInterval(_bridgeTick); _bridgeTick=null; }
+    if(_bridgePoll){ clearInterval(_bridgePoll); _bridgePoll=null; }
+    _bridgeSid=sid; _bridgeName=(lead&&lead.name)||'this lead'; _bridgeStart=Date.now(); _bridgePhase='ringing';
+    renderBridgeBar();
+    _bridgeTick=setInterval(renderBridgeBar, 1000);
+    _bridgePoll=setInterval(pollBridge, 3500);
+    pollBridge();
+    // safety: never let the bar / timers run forever
+    setTimeout(function(){ if(_bridgeSid===sid) endBridgeBar(); }, 600000);
+  }
+  function stopBridgePolling(){ if(_bridgePoll){ clearInterval(_bridgePoll); _bridgePoll=null; } }
+  async function pollBridge(){
+    if(!_bridgeSid) return;
+    try{
+      var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'call_status', twilio_call_sid:_bridgeSid}});
+      if(r&&r.error) return; // SID may not be registered yet — keep current phase, keep polling
+      var d=r&&r.data?r.data:{};
+      var st=String(d.status||'').toLowerCase();
+      if(st==='in-progress'){ _bridgePhase='live'; }
+      else if(st==='queued'||st==='initiated'||st==='ringing'){ _bridgePhase='ringing'; }
+      else if(st==='completed'||st==='busy'||st==='no-answer'||st==='canceled'||st==='failed'){
+        _bridgePhase='ended';
+        if(d.duration!=null && Number(d.duration)>0) _pendingDur=Number(d.duration); // next disposition logs real length
+        stopBridgePolling();
+      }
+      renderBridgeBar();
+    }catch(e){ /* transient — keep polling */ }
+  }
+  function renderBridgeBar(){
+    var bar=document.getElementById('bridgeBar'); if(!bar) return;
+    if(!_bridgeSid){ bar.style.display='none'; bar.innerHTML=''; return; }
+    var nm=esc(_bridgeName), t=_bridgeElapsed();
+    var left, hint='';
+    if(_bridgePhase==='live'){ left='🟢 On call · '+nm+' · '+t; hint='audio is on your phone'; }
+    else if(_bridgePhase==='ended'){ left='✓ Call ended · '+nm+' · '+t+' — log the outcome below'; }
+    else { left='📞 Ringing your phone — answer to connect to '+nm; }
+    var endNote=(_bridgePhase!=='ended')?'<span class="muted" style="font-size:11px;">(hang up on your phone to end)</span>':'';
+    bar.innerHTML='<span style="font-weight:700;">'+left+'</span>'
+      +(hint?'<span class="muted" style="font-size:11px;">'+esc(hint)+'</span>':'')
+      +endNote
+      +'<span style="display:flex;gap:8px;"><button class="bb-btn" onclick="bridgeLogOutcome()">Log outcome ↓</button>'
+      +'<button class="bb-btn" onclick="endBridgeBar()">Done ✕</button></span>';
+    bar.style.display='flex';
+  }
+  function bridgeLogOutcome(){
+    var row=document.getElementById('dispoRow'); if(!row) return;
+    row.scrollIntoView({behavior:'smooth', block:'center'});
+    row.classList.add('dispo-flash');
+    setTimeout(function(){ row.classList.remove('dispo-flash'); }, 1200);
+  }
+  function endBridgeBar(){
+    if(_bridgeTick){ clearInterval(_bridgeTick); _bridgeTick=null; }
+    if(_bridgePoll){ clearInterval(_bridgePoll); _bridgePoll=null; }
+    _bridgeSid=null;
+    var bar=document.getElementById('bridgeBar'); if(bar){ bar.style.display='none'; bar.innerHTML=''; }
   }
 
   async function markDNC(){
@@ -505,6 +574,7 @@
     try{
       var r=await _authClient().rpc('contact_set_dnc',{p_contact_id:lead.contact_id,p_value:true,p_reason:'manual'});
       if(r&&r.error) throw new Error(r.error.message);
+      endBridgeBar();
       showToast('Marked Do Not Call'); loadCounts(); advance(true);
     }catch(e){ showToast((e&&e.message)||'Could not set Do Not Call'); }
   }
@@ -644,7 +714,7 @@
       // recent notes
       +'<div class="pd-section"><div class="pd-section-h">Recent notes</div><div id="focusNotes"><div class="muted" style="font-size:11px;">Loading notes…</div></div></div>'
       // dispositions
-      +'<div class="pd-section"><div class="pd-section-h">Disposition — logs a call &amp; advances</div>'
+      +'<div class="pd-section" id="dispoRow"><div class="pd-section-h">Disposition — logs a call &amp; advances</div>'
         +'<div style="display:flex;flex-wrap:wrap;gap:7px;">'+dispoBtns+'</div></div>'
       // note + log
       +'<div class="pd-section"><div class="pd-section-h">Notes</div>'
@@ -717,7 +787,9 @@
   async function dispo(text){
     var lead=_queue[_currentIdx]; if(!lead) return;
     if(!confirmHours(lead)) return; // calling-hours guardrail (dispositions log a call)
-    var ok=await rpcLog(lead,'call','outbound',text,null); if(!ok) return;
+    var dur=_pendingDur>0?_pendingDur:null; // real call length captured from a browser/bridge call
+    var ok=await rpcLog(lead,'call','outbound',text,dur); if(!ok) return;
+    _pendingDur=0; endBridgeBar();
     if(/wrong number/i.test(text)){ // wrong numbers shouldn't be redialed
       try{ await _authClient().rpc('contact_set_dnc',{p_contact_id:lead.contact_id,p_value:true,p_reason:'wrong number'}); }catch(e){}
     }
