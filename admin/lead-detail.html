@@ -2212,7 +2212,16 @@
           </div>
           <div class="ld-field span-3">
             <label class="ld-label">Property Address</label>
-            <input class="ld-input" type="text" id="f-property" placeholder="123 Main St, City, State ZIP" autocomplete="off" oninput="addressAutocomplete(this)">
+            <input class="ld-input" type="text" id="f-property" placeholder="123 Main St, City, State ZIP" autocomplete="off" oninput="addressAutocomplete(this); if(typeof lpPropEstSyncBtn==='function') lpPropEstSyncBtn();">
+            <!-- Property estimate (RentCast via property-lookup edge fn) -->
+            <div id="lpPropEst" style="margin-top:10px;border:1px solid rgba(201,168,76,0.25);border-radius:10px;background:rgba(201,168,76,0.04);padding:12px 14px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                <span style="font-size:12px;font-weight:700;color:#C9A84C;letter-spacing:0.04em;">Property estimate</span>
+                <button type="button" id="lpPropEstBtn" onclick="lpPropEstFetch()" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.4);color:#C9A84C;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;padding:5px 12px;font-family:inherit;">Get property estimate</button>
+              </div>
+              <div id="lpPropEstBody" style="margin-top:10px;"></div>
+              <div id="lpPropEstMsg" style="display:none;font-size:11px;color:#E5484D;margin-top:8px;"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -5593,6 +5602,7 @@ async function populateUI() {
   setVal('f-ltv', leadData.ltv ? leadData.ltv + '%' : '');
   setSelectVal('f-timeline', leadData.timeline || '');
   setVal('f-property', leadData.property_address || '');
+  if (typeof lpPropEstInit === 'function') { try { lpPropEstInit(); } catch (_) {} }
   setVal('f-first-name', contactData.first_name || '');
   setVal('f-last-name', contactData.last_name || '');
   setVal('f-email', contactData.email || '');
@@ -8707,6 +8717,152 @@ async function lpRefreshTimeline(){
 }
 function lpCid(){ return (typeof contactId!=='undefined'&&contactId) || (typeof getContactId==='function'?getContactId():null); }
 function lpEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+/* ═══ PROPERTY ESTIMATE (RentCast via property-lookup edge fn, verify_jwt=true) ═══ */
+var _lpPropEstHasData = false;
+var _lpPropEstBusy = false;
+
+function lpPropEstEndpoint(){
+  var cfg = window.APP_CONFIG || {};
+  return (cfg.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/property-lookup';
+}
+function _lpPropMoney(n){
+  if(n==null||n==='') return '—';
+  var num=Number(String(n).replace(/[^0-9.\-]/g,''));
+  if(!isFinite(num)) return String(n);
+  return '$'+Math.round(num).toLocaleString('en-US');
+}
+function _lpPropNum(n){
+  if(n==null||n==='') return '';
+  var num=Number(String(n).replace(/[^0-9.\-]/g,''));
+  if(!isFinite(num)) return String(n);
+  return Math.round(num).toLocaleString('en-US');
+}
+function _lpPropDateMDY(v){
+  if(!v) return '';
+  var s=String(v), m=s.match(/^(\d{4})-(\d{2})-(\d{2})/), d;
+  if(m){ d=new Date(+m[1],+m[2]-1,+m[3]); } else { d=new Date(s); }
+  if(isNaN(d.getTime())) return s;
+  return (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
+}
+function _lpPropAddrVal(){ var el=document.getElementById('f-property'); return el?(el.value||'').trim():''; }
+function _lpPropEstMsg(text){ var el=document.getElementById('lpPropEstMsg'); if(!el) return; el.textContent=text||''; el.style.display=text?'block':'none'; }
+
+function lpPropEstSyncBtn(){
+  var btn=document.getElementById('lpPropEstBtn'); if(!btn) return;
+  if(_lpPropEstBusy){ btn.textContent='Checking…'; btn.disabled=true; btn.style.opacity='0.7'; return; }
+  btn.disabled=false; btn.style.opacity='1';
+  if(!_lpPropAddrVal()){ btn.textContent='Enter a property address first'; return; }
+  btn.textContent=_lpPropEstHasData ? '↻ Refresh' : 'Get property estimate';
+}
+
+// Normalize either response shape (live pull or saved get) to one render shape.
+function _lpNormEst(src, fromSaved){
+  if(!src) return null;
+  if(fromSaved){
+    return {
+      estimated_value:src.estimated_value, value_low:src.value_low, value_high:src.value_high,
+      rent_estimate:src.rent_estimate, rent_low:src.rent_low, rent_high:src.rent_high,
+      details:src.details||{}, address:src.address, fetched_at:src.fetched_at, value_error:null
+    };
+  }
+  var v=src.value||{}, r=src.rent||{};
+  return {
+    estimated_value:v.estimate, value_low:v.low, value_high:v.high,
+    rent_estimate:r.estimate, rent_low:r.low, rent_high:r.high,
+    details:src.details||{}, address:src.address, fetched_at:src.fetched_at, value_error:src.value_error||null
+  };
+}
+
+function lpPropEstRender(est){
+  var body=document.getElementById('lpPropEstBody'); if(!body) return;
+  if(!est){ body.innerHTML=''; lpPropEstSyncBtn(); return; }
+  var d=est.details||{};
+  var html='';
+  if(est.estimated_value!=null && est.estimated_value!==''){
+    html+='<div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.06em;">Estimated value</div>'
+      +'<div style="font-size:25px;font-weight:800;color:#E0DDD4;line-height:1.15;">'+_lpPropMoney(est.estimated_value)+'</div>';
+    if((est.value_low!=null&&est.value_low!=='')||(est.value_high!=null&&est.value_high!=='')){
+      html+='<div style="font-size:12px;color:#C9A84C;margin-top:1px;">'+_lpPropMoney(est.value_low)+' – '+_lpPropMoney(est.value_high)+'</div>';
+    }
+  } else if(est.value_error){
+    html+='<div style="font-size:12px;color:#e0a060;line-height:1.4;">'+lpEsc(est.value_error)+'</div>';
+  }
+  var chips=[];
+  if(d.propertyType) chips.push(lpEsc(d.propertyType));
+  if(d.bedrooms!=null&&d.bedrooms!=='') chips.push(lpEsc(d.bedrooms)+' bd');
+  if(d.bathrooms!=null&&d.bathrooms!=='') chips.push(lpEsc(d.bathrooms)+' ba');
+  if(d.squareFootage!=null&&d.squareFootage!=='') chips.push(_lpPropNum(d.squareFootage)+' sqft');
+  if(d.yearBuilt!=null&&d.yearBuilt!=='') chips.push('built '+lpEsc(d.yearBuilt));
+  if(d.lotSize!=null&&d.lotSize!=='') chips.push(_lpPropNum(d.lotSize)+' sqft lot');
+  if(chips.length){
+    html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">'
+      +chips.map(function(c){ return '<span style="font-size:10px;color:#C9A84C;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.2);border-radius:10px;padding:2px 8px;">'+c+'</span>'; }).join('')
+      +'</div>';
+  }
+  if(d.lastSalePrice!=null&&d.lastSalePrice!==''){
+    html+='<div style="font-size:12px;color:#aaa;margin-top:9px;">Last sold: '+_lpPropMoney(d.lastSalePrice)+(d.lastSaleDate?(' on '+_lpPropDateMDY(d.lastSaleDate)):'')+'</div>';
+  }
+  if(est.rent_estimate!=null&&est.rent_estimate!==''){
+    html+='<div style="font-size:12px;color:#aaa;margin-top:4px;">Est. rent: '+_lpPropMoney(est.rent_estimate)+'/mo</div>';
+  }
+  if(est.estimated_value!=null&&est.estimated_value!==''){
+    html+='<div style="margin-top:9px;"><a href="#" onclick="lpPropEstUsePrice('+Number(String(est.estimated_value).replace(/[^0-9.\-]/g,''))+');return false;" style="font-size:11px;color:#C9A84C;text-decoration:underline;cursor:pointer;">Use as purchase price</a></div>';
+  }
+  html+='<div style="font-size:10px;color:#666;margin-top:10px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;line-height:1.4;">As of '+(est.fetched_at?_lpPropDateMDY(est.fetched_at):'—')+' · Automated estimate (RentCast), not an appraisal.</div>';
+  body.innerHTML=html;
+  lpPropEstSyncBtn();
+}
+
+// ON LOAD: free saved lookup only (no live API call).
+async function lpPropEstInit(){
+  var body=document.getElementById('lpPropEstBody'); if(body) body.innerHTML='';
+  _lpPropEstHasData=false; _lpPropEstMsg(''); lpPropEstSyncBtn();
+  var cid=lpCid(); if(!cid) return;
+  try{
+    var headers=await _rnrAuthHeaders();
+    var res=await fetch(lpPropEstEndpoint(),{ method:'POST', headers:headers, body:JSON.stringify({ contact_id:cid, mode:'get' }) });
+    var json=null; try{ json=await res.json(); }catch(_){}
+    if(res.ok && json && json.success && json.saved && json.estimate){
+      _lpPropEstHasData=true;
+      lpPropEstRender(_lpNormEst(json.estimate, true));
+    }
+  }catch(e){ /* non-fatal — just leave the button showing */ }
+  lpPropEstSyncBtn();
+}
+
+// LIVE pull (costs RentCast quota) — always send BOTH contact_id and address.
+async function lpPropEstFetch(){
+  if(_lpPropEstBusy) return;
+  var cid=lpCid(); if(!cid){ _lpPropEstMsg('No contact loaded'); return; }
+  var addr=_lpPropAddrVal();
+  if(!addr){ _lpPropEstMsg('Enter a property address first'); lpPropEstSyncBtn(); return; }
+  _lpPropEstMsg('');
+  _lpPropEstBusy=true; lpPropEstSyncBtn();
+  try{
+    var headers=await _rnrAuthHeaders();
+    var res=await fetch(lpPropEstEndpoint(),{ method:'POST', headers:headers, body:JSON.stringify({ contact_id:cid, address:addr }) });
+    var json=null; try{ json=await res.json(); }catch(_){}
+    if(!res.ok || !json || json.success===false){ throw new Error((json&&(json.error||json.message))||('Request failed ('+res.status+')')); }
+    _lpPropEstHasData=true;
+    lpPropEstRender(_lpNormEst(json, false));
+  }catch(e){
+    _lpPropEstMsg((e&&e.message)||'Could not fetch estimate');
+  }finally{
+    _lpPropEstBusy=false; lpPropEstSyncBtn();
+  }
+}
+
+// Fill Purchase Price (confirm before clobbering a non-empty value).
+function lpPropEstUsePrice(value){
+  var el=document.getElementById('f-purchase-price'); if(!el) return;
+  var cur=(el.value||'').replace(/[^0-9.]/g,'');
+  if(cur && Number(cur)>0){ if(!confirm('Replace the current Purchase Price with '+_lpPropMoney(value)+'?')) return; }
+  el.value=(typeof fmt$==='function') ? fmt$(value) : _lpPropMoney(value);
+  if(typeof recalcLoanFromPpLtv==='function'){ try{ recalcLoanFromPpLtv(); }catch(_){} }
+  try{ el.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){}
+  if(typeof showToast==='function') showToast('Purchase price set to '+_lpPropMoney(value));
+}
 function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'); if(s.length!==3) return ''; const d=new Date(+s[0],+s[1]-1,+s[2]); return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
 /* ═══ PROCESSING QUICK ACTIONS (wired — DB templates) ═══ */
 function _lpEscHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
