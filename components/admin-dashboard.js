@@ -1622,12 +1622,12 @@ async function renderDocuments() {
               <button class="fv-pill" data-fv-pill="Credit Report">Credit</button>
               <button class="fv-pill" data-fv-pill="Other">Other</button>
             </div>
-            <label id="fv-select-all-wrap" title="Select / deselect all files in this folder" style="display:flex;align-items:center;gap:6px;flex-shrink:0;color:#999;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;">
-              <input type="checkbox" id="fv-select-all" style="accent-color:#C9A84C;width:14px;height:14px;cursor:pointer;">
-              <span>Select all</span>
-              <span id="fv-sel-count" style="color:#C9A84C;font-size:11px;"></span>
-            </label>
-            <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;">
+              <label id="fv-select-all-wrap" title="Select / deselect all files in this folder" style="display:flex;align-items:center;gap:6px;flex-shrink:0;color:#999;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;">
+                <input type="checkbox" id="fv-select-all" style="accent-color:#C9A84C;width:14px;height:14px;cursor:pointer;">
+                <span>Select all</span>
+                <span id="fv-sel-count" style="color:#C9A84C;font-size:11px;"></span>
+              </label>
               <button id="fv-convert-all" title="Convert non-PDF files to PDF (selected files only if any are checked)" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#128196; Convert all to PDF</button>
               <button id="fv-ai-scan" title="OCR every file and suggest clean names" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#10024; AI Scan &amp; Rename</button>
               <button id="fv-review" title="Review &amp; approve the AI-suggested names" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#9745; Review</button>
