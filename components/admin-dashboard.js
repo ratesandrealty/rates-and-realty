@@ -3380,6 +3380,7 @@ function _fvOpenReviewModal() {
         <button id="fvReviewNext" style="background:transparent;border:1px solid #2a2a2a;color:#aaa;font-size:13px;padding:7px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">Next &#8594;</button>
         <span style="flex:1;"></span>
         <button id="fvReviewSkip" title="Leave this file's name unchanged and move on" style="background:transparent;border:1px solid #2a2a2a;color:#aaa;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">Keep current name</button>
+        <button id="fvReviewPull" title="Push this document's extracted income/assets into the borrower's 1003" style="display:none;background:transparent;border:1px solid #C9A84C;color:#C9A84C;font-size:13px;font-weight:700;padding:8px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">&#8615; Pull to 1003</button>
         <button id="fvReviewApprove" style="background:#C9A84C;border:none;color:#000;font-size:13px;font-weight:700;padding:8px 22px;border-radius:8px;cursor:pointer;font-family:inherit;">Approve &amp; rename &#8594;</button>
       </div>
     </div>`;
@@ -3389,6 +3390,7 @@ function _fvOpenReviewModal() {
   document.getElementById("fvReviewPrev").onclick = () => _fvReviewNav(-1);
   document.getElementById("fvReviewNext").onclick = () => _fvReviewNav(1);
   document.getElementById("fvReviewSkip").onclick = _fvReviewSkip;
+  document.getElementById("fvReviewPull").onclick = _fvPullTo1003;
   document.getElementById("fvReviewApprove").onclick = _fvReviewApprove;
   ov.querySelectorAll("[data-fv-chip]").forEach((b) => {
     b.addEventListener("click", () => _fvInsertNameToken(b.getAttribute("data-token")));
@@ -3488,6 +3490,9 @@ function _fvReviewRender() {
   const prevB = document.getElementById("fvReviewPrev"), nextB = document.getElementById("fvReviewNext");
   if (prevB) { prevB.disabled = _fvReviewIndex === 0; prevB.style.opacity = prevB.disabled ? ".4" : "1"; }
   if (nextB) { nextB.disabled = _fvReviewIndex >= _fvReviewQueue.length - 1; nextB.style.opacity = nextB.disabled ? ".4" : "1"; }
+  // Only Pay Stub / W-2 / Bank Statement map to the 1003.
+  const pullB = document.getElementById("fvReviewPull");
+  if (pullB) { pullB.style.display = _fvDocMapsTo1003(q.docType) ? "" : "none"; pullB.disabled = false; pullB.textContent = "⇣ Pull to 1003"; }
   _fvReviewLoadPreview(q.file);
 }
 
@@ -3559,6 +3564,157 @@ async function _fvReviewApprove() {
   _fvReviewAdvance();
 }
 
+/* ── PULL TO 1003 ─────────────────────────────────────────────────── */
+// Only Pay Stub / W-2 / Bank Statement map to the 1003.
+function _fvDocMapsTo1003(docType) {
+  const dt = (docType || "").toLowerCase();
+  if (dt.indexOf("pay") >= 0) return true;            // pay stub / pay_stubs / paystub
+  if (dt === "w2" || dt.indexOf("w-2") >= 0 || dt.indexOf("w2") >= 0) return true;
+  if (dt.indexOf("bank") >= 0) return true;           // bank statement(s)
+  return false;
+}
+
+// Format a numeric value as money with thousands separators.
+function _fv1003Money(v) {
+  if (v == null || v === "") return "—";
+  const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
+  if (!isFinite(n)) return _fvEscape(String(v));
+  return "$" + n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+// Authenticated call to the ocr-apply-1003 edge fn (verify_jwt=true) — same
+// session-Bearer style as the textract-ocr scan call. No `owner` is sent, so the
+// function attributes rows to the document's own extracted name (co-borrower-safe).
+async function _fvCall1003Apply(item, preview) {
+  const jwt = await _fvUserAccessToken();
+  if (!jwt) throw new Error("Session expired — sign in and retry");
+  const anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || "";
+  const body = {
+    contact_id: item.contactId,
+    doc_type: item.docType,
+    fields: item.fields || {},
+    job_id: item.jobId || null,
+    preview: !!preview,
+  };
+  const res = await fetch(_fvFnBase() + "/functions/v1/ocr-apply-1003", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + jwt, "apikey": anon },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg = "ocr-apply-1003 HTTP " + res.status;
+    try { const j = await res.json(); if (j && (j.error || j.message)) msg = j.error || j.message; } catch (_) {}
+    throw new Error(msg);
+  }
+  return await res.json();
+}
+
+// "Pull to 1003" — fetch a preview plan, then show it for confirmation.
+async function _fvPullTo1003() {
+  const q = _fvReviewQueue[_fvReviewIndex];
+  if (!q) return;
+  if (!_fvDocMapsTo1003(q.docType)) { _fvShowToast("This document type doesn't map to the 1003"); return; }
+  const btn = document.getElementById("fvReviewPull");
+  if (btn) { btn.disabled = true; btn.textContent = "Reading…"; }
+  try {
+    const resp = await _fvCall1003Apply(q, true);
+    _fv1003ShowPlan(q, resp);
+  } catch (e) {
+    _fvShowToast("Pull to 1003 failed: " + ((e && e.message) || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "⇣ Pull to 1003"; }
+  }
+}
+
+// Render the preview plan inside the modal with a Confirm-write action.
+function _fv1003ShowPlan(item, resp) {
+  const plan = (resp && (resp.plan || resp)) || {};
+  const income = Array.isArray(plan.income) ? plan.income : [];
+  const assets = Array.isArray(plan.assets) ? plan.assets : [];
+  const employment = plan.employment || plan.employment_update || null;
+  const notes = Array.isArray(plan.notes) ? plan.notes : [];
+
+  const sec = (t) => `<div style="color:#C9A84C;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin:14px 0 6px;">${t}</div>`;
+  const empty = (m) => `<div style="color:#666;font-size:12px;">${m}</div>`;
+  const card = (head, right, sub) =>
+    `<div style="background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;color:#ddd;">
+       <div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:#e8e8e8;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${head}</span><span style="color:#C9A84C;flex-shrink:0;">${right}</span></div>
+       ${sub ? `<div style="color:#888;margin-top:2px;">${sub}</div>` : ""}
+     </div>`;
+
+  let html = "";
+  html += sec("Income");
+  html += income.length ? income.map((r) => card(
+    _fvEscape(r.employer_name || r.income_type || "Income"),
+    _fv1003Money(r.monthly_amount) + "/mo",
+    [r.income_owner, r.income_type, (r.annual_amount != null && r.annual_amount !== "") ? _fv1003Money(r.annual_amount) + "/yr" : ""].filter(Boolean).map(_fvEscape).join(" · ")
+  )).join("") : empty("No income rows.");
+
+  html += sec("Assets");
+  html += assets.length ? assets.map((r) => card(
+    _fvEscape(r.institution_name || r.asset_type || "Asset"),
+    _fv1003Money(r.current_value),
+    [r.asset_owner, r.asset_type].filter(Boolean).map(_fvEscape).join(" · ")
+  )).join("") : empty("No asset rows.");
+
+  if (employment && (employment.employer_name || employment.base_income != null)) {
+    html += sec("Employment update");
+    html += card(
+      _fvEscape(employment.employer_name || "—"),
+      (employment.base_income != null && employment.base_income !== "") ? _fv1003Money(employment.base_income) : "",
+      "base income"
+    );
+  }
+
+  if (notes.length) {
+    html += sec("Notes");
+    html += `<div style="color:#aaa;font-size:12px;line-height:1.5;">${notes.map((n) => "• " + _fvEscape(String(n))).join("<br>")}</div>`;
+  }
+
+  const old = document.getElementById("fv1003Overlay"); if (old) old.remove();
+  const ov = document.createElement("div");
+  ov.id = "fv1003Overlay";
+  ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9992;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;";
+  ov.innerHTML = `
+    <div style="width:520px;max-width:94vw;max-height:84vh;display:flex;flex-direction:column;background:#0e0e0e;border:1px solid #C9A84C66;border-radius:14px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.7);">
+      <div style="display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #1e1e1e;flex-shrink:0;">
+        <span style="color:#C9A84C;font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;">Pull to 1003 — preview</span>
+        <span style="flex:1;"></span>
+        <span style="color:#666;font-size:12px;">${_fvEscape((item.docType || "").replace(/_/g, " "))}</span>
+      </div>
+      <div style="padding:6px 18px 14px;overflow-y:auto;">${html || empty("Nothing to apply.")}</div>
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid #1e1e1e;flex-shrink:0;">
+        <button id="fv1003Cancel" style="background:transparent;border:1px solid #2a2a2a;color:#aaa;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">Cancel</button>
+        <span style="flex:1;"></span>
+        <button id="fv1003Confirm" style="background:#C9A84C;border:none;color:#000;font-size:13px;font-weight:700;padding:8px 20px;border-radius:8px;cursor:pointer;font-family:inherit;">Confirm &amp; write to 1003</button>
+      </div>
+    </div>`;
+  ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  document.getElementById("fv1003Cancel").onclick = () => ov.remove();
+  document.getElementById("fv1003Confirm").onclick = () => _fv1003Confirm(item);
+}
+
+// Confirm — re-POST the same body with preview:false and toast the written counts.
+async function _fv1003Confirm(item) {
+  const btn = document.getElementById("fv1003Confirm");
+  if (btn) { btn.disabled = true; btn.textContent = "Writing…"; }
+  try {
+    const resp = await _fvCall1003Apply(item, false);
+    const w = (resp && resp.written) || {};
+    const inc = Number(w.income || 0), ast = Number(w.assets || 0);
+    const parts = [];
+    if (inc) parts.push(`${inc} income row${inc === 1 ? "" : "s"}`);
+    if (ast) parts.push(`${ast} asset row${ast === 1 ? "" : "s"}`);
+    if (w.employment_updated) parts.push("updated employment");
+    _fvShowToast(parts.length ? ("Added " + parts.join(", ") + " ✓") : "1003 already up to date ✓");
+    const ov = document.getElementById("fv1003Overlay"); if (ov) ov.remove();
+  } catch (e) {
+    _fvShowToast("Write to 1003 failed: " + ((e && e.message) || e));
+    if (btn) { btn.disabled = false; btn.textContent = "Confirm & write to 1003"; }
+  }
+}
+
 function _fvFinishReview() {
   const approved = _fvReviewQueue.filter((q) => q.approved).length;
   const total = _fvReviewQueue.length;
@@ -3573,6 +3729,7 @@ function _fvFinishReview() {
 function _fvCloseReviewModal() {
   _fvReviewStashName();
   if (_fvReviewBlobUrl) { try { URL.revokeObjectURL(_fvReviewBlobUrl); } catch (_) {} _fvReviewBlobUrl = null; }
+  const plan = document.getElementById("fv1003Overlay"); if (plan) plan.remove();
   const ov = document.getElementById("fvReviewOverlay");
   if (ov) ov.remove();
 }
