@@ -80,6 +80,16 @@
     .pd-tagopt:hover{border-color:var(--gold-bdr);color:var(--gold);}
     .pd-fpanel{display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:50;background:var(--surface);border:1px solid var(--gold-bdr);border-radius:12px;padding:14px;width:300px;box-shadow:0 12px 36px rgba(0,0,0,.6);}
     .pd-fpanel.open{display:block;}
+    /* Smart empty-state card */
+    .pd-emptycard{width:480px;max-width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:24px;text-align:center;}
+    .pd-fix{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text2);border-radius:9px;padding:11px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:7px;text-align:left;}
+    .pd-fix:hover{border-color:var(--gold-bdr);color:var(--text);}
+    .pd-fix-n{color:var(--gold);font-weight:800;white-space:nowrap;flex-shrink:0;}
+    .pd-fix-all{border-color:var(--gold-bdr);}
+    .pd-bchip{background:var(--surface);border:1px solid var(--border);color:var(--text2);border-radius:16px;font-size:12px;font-weight:700;padding:5px 12px;cursor:pointer;font-family:inherit;}
+    .pd-bchip:hover{border-color:var(--gold-bdr);color:var(--gold);}
+    .pd-bchip.on{background:var(--gold-bg);border-color:var(--gold-bdr);color:var(--gold);}
+    .pd-empty-amber{background:rgba(229,152,77,.10);border:1px solid rgba(229,152,77,.35);color:#E7B380;font-size:12.5px;border-radius:9px;padding:9px 12px;margin-top:14px;line-height:1.5;}
     /* Live call bar */
     #callBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;align-items:center;gap:12px;background:#161616;border:1px solid var(--gold-bdr);border-radius:12px;padding:9px 16px;z-index:9998;box-shadow:0 12px 36px rgba(0,0,0,.6);font-size:13px;}
     .pd-dispo{background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;padding:9px 13px;font-family:inherit;}
@@ -332,9 +342,95 @@
   function scrollCurrentIntoView(){ var el=document.querySelector('#queueList .pd-row.active'); if(el) el.scrollIntoView({block:'nearest'}); }
 
   /* ── focus pane ── */
-  function showCleared(){
+  // Empty queue — diagnose WHY (filters vs genuinely caught up) via one RPC, only on empty.
+  async function showCleared(){
     _currentIdx=-1;
-    var box=document.getElementById('focusBody'); if(box) box.innerHTML='<div class="pd-cleared"><div style="font-size:34px;">✅</div>Queue cleared — nice work.</div>';
+    var box=document.getElementById('focusBody'); if(!box) return;
+    box.innerHTML='<div class="pd-cleared"><span class="spin"></span></div>';
+    var help={};
+    try{
+      var r=await _authClient().rpc('power_dialer_zero_help',{
+        p_filter:_filter, p_stage:_stage||null, p_partner_id:_partnerId||null,
+        p_source:_source||null, p_tag_ids:(_tagIds&&_tagIds.length)?_tagIds:null,
+        p_callable_only:!!_callableOnly, p_min_loan:(_minLoan!=null&&_minLoan!=='')?Number(_minLoan):null
+      });
+      help=(r&&!r.error&&r.data)?(Array.isArray(r.data)?(r.data[0]||{}):r.data):{};
+    }catch(e){ help={}; }
+    var box2=document.getElementById('focusBody'); if(box2) box2.innerHTML=renderEmptyState(help);
+  }
+  function bucketChipsHTML(buckets){
+    buckets=buckets||{};
+    var defs=[['due','Due'],['new','New'],['stale','Stale'],['scheduled','Scheduled'],['all','All']];
+    return '<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;">'+defs.map(function(d){
+      var c=buckets[d[0]]; var n=(c!=null?(' '+c):'');
+      return '<button class="pd-bchip'+(_filter===d[0]?' on':'')+'" onclick="jumpBucket(\''+d[0]+'\')">'+d[1]+n+'</button>';
+    }).join('')+'</div>';
+  }
+  function renderEmptyState(help){
+    help=help||{};
+    var buckets=help.buckets||{};
+    var total=(help.total_active!=null)?help.total_active:0;
+    var callableTotal=(help.callable_now_total!=null)?help.callable_now_total:null;
+    var relax=Array.isArray(help.relax)?help.relax.slice():[];
+    var relaxPos=relax.filter(function(x){ return Number(x.count)>0; }).sort(function(a,b){ return Number(b.count)-Number(a.count); });
+    var filtersActive=(_filter!=='all') || !!_stage || !!_partnerId || !!_source || !!(_tagIds&&_tagIds.length) || !!_callableOnly || (_minLoan!=null);
+    var modeA=filtersActive || relaxPos.length>0;
+    var bucketName=(TABS.filter(function(t){ return t[0]===_filter; })[0]||['','All'])[1];
+    var inner;
+    if(modeA){
+      var fixes;
+      if(relaxPos.length){
+        fixes='<div class="pd-section-h" style="text-align:left;margin-top:6px;">Quickest fixes</div>'
+          +relaxPos.map(function(x){
+            return '<button class="pd-fix" onclick="relaxOne(\''+esc(String(x.key))+'\')"><span>'+esc(x.label||x.key)+'</span><span class="pd-fix-n">'+Number(x.count)+' leads</span></button>';
+          }).join('');
+      } else {
+        fixes='<div class="muted" style="font-size:12.5px;margin:6px 0 2px;">No leads carry this combination yet.</div>';
+      }
+      inner='<div style="font-size:30px;">🔍</div>'
+        +'<div style="font-size:18px;font-weight:800;margin-top:6px;">No leads match these filters</div>'
+        +'<div class="muted" style="font-size:13px;margin-top:6px;">This combination matches 0 of your '+esc(total)+' dialable leads.</div>'
+        +'<div style="margin-top:14px;text-align:left;">'+fixes+'</div>'
+        +'<button class="pd-fix pd-fix-all" onclick="clearAllFilters()"><span>Clear all filters</span><span class="pd-fix-n">→ '+esc(total)+'</span></button>'
+        +'<div class="pd-section-h" style="margin-top:16px;">Jump to</div>'+bucketChipsHTML(buckets);
+    } else {
+      var sess='<div class="muted" style="font-size:12px;margin-top:8px;">'+_sCalls+' call'+(_sCalls===1?'':'s')+' · '+_sConnects+' connect'+(_sConnects===1?'':'s')+' · '+_sCallbacks+' callback'+(_sCallbacks===1?'':'s')+' set this session</div>';
+      var note='';
+      if(callableTotal===0) note='<div class="pd-empty-amber">It’s outside calling hours for your leads right now — a good moment to set callbacks or send texts instead.</div>';
+      else if(callableTotal>0) note='<div class="muted" style="font-size:12px;margin-top:10px;">'+callableTotal+' leads are callable right now across other buckets.</div>';
+      inner='<div style="font-size:34px;">✅</div>'
+        +'<div style="font-size:18px;font-weight:800;margin-top:6px;">You’re caught up on '+esc(bucketName)+'.</div>'
+        +sess
+        +'<div class="pd-section-h" style="margin-top:16px;">Where to go next</div>'+bucketChipsHTML(buckets)
+        +note;
+    }
+    return '<div style="display:flex;align-items:flex-start;justify-content:center;padding-top:6vh;"><div class="pd-emptycard">'+inner+'</div></div>';
+  }
+  // re-sync controls after a filter change driven from the empty-state card
+  function syncFilterControls(){
+    renderTabs();
+    var ss=document.getElementById('stageSelect'); if(ss) ss.value=_stage||'';
+    var ps=document.getElementById('partnerSelect'); if(ps) ps.value=_partnerId||'';
+    if(typeof renderFiltersPanel==='function') renderFiltersPanel();
+    if(typeof updateFiltersCount==='function') updateFiltersCount();
+  }
+  function relaxOne(key){
+    if(key==='bucket') _filter='all';
+    else if(key==='stage') _stage='';
+    else if(key==='partner') _partnerId='';
+    else if(key==='tags') _tagIds=null;
+    else if(key==='source') _source=null;
+    else if(key==='callable') _callableOnly=false;
+    else if(key==='minloan') _minLoan=null;
+    syncFilterControls(); updateFilterSummary(); loadQueue(true);
+  }
+  function clearAllFilters(){
+    _filter='all'; _stage=''; _partnerId=''; _source=null; _tagIds=null; _callableOnly=false; _minLoan=null;
+    syncFilterControls(); updateFilterSummary(); loadQueue(true);
+  }
+  function jumpBucket(b){
+    _filter=b; _stage=''; _partnerId=''; _source=null; _tagIds=null; _callableOnly=false; _minLoan=null;
+    syncFilterControls(); updateFilterSummary(); loadQueue(true);
   }
   /* ── calling-hours guardrail + local presence helpers ── */
   function canCall(l){ return !(l && l.callable_now===false); }
