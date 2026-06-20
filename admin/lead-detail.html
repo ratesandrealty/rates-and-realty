@@ -2188,6 +2188,10 @@
             <input class="ld-input" type="text" id="f-loan-amount" placeholder="$0">
           </div>
           <div class="ld-field">
+            <label class="ld-label">Current Loan Amount</label>
+            <input class="ld-input" type="text" id="f-current-loan" placeholder="$0" onchange="lpSaveCurrentLoan()">
+          </div>
+          <div class="ld-field">
             <label class="ld-label">Purchase Price</label>
             <input class="ld-input" type="text" id="f-purchase-price" placeholder="$0" oninput="recalcLoanFromPpLtv()">
           </div>
@@ -2208,6 +2212,16 @@
               <option value="3-6months">3–6 Months</option>
               <option value="6-12months">6–12 Months</option>
               <option value="exploring">Just Exploring</option>
+            </select>
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Status</label>
+            <select class="ld-select" id="f-borrower-type" onchange="lpSaveBorrowerType()">
+              <option value="">Select</option>
+              <option value="Homeowner">Homeowner</option>
+              <option value="Home Buyer">Home Buyer</option>
+              <option value="Seller">Seller</option>
+              <option value="Refinance">Refinance</option>
             </select>
           </div>
           <div class="ld-field span-3">
@@ -5603,6 +5617,7 @@ async function populateUI() {
   setSelectVal('f-timeline', leadData.timeline || '');
   setVal('f-property', leadData.property_address || '');
   if (typeof lpPropEstInit === 'function') { try { lpPropEstInit(); } catch (_) {} }
+  if (typeof lpLoadAppLoanDetails === 'function') { try { lpLoadAppLoanDetails(); } catch (_) {} }
   setVal('f-first-name', contactData.first_name || '');
   setVal('f-last-name', contactData.last_name || '');
   setVal('f-email', contactData.email || '');
@@ -8278,6 +8293,9 @@ async function saveLeadDetails() {
     }
     Object.assign(contactData, cFields);
     Object.assign(leadData, lFields);
+    // mortgage_applications-backed Loan Details fields (separate columns).
+    if (typeof lpSaveCurrentLoan === 'function') { try { lpSaveCurrentLoan(); } catch (_) {} }
+    if (typeof lpSaveBorrowerType === 'function') { try { lpSaveBorrowerType(); } catch (_) {} }
     setStatusBadge(lFields.status);
     document.getElementById('topbar-name').textContent = [cFields.first_name, cFields.last_name].filter(Boolean).join(' ');
     renderScoreCard(leadData, contactData);
@@ -8862,6 +8880,43 @@ function lpPropEstUsePrice(value){
   if(typeof recalcLoanFromPpLtv==='function'){ try{ recalcLoanFromPpLtv(); }catch(_){} }
   try{ el.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){}
   if(typeof showToast==='function') showToast('Purchase price set to '+_lpPropMoney(value));
+}
+
+/* ═══ LOAN DETAILS — mortgage_applications-backed fields ═══
+   Current Loan Amount → remaining_loan_balance, Status → borrower_type.
+   These persist to mortgage_applications (NOT leads), reusing the same
+   load (_fetchAppRowForContact) and update/insert pattern as lpSaveDate. */
+async function _lpSaveAppField(col, value){
+  var cid=lpCid(); if(!cid) return;
+  try{
+    var app=(typeof _fetchAppRowForContact==='function') ? await _fetchAppRowForContact(cid) : null;
+    if(app && app.id){ await _authClient().from('mortgage_applications').update({ [col]:value, updated_at:new Date().toISOString() }).eq('id',app.id); }
+    else { await _authClient().from('mortgage_applications').insert({ contact_id:cid, [col]:value }); }
+  }catch(e){ console.warn('[lpSaveAppField '+col+']', e&&e.message); }
+}
+function lpSaveCurrentLoan(){
+  var el=document.getElementById('f-current-loan'); if(!el) return;
+  var num=(typeof parseNum==='function') ? parseNum(el.value) : (parseFloat(String(el.value).replace(/[^0-9.\-]/g,''))||null);
+  if(num!=null && isFinite(num) && num>0){ el.value=(typeof fmt$==='function') ? fmt$(num) : ('$'+Math.round(num).toLocaleString('en-US')); }
+  else { num=null; el.value=''; }
+  _lpSaveAppField('remaining_loan_balance', num);
+}
+function lpSaveBorrowerType(){
+  var el=document.getElementById('f-borrower-type'); if(!el) return;
+  _lpSaveAppField('borrower_type', el.value || null);
+}
+async function lpLoadAppLoanDetails(){
+  var cid=lpCid(); if(!cid) return;
+  try{
+    var app=(typeof _fetchAppRowForContact==='function') ? await _fetchAppRowForContact(cid) : null;
+    if(!app) return;
+    var cl=document.getElementById('f-current-loan');
+    if(cl && app.remaining_loan_balance!=null && app.remaining_loan_balance!==''){
+      cl.value=(typeof fmt$==='function') ? fmt$(app.remaining_loan_balance) : ('$'+Math.round(Number(app.remaining_loan_balance)).toLocaleString('en-US'));
+    }
+    var bt=document.getElementById('f-borrower-type');
+    if(bt && app.borrower_type){ bt.value=app.borrower_type; }
+  }catch(e){ /* non-fatal */ }
 }
 function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'); if(s.length!==3) return ''; const d=new Date(+s[0],+s[1]-1,+s[2]); return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
 /* ═══ PROCESSING QUICK ACTIONS (wired — DB templates) ═══ */
