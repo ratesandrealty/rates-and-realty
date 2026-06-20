@@ -516,6 +516,7 @@
     <h3>Loan Info</h3>
     <div class="field"><label>Borrower Name</label><input type="text" id="borrowerName" placeholder="John Doe"></div>
     <div class="field"><label>Property Address</label><input type="text" id="propertyAddress" placeholder="123 Main St, City, CA"></div>
+    <div id="purchaseRefiFields">
     <div class="row2">
         <div class="field"><label>Purchase Price</label><input type="text" id="purchasePrice" placeholder="$500,000"></div>
         <div class="field"><label>Down Payment %</label><input type="number" id="downPct" value="20" step="0.5" min="0" max="100"></div>
@@ -598,6 +599,7 @@
         </div>
         <div class="field"><label>Annual Hazard Ins.</label><input type="text" id="annualInsurance" placeholder="$1,800"></div>
     </div>
+    </div><!-- /purchaseRefiFields -->
 
     <!-- MODE TOGGLE -->
     <div class="mode-toggle-wrap">
@@ -606,10 +608,11 @@
             <button id="modeBtnRate" type="button" onclick="setMode('rate')" class="active">Rate Comparison</button>
             <button id="modeBtnSingle" type="button" onclick="setMode('single')">Single Rate</button>
             <button id="modeBtnProperty" type="button" onclick="setMode('property')">Property Comparison</button>
+            <button id="modeBtnHeloc" type="button" onclick="setMode('heloc')">HELOC</button>
         </div>
     </div>
 
-    <!-- SCENARIO CARDS -->
+    <!-- SCENARIO CARDS (purchase/refi) -->
     <div id="scenarioCards"></div>
 
     <div class="sidebar-actions">
@@ -617,11 +620,53 @@
         <button class="btn-outline" onclick="window.print()">Print / PDF</button>
         <button class="btn-outline" onclick="copyToClipboard()">Copy to Clipboard</button>
     </div>
+
+    <!-- ════════════ HELOC PANEL (swaps in for HELOC mode) ════════════ -->
+    <div id="helocPanel" style="display:none;">
+        <div class="row2">
+            <div class="field"><label>Estimated Home Value</label><input type="text" id="heloc_value" placeholder="$650,000" oninput="helocRecalc()"></div>
+            <div class="field"><label>Current Mortgage Balance</label><input type="text" id="heloc_balance" placeholder="$350,000" oninput="helocRecalc()"></div>
+        </div>
+        <div class="row2">
+            <div class="field"><label>Max CLTV %</label><input type="number" id="heloc_cltv" value="85" step="1" min="0" max="100" oninput="helocRecalc()"></div>
+            <div class="field" style="display:flex;align-items:flex-end;">
+                <div style="font-size:11px;color:#aaa;line-height:1.4;">Available equity<br><strong id="heloc_equity_display" style="color:#C9A84C;font-size:14px;">—</strong></div>
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Cash / Initial Draw Amount</label>
+            <input type="text" id="heloc_draw" placeholder="$50,000" oninput="helocOnDrawInput()">
+            <input type="range" id="heloc_draw_slider" min="0" max="200000" step="1000" value="0" oninput="helocOnSliderInput()" style="width:100%;margin-top:8px;accent-color:#C9A84C;">
+        </div>
+
+        <div style="margin-top:14px;">
+            <div class="mode-toggle-label">Origination Fee</div>
+            <div id="heloc_orig_cards" style="display:flex;gap:8px;"></div>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#ccc;cursor:pointer;margin:14px 0 4px;">
+            <input type="checkbox" id="heloc_autopay" style="width:15px;height:15px;accent-color:#C9A84C;" onchange="helocRecalc()">
+            Save 0.25% APR with AutoPay
+        </label>
+
+        <div style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;">
+            <div class="mode-toggle-label" style="margin:0;">Rate Cards</div>
+            <button id="heloc_add_card" type="button" onclick="helocAddCard()" style="background:transparent;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;padding:4px 10px;font-family:inherit;">+ Add rate card</button>
+        </div>
+        <div id="heloc_rate_cards" style="margin-top:8px;"></div>
+
+        <div id="heloc_err" style="display:none;color:#ff8080;font-size:11px;margin-top:10px;line-height:1.4;"></div>
+        <div class="sidebar-actions">
+            <button class="btn-gold" id="heloc_download_btn" onclick="helocDownloadPdf()">Download PDF</button>
+        </div>
+    </div>
 </div>
 
 <!-- SHEET -->
 <div class="main">
     <div class="sheet" id="sheet"></div>
+    <div id="helocSheet" style="display:none;"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -895,6 +940,7 @@ function togglePropertyRecommend(i) {
 
 // Dispatcher — mounts the right cards into #scenarioCards based on _currentMode.
 function renderCards() {
+    if (_currentMode === 'heloc') { return; } // HELOC builds its own panel
     if (_currentMode === 'property') {
         buildPropertyCards();
     } else {
@@ -915,16 +961,33 @@ function renderCards() {
 
 // Mode toggle handler. Wired to the toggle pill buttons.
 function setMode(newMode) {
-    if (newMode !== 'rate' && newMode !== 'single' && newMode !== 'property') return;
+    if (newMode !== 'rate' && newMode !== 'single' && newMode !== 'property' && newMode !== 'heloc') return;
     if (_currentMode === newMode) return;
     _currentMode = newMode;
     // Update toggle button visuals.
     const rateBtn = document.getElementById('modeBtnRate');
     const singleBtn = document.getElementById('modeBtnSingle');
     const propBtn = document.getElementById('modeBtnProperty');
+    const helocBtn = document.getElementById('modeBtnHeloc');
     if (rateBtn) rateBtn.classList.toggle('active', newMode === 'rate');
     if (singleBtn) singleBtn.classList.toggle('active', newMode === 'single');
     if (propBtn) propBtn.classList.toggle('active', newMode === 'property');
+    if (helocBtn) helocBtn.classList.toggle('active', newMode === 'heloc');
+    // Swap the HELOC panel in/out for the purchase/refi panel. Borrower fields +
+    // the mode toggle stay visible; only the mode-specific bodies swap.
+    const isHeloc = (newMode === 'heloc');
+    const prFields = document.getElementById('purchaseRefiFields');
+    const scen = document.getElementById('scenarioCards');
+    const acts = document.querySelector('.sidebar-actions');
+    const helocPanel = document.getElementById('helocPanel');
+    const sheet = document.getElementById('sheet');
+    const helocSheet = document.getElementById('helocSheet');
+    if (prFields) prFields.style.display = isHeloc ? 'none' : '';
+    if (scen) scen.style.display = isHeloc ? 'none' : '';
+    if (acts) acts.style.display = isHeloc ? 'none' : '';
+    if (helocPanel) helocPanel.style.display = isHeloc ? '' : 'none';
+    if (sheet) sheet.style.display = isHeloc ? 'none' : '';
+    if (helocSheet) helocSheet.style.display = isHeloc ? '' : 'none';
     renderCards();
     recalc();
     notifyParentOfChange();
@@ -1588,6 +1651,7 @@ function calcPropertyColumn(col) {
 }
 
 function recalc() {
+    if (_currentMode === 'heloc') { helocRecalc(); return; }
     if (_currentMode === 'property') {
         if (!propertyScenarios || propertyScenarios.length === 0) {
             propertyScenarios = defaultPropertyScenarios();
@@ -1816,6 +1880,297 @@ const observer = new MutationObserver(() => {
     });
 });
 observer.observe($('scenarioCards'), { childList: true, subtree: true });
+
+/* ════════════════════════════════════════════════════════════════════
+   HELOC MODE — separate panel; purchase/refi logic above is untouched.
+   ════════════════════════════════════════════════════════════════════ */
+var _helocState = {
+    origOptions: [2.99, 1.99],
+    origSelected: 0,
+    autopay: false,
+    cards: [
+        { type: 'fixed',    term: 30, rate: 0, selected: true  },
+        { type: 'variable', term: 20, rate: 0, selected: false }
+    ]
+};
+var _HELOC_TERMS = [30, 20, 15, 10, 5];
+var _HELOC_DRAW_FALLBACK_MAX = 500000; // slider cap when no home value entered
+var _HELOC_AUTOPAY_REDUCTION = 0.25;
+
+function helocCfg() {
+    return {
+        url: (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co',
+        anon: (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4'
+    };
+}
+function _helocMoney(n) {
+    if (n == null || isNaN(n)) return '$0';
+    return '$' + Math.round(n).toLocaleString('en-US');
+}
+function _helocNum(id) { var e = $(id); return e ? parseCurrency(e.value) : 0; }
+
+// Available equity = value * CLTV/100 - balance. null when no value entered.
+function helocAvailableEquity() {
+    var value = _helocNum('heloc_value');
+    if (!value || value <= 0) return null;
+    var balance = _helocNum('heloc_balance');
+    var cltv = parseFloat(($('heloc_cltv') || {}).value) || 0;
+    return Math.max(0, value * (cltv / 100) - balance);
+}
+function helocDrawMax() {
+    var eq = helocAvailableEquity();
+    return (eq != null && eq > 0) ? eq : _HELOC_DRAW_FALLBACK_MAX;
+}
+
+// EXACT formula (must match the PDF to the dollar).
+function helocCompute(card, drawAmount, origPct, autopay) {
+    var rate = parseFloat(card.rate) || 0;
+    var term = parseInt(card.term, 10) || 0;
+    var origFee = drawAmount * (origPct / 100);
+    var totalLoan = drawAmount + origFee;
+    var effRate = autopay ? Math.max(0, rate - 0.25) : rate;
+    var r = effRate / 100 / 12;
+    var n = term * 12;
+    var monthly;
+    if (n <= 0) monthly = 0;
+    else if (r <= 0) monthly = totalLoan / n;
+    else monthly = totalLoan * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1);
+    return { origFee: origFee, totalLoan: totalLoan, monthly: monthly, effRate: effRate, rate: rate, term: term };
+}
+
+// ── Rate-card editor (left panel) ──
+function helocAddCard() {
+    if (_helocState.cards.length >= 8) { showToast('Up to 8 rate cards'); return; }
+    _helocState.cards.push({ type: 'fixed', term: 30, rate: 0, selected: false });
+    if (!_helocState.cards.some(function (c) { return c.selected; })) _helocState.cards[0].selected = true;
+    helocRenderRateEditor();
+    helocRecalc();
+}
+function helocRemoveCard(i) {
+    if (_helocState.cards.length <= 1) { showToast('At least one rate card is required'); return; }
+    var wasSelected = _helocState.cards[i] && _helocState.cards[i].selected;
+    _helocState.cards.splice(i, 1);
+    if (wasSelected && _helocState.cards.length) _helocState.cards[0].selected = true;
+    helocRenderRateEditor();
+    helocRecalc();
+}
+function helocSelectCard(i) {
+    _helocState.cards.forEach(function (c, idx) { c.selected = (idx === i); });
+    helocRenderRateEditor();
+    helocRecalc();
+}
+function helocSetCard(i, field, val) {
+    if (!_helocState.cards[i]) return;
+    if (field === 'rate') _helocState.cards[i].rate = parseFloat(val) || 0;
+    else if (field === 'term') _helocState.cards[i].term = parseInt(val, 10) || 0;
+    else _helocState.cards[i][field] = val;
+    helocRecalc();
+}
+function helocRenderRateEditor() {
+    var host = $('heloc_rate_cards'); if (!host) return;
+    var sel = 'background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#ddd;font-size:12px;padding:5px 6px;font-family:inherit;';
+    host.innerHTML = _helocState.cards.map(function (c, i) {
+        var typeOpts = ['fixed', 'variable'].map(function (t) {
+            return '<option value="' + t + '"' + (c.type === t ? ' selected' : '') + '>' + (t === 'fixed' ? 'Fixed' : 'Variable') + '</option>';
+        }).join('');
+        var termOpts = _HELOC_TERMS.map(function (t) {
+            return '<option value="' + t + '"' + (Number(c.term) === t ? ' selected' : '') + '>' + t + ' yr</option>';
+        }).join('');
+        return '<div style="border:1px solid ' + (c.selected ? '#C9A84C' : '#2a2a2a') + ';border-radius:8px;padding:8px;margin-bottom:8px;background:' + (c.selected ? 'rgba(201,168,76,0.08)' : 'transparent') + ';">'
+            + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
+            + '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#C9A84C;cursor:pointer;flex:1;">'
+            + '<input type="radio" name="helocSel" ' + (c.selected ? 'checked' : '') + ' onclick="helocSelectCard(' + i + ')" style="accent-color:#C9A84C;"> Select'
+            + '</label>'
+            + '<button type="button" onclick="helocRemoveCard(' + i + ')" title="Remove" style="background:transparent;border:none;color:#ff8080;font-size:16px;line-height:1;cursor:pointer;padding:0 4px;">&times;</button>'
+            + '</div>'
+            + '<div style="display:flex;gap:6px;">'
+            + '<select onchange="helocSetCard(' + i + ',\'type\',this.value)" style="' + sel + 'flex:1;">' + typeOpts + '</select>'
+            + '<select onchange="helocSetCard(' + i + ',\'term\',this.value)" style="' + sel + 'flex:1;">' + termOpts + '</select>'
+            + '<input type="number" step="0.001" min="0" placeholder="Rate %" value="' + (c.rate || '') + '" oninput="helocSetCard(' + i + ',\'rate\',this.value)" style="' + sel + 'width:74px;">'
+            + '</div>'
+            + '</div>';
+    }).join('');
+}
+
+// ── Origination-fee option cards (left panel) ──
+function helocSetOrigSelected(i) { _helocState.origSelected = i; helocRecalc(); }
+function helocSetOrigPct(i, val) {
+    var v = parseFloat(val);
+    _helocState.origOptions[i] = isNaN(v) ? 0 : v;
+    helocRecalc();
+}
+function helocRenderOrigCards(drawAmount) {
+    var host = $('heloc_orig_cards'); if (!host) return;
+    host.innerHTML = _helocState.origOptions.map(function (pct, i) {
+        var on = (_helocState.origSelected === i);
+        var dollars = drawAmount * ((parseFloat(pct) || 0) / 100);
+        return '<div onclick="helocSetOrigSelected(' + i + ')" style="flex:1;cursor:pointer;border:1px solid ' + (on ? '#C9A84C' : '#2a2a2a') + ';border-radius:8px;padding:8px;background:' + (on ? 'rgba(201,168,76,0.1)' : 'transparent') + ';">'
+            + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">'
+            + '<input type="radio" name="helocOrig" ' + (on ? 'checked' : '') + ' onclick="event.stopPropagation();helocSetOrigSelected(' + i + ')" style="accent-color:#C9A84C;">'
+            + '<input type="number" step="0.01" min="0" value="' + pct + '" onclick="event.stopPropagation()" oninput="helocSetOrigPct(' + i + ',this.value)" style="width:60px;background:#1a1a1a;border:1px solid #333;border-radius:5px;color:#ddd;font-size:12px;padding:3px 5px;font-family:inherit;"><span style="font-size:12px;color:#888;">%</span>'
+            + '</div>'
+            + '<div style="font-size:13px;font-weight:600;color:#C9A84C;">' + _helocMoney(dollars) + '</div>'
+            + '</div>';
+    }).join('');
+}
+
+// ── Slider <-> draw input sync ──
+function helocOnDrawInput() {
+    var sl = $('heloc_draw_slider');
+    if (sl) sl.value = String(Math.min(helocDrawMax(), _helocNum('heloc_draw')));
+    helocRecalc();
+}
+function helocOnSliderInput() {
+    var sl = $('heloc_draw_slider'); if (!sl) return;
+    var v = parseFloat(sl.value) || 0;
+    var di = $('heloc_draw'); if (di) di.value = v ? _helocMoney(v) : '';
+    helocRecalc();
+}
+
+// ── Live recompute + render right-side output ──
+function helocRecalc() {
+    var eq = helocAvailableEquity();
+    var eqEl = $('heloc_equity_display');
+    if (eqEl) eqEl.textContent = (eq != null) ? _helocMoney(eq) : '—';
+    // Keep slider max in sync with available equity.
+    var sl = $('heloc_draw_slider');
+    var maxDraw = helocDrawMax();
+    if (sl) { sl.max = String(Math.round(maxDraw)); if (parseFloat(sl.value) > maxDraw) sl.value = String(Math.round(maxDraw)); }
+
+    var draw = _helocNum('heloc_draw');
+    var autopay = !!($('heloc_autopay') && $('heloc_autopay').checked);
+    var origPct = parseFloat(_helocState.origOptions[_helocState.origSelected]) || 0;
+
+    helocRenderOrigCards(draw);
+    helocRenderRateEditor();
+    helocRenderOutput(draw, origPct, autopay);
+    helocValidate(draw);
+}
+
+function helocRenderOutput(draw, origPct, autopay) {
+    var host = $('helocSheet'); if (!host) return;
+    var bn = ($('borrowerName').value || 'TBD');
+    var addr = ($('propertyAddress').value || 'TBD');
+    var cardsHtml = _helocState.cards.map(function (c, i) {
+        var res = helocCompute(c, draw, origPct, autopay);
+        var isVar = (c.type === 'variable');
+        var ratePrefix = isVar ? 'Starting at ' : '';
+        var rateTxt = (parseFloat(c.rate) || 0) ? (ratePrefix + (parseFloat(c.rate)).toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + '%') : 'Enter rate %';
+        return '<div onclick="helocSelectCard(' + i + ')" style="cursor:pointer;border:2px solid ' + (c.selected ? '#C9A84C' : '#2a2a2a') + ';border-radius:12px;padding:16px;background:' + (c.selected ? 'rgba(201,168,76,0.10)' : '#141414') + ';min-width:150px;flex:1;">'
+            + '<div style="font-size:26px;font-weight:800;color:#fff;line-height:1.1;">' + _helocMoney(res.monthly) + '<span style="font-size:13px;color:#888;font-weight:500;">/month</span></div>'
+            + '<div style="font-size:13px;color:#C9A84C;margin-top:6px;font-weight:600;">' + rateTxt + '</div>'
+            + '<div style="font-size:11px;color:#999;margin-top:3px;text-transform:capitalize;">' + (c.term) + 'yr ' + (c.type) + '</div>'
+            + '</div>';
+    }).join('');
+
+    var selCard = _helocState.cards.find(function (c) { return c.selected; }) || _helocState.cards[0];
+    var sr = helocCompute(selCard, draw, origPct, autopay);
+    var line = function (label, val) {
+        return '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #222;font-size:13px;"><span style="color:#aaa;">' + label + '</span><span style="color:#eee;font-weight:600;">' + val + '</span></div>';
+    };
+    var breakdown = '<div style="margin-top:22px;border:1px solid #2a2a2a;border-radius:12px;padding:18px;background:#111;">'
+        + '<div style="font-size:13px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Loan Breakdown</div>'
+        + line('Initial Draw Amount', _helocMoney(draw))
+        + line('Cash Required at Closing', '$0')
+        + line('Term', selCard.term + ' yrs / ' + (selCard.term * 12) + ' mo.')
+        + line('Origination Fee (deducted from total)', (parseFloat(origPct) || 0) + '% · ' + _helocMoney(sr.origFee))
+        + line('Total Loan Amount', _helocMoney(sr.totalLoan))
+        + line('Est. Monthly Payment', _helocMoney(sr.monthly))
+        + (autopay ? '<div style="font-size:11px;color:#C9A84C;margin-top:8px;">AutoPay applied: −0.25% APR (effective ' + sr.effRate.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + '%)</div>' : '')
+        + '<div style="font-size:10px;color:#666;margin-top:10px;">Illustrative estimate only — not an appraisal or loan commitment.</div>'
+        + '</div>';
+
+    host.innerHTML = '<div style="padding:24px 28px;">'
+        + '<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #C9A84C;padding-bottom:12px;margin-bottom:18px;">'
+        + '<div><div style="font-size:20px;font-weight:800;color:#fff;">HELOC Estimate</div>'
+        + '<div style="font-size:12px;color:#aaa;margin-top:4px;"><strong>' + bn + '</strong> &nbsp;|&nbsp; ' + addr + '</div></div>'
+        + '<div style="font-size:11px;color:#888;text-align:right;">Rates &amp; Realty<br>' + new Date().toLocaleDateString() + '</div>'
+        + '</div>'
+        + '<div style="display:flex;gap:12px;flex-wrap:wrap;">' + cardsHtml + '</div>'
+        + breakdown
+        + '</div>';
+}
+
+// ── Validation ──
+function helocValidate(draw) {
+    var btn = $('heloc_download_btn');
+    var err = $('heloc_err');
+    var problems = [];
+    if (!(draw > 0)) problems.push('Enter a draw amount greater than $0.');
+    var hasRate = _helocState.cards.some(function (c) { return (parseFloat(c.rate) || 0) > 0; });
+    if (!hasRate) problems.push('Add at least one rate card with a rate above 0%.');
+    var ok = problems.length === 0;
+    if (btn) { btn.disabled = !ok; btn.style.opacity = ok ? '1' : '0.5'; btn.style.cursor = ok ? 'pointer' : 'not-allowed'; }
+    if (err) {
+        if (ok) { err.style.display = 'none'; err.textContent = ''; }
+        else { err.style.display = 'block'; err.innerHTML = problems.map(function (p) { return '• ' + p; }).join('<br>'); }
+    }
+    return ok;
+}
+
+// ── Base64 → PDF download (mirrors generate-fee-sheet's pdf field) ──
+function helocBase64Download(b64, filename) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var blob = new Blob([bytes], { type: 'application/pdf' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+}
+
+async function helocDownloadPdf() {
+    var draw = _helocNum('heloc_draw');
+    if (!helocValidate(draw)) { showToast('Fix the highlighted fields first'); return; }
+    var btn = $('heloc_download_btn');
+    var origLabel = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    try {
+        var cfg = helocCfg();
+        var body = {
+            borrower_name: $('borrowerName').value || 'TBD',
+            property_address: $('propertyAddress').value || 'TBD',
+            state: $('state') ? $('state').value : '',
+            estimated_value: _helocNum('heloc_value') || null,
+            mortgage_balance: _helocNum('heloc_balance') || null,
+            cltv_max: parseFloat(($('heloc_cltv') || {}).value) || 85,
+            draw_amount: draw,
+            origination_pct: parseFloat(_helocState.origOptions[_helocState.origSelected]) || 0,
+            origination_options: _helocState.origOptions.map(function (p) { return parseFloat(p) || 0; }),
+            autopay: !!($('heloc_autopay') && $('heloc_autopay').checked),
+            autopay_apr_reduction: _HELOC_AUTOPAY_REDUCTION,
+            cards: _helocState.cards.map(function (c) {
+                return { type: c.type, term_years: parseInt(c.term, 10) || 0, rate: parseFloat(c.rate) || 0, selected: !!c.selected };
+            })
+        };
+        var res = await fetch(cfg.url + '/functions/v1/generate-heloc-sheet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': cfg.anon, 'Authorization': 'Bearer ' + cfg.anon },
+            body: JSON.stringify(body)
+        });
+        var data = null; try { data = await res.json(); } catch (_) {}
+        if (!res.ok || !data || data.success === false || !data.pdf) {
+            throw new Error((data && (data.error || data.message)) || ('Request failed (' + res.status + ')'));
+        }
+        var safe = (body.borrower_name || 'Borrower').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Borrower';
+        helocBase64Download(data.pdf, 'HELOC-Estimate-' + safe + '.pdf');
+        showToast('HELOC PDF downloaded');
+    } catch (e) {
+        var err = $('heloc_err');
+        if (err) { err.style.display = 'block'; err.textContent = 'Download failed: ' + ((e && e.message) || e); }
+        showToast('Download failed');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origLabel || 'Download PDF'; }
+    }
+}
+
+function helocInit() {
+    helocRenderRateEditor();
+    helocRecalc();
+}
+helocInit();
 
 renderCards();
 recalc();
