@@ -123,6 +123,34 @@
     .panel{padding:16px;}
     .doc-head h1{font-size:18px;}
   }
+  /* ── PDF signing mode (added; HTML-template styles above unchanged) ── */
+  .pdf-doc{margin-top:6px;}
+  .pdf-page{position:relative;margin:0 auto 16px;background:#fff;border:1px solid var(--line);box-shadow:0 2px 12px rgba(0,0,0,0.08);max-width:100%;}
+  .pdf-page canvas{display:block;}
+  .pdf-field{position:absolute;box-sizing:border-box;}
+  .pf-other{background:rgba(20,30,60,0.04);border:1px dashed #e2e2e2;opacity:0.5;pointer-events:none;border-radius:3px;}
+  .pf-readonly{display:flex;align-items:center;padding:0 4px;color:#16213e;white-space:nowrap;overflow:hidden;pointer-events:none;line-height:1.1;}
+  .pf-sig{border:2px dashed var(--gold);background:rgba(201,168,76,0.10);border-radius:4px;cursor:pointer;}
+  .pf-sig:hover{background:rgba(201,168,76,0.18);}
+  .pf-sig-tab{position:absolute;top:-10px;left:6px;background:var(--gold);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;white-space:nowrap;text-transform:uppercase;letter-spacing:0.03em;pointer-events:none;}
+  .pf-sig-content{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .pf-sig-content img{max-width:100%;max-height:100%;object-fit:contain;}
+  .pf-sig-filled{border-style:solid;background:#fff;}
+  .pf-typed{font-family:'Dancing Script',cursive;color:#16213e;line-height:1;white-space:nowrap;}
+  .pf-input{display:flex;align-items:center;}
+  .pf-inp{width:100%;height:100%;border:1px solid var(--gold);border-radius:3px;background:rgba(201,168,76,0.07);padding:0 4px;outline:none;box-sizing:border-box;color:#16213e;}
+  .pf-inp:focus{border-color:var(--gold-dark);background:#fff;}
+  .sig-modal{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:none;align-items:flex-end;justify-content:center;z-index:1000;}
+  .sig-modal.open{display:flex;}
+  .sig-modal-box{background:#fff;width:100%;max-width:560px;border-radius:16px 16px 0 0;padding:18px 16px 20px;box-shadow:0 -6px 30px rgba(0,0,0,0.25);}
+  .sig-modal-head{display:flex;justify-content:space-between;align-items:center;font-size:16px;font-weight:700;margin-bottom:12px;}
+  .sig-close{background:none;border:none;font-size:20px;color:var(--muted);cursor:pointer;line-height:1;padding:0 4px;}
+  .sig-modal-actions{display:flex;gap:10px;margin-top:14px;}
+  .sig-modal-actions .btn-primary{flex:1;}
+  .btn-secondary{flex:1;padding:15px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;}
+  #mSigCanvas{display:block;width:100%;height:200px;border-radius:10px;touch-action:none;cursor:crosshair;}
+  .typed-input.cursive{font-family:'Dancing Script',cursive;font-size:30px;}
+  @media (min-width:560px){ .sig-modal{align-items:center;} .sig-modal-box{border-radius:16px;} }
 </style>
 </head>
 <body>
@@ -221,6 +249,11 @@
 
   function route(data){
     var state = data && data.state;
+    if(data && data.mode === "pdf"){
+      // PDF mode: real-PDF signing UI. Other states fall through to the shared messaging below.
+      if(state==="ready"){ renderPdfSigning(data, false); return; }
+      if(state==="signed"){ renderPdfSigning(data, true); return; }
+    }
     if(state==="ready"){ renderSigning(data, false); return; }
     if(state==="signed"){ renderSigning(data, true); return; }
     var copy = {
@@ -527,6 +560,351 @@
     centerMessage("You declined to sign this document",
       ["We’ve recorded that you declined.","If this was a mistake, please contact your loan officer."],
       { icon: icon, color:"var(--red)" });
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  PDF SIGNING MODE  (new — the HTML-template flow above is unchanged)
+  // ════════════════════════════════════════════════════════════
+  var pdfState = null;
+
+  function initialsFromName(name){
+    var parts = String(name||"").trim().split(/\s+/).filter(Boolean);
+    return parts.map(function(w){ return w.charAt(0); }).join("").toUpperCase();
+  }
+  function todayMDY(){
+    var d = new Date();
+    return (d.getMonth()+1) + "/" + d.getDate() + "/" + d.getFullYear();
+  }
+
+  function loadPdfJs(){
+    return new Promise(function(resolve, reject){
+      if(window.pdfjsLib){ resolve(window.pdfjsLib); return; }
+      var s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+      s.onload = function(){
+        if(window.pdfjsLib){
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+          resolve(window.pdfjsLib);
+        } else { reject(new Error("pdf.js unavailable")); }
+      };
+      s.onerror = function(){ reject(new Error("pdf.js load failed")); };
+      document.head.appendChild(s);
+    });
+  }
+
+  // Reusable signature pad (mouse + touch + pointer all map through here).
+  function setupSigPad(canvas){
+    var ctx, drawing=false, lastX=0, lastY=0, has=false;
+    function setup(){
+      var ratio = window.devicePixelRatio || 1;
+      var rect = canvas.getBoundingClientRect();
+      canvas.width = Math.round(rect.width*ratio);
+      canvas.height = Math.round(rect.height*ratio);
+      ctx = canvas.getContext("2d");
+      ctx.scale(ratio, ratio);
+      ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = "#16213e";
+    }
+    function pos(e){
+      var rect = canvas.getBoundingClientRect();
+      var p = (e.touches && e.touches[0]) ? e.touches[0] : e;
+      return { x:p.clientX - rect.left, y:p.clientY - rect.top };
+    }
+    function start(e){ e.preventDefault(); drawing=true; var p=pos(e); lastX=p.x; lastY=p.y; }
+    function move(e){ if(!drawing) return; e.preventDefault(); var p=pos(e); ctx.beginPath(); ctx.moveTo(lastX,lastY); ctx.lineTo(p.x,p.y); ctx.stroke(); lastX=p.x; lastY=p.y; has=true; }
+    function end(){ drawing=false; }
+    canvas.addEventListener("mousedown", start);
+    canvas.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", end);
+    canvas.addEventListener("touchstart", start, {passive:false});
+    canvas.addEventListener("touchmove", move, {passive:false});
+    canvas.addEventListener("touchend", end);
+    return {
+      setup: setup,
+      clear: function(){ if(ctx) ctx.clearRect(0,0,canvas.width,canvas.height); has=false; },
+      hasDrawing: function(){ return has; },
+      dataUrl: function(){ return canvas.toDataURL("image/png"); }
+    };
+  }
+
+  // ── signature modal (built once, shared by every signature box) ──
+  var sigModalEl=null, sigPad=null, modalTab="draw";
+  function ensureSigModal(){
+    if(sigModalEl) return;
+    sigModalEl = document.createElement("div");
+    sigModalEl.className = "sig-modal";
+    sigModalEl.innerHTML =
+      '<div class="sig-modal-box">' +
+        '<div class="sig-modal-head"><span>Adopt your signature</span><button type="button" class="sig-close" id="mClose">✕</button></div>' +
+        '<div class="tabs"><div class="tab active" id="mTabDraw">Draw</div><div class="tab" id="mTabType">Type</div></div>' +
+        '<div id="mDrawPane"><div class="sig-box"><canvas id="mSigCanvas"></canvas><div class="sig-baseline"></div><div class="sig-x">×</div><div class="sig-actions"><button type="button" class="link-btn" id="mClear">Clear</button></div></div></div>' +
+        '<div id="mTypePane" style="display:none;"><input type="text" class="typed-input cursive" id="mTypedName" placeholder="Type your full legal name" autocomplete="name"></div>' +
+        '<div class="err-line" id="mErr"></div>' +
+        '<div class="sig-modal-actions"><button type="button" class="btn-secondary" id="mCancel">Cancel</button><button type="button" class="btn-primary" id="mConfirm">Apply signature</button></div>' +
+      '</div>';
+    document.body.appendChild(sigModalEl);
+
+    sigPad = setupSigPad(sigModalEl.querySelector("#mSigCanvas"));
+
+    var tabDraw=sigModalEl.querySelector("#mTabDraw"), tabType=sigModalEl.querySelector("#mTabType");
+    var drawPane=sigModalEl.querySelector("#mDrawPane"), typePane=sigModalEl.querySelector("#mTypePane");
+    function selectTab(t){
+      modalTab = t;
+      tabDraw.classList.toggle("active", t==="draw");
+      tabType.classList.toggle("active", t==="type");
+      drawPane.style.display = t==="draw" ? "" : "none";
+      typePane.style.display = t==="draw" ? "none" : "";
+      if(t==="draw"){ setTimeout(function(){ sigPad.setup(); }, 0); }
+    }
+    tabDraw.addEventListener("click", function(){ selectTab("draw"); });
+    tabType.addEventListener("click", function(){ selectTab("type"); });
+    sigModalEl.querySelector("#mClear").addEventListener("click", function(){ sigPad.clear(); });
+    sigModalEl.querySelector("#mClose").addEventListener("click", closeSigModal);
+    sigModalEl.querySelector("#mCancel").addEventListener("click", closeSigModal);
+    sigModalEl.querySelector("#mConfirm").addEventListener("click", confirmSignature);
+    sigModalEl.addEventListener("click", function(e){ if(e.target===sigModalEl) closeSigModal(); });
+  }
+  function openSignatureModal(){
+    ensureSigModal();
+    modalTab = "draw";
+    sigModalEl.querySelector("#mTabDraw").classList.add("active");
+    sigModalEl.querySelector("#mTabType").classList.remove("active");
+    sigModalEl.querySelector("#mDrawPane").style.display = "";
+    sigModalEl.querySelector("#mTypePane").style.display = "none";
+    sigModalEl.querySelector("#mErr").textContent = "";
+    sigModalEl.querySelector("#mTypedName").value = "";
+    sigModalEl.classList.add("open");
+    setTimeout(function(){ sigPad.setup(); sigPad.clear(); }, 30);
+  }
+  function closeSigModal(){ if(sigModalEl) sigModalEl.classList.remove("open"); }
+  function confirmSignature(){
+    var mErr = sigModalEl.querySelector("#mErr"); mErr.textContent = "";
+    if(modalTab==="draw"){
+      if(!sigPad.hasDrawing()){ mErr.textContent = "Please draw your signature, or switch to Type."; return; }
+      pdfState.signature = { type:"drawn", dataUrl:sigPad.dataUrl() };
+    } else {
+      var v = (sigModalEl.querySelector("#mTypedName").value || "").trim();
+      if(!v){ mErr.textContent = "Please type your full name."; return; }
+      pdfState.signature = { type:"typed", text:v };
+    }
+    applySignatureToBoxes();
+    closeSigModal();
+    if(pdfState && pdfState.refresh) pdfState.refresh();
+  }
+  // Capture ONE signature for the whole document; paint it into every box the borrower owns.
+  function applySignatureToBoxes(){
+    var sig = pdfState && pdfState.signature; if(!sig) return;
+    pdfState.sigBoxes.forEach(function(box){
+      box.classList.add("pf-sig-filled");
+      var tab = box.querySelector(".pf-sig-tab"); if(tab) tab.style.display = "none";
+      var content = box.querySelector(".pf-sig-content"); if(!content) return;
+      content.innerHTML = "";
+      if(sig.type==="drawn"){
+        var img = document.createElement("img"); img.alt = "signature"; img.src = sig.dataUrl; content.appendChild(img);
+      } else {
+        var sp = document.createElement("span"); sp.className = "pf-typed"; sp.textContent = sig.text;
+        sp.style.fontSize = Math.max(12, Math.min(34, (box.clientHeight||30)*0.7)) + "px";
+        content.appendChild(sp);
+      }
+    });
+  }
+
+  // Build one absolutely-positioned overlay for a field over its page.
+  function buildFieldOverlay(f, PW, PH, signer){
+    var div = document.createElement("div");
+    div.className = "pdf-field";
+    var left=(Number(f.x)||0)*PW, top=(Number(f.y)||0)*PH, width=(Number(f.w)||0)*PW, height=(Number(f.h)||0)*PH;
+    div.style.left=left+"px"; div.style.top=top+"px"; div.style.width=width+"px"; div.style.height=height+"px";
+    var fs = Math.max(9, Math.min(16, height*0.5));
+    var mine = f.mine===true, sender = f.fill_by==="sender", type = f.type;
+
+    // Belongs to another signer — show faintly, never interactive, never blocks submit.
+    if(!mine && !sender){ div.className += " pf-other"; return div; }
+
+    // Pre-filled by the sender — read-only value.
+    if(sender){
+      div.className += " pf-readonly"; div.style.fontSize = fs+"px";
+      div.textContent = (f.value!=null) ? String(f.value) : "";
+      return div;
+    }
+
+    // ── mine ──
+    if(type==="signature"){
+      div.className += " pf-sig";
+      div.setAttribute("role","button"); div.tabIndex = 0;
+      var stab = document.createElement("span"); stab.className = "pf-sig-tab"; stab.textContent = "Sign here";
+      var content = document.createElement("span"); content.className = "pf-sig-content";
+      div.appendChild(stab); div.appendChild(content);
+      div.addEventListener("click", openSignatureModal);
+      div.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openSignatureModal(); } });
+      pdfState.sigBoxes.push(div);
+      return div;
+    }
+    if(type==="initials"){ div.className += " pf-readonly"; div.style.fontSize = fs+"px"; div.textContent = initialsFromName(signer.name); return div; }
+    if(type==="name"){ div.className += " pf-readonly"; div.style.fontSize = fs+"px"; div.textContent = signer.name || ""; return div; }
+    if(type==="date"){ div.className += " pf-readonly"; div.style.fontSize = fs+"px"; div.textContent = todayMDY(); return div; }
+
+    if(type==="ssn_last4"){
+      div.className += " pf-input";
+      var sinp = document.createElement("input");
+      sinp.type = "tel"; sinp.inputMode = "numeric"; sinp.maxLength = 4; sinp.placeholder = "••••";
+      sinp.className = "pf-inp"; sinp.style.fontSize = fs+"px"; sinp.autocomplete = "off";
+      sinp.value = pdfState.ssn || "";
+      sinp.addEventListener("input", function(){
+        sinp.value = sinp.value.replace(/\D/g,"").slice(0,4);
+        pdfState.ssn = sinp.value;
+        pdfState.ssnInputs.forEach(function(o){ if(o!==sinp) o.value = pdfState.ssn; });
+        if(pdfState.refresh) pdfState.refresh();
+      });
+      div.appendChild(sinp);
+      pdfState.ssnInputs.push(sinp);
+      pdfState.hasSsn = true;
+      return div;
+    }
+
+    if(type==="text" || type==="number"){
+      div.className += " pf-input";
+      var tinp = document.createElement("input");
+      tinp.type = (type==="number") ? "tel" : "text";
+      if(type==="number") tinp.inputMode = "decimal";
+      tinp.className = "pf-inp"; tinp.style.fontSize = fs+"px";
+      if(f.value!=null && f.value!==""){ tinp.value = String(f.value); pdfState.fieldValues[f.id] = String(f.value); }
+      tinp.addEventListener("input", function(){
+        pdfState.fieldValues[f.id] = tinp.value;
+        if(pdfState.refresh) pdfState.refresh();
+      });
+      div.appendChild(tinp);
+      pdfState.textFields.push({ id:f.id, required:!!f.required });
+      return div;
+    }
+
+    div.className += " pf-other";
+    return div;
+  }
+
+  async function renderPdfSigning(data, alreadySigned){
+    var env = data.envelope || {}, signer = data.signer || {}, pdf = data.pdf || {}, fields = data.fields || [];
+    pdfState = { data:data, signer:signer, signature:null, sigBoxes:[], textFields:[], ssnInputs:[], hasSsn:false, ssn:"", fieldValues:{}, refresh:null };
+
+    var html = "";
+    html += '<div class="doc-head"><h1>'+esc(env.title || "Document")+'</h1><div class="sub">Sent by RFD Group / Rates &amp; Realty</div></div>';
+    if(alreadySigned){ html += '<div class="banner">✓ You’ve already signed this document.</div>'; }
+    html += '<div id="pdfDoc" class="pdf-doc"><div class="center-msg"><div class="spinner"></div><p>Loading your document…</p></div></div>';
+    if(!alreadySigned){
+      html += '<div class="panel" id="signPanel">';
+      html +=   '<label class="consent"><input type="checkbox" id="consentChk"><span>I agree to sign electronically and to the use of electronic records and signatures (ESIGN/UETA).</span></label>';
+      html +=   '<button type="button" class="btn-primary" id="signBtn" disabled>Sign Document</button>';
+      html +=   '<div class="err-line" id="errLine"></div>';
+      html +=   '<div class="decline"><button type="button" id="declineBtn">Decline to sign</button></div>';
+      html += '</div>';
+    }
+    html += '<div class="footer-note">Secured by Rates &amp; Realty · Powered by RFD Group</div>';
+    root.innerHTML = html;
+
+    var pdfDoc = document.getElementById("pdfDoc");
+    try{
+      if(!pdf.url) throw new Error("missing pdf url");
+      var pdfjs = await loadPdfJs();
+      var doc = await pdfjs.getDocument(pdf.url).promise;
+      pdfDoc.innerHTML = "";
+      var containerW = pdfDoc.clientWidth || (window.innerWidth - 32);
+      var targetW = Math.min(containerW, 800);
+      var dpr = window.devicePixelRatio || 1;
+      for(var p=1; p<=doc.numPages; p++){
+        var page = await doc.getPage(p);
+        var base = page.getViewport({ scale:1 });
+        var scale = targetW / base.width;
+        var PW = Math.round(base.width*scale), PH = Math.round(base.height*scale);
+        var wrap = document.createElement("div");
+        wrap.className = "pdf-page"; wrap.style.width = PW+"px"; wrap.style.height = PH+"px";
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.round(PW*dpr); canvas.height = Math.round(PH*dpr);
+        canvas.style.width = PW+"px"; canvas.style.height = PH+"px";
+        wrap.appendChild(canvas);
+        pdfDoc.appendChild(wrap);
+        await page.render({ canvasContext:canvas.getContext("2d"), viewport:page.getViewport({ scale:scale*dpr }) }).promise;
+        if(!alreadySigned){
+          var pf = fields.filter(function(fld){ return Number(fld.page)===p; });
+          for(var k=0; k<pf.length; k++){ wrap.appendChild(buildFieldOverlay(pf[k], PW, PH, signer)); }
+        }
+      }
+    }catch(e){
+      pdfDoc.innerHTML = '<div class="center-msg"><p style="color:var(--red);">We couldn’t display this document. Please reopen the link from your email, or contact your loan officer.</p></div>';
+      return;
+    }
+
+    if(alreadySigned) return; // already-signed view: document + banner, no signing UI
+    wirePdfSigning();
+  }
+
+  function wirePdfSigning(){
+    var consentChk = document.getElementById("consentChk");
+    var signBtn = document.getElementById("signBtn");
+    var errLine = document.getElementById("errLine");
+    var declineBtn = document.getElementById("declineBtn");
+
+    function textFieldsOk(){
+      return pdfState.textFields.every(function(tf){
+        if(!tf.required) return true;
+        return String(pdfState.fieldValues[tf.id]||"").trim().length > 0;
+      });
+    }
+    function ssnOk(){ return !pdfState.hasSsn || /^\d{4}$/.test(pdfState.ssn||""); }
+    function sigOk(){ return pdfState.sigBoxes.length===0 || !!pdfState.signature; }
+    function canSubmit(){ return sigOk() && textFieldsOk() && ssnOk() && consentChk.checked; }
+    function refresh(){ signBtn.disabled = !canSubmit(); }
+    pdfState.refresh = refresh;
+    consentChk.addEventListener("change", refresh);
+    refresh();
+
+    signBtn.addEventListener("click", async function(){
+      if(signBtn.disabled) return;
+      errLine.textContent = "";
+      signBtn.disabled = true; var label = signBtn.textContent; signBtn.textContent = "Signing…";
+
+      var body = { action:"submit", token:token };
+      if(pdfState.signature){
+        body.signature_type = pdfState.signature.type; // "drawn" or "typed"
+        body.signature_data = (pdfState.signature.type==="drawn") ? pdfState.signature.dataUrl : pdfState.signature.text;
+      }
+      var fv = {};
+      pdfState.textFields.forEach(function(tf){
+        var v = pdfState.fieldValues[tf.id];
+        if(v!=null && String(v).trim()!=="") fv[tf.id] = v;
+      });
+      if(pdfState.hasSsn && pdfState.ssn){ fv.ssn_last4 = pdfState.ssn; body.ssn_last4 = pdfState.ssn; }
+      body.field_values = fv;
+
+      try{
+        var r = await api(body);
+        if(r.ok && r.json && r.json.ok && r.json.signed){
+          renderSuccess(r.json);
+        } else {
+          errLine.textContent = (r.json && (r.json.error||r.json.message)) || "Something went wrong. Please try again.";
+          signBtn.disabled = false; signBtn.textContent = label;
+        }
+      }catch(e){
+        errLine.textContent = "Connection problem — please try again.";
+        signBtn.disabled = false; signBtn.textContent = label;
+      }
+    });
+
+    declineBtn.addEventListener("click", async function(){
+      var reason = window.prompt("If you’d like, tell us why you’re declining (optional):", "");
+      if(reason === null) return;
+      declineBtn.disabled = true; declineBtn.textContent = "Submitting…";
+      try{
+        var r = await api({ action:"submit", token:token, decline:true, decline_reason:(reason||"").trim() });
+        if(r.ok && r.json && (r.json.ok || r.json.declined!==undefined || r.json.signed!==undefined)){
+          renderDeclined();
+        } else {
+          errLine.textContent = (r.json && (r.json.error||r.json.message)) || "Could not submit. Please try again.";
+          declineBtn.disabled = false; declineBtn.textContent = "Decline to sign";
+        }
+      }catch(e){
+        errLine.textContent = "Connection problem — please try again.";
+        declineBtn.disabled = false; declineBtn.textContent = "Decline to sign";
+      }
+    });
   }
 
   load();
