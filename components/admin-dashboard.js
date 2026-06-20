@@ -1484,6 +1484,7 @@ let _fvBatchBusy = false;          // guards against overlapping batch runs
 let _fvReviewQueue = [];           // [{ file, originalName, suggestedName, docType, category, fields, jobId, flagged, ext, contactId, approved }]
 let _fvReviewIndex = 0;            // current item in the Review & Approve modal
 let _fvReviewBlobUrl = null;       // object URL for the current review preview (revoked on nav/close)
+let _fvSelectedIds = new Set();    // file ids the user has checked in the current folder (controls scan/convert scope)
 
 // ── OAUTH (Google Identity Services) ──────────────────────────────
 // Returns a fresh OAuth access token scoped to Drive. On first call within
@@ -1621,8 +1622,13 @@ async function renderDocuments() {
               <button class="fv-pill" data-fv-pill="Credit Report">Credit</button>
               <button class="fv-pill" data-fv-pill="Other">Other</button>
             </div>
+            <label id="fv-select-all-wrap" title="Select / deselect all files in this folder" style="display:flex;align-items:center;gap:6px;flex-shrink:0;color:#999;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;">
+              <input type="checkbox" id="fv-select-all" style="accent-color:#C9A84C;width:14px;height:14px;cursor:pointer;">
+              <span>Select all</span>
+              <span id="fv-sel-count" style="color:#C9A84C;font-size:11px;"></span>
+            </label>
             <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;">
-              <button id="fv-convert-all" title="Convert every non-PDF file for this borrower to PDF" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#128196; Convert all to PDF</button>
+              <button id="fv-convert-all" title="Convert non-PDF files to PDF (selected files only if any are checked)" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#128196; Convert all to PDF</button>
               <button id="fv-ai-scan" title="OCR every file and suggest clean names" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#10024; AI Scan &amp; Rename</button>
               <button id="fv-review" title="Review &amp; approve the AI-suggested names" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#9745; Review</button>
               <button id="fv-upload-btn" style="background:#C9A84C;border:none;color:#000;font-size:12px;font-weight:700;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;">+ Upload</button>
@@ -1741,6 +1747,15 @@ function _fvBindPanels() {
   if (aiScanBtn) aiScanBtn.onclick = _fvScanAndRename;
   const reviewBtn = document.getElementById("fv-review");
   if (reviewBtn) reviewBtn.onclick = _fvOpenReviewModal;
+  // Select all / none toggle (operates on the non-folder files in the current view).
+  const selAll = document.getElementById("fv-select-all");
+  if (selAll) selAll.onchange = () => {
+    const files = _fvCurrentFileObjects();
+    if (selAll.checked) files.forEach((f) => _fvSelectedIds.add(f.id));
+    else files.forEach((f) => _fvSelectedIds.delete(f.id));
+    document.querySelectorAll(".fv-row-check").forEach((cb) => { cb.checked = _fvSelectedIds.has(cb.dataset.id); });
+    _fvUpdateSelectionUI();
+  };
 
   if (dropTarget) {
     dropTarget.addEventListener("dragover", (e) => {
@@ -1997,6 +2012,7 @@ function _fvBorrowerCardHtml(c) {
 async function _fvSelectBorrower(contact) {
   _fvSelectedContactId = contact.id;
   _fvFileFilter = "";
+  _fvSelectedIds.clear(); // selection is per-folder; reset when switching borrowers
   _fvFolderStack = [];
   _fvUpdateBreadcrumb();
   _fvShowFileList();
@@ -2552,6 +2568,7 @@ function _fvRenderFileListPanel(contact) {
 
   if (!sorted.length) {
     host.innerHTML = `<div style="padding:40px 20px;text-align:center;color:#555;font-size:12px;">${allItems.length ? "No files match this filter" : "No files yet — drop files here"}</div>`;
+    _fvUpdateSelectionUI();
     return;
   }
   host.innerHTML = sorted.map((f) => _fvFileRowHtml(f)).join("");
@@ -2572,14 +2589,28 @@ function _fvRenderFileListPanel(contact) {
 
     // Regular file row.
     row.onclick = (e) => {
-      if (e.target && e.target.closest && (e.target.closest(".fv-pdf-btn") || e.target.closest(".fv-dl-btn"))) return;
+      if (e.target && e.target.closest && (e.target.closest(".fv-pdf-btn") || e.target.closest(".fv-dl-btn") || e.target.closest(".fv-convert-btn") || e.target.closest(".fv-row-check"))) return;
       const idx = docs.findIndex((x) => x.id === fileId);
       if (idx >= 0) _fvOpenViewer(contact, docs, idx);
     };
 
+    const check = row.querySelector(".fv-row-check");
+    if (check) {
+      check.onclick = (e) => e.stopPropagation();
+      check.onchange = (e) => {
+        e.stopPropagation();
+        if (check.checked) _fvSelectedIds.add(fileId); else _fvSelectedIds.delete(fileId);
+        _fvUpdateSelectionUI();
+      };
+    }
+
     const pdfBtn = row.querySelector(".fv-pdf-btn");
     if (pdfBtn) {
       pdfBtn.onclick = (e) => { e.stopPropagation(); _fvConvertToPdf(f); };
+    }
+    const convBtn = row.querySelector(".fv-convert-btn");
+    if (convBtn) {
+      convBtn.onclick = (e) => { e.stopPropagation(); _fvConvertOneFile(f); };
     }
     const dlBtn = row.querySelector(".fv-dl-btn");
     if (dlBtn) {
@@ -2589,6 +2620,11 @@ function _fvRenderFileListPanel(contact) {
       };
     }
   });
+
+  // Prune any selected ids no longer present in this folder, then refresh the toolbar UI.
+  const present = new Set(docs.map((d) => d.id));
+  Array.from(_fvSelectedIds).forEach((id) => { if (!present.has(id)) _fvSelectedIds.delete(id); });
+  _fvUpdateSelectionUI();
 
   // Lazy-load document counts for the subfolders shown, then fill in their 📄 badges.
   const _fvSubIds = folders.map((f) => f.id);
@@ -2611,6 +2647,7 @@ function _fvFileRowHtml(f) {
   if (f.mimeType === "application/vnd.google-apps.folder") {
     return `
       <div class="fv-file-row" data-fv-row="${_fvEscape(f.id)}">
+        <div style="width:16px;flex-shrink:0;"></div>
         <div style="font-size:18px;flex-shrink:0;">&#128193;</div>
         <div style="flex:1;min-width:0;">
           <div class="fv-name" style="color:#C9A84C;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</div>
@@ -2626,8 +2663,15 @@ function _fvFileRowHtml(f) {
   const date = f.createdTime ? new Date(f.createdTime).toLocaleDateString() : "";
   const docType = (f.appProperties && f.appProperties.docType) || "";
   const isGoogleDoc = (f.mimeType || "").startsWith("application/vnd.google-apps.");
+  const isPdf = _fvIsPdf(f) || /\.pdf$/i.test(f.name || "");
+  const checked = _fvSelectedIds.has(f.id) ? " checked" : "";
+  // A per-row "Convert to PDF" button on every NON-PDF, non-Google-native file.
+  const convertBtn = (!isPdf && !isGoogleDoc)
+    ? `<button class="fv-convert-btn" title="Convert this file to PDF" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#128196; PDF</button>`
+    : "";
   return `
     <div class="fv-file-row" data-fv-row="${_fvEscape(f.id)}">
+      <input type="checkbox" class="fv-row-check" data-id="${_fvEscape(f.id)}"${checked} title="Select this file" style="accent-color:#C9A84C;width:14px;height:14px;flex-shrink:0;cursor:pointer;">
       <div style="font-size:16px;flex-shrink:0;">${icon}</div>
       <div style="flex:1;min-width:0;">
         <div class="fv-name" style="color:#d0d0d0;font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</div>
@@ -2638,6 +2682,7 @@ function _fvFileRowHtml(f) {
       </div>
       <div style="display:flex;gap:4px;flex-shrink:0;align-items:center;">
         ${isGoogleDoc ? `<button class="fv-pdf-btn" title="Export as PDF" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#C9A84C88;font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;font-family:inherit;">PDF</button>` : ''}
+        ${convertBtn}
         <button class="fv-dl-btn" title="Download" style="background:transparent;border:none;color:#444;cursor:pointer;font-size:14px;padding:2px 4px;font-family:inherit;">&#8681;</button>
       </div>
     </div>
@@ -2646,6 +2691,7 @@ function _fvFileRowHtml(f) {
 
 // ── FOLDER NAVIGATION ────────────────────────────────────────────
 async function _fvNavigateIntoFolder(folder) {
+  _fvSelectedIds.clear(); // selection is per-folder
   // Push the current folder onto the breadcrumb stack.
   _fvFolderStack.push({
     id: window._fvCurrentFolderId,
@@ -2659,6 +2705,7 @@ async function _fvNavigateIntoFolder(folder) {
 
 async function _fvFolderBack() {
   if (!_fvFolderStack.length) return;
+  _fvSelectedIds.clear(); // selection is per-folder
   const parent = _fvFolderStack.pop();
   _fvUpdateBreadcrumb();
   await _fvLoadFiles(parent.id);
@@ -2842,6 +2889,25 @@ function _fvCurrentFileObjects() {
   return all.filter((f) => f && f.mimeType !== "application/vnd.google-apps.folder");
 }
 
+// The currently-checked files in the open folder.
+function _fvSelectedFileObjects() {
+  return _fvCurrentFileObjects().filter((f) => _fvSelectedIds.has(f.id));
+}
+
+// Refresh the "Select all" checkbox state + selection count in the toolbar.
+function _fvUpdateSelectionUI() {
+  const files = _fvCurrentFileObjects();
+  const total = files.length;
+  const sel = files.filter((f) => _fvSelectedIds.has(f.id)).length;
+  const countEl = document.getElementById("fv-sel-count");
+  if (countEl) countEl.textContent = sel ? `(${sel} selected)` : "";
+  const selAll = document.getElementById("fv-select-all");
+  if (selAll) {
+    selAll.checked = total > 0 && sel === total;
+    selAll.indeterminate = sel > 0 && sel < total;
+  }
+}
+
 // Download a Drive file's bytes (same alt=media path the viewer uses) as a Blob.
 async function _fvDownloadBlob(fileId) {
   const token = await _fvEnsureToken();
@@ -2981,7 +3047,71 @@ async function _fvAdminIdentity() {
   } catch (_) { return "admin"; }
 }
 
-/* ── (1) CONVERT ALL TO PDF ───────────────────────────────────────── */
+/* ── (1) CONVERT TO PDF (per-file + safe Convert all) ─────────────── */
+// Convert ONE non-PDF file to PDF via the edge function and replace the original.
+// Never touches an existing PDF. Returns { status:'converted'|'skipped'|'noop', name, reason?, warn? }.
+async function _fvConvertOneViaFn(f, folderId) {
+  // Already a PDF → never modify.
+  if (_fvIsPdf(f) || /\.pdf$/i.test(f.name || "")) return { status: "noop", name: f.name };
+  // Google-native docs can't be fetched via alt=media — they need the export path.
+  if ((f.mimeType || "").indexOf("application/vnd.google-apps") === 0) {
+    return { status: "skipped", name: f.name, reason: "Google Doc — open in Drive → File → Download as PDF" };
+  }
+  const blob = await _fvDownloadBlob(f.id);
+  const b64 = await _fvBlobToBase64(blob);
+  let resp;
+  try {
+    resp = await _fvCallConvertToPdf(b64, f.mimeType || "application/octet-stream", f.name || "file");
+  } catch (err) {
+    if (err && err.status === 415) return { status: "skipped", name: f.name, reason: "HEIC / Office doc — convert on your phone or re-upload as PDF" };
+    throw err;
+  }
+  if (resp && resp.already_pdf) return { status: "noop", name: f.name }; // backend says already PDF
+  if (!resp || !resp.pdf_base64) throw new Error("no PDF returned");
+
+  const bytes = _fvB64ToBytes(resp.pdf_base64);
+  // Keep the file's current (possibly hand-edited) name — only swap the extension.
+  const pdfName = resp.pdf_name || ((f.name || "document").replace(/\.[a-zA-Z0-9]{1,6}$/, "") + ".pdf");
+  const pdfFile = new File([bytes], pdfName, { type: "application/pdf" });
+
+  const up = await _fvUploadOne(folderId, pdfFile);
+  if (!up || !up.ok) throw new Error((up && up.error) || "upload failed");
+
+  // Preserve the original's document category onto the new PDF.
+  const cat = (f.appProperties && f.appProperties.docType) || "";
+  if (cat && up.file && up.file.id) { try { await _fvSetAppPropDocType(up.file.id, cat); } catch (_) {} }
+
+  // Replace the original: remove the non-PDF so we don't keep both.
+  try { await _fvDeleteDriveFile(f.id); }
+  catch (delErr) { return { status: "converted", name: pdfName, warn: "original couldn't be deleted" }; }
+  return { status: "converted", name: pdfName };
+}
+
+// Per-row "Convert to PDF" button — converts just this one file.
+async function _fvConvertOneFile(f) {
+  if (_fvBatchBusy) { _fvShowToast("A batch is already running…"); return; }
+  if (_fvIsPdf(f) || /\.pdf$/i.test(f.name || "")) { _fvShowToast("Already a PDF"); return; }
+  const contact = _fvCurrentContact();
+  const folderId = _fvCurrentFolderIdResolved();
+  if (!folderId) { _fvShowToast("No folder for this borrower"); return; }
+  try { await _fvEnsureToken(); } catch (e) { _fvShowToast("Google Drive access needed — click again to allow"); return; }
+
+  _fvBatchBusy = true;
+  _fvShowToast(`Converting ${f.name || "file"}…`);
+  let res = null, errMsg = "";
+  try { res = await _fvConvertOneViaFn(f, folderId); }
+  catch (e) { errMsg = (e && e.message) || String(e); }
+  finally { _fvBatchBusy = false; }
+
+  try { await _fvLoadFiles(folderId); if (contact) _fvRenderFileListPanel(contact); } catch (_) {}
+  if (errMsg) { _fvShowToast("Convert failed: " + errMsg); return; }
+  if (res.status === "skipped") { _fvShowSummary("Convert to PDF", [`Skipped ${res.name}:`, "• " + res.reason]); return; }
+  if (res.status === "noop") { _fvShowToast("Already a PDF"); return; }
+  _fvShowToast(`Converted to PDF ✓${res.warn ? " (original not removed)" : ""}`);
+}
+
+// Convert all — only ever non-PDFs; never touches existing PDFs. Scopes to the
+// selected files when any are checked, otherwise everything in the folder.
 async function _fvConvertAllToPdf() {
   if (_fvBatchBusy) { _fvShowToast("A batch is already running…"); return; }
   const contact = _fvCurrentContact();
@@ -2989,8 +3119,12 @@ async function _fvConvertAllToPdf() {
   const folderId = _fvCurrentFolderIdResolved();
   if (!folderId) { _fvShowToast("No folder for this borrower"); return; }
 
-  const targets = _fvCurrentFileObjects().filter((f) => !_fvIsPdf(f) && !/\.pdf$/i.test(f.name || ""));
-  if (!targets.length) { _fvShowToast("Everything here is already a PDF ✓"); return; }
+  const scoped = _fvSelectedIds.size ? _fvSelectedFileObjects() : _fvCurrentFileObjects();
+  const targets = scoped.filter((f) => !_fvIsPdf(f) && !/\.pdf$/i.test(f.name || ""));
+  if (!targets.length) {
+    _fvShowToast(_fvSelectedIds.size ? "No non-PDF files selected" : "Everything here is already a PDF ✓");
+    return;
+  }
 
   // Grab the Drive token now, under the click gesture, so consent fails loudly.
   try { await _fvEnsureToken(); } catch (e) { _fvShowToast("Google Drive access needed — click again to allow"); return; }
@@ -3002,43 +3136,10 @@ async function _fvConvertAllToPdf() {
       const f = targets[i];
       _fvShowToast(`Converting ${i + 1} of ${targets.length}…`);
       try {
-        // Google-native docs can't be fetched via alt=media — they need the export path.
-        if ((f.mimeType || "").indexOf("application/vnd.google-apps") === 0) {
-          skipped.push(`${f.name || "file"} (Google Doc — open in Drive → File → Download as PDF)`);
-          continue;
-        }
-        const blob = await _fvDownloadBlob(f.id);
-        const b64 = await _fvBlobToBase64(blob);
-        let resp;
-        try {
-          resp = await _fvCallConvertToPdf(b64, f.mimeType || "application/octet-stream", f.name || "file");
-        } catch (err) {
-          if (err && err.status === 415) { skipped.push(`${f.name || "file"} (HEIC / Office doc — convert on your phone or re-upload as PDF)`); continue; }
-          throw err;
-        }
-        if (resp && resp.already_pdf) { continue; } // backend says it's already a PDF — leave it
-        if (!resp || !resp.pdf_base64) throw new Error("no PDF returned");
-
-        const bytes = _fvB64ToBytes(resp.pdf_base64);
-        const pdfName = resp.pdf_name || ((f.name || "document").replace(/\.[a-zA-Z0-9]{1,6}$/, "") + ".pdf");
-        const pdfFile = new File([bytes], pdfName, { type: "application/pdf" });
-
-        const up = await _fvUploadOne(folderId, pdfFile);
-        if (!up || !up.ok) throw new Error((up && up.error) || "upload failed");
-
-        // Preserve the original's document category onto the new PDF.
-        const cat = (f.appProperties && f.appProperties.docType) || "";
-        if (cat && up.file && up.file.id) { try { await _fvSetAppPropDocType(up.file.id, cat); } catch (_) {} }
-
-        // Replace the original: remove the non-PDF so we don't keep both.
-        try {
-          await _fvDeleteDriveFile(f.id);
-        } catch (delErr) {
-          errors.push(`${f.name || "file"}: PDF created but original couldn't be deleted`);
-          converted.push(pdfName);
-          continue;
-        }
-        converted.push(pdfName);
+        const res = await _fvConvertOneViaFn(f, folderId);
+        if (res.status === "converted") { converted.push(res.name); if (res.warn) errors.push(`${res.name}: ${res.warn}`); }
+        else if (res.status === "skipped") { skipped.push(`${res.name} (${res.reason})`); }
+        // noop → an existing PDF slipped through; leave it untouched
       } catch (e) {
         errors.push(`${f.name || "file"}: ${(e && e.message) || e}`);
       }
@@ -3056,7 +3157,7 @@ async function _fvConvertAllToPdf() {
   if (skipped.length || errors.length) {
     const lines = [`${converted.length} converted to PDF.`];
     if (skipped.length) { lines.push(`${skipped.length} skipped — convert these on your phone or re-upload as PDF:`); skipped.forEach((s) => lines.push("• " + s)); }
-    if (errors.length) { lines.push(`${errors.length} failed:`); errors.forEach((s) => lines.push("• " + s)); }
+    if (errors.length) { lines.push(`${errors.length} issue(s):`); errors.forEach((s) => lines.push("• " + s)); }
     _fvShowSummary("Convert all to PDF", lines);
   }
 }
@@ -3162,7 +3263,21 @@ async function _fvScanAndRename() {
   if (!contact) { _fvShowToast("Pick a borrower first"); return; }
   const folderId = _fvCurrentFolderIdResolved();
   if (!folderId) { _fvShowToast("No folder for this borrower"); return; }
-  const targets = _fvCurrentFileObjects();
+
+  // Scan ONLY the selected files. If none are selected, ask before scanning all.
+  // (Scanning never renames — it only proposes names for Review & Approve.)
+  let targets;
+  if (_fvSelectedIds.size) {
+    targets = _fvSelectedFileObjects();
+  } else {
+    const all = _fvCurrentFileObjects();
+    if (!all.length) { _fvShowToast("No files to scan"); return; }
+    if (!confirm(`No files selected. Scan all ${all.length} file${all.length === 1 ? "" : "s"} in this folder?\n\n(Nothing is renamed — you'll review each suggestion first.)`)) {
+      _fvShowToast("Tick the files you want, then run AI Scan");
+      return;
+    }
+    targets = all;
+  }
   if (!targets.length) { _fvShowToast("No files to scan"); return; }
 
   try { await _fvEnsureToken(); } catch (e) { _fvShowToast("Google Drive access needed — click again to allow"); return; }
@@ -3242,7 +3357,7 @@ function _fvOpenReviewModal() {
         <div id="fvReviewPreview" style="flex:1;min-width:0;background:#050505;display:flex;align-items:center;justify-content:center;overflow:auto;"></div>
         <div style="width:340px;flex-shrink:0;border-left:1px solid #1e1e1e;padding:18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;">
           <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Detected type</div><div id="fvReviewType" style="color:#C9A84C;font-size:13px;font-weight:600;"></div></div>
-          <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Current name</div><div id="fvReviewCurrent" style="color:#999;font-size:12px;word-break:break-word;"></div></div>
+          <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Current name</div><div id="fvReviewCurrent" style="color:#e8e8e8;font-size:14px;font-weight:600;word-break:break-word;line-height:1.35;"></div></div>
           <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Suggested name (editable)</div>
             <div id="fvReviewChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;">${chipsHtml}</div>
             <input id="fvReviewName" type="text" list="fvReviewNameList" autocomplete="off" placeholder="Type a name…" style="width:100%;background:#161616;border:1px solid #C9A84C55;color:#eee;font-size:13px;padding:8px 10px;border-radius:8px;outline:none;font-family:inherit;box-sizing:border-box;">${datalistHtml}
@@ -3255,6 +3370,7 @@ function _fvOpenReviewModal() {
         <button id="fvReviewPrev" style="background:transparent;border:1px solid #2a2a2a;color:#aaa;font-size:13px;padding:7px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">&#8592; Prev</button>
         <button id="fvReviewNext" style="background:transparent;border:1px solid #2a2a2a;color:#aaa;font-size:13px;padding:7px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">Next &#8594;</button>
         <span style="flex:1;"></span>
+        <button id="fvReviewSkip" title="Leave this file's name unchanged and move on" style="background:transparent;border:1px solid #2a2a2a;color:#aaa;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">Keep current name</button>
         <button id="fvReviewApprove" style="background:#C9A84C;border:none;color:#000;font-size:13px;font-weight:700;padding:8px 22px;border-radius:8px;cursor:pointer;font-family:inherit;">Approve &amp; rename &#8594;</button>
       </div>
     </div>`;
@@ -3263,11 +3379,46 @@ function _fvOpenReviewModal() {
   document.getElementById("fvReviewClose").onclick = _fvCloseReviewModal;
   document.getElementById("fvReviewPrev").onclick = () => _fvReviewNav(-1);
   document.getElementById("fvReviewNext").onclick = () => _fvReviewNav(1);
+  document.getElementById("fvReviewSkip").onclick = _fvReviewSkip;
   document.getElementById("fvReviewApprove").onclick = _fvReviewApprove;
   ov.querySelectorAll("[data-fv-chip]").forEach((b) => {
     b.addEventListener("click", () => _fvInsertNameToken(b.getAttribute("data-token")));
   });
   _fvReviewRender();
+  _fvAugmentNameSuggestions(_rc); // best-effort: add co-borrowers / related people to the datalist
+}
+
+// Add co-borrower + related-people names to the rename autocomplete datalist.
+// Best-effort and async — never blocks the modal.
+async function _fvAugmentNameSuggestions(contact) {
+  if (!contact || !contact.id) return;
+  const extra = [];
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    try {
+      const { data } = await supabase
+        .from("mortgage_applications_secure")
+        .select("co_borrower_first_name,co_borrower_last_name")
+        .eq("contact_id", contact.id).order("created_at", { ascending: false }).limit(1);
+      const a = data && data[0];
+      if (a) {
+        const co = [a.co_borrower_first_name, a.co_borrower_last_name].filter(Boolean).join(" ").trim();
+        if (co) extra.push(co);
+        if (a.co_borrower_first_name) extra.push(String(a.co_borrower_first_name).trim());
+      }
+    } catch (_) {}
+    try {
+      const { data } = await supabase.from("loan_contacts").select("name").eq("contact_id", contact.id);
+      (data || []).forEach((r) => { if (r && r.name && String(r.name).trim()) extra.push(String(r.name).trim()); });
+    } catch (_) {}
+  } catch (_) {}
+  if (!extra.length) return;
+  const list = document.getElementById("fvReviewNameList");
+  if (!list) return;
+  const existing = new Set(Array.from(list.querySelectorAll("option")).map((o) => o.value));
+  extra.forEach((n) => {
+    if (n && !existing.has(n)) { existing.add(n); const o = document.createElement("option"); o.value = n; list.appendChild(o); }
+  });
 }
 
 // Insert a name token (chip) at the caret in the rename field, joining onto
@@ -3355,6 +3506,16 @@ async function _fvReviewLoadPreview(f) {
   }
 }
 
+// Advance to the next queued item, or finish after the last. Writes NOTHING.
+function _fvReviewAdvance() {
+  if (_fvReviewIndex >= _fvReviewQueue.length - 1) _fvFinishReview();
+  else { _fvReviewIndex++; _fvReviewRender(); }
+}
+
+// "Keep current name" / Skip — leave the file untouched and move on.
+function _fvReviewSkip() { _fvReviewAdvance(); }
+
+// The ONLY action that writes a new name to Drive.
 async function _fvReviewApprove() {
   const q = _fvReviewQueue[_fvReviewIndex];
   if (!q) return;
@@ -3363,6 +3524,14 @@ async function _fvReviewApprove() {
   if (!newName) { _fvShowToast("Enter a name first"); return; }
   newName = _fvKeepExt(newName, q.ext);
   q.suggestedName = newName;
+
+  // No-op when the proposed name already matches the file's current name.
+  const currentName = q.file.name || q.originalName || "";
+  if (newName === currentName) {
+    _fvShowToast("Already named — nothing to change");
+    _fvReviewAdvance();
+    return;
+  }
 
   const btn = document.getElementById("fvReviewApprove");
   if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
@@ -3378,14 +3547,7 @@ async function _fvReviewApprove() {
     return;
   }
   if (btn) { btn.disabled = false; btn.textContent = "Approve & rename →"; }
-
-  // Advance to the next item, or finish after the last.
-  if (_fvReviewIndex >= _fvReviewQueue.length - 1) {
-    _fvFinishReview();
-  } else {
-    _fvReviewIndex++;
-    _fvReviewRender();
-  }
+  _fvReviewAdvance();
 }
 
 function _fvFinishReview() {
