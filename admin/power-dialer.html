@@ -10,6 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/admin/js/supabase-client.js?v=2026061501"></script>
   <script src="/admin/js/auth-guard.js?v=2026061501"></script>
+  <script src="https://sdk.twilio.com/js/voice/releases/2.11.0/twilio.min.js"></script>
   <style>
     :root{
       --bg:#050505; --surface:rgba(13,13,13,0.98); --surface2:rgba(20,20,20,0.98);
@@ -57,14 +58,18 @@
     .pd-list{overflow-y:auto;border-right:1px solid var(--border);background:#0a0a0a;}
     .pd-list-hd{position:sticky;top:0;background:#0a0a0a;border-bottom:1px solid var(--border);padding:8px 12px;font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:space-between;z-index:2;}
     .pd-mtoggle{display:none;}
-    .pd-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border2);cursor:pointer;border-left:3px solid transparent;}
+    .pd-row{display:flex;align-items:center;gap:10px;padding:13px 14px;border-bottom:1px solid var(--border2);cursor:pointer;border-left:3px solid transparent;line-height:1.45;}
     .pd-row:hover{background:rgba(255,255,255,.02);}
     .pd-row.active{background:var(--gold-bg);border-left-color:var(--gold);}
-    .pd-row .nm{font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-    .pd-row .sub{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-    .pd-badge{display:inline-block;font-size:9px;font-weight:800;border-radius:9px;padding:1px 7px;white-space:nowrap;}
-    .pd-focus{overflow-y:auto;padding:22px 26px 60px;}
+    .pd-row .nm{font-size:16.5px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .pd-row .sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;}
+    .pd-badge{display:inline-block;font-size:9.5px;font-weight:800;border-radius:9px;padding:1px 7px;white-space:nowrap;}
+    .pd-pe{display:inline-block;font-size:10.5px;font-weight:800;color:var(--gold);background:var(--gold-bg);border:1px solid var(--gold-bdr);border-radius:9px;padding:1px 7px;white-space:nowrap;}
+    .chip-gold{color:var(--gold);border:1px solid var(--gold-bdr);background:var(--gold-bg);}
+    .pd-focus{overflow-y:auto;padding:22px 26px 90px;}
     .pd-bigphone{display:inline-block;font-size:26px;font-weight:800;color:var(--gold);letter-spacing:.5px;}
+    /* Live call bar */
+    #callBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;align-items:center;gap:12px;background:#161616;border:1px solid var(--gold-bdr);border-radius:12px;padding:9px 16px;z-index:9998;box-shadow:0 12px 36px rgba(0,0,0,.6);font-size:13px;}
     .pd-dispo{background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;padding:8px 12px;font-family:inherit;}
     .pd-dispo:hover{border-color:var(--gold-bdr);color:var(--gold);}
     .pd-dispo b{color:var(--muted);font-size:10px;margin-right:3px;}
@@ -94,6 +99,7 @@
 
   <div class="pd-controls">
     <div class="pd-tabs" id="pdTabs"></div>
+    <select id="partnerSelect" class="fld" style="width:auto;height:32px;font-size:12px;padding:0 8px;" onchange="changePartner()"><option value="">All partners</option></select>
     <select id="stageSelect" class="fld" style="width:auto;height:32px;font-size:12px;padding:0 8px;" onchange="changeStage()">
       <option value="">All stages</option>
       <option value="New Lead">New Lead</option>
@@ -103,6 +109,9 @@
       <option value="Under Contract">Under Contract</option>
       <option value="Clear to Close">Clear to Close</option>
     </select>
+    <select id="viewSelect" class="fld" style="width:auto;height:32px;font-size:12px;padding:0 8px;" onchange="applyView(this.value)"><option value="">Saved views…</option></select>
+    <button class="btn-ghost" style="padding:5px 10px;" onclick="saveView()">Save view</button>
+    <button id="viewDelBtn" class="q-copy" style="display:none;" onclick="deleteView()" title="Delete selected view">×</button>
     <span class="pd-hint"><kbd>N</kbd>/<kbd>Enter</kbd> next · <kbd>1</kbd>–<kbd>5</kbd> dispositions · <kbd>C</kbd> note</span>
   </div>
 
@@ -120,6 +129,7 @@
     </section>
   </div>
 
+  <div id="callBar"></div>
   <div id="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -157,9 +167,11 @@
   async function waitClient(ms){ ms=ms||7000; var s=Date.now(); while(!window._supabaseClient && Date.now()-s<ms){ await new Promise(function(r){setTimeout(r,40);}); } return window._supabaseClient; }
 
   /* ── state ── */
-  var _filter='new', _stage='', _queue=[], _offset=0, _limit=75, _loading=false, _exhausted=false, _currentIdx=-1;
-  var _counts={}, _notesCache={};
+  var _filter='new', _stage='', _partnerId='', _sort='', _queue=[], _offset=0, _limit=75, _loading=false, _exhausted=false, _currentIdx=-1;
+  var _counts={}, _notesCache={}, _partners=[], _views=[];
   var _sCalls=0, _sConnects=0, _sCallbacks=0;
+  var _device=null, _call=null, _voiceReady=false, _callT=null, _callSec=0, _pendingDur=0;
+  var _vmTemplates=[], _vmLoaded=false, _vmRec=null, _vmChunks=[];
   var DISPOS=['No answer','Left VM','Connected','Not interested','Wrong number'];
   var TABS=[['due','Due','due'],['new','New','new_leads'],['stale','Stale','stale'],['scheduled','Scheduled','scheduled'],['all','All','total_active']];
 
@@ -169,7 +181,10 @@
     if(!window._supabaseClient) return; // auth-guard redirects
     renderTabs();
     await loadCounts();
+    loadPartners();
+    loadViews();
     await loadQueue(true);
+    initVoice(); // async; re-renders focus when ready (or stays on tel: fallback)
   })();
 
   /* ── counts + tabs ── */
@@ -199,7 +214,7 @@
     _loading=true;
     if(reset){ _queue=[]; _offset=0; _exhausted=false; _currentIdx=-1; document.getElementById('queueList').innerHTML='<div class="loading"><span class="spin"></span> Loading queue…</div>'; }
     try{
-      var r=await _authClient().rpc('power_dialer_queue',{p_filter:_filter,p_stage:_stage||null,p_limit:_limit,p_offset:_offset});
+      var r=await _authClient().rpc('power_dialer_queue',{p_filter:_filter,p_stage:_stage||null,p_partner_id:_partnerId||null,p_limit:_limit,p_offset:_offset});
       var rows=(r&&!r.error&&r.data)?r.data:[];
       _queue=_queue.concat(rows);
       _offset+=rows.length;
@@ -233,9 +248,10 @@
     box.innerHTML=_queue.map(function(l,i){
       var stage=l.stage?'<span class="chip chip-muted">'+esc(l.stage)+'</span>':'';
       var rec=l.last_activity_at?('Last touch '+timeAgo(l.last_activity_at)):'Never contacted';
+      var pe=(Number(l.potential_earnings)>0)?'<span class="pd-pe">~'+esc(fmtMoney(l.potential_earnings))+'</span>':'';
       return '<div class="pd-row'+(i===_currentIdx?' active':'')+'" onclick="selectLead('+i+')">'
         +'<div style="flex:1;min-width:0;">'
-          +'<div style="display:flex;align-items:center;gap:6px;min-width:0;"><span class="nm">'+esc(l.name||'Unknown')+'</span>'+bucketBadge(l.bucket)+'</div>'
+          +'<div style="display:flex;align-items:center;gap:6px;min-width:0;"><span class="nm">'+esc(l.name||'Unknown')+'</span>'+bucketBadge(l.bucket)+pe+'</div>'
           +'<div class="sub">'+stage+' '+esc(rec)+(l.phone?(' · '+esc(l.phone)):'')+'</div>'
         +'</div>'
       +'</div>';
@@ -254,7 +270,9 @@
     var l=_queue[_currentIdx]; if(!l){ showCleared(); return; }
     var stage=l.stage?'<span class="chip chip-muted">'+esc(l.stage)+'</span>':'';
     var src=l.source?'<span class="muted" style="font-size:12px;">via '+esc(l.source)+'</span>':'';
-    var amt=l.loan_amount?'<span style="font-size:18px;font-weight:800;color:var(--gold);white-space:nowrap;">'+esc(fmtMoney(l.loan_amount))+'</span>':'';
+    var partnerChip=l.partner_name?'<span class="chip chip-gold">via '+esc(l.partner_name)+'</span>':'';
+    var amt=l.loan_amount?'<div style="font-size:20px;font-weight:800;color:var(--gold);white-space:nowrap;">'+esc(fmtMoney(l.loan_amount))+'</div>':'';
+    var pe=(Number(l.potential_earnings)>0)?'<div style="font-size:13px;font-weight:700;color:var(--gold);white-space:nowrap;margin-top:2px;">~'+esc(fmtMoney(l.potential_earnings))+' potential commission</div>':'';
     var rec=l.last_activity_at?('Last touch: '+timeAgo(l.last_activity_at)):'Never contacted';
     var recColor=l.last_activity_at?'#8FD79A':'#E7B380';
     var phone=l.phone
@@ -265,19 +283,23 @@
       ? '<div class="muted" style="font-size:12px;margin-top:8px;">📅 Callback set for <strong style="color:var(--green);">'+esc(fmtDateTime(l.next_followup_at))+'</strong> <button class="q-copy" onclick="clearCallback()">Clear callback</button></div>'
       : '';
     var dispoBtns=DISPOS.map(function(d,i){ return '<button class="pd-dispo" onclick="dispo(\''+d+'\')"><b>'+(i+1)+'</b>'+esc(d)+'</button>'; }).join('');
+    var callBtn=(_voiceReady && l.phone)?'<button class="btn-gold" onclick="startCall()">📞 Call</button>':'';
+    var vmBtn=l.phone?'<button class="btn-ghost" onclick="dropVMClick()">📩 Drop VM</button>':'';
 
     box.innerHTML=''
       +'<div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;">Now calling</div>'
       +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
         +'<div style="min-width:0;">'
-          +'<div style="font-size:22px;font-weight:800;">'+esc(l.name||'Unknown')+'</div>'
-          +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:5px;">'+stage+src+'</div>'
-        +'</div>'+amt
+          +'<div style="font-size:26px;font-weight:800;line-height:1.15;">'+esc(l.name||'Unknown')+'</div>'
+          +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;">'+stage+partnerChip+src+'</div>'
+        +'</div>'
+        +'<div style="text-align:right;">'+amt+pe+'</div>'
       +'</div>'
       +'<div style="margin-top:14px;">'+phone+'</div>'
       +email
       +'<div class="muted" style="font-size:12px;margin-top:6px;color:'+recColor+';">'+esc(rec)+'</div>'
       +cb
+      +((callBtn||vmBtn)?('<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">'+callBtn+vmBtn+'</div><div id="vmArea"></div>'):'<div id="vmArea"></div>')
       // recent notes
       +'<div class="pd-section"><div class="pd-section-h">Recent notes</div><div id="focusNotes"><div class="muted" style="font-size:11px;">Loading notes…</div></div></div>'
       // dispositions
@@ -292,6 +314,13 @@
           +'<button class="btn-ghost" onclick="quickLog(\'note\')">Log Note</button>'
           +'<button class="btn-ghost" onclick="skipNext()">Skip →</button>'
           +'<a class="btn-ghost" href="lead-detail.html?contact_id='+encodeURIComponent(l.contact_id||'')+'" target="_blank" rel="noopener" style="margin-left:auto;">Open full lead ↗</a>'
+        +'</div></div>'
+      // send SMS
+      +'<div class="pd-section"><div class="pd-section-h">Send SMS</div>'
+        +'<textarea id="smsBox" class="fld" rows="3" placeholder="Text message…"></textarea>'
+        +'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;">'
+          +'<button class="btn-gold" onclick="sendSMS()">Send SMS</button>'
+          +'<button class="btn-ghost" onclick="draftSMS()">✨ Draft with AI</button>'
         +'</div></div>'
       // callback
       +'<div class="pd-section"><div class="pd-section-h">Set callback</div>'
@@ -355,7 +384,9 @@
   async function logAndNext(){
     var lead=_queue[_currentIdx]; if(!lead) return;
     var note=((document.getElementById('focusNote')||{}).value||'').trim();
-    var ok=await rpcLog(lead,'call','outbound',note||null,null); if(!ok) return;
+    var dur=_pendingDur>0?_pendingDur:null; // duration captured from a browser call
+    var ok=await rpcLog(lead,'call','outbound',note||null,dur); if(!ok) return;
+    _pendingDur=0;
     _sCalls++; updateSession(); showToast('Call logged');
     loadCounts(); advance(true);
   }
@@ -409,6 +440,7 @@
   function skipNext(){ advance(false); }
   async function advance(removed){
     if(_currentIdx<0) return;
+    _pendingDur=0; // moving to a new lead — clear any leftover call duration
     if(removed){ _queue.splice(_currentIdx,1); } // dispositioned/callbacked — don't recall this session
     else { _currentIdx++; }
     // fetch next page when nearing the end
@@ -422,6 +454,234 @@
     renderList();
     renderFocus();
     scrollCurrentIntoView();
+  }
+
+  /* ── partner filter ── */
+  async function loadPartners(){
+    try{ var r=await _authClient().rpc('partners_overview_all'); _partners=(r&&!r.error&&r.data)?r.data:[]; }catch(e){ _partners=[]; }
+    var sel=document.getElementById('partnerSelect'); if(!sel) return;
+    sel.innerHTML='<option value="">All partners</option>'+_partners.map(function(p){
+      var nm=((p.first_name||'')+' '+(p.last_name||'')).trim()||'(unnamed)';
+      return '<option value="'+esc(String(p.id))+'">'+esc(nm)+'</option>';
+    }).join('');
+    sel.value=_partnerId||'';
+  }
+  function changePartner(){ _partnerId=(document.getElementById('partnerSelect')||{}).value||''; loadQueue(true); }
+
+  /* ── saved views ── */
+  async function loadViews(){
+    try{ var r=await _authClient().rpc('dialer_views_list'); _views=(r&&!r.error&&r.data)?r.data:[]; }catch(e){ _views=[]; }
+    var sel=document.getElementById('viewSelect'); if(!sel) return;
+    var keep=sel.value||'';
+    sel.innerHTML='<option value="">Saved views…</option>'+_views.map(function(v){ return '<option value="'+esc(String(v.id))+'">'+esc(v.name||'View')+'</option>'; }).join('');
+    if(keep && _views.some(function(v){ return String(v.id)===keep; })) sel.value=keep;
+  }
+  function applyView(id){
+    var del=document.getElementById('viewDelBtn'); if(del) del.style.display=id?'inline-block':'none';
+    if(!id) return;
+    var v=_views.filter(function(x){ return String(x.id)===String(id); })[0]; if(!v) return;
+    _filter=v.filter||'all'; _stage=v.stage||''; _partnerId=v.partner_id!=null?String(v.partner_id):''; _sort=v.sort||'';
+    var ss=document.getElementById('stageSelect'); if(ss) ss.value=_stage;
+    var ps=document.getElementById('partnerSelect'); if(ps) ps.value=_partnerId;
+    renderTabs();
+    loadQueue(true);
+  }
+  async function saveView(){
+    var name=prompt('Name this view:'); if(name==null) return; name=name.trim(); if(!name){ showToast('Name required'); return; }
+    try{
+      var r=await _authClient().rpc('dialer_view_save',{p_name:name,p_filter:_filter,p_stage:_stage||null,p_partner_id:_partnerId||null,p_sort:_sort||null});
+      if(r&&r.error) throw new Error(r.error.message);
+      showToast('View saved'); await loadViews();
+    }catch(e){ showToast((e&&e.message)||'Could not save view'); }
+  }
+  async function deleteView(){
+    var sel=document.getElementById('viewSelect'); var id=sel?sel.value:''; if(!id) return;
+    if(!confirm('Delete this saved view?')) return;
+    try{
+      var r=await _authClient().rpc('dialer_view_delete',{p_id:id});
+      if(r&&r.error) throw new Error(r.error.message);
+      showToast('View deleted'); if(sel) sel.value=''; var del=document.getElementById('viewDelBtn'); if(del) del.style.display='none'; await loadViews();
+    }catch(e){ showToast((e&&e.message)||'Could not delete view'); }
+  }
+
+  /* ── browser calling (Twilio Voice) ── */
+  async function getVoiceToken(){
+    try{
+      var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'get_token'}});
+      if(r&&r.error) throw new Error((r.error&&r.error.message)||'token error');
+      var d=r&&r.data?r.data:null;
+      return (d&&d.token)?d.token:null;
+    }catch(e){ return null; }
+  }
+  async function initVoice(){
+    if(typeof Twilio==='undefined' || !Twilio.Device){ _voiceReady=false; return; }
+    try{
+      var tok=await getVoiceToken();
+      if(!tok){ _voiceReady=false; return; }
+      _device=new Twilio.Device(tok,{codecPreferences:['opus','pcmu']});
+      _device.on('tokenWillExpire', async function(){ try{ var t=await getVoiceToken(); if(t) _device.updateToken(t); }catch(e){} });
+      _device.on('error', function(err){ console.warn('Twilio device error', err); });
+      _voiceReady=true;
+    }catch(e){ _voiceReady=false; }
+    if(_currentIdx>=0) renderFocus(); // surface the Call button (or keep tel: fallback)
+  }
+  async function startCall(){
+    var lead=_queue[_currentIdx]; if(!lead||!lead.phone){ showToast('No phone on file'); return; }
+    if(!_voiceReady||!_device){ showToast('Browser calling unavailable'); return; }
+    try{
+      showCallBar('Ringing…');
+      _call=await _device.connect({params:{To:lead.phone}});
+      _call.on('accept', function(){ startCallTimer(); });
+      _call.on('disconnect', function(){ endCall(); });
+      _call.on('error', async function(err){
+        var msg=(err&&err.message)||'';
+        if(/token/i.test(msg) && /expir/i.test(msg)){ var t=await getVoiceToken(); if(t&&_device) _device.updateToken(t); }
+        showToast('Call error'); endCall();
+      });
+    }catch(e){ showToast((e&&e.message)||'Could not start call'); hideCallBar(); _call=null; }
+  }
+  function startCallTimer(){ _callSec=0; updateCallBar(); if(_callT) clearInterval(_callT); _callT=setInterval(function(){ _callSec++; updateCallBar(); },1000); }
+  function updateCallBar(){ var st=document.getElementById('callStatus'); if(st){ var m=Math.floor(_callSec/60), s=_callSec%60; st.textContent='In call '+m+':'+(s<10?'0':'')+s; } }
+  function showCallBar(status){
+    var bar=document.getElementById('callBar'); if(!bar) return;
+    var lead=_queue[_currentIdx]||{};
+    bar.innerHTML='<span style="font-weight:700;">📞 '+esc(lead.name||'')+'</span>'
+      +'<span id="callStatus" style="color:var(--gold);font-weight:700;">'+esc(status)+'</span>'
+      +'<button class="q-copy" onclick="toggleMute(this)">Mute</button>'
+      +'<button onclick="hangUp()" style="background:var(--red);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;padding:7px 16px;font-family:inherit;">Hang Up</button>';
+    bar.style.display='flex';
+  }
+  function hideCallBar(){ var bar=document.getElementById('callBar'); if(bar){ bar.style.display='none'; bar.innerHTML=''; } }
+  function endCall(){
+    if(_callT){ clearInterval(_callT); _callT=null; }
+    _pendingDur=_callSec; _callSec=0;
+    hideCallBar();
+    _call=null;
+    var ta=document.getElementById('focusNote');
+    if(ta){ ta.focus(); showToast('Call ended — add a note & Log'); }
+  }
+  function hangUp(){ if(_call){ try{ _call.disconnect(); }catch(e){} } }
+  function toggleMute(btn){
+    if(!_call) return;
+    var muted=(_call.isMuted?_call.isMuted():false);
+    try{ _call.mute(!muted); }catch(e){}
+    if(btn) btn.textContent=(!muted?'Unmute':'Mute');
+  }
+
+  /* ── voicemail drop ── */
+  async function loadVmTemplates(){
+    try{ var r=await _authClient().rpc('vm_templates_list'); _vmTemplates=(r&&!r.error&&r.data)?r.data:[]; }catch(e){ _vmTemplates=[]; }
+    _vmLoaded=true;
+  }
+  async function dropVMClick(){
+    var lead=_queue[_currentIdx]; if(!lead) return;
+    if(!_vmLoaded) await loadVmTemplates();
+    if(!_vmTemplates.length){ openVmPanel(); return; }
+    if(_vmTemplates.length===1){ dropVM(_vmTemplates[0].url); return; }
+    showVmMenu();
+  }
+  function showVmMenu(){
+    var box=document.getElementById('vmArea'); if(!box) return;
+    box.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;">'
+      +'<span class="muted" style="font-size:11px;">Drop:</span>'
+      +_vmTemplates.map(function(t,i){ return '<button class="pd-dispo" onclick="dropVMByIndex('+i+')">'+esc(t.name||'Template')+'</button>'; }).join('')
+      +'<button class="q-copy" onclick="openVmPanel()">Manage</button>'
+    +'</div>';
+  }
+  function dropVMByIndex(i){ var t=_vmTemplates[i]; if(t) dropVM(t.url); }
+  async function dropVM(url){
+    var lead=_queue[_currentIdx]; if(!lead) return;
+    try{
+      var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'voicemail_drop', to:lead.phone, voicemail_url:url, contact_id:lead.contact_id}});
+      if(r&&r.error) throw new Error((r.error&&r.error.message)||'drop failed');
+      showToast('Voicemail dropped'); loadCounts(); advance(true);
+    }catch(e){ showToast((e&&e.message)||'Voicemail failed'); }
+  }
+  function openVmPanel(){
+    var box=document.getElementById('vmArea'); if(!box) return;
+    var list=_vmTemplates.length
+      ? '<div style="margin-bottom:8px;">'+_vmTemplates.map(function(t,i){ return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;"><span style="font-size:12px;">'+esc(t.name||'Template')+'</span><button class="q-copy" onclick="deleteVm('+i+')">Delete</button></div>'; }).join('')+'</div>'
+      : '<div class="muted" style="font-size:11px;margin-bottom:8px;">No voicemail templates yet.</div>';
+    box.innerHTML='<div style="border:1px solid var(--border);border-radius:10px;padding:11px;background:var(--surface2);margin-top:10px;">'
+      +'<div class="pd-section-h">Voicemail templates</div>'+list
+      +'<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">'
+        +'<input id="vmName" class="fld" placeholder="Template name" style="max-width:160px;">'
+        +'<input id="vmUrl" class="fld" placeholder="Public MP3 URL" style="max-width:240px;">'
+        +'<button class="btn-ghost" onclick="saveVmUrl()">Save URL</button>'
+        +'<button class="btn-ghost" id="vmRecBtn" onclick="toggleVmRecord(this)">● Record</button>'
+        +'<span id="vmRecStatus" class="muted" style="font-size:11px;"></span>'
+      +'</div></div>';
+  }
+  async function saveVmUrl(){
+    var name=((document.getElementById('vmName')||{}).value||'').trim()||'Voicemail';
+    var url=((document.getElementById('vmUrl')||{}).value||'').trim();
+    if(!url){ showToast('Paste a public MP3 URL'); return; }
+    await vmSave(name,url);
+  }
+  async function vmSave(name,url){
+    try{ var r=await _authClient().rpc('vm_template_save',{p_name:name,p_url:url}); if(r&&r.error) throw new Error(r.error.message); showToast('Template saved'); await loadVmTemplates(); openVmPanel(); }
+    catch(e){ showToast((e&&e.message)||'Could not save template'); }
+  }
+  async function deleteVm(i){
+    var t=_vmTemplates[i]; if(!t) return; if(!confirm('Delete this template?')) return;
+    try{ var r=await _authClient().rpc('vm_template_delete',{p_id:t.id}); if(r&&r.error) throw new Error(r.error.message); showToast('Deleted'); await loadVmTemplates(); openVmPanel(); }
+    catch(e){ showToast((e&&e.message)||'Could not delete'); }
+  }
+  async function toggleVmRecord(btn){
+    if(_vmRec && _vmRec.state==='recording'){ _vmRec.stop(); return; }
+    try{
+      var stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      _vmChunks=[]; _vmRec=new MediaRecorder(stream);
+      _vmRec.ondataavailable=function(e){ if(e.data&&e.data.size) _vmChunks.push(e.data); };
+      _vmRec.onstop=async function(){
+        stream.getTracks().forEach(function(t){ t.stop(); });
+        var blob=new Blob(_vmChunks,{type:_vmRec.mimeType||'audio/webm'});
+        var st=document.getElementById('vmRecStatus'); if(st) st.textContent='Uploading…';
+        await uploadVm(blob);
+        var b=document.getElementById('vmRecBtn'); if(b) b.textContent='● Record';
+      };
+      _vmRec.start();
+      if(btn) btn.textContent='■ Stop';
+      var st=document.getElementById('vmRecStatus'); if(st) st.textContent='Recording…';
+    }catch(e){ showToast('Microphone unavailable'); }
+  }
+  async function uploadVm(blob){
+    try{
+      var fname='vm_'+new Date().getTime()+'.webm';
+      var up=await _authClient().storage.from('voicemails').upload(fname, blob, {contentType:blob.type||'audio/webm', upsert:true});
+      if(up&&up.error) throw new Error(up.error.message);
+      var pub=_authClient().storage.from('voicemails').getPublicUrl(fname);
+      var url=pub&&pub.data?pub.data.publicUrl:'';
+      if(!url) throw new Error('No public URL');
+      var name=((document.getElementById('vmName')||{}).value||'').trim()||('Recording '+new Date().toLocaleDateString());
+      await vmSave(name,url);
+    }catch(e){ showToast((e&&e.message)||'Upload failed'); var st=document.getElementById('vmRecStatus'); if(st) st.textContent=''; }
+  }
+
+  /* ── quick SMS ── */
+  async function sendSMS(){
+    var lead=_queue[_currentIdx]; if(!lead) return;
+    var ta=document.getElementById('smsBox'); var msg=((ta&&ta.value)||'').trim();
+    if(!msg){ showToast('Type a message'); return; }
+    if(!/\bstop\b/i.test(msg)) msg=msg+' Reply STOP to opt out.';
+    try{
+      var r=await _authClient().functions.invoke('sms-service',{body:{trigger:'custom', to_phone:lead.phone, params:{message:msg}, contact_id:lead.contact_id}});
+      if(r&&r.error) throw new Error((r.error&&r.error.message)||'send failed');
+      showToast('SMS sent'); loadCounts(); advance(true);
+    }catch(e){ showToast((e&&e.message)||'SMS failed'); }
+  }
+  async function draftSMS(){
+    var lead=_queue[_currentIdx]; if(!lead) return;
+    var ta=document.getElementById('smsBox'); if(!ta) return;
+    var intent=(ta.value||'').trim()||'friendly intro';
+    var prev=ta.value; ta.value='Drafting…'; ta.disabled=true;
+    try{
+      var r=await _authClient().functions.invoke('sms-service',{body:{trigger:'ai_compose', prompt:intent, contact_name:lead.name, tone:'friendly'}});
+      if(r&&r.error) throw new Error((r.error&&r.error.message)||'draft failed');
+      var d=r&&r.data?r.data:null;
+      ta.value=(d&&(d.message||d.text))||prev;
+    }catch(e){ ta.value=prev; showToast((e&&e.message)||'AI draft failed'); }
+    ta.disabled=false; ta.focus();
   }
 
   /* ── keyboard shortcuts ── */
