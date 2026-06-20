@@ -1479,6 +1479,12 @@ let _fvFiles = {};
 let _fvFolderCounts = {};          // subfolderId → document count (lazy-loaded, shown as 📄 N)
 let _fvViewerState = null; // { contactId, files, index, keyHandler }
 
+// ── Batch tooling state (Convert all / AI Scan / Review & Approve) ──
+let _fvBatchBusy = false;          // guards against overlapping batch runs
+let _fvReviewQueue = [];           // [{ file, originalName, suggestedName, docType, category, fields, jobId, flagged, ext, contactId, approved }]
+let _fvReviewIndex = 0;            // current item in the Review & Approve modal
+let _fvReviewBlobUrl = null;       // object URL for the current review preview (revoked on nav/close)
+
 // ── OAUTH (Google Identity Services) ──────────────────────────────
 // Returns a fresh OAuth access token scoped to Drive. On first call within
 // a tab session this opens the Google consent popup; subsequent calls reuse
@@ -1615,7 +1621,10 @@ async function renderDocuments() {
               <button class="fv-pill" data-fv-pill="Credit Report">Credit</button>
               <button class="fv-pill" data-fv-pill="Other">Other</button>
             </div>
-            <div style="display:flex;gap:8px;flex-shrink:0;">
+            <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;">
+              <button id="fv-convert-all" title="Convert every non-PDF file for this borrower to PDF" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#128196; Convert all to PDF</button>
+              <button id="fv-ai-scan" title="OCR every file and suggest clean names" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#10024; AI Scan &amp; Rename</button>
+              <button id="fv-review" title="Review &amp; approve the AI-suggested names" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;">&#9745; Review</button>
               <button id="fv-upload-btn" style="background:#C9A84C;border:none;color:#000;font-size:12px;font-weight:700;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;">+ Upload</button>
               <a id="fv-open-drive-link" href="#" target="_blank" rel="noopener" style="background:#1a1a1a;border:1px solid #C9A84C44;color:#C9A84C;font-size:12px;padding:6px 12px;border-radius:6px;text-decoration:none;white-space:nowrap;">&#128193; Drive</a>
             </div>
@@ -1724,6 +1733,14 @@ function _fvBindPanels() {
   };
   if (uploadBtn) uploadBtn.onclick = pickFiles;
   if (dropTarget) dropTarget.onclick = pickFiles;
+
+  // Batch tools — Convert all to PDF / AI Scan & Rename / Review & Approve.
+  const convertAllBtn = document.getElementById("fv-convert-all");
+  if (convertAllBtn) convertAllBtn.onclick = _fvConvertAllToPdf;
+  const aiScanBtn = document.getElementById("fv-ai-scan");
+  if (aiScanBtn) aiScanBtn.onclick = _fvScanAndRename;
+  const reviewBtn = document.getElementById("fv-review");
+  if (reviewBtn) reviewBtn.onclick = _fvOpenReviewModal;
 
   if (dropTarget) {
     dropTarget.addEventListener("dragover", (e) => {
@@ -2797,6 +2814,551 @@ async function _fvConvertToPdf(file) {
     console.error("[FileVault][convert] FAILED", err);
     _fvShowToast("Convert failed: " + (err.message || err));
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   BATCH TOOLS — Convert all to PDF / AI Scan & Rename / Review & Approve
+   Operates on the selected borrower's currently-shown file list. Reuses the
+   existing Drive helpers (download via alt=media, _fvUploadOne, rename PATCH,
+   appProperties for category/review metadata) and the deployed convert-to-pdf
+   and textract-ocr edge functions. Storage stays in the borrower's Drive
+   folder — no new bucket or upload path.
+═══════════════════════════════════════════════════════════════════ */
+
+function _fvFnBase() {
+  return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "https://ljywhvbmsibwnssxpesh.supabase.co";
+}
+
+// Resolve the folder whose files are currently shown (open subfolder → borrower root).
+function _fvCurrentFolderIdResolved() {
+  const c = _fvCurrentContact();
+  return window._fvCurrentFolderId || (c && c.gdrive_folder_id) || null;
+}
+
+// The real files (not subfolders) in the current view.
+function _fvCurrentFileObjects() {
+  const fid = _fvCurrentFolderIdResolved();
+  const all = (fid && _fvFiles[fid]) || [];
+  return all.filter((f) => f && f.mimeType !== "application/vnd.google-apps.folder");
+}
+
+// Download a Drive file's bytes (same alt=media path the viewer uses) as a Blob.
+async function _fvDownloadBlob(fileId) {
+  const token = await _fvEnsureToken();
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true&t=${Date.now()}`,
+    { headers: { Authorization: "Bearer " + token, "Cache-Control": "no-cache", Pragma: "no-cache" }, cache: "no-store" }
+  );
+  if (res.status === 401 || res.status === 403) _fvClearToken();
+  if (!res.ok) throw new Error("download HTTP " + res.status);
+  return await res.blob();
+}
+
+function _fvBlobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => { const s = String(r.result || ""); const c = s.indexOf(","); resolve(c >= 0 ? s.slice(c + 1) : s); };
+    r.onerror = () => reject(r.error || new Error("read failed"));
+    r.readAsDataURL(blob);
+  });
+}
+
+function _fvB64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// convert-to-pdf edge function (same call shape the upload path already uses).
+// Throws an error with .status=415 for HEIC / Office docs.
+async function _fvCallConvertToPdf(base64, mime, name) {
+  const res = await fetch(_fvFnBase() + "/functions/v1/convert-to-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_base64: base64, mime_type: mime, file_name: name }),
+  });
+  if (res.status === 415) {
+    const j = await res.json().catch(() => ({}));
+    const err = new Error((j && j.error) || "Unsupported file type");
+    err.status = 415;
+    throw err;
+  }
+  if (!res.ok) throw new Error("convert-to-pdf HTTP " + res.status);
+  return await res.json();
+}
+
+// textract-ocr edge function (start an OCR job, get flat fields back).
+async function _fvCallTextract(base64, name, fileType, contactId, docType) {
+  const res = await fetch(_fvFnBase() + "/functions/v1/textract-ocr", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "start", file_base64: base64, file_name: name, file_type: fileType, contact_id: contactId, doc_type: docType || "" }),
+  });
+  if (!res.ok) throw new Error("textract-ocr HTTP " + res.status);
+  return await res.json();
+}
+
+// Rename a Drive file (same PATCH the inline rename uses).
+async function _fvRenameDriveFile(fileId, name) {
+  const headers = await _fvAuthHeaders({ "Content-Type": "application/json" });
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name&supportsAllDrives=true`,
+    { method: "PATCH", headers, body: JSON.stringify({ name }) }
+  );
+  if (res.status === 401 || res.status === 403) _fvClearToken();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.id) throw new Error((data.error && data.error.message) || ("HTTP " + res.status));
+  return data;
+}
+
+// Delete a Drive file (no confirm — used inside batches that replace originals).
+async function _fvDeleteDriveFile(fileId) {
+  const headers = await _fvAuthHeaders();
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`,
+    { method: "DELETE", headers }
+  );
+  if (res.status === 401 || res.status === 403) { _fvClearToken(); throw new Error("HTTP " + res.status); }
+  if (!res.ok && res.status !== 204) throw new Error("HTTP " + res.status);
+  return true;
+}
+
+// Persist the document category onto a file (same appProperties.docType store).
+async function _fvSetAppPropDocType(fileId, docType) {
+  const token = await _fvEnsureToken();
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,appProperties`,
+    { method: "PATCH", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify({ appProperties: { docType: docType } }) }
+  );
+  if (res.status === 401 || res.status === 403) _fvClearToken();
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return true;
+}
+
+// Mark a file reviewed (status / reviewedBy / reviewedAt) in appProperties —
+// the page's existing per-file metadata store.
+async function _fvSetReviewedMeta(fileId, who) {
+  const token = await _fvEnsureToken();
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,appProperties`,
+    {
+      method: "PATCH",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ appProperties: { status: "reviewed", reviewedBy: who || "", reviewedAt: new Date().toISOString() } }),
+    }
+  );
+  if (res.status === 401 || res.status === 403) _fvClearToken();
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return true;
+}
+
+// Identify the signed-in admin (for reviewed_by) via the shared Supabase client.
+async function _fvAdminIdentity() {
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    const { data } = await supabase.auth.getSession();
+    const u = data && data.session && data.session.user;
+    return (u && (u.email || u.id)) || "admin";
+  } catch (_) { return "admin"; }
+}
+
+/* ── (1) CONVERT ALL TO PDF ───────────────────────────────────────── */
+async function _fvConvertAllToPdf() {
+  if (_fvBatchBusy) { _fvShowToast("A batch is already running…"); return; }
+  const contact = _fvCurrentContact();
+  if (!contact) { _fvShowToast("Pick a borrower first"); return; }
+  const folderId = _fvCurrentFolderIdResolved();
+  if (!folderId) { _fvShowToast("No folder for this borrower"); return; }
+
+  const targets = _fvCurrentFileObjects().filter((f) => !_fvIsPdf(f) && !/\.pdf$/i.test(f.name || ""));
+  if (!targets.length) { _fvShowToast("Everything here is already a PDF ✓"); return; }
+
+  // Grab the Drive token now, under the click gesture, so consent fails loudly.
+  try { await _fvEnsureToken(); } catch (e) { _fvShowToast("Google Drive access needed — click again to allow"); return; }
+
+  _fvBatchBusy = true;
+  const converted = [], skipped = [], errors = [];
+  try {
+    for (let i = 0; i < targets.length; i++) {
+      const f = targets[i];
+      _fvShowToast(`Converting ${i + 1} of ${targets.length}…`);
+      try {
+        // Google-native docs can't be fetched via alt=media — they need the export path.
+        if ((f.mimeType || "").indexOf("application/vnd.google-apps") === 0) {
+          skipped.push(`${f.name || "file"} (Google Doc — open in Drive → File → Download as PDF)`);
+          continue;
+        }
+        const blob = await _fvDownloadBlob(f.id);
+        const b64 = await _fvBlobToBase64(blob);
+        let resp;
+        try {
+          resp = await _fvCallConvertToPdf(b64, f.mimeType || "application/octet-stream", f.name || "file");
+        } catch (err) {
+          if (err && err.status === 415) { skipped.push(`${f.name || "file"} (HEIC / Office doc — convert on your phone or re-upload as PDF)`); continue; }
+          throw err;
+        }
+        if (resp && resp.already_pdf) { continue; } // backend says it's already a PDF — leave it
+        if (!resp || !resp.pdf_base64) throw new Error("no PDF returned");
+
+        const bytes = _fvB64ToBytes(resp.pdf_base64);
+        const pdfName = resp.pdf_name || ((f.name || "document").replace(/\.[a-zA-Z0-9]{1,6}$/, "") + ".pdf");
+        const pdfFile = new File([bytes], pdfName, { type: "application/pdf" });
+
+        const up = await _fvUploadOne(folderId, pdfFile);
+        if (!up || !up.ok) throw new Error((up && up.error) || "upload failed");
+
+        // Preserve the original's document category onto the new PDF.
+        const cat = (f.appProperties && f.appProperties.docType) || "";
+        if (cat && up.file && up.file.id) { try { await _fvSetAppPropDocType(up.file.id, cat); } catch (_) {} }
+
+        // Replace the original: remove the non-PDF so we don't keep both.
+        try {
+          await _fvDeleteDriveFile(f.id);
+        } catch (delErr) {
+          errors.push(`${f.name || "file"}: PDF created but original couldn't be deleted`);
+          converted.push(pdfName);
+          continue;
+        }
+        converted.push(pdfName);
+      } catch (e) {
+        errors.push(`${f.name || "file"}: ${(e && e.message) || e}`);
+      }
+    }
+  } finally {
+    _fvBatchBusy = false;
+  }
+
+  // Refresh the list + borrower count.
+  try { await _fvLoadFiles(folderId); _fvRenderFileListPanel(contact); } catch (_) {}
+  const countSpan = document.querySelector(`[data-fv-count="${contact.id}"]`);
+  if (countSpan) countSpan.textContent = (_fvFileCounts[folderId] || 0) + " files";
+
+  _fvShowToast(`Converted ${converted.length} of ${targets.length} ✓`);
+  if (skipped.length || errors.length) {
+    const lines = [`${converted.length} converted to PDF.`];
+    if (skipped.length) { lines.push(`${skipped.length} skipped — convert these on your phone or re-upload as PDF:`); skipped.forEach((s) => lines.push("• " + s)); }
+    if (errors.length) { lines.push(`${errors.length} failed:`); errors.forEach((s) => lines.push("• " + s)); }
+    _fvShowSummary("Convert all to PDF", lines);
+  }
+}
+
+/* ── (2) AI SCAN & RENAME ─────────────────────────────────────────── */
+// Map a stored document category to a textract-ocr doc_type key.
+function _fvDocTypeToTextract(category) {
+  const c = (category || "").toLowerCase();
+  if (!c) return "";
+  if (c.indexOf("pay") >= 0) return "pay_stubs";
+  if (c.indexOf("w-2") >= 0 || c.indexOf("w2") >= 0) return "w2";
+  if (c.indexOf("1040") >= 0 || c.indexOf("tax") >= 0) return "tax_returns";
+  if (c.indexOf("bank") >= 0) return "bank_statements";
+  if (c.indexOf("id") >= 0 || c.indexOf("license") >= 0) return "gov_id";
+  if (c.indexOf("insurance") >= 0) return "insurance";
+  if (c.indexOf("credit") >= 0) return "credit";
+  return "";
+}
+
+function _fvFirstWord(s) { if (!s) return ""; return String(s).trim().split(/\s+/)[0] || ""; }
+
+const _FV_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function _fvParseDate(v) {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  const s = String(v).trim();
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) { const d = new Date(+iso[1], +iso[2] - 1, +iso[3]); if (!isNaN(d.getTime())) return d; }
+  const mdy = s.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  if (mdy) { let y = +mdy[3]; if (y < 100) y += 2000; const d = new Date(y, +mdy[1] - 1, +mdy[2]); if (!isNaN(d.getTime())) return d; }
+  const d2 = new Date(s);
+  return isNaN(d2.getTime()) ? null : d2;
+}
+function _fvFmtDateMDY(v) { const d = _fvParseDate(v); return d ? `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}` : ""; }
+function _fvFmtMonYear(v) { const d = _fvParseDate(v); return d ? `${_FV_MONTHS[d.getMonth()]} ${d.getFullYear()}` : ""; }
+
+function _fvFallbackName(category, contact, file) {
+  const cat = category || "Document";
+  const who = (contact && contact.first_name) || _fvFirstWord(contact && contact.name) || "Borrower";
+  const dateStr = _fvFmtDateMDY((file && (file.modifiedTime || file.createdTime)) || new Date());
+  return `${cat} – ${who}${dateStr ? ` – ${dateStr}` : ""}`;
+}
+
+// Build a suggested file name from the OCR doc_type + extracted fields.
+function _fvComputeSuggestedName(docType, fields, contact, category, file) {
+  const f = fields || {};
+  const dt = (docType || "").toLowerCase();
+  const borrowerFirst = (contact && contact.first_name) || _fvFirstWord(contact && contact.name) || "Borrower";
+  const get = (...keys) => { for (const k of keys) { const v = f[k]; if (v != null && String(v).trim() !== "") return String(v).trim(); } return ""; };
+  let name = "", flagged = false;
+
+  if (dt === "pay_stubs" || dt === "pay_stub" || dt === "paystub") {
+    const fn = _fvFirstWord(get("first_name", "employee_first_name", "employee_name")) || borrowerFirst;
+    const ps = _fvFmtDateMDY(get("pay_period_start", "period_start", "pay_period_start_date"));
+    const pe = _fvFmtDateMDY(get("pay_period_end", "period_end", "pay_period_end_date"));
+    const emp = get("employer_name", "employer", "company_name");
+    const period = (ps || pe) ? ` – ${ps}–${pe}` : "";
+    name = `Paystub – ${fn}${period}${emp ? ` – ${emp}` : ""}`;
+    if (!ps && !pe && !emp) flagged = true;
+  } else if (dt === "w2" || dt === "w-2") {
+    const fn = _fvFirstWord(get("employee_first_name", "first_name", "employee_name")) || borrowerFirst;
+    const yr = get("tax_year", "year");
+    const emp = get("employer_name", "employer", "company_name");
+    name = `W2 – ${fn}${yr ? ` – ${yr}` : ""}${emp ? ` – ${emp}` : ""}`;
+    if (!yr && !emp) flagged = true;
+  } else if (dt === "bank_statements" || dt === "bank_statement") {
+    const fn = _fvFirstWord(get("account_holder_first_name", "account_holder_name", "first_name")) || borrowerFirst;
+    const bank = get("bank_name", "institution_name", "bank");
+    const end = _fvFmtMonYear(get("statement_end_date", "statement_period_end", "end_date", "statement_date"));
+    name = `Bank Stmt – ${fn}${bank ? ` – ${bank}` : ""}${end ? ` – ${end}` : ""}`;
+    if (!bank && !end) flagged = true;
+  } else if (dt === "gov_id" || dt === "govid" || dt === "drivers_license" || dt === "driver_license" || dt === "id") {
+    const fn = _fvFirstWord(get("first_name", "full_name", "name")) || borrowerFirst;
+    const st = get("dl_state", "state", "issuing_state");
+    name = `Gov ID – ${fn} – DL${st ? ` (${st})` : ""}`;
+  } else if (dt === "tax_returns" || dt === "tax_return" || dt === "1040") {
+    const fn = _fvFirstWord(get("first_name", "taxpayer_first_name", "name")) || borrowerFirst;
+    const yr = get("tax_year", "year");
+    name = `Tax Return – ${fn}${yr ? ` – ${yr}` : ""}`;
+    if (!yr) flagged = true;
+  } else {
+    name = _fvFallbackName(category, contact, file);
+    flagged = true;
+  }
+  return { name: name.replace(/\s+/g, " ").trim(), flagged };
+}
+
+function _fvFileExt(name) {
+  const m = (name || "").match(/\.[a-zA-Z0-9]{1,6}$/);
+  return m ? m[0] : "";
+}
+function _fvKeepExt(name, ext) {
+  if (!ext) return name;
+  return name.slice(-ext.length).toLowerCase() === ext.toLowerCase() ? name : name + ext;
+}
+
+async function _fvScanAndRename() {
+  if (_fvBatchBusy) { _fvShowToast("A batch is already running…"); return; }
+  const contact = _fvCurrentContact();
+  if (!contact) { _fvShowToast("Pick a borrower first"); return; }
+  const folderId = _fvCurrentFolderIdResolved();
+  if (!folderId) { _fvShowToast("No folder for this borrower"); return; }
+  const targets = _fvCurrentFileObjects();
+  if (!targets.length) { _fvShowToast("No files to scan"); return; }
+
+  try { await _fvEnsureToken(); } catch (e) { _fvShowToast("Google Drive access needed — click again to allow"); return; }
+
+  _fvBatchBusy = true;
+  _fvReviewQueue = [];
+  const errors = [];
+  try {
+    for (let i = 0; i < targets.length; i++) {
+      const f = targets[i];
+      _fvShowToast(`Scanning ${i + 1} of ${targets.length}…`);
+      const ext = _fvFileExt(f.name);
+      const category = (f.appProperties && f.appProperties.docType) || "";
+      const docTypeKey = _fvDocTypeToTextract(category);
+      let fields = {}, detectedType = docTypeKey, jobId = null, flagged = false, name;
+      try {
+        const blob = await _fvDownloadBlob(f.id);
+        const b64 = await _fvBlobToBase64(blob);
+        const resp = await _fvCallTextract(b64, f.name || "file", f.mimeType || "", contact.id, docTypeKey);
+        fields = (resp && resp.fields) || {};
+        detectedType = (resp && resp.doc_type) || docTypeKey || "";
+        jobId = (resp && resp.job_id) || null;
+        const built = _fvComputeSuggestedName(detectedType, fields, contact, category, f);
+        name = built.name;
+        flagged = built.flagged;
+      } catch (e) {
+        errors.push(`${f.name || "file"}: ${(e && e.message) || e}`);
+        flagged = true;
+        name = _fvFallbackName(category, contact, f);
+      }
+      name = _fvKeepExt(name, ext);
+      _fvReviewQueue.push({ file: f, originalName: f.name || "", suggestedName: name, docType: detectedType, category: category, fields: fields, jobId: jobId, flagged: flagged, ext: ext, contactId: contact.id, approved: false });
+    }
+  } finally {
+    _fvBatchBusy = false;
+  }
+
+  const flaggedCount = _fvReviewQueue.filter((q) => q.flagged).length;
+  _fvShowToast(`Scanned ${_fvReviewQueue.length} file${_fvReviewQueue.length === 1 ? "" : "s"}${flaggedCount ? ` · ${flaggedCount} need a look` : ""} ✓`);
+  if (errors.length) console.warn("[FileVault][scan] errors:", errors);
+  if (_fvReviewQueue.length) _fvOpenReviewModal();
+}
+
+/* ── (3) REVIEW & APPROVE ─────────────────────────────────────────── */
+function _fvOpenReviewModal() {
+  if (!_fvReviewQueue.length) { _fvShowToast("Run “AI Scan & Rename” first"); return; }
+  if (_fvReviewIndex < 0 || _fvReviewIndex >= _fvReviewQueue.length) _fvReviewIndex = 0;
+  const existing = document.getElementById("fvReviewOverlay");
+  if (existing) existing.remove();
+
+  const ov = document.createElement("div");
+  ov.id = "fvReviewOverlay";
+  ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9990;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;";
+  ov.innerHTML = `
+    <div style="width:1100px;max-width:96vw;height:88vh;display:flex;flex-direction:column;background:#0e0e0e;border:1px solid #C9A84C44;border-radius:14px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.6);">
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid #1e1e1e;flex-shrink:0;">
+        <span style="color:#C9A84C;font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;">Review &amp; Approve</span>
+        <span id="fvReviewProgress" style="color:#666;font-size:12px;"></span>
+        <span style="flex:1;"></span>
+        <button id="fvReviewClose" style="background:transparent;border:1px solid #2a2a2a;color:#888;font-size:13px;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit;">Close</button>
+      </div>
+      <div style="display:flex;flex:1;min-height:0;">
+        <div id="fvReviewPreview" style="flex:1;min-width:0;background:#050505;display:flex;align-items:center;justify-content:center;overflow:auto;"></div>
+        <div style="width:340px;flex-shrink:0;border-left:1px solid #1e1e1e;padding:18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;">
+          <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Detected type</div><div id="fvReviewType" style="color:#C9A84C;font-size:13px;font-weight:600;"></div></div>
+          <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Current name</div><div id="fvReviewCurrent" style="color:#999;font-size:12px;word-break:break-word;"></div></div>
+          <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Suggested name (editable)</div>
+            <input id="fvReviewName" type="text" style="width:100%;background:#161616;border:1px solid #C9A84C55;color:#eee;font-size:13px;padding:8px 10px;border-radius:8px;outline:none;font-family:inherit;box-sizing:border-box;"></div>
+          <div id="fvReviewFlag" style="display:none;background:#3a2a0a;border:1px solid #C9A84C55;color:#e0c070;font-size:11px;padding:8px 10px;border-radius:8px;line-height:1.4;">&#9888; Couldn’t read this one confidently — please set the name manually.</div>
+          <div id="fvReviewFields" style="font-size:11px;color:#666;"></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid #1e1e1e;flex-shrink:0;">
+        <button id="fvReviewPrev" style="background:transparent;border:1px solid #2a2a2a;color:#aaa;font-size:13px;padding:7px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">&#8592; Prev</button>
+        <button id="fvReviewNext" style="background:transparent;border:1px solid #2a2a2a;color:#aaa;font-size:13px;padding:7px 16px;border-radius:8px;cursor:pointer;font-family:inherit;">Next &#8594;</button>
+        <span style="flex:1;"></span>
+        <button id="fvReviewApprove" style="background:#C9A84C;border:none;color:#000;font-size:13px;font-weight:700;padding:8px 22px;border-radius:8px;cursor:pointer;font-family:inherit;">Approve &amp; rename &#8594;</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", (e) => { if (e.target === ov) _fvCloseReviewModal(); });
+  document.getElementById("fvReviewClose").onclick = _fvCloseReviewModal;
+  document.getElementById("fvReviewPrev").onclick = () => _fvReviewNav(-1);
+  document.getElementById("fvReviewNext").onclick = () => _fvReviewNav(1);
+  document.getElementById("fvReviewApprove").onclick = _fvReviewApprove;
+  _fvReviewRender();
+}
+
+function _fvReviewStashName() {
+  const q = _fvReviewQueue[_fvReviewIndex];
+  const el = document.getElementById("fvReviewName");
+  if (q && el) q.suggestedName = el.value;
+}
+
+function _fvReviewNav(delta) {
+  _fvReviewStashName();
+  const n = _fvReviewIndex + delta;
+  if (n < 0 || n >= _fvReviewQueue.length) return;
+  _fvReviewIndex = n;
+  _fvReviewRender();
+}
+
+function _fvReviewRender() {
+  const q = _fvReviewQueue[_fvReviewIndex];
+  if (!q) return;
+  const prog = document.getElementById("fvReviewProgress");
+  if (prog) prog.textContent = `${_fvReviewIndex + 1} of ${_fvReviewQueue.length}` + (q.approved ? " · approved ✓" : "");
+  const typeEl = document.getElementById("fvReviewType");
+  if (typeEl) typeEl.textContent = (q.docType ? q.docType.replace(/_/g, " ") : "—") + (q.category ? ` · ${q.category}` : "");
+  const curEl = document.getElementById("fvReviewCurrent");
+  if (curEl) curEl.textContent = q.originalName || "(unnamed)";
+  const nameEl = document.getElementById("fvReviewName");
+  if (nameEl) nameEl.value = q.suggestedName || "";
+  const flag = document.getElementById("fvReviewFlag");
+  if (flag) flag.style.display = q.flagged ? "block" : "none";
+  const fEl = document.getElementById("fvReviewFields");
+  if (fEl) {
+    const keys = Object.keys(q.fields || {}).slice(0, 8);
+    fEl.innerHTML = keys.length
+      ? ("<div style='color:#555;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;'>Extracted</div>" +
+         keys.map((k) => `<div style="margin-bottom:2px;"><span style='color:#888;'>${_fvEscape(k)}:</span> ${_fvEscape(String(q.fields[k]))}</div>`).join(""))
+      : "";
+  }
+  const prevB = document.getElementById("fvReviewPrev"), nextB = document.getElementById("fvReviewNext");
+  if (prevB) { prevB.disabled = _fvReviewIndex === 0; prevB.style.opacity = prevB.disabled ? ".4" : "1"; }
+  if (nextB) { nextB.disabled = _fvReviewIndex >= _fvReviewQueue.length - 1; nextB.style.opacity = nextB.disabled ? ".4" : "1"; }
+  _fvReviewLoadPreview(q.file);
+}
+
+async function _fvReviewLoadPreview(f) {
+  const host = document.getElementById("fvReviewPreview");
+  if (!host) return;
+  if (_fvReviewBlobUrl) { try { URL.revokeObjectURL(_fvReviewBlobUrl); } catch (_) {} _fvReviewBlobUrl = null; }
+  host.innerHTML = '<div style="color:#666;font-size:13px;display:flex;align-items:center;gap:10px;"><span style="width:16px;height:16px;border:2px solid #C9A84C;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;"></span>Loading preview…</div>';
+  const myIndex = _fvReviewIndex;
+  try {
+    const blob = await _fvDownloadBlob(f.id);
+    if (_fvReviewIndex !== myIndex || !document.getElementById("fvReviewPreview")) return;
+    const url = URL.createObjectURL(blob);
+    _fvReviewBlobUrl = url;
+    const mime = f.mimeType || blob.type || "";
+    if (mime.indexOf("image/") === 0) {
+      host.innerHTML = `<img src="${url}" alt="" style="max-width:100%;max-height:100%;object-fit:contain;display:block;">`;
+    } else if (mime.indexOf("pdf") >= 0 || /\.pdf$/i.test(f.name || "")) {
+      host.innerHTML = `<iframe src="${url}" title="preview" style="width:100%;height:100%;border:none;background:#fff;"></iframe>`;
+    } else {
+      host.innerHTML = `<div style="color:#888;font-size:13px;text-align:center;padding:30px;">No inline preview for this file type.<br>You can still set a name and approve.</div>`;
+    }
+  } catch (e) {
+    if (document.getElementById("fvReviewPreview")) host.innerHTML = `<div style="color:#e0a0a0;font-size:13px;padding:30px;text-align:center;">Preview failed: ${_fvEscape((e && e.message) || "error")}</div>`;
+  }
+}
+
+async function _fvReviewApprove() {
+  const q = _fvReviewQueue[_fvReviewIndex];
+  if (!q) return;
+  const el = document.getElementById("fvReviewName");
+  let newName = ((el && el.value) || "").trim();
+  if (!newName) { _fvShowToast("Enter a name first"); return; }
+  newName = _fvKeepExt(newName, q.ext);
+  q.suggestedName = newName;
+
+  const btn = document.getElementById("fvReviewApprove");
+  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  try {
+    await _fvRenameDriveFile(q.file.id, newName);
+    q.file.name = newName;
+    const who = await _fvAdminIdentity();
+    try { await _fvSetReviewedMeta(q.file.id, who); } catch (_) {}
+    q.approved = true;
+  } catch (e) {
+    _fvShowToast("Approve failed: " + ((e && e.message) || e));
+    if (btn) { btn.disabled = false; btn.textContent = "Approve & rename →"; }
+    return;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = "Approve & rename →"; }
+
+  // Advance to the next item, or finish after the last.
+  if (_fvReviewIndex >= _fvReviewQueue.length - 1) {
+    _fvFinishReview();
+  } else {
+    _fvReviewIndex++;
+    _fvReviewRender();
+  }
+}
+
+function _fvFinishReview() {
+  const approved = _fvReviewQueue.filter((q) => q.approved).length;
+  const total = _fvReviewQueue.length;
+  _fvCloseReviewModal();
+  _fvShowToast(`Reviewed ${approved} of ${total} ✓`);
+  // Refresh the file list so the new names show.
+  const contact = _fvCurrentContact();
+  const folderId = _fvCurrentFolderIdResolved();
+  if (folderId && contact) { _fvLoadFiles(folderId).then(() => _fvRenderFileListPanel(contact)).catch(() => {}); }
+}
+
+function _fvCloseReviewModal() {
+  _fvReviewStashName();
+  if (_fvReviewBlobUrl) { try { URL.revokeObjectURL(_fvReviewBlobUrl); } catch (_) {} _fvReviewBlobUrl = null; }
+  const ov = document.getElementById("fvReviewOverlay");
+  if (ov) ov.remove();
+}
+
+// Themed summary dialog (used by Convert all to PDF for skipped/errored files).
+function _fvShowSummary(title, lines) {
+  const ov = document.createElement("div");
+  ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9991;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;";
+  ov.innerHTML = `
+    <div style="width:520px;max-width:94vw;background:#0e0e0e;border:1px solid #C9A84C44;border-radius:14px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.6);">
+      <div style="padding:14px 18px;border-bottom:1px solid #1e1e1e;color:#C9A84C;font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;">${_fvEscape(title)}</div>
+      <div style="padding:16px 18px;color:#ccc;font-size:13px;line-height:1.6;max-height:50vh;overflow-y:auto;">${lines.map((l) => `<div style="margin-bottom:6px;">${_fvEscape(l)}</div>`).join("")}</div>
+      <div style="padding:12px 18px;border-top:1px solid #1e1e1e;text-align:right;"><button style="background:#C9A84C;border:none;color:#000;font-size:13px;font-weight:700;padding:7px 18px;border-radius:8px;cursor:pointer;font-family:inherit;">Got it</button></div>
+    </div>`;
+  ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+  ov.querySelector("button").onclick = () => ov.remove();
+  document.body.appendChild(ov);
 }
 
 // ── INLINE FILE VIEWER (right panel view toggle) ────────────────
