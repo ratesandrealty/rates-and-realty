@@ -2888,12 +2888,30 @@ async function _fvCallConvertToPdf(base64, mime, name) {
   return await res.json();
 }
 
+// Current user's Supabase access token. textract-ocr runs with verify_jwt=true,
+// so it 401s without a real session JWT (the anon key alone is rejected). Same
+// pattern the lead-detail document OCR uses.
+async function _fvUserAccessToken() {
+  try {
+    const { supabase } = await import("/api/supabase-client.js");
+    const { data } = await supabase.auth.getSession();
+    return (data && data.session && data.session.access_token) || null;
+  } catch (_) { return null; }
+}
+
 // textract-ocr edge function (start an OCR job, get flat fields back).
+// Must carry the user's JWT (verify_jwt=true). doc_type is omitted when empty so
+// the engine auto-detects the document type.
 async function _fvCallTextract(base64, name, fileType, contactId, docType) {
+  const jwt = await _fvUserAccessToken();
+  if (!jwt) throw new Error("Session expired — sign in and retry");
+  const anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || "";
+  const body = { action: "start", file_base64: base64, file_name: name, file_type: fileType, contact_id: contactId };
+  if (docType) body.doc_type = docType; // omit when empty → engine auto-detects
   const res = await fetch(_fvFnBase() + "/functions/v1/textract-ocr", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "start", file_base64: base64, file_name: name, file_type: fileType, contact_id: contactId, doc_type: docType || "" }),
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + jwt, "apikey": anon },
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error("textract-ocr HTTP " + res.status);
   return await res.json();
@@ -3076,10 +3094,13 @@ function _fvFmtDateMDY(v) { const d = _fvParseDate(v); return d ? `${d.getMonth(
 function _fvFmtMonYear(v) { const d = _fvParseDate(v); return d ? `${_FV_MONTHS[d.getMonth()]} ${d.getFullYear()}` : ""; }
 
 function _fvFallbackName(category, contact, file) {
+  // "Couldn't read" fallback: Category + borrower name only — NO synthetic
+  // today's/upload date. (Real document dates still appear in the proper-name
+  // builders below for paystubs / bank statements / W-2 / tax returns.)
   const cat = category || "Document";
-  const who = (contact && contact.first_name) || _fvFirstWord(contact && contact.name) || "Borrower";
-  const dateStr = _fvFmtDateMDY((file && (file.modifiedTime || file.createdTime)) || new Date());
-  return `${cat} – ${who}${dateStr ? ` – ${dateStr}` : ""}`;
+  const full = contact ? `${contact.first_name || ""} ${contact.last_name || ""}`.trim() : "";
+  const who = full || (contact && contact.first_name) || _fvFirstWord(contact && contact.name) || "Borrower";
+  return `${cat} – ${who}`;
 }
 
 // Build a suggested file name from the OCR doc_type + extracted fields.
@@ -3192,6 +3213,20 @@ function _fvOpenReviewModal() {
   const existing = document.getElementById("fvReviewOverlay");
   if (existing) existing.remove();
 
+  // Name autocomplete seeds from the open borrower's known info + quick-insert chips.
+  const _rc = _fvCurrentContact() || {};
+  const _full = `${_rc.first_name || ""} ${_rc.last_name || ""}`.trim();
+  const _first = _rc.first_name || _fvFirstWord(_full) || "";
+  const _last = _rc.last_name || "";
+  const _today = _fvFmtDateMDY(new Date());
+  const _seedNames = Array.from(new Set([_full, _first, _last].filter(Boolean)));
+  const _chipTokens = ["Paystub", "W2", "Bank Stmt", "Gov ID", "Tax Return"];
+  if (_first) _chipTokens.push(_first);
+  if (_today) _chipTokens.push(_today);
+  const _chipStyle = "background:#1a1a1a;border:1px solid #C9A84C55;color:#C9A84C;font-size:11px;padding:3px 9px;border-radius:14px;cursor:pointer;font-family:inherit;white-space:nowrap;";
+  const chipsHtml = _chipTokens.map((t) => `<button type="button" data-fv-chip data-token="${_fvEscape(t)}" title="Insert “${_fvEscape(t)}”" style="${_chipStyle}">${_fvEscape(t)}</button>`).join("");
+  const datalistHtml = `<datalist id="fvReviewNameList">${_seedNames.map((n) => `<option value="${_fvEscape(n)}"></option>`).join("")}</datalist>`;
+
   const ov = document.createElement("div");
   ov.id = "fvReviewOverlay";
   ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9990;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;";
@@ -3209,7 +3244,9 @@ function _fvOpenReviewModal() {
           <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Detected type</div><div id="fvReviewType" style="color:#C9A84C;font-size:13px;font-weight:600;"></div></div>
           <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Current name</div><div id="fvReviewCurrent" style="color:#999;font-size:12px;word-break:break-word;"></div></div>
           <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Suggested name (editable)</div>
-            <input id="fvReviewName" type="text" style="width:100%;background:#161616;border:1px solid #C9A84C55;color:#eee;font-size:13px;padding:8px 10px;border-radius:8px;outline:none;font-family:inherit;box-sizing:border-box;"></div>
+            <div id="fvReviewChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;">${chipsHtml}</div>
+            <input id="fvReviewName" type="text" list="fvReviewNameList" autocomplete="off" placeholder="Type a name…" style="width:100%;background:#161616;border:1px solid #C9A84C55;color:#eee;font-size:13px;padding:8px 10px;border-radius:8px;outline:none;font-family:inherit;box-sizing:border-box;">${datalistHtml}
+            <div style="color:#555;font-size:10px;margin-top:4px;">Tap a chip to insert · or pick a saved name as you type</div></div>
           <div id="fvReviewFlag" style="display:none;background:#3a2a0a;border:1px solid #C9A84C55;color:#e0c070;font-size:11px;padding:8px 10px;border-radius:8px;line-height:1.4;">&#9888; Couldn’t read this one confidently — please set the name manually.</div>
           <div id="fvReviewFields" style="font-size:11px;color:#666;"></div>
         </div>
@@ -3227,7 +3264,30 @@ function _fvOpenReviewModal() {
   document.getElementById("fvReviewPrev").onclick = () => _fvReviewNav(-1);
   document.getElementById("fvReviewNext").onclick = () => _fvReviewNav(1);
   document.getElementById("fvReviewApprove").onclick = _fvReviewApprove;
+  ov.querySelectorAll("[data-fv-chip]").forEach((b) => {
+    b.addEventListener("click", () => _fvInsertNameToken(b.getAttribute("data-token")));
+  });
   _fvReviewRender();
+}
+
+// Insert a name token (chip) at the caret in the rename field, joining onto
+// existing text with the standard " – " separator. Keeps the field editable.
+function _fvInsertNameToken(token) {
+  const el = document.getElementById("fvReviewName");
+  if (!el) return;
+  token = String(token || "");
+  const v = el.value;
+  let start = el.selectionStart, end = el.selectionEnd;
+  if (typeof start !== "number" || start < 0) { start = v.length; end = v.length; }
+  const before = v.slice(0, start);
+  const after = v.slice(end);
+  let ins = token;
+  if (before && !/[\s\-–]$/.test(before)) ins = " – " + ins; // join onto existing text nicely
+  el.value = before + ins + after;
+  const caret = (before + ins).length;
+  el.focus();
+  try { el.setSelectionRange(caret, caret); } catch (_) {}
+  if (_fvReviewQueue[_fvReviewIndex]) _fvReviewQueue[_fvReviewIndex].suggestedName = el.value;
 }
 
 function _fvReviewStashName() {
