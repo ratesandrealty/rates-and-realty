@@ -1544,6 +1544,90 @@ function _fvClearToken() {
   } catch (_) {}
 }
 
+// ── CLIENT-SIDE DRIVE WRITE (rotate / crop autosave) ──────────────
+// The save-document edge fn's server-side Drive token is dead, so we bake edits
+// into the PDF in the browser with pdf-lib and PATCH the bytes back to the same
+// Drive file using the SAME Google sign-in that already reads files.
+let _fvRotAutosaveTimer = null;       // debounce handle for rotation autosave
+let _fvPdfLibPromise = null;          // single-flight pdf-lib loader
+
+function _fvEnsurePdfLib() {
+  if (window.PDFLib) return Promise.resolve(window.PDFLib);
+  if (_fvPdfLibPromise) return _fvPdfLibPromise;
+  _fvPdfLibPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
+    s.onload = () => { window.PDFLib ? resolve(window.PDFLib) : reject(new Error("pdf-lib missing after load")); };
+    s.onerror = () => { _fvPdfLibPromise = null; reject(new Error("pdf-lib CDN failed to load")); };
+    document.head.appendChild(s);
+  });
+  return _fvPdfLibPromise;
+}
+
+// Incremental consent for full Drive write scope. Only reached if the cached
+// read token lacks write access (the vault already requests auth/drive, so this
+// normally never prompts).
+function _fvRequestWriteToken() {
+  return new Promise((resolve, reject) => {
+    if (!(window.google && window.google.accounts && window.google.accounts.oauth2)) {
+      return reject(new Error("Google sign-in not loaded — reload the page"));
+    }
+    try {
+      const tc = google.accounts.oauth2.initTokenClient({
+        client_id: GDRIVE_OAUTH_CLIENT_ID,
+        scope: "https://www.googleapis.com/auth/drive", // full Drive — drive.file can't touch pre-existing files
+        callback: (resp) => {
+          if (resp.error) return reject(new Error(resp.error));
+          if (!resp.access_token) return reject(new Error("No access token returned"));
+          try {
+            sessionStorage.setItem("gdriveOAuthToken", resp.access_token);
+            sessionStorage.setItem("gdriveOAuthExpiry", String(Date.now() + (Number(resp.expires_in) || 3600) * 1000));
+          } catch (_) {}
+          resolve(resp.access_token);
+        },
+        error_callback: (err) => reject(new Error((err && err.message) || "Google permission denied")),
+      });
+      tc.requestAccessToken({ prompt: "consent" });
+    } catch (e) { reject(e); }
+  });
+}
+
+function _fvDoDrivePatch(fileId, bytes, token) {
+  return fetch(
+    `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&supportsAllDrives=true`,
+    { method: "PATCH", headers: { Authorization: "Bearer " + token, "Content-Type": "application/pdf" }, body: bytes }
+  );
+}
+
+// PATCH new bytes onto an existing Drive file. On 401/403 (insufficient scope)
+// request write consent once and retry.
+async function _fvPatchDriveBytes(fileId, bytes) {
+  let token = await _fvEnsureToken();
+  let res = await _fvDoDrivePatch(fileId, bytes, token);
+  if (res.status === 401 || res.status === 403) {
+    _fvClearToken();
+    token = await _fvRequestWriteToken(); // prompts only if read token lacked write scope
+    res = await _fvDoDrivePatch(fileId, bytes, token);
+  }
+  if (!res.ok) {
+    let msg = "HTTP " + res.status;
+    try { const j = await res.json(); if (j && j.error) msg = (j.error.message || j.error.status || j.error); } catch (_) {}
+    throw new Error(msg);
+  }
+  return await res.json().catch(() => ({}));
+}
+
+// Small inline status pill in the PDF toolbar: "Saving…" / "Saved ✓" / error.
+function _fvSetRotStatus(text, kind) {
+  const el = document.getElementById("fv-rot-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "inline" : "none";
+  el.style.color = kind === "error" ? "#e0a0a0" : (kind === "ok" ? "#7fcf9f" : "#C9A84C");
+  if (el._fvHide) { clearTimeout(el._fvHide); el._fvHide = null; }
+  if (kind === "ok") { el._fvHide = setTimeout(() => { if (el.textContent === text) { el.style.display = "none"; el.textContent = ""; } }, 2500); }
+}
+
 async function renderDocuments() {
   const el = document.getElementById("admin-document-table");
   if (!el) return;
@@ -1681,6 +1765,7 @@ async function renderDocuments() {
             <span class="fv-tb-sep"></span>
             <button id="fv-pdf-rotate-btn" type="button" class="fv-tb-btn" title="Rotate 90&deg; clockwise" aria-label="Rotate 90 degrees"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><polyline points="13.5 2.5 13.5 5 11 5"/></svg></button>
             <button id="fv-pdf-save-rot-btn" type="button" class="fv-tb-btn fv-tb-btn-save" title="Save rotation to file" aria-label="Save rotation"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5h-9a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-9z"/><polyline points="4 1.5 4 5.5 10 5.5 10 1.5"/><rect x="4" y="9" width="8" height="5"/></svg><span class="fv-tb-label">Save</span></button>
+            <span id="fv-rot-status" style="display:none;font-size:11px;font-weight:600;margin:0 4px;white-space:nowrap;"></span>
             <span class="fv-tb-sep"></span>
             <button id="fv-pdf-crop-btn" type="button" class="fv-tb-btn" title="Crop page" aria-label="Crop"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 1v10a1 1 0 0 0 1 1h10"/><path d="M1 4h10a1 1 0 0 1 1 1v10"/></svg></button>
             <button id="fv-pdf-crop-apply-btn" type="button" class="fv-tb-btn fv-tb-btn-save" title="Apply crop"><span class="fv-tb-label">Apply</span></button>
@@ -3911,8 +3996,11 @@ function _fvEnsurePdfJs() {
 // PDF editing state — mirrors the lead-detail.html docViewer state but
 // scoped to the File Vault component.
 function _fvResetPdfEditState() {
+  if (_fvRotAutosaveTimer) { clearTimeout(_fvRotAutosaveTimer); _fvRotAutosaveTimer = null; }
+  _fvSetRotStatus("", null);
   if (_fvViewerState) {
     _fvViewerState.pdfDoc = null;
+    _fvViewerState.pdfBytes = null; // authoritative current PDF bytes (for client-side edits)
     _fvViewerState.scale = 1.0;
     _fvViewerState.rotation = 0;
     _fvViewerState.savedRotation = 0;
@@ -3974,6 +4062,9 @@ async function _fvLoadBlobIntoIframe(f) {
       if (isPdf) {
         const pdfjsLib = await _fvEnsurePdfJs();
         if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
+        // Keep an independent copy of the bytes for client-side edits — pdf.js may
+        // detach (transfer) the array it's handed to its worker.
+        _fvViewerState.pdfBytes = new Uint8Array(buf).slice();
         let pdfDoc;
         try {
           pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
@@ -4117,56 +4208,75 @@ function _fvPdfRotate() {
   _fvRenderPdfPages(_fvViewerState.index).then(() => {
     _fvUpdateSaveRotBtn();
   });
+  // AUTOSAVE: bake + write to Drive ~800ms after the last rotate click.
+  if (_fvRotAutosaveTimer) clearTimeout(_fvRotAutosaveTimer);
+  _fvRotAutosaveTimer = setTimeout(() => { _fvRotAutosaveTimer = null; _fvSaveRotationClientSide(); }, 800);
 }
 
+// Manual Save button → same client-side path, no debounce.
 async function _fvPdfSaveRotation() {
+  if (_fvRotAutosaveTimer) { clearTimeout(_fvRotAutosaveTimer); _fvRotAutosaveTimer = null; }
+  await _fvSaveRotationClientSide();
+}
+
+// Bake the net on-screen rotation into the PDF (pdf-lib) and PATCH it back to the
+// same Drive file with the browser's Google token. Replaces the dead
+// save-document edge-fn path. One failure never breaks the viewer.
+async function _fvSaveRotationClientSide() {
   if (!_fvViewerState || _fvViewerState.type !== "pdf") return;
   const file = _fvViewerState.files && _fvViewerState.files[_fvViewerState.index];
-  if (!file || !_fvViewerState.rotation) return;
+  if (!file) return;
+  const net = (((_fvViewerState.rotation || 0) % 360) + 360) % 360;
+  if (!net) return; // nothing to bake
+  const fileId = file.id;
+  const renderIndex = _fvViewerState.index;
   const btn = document.getElementById("fv-pdf-save-rot-btn");
   const SAVE_BTN_HTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5h-9a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-9z"/><polyline points="4 1.5 4 5.5 10 5.5 10 1.5"/><rect x="4" y="9" width="8" height="5"/></svg><span class="fv-tb-label">Save</span>';
-  const pendingRot = _fvViewerState.rotation;
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;"></span><span class="fv-tb-label">Saving</span>';
-  }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:fvSpin .7s linear infinite;"></span><span class="fv-tb-label">Saving</span>'; }
+  _fvSetRotStatus("Saving…", null);
   try {
-    const { supabase } = await import("/api/supabase-client.js");
-    const sess = await supabase.auth.getSession();
-    const accessToken = sess?.data?.session?.access_token;
-    if (!accessToken) throw new Error("Not signed in — refresh and log in again");
-    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
-    const res = await fetch(base + "/functions/v1/save-document", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
-      body: JSON.stringify({ file_id: file.id, rotation_degrees: pendingRot }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success) throw new Error((data && data.error) || ("HTTP " + res.status));
-    // The viewer is already showing the rotated pages (we render with
-    // state.rotation each time). Mark the rotation as saved so the Save
-    // button hides — no Drive re-fetch needed. Drive's CDN ignores cache-
-    // busting query params, so a re-fetch would return stale bytes anyway.
-    if (_fvViewerState) _fvViewerState.savedRotation = pendingRot;
-    if (btn) {
-      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8.5 6.5 12 13 4.5"/></svg><span class="fv-tb-label">Saved</span>';
+    const PDFLib = await _fvEnsurePdfLib();
+    // Work from the authoritative cached bytes; fall back to a fresh download.
+    let bytes = _fvViewerState.pdfBytes;
+    if (!bytes || !bytes.length) {
+      const blob = await _fvDownloadBlob(fileId);
+      bytes = new Uint8Array(await blob.arrayBuffer());
     }
-    _fvShowToast("Rotation saved");
-    setTimeout(() => {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = SAVE_BTN_HTML;
-      }
-      _fvUpdateSaveRotBtn();
-    }, 900);
+    const pdfDoc = await PDFLib.PDFDocument.load(bytes);
+    pdfDoc.getPages().forEach((p) => {
+      const existing = (p.getRotation && p.getRotation() && p.getRotation().angle) || 0;
+      p.setRotation(PDFLib.degrees((((existing + net) % 360) + 360) % 360));
+    });
+    const out = await pdfDoc.save(); // Uint8Array
+    await _fvPatchDriveBytes(fileId, out);
+
+    // Baked in now → reset net rotation and re-render from the new bytes.
+    if (_fvViewerState && _fvViewerState.index === renderIndex) {
+      _fvViewerState.pdfBytes = out;
+      _fvViewerState.rotation = 0;
+      _fvViewerState.savedRotation = 0;
+      await _fvReparseAndRender(out, renderIndex);
+    }
+    _fvSetRotStatus("Saved ✓", "ok");
+    if (btn) { btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8.5 6.5 12 13 4.5"/></svg><span class="fv-tb-label">Saved</span>'; }
+    setTimeout(() => { if (btn) { btn.disabled = false; btn.innerHTML = SAVE_BTN_HTML; } _fvUpdateSaveRotBtn(); }, 900);
   } catch (e) {
     console.error("[FileVault][saveRotation] failed:", e);
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = SAVE_BTN_HTML;
-    }
-    _fvShowToast("Save failed: " + (e.message || e));
+    if (btn) { btn.disabled = false; btn.innerHTML = SAVE_BTN_HTML; }
+    _fvUpdateSaveRotBtn();
+    _fvSetRotStatus("Couldn't save rotation — " + ((e && e.message) || e), "error");
   }
+}
+
+// Re-parse PDF bytes with pdf.js and re-render the page canvases. Pass a copy to
+// pdf.js so it never detaches our cached bytes.
+async function _fvReparseAndRender(bytes, renderIndex) {
+  const pdfjsLib = await _fvEnsurePdfJs();
+  if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(bytes).slice() }).promise;
+  if (!_fvViewerState || _fvViewerState.index !== renderIndex) return;
+  _fvViewerState.pdfDoc = doc;
+  await _fvRenderPdfPages(renderIndex);
 }
 
 // ── CROP TOOL ──────────────────────────────────────────────────────────
@@ -4314,32 +4424,34 @@ async function _fvPdfApplyCrop() {
   if (cancelBtn) cancelBtn.disabled = true;
 
   try {
-    const { supabase } = await import("/api/supabase-client.js");
-    const sess = await supabase.auth.getSession();
-    const accessToken = sess?.data?.session?.access_token;
-    if (!accessToken) throw new Error("Not signed in — refresh and log in again");
-    const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
-    const res = await fetch(base + "/functions/v1/save-document", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
-      body: JSON.stringify({ file_id: file.id, crop: cropPayload }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success) throw new Error((data && data.error) || ("HTTP " + res.status));
-    _fvShowToast("Cropped!");
+    // Client-side crop with pdf-lib, then PATCH the bytes back to the same Drive
+    // file (the save-document edge fn's server-side Drive token is dead).
+    const PDFLib = await _fvEnsurePdfLib();
+    let bytes = _fvViewerState.pdfBytes;
+    if (!bytes || !bytes.length) {
+      const blob = await _fvDownloadBlob(file.id);
+      bytes = new Uint8Array(await blob.arrayBuffer());
+    }
+    const pdfDoc = await PDFLib.PDFDocument.load(bytes);
+    const pages = pdfDoc.getPages();
+    const page = pages[(cropPayload.page || 1) - 1];
+    if (!page) throw new Error("page out of range");
+    // cropPayload is in PDF points, bottom-left origin, relative to the current
+    // view — offset by the page's existing crop-box origin to get absolute coords.
+    const cb = page.getCropBox();
+    page.setCropBox(cb.x + cropPayload.x, cb.y + cropPayload.y, cropPayload.width, cropPayload.height);
+    const out = await pdfDoc.save();
+    await _fvPatchDriveBytes(file.id, out);
+
+    _fvShowToast("Cropped ✓");
     _fvPdfExitCropMode();
-    const contact = _fvContacts.find((c) => c.id === _fvViewerState.contactId);
-    if (contact && contact.gdrive_folder_id) {
-      await _fvLoadFiles(contact.gdrive_folder_id);
-      const refreshed = _fvFiles[contact.gdrive_folder_id] || [];
-      _fvViewerState.files = refreshed;
-      const newId = (data.file && data.file.id) || file.id;
-      const idx = refreshed.findIndex((x) => x.id === newId);
-      if (idx >= 0) {
-        _fvViewerState.index = idx;
-        _fvViewerRender();
-      }
-      _fvRenderFileListPanel(contact);
+    // Same file id — refresh in place from the new bytes.
+    const renderIndex = _fvViewerState ? _fvViewerState.index : 0;
+    if (_fvViewerState) {
+      _fvViewerState.pdfBytes = out;
+      _fvViewerState.rotation = 0;
+      _fvViewerState.savedRotation = 0;
+      await _fvReparseAndRender(out, renderIndex);
     }
   } catch (e) {
     console.error("[FileVault] crop failed:", e);
