@@ -11017,6 +11017,16 @@ function _esignRenderSigningLinks(signers){
 // most-recently-picked id for the existing picker UI. _esignPdfDocMeta caches each
 // doc's name/page_count/field_count + required-signer count (req).
 var _esignPdfDocId=null, _esignPdfDocIds=[], _esignPdfDocMeta={}, _esignPdfRequired=1, _esignPdfSigners=[];
+var _esignSendSms=true; // "Also text the signing link" — per-envelope default ON
+
+// Light US phone formatting for display only (backend/Twilio normalizes).
+function _esignFmtPhone(p){
+  if(!p) return '';
+  var d=String(p).replace(/\D/g,'');
+  if(d.length===10) return '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);
+  if(d.length===11 && d.charAt(0)==='1') return '('+d.slice(1,4)+') '+d.slice(4,7)+'-'+d.slice(7);
+  return String(p);
+}
 
 function _esignPdfCloseModal(){ var o=document.getElementById('esignPdfSendOverlay'); if(o) o.remove(); }
 
@@ -11036,8 +11046,9 @@ async function openEsignPdfSendModal(documentId, docName){
   // Seed the envelope with the document the user opened this from.
   var _initMeta=(_esignDocs||[]).filter(function(d){ return d.kind==='pdf' && d.document_id===documentId; })[0]||{};
   _esignPdfAddDoc(documentId, docName||_initMeta.name||'PDF', _initMeta.page_count, _initMeta.field_count);
+  _esignSendSms=true; // default ON each time the composer opens
   var cname=[ (window.contactData&&contactData.first_name)||'', (window.contactData&&contactData.last_name)||'' ].filter(Boolean).join(' ').trim();
-  _esignPdfSigners=[{ name:cname||'', email:(window.contactData&&contactData.email)||'', role:'borrower', is_cc:false, contact_id:(typeof lpCid==='function'?lpCid():null) }];
+  _esignPdfSigners=[{ name:cname||'', email:(window.contactData&&contactData.email)||'', phone:(window.contactData&&(contactData.phone||contactData.secondary_phone))||'', role:'borrower', is_cc:false, contact_id:(typeof lpCid==='function'?lpCid():null) }];
 
   var overlay=document.createElement('div');
   overlay.id='esignPdfSendOverlay';
@@ -11069,6 +11080,7 @@ async function openEsignPdfSendModal(documentId, docName){
         +'<label style="display:block;font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Options</label>'
         +'<input type="text" id="esignPdfSubject" placeholder="Email subject (optional)" style="'+inputStyle+'margin-bottom:7px;">'
         +'<textarea id="esignPdfMessage" placeholder="Short message to recipients (optional)" rows="2" style="'+inputStyle+'height:auto;padding:7px 9px;resize:vertical;"></textarea>'
+        +'<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#bbb;cursor:pointer;margin-top:10px;"><input type="checkbox" id="esignPdfSms" checked onchange="_esignSendSms=this.checked" style="width:14px;height:14px;accent-color:#C9A84C;cursor:pointer;"> Also text the signing link (SMS)</label>'
       +'</div>'
       +'<div id="esignPdfErr" style="color:#E5484D;font-size:12px;margin-top:10px;min-height:16px;"></div>'
       +'<div style="display:flex;gap:8px;margin-top:8px;">'
@@ -11201,6 +11213,7 @@ function _esignPdfRenderSigners(){
         +(_esignPdfSigners.length>1?'<button type="button" onclick="_esignPdfRemoveSigner('+i+')" title="Remove" style="background:transparent;border:none;color:#E5484D;font-size:16px;line-height:1;cursor:pointer;padding:0 4px;">&times;</button>':'')
       +'</div>'
       +'<input type="email" placeholder="Email" value="'+lpEsc(s.email||'')+'" oninput="_esignPdfSet('+i+',\'email\',this.value)" style="width:100%;'+fld+'margin-bottom:6px;">'
+      +'<input type="tel" placeholder="Mobile phone (optional — for SMS)" value="'+lpEsc(s.phone||'')+'" oninput="_esignPdfSet('+i+',\'phone\',this.value)" style="width:100%;'+fld+'margin-bottom:6px;">'
       +'<label style="display:flex;align-items:center;gap:7px;font-size:11px;color:#bbb;cursor:pointer;"><input type="checkbox" '+(s.is_cc?'checked':'')+' onchange="_esignPdfSet('+i+',\'is_cc\',this.checked)" style="width:14px;height:14px;accent-color:#C9A84C;cursor:pointer;"> CC only — receives the completed copy, doesn’t sign</label>'
     +'</div>';
   }).join('');
@@ -11220,12 +11233,20 @@ async function _esignPdfSubmit(){
   // Ordered envelope documents; fall back to the legacy single id (unchanged behavior).
   var docIds=(_esignPdfDocIds&&_esignPdfDocIds.length)?_esignPdfDocIds.slice():(_esignPdfDocId?[_esignPdfDocId]:[]);
   if(!docIds.length){ if(err) err.textContent='Add at least one document to the envelope.'; return; }
-  var signers=_esignPdfSigners.map(function(s){ return { name:(s.name||'').trim(), email:(s.email||'').trim(), role:(s.role||'borrower'), is_cc:!!s.is_cc }; });
-  if(signers.some(function(s){ return !s.name || !s.email; })){ if(err) err.textContent='Every recipient needs a name and email.'; return; }
+  var signers=_esignPdfSigners.map(function(s){
+    var o={ name:(s.name||'').trim(), email:(s.email||'').trim(), role:(s.role||'borrower'), is_cc:!!s.is_cc };
+    var ph=(s.phone||'').trim(); o.phone = ph || null; // backend uses this, else looks it up from the contact
+    var pcid = s.person_contact_id || s.contact_id || null; if(pcid) o.person_contact_id=pcid;
+    return o;
+  });
+  if(signers.some(function(s){ return !s.name; })){ if(err) err.textContent='Every recipient needs a name.'; return; }
+  var unreachable=signers.filter(function(s){ return !s.email && !s.phone; })[0];
+  if(unreachable){ showToast((unreachable.name||'A recipient')+' has no email or phone — they can’t be reached', true); return; }
   var signing=signers.filter(function(s){ return !s.is_cc; });
   if(signing.length < _esignPdfRequired){ if(err) err.textContent=(docIds.length>1?'These documents need ':'This document needs ')+_esignPdfRequired+' signer'+(_esignPdfRequired===1?'':'s')+', but only '+signing.length+' added.'; return; }
 
   var body={ action:'create', document_ids:docIds, signers:signers };
+  var smsEl=document.getElementById('esignPdfSms'); body.send_sms = smsEl ? !!smsEl.checked : !!_esignSendSms;
   var envName=((document.getElementById('esignPdfEnvName')||{}).value||'').trim(); if(envName) body.document_title=envName;
   body.order_mode=((document.getElementById('esignPdfOrder')||{}).value)||'parallel';
   var subj=((document.getElementById('esignPdfSubject')||{}).value||'').trim(); if(subj) body.email_subject=subj;
@@ -11280,13 +11301,36 @@ function _esignSignerStatusBadge(st, isCc){
 }
 function _esignSignerRowHTML(s){
   var nm=lpEsc(s.name||s.email||'Signer');
-  var sub=lpEsc([s.email,s.role].filter(Boolean).join(' · '));
-  var copy=(!s.is_cc && s.signing_url) ? '<button type="button" onclick="_esignCopyLink(this)" data-url="'+lpEsc(s.signing_url)+'" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;padding:3px 8px;">Copy link</button>' : '';
+  var sub=lpEsc([s.email, s.phone?_esignFmtPhone(s.phone):'', s.role].filter(Boolean).join(' · '));
+  var goldSm='flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;padding:3px 8px;';
+  var copy=(!s.is_cc && s.signing_url) ? '<button type="button" onclick="_esignCopyLink(this)" data-url="'+lpEsc(s.signing_url)+'" style="'+goldSm+'">Copy link</button>' : '';
+  var sid=lpEsc(String(s.id||s.signer_id||''));
+  var low=(s.status||'').toLowerCase();
+  var canResend = !s.is_cc && sid && (low==='sent' || low==='viewed');
+  var resend = canResend ? '<button type="button" class="esignResendBtn" data-sid="'+sid+'" data-name="'+lpEsc(s.name||s.email||'')+'" data-phone="'+lpEsc(s.phone||'')+'" style="'+goldSm+'">Resend</button>' : '';
+  var addNum = (canResend && !s.phone) ? '<button type="button" class="esignAddNumBtn" data-sid="'+sid+'" data-name="'+lpEsc(s.name||s.email||'')+'" title="Also text the link to a mobile number" style="flex-shrink:0;background:transparent;border:1px dashed rgba(201,168,76,0.4);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;padding:3px 8px;">add #</button>' : '';
   return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
     +'<span style="min-width:0;"><span style="font-size:12px;color:#ddd;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+nm+'</span>'
     +(sub?'<span style="font-size:10px;color:#888;">'+sub+'</span>':'')+'</span>'
-    +'<span style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'+_esignSignerStatusBadge(s.status, s.is_cc)+copy+'</span>'
+    +'<span style="display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">'+_esignSignerStatusBadge(s.status, s.is_cc)+copy+resend+addNum+'</span>'
   +'</div>';
+}
+
+// Resend a signer's invite (email + SMS if phone available). Optionally pass a
+// phone to also text the link. Re-fetches status so updated phone shows.
+async function _esignPvResend(envelopeId, docTitle, signerId, name, btn, phone){
+  if(!signerId){ showToast('Missing signer id', true); return; }
+  var orig=btn?btn.textContent:''; if(btn){ btn.disabled=true; btn.textContent='…'; }
+  try{
+    var body={ action:'resend', envelope_id:envelopeId, signer_id:signerId };
+    if(phone && String(phone).trim()) body.phone=String(phone).trim();
+    await _esignFnPost(body);
+    showToast('Link resent to '+(name||'signer'));
+    openEsignPdfStatusModal(envelopeId, docTitle); // re-fetch so any updated phone shows
+  }catch(e){
+    showToast((e&&e.message)||'Could not resend', true);
+    if(btn){ btn.disabled=false; btn.textContent=orig||'Resend'; }
+  }
 }
 async function _esignPvFinalDownload(envelopeId, finalUrl, btn){
   var orig=btn?btn.textContent:'';
@@ -11429,6 +11473,16 @@ async function openEsignPdfStatusModal(envelopeId, docTitle){
           el.addEventListener('click', function(){ _esignPvDownloadDoc(envelopeId, el.getAttribute('data-doc')||'', el.getAttribute('data-url')||'', el); });
         });
       }
+      // Resend a signing link (sent/viewed recipients) — email + SMS when a phone is known.
+      body.querySelectorAll('.esignResendBtn').forEach(function(el){
+        el.addEventListener('click', function(){ _esignPvResend(envelopeId, docTitle, el.getAttribute('data-sid'), el.getAttribute('data-name')||'', el, el.getAttribute('data-phone')||''); });
+      });
+      body.querySelectorAll('.esignAddNumBtn').forEach(function(el){
+        el.addEventListener('click', function(){
+          var num=prompt('Mobile number to also text the signing link:'); if(num==null) return; num=num.trim(); if(!num) return;
+          _esignPvResend(envelopeId, docTitle, el.getAttribute('data-sid'), el.getAttribute('data-name')||'', el, num);
+        });
+      });
     }
     var actions=document.getElementById('esignPvActions');
     if(actions){
