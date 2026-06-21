@@ -10626,27 +10626,33 @@ function _esignRPOpenTemplate(i){
   _esignRPRenderTemplate(d.key, d.name||d.key);
 }
 
-// Fetch a template's rendered HTML (read-only preview). Re-resolves _authClient() at CALL time so the
-// session token is fresh — never holds the load-time anon client.
+// Fetch a template's rendered HTML (read-only preview) via the shared esign POST helper, which
+// re-resolves _authClient() at CALL time (fresh session token — never the load-time anon client).
 async function _esignFetchTemplateHtml(tplKey){
-  var cfg=window.APP_CONFIG||{};
-  var SUPABASE_URL=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co';
-  var anonKey=cfg.SUPABASE_ANON_KEY||'';
-  var token=anonKey;
-  try{ var sess=await _authClient().auth.getSession(); if(sess&&sess.data&&sess.data.session) token=sess.data.session.access_token; }catch(_){}
   var signers=_esignSigners.map(function(s){ return { name:s.name }; });
-  var res=await fetch(SUPABASE_URL+'/functions/v1/esign',{
-    method:'POST',
-    headers:{ 'Content-Type':'application/json', 'apikey':anonKey, 'Authorization':'Bearer '+token },
-    body:JSON.stringify({ action:'template_preview', template_key:tplKey, signers:signers })
-  });
-  var json=null; try{ json=await res.json(); }catch(_){}
-  if(!res.ok){ throw new Error((json&&(json.error||json.message))||('Request failed ('+res.status+')')); }
-  return json;
+  return await _esignFnPost({ action:'template_preview', template_key:tplKey, signers:signers });
+}
+
+// Pull the rendered document body out of a template_preview response, tolerating key variations.
+function _esignTemplateHtmlOf(json){
+  if(!json) return '';
+  return json.document_html || json.html || json.body_html || json.rendered_html || json.content || '';
+}
+
+// Render a small visible error INTO the template-preview pane (never a silent no-op).
+function _esignRPTemplateError(msg){
+  var loading=document.getElementById('esignRPTplLoading'), docEl=document.getElementById('esignRPTplDoc');
+  if(loading) loading.style.display='none';
+  if(docEl){
+    docEl.style.background='transparent'; docEl.style.boxShadow='none'; docEl.style.padding='18px';
+    docEl.innerHTML='<div style="color:#E5484D;font-size:13px;line-height:1.5;">'+lpEsc(msg||'Couldn’t load preview.')+'</div>';
+    docEl.style.display='block';
+  }
 }
 
 function _esignRPRenderTemplate(tplKey, name){
-  var pane=document.getElementById('esignRightPane'); if(!pane) return;
+  var pane=document.getElementById('esignRightPane');
+  if(!pane){ console.error('[esign] template preview: #esignRightPane not found'); return; }
   pane.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06);background:#131315;flex-shrink:0;">'
       +'<div style="font-size:13px;font-weight:700;color:#E0DDD4;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(name||'Template')+'</div>'
       +'<span style="flex-shrink:0;font-size:11px;color:#888;background:rgba(255,255,255,0.05);border-radius:8px;padding:2px 9px;">Template preview</span>'
@@ -10663,14 +10669,21 @@ function _esignRPRenderTemplate(tplKey, name){
   }
   _esignFetchTemplateHtml(tplKey).then(function(json){
     if(_esignActiveTplKey!==tplKey) return; // user navigated to another doc while loading
+    if(!document.getElementById('esignRPTplDoc')) return; // pane replaced
+    var htmlBody=_esignTemplateHtmlOf(json);
+    if(!htmlBody){
+      console.error('[esign] template_preview returned no document HTML for "'+tplKey+'"', json);
+      _esignRPTemplateError('Couldn’t load preview — the server returned no document content.');
+      return;
+    }
     var loading=document.getElementById('esignRPTplLoading'), docEl=document.getElementById('esignRPTplDoc');
-    if(!loading||!docEl) return;
-    docEl.innerHTML=(json&&json.document_html)||'<div style="color:#666;">No document content.</div>';
-    loading.style.display='none'; docEl.style.display='block';
+    docEl.innerHTML=htmlBody;
+    if(loading) loading.style.display='none';
+    docEl.style.display='block';
   }).catch(function(e){
+    console.error('[esign] template_preview failed for "'+tplKey+'"', e);
     if(_esignActiveTplKey!==tplKey) return;
-    var loading=document.getElementById('esignRPTplLoading');
-    if(loading){ loading.style.color='#E5484D'; loading.innerHTML=lpEsc((e&&e.message)||'Could not load preview.'); }
+    _esignRPTemplateError('Couldn’t load preview'+((e&&e.message)?(': '+e.message):'.'));
   });
 }
 
