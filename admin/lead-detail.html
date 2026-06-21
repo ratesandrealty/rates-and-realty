@@ -11198,6 +11198,81 @@ async function _esignPvFinalDownload(envelopeId, finalUrl, btn){
   }catch(e){ showToast((e&&e.message)||'Could not prepare download', true); }
   finally{ if(btn){ btn.disabled=false; btn.textContent=orig||'⬇ Download signed PDF'; } }
 }
+
+// Trigger a browser download (or open) for a signed-URL.
+function _esignTriggerDownload(url, filename){
+  if(!url) return;
+  try{ var a=document.createElement('a'); a.href=url; if(filename) a.download=filename; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove(); }
+  catch(_){ window.open(url,'_blank'); }
+}
+
+// Combined "all documents" signed PDF — fetch a fresh URL (esign-docs final_url),
+// fall back to the URL already in status.
+async function _esignPvDownloadCombined(envelopeId, fallbackUrl, btn){
+  var orig=btn?btn.innerHTML:'';
+  if(btn){ btn.disabled=true; }
+  try{
+    var url='', filename='';
+    try{
+      var j=await _esignDocsPost({ action:'final_url', envelope_id:envelopeId });
+      url=(j&&(j.combined_url||j.url))||''; filename=(j&&j.filename)||'';
+    }catch(_){}
+    if(!url) url=fallbackUrl||'';
+    if(!url) throw new Error('No download URL returned');
+    _esignTriggerDownload(url, filename);
+  }catch(e){ showToast((e&&e.message)||'Could not prepare download', true); }
+  finally{ if(btn){ btn.disabled=false; if(orig) btn.innerHTML=orig; } }
+}
+
+// Per-document signed PDF — fetch a fresh URL and match by document_id; fall back
+// to the URL already in status.
+async function _esignPvDownloadDoc(envelopeId, documentId, fallbackUrl, btn){
+  var orig=btn?btn.innerHTML:'';
+  if(btn){ btn.disabled=true; }
+  try{
+    var url='', filename='';
+    try{
+      var j=await _esignDocsPost({ action:'final_url', envelope_id:envelopeId });
+      var list=(j&&Array.isArray(j.documents))?j.documents:[];
+      var hit=null;
+      if(documentId) hit=list.filter(function(d){ return String(d.document_id)===String(documentId); })[0];
+      if(!hit && list.length===1) hit=list[0];
+      if(hit){ url=hit.url||''; filename=hit.filename||''; }
+      if(!url && !documentId){ url=(j&&(j.url||j.combined_url))||''; filename=(j&&j.filename)||''; }
+    }catch(_){}
+    if(!url) url=fallbackUrl||'';
+    if(!url) throw new Error('No download URL returned');
+    _esignTriggerDownload(url, filename);
+  }catch(e){ showToast((e&&e.message)||'Could not prepare download', true); }
+  finally{ if(btn){ btn.disabled=false; if(orig) btn.innerHTML=orig; } }
+}
+
+// "Signed documents" section for a completed envelope: a primary combined link,
+// then per-document signed links. Single-doc envelopes show just the one link.
+function _esignSignedDocsSectionHtml(env, docs){
+  var combinedUrl=(env&&env.final_pdf_url)||'';
+  var n=docs.length;
+  var goldBtn='display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;font-family:inherit;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;border:none;font-weight:700;font-size:13px;';
+  var rowBtn='display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;border-radius:8px;padding:9px 12px;margin-bottom:6px;cursor:pointer;font-family:inherit;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);';
+  var html='<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Signed documents</div>';
+  if(n>1){
+    html+='<button type="button" class="esignSignedCombined" data-url="'+lpEsc(combinedUrl)+'" style="'+goldBtn+'">'
+      +'<span>⬇ Download combined PDF (all documents)</span>'
+      +'<span style="font-size:11px;opacity:0.85;flex-shrink:0;">'+n+' docs</span></button>';
+    html+=docs.map(function(d){
+      return '<button type="button" class="esignSignedDoc" data-doc="'+lpEsc(String(d.document_id||''))+'" data-url="'+lpEsc(d.final_pdf_url||'')+'" style="'+rowBtn+'">'
+        +'<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#E0DDD4;">📄 '+lpEsc(d.name||'Document')+(d.page_count?(' <span style="color:#888;font-weight:400;">· '+d.page_count+'p</span>'):'')+'</span>'
+        +'<span style="flex-shrink:0;color:#C9A84C;font-weight:600;font-size:12px;">⬇ Signed PDF</span></button>';
+    }).join('');
+  } else {
+    var only=docs[0]||{};
+    var u=only.final_pdf_url||combinedUrl||'';
+    html+='<button type="button" class="esignSignedDoc" data-doc="'+lpEsc(String(only.document_id||''))+'" data-url="'+lpEsc(u)+'" style="'+goldBtn+'">'
+      +'<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">⬇ Download signed PDF'+(only.name?(' — '+lpEsc(only.name)):'')+'</span></button>';
+  }
+  return '<div style="margin-bottom:16px;">'+html+'</div>';
+}
+
 async function openEsignPdfStatusModal(envelopeId, docTitle){
   _esignPreviewClose();
   docTitle=docTitle||'Document';
@@ -11231,19 +11306,31 @@ async function openEsignPdfStatusModal(envelopeId, docTitle){
       var when=env.completed_at?(' · '+new Date(env.completed_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})):'';
       statusEl.textContent = st2 ? (st2.charAt(0).toUpperCase()+st2.slice(1)+when) : '—';
     }
+    var low=st2.toLowerCase();
+    var completed=['completed','signed'].indexOf(low)>-1;
+    var live=['sent','in_progress','draft'].indexOf(low)>-1;
+    var docs=(env&&Array.isArray(env.documents))?env.documents:[];
+    var hasDocList=completed && docs.length>0;
     var body=document.getElementById('esignPvBody');
     if(body){
-      body.innerHTML='<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Recipients</div>'
+      var recipientsHtml='<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Recipients</div>'
         +(signers.length? signers.map(_esignSignerRowHTML).join('') : '<div style="color:#888;font-size:12px;padding:8px 0;">No recipients.</div>');
+      // Completed + documents[] present → show the Signed documents section (combined + per-doc) above recipients.
+      body.innerHTML=(hasDocList ? _esignSignedDocsSectionHtml(env, docs) : '') + recipientsHtml;
+      if(hasDocList){
+        var cmb=body.querySelector('.esignSignedCombined');
+        if(cmb) cmb.addEventListener('click', function(){ _esignPvDownloadCombined(envelopeId, cmb.getAttribute('data-url')||'', cmb); });
+        body.querySelectorAll('.esignSignedDoc').forEach(function(el){
+          el.addEventListener('click', function(){ _esignPvDownloadDoc(envelopeId, el.getAttribute('data-doc')||'', el.getAttribute('data-url')||'', el); });
+        });
+      }
     }
     var actions=document.getElementById('esignPvActions');
     if(actions){
-      var low=st2.toLowerCase();
-      var completed=['completed','signed'].indexOf(low)>-1;
-      var live=['sent','in_progress','draft'].indexOf(low)>-1;
       var btns='';
       if(live) btns+='<button type="button" id="esignPvCancelBtn2" style="background:transparent;border:1px solid rgba(229,72,77,0.4);color:#E5484D;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">Cancel request</button>';
-      if(completed) btns+='<button type="button" id="esignPvDlBtn2" style="background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">⬇ Download signed PDF</button>';
+      // Older single-doc envelopes (no documents[]) keep today's single signed-PDF button in the footer.
+      if(completed && !hasDocList) btns+='<button type="button" id="esignPvDlBtn2" style="background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;">⬇ Download signed PDF</button>';
       actions.innerHTML=btns||'<span style="font-size:10px;color:#666;">No actions available.</span>';
       var cb=document.getElementById('esignPvCancelBtn2'); if(cb) cb.addEventListener('click', function(){ _esignPvCancel(envelopeId); });
       var db=document.getElementById('esignPvDlBtn2'); if(db) db.addEventListener('click', function(){ _esignPvFinalDownload(envelopeId, env.final_pdf_url||'', db); });
