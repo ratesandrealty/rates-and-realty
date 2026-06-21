@@ -2924,6 +2924,22 @@
           </div>
         </div>
 
+        <!-- CO-BORROWER DRIVER'S LICENSE -->
+        <div class="ld-form-grid cols-3">
+          <div class="ld-field">
+            <label class="ld-label">Driver's License #</label>
+            <input class="ld-input" type="text" id="cb_dl_number" placeholder="A1234567">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">DL State</label>
+            <input class="ld-input" type="text" id="cb_dl_state" placeholder="CA" maxlength="2">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">DL Expiration</label>
+            <input class="ld-input" type="date" id="cb_dl_expiry">
+          </div>
+        </div>
+
         <!-- CO-BORROWER CURRENT ADDRESS -->
         <h4 style="color:var(--muted); font-size:13px; margin:16px 0 10px; text-transform:uppercase; letter-spacing:0.5px;">Current Address</h4>
         <div class="ld-form-grid cols-4">
@@ -17322,6 +17338,9 @@ async function save1003() {
     co_borrower_cell_phone: gv('cb_cell_phone'),
     co_borrower_home_phone: gv('cb_home_phone'),
     co_borrower_email: gv('cb_email'),
+    co_borrower_dl_number: gv('cb_dl_number'),
+    co_borrower_dl_state: gv('cb_dl_state'),
+    co_borrower_dl_expiry: toISODate(gv('cb_dl_expiry')),
     co_borrower_current_street: gv('cb_current_street'),
     co_borrower_current_city: gv('cb_current_city'),
     co_borrower_current_state: gv('cb_current_state'),
@@ -18114,6 +18133,9 @@ async function load1003(overrideCid) {
     sv('cb_cell_phone', data.co_borrower_cell_phone);
     sv('cb_home_phone', data.co_borrower_home_phone);
     sv('cb_email', data.co_borrower_email);
+    sv('cb_dl_number', data.co_borrower_dl_number);
+    sv('cb_dl_state', data.co_borrower_dl_state);
+    sv('cb_dl_expiry', data.co_borrower_dl_expiry);
     sv('cb_current_street', data.co_borrower_current_street);
     sv('cb_current_city', data.co_borrower_current_city);
     sv('cb_current_state', data.co_borrower_current_state);
@@ -21265,6 +21287,21 @@ async function openOCRReviewModal(fields, docType, sourceFile) {
     if (activeB && activeB.contact_id) defaultTargetId = activeB.contact_id;
   }
   if (!defaultTargetId) defaultTargetId = primaryId;
+  // If the visible 1003 switcher is on a CO-BORROWER tab, that selection WINS —
+  // the scan must target the co-borrower, not the primary. For an inline
+  // co-borrower (no own contact) use the 'cob:<primaryId>' sentinel so the apply
+  // routes to co_borrower_* columns instead of clobbering the primary row.
+  if (typeof losViewMode !== 'undefined' && losViewMode === 'individual'
+      && typeof losActiveBorrowerIdx === 'number' && losActiveBorrowerIdx >= 1
+      && Array.isArray(window.losBorrowers) && window.losBorrowers[losActiveBorrowerIdx]) {
+    const ab = window.losBorrowers[losActiveBorrowerIdx];
+    if (ab.contact_id) {
+      defaultTargetId = ab.contact_id;
+    } else {
+      const pc = (window.losBorrowers[0] && window.losBorrowers[0].contact_id) || primaryId;
+      if (pc) defaultTargetId = 'cob:' + pc;
+    }
+  }
   _ocrReviewTargetId = defaultTargetId || null;
   _ocrReviewIsAddNew = false;
 
@@ -21409,17 +21446,30 @@ async function _ocrReviewRenderSource(file) {
 // switching the read source is transparent to the write path.
 function _ocrReviewBorrowerList() {
   const lb = Array.isArray(window.losBorrowers) ? window.losBorrowers : [];
+  // Primary contact id — used to build the sentinel target for an inline
+  // co-borrower (one stored only in the primary row's co_borrower_* columns).
+  const primaryCid = (lb[0] && (lb[0].contact_id || (lb[0].contact && lb[0].contact.id)))
+                  || (typeof losCid === 'function' ? losCid() : null)
+                  || (window.contactData && contactData.id) || null;
   const list = [];
   lb.forEach(function(b, i) {
     if (!b) return;
     const c   = b.contact || {};
-    const cid = b.contact_id || c.id;
-    if (!cid) return; // skip legacy app-row co-borrower w/ no contact_id — picker needs an id to target
-    const name = [(c.first_name||'').trim(), (c.last_name||'').trim()].filter(Boolean).join(' ')
-              || ('Borrower ' + (i + 1));
+    let cid = b.contact_id || c.id;
     let role = (typeof _borrRoleLabel === 'function')
       ? _borrRoleLabel(b, i)
       : ((b.is_primary || i === 0) ? 'Primary' : 'Co-Borrower');
+    const isCo = !(b.is_primary || i === 0)
+              && (b.borrower_role === 'CoBorrower' || String(role).toLowerCase().indexOf('co-borrower') !== -1);
+    if (!cid) {
+      // Inline co-borrower (no own contact): target the co_borrower_* slot on the
+      // primary's app row via a 'cob:<primaryId>' sentinel so the apply writes
+      // co_borrower_* columns and NEVER clobbers the primary inline columns.
+      if (isCo && primaryCid) cid = 'cob:' + primaryCid;
+      else return; // no id and not an inline co-borrower — can't target
+    }
+    const name = [(c.first_name||'').trim(), (c.last_name||'').trim()].filter(Boolean).join(' ')
+              || ('Borrower ' + (i + 1));
     // Uppercase Primary for visual emphasis (matches the old picker's PRIMARY chip).
     if (role === 'Primary') role = 'PRIMARY';
     list.push({ id: cid, name: name, role: role });
@@ -21510,6 +21560,9 @@ let _ocrReviewExistingLoading = {}; // { [cid]: true } while a fetch is in-fligh
 
 async function _ocrReviewFetchExisting(cid) {
   if (!cid) return null;
+  // Inline co-borrower sentinel ('cob:<primaryId>') is not a contact id — no
+  // per-contact existing row to diff against; show no existing-data column.
+  if (typeof cid === 'string' && cid.indexOf('cob:') === 0) { _ocrReviewExistingCache[cid] = {}; return {}; }
   if (_ocrReviewExistingCache[cid] !== undefined) return _ocrReviewExistingCache[cid];
   if (_ocrReviewExistingLoading[cid]) return null; // re-render will happen when in-flight fetch resolves
   _ocrReviewExistingLoading[cid] = true;
@@ -22249,6 +22302,25 @@ const _OCR_TO_APP_COLUMN = {
   gross_monthly_income:     'base_income',
   base_income:              'base_income',
 };
+// When the apply target is the CO-BORROWER (inline co_borrower_* on the primary's
+// app row), each primary inline column is rerouted to its co_borrower_* twin.
+// A column with NO twin here is DROPPED for co-borrower applies — so a co-borrower
+// scan can NEVER write a primary inline column. (SSN isn't on a DL but mapped for
+// completeness; employer_*/base_income have no co_borrower_* twin → dropped.)
+const _OCR_APP_COL_TO_COBORROWER = {
+  first_name:             'co_borrower_first_name',
+  middle_name:            'co_borrower_middle_name',
+  last_name:              'co_borrower_last_name',
+  date_of_birth:          'co_borrower_dob',
+  ssn:                    'co_borrower_ssn',
+  dl_number:              'co_borrower_dl_number',
+  dl_state:               'co_borrower_dl_state',
+  dl_expiry:              'co_borrower_dl_expiry',
+  current_address_street: 'co_borrower_current_street',
+  current_address_city:   'co_borrower_current_city',
+  current_address_state:  'co_borrower_current_state',
+  current_address_zip:    'co_borrower_current_zip',
+};
 // Columns that need date conversion via toISODate (MM/DD/YYYY -> YYYY-MM-DD)
 const _OCR_APP_DATE_COLS = new Set(['date_of_birth', 'dl_expiry']);
 // Columns that need numeric conversion via parseFloat (strip $ and commas)
@@ -22271,7 +22343,7 @@ const _OCR_APP_NUMERIC_COLS = new Set(['base_income']);
 // fetch-or-create (mirrors save1003 L12678-12711). Throws on DB error so the
 // caller chooses how to surface it. Returns the non-metadata patch keys for
 // logging.
-async function _ocrApplyPatchesToTarget(targetId, fields, extraAppPatch) {
+async function _ocrApplyPatchesToTarget(targetId, fields, extraAppPatch, asCoBorrower) {
   const contactsPatch = {};
   const appPatch = {};
   Object.entries(fields).forEach(function(kv) {
@@ -22289,6 +22361,15 @@ async function _ocrApplyPatchesToTarget(targetId, fields, extraAppPatch) {
       const n = parseFloat(String(val).replace(/[$,\s]/g, ''));
       if (!isFinite(n)) return;
       val = n;
+    }
+
+    if (asCoBorrower) {
+      // Co-borrower scope: reroute to the co_borrower_* twin and NEVER touch a
+      // primary inline column (drop columns with no twin) or the contacts name.
+      const coCol = _OCR_APP_COL_TO_COBORROWER[col];
+      if (!coCol) return;
+      appPatch[coCol] = val;
+      return;
     }
 
     appPatch[col] = val;
@@ -22865,6 +22946,7 @@ async function _ocrReviewFetchBankMatch(cid, fields) {
 // user switches target mid-flight (the picker handler resets state).
 async function _ocrReviewMaybeLoadBankMatch(cid) {
   if (!cid || _ocrReviewIsAddNew) return;
+  if (typeof cid === 'string' && cid.indexOf('cob:') === 0) return; // sentinel, not a contact id
   if (!_ocrIsBankScan(_ocrReviewFields)) return;
   _ocrReviewBankMatch = { existingRowId: null, existingRow: null, choice: 'add', loading: true };
   // Quick-wins Fix 1: refresh Apply label so the button disables itself
@@ -23007,6 +23089,12 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
     if (typeof toast === 'function') toast('No borrower selected', true);
     return;
   }
+  // Inline co-borrower target ('cob:<primaryId>'): the row owner is the PRIMARY
+  // contact, but fields route to co_borrower_* columns (asCoBorrower) so the
+  // primary's own inline columns are never touched. Side writes (bank/income/
+  // reload) use the resolved row owner id.
+  const asCoBorrower = (typeof targetId === 'string' && targetId.indexOf('cob:') === 0);
+  const rowOwnerId = asCoBorrower ? targetId.slice(4) : targetId;
 
   const applyBtn = document.getElementById('ocrReviewApplyBtn');
   const origLabel = applyBtn ? applyBtn.textContent : '';
@@ -23068,8 +23156,8 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
       monthliesPatch   = _ocrBuildEmploymentMonthliesPatch(monthliesPreview);
     }
 
-    const r = await _ocrApplyPatchesToTarget(targetId, fields, monthliesPatch);
-    console.log('[ocrReview] Applied to', targetId,
+    const r = await _ocrApplyPatchesToTarget(rowOwnerId, fields, monthliesPatch, asCoBorrower);
+    console.log('[ocrReview] Applied to', rowOwnerId, asCoBorrower ? '(co_borrower_* columns)' : '',
       '— contacts patch:', r.contactsKeys, '— mortgage_applications patch:', r.appKeys,
       '— monthlies patch:', monthliesPatch);
 
@@ -23100,15 +23188,15 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
       } else if (bankChoice === 'replace' && matchedRowId) {
         bankUpdated = await _ocrMaybeUpdateBankAsset(matchedRowId, fields);
         if (bankUpdated && typeof losLoadAssets === 'function') {
-          try { await losLoadAssets(targetId); }
+          try { await losLoadAssets(rowOwnerId); }
           catch (e) { console.warn('[ocrReview] losLoadAssets after asset update failed:', e); }
         }
       } else {
         // 'add' (default) OR 'replace' without matchedRowId (degenerate —
         // no match was actually found; fall back to add)
-        bankInserted = await _ocrMaybeInsertBankAsset(targetId, fields);
+        bankInserted = await _ocrMaybeInsertBankAsset(rowOwnerId, fields);
         if (bankInserted && typeof losLoadAssets === 'function') {
-          try { await losLoadAssets(targetId); }
+          try { await losLoadAssets(rowOwnerId); }
           catch (e) { console.warn('[ocrReview] losLoadAssets after asset insert failed:', e); }
         }
       }
@@ -23132,9 +23220,9 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
     });
     if (incomeDocType && anyIncomeChecked) {
       try {
-        incomeInserted = await _ocrMaybeInsertIncomeRow(targetId, fields, incomeDocType);
+        incomeInserted = await _ocrMaybeInsertIncomeRow(rowOwnerId, fields, incomeDocType);
         if (incomeInserted && typeof losLoadIncome === 'function') {
-          try { await losLoadIncome(targetId); }
+          try { await losLoadIncome(rowOwnerId); }
           catch (e) { console.warn('[ocrReview] losLoadIncome after income insert failed:', e); }
         }
       } catch (incomeErr) {
@@ -23181,9 +23269,9 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
       }
     }
     closeOCRReviewModal();
-    try { if (typeof switchToBorrower === 'function') await switchToBorrower(targetId); }
+    try { if (typeof switchToBorrower === 'function') await switchToBorrower(rowOwnerId); }
     catch (e) { console.warn('[ocrReview] switchToBorrower after apply failed:', e); }
-    try { if (typeof load1003 === 'function') await load1003(targetId); }
+    try { if (typeof load1003 === 'function') await load1003(rowOwnerId); }
     catch (e) { console.warn('[ocrReview] load1003 after apply failed:', e); }
   } catch (err) {
     console.error('[ocrReview] write failed:', err);
