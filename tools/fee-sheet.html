@@ -2442,6 +2442,129 @@ function helocInit() {
 }
 helocInit();
 
+/* ════════════════════════════════════════════════════════════════════
+   PROPERTY ADDRESS AUTOCOMPLETE — uses the address-autocomplete edge fn
+   (verify_jwt). Reuses the parent's authenticated Supabase client so the user
+   JWT is attached; falls back to the shared client module when standalone.
+   ════════════════════════════════════════════════════════════════════ */
+var _fsAddrTimer = null, _fsAddrItems = [], _fsAddrHi = -1;
+
+function _fsEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+async function _fsGetAuthClient() {
+    try {
+        var pc = window.parent;
+        if (pc && pc !== window) {
+            if (pc._supabaseClient) return pc._supabaseClient;            // session-aware client (JWT attached)
+            if (typeof pc._authClient === 'function') { var c = pc._authClient(); if (c) return c; }
+        }
+    } catch (_) {}
+    try { var m = await import('/api/supabase-client.js'); if (m && m.supabase) return m.supabase; } catch (_) {}
+    return null;
+}
+
+function _fsAddrClose() {
+    _fsAddrItems = []; _fsAddrHi = -1;
+    var d = document.getElementById('_fsAddrDrop'); if (d) d.remove();
+}
+
+function _fsAddrInput() {
+    clearTimeout(_fsAddrTimer);
+    var inp = $('propertyAddress'); if (!inp) return;
+    var q = (inp.value || '').trim();
+    if (q.length < 3) { _fsAddrClose(); return; }
+    _fsAddrTimer = setTimeout(function () { _fsAddrFetch(q); }, 250);
+}
+
+async function _fsAddrFetch(q) {
+    var inp = $('propertyAddress');
+    if (!inp || (inp.value || '').trim() !== q) return; // user kept typing
+    try {
+        var client = await _fsGetAuthClient();
+        if (!client || !client.functions) return; // no auth → no suggestions (never error)
+        var resp = await client.functions.invoke('address-autocomplete', { body: { input: q } });
+        if (!resp || resp.error) return;            // function error → show nothing
+        var data = resp.data || {};
+        var preds = Array.isArray(data.predictions) ? data.predictions : [];
+        var cur = $('propertyAddress');
+        if (!cur || (cur.value || '').trim() !== q) return; // stale result
+        if (!preds.length) { _fsAddrClose(); return; }
+        _fsAddrRender(preds);
+    } catch (e) { /* never break typing */ }
+}
+
+function _fsAddrRender(preds) {
+    _fsAddrClose();
+    var inp = $('propertyAddress'); if (!inp) return;
+    var field = inp.parentElement; if (!field) return;
+    field.style.position = 'relative';
+    _fsAddrItems = preds.slice(0, 8);
+    _fsAddrHi = -1;
+    var drop = document.createElement('div');
+    drop.id = '_fsAddrDrop';
+    drop.style.cssText = 'position:absolute;top:calc(100% + 2px);left:0;width:100%;background:#1a1a1a;border:1px solid rgba(201,168,76,0.4);border-radius:8px;z-index:99999;box-shadow:0 8px 24px rgba(0,0,0,0.7);max-height:240px;overflow-y:auto;font-size:12px;';
+    _fsAddrItems.forEach(function (p, i) {
+        var main = p.main || p.description || '';
+        var sec = p.secondary || '';
+        var item = document.createElement('div');
+        item.dataset.i = String(i);
+        item.style.cssText = 'padding:9px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.06);color:#eee;line-height:1.4;';
+        item.innerHTML = '<div style="font-weight:600;color:#eee;">' + _fsEsc(main) + '</div>' +
+            (sec ? '<div style="font-size:10px;color:#888;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _fsEsc(sec) + '</div>' : '');
+        item.addEventListener('mousedown', function (e) { e.preventDefault(); _fsAddrPick(i); }); // before blur
+        item.addEventListener('mouseover', function () { _fsAddrSetHi(i); });
+        drop.appendChild(item);
+    });
+    field.appendChild(drop);
+}
+
+function _fsAddrSetHi(i) {
+    _fsAddrHi = i;
+    var drop = document.getElementById('_fsAddrDrop'); if (!drop) return;
+    Array.prototype.forEach.call(drop.children, function (el, idx) {
+        el.style.background = (idx === i) ? 'rgba(201,168,76,0.15)' : '';
+    });
+}
+
+function _fsAddrScrollHi() {
+    var drop = document.getElementById('_fsAddrDrop'); if (!drop) return;
+    var el = drop.children[_fsAddrHi];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+}
+
+function _fsAddrPick(i) {
+    var p = _fsAddrItems[i]; if (!p) return;
+    var inp = $('propertyAddress'); if (!inp) return;
+    inp.value = p.description || p.main || '';   // only replace on an actual pick
+    _fsAddrClose();
+    try { inp.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+    if (typeof recalc === 'function') recalc();   // existing change pipeline → autosave + render
+}
+
+function _fsAddrKey(e) {
+    var drop = document.getElementById('_fsAddrDrop');
+    if (!drop || !_fsAddrItems.length) { if (e.key === 'Escape') _fsAddrClose(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); _fsAddrSetHi(Math.min(_fsAddrItems.length - 1, _fsAddrHi + 1)); _fsAddrScrollHi(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); _fsAddrSetHi(Math.max(0, _fsAddrHi - 1)); _fsAddrScrollHi(); }
+    else if (e.key === 'Enter') { if (_fsAddrHi >= 0) { e.preventDefault(); _fsAddrPick(_fsAddrHi); } }
+    else if (e.key === 'Escape') { e.preventDefault(); _fsAddrClose(); }
+}
+
+function _fsAddrWire() {
+    var inp = $('propertyAddress'); if (!inp || inp._fsAddrWired) return;
+    inp._fsAddrWired = true;
+    inp.setAttribute('autocomplete', 'off');
+    inp.addEventListener('input', _fsAddrInput);
+    inp.addEventListener('keydown', _fsAddrKey);
+    inp.addEventListener('blur', function () { setTimeout(_fsAddrClose, 180); }); // delay so a click registers
+    document.addEventListener('click', function (e) {
+        var drop = document.getElementById('_fsAddrDrop'); if (!drop) return;
+        if (e.target === inp || drop.contains(e.target)) return;
+        _fsAddrClose();
+    });
+}
+_fsAddrWire();
+
 renderCards();
 recalc();
 
