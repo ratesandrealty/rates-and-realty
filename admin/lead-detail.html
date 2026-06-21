@@ -11561,6 +11561,14 @@ function buildFeeSheetUrl() {
 let _feeSheetLoaded = false;
 let _feeSheetSaveTimer = null;
 let _feeSheetSavedData = null;
+// Comprehensive draft (all sections incl. HELOC) persisted via the
+// save_fee_sheet_draft / get_fee_sheet_draft RPCs, keyed by contact id.
+let _feeSheetRestoreDone = false;   // true only after a draft has been applied — gates autosave
+let _fsDraftSaveTimer = null;
+function _feeSheetCid() {
+  return (typeof getContactId === 'function' && getContactId()) ||
+    new URLSearchParams(window.location.search).get('contact_id') || null;
+}
 
 async function prefillFeeSheet() {
   var iframe = document.getElementById('feeSheetIframe');
@@ -11572,6 +11580,7 @@ async function prefillFeeSheet() {
     iframe.addEventListener('load', async function() {
       var cid = new URLSearchParams(window.location.search).get('contact_id');
       if (!cid) return;
+      _feeSheetRestoreDone = false; // block autosave until a draft is applied
       try {
         var fsd = null, appRow = null;
         var { data: _restoreRow, error: _restoreErr } = await _authClient().from('mortgage_applications_secure')
@@ -11604,16 +11613,61 @@ async function prefillFeeSheet() {
           }, 300);
         }
       } catch(e) { console.warn('Fee sheet restore:', e); }
+
+      // Comprehensive draft restore (authoritative) via RPC — covers ALL sections
+      // incl. HELOC. Applied AFTER the seed above so it wins; the iframe replies
+      // with fsDraftReady which enables autosave (ordering prevents a blank first save).
+      var _draftObj = {};
+      try {
+        var _dr = await _authClient().rpc('get_fee_sheet_draft', { p_contact_id: cid });
+        if (_dr && !_dr.error && _dr.data && typeof _dr.data === 'object') _draftObj = _dr.data;
+      } catch (_de) { console.warn('[fee sheet draft get]', _de); }
+      setTimeout(function () {
+        try { iframe.contentWindow.postMessage({ type: 'fsDraftApply', draft: _draftObj }, '*'); } catch (_) {}
+      }, 450);
     });
   } else {
     syncFeeSheetData();
   }
 }
 
+// Comprehensive draft bridge — restore-ready signal + RPC autosave (all sections incl. HELOC).
+window.addEventListener('message', function(e) {
+  if (!e.data) return;
+  // Iframe finished applying the restored draft → safe to start autosaving now.
+  if (e.data.type === 'fsDraftReady') { _feeSheetRestoreDone = true; return; }
+  if (e.data.type !== 'fsDraftChanged') return;
+  if (!_feeSheetRestoreDone) return;               // don't save before restore completes
+  var cid = _feeSheetCid();
+  if (!cid) return;                                // only save when a borrower is known
+  var draft = e.data.draft;
+  if (!draft || typeof draft !== 'object') return;
+  var ind = document.getElementById('feeSheetSaveStatus');
+  if (ind) { ind.textContent = 'Saving…'; ind.style.color = '#888'; }
+  clearTimeout(_fsDraftSaveTimer);
+  _fsDraftSaveTimer = setTimeout(async function() {
+    try {
+      var r = await _authClient().rpc('save_fee_sheet_draft', { p_contact_id: cid, p_data: draft });
+      if (r && r.error) throw new Error(r.error.message || 'save failed');
+      if (ind) {
+        var t = new Date();
+        ind.textContent = 'Saved ' + String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
+        ind.style.color = '#2ecc71';
+      }
+    } catch (err) {
+      console.warn('[fee sheet draft save]', err);
+      if (ind) { ind.textContent = 'Save failed'; ind.style.color = '#e74c3c'; }
+    }
+  }, 600);
+});
+
 // Listen for auto-save messages from fee sheet iframe
 window.addEventListener('message', function(e) {
   if (!e.data || e.data.type !== 'feeSheetAutoSave') return;
-  var saveIndicator = document.getElementById('feeSheetSaveStatus');
+  // The visible "Saved HH:MM" status is now driven by the comprehensive-draft RPC
+  // autosave (fsDraftChanged handler above); this legacy path keeps doing the
+  // mortgage_applications column sync + lead-score events silently.
+  var saveIndicator = null;
   if (saveIndicator) { saveIndicator.textContent = 'Saving...'; saveIndicator.style.color = '#888'; }
   clearTimeout(_feeSheetSaveTimer);
   _feeSheetSaveTimer = setTimeout(async function() {
@@ -11676,6 +11730,14 @@ function openFeeSheetPDF() {
   // Capture the exact HTML preview from the fee sheet iframe — NO edge function
   var iframe = document.getElementById('feeSheetIframe');
   if (!iframe) { alert('Fee sheet not loaded yet'); return; }
+  // HELOC mode: the standard fee-sheet PDF path has no HELOC data (blank page).
+  // Use the iframe's branded HELOC report (shared header/footer) instead.
+  try {
+    var _cw = iframe.contentWindow;
+    if (_cw && typeof _cw.getFeeSheetMode === 'function' && _cw.getFeeSheetMode() === 'heloc') {
+      if (typeof _cw._helocOpenReport === 'function') { _cw._helocOpenReport(); return; }
+    }
+  } catch (e) { /* cross-frame guard — fall through to standard path */ }
   var iframeDoc;
   try { iframeDoc = iframe.contentDocument || iframe.contentWindow.document; } catch(e) { alert('Cannot access fee sheet'); return; }
   var sheetEl = iframeDoc.getElementById('sheet');

@@ -1792,7 +1792,135 @@ function copyToClipboard() {
 // at the top level for backwards compat. Once parent gate updates to detect d.scenarios, the top-level
 // purchasePrice duplication can drop.
 let _saveTimer = null;
+
+/* ════════════════════════════════════════════════════════════════════
+   COMPREHENSIVE DRAFT — autosave/restore for ALL sections incl. HELOC.
+   collectFeeSheetDraft() gathers every input; applyFeeSheetDraft() repopulates
+   them, restores the active mode, and re-renders the live preview. The parent
+   (lead-detail) persists/loads via the save_fee_sheet_draft / get_fee_sheet_draft
+   RPCs and bridges the object over postMessage.
+   ════════════════════════════════════════════════════════════════════ */
+var _fsApplying = false;            // true while applyFeeSheetDraft runs (suppresses autosave)
+function getFeeSheetMode() { return _currentMode; }
+
+function collectFeeSheetDraft() {
+    function v(id){ var el = $(id); return el ? el.value : ''; }
+    return {
+        v: 3,
+        mode: _currentMode,
+        common: {
+            borrowerName: v('borrowerName'),
+            propertyAddress: v('propertyAddress'),
+            purchasePrice: v('purchasePrice'),
+            downPct: v('downPct'),
+            downDollar: v('downDollar'),
+            loanAmount: v('loanAmount'),
+            loanProduct: v('loanProduct'),
+            lockPeriod: v('lockPeriod'),
+            propertyType: v('propertyType'),
+            creditScore: v('creditScore'),
+            state: v('state'),
+            county: v('county'),
+            taxMode: _taxMode,
+            annualTax: v('annualTax'),
+            taxPct: v('taxPctInput'),
+            annualInsurance: v('annualInsurance')
+        },
+        scenarios: scenarios.map(function (s) {
+            return { id: s.id, label: s.label, rate: s.rate, points: s.points, origComp: s.origComp, lenderCredits: s.lenderCredits, recommended: !!s.recommended };
+        }),
+        property_scenarios: (propertyScenarios || []).map(function (p) {
+            return { id: p.id, label: p.label, propertyType: p.propertyType, purchasePrice: p.purchasePrice, downPct: (p.downPct != null ? p.downPct : 20), hoa: p.hoa, monthlyRent: p.monthlyRent, rate: p.rate, loanProduct: p.loanProduct, recommended: !!p.recommended };
+        }),
+        heloc: {
+            value: v('heloc_value'),
+            balance: v('heloc_balance'),
+            cltv: v('heloc_cltv'),
+            draw: v('heloc_draw'),
+            origOptions: (_helocState.origOptions || []).slice(),
+            origSelected: _helocState.origSelected,
+            autopay: !!($('heloc_autopay') && $('heloc_autopay').checked),
+            cards: (_helocState.cards || []).map(function (c) { return { type: c.type, term: c.term, rate: c.rate, selected: !!c.selected }; })
+        }
+    };
+}
+
+function applyFeeSheetDraft(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    _fsApplying = true;
+    try {
+        var c = obj.common || {};
+        function setV(id, val) { var el = $(id); if (el && val != null && val !== '') el.value = val; }
+        setV('borrowerName', c.borrowerName);
+        setV('propertyAddress', c.propertyAddress);
+        setV('purchasePrice', c.purchasePrice);
+        setV('downPct', c.downPct);
+        setV('downDollar', c.downDollar);
+        setV('loanAmount', c.loanAmount);
+        setV('loanProduct', c.loanProduct);
+        setV('lockPeriod', c.lockPeriod);
+        setV('propertyType', c.propertyType);
+        setV('creditScore', c.creditScore);
+        setV('state', c.state);
+        setV('county', c.county);
+        setV('annualTax', c.annualTax);
+        setV('taxPctInput', c.taxPct);
+        setV('annualInsurance', c.annualInsurance);
+        if (c.taxMode) { try { setTaxMode(c.taxMode); } catch (_) {} }
+
+        // Rate-comparison scenarios — applied in place (scenarios is const).
+        if (Array.isArray(obj.scenarios) && obj.scenarios.length) {
+            for (var i = 0; i < scenarios.length && i < obj.scenarios.length; i++) {
+                var si = obj.scenarios[i];
+                scenarios[i].label = si.label || scenarios[i].label;
+                scenarios[i].rate = si.rate || 0;
+                scenarios[i].points = si.points || 0;
+                scenarios[i].origComp = (si.origComp != null) ? si.origComp : 1.5;
+                scenarios[i].lenderCredits = si.lenderCredits || 0;
+                if (typeof si.recommended === 'boolean') scenarios[i].recommended = si.recommended;
+            }
+        }
+        if (Array.isArray(obj.property_scenarios) && obj.property_scenarios.length) {
+            propertyScenarios = obj.property_scenarios.map(function (p) {
+                return { id: p.id || 'P?', label: p.label || '', propertyType: p.propertyType || 'sfr', purchasePrice: p.purchasePrice || 0, downPct: (p.downPct != null ? p.downPct : 20), hoa: p.hoa || 0, monthlyRent: p.monthlyRent || 0, rate: p.rate || 0, loanProduct: p.loanProduct || 'conv30', recommended: !!p.recommended };
+            });
+        }
+
+        // HELOC section.
+        var h = obj.heloc || {};
+        if ($('heloc_value')) $('heloc_value').value = (h.value != null ? h.value : '');
+        if ($('heloc_balance')) $('heloc_balance').value = (h.balance != null ? h.balance : '');
+        if ($('heloc_cltv') && h.cltv != null && h.cltv !== '') $('heloc_cltv').value = h.cltv;
+        if ($('heloc_draw')) $('heloc_draw').value = (h.draw != null ? h.draw : '');
+        if (Array.isArray(h.origOptions) && h.origOptions.length) _helocState.origOptions = h.origOptions.slice();
+        if (h.origSelected != null) _helocState.origSelected = h.origSelected;
+        if (typeof h.autopay === 'boolean' && $('heloc_autopay')) $('heloc_autopay').checked = h.autopay;
+        if (Array.isArray(h.cards) && h.cards.length) {
+            _helocState.cards = h.cards.map(function (c2) { return { type: c2.type || 'fixed', term: c2.term || 30, rate: c2.rate || 0, selected: !!c2.selected }; });
+            if (!_helocState.cards.some(function (c2) { return c2.selected; })) _helocState.cards[0].selected = true;
+        }
+
+        // Restore active mode (switches panel visibility + toggle visuals + render).
+        var targetMode = obj.mode || 'rate';
+        if (targetMode !== _currentMode) {
+            setMode(targetMode);
+        } else {
+            ['rate', 'single', 'property', 'heloc'].forEach(function (m) {
+                var b = document.getElementById('modeBtn' + m.charAt(0).toUpperCase() + m.slice(1));
+                if (b) b.classList.toggle('active', m === _currentMode);
+            });
+        }
+        // Rebuild the HELOC editor + the visible output from restored state.
+        if (typeof helocRenderRateEditor === 'function') helocRenderRateEditor();
+        if (_currentMode === 'heloc') { if (typeof helocRecalc === 'function') helocRecalc(); }
+        else { _origRecalc(); }
+    } finally {
+        _fsApplying = false;
+    }
+}
+
 function notifyParentOfChange() {
+    if (_fsApplying) return; // never autosave while restoring
     clearTimeout(_saveTimer);
     _saveTimer = setTimeout(function() {
         if (window.parent === window) return; // not in iframe
@@ -1861,6 +1989,8 @@ function notifyParentOfChange() {
             lastUpdated: new Date().toISOString()
         };
         window.parent.postMessage(data, '*');
+        // Comprehensive draft → parent persists it via save_fee_sheet_draft RPC.
+        try { window.parent.postMessage({ type: 'fsDraftChanged', draft: collectFeeSheetDraft() }, '*'); } catch (_) {}
     }, 1000);
 }
 
@@ -2070,6 +2200,7 @@ function helocRecalc() {
     helocRenderRateEditor();
     helocRenderOutput(draw, origPct, autopay);
     helocValidate(draw);
+    notifyParentOfChange(); // HELOC edits autosave too (guarded during restore)
 }
 
 // Light recompute used while the user is typing in a rate / origination % input:
@@ -2095,6 +2226,7 @@ function helocRecalcLight() {
     });
     helocRenderOutput(draw, origPct, autopay);
     helocValidate(draw);
+    notifyParentOfChange(); // autosave on rate/orig typing too (guarded during restore)
 }
 
 function helocRenderOutput(draw, origPct, autopay) {
@@ -2447,6 +2579,13 @@ recalc();
                 propBtn.classList.toggle('active', _currentMode === 'property');
             }
             _origRecalc(); // don't trigger auto-save back
+        }
+        // Comprehensive draft restore from the parent (get_fee_sheet_draft RPC).
+        // Apply the saved draft (if any), then signal ready so the parent enables
+        // autosave — ordering matters so the first autosave can't blank the draft.
+        if (e.data.type === 'fsDraftApply') {
+            try { if (e.data.draft && typeof e.data.draft === 'object' && Object.keys(e.data.draft).length) applyFeeSheetDraft(e.data.draft); } catch (err) { /* non-fatal */ }
+            try { window.parent.postMessage({ type: 'fsDraftReady' }, '*'); } catch (_) {}
         }
     });
 })();
