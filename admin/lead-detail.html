@@ -14935,6 +14935,77 @@ window.addEventListener('scroll', function() {
 /* ── HELPERS ── */
 function getVal(id) { return (document.getElementById(id)||{}).value || ''; }
 function setVal(id, v) { const el = document.getElementById(id); if (el) el.value = v || ''; }
+
+/* SSN display masking (display-only). The real value stays in the input's .value
+   at all times so the existing save/debounce path (save1003 reads .value) is
+   unchanged. While masked the input text is color-transparent + readOnly and a
+   masked overlay (•••-••-1234, last 4 from the real value) sits on top; the eye
+   button reveals/edits. Idempotent: re-calling just refreshes the mask. */
+function _lpInitSsnMask(id) {
+  var input = document.getElementById(id);
+  if (!input) return;
+  if (input._ssnRemask) { input._ssnRemask(); return; } // already wired — just refresh
+
+  var EYE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var EYEOFF = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+  var cs = getComputedStyle(input);
+  var padL = cs.paddingLeft || '12px', radius = cs.borderRadius || '8px';
+  var fs = cs.fontSize || '13px', ff = cs.fontFamily || 'inherit';
+  var origColor = input.style.color || cs.color || '#fff'; // restore target when visible
+
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'position:relative;width:100%;';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  input.style.paddingRight = '34px'; // room for the eye button
+
+  var ov = document.createElement('div');
+  ov.setAttribute('aria-hidden', 'true');
+  ov.style.cssText = 'position:absolute;left:0;top:0;right:0;bottom:0;display:none;align-items:center;'
+    + 'padding-left:' + padL + ';padding-right:34px;font-size:' + fs + ';font-family:' + ff + ';color:' + origColor + ';'
+    + 'pointer-events:none;border-radius:' + radius + ';box-sizing:border-box;white-space:nowrap;overflow:hidden;';
+  wrap.appendChild(ov);
+
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.tabIndex = -1;
+  btn.style.cssText = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:transparent;border:none;'
+    + 'color:rgba(255,255,255,0.4);cursor:pointer;padding:4px;line-height:0;display:flex;align-items:center;';
+  wrap.appendChild(btn);
+
+  var revealed = false;
+  function mask() {
+    revealed = false;
+    var v = (input.value || '').trim();
+    if (v) {
+      var last4 = v.replace(/\D/g, '').slice(-4);
+      ov.textContent = '•••-••-' + (last4 || '••••');
+      ov.style.display = 'flex';
+      input.style.color = 'transparent';
+    } else {
+      ov.style.display = 'none';
+      input.style.color = origColor; // empty → normal placeholder, no mask
+    }
+    input.readOnly = true;
+    btn.setAttribute('aria-label', 'Show SSN');
+    btn.innerHTML = EYE;
+  }
+  function reveal() {
+    revealed = true;
+    ov.style.display = 'none';
+    input.style.color = origColor;
+    input.readOnly = false;
+    btn.setAttribute('aria-label', 'Hide SSN');
+    btn.innerHTML = EYEOFF;
+    try { input.focus(); } catch (e) {}
+  }
+  btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); if (revealed) mask(); else reveal(); });
+  input.addEventListener('blur', function () { if (revealed) mask(); });
+  input.addEventListener('input', function () { if (!revealed) mask(); }); // catches programmatic value sets (e.g. vault load)
+  input._ssnRemask = mask;
+  mask();
+}
 function setSelectVal(id, v) {
   const el = document.getElementById(id);
   if (!el || !v) return;
@@ -18074,6 +18145,8 @@ async function load1003(overrideCid) {
             if (!v) return; // not permitted to see SSN, or none on file
             if (v.ssn) { try { sv('f_ssn', v.ssn); } catch (e) {} }
             if (v.co_borrower_ssn) { try { sv('cb_ssn', v.co_borrower_ssn); } catch (e) {} }
+            // refresh the SSN masks now that the real values are loaded from the vault
+            try { _lpInitSsnMask('f_ssn'); _lpInitSsnMask('cb_ssn'); } catch (e) {}
             // also refresh the read-only "SSN (last 4)" summary if present
             try {
               var el = document.getElementById('f_ssn');
@@ -18085,6 +18158,8 @@ async function load1003(overrideCid) {
 
     // Attach auto-save after fields are populated
     attachAutoSave();
+    // SSN display masking (display-only; real value stays in .value for save)
+    try { _lpInitSsnMask('f_ssn'); _lpInitSsnMask('cb_ssn'); } catch (e) {}
     // Hydrate the Loan Summary panel + compute initial DTI/LTV
     initLoanSummary();
     // Fill any still-empty 1A fields from the linked contacts (never overwrites
