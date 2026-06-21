@@ -9808,6 +9808,7 @@ var _esignSearchTimer = null;
 var _esignRPDoc = null;        // { document_id, name, page_count } currently shown in the right pane
 var _esignRPMode = 'edit';     // 'edit' | 'preview'
 var _esignActiveDocId = null;  // document_id highlighted in the left DOCUMENTS list
+var _esignActiveTplKey = null; // template key currently previewed in the right pane (templates have no document_id)
 var _esignAutoSaveTimer = null;
 var _esignTemplateEdit = false; // true while the right pane edits a LIBRARY template's own field layout
 var _esignReturnDocId = null;   // deal doc to restore in the right pane after exiting template-edit
@@ -9816,7 +9817,7 @@ function _esignCloseModal(){
   _esignHideSearch();
   document.removeEventListener('keydown', _esignDocKeydown);
   if(_esignAutoSaveTimer){ clearTimeout(_esignAutoSaveTimer); _esignAutoSaveTimer=null; }
-  _esignTool=null; _esignRPDoc=null; _esignActiveDocId=null; _esignTemplateEdit=false; _esignReturnDocId=null;
+  _esignTool=null; _esignRPDoc=null; _esignActiveDocId=null; _esignActiveTplKey=null; _esignTemplateEdit=false; _esignReturnDocId=null;
   var o=document.getElementById('esignSendOverlay'); if(o) o.remove();
 }
 
@@ -9831,6 +9832,21 @@ function _esignAddSigner(name, email, role, personContactId){
   _esignSigners.push(s);
   _esignRenderSigners();
   return true;
+}
+
+// "+ Add" on a suggested-from-this-loan person. If the loan record has an email, add directly.
+// If it doesn't (common for co-borrowers/family with no email on file), prefill the manual form and
+// focus the email field instead of dead-ending — so the person can always be added.
+function _esignAddSuggested(btn){
+  if(!btn) return;
+  var name=btn.getAttribute('data-n')||'', email=btn.getAttribute('data-e')||'';
+  var role=btn.getAttribute('data-r')||'other', pcid=btn.getAttribute('data-p')||null;
+  if(email){ _esignAddSigner(name, email, role, pcid); return; }
+  var n=document.getElementById('esignManualName'), e=document.getElementById('esignManualEmail'), r=document.getElementById('esignManualRole');
+  if(n) n.value=name;
+  if(r){ var hasRole=Array.prototype.some.call(r.options,function(o){ return o.value===role; }); r.value=hasRole?role:'other'; }
+  if(e){ e.value=''; e.focus(); }
+  showToast('Add an email for '+(name||'this person')+' to include them', true);
 }
 
 function _esignRemoveSigner(idx){ _esignSigners.splice(idx,1); _esignRenderSigners(); }
@@ -10312,14 +10328,14 @@ function _esignRenderDocs(){
   var btnStyle='background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;padding:3px 9px;';
   var delStyle='background:transparent;border:none;color:#E5484D;font-size:16px;line-height:1;cursor:pointer;padding:0 4px;';
   list.innerHTML=_esignDocs.map(function(d,i){
-    var active=(d.kind==='pdf' && d.document_id===_esignActiveDocId);
+    var active=(d.kind==='pdf' && d.document_id===_esignActiveDocId) || (d.kind==='template' && d.key===_esignActiveTplKey);
     var rowOpen='<div style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;background:'+(active?'#1d1a12':'#161618')+';border:1px solid '+(active?'rgba(201,168,76,0.5)':'rgba(201,168,76,0.14)')+';border-radius:7px;margin-bottom:6px;">';
     if(d.kind==='template'){
       return rowOpen
         +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
-          +'<span style="min-width:0;display:flex;align-items:center;gap:8px;"><span style="font-size:15px;flex-shrink:0;">📄</span>'
+          +'<span onclick="_esignRPOpenTemplate('+i+')" title="Open preview" style="min-width:0;display:flex;align-items:center;gap:8px;cursor:pointer;"><span style="font-size:15px;flex-shrink:0;">📄</span>'
             +'<span style="min-width:0;"><span style="font-size:12px;color:#E0DDD4;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(d.name||d.key)+'</span>'
-            +'<span style="font-size:10px;color:#888;">Template</span></span></span>'
+            +'<span style="font-size:10px;color:#888;">Template'+(active?' · viewing':'')+'</span></span></span>'
           +'<span style="flex-shrink:0;display:flex;align-items:center;gap:6px;">'
             +'<button type="button" onclick="_esignDocPreviewTemplate('+i+')" style="'+btnStyle+'">Preview</button>'
             +'<button type="button" onclick="_esignRemoveDoc('+i+')" title="Remove" style="'+delStyle+'">&times;</button>'
@@ -10436,6 +10452,7 @@ function _esignRPOpen(documentId, name, pageCount, mode){
   _esignTemplateEdit=isTemplate;
   _esignRPDoc={ document_id:documentId, name:name||'PDF', page_count:Number(pageCount)||0 };
   window._esignUploadedDoc={ id:documentId, page_count:Number(pageCount)||0 }; // save target (template OR deal doc)
+  _esignActiveTplKey=null; // opening a PDF clears any HTML-template preview selection
   _esignActiveDocId=isTemplate?null:documentId; // a template is NOT a deal doc — don't highlight a deal row
   _esignRPMode=(mode==='preview')?'preview':'edit'; // template edits run through the normal 'edit' engine
   _esignTool=null;
@@ -10454,7 +10471,7 @@ function _esignTemplateEditDone(){
       var d=_esignDocs.filter(function(x){ return x.kind==='pdf' && x.document_id===rid; })[0];
       if(d){ _esignRPOpen(d.document_id, d.name, d.page_count, 'edit'); return; }
     }
-    _esignRPDoc=null; window._esignUploadedDoc=null; _esignActiveDocId=null;
+    _esignRPDoc=null; window._esignUploadedDoc=null; _esignActiveDocId=null; _esignActiveTplKey=null;
     _esignRenderDocs();
     var pane=document.getElementById('esignRightPane'); if(pane) pane.innerHTML=_esignRPPlaceholderHTML();
   });
@@ -10594,6 +10611,67 @@ function _esignRPRenderPreview(){
       var ld=document.getElementById('esignRPPvLoading');
       if(ld){ ld.style.color='#E5484D'; ld.textContent=(e&&e.message)||'Could not generate preview'; }
     });
+}
+
+// Open an HTML-template document (no document_id, not field-editable) in the right pane as a live preview.
+function _esignRPOpenTemplate(i){
+  var d=_esignDocs[i]; if(!d || d.kind!=='template') return;
+  if(_esignAutoSaveTimer){ clearTimeout(_esignAutoSaveTimer); _esignAutoSaveTimer=null; }
+  _esignTemplateEdit=false;
+  _esignRPDoc=null; window._esignUploadedDoc=null;
+  _esignActiveDocId=null;
+  _esignActiveTplKey=d.key;
+  _esignTool=null;
+  _esignRenderDocs(); // refresh active-row highlight in the left list
+  _esignRPRenderTemplate(d.key, d.name||d.key);
+}
+
+// Fetch a template's rendered HTML (read-only preview). Re-resolves _authClient() at CALL time so the
+// session token is fresh — never holds the load-time anon client.
+async function _esignFetchTemplateHtml(tplKey){
+  var cfg=window.APP_CONFIG||{};
+  var SUPABASE_URL=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co';
+  var anonKey=cfg.SUPABASE_ANON_KEY||'';
+  var token=anonKey;
+  try{ var sess=await _authClient().auth.getSession(); if(sess&&sess.data&&sess.data.session) token=sess.data.session.access_token; }catch(_){}
+  var signers=_esignSigners.map(function(s){ return { name:s.name }; });
+  var res=await fetch(SUPABASE_URL+'/functions/v1/esign',{
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'apikey':anonKey, 'Authorization':'Bearer '+token },
+    body:JSON.stringify({ action:'template_preview', template_key:tplKey, signers:signers })
+  });
+  var json=null; try{ json=await res.json(); }catch(_){}
+  if(!res.ok){ throw new Error((json&&(json.error||json.message))||('Request failed ('+res.status+')')); }
+  return json;
+}
+
+function _esignRPRenderTemplate(tplKey, name){
+  var pane=document.getElementById('esignRightPane'); if(!pane) return;
+  pane.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06);background:#131315;flex-shrink:0;">'
+      +'<div style="font-size:13px;font-weight:700;color:#E0DDD4;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(name||'Template')+'</div>'
+      +'<span style="flex-shrink:0;font-size:11px;color:#888;background:rgba(255,255,255,0.05);border-radius:8px;padding:2px 9px;">Template preview</span>'
+    +'</div>'
+    +'<div style="flex:1;overflow-y:auto;background:#0E0E10;padding:18px;">'
+      +'<div id="esignRPTplLoading" style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;font-size:13px;gap:10px;">'
+        +'<span style="width:18px;height:18px;border:2px solid rgba(201,168,76,0.25);border-top-color:#C9A84C;border-radius:50%;display:inline-block;animation:lpSpin .7s linear infinite;"></span> Loading preview…</div>'
+      +'<div id="esignRPTplDoc" style="display:none;background:#fff;color:#111;border-radius:6px;padding:32px;box-shadow:0 4px 18px rgba(0,0,0,0.4);"></div>'
+    +'</div>';
+  if(!document.getElementById('lpSpinKeyframes')){
+    var st=document.createElement('style'); st.id='lpSpinKeyframes';
+    st.textContent='@keyframes lpSpin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+  }
+  _esignFetchTemplateHtml(tplKey).then(function(json){
+    if(_esignActiveTplKey!==tplKey) return; // user navigated to another doc while loading
+    var loading=document.getElementById('esignRPTplLoading'), docEl=document.getElementById('esignRPTplDoc');
+    if(!loading||!docEl) return;
+    docEl.innerHTML=(json&&json.document_html)||'<div style="color:#666;">No document content.</div>';
+    loading.style.display='none'; docEl.style.display='block';
+  }).catch(function(e){
+    if(_esignActiveTplKey!==tplKey) return;
+    var loading=document.getElementById('esignRPTplLoading');
+    if(loading){ loading.style.color='#E5484D'; loading.innerHTML=lpEsc((e&&e.message)||'Could not load preview.'); }
+  });
 }
 
 // Keep the right-pane editor's signer dropdown + field palette in sync as signers change
@@ -10973,7 +11051,7 @@ async function openEsignSendModal(){
           +'<span style="min-width:0;"><span style="font-size:12px;color:#E0DDD4;">'+name+'</span>'
           +' <span style="font-size:11px;color:#888;">'+email+'</span>'
           +' <span style="font-size:10px;color:#888;background:rgba(255,255,255,0.05);border-radius:8px;padding:1px 7px;">'+role+(source?' · '+source:'')+'</span></span>'
-          +'<button type="button" onclick="_esignAddSigner(this.getAttribute(\'data-n\'),this.getAttribute(\'data-e\'),this.getAttribute(\'data-r\'),this.getAttribute(\'data-p\')||null)" '
+          +'<button type="button" onclick="_esignAddSuggested(this)" '
           +'data-n="'+name+'" data-e="'+email+'" data-r="'+role+'" data-p="'+lpEsc(pcid)+'" '
           +'style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.3);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;padding:3px 9px;">+ Add</button>'
           +'</div>';
