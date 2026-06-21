@@ -658,7 +658,7 @@
 
         <div id="heloc_err" style="display:none;color:#ff8080;font-size:11px;margin-top:10px;line-height:1.4;"></div>
         <div class="sidebar-actions">
-            <button type="button" class="btn-gold" id="heloc_download_btn" onclick="downloadHelocPdf()">Download PDF</button>
+            <button type="button" class="btn-gold" id="heloc_download_btn" onclick="_helocOpenReport()">Download PDF</button>
         </div>
     </div>
 </div>
@@ -1319,32 +1319,7 @@ function render(inp, results) {
     }
 
     const html = `
-        <div class="sheet-header">
-            <div class="sheet-header-left">
-                <img src="/assets/images/rr-logo.png" alt="R&amp;R" style="height:70px;border-radius:6px;" onerror="this.style.display='none'">
-                <div>
-                    <div class="sheet-logo-text">Rates &amp; Realty</div>
-                    <div class="sheet-logo-tag">AI-Powered Mortgage</div>
-                </div>
-            </div>
-            <div class="sheet-header-right" style="display:flex;align-items:center;gap:12px;">
-                <div style="text-align:right;">
-                    <strong>Rene Duarte</strong><br>
-                    NMLS #1795044<br>
-                    (714) 472-8508<br>
-                    rene@ratesandrealty.com
-                </div>
-                <img src="/assets/images/rene-headshot.png" alt="Rene" style="width:72px;height:72px;border-radius:50%;border:3px solid #C9A84C;object-fit:cover;box-shadow:0 2px 8px rgba(0,0,0,0.15);" onerror="this.style.display='none'">
-            </div>
-        </div>
-
-        <div class="quote-bar">
-            <span>Quote # <strong>${quoteId}</strong></span>
-            <span>${dateStr}</span>
-        </div>
-        <div class="borrower-bar">
-            <strong>${inp.borrowerName}</strong> &nbsp;|&nbsp; ${inp.propertyAddress}
-        </div>
+        ${_fsReportHeader(inp.borrowerName, inp.propertyAddress, dateStr)}
 
         ${(inp.mode === 'property') ? '' : `<div class="summary-strip">
             <div class="item"><div class="lbl">Purchase Price</div><div class="val">${fmtPlain(inp.purchasePrice, 0)}</div></div>
@@ -1567,6 +1542,49 @@ function render(inp, results) {
             '</div>';
         })()}
 
+        ${_fsReportFooter(dateStr, timeStr)}
+    `;
+
+    $('sheet').innerHTML = html;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SHARED BRANDED REPORT HEADER / FOOTER — used by BOTH the Fee Sheet and the
+   HELOC report so the branding (logo, headshot, fonts, gold theme, disclaimer,
+   licensing box, QR) stays in sync. Do not duplicate this markup elsewhere.
+   ════════════════════════════════════════════════════════════════════ */
+function _fsReportHeader(title, subtitle, dateStr) {
+    return `
+        <div class="sheet-header">
+            <div class="sheet-header-left">
+                <img src="/assets/images/rr-logo.png" alt="R&amp;R" style="height:70px;border-radius:6px;" onerror="this.style.display='none'">
+                <div>
+                    <div class="sheet-logo-text">Rates &amp; Realty</div>
+                    <div class="sheet-logo-tag">AI-Powered Mortgage</div>
+                </div>
+            </div>
+            <div class="sheet-header-right" style="display:flex;align-items:center;gap:12px;">
+                <div style="text-align:right;">
+                    <strong>Rene Duarte</strong><br>
+                    NMLS #1795044<br>
+                    (714) 472-8508<br>
+                    rene@ratesandrealty.com
+                </div>
+                <img src="/assets/images/rene-headshot.png" alt="Rene" style="width:72px;height:72px;border-radius:50%;border:3px solid #C9A84C;object-fit:cover;box-shadow:0 2px 8px rgba(0,0,0,0.15);" onerror="this.style.display='none'">
+            </div>
+        </div>
+
+        <div class="quote-bar">
+            <span>Quote # <strong>${quoteId}</strong></span>
+            <span>${dateStr}</span>
+        </div>
+        <div class="borrower-bar">
+            <strong>${title}</strong> &nbsp;|&nbsp; ${subtitle}
+        </div>`;
+}
+
+function _fsReportFooter(dateStr, timeStr) {
+    return `
         <div class="sheet-footer">
             <p><strong>Disclaimer:</strong> This is an estimate only. Actual charges may vary. This is not a commitment to lend. All rates and fees are subject to change without notice. This estimate is provided for informational purposes and does not constitute a Loan Estimate as defined under TRID/TILA-RESPA.</p>
             <p style="margin-top:6px">Rene Duarte | NMLS #1795044 | Rates &amp; Realty | Equal Housing Lender</p>
@@ -1578,10 +1596,7 @@ function render(inp, results) {
                 <img src="/assets/images/qr-code.png" alt="QR Code" style="width:72px;height:72px;border-radius:4px;opacity:0.85;" onerror="this.style.display='none'">
                 <div style="font-size:7px;color:#bbb;margin-top:2px;">Scan to Apply</div>
             </div>
-        </div>
-    `;
-
-    $('sheet').innerHTML = html;
+        </div>`;
 }
 
 // ── Recalc ──
@@ -2143,82 +2158,151 @@ function helocValidate(draw) {
     return ok;
 }
 
-// ── Base64 → PDF download (mirrors generate-fee-sheet's pdf field) ──
-function helocBase64Download(b64, filename) {
-    var bin = atob(b64);
-    var bytes = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    var blob = new Blob([bytes], { type: 'application/pdf' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+// Trim trailing zeros from a rate for display (e.g. 7.150 -> 7.15, 8.000 -> 8).
+function _helocRateLabel(r) {
+    var n = parseFloat(r) || 0;
+    return n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-// Build the HELOC payload sent to generate-heloc-sheet.
-function buildHelocPayload() {
-    return {
-        borrower_name: $('borrowerName').value || 'TBD',
-        property_address: $('propertyAddress').value || 'TBD',
-        state: $('state') ? $('state').value : '',
-        estimated_value: _helocNum('heloc_value') || null,
-        mortgage_balance: _helocNum('heloc_balance') || null,
-        cltv_max: parseFloat(($('heloc_cltv') || {}).value) || 85,
-        draw_amount: _helocNum('heloc_draw'),
-        origination_pct: parseFloat(_helocState.origOptions[_helocState.origSelected]) || 0,
-        origination_options: _helocState.origOptions.map(function (p) { return parseFloat(p) || 0; }),
-        autopay: !!($('heloc_autopay') && $('heloc_autopay').checked),
-        autopay_apr_reduction: _HELOC_AUTOPAY_REDUCTION,
-        cards: _helocState.cards.map(function (c) {
-            return { type: c.type, term_years: parseInt(c.term, 10) || 0, rate: parseFloat(c.rate) || 0, selected: !!c.selected };
-        })
+// HELOC report BODY — light-report styled, matching the live on-screen preview to
+// the dollar (uses the same helocCompute() formula). Sits between the shared
+// branded header and footer.
+function _helocReportBodyHtml() {
+    var draw = _helocNum('heloc_draw');
+    var autopay = !!($('heloc_autopay') && $('heloc_autopay').checked);
+    var origPct = parseFloat(_helocState.origOptions[_helocState.origSelected]) || 0;
+    var altIdx = (_helocState.origSelected === 0) ? 1 : 0;
+    var altPct = parseFloat(_helocState.origOptions[altIdx]);
+    var value = _helocNum('heloc_value');
+    var balance = _helocNum('heloc_balance');
+    var eq = helocAvailableEquity();
+    var selCard = _helocState.cards.find(function (c) { return c.selected; }) || _helocState.cards[0] || { type: 'fixed', term: 30, rate: 0 };
+    var sr = helocCompute(selCard, draw, origPct, autopay);
+
+    // Summary row — equity figures only when values exist.
+    var chips = [];
+    if (value > 0) chips.push(['Estimated Value', _helocMoney(value)]);
+    if (balance > 0) chips.push(['Mortgage Balance', _helocMoney(balance)]);
+    if (eq != null) chips.push(['Available Equity', _helocMoney(eq)]);
+    chips.push(['Requested Draw', _helocMoney(draw)]);
+    var summaryHtml = '<div class="summary-strip">' + chips.map(function (c) {
+        return '<div class="item"><div class="lbl">' + c[0] + '</div><div class="val">' + c[1] + '</div></div>';
+    }).join('') + '</div>';
+
+    // Origination fee — selected % and $ (+ alternate option).
+    var origHtml = '<div style="margin:6px 0 14px;font-size:13px;color:#333;">Origination Fee: '
+        + '<strong style="color:#1A1A1A;">' + _helocRateLabel(origPct) + '% &middot; ' + _helocMoney(draw * origPct / 100) + '</strong>'
+        + (isFinite(altPct) ? ' <span style="color:#999;">(alternate ' + _helocRateLabel(altPct) + '% &middot; ' + _helocMoney(draw * altPct / 100) + ')</span>' : '')
+        + '</div>';
+
+    // Rate-card comparison table — selected highlighted gold.
+    var th = 'style="text-align:left;padding:7px 10px;border-bottom:2px solid #C9A84C;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#888;"';
+    var tdc = 'padding:7px 10px;border-bottom:1px solid #eee;font-size:13px;color:#222;';
+    var rowsHtml = _helocState.cards.map(function (c) {
+        var res = helocCompute(c, draw, origPct, autopay);
+        var isVar = (c.type === 'variable');
+        var rateTxt = (parseFloat(c.rate) || 0) ? ((isVar ? 'Starting at ' : '') + _helocRateLabel(c.rate) + '%') : '&mdash;';
+        var on = !!c.selected;
+        var rowBg = on ? 'background:#FBF6E9;' : '';
+        return '<tr style="' + rowBg + '">'
+            + '<td style="' + tdc + (on ? 'font-weight:700;' : '') + '">' + c.term + ' yr</td>'
+            + '<td style="' + tdc + '">' + (isVar ? 'Variable' : 'Fixed') + (on ? ' <span style="color:#C9A84C;font-weight:700;">&#9733; selected</span>' : '') + '</td>'
+            + '<td style="' + tdc + '">' + rateTxt + '</td>'
+            + '<td style="' + tdc + 'text-align:right;font-weight:700;">' + _helocMoney(res.monthly) + '/mo</td>'
+            + '</tr>';
+    }).join('');
+    var tableHtml = '<table style="width:100%;border-collapse:collapse;margin-bottom:8px;">'
+        + '<thead><tr><th ' + th + '>Term</th><th ' + th + '>Type</th><th ' + th + '>Rate</th><th ' + th + ' style="text-align:right;padding:7px 10px;border-bottom:2px solid #C9A84C;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#888;">Est. Monthly Payment</th></tr></thead>'
+        + '<tbody>' + rowsHtml + '</tbody></table>';
+
+    // Loan Breakdown box for the selected card.
+    var bd = function (l, v) {
+        return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;font-size:13px;"><span style="color:#666;">' + l + '</span><span style="font-weight:600;color:#1A1A1A;">' + v + '</span></div>';
     };
+    var breakdownHtml = '<div style="margin-top:18px;border:1px solid #e8e8e8;border-radius:8px;padding:16px;background:#fafafa;">'
+        + '<div style="font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;font-size:12px;margin-bottom:8px;">Loan Breakdown</div>'
+        + bd('Initial Draw Amount', _helocMoney(draw))
+        + bd('Cash Required at Closing', '$0')
+        + bd('Term', selCard.term + ' yrs / ' + (selCard.term * 12) + ' mo.')
+        + bd('Origination Fee (deducted from total)', _helocRateLabel(origPct) + '% &middot; ' + _helocMoney(sr.origFee))
+        + bd('Total Loan Amount', _helocMoney(sr.totalLoan))
+        + bd('Est. Monthly Payment', _helocMoney(sr.monthly))
+        + (autopay ? '<div style="font-size:11px;color:#C9A84C;margin-top:8px;font-weight:600;">AutoPay applied: &minus;0.25% APR (effective ' + _helocRateLabel(sr.effRate) + '%)</div>' : '')
+        + '</div>';
+
+    return '<div style="padding:4px 0 8px;">'
+        + summaryHtml
+        + origHtml
+        + '<div style="font-weight:700;color:#1A1A1A;font-size:14px;margin:6px 0 8px;">Rate Options</div>'
+        + tableHtml
+        + breakdownHtml
+        + '</div>';
 }
 
-// Self-contained HELOC PDF download. Fetches generate-heloc-sheet and renders the
-// returned PDF bytes DIRECTLY — never the shared fee-sheet preview-window/HTML
-// shell (that shell renders fee-sheet HTML and shows nothing for a HELOC).
-async function downloadHelocPdf() {
+// Full branded HELOC report = shared header + HELOC body + shared footer.
+function _helocReportHtml() {
+    var today = new Date();
+    var dateStr = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    var timeStr = today.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    var name = ($('borrowerName').value || 'TBD');
+    var subtitle = ($('propertyAddress').value || 'TBD');
+    return '<div class="sheet">'
+        + _fsReportHeader(name, subtitle, dateStr)
+        + _helocReportBodyHtml()
+        + _fsReportFooter(dateStr, timeStr)
+        + '</div>';
+}
+
+// Render the branded HELOC report into the SAME style preview window the Fee Sheet
+// uses (same toolbar + Print / Download-PDF via window.print). Self-contained so it
+// works whether embedded in lead-detail or opened standalone — and never blank.
+function _helocOpenReport() {
     var draw = _helocNum('heloc_draw');
     if (!helocValidate(draw)) { showToast('Fix the highlighted fields first'); return; }
-    var cfg = helocCfg();
-    var FN_BASE = cfg.url + '/functions/v1';
-    var ANON = cfg.anon;
-    var payload = buildHelocPayload();
-    var btn = $('heloc_download_btn');
-    var origLabel = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-    try {
-        var res = await fetch(FN_BASE + '/generate-heloc-sheet', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': ANON, 'Authorization': 'Bearer ' + ANON },
-            body: JSON.stringify(payload)
-        });
-        var json = await res.json();
-        if (!res.ok || !json.pdf) { showToast(json.error || 'Could not generate HELOC PDF'); return; }
-        var bin = atob(json.pdf);
-        var bytes = new Uint8Array(bin.length);
-        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        var blob = new Blob([bytes], { type: 'application/pdf' });
-        var url = URL.createObjectURL(blob);
-        // direct download (always works, no popup blocker)
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = 'HELOC-Estimate-' + ((payload.borrower_name || 'borrower').replace(/\s+/g, '-')) + '.pdf';
-        document.body.appendChild(a); a.click(); a.remove();
-        // also open the real PDF in a new tab for preview (native viewer = working print/download)
-        window.open(url, '_blank');
-        setTimeout(function () { URL.revokeObjectURL(url); }, 8000);
-    } catch (e) {
-        showToast('HELOC PDF failed: ' + (e && e.message ? e.message : e));
-    } finally {
-        if (btn) { btn.disabled = false; btn.textContent = origLabel || 'Download PDF'; }
-    }
+    var name = ($('borrowerName').value || 'Borrower').replace(/[<>"']/g, '');
+    var dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    var reportHtml = _helocReportHtml();
+    // Copy the page's styles so the .sheet / header / footer classes render in the popup.
+    var styles = '';
+    try { Array.from(document.querySelectorAll('style, link[rel="stylesheet"]')).forEach(function (s) { styles += s.outerHTML; }); } catch (e) {}
+
+    var popup = window.open('', '_blank', 'width=1100,height=900,menubar=no,toolbar=no,scrollbars=yes');
+    if (!popup) { showToast('Allow popups for this site'); return; }
+    popup.document.open();
+    popup.document.write('<!DOCTYPE html><html><head><meta charset="utf-8">'
+        + '<title>HELOC Estimate — ' + name + '</title>'
+        + '<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">'
+        + styles
+        + '<style>'
+        + '@page { size: letter; margin: 0.3in; }'
+        + '@media print { body { background:white !important; padding:0 !important; margin:0 !important; } * { -webkit-print-color-adjust:exact !important; color-adjust:exact !important; print-color-adjust:exact !important; } .toolbar { display:none !important; } .page-wrap { margin-top:0 !important; padding:0 !important; } .sheet { box-shadow:none !important; max-width:none !important; } tr { page-break-inside:avoid !important; } }'
+        + 'body { background:#f0f0f0; padding:0; margin:0; font-family:"DM Sans",sans-serif; }'
+        + '.toolbar { display:flex; align-items:center; justify-content:space-between; background:#111; padding:10px 20px; border-bottom:2px solid #C9A84C; position:fixed; top:0; left:0; right:0; z-index:1000; }'
+        + '.toolbar .ti { color:#E8D5A3; font-size:14px; font-weight:700; }'
+        + '.toolbar .ts { color:#555; font-size:11px; margin-top:2px; }'
+        + '.toolbar-right { display:flex; gap:8px; }'
+        + '.tbtn { padding:7px 18px; border-radius:6px; border:1px solid #444; cursor:pointer; font-size:13px; font-weight:600; color:#aaa; background:transparent; font-family:inherit; }'
+        + '.tbtn:hover { border-color:#888; color:#fff; }'
+        + '.tbtn-gold { background:#C9A84C !important; color:#000 !important; border-color:#C9A84C !important; }'
+        + '.page-wrap { margin-top:56px; padding:20px; }'
+        + '</style></head><body>'
+        + '<div class="toolbar">'
+        +   '<div><div class="ti">🏠 HELOC Estimate — ' + name + '</div><div class="ts">' + dateStr + '</div></div>'
+        +   '<div class="toolbar-right">'
+        +     '<button class="tbtn" onclick="window.print()">🖨 Print</button>'
+        +     '<button class="tbtn tbtn-gold" onclick="window.print()">⬇ Download PDF</button>'
+        +     '<button class="tbtn" onclick="window.close()">✕ Close</button>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="page-wrap">');
+    popup.document.write(reportHtml);
+    popup.document.write('</div></body></html>');
+    popup.document.close();
+    showToast('HELOC estimate ready ✓');
 }
 
-// Back-compat alias for any older wiring.
-function helocDownloadPdf() { return downloadHelocPdf(); }
+// Button entry point (kept name for any older wiring).
+function helocDownloadPdf() { return _helocOpenReport(); }
 
 function helocInit() {
     helocRenderRateEditor();
