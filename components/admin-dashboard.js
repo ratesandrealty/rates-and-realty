@@ -3458,6 +3458,10 @@ function _fvOpenReviewModal() {
         <div id="fvReviewPreview" style="flex:1;min-width:0;background:#050505;display:flex;align-items:center;justify-content:center;overflow:auto;"></div>
         <div style="width:340px;flex-shrink:0;border-left:1px solid #1e1e1e;padding:18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;">
           <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Detected type</div><div id="fvReviewType" style="color:#C9A84C;font-size:13px;font-weight:600;"></div></div>
+          <div id="fvReviewPeopleWrap" style="display:none;">
+            <div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;">Apply to which borrower?</div>
+            <div id="fvReviewPeople" style="display:flex;flex-direction:column;gap:6px;"></div>
+          </div>
           <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Current name</div><div id="fvReviewCurrent" style="color:#e8e8e8;font-size:14px;font-weight:600;word-break:break-word;line-height:1.35;"></div></div>
           <div><div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Suggested name (editable)</div>
             <div id="fvReviewChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;">${chipsHtml}</div>
@@ -3585,6 +3589,7 @@ function _fvReviewRender() {
   // Only Pay Stub / W-2 / Bank Statement map to the 1003.
   const pullB = document.getElementById("fvReviewPull");
   if (pullB) { pullB.style.display = _fvDocMapsTo1003(q.docType) ? "" : "none"; pullB.disabled = false; pullB.textContent = "⇣ Pull to 1003"; }
+  _fvRenderPeoplePicker(q); // "Apply to which borrower?" for borrower-data docs
   _fvReviewLoadPreview(q.file);
 }
 
@@ -3656,6 +3661,135 @@ async function _fvReviewApprove() {
   _fvReviewAdvance();
 }
 
+/* ── BORROWER PLACEMENT — shared source of truth (get_lead_people) ──── */
+// Cache of people rows per lead/folder contact id.
+var _fvPeopleCache = {};
+
+async function _fvAuthClient() {
+  const { supabase } = await import("/api/supabase-client.js");
+  return supabase; // session-aware (persistSession) → RPCs carry the user JWT
+}
+
+// Docs that carry borrower data → show the "Apply to which borrower?" picker.
+function _fvDocCarriesBorrower(docType) {
+  const dt = (docType || "").toLowerCase();
+  if (dt.indexOf("pay") >= 0) return true;                                  // pay stub
+  if (dt === "w2" || dt.indexOf("w-2") >= 0 || dt.indexOf("w2") >= 0) return true; // W-2
+  if (dt.indexOf("bank") >= 0) return true;                                 // bank statement
+  if (dt.indexOf("gov") >= 0 || dt.indexOf("license") >= 0 || dt.indexOf("dl") >= 0 || dt.indexOf("id") >= 0) return true; // gov ID / driver's license
+  if (dt.indexOf("social") >= 0 || dt.indexOf("ssn") >= 0) return true;     // Social Security card
+  return false;
+}
+
+function _fvPersonName(p) {
+  return p.full_name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "Unnamed";
+}
+function _fvRoleBadge(p) {
+  if (p.is_primary || p.is_owner) return "Primary";
+  if (String(p.role_label || "").toLowerCase().replace(/[\s_-]/g, "").indexOf("co") >= 0) return "CoBorrower";
+  return "Connected";
+}
+
+// Load the lead's people via the shared RPC (same source lead-detail uses).
+// Primary/owner first, then borrower_order, then name. Cached per contact id.
+async function _fvLoadLeadPeople(contactId) {
+  if (!contactId) return [];
+  if (_fvPeopleCache[contactId]) return _fvPeopleCache[contactId];
+  try {
+    const sb = await _fvAuthClient();
+    const { data, error } = await sb.rpc("get_lead_people", { p_contact_id: contactId });
+    if (error) throw error;
+    const rows = Array.isArray(data) ? data.slice() : [];
+    rows.sort((a, b) => {
+      const ap = (a.is_primary || a.is_owner) ? 0 : 1, bp = (b.is_primary || b.is_owner) ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      const ao = (a.borrower_order == null) ? 9999 : Number(a.borrower_order);
+      const bo = (b.borrower_order == null) ? 9999 : Number(b.borrower_order);
+      if (ao !== bo) return ao - bo;
+      return String(a.full_name || "").localeCompare(String(b.full_name || ""));
+    });
+    _fvPeopleCache[contactId] = rows;
+    return rows;
+  } catch (e) { console.warn("[fv get_lead_people]", e); return []; }
+}
+
+async function _fvGetApplicationId(contactId) {
+  try {
+    const sb = await _fvAuthClient();
+    const { data } = await sb.from("mortgage_applications_secure").select("id").eq("contact_id", contactId).order("created_at", { ascending: false }).limit(1);
+    return (data && data[0] && data[0].id) || null;
+  } catch (_) { return null; }
+}
+
+// Render the borrower chips for the current review item.
+async function _fvRenderPeoplePicker(q) {
+  const wrap = document.getElementById("fvReviewPeopleWrap");
+  const host = document.getElementById("fvReviewPeople");
+  if (!wrap || !host) return;
+  if (!q || !_fvDocCarriesBorrower(q.docType)) { wrap.style.display = "none"; host.innerHTML = ""; return; }
+  wrap.style.display = "block";
+  host.innerHTML = '<div style="color:#666;font-size:11px;">Loading people…</div>';
+  const people = await _fvLoadLeadPeople(q.contactId);
+  if (_fvReviewQueue[_fvReviewIndex] !== q) return; // user navigated while loading
+  q.people = people;
+  if (people.length) {
+    if (!q.selectedContactId) {
+      const prim = people.find((p) => p.is_primary || p.is_owner) || people[0];
+      q.selectedContactId = prim ? String(prim.contact_id) : null;
+    }
+  }
+  const chipHtml = (p) => {
+    const sel = String(p.contact_id) === String(q.selectedContactId);
+    const onLoan = p.is_borrower ? ' · <span style="color:#7fcf9f;">on loan ✓</span>' : "";
+    return `<button type="button" data-fv-person="${_fvEscape(String(p.contact_id))}" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;background:${sel ? "#1d1a12" : "#161616"};border:1px solid ${sel ? "#C9A84C" : "#2a2a2a"};color:#e8e8e8;border-radius:8px;padding:7px 10px;cursor:pointer;font-family:inherit;">`
+      + `<span style="font-size:12px;font-weight:600;">${_fvEscape(_fvPersonName(p))}</span>`
+      + `<span style="font-size:9px;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;">${_fvEscape(_fvRoleBadge(p))}${onLoan}</span>`
+      + `</button>`;
+  };
+  const addHtml = `<button type="button" data-fv-addperson="1" style="background:transparent;border:1px dashed #C9A84C66;color:#C9A84C;border-radius:8px;padding:7px 10px;cursor:pointer;font-family:inherit;width:100%;font-size:12px;">+ Add new borrower</button>`;
+  host.innerHTML = (people.length ? people.map(chipHtml).join("") : '<div style="color:#666;font-size:11px;margin-bottom:4px;">No people found for this lead.</div>') + addHtml;
+  host.querySelectorAll("[data-fv-person]").forEach((el) => {
+    el.addEventListener("click", () => _fvSelectPerson(q, el.getAttribute("data-fv-person")));
+  });
+  const addBtn = host.querySelector("[data-fv-addperson]");
+  if (addBtn) addBtn.addEventListener("click", () => _fvAddNewBorrower(q));
+}
+
+// Select a borrower chip. Connected non-borrowers are confirmed + promoted via
+// add_loan_borrower before they become the apply target.
+async function _fvSelectPerson(q, contactId) {
+  const p = (q.people || []).find((x) => String(x.contact_id) === String(contactId));
+  if (!p) return;
+  if (!p.is_borrower && !(p.is_primary || p.is_owner)) {
+    if (!confirm("Is this person a borrower on this loan?")) { _fvRenderPeoplePicker(q); return; }
+    const ok = await _fvAddLoanBorrower(q, contactId);
+    if (!ok) { _fvRenderPeoplePicker(q); return; }
+    p.is_borrower = true;
+  }
+  q.selectedContactId = String(contactId);
+  _fvRenderPeoplePicker(q);
+}
+
+async function _fvAddLoanBorrower(q, contactId) {
+  try {
+    const appId = await _fvGetApplicationId(q.contactId);
+    if (!appId) { _fvShowToast("No loan application found for this lead"); return false; }
+    const sb = await _fvAuthClient();
+    const { error } = await sb.rpc("add_loan_borrower", { p_application_id: appId, p_contact_id: contactId, p_is_primary: false, p_role: "CoBorrower" });
+    if (error) throw error;
+    delete _fvPeopleCache[q.contactId];           // refresh so the "on loan ✓" shows
+    q.people = await _fvLoadLeadPeople(q.contactId);
+    _fvShowToast("Added as co-borrower ✓");
+    return true;
+  } catch (e) { _fvShowToast("Could not add borrower: " + ((e && e.message) || e)); return false; }
+}
+
+// New person belongs in the lead's Connected People (shared source of truth).
+function _fvAddNewBorrower(q) {
+  _fvShowToast("Add the new borrower in the lead's Connected People, then reopen review");
+  try { window.open("/admin/lead-detail.html?contact_id=" + encodeURIComponent(q.contactId || ""), "_blank"); } catch (_) {}
+}
+
 /* ── PULL TO 1003 ─────────────────────────────────────────────────── */
 // Only Pay Stub / W-2 / Bank Statement map to the 1003.
 function _fvDocMapsTo1003(docType) {
@@ -3675,14 +3809,17 @@ function _fv1003Money(v) {
 }
 
 // Authenticated call to the ocr-apply-1003 edge fn (verify_jwt=true) — same
-// session-Bearer style as the textract-ocr scan call. No `owner` is sent, so the
-// function attributes rows to the document's own extracted name (co-borrower-safe).
+// session-Bearer style as the textract-ocr scan call. Posts the SELECTED borrower
+// (from the "Apply to which borrower?" picker) as both contact_id and the owner
+// hint, so the dashboard uses the exact same centralized mapping lead-detail does.
 async function _fvCall1003Apply(item, preview) {
   const jwt = await _fvUserAccessToken();
   if (!jwt) throw new Error("Session expired — sign in and retry");
   const anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || "";
+  const applyId = item.selectedContactId || item.contactId;
   const body = {
-    contact_id: item.contactId,
+    contact_id: applyId,
+    owner: applyId,           // owner hint → row attributed to the chosen borrower
     doc_type: item.docType,
     fields: item.fields || {},
     job_id: item.jobId || null,
