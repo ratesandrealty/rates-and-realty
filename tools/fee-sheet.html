@@ -658,7 +658,7 @@
 
         <div id="heloc_err" style="display:none;color:#ff8080;font-size:11px;margin-top:10px;line-height:1.4;"></div>
         <div class="sidebar-actions">
-            <button type="button" class="btn-gold" id="heloc_download_btn" onclick="helocDownloadPdf()">Download PDF</button>
+            <button type="button" class="btn-gold" id="heloc_download_btn" onclick="downloadHelocPdf()">Download PDF</button>
         </div>
     </div>
 </div>
@@ -2156,50 +2156,69 @@ function helocBase64Download(b64, filename) {
     setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
 }
 
-async function helocDownloadPdf() {
+// Build the HELOC payload sent to generate-heloc-sheet.
+function buildHelocPayload() {
+    return {
+        borrower_name: $('borrowerName').value || 'TBD',
+        property_address: $('propertyAddress').value || 'TBD',
+        state: $('state') ? $('state').value : '',
+        estimated_value: _helocNum('heloc_value') || null,
+        mortgage_balance: _helocNum('heloc_balance') || null,
+        cltv_max: parseFloat(($('heloc_cltv') || {}).value) || 85,
+        draw_amount: _helocNum('heloc_draw'),
+        origination_pct: parseFloat(_helocState.origOptions[_helocState.origSelected]) || 0,
+        origination_options: _helocState.origOptions.map(function (p) { return parseFloat(p) || 0; }),
+        autopay: !!($('heloc_autopay') && $('heloc_autopay').checked),
+        autopay_apr_reduction: _HELOC_AUTOPAY_REDUCTION,
+        cards: _helocState.cards.map(function (c) {
+            return { type: c.type, term_years: parseInt(c.term, 10) || 0, rate: parseFloat(c.rate) || 0, selected: !!c.selected };
+        })
+    };
+}
+
+// Self-contained HELOC PDF download. Fetches generate-heloc-sheet and renders the
+// returned PDF bytes DIRECTLY — never the shared fee-sheet preview-window/HTML
+// shell (that shell renders fee-sheet HTML and shows nothing for a HELOC).
+async function downloadHelocPdf() {
     var draw = _helocNum('heloc_draw');
     if (!helocValidate(draw)) { showToast('Fix the highlighted fields first'); return; }
+    var cfg = helocCfg();
+    var FN_BASE = cfg.url + '/functions/v1';
+    var ANON = cfg.anon;
+    var payload = buildHelocPayload();
     var btn = $('heloc_download_btn');
     var origLabel = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
     try {
-        var cfg = helocCfg();
-        var body = {
-            borrower_name: $('borrowerName').value || 'TBD',
-            property_address: $('propertyAddress').value || 'TBD',
-            state: $('state') ? $('state').value : '',
-            estimated_value: _helocNum('heloc_value') || null,
-            mortgage_balance: _helocNum('heloc_balance') || null,
-            cltv_max: parseFloat(($('heloc_cltv') || {}).value) || 85,
-            draw_amount: draw,
-            origination_pct: parseFloat(_helocState.origOptions[_helocState.origSelected]) || 0,
-            origination_options: _helocState.origOptions.map(function (p) { return parseFloat(p) || 0; }),
-            autopay: !!($('heloc_autopay') && $('heloc_autopay').checked),
-            autopay_apr_reduction: _HELOC_AUTOPAY_REDUCTION,
-            cards: _helocState.cards.map(function (c) {
-                return { type: c.type, term_years: parseInt(c.term, 10) || 0, rate: parseFloat(c.rate) || 0, selected: !!c.selected };
-            })
-        };
-        var res = await fetch(cfg.url + '/functions/v1/generate-heloc-sheet', {
+        var res = await fetch(FN_BASE + '/generate-heloc-sheet', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': cfg.anon, 'Authorization': 'Bearer ' + cfg.anon },
-            body: JSON.stringify(body)
+            headers: { 'Content-Type': 'application/json', 'apikey': ANON, 'Authorization': 'Bearer ' + ANON },
+            body: JSON.stringify(payload)
         });
-        var data = null; try { data = await res.json(); } catch (_) {}
-        if (!res.ok || !data || data.success === false || !data.pdf) {
-            throw new Error((data && (data.error || data.message)) || ('Request failed (' + res.status + ')'));
-        }
-        var safe = (body.borrower_name || 'Borrower').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Borrower';
-        helocBase64Download(data.pdf, 'HELOC-Estimate-' + safe + '.pdf');
-        showToast('HELOC PDF downloaded');
+        var json = await res.json();
+        if (!res.ok || !json.pdf) { showToast(json.error || 'Could not generate HELOC PDF'); return; }
+        var bin = atob(json.pdf);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        var blob = new Blob([bytes], { type: 'application/pdf' });
+        var url = URL.createObjectURL(blob);
+        // direct download (always works, no popup blocker)
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'HELOC-Estimate-' + ((payload.borrower_name || 'borrower').replace(/\s+/g, '-')) + '.pdf';
+        document.body.appendChild(a); a.click(); a.remove();
+        // also open the real PDF in a new tab for preview (native viewer = working print/download)
+        window.open(url, '_blank');
+        setTimeout(function () { URL.revokeObjectURL(url); }, 8000);
     } catch (e) {
-        var err = $('heloc_err');
-        if (err) { err.style.display = 'block'; err.textContent = 'Download failed: ' + ((e && e.message) || e); }
-        showToast('Download failed');
+        showToast('HELOC PDF failed: ' + (e && e.message ? e.message : e));
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = origLabel || 'Download PDF'; }
     }
 }
+
+// Back-compat alias for any older wiring.
+function helocDownloadPdf() { return downloadHelocPdf(); }
 
 function helocInit() {
     helocRenderRateEditor();
