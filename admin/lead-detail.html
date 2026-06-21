@@ -11012,7 +11012,11 @@ function _esignRenderSigningLinks(signers){
 /* ══════════════════════════════════════════════
    SEND A PDF DOCUMENT FOR SIGNATURE  (PDF path — separate from the HTML-template send above)
 ══════════════════════════════════════════════ */
-var _esignPdfDocId=null, _esignPdfRequired=1, _esignPdfSigners=[];
+// _esignPdfDocIds is the ordered source of truth for which documents go in the envelope
+// (list order = order in the signed/combined output). _esignPdfDocId stays the
+// most-recently-picked id for the existing picker UI. _esignPdfDocMeta caches each
+// doc's name/page_count/field_count + required-signer count (req).
+var _esignPdfDocId=null, _esignPdfDocIds=[], _esignPdfDocMeta={}, _esignPdfRequired=1, _esignPdfSigners=[];
 
 function _esignPdfCloseModal(){ var o=document.getElementById('esignPdfSendOverlay'); if(o) o.remove(); }
 
@@ -11027,7 +11031,11 @@ function _esignDocSendForSignature(i){
 async function openEsignPdfSendModal(documentId, docName){
   _esignPdfCloseModal();
   _esignPdfDocId=documentId;
+  _esignPdfDocIds=[]; _esignPdfDocMeta={};
   _esignPdfRequired=1;
+  // Seed the envelope with the document the user opened this from.
+  var _initMeta=(_esignDocs||[]).filter(function(d){ return d.kind==='pdf' && d.document_id===documentId; })[0]||{};
+  _esignPdfAddDoc(documentId, docName||_initMeta.name||'PDF', _initMeta.page_count, _initMeta.field_count);
   var cname=[ (window.contactData&&contactData.first_name)||'', (window.contactData&&contactData.last_name)||'' ].filter(Boolean).join(' ').trim();
   _esignPdfSigners=[{ name:cname||'', email:(window.contactData&&contactData.email)||'', role:'borrower', is_cc:false, contact_id:(typeof lpCid==='function'?lpCid():null) }];
 
@@ -11037,8 +11045,15 @@ async function openEsignPdfSendModal(documentId, docName){
   var inputStyle='width:100%;height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 9px;outline:none;box-sizing:border-box;';
   overlay.innerHTML='<div style="width:520px;max-width:100%;max-height:90vh;overflow-y:auto;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,0.6);">'
     +'<div style="font-size:15px;font-weight:700;color:#E0DDD4;margin-bottom:3px;">Send for signature</div>'
-    +'<div style="font-size:11px;color:#888;margin-bottom:16px;">📄 '+lpEsc(docName||'PDF')+' · PDF</div>'
+    +'<div style="font-size:11px;color:#888;margin-bottom:16px;">Bundle one or more prepared PDFs into a single signing envelope.</div>'
     +'<div id="esignPdfBody">'
+      +'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Envelope documents</div>'
+      +'<div id="esignPdfDocList" style="margin-bottom:8px;"></div>'
+      +'<div id="esignPdfAddRow" style="display:flex;gap:6px;margin-bottom:12px;">'
+        +'<select id="esignPdfAddSelect" style="'+inputStyle+'height:34px;flex:1;"></select>'
+        +'<button type="button" id="esignPdfAddBtn" onclick="_esignPdfAddFromSelect()" style="flex-shrink:0;height:34px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;">+ Add to envelope</button>'
+      +'</div>'
+      +'<input type="text" id="esignPdfEnvName" placeholder="Envelope name (optional)" style="'+inputStyle+'margin-bottom:16px;">'
       +'<div id="esignPdfReqHint" style="font-size:11px;color:#888;margin-bottom:10px;"></div>'
       +'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Recipients</div>'
       +'<div id="esignPdfSignersList" style="margin-bottom:8px;"></div>'
@@ -11052,7 +11067,6 @@ async function openEsignPdfSendModal(documentId, docName){
       +'</div>'
       +'<div style="margin-top:14px;">'
         +'<label style="display:block;font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Options</label>'
-        +'<input type="text" id="esignPdfTitle" placeholder="Document title (optional — defaults to file name)" style="'+inputStyle+'margin-bottom:7px;">'
         +'<input type="text" id="esignPdfSubject" placeholder="Email subject (optional)" style="'+inputStyle+'margin-bottom:7px;">'
         +'<textarea id="esignPdfMessage" placeholder="Short message to recipients (optional)" rows="2" style="'+inputStyle+'height:auto;padding:7px 9px;resize:vertical;"></textarea>'
       +'</div>'
@@ -11066,23 +11080,108 @@ async function openEsignPdfSendModal(documentId, docName){
   document.body.appendChild(overlay);
   overlay.addEventListener('click', function(e){ if(e.target===overlay) _esignPdfCloseModal(); });
 
+  _esignPdfRenderDocList();
+  _esignPdfRefreshAddSelect();
   _esignPdfRenderSigners();
   _esignPdfUpdateRequiredHint();
 
-  // How many signers does this document require? = max signer_index among non-sender fields.
-  try{
-    var resp=await _esignDocsPost({ action:'get_fields', document_id:documentId });
-    var fields=(resp&&resp.fields)||[];
-    var maxIdx=0;
-    fields.forEach(function(f){ if((f.fill_by||'')!=='sender'){ var si=Number(f.signer_index)||1; if(si>maxIdx) maxIdx=si; } });
-    _esignPdfRequired=Math.max(1,maxIdx);
-  }catch(e){ _esignPdfRequired=1; }
-  // Make sure we show at least the required number of (non-CC) signer rows.
+  // Required signers = max signer_index (non-sender) across ALL envelope documents.
+  await _esignPdfRecomputeRequired();
+}
+
+// ── Envelope document list (ordered) — source of truth: _esignPdfDocIds ──
+function _esignPdfAddDoc(documentId, name, page_count, field_count){
+  if(!documentId) return false;
+  if(_esignPdfDocIds.indexOf(documentId)>-1) return false; // no duplicates
+  _esignPdfDocIds.push(documentId);
+  _esignPdfDocMeta[documentId]=Object.assign(_esignPdfDocMeta[documentId]||{}, { name:name||'PDF', page_count:Number(page_count)||0, field_count:Number(field_count)||0 });
+  _esignPdfDocId=documentId; // most-recently-picked
+  return true;
+}
+
+function _esignPdfRenderDocList(){
+  var box=document.getElementById('esignPdfDocList'); if(!box) return;
+  if(!_esignPdfDocIds.length){ box.innerHTML='<div style="font-size:11px;color:#888;padding:6px 2px;">No documents in this envelope yet.</div>'; return; }
+  box.innerHTML=_esignPdfDocIds.map(function(id,i){
+    var m=_esignPdfDocMeta[id]||{};
+    var fc=Number(m.field_count)||0, pc=Number(m.page_count)||0;
+    var meta=[pc?(pc+' page'+(pc===1?'':'s')):'', fc?(fc+' field'+(fc===1?'':'s')):''].filter(Boolean).join(' · ');
+    var up = i>0 ? '<button type="button" title="Move up" onclick="_esignPdfMoveDoc('+i+',-1)" style="background:transparent;border:none;color:#C9A84C;font-size:12px;line-height:1;cursor:pointer;padding:0 3px;">&#9650;</button>' : '<span style="display:inline-block;width:15px;"></span>';
+    var down = i<_esignPdfDocIds.length-1 ? '<button type="button" title="Move down" onclick="_esignPdfMoveDoc('+i+',1)" style="background:transparent;border:none;color:#C9A84C;font-size:12px;line-height:1;cursor:pointer;padding:0 3px;">&#9660;</button>' : '<span style="display:inline-block;width:15px;"></span>';
+    return '<div style="display:flex;align-items:center;gap:8px;background:#161618;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px 10px;margin-bottom:6px;">'
+      +'<span style="flex-shrink:0;color:#888;font-size:11px;width:14px;text-align:center;">'+(i+1)+'</span>'
+      +'<span style="min-width:0;flex:1;"><span style="font-size:12px;color:#E0DDD4;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 '+lpEsc(m.name||'PDF')+'</span>'
+        +(meta?'<span style="font-size:10px;color:#888;">'+meta+'</span>':'')+'</span>'
+      +'<span style="flex-shrink:0;display:flex;align-items:center;gap:2px;">'+up+down
+        +'<button type="button" title="Remove" onclick="_esignPdfRemoveDocAt('+i+')" style="background:transparent;border:none;color:#E5484D;font-size:16px;line-height:1;cursor:pointer;padding:0 4px;">&times;</button>'
+      +'</span>'
+    +'</div>';
+  }).join('');
+}
+
+function _esignPdfRemoveDocAt(i){
+  if(i<0||i>=_esignPdfDocIds.length) return;
+  var removed=_esignPdfDocIds.splice(i,1)[0];
+  if(_esignPdfDocId===removed) _esignPdfDocId=_esignPdfDocIds[_esignPdfDocIds.length-1]||null;
+  _esignPdfRenderDocList(); _esignPdfRefreshAddSelect(); _esignPdfRecomputeRequired();
+}
+
+function _esignPdfMoveDoc(i,dir){
+  var j=i+dir; if(j<0||j>=_esignPdfDocIds.length) return;
+  var t=_esignPdfDocIds[i]; _esignPdfDocIds[i]=_esignPdfDocIds[j]; _esignPdfDocIds[j]=t;
+  _esignPdfRenderDocList();
+}
+
+// Populate the "Add to envelope" picker with prepared PDFs not already added.
+function _esignPdfRefreshAddSelect(){
+  var sel=document.getElementById('esignPdfAddSelect'), btn=document.getElementById('esignPdfAddBtn'); if(!sel) return;
+  var avail=(_esignDocs||[]).filter(function(d){ return d.kind==='pdf' && _esignPdfDocIds.indexOf(d.document_id)===-1; });
+  if(!avail.length){
+    sel.innerHTML='<option value="">No other prepared PDFs</option>'; sel.disabled=true;
+    if(btn){ btn.disabled=true; btn.style.opacity='0.5'; btn.style.cursor='not-allowed'; }
+    return;
+  }
+  sel.disabled=false; if(btn){ btn.disabled=false; btn.style.opacity='1'; btn.style.cursor='pointer'; }
+  sel.innerHTML='<option value="">Add another document…</option>'+avail.map(function(d){
+    var fc=Number(d.field_count)||0;
+    return '<option value="'+lpEsc(String(d.document_id))+'">'+lpEsc(d.name||'PDF')+(fc?(' · '+fc+' field'+(fc===1?'':'s')):' · no fields')+'</option>';
+  }).join('');
+}
+
+function _esignPdfAddFromSelect(){
+  var sel=document.getElementById('esignPdfAddSelect'); if(!sel||!sel.value) return;
+  var d=(_esignDocs||[]).filter(function(x){ return x.kind==='pdf' && x.document_id===sel.value; })[0];
+  if(!d) return;
+  // Reuse the single-doc rule: a document must have its field layout placed.
+  if(!(Number(d.field_count)>0)){ showToast('Place at least one field on the document before adding', true); return; }
+  if(_esignPdfAddDoc(d.document_id, d.name, d.page_count, d.field_count)){
+    _esignPdfRenderDocList(); _esignPdfRefreshAddSelect(); _esignPdfRecomputeRequired();
+  }
+}
+
+// Required signers = max non-sender signer_index across every envelope document.
+async function _esignPdfRecomputeRequired(){
+  for(var i=0;i<_esignPdfDocIds.length;i++){
+    var id=_esignPdfDocIds[i]; var m=_esignPdfDocMeta[id]||(_esignPdfDocMeta[id]={});
+    if(typeof m.req==='number') continue; // cached
+    m.req=1;
+    try{
+      var resp=await _esignDocsPost({ action:'get_fields', document_id:id });
+      var fields=(resp&&resp.fields)||[]; var maxIdx=0;
+      fields.forEach(function(f){ if((f.fill_by||'')!=='sender'){ var si=Number(f.signer_index)||1; if(si>maxIdx) maxIdx=si; } });
+      m.req=Math.max(1,maxIdx);
+      if(!Number(m.field_count)) m.field_count=fields.length;
+    }catch(e){ m.req=1; }
+  }
+  var req=1;
+  _esignPdfDocIds.forEach(function(id){ var m=_esignPdfDocMeta[id]; if(m&&m.req>req) req=m.req; });
+  _esignPdfRequired=req;
   while(_esignPdfSigners.filter(function(s){ return !s.is_cc; }).length < _esignPdfRequired){
     _esignPdfSigners.push({ name:'', email:'', role:'borrower', is_cc:false });
   }
   _esignPdfRenderSigners();
   _esignPdfUpdateRequiredHint();
+  _esignPdfRenderDocList(); // reflect any field counts learned from get_fields
 }
 
 function _esignPdfSet(i,k,v){ if(_esignPdfSigners[i]){ _esignPdfSigners[i][k]=v; if(k==='is_cc') _esignPdfUpdateRequiredHint(); } }
@@ -11110,19 +11209,24 @@ function _esignPdfRenderSigners(){
 function _esignPdfUpdateRequiredHint(){
   var hint=document.getElementById('esignPdfReqHint'); if(!hint) return;
   var n=_esignPdfRequired, have=_esignPdfSigners.filter(function(s){ return !s.is_cc; }).length;
-  hint.textContent='This document needs '+n+' signer'+(n===1?'':'s')+'. '+have+' added'+(have<n?(' — add '+(n-have)+' more.'):'.');
+  var nd=_esignPdfDocIds.length;
+  var subj=(nd>1?('These '+nd+' documents need '):'This document needs ');
+  hint.textContent=subj+n+' signer'+(n===1?'':'s')+'. '+have+' added'+(have<n?(' — add '+(n-have)+' more.'):'.');
   hint.style.color=(have<n)?'#E5984D':'#888';
 }
 
 async function _esignPdfSubmit(){
   var err=document.getElementById('esignPdfErr'); if(err) err.textContent='';
+  // Ordered envelope documents; fall back to the legacy single id (unchanged behavior).
+  var docIds=(_esignPdfDocIds&&_esignPdfDocIds.length)?_esignPdfDocIds.slice():(_esignPdfDocId?[_esignPdfDocId]:[]);
+  if(!docIds.length){ if(err) err.textContent='Add at least one document to the envelope.'; return; }
   var signers=_esignPdfSigners.map(function(s){ return { name:(s.name||'').trim(), email:(s.email||'').trim(), role:(s.role||'borrower'), is_cc:!!s.is_cc }; });
   if(signers.some(function(s){ return !s.name || !s.email; })){ if(err) err.textContent='Every recipient needs a name and email.'; return; }
   var signing=signers.filter(function(s){ return !s.is_cc; });
-  if(signing.length < _esignPdfRequired){ if(err) err.textContent='This document needs '+_esignPdfRequired+' signer'+(_esignPdfRequired===1?'':'s')+', but only '+signing.length+' added.'; return; }
+  if(signing.length < _esignPdfRequired){ if(err) err.textContent=(docIds.length>1?'These documents need ':'This document needs ')+_esignPdfRequired+' signer'+(_esignPdfRequired===1?'':'s')+', but only '+signing.length+' added.'; return; }
 
-  var body={ action:'create', document_id:_esignPdfDocId, signers:signers };
-  var title=((document.getElementById('esignPdfTitle')||{}).value||'').trim(); if(title) body.document_title=title;
+  var body={ action:'create', document_ids:docIds, signers:signers };
+  var envName=((document.getElementById('esignPdfEnvName')||{}).value||'').trim(); if(envName) body.document_title=envName;
   body.order_mode=((document.getElementById('esignPdfOrder')||{}).value)||'parallel';
   var subj=((document.getElementById('esignPdfSubject')||{}).value||'').trim(); if(subj) body.email_subject=subj;
   var msg=((document.getElementById('esignPdfMessage')||{}).value||'').trim(); if(msg) body.email_message=msg;
@@ -11132,9 +11236,10 @@ async function _esignPdfSubmit(){
   try{
     var json=await _esignFnPost(body);
     _esignPdfRenderSuccess(json);
-    // The sent document drops off the unsent list — remove it locally and refresh both views.
-    var sentId=_esignPdfDocId;
-    for(var k=0;k<_esignDocs.length;k++){ if(_esignDocs[k].kind==='pdf' && _esignDocs[k].document_id===sentId){ _esignDocs.splice(k,1); break; } }
+    // The sent documents drop off the unsent list — remove them locally and refresh both views.
+    docIds.forEach(function(sentId){
+      for(var k=0;k<_esignDocs.length;k++){ if(_esignDocs[k].kind==='pdf' && _esignDocs[k].document_id===sentId){ _esignDocs.splice(k,1); break; } }
+    });
     if(typeof _esignRenderDocs==='function') _esignRenderDocs();
     if(typeof lpLoadEsign==='function') lpLoadEsign(cid);
   }catch(e){

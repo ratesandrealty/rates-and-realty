@@ -782,17 +782,28 @@
   }
 
   async function renderPdfSigning(data, alreadySigned){
-    var env = data.envelope || {}, signer = data.signer || {}, pdf = data.pdf || {}, fields = data.fields || [];
+    var env = data.envelope || {}, signer = data.signer || {};
+    // Multi-document envelope (data.documents in display order). Falls back to the
+    // legacy single document (data.pdf + data.fields) when documents is absent/empty.
+    var docs = (Array.isArray(data.documents) && data.documents.length) ? data.documents : null;
+    if(!docs){
+      var pdf = data.pdf || {};
+      docs = [{ document_id:(pdf.document_id||null), name:(env.title||"Document"), url:pdf.url, page_count:pdf.page_count, page_sizes:pdf.page_sizes, fields:(data.fields||[]) }];
+    }
+    var multi = docs.length>1;
+    // Signature + field values are captured ONCE for the whole envelope; field ids
+    // are unique across documents, so all overlays accumulate into this one state.
     pdfState = { data:data, signer:signer, signature:null, sigBoxes:[], textFields:[], ssnInputs:[], hasSsn:false, ssn:"", fieldValues:{}, refresh:null };
 
     var html = "";
-    html += '<div class="doc-head"><h1>'+esc(env.title || "Document")+'</h1><div class="sub">Sent by RFD Group / Rates &amp; Realty</div></div>';
-    if(alreadySigned){ html += '<div class="banner">✓ You’ve already signed this document.</div>'; }
-    html += '<div id="pdfDoc" class="pdf-doc"><div class="center-msg"><div class="spinner"></div><p>Loading your document…</p></div></div>';
+    html += '<div class="doc-head"><h1>'+esc(env.title || "Document")+'</h1><div class="sub">Sent by RFD Group / Rates &amp; Realty'+(multi?(' · '+docs.length+' documents'):'')+'</div></div>';
+    if(alreadySigned){ html += '<div class="banner">✓ You’ve already signed '+(multi?'these documents':'this document')+'.</div>'; }
+    html += '<div id="pdfDoc" class="pdf-doc"><div class="center-msg"><div class="spinner"></div><p>Loading your document'+(multi?'s':'')+'…</p></div></div>';
     if(!alreadySigned){
       html += '<div class="panel" id="signPanel">';
+      html +=   '<div id="signProgress" style="display:none;font-size:12px;color:#6b7280;text-align:center;margin-bottom:10px;"></div>';
       html +=   '<label class="consent"><input type="checkbox" id="consentChk"><span>I agree to sign electronically and to the use of electronic records and signatures (ESIGN/UETA).</span></label>';
-      html +=   '<button type="button" class="btn-primary" id="signBtn" disabled>Sign Document</button>';
+      html +=   '<button type="button" class="btn-primary" id="signBtn" disabled>Sign Document'+(multi?'s':'')+'</button>';
       html +=   '<div class="err-line" id="errLine"></div>';
       html +=   '<div class="decline"><button type="button" id="declineBtn">Decline to sign</button></div>';
       html += '</div>';
@@ -802,37 +813,48 @@
 
     var pdfDoc = document.getElementById("pdfDoc");
     try{
-      if(!pdf.url) throw new Error("missing pdf url");
       var pdfjs = await loadPdfJs();
-      var doc = await pdfjs.getDocument(pdf.url).promise;
       pdfDoc.innerHTML = "";
       var containerW = pdfDoc.clientWidth || (window.innerWidth - 32);
       var targetW = Math.min(containerW, 800);
       var dpr = window.devicePixelRatio || 1;
-      for(var p=1; p<=doc.numPages; p++){
-        var page = await doc.getPage(p);
-        var base = page.getViewport({ scale:1 });
-        var scale = targetW / base.width;
-        var PW = Math.round(base.width*scale), PH = Math.round(base.height*scale);
-        var wrap = document.createElement("div");
-        wrap.className = "pdf-page"; wrap.style.width = PW+"px"; wrap.style.height = PH+"px";
-        var canvas = document.createElement("canvas");
-        canvas.width = Math.round(PW*dpr); canvas.height = Math.round(PH*dpr);
-        canvas.style.width = PW+"px"; canvas.style.height = PH+"px";
-        wrap.appendChild(canvas);
-        pdfDoc.appendChild(wrap);
-        await page.render({ canvasContext:canvas.getContext("2d"), viewport:page.getViewport({ scale:scale*dpr }) }).promise;
-        if(!alreadySigned){
-          var pf = fields.filter(function(fld){ return Number(fld.page)===p; });
-          for(var k=0; k<pf.length; k++){ wrap.appendChild(buildFieldOverlay(pf[k], PW, PH, signer)); }
+      for(var di=0; di<docs.length; di++){
+        var d = docs[di];
+        if(!d.url) throw new Error("missing pdf url");
+        if(multi){
+          var sep = document.createElement("div");
+          sep.style.cssText = "margin:18px 0 8px;padding:6px 2px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;";
+          sep.innerHTML = '<span style="font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#9a7b2e;">Document '+(di+1)+' of '+docs.length+'</span>'
+            + '<span style="font-size:13px;font-weight:600;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(d.name||("Document "+(di+1)))+'</span>';
+          pdfDoc.appendChild(sep);
+        }
+        var dfields = Array.isArray(d.fields) ? d.fields : [];
+        var doc = await pdfjs.getDocument(d.url).promise;
+        for(var p=1; p<=doc.numPages; p++){
+          var page = await doc.getPage(p);
+          var base = page.getViewport({ scale:1 });
+          var scale = targetW / base.width;
+          var PW = Math.round(base.width*scale), PH = Math.round(base.height*scale);
+          var wrap = document.createElement("div");
+          wrap.className = "pdf-page"; wrap.style.width = PW+"px"; wrap.style.height = PH+"px";
+          var canvas = document.createElement("canvas");
+          canvas.width = Math.round(PW*dpr); canvas.height = Math.round(PH*dpr);
+          canvas.style.width = PW+"px"; canvas.style.height = PH+"px";
+          wrap.appendChild(canvas);
+          pdfDoc.appendChild(wrap);
+          await page.render({ canvasContext:canvas.getContext("2d"), viewport:page.getViewport({ scale:scale*dpr }) }).promise;
+          if(!alreadySigned){
+            var pf = dfields.filter(function(fld){ return Number(fld.page)===p; });
+            for(var k=0; k<pf.length; k++){ wrap.appendChild(buildFieldOverlay(pf[k], PW, PH, signer)); }
+          }
         }
       }
     }catch(e){
-      pdfDoc.innerHTML = '<div class="center-msg"><p style="color:var(--red);">We couldn’t display this document. Please reopen the link from your email, or contact your loan officer.</p></div>';
+      pdfDoc.innerHTML = '<div class="center-msg"><p style="color:var(--red);">We couldn’t display '+(multi?'these documents':'this document')+'. Please reopen the link from your email, or contact your loan officer.</p></div>';
       return;
     }
 
-    if(alreadySigned) return; // already-signed view: document + banner, no signing UI
+    if(alreadySigned) return; // already-signed view: documents + banner, no signing UI
     wirePdfSigning();
   }
 
@@ -851,7 +873,20 @@
     function ssnOk(){ return !pdfState.hasSsn || /^\d{4}$/.test(pdfState.ssn||""); }
     function sigOk(){ return pdfState.sigBoxes.length===0 || !!pdfState.signature; }
     function canSubmit(){ return sigOk() && textFieldsOk() && ssnOk() && consentChk.checked; }
-    function refresh(){ signBtn.disabled = !canSubmit(); }
+    // Envelope-wide progress: signature (1, satisfies all sig boxes) + each required
+    // text/number field + the SSN control — counted across ALL documents.
+    function progressCounts(){
+      var total=0, done=0;
+      if(pdfState.sigBoxes.length>0){ total++; if(pdfState.signature) done++; }
+      pdfState.textFields.forEach(function(tf){ if(tf.required){ total++; if(String(pdfState.fieldValues[tf.id]||"").trim().length>0) done++; } });
+      if(pdfState.hasSsn){ total++; if(/^\d{4}$/.test(pdfState.ssn||"")) done++; }
+      return { total:total, done:done };
+    }
+    function refresh(){
+      signBtn.disabled = !canSubmit();
+      var prog=document.getElementById("signProgress");
+      if(prog){ var pc=progressCounts(); if(pc.total){ prog.textContent = pc.done+" of "+pc.total+" fields completed"; prog.style.display=""; } else { prog.style.display="none"; } }
+    }
     pdfState.refresh = refresh;
     consentChk.addEventListener("change", refresh);
     refresh();
