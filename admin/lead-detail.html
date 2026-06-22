@@ -2345,7 +2345,7 @@
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
         <div class="lp-card"><div class="lp-h">🏠 Appraisal Order</div><div id="lpApOrderBody"></div></div>
         <div class="lp-card"><div class="lp-h">🔑 Appraisal Portal</div><div id="lpAppraisalPortalBody"></div></div>
-        <div class="lp-card"><div class="lp-h">✍️ LOE Center</div><div id="lpLoeBody"></div></div>
+        <div class="lp-card"><div class="lp-h"><span>✍️ Letters of Explanation</span><button type="button" onclick="loeOpenEditor(null)" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">+ New LOE</button></div><div id="lpLoeBody"></div></div>
         <div class="lp-card"><div class="lp-h">👥 Related People</div><div id="lpRelatedBody"></div></div>
         <div class="lp-card"><div class="lp-h"><span>🖊️ E-Signature Status</span><button type="button" onclick="openEsignSendModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">Send for signature</button></div><div id="lpEsignLinks"></div><div id="lpEsignBody"></div></div>
         <div class="lp-card"><div class="lp-h">🌅 VA Daily Tasks</div><div id="lpVaTasksBody"></div></div>
@@ -9520,61 +9520,360 @@ async function lpSetOrder(orderType, status){
   }catch(e){ alert('Could not save order status.'); }
 }
 
-const LP_LOE_STATUS = { needed:{t:'Needed',c:'#E5984D'}, requested:{t:'Requested',c:'#5B8DEF'}, received:{t:'Received',c:'#3FB950'} };
-const LP_LOE_NEXT   = { needed:'requested', requested:'received', received:'needed' };
+/* ═══════════════════════════════════════════════════════════════════════════
+   ===== LOE CENTER =====
+   Letters of Explanation: AI-drafted, multi-signer e-sign letters for this lead.
+   Backend is already deployed (do NOT recreate): rpc loe_list_for_lead / loe_save /
+   loe_void / loe_delete, edge fns loe-generate / loe-send, and esign (preview/status).
+   Uses the page's authenticated client (_authClient → window._supabaseClient) so the
+   logged-in user's JWT rides along — same client the e-sign composer + 1003 editor use.
+   Context reused from the rest of the page: contact id = lpCid(), application id =
+   _activeBorrowerApp.id (the exact values openEsignSendModal + the 1003 editor read).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+// Category presets — values MUST match what loe-generate / loe_save expect.
+var LOE_CATEGORIES = [
+  ['credit_inquiry','Credit inquiry'],
+  ['large_deposit','Large deposit'],
+  ['employment_gap','Employment gap'],
+  ['address_discrepancy','Address / name discrepancy'],
+  ['late_payment','Late payment'],
+  ['source_of_funds','Source of funds'],
+  ['other','Other']
+];
+var LOE_CAT_LABEL = {}; LOE_CATEGORIES.forEach(function(c){ LOE_CAT_LABEL[c[0]] = c[1]; });
+var LOE_STATUS_BADGE = {
+  drafted:{ t:'Draft',  c:'#C9A84C', bg:'rgba(201,168,76,0.14)' },
+  sent:   { t:'Sent',   c:'#5B8DEF', bg:'rgba(91,141,239,0.14)' },
+  signed: { t:'Signed', c:'#3FB950', bg:'rgba(63,185,80,0.14)' },
+  voided: { t:'Voided', c:'#888888', bg:'rgba(255,255,255,0.06)' }
+};
+
+var _loeRows = [];        // last-loaded list for this lead
+var _loeCurrentId = null; // loe_id open in the editor (null = brand-new draft)
+
+function _loeCid(){ return (typeof lpCid==='function') ? lpCid() : (typeof getContactId==='function'?getContactId():null); }
+function _loeAppId(){ return (typeof _activeBorrowerApp!=='undefined' && _activeBorrowerApp && _activeBorrowerApp.id) ? _activeBorrowerApp.id : null; }
+function _loeToast(msg, isErr){ if(typeof showToast==='function') showToast(msg, !!isErr); else if(typeof toast==='function') toast(msg, !!isErr); }
+function loeCloseModal(id){ var o=document.getElementById(id); if(o) o.remove(); }
+
+// functions.invoke wrapper — uses the authed client (JWT attached) and surfaces BOTH
+// transport errors and the function's own { error } body so nothing fails silently.
+async function _loeInvoke(fn, body){
+  var res = await _authClient().functions.invoke(fn, { body: body });
+  var data = res && res.data, err = res && res.error;
+  if(err){
+    var detail = '';
+    try{ if(err.context && typeof err.context.json==='function'){ var j=await err.context.json(); detail=(j&&(j.error||j.message))||''; } }catch(_){}
+    throw new Error(detail || err.message || ('Request to '+fn+' failed'));
+  }
+  if(data && data.error) throw new Error(data.error);
+  return data || {};
+}
+function _loeBusy(id, busy, label){
+  var b=document.getElementById(id); if(!b) return;
+  if(busy){ if(b.dataset.orig==null) b.dataset.orig=b.innerHTML; b.innerHTML=label||'…'; b.disabled=true; b.style.opacity='0.65'; b.style.cursor='not-allowed'; }
+  else{ if(b.dataset.orig!=null){ b.innerHTML=b.dataset.orig; delete b.dataset.orig; } b.disabled=false; b.style.opacity='1'; b.style.cursor='pointer'; }
+}
+function _loeFmtDate(d){ if(!d) return ''; try{ var dt=new Date(d); if(isNaN(dt.getTime())) return ''; return dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }catch(e){ return ''; } }
+function _loeBadge(status){ var s=LOE_STATUS_BADGE[status]||LOE_STATUS_BADGE.drafted; return '<span style="flex-shrink:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:'+s.c+';background:'+s.bg+';border:1px solid '+s.c+'55;border-radius:9px;padding:1px 7px;">'+s.t+'</span>'; }
+
+// ── Card list (renders into #lpLoeBody; lpLoadLoe is the init entry point) ──
 async function lpLoadLoe(cid){
-  const body = document.getElementById('lpLoeBody'); if(!body) return;
+  cid = cid || _loeCid();
+  var body=document.getElementById('lpLoeBody'); if(!body) return;
+  if(!cid){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No contact loaded.</div>'; return; }
+  body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
   try{
-    const { data } = await _authClient().from('loe_requests').select('id,topic,status').eq('contact_id',cid).order('created_at',{ascending:true});
-    const inp = 'flex:1;min-width:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:5px 7px;';
-    const addBtn = 'background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:11px;font-weight:600;flex-shrink:0;';
-    let rows;
-    if(!data || !data.length){
-      rows = '<div style="color:#888;font-size:12px;padding:6px 4px;">No letters of explanation yet.</div>';
-    } else {
-      rows = data.map(l=>{
-        const s = LP_LOE_STATUS[l.status]||LP_LOE_STATUS.needed;
-        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
-          +'<span style="font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(l.topic||'')+'</span>'
-          +'<span style="display:flex;gap:6px;align-items:center;flex-shrink:0;">'
-          +'<button onclick="lpCycleLoe(\''+l.id+'\',\''+l.status+'\')" title="Click to advance status" style="background:transparent;border:1px solid '+s.c+'55;color:'+s.c+';border-radius:10px;padding:2px 9px;cursor:pointer;font-size:10px;font-weight:600;">'+s.t+'</button>'
-          +'<button onclick="lpDeleteLoe(\''+l.id+'\')" title="Delete" style="background:transparent;border:none;color:#666;cursor:pointer;font-size:14px;line-height:1;">×</button>'
-          +'</span></div>';
-      }).join('');
-    }
-    body.innerHTML = rows
-      + '<div style="display:flex;gap:6px;margin-top:8px;">'
-      + '<input id="lpLoeNew" type="text" placeholder="New LOE topic (e.g. Large deposit 4/12)" onkeydown="if(event.key===\'Enter\')lpAddLoe()" style="'+inp+'">'
-      + '<button onclick="lpAddLoe()" style="'+addBtn+'">+ Add</button>'
-      + '</div>';
-  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load LOEs.</div>'; }
+    var res=await _authClient().rpc('loe_list_for_lead', { p_contact_id: cid, p_application_id: _loeAppId() });
+    if(res.error) throw res.error;
+    _loeRows=(res.data||[]).slice().sort(function(a,b){ return (new Date(b.created_at)).getTime() - (new Date(a.created_at)).getTime(); });
+    body.innerHTML=_loeListHtml(_loeRows);
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load letters. '+lpEsc((e&&e.message)||'')+'</div>'; }
 }
-async function lpAddLoe(){
-  const cid = lpCid(); if(!cid) return;
-  const el = document.getElementById('lpLoeNew'); const topic = ((el&&el.value)||'').trim();
-  if(!topic) return;
+function loeRefresh(){ lpLoadLoe(_loeCid()); }
+
+function _loeListHtml(rows){
+  if(!rows || !rows.length){
+    return '<div style="color:#888;font-size:12px;padding:10px 4px;line-height:1.5;">No letters of explanation yet.<br>Click <b style="color:#C9A84C;">+ New LOE</b> above to draft one with AI.</div>';
+  }
+  return rows.map(function(r){
+    var dim = (r.status==='voided') ? 'opacity:0.55;' : '';
+    var title = lpEsc(r.title || r.topic || LOE_CAT_LABEL[r.category] || 'Letter of Explanation');
+    var cat = lpEsc(LOE_CAT_LABEL[r.category] || r.category || '');
+    var date = _loeFmtDate(r.signed_at || r.sent_at || r.created_at);
+    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.05);'+dim+'">'
+      +'<span style="min-width:0;display:flex;flex-direction:column;gap:3px;">'
+        +'<span style="display:flex;align-items:center;gap:7px;min-width:0;">'+_loeBadge(r.status)
+          +'<span style="font-size:12px;color:#ddd;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+title+'</span></span>'
+        +'<span style="font-size:10px;color:#888;">'+(cat?cat+' · ':'')+date+'</span>'
+      +'</span>'
+      +'<span style="display:flex;gap:6px;align-items:center;flex-shrink:0;">'+_loeRowActions(r)+'</span>'
+    +'</div>';
+  }).join('');
+}
+function _loeActBtn(label, onclick, accent){
+  return '<button type="button" onclick="'+onclick+'" style="background:transparent;border:1px solid '+(accent?'rgba(201,168,76,0.4)':'rgba(255,255,255,0.15)')+';color:'+(accent?'#C9A84C':'#999')+';border-radius:6px;padding:3px 9px;cursor:pointer;font-size:10px;font-weight:600;font-family:inherit;">'+label+'</button>';
+}
+function _loeRowActions(r){
+  var id="'"+r.id+"'";
+  if(r.status==='drafted') return _loeActBtn('Edit','loeOpenEditor('+id+')',true)+_loeActBtn('Send','loeQuickSend('+id+')',true)+_loeActBtn('Delete','loeDelete('+id+')',false);
+  if(r.status==='sent')    return _loeActBtn('View status','loeViewStatus('+id+')',true);
+  if(r.status==='signed')  return _loeActBtn('View signed','loeViewSigned('+id+')',true);
+  if(r.status==='voided')  return _loeActBtn('Delete','loeDelete('+id+')',false);
+  return '';
+}
+
+// ── Editor modal (New / Edit) ──
+function loeCloseEditor(){ loeCloseModal('loeEditorOverlay'); }
+function loeOpenEditor(loeId){
+  loeCloseEditor();
+  var existing = loeId ? _loeRows.filter(function(r){ return String(r.id)===String(loeId); })[0] : null;
+  _loeCurrentId = existing ? existing.id : null;
+
+  var catOpts = LOE_CATEGORIES.map(function(c){ var sel=(existing&&existing.category===c[0])?' selected':''; return '<option value="'+c[0]+'"'+sel+'>'+lpEsc(c[1])+'</option>'; }).join('');
+  var inp='width:100%;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:13px;padding:9px 11px;outline:none;box-sizing:border-box;font-family:inherit;';
+  var lbl='font-size:11px;color:#888;display:block;margin-bottom:5px;';
+  var goldBtn='border:none;border-radius:7px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:13px;font-weight:700;cursor:pointer;padding:0 16px;height:38px;font-family:inherit;';
+  var ghostBtn='border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;font-size:13px;font-weight:600;cursor:pointer;padding:0 14px;height:38px;border-radius:7px;font-family:inherit;';
+
+  var ov=document.createElement('div');
+  ov.id='loeEditorOverlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:20000;display:flex;align-items:center;justify-content:center;padding:20px;';
+  ov.innerHTML='<div style="width:760px;max-width:100%;height:90vh;display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.6);overflow:hidden;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;">'
+      +'<div style="font-size:15px;font-weight:700;color:#E0DDD4;">'+(existing?'Edit Letter of Explanation':'New Letter of Explanation')+'</div>'
+      +'<button type="button" onclick="loeCloseEditor()" style="background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;font-family:inherit;">Close</button>'
+    +'</div>'
+    +'<div style="flex:1;overflow-y:auto;padding:18px 20px;">'
+      +'<div style="display:flex;gap:12px;margin-bottom:14px;">'
+        +'<div style="flex:1;min-width:0;"><label style="'+lbl+'">Category</label><select id="loeCat" style="'+inp+'">'+catOpts+'</select></div>'
+        +'<div style="flex:1.4;min-width:0;"><label style="'+lbl+'">Title (optional)</label><input id="loeTitle" type="text" placeholder="e.g., Explanation of recent credit inquiry" value="'+lpEsc((existing&&existing.title)||'')+'" style="'+inp+'"></div>'
+      +'</div>'
+      +'<div style="margin-bottom:14px;"><label style="'+lbl+'">Signers</label><div id="loeSigners" style="margin-bottom:5px;"><div style="color:#888;font-size:11px;">Loading people…</div></div>'
+        +'<div style="font-size:10px;color:#666;">Normally just the borrower — add a co-borrower for a joint letter.</div></div>'
+      +'<div style="margin-bottom:12px;"><label style="'+lbl+'">What should the letter explain? (facts, dates, amounts)</label>'
+        +'<textarea id="loeDetails" rows="3" placeholder="e.g., The 4/12 inquiry from DealerAuto was an auto-loan rate shop; no new debt was opened." style="'+inp+'resize:vertical;">'+lpEsc((existing&&existing.details)||'')+'</textarea></div>'
+      +'<div style="margin-bottom:14px;"><button type="button" id="loeDraftBtn" onclick="loeDraftAI()" style="'+goldBtn+'width:100%;">✨ Draft with AI</button></div>'
+      +'<div style="margin-bottom:8px;"><label style="'+lbl+'">Letter</label>'
+        +'<textarea id="loeBody" rows="14" placeholder="Your drafted letter will appear here. You can edit it freely." style="'+inp+'resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55;min-height:240px;">'+lpEsc((existing&&existing.body)||'')+'</textarea></div>'
+      +'<div style="display:flex;gap:8px;margin-bottom:14px;">'
+        +'<input id="loeRefineInput" type="text" placeholder="Tell the AI how to revise — e.g. make it shorter, mention the bonus" style="'+inp+'flex:1;min-width:0;">'
+        +'<button type="button" id="loeRefineBtn" onclick="loeRefine()" style="'+ghostBtn+'flex-shrink:0;">Refine</button>'
+      +'</div>'
+      +'<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#bbb;cursor:pointer;">'
+        +'<input type="checkbox" id="loeSms" checked style="width:15px;height:15px;accent-color:#C9A84C;cursor:pointer;"> Also text the signer(s) (SMS)</label>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;padding:14px 20px;border-top:1px solid rgba(255,255,255,0.06);flex-shrink:0;">'
+      +'<button type="button" onclick="loeCloseEditor()" style="'+ghostBtn+'border-color:rgba(255,255,255,0.15);color:#888;">Cancel</button>'
+      +'<button type="button" id="loeSaveBtn" onclick="loeSaveDraft()" style="'+ghostBtn+'margin-left:auto;">Save draft</button>'
+      +'<button type="button" id="loePreviewBtn" onclick="loePreviewSend()" style="'+ghostBtn+'">Preview &amp; send</button>'
+      +'<button type="button" id="loeSendBtn" onclick="loeSendNow()" style="'+goldBtn+'">Send for signature</button>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function(e){ if(e.target===ov) loeCloseEditor(); });
+  _loeRenderSigners();
+}
+
+// Checkbox list from esign_signer_suggestions (same source the e-sign composer uses;
+// rows expose name / email / role / person_contact_id). Pre-checks the primary borrower.
+async function _loeRenderSigners(){
+  var wrap=document.getElementById('loeSigners'); if(!wrap) return;
   try{
-    await _authClient().from('loe_requests').insert({ contact_id:cid, topic:topic, status:'needed' });
-    lpLoadLoe(cid);
-  }catch(e){ alert('Could not add LOE.'); }
+    var sug=await _authClient().rpc('esign_signer_suggestions', { p_contact_id: _loeCid() });
+    if(sug && sug.error) throw sug.error;
+    var rows=(sug && sug.data) || [];
+    var primaryCid=String(_loeCid()||'');
+    if(!rows.length){ wrap.innerHTML='<div style="color:#888;font-size:11px;">No people found on this loan.</div>'; return; }
+    wrap.innerHTML=rows.map(function(r){
+      var pcid=r.person_contact_id?String(r.person_contact_id):'';
+      var name=lpEsc(r.name||'(no name)'), email=lpEsc(r.email||''), role=lpEsc(r.role||'');
+      var checked=(pcid && pcid===primaryCid)?' checked':'';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:6px 7px;border:1px solid rgba(255,255,255,0.07);border-radius:6px;margin-bottom:5px;cursor:pointer;">'
+        +'<input type="checkbox" class="loe-signer-cb" value="'+lpEsc(pcid)+'" data-name="'+name+'"'+checked+' style="width:15px;height:15px;accent-color:#C9A84C;cursor:pointer;flex-shrink:0;">'
+        +'<span style="min-width:0;"><span style="font-size:12px;color:#E0DDD4;">'+name+'</span>'
+        +(email?' <span style="font-size:11px;color:#888;">'+email+'</span>':'')
+        +(role?' <span style="font-size:9px;color:#888;background:rgba(255,255,255,0.05);border-radius:8px;padding:1px 6px;">'+role+'</span>':'')+'</span></label>';
+    }).join('');
+  }catch(e){ wrap.innerHTML='<div style="color:#E5484D;font-size:11px;">Could not load people. '+lpEsc((e&&e.message)||'')+'</div>'; }
 }
-async function lpCycleLoe(id, cur){
-  const cid = lpCid(); if(!cid) return;
-  const next = LP_LOE_NEXT[cur] || 'needed';
-  const patch = { status:next, updated_at:new Date().toISOString(), completed_at: next==='received'?new Date().toISOString():null };
+function _loeSelectedSigners(){
+  var out=[]; var nodes=document.querySelectorAll('#loeSigners .loe-signer-cb');
+  for(var i=0;i<nodes.length;i++){ if(nodes[i].checked && nodes[i].value) out.push({ id:nodes[i].value, name:nodes[i].getAttribute('data-name')||'' }); }
+  return out;
+}
+function _loeReadFields(){
+  return {
+    category: ((document.getElementById('loeCat')||{}).value)||'other',
+    title: (((document.getElementById('loeTitle')||{}).value)||'').trim(),
+    details: (((document.getElementById('loeDetails')||{}).value)||'').trim(),
+    body: ((document.getElementById('loeBody')||{}).value)||'',
+    sms: !!((document.getElementById('loeSms')||{}).checked),
+    signers: _loeSelectedSigners()
+  };
+}
+
+// AI draft: NEW payload, plus loe_id when this LOE already exists (re-draft same row).
+async function loeDraftAI(){
+  var f=_loeReadFields();
+  if(!f.signers.length){ _loeToast('Pick at least one signer.', true); return; }
+  if(!f.details){ _loeToast('Add a few facts in "What should the letter explain?" first.', true); return; }
+  _loeBusy('loeDraftBtn', true, '✨ Drafting…');
   try{
-    await _authClient().from('loe_requests').update(patch).eq('id',id);
-    lpLoadLoe(cid);
-  }catch(e){ alert('Could not update LOE.'); }
+    var payload={ contact_id:_loeCid(), application_id:_loeAppId(), category:f.category, topic:(f.title||LOE_CAT_LABEL[f.category]||'Letter of Explanation'), details:f.details, signer_contact_ids:f.signers.map(function(s){return s.id;}) };
+    if(_loeCurrentId) payload.loe_id=_loeCurrentId;
+    var data=await _loeInvoke('loe-generate', payload);
+    if(data.loe_id) _loeCurrentId=data.loe_id;
+    var ta=document.getElementById('loeBody'); if(ta && data.body!=null) ta.value=data.body;
+    _loeToast('Draft ready — review and edit as needed.');
+  }catch(e){ _loeToast('Draft failed: '+((e&&e.message)||'unknown error'), true); }
+  finally{ _loeBusy('loeDraftBtn', false); }
 }
-async function lpDeleteLoe(id){
-  const cid = lpCid(); if(!cid) return;
-  if(!confirm('Delete this LOE?')) return;
+// Refine an existing draft from a free-text instruction + the current textarea.
+async function loeRefine(){
+  if(!_loeCurrentId){ _loeToast('Draft the letter first, then refine.', true); return; }
+  var instruction=(((document.getElementById('loeRefineInput')||{}).value)||'').trim();
+  if(!instruction){ _loeToast('Type how you want it revised.', true); return; }
+  var cur=((document.getElementById('loeBody')||{}).value)||'';
+  _loeBusy('loeRefineBtn', true, 'Refining…');
   try{
-    await _authClient().from('loe_requests').delete().eq('id',id);
-    lpLoadLoe(cid);
-  }catch(e){ alert('Could not delete LOE.'); }
+    var data=await _loeInvoke('loe-generate', { loe_id:_loeCurrentId, instruction:instruction, current_body:cur });
+    var ta=document.getElementById('loeBody'); if(ta && data.body!=null) ta.value=data.body;
+    var ri=document.getElementById('loeRefineInput'); if(ri) ri.value='';
+    _loeToast('Letter revised.');
+  }catch(e){ _loeToast('Refine failed: '+((e&&e.message)||'unknown error'), true); }
+  finally{ _loeBusy('loeRefineBtn', false); }
 }
+// Persist current editor fields (incl. the edited body) via loe_save; returns the loe id.
+async function _loePersist(){
+  var f=_loeReadFields();
+  var res=await _authClient().rpc('loe_save', {
+    p_loe_id:_loeCurrentId||null, p_contact_id:_loeCid(), p_application_id:_loeAppId(),
+    p_topic:(f.title||LOE_CAT_LABEL[f.category]||'Letter of Explanation'), p_category:f.category, p_title:(f.title||null),
+    p_details:(f.details||null), p_body:f.body, p_signer_contact_ids:f.signers.map(function(s){return s.id;}), p_status:null
+  });
+  if(res.error) throw res.error;
+  var id=res.data;
+  if(id!=null) _loeCurrentId=(typeof id==='object') ? (id.id||id.loe_id||_loeCurrentId) : id;
+  return _loeCurrentId;
+}
+async function loeSaveDraft(){
+  var f=_loeReadFields();
+  if(!f.signers.length){ _loeToast('Pick at least one signer.', true); return; }
+  _loeBusy('loeSaveBtn', true, 'Saving…');
+  try{ await _loePersist(); _loeToast('Draft saved.'); loeRefresh(); }
+  catch(e){ _loeToast('Save failed: '+((e&&e.message)||'unknown error'), true); }
+  finally{ _loeBusy('loeSaveBtn', false); }
+}
+// Send: persist the textarea FIRST (so edits aren't lost), then loe-send. fromPreview
+// drives which button shows the spinner + closes the preview overlay too.
+async function loeSendNow(fromPreview){
+  var btnId = fromPreview ? 'loePreviewSendBtn' : 'loeSendBtn';
+  var f=_loeReadFields();
+  if(!f.signers.length){ _loeToast('Pick at least one signer.', true); return; }
+  if(!f.body.trim()){ _loeToast('The letter is empty — draft it first.', true); return; }
+  _loeBusy(btnId, true, 'Sending…');
+  try{
+    var id=await _loePersist();
+    if(!id) throw new Error('Could not save the letter before sending.');
+    await _loeInvoke('loe-send', { loe_id:id, send_sms:f.sms });
+    loeCloseModal('loePreviewOverlay');
+    loeCloseEditor();
+    _loeToast('LOE sent for signature ✓');
+    loeRefresh();
+  }catch(e){ _loeToast('Send failed: '+((e&&e.message)||'unknown error'), true); _loeBusy(btnId, false); }
+}
+// Read-only preview of the drafted letter + who receives it + SMS state, then "Send now".
+function loePreviewSend(){
+  var f=_loeReadFields();
+  if(!f.signers.length){ _loeToast('Pick at least one signer.', true); return; }
+  if(!f.body.trim()){ _loeToast('The letter is empty — draft it first.', true); return; }
+  var signerList=f.signers.map(function(s){ return '<span style="display:inline-block;font-size:11px;color:#E0DDD4;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.3);border-radius:12px;padding:2px 10px;margin:0 5px 5px 0;">'+lpEsc(s.name||'Signer')+'</span>'; }).join('');
+  loeCloseModal('loePreviewOverlay');
+  var ov=document.createElement('div'); ov.id='loePreviewOverlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:20002;display:flex;align-items:center;justify-content:center;padding:20px;';
+  ov.innerHTML='<div style="width:720px;max-width:100%;height:88vh;display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;"><div style="font-size:15px;font-weight:700;color:#E0DDD4;">Preview &amp; send</div><button type="button" onclick="loeCloseModal(\'loePreviewOverlay\')" style="background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 14px;font-family:inherit;">Close</button></div>'
+    +'<div style="flex:1;overflow-y:auto;padding:20px;background:#0E0E10;">'
+      +'<div style="background:#fbf9f4;color:#1a1a1a;border-radius:6px;padding:34px 38px;box-shadow:0 4px 18px rgba(0,0,0,0.4);font-family:Georgia,\'Times New Roman\',serif;font-size:14px;line-height:1.7;white-space:pre-wrap;">'+lpEsc(f.body.trim())+'</div>'
+      +'<div style="margin-top:16px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Signers who will receive it</div><div>'+signerList+'</div>'
+      +'<div style="margin-top:10px;font-size:12px;color:'+(f.sms?'#3FB950':'#888')+';">'+(f.sms?'✓ Email + SMS':'Email only (SMS off)')+'</div>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;padding:14px 20px;border-top:1px solid rgba(255,255,255,0.06);flex-shrink:0;justify-content:flex-end;">'
+      +'<button type="button" onclick="loeCloseModal(\'loePreviewOverlay\')" style="border:1px solid rgba(255,255,255,0.15);background:transparent;color:#888;font-size:13px;font-weight:600;cursor:pointer;padding:0 14px;height:38px;border-radius:7px;font-family:inherit;">Back</button>'
+      +'<button type="button" id="loePreviewSendBtn" onclick="loeSendNow(true)" style="border:none;border-radius:7px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:13px;font-weight:700;cursor:pointer;padding:0 18px;height:38px;font-family:inherit;">Send now</button>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function(e){ if(e.target===ov) loeCloseModal('loePreviewOverlay'); });
+}
+
+// ── Row actions: quick send / status / signed / void / delete ──
+async function loeQuickSend(id){
+  if(!confirm('Send this letter for signature now? The signer(s) will get an email and text to sign.')) return;
+  try{ await _loeInvoke('loe-send', { loe_id:id, send_sms:true }); _loeToast('LOE sent for signature ✓'); loeRefresh(); }
+  catch(e){ _loeToast('Send failed: '+((e&&e.message)||'unknown error'), true); }
+}
+async function loeDelete(id){
+  if(!confirm('Delete this draft letter? This cannot be undone.')) return;
+  try{ var res=await _authClient().rpc('loe_delete', { p_loe_id:id }); if(res.error) throw res.error; _loeToast('Letter deleted.'); loeRefresh(); }
+  catch(e){ _loeToast('Delete failed: '+((e&&e.message)||'unknown error'), true); }
+}
+async function loeVoid(id){
+  if(!confirm('Void this letter? The signer(s) can no longer sign it.')) return;
+  try{ var res=await _authClient().rpc('loe_void', { p_loe_id:id }); if(res.error) throw res.error; loeCloseModal('loeStatusOverlay'); _loeToast('Letter voided.'); loeRefresh(); }
+  catch(e){ _loeToast('Void failed: '+((e&&e.message)||'unknown error'), true); }
+}
+// Small modal shell reused by the status + signed views.
+function _loeModalShell(id, title, innerHtml, big){
+  loeCloseModal(id);
+  var ov=document.createElement('div'); ov.id=id;
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:20002;display:flex;align-items:center;justify-content:center;padding:20px;';
+  ov.innerHTML='<div style="width:'+(big?'820px':'520px')+';max-width:100%;'+(big?'height:88vh;':'max-height:86vh;')+'display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:15px 18px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;"><div style="font-size:14px;font-weight:700;color:#E0DDD4;">'+lpEsc(title)+'</div><button type="button" onclick="loeCloseModal(\''+id+'\')" style="background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;padding:6px 12px;font-family:inherit;">Close</button></div>'
+    +'<div id="'+id+'_body" style="flex:1;overflow-y:auto;padding:16px 18px;'+(big?'background:#0E0E10;':'')+'">'+innerHtml+'</div>'
+  +'</div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function(e){ if(e.target===ov) loeCloseModal(id); });
+}
+function _loeModalBody(id, html){ var b=document.getElementById(id+'_body'); if(b) b.innerHTML=html; }
+
+async function loeViewStatus(id){
+  var r=_loeRows.filter(function(x){ return String(x.id)===String(id); })[0];
+  if(!r || !r.envelope_id){ _loeToast('No signature envelope to check yet.', true); return; }
+  _loeModalShell('loeStatusOverlay','Signature status','<div style="color:#888;font-size:12px;">Loading…</div>', false);
+  try{
+    var data=await _loeInvoke('esign', { action:'status', envelope_id:r.envelope_id });
+    var env=(data&&data.envelope)||{}, signers=(data&&data.signers)||[];
+    var st=(env.status||'').toString();
+    var head='<div style="font-size:12px;color:#C9A84C;font-weight:700;margin-bottom:12px;">Envelope: '+lpEsc(st?(st.charAt(0).toUpperCase()+st.slice(1)):'—')+'</div>';
+    var list = signers.length ? signers.map(function(s){
+      var badge=(typeof _esignSignerStatusBadge==='function') ? _esignSignerStatusBadge(s.status, s.is_cc) : '<span style="font-size:10px;color:#888;">'+lpEsc(s.status||'')+'</span>';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
+        +'<span style="min-width:0;"><span style="font-size:12px;color:#ddd;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(s.name||s.email||'Signer')+'</span>'
+        +(s.email?'<span style="font-size:10px;color:#888;">'+lpEsc(s.email)+'</span>':'')+'</span>'
+        +'<span style="flex-shrink:0;">'+badge+'</span></div>';
+    }).join('') : '<div style="color:#888;font-size:12px;">No recipients.</div>';
+    var voidBtn='<div style="margin-top:14px;text-align:right;"><button type="button" onclick="loeVoid(\''+r.id+'\')" style="border:1px solid rgba(229,72,77,0.4);background:transparent;color:#E5484D;font-size:11px;font-weight:600;cursor:pointer;padding:5px 12px;border-radius:6px;font-family:inherit;">Void this letter</button></div>';
+    _loeModalBody('loeStatusOverlay', head+list+voidBtn);
+  }catch(e){ _loeModalBody('loeStatusOverlay', '<div style="color:#E5484D;font-size:12px;">'+lpEsc((e&&e.message)||'Could not load status')+'</div>'); }
+}
+
+async function loeViewSigned(id){
+  var r=_loeRows.filter(function(x){ return String(x.id)===String(id); })[0];
+  if(!r || !r.envelope_id){ _loeToast('No signed document available.', true); return; }
+  _loeModalShell('loeSignedOverlay','Signed letter','<div style="color:#888;font-size:12px;">Loading…</div>', true);
+  try{
+    var data=await _loeInvoke('esign', { action:'preview', envelope_id:r.envelope_id });
+    var docHtml=(data&&data.document_html)||'<div style="color:#666;">No document content.</div>';
+    var certHtml=(data&&data.certificate_html)||'';
+    var html='<div style="background:#fff;color:#111;border-radius:6px;padding:30px 34px;box-shadow:0 4px 18px rgba(0,0,0,0.4);">'+docHtml+'</div>';
+    if(certHtml) html+='<details style="margin-top:14px;"><summary style="cursor:pointer;color:#C9A84C;font-size:12px;font-weight:600;">View signing certificate</summary><div style="background:#fff;color:#111;border-radius:6px;padding:24px 28px;margin-top:8px;">'+certHtml+'</div></details>';
+    _loeModalBody('loeSignedOverlay', html);
+  }catch(e){ _loeModalBody('loeSignedOverlay', '<div style="color:#E5484D;font-size:12px;">'+lpEsc((e&&e.message)||'Could not load signed letter')+'</div>'); }
+}
+// ===== END LOE CENTER =====
 
 /* ══════════════════════════════════════════════
    RELATED PEOPLE  (co-borrowers / family / connected)
