@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>LOE Center — Rates & Realty CRM</title>
+<!-- EXACT same authenticated-client bootstrap + login-redirect/admin guard as referral-partners.html -->
+<script src="/admin/js/auth-guard.js?v=2026061501"></script>
+<script src="/api/env.js?v=2026033003"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="/assets/js/sb-auth.js?v=2026061401"></script>
+<style>
+:root{--gold:#c9a84c;--gold2:#e4b84e;--bg:#0a0a0a;--surface:#111;--surface2:#181818;--surface3:#222;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#fff;--muted:rgba(255,255,255,0.38);--green:#50c878;--red:#f87171;--blue:#60a0ff;--orange:#fb923c}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+
+.topbar{display:flex;align-items:center;gap:10px;padding:0 20px;height:52px;background:var(--surface);border-bottom:1px solid var(--border)}
+.topbar h1{font-size:16px;font-weight:800;color:var(--gold)}
+.topbar-right{margin-left:auto;display:flex;gap:8px}
+
+.btn{padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;font-family:inherit}
+.btn-gold{background:var(--gold);color:#000}
+.btn-gold:hover{background:var(--gold2)}
+.btn-ghost{background:rgba(255,255,255,0.06);color:#fff;border:1px solid var(--border2)}
+.btn-ghost:hover{background:rgba(255,255,255,0.1)}
+.btn-sm{padding:5px 10px;font-size:11px}
+.btn-xs{padding:4px 9px;font-size:10px;font-weight:700}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+
+/* Tabs */
+.tabbar{display:flex;gap:4px;padding:10px 20px 0;background:var(--surface);border-bottom:1px solid var(--border)}
+.tab{padding:9px 16px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;background:none;border-top:none;border-left:none;border-right:none;font-family:inherit}
+.tab:hover{color:#fff}
+.tab.active{color:var(--gold);border-bottom-color:var(--gold)}
+
+.filter-bar{display:flex;align-items:center;gap:8px;padding:12px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.search-wrap{position:relative;flex:1;max-width:320px}
+.search-wrap input{width:100%;padding:7px 12px 7px 30px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;font-family:inherit}
+.search-wrap input:focus{border-color:rgba(201,168,76,0.4)}
+.search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:12px;pointer-events:none}
+
+/* Table */
+.tbl-wrap{padding:14px 20px}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);font-weight:700}
+.tbl td{padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+.tbl tbody tr:hover td{background:rgba(255,255,255,0.02)}
+.badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.lead-link{text-decoration:none;display:inline-block}
+
+.empty{text-align:center;padding:60px;color:var(--muted)}
+.empty .icon{font-size:48px;margin-bottom:12px}
+
+/* Modal (same pattern as referral-partners.html) */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:100;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface2);border-radius:16px;width:100%;max-width:540px;max-height:90vh;display:flex;flex-direction:column;border:1px solid var(--border2);overflow:hidden}
+.modal.wide{max-width:840px}
+.modal-hdr{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-hdr h2{font-size:15px;font-weight:700}
+.modal-body{flex:1;overflow-y:auto;padding:20px}
+.signer-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.05)}
+.signer-row:last-child{border-bottom:none}
+/* The signed letter renders on a white page (document_html carries its own styling) */
+.letter-page{background:#fff;color:#111;border-radius:6px;padding:30px 34px;box-shadow:0 4px 18px rgba(0,0,0,0.4)}
+.cert-page{background:#fff;color:#111;border-radius:6px;padding:22px 26px;margin-top:8px}
+
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999;max-width:90vw}
+#toast.show{opacity:1}
+#toast.err{border-color:rgba(248,113,113,0.55);color:#f87171}
+</style>
+<link rel="stylesheet" href="/public/css/responsive-global.css">
+</head>
+<body>
+
+<div class="topbar">
+  <a href="people.html" style="color:var(--muted);text-decoration:none;font-size:12px;margin-right:4px;">← Back</a>
+  <a href="settings.html" style="color:var(--muted);text-decoration:none;font-size:12px;margin-right:4px;">⚙ Settings</a>
+  <h1>✍️ LOE Center</h1>
+  <div class="topbar-right">
+    <button class="btn btn-ghost btn-sm" onclick="refreshAll()">↻ Refresh</button>
+  </div>
+</div>
+
+<div class="tabbar">
+  <button class="tab active" id="tab-queue" onclick="setTab('queue')">Queue (0)</button>
+  <button class="tab" id="tab-signed" onclick="setTab('signed')">Signed (0)</button>
+</div>
+
+<div class="filter-bar">
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="searchInput" placeholder="Filter by borrower name..." oninput="onSearch(this.value)">
+  </div>
+</div>
+
+<div class="tbl-wrap" id="tblWrap">
+  <div class="empty"><div class="icon">✍️</div><div>Loading…</div></div>
+</div>
+
+<!-- Reusable modal (status / signed letter) -->
+<div class="modal-overlay" id="loeModal" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="loeModalBox"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   LOE CENTER — global admin view of Letters of Explanation across every lead.
+   Backend is already deployed; this page ONLY calls existing RPCs / edge fns:
+     • rpc  loe_queue      → outstanding LOEs (drafted/sent), newest first
+     • rpc  loe_signed     → signed archive, newest first
+     • fn   loe-send       → send a drafted LOE for signature (+ SMS)
+     • fn   esign {status}  → per-signer envelope status
+     • fn   esign {preview} → signed document_html (+ certificate_html)
+   Auth: window._supabaseClient (set up by auth-guard.js / sb-auth.js) carries the
+   logged-in user's JWT; edge fns go through that client's .functions.invoke().
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+// ── Authenticated client (identical to referral-partners.html) ──
+function _authClient() { return window._supabaseClient; }
+async function waitClient(ms) { ms = ms || 7000; const s = Date.now(); while (!window._supabaseClient && Date.now() - s < ms) { await new Promise(r => setTimeout(r, 40)); } return window._supabaseClient; }
+
+// ── Toast helper (matches the other admin pages; err=true tints it red) ──
+function showToast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isError);
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), isError ? 4000 : 2500);
+}
+
+// ── Category labels (fall back to the raw value if unmapped) ──
+const LOE_CAT = {
+  credit_inquiry: 'Credit inquiry', large_deposit: 'Large deposit', employment_gap: 'Employment gap',
+  address_discrepancy: 'Address / name discrepancy', late_payment: 'Late payment', source_of_funds: 'Source of funds',
+  name_variation: 'Name variation', cash_out: 'Cash-out', other: 'Other'
+};
+function catLabel(c) { return LOE_CAT[c] || c || ''; }
+
+// ── State ──
+let _queue = [], _signed = [], _tab = 'queue', _search = '';
+
+// ── Edge-function invoke wrapper: attaches JWT (via the authed client) and
+//    surfaces BOTH transport errors and a function's own { error } body. ──
+async function _loeInvoke(fn, body) {
+  const res = await _authClient().functions.invoke(fn, { body: body });
+  if (res && res.error) {
+    let detail = '';
+    try { if (res.error.context && typeof res.error.context.json === 'function') { const j = await res.error.context.json(); detail = (j && (j.error || j.message)) || ''; } } catch (e) {}
+    throw new Error(detail || res.error.message || ('Request to ' + fn + ' failed'));
+  }
+  const data = res && res.data;
+  if (data && data.error) throw new Error(data.error);
+  return data || {};
+}
+
+// ── Small utils ──
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function fmtDate(d) { if (!d) return ''; try { const dt = new Date(d); if (isNaN(dt.getTime())) return ''; return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (e) { return ''; } }
+function _btnBusy(btn, busy, label) {
+  if (!btn) return;
+  if (busy) { if (btn.dataset.orig == null) btn.dataset.orig = btn.textContent; btn.textContent = label || '…'; btn.disabled = true; }
+  else { if (btn.dataset.orig != null) { btn.textContent = btn.dataset.orig; delete btn.dataset.orig; } btn.disabled = false; }
+}
+// Open the borrower's lead detail — same URL pattern the rest of the admin app uses.
+function leadLink(cid) {
+  return '<a class="btn btn-ghost btn-xs lead-link" href="lead-detail.html?contact_id=' + encodeURIComponent(cid || '') + '">Open lead</a>';
+}
+function statusBadge(status) {
+  const map = {
+    drafted: ['#c9a84c', 'rgba(201,168,76,0.14)', 'Draft'],
+    sent:    ['#60a0ff', 'rgba(96,160,255,0.14)', 'Sent'],
+    signed:  ['#50c878', 'rgba(80,200,120,0.14)', 'Signed'],
+    voided:  ['rgba(255,255,255,0.5)', 'rgba(255,255,255,0.06)', 'Voided']
+  };
+  const c = map[status] || ['rgba(255,255,255,0.5)', 'rgba(255,255,255,0.06)', status || '—'];
+  return '<span class="badge" style="color:' + c[0] + ';background:' + c[1] + '">' + escapeHtml(c[2]) + '</span>';
+}
+function signerBadge(status) {
+  const s = String(status || '').toLowerCase();
+  const map = {
+    signed: ['#50c878', 'rgba(80,200,120,0.14)'], completed: ['#50c878', 'rgba(80,200,120,0.14)'],
+    sent: ['#60a0ff', 'rgba(96,160,255,0.14)'], delivered: ['#60a0ff', 'rgba(96,160,255,0.14)'],
+    viewed: ['#c9a84c', 'rgba(201,168,76,0.14)'], declined: ['#f87171', 'rgba(248,113,113,0.14)']
+  };
+  const c = map[s] || ['rgba(255,255,255,0.5)', 'rgba(255,255,255,0.06)'];
+  return '<span class="badge" style="color:' + c[0] + ';background:' + c[1] + '">' + escapeHtml(status || '—') + '</span>';
+}
+
+// ── Tabs ──
+function setTab(name) {
+  _tab = name;
+  document.getElementById('tab-queue').classList.toggle('active', name === 'queue');
+  document.getElementById('tab-signed').classList.toggle('active', name === 'signed');
+  render();
+}
+function updateCounts() {
+  document.getElementById('tab-queue').textContent = 'Queue (' + _queue.length + ')';
+  document.getElementById('tab-signed').textContent = 'Signed (' + _signed.length + ')';
+}
+
+// ── Search (client-side, by borrower name) ──
+function onSearch(v) { _search = (v || '').trim().toLowerCase(); render(); }
+function matchSearch(r) { return !_search || String(r.borrower_name || '').toLowerCase().indexOf(_search) !== -1; }
+
+// ── Render ──
+function emptyState(icon, msg) { return '<div class="empty"><div class="icon">' + icon + '</div><div>' + escapeHtml(msg) + '</div></div>'; }
+function render() { if (_tab === 'queue') renderQueue(); else renderSigned(); }
+
+function renderQueue() {
+  const rows = _queue.filter(matchSearch);
+  const wrap = document.getElementById('tblWrap');
+  if (!rows.length) { wrap.innerHTML = emptyState('📭', _search ? 'No matching letters' : 'No outstanding letters'); return; }
+  wrap.innerHTML = '<table class="tbl"><thead><tr>'
+    + '<th>Borrower</th><th>Letter</th><th>Category</th><th>Status</th><th>Date</th><th></th>'
+    + '</tr></thead><tbody>'
+    + rows.map(function (r) {
+        const letter = escapeHtml(r.title || r.topic || catLabel(r.category) || 'Letter of Explanation');
+        const date = fmtDate(r.sent_at || r.created_at);
+        let action = '';
+        if (r.status === 'drafted') action = '<button class="btn btn-gold btn-xs" onclick="loeSend(\'' + r.id + '\',this)">Send</button> ';
+        else if (r.status === 'sent') action = '<button class="btn btn-ghost btn-xs" onclick="loeViewStatus(\'' + r.id + '\',this)">View status</button> ';
+        return '<tr>'
+          + '<td style="font-weight:600;">' + escapeHtml(r.borrower_name || '—') + '</td>'
+          + '<td>' + letter + '</td>'
+          + '<td style="color:var(--muted);">' + escapeHtml(catLabel(r.category)) + '</td>'
+          + '<td>' + statusBadge(r.status) + '</td>'
+          + '<td style="color:var(--muted);white-space:nowrap;">' + date + '</td>'
+          + '<td style="text-align:right;white-space:nowrap;">' + action + leadLink(r.contact_id) + '</td>'
+          + '</tr>';
+      }).join('')
+    + '</tbody></table>';
+}
+
+function renderSigned() {
+  const rows = _signed.filter(matchSearch);
+  const wrap = document.getElementById('tblWrap');
+  if (!rows.length) { wrap.innerHTML = emptyState('🗂', _search ? 'No matching letters' : 'No signed letters yet'); return; }
+  wrap.innerHTML = '<table class="tbl"><thead><tr>'
+    + '<th>Borrower</th><th>Letter</th><th>Category</th><th>Signed</th><th></th>'
+    + '</tr></thead><tbody>'
+    + rows.map(function (r) {
+        const letter = escapeHtml(r.title || r.topic || catLabel(r.category) || 'Letter of Explanation');
+        return '<tr>'
+          + '<td style="font-weight:600;">' + escapeHtml(r.borrower_name || '—') + '</td>'
+          + '<td>' + letter + '</td>'
+          + '<td style="color:var(--muted);">' + escapeHtml(catLabel(r.category)) + '</td>'
+          + '<td style="color:var(--muted);white-space:nowrap;">' + fmtDate(r.signed_at) + '</td>'
+          + '<td style="text-align:right;white-space:nowrap;">'
+            + '<button class="btn btn-ghost btn-xs" onclick="loeViewSigned(\'' + r.id + '\',this)">View signed</button> '
+            + leadLink(r.contact_id)
+          + '</td>'
+          + '</tr>';
+      }).join('')
+    + '</tbody></table>';
+}
+
+// ── Data loads ──
+async function loadQueue() {
+  try {
+    const res = await _authClient().rpc('loe_queue');
+    if (res.error) throw res.error;
+    _queue = res.data || [];
+  } catch (e) { _queue = []; showToast('Could not load queue: ' + (e.message || 'error'), true); }
+  updateCounts();
+  if (_tab === 'queue') renderQueue();
+}
+async function loadSigned() {
+  try {
+    const res = await _authClient().rpc('loe_signed');
+    if (res.error) throw res.error;
+    _signed = res.data || [];
+  } catch (e) { _signed = []; showToast('Could not load signed archive: ' + (e.message || 'error'), true); }
+  updateCounts();
+  if (_tab === 'signed') renderSigned();
+}
+async function refreshAll() { await Promise.all([loadQueue(), loadSigned()]); }
+
+// ── Row actions ──
+async function loeSend(id, btn) {
+  _btnBusy(btn, true, 'Sending…');
+  try {
+    await _loeInvoke('loe-send', { loe_id: id, send_sms: true });
+    showToast('LOE sent');
+    await refreshAll();   // re-renders the table; the clicked button is replaced
+  } catch (e) {
+    showToast('Send failed: ' + (e.message || 'error'), true);
+    _btnBusy(btn, false);
+  }
+}
+async function loeViewStatus(id, btn) {
+  const r = _queue.filter(function (x) { return String(x.id) === String(id); })[0];
+  if (!r || !r.envelope_id) { showToast('No signature envelope yet.', true); return; }
+  _btnBusy(btn, true, '…');
+  try {
+    const data = await _loeInvoke('esign', { action: 'status', envelope_id: r.envelope_id });
+    _btnBusy(btn, false);
+    const env = (data && data.envelope) || {};
+    const signers = (data && data.signers) || [];
+    const st = (env.status || '').toString();
+    const head = '<div style="font-size:12px;color:var(--gold);font-weight:700;margin-bottom:12px;">Envelope: '
+      + escapeHtml(st ? st.charAt(0).toUpperCase() + st.slice(1) : '—') + '</div>';
+    const list = signers.length
+      ? signers.map(function (s) {
+          return '<div class="signer-row"><span style="min-width:0;">'
+            + '<span style="display:block;font-size:13px;">' + escapeHtml(s.name || s.email || 'Signer') + '</span>'
+            + (s.email ? '<span style="font-size:11px;color:var(--muted);">' + escapeHtml(s.email) + '</span>' : '')
+            + '</span>' + signerBadge(s.status) + '</div>';
+        }).join('')
+      : '<div style="color:var(--muted);font-size:13px;">No recipients.</div>';
+    openModal('Signature status', head + list, false);
+  } catch (e) {
+    _btnBusy(btn, false);
+    showToast('Could not load status: ' + (e.message || 'error'), true);
+  }
+}
+async function loeViewSigned(id, btn) {
+  const r = _signed.filter(function (x) { return String(x.id) === String(id); })[0];
+  if (!r || !r.envelope_id) { showToast('No signed document available.', true); return; }
+  _btnBusy(btn, true, '…');
+  try {
+    const data = await _loeInvoke('esign', { action: 'preview', envelope_id: r.envelope_id });
+    _btnBusy(btn, false);
+    const docHtml = (data && data.document_html) || '<div style="color:#666;">No document content.</div>';
+    const certHtml = (data && data.certificate_html) || '';
+    let html = '<div class="letter-page">' + docHtml + '</div>';
+    if (certHtml) {
+      html += '<details style="margin-top:14px;"><summary style="cursor:pointer;color:var(--gold);font-size:12px;font-weight:600;">View signing certificate</summary>'
+        + '<div class="cert-page">' + certHtml + '</div></details>';
+    }
+    openModal('Signed letter', html, true);
+  } catch (e) {
+    _btnBusy(btn, false);
+    showToast('Could not load signed letter: ' + (e.message || 'error'), true);
+  }
+}
+
+// ── Modal ──
+function openModal(title, bodyHtml, wide) {
+  const box = document.getElementById('loeModalBox');
+  box.className = 'modal' + (wide ? ' wide' : '');
+  box.innerHTML = '<div class="modal-hdr"><h2>' + escapeHtml(title) + '</h2>'
+    + '<button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button></div>'
+    + '<div class="modal-body">' + bodyHtml + '</div>';
+  document.getElementById('loeModal').classList.add('open');
+}
+function closeModal() { document.getElementById('loeModal').classList.remove('open'); }
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+
+// ── Boot ──
+(async function init() {
+  await waitClient();
+  if (!_authClient()) {
+    document.getElementById('tblWrap').innerHTML = emptyState('🔒', 'Not signed in.');
+    return;
+  }
+  await refreshAll();
+})();
+</script>
+</body>
+</html>
