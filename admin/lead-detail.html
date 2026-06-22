@@ -17260,6 +17260,56 @@ function fromISODate(val) {
   return val;
 }
 
+/* ── ACTIVE-BORROWER → COLUMN SCOPE (Section 1a / Personal Information) ──
+   ONE mapping that governs read (load1003), write (save1003), the DL scan-apply,
+   and "Pull from contact". Section 1a uses the f_* inputs; when the PRIMARY tab
+   is active they bind to the inline columns, when a CO-BORROWER tab is active
+   they bind to the co_borrower_* columns of the SAME (primary's) application row.
+   SSN is handled separately against the application_ssn vault. */
+function _lp1003CoActive() {
+  return typeof losViewMode !== 'undefined' && losViewMode === 'individual'
+      && typeof losActiveBorrowerIdx === 'number' && losActiveBorrowerIdx >= 1;
+}
+function _lp1003PrimaryCid() {
+  return (Array.isArray(window.losBorrowers) && losBorrowers[0] && losBorrowers[0].contact_id)
+      || (typeof losCid === 'function' && losCid())
+      || (typeof getContactId === 'function' && getContactId()) || null;
+}
+// [ f_* input id, primary inline column, co_borrower_* column, isDate ]
+var _LP_1A_FIELDS = [
+  ['f_first_name',    'first_name',             'co_borrower_first_name',  false],
+  ['f_middle_name',   'middle_name',            'co_borrower_middle_name', false],
+  ['f_last_name',     'last_name',              'co_borrower_last_name',   false],
+  ['f_suffix',        'suffix',                 'co_borrower_suffix',      false],
+  ['f_dob',           'date_of_birth',          'co_borrower_dob',         true ],
+  ['f_citizenship',   'citizenship',            'co_borrower_citizenship', false],
+  ['f_marital_status','marital_status',         'co_borrower_marital_status', false],
+  ['f_cell_phone',    'cell_phone',             'co_borrower_cell_phone',  false],
+  ['f_home_phone',    'home_phone',             'co_borrower_home_phone',  false],
+  ['f_email',         'email',                  'co_borrower_email',       false],
+  ['f_dl_number',     'dl_number',              'co_borrower_dl_number',   false],
+  ['f_dl_state',      'dl_state',               'co_borrower_dl_state',    false],
+  ['f_dl_expiry',     'dl_expiry',              'co_borrower_dl_expiry',   true ],
+  ['f_current_street','current_address_street', 'co_borrower_current_street', false],
+  ['f_current_city',  'current_address_city',   'co_borrower_current_city',  false],
+  ['f_current_state', 'current_address_state',  'co_borrower_current_state', false],
+  ['f_current_zip',   'current_address_zip',    'co_borrower_current_zip',   false],
+  ['f_current_housing','current_housing_type',  'co_borrower_housing_type',  false],
+];
+// Section 1a personal f_* fields with NO co_borrower_* twin — cleared on read /
+// dropped on write while a co-borrower is active so the co tab never shows or
+// persists a primary value.
+var _LP_1A_NOTWIN = [
+  ['f_current_unit',     'current_address_unit'],
+  ['f_current_country',  'current_address_country'],
+  ['f_current_years',    'current_address_years'],
+  ['f_current_months',   'current_address_months'],
+  ['f_current_rent',     'current_rent_amount'],
+  ['f_dependents_count', 'dependents_count'],
+  ['f_dependents_ages',  'dependents_ages'],
+  ['f_work_phone',       'work_phone'],
+];
+
 /* ── 1003 — SAVE TO SUPABASE ── */
 async function save1003() {
   const cid = getContactId();
@@ -17435,6 +17485,25 @@ async function save1003() {
     cleanData.overtime_income = null;
     cleanData.bonus_income = null;
     cleanData.commission_income = null;
+  }
+
+  // CO-BORROWER scope: Section 1a edits belong to the co_borrower_* columns. Move
+  // each f_*-derived value into its co_borrower_* twin and DROP the primary inline
+  // column so the primary's record is never touched. (save1003 already targets the
+  // primary row via getContactId, so the co_borrower_* columns land correctly.)
+  if (_lp1003CoActive()) {
+    _LP_1A_FIELDS.forEach(function(m) {
+      var fid = m[0], inlineCol = m[1], coCol = m[2], isDate = m[3];
+      var raw = (document.getElementById(fid) || {}).value;
+      raw = (raw == null || raw === '') ? null : raw;
+      cleanData[coCol] = isDate ? toISODate(raw) : raw;
+      delete cleanData[inlineCol];
+    });
+    // SSN: co-borrower writes co_borrower_ssn (from the Section 1a field), never the primary ssn.
+    cleanData.co_borrower_ssn = gv('f_ssn');
+    delete cleanData.ssn;
+    // Personal columns with no co twin: don't write them (would hit primary inline).
+    _LP_1A_NOTWIN.forEach(function(m) { delete cleanData[m[1]]; });
   }
 
   console.log('Saving 1003 with fields:', Object.keys(cleanData));
@@ -17894,7 +17963,10 @@ function _openDocPreview(url) {
 }
 
 async function load1003(overrideCid) {
-  const cid = overrideCid || getContactId();
+  // When a co-borrower tab is active, Section 1a reads the co_borrower_* columns
+  // from the PRIMARY row (that's where they live), so force the primary cid.
+  const _coActive = _lp1003CoActive();
+  const cid = _coActive ? _lp1003PrimaryCid() : (overrideCid || getContactId());
   if (!cid) return;
 
   try {
@@ -17966,6 +18038,15 @@ async function load1003(overrideCid) {
     sv('f_current_months', data.current_address_months);
     sv('f_current_housing', data.current_housing_type);
     sv('f_current_rent', data.current_rent_amount);
+
+    // CO-BORROWER scope: Section 1a (f_*) must show ONLY co_borrower_* values.
+    // svc clears the field when the co value is empty so a primary value can
+    // never bleed through; SSN is overridden in the vault block below.
+    if (_coActive) {
+      const svc = function(id, val) { const el = document.getElementById(id); if (el) el.value = (val == null ? '' : val); };
+      _LP_1A_FIELDS.forEach(function(m) { svc(m[0], data[m[2]]); });
+      _LP_1A_NOTWIN.forEach(function(m) { svc(m[0], ''); });
+    }
     sv('f_loan_amount', data.loan_amount);
     sv('f_loan_purpose', data.loan_purpose);
     sv('f_loan_type_app', data.loan_type);
@@ -18165,7 +18246,13 @@ async function load1003(overrideCid) {
           .then(function (res) {
             var v = res && res.data ? res.data : null;
             if (!v) return; // not permitted to see SSN, or none on file
-            if (v.ssn) { try { sv('f_ssn', v.ssn); } catch (e) {} }
+            // Co-borrower scope: Section 1a SSN field shows the co_borrower_ssn,
+            // never the primary ssn. Clear it when the co-borrower has none.
+            if (_lp1003CoActive()) {
+              var _fs = document.getElementById('f_ssn'); if (_fs) _fs.value = v.co_borrower_ssn || '';
+            } else if (v.ssn) {
+              try { sv('f_ssn', v.ssn); } catch (e) {}
+            }
             if (v.co_borrower_ssn) { try { sv('cb_ssn', v.co_borrower_ssn); } catch (e) {} }
             // refresh the SSN masks now that the real values are loaded from the vault
             try { _lpInitSsnMask('f_ssn'); _lpInitSsnMask('cb_ssn'); } catch (e) {}
@@ -18262,8 +18349,14 @@ async function _lpPrefill1003People(force) {
   // CO-BORROWER = first connected person that is_borrower, else first connected person.
   var co = others.filter(function (r) { return r.is_borrower === true; })[0] || others[0] || null;
 
-  _lpFillPersonInfo(primary, false, force);
-  if (co) _lpFillPersonInfo(co, true, force);
+  if (_lp1003CoActive()) {
+    // Co-borrower tab: Section 1a (f_*) IS the co-borrower — pull the co-borrower's
+    // contact into f_* (which save1003 routes to co_borrower_*). Never touch primary.
+    if (co) _lpFillPersonInfo(co, false, force);
+  } else {
+    _lpFillPersonInfo(primary, false, force);
+    if (co) _lpFillPersonInfo(co, true, force);
+  }
 
   // Type of Credit default — only when the user hasn't chosen and none was saved.
   if (!window._lp1003CreditTouched && !window._lp1003HasSavedCreditType) {
@@ -21292,15 +21385,12 @@ async function openOCRReviewModal(fields, docType, sourceFile) {
   // co-borrower (no own contact) use the 'cob:<primaryId>' sentinel so the apply
   // routes to co_borrower_* columns instead of clobbering the primary row.
   if (typeof losViewMode !== 'undefined' && losViewMode === 'individual'
-      && typeof losActiveBorrowerIdx === 'number' && losActiveBorrowerIdx >= 1
-      && Array.isArray(window.losBorrowers) && window.losBorrowers[losActiveBorrowerIdx]) {
-    const ab = window.losBorrowers[losActiveBorrowerIdx];
-    if (ab.contact_id) {
-      defaultTargetId = ab.contact_id;
-    } else {
-      const pc = (window.losBorrowers[0] && window.losBorrowers[0].contact_id) || primaryId;
-      if (pc) defaultTargetId = 'cob:' + pc;
-    }
+      && typeof losActiveBorrowerIdx === 'number' && losActiveBorrowerIdx >= 1) {
+    // Co-borrower 1003 data lives in the primary row's co_borrower_* columns, so a
+    // scan on a co-borrower tab ALWAYS routes there via the sentinel — never the
+    // primary inline columns, and never a co-borrower's own contact row.
+    const pc = (Array.isArray(window.losBorrowers) && window.losBorrowers[0] && window.losBorrowers[0].contact_id) || primaryId;
+    if (pc) defaultTargetId = 'cob:' + pc;
   }
   _ocrReviewTargetId = defaultTargetId || null;
   _ocrReviewIsAddNew = false;
