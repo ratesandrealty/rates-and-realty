@@ -109,13 +109,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 /* ═══════════════════════════════════════════════════════════════════════════
    LOE CENTER — global admin view of Letters of Explanation across every lead.
    Backend is already deployed; this page ONLY calls existing RPCs / edge fns:
-     • rpc  loe_queue      → outstanding LOEs (drafted/sent), newest first
-     • rpc  loe_signed     → signed archive, newest first
-     • fn   loe-send       → send a drafted LOE for signature (+ SMS)
-     • fn   esign {status}  → per-signer envelope status
-     • fn   esign {preview} → signed document_html (+ certificate_html)
+     • rpc  loe_queue           → outstanding LOEs (drafted/sent), newest first
+     • rpc  loe_signed          → signed archive, newest first
+     • rpc  loe_envelope_detail → single row: { status, signers[], document_html } —
+                                  used for both "View status" and "View signed"
+                                  (CORS-clean; replaces the esign edge fn)
+     • fn   loe-send            → send a drafted LOE for signature (+ SMS)
    Auth: window._supabaseClient (set up by auth-guard.js / sb-auth.js) carries the
-   logged-in user's JWT; edge fns go through that client's .functions.invoke().
+   logged-in user's JWT; the edge fn goes through that client's .functions.invoke().
    ═══════════════════════════════════════════════════════════════════════════ */
 
 // ── Authenticated client (identical to referral-partners.html) ──
@@ -292,14 +293,17 @@ async function loeSend(id, btn) {
 }
 async function loeViewStatus(id, btn) {
   const r = _queue.filter(function (x) { return String(x.id) === String(id); })[0];
-  if (!r || !r.envelope_id) { showToast('No signature envelope yet.', true); return; }
+  if (!r) { showToast('Letter not found.', true); return; }
   _btnBusy(btn, true, '…');
   try {
-    const data = await _loeInvoke('esign', { action: 'status', envelope_id: r.envelope_id });
+    // CORS-clean RPC keyed off the LOE row id (single-row result set).
+    const { data, error } = await _authClient().rpc('loe_envelope_detail', { p_loe_id: r.id });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
     _btnBusy(btn, false);
-    const env = (data && data.envelope) || {};
-    const signers = (data && data.signers) || [];
-    const st = (env.status || '').toString();
+    if (!row) { showToast('No envelope detail found.', true); return; }
+    const signers = row.signers || [];
+    const st = (row.status || '').toString();
     const head = '<div style="font-size:12px;color:var(--gold);font-weight:700;margin-bottom:12px;">Envelope: '
       + escapeHtml(st ? st.charAt(0).toUpperCase() + st.slice(1) : '—') + '</div>';
     const list = signers.length
@@ -318,19 +322,18 @@ async function loeViewStatus(id, btn) {
 }
 async function loeViewSigned(id, btn) {
   const r = _signed.filter(function (x) { return String(x.id) === String(id); })[0];
-  if (!r || !r.envelope_id) { showToast('No signed document available.', true); return; }
+  if (!r) { showToast('Letter not found.', true); return; }
   _btnBusy(btn, true, '…');
   try {
-    const data = await _loeInvoke('esign', { action: 'preview', envelope_id: r.envelope_id });
+    // CORS-clean RPC keyed off the LOE row id; row.document_html is the signed
+    // letter with the signature already baked in (signed_pdf_url is null for letters).
+    const { data, error } = await _authClient().rpc('loe_envelope_detail', { p_loe_id: r.id });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
     _btnBusy(btn, false);
-    const docHtml = (data && data.document_html) || '<div style="color:#666;">No document content.</div>';
-    const certHtml = (data && data.certificate_html) || '';
-    let html = '<div class="letter-page">' + docHtml + '</div>';
-    if (certHtml) {
-      html += '<details style="margin-top:14px;"><summary style="cursor:pointer;color:var(--gold);font-size:12px;font-weight:600;">View signing certificate</summary>'
-        + '<div class="cert-page">' + certHtml + '</div></details>';
-    }
-    openModal('Signed letter', html, true);
+    if (!row) { showToast('No signed document found.', true); return; }
+    const docHtml = row.document_html || '<div style="color:#666;">No document content.</div>';
+    openModal('Signed letter', '<div class="letter-page">' + docHtml + '</div>', true);
   } catch (e) {
     _btnBusy(btn, false);
     showToast('Could not load signed letter: ' + (e.message || 'error'), true);
