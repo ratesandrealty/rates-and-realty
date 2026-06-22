@@ -18039,14 +18039,18 @@ async function load1003(overrideCid) {
     sv('f_current_housing', data.current_housing_type);
     sv('f_current_rent', data.current_rent_amount);
 
-    // CO-BORROWER scope: Section 1a (f_*) must show ONLY co_borrower_* values.
-    // svc clears the field when the co value is empty so a primary value can
-    // never bleed through; SSN is overridden in the vault block below.
-    if (_coActive) {
+    // Bind Section 1a to the ACTIVE borrower's column set. svc CLEARS the field on
+    // null so a value can never retain the previous borrower's — critical for
+    // <select>s (marital_status / citizenship / suffix), which the tab switch does
+    // NOT clear and which the inline `sv` above skips when null, leaking the prior
+    // borrower's value into the next save. Twinned fields use co_borrower_* when a
+    // co-borrower is active, inline columns otherwise; co-active also blanks the
+    // personal fields that have no co twin. SSN is handled in the vault block below.
+    (function() {
       const svc = function(id, val) { const el = document.getElementById(id); if (el) el.value = (val == null ? '' : val); };
-      _LP_1A_FIELDS.forEach(function(m) { svc(m[0], data[m[2]]); });
-      _LP_1A_NOTWIN.forEach(function(m) { svc(m[0], ''); });
-    }
+      _LP_1A_FIELDS.forEach(function(m) { svc(m[0], _coActive ? data[m[2]] : data[m[1]]); });
+      if (_coActive) _LP_1A_NOTWIN.forEach(function(m) { svc(m[0], ''); });
+    })();
     sv('f_loan_amount', data.loan_amount);
     sv('f_loan_purpose', data.loan_purpose);
     sv('f_loan_type_app', data.loan_type);
@@ -19669,6 +19673,10 @@ async function losSwitchBorrower(idx) {
     var appPanel = document.getElementById('tab-application');
     if (appPanel) {
       appPanel.querySelectorAll('input[id^="f_"]').forEach(function(el){ if (el.type !== 'checkbox' && el.type !== 'radio') el.value = ''; });
+      // Also reset f_* <select>s — they aren't cleared by the input sweep above, so
+      // without this a dropdown (marital_status / citizenship / suffix) kept the
+      // previous borrower's value and bled into the next save.
+      appPanel.querySelectorAll('select[id^="f_"]').forEach(function(el){ el.value = ''; });
       appPanel.querySelectorAll('input[type="checkbox"][id^="f_"], input[type="radio"][name^="decl_"]').forEach(function(el){ el.checked = false; });
     }
     await Promise.all([
