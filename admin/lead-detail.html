@@ -9841,15 +9841,20 @@ function _loeModalBody(id, html){ var b=document.getElementById(id+'_body'); if(
 
 async function loeViewStatus(id){
   var r=_loeRows.filter(function(x){ return String(x.id)===String(id); })[0];
-  if(!r || !r.envelope_id){ _loeToast('No signature envelope to check yet.', true); return; }
+  if(!r){ _loeToast('Letter not found.', true); return; }
   _loeModalShell('loeStatusOverlay','Signature status','<div style="color:#888;font-size:12px;">Loading…</div>', false);
   try{
-    var data=await _loeInvoke('esign', { action:'status', envelope_id:r.envelope_id });
-    var env=(data&&data.envelope)||{}, signers=(data&&data.signers)||[];
-    var st=(env.status||'').toString();
+    // CORS-clean admin RPC keyed off the LOE row id (replaces the esign edge fn,
+    // whose CORS allow-list rejected the x-client-info header invoke() sends).
+    var res=await _authClient().rpc('loe_envelope_detail', { p_loe_id:r.id });
+    if(res.error) throw res.error;
+    var row=Array.isArray(res.data)?res.data[0]:res.data;
+    if(!row) throw new Error('No envelope detail found.');
+    var signers=(row.signers)||[];
+    var st=(row.status||'').toString();
     var head='<div style="font-size:12px;color:#C9A84C;font-weight:700;margin-bottom:12px;">Envelope: '+lpEsc(st?(st.charAt(0).toUpperCase()+st.slice(1)):'—')+'</div>';
     var list = signers.length ? signers.map(function(s){
-      var badge=(typeof _esignSignerStatusBadge==='function') ? _esignSignerStatusBadge(s.status, s.is_cc) : '<span style="font-size:10px;color:#888;">'+lpEsc(s.status||'')+'</span>';
+      var badge=(typeof _esignSignerStatusBadge==='function') ? _esignSignerStatusBadge(s.status) : '<span style="font-size:10px;color:#888;">'+lpEsc(s.status||'')+'</span>';
       return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
         +'<span style="min-width:0;"><span style="font-size:12px;color:#ddd;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(s.name||s.email||'Signer')+'</span>'
         +(s.email?'<span style="font-size:10px;color:#888;">'+lpEsc(s.email)+'</span>':'')+'</span>'
@@ -9857,21 +9862,24 @@ async function loeViewStatus(id){
     }).join('') : '<div style="color:#888;font-size:12px;">No recipients.</div>';
     var voidBtn='<div style="margin-top:14px;text-align:right;"><button type="button" onclick="loeVoid(\''+r.id+'\')" style="border:1px solid rgba(229,72,77,0.4);background:transparent;color:#E5484D;font-size:11px;font-weight:600;cursor:pointer;padding:5px 12px;border-radius:6px;font-family:inherit;">Void this letter</button></div>';
     _loeModalBody('loeStatusOverlay', head+list+voidBtn);
-  }catch(e){ _loeModalBody('loeStatusOverlay', '<div style="color:#E5484D;font-size:12px;">'+lpEsc((e&&e.message)||'Could not load status')+'</div>'); }
+  }catch(e){ var m=(e&&e.message)||'Could not load status'; _loeToast(m, true); _loeModalBody('loeStatusOverlay', '<div style="color:#E5484D;font-size:12px;">'+lpEsc(m)+'</div>'); }
 }
 
 async function loeViewSigned(id){
   var r=_loeRows.filter(function(x){ return String(x.id)===String(id); })[0];
-  if(!r || !r.envelope_id){ _loeToast('No signed document available.', true); return; }
+  if(!r){ _loeToast('Letter not found.', true); return; }
   _loeModalShell('loeSignedOverlay','Signed letter','<div style="color:#888;font-size:12px;">Loading…</div>', true);
   try{
-    var data=await _loeInvoke('esign', { action:'preview', envelope_id:r.envelope_id });
-    var docHtml=(data&&data.document_html)||'<div style="color:#666;">No document content.</div>';
-    var certHtml=(data&&data.certificate_html)||'';
+    // CORS-clean admin RPC keyed off the LOE row id (replaces the esign edge fn).
+    // row.document_html is the signed letter with the signature already baked in.
+    var res=await _authClient().rpc('loe_envelope_detail', { p_loe_id:r.id });
+    if(res.error) throw res.error;
+    var row=Array.isArray(res.data)?res.data[0]:res.data;
+    if(!row) throw new Error('No signed document found.');
+    var docHtml=(row.document_html)||'<div style="color:#666;">No document content.</div>';
     var html='<div style="background:#fff;color:#111;border-radius:6px;padding:30px 34px;box-shadow:0 4px 18px rgba(0,0,0,0.4);">'+docHtml+'</div>';
-    if(certHtml) html+='<details style="margin-top:14px;"><summary style="cursor:pointer;color:#C9A84C;font-size:12px;font-weight:600;">View signing certificate</summary><div style="background:#fff;color:#111;border-radius:6px;padding:24px 28px;margin-top:8px;">'+certHtml+'</div></details>';
     _loeModalBody('loeSignedOverlay', html);
-  }catch(e){ _loeModalBody('loeSignedOverlay', '<div style="color:#E5484D;font-size:12px;">'+lpEsc((e&&e.message)||'Could not load signed letter')+'</div>'); }
+  }catch(e){ var m=(e&&e.message)||'Could not load signed letter'; _loeToast(m, true); _loeModalBody('loeSignedOverlay', '<div style="color:#E5484D;font-size:12px;">'+lpEsc(m)+'</div>'); }
 }
 // ===== END LOE CENTER =====
 
