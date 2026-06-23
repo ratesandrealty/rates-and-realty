@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>Vendor Directory — Rates & Realty CRM</title>
+<!-- EXACT same authenticated-client bootstrap + login-redirect/admin guard as loe-center.html / referral-partners.html -->
+<script src="/admin/js/auth-guard.js?v=2026061501"></script>
+<script src="/api/env.js?v=2026033003"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="/assets/js/sb-auth.js?v=2026061401"></script>
+<style>
+:root{--gold:#c9a84c;--gold2:#e4b84e;--bg:#0a0a0a;--surface:#111;--surface2:#181818;--surface3:#222;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#fff;--muted:rgba(255,255,255,0.38);--green:#50c878;--red:#f87171;--blue:#60a0ff;--orange:#fb923c}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+
+.topbar{display:flex;align-items:center;gap:10px;padding:0 20px;height:52px;background:var(--surface);border-bottom:1px solid var(--border)}
+.topbar h1{font-size:16px;font-weight:800;color:var(--gold)}
+.topbar-right{margin-left:auto;display:flex;gap:8px}
+
+.btn{padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;font-family:inherit}
+.btn-gold{background:var(--gold);color:#000}
+.btn-gold:hover{background:var(--gold2)}
+.btn-ghost{background:rgba(255,255,255,0.06);color:#fff;border:1px solid var(--border2)}
+.btn-ghost:hover{background:rgba(255,255,255,0.1)}
+.btn-sm{padding:5px 10px;font-size:11px}
+.btn-xs{padding:4px 9px;font-size:10px;font-weight:700}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+
+.filter-bar{display:flex;align-items:center;gap:8px;padding:12px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.search-wrap{position:relative;flex:1;max-width:340px}
+.search-wrap input{width:100%;padding:7px 12px 7px 30px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;font-family:inherit}
+.search-wrap input:focus{border-color:rgba(201,168,76,0.4)}
+.search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:12px;pointer-events:none}
+.role-select{background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:8px;font-size:12px;font-family:inherit;padding:7px 9px;cursor:pointer;outline:none}
+.role-select option{background:#181818}
+
+/* Table (same pattern as loe-center.html) */
+.tbl-wrap{padding:14px 20px;overflow-x:auto}
+.tbl{width:100%;border-collapse:collapse;min-width:920px}
+.tbl th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);font-weight:700;white-space:nowrap}
+.tbl td{padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+.tbl tbody tr:hover td{background:rgba(255,255,255,0.02)}
+.role-pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(201,168,76,0.12);color:var(--gold);white-space:nowrap}
+.lnk{color:var(--blue);text-decoration:none}
+.lnk:hover{text-decoration:underline}
+.muted{color:var(--muted)}
+
+.empty{text-align:center;padding:60px;color:var(--muted)}
+.empty .icon{font-size:48px;margin-bottom:12px}
+
+/* Modal (same pattern as referral-partners.html) */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:100;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface2);border-radius:16px;width:100%;max-width:540px;max-height:90vh;display:flex;flex-direction:column;border:1px solid var(--border2);overflow:hidden}
+.modal-hdr{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-hdr h2{font-size:15px;font-weight:700}
+.modal-body{flex:1;overflow-y:auto;padding:20px}
+.modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.fld{margin-bottom:13px}
+.fld label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);display:block;margin-bottom:5px}
+.fld input,.fld select,.fld textarea{width:100%;padding:9px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;font-size:13px;outline:none;font-family:inherit;transition:border-color .15s}
+.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:rgba(201,168,76,0.35)}
+.fld select option{background:#181818}
+.fld textarea{min-height:70px;resize:vertical}
+.fld-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
+#toast.show{opacity:1}
+#toast.err{border-color:rgba(248,113,113,0.5);color:var(--red)}
+</style>
+  <link rel="stylesheet" href="/public/css/responsive-global.css">
+</head>
+<body>
+
+<div class="topbar">
+  <a href="people.html" style="color:var(--muted);text-decoration:none;font-size:12px;margin-right:4px;">← Back</a>
+  <a href="settings.html" style="color:var(--muted);text-decoration:none;font-size:12px;margin-right:4px;">⚙ Settings</a>
+  <h1>📇 Vendor Directory</h1>
+  <div class="topbar-right">
+    <button class="btn btn-ghost btn-sm" onclick="loadVendors()">↻ Refresh</button>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <select id="roleFilter" class="role-select" onchange="loadVendors()" title="Filter by role">
+    <option value="">All roles</option>
+  </select>
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="searchInput" placeholder="Search name, company, email, phone…" oninput="onSearch()">
+  </div>
+  <button class="btn btn-gold" style="margin-left:auto" onclick="openAddModal()">➕ Add Vendor</button>
+</div>
+
+<div class="tbl-wrap" id="tblWrap">
+  <div class="empty"><div class="icon">📇</div><div>Loading…</div></div>
+</div>
+
+<!-- Add / Edit modal (same pattern as referral-partners.html) -->
+<div class="modal-overlay" id="vendorModal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="modalTitle">📇 Add Vendor</h2>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fld"><label>Role *</label><select id="vf_role"></select></div>
+      <div class="fld-row">
+        <div class="fld"><label>Name</label><input type="text" id="vf_name" placeholder="Contact name"></div>
+        <div class="fld"><label>Company</label><input type="text" id="vf_company" placeholder="Company / brokerage"></div>
+      </div>
+      <div class="fld-row">
+        <div class="fld"><label>Phone</label><input type="tel" id="vf_phone" placeholder="(714) 555-1234"></div>
+        <div class="fld"><label>Email</label><input type="email" id="vf_email" placeholder="vendor@example.com"></div>
+      </div>
+      <div class="fld"><label>Website</label><input type="text" id="vf_website" placeholder="https://example.com"></div>
+      <div class="fld"><label>Notes</label><textarea id="vf_notes" placeholder="Any notes about this vendor…"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-gold" id="saveVendorBtn" onclick="saveVendor()">Add Vendor</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   VENDOR DIRECTORY — standalone home for the reusable transaction-contact
+   directory. Backend is already deployed; this page ONLY calls existing,
+   admin-gated RPCs:
+     • rpc vendor_directory_list   → ranked rows (most-used first)
+     • rpc vendor_directory_upsert → add (p_id null) / edit (p_id set); RAISES
+                                     on validation errors → shown via showToast
+     • rpc vendor_directory_delete → boolean
+   Auth: window._supabaseClient (set up by auth-guard.js / sb-auth.js) carries
+   the logged-in user's JWT.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+// ── Authenticated client (identical to loe-center.html / referral-partners.html) ──
+function _authClient() { return window._supabaseClient; }
+async function waitClient(ms) { ms = ms || 7000; const s = Date.now(); while (!window._supabaseClient && Date.now() - s < ms) { await new Promise(r => setTimeout(r, 40)); } return window._supabaseClient; }
+
+// ── Toast helper (matches the other admin pages; err=true tints it red) ──
+function showToast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isError);
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), isError ? 4000 : 2500);
+}
+
+// ── Canonical role map (key → label). Unmapped keys fall back to the raw key. ──
+const ROLE_LABELS = {
+  listing_agent: 'Listing Agent',
+  listing_agent_tc: 'Listing Agent Transaction Coordinator',
+  buyer_agent: 'Buyer Agent',
+  buyer_agent_tc: 'Buyer Agent Transaction Coordinator',
+  hoi_agent: 'HOI Agent',
+  title_officer: 'Title Officer',
+  escrow_officer: 'Escrow Officer',
+  lender_ae: 'Lender AE',
+  underwriter: 'Underwriter',
+  appraisal_company: 'Appraisal Company'
+};
+function roleLabel(k) { return ROLE_LABELS[k] || k || ''; }
+
+// ── Helpers ──
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function shortDate(d) { if (!d) return '—'; const dt = new Date(d); if (isNaN(dt)) return '—'; return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+function normUrl(u) { u = String(u || '').trim(); if (!u) return ''; return /^https?:\/\//i.test(u) ? u : 'https://' + u; }
+
+// ── State ──
+let _vendors = [], _editId = null, _searchTimer = null;
+
+// Populate the role <select>s (filter + modal) from the canonical map.
+function buildRoleSelects() {
+  const opts = Object.keys(ROLE_LABELS).map(k => '<option value="' + k + '">' + esc(ROLE_LABELS[k]) + '</option>').join('');
+  document.getElementById('roleFilter').innerHTML = '<option value="">All roles</option>' + opts;
+  document.getElementById('vf_role').innerHTML = '<option value="">— Select role —</option>' + opts;
+}
+
+async function loadVendors() {
+  const wrap = document.getElementById('tblWrap');
+  wrap.innerHTML = '<div class="empty"><div class="icon">📇</div><div>Loading…</div></div>';
+  try {
+    await waitClient();
+    if (!_authClient()) { wrap.innerHTML = '<div class="empty"><div class="icon">🔒</div><div>Not signed in.</div></div>'; return; }
+    const role = document.getElementById('roleFilter').value || '';
+    const query = (document.getElementById('searchInput').value || '').trim();
+    const { data, error } = await _authClient().rpc('vendor_directory_list', { p_role: role, p_query: query, p_limit: 500, p_offset: 0 });
+    if (error) { showToast('Could not load directory: ' + error.message, true); wrap.innerHTML = '<div class="empty"><div class="icon">⚠️</div><div>Could not load the directory.</div></div>'; return; }
+    _vendors = data || [];
+    renderTable();
+  } catch (e) {
+    showToast('Could not load directory: ' + (e && e.message || e), true);
+    wrap.innerHTML = '<div class="empty"><div class="icon">⚠️</div><div>Could not load the directory.</div></div>';
+  }
+}
+
+function onSearch() { clearTimeout(_searchTimer); _searchTimer = setTimeout(loadVendors, 250); }
+
+function renderTable() {
+  const wrap = document.getElementById('tblWrap');
+  if (!_vendors.length) {
+    wrap.innerHTML = '<div class="empty"><div class="icon">📇</div><div style="font-size:15px;font-weight:700;margin-bottom:6px">No vendors yet</div><div style="font-size:13px;margin-bottom:16px">No vendors yet — add one or save a transaction contact on a lead.</div><button class="btn btn-gold" onclick="openAddModal()">➕ Add Vendor</button></div>';
+    return;
+  }
+  const rows = _vendors.map(v => {
+    const site = normUrl(v.website);
+    const siteCell = site ? '<a class="lnk" href="' + esc(site) + '" target="_blank" rel="noopener">' + esc(v.website) + '</a>' : '<span class="muted">—</span>';
+    const emailCell = v.email ? '<a class="lnk" href="mailto:' + esc(v.email) + '">' + esc(v.email) + '</a>' : '<span class="muted">—</span>';
+    const phoneCell = v.phone ? '<a class="lnk" href="tel:' + esc(v.phone) + '">' + esc(v.phone) + '</a>' : '<span class="muted">—</span>';
+    return '<tr>'
+      + '<td><span class="role-pill">' + esc(roleLabel(v.role)) + '</span></td>'
+      + '<td>' + (v.name ? esc(v.name) : '<span class="muted">—</span>') + '</td>'
+      + '<td>' + (v.company ? esc(v.company) : '<span class="muted">—</span>') + '</td>'
+      + '<td>' + phoneCell + '</td>'
+      + '<td>' + emailCell + '</td>'
+      + '<td>' + siteCell + '</td>'
+      + '<td style="text-align:center">' + (Number(v.usage_count) || 0) + '</td>'
+      + '<td class="muted" style="white-space:nowrap">' + esc(shortDate(v.last_used_at)) + '</td>'
+      + '<td style="white-space:nowrap">'
+        + '<button class="btn btn-ghost btn-xs" onclick="editVendor(\'' + v.id + '\')">✏️ Edit</button> '
+        + '<button class="btn btn-ghost btn-xs" onclick="deleteVendor(\'' + v.id + '\')">🗑️ Delete</button>'
+      + '</td>'
+      + '</tr>';
+  }).join('');
+  wrap.innerHTML = '<table class="tbl"><thead><tr>'
+    + '<th>Role</th><th>Name</th><th>Company</th><th>Phone</th><th>Email</th><th>Website</th>'
+    + '<th style="text-align:center">Used</th><th>Last used</th><th></th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+// ── Add / Edit modal ──
+function openAddModal() {
+  _editId = null;
+  document.getElementById('modalTitle').textContent = '📇 Add Vendor';
+  document.getElementById('saveVendorBtn').textContent = 'Add Vendor';
+  // Default the modal role to whatever the filter is set to (if any).
+  document.getElementById('vf_role').value = document.getElementById('roleFilter').value || '';
+  ['vf_name', 'vf_company', 'vf_phone', 'vf_email', 'vf_website', 'vf_notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('vendorModal').classList.add('open');
+  setTimeout(() => document.getElementById('vf_role').focus(), 50);
+}
+
+function editVendor(id) {
+  const v = _vendors.find(x => String(x.id) === String(id)); if (!v) return;
+  _editId = v.id;
+  document.getElementById('modalTitle').textContent = '✏️ Edit Vendor';
+  document.getElementById('saveVendorBtn').textContent = 'Save Changes';
+  document.getElementById('vf_role').value = v.role || '';
+  document.getElementById('vf_name').value = v.name || '';
+  document.getElementById('vf_company').value = v.company || '';
+  document.getElementById('vf_phone').value = v.phone || '';
+  document.getElementById('vf_email').value = v.email || '';
+  document.getElementById('vf_website').value = v.website || '';
+  document.getElementById('vf_notes').value = v.notes || '';
+  document.getElementById('vendorModal').classList.add('open');
+}
+
+function closeModal() { document.getElementById('vendorModal').classList.remove('open'); }
+
+async function saveVendor() {
+  const g = id => (document.getElementById(id).value || '').trim();
+  const payload = {
+    p_id: _editId || null,
+    p_role: document.getElementById('vf_role').value || null,
+    p_name: g('vf_name') || null,
+    p_company: g('vf_company') || null,
+    p_phone: g('vf_phone') || null,
+    p_email: g('vf_email') || null,
+    p_website: g('vf_website') || null,
+    p_notes: g('vf_notes') || null
+  };
+  const btn = document.getElementById('saveVendorBtn');
+  btn.disabled = true;
+  try {
+    const { error } = await _authClient().rpc('vendor_directory_upsert', payload);
+    // The RPC raises on validation errors (missing role, missing both name+company,
+    // duplicate role+email) — surface the message and keep the modal open.
+    if (error) { showToast(error.message || 'Save failed', true); return; }
+    closeModal();
+    await loadVendors();
+    showToast('Vendor saved');
+  } catch (e) {
+    showToast((e && e.message) || 'Save failed', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteVendor(id) {
+  if (!window.confirm('Delete this vendor from the directory?')) return;
+  try {
+    const { error } = await _authClient().rpc('vendor_directory_delete', { p_id: id });
+    if (error) { showToast(error.message || 'Delete failed', true); return; }
+    await loadVendors();
+    showToast('Vendor deleted');
+  } catch (e) {
+    showToast((e && e.message) || 'Delete failed', true);
+  }
+}
+
+// Esc closes the modal.
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+buildRoleSelects();
+loadVendors();
+</script>
+</body>
+</html>
