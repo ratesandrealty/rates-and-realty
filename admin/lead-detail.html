@@ -8940,8 +8940,20 @@ async function lpLoadAppLoanDetails(){
     if(cl && app.remaining_loan_balance!=null && app.remaining_loan_balance!==''){
       cl.value=(typeof fmt$==='function') ? fmt$(app.remaining_loan_balance) : ('$'+Math.round(Number(app.remaining_loan_balance)).toLocaleString('en-US'));
     }
+    // borrower_type is NOT exposed by the mortgage_applications_secure view that
+    // _fetchAppRowForContact / _activeBorrowerApp read from (remaining_loan_balance
+    // is, which is why that field reloads). Fetch borrower_type straight from the
+    // base mortgage_applications table by the active app id (admin RLS allows it).
     var bt=document.getElementById('f-borrower-type');
-    if(bt && app.borrower_type){ bt.value=app.borrower_type; }
+    if(bt){
+      var appId=(typeof _activeBorrowerApp!=='undefined' && _activeBorrowerApp && _activeBorrowerApp.id) ? _activeBorrowerApp.id : app.id;
+      var btVal=app.borrower_type;
+      if(appId && (btVal==null || btVal==='')){
+        try{ var _r=await _authClient().from('mortgage_applications').select('borrower_type').eq('id',appId).maybeSingle(); btVal=_r && _r.data ? _r.data.borrower_type : null; }catch(_){}
+      }
+      bt.value=btVal||'';
+      console.log('[lpLoadAppLoanDetails] borrower_type read:', btVal, '→ f-borrower-type.value:', bt.value);
+    }
   }catch(e){ /* non-fatal */ }
 }
 function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'); if(s.length!==3) return ''; const d=new Date(+s[0],+s[1]-1,+s[2]); return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
