@@ -2218,10 +2218,8 @@
             <label class="ld-label">Status</label>
             <select class="ld-select" id="f-borrower-type" onchange="lpSaveBorrowerType()">
               <option value="">Select</option>
-              <option value="Homeowner">Homeowner</option>
               <option value="Home Buyer">Home Buyer</option>
-              <option value="Seller">Seller</option>
-              <option value="Refinance">Refinance</option>
+              <option value="Homeowner">Homeowner</option>
             </select>
           </div>
           <div class="ld-field span-3">
@@ -8905,13 +8903,20 @@ function lpPropEstUsePrice(value){
 
 /* ═══ LOAN DETAILS — mortgage_applications-backed fields ═══
    Current Loan Amount → remaining_loan_balance, Status → borrower_type.
-   These persist to mortgage_applications (NOT leads), reusing the same
-   load (_fetchAppRowForContact) and update/insert pattern as lpSaveDate. */
+   These persist to mortgage_applications (NOT leads) on the ACTIVE app, using
+   the same direct-update-by-id mechanism as saveLoanDashboard
+   (.from('mortgage_applications').update({...}).eq('id', _activeBorrowerApp.id)).
+   Falls back to _fetchAppRowForContact (and an insert) if no active app is
+   loaded yet, so an early edit still persists. */
 async function _lpSaveAppField(col, value){
   var cid=lpCid(); if(!cid) return;
   try{
-    var app=(typeof _fetchAppRowForContact==='function') ? await _fetchAppRowForContact(cid) : null;
-    if(app && app.id){ await _authClient().from('mortgage_applications').update({ [col]:value, updated_at:new Date().toISOString() }).eq('id',app.id); }
+    var appId=(typeof _activeBorrowerApp!=='undefined' && _activeBorrowerApp && _activeBorrowerApp.id) ? _activeBorrowerApp.id : null;
+    if(!appId){ var app=(typeof _fetchAppRowForContact==='function') ? await _fetchAppRowForContact(cid) : null; appId=app && app.id; }
+    if(appId){
+      await _authClient().from('mortgage_applications').update({ [col]:value, updated_at:new Date().toISOString() }).eq('id',appId);
+      if(typeof _activeBorrowerApp!=='undefined' && _activeBorrowerApp && _activeBorrowerApp.id===appId){ _activeBorrowerApp[col]=value; }
+    }
     else { await _authClient().from('mortgage_applications').insert({ contact_id:cid, [col]:value }); }
   }catch(e){ console.warn('[lpSaveAppField '+col+']', e&&e.message); }
 }
