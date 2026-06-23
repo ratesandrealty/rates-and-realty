@@ -9084,7 +9084,7 @@ async function lpLoadProcessing(){
   lpLoadLoe(cid);
   lpLoadRelated(cid);
   lpLoadEsign(cid);
-  lpLoadVaTasks(cid);
+  lpLoadVaTasks();
 }
 function lpGoToLender(name){
   const btn = document.querySelector('.ld-tab-btn[onclick*="lenders"]');
@@ -12112,38 +12112,166 @@ async function _esignSubmit(){
   }
 }
 
-async function lpLoadVaTasks(cid){
-  const body = document.getElementById('lpVaTasksBody'); if(!body) return;
-  try{
-    const { data } = await _authClient().from('tasks').select('id,title,due_date,status,clickup_url').eq('contact_id',cid).order('due_date',{ascending:true,nullsFirst:false});
-    const done = ['done','complete','completed','closed','cancelled','canceled'];
-    const open = (data||[]).filter(t=>done.indexOf((t.status||'').toLowerCase())===-1);
-    if(!open.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No open tasks. 🎉</div>'; return; }
-    const today = new Date(); today.setHours(0,0,0,0);
-    body.innerHTML = open.map(t=>{
-      let due='', dueColor='#888';
-      if(t.due_date){
-        const d=new Date(t.due_date); const d0=new Date(d); d0.setHours(0,0,0,0);
-        due = d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
-        if(d0 < today){ dueColor='#E5484D'; due='Overdue · '+due; }
-        else if(d0.getTime()===today.getTime()){ dueColor='#E5984D'; due='Today'; }
-      }
-      const title = (t.clickup_url?'<a href="'+lpEsc(t.clickup_url)+'" target="_blank" style="color:#ddd;text-decoration:none;">':'')+lpEsc(t.title||'(untitled)')+(t.clickup_url?' ↗</a>':'');
-      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
-        +'<button onclick="lpCompleteTask(\''+t.id+'\')" title="Mark done" style="flex-shrink:0;width:18px;height:18px;border-radius:4px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#3FB950;cursor:pointer;font-size:12px;line-height:1;padding:0;">✓</button>'
-        +'<span style="flex:1;min-width:0;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+title+'</span>'
-        +(due?'<span style="font-size:10px;color:'+dueColor+';font-weight:600;flex-shrink:0;">'+lpEsc(due)+'</span>':'')
-        +'</div>';
-    }).join('');
-  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; }
+/* ═══ VA DAILY TASKS — backed by the va_task_* SECURITY DEFINER RPCs (global VA
+   to-do list, not per-lead). All writes refresh the list; {error} surfaces via
+   the page toast. Delete is admin-only (hidden for va/agent, backend-enforced). */
+let _vaTasks = [];        // last va_task_list() result (for edit prefill)
+let _vaEditId = null;     // id of the row currently in inline-edit mode
+const VA_PRIORITIES = ['urgent','high','normal','low'];
+const VA_PRIO_STYLE = {
+  urgent: 'background:rgba(229,72,77,.16);color:#E5484D;',
+  high:   'background:rgba(229,152,77,.16);color:#E5984D;',
+  normal: 'background:rgba(255,255,255,.10);color:#bbb;',
+  low:    'background:rgba(255,255,255,.05);color:#777;'
+};
+const VA_SUGGESTED = [
+  { group:'Cold calling', items:['Cold call new leads (goal: 50)','Follow up with warm leads','Dial aged/cold list','Return missed calls & voicemails'] },
+  { group:'Loan processing', items:['Order HOI / title / escrow on active files','Request missing items from borrowers (needs list)','Upload docs to loan files (Drive)','Update loan statuses / milestones'] },
+  { group:'Data entry', items:['Enter new leads into CRM','Log call outcomes & notes','Update contact info & tags','Prep daily pipeline snapshot'] }
+];
+const _vaInp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:5px 7px;outline:none;font-family:inherit;box-sizing:border-box;';
+
+function _vaToast(e, fallback){ if(typeof showToast==='function') showToast((e&&e.message)||fallback, true); }
+function _vaDueDisplay(iso){
+  if(!iso) return null;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const d=new Date(iso); const d0=new Date(d); d0.setHours(0,0,0,0);
+  let txt=d.toLocaleDateString('en-US',{month:'short',day:'numeric'}), color='#888';
+  if(d0<today){ color='#E5484D'; txt='Overdue · '+txt; }
+  else if(d0.getTime()===today.getTime()){ color='#E5984D'; txt='Today'; }
+  return { txt:txt, color:color };
 }
-async function lpCompleteTask(id){
-  const cid = lpCid(); if(!cid) return;
+
+async function lpLoadVaTasks(){
+  const body = document.getElementById('lpVaTasksBody'); if(!body) return;
+  if(!_vaTasks.length && !body.innerHTML.trim()) body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
   try{
-    await _authClient().from('tasks').update({ status:'complete', updated_at:new Date().toISOString() }).eq('id',id);
-    lpLoadVaTasks(cid);
-    if(typeof lpLoadTasks==='function') lpLoadTasks(cid);
-  }catch(e){ alert('Could not complete task.'); }
+    const { data, error } = await _authClient().rpc('va_task_list', { p_include_completed:false });
+    if(error){ _vaToast(error,'Could not load tasks'); body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; return; }
+    _vaTasks = data || [];
+    _vaRenderTasks();
+  }catch(e){ _vaToast(e,'Could not load tasks'); body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; }
+}
+
+function _vaRenderTasks(){
+  const body = document.getElementById('lpVaTasksBody'); if(!body) return;
+  const hideDelete = (typeof _ldNonAdmin==='function' && _ldNonAdmin());
+  // ── Suggested-task chips (grouped, compact) ──
+  let chips = '<div style="margin-bottom:12px;">';
+  VA_SUGGESTED.forEach(function(g){
+    chips += '<div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);margin:6px 0 4px;">'+lpEsc(g.group)+'</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:5px;">'
+      + g.items.map(function(it){ return '<button type="button" onclick="lpVaAddSuggested(this.getAttribute(\'data-t\'))" data-t="'+lpEsc(it)+'" title="Add this task" style="background:rgba(201,168,76,.10);border:1px solid rgba(201,168,76,.30);color:#C9A84C;border-radius:14px;padding:3px 9px;cursor:pointer;font-size:10px;font-weight:600;font-family:inherit;">+ '+lpEsc(it)+'</button>'; }).join('')
+      + '</div>';
+  });
+  chips += '</div>';
+  // ── Add row ──
+  const prioOpts = VA_PRIORITIES.map(function(p){ return '<option value="'+p+'"'+(p==='normal'?' selected':'')+'>'+p.charAt(0).toUpperCase()+p.slice(1)+'</option>'; }).join('');
+  const addRow = '<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">'
+    + '<input id="vaNewTitle" type="text" placeholder="Add a task…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();lpVaAdd();}" style="'+_vaInp+'flex:1;min-width:140px;">'
+    + '<select id="vaNewPrio" title="Priority" style="'+_vaInp+'">'+prioOpts+'</select>'
+    + '<input id="vaNewDue" type="date" title="Due date (optional)" style="'+_vaInp+'">'
+    + '<button type="button" onclick="lpVaAdd()" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;">+ Add</button>'
+    + '</div>';
+  // ── Open list ──
+  let list;
+  if(!_vaTasks.length){
+    list = '<div style="color:#888;font-size:12px;padding:8px;">No open tasks. 🎉</div>';
+  } else {
+    list = _vaTasks.map(function(t){
+      if(t.id===_vaEditId) return _vaEditRow(t);
+      const prio = (t.priority||'normal').toLowerCase();
+      const badge = '<span style="flex-shrink:0;'+(VA_PRIO_STYLE[prio]||VA_PRIO_STYLE.normal)+'border-radius:10px;padding:1px 7px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;">'+lpEsc(prio)+'</span>';
+      const due = _vaDueDisplay(t.due_date);
+      const dueEl = due ? '<span style="font-size:10px;color:'+due.color+';font-weight:600;flex-shrink:0;">'+lpEsc(due.txt)+'</span>' : '';
+      const who = t.contact_name ? '<span style="font-size:10px;color:#888;flex-shrink:0;">· '+lpEsc(t.contact_name)+'</span>' : '';
+      const del = hideDelete ? '' : '<button onclick="lpVaDelete(\''+t.id+'\')" title="Delete" style="flex-shrink:0;background:transparent;border:none;color:#777;cursor:pointer;font-size:12px;line-height:1;padding:2px;">🗑️</button>';
+      return '<div style="display:flex;align-items:center;gap:7px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+        + '<button onclick="lpVaComplete(\''+t.id+'\')" title="Mark done" style="flex-shrink:0;width:18px;height:18px;border-radius:4px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#3FB950;cursor:pointer;font-size:12px;line-height:1;padding:0;">✓</button>'
+        + '<span style="flex:1;min-width:0;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+lpEsc(t.description||'')+'">'+lpEsc(t.title||'(untitled)')+'</span>'
+        + badge + dueEl + who
+        + '<button onclick="lpVaEdit(\''+t.id+'\')" title="Edit" style="flex-shrink:0;background:transparent;border:none;color:#888;cursor:pointer;font-size:12px;line-height:1;padding:2px;">✏️</button>'
+        + del
+        + '</div>';
+    }).join('');
+  }
+  body.innerHTML = chips + addRow + list;
+}
+
+function _vaEditRow(t){
+  const prio=(t.priority||'normal').toLowerCase();
+  const prioOpts = VA_PRIORITIES.map(function(p){ return '<option value="'+p+'"'+(p===prio?' selected':'')+'>'+p.charAt(0).toUpperCase()+p.slice(1)+'</option>'; }).join('');
+  const dueVal = t.due_date ? String(t.due_date).slice(0,10) : '';
+  return '<div style="padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.05);background:rgba(201,168,76,.04);">'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">'
+    +   '<input id="vaEditTitle" type="text" value="'+lpEsc(t.title||'')+'" placeholder="Title" style="'+_vaInp+'flex:1;min-width:140px;">'
+    +   '<select id="vaEditPrio" title="Priority" style="'+_vaInp+'">'+prioOpts+'</select>'
+    +   '<input id="vaEditDue" type="date" value="'+lpEsc(dueVal)+'" title="Due date" style="'+_vaInp+'">'
+    + '</div>'
+    + '<textarea id="vaEditDesc" placeholder="Description (optional)" rows="2" style="'+_vaInp+'width:100%;resize:vertical;margin-bottom:6px;">'+lpEsc(t.description||'')+'</textarea>'
+    + '<div style="display:flex;gap:6px;justify-content:flex-end;">'
+    +   '<button type="button" onclick="lpVaCancelEdit()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:6px;padding:4px 11px;cursor:pointer;font-size:11px;font-family:inherit;">Cancel</button>'
+    +   '<button type="button" onclick="lpVaSaveEdit(\''+t.id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;">Save</button>'
+    + '</div>'
+    + '</div>';
+}
+
+function _vaDueToIso(v){ v=(v||'').trim(); return v ? new Date(v+'T00:00:00').toISOString() : null; }
+
+async function lpVaAdd(){
+  const titleEl=document.getElementById('vaNewTitle'); if(!titleEl) return;
+  const title=(titleEl.value||'').trim(); if(!title){ titleEl.focus(); return; }
+  const prio=(document.getElementById('vaNewPrio')||{}).value || 'normal';
+  const due=_vaDueToIso((document.getElementById('vaNewDue')||{}).value);
+  try{
+    const { error } = await _authClient().rpc('va_task_add', { p_title:title, p_priority:prio, p_due_date:due, p_contact_id:null, p_description:null });
+    if(error){ _vaToast(error,'Could not add task'); return; }
+    await lpLoadVaTasks();
+  }catch(e){ _vaToast(e,'Could not add task'); }
+}
+
+async function lpVaAddSuggested(title){
+  if(!title) return;
+  try{
+    const { error } = await _authClient().rpc('va_task_add', { p_title:title, p_priority:'normal', p_due_date:null, p_contact_id:null, p_description:null });
+    if(error){ _vaToast(error,'Could not add task'); return; }
+    await lpLoadVaTasks();
+  }catch(e){ _vaToast(e,'Could not add task'); }
+}
+
+async function lpVaComplete(id){
+  try{
+    const { error } = await _authClient().rpc('va_task_set_status', { p_id:id, p_status:'completed' });
+    if(error){ _vaToast(error,'Could not complete task'); return; }
+    await lpLoadVaTasks();
+    if(typeof lpLoadTasks==='function'){ const c=lpCid(); if(c) try{ lpLoadTasks(c); }catch(_){} }
+  }catch(e){ _vaToast(e,'Could not complete task'); }
+}
+
+function lpVaEdit(id){ _vaEditId=id; _vaRenderTasks(); const el=document.getElementById('vaEditTitle'); if(el){ el.focus(); el.select(); } }
+function lpVaCancelEdit(){ _vaEditId=null; _vaRenderTasks(); }
+
+async function lpVaSaveEdit(id){
+  const titleEl=document.getElementById('vaEditTitle'); if(!titleEl) return;
+  const title=(titleEl.value||'').trim(); if(!title){ titleEl.focus(); return; }
+  const prio=(document.getElementById('vaEditPrio')||{}).value || 'normal';
+  const due=_vaDueToIso((document.getElementById('vaEditDue')||{}).value);
+  const desc=((document.getElementById('vaEditDesc')||{}).value || '').trim() || null;
+  try{
+    const { error } = await _authClient().rpc('va_task_update', { p_id:id, p_title:title, p_priority:prio, p_due_date:due, p_description:desc });
+    if(error){ _vaToast(error,'Could not save task'); return; }
+    _vaEditId=null;
+    await lpLoadVaTasks();
+  }catch(e){ _vaToast(e,'Could not save task'); }
+}
+
+async function lpVaDelete(id){
+  if(!window.confirm('Delete this task?')) return;
+  try{
+    const { error } = await _authClient().rpc('va_task_delete', { p_id:id });
+    if(error){ _vaToast(error,'Could not delete task'); return; }
+    await lpLoadVaTasks();
+  }catch(e){ _vaToast(e,'Could not delete task'); }
 }
 
 /* ═══ LOAN SNAPSHOT — lender picker (two-way synced with Pricing & Lender box) ═══ */
