@@ -1452,6 +1452,7 @@
   <a href="qualifying.html" class="ab-back" title="Qualifying Analyzer" style="text-decoration:none;flex-shrink:0;">&#128202;</a>
   <a href="sms-activity.html" class="ab-back" title="SMS Activity" style="text-decoration:none;flex-shrink:0;">&#128172;</a>
   <a href="settings.html" class="ab-back" title="Settings" style="text-decoration:none;flex-shrink:0;">&#9881;</a>
+  <button id="notifBell" onclick="notifToggle(event)" title="Notifications" style="position:relative;background:transparent;border:none;cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;padding:2px 3px;color:inherit;">&#128276;<span id="notifBadge" style="display:none;position:absolute;top:-3px;right:-4px;min-width:15px;height:15px;line-height:15px;padding:0 3px;border-radius:8px;background:#E5484D;color:#fff;font-size:9px;font-weight:700;text-align:center;box-sizing:border-box;"></span></button>
   <div class="ab-name" id="topbar-name" style="flex-shrink:0;">Loading&#8230;</div>
   <!-- Drive folder status pill -->
   <button id="driveFolderBtn" onclick="handleDriveFolderBtn()" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid #333;background:#1a1a1a;color:#888;transition:all 0.2s;flex-shrink:0;font-family:inherit;height:22px;line-height:1;white-space:nowrap;">
@@ -5871,7 +5872,7 @@ function renderContactNoteItem(n) {
         <span class="ld-note-tag ${b.cls}">${b.label}</span>
         ${dateLine}
       </div>
-      <div class="ld-note-text">${esc(n.note_text || '')}</div>
+      <div class="ld-note-text">${typeof renderMentions==='function' ? renderMentions(n.note_text || '') : esc(n.note_text || '')}</div>
       ${who ? `<div class="ld-note-date" style="margin-top:4px;">${esc(who)}</div>` : ''}
     </div>`;
 }
@@ -5886,7 +5887,7 @@ function renderLegacyNoteItem(n) {
         <span class="ld-note-tag tag-${tag}">${tagLabel}</span>
         <span class="ld-note-date">${fmtDateShort(n.created_at)}</span>
       </div>
-      <div class="ld-note-text">${esc(n.body || '')}</div>
+      <div class="ld-note-text">${typeof renderMentions==='function' ? renderMentions(n.body || '') : esc(n.body || '')}</div>
     </div>`;
 }
 
@@ -8657,6 +8658,13 @@ document.addEventListener('DOMContentLoaded', function(){
   try {
     if (localStorage.getItem('rr-lead-sidebar-collapsed') === '1') _applyLeadSidebarState(true);
     if (localStorage.getItem('rr-lead-vault-collapsed') === '1') _applyVaultState(true);
+  } catch(_){}
+  // Collaboration layer: start the notification-bell poll and wire @-mention
+  // autocomplete onto the lead-detail notes box (PART 2 + PART 5).
+  try { if (typeof notifInit === 'function') notifInit(); } catch(_){}
+  try {
+    var _nt = document.getElementById('note-textarea');
+    if (_nt && typeof attachMentionAutocomplete === 'function') attachMentionAutocomplete(_nt);
   } catch(_){}
 });
 
@@ -12117,6 +12125,11 @@ async function _esignSubmit(){
    the page toast. Delete is admin-only (hidden for va/agent, backend-enforced). */
 let _vaTasks = [];        // last va_task_list() result (for edit prefill)
 let _vaEditId = null;     // id of the row currently in inline-edit mode
+let _vaView = 'open';     // 'open' | 'history' (PART 4 completed-history toggle)
+let _vaCompleted = [];    // va_task_completed_history() rows (null = loading)
+const _vaHistOpen = {};   // taskId -> true when its notes/history panel is expanded
+const _vaHist = {};       // taskId -> task_history() rows
+let _vaHashDone = false;   // one-shot guard for #vatask= deep-link auto-expand
 const VA_PRIORITIES = ['urgent','high','normal','low'];
 const VA_PRIO_STYLE = {
   urgent: 'background:rgba(229,72,77,.16);color:#E5484D;',
@@ -12150,12 +12163,36 @@ async function lpLoadVaTasks(){
     if(error){ _vaToast(error,'Could not load tasks'); body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; return; }
     _vaTasks = data || [];
     _vaRenderTasks();
+    // One-shot deep-link: a task_note notification can navigate here with
+    // #vatask=<task_id> to auto-expand that task's notes/history.
+    if(!_vaHashDone){
+      _vaHashDone = true;
+      try{ const h=(location.hash||'').match(/vatask=([^&]+)/); if(h){ _vaEnsureTaskOpen(decodeURIComponent(h[1])); } }catch(_){}
+    }
   }catch(e){ _vaToast(e,'Could not load tasks'); body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; }
 }
 
+function _vaTab(v,label){
+  const active=_vaView===v;
+  return '<button type="button" onclick="lpVaSetView(\''+v+'\')" style="background:transparent;border:none;border-bottom:2px solid '+(active?'#C9A84C':'transparent')+';color:'+(active?'#C9A84C':'#888')+';font-size:12px;font-weight:600;padding:6px 10px;cursor:pointer;font-family:inherit;">'+label+'</button>';
+}
+function _vaCompletedHtml(){
+  if(_vaCompleted===null) return '<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
+  if(!_vaCompleted.length) return '<div style="color:#888;font-size:12px;padding:8px;">No completed tasks yet.</div>';
+  return _vaCompleted.map(function(t){
+    const when=t.completed_at?new Date(t.completed_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+    const who=t.contact_name?'<span style="color:#888;"> · '+lpEsc(t.contact_name)+'</span>':'';
+    return '<div style="padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);font-size:12px;color:#ddd;">'
+      +'<span style="color:#3FB950;margin-right:5px;">✓</span>'+lpEsc(t.title||'(untitled)')
+      +'<div style="font-size:10px;color:#888;margin-top:2px;">completed by '+lpEsc(t.completed_by||'—')+(when?' · '+lpEsc(when):'')+who+'</div>'
+      +'</div>';
+  }).join('');
+}
 function _vaRenderTasks(){
   const body = document.getElementById('lpVaTasksBody'); if(!body) return;
   const hideDelete = (typeof _ldNonAdmin==='function' && _ldNonAdmin());
+  const tabs = '<div style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,.08);">'+_vaTab('open','Open')+_vaTab('history','History')+'</div>';
+  if(_vaView==='history'){ body.innerHTML = tabs + _vaCompletedHtml(); return; }
   // ── Suggested-task chips (grouped, compact) ──
   let chips = '<div style="margin-bottom:12px;">';
   VA_SUGGESTED.forEach(function(g){
@@ -12186,16 +12223,23 @@ function _vaRenderTasks(){
       const dueEl = due ? '<span style="font-size:10px;color:'+due.color+';font-weight:600;flex-shrink:0;">'+lpEsc(due.txt)+'</span>' : '';
       const who = t.contact_name ? '<span style="font-size:10px;color:#888;flex-shrink:0;">· '+lpEsc(t.contact_name)+'</span>' : '';
       const del = hideDelete ? '' : '<button onclick="lpVaDelete(\''+t.id+'\')" title="Delete" style="flex-shrink:0;background:transparent;border:none;color:#777;cursor:pointer;font-size:12px;line-height:1;padding:2px;">🗑️</button>';
-      return '<div style="display:flex;align-items:center;gap:7px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+      const noteCount = (_vaHist[t.id]||[]).filter(function(h){ return h.kind==='note'; }).length;
+      const open = !!_vaHistOpen[t.id];
+      const noteBtn = '<button onclick="lpVaToggleHistory(\''+t.id+'\')" title="Notes & history" style="flex-shrink:0;background:transparent;border:none;color:'+(open?'#C9A84C':'#888')+';cursor:pointer;font-size:12px;line-height:1;padding:2px;">💬'+(noteCount?' '+noteCount:'')+'</button>';
+      const row = '<div style="display:flex;align-items:center;gap:7px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
         + '<button onclick="lpVaComplete(\''+t.id+'\')" title="Mark done" style="flex-shrink:0;width:18px;height:18px;border-radius:4px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#3FB950;cursor:pointer;font-size:12px;line-height:1;padding:0;">✓</button>'
         + '<span style="flex:1;min-width:0;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+lpEsc(t.description||'')+'">'+lpEsc(t.title||'(untitled)')+'</span>'
         + badge + dueEl + who
+        + noteBtn
         + '<button onclick="lpVaEdit(\''+t.id+'\')" title="Edit" style="flex-shrink:0;background:transparent;border:none;color:#888;cursor:pointer;font-size:12px;line-height:1;padding:2px;">✏️</button>'
         + del
         + '</div>';
+      return row + (open ? _vaHistoryPanel(t.id) : '');
     }).join('');
   }
-  body.innerHTML = chips + addRow + list;
+  body.innerHTML = tabs + chips + addRow + list;
+  // Attach @-mention autocomplete to any open note textareas (PART 1 reuse).
+  Object.keys(_vaHistOpen).forEach(function(id){ if(_vaHistOpen[id]){ const ta=document.getElementById('vaNote_'+id); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta); } });
 }
 
 function _vaEditRow(t){
@@ -12272,6 +12316,244 @@ async function lpVaDelete(id){
     if(error){ _vaToast(error,'Could not delete task'); return; }
     await lpLoadVaTasks();
   }catch(e){ _vaToast(e,'Could not delete task'); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COLLABORATION LAYER — @-mention autocomplete (PART 1), notification bell
+   (PART 2), task notes/history (PART 3), completed-history (PART 4). All data
+   via the listed SECURITY DEFINER RPCs; {error} surfaces through the toast.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── PART 1: shared @-mention autocomplete + highlight render (build once) ── */
+let _teamRoster = null, _teamRosterPromise = null;
+async function loadTeamRoster(){
+  if(_teamRoster) return _teamRoster;
+  if(_teamRosterPromise) return _teamRosterPromise;
+  _teamRosterPromise = (async function(){
+    try{
+      const { data, error } = await _authClient().rpc('team_roster');
+      _teamRoster = (error ? [] : (data || []));
+      if(error) console.warn('[team_roster]', error.message);
+    }catch(e){ console.warn('[team_roster]', e&&e.message); _teamRoster = []; }
+    return _teamRoster;
+  })();
+  return _teamRosterPromise;
+}
+let _mentBox=null, _mentEl=null, _mentItems=[], _mentIdx=0, _mentStart=-1;
+function _mentEnsureBox(){
+  if(_mentBox) return _mentBox;
+  _mentBox=document.createElement('div'); _mentBox.id='mentionBox';
+  _mentBox.style.cssText='position:fixed;z-index:10001;display:none;min-width:200px;max-width:320px;max-height:240px;overflow-y:auto;background:#15140f;border:1px solid rgba(201,168,76,.4);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);';
+  document.body.appendChild(_mentBox); return _mentBox;
+}
+function _mentClose(){ if(_mentBox){ _mentBox.style.display='none'; _mentBox.innerHTML=''; } _mentEl=null; _mentItems=[]; _mentIdx=0; _mentStart=-1; }
+function _mentRender(){
+  const box=_mentEnsureBox();
+  if(!_mentItems.length){ _mentClose(); return; }
+  box.innerHTML=_mentItems.map(function(r,i){
+    const sub=[r.handle?('@'+r.handle):'', r.role||''].filter(Boolean).join(' · ');
+    return '<div onmousedown="event.preventDefault();_mentPickIdx('+i+')" style="padding:6px 10px;cursor:pointer;'+(i===_mentIdx?'background:rgba(201,168,76,.18);':'')+'">'
+      +'<div style="font-size:12px;color:#eee;font-weight:600;">'+lpEsc(r.display||r.handle||'(user)')+'</div>'
+      +(sub?'<div style="font-size:10px;color:#888;">'+lpEsc(sub)+'</div>':'')+'</div>';
+  }).join('');
+  if(_mentEl){ const rc=_mentEl.getBoundingClientRect(); box.style.left=Math.max(8,Math.min(rc.left, window.innerWidth-330))+'px'; box.style.top=Math.min(rc.bottom+4, window.innerHeight-250)+'px'; }
+  box.style.display='block';
+}
+async function _mentOnInput(el){
+  const pos=el.selectionStart||0; const before=(el.value||'').slice(0,pos);
+  const m=before.match(/@([\w.\-]*)$/);
+  if(!m){ _mentClose(); return; }
+  const q=(m[1]||'').toLowerCase();
+  const roster=await loadTeamRoster();
+  const items=(roster||[]).filter(function(r){ return !q || (r.handle||'').toLowerCase().indexOf(q)!==-1 || (r.display||'').toLowerCase().indexOf(q)!==-1; }).slice(0,8);
+  if(!items.length){ _mentClose(); return; }
+  _mentEl=el; _mentItems=items; _mentIdx=0; _mentStart=pos-m[0].length; _mentRender();
+}
+function _mentPickIdx(i){ if(_mentItems[i]) _mentInsert(_mentItems[i]); }
+function _mentInsert(r){
+  const el=_mentEl; if(!el) return;
+  const handle=r.handle||String(r.display||'').replace(/\s+/g,'');
+  const pos=el.selectionStart||0, val=el.value||'';
+  el.value=val.slice(0,_mentStart)+'@'+handle+' '+val.slice(pos);
+  const caret=_mentStart+handle.length+2;
+  el.focus(); try{ el.setSelectionRange(caret,caret); }catch(_){}
+  try{ el.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){}
+  _mentClose();
+}
+function _mentOnKeydown(el,e){
+  if(!_mentBox || _mentBox.style.display==='none' || _mentEl!==el) return;
+  if(e.key==='ArrowDown'){ e.preventDefault(); _mentIdx=Math.min(_mentIdx+1,_mentItems.length-1); _mentRender(); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); _mentIdx=Math.max(_mentIdx-1,0); _mentRender(); }
+  else if(e.key==='Enter'){ e.preventDefault(); _mentInsert(_mentItems[_mentIdx]); }
+  else if(e.key==='Escape'){ _mentClose(); }
+}
+function attachMentionAutocomplete(el){
+  if(!el || el._mentAttached) return; el._mentAttached=true;
+  el.addEventListener('input', function(){ _mentOnInput(el); });
+  el.addEventListener('keydown', function(e){ _mentOnKeydown(el,e); }, true);
+  el.addEventListener('blur', function(){ setTimeout(function(){ if(_mentEl===el) _mentClose(); }, 150); });
+}
+// Highlight @handle tokens in displayed text (escapes first, then styles tokens).
+function renderMentions(text){
+  return lpEsc(text||'').replace(/@([A-Za-z0-9_.\-]+)/g, '<span style="color:#C9A84C;font-weight:600;">@$1</span>');
+}
+
+/* ── PART 2: notification bell ── */
+let _notifTimer=null;
+function _notifBox(){
+  let b=document.getElementById('notifDropdown');
+  if(!b){
+    b=document.createElement('div'); b.id='notifDropdown';
+    b.style.cssText='position:fixed;z-index:10000;display:none;width:340px;max-height:440px;overflow-y:auto;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:10px;box-shadow:0 18px 44px rgba(0,0,0,.6);';
+    document.body.appendChild(b);
+  }
+  return b;
+}
+function _notifHide(){ const b=document.getElementById('notifDropdown'); if(b) b.style.display='none'; }
+async function notifRefreshCount(){
+  try{
+    const { data, error } = await _authClient().rpc('notifications_unread_count');
+    if(error) return;
+    const n=Number(data)||0, badge=document.getElementById('notifBadge');
+    if(badge){ if(n>0){ badge.textContent=n>99?'99+':String(n); badge.style.display='block'; } else { badge.style.display='none'; } }
+  }catch(_){}
+}
+async function notifRenderList(){
+  const box=_notifBox();
+  const head='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);position:sticky;top:0;background:#15140f;"><span style="font-size:12px;font-weight:700;color:#C9A84C;">Notifications</span><button onclick="notifMarkAll()" style="background:transparent;border:none;color:#888;font-size:11px;cursor:pointer;font-family:inherit;">Mark all read</button></div>';
+  box.innerHTML=head+'<div style="padding:14px;color:#888;font-size:12px;">Loading…</div>';
+  try{
+    const { data, error } = await _authClient().rpc('notifications_list', { p_limit:30, p_only_unread:false });
+    if(error){ _vaToast(error,'Could not load notifications'); box.innerHTML=head+'<div style="padding:14px;color:#E5484D;font-size:12px;">Could not load.</div>'; return; }
+    const rows=data||[];
+    if(!rows.length){ box.innerHTML=head+'<div style="padding:20px;text-align:center;color:#888;font-size:12px;">No notifications</div>'; return; }
+    box.innerHTML=head+rows.map(function(n){
+      const unread=!n.is_read, bg=unread?'rgba(201,168,76,.07)':'transparent';
+      return '<div onclick="notifOpen(\''+n.id+'\',\''+(n.contact_id||'')+'\',\''+(n.source_kind||'')+'\',\''+(n.source_id||'')+'\')" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;background:'+bg+';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\''+bg+'\'">'
+        +'<div style="display:flex;gap:6px;align-items:baseline;">'+(unread?'<span style="flex-shrink:0;width:7px;height:7px;border-radius:50%;background:#C9A84C;display:inline-block;"></span>':'')
+        +'<span style="font-size:12px;color:#eee;font-weight:600;">'+lpEsc(n.actor_display||'Someone')+'</span>'
+        +'<span style="margin-left:auto;font-size:10px;color:#777;flex-shrink:0;">'+lpEsc(relativeTime(n.created_at))+'</span></div>'
+        +'<div style="font-size:11px;color:#bbb;margin-top:2px;">'+renderMentions(n.preview||'')+'</div></div>';
+    }).join('');
+  }catch(e){ _vaToast(e,'Could not load notifications'); }
+}
+function notifToggle(ev){
+  if(ev){ ev.stopPropagation(); }
+  const box=_notifBox();
+  if(box.style.display==='block'){ _notifHide(); return; }
+  const bell=document.getElementById('notifBell'), rc=bell?bell.getBoundingClientRect():{bottom:48,right:240};
+  box.style.left=Math.max(8,Math.min(rc.right-340, window.innerWidth-348))+'px';
+  box.style.top=(rc.bottom+6)+'px';
+  box.style.display='block';
+  notifRenderList();
+}
+async function notifOpen(id, contactId, sourceKind, sourceId){
+  try{ await _authClient().rpc('notification_mark_read', { p_id:id }); }catch(_){}
+  notifRefreshCount();
+  _notifHide();
+  const cur=new URLSearchParams(window.location.search).get('contact_id');
+  if(contactId){
+    if(cur===contactId){ if(sourceKind==='task_note' && sourceId) _vaEnsureTaskOpen(sourceId); }
+    else { const hash=(sourceKind==='task_note'&&sourceId)?('#vatask='+encodeURIComponent(sourceId)):''; window.location.href='lead-detail.html?contact_id='+encodeURIComponent(contactId)+hash; }
+  } else if(sourceKind==='task_note' && sourceId){
+    _vaEnsureTaskOpen(sourceId);
+  }
+}
+async function notifMarkAll(){
+  try{ const { error } = await _authClient().rpc('notifications_mark_all_read'); if(error){ _vaToast(error,'Could not mark all read'); return; } }
+  catch(e){ _vaToast(e,'Could not mark all read'); return; }
+  notifRefreshCount(); notifRenderList();
+}
+function notifInit(){
+  notifRefreshCount();
+  if(_notifTimer) clearInterval(_notifTimer);
+  _notifTimer=setInterval(notifRefreshCount, 60000);
+  document.addEventListener('click', function(e){
+    const b=document.getElementById('notifDropdown'); if(!b || b.style.display!=='block') return;
+    if(e.target.closest && (e.target.closest('#notifDropdown') || e.target.closest('#notifBell'))) return;
+    _notifHide();
+  });
+}
+
+/* ── PART 3: per-task notes + history ── */
+function _vaEventLabel(h){
+  switch(h.kind){
+    case 'created': return 'Created';
+    case 'completed': return 'Completed by '+(h.actor_display||'someone');
+    case 'reopened': return 'Reopened';
+    case 'edited': return 'Edited';
+    case 'status_changed': return 'Status changed'+(h.meta && h.meta.to ? (' → '+h.meta.to) : '');
+    default: return h.kind || 'Updated';
+  }
+}
+function _vaHistoryPanel(id){
+  const rows=_vaHist[id];
+  let timeline;
+  if(rows===undefined){ timeline='<div style="color:#888;font-size:11px;padding:6px;">Loading history…</div>'; }
+  else if(!rows.length){ timeline='<div style="color:#888;font-size:11px;padding:6px;">No history yet.</div>'; }
+  else {
+    timeline=rows.map(function(h){
+      const t='<span style="color:#777;font-size:9px;margin-left:6px;">'+lpEsc(relativeTime(h.created_at))+'</span>';
+      if(h.kind==='note'){
+        return '<div style="padding:5px 6px;border-left:2px solid rgba(201,168,76,.4);margin:4px 0;background:rgba(255,255,255,.02);">'
+          +'<span style="font-size:11px;color:#C9A84C;font-weight:600;">'+lpEsc(h.actor_display||'Someone')+':</span> '
+          +'<span style="font-size:11px;color:#ddd;">'+renderMentions(h.note||'')+'</span>'+t+'</div>';
+      }
+      return '<div style="padding:3px 6px;font-size:10px;color:#888;">• '+lpEsc(_vaEventLabel(h))+t+'</div>';
+    }).join('');
+  }
+  return '<div style="padding:8px 6px 10px 30px;background:rgba(255,255,255,.015);border-bottom:1px solid rgba(255,255,255,.05);">'
+    + '<div style="max-height:200px;overflow-y:auto;margin-bottom:8px;">'+timeline+'</div>'
+    + '<div style="display:flex;gap:6px;align-items:flex-end;">'
+    +   '<textarea id="vaNote_'+id+'" rows="2" placeholder="Add a note… use @ to mention" style="'+_vaInp+'flex:1;resize:vertical;"></textarea>'
+    +   '<button type="button" onclick="lpVaPostNote(\''+id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;flex-shrink:0;">Post</button>'
+    + '</div></div>';
+}
+async function lpVaToggleHistory(id){
+  if(_vaHistOpen[id]){ _vaHistOpen[id]=false; _vaRenderTasks(); return; }
+  _vaHistOpen[id]=true;
+  _vaRenderTasks();              // render panel in loading state
+  await lpVaLoadHistory(id);
+}
+async function lpVaLoadHistory(id){
+  try{
+    const { data, error } = await _authClient().rpc('task_history', { p_task_id:id });
+    if(error){ _vaToast(error,'Could not load history'); _vaHist[id]=[]; }
+    else _vaHist[id]=data||[];
+  }catch(e){ _vaToast(e,'Could not load history'); _vaHist[id]=[]; }
+  _vaRenderTasks();
+}
+async function lpVaPostNote(id){
+  const ta=document.getElementById('vaNote_'+id); if(!ta) return;
+  const body=(ta.value||'').trim(); if(!body){ ta.focus(); return; }
+  try{
+    const { error } = await _authClient().rpc('task_note_add', { p_task_id:id, p_body:body });
+    if(error){ _vaToast(error,'Could not post note'); return; }
+    ta.value='';
+    await lpVaLoadHistory(id);     // refresh this task's history
+    if(typeof notifRefreshCount==='function') notifRefreshCount();
+  }catch(e){ _vaToast(e,'Could not post note'); }
+}
+async function _vaEnsureTaskOpen(id){
+  if(!document.getElementById('lpVaTasksBody')) return;
+  _vaView='open'; _vaHistOpen[id]=true; _vaRenderTasks();
+  await lpVaLoadHistory(id);
+  setTimeout(function(){ const ta=document.getElementById('vaNote_'+id); if(ta) try{ ta.scrollIntoView({block:'center'}); }catch(_){} }, 60);
+}
+
+/* ── PART 4: completed-history view ── */
+async function lpVaSetView(v){
+  _vaView=v;
+  if(v==='history'){ _vaCompleted=null; _vaRenderTasks(); await lpVaLoadCompleted(); }
+  else { _vaRenderTasks(); }
+}
+async function lpVaLoadCompleted(){
+  try{
+    const { data, error } = await _authClient().rpc('va_task_completed_history', { p_limit:50 });
+    if(error){ _vaToast(error,'Could not load history'); _vaCompleted=[]; }
+    else _vaCompleted=data||[];
+  }catch(e){ _vaToast(e,'Could not load history'); _vaCompleted=[]; }
+  _vaRenderTasks();
 }
 
 /* ═══ LOAN SNAPSHOT — lender picker (two-way synced with Pricing & Lender box) ═══ */
