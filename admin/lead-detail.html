@@ -12441,6 +12441,28 @@ async function prefillFeeSheet() {
 }
 
 // Comprehensive draft bridge — restore-ready signal + RPC autosave (all sections incl. HELOC).
+let _fsLastDraft = null, _fsLastCid = null;   // remembered so the "retry" affordance can re-send
+// Single source of truth for the draft save + status indicator (Saving… / Saved ✓ / failed-retry).
+async function _fsSaveDraft(cid, draft) {
+  var ind = document.getElementById('feeSheetSaveStatus');
+  if (ind) { ind.textContent = 'Saving…'; ind.style.color = '#888'; ind.style.cursor = ''; ind.onclick = null; ind.title = ''; }
+  try {
+    var r = await _authClient().rpc('save_fee_sheet_draft', { p_contact_id: cid, p_data: draft });
+    if (r && r.error) throw new Error(r.error.message || 'save failed');
+    if (ind) {
+      var t = new Date();
+      ind.textContent = 'Saved ✓ ' + String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
+      ind.style.color = '#2ecc71'; ind.style.cursor = ''; ind.onclick = null; ind.title = '';
+    }
+  } catch (err) {
+    console.warn('[fee sheet draft save]', err);
+    if (ind) {
+      ind.textContent = 'Save failed — retry';
+      ind.style.color = '#e74c3c'; ind.style.cursor = 'pointer'; ind.title = 'Click to retry saving';
+      ind.onclick = function() { if (_fsLastCid && _fsLastDraft) _fsSaveDraft(_fsLastCid, _fsLastDraft); };
+    }
+  }
+}
 window.addEventListener('message', function(e) {
   if (!e.data) return;
   // Iframe finished applying the restored draft → safe to start autosaving now.
@@ -12451,23 +12473,11 @@ window.addEventListener('message', function(e) {
   if (!cid) return;                                // only save when a borrower is known
   var draft = e.data.draft;
   if (!draft || typeof draft !== 'object') return;
+  _fsLastCid = cid; _fsLastDraft = draft;          // coalesce rapid edits; keep latest for retry
   var ind = document.getElementById('feeSheetSaveStatus');
-  if (ind) { ind.textContent = 'Saving…'; ind.style.color = '#888'; }
+  if (ind) { ind.textContent = 'Saving…'; ind.style.color = '#888'; ind.style.cursor = ''; ind.onclick = null; }
   clearTimeout(_fsDraftSaveTimer);
-  _fsDraftSaveTimer = setTimeout(async function() {
-    try {
-      var r = await _authClient().rpc('save_fee_sheet_draft', { p_contact_id: cid, p_data: draft });
-      if (r && r.error) throw new Error(r.error.message || 'save failed');
-      if (ind) {
-        var t = new Date();
-        ind.textContent = 'Saved ' + String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
-        ind.style.color = '#2ecc71';
-      }
-    } catch (err) {
-      console.warn('[fee sheet draft save]', err);
-      if (ind) { ind.textContent = 'Save failed'; ind.style.color = '#e74c3c'; }
-    }
-  }, 600);
+  _fsDraftSaveTimer = setTimeout(function() { _fsSaveDraft(cid, draft); }, 600);
 });
 
 // Listen for auto-save messages from fee sheet iframe
