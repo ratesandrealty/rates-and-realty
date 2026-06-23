@@ -8676,39 +8676,39 @@ function togglePortalPanel() {
 }
 
 /* ═══ LOAN PROCESSING (command center) — Phase 1. Self-contained, lp* namespaced. ═══ */
+// Condensed processing checklist. intake-kind steps live here; doc-kind items in
+// LP_DOC_TEMPLATE below. Categories (in render order): Setup, Docs, Disclosures,
+// Submit, Orders, Final, Closing. template_key is the stable identity used for
+// upsert/dedup — do not rename keys.
 const LP_INTAKE_TEMPLATE = [
-  {key:'welcome_call',label:'Welcome call to borrower',category:'Setup'},
-  {key:'send_needs_list',label:'Send needs list / document request',category:'Setup'},
-  {key:'order_credit',label:'Pull / review credit',category:'Setup'},
-  {key:'drive_folder',label:'Create loan file + Google Drive folder',category:'Setup'},
-  {key:'verify_income',label:'Verify income documents',category:'Docs'},
-  {key:'verify_assets',label:'Verify assets / bank statements',category:'Docs'},
-  {key:'disclosures_sent',label:'Initial disclosures sent',category:'Disclosures'},
-  {key:'disclosures_signed',label:'Initial disclosures signed',category:'Disclosures'},
-  {key:'submit_processing',label:'Submit file to processing',category:'Processing'},
-  {key:'order_title',label:'Order title',category:'Orders'},
-  {key:'order_hoi',label:'Order homeowners insurance (HOI)',category:'Orders'},
-  {key:'request_escrow',label:'Request escrow / closing docs',category:'Orders'},
-  {key:'submit_lender',label:'Submit to lender / upload package',category:'Lender'},
-  {key:'order_appraisal',label:'Order appraisal',category:'Appraisal'},
-  {key:'appraisal_received',label:'Appraisal received / reviewed',category:'Appraisal'},
-  {key:'initial_conditions_in',label:'Initial approval / conditions received',category:'Initial Conditions'},
-  {key:'clear_conditions',label:'Clear initial conditions',category:'Initial Conditions'},
-  {key:'final_conditions_in',label:'Final conditions received',category:'Final Conditions'},
-  {key:'clear_final_conditions',label:'Clear final conditions',category:'Final Conditions'},
-  {key:'ctc',label:'Clear to Close (CTC)',category:'Closing'},
-  {key:'schedule_signing',label:'Schedule signing',category:'Closing'},
-  {key:'funded',label:'Funded',category:'Closing'}
+  {key:'welcome_call',label:'Welcome call to borrower',category:'Setup',sort_order:10},
+  {key:'drive_folder',label:'Create loan file + Drive folder',category:'Setup',sort_order:11},
+  {key:'order_credit',label:'Pull & review credit',category:'Setup',sort_order:12},
+  {key:'send_needs_list',label:'Send needs list',category:'Setup',sort_order:13},
+  {key:'verify_docs',label:'Verify income & assets',category:'Docs',sort_order:26},
+  {key:'disclosures_sent',label:'Send initial disclosures',category:'Disclosures',sort_order:30},
+  {key:'disclosures_signed',label:'Initial disclosures signed',category:'Disclosures',sort_order:31},
+  {key:'submit_lender',label:'Submit file to lender',category:'Submit',sort_order:40},
+  {key:'initial_conditions_in',label:'Initial conditions received',category:'Submit',sort_order:41},
+  {key:'clear_initial_conditions',label:'Clear initial conditions',category:'Submit',sort_order:42},
+  {key:'order_appraisal',label:'Order appraisal',category:'Orders',sort_order:50},
+  {key:'appraisal_received',label:'Appraisal received / reviewed',category:'Orders',sort_order:51},
+  {key:'order_title',label:'Order title',category:'Orders',sort_order:52},
+  {key:'order_hoi',label:'Order HOI (declaration in)',category:'Orders',sort_order:53},
+  {key:'request_escrow',label:'Request escrow / closing docs',category:'Orders',sort_order:54},
+  {key:'final_conditions_in',label:'Final conditions received',category:'Final',sort_order:60},
+  {key:'clear_final_conditions',label:'Clear final conditions',category:'Final',sort_order:61},
+  {key:'ctc',label:'Clear to Close (CTC)',category:'Closing',sort_order:70},
+  {key:'schedule_signing',label:'Schedule signing',category:'Closing',sort_order:71},
+  {key:'funded',label:'Funded',category:'Closing',sort_order:72}
 ];
 const LP_DOC_TEMPLATE = [
-  {key:'id',label:"Driver's License / ID",category:'Identity'},
-  {key:'paystubs',label:'Paystubs (most recent 30 days)',category:'Income'},
-  {key:'w2',label:'W-2s (2 years)',category:'Income'},
-  {key:'tax_returns',label:'Tax returns (2 years)',category:'Income'},
-  {key:'bank_statements',label:'Bank statements (2 months)',category:'Assets'},
-  {key:'hoi',label:'Homeowners insurance declaration',category:'Property'},
-  {key:'purchase_contract',label:'Purchase contract (if purchase)',category:'Property'},
-  {key:'other_income',label:'Award letters / other income',category:'Income'}
+  {key:'id',label:"Driver's License / ID",category:'Docs',sort_order:20},
+  {key:'paystubs',label:'Paystubs (30 days)',category:'Docs',sort_order:21},
+  {key:'w2',label:'W-2s (2 yrs)',category:'Docs',sort_order:22},
+  {key:'tax_returns',label:'Tax returns (2 yrs)',category:'Docs',sort_order:23},
+  {key:'bank_statements',label:'Bank statements (2 mo)',category:'Docs',sort_order:24},
+  {key:'purchase_contract',label:'Purchase contract (if purchase)',category:'Docs',sort_order:25}
 ];
 const LP_STATUSES = ['not_started','in_progress','waiting','done','na'];
 const LP_STATUS_LABEL = {not_started:'Not started',in_progress:'In progress',waiting:'Waiting',done:'Done',na:'N/A'};
@@ -9143,7 +9143,7 @@ async function lpLoadChecklist(kind, bodyId, template){
   try{
     // Ensure every template item exists for this file (adds newly-introduced steps to existing
     // loans). ignoreDuplicates relies on the (contact_id,kind,template_key) unique index.
-    const seed = template.map((t,i)=>({contact_id:cid,kind:kind,label:t.label,category:t.category||null,template_key:t.key,sort_order:i}));
+    const seed = template.map((t,i)=>({contact_id:cid,kind:kind,label:t.label,category:t.category||null,template_key:t.key,sort_order:(t.sort_order!=null?t.sort_order:i)}));
     await _authClient().from('processing_items').upsert(seed, { onConflict:'contact_id,kind,template_key', ignoreDuplicates:true });
     let { data: items, error } = await _authClient().from('processing_items').select('*').eq('contact_id',cid).eq('kind',kind).eq('dismissed',false);
     if(error) throw error;
