@@ -18673,9 +18673,23 @@ async function load1003(overrideCid) {
     sv('cb_cell_phone', data.co_borrower_cell_phone);
     sv('cb_home_phone', data.co_borrower_home_phone);
     sv('cb_email', data.co_borrower_email);
-    sv('cb_dl_number', data.co_borrower_dl_number);
-    sv('cb_dl_state', data.co_borrower_dl_state);
-    sv('cb_dl_expiry', data.co_borrower_dl_expiry);
+    // co_borrower_dl_number / _state / _expiry are NOT in the mortgage_applications_secure
+    // view that _fetchAppRowForContact reads, so they arrive undefined above. Pull them
+    // straight from the base mortgage_applications table by the active app id
+    // (admin_all_mortgage_applications RLS permits this SELECT).
+    try {
+      const _cbAppId = (_activeBorrowerApp && _activeBorrowerApp.id) || data.id;
+      if (_cbAppId) {
+        const { data: _cbDl } = await _authClient().from('mortgage_applications')
+          .select('co_borrower_dl_number, co_borrower_dl_state, co_borrower_dl_expiry')
+          .eq('id', _cbAppId).maybeSingle();
+        if (_cbDl) {
+          sv('cb_dl_number', _cbDl.co_borrower_dl_number);
+          sv('cb_dl_state', _cbDl.co_borrower_dl_state);
+          if (_cbDl.co_borrower_dl_expiry != null) sv('cb_dl_expiry', _cbDl.co_borrower_dl_expiry);
+        }
+      }
+    } catch (_) {}
     sv('cb_current_street', data.co_borrower_current_street);
     sv('cb_current_city', data.co_borrower_current_city);
     sv('cb_current_state', data.co_borrower_current_state);
