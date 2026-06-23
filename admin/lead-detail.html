@@ -2750,6 +2750,8 @@
         #losLiabBody input[type="checkbox"]{width:14px;height:14px;accent-color:#C9A84C;cursor:pointer}
         #losLiabBody .liab-del{background:none;border:none;color:#666;cursor:pointer;font-size:.9rem;padding:2px 6px}
         #losLiabBody .liab-del:hover{color:#ef4444}
+        .lp-contact.lp-drop-active{outline:2px dashed #C9A84C;outline-offset:-2px;background:rgba(201,168,76,.10)!important;border-radius:6px}
+        .lp-contact.lp-drop-active *{pointer-events:none}
       </style>
 
       <!-- ═══ SECTION 1a: PERSONAL INFORMATION ═══ -->
@@ -9388,7 +9390,7 @@ async function lpLoadContacts(cid){
   const header = '<div style="'+grid+'padding:0 4px 8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);"><div>Role</div><div>Name</div><div>Company</div><div>Phone</div><div>Email</div><div></div></div>';
   el.innerHTML = header + LP_CONTACT_ROLES.map(r=>{
     const c = map[r.key]||{};
-    return '<div class="lp-contact" data-role="'+r.key+'" style="position:relative;'+grid+'align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
+    return '<div class="lp-contact" data-role="'+r.key+'" ondragenter="lpRowDragEnter(this,event)" ondragover="lpRowDragOver(this,event)" ondragleave="lpRowDragLeave(this,event)" ondrop="lpRowDrop(\''+r.key+'\',this,event)" style="position:relative;'+grid+'align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
       +'<div style="font-size:11px;font-weight:600;color:#C9A84C;">'+r.label+'</div>'
       +'<input data-f="name" type="text" autocomplete="off" placeholder="Name" value="'+lpEsc(c.name||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<input data-f="company" type="text" autocomplete="off" placeholder="Company" value="'+lpEsc(c.company||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
@@ -9460,6 +9462,39 @@ function lpFlash(el){
     el.style.background = 'rgba(201,168,76,.32)';
     setTimeout(function(){ el.style.background = prevBg||''; setTimeout(function(){ el.style.transition=''; }, 260); }, 650);
   }catch(_){}
+}
+/* Drag-and-drop an image onto a contact row → same path as the 📷 Scan button (lpScanImage). Scoped to rows only. */
+function lpDragHasFiles(e){
+  const t = e.dataTransfer && e.dataTransfer.types; if(!t) return false;
+  if(t.contains) return t.contains('Files');           // DOMStringList
+  return Array.prototype.indexOf.call(t,'Files') !== -1; // array
+}
+function lpRowDragEnter(row, e){
+  if(!lpDragHasFiles(e)) return;
+  e.preventDefault();
+  row._dragDepth = (row._dragDepth||0) + 1;
+  row.classList.add('lp-drop-active');
+}
+function lpRowDragOver(row, e){
+  if(!lpDragHasFiles(e)) return;
+  e.preventDefault();
+  if(e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+}
+function lpRowDragLeave(row, e){
+  if(!lpDragHasFiles(e)) return;
+  row._dragDepth = (row._dragDepth||0) - 1;
+  if(row._dragDepth <= 0){ row._dragDepth = 0; row.classList.remove('lp-drop-active'); }
+}
+function lpRowDrop(role, row, e){
+  if(!lpDragHasFiles(e)) return;
+  e.preventDefault();
+  row._dragDepth = 0;
+  row.classList.remove('lp-drop-active');
+  const files = (e.dataTransfer && e.dataTransfer.files) || [];
+  let img = null;
+  for(let i=0;i<files.length;i++){ if((files[i].type||'').indexOf('image/')===0){ img = files[i]; break; } }
+  if(!img){ (window.showToast||window.toast||function(){})('Please drop an image file', true); return; }
+  lpScanImage(role, img); // shared scan path: read → parse-signature → fill, with per-row loading + error handling
 }
 /* AI signature scan — fills a row from an email-signature screenshot via the parse-signature edge function. */
 function lpScanRow(role, btn){
