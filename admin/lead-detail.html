@@ -9384,7 +9384,7 @@ async function lpLoadContacts(cid){
   let map = {};
   try{ const { data } = await _authClient().from('loan_contacts').select('*').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.role]=r; }); }catch(_){}
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:4px 6px;width:100%;';
-  const grid = 'display:grid;grid-template-columns:150px 1fr 1fr 120px 1.4fr 150px;gap:8px;min-width:910px;';
+  const grid = 'display:grid;grid-template-columns:150px 1fr 1fr 120px 1.4fr 210px;gap:8px;min-width:970px;';
   const sbtn = 'background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:4px 0;cursor:pointer;font-size:10px;font-weight:600;flex:1;';
   const scanbtn = 'background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#cbb87a;border-radius:6px;padding:4px 0;cursor:pointer;font-size:10px;font-weight:600;flex:1;';
   const header = '<div style="'+grid+'padding:0 4px 8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);"><div>Role</div><div>Name</div><div>Company</div><div>Phone</div><div>Email</div><div></div></div>';
@@ -9398,6 +9398,7 @@ async function lpLoadContacts(cid){
       +'<input data-f="email" type="email" autocomplete="off" placeholder="Email" value="'+lpEsc(c.email||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<div style="display:flex;gap:5px;">'
         +'<button type="button" class="lp-scan-btn" title="Scan an email-signature screenshot to auto-fill" onclick="lpScanRow(\''+r.key+'\',this)" style="'+scanbtn+'">📷 Scan</button>'
+        +'<button type="button" title="Paste a screenshot from your clipboard to auto-fill" onclick="lpPasteRow(\''+r.key+'\')" style="'+scanbtn+'">📋 Paste</button>'
         +'<button type="button" title="Save to vendor directory" onclick="lpVendorSaveRow(\''+r.key+'\')" style="'+sbtn+'">💾 Save</button>'
       +'</div>'
       +'<input type="file" class="lp-scan-file" accept="image/*" style="display:none;" onchange="lpScanFile(\''+r.key+'\',this)">'
@@ -9525,7 +9526,8 @@ async function lpScanImage(role, file){
   }catch(e){ toastFn('Scan failed: '+(e&&e.message||e), true); }
   finally{ if(btn){ btn.disabled=false; btn.innerHTML=orig; } }
 }
-// Nice-to-have: paste an image directly while a contact row is focused.
+// Ctrl+V while a contact row's input is focused: route a pasted image to that row.
+// Only intercepts when the clipboard carries an image — normal text paste is untouched.
 document.addEventListener('paste', function(e){
   const active = document.activeElement;
   const row = active && active.closest ? active.closest('.lp-contact') : null;
@@ -9539,6 +9541,28 @@ document.addEventListener('paste', function(e){
     }
   }
 });
+// 📋 Paste button: pull a screenshot from the clipboard via the async Clipboard API → same lpScanImage path.
+async function lpPasteRow(role){
+  const toastFn = window.showToast || window.toast || function(){};
+  try{
+    if(!navigator.clipboard || !navigator.clipboard.read){
+      toastFn('Clipboard access was blocked — allow clipboard permission, or use Scan / drag-and-drop instead.', true); return;
+    }
+    const items = await navigator.clipboard.read();
+    for(let i=0;i<items.length;i++){
+      const imgType = (items[i].types||[]).find(function(t){ return t.indexOf('image/')===0; });
+      if(imgType){
+        const blob = await items[i].getType(imgType);
+        const file = new File([blob], 'pasted-signature.png', { type: blob.type || imgType });
+        await lpScanImage(role, file);
+        return;
+      }
+    }
+    toastFn('No image found on your clipboard — take a screenshot first (Win+Shift+S), then click Paste.', true);
+  }catch(e){
+    toastFn('Clipboard access was blocked — allow clipboard permission, or use Scan / drag-and-drop instead.', true);
+  }
+}
 async function lpVendorSaveRow(role){
   const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
   const g = function(f){ const e=row.querySelector('input[data-f="'+f+'"]'); return e?(e.value||'').trim():''; };
