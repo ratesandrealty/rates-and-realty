@@ -9745,13 +9745,15 @@ async function lpSetOrder(orderType, status){
 
 // Category presets — values MUST match what loe-generate / loe_save expect.
 var LOE_CATEGORIES = [
-  ['credit_inquiry','Credit inquiry'],
-  ['large_deposit','Large deposit'],
+  ['credit_inquiry','Recent credit inquiry / new credit'],
+  ['large_deposit','Large/unusual deposit'],
   ['employment_gap','Employment gap'],
-  ['address_discrepancy','Address / name discrepancy'],
-  ['late_payment','Late payment'],
+  ['address_discrepancy','Address discrepancy'],
+  ['name_variation','Name variation / alias'],
+  ['late_payment','Late payment(s)'],
   ['source_of_funds','Source of funds'],
-  ['other','Other']
+  ['cash_out','Cash-out use'],
+  ['other','General explanation']
 ];
 var LOE_CAT_LABEL = {}; LOE_CATEGORIES.forEach(function(c){ LOE_CAT_LABEL[c[0]] = c[1]; });
 var LOE_STATUS_BADGE = {
@@ -9830,10 +9832,19 @@ function _loeActBtn(label, onclick, accent){
 function _loeRowActions(r){
   var id="'"+r.id+"'";
   if(r.status==='drafted') return _loeActBtn('Edit','loeOpenEditor('+id+')',true)+_loeActBtn('Send','loeQuickSend('+id+')',true)+_loeActBtn('Delete','loeDelete('+id+')',false);
-  if(r.status==='sent')    return _loeActBtn('View status','loeViewStatus('+id+')',true);
-  if(r.status==='signed')  return _loeActBtn('View signed','loeViewSigned('+id+')',true);
+  if(r.status==='sent')    return _loeActBtn('View status','loeViewStatus('+id+')',true)+_loeActBtn('Void','loeVoid('+id+')',false);
+  if(r.status==='signed'){
+    var acts=_loeActBtn('View signed','loeViewSigned('+id+')',true);
+    if(r.signed_pdf_url) acts+=_loeActBtn('Download PDF','loeDownloadPdf('+id+')',false);
+    return acts;
+  }
   if(r.status==='voided')  return _loeActBtn('Delete','loeDelete('+id+')',false);
   return '';
+}
+function loeDownloadPdf(id){
+  var r=_loeRows.filter(function(x){ return String(x.id)===String(id); })[0];
+  if(r && r.signed_pdf_url) window.open(r.signed_pdf_url, '_blank', 'noopener');
+  else _loeToast('No signed PDF available yet.', true);
 }
 
 // ── Editor modal (New / Edit) ──
