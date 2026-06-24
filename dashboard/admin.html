@@ -1233,6 +1233,18 @@
           </div>
         </div>
 
+        <!-- ⚡ DAILY COMMAND CENTER (single RPC: dashboard_command_center) -->
+        <section id="command-center" class="panel" style="margin-bottom:24px;padding:18px 20px;border:1px solid rgba(201,168,76,0.20);background:linear-gradient(180deg,rgba(201,168,76,0.05),rgba(201,168,76,0.01));border-radius:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+            <div><p class="kicker" style="margin:0 0 2px;color:#C9A84C;">Daily</p><h3 style="margin:0;font-size:1.15rem;">⚡ Command Center</h3></div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span id="cc-asof" style="font-size:11px;color:#888;"></span>
+              <button id="cc-refresh" type="button" onclick="loadCommandCenter()" class="btn btn-secondary btn-sm">↺ Refresh</button>
+            </div>
+          </div>
+          <div id="cc-body"><div style="padding:34px;text-align:center;color:#888;font-size:13px;">Loading command center…</div></div>
+        </section>
+
         <div class="dashboard-sections-wrapper">
 
         <!-- 6 Stat Cards -->
@@ -4714,6 +4726,186 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', notifInit); else notifInit();
+})();
+</script>
+
+<script>
+/* ═══ DAILY COMMAND CENTER — single RPC dashboard_command_center(), rendered into
+   #cc-body. Reuses the dashboard's authed client (window._dashSupabase) and its
+   escapeHtml/timeAgo helpers. Every lead/task row links to lead-detail. ═══ */
+(function(){
+  var esc = (typeof escapeHtml === 'function') ? escapeHtml : function(s){ return (s||'').replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var ago = (typeof timeAgo === 'function') ? timeAgo : function(d){ return d ? new Date(d).toLocaleDateString() : ''; };
+  function _ccClient(){ return new Promise(function(resolve){
+    var sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient, w = 0;
+    (function tick(){ sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient; if(sb || w >= 5000) return resolve(sb); w += 100; setTimeout(tick, 100); })();
+  }); }
+  function _href(cid){ return '/admin/lead-detail.html?contact_id=' + encodeURIComponent(cid||''); }
+  function _daysAgo(d){ if(!d) return ''; var n = Math.floor((Date.now() - new Date(d).getTime())/86400000); return n <= 0 ? 'today' : n + 'd ago'; }
+  function _prioBadge(p){
+    var m = { urgent:['#E5484D','rgba(229,72,77,.16)'], high:['#E5984D','rgba(229,152,77,.16)'], normal:['#bbb','rgba(255,255,255,.10)'], low:['#777','rgba(255,255,255,.05)'] };
+    var k = (p||'normal').toLowerCase(); var c = m[k] || m.normal;
+    return '<span style="flex-shrink:0;color:'+c[0]+';background:'+c[1]+';border-radius:10px;padding:1px 7px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;">'+esc(k)+'</span>';
+  }
+  function _tempBadge(t){
+    var k = (t||'').toLowerCase(); var c = k==='hot' ? ['#E5484D','rgba(229,72,77,.16)'] : k==='warm' ? ['#E5984D','rgba(229,152,77,.16)'] : ['#bbb','rgba(255,255,255,.10)'];
+    return '<span style="flex-shrink:0;color:'+c[0]+';background:'+c[1]+';border-radius:10px;padding:1px 8px;font-size:9px;font-weight:700;text-transform:uppercase;">'+esc(t||'—')+'</span>';
+  }
+  function _stageBadge(s){ return '<span style="flex-shrink:0;color:#C9A84C;background:rgba(201,168,76,.12);border-radius:10px;padding:1px 8px;font-size:10px;font-weight:600;white-space:nowrap;">'+esc(s||'—')+'</span>'; }
+  function _card(title, headRight, inner){
+    return '<div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;min-height:120px;">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;"><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#C9A84C;">'+title+'</span>'+(headRight||'')+'</div>'
+      + '<div style="flex:1;">'+inner+'</div></div>';
+  }
+  function _empty(msg){ return '<div style="padding:14px 4px;color:#888;font-size:12px;text-align:center;">'+esc(msg)+'</div>'; }
+  function _row(href, html){ return href
+    ? '<a href="'+href+'" style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);text-decoration:none;color:inherit;">'+html+'</a>'
+    : '<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'+html+'</div>'; }
+
+  function _kpis(k){
+    k = k || {};
+    function card(label, value, sub, accent){
+      return '<div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px;">'
+        + '<div style="font-size:1.55rem;font-weight:800;color:'+(accent||'#eee')+';line-height:1.05;">'+value+'</div>'
+        + '<div style="font-size:10px;color:#999;margin-top:3px;text-transform:uppercase;letter-spacing:.5px;">'+label+'</div>'
+        + (sub ? '<div style="font-size:11px;color:#C9A84C;margin-top:3px;">'+sub+'</div>' : '')
+        + '</div>';
+    }
+    var n = function(v){ return (v==null?0:v); };
+    return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px;">'
+      + card('New Leads', n(k.new_leads), '+' + n(k.new_leads_7d) + ' this week', '#C9A84C')
+      + card('Active Pipeline', n(k.active_pipeline), '', '#eee')
+      + card('Closed', n(k.closed), '', '#3FB950')
+      + card('Hot Leads', n(k.hot_leads), '', '#E5484D')
+      + card('Open Tasks', n(k.tasks_open), n(k.tasks_due_today) + ' due today', '#eee')
+      + card('Activity Today', n(k.activity_today), '', '#eee')
+      + '</div>';
+  }
+
+  function _newLeads(rows, backlog){
+    rows = rows || [];
+    var head = '<a href="/admin/people.html" style="font-size:11px;color:#C9A84C;text-decoration:none;">'+esc(String(backlog==null?rows.length:backlog))+' in backlog · View all →</a>';
+    var inner = rows.length ? rows.map(function(l){
+      var meta = [l.source, l.phone].filter(Boolean).map(esc).join(' · ');
+      return _row(_href(l.contact_id),
+        '<span style="flex:1;min-width:0;font-size:13px;font-weight:600;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(l.name||'(no name)')+'</span>'
+        + (meta?'<span style="font-size:10px;color:#888;flex-shrink:0;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+meta+'</span>':'')
+        + '<span style="font-size:10px;color:#777;flex-shrink:0;">'+esc(_daysAgo(l.created_at))+'</span>');
+    }).join('') : _empty('No new leads waiting 🎉');
+    // Visual weight: gold accent border + own block spanning full width.
+    return '<div style="background:linear-gradient(180deg,rgba(201,168,76,0.06),transparent);border:1px solid rgba(201,168,76,0.35);border-radius:12px;padding:14px 16px;margin-bottom:16px;">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;"><span style="font-size:13px;font-weight:800;color:#C9A84C;">🎯 New Leads to Work</span>'+head+'</div>'
+      + '<div>'+inner+'</div></div>';
+  }
+
+  function _pipeline(stages){
+    stages = stages || [];
+    var total = stages.reduce(function(s,x){ return s + (Number(x.count)||0); }, 0) || 1;
+    var bar = stages.map(function(x,i){
+      var endcap = (i===0 || i===stages.length-1);
+      var pct = Math.max(2, Math.round((Number(x.count)||0)/total*100));
+      var bg = endcap ? 'rgba(255,255,255,0.12)' : 'linear-gradient(90deg,rgba(201,168,76,0.55),rgba(201,168,76,0.85))';
+      return '<div title="'+esc(x.stage)+': '+(x.count||0)+'" style="flex:'+pct+' '+pct+' 0;min-width:18px;height:14px;background:'+bg+';"></div>';
+    }).join('');
+    var chips = stages.map(function(x,i){
+      var endcap = (i===0 || i===stages.length-1);
+      return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:'+(endcap?'#888':'#ddd')+';">'
+        + '<span style="font-weight:700;color:'+(endcap?'#aaa':'#C9A84C')+';">'+(x.count||0)+'</span>'+esc(x.stage)+'</span>';
+    }).join('<span style="color:#555;">›</span>');
+    return _card('Active Pipeline', '',
+      '<div style="display:flex;gap:2px;border-radius:6px;overflow:hidden;margin-bottom:10px;">'+bar+'</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">'+chips+'</div>');
+  }
+
+  function _attention(rows){
+    rows = rows || [];
+    var inner = rows.length ? rows.map(function(a){
+      var quiet = (a.days_quiet==null) ? 'no activity logged' : (a.days_quiet+'d quiet');
+      var hot = (a.days_quiet==null) || (Number(a.days_quiet) >= 14);
+      var qc = hot ? '#E5484D' : '#E5984D';
+      return _row(_href(a.contact_id),
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(a.name||'(no name)')+'</span>'
+        + _stageBadge(a.stage)
+        + (a.phone?'<span style="font-size:10px;color:#888;flex-shrink:0;">'+esc(a.phone)+'</span>':'')
+        + '<span style="font-size:10px;font-weight:700;color:'+qc+';flex-shrink:0;">'+esc(quiet)+'</span>');
+    }).join('') : _empty("All caught up — nothing's gone quiet 👍");
+    return _card('🔥 Deals Gone Quiet', '', inner);
+  }
+
+  function _tasks(rows){
+    rows = rows || [];
+    var inner = rows.length ? rows.map(function(t){
+      var href = t.contact_id ? (_href(t.contact_id) + '#vatask=' + encodeURIComponent(t.id)) : null;
+      return _row(href,
+        _prioBadge(t.priority)
+        + '<span style="flex:1;min-width:0;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(t.title||'(untitled)')+'</span>'
+        + (t.contact_name?'<span style="font-size:10px;color:#888;flex-shrink:0;">'+esc(t.contact_name)+'</span>':''));
+    }).join('') : _empty('No tasks due today 🎉');
+    return _card("✓ Today's Tasks", '', inner);
+  }
+
+  function _hot(rows){
+    rows = rows || [];
+    var inner = rows.length ? rows.map(function(h){
+      return _row(_href(h.contact_id),
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(h.name||'(no name)')+'</span>'
+        + _tempBadge(h.temperature)
+        + (h.score!=null?'<span style="font-size:10px;color:#C9A84C;font-weight:700;flex-shrink:0;">'+esc(String(h.score))+'</span>':'')
+        + _stageBadge(h.stage));
+    }).join('') : _empty('No hot leads right now');
+    return _card('🌡️ Hot Leads', '', inner);
+  }
+
+  function _actIcon(type){
+    var t = String(type||'').toLowerCase();
+    if(t.indexOf('sms')>=0 || t.indexOf('text')>=0) return '💬';
+    if(t.indexOf('email')>=0) return '✉️';
+    if(t.indexOf('call')>=0) return '📞';
+    if(t.indexOf('page')>=0 || t.indexOf('view')>=0) return '👁️';
+    if(t.indexOf('document')>=0 || t.indexOf('upload')>=0 || t.indexOf('doc')>=0) return '📄';
+    if(t.indexOf('stage')>=0) return '🔀';
+    if(t.indexOf('note')>=0) return '📝';
+    if(t.indexOf('task')>=0) return '✓';
+    return '•';
+  }
+  function _activity(rows){
+    rows = rows || [];
+    var inner = rows.length ? rows.map(function(e){
+      var sub = [e.contact_name, e.channel, e.direction].filter(Boolean).map(esc).join(' · ');
+      return _row(e.contact_id ? _href(e.contact_id) : null,
+        '<span style="flex-shrink:0;font-size:13px;width:18px;text-align:center;">'+_actIcon(e.type)+'</span>'
+        + '<span style="flex:1;min-width:0;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(e.title||e.type||'Activity')+(sub?'<span style="color:#777;"> · '+sub+'</span>':'')+'</span>'
+        + '<span style="font-size:10px;color:#777;flex-shrink:0;">'+esc(ago(e.created_at))+'</span>');
+    }).join('') : _empty('No recent activity');
+    return _card('📡 Recent Activity', '', inner);
+  }
+
+  function render(d){
+    var body = document.getElementById('cc-body'); if(!body) return;
+    var grid = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;">'
+      + _attention(d.attention) + _tasks(d.todays_tasks) + _hot(d.hot_leads) + _activity(d.recent_activity)
+      + '</div>';
+    body.innerHTML = _kpis(d.kpis) + _newLeads(d.new_leads_recent, d.kpis && d.kpis.new_leads) + _pipeline(d.pipeline_by_stage) + grid;
+    var asof = document.getElementById('cc-asof');
+    if(asof) asof.textContent = d.generated_at ? ('as of ' + new Date(d.generated_at).toLocaleString()) : '';
+  }
+
+  window.loadCommandCenter = async function(){
+    var body = document.getElementById('cc-body'); if(!body) return;
+    var btn = document.getElementById('cc-refresh'); if(btn) btn.disabled = true;
+    body.innerHTML = '<div style="padding:34px;text-align:center;color:#888;font-size:13px;">Loading command center…</div>';
+    try{
+      var sb = await _ccClient();
+      if(!sb){ body.innerHTML = '<div style="padding:24px;text-align:center;color:#E5484D;font-size:13px;">Supabase client not ready.</div>'; return; }
+      var r = await sb.rpc('dashboard_command_center');
+      if(r.error){ body.innerHTML = '<div style="padding:24px;text-align:center;color:#E5484D;font-size:13px;">Could not load command center: '+esc(r.error.message||'error')+'</div>'; return; }
+      render(r.data || {});
+    }catch(e){
+      body.innerHTML = '<div style="padding:24px;text-align:center;color:#E5484D;font-size:13px;">Could not load command center.</div>';
+      console.warn('[command-center]', e && e.message || e);
+    }finally{ if(btn) btn.disabled = false; }
+  };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', window.loadCommandCenter); else window.loadCommandCenter();
 })();
 </script>
 </body>
