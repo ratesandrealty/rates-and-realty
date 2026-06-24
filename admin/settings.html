@@ -186,7 +186,7 @@ select.inp option{background:#1a1a1a;color:#fff}
     <div class="ss-label">Settings</div>
     <div class="ss-item active" id="navUsers">👥 Users &amp; Roles</div>
     <div class="ss-item" onclick="document.getElementById('navAutomations').scrollIntoView({behavior:'smooth'})">⚡ Automations</div>
-    <div class="ss-item disabled" title="Coming soon">🖥️ VA View <span class="ss-soon">Soon</span></div>
+    <div class="ss-item" onclick="document.getElementById('navVaView').scrollIntoView({behavior:'smooth'})">🖥️ VA View</div>
   </div>
 
   <div class="main">
@@ -261,6 +261,18 @@ select.inp option{background:#1a1a1a;color:#fff}
       <div class="card" style="padding:6px 0;">
         <div class="auto-list" id="autoList">
           <div class="auto-row"><div class="auto-info"><div class="auto-desc">Loading automations…</div></div></div>
+        </div>
+      </div>
+
+      <!-- VA View — controls what the VA role can see -->
+      <div class="section-head" id="navVaView">
+        <h2>VA View — what your VA can see</h2>
+        <span class="section-count" id="vaViewSaved" style="color:var(--green);display:none;">Saved ✓</span>
+      </div>
+      <div class="card-sub" style="max-width:1100px;margin:-6px 0 12px;">These control sensitive data visibility for the VA role. Everything defaults to hidden. Turn a switch on only if you want your VA to see that data. Changes apply immediately.</div>
+      <div class="card" style="padding:6px 0;">
+        <div class="auto-list" id="vaViewList">
+          <div class="auto-row"><div class="auto-info"><div class="auto-desc">Loading…</div></div></div>
         </div>
       </div>
 
@@ -710,6 +722,54 @@ async function init() {
   document.getElementById('mainScroll').style.display = '';
   await loadUsers();
   loadAutomations();
+  loadVaView();
+}
+
+/* ── VA View — admin controls for what the VA role can see (va_view_get / va_view_set) ── */
+var _vaCaps = [];
+async function loadVaView() {
+  var list = document.getElementById('vaViewList');
+  try {
+    var res = await _client.rpc('va_view_get');
+    if (res.error) throw res.error;
+    _vaCaps = (res.data && res.data.capabilities) ? res.data.capabilities : [];
+    renderVaView();
+  } catch (e) {
+    _vaCaps = [];
+    list.innerHTML = '<div class="auto-row"><div class="auto-info"><div class="auto-desc" style="color:var(--red)">Couldn’t load VA view settings.</div></div></div>';
+  }
+}
+function renderVaView() {
+  var list = document.getElementById('vaViewList');
+  if (!_vaCaps.length) { list.innerHTML = '<div class="auto-row"><div class="auto-info"><div class="auto-desc">No capabilities to configure.</div></div></div>'; return; }
+  list.innerHTML = _vaCaps.map(function (c, idx) {
+    return '<div class="auto-row">' +
+        '<div class="auto-info">' +
+          '<div class="auto-name">' + esc(c.label || c.capability) + '</div>' +
+          (c.description ? '<div class="auto-desc">' + esc(c.description) + '</div>' : '') +
+        '</div>' +
+        '<div class="auto-ctrl"><label class="switch">' +
+          '<input type="checkbox"' + (c.allowed ? ' checked' : '') + ' id="va-sw-' + idx + '" onchange="toggleVaView(\'' + esc(c.capability) + '\', this.checked, ' + idx + ')">' +
+          '<span class="slider"></span>' +
+        '</label></div>' +
+      '</div>';
+  }).join('');
+}
+async function toggleVaView(capability, allowed, idx) {
+  var sw = document.getElementById('va-sw-' + idx);
+  if (sw) sw.disabled = true;
+  try {
+    var res = await _client.rpc('va_view_set', { p_capability: capability, p_allowed: allowed });
+    if (res.error) throw res.error;
+    // The RPC returns the updated state — re-render from it.
+    _vaCaps = (res.data && res.data.capabilities) ? res.data.capabilities : _vaCaps;
+    renderVaView();
+    var saved = document.getElementById('vaViewSaved');
+    if (saved) { saved.style.display = ''; setTimeout(function () { saved.style.display = 'none'; }, 1800); }
+  } catch (e) {
+    if (sw) { sw.checked = !allowed; sw.disabled = false; }  // revert the visual toggle
+    showToast('Couldn’t save — try again.');
+  }
 }
 
 init();
