@@ -474,7 +474,8 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
         <div><label class="apm-label">Source</label>
-          <select id="nf_source" class="apm-input"><option value="">Select source...</option><option>Referral</option><option value="Business Referral">Business Referral</option><option>Website</option><option>Zillow</option><option>Realtor.com</option><option>Social Media</option><option>Open House</option><option>Cold Call</option><option>Email Campaign</option><option>Repeat Client</option><option>Walk-In</option><option>Other</option></select></div>
+          <select id="nf_source" class="apm-input" onchange="nfSourceChanged()"><option value="">Select source...</option><option>Referral</option><option>Open House</option><option>Past Client</option><option>Website</option><option>Google</option><option>Social</option><option value="Zillow/Portal">Zillow/Portal</option><option value="__other">Other (type in)</option></select>
+          <input id="nf_source_other" class="apm-input" type="text" placeholder="Enter source" style="display:none;margin-top:8px;"></div>
         <div><label class="apm-label">Language</label>
           <select id="nf_language" class="apm-input"><option value="">Select language...</option><option>English</option><option>Spanish</option><option>Vietnamese</option><option>Mandarin</option><option>Tagalog</option><option>Korean</option><option>Arabic</option><option>French</option><option>Portuguese</option><option>Other</option></select></div>
       </div>
@@ -1509,6 +1510,7 @@ function closeNewModal() {
   ['nf_source','nf_language','nf_loan','nf_stage'].forEach(function(id) {
     var el = document.getElementById(id); if (el) el.selectedIndex = 0;
   });
+  var _so = document.getElementById('nf_source_other'); if (_so) { _so.value = ''; _so.style.display = 'none'; }
   _apmTags = [];
   document.getElementById('nf_tags').value = '[]';
   document.querySelectorAll('.apm-tag-opt').forEach(function(b) { b.classList.remove('active'); });
@@ -1579,6 +1581,11 @@ function _apmShotFill(fields, found){
   _apmShotTouched=[]; var addrTouched=false;
   Object.keys(APM_SHOT_MAP).forEach(function(key){
     if(fields[key]==null) return;
+    if(key==='lead_source'){
+      var sid=_apmSetSource(fields[key]);
+      if(sid){ if(_apmShotTouched.indexOf('nf_source')===-1) _apmShotTouched.push('nf_source'); if(sid==='nf_source_other') _apmShotTouched.push('nf_source_other'); }
+      return;
+    }
     var id=APM_SHOT_MAP[key];
     if(_apmShotSet(id, fields[key])){
       _apmShotTouched.push(id);
@@ -1615,6 +1622,7 @@ function apmShotClear(){
     var el=document.getElementById(id); if(!el) return;
     if(el.tagName==='SELECT') el.selectedIndex=0; else el.value='';
   });
+  if(typeof nfSourceChanged==='function') nfSourceChanged(); // re-hide the Other box if source was reset
   _apmShotTouched=[]; _apmShotReset();
 }
 async function apmShotHandle(file){
@@ -1789,6 +1797,29 @@ function apmClearReferral() {
   document.getElementById('nf_referral_search').value = '';
 }
 
+// Source dropdown: reveal the free-text box when "Other" is chosen; clear it otherwise.
+function nfSourceChanged(){
+  var sel=document.getElementById('nf_source'), other=document.getElementById('nf_source_other');
+  if(!sel||!other) return;
+  if(sel.value==='__other'){ other.style.display='block'; other.focus(); }
+  else{ other.style.display='none'; other.value=''; }
+}
+// Resolve the value that gets written to contacts.source (Other → the typed text).
+function _newLeadSource(){
+  var sel=document.getElementById('nf_source'); var v=sel?sel.value:'';
+  if(v==='__other'){ var o=document.getElementById('nf_source_other'); return (o&&o.value.trim())||null; }
+  return v||null;
+}
+// Screenshot autofill: pre-select a matching option, else drop the value into "Other".
+function _apmSetSource(val){
+  var sel=document.getElementById('nf_source'); if(!sel) return null;
+  var v=String(val==null?'':val).trim(); if(!v) return null;
+  var opt=Array.prototype.find.call(sel.options, function(o){ return o.value && o.value!=='__other' && (o.value.toLowerCase()===v.toLowerCase() || (o.text||'').toLowerCase()===v.toLowerCase()); });
+  var other=document.getElementById('nf_source_other');
+  if(opt){ sel.value=opt.value; if(other){ other.style.display='none'; other.value=''; } return 'nf_source'; }
+  sel.value='__other'; if(other){ other.style.display='block'; other.value=v; }
+  return 'nf_source_other';
+}
 async function savePerson() {
   var first = document.getElementById('nf_first').value.trim();
   if (!first) { showToast('First name is required'); document.getElementById('nf_first').focus(); return; }
@@ -1799,7 +1830,7 @@ async function savePerson() {
     email: document.getElementById('nf_email').value.trim() || null,
     phone: document.getElementById('nf_phone').value.trim() || null,
     date_of_birth: document.getElementById('nf_birthday').value || null,
-    source: document.getElementById('nf_source').value || null,
+    source: _newLeadSource(),
     preferred_language: document.getElementById('nf_language').value || null,
     loan_type: document.getElementById('nf_loan').value || null,
     pipeline_status: document.getElementById('nf_stage').value || 'New Lead',
