@@ -1,17 +1,285 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Redirecting to Insights…</title>
-  <script src="/admin/js/auth-guard.js?v=2026062401"></script>
-  <meta http-equiv="refresh" content="0; url=/admin/insights.html">
-  <script>location.replace('/admin/insights.html' + (location.search || ''));</script>
-  <style>
-    body{background:#0a0a0a;color:#e8e8e8;font-family:-apple-system,'Segoe UI',Arial,sans-serif;margin:0;padding:60px 24px;text-align:center}
-    a{color:#C9A84C}
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>Production Report — Rates & Realty CRM</title>
+<script src="/api/env.js?v=2026033003"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/admin/js/supabase-client.js?v=2026050601"></script>
+<script src="/admin/js/auth-guard.js?v=2026062401"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--gold:#c9a84c;--gold2:#e4b84e;--bg:#0a0a0a;--surface:#111;--surface2:#161616;--surface3:#1c1c1c;--border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);--text:#fff;--muted:rgba(255,255,255,0.42);--green:#50c878;--red:#f87171;--blue:#60a0ff}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+
+.topbar{display:flex;align-items:center;gap:12px;padding:0 20px;height:52px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}
+.topbar a.back{color:var(--muted);text-decoration:none;font-size:12px}
+.topbar h1{font-size:16px;font-weight:800;color:var(--gold)}
+.topbar .updated{margin-left:auto;font-size:11px;color:var(--muted)}
+
+.wrap{max-width:1180px;margin:0 auto;padding:20px 22px 60px}
+.deny{display:none;text-align:center;padding:90px 20px;color:var(--muted)}
+.deny .ic{font-size:46px;margin-bottom:12px}
+
+/* date range */
+.range{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+.rbtn{background:var(--surface2);border:1px solid var(--border2);color:#ddd;border-radius:8px;font-size:12px;font-weight:600;padding:7px 13px;cursor:pointer;font-family:inherit}
+.rbtn:hover{border-color:rgba(201,168,76,0.4)}
+.rbtn.active{background:rgba(201,168,76,0.14);border-color:var(--gold);color:var(--gold)}
+.range input[type=date]{background:var(--surface2);border:1px solid var(--border2);color:#ddd;border-radius:8px;font-size:12px;padding:6px 9px;font-family:inherit;outline:none}
+.range .sep{color:var(--muted);font-size:11px}
+
+/* sections */
+.sec{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:18px}
+.sec-h{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--gold);margin-bottom:14px}
+.sec-sub{font-size:11px;color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0;margin-left:8px}
+.empty{color:var(--muted);font-size:12px;padding:14px 4px;text-align:center}
+
+/* kpi tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
+.tile{background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:14px 16px}
+.tile.gold{border-color:rgba(201,168,76,0.3);background:linear-gradient(135deg,var(--surface2),rgba(201,168,76,0.05))}
+.tile-val{font-size:1.55rem;font-weight:800;line-height:1.05;letter-spacing:-0.02em}
+.tile.gold .tile-val{color:var(--gold)}
+.tile-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:4px}
+.tile-note{font-size:10px;color:rgba(255,255,255,0.3);margin-top:3px;font-style:italic}
+
+/* conversion */
+.conv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.conv{background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:14px 16px}
+.conv.emph{border-color:rgba(201,168,76,0.45);background:linear-gradient(135deg,var(--surface2),rgba(201,168,76,0.06))}
+.conv-val{font-size:1.7rem;font-weight:800;color:#eee}
+.conv.emph .conv-val{color:var(--gold)}
+.conv-lbl{font-size:12px;font-weight:700;color:#ddd;margin-top:3px}
+.conv-sub{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4}
+
+/* funnel */
+.funnel-row{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+.funnel-lbl{width:120px;flex-shrink:0;font-size:12px;color:#ccc;text-align:right}
+.funnel-track{flex:1;background:rgba(255,255,255,0.04);border-radius:6px;overflow:hidden;height:22px}
+.funnel-bar{height:100%;background:linear-gradient(90deg,rgba(201,168,76,0.55),rgba(201,168,76,0.9));border-radius:6px;min-width:3px}
+.funnel-n{width:46px;flex-shrink:0;font-size:12px;font-weight:700;color:var(--gold);text-align:left}
+
+/* tables */
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border);font-weight:700;white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle;white-space:nowrap}
+tbody tr:hover td{background:rgba(255,255,255,0.02)}
+td.num,th.num{text-align:right}
+tr.hot td{background:rgba(201,168,76,0.07)}
+tr.hot td:first-child{font-weight:700;color:var(--gold)}
+a.lead{color:var(--gold);text-decoration:none}
+a.lead:hover{text-decoration:underline}
+
+.two-col{display:grid;grid-template-columns:1.4fr 1fr;gap:18px}
+@media(max-width:820px){.two-col{grid-template-columns:1fr}}
+.chart-box{position:relative;height:260px}
+</style>
 </head>
 <body>
-  <p>Reports has moved. Redirecting to <a href="/admin/insights.html">Insights</a>…</p>
+
+<div class="topbar">
+  <a href="people.html" class="back">← Back</a>
+  <a href="settings.html" class="back">⚙ Settings</a>
+  <h1>📊 Production Report</h1>
+  <span class="updated" id="updated"></span>
+</div>
+
+<div class="deny" id="denyNotice">
+  <div class="ic">🔒</div>
+  <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:6px;">Admins only</div>
+  <div>This report is limited to administrators.</div>
+</div>
+
+<div class="wrap" id="wrap" style="display:none">
+
+  <div class="range" id="rangeBar">
+    <button class="rbtn active" data-range="all" onclick="setRange('all')">All time</button>
+    <button class="rbtn" data-range="ytd" onclick="setRange('ytd')">This year</button>
+    <button class="rbtn" data-range="12mo" onclick="setRange('12mo')">Last 12 months</button>
+    <span class="sep">·</span>
+    <input type="date" id="customFrom" title="From">
+    <span class="sep">to</span>
+    <input type="date" id="customTo" title="To">
+    <button class="rbtn" onclick="setRange('custom')">Apply</button>
+  </div>
+
+  <div id="report">
+    <div class="empty" style="padding:60px;">Loading report…</div>
+  </div>
+</div>
+
+<script>
+var _client = null;
+var _range = 'all', _from = null, _to = null;
+var _charts = {};
+
+/* ── formatting ── */
+function fmtMoney(n){ if(n==null||n==='') return '—'; var v=Math.round(Number(n)); if(isNaN(v)) return '—'; return '$'+v.toLocaleString('en-US'); }
+function earn(n){ return n==null ? '—' : fmtMoney(n); }          // null earnings → "—", never $0
+function fmtNum(n){ var v=Number(n||0); return isNaN(v)?'0':v.toLocaleString('en-US'); }
+function fmtPct(n){ if(n==null||n==='') return '—'; var v=Number(n); return isNaN(v)?'—':(v.toFixed(1)+'%'); }
+function fmtDate(d){ if(!d) return '—'; var dt=new Date(d); if(isNaN(dt.getTime())) return '—'; return dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function ymd(dt){ return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); }
+
+/* ── date range control ── */
+function setRange(mode){
+  var now=new Date();
+  if(mode==='all'){ _from=null; _to=null; }
+  else if(mode==='ytd'){ _from=now.getFullYear()+'-01-01'; _to=ymd(now); }
+  else if(mode==='12mo'){ var d=new Date(now); d.setMonth(d.getMonth()-12); _from=ymd(d); _to=ymd(now); }
+  else if(mode==='custom'){
+    var f=document.getElementById('customFrom').value||null, t=document.getElementById('customTo').value||null;
+    if(!f && !t){ mode='all'; }
+    _from=f; _to=t;
+  }
+  _range=mode;
+  document.querySelectorAll('#rangeBar .rbtn[data-range]').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-range')===mode); });
+  loadReport();
+}
+
+async function loadReport(){
+  var rep=document.getElementById('report');
+  rep.innerHTML='<div class="empty" style="padding:60px;">Loading report…</div>';
+  try{
+    var res=await _client.rpc('production_report', { p_from:_from||null, p_to:_to||null });
+    if(res.error) throw res.error;
+    render(res.data||{});
+  }catch(e){
+    rep.innerHTML='<div class="empty" style="color:var(--red);padding:50px;">Could not load report: '+esc((e&&e.message)||'error')+'</div>';
+  }
+}
+
+function _destroyCharts(){ Object.keys(_charts).forEach(function(k){ try{ _charts[k].destroy(); }catch(_){} }); _charts={}; }
+
+function render(d){
+  _destroyCharts();
+  var k=d.kpis||{}, seeEarn=!!d.can_see_earnings;
+  var up=document.getElementById('updated');
+  up.textContent = d.generated_at ? ('Updated '+new Date(d.generated_at).toLocaleString()) : '';
+
+  var html='';
+
+  /* 2. KPI TILES */
+  function tile(label,value,opts){ opts=opts||{}; return '<div class="tile'+(opts.gold?' gold':'')+'"><div class="tile-val">'+value+'</div><div class="tile-lbl">'+label+'</div>'+(opts.note?'<div class="tile-note">'+opts.note+'</div>':'')+'</div>'; }
+  function earnTile(label,val,gold){ if(!seeEarn || val==null) return tile(label,'—',{note:'hidden',gold:gold}); return tile(label,fmtMoney(val),{gold:gold}); }
+  html+='<div class="sec"><div class="sec-h">Key numbers</div><div class="tiles">'
+    + tile('Funded loans', fmtNum(k.funded_count), {gold:true})
+    + tile('Funded volume', fmtMoney(k.funded_volume), {gold:true})
+    + earnTile('Total earnings', k.total_earnings, true)
+    + tile('Avg loan size', fmtMoney(k.avg_loan))
+    + tile('Open pipeline', fmtNum(k.open_pipeline_count))
+    + earnTile('Pending est. earnings', k.pending_est_earnings, false)
+    + '</div></div>';
+
+  /* 3. CONVERSION */
+  function conv(label,val,sub,emph){ return '<div class="conv'+(emph?' emph':'')+'"><div class="conv-val">'+fmtPct(val)+'</div><div class="conv-lbl">'+label+'</div><div class="conv-sub">'+sub+'</div></div>'; }
+  html+='<div class="sec"><div class="sec-h">Conversion</div><div class="conv-grid">'
+    + conv('Lead → Funded (all)', k.conversion_overall_pct, 'every contact incl. bulk imports', false)
+    + conv('Lead → Funded (real)', k.conversion_real_pct, 'excludes one-time CSV/import lists', true)
+    + conv('Engaged → Funded', k.conversion_engaged_pct, 'of leads worked past New Lead', false)
+    + '</div></div>';
+
+  /* 4. PIPELINE FUNNEL */
+  var stages=(d.pipeline_by_stage||[]).slice().sort(function(a,b){ return (a.ord||0)-(b.ord||0); });
+  html+='<div class="sec"><div class="sec-h">Pipeline snapshot <span class="sec-sub">where leads sit right now</span></div>';
+  if(!stages.length){ html+='<div class="empty">No data for this range.</div>'; }
+  else{
+    var maxN=Math.max.apply(null, stages.map(function(s){ return Number(s.n)||0; }).concat([1]));
+    html+=stages.map(function(s){ var n=Number(s.n)||0; var w=Math.max(2,(n/maxN*100));
+      return '<div class="funnel-row"><span class="funnel-lbl">'+esc(s.stage)+'</span><div class="funnel-track"><div class="funnel-bar" style="width:'+w+'%"></div></div><span class="funnel-n">'+fmtNum(n)+'</span></div>'; }).join('');
+  }
+  html+='</div>';
+
+  /* 5. SOURCE PERFORMANCE (table + volume bar) */
+  var src=d.by_source||[];
+  html+='<div class="sec"><div class="sec-h">Source performance <span class="sec-sub">best funded first</span></div><div class="two-col">';
+  html+='<div>';
+  if(!src.length){ html+='<div class="empty">No data for this range.</div>'; }
+  else{
+    html+='<table><thead><tr><th>Source</th><th class="num">Leads</th><th class="num">Engaged</th><th class="num">Funded</th><th class="num">Volume</th><th class="num">Conv %</th>'+(seeEarn?'<th class="num">Earnings</th>':'')+'</tr></thead><tbody>';
+    html+=src.map(function(r){ var hot=/referral/i.test(r.source||'');
+      return '<tr'+(hot?' class="hot"':'')+'><td>'+esc(r.source||'—')+'</td><td class="num">'+fmtNum(r.leads)+'</td><td class="num">'+fmtNum(r.engaged)+'</td><td class="num">'+fmtNum(r.funded)+'</td><td class="num">'+fmtMoney(r.volume)+'</td><td class="num">'+fmtPct(r.conv_pct)+'</td>'+(seeEarn?'<td class="num">'+earn(r.earnings)+'</td>':'')+'</tr>'; }).join('');
+    html+='</tbody></table>';
+  }
+  html+='</div><div><div class="chart-box"><canvas id="srcChart"></canvas></div></div>';
+  html+='</div></div>';
+
+  /* 6 & 7: LOAN TYPE MIX + MONTHLY TREND */
+  html+='<div class="two-col">'
+    + '<div class="sec"><div class="sec-h">Loan-type mix</div>'+((d.by_loan_type||[]).length?'<div class="chart-box"><canvas id="ltChart"></canvas></div>':'<div class="empty">No data for this range.</div>')+'</div>'
+    + '<div class="sec"><div class="sec-h">Monthly trend</div>'+((d.monthly_trend||[]).length?'<div class="chart-box"><canvas id="moChart"></canvas></div>':'<div class="empty">No data for this range.</div>')+'</div>'
+    + '</div>';
+
+  /* 8. RECENT FUNDED */
+  var rf=(d.recent_funded||[]).slice().sort(function(a,b){ return new Date(b.closed_date||0)-new Date(a.closed_date||0); });
+  html+='<div class="sec"><div class="sec-h">Recently funded</div>';
+  if(!rf.length){ html+='<div class="empty">No data for this range.</div>'; }
+  else{
+    html+='<table><thead><tr><th>Name</th><th>Source</th><th class="num">Loan amount</th>'+(seeEarn?'<th class="num">Earnings</th>':'')+'<th>Closed</th></tr></thead><tbody>';
+    html+=rf.map(function(r){
+      var cid=r.contact_id||r.id;
+      var nm=cid ? '<a class="lead" href="lead-detail.html?contact_id='+encodeURIComponent(cid)+'">'+esc(r.name||'(no name)')+'</a>' : esc(r.name||'(no name)');
+      return '<tr><td>'+nm+'</td><td>'+esc(r.source||'—')+'</td><td class="num">'+fmtMoney(r.loan_amount)+'</td>'+(seeEarn?'<td class="num">'+earn(r.earnings)+'</td>':'')+'<td>'+fmtDate(r.closed_date)+'</td></tr>'; }).join('');
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+
+  document.getElementById('report').innerHTML=html;
+
+  /* charts (after DOM is in place) */
+  if(window.Chart){
+    var GOLD='rgba(201,168,76,0.85)', GOLD2='rgba(201,168,76,0.45)';
+    Chart.defaults.color='rgba(255,255,255,0.55)';
+    Chart.defaults.font.family="-apple-system,'Segoe UI',sans-serif";
+    Chart.defaults.font.size=11;
+
+    if(src.length){
+      var top=src.slice(0,8);
+      _charts.src=new Chart(document.getElementById('srcChart'),{ type:'bar',
+        data:{ labels:top.map(function(s){return s.source||'—';}), datasets:[{ label:'Funded volume', data:top.map(function(s){return Number(s.volume)||0;}), backgroundColor:GOLD, borderRadius:5 }] },
+        options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:function(c){ return fmtMoney(c.raw); } } } },
+          scales:{ x:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{ callback:function(v){ return '$'+(v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v); } } }, y:{ grid:{display:false} } } } });
+    }
+    var lt=d.by_loan_type||[];
+    if(lt.length){
+      var palette=['#c9a84c','#60a0ff','#50c878','#e0884c','#a06fe0','#f87171','#4cc9c0','#d4a373'];
+      _charts.lt=new Chart(document.getElementById('ltChart'),{ type:'doughnut',
+        data:{ labels:lt.map(function(t){return t.loan_type||'—';}), datasets:[{ data:lt.map(function(t){return Number(t.funded)||0;}), backgroundColor:lt.map(function(_x,i){return palette[i%palette.length];}), borderColor:'#111', borderWidth:2 }] },
+        options:{ responsive:true, maintainAspectRatio:false, cutout:'58%', plugins:{ legend:{ position:'right', labels:{boxWidth:11,padding:9} },
+          tooltip:{ callbacks:{ label:function(c){ var t=lt[c.dataIndex]; return (t.loan_type||'—')+': '+fmtNum(t.funded)+' · '+fmtMoney(t.volume); } } } } } });
+    }
+    var mo=d.monthly_trend||[];
+    if(mo.length){
+      var ds=[{ type:'bar', label:'Funded volume', data:mo.map(function(m){return Number(m.funded_volume)||0;}), backgroundColor:GOLD2, borderColor:GOLD, borderWidth:1, borderRadius:4, yAxisID:'y', order:2 }];
+      if(seeEarn && mo.some(function(m){return m.earnings!=null;})){
+        ds.push({ type:'line', label:'Earnings', data:mo.map(function(m){return m.earnings==null?null:Number(m.earnings);}), borderColor:'#50c878', backgroundColor:'#50c878', tension:0.3, yAxisID:'y1', order:1, pointRadius:3 });
+      }
+      _charts.mo=new Chart(document.getElementById('moChart'),{ data:{ labels:mo.map(function(m){return m.month;}), datasets:ds },
+        options:{ responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{display:ds.length>1}, tooltip:{ callbacks:{ label:function(c){ var m=mo[c.dataIndex];
+            if(c.dataset.label==='Funded volume') return 'Volume '+fmtMoney(c.raw)+' · '+fmtNum(m.funded_count)+' funded';
+            return 'Earnings '+earn(c.raw); } } } },
+          scales:{ y:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{ callback:function(v){ return '$'+(v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v); } } },
+            y1:{ display:seeEarn&&ds.length>1, position:'right', grid:{display:false}, ticks:{ callback:function(v){ return '$'+(v>=1e3?(v/1e3).toFixed(0)+'K':v); } } },
+            x:{ grid:{display:false} } } } });
+    }
+  }
+}
+
+async function init(){
+  try{ _client = await getSupabaseClient(); }
+  catch(e){ document.getElementById('denyNotice').style.display=''; return; }
+  var role=null;
+  try{ var r=await _client.rpc('current_app_role'); role=r&&r.data; }catch(e){ role=null; }
+  if(role!=='admin'){ document.getElementById('denyNotice').style.display=''; return; }
+  document.getElementById('wrap').style.display='';
+  loadReport();
+}
+init();
+</script>
 </body>
 </html>
