@@ -8998,8 +8998,10 @@ async function lpAction(name){
   var bName=_lpBorrowerName();
   var map=await _lpLoadContactMap(cid);
   var SIG='<br><br>Best regards,<br>Rene Duarte<br>Rates &amp; Realty<br>rene@ratesandrealty.com';
-  function emailRole(roleKey,roleLabel,tpl,tkey){ var rc=map[roleKey]||{}; var to=(rc.email||'').trim(); if(!to){ toastFn('No '+roleLabel+' email on file — add it under Transaction Contacts below.',true); return false; } openEmailComposer({to:to,toName:rc.name||roleLabel,subject:_lpSubst(tpl.subject,borrower,bName),bodyHtml:_lpSubst(tpl.body,borrower,bName),templateKey:tkey}); return true; }
-  function emailBorrower(tpl,tkey){ var to=(borrower.email||'').trim(); if(!to){ toastFn('No borrower email on file.',true); return false; } openEmailComposer({to:to,toName:bName,subject:_lpSubst(tpl.subject,borrower,bName),bodyHtml:_lpSubst(tpl.body,borrower,bName),templateKey:tkey}); return true; }
+  // Open the server-rendered preview-before-send modal. RAW template (tags intact)
+  // goes to email-service 'preview'; the server fills tags from proc_contact_id + sample_recipient.
+  function emailRole(roleKey,roleLabel,tpl,tkey){ var rc=map[roleKey]||{}; var to=(rc.email||'').trim(); if(!to){ toastFn('No '+roleLabel+' email on file — add it under Transaction Contacts below.',true); return false; } var fn=((rc.name||'').trim().split(/\s+/)[0])||''; lpEmailPreview({to:to,toName:rc.name||roleLabel,firstName:fn,subjectRaw:tpl.subject,bodyRaw:tpl.body,cid:cid}); return true; }
+  function emailBorrower(tpl,tkey){ var to=(borrower.email||'').trim(); if(!to){ toastFn('No borrower email on file.',true); return false; } lpEmailPreview({to:to,toName:bName,firstName:(borrower.first_name||''),subjectRaw:tpl.subject,bodyRaw:tpl.body,cid:cid}); return true; }
   try{
     switch(name){
       case 'Send Needs List': {
@@ -9011,22 +9013,10 @@ async function lpAction(name){
         var to=(rc.email||'').trim();
         if(!to){ toastFn('No HOI agent email on file — add it under Transaction Contacts below.',true); break; }
         var hoiFirst=((rc.name||'').trim().split(/\s+/)[0])||'there';
-        var csec=null, app=null;
-        try{ var cr=await _authClient().from('contacts_secure').select('first_name,last_name,date_of_birth,property_address,purchase_price,property_value').eq('id',cid).maybeSingle(); csec=cr.data||null; }catch(e){}
-        try{ var ar=await _authClient().from('mortgage_applications_secure').select('co_borrower_first_name,co_borrower_last_name,co_borrower_dob,property_address,property_address_street,property_city,property_address_city,property_state,property_address_state,property_zip,property_address_zip,purchase_price,property_value').eq('contact_id',cid).order('created_at',{ascending:false}).limit(1); app=(ar.data&&ar.data[0])||null; }catch(e){}
-        var names=[], dobs=[];
-        var pName=[(csec&&csec.first_name)||borrower.first_name,(csec&&csec.last_name)||borrower.last_name].filter(Boolean).join(' ').trim();
-        if(pName) names.push(pName);
-        var pDob=(csec&&csec.date_of_birth)||'';
-        if(pDob) dobs.push(_lpFmtDob(pDob));
-        if(app){ var coName=[app.co_borrower_first_name,app.co_borrower_last_name].filter(Boolean).join(' ').trim(); if(coName){ names.push(coName); if(app.co_borrower_dob) dobs.push(_lpFmtDob(app.co_borrower_dob)); } }
-        var addr='';
-        if(app){ addr=[app.property_address||app.property_address_street,app.property_city||app.property_address_city,app.property_state||app.property_address_state,app.property_zip||app.property_address_zip].filter(Boolean).join(', '); }
-        if(!addr){ addr=(csec&&csec.property_address)||borrower.property_address||''; }
-        var price=_lpFmtMoney((app&&(app.purchase_price||app.property_value))||(csec&&(csec.purchase_price||csec.property_value))||borrower.purchase_price||borrower.property_value||'');
-        var vals={ hoi_first_name:hoiFirst, property_address:addr||'(see attached)', purchase_price:price||'(see attached)', borrowers:names.length?names.join(', '):bName, birthdates:dobs.length?dobs.join(', '):'(see attached)' };
+        // RAW template (tags intact) — email-service 'preview' fills hoi_first_name from
+        // sample_recipient and property_address/purchase_price/borrowers/birthdates from proc_contact_id.
         var tH=await lpTemplate('proc_hoi_agent',{subject:'Homeowners Insurance Quote Request — {{borrower_name}}',body:'Hello {{hoi_first_name}},<br><br>Can you provide a homeowners insurance quote for a client of mine? The client\'s information is below. Please let me know if you need anything else.<br><br>Address: {{property_address}}<br>Purchase Price: {{purchase_price}}<br>Borrower: {{borrowers}}<br>Birth Date: {{birthdates}}<br><br><b>Please confirm receipt of this email.</b>'+SIG});
-        openEmailComposer({to:to,toName:rc.name||'HOI agent',subject:_lpSubst(tH.subject,borrower,bName,vals),bodyHtml:_lpSubst(tH.body,borrower,bName,vals),templateKey:'proc_hoi_agent'});
+        lpEmailPreview({to:to,toName:rc.name||'HOI agent',firstName:hoiFirst,subjectRaw:tH.subject,bodyRaw:tH.body,cid:cid});
         break;
       }
       case 'Order Title': {
@@ -9045,13 +9035,103 @@ async function lpAction(name){
         var realtor=(map['buyer_agent']&&map['buyer_agent'].email)?map['buyer_agent']:(map['listing_agent']||{});
         var to=(realtor.email||'').trim();
         if(!to){ toastFn('No realtor email on file — add a Buyer/Listing Agent under Transaction Contacts.',true); break; }
+        var rFirst=((realtor.name||'').trim().split(/\s+/)[0])||'';
         var t5=await lpTemplate('proc_realtor_update',{subject:'Loan Status Update — {{borrower_name}}',body:'Hi there,<br><br>Quick update on {{borrower_name}}\'s loan — we\'re actively processing and on track. I\'ll let you know as soon as we hit the next milestone. Reach out anytime with questions.'+SIG});
-        openEmailComposer({to:to,toName:realtor.name||'Agent',subject:_lpSubst(t5.subject,borrower,bName),bodyHtml:_lpSubst(t5.body,borrower,bName),templateKey:'proc_realtor_update'});
+        lpEmailPreview({to:to,toName:realtor.name||'Agent',firstName:rFirst,subjectRaw:t5.subject,bodyRaw:t5.body,cid:cid});
         break;
       }
       default: toastFn('Unknown action: '+name,true);
     }
   }catch(e){ toastFn('Error: '+(e&&e.message||e),true); }
+}
+
+/* ═══ EMAIL PREVIEW-BEFORE-SEND (Loan Processing quick-action emails) ═══
+   1) email-service 'preview' renders the RAW template (server fills {{tags}} from
+      proc_contact_id + sample_recipient). 2) Admin reviews/edits To/Subject/Body.
+      3) email-service 'send' delivers + logs to the lead via contact_id. */
+var _lpEmailState = null;
+function _lpEmailEnsureModal(){
+  var ov = document.getElementById('lpEmailOverlay');
+  if(ov) return ov;
+  var lbl='display:block;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;';
+  var inp='width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;outline:none;box-sizing:border-box;font-family:inherit;';
+  ov = document.createElement('div');
+  ov.id='lpEmailOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:20px;';
+  ov.onclick=function(e){ if(e.target===ov) _lpEmailModalClose(); };
+  ov.innerHTML =
+    '<div style="width:100%;max-width:640px;max-height:90vh;display:flex;flex-direction:column;background:#15140f;border:1px solid rgba(201,168,76,.3);border-radius:14px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.6);">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);"><span style="font-size:14px;font-weight:700;color:#C9A84C;">✉️ Review email before sending</span><button onclick="_lpEmailModalClose()" style="background:transparent;border:none;color:#888;font-size:18px;cursor:pointer;line-height:1;">✕</button></div>'
+    + '<div style="flex:1;overflow-y:auto;padding:16px 18px;">'
+    +   '<div id="lpEmailLoading" style="padding:34px;text-align:center;color:#888;font-size:13px;">Rendering preview…</div>'
+    +   '<div id="lpEmailForm" style="display:none;">'
+    +     '<div style="margin-bottom:12px;"><label style="'+lbl+'">To</label><input id="lpEmailTo" type="text" style="'+inp+'"></div>'
+    +     '<div style="margin-bottom:12px;"><label style="'+lbl+'">Subject</label><input id="lpEmailSubject" type="text" style="'+inp+'"></div>'
+    +     '<div><label style="'+lbl+'">Body</label><div id="lpEmailBody" contenteditable="true" style="min-height:240px;max-height:44vh;overflow-y:auto;background:#fff;color:#111;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.5;outline:none;"></div></div>'
+    +   '</div>'
+    + '</div>'
+    + '<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid rgba(255,255,255,.08);"><button onclick="_lpEmailModalClose()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-family:inherit;">Cancel</button><button id="lpEmailSendBtn" onclick="_lpEmailSend()" style="background:#C9A84C;border:none;color:#000;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">Send</button></div>'
+    + '</div>';
+  document.body.appendChild(ov);
+  return ov;
+}
+function _lpEmailModalClose(){ var ov=document.getElementById('lpEmailOverlay'); if(ov) ov.style.display='none'; _lpEmailState=null; }
+async function lpEmailPreview(o){
+  var toastFn=window.showToast||window.toast||function(){};
+  if(!o || !o.to){ toastFn('No recipient email on file.',true); return; }
+  var ov=_lpEmailEnsureModal();
+  document.getElementById('lpEmailLoading').style.display='block';
+  document.getElementById('lpEmailForm').style.display='none';
+  ov.style.display='flex';
+  try{
+    var resp=await _authClient().functions.invoke('email-service',{ body:{
+      action:'preview',
+      subject:o.subjectRaw||'',
+      html:o.bodyRaw||'',
+      proc_contact_id:o.cid||null,
+      sample_recipient:{ first_name:o.firstName||'', email:o.to }
+    }});
+    var data=resp&&resp.data, error=resp&&resp.error;
+    if(error || !data){ throw new Error((data&&data.error)||(error&&error.message)||'Preview failed'); }
+    _lpEmailState={ toName:o.toName||'', firstName:o.firstName||'', cid:o.cid||null };
+    document.getElementById('lpEmailLoading').style.display='none';
+    document.getElementById('lpEmailForm').style.display='block';
+    document.getElementById('lpEmailTo').value=o.to;
+    document.getElementById('lpEmailSubject').value=(data.rendered_subject!=null?data.rendered_subject:(o.subjectRaw||''));
+    document.getElementById('lpEmailBody').innerHTML=(data.rendered_html!=null?data.rendered_html:(o.bodyRaw||''));
+    var b=document.getElementById('lpEmailSendBtn'); if(b){ b.disabled=false; b.textContent='Send'; }
+  }catch(e){
+    _lpEmailModalClose();
+    toastFn('Preview failed: '+(e&&e.message||e),true);
+  }
+}
+async function _lpEmailSend(){
+  var toastFn=window.showToast||window.toast||function(){};
+  var st=_lpEmailState; if(!st) return;
+  var to=(document.getElementById('lpEmailTo').value||'').trim();
+  var subject=document.getElementById('lpEmailSubject').value||'';
+  var bodyEl=document.getElementById('lpEmailBody');
+  var html=bodyEl?bodyEl.innerHTML:'';
+  if(!to){ toastFn('Enter a recipient email.',true); return; }
+  var b=document.getElementById('lpEmailSendBtn'); if(b){ b.disabled=true; b.textContent='Sending…'; }
+  try{
+    var resp=await _authClient().functions.invoke('email-service',{ body:{
+      action:'send',
+      to_email:to,
+      to_name:st.toName||'',
+      first_name:st.firstName||'',
+      subject:subject,
+      html:html,
+      contact_id:st.cid||null
+    }});
+    var data=resp&&resp.data, error=resp&&resp.error;
+    if(error || !data || data.success!==true){ throw new Error((data&&data.error)||(error&&error.message)||'Send failed'); }
+    toastFn('Email sent ✓');
+    _lpEmailModalClose();
+  }catch(e){
+    if(b){ b.disabled=false; b.textContent='Send'; }
+    toastFn('Send failed: '+(e&&e.message||e),true);
+  }
 }
 async function lpLoadProcessing(){
   const cid = lpCid(); if(!cid) return;
