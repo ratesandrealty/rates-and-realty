@@ -1227,6 +1227,7 @@
             <h2>Pipeline Overview</h2>
           </div>
           <div class="flex-gap">
+            <button id="notifBell" type="button" onclick="notifToggle(event)" title="Notifications" style="position:relative;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#e8d5a3;cursor:pointer;font-size:15px;line-height:1;padding:6px 11px;">🔔<span id="notifBadge" style="display:none;position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;line-height:16px;padding:0 3px;border-radius:8px;background:#E5484D;color:#fff;font-size:9px;font-weight:700;text-align:center;box-sizing:border-box;">0</span></button>
             <button class="btn btn-secondary btn-sm" id="refresh-btn">↺ Refresh</button>
             <button class="btn btn-primary btn-sm" id="new-lead-btn">+ New Lead</button>
           </div>
@@ -4620,6 +4621,99 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   window.__rrPickers = { priority: priority, due: due, lead: lead, closeAll: closeAll };
+})();
+</script>
+
+<script>
+/* ── Notification bell — ports the lead-detail bell (same RPCs/behavior),
+   adapted to the dashboard's authed client (window._dashSupabase) and its
+   escapeHtml/timeAgo helpers. notifications_unread_count / notifications_list /
+   notification_mark_read / notifications_mark_all_read. ── */
+(function(){
+  var _notifTimer = null;
+  async function _dnClient(){
+    var sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient, w = 0;
+    while(!sb && w < 5000){ await new Promise(function(r){ setTimeout(r,100); }); w += 100; sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient; }
+    return sb;
+  }
+  function _dnBox(){
+    var b = document.getElementById('notifDropdown');
+    if(!b){
+      b = document.createElement('div'); b.id = 'notifDropdown';
+      b.style.cssText = 'position:fixed;z-index:10000;display:none;width:340px;max-height:440px;overflow-y:auto;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:10px;box-shadow:0 18px 44px rgba(0,0,0,.6);';
+      document.body.appendChild(b);
+    }
+    return b;
+  }
+  function _dnHide(){ var b = document.getElementById('notifDropdown'); if(b) b.style.display = 'none'; }
+  function _dnToast(msg){
+    try{ console.warn('[notifications]', msg); }catch(_){}
+    var t = document.createElement('div'); t.textContent = msg;
+    t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2a1a1a;border:1px solid rgba(229,72,77,.5);color:#ff9a9a;padding:9px 16px;border-radius:8px;font-size:12px;z-index:10002;';
+    document.body.appendChild(t); setTimeout(function(){ t.remove(); }, 3500);
+  }
+  async function notifRefreshCount(){
+    try{
+      var sb = await _dnClient(); if(!sb) return;
+      var r = await sb.rpc('notifications_unread_count'); if(r.error) return;
+      var n = Number(r.data) || 0, badge = document.getElementById('notifBadge');
+      if(badge){ if(n > 0){ badge.textContent = n > 99 ? '99+' : String(n); badge.style.display = 'block'; } else badge.style.display = 'none'; }
+    }catch(_){}
+  }
+  async function notifRenderList(){
+    var box = _dnBox();
+    var head = '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);position:sticky;top:0;background:#15140f;"><span style="font-size:12px;font-weight:700;color:#C9A84C;">Notifications</span><button onclick="notifMarkAll()" style="background:transparent;border:none;color:#888;font-size:11px;cursor:pointer;font-family:inherit;">Mark all read</button></div>';
+    box.innerHTML = head + '<div style="padding:14px;color:#888;font-size:12px;">Loading…</div>';
+    try{
+      var sb = await _dnClient(); if(!sb){ box.innerHTML = head + '<div style="padding:14px;color:#E5484D;font-size:12px;">Client not ready.</div>'; return; }
+      var r = await sb.rpc('notifications_list', { p_limit:30, p_only_unread:false });
+      if(r.error){ _dnToast('Could not load notifications: ' + r.error.message); box.innerHTML = head + '<div style="padding:14px;color:#E5484D;font-size:12px;">Could not load.</div>'; return; }
+      var rows = r.data || [];
+      if(!rows.length){ box.innerHTML = head + '<div style="padding:20px;text-align:center;color:#888;font-size:12px;">No notifications</div>'; return; }
+      box.innerHTML = head + rows.map(function(n){
+        var unread = !n.is_read, bg = unread ? 'rgba(201,168,76,.07)' : 'transparent';
+        return '<div onclick="notifOpen(\'' + n.id + '\',\'' + (n.contact_id||'') + '\',\'' + (n.source_kind||'') + '\',\'' + (n.source_id||'') + '\')" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;background:' + bg + ';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\'' + bg + '\'">'
+          + '<div style="display:flex;gap:6px;align-items:baseline;">' + (unread ? '<span style="flex-shrink:0;width:7px;height:7px;border-radius:50%;background:#C9A84C;display:inline-block;"></span>' : '')
+          + '<span style="font-size:12px;color:#eee;font-weight:600;">' + escapeHtml(n.actor_display || 'Someone') + '</span>'
+          + '<span style="margin-left:auto;font-size:10px;color:#777;flex-shrink:0;">' + escapeHtml(timeAgo(n.created_at)) + '</span></div>'
+          + '<div style="font-size:11px;color:#bbb;margin-top:2px;">' + escapeHtml(n.preview || '') + '</div></div>';
+      }).join('');
+    }catch(e){ _dnToast('Could not load notifications: ' + (e && e.message || e)); }
+  }
+  window.notifToggle = function(ev){
+    if(ev) ev.stopPropagation();
+    var box = _dnBox();
+    if(box.style.display === 'block'){ _dnHide(); return; }
+    var bell = document.getElementById('notifBell'), rc = bell ? bell.getBoundingClientRect() : { bottom:50, right:300 };
+    box.style.left = Math.max(8, Math.min(rc.right - 340, window.innerWidth - 348)) + 'px';
+    box.style.top = (rc.bottom + 6) + 'px';
+    box.style.display = 'block';
+    notifRenderList();
+  };
+  window.notifOpen = async function(id, contactId, sourceKind, sourceId){
+    try{ var sb = await _dnClient(); if(sb) await sb.rpc('notification_mark_read', { p_id:id }); }catch(_){}
+    notifRefreshCount(); _dnHide();
+    if(contactId){
+      var hash = (sourceKind === 'task_note' && sourceId) ? ('#vatask=' + encodeURIComponent(sourceId)) : '';
+      window.location.href = '/admin/lead-detail.html?contact_id=' + encodeURIComponent(contactId) + hash;
+    }
+  };
+  window.notifMarkAll = async function(){
+    try{ var sb = await _dnClient(); if(!sb) return; var r = await sb.rpc('notifications_mark_all_read'); if(r.error){ _dnToast('Could not mark all read: ' + r.error.message); return; } }
+    catch(e){ _dnToast('Could not mark all read'); return; }
+    notifRefreshCount(); notifRenderList();
+  };
+  function notifInit(){
+    notifRefreshCount();
+    if(_notifTimer) clearInterval(_notifTimer);
+    _notifTimer = setInterval(notifRefreshCount, 60000);
+    document.addEventListener('click', function(e){
+      var b = document.getElementById('notifDropdown'); if(!b || b.style.display !== 'block') return;
+      if(e.target.closest && (e.target.closest('#notifDropdown') || e.target.closest('#notifBell'))) return;
+      _dnHide();
+    });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', notifInit); else notifInit();
 })();
 </script>
 </body>
