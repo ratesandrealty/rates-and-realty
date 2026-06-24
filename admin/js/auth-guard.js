@@ -158,6 +158,8 @@
         'reports.html':            ['admin'],
         'insights.html':           ['admin'],
         'emc-import.html':         ['admin'],
+        'referral-partners.html':  ['admin'],
+        'partner-detail.html':     ['admin'],
       };
       const filename = window.location.pathname.split('/').pop();
       const allowed = PAGE_ACCESS[filename];
