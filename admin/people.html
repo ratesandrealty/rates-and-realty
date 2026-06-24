@@ -444,6 +444,8 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 #newModal .apm-label{display:block;color:#666;font-size:11px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px;font-weight:500;}
 #newModal .apm-input{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;color:#e0e0e0;padding:9px 12px;border-radius:7px;font-size:13px;box-sizing:border-box;outline:none;transition:border-color .15s;font-family:inherit;}
 #newModal .apm-input:focus{border-color:#C9A84C44;}
+#newModal .apm-spin{display:inline-block;width:13px;height:13px;border:2px solid #C9A84C44;border-top-color:#C9A84C;border-radius:50%;animation:apmspin .7s linear infinite;vertical-align:-2px;margin-right:6px;}
+@keyframes apmspin{to{transform:rotate(360deg);}}
 #newModal .apm-tag-opt.active{background:#C9A84C22!important;border-color:#C9A84C!important;color:#C9A84C!important;}
 /* Ensure tab active underline is not overridden by anything */
 .tab-pill.active{color:var(--gold)!important;border-bottom-color:var(--gold)!important;}
@@ -452,6 +454,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <div class="modal" style="max-width:620px;">
     <div class="modal-hdr"><h2>Add New Person</h2><button class="btn btn-ghost btn-sm" onclick="closeNewModal()">&times;</button></div>
     <div class="modal-body" style="padding:20px 24px;">
+
+      <!-- AI screenshot-to-autofill (optional accelerator above the manual fields) -->
+      <div id="apmShotZone" onclick="apmShotPick()" ondragover="apmShotDragOver(event)" ondragleave="apmShotDragLeave(event)" ondrop="apmShotDrop(event)"
+           style="border:1.5px dashed #C9A84C66;border-radius:10px;background:#C9A84C08;padding:14px 16px;text-align:center;cursor:pointer;margin-bottom:18px;transition:background .15s,border-color .15s;">
+        <div id="apmShotIdle" style="color:#C9A84C;font-size:13px;font-weight:600;">📋 Paste or drop a lead screenshot — AI will fill the form</div>
+        <div id="apmShotStatus" style="display:none;font-size:13px;"></div>
+        <input type="file" id="apmShotFile" accept="image/*" style="display:none;" onchange="apmShotFileChange(event)">
+      </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
         <div><label class="apm-label">First Name *</label><input id="nf_first" type="text" class="apm-input" placeholder="First name"></div>
@@ -1484,10 +1494,15 @@ function openNewModal() {
       return '<button class="apm-tag-opt" data-tag="' + t + '" onclick="apmToggleTag(\'' + t + '\',this)" style="background:transparent;border:1px solid #2a2a2a;color:#666;font-size:11px;padding:3px 10px;border-radius:20px;cursor:pointer;transition:all .15s;">' + t + '</button>';
     }).join('');
   }
+  // Scope the screenshot paste-to-autofill listener to while the popup is open.
+  document.addEventListener('paste', _apmShotPaste);
+  if (typeof _apmShotReset === 'function') { _apmShotReset(); _apmShotTouched = []; }
   setTimeout(function() { document.getElementById('nf_first').focus(); }, 50);
 }
 function closeNewModal() {
   document.getElementById('newModal').classList.remove('open');
+  document.removeEventListener('paste', _apmShotPaste);
+  if (typeof _apmShotReset === 'function') { _apmShotReset(); _apmShotTouched = []; }
   ['nf_first','nf_last','nf_email','nf_phone','nf_birthday','nf_street','nf_city','nf_state','nf_zip','nf_notes','nf_referral_search','nf_referral_id'].forEach(function(id) {
     var el = document.getElementById(id); if (el) el.value = '';
   });
@@ -1502,6 +1517,107 @@ function closeNewModal() {
   var ab = document.getElementById('apm-address-block'); if (ab) ab.style.display = 'none';
   var at = document.getElementById('apm-addr-toggle'); if (at) at.textContent = '+ Add address';
   var cl = document.getElementById('apm-connected-list'); if (cl) cl.innerHTML = '';
+}
+
+/* ── AI screenshot → autofill for the Add-New-Person form ──
+   Three inputs (paste / drag-drop / click) feed one image into the
+   extract-lead-from-image edge function, which returns { ok, found, fields }. */
+var _apmShotBusy = false, _apmShotTouched = [];
+// Extracted key → form input id. Keys with no field here are skipped.
+var APM_SHOT_MAP = {
+  first_name:'nf_first', last_name:'nf_last', email:'nf_email', phone:'nf_phone',
+  address:'nf_street', city:'nf_city', state:'nf_state', zip:'nf_zip',
+  date_of_birth:'nf_birthday', loan_type:'nf_loan', lead_source:'nf_source', notes:'nf_notes'
+};
+function _apmEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+function _apmShotEls(){ return { zone:document.getElementById('apmShotZone'), idle:document.getElementById('apmShotIdle'), status:document.getElementById('apmShotStatus') }; }
+function _apmShotStatusHtml(html, busy){
+  var e=_apmShotEls(); if(!e.status) return;
+  e.idle.style.display='none'; e.status.style.display='block'; e.status.innerHTML=html;
+  if(e.zone){ e.zone.style.pointerEvents = busy ? 'none' : ''; e.zone.style.opacity = busy ? '0.85' : '1'; }
+}
+function _apmShotReset(){
+  var e=_apmShotEls(); if(!e.status) return;
+  e.status.style.display='none'; e.status.innerHTML='';
+  if(e.idle) e.idle.style.display='block';
+  if(e.zone){ e.zone.style.pointerEvents=''; e.zone.style.opacity='1'; e.zone.style.background='#C9A84C08'; e.zone.style.borderColor='#C9A84C66'; }
+}
+function apmShotPick(){ if(_apmShotBusy) return; var f=document.getElementById('apmShotFile'); if(f) f.click(); }
+function apmShotDragOver(e){ e.preventDefault(); var z=document.getElementById('apmShotZone'); if(z){ z.style.background='#C9A84C18'; z.style.borderColor='#C9A84C'; } }
+function apmShotDragLeave(e){ var z=document.getElementById('apmShotZone'); if(z){ z.style.background='#C9A84C08'; z.style.borderColor='#C9A84C66'; } }
+function apmShotDrop(e){
+  e.preventDefault(); apmShotDragLeave(e);
+  var files=(e.dataTransfer&&e.dataTransfer.files)||[];
+  for(var i=0;i<files.length;i++){ if((files[i].type||'').indexOf('image/')===0){ apmShotHandle(files[i]); return; } }
+}
+function apmShotFileChange(e){ var f=e.target.files&&e.target.files[0]; e.target.value=''; if(f) apmShotHandle(f); }
+function _apmShotPaste(e){
+  var m=document.getElementById('newModal'); if(!m || !m.classList.contains('open')) return;
+  var items=(e.clipboardData&&e.clipboardData.items)||[];
+  for(var i=0;i<items.length;i++){
+    if(items[i].type && items[i].type.indexOf('image')===0){
+      var f=items[i].getAsFile(); if(f){ e.preventDefault(); apmShotHandle(f); } return;
+    }
+  }
+}
+function _apmShotSet(id, val){
+  var el=document.getElementById(id); if(!el || val==null) return false;
+  var v=String(val).trim(); if(!v) return false;
+  if(el.tagName==='SELECT'){
+    var opt=Array.prototype.find.call(el.options, function(o){ return o.value.toLowerCase()===v.toLowerCase() || (o.text||'').toLowerCase()===v.toLowerCase(); });
+    if(opt){ el.value=opt.value; return true; }
+    return false; // no matching option — leave the select untouched
+  }
+  if(el.type==='date'){
+    var mm=v.match(/\d{4}-\d{2}-\d{2}/); if(mm){ el.value=mm[0]; return true; }
+    var d=new Date(v); if(!isNaN(d.getTime())){ el.value=d.toISOString().slice(0,10); return true; }
+    return false;
+  }
+  el.value=v; return true;
+}
+function _apmShotFill(fields, found){
+  _apmShotTouched=[]; var addrTouched=false;
+  Object.keys(APM_SHOT_MAP).forEach(function(key){
+    if(fields[key]==null) return;
+    var id=APM_SHOT_MAP[key];
+    if(_apmShotSet(id, fields[key])){
+      _apmShotTouched.push(id);
+      if(id==='nf_street'||id==='nf_city'||id==='nf_state'||id==='nf_zip') addrTouched=true;
+    }
+  });
+  if(addrTouched){
+    var ab=document.getElementById('apm-address-block'); if(ab) ab.style.display='block';
+    var at=document.getElementById('apm-addr-toggle'); if(at) at.textContent='− Hide address';
+  }
+  var n=(found!=null) ? found : _apmShotTouched.length;
+  _apmShotStatusHtml('<span style="color:#4ade80;font-weight:600;">✓ Filled '+_apmEsc(String(n))+' field'+(String(n)==='1'?'':'s')+' from screenshot — review and save.</span>'
+    + ' <a href="#" onclick="apmShotClear();return false;" style="color:#888;text-decoration:underline;margin-left:6px;">Clear</a>', false);
+}
+function apmShotClear(){
+  (_apmShotTouched||[]).forEach(function(id){
+    var el=document.getElementById(id); if(!el) return;
+    if(el.tagName==='SELECT') el.selectedIndex=0; else el.value='';
+  });
+  _apmShotTouched=[]; _apmShotReset();
+}
+async function apmShotHandle(file){
+  if(_apmShotBusy) return;
+  if(!/^image\//.test(file.type||'')){ _apmShotStatusHtml('<span style="color:#f87171;">Please use an image file.</span> <a href="#" onclick="_apmShotReset();return false;" style="color:#888;text-decoration:underline;margin-left:6px;">Try again</a>', false); return; }
+  _apmShotBusy=true;
+  _apmShotStatusHtml('<span class="apm-spin"></span>Reading screenshot…', true);
+  try{
+    var dataUrl=await new Promise(function(res,rej){ var fr=new FileReader(); fr.onload=function(){res(fr.result);}; fr.onerror=function(){rej(fr.error||new Error('read failed'));}; fr.readAsDataURL(file); });
+    var resp=await _authClient().functions.invoke('extract-lead-from-image', { body:{ image:dataUrl, media_type:file.type||'image/png' } });
+    var data=resp&&resp.data, error=resp&&resp.error;
+    if(error || !data || data.ok!==true){
+      var msg=(data&&data.error) || (error&&error.message) || "Couldn't read that image";
+      _apmShotStatusHtml('<span style="color:#f87171;">'+_apmEsc(msg)+'</span> <a href="#" onclick="_apmShotReset();return false;" style="color:#888;text-decoration:underline;margin-left:6px;">Try another</a>', false);
+      return;
+    }
+    _apmShotFill(data.fields||{}, data.found);
+  }catch(err){
+    _apmShotStatusHtml('<span style="color:#f87171;">'+_apmEsc((err&&err.message)||"Couldn't read that image")+'</span> <a href="#" onclick="_apmShotReset();return false;" style="color:#888;text-decoration:underline;margin-left:6px;">Try another</a>', false);
+  }finally{ _apmShotBusy=false; }
 }
 
 function apmToggleAddress() {
