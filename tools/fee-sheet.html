@@ -35,10 +35,9 @@
             background: var(--sidebar-bg);
             border-right: 1px solid #222;
             padding: 20px 18px 30px;
-            overflow-y: auto;
-            height: 100vh;
-            position: sticky;
-            top: 0;
+            /* Grow with the page (flex-stretch fills height) — no inner scroll
+               region and no horizontal overflow, so the page owns the only scrollbar. */
+            min-height: 100vh;
         }
 
         .sidebar a.back-link {
@@ -96,6 +95,8 @@
         }
 
         .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        /* Let grid children shrink below their intrinsic input width instead of overflowing. */
+        .row2 > * { min-width: 0; }
 
         /* scenario card */
         .scenario-card {
@@ -199,10 +200,10 @@
         /* ── MAIN / SHEET ── */
         .main {
             flex: 1;
+            min-width: 0;
             padding: 40px;
             display: flex;
             justify-content: center;
-            overflow-y: auto;
         }
 
         .sheet {
@@ -1020,7 +1021,8 @@ function readSidebarInputs(overrides) {
     };
     const govFee = computeGovUpfrontFee(loanProductValue, loanAmount, downPct, vaConfig);
     const totalLoanAmount = (govFee && govFee.financed) ? +(loanAmount + govFee.amount).toFixed(2) : loanAmount;
-    const ltv = purchasePrice > 0 ? (totalLoanAmount / purchasePrice * 100) : 0;
+    // LTV is base loan amount / purchase price — NOT the MIP/UFMIP-inflated total loan amount.
+    const ltv = purchasePrice > 0 ? (loanAmount / purchasePrice * 100) : 0;
 
     // Tax: % mode or $ mode. In property-comparison mode we ALWAYS recompute from % regardless
     // of _taxMode, since per-column purchase prices yield different tax amounts.
@@ -1202,6 +1204,33 @@ function computeGovUpfrontFee(loanProduct, baseLoanAmount, downPaymentPct, vaCon
     return null;
 }
 
+// Reg Z APR: solve for the monthly rate whose PV of the note payment equals the
+// amount financed (loan amount minus APR-eligible prepaid finance charges). With
+// zero finance charges, APR collapses back to the note rate.
+function calcMonthlyPI(loanAmount, ratePercent, termMonths = 360) {
+    const r = ratePercent / 100 / 12;
+    if (r === 0) return loanAmount / termMonths;
+    const f = Math.pow(1 + r, termMonths);
+    return loanAmount * r * f / (f - 1);
+}
+function calcAPR(loanAmount, ratePercent, prepaidFinanceCharges, termMonths = 360) {
+    const pmt = calcMonthlyPI(loanAmount, ratePercent, termMonths);
+    const financed = loanAmount - (prepaidFinanceCharges || 0);
+    if (financed <= 0 || pmt <= 0) return ratePercent;
+    const pv = (i) => (i === 0 ? pmt * termMonths : pmt * (1 - Math.pow(1 + i, -termMonths)) / i);
+    let lo = ratePercent / 100 / 12;
+    let hi = lo + 0.05;
+    for (let k = 0; k < 80 && pv(hi) > financed; k++) hi += 0.05;
+    let i = lo;
+    for (let k = 0; k < 200; k++) {
+        i = (lo + hi) / 2;
+        const val = pv(i);
+        if (Math.abs(val - financed) < 1e-6) break;
+        if (val > financed) lo = i; else hi = i;
+    }
+    return i * 12 * 100;
+}
+
 function calcScenario(inp, sc) {
     const la = inp.loanAmount;
     const totalLa = inp.totalLoanAmount || la;
@@ -1362,10 +1391,16 @@ function render(inp, results) {
                     if (s.points === 0) { pillClass = 'pill-none'; pillText = 'No Points'; }
                     else if (s.points > 0) { pillClass = 'pill-cost'; pillText = s.points + 'pts \u2014 ' + fmtPlain(ptsAmt, 0); }
                     else { pillClass = 'pill-credit'; pillText = 'Credit \u2014 ' + fmtPlain(ptsAmt, 0); }
+                    // APR-eligible Section A lender charges: origination + discount points (only when
+                    // points>0) + underwriting + admin. Third-party fees are excluded.
+                    const sPFC = inp.loanAmount * (s.origComp || 0) / 100
+                        + ((s.points || 0) > 0 ? inp.loanAmount * s.points / 100 : 0)
+                        + 1350 + 185;
+                    const sApr = calcAPR(inp.loanAmount, s.rate, sPFC);
                     return '<div class="rate-card' + (isRec ? ' rec' : '') + '">' +
                         '<div class="rate-card-label">Option ' + s.id + ' \u2014 ' + s.label + '</div>' +
                         '<div class="rate-card-rate">' + s.rate.toFixed(3) + '%</div>' +
-                        '<div class="rate-card-apr">' + s.rate.toFixed(3) + '% APR</div>' +
+                        '<div class="rate-card-apr">' + sApr.toFixed(3) + '% APR</div>' +
                         '<div><span class="rate-card-pill ' + pillClass + '">' + pillText + '</span></div>' +
                     '</div>';
                 }).join('')}
