@@ -143,6 +143,10 @@ select.inp option{background:#1a1a1a;color:#fff}
 .auto-err{font-size:11px;color:var(--red);margin-top:4px;display:none}
 .auto-err.show{display:block}
 .auto-ctrl{flex-shrink:0}
+.auto-cat{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--gold);padding:16px 18px 6px}
+.auto-sched{font-size:11px;color:var(--muted);margin-top:3px}
+.auto-ctrl-off{display:flex;flex-direction:column;align-items:center;gap:2px}
+.auto-note{font-size:10.5px;color:var(--muted);text-align:center}
 
 /* Toggle switch */
 .switch{position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0}
@@ -255,11 +259,28 @@ select.inp option{background:#1a1a1a;color:#fff}
       <!-- Automations -->
       <div class="section-head" id="navAutomations">
         <h2>Automations</h2>
+      </div>
+
+      <!-- GROUP 1: Event automations (automation-config / ClickUp event triggers) -->
+      <div class="section-head" style="margin:6px 0 12px;">
+        <h2 style="font-size:14px;">Event automations</h2>
         <span class="section-count" id="autoCount"></span>
       </div>
       <div class="card-sub" style="max-width:1100px;margin:-6px 0 12px;">Turn the ClickUp automation workflows on or off. This mirrors the dashboard’s Automations tab — flip a switch here and it takes effect everywhere. Full editing (timing, lists) stays on the dashboard.</div>
       <div class="card" style="padding:6px 0;">
         <div class="auto-list" id="autoList">
+          <div class="auto-row"><div class="auto-info"><div class="auto-desc">Loading automations…</div></div></div>
+        </div>
+      </div>
+
+      <!-- GROUP 2: Scheduled automations (automation_list RPC / timed cron jobs) -->
+      <div class="section-head" style="border-top:1px solid var(--border);margin:24px 0 12px;padding-top:20px;">
+        <h2 style="font-size:14px;">Scheduled automations</h2>
+        <span class="section-count" id="schedAutoCount"></span>
+      </div>
+      <div class="card-sub" style="max-width:1100px;margin:-6px 0 12px;">Timed jobs that run on a schedule — digests, reminders, and outreach. Changes are admin-only.</div>
+      <div class="card" style="padding:6px 0;">
+        <div class="auto-list" id="schedAutoList">
           <div class="auto-row"><div class="auto-info"><div class="auto-desc">Loading automations…</div></div></div>
         </div>
       </div>
@@ -603,7 +624,7 @@ document.getElementById('resetModal').addEventListener('click', function (e) {
   if (e.target === this) closeReset();
 });
 
-/* ─── Automations (ClickUp automation toggles) ─────────────────────────────
+/* ─── GROUP 1: Event automations (ClickUp automation toggles) ──────────────
    Uses the automation-config edge function directly with the anon key (no
    session required) — same data the dashboard's Automations tab uses. */
 var _automations = [];
@@ -691,6 +712,122 @@ async function toggleAutomation(idx, enabled) {
   }
 }
 
+/* ─── GROUP 2: Scheduled automations (timed cron jobs) ─────────────────────
+   A SEPARATE system from the event automations above. Uses the page's authed
+   Supabase client: automation_list (admins/VAs can read) + automation_toggle
+   (admin-only, enforced server-side). */
+var _schedAutomations = [];
+
+// Convert a 5-field cron string to a short English hint when it's an easy case;
+// otherwise fall back to the raw cron so we never show something misleading.
+function cronHint(cron) {
+  var c = String(cron || '').trim();
+  if (!c) return '';
+  var p = c.split(/\s+/);
+  if (p.length !== 5) return c;
+  var min = p[0], hr = p[1], dom = p[2], mon = p[3], dow = p[4];
+  var days = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+  function t12(h, m) {
+    h = Number(h); m = Number(m);
+    if (isNaN(h) || isNaN(m)) return null;
+    var ap = h < 12 ? 'AM' : 'PM', hh = h % 12; if (hh === 0) hh = 12;
+    return hh + (m ? ':' + String(m).padStart(2, '0') : '') + ' ' + ap;
+  }
+  var time = (/^\d+$/.test(min) && /^\d+$/.test(hr)) ? t12(hr, min) : null;
+  if (dom === '*' && mon === '*') {
+    if (dow === '*') return time ? ('Daily at ' + time) : 'Daily';
+    if (dow === '1-5') return time ? ('Weekdays at ' + time) : 'Weekdays';
+    if (/^\d$/.test(dow)) { var d = days[Number(dow)] || ('day ' + dow); return time ? (d + ' at ' + time) : d; }
+  }
+  return c; // fallback: show raw cron
+}
+
+// Group by category preserving display_order: items sorted by display_order, then
+// bucketed by category in first-appearance order (== ascending display_order).
+function groupSchedAutomations(items) {
+  var sorted = items.slice().sort(function (a, b) { return (a.display_order || 0) - (b.display_order || 0); });
+  var order = [], buckets = {};
+  sorted.forEach(function (a) {
+    var cat = (a.category && String(a.category).trim()) ? a.category : 'Other';
+    if (!buckets[cat]) { buckets[cat] = []; order.push(cat); }
+    buckets[cat].push(a);
+  });
+  return order.map(function (cat) { return { category: cat, items: buckets[cat] }; });
+}
+
+function renderSchedAutomations() {
+  var list = document.getElementById('schedAutoList');
+  var count = document.getElementById('schedAutoCount');
+  if (!_schedAutomations.length) {
+    list.innerHTML = '<div class="auto-row"><div class="auto-info"><div class="auto-desc">No automations configured.</div></div></div>';
+    if (count) count.textContent = '';
+    return;
+  }
+  if (count) count.textContent = _schedAutomations.length + (_schedAutomations.length === 1 ? ' automation' : ' automations');
+
+  list.innerHTML = groupSchedAutomations(_schedAutomations).map(function (g) {
+    var rows = g.items.map(function (a) {
+      var checked = a.enabled ? ' checked' : '';
+      var sched = a.schedule ? '<div class="auto-sched">' + esc(cronHint(a.schedule)) + '</div>' : '';
+      var ctrl;
+      if (a.exists === false) {
+        // Not scheduled in cron yet — show a disabled switch + note instead of a live toggle.
+        ctrl = '<div class="auto-ctrl auto-ctrl-off">' +
+            '<label class="switch"><input type="checkbox"' + checked + ' disabled><span class="slider"></span></label>' +
+            '<div class="auto-note">(not scheduled)</div>' +
+          '</div>';
+      } else {
+        ctrl = '<div class="auto-ctrl"><label class="switch">' +
+            '<input type="checkbox"' + checked + ' data-key="' + esc(a.key) + '" onchange="toggleSchedAutomation(this.dataset.key, this.checked, this)">' +
+            '<span class="slider"></span></label></div>';
+      }
+      return '<div class="auto-row">' +
+          '<div class="auto-info">' +
+            '<div class="auto-name">' + esc(a.display_name || a.key || 'Automation') + '</div>' +
+            (a.description ? '<div class="auto-desc">' + esc(a.description) + '</div>' : '') +
+            sched +
+          '</div>' + ctrl +
+        '</div>';
+    }).join('');
+    return '<div class="auto-cat">' + esc(g.category) + '</div>' + rows;
+  }).join('');
+}
+
+async function loadSchedAutomations() {
+  var list = document.getElementById('schedAutoList');
+  var count = document.getElementById('schedAutoCount');
+  try {
+    var res = await _client.rpc('automation_list');
+    if (res.error) throw res.error;
+    _schedAutomations = Array.isArray(res.data) ? res.data : [];
+    renderSchedAutomations();
+  } catch (e) {
+    _schedAutomations = [];
+    if (count) count.textContent = '';
+    list.innerHTML = '<div class="auto-row"><div class="auto-info"><div class="auto-desc" style="color:var(--red)">Couldn’t load automations.</div></div></div>';
+  }
+}
+
+async function toggleSchedAutomation(key, enabled, el) {
+  var a = _schedAutomations.find(function (x) { return x.key === key; });
+  if (!a) return;
+  var prev = a.enabled;
+  a.enabled = enabled;              // optimistic
+  if (el) el.disabled = true;
+  try {
+    var res = await _client.rpc('automation_toggle', { p_key: key, p_enabled: enabled });
+    if (res.error) throw res.error;
+    showToast((a.display_name || 'Automation') + ' turned ' + (enabled ? 'on' : 'off'));
+  } catch (e) {
+    // Revert and surface the server message (e.g. "Only admins can change automations").
+    a.enabled = prev;
+    if (el) el.checked = prev;
+    showToast((e && e.message) ? e.message : 'Could not update automation.');
+  } finally {
+    if (el) el.disabled = false;
+  }
+}
+
 async function init() {
   // Populate the Add-User role select (default: VA).
   populateRoleSelect(document.getElementById('newRole'), 'va');
@@ -722,6 +859,7 @@ async function init() {
   document.getElementById('mainScroll').style.display = '';
   await loadUsers();
   loadAutomations();
+  loadSchedAutomations();
   loadVaView();
 }
 
