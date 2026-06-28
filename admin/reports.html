@@ -90,6 +90,10 @@ a.lead:hover{text-decoration:underline}
 .prio{font-size:12px;font-weight:700;text-transform:capitalize}
 tr.warn td{background:rgba(248,113,113,0.08)}
 tr.warn td:first-child{color:var(--red);font-weight:700}
+:root{--amber:#e0884c}
+tr.amber td{background:rgba(224,136,76,0.10)}
+.txt-red{color:var(--red);font-weight:700}
+.txt-amber{color:var(--amber);font-weight:700}
 </style>
 </head>
 <body>
@@ -112,6 +116,7 @@ tr.warn td:first-child{color:var(--red);font-weight:700}
   <div class="tabs" id="tabs">
     <button class="tab active" data-view="production" onclick="switchView('production')">Production</button>
     <button class="tab" data-view="va" onclick="switchView('va')">VA Productivity</button>
+    <button class="tab" data-view="pv" onclick="switchView('pv')">Pipeline Velocity</button>
   </div>
 
   <div id="viewProduction">
@@ -148,6 +153,21 @@ tr.warn td:first-child{color:var(--red);font-weight:700}
       <div class="empty" style="padding:60px;">Loading…</div>
     </div>
   </div>
+
+  <div id="viewPv" style="display:none">
+    <div class="range" id="pvRangeBar">
+      <button class="rbtn" data-pvrange="90d" onclick="setPvRange('90d')">Last 90 days</button>
+      <button class="rbtn active" data-pvrange="365d" onclick="setPvRange('365d')">Last 365 days</button>
+      <span class="sep">·</span>
+      <input type="date" id="pvFrom" title="From">
+      <span class="sep">to</span>
+      <input type="date" id="pvTo" title="To">
+      <button class="rbtn" onclick="setPvRange('custom')">Apply</button>
+    </div>
+    <div id="pvReport">
+      <div class="empty" style="padding:60px;">Loading…</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -156,6 +176,7 @@ var _range = 'all', _from = null, _to = null;
 var _charts = {};
 var _vaRange = '30d', _vaFrom = null, _vaTo = null, _vaLoaded = false;
 var _vaCharts = {};
+var _pvRange = '365d', _pvFrom = null, _pvTo = null, _pvLoaded = false;
 
 /* ── formatting ── */
 function fmtMoney(n){ if(n==null||n==='') return '—'; var v=Math.round(Number(n)); if(isNaN(v)) return '—'; return '$'+v.toLocaleString('en-US'); }
@@ -172,6 +193,9 @@ function fmtDateTime(d){ if(!d) return '—'; var dt=new Date(d); if(isNaN(dt.ge
 function cap(s){ s=String(s==null?'':s); return s ? s.charAt(0).toUpperCase()+s.slice(1) : '—'; }
 function mdLabel(s){ var p=String(s||'').split('-'); return p.length===3 ? (Number(p[1])+'/'+Number(p[2])) : String(s||''); }
 function prioColor(p){ p=String(p||'').toLowerCase(); return p==='urgent'?'#f87171':p==='high'?'#e0884c':p==='normal'?'#c9a84c':p==='low'?'#60a0ff':'#888'; }
+function fmtMoneyShort(n){ if(n==null||n==='') return '—'; var v=Number(n); if(isNaN(v)) return '—'; var a=Math.abs(v); if(a>=1e6) return '$'+(v/1e6).toFixed(2)+'M'; if(a>=1e3) return '$'+(v/1e3).toFixed(1)+'K'; return '$'+Math.round(v).toLocaleString('en-US'); }
+function fmtDays(n){ if(n==null||n==='') return '—'; var v=Number(n); if(isNaN(v)) return '—'; var s=Math.round(v*10)/10; return (Number.isInteger(s)?String(s):s.toFixed(1))+'d'; }
+function dnum(n){ if(n==null||n==='') return '—'; var v=Number(n); return isNaN(v)?'—':fmtNum(Math.round(v)); }
 
 /* ── date range control ── */
 function setRange(mode){
@@ -321,9 +345,11 @@ function render(d){
 /* ── view tabs ── */
 function switchView(view){
   document.querySelectorAll('#tabs .tab').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-view')===view); });
-  document.getElementById('viewProduction').style.display = view==='va' ? 'none' : '';
+  document.getElementById('viewProduction').style.display = view==='production' ? '' : 'none';
   document.getElementById('viewVa').style.display = view==='va' ? '' : 'none';
+  document.getElementById('viewPv').style.display = view==='pv' ? '' : 'none';
   if(view==='va' && !_vaLoaded){ setVaRange('30d'); }
+  if(view==='pv' && !_pvLoaded){ setPvRange('365d'); }
 }
 
 /* ── VA productivity ── */
@@ -473,6 +499,117 @@ function renderVa(d){
           tooltip:{ callbacks:{ label:function(c){ return cap(bp[c.dataIndex].priority)+': '+fmtNum(bp[c.dataIndex].n); } } } } } });
     }
   }
+}
+
+/* ── Pipeline velocity ── */
+function setPvRange(mode){
+  var now=new Date();
+  function back(days){ var d=new Date(now); d.setDate(d.getDate()-days); return ymd(d); }
+  if(mode==='90d'){ _pvFrom=back(90); _pvTo=ymd(now); }
+  else if(mode==='custom'){
+    var f=document.getElementById('pvFrom').value||null, t=document.getElementById('pvTo').value||null;
+    if(!f || !t){ mode='365d'; _pvFrom=back(365); _pvTo=ymd(now); }
+    else { _pvFrom=f; _pvTo=t; }
+  }
+  else { mode='365d'; _pvFrom=back(365); _pvTo=ymd(now); }
+  _pvRange=mode;
+  document.querySelectorAll('#pvRangeBar .rbtn[data-pvrange]').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-pvrange')===mode); });
+  if(mode!=='custom'){ var ff=document.getElementById('pvFrom'), tt=document.getElementById('pvTo'); if(ff)ff.value=_pvFrom; if(tt)tt.value=_pvTo; }
+  loadPvReport();
+}
+
+async function loadPvReport(){
+  _pvLoaded=true;
+  var rep=document.getElementById('pvReport');
+  rep.innerHTML='<div class="empty" style="padding:60px;">Loading…</div>';
+  try{
+    var res=await _client.rpc('pipeline_velocity_report', { p_from:_pvFrom, p_to:_pvTo });
+    if(res.error) throw res.error;
+    renderPv(res.data||{});
+  }catch(e){
+    rep.innerHTML='<div class="empty" style="color:var(--red);padding:50px;">Could not load report: '+esc((e&&e.message)||'error')+'</div>';
+  }
+}
+
+function renderPv(d){
+  var t=d.time_to_fund||{};
+  var up=document.getElementById('updated');
+  if(up) up.textContent = d.generated_at ? ('Updated '+new Date(d.generated_at).toLocaleString()) : '';
+
+  function tile(label,value,opts){ opts=opts||{}; return '<div class="tile'+(opts.gold?' gold':'')+'"><div class="tile-val">'+value+'</div><div class="tile-lbl">'+label+'</div></div>'; }
+
+  var html='';
+
+  /* 1. KPI tiles + note */
+  html+='<div class="sec"><div class="sec-h">Time to fund</div><div class="tiles">'
+    + tile('Median days to fund', fmtDays(t.median_days), {gold:true})
+    + tile('Avg days to fund', fmtDays(t.avg_days))
+    + tile('Fastest', fmtDays(t.fastest_days))
+    + tile('Slowest', fmtDays(t.slowest_days))
+    + tile('Funded count', fmtNum(t.funded_count))
+    + tile('Funded volume', fmtMoneyShort(t.funded_volume))
+    + tile('Active pipeline', fmtNum(d.active_pipeline_count))
+    + '</div>'
+    + (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
+    + '</div>';
+
+  /* 2. Stage aging */
+  var bs=d.by_stage||[];
+  html+='<div class="sec"><div class="sec-h">Stage aging <span class="sec-sub">how long active deals sit per stage</span></div>';
+  if(!bs.length){ html+='<div class="empty">No active deals in this range.</div>'; }
+  else{
+    html+='<table><thead><tr><th>Stage</th><th class="num">Count</th><th class="num">Median age (d)</th><th class="num">Avg age (d)</th><th class="num">Oldest (d)</th></tr></thead><tbody>';
+    html+=bs.map(function(r){
+      var med=Number(r.median_age_days);
+      var hot=!isNaN(med) && med>60;
+      return '<tr'+(hot?' class="amber"':'')+'><td>'+esc(r.stage||'—')+'</td>'
+        +'<td class="num">'+fmtNum(r.n)+'</td>'
+        +'<td class="num'+(hot?' txt-amber':'')+'">'+dnum(r.median_age_days)+'</td>'
+        +'<td class="num">'+dnum(r.avg_age_days)+'</td>'
+        +'<td class="num">'+dnum(r.oldest_age_days)+'</td></tr>'; }).join('');
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+
+  /* 3. Stalled deals (action list) */
+  var sd=d.stalled_deals||[];
+  html+='<div class="sec"><div class="sec-h">Stalled deals <span class="sec-sub">active &gt;45d — work these</span></div>';
+  if(!sd.length){ html+='<div class="empty">No stalled deals — pipeline is moving.</div>'; }
+  else{
+    html+='<table><thead><tr><th>Name</th><th>Stage</th><th class="num">Age (d)</th><th class="num">Loan amount</th><th>Last contact</th></tr></thead><tbody>';
+    html+=sd.map(function(r){
+      var age=Number(r.age_days);
+      var rowCls=(!isNaN(age)&&age>90)?'warn':((!isNaN(age)&&age>=45)?'amber':'');
+      var ageCls=(!isNaN(age)&&age>90)?'txt-red':((!isNaN(age)&&age>=45)?'txt-amber':'');
+      var nm=r.id ? '<a class="lead" href="lead-detail.html?contact_id='+encodeURIComponent(r.id)+'">'+esc(r.name||'(no name)')+'</a>' : esc(r.name||'(no name)');
+      return '<tr'+(rowCls?' class="'+rowCls+'"':'')+'><td>'+nm+'</td>'
+        +'<td>'+esc(r.stage||'—')+'</td>'
+        +'<td class="num '+ageCls+'">'+dnum(r.age_days)+'</td>'
+        +'<td class="num">'+fmtMoney(r.loan_amount)+'</td>'
+        +'<td>'+fmtDate(r.last_contact)+'</td></tr>'; }).join('');
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+
+  /* 4. Recently funded */
+  var rf=d.recent_funded||[];
+  html+='<div class="sec"><div class="sec-h">Recently funded</div>';
+  if(!rf.length){ html+='<div class="empty">No funded deals in this range.</div>'; }
+  else{
+    html+='<table><thead><tr><th>Name</th><th>Source</th><th>Lead created</th><th>Closed</th><th class="num">Days to fund</th><th class="num">Loan amount</th></tr></thead><tbody>';
+    html+=rf.map(function(r){
+      var nm=r.id ? '<a class="lead" href="lead-detail.html?contact_id='+encodeURIComponent(r.id)+'">'+esc(r.name||'(no name)')+'</a>' : esc(r.name||'(no name)');
+      return '<tr><td>'+nm+'</td>'
+        +'<td>'+esc(r.source||'—')+'</td>'
+        +'<td>'+fmtDate(r.lead_created)+'</td>'
+        +'<td>'+fmtDate(r.closed_date)+'</td>'
+        +'<td class="num">'+fmtDays(r.days_to_fund)+'</td>'
+        +'<td class="num">'+fmtMoney(r.loan_amount)+'</td></tr>'; }).join('');
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+
+  document.getElementById('pvReport').innerHTML=html;
 }
 
 async function init(){
