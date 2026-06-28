@@ -76,6 +76,20 @@ a.lead:hover{text-decoration:underline}
 .two-col{display:grid;grid-template-columns:1.4fr 1fr;gap:18px}
 @media(max-width:820px){.two-col{grid-template-columns:1fr}}
 .chart-box{position:relative;height:260px}
+
+/* view tabs */
+.tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--border)}
+.tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:700;padding:10px 16px;margin-bottom:-1px;cursor:pointer;font-family:inherit}
+.tab:hover{color:#ddd}
+.tab.active{color:var(--gold);border-bottom-color:var(--gold)}
+
+/* va productivity extras */
+.note{font-size:11px;color:var(--muted);line-height:1.5;margin-top:12px}
+.tile.red{border-color:rgba(248,113,113,0.3)}
+.tile.red .tile-val{color:var(--red)}
+.prio{font-size:12px;font-weight:700;text-transform:capitalize}
+tr.warn td{background:rgba(248,113,113,0.08)}
+tr.warn td:first-child{color:var(--red);font-weight:700}
 </style>
 </head>
 <body>
@@ -95,6 +109,13 @@ a.lead:hover{text-decoration:underline}
 
 <div class="wrap" id="wrap" style="display:none">
 
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-view="production" onclick="switchView('production')">Production</button>
+    <button class="tab" data-view="va" onclick="switchView('va')">VA Productivity</button>
+  </div>
+
+  <div id="viewProduction">
+
   <div class="range" id="rangeBar">
     <button class="rbtn active" data-range="all" onclick="setRange('all')">All time</button>
     <button class="rbtn" data-range="ytd" onclick="setRange('ytd')">This year</button>
@@ -109,12 +130,32 @@ a.lead:hover{text-decoration:underline}
   <div id="report">
     <div class="empty" style="padding:60px;">Loading report…</div>
   </div>
+
+  </div><!-- /viewProduction -->
+
+  <div id="viewVa" style="display:none">
+    <div class="range" id="vaRangeBar">
+      <button class="rbtn" data-varange="7d" onclick="setVaRange('7d')">Last 7 days</button>
+      <button class="rbtn active" data-varange="30d" onclick="setVaRange('30d')">Last 30 days</button>
+      <button class="rbtn" data-varange="90d" onclick="setVaRange('90d')">Last 90 days</button>
+      <span class="sep">·</span>
+      <input type="date" id="vaFrom" title="From">
+      <span class="sep">to</span>
+      <input type="date" id="vaTo" title="To">
+      <button class="rbtn" onclick="setVaRange('custom')">Apply</button>
+    </div>
+    <div id="vaReport">
+      <div class="empty" style="padding:60px;">Loading…</div>
+    </div>
+  </div>
 </div>
 
 <script>
 var _client = null;
 var _range = 'all', _from = null, _to = null;
 var _charts = {};
+var _vaRange = '30d', _vaFrom = null, _vaTo = null, _vaLoaded = false;
+var _vaCharts = {};
 
 /* ── formatting ── */
 function fmtMoney(n){ if(n==null||n==='') return '—'; var v=Math.round(Number(n)); if(isNaN(v)) return '—'; return '$'+v.toLocaleString('en-US'); }
@@ -124,6 +165,13 @@ function fmtPct(n){ if(n==null||n==='') return '—'; var v=Number(n); return is
 function fmtDate(d){ if(!d) return '—'; var dt=new Date(d); if(isNaN(dt.getTime())) return '—'; return dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 function ymd(dt){ return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); }
+function fmtDec(n){ var v=Number(n); return isNaN(v)?'0':v.toFixed(1); }
+function fmtHrs(n){ if(n==null||n==='') return '—'; var v=Number(n); return isNaN(v)?'—':(v.toFixed(1)+' h'); }      // KPI tiles: "0.5 h"
+function fmtHrsTbl(n){ if(n==null||n==='') return '—'; var v=Number(n); return isNaN(v)?'—':(v.toFixed(1)+'h'); }     // table: "0.5h"
+function fmtDateTime(d){ if(!d) return '—'; var dt=new Date(d); if(isNaN(dt.getTime())) return '—'; return dt.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }
+function cap(s){ s=String(s==null?'':s); return s ? s.charAt(0).toUpperCase()+s.slice(1) : '—'; }
+function mdLabel(s){ var p=String(s||'').split('-'); return p.length===3 ? (Number(p[1])+'/'+Number(p[2])) : String(s||''); }
+function prioColor(p){ p=String(p||'').toLowerCase(); return p==='urgent'?'#f87171':p==='high'?'#e0884c':p==='normal'?'#c9a84c':p==='low'?'#60a0ff':'#888'; }
 
 /* ── date range control ── */
 function setRange(mode){
@@ -266,6 +314,163 @@ function render(d){
           scales:{ y:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{ callback:function(v){ return '$'+(v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v); } } },
             y1:{ display:seeEarn&&ds.length>1, position:'right', grid:{display:false}, ticks:{ callback:function(v){ return '$'+(v>=1e3?(v/1e3).toFixed(0)+'K':v); } } },
             x:{ grid:{display:false} } } } });
+    }
+  }
+}
+
+/* ── view tabs ── */
+function switchView(view){
+  document.querySelectorAll('#tabs .tab').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-view')===view); });
+  document.getElementById('viewProduction').style.display = view==='va' ? 'none' : '';
+  document.getElementById('viewVa').style.display = view==='va' ? '' : 'none';
+  if(view==='va' && !_vaLoaded){ setVaRange('30d'); }
+}
+
+/* ── VA productivity ── */
+function setVaRange(mode){
+  var now=new Date();
+  function back(days){ var d=new Date(now); d.setDate(d.getDate()-days); return ymd(d); }
+  if(mode==='7d'){ _vaFrom=back(7); _vaTo=ymd(now); }
+  else if(mode==='90d'){ _vaFrom=back(90); _vaTo=ymd(now); }
+  else if(mode==='custom'){
+    var f=document.getElementById('vaFrom').value||null, t=document.getElementById('vaTo').value||null;
+    if(!f || !t){ mode='30d'; _vaFrom=back(30); _vaTo=ymd(now); }
+    else { _vaFrom=f; _vaTo=t; }
+  }
+  else { mode='30d'; _vaFrom=back(30); _vaTo=ymd(now); }
+  _vaRange=mode;
+  document.querySelectorAll('#vaRangeBar .rbtn[data-varange]').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-varange')===mode); });
+  if(mode!=='custom'){ var ff=document.getElementById('vaFrom'), tt=document.getElementById('vaTo'); if(ff)ff.value=_vaFrom; if(tt)tt.value=_vaTo; }
+  loadVaReport();
+}
+
+async function loadVaReport(){
+  _vaLoaded=true;
+  var rep=document.getElementById('vaReport');
+  rep.innerHTML='<div class="empty" style="padding:60px;">Loading…</div>';
+  try{
+    var res=await _client.rpc('va_productivity_report', { p_from:_vaFrom, p_to:_vaTo });
+    if(res.error) throw res.error;
+    renderVa(res.data||{});
+  }catch(e){
+    rep.innerHTML='<div class="empty" style="color:var(--red);padding:50px;">Could not load report: '+esc((e&&e.message)||'error')+'</div>';
+  }
+}
+
+function _destroyVaCharts(){ Object.keys(_vaCharts).forEach(function(k){ try{ _vaCharts[k].destroy(); }catch(_){} }); _vaCharts={}; }
+
+function renderVa(d){
+  _destroyVaCharts();
+  var k=d.kpis||{};
+  var up=document.getElementById('updated');
+  if(up) up.textContent = d.generated_at ? ('Updated '+new Date(d.generated_at).toLocaleString()) : '';
+
+  function tile(label,value,opts){ opts=opts||{}; return '<div class="tile'+(opts.gold?' gold':'')+(opts.red?' red':'')+'"><div class="tile-val">'+value+'</div><div class="tile-lbl">'+label+'</div></div>'; }
+
+  var html='';
+
+  /* 1. KPI tiles + note */
+  html+='<div class="sec"><div class="sec-h">Key numbers</div><div class="tiles">'
+    + tile('Completed (in range)', fmtNum(k.completed_in_range), {gold:true})
+    + tile('Completed last 7d', fmtNum(k.completed_7d))
+    + tile('Avg / day', fmtDec(k.avg_per_day))
+    + tile('Median turnaround', fmtHrs(k.median_turnaround_hrs))
+    + tile('Avg turnaround', fmtHrs(k.avg_turnaround_hrs))
+    + tile('On-time %', fmtPct(k.on_time_pct))
+    + tile('Open now', fmtNum(k.open_now))
+    + tile('Overdue now', fmtNum(k.overdue_now), {red:(Number(k.overdue_now)>0)})
+    + '</div>'
+    + '<div class="note">Completions counted by task completion time. Some completions are automated bulk actions (e.g. cold-lead re-engagement), so throughput blends manual and system-completed tasks.</div>'
+    + '</div>';
+
+  /* 2. Daily throughput */
+  var dt=d.daily_throughput||[];
+  html+='<div class="sec"><div class="sec-h">Daily throughput <span class="sec-sub">tasks completed per day</span></div>'
+    + (dt.length ? '<div class="chart-box"><canvas id="vaThruChart"></canvas></div>' : '<div class="empty">No data in this range.</div>')
+    + '</div>';
+
+  /* 3. Turnaround distribution + by priority */
+  var tb=d.turnaround_buckets||{};
+  var buckets=[['<1h',tb.lt_1h],['1–4h',tb.h1_4],['4–24h',tb.h4_24],['1–3d',tb.h24_72],['>3d',tb.gt_72h]];
+  var anyB=buckets.some(function(b){ return Number(b[1])>0; });
+  var bp=d.by_priority||[];
+  html+='<div class="two-col">';
+  html+='<div class="sec"><div class="sec-h">Turnaround distribution</div>';
+  if(!anyB){ html+='<div class="empty">No data in this range.</div>'; }
+  else{
+    var maxB=Math.max.apply(null, buckets.map(function(b){ return Number(b[1])||0; }).concat([1]));
+    html+=buckets.map(function(b){ var n=Number(b[1])||0; var w=Math.max(2,n/maxB*100);
+      return '<div class="funnel-row"><span class="funnel-lbl">'+b[0]+'</span><div class="funnel-track"><div class="funnel-bar" style="width:'+w+'%"></div></div><span class="funnel-n">'+fmtNum(n)+'</span></div>'; }).join('');
+  }
+  html+='</div>';
+  html+='<div class="sec"><div class="sec-h">By priority</div>'
+    + (bp.length ? '<div class="chart-box"><canvas id="vaPrioChart"></canvas></div>' : '<div class="empty">No data in this range.</div>')
+    + '</div>';
+  html+='</div>';
+
+  /* 4. Backlog */
+  var bl=d.backlog||{};
+  html+='<div class="sec"><div class="sec-h">Backlog</div><div class="tiles">'
+    + tile('Overdue', fmtNum(bl.overdue), {red:(Number(bl.overdue)>0)})
+    + tile('Due today', fmtNum(bl.due_today))
+    + tile('Due later', fmtNum(bl.due_later))
+    + tile('No due date', fmtNum(bl.no_due_date))
+    + '</div></div>';
+
+  /* 5. Oldest open tasks */
+  var oa=d.open_aging||[];
+  html+='<div class="sec"><div class="sec-h">Oldest open tasks</div>';
+  if(!oa.length){ html+='<div class="empty">No data in this range.</div>'; }
+  else{
+    var nowMs=Date.now();
+    html+='<table><thead><tr><th>Title</th><th>Priority</th><th>Contact</th><th class="num">Age</th><th>Due</th></tr></thead><tbody>';
+    html+=oa.map(function(r){
+      var overdue = r.due_date && (new Date(r.due_date).getTime() < nowMs);
+      return '<tr'+(overdue?' class="warn"':'')+'><td>'+esc(r.title||'(untitled)')+'</td>'
+        +'<td><span class="prio">'+esc(cap(r.priority))+'</span></td>'
+        +'<td>'+esc(r.contact_name||'—')+'</td>'
+        +'<td class="num">'+(r.age_days!=null?(fmtNum(r.age_days)+'d'):'—')+'</td>'
+        +'<td>'+fmtDate(r.due_date)+'</td></tr>'; }).join('');
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+
+  /* 6. Recent completions */
+  var rc=d.recent_completions||[];
+  html+='<div class="sec"><div class="sec-h">Recent completions</div>';
+  if(!rc.length){ html+='<div class="empty">No data in this range.</div>'; }
+  else{
+    html+='<table><thead><tr><th>Title</th><th>Contact</th><th>Priority</th><th class="num">Turnaround</th><th>Completed</th></tr></thead><tbody>';
+    html+=rc.map(function(r){
+      return '<tr><td>'+esc(r.title||'(untitled)')+'</td>'
+        +'<td>'+esc(r.contact_name||'—')+'</td>'
+        +'<td><span class="prio">'+esc(cap(r.priority))+'</span></td>'
+        +'<td class="num">'+fmtHrsTbl(r.turnaround_hrs)+'</td>'
+        +'<td>'+fmtDateTime(r.completed_at)+'</td></tr>'; }).join('');
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+
+  document.getElementById('vaReport').innerHTML=html;
+
+  /* charts (after DOM is in place) */
+  if(window.Chart){
+    var GOLD='rgba(201,168,76,0.85)';
+    Chart.defaults.color='rgba(255,255,255,0.55)';
+    Chart.defaults.font.family="-apple-system,'Segoe UI',sans-serif";
+    Chart.defaults.font.size=11;
+
+    if(dt.length){
+      _vaCharts.thru=new Chart(document.getElementById('vaThruChart'),{ type:'bar',
+        data:{ labels:dt.map(function(x){ return mdLabel(x.day); }), datasets:[{ label:'Completed', data:dt.map(function(x){ return Number(x.completed)||0; }), backgroundColor:GOLD, borderRadius:4 }] },
+        options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} },
+          scales:{ y:{ beginAtZero:true, grid:{color:'rgba(255,255,255,0.05)'}, ticks:{ precision:0 } }, x:{ grid:{display:false}, ticks:{ autoSkip:true, maxRotation:0 } } } } });
+    }
+    if(bp.length){
+      _vaCharts.prio=new Chart(document.getElementById('vaPrioChart'),{ type:'doughnut',
+        data:{ labels:bp.map(function(p){ return cap(p.priority); }), datasets:[{ data:bp.map(function(p){ return Number(p.n)||0; }), backgroundColor:bp.map(function(p){ return prioColor(p.priority); }), borderColor:'#111', borderWidth:2 }] },
+        options:{ responsive:true, maintainAspectRatio:false, cutout:'58%', plugins:{ legend:{ position:'right', labels:{boxWidth:11,padding:9} },
+          tooltip:{ callbacks:{ label:function(c){ return cap(bp[c.dataIndex].priority)+': '+fmtNum(bp[c.dataIndex].n); } } } } } });
     }
   }
 }
