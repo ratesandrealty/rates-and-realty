@@ -20582,6 +20582,28 @@ async function losLoadBorrowers() {
       });
     } catch(le) { console.warn('[borrowers] linked co-borrower load:', le); }
   } catch(e) { console.warn('[borrowers] load:', e); losBorrowers = []; }
+  // De-duplicate co-borrowers by contact_id. The same person can arrive from several sources
+  // (flat co_borrower_* fields, co_borrower_contact_id, loan_borrowers, AND the linked contact
+  // via primary_borrower_contact_id) — collapse to one slot per contact_id. A flat/contact-less
+  // co-borrower (contact_id=null) is dropped when a real contact-bearing co-borrower exists
+  // (it's the same person). borrower_order is renumbered so labels reflect the deduped count
+  // (single co-borrower → "Co-Borrower", not "Co-Borrower 3").
+  if (Array.isArray(losBorrowers) && losBorrowers.length > 1) {
+    var _primary = losBorrowers[0];
+    var _pid = _primary && _primary.contact_id;
+    var _seen = {}, _out = [];
+    var _hasIdentified = losBorrowers.slice(1).some(function(b){ return b.contact_id && b.contact_id !== _pid; });
+    losBorrowers.slice(1).forEach(function(b){
+      if (b.contact_id) {
+        if (b.contact_id === _pid || _seen[b.contact_id]) return;  // never duplicate the primary
+        _seen[b.contact_id] = true; _out.push(b);
+      } else if (!_hasIdentified) {
+        _out.push(b);   // contact-less flat co-borrower only when no identified co-borrower exists
+      }
+    });
+    losBorrowers = [_primary].concat(_out);
+    losBorrowers.forEach(function(b, i){ b.borrower_order = i + 1; });
+  }
   renderBorrowerTabs();
 }
 
