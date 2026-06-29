@@ -5964,6 +5964,16 @@ async function saveNote() {
   if (ta) ta.value = '';
   toggleNoteForm();
   toast('✓ Note saved');
+  // If the note @-mentions a referral partner, the backend auto-emails them the lead + note
+  // (via the contact_notes insert) — surface a confirmation. Detect against kind='partner' handles.
+  try {
+    await loadTeamRoster();
+    var _mp = (_teamRoster || []).filter(function(r){
+      return r.kind === 'partner' && r.handle &&
+        new RegExp('@' + r.handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w.\\-])', 'i').test(body);
+    });
+    if (_mp.length) toast('📧 Emailed ' + _mp.map(function(p){ return p.display || p.handle; }).join(', ') + ' the lead + note.');
+  } catch(_){}
 }
 
 /* ── TASKS ── */
@@ -12426,21 +12436,36 @@ let _mentBox=null, _mentEl=null, _mentItems=[], _mentIdx=0, _mentStart=-1;
 function _mentEnsureBox(){
   if(_mentBox) return _mentBox;
   _mentBox=document.createElement('div'); _mentBox.id='mentionBox';
-  _mentBox.style.cssText='position:fixed;z-index:10001;display:none;min-width:200px;max-width:320px;max-height:240px;overflow-y:auto;background:#15140f;border:1px solid rgba(201,168,76,.4);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);';
+  _mentBox.style.cssText='position:fixed;z-index:10001;display:none;min-width:220px;max-width:320px;max-height:220px;overflow-y:auto;background:#15140f;border:1px solid rgba(201,168,76,.45);border-radius:8px;box-shadow:0 14px 34px rgba(0,0,0,.7);';
   document.body.appendChild(_mentBox); return _mentBox;
 }
-function _mentClose(){ if(_mentBox){ _mentBox.style.display='none'; _mentBox.innerHTML=''; } _mentEl=null; _mentItems=[]; _mentIdx=0; _mentStart=-1; }
+function _mentClose(){ if(_mentEl){ try{ _mentEl.style.marginBottom=''; }catch(_){} } if(_mentBox){ _mentBox.style.display='none'; _mentBox.innerHTML=''; } _mentEl=null; _mentItems=[]; _mentIdx=0; _mentStart=-1; }
 function _mentRender(){
   const box=_mentEnsureBox();
   if(!_mentItems.length){ _mentClose(); return; }
   box.innerHTML=_mentItems.map(function(r,i){
+    const isPartner = r.kind==='partner';
     const sub=[r.handle?('@'+r.handle):'', r.role||''].filter(Boolean).join(' · ');
+    const badge = isPartner ? '<span style="font-size:9px;font-weight:700;color:#C9A84C;border:1px solid rgba(201,168,76,.5);border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:1px;">Partner</span>' : '';
     return '<div onmousedown="event.preventDefault();_mentPickIdx('+i+')" style="padding:6px 10px;cursor:pointer;'+(i===_mentIdx?'background:rgba(201,168,76,.18);':'')+'">'
-      +'<div style="font-size:12px;color:#eee;font-weight:600;">'+lpEsc(r.display||r.handle||'(user)')+'</div>'
+      +'<div style="font-size:12px;color:#eee;font-weight:600;">'+lpEsc(r.display||r.handle||'(user)')+badge+'</div>'
       +(sub?'<div style="font-size:10px;color:#888;">'+lpEsc(sub)+'</div>':'')+'</div>';
   }).join('');
-  if(_mentEl){ const rc=_mentEl.getBoundingClientRect(); box.style.left=Math.max(8,Math.min(rc.left, window.innerWidth-330))+'px'; box.style.top=Math.min(rc.bottom+4, window.innerHeight-250)+'px'; }
   box.style.display='block';
+  if(_mentEl){
+    const rc=_mentEl.getBoundingClientRect();
+    const bh=box.offsetHeight||0;
+    box.style.left=Math.max(8, Math.min(rc.left, window.innerWidth - box.offsetWidth - 8))+'px';
+    if((window.innerHeight - rc.bottom) < (bh + 12) && rc.top > (bh + 12)){
+      // Not enough room below — float ABOVE the textarea (no space reserved).
+      box.style.top = Math.max(8, rc.top - bh - 4) + 'px';
+      try{ _mentEl.style.marginBottom=''; }catch(_){}
+    } else {
+      // Float directly BELOW and reserve space so the dropdown never covers the Save button.
+      box.style.top = (rc.bottom + 4) + 'px';
+      try{ _mentEl.style.marginBottom = (bh + 8) + 'px'; }catch(_){}
+    }
+  }
 }
 async function _mentOnInput(el){
   const pos=el.selectionStart||0; const before=(el.value||'').slice(0,pos);
@@ -12448,7 +12473,9 @@ async function _mentOnInput(el){
   if(!m){ _mentClose(); return; }
   const q=(m[1]||'').toLowerCase();
   const roster=await loadTeamRoster();
-  const items=(roster||[]).filter(function(r){ return !q || (r.handle||'').toLowerCase().indexOf(q)!==-1 || (r.display||'').toLowerCase().indexOf(q)!==-1; }).slice(0,8);
+  const filtered=(roster||[]).filter(function(r){ return !q || (r.handle||'').toLowerCase().indexOf(q)!==-1 || (r.display||'').toLowerCase().indexOf(q)!==-1; });
+  filtered.sort(function(a,b){ return (a.kind==='partner'?1:0)-(b.kind==='partner'?1:0); });  // staff first, partners after
+  const items=filtered.slice(0,8);
   if(!items.length){ _mentClose(); return; }
   _mentEl=el; _mentItems=items; _mentIdx=0; _mentStart=pos-m[0].length; _mentRender();
 }
