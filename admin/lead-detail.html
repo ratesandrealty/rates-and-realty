@@ -5610,7 +5610,9 @@ async function populateUI() {
   });
 
   setSelectVal('f-loan-type', leadData.loan_type || '');
-  setSelectVal('pricingLoanType', contactData.closing_loan_type || contactData.loan_type || '');
+  // PRICING LOAN TYPE binds to the shared working loan_type (kept in sync with the Add-Person
+  // modal, 1003 qualifier, fee sheet, etc.). closing_loan_type is a legacy read-fallback only.
+  setSelectVal('pricingLoanType', contactData.loan_type || contactData.closing_loan_type || '');
   setSelectVal('pricingLoanPurpose', contactData.loan_purpose || '');
   { const _pls = document.getElementById('pricingLenderSearch'); if (_pls && contactData.closing_lender) _pls.value = contactData.closing_lender; }
   // Populate Pricing & Lender rate/date/fee fields from the mortgage_applications row.
@@ -9193,7 +9195,7 @@ async function lpRenderSnapshot(cid){
   const ecell = (label,key,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div '+(_ro?'':'onclick="lpSnapEdit(\''+key+'\',event)" title="Click to edit" ')+'style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'+(_ro?'':'cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);')+'">'+val+'</div></div>';
   el.innerHTML = cell('Borrower',lpEsc(name))
     + ecell('Loan Amount','loan_amount',money(c.loan_amount))
-    + ecell('Type / Purpose','type_purpose',lpEsc(tcase(c.closing_loan_type||c.loan_type||'—')+' · '+tcase(c.loan_purpose||'—')))
+    + ecell('Type / Purpose','type_purpose',lpEsc(tcase(c.loan_type||c.closing_loan_type||'—')+' · '+tcase(c.loan_purpose||'—')))
     + lenderCell
     + lpLockedRateCellHtml(app, _ro)
     + ecell('Lock Expires','rate_lock_expiry',dd(app.rate_lock_expiry)+lockChip)
@@ -12754,12 +12756,12 @@ function lpSnapEdit(key, ev){
             +'<div style="'+lbl+'">Loan Purpose</div><select id="lpSnapInP" style="'+inStyle+'">'+(pSel?pSel.innerHTML:'<option value=\"\">—</option>')+'</select>';
     commit=async ()=>{
       const tv=document.getElementById('lpSnapInT').value, pv=document.getElementById('lpSnapInP').value;
-      await _authClient().from('contacts').update({ closing_loan_type:tv||null, loan_purpose:pv||null, updated_at:new Date().toISOString() }).eq('id',cid);
-      if(c){ c.closing_loan_type=tv||null; c.loan_purpose=pv||null; }
+      await _authClient().from('contacts').update({ loan_type:tv||null, loan_purpose:pv||null, updated_at:new Date().toISOString() }).eq('id',cid);
+      if(c){ c.loan_type=tv||null; c.loan_purpose=pv||null; }
       if(tSel) tSel.value=tv; if(pSel) pSel.value=pv;
       lpRenderSnapshot(cid);
     };
-    setTimeout(()=>{ const t=document.getElementById('lpSnapInT'),p=document.getElementById('lpSnapInP'); if(t)t.value=(c.closing_loan_type||c.loan_type||''); if(p)p.value=(c.loan_purpose||''); },10);
+    setTimeout(()=>{ const t=document.getElementById('lpSnapInT'),p=document.getElementById('lpSnapInP'); if(t)t.value=(c.loan_type||c.closing_loan_type||''); if(p)p.value=(c.loan_purpose||''); },10);
   } else {
     const cfg=LP_SNAP_FIELDS[key]; if(!cfg){ return; }
     const srcEl=cfg.src?document.getElementById(cfg.src):null;
@@ -17236,7 +17238,7 @@ function savePricingMeta(lenderName) {
     const lp = document.getElementById('pricingLoanPurpose');
     const lt = document.getElementById('pricingLoanType');
     if (lp && lp.value) patch.loan_purpose = lp.value;
-    if (lt && lt.value) patch.closing_loan_type = lt.value;
+    if (lt && lt.value) patch.loan_type = lt.value;   // working loan type (shared), not closing_loan_type
     if (typeof lenderName === 'string' && lenderName.trim()) patch.closing_lender = lenderName.trim();
     const { error } = await _authClient().from('contacts').update(patch).eq('id', targetId);
     if (error) console.error('[savePricingMeta] error:', error.message);
@@ -18505,13 +18507,14 @@ async function save1003() {
       toast('Error saving: ' + (error.message || error.details || JSON.stringify(error)), true);
       return;
     }
-    // Sync loan_type + mirror Pricing & Lender selections (closing_loan_type, loan_purpose)
-    // so they persist no matter which pricing field triggered the save.
+    // Sync the working loan_type (shared across modal / 1003 / fee sheet / pricing) + loan_purpose.
+    // The PRICING LOAN TYPE binds to loan_type now (not closing_loan_type); the 1003's own value
+    // stays authoritative, with the pricing dropdown as a fallback only when the 1003 left it blank.
     if (cid) {
       var _cpatch = { updated_at: new Date().toISOString() };
       if (cleanData.loan_type) _cpatch.loan_type = cleanData.loan_type;
       var _plt = document.getElementById('pricingLoanType');
-      if (_plt && _plt.value) _cpatch.closing_loan_type = _plt.value;
+      if (_plt && _plt.value && !_cpatch.loan_type) _cpatch.loan_type = _plt.value;
       var _plp = document.getElementById('pricingLoanPurpose');
       if (_plp && _plp.value) _cpatch.loan_purpose = _plp.value;
       _authClient().from('contacts')
