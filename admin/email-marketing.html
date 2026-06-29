@@ -780,11 +780,25 @@ function initFlatpickr() {
    ================================================================ */
 async function loadContacts() {
   try {
-    const url = SB_URL + '/rest/v1/contacts?select=id,first_name,last_name,email,phone,pipeline_status,source,loan_type,tags&not.email.is.null&order=created_at.desc&limit=500';
-    const res = await fetch(url, {
-      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY }
-    });
-    allContacts = (await res.json()).filter(c => c.email);
+    // Paginate through ALL contacts. A single request is capped by PostgREST's
+    // max-rows (~1000), which previously truncated the list and hid tagged
+    // contacts outside the newest page. Loop in batches until a page is empty.
+    const pageSize = 1000;
+    let rows = [], offset = 0, batch;
+    do {
+      const url = SB_URL + '/rest/v1/contacts?select=id,first_name,last_name,email,phone,pipeline_status,source,loan_type,tags'
+        + '&order=created_at.desc,id.desc&limit=' + pageSize + '&offset=' + offset;
+      const res = await fetch(url, {
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY }
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      batch = await res.json();
+      if (!Array.isArray(batch) || !batch.length) break;
+      rows = rows.concat(batch);
+      offset += batch.length;
+    } while (offset < 50000); // safety cap; loop normally ends when a page returns 0 rows
+    // Keep the existing client-side email filter (recipients must have an email).
+    allContacts = rows.filter(c => c.email);
     filteredContacts = [...allContacts];
     smsFilteredContacts = [...allContacts];
     populateTagFilters();
