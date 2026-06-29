@@ -4236,6 +4236,7 @@
           <div style="display:flex;gap:8px">
             <span id="feeSheetSaveStatus" style="font-size:.7rem;min-width:60px;text-align:right;"></span>
             <button onclick="openFeeSheetPDF()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);"><i class="fas fa-file-pdf" style="margin-right:4px"></i>Download PDF</button>
+            <button id="emailFeeSheetBtn" onclick="emailFeeSheet()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);">📧 Email Fee Sheet</button>
             <button onclick="openFeeSheetFullscreen()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-expand" style="margin-right:4px"></i>Fullscreen</button>
           </div>
         </div>
@@ -4300,6 +4301,7 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
             <button onclick="daUseAvmAsArv()" class="ld-btn-sm" style="padding:6px 14px;font-size:.76rem;background:rgba(201,168,76,.12);color:var(--gold);border:1px solid rgba(201,168,76,.3);border-radius:6px;cursor:pointer;font-weight:700;">→ Use AVM as ARV</button>
             <button onclick="daPrintCMA()" class="ld-btn-sm" style="padding:6px 14px;font-size:.76rem;background:var(--gold);color:#111;border:none;border-radius:6px;cursor:pointer;font-weight:700;"><i class="fas fa-file-pdf" style="margin-right:4px"></i>Generate CMA PDF</button>
+            <button id="emailCmaBtn" onclick="emailCMA()" class="ld-btn-sm" style="padding:6px 14px;font-size:.76rem;background:rgba(201,168,76,.12);color:var(--gold);border:1px solid rgba(201,168,76,.3);border-radius:6px;cursor:pointer;font-weight:700;">📧 Email CMA</button>
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:.74rem;color:var(--muted);cursor:pointer;user-select:none;"><input type="checkbox" id="da-cma-include-acq" style="accent-color:var(--gold);width:14px;height:14px;cursor:pointer;">Include Acquisition Analysis page</label>
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:.74rem;color:var(--muted);cursor:pointer;user-select:none;"><input type="checkbox" id="da-cma-include-rentals" style="accent-color:var(--gold);width:14px;height:14px;cursor:pointer;">Include rental comps page</label>
           </div>
@@ -27868,6 +27870,8 @@ async function openEmailComposer(opts) {
 
   // Reset attachments
   window._attachedFiles = [];
+  // Base64 PDF attachments passed by the caller (e.g. Email Fee Sheet / Email CMA).
+  window._ecPdfAttachments = (opts && Array.isArray(opts.attachments)) ? opts.attachments : [];
 
   // Insert HTML
   var wrapper = document.createElement('div');
@@ -27908,6 +27912,22 @@ async function openEmailComposer(opts) {
       if (ccRow) ccRow.style.display = 'flex';
     }
   })();
+  // Extra CC addresses from the caller (e.g. referral partner for fee sheet / CMA emails).
+  if (opts && Array.isArray(opts.cc) && opts.cc.length) {
+    var _ccArea = document.getElementById('ccChips'), _ccRow2 = document.getElementById('ccRow');
+    if (_ccArea) {
+      var _ccInput = document.getElementById('ccInput');
+      var _ccHave = (typeof getChipEmails === 'function') ? getChipEmails('ccChips').map(function(x){ return x.toLowerCase(); }) : [];
+      opts.cc.forEach(function(addr){
+        addr = String(addr || '').trim(); if (!addr || _ccHave.indexOf(addr.toLowerCase()) !== -1) return;
+        _ccHave.push(addr.toLowerCase());
+        var _chip = document.createElement('div'); _chip.className = 'ec-chip';
+        _chip.innerHTML = '<span>' + addr.replace(/</g,'&lt;') + '</span><button onclick="this.parentElement.remove()">&times;</button>';
+        if (_ccInput) _ccArea.insertBefore(_chip, _ccInput); else _ccArea.appendChild(_chip);
+      });
+      if (_ccRow2) _ccRow2.style.display = 'flex';
+    }
+  }
   // Editor keyboard shortcuts for undo/redo
   var editorEl = document.getElementById('emailEditor');
   editorEl.addEventListener('keydown', function(e) {
@@ -28852,7 +28872,8 @@ async function sendEmailFromComposer() {
         subject: subject,
         body_html: htmlBody,
         body_text: textBody
-      }, ccEmails.length ? {cc: ccEmails} : {}, bccEmails.length ? {bcc: bccEmails} : {}))
+      }, ccEmails.length ? {cc: ccEmails} : {}, bccEmails.length ? {bcc: bccEmails} : {},
+         (window._ecPdfAttachments && window._ecPdfAttachments.length) ? {attachments: window._ecPdfAttachments} : {}))
     });
     var data = await res.json();
     if (data.success || data.id) {
@@ -28866,6 +28887,99 @@ async function sendEmailFromComposer() {
     } else { showToast('Send failed: ' + (data.error || 'unknown'), true); }
   } catch(e) { showToast('Error: ' + e.message, true); }
   if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+}
+
+/* ═══ EMAIL FEE SHEET / CMA (PDF attachment + referral-partner CC) ═══ */
+function _emailPdfBorrowerName(){
+  var c = window.contactData || {};
+  return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Borrower';
+}
+// Referral partner email for CC (empty array if the lead has no partner with an email).
+async function _leadReferralPartnerCC(cid){
+  if (!cid) return [];
+  try {
+    var res = await _authClient().rpc('lead_referral_partner', { p_contact_id: cid });
+    if (res.error) return [];
+    var row = (res.data || [])[0];
+    return (row && row.partner_email) ? [row.partner_email] : [];
+  } catch(e){ return []; }
+}
+// Fee sheet PDF base64 via generate-fee-sheet, built from the live (same-origin) iframe data.
+async function _feeSheetPdfBase64(){
+  var iframe = document.getElementById('feeSheetIframe');
+  if (!iframe || !iframe.contentWindow) throw new Error('open the Fee Sheet tab first');
+  var cw = iframe.contentWindow;
+  if (typeof cw.readSidebarInputs !== 'function' || !Array.isArray(cw.scenarios)) throw new Error('fee sheet not ready');
+  var inp = cw.readSidebarInputs();
+  var scen = cw.scenarios.map(function(s){ return { id:s.id, label:s.label, rate:s.rate, points:s.points, origComp:s.origComp, lenderCredits:s.lenderCredits, recommended:!!s.recommended }; });
+  var cfg = window.APP_CONFIG || {}, base = cfg.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co', anon = cfg.SUPABASE_ANON_KEY || '';
+  var payload = { borrower_name:inp.borrowerName, property_address:inp.propertyAddress, purchase_price:inp.purchasePrice,
+    loan_amount:inp.loanAmount, down_pct:inp.downPct, ltv:inp.ltv, loan_product:inp.loanProduct, lock_period:inp.lockPeriod,
+    annual_tax:inp.annualTax, annual_insurance:inp.annualInsurance, property_type:inp.propertyType, state:inp.state, scenarios:scen };
+  var res = await fetch(base + '/functions/v1/generate-fee-sheet', { method:'POST', headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon }, body: JSON.stringify(payload) });
+  var result = await res.json();
+  if (!result.success || !result.pdf) throw new Error(result.error || 'PDF generation failed');
+  return result.pdf;
+}
+// Mirrors daPrintCMA's payload build (standalone to avoid destabilizing that function).
+function _cmaBuildPayload(){
+  var d = window._daCmaData; if (!d) return null;
+  var includeAcq = !!(document.getElementById('da-cma-include-acq') && document.getElementById('da-cma-include-acq').checked);
+  var first=(document.getElementById('f-first-name')||{}).value||(window.contactData&&contactData.first_name)||'';
+  var last=(document.getElementById('f-last-name')||{}).value||(window.contactData&&contactData.last_name)||'';
+  var borrowerName=[first,last].filter(Boolean).join(' ')||'Borrower';
+  var propertyAddress=(document.getElementById('f-property')||{}).value||(window.leadData&&leadData.property_address)||(d.subject&&d.subject.address)||'';
+  var payload={subject:d.subject,value:d.value,stats:d.stats,comps:d.comps,include_acquisition:includeAcq,include_rentals:(document.getElementById('da-cma-include-rentals')?document.getElementById('da-cma-include-rentals').checked:false),borrower_name:borrowerName,property_address:propertyAddress};
+  if(includeAcq){
+    var g=function(id){var el=document.getElementById(id);var n=el?parseFloat(String(el.value).replace(/[,$%]/g,'')):0;return isNaN(n)?0:n;};
+    payload.da_inputs={purchase:g('da-purchase'),reno:g('da-reno'),arv:g('da-arv'),hold_months:g('da-hold-months'),hold_monthly:g('da-hold-monthly'),lender_fees:g('da-lender-fees'),buy_closing:g('da-buy-closing'),sell_closing:g('da-sell-closing'),realtor_pct:0,rent:g('da-rent'),vacancy_pct:g('da-vacancy'),opex_pct:g('da-opex'),loan_rate:g('da-refi-rate'),loan_term:g('da-refi-term'),refi_ltv:g('da-refi-ltv'),bh_down_pct:g('da-bh-down-pct'),appreciation_pct:g('da-appreciation-pct'),flip_ltc_pct:g('da-flip-ltc-pct'),flip_hm_rate:g('da-flip-hm-rate'),flip_points:g('da-flip-points')};
+  }
+  return payload;
+}
+async function _cmaPdfBase64(){
+  var payload = _cmaBuildPayload(); if (!payload) throw new Error('pull comps first');
+  var cfg=window.APP_CONFIG||{}, base=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co', anon=cfg.SUPABASE_ANON_KEY||'';
+  var res=await fetch(base+'/functions/v1/generate-cma',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},body:JSON.stringify(payload)});
+  var result=await res.json();
+  if(!result.success||!result.pdf) throw new Error(result.error||'PDF generation failed');
+  return result.pdf;
+}
+async function emailFeeSheet(){
+  var to = (window.contactData && contactData.email) || '';
+  if (!to){ showToast('No borrower email on file', true); return; }
+  var btn = document.getElementById('emailFeeSheetBtn'), oh = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = 'Preparing…'; }
+  try {
+    var b64 = await _feeSheetPdfBase64();           // generate the PDF first so there's always an attachment
+    var cid = (window.contactData && contactData.id) || new URLSearchParams(location.search).get('contact_id');
+    var cc = await _leadReferralPartnerCC(cid);
+    var name = _emailPdfBorrowerName(), first = (window.contactData && contactData.first_name) || 'there';
+    openEmailComposer({
+      to: to, cc: cc, subject: 'Your Fee Sheet — Rates & Realty',
+      bodyHtml: '<p>Hi ' + _recACEsc(first) + ',</p><p>Attached is your personalized fee sheet. Let me know if you have any questions.</p><p>Best,<br>Rene Duarte</p>',
+      attachments: [{ filename: 'Fee Sheet - ' + name + '.pdf', content: b64 }]
+    });
+  } catch(e){ showToast('Could not prepare fee sheet: ' + (e.message || 'error'), true); }
+  finally { if (btn){ btn.disabled = false; btn.innerHTML = oh; } }
+}
+async function emailCMA(){
+  var to = (window.contactData && contactData.email) || '';
+  if (!to){ showToast('No borrower email on file', true); return; }
+  if (!window._daCmaData){ showToast('Pull comps first to build the CMA', true); return; }
+  var btn = document.getElementById('emailCmaBtn'), oh = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = 'Preparing…'; }
+  try {
+    var b64 = await _cmaPdfBase64();
+    var cid = (window.contactData && contactData.id) || new URLSearchParams(location.search).get('contact_id');
+    var cc = await _leadReferralPartnerCC(cid);
+    var name = _emailPdfBorrowerName(), first = (window.contactData && contactData.first_name) || 'there';
+    openEmailComposer({
+      to: to, cc: cc, subject: 'Your CMA — Rates & Realty',
+      bodyHtml: '<p>Hi ' + _recACEsc(first) + ',</p><p>Attached is your personalized CMA (Comparative Market Analysis). Let me know if you have any questions.</p><p>Best,<br>Rene Duarte</p>',
+      attachments: [{ filename: 'CMA - ' + name + '.pdf', content: b64 }]
+    });
+  } catch(e){ showToast('Could not prepare CMA: ' + (e.message || 'error'), true); }
+  finally { if (btn){ btn.disabled = false; btn.innerHTML = oh; } }
 }
 
 /* --- Save Draft --- */
