@@ -521,6 +521,19 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
         <label class="apm-label">Tags</label>
         <div style="display:flex;flex-wrap:wrap;gap:6px;" id="apm-tag-container"></div>
         <input id="nf_tags" type="hidden" value="[]">
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <input id="nf_custom_tag" type="text" class="apm-input" placeholder="Add custom tag…" style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();apmAddCustomTag();}">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="apmAddCustomTag()" style="white-space:nowrap;">+ Add</button>
+        </div>
+      </div>
+
+      <!-- Estimated Earnings (admin-only; shown/saved only for admin role) -->
+      <div style="margin-bottom:14px;display:none;" id="apm-earnings-row">
+        <label class="apm-label">Potential / Estimated Earnings</label>
+        <div style="position:relative;">
+          <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#666;font-size:13px;pointer-events:none;">$</span>
+          <input id="nf_estimated_earnings" type="number" min="0" step="100" class="apm-input" placeholder="0" style="padding-left:22px;">
+        </div>
       </div>
 
       <!-- Notes -->
@@ -1484,7 +1497,8 @@ async function deleteContacts(ids) {
 }
 
 var _apmTags = [];
-var _apmTagList = ['VIP','Investor','First-Time Buyer','Repeat Client','Spanish Speaker','English Speaker','Referral Partner','Agent','Builder','Self-Employed','VA Borrower','High Priority','Follow Up'];
+var _apmTagList = ['VIP','Investor','First-Time Buyer','Repeat Client','Past Client','Spanish Speaker','English Speaker','Homeowner','Home Buyer','Seller','Refinance','Reverse Mortgage','ITIN','Open House Guest','Facebook Lead'];
+function _apmIsAdmin() { return (sessionStorage.getItem('rnr_app_role') || '').toLowerCase() === 'admin'; }
 
 function openNewModal() {
   document.getElementById('newModal').classList.add('open');
@@ -1495,6 +1509,9 @@ function openNewModal() {
       return '<button class="apm-tag-opt" data-tag="' + t + '" onclick="apmToggleTag(\'' + t + '\',this)" style="background:transparent;border:1px solid #2a2a2a;color:#666;font-size:11px;padding:3px 10px;border-radius:20px;cursor:pointer;transition:all .15s;">' + t + '</button>';
     }).join('');
   }
+  // Estimated earnings is an owner/admin-level number — only show it to admins.
+  var earnRow = document.getElementById('apm-earnings-row');
+  if (earnRow) earnRow.style.display = _apmIsAdmin() ? '' : 'none';
   // Scope the screenshot paste-to-autofill listener to while the popup is open.
   document.addEventListener('paste', _apmShotPaste);
   if (typeof _apmShotReset === 'function') { _apmShotReset(); _apmShotTouched = []; }
@@ -1504,7 +1521,7 @@ function closeNewModal() {
   document.getElementById('newModal').classList.remove('open');
   document.removeEventListener('paste', _apmShotPaste);
   if (typeof _apmShotReset === 'function') { _apmShotReset(); _apmShotTouched = []; }
-  ['nf_first','nf_last','nf_email','nf_phone','nf_birthday','nf_street','nf_city','nf_state','nf_zip','nf_notes','nf_referral_search','nf_referral_id'].forEach(function(id) {
+  ['nf_first','nf_last','nf_email','nf_phone','nf_birthday','nf_street','nf_city','nf_state','nf_zip','nf_notes','nf_referral_search','nf_referral_id','nf_custom_tag','nf_estimated_earnings'].forEach(function(id) {
     var el = document.getElementById(id); if (el) el.value = '';
   });
   ['nf_source','nf_language','nf_loan','nf_stage'].forEach(function(id) {
@@ -1513,7 +1530,11 @@ function closeNewModal() {
   var _so = document.getElementById('nf_source_other'); if (_so) { _so.value = ''; _so.style.display = 'none'; }
   _apmTags = [];
   document.getElementById('nf_tags').value = '[]';
-  document.querySelectorAll('.apm-tag-opt').forEach(function(b) { b.classList.remove('active'); });
+  // Deactivate preset chips; drop any custom chips that were added this session.
+  document.querySelectorAll('#apm-tag-container .apm-tag-opt').forEach(function(b) {
+    if (_apmTagList.indexOf(b.getAttribute('data-tag')) === -1) { b.remove(); }
+    else { b.classList.remove('active'); }
+  });
   var sel = document.getElementById('apm-referral-selected'); if (sel) sel.style.display = 'none';
   var srch = document.getElementById('nf_referral_search'); if (srch) srch.style.display = 'block';
   var ab = document.getElementById('apm-address-block'); if (ab) ab.style.display = 'none';
@@ -1761,6 +1782,35 @@ function apmToggleTag(tag, btn) {
   document.getElementById('nf_tags').value = JSON.stringify(_apmTags);
 }
 
+// Add a custom tag chip (selected) from the inline input. Trims, ignores empties
+// and case-insensitive duplicates; if it matches an existing preset chip, just
+// activates that chip instead of creating a duplicate.
+function apmAddCustomTag() {
+  var inp = document.getElementById('nf_custom_tag');
+  if (!inp) return;
+  var val = (inp.value || '').trim();
+  if (!val) { inp.value = ''; return; }
+  var lower = val.toLowerCase();
+  if (_apmTags.some(function(t) { return t.toLowerCase() === lower; })) { inp.value = ''; return; }
+  var existing = Array.prototype.slice.call(document.querySelectorAll('#apm-tag-container .apm-tag-opt'))
+    .filter(function(b) { return (b.getAttribute('data-tag') || '').toLowerCase() === lower; })[0];
+  if (existing) {
+    if (!existing.classList.contains('active')) { _apmTags.push(existing.getAttribute('data-tag')); existing.classList.add('active'); }
+  } else {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'apm-tag-opt active';
+    btn.setAttribute('data-tag', val);
+    btn.style.cssText = 'background:transparent;border:1px solid #2a2a2a;color:#666;font-size:11px;padding:3px 10px;border-radius:20px;cursor:pointer;transition:all .15s;';
+    btn.textContent = val;
+    btn.onclick = function() { apmToggleTag(val, btn); };
+    document.getElementById('apm-tag-container').appendChild(btn);
+    _apmTags.push(val);
+  }
+  document.getElementById('nf_tags').value = JSON.stringify(_apmTags);
+  inp.value = '';
+}
+
 async function apmSearchReferral(q) {
   var box = document.getElementById('apm-referral-results');
   if (!q || !q.trim()) { box.style.display = 'none'; return; }
@@ -1845,6 +1895,15 @@ async function savePerson() {
   };
   // Strip nulls to avoid overwriting DB defaults
   Object.keys(payload).forEach(function(k) { if (payload[k] === null) delete payload[k]; });
+  // Tags → contacts.tags (text[]). Previously omitted from the payload, which is why
+  // newly-added people came back with tags=null. Only write when there's at least one.
+  if (tags && tags.length) payload.tags = tags;
+  // Estimated earnings is admin-only: a DB trigger (fn_contacts_protect_cols) silently
+  // blocks va/agent from setting it, so only send it for admins.
+  if (_apmIsAdmin()) {
+    var _ee = parseFloat(document.getElementById('nf_estimated_earnings').value);
+    if (!isNaN(_ee)) payload.estimated_earnings = _ee;
+  }
   var r = await _authClient().from('contacts').insert(payload).select('id');
   if (!r.error) {
     // `leads` is a VIEW over `contacts` whose INSTEAD OF INSERT trigger always inserts a
