@@ -28003,10 +28003,7 @@ function handleChipKey(e, containerId) {
   var input = e.target;
   var val = input.value.trim().replace(/,$/,'');
   if (!val || !val.includes('@')) return;
-  var chip = document.createElement('div');
-  chip.className = 'ec-chip';
-  chip.innerHTML = '<span>' + val + '</span><button onclick="this.parentElement.remove()">&times;</button>';
-  input.parentElement.insertBefore(chip, input);
+  _recACAddChip(containerId, val);   // dedups + inserts the chip (shared with autocomplete)
   input.value = '';
 }
 
@@ -28015,6 +28012,153 @@ function getChipEmails(containerId) {
   if (!container) return [];
   return Array.from(container.querySelectorAll('.ec-chip span')).map(function(s){return s.textContent.trim();}).filter(Boolean);
 }
+
+/* ── CRM recipient autocomplete for the email composer To / CC / BCC ───────────
+   Debounced public.recipient_search() lookups; lightweight positioned dropdown.
+   Free-typed arbitrary emails still work via handleChipKey (Enter with no
+   highlighted suggestion). */
+var _recAC = { box:null, input:null, containerId:null, items:[], hi:-1, timer:null, seq:0, wired:false };
+
+function _recACEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+function _recACAddChip(containerId, email){
+  email = String(email==null?'':email).trim().replace(/,$/,'');
+  if (!email) return;
+  var container = document.getElementById(containerId); if (!container) return;
+  var existing = getChipEmails(containerId).map(function(x){ return x.toLowerCase(); });
+  if (existing.indexOf(email.toLowerCase()) >= 0) return;   // already a chip in this field
+  var input = container.querySelector('.ec-chip-input');
+  var chip = document.createElement('div');
+  chip.className = 'ec-chip';
+  chip.innerHTML = '<span>' + _recACEsc(email) + '</span><button onclick="this.parentElement.remove()">&times;</button>';
+  if (input) container.insertBefore(chip, input); else container.appendChild(chip);
+}
+
+function _recACOpen(){ return !!(_recAC.box && _recAC.box.style.display === 'block'); }
+function _recACClose(){ if (_recAC.box) _recAC.box.style.display = 'none'; _recAC.items = []; _recAC.hi = -1; _recAC.input = null; _recAC.containerId = null; }
+function _recACContainerId(inputEl){ var a = inputEl.closest('.ec-field-area'); return a ? a.id : null; }
+
+function _recACOnInput(inputEl){
+  var containerId = _recACContainerId(inputEl);
+  clearTimeout(_recAC.timer);
+  var q = (inputEl.value || '').trim();
+  if (!containerId || q.length < 2){ _recACClose(); return; }
+  var seq = ++_recAC.seq;
+  _recAC.timer = setTimeout(async function(){
+    var rows = [];
+    try {
+      var client = (typeof _authClient === 'function') ? _authClient() : (window._supabaseClient || window.supabase);
+      if (!client || !client.rpc) return;
+      var res = await client.rpc('recipient_search', { p_query: q, p_limit: 8 });
+      if (seq !== _recAC.seq) return;            // superseded by a newer keystroke
+      if (res.error){ _recACClose(); return; }
+      var existing = getChipEmails(containerId).map(function(x){ return x.toLowerCase(); });
+      rows = (res.data || []).filter(function(r){ return r && r.email && existing.indexOf(String(r.email).toLowerCase()) < 0; });
+    } catch(err){ _recACClose(); return; }
+    if (seq !== _recAC.seq) return;
+    _recACShow(inputEl, containerId, rows);
+  }, 200);
+}
+
+function _recACShow(inputEl, containerId, rows){
+  if (!rows.length){ _recACClose(); return; }
+  var box = _recAC.box; if (!box) return;
+  _recAC.input = inputEl; _recAC.containerId = containerId; _recAC.items = rows; _recAC.hi = -1;
+  box.innerHTML = rows.map(function(r,i){
+    return '<div class="rec-ac-item" data-i="'+i+'">'+
+      '<div class="rec-ac-name">'+_recACEsc(r.name||r.email)+(r.kind==='partner'?'<span class="rec-ac-badge">Partner</span>':'')+'</div>'+
+      '<div class="rec-ac-email">'+_recACEsc(r.email)+'</div></div>';
+  }).join('');
+  var rect = inputEl.getBoundingClientRect();
+  box.style.left = Math.round(rect.left) + 'px';
+  box.style.top = Math.round(rect.bottom + 2) + 'px';
+  box.style.minWidth = Math.max(220, Math.round(rect.width)) + 'px';
+  box.style.display = 'block';
+}
+
+function _recACRender(){
+  if (!_recAC.box) return;
+  Array.from(_recAC.box.querySelectorAll('.rec-ac-item')).forEach(function(el,i){
+    el.classList.toggle('active', i === _recAC.hi);
+    if (i === _recAC.hi && el.scrollIntoView) el.scrollIntoView({ block:'nearest' });
+  });
+}
+
+function _recACMove(delta){
+  if (!_recAC.items.length) return;
+  _recAC.hi += delta;
+  if (_recAC.hi < -1) _recAC.hi = -1;                 // -1 = no selection (Enter adds typed email)
+  if (_recAC.hi >= _recAC.items.length) _recAC.hi = _recAC.items.length - 1;
+  _recACRender();
+}
+
+function _recACSelect(i){
+  var item = _recAC.items[i]; if (!item) return;
+  var containerId = _recAC.containerId, input = _recAC.input;
+  _recACAddChip(containerId, item.email);
+  if (input){ input.value = ''; try { input.focus(); } catch(_){} }
+  _recACClose();
+}
+
+function _recACOnKeydown(e){
+  var el = e.target;
+  if (!el || !el.classList || !el.classList.contains('ec-chip-input')) return;
+  if (!_recACOpen()) return;
+  if (e.key === 'ArrowDown'){ e.preventDefault(); e.stopPropagation(); _recACMove(1); }
+  else if (e.key === 'ArrowUp'){ e.preventDefault(); e.stopPropagation(); _recACMove(-1); }
+  else if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); _recACClose(); }
+  else if (e.key === 'Enter'){
+    if (_recAC.hi >= 0 && _recAC.items[_recAC.hi]){
+      // A suggestion is highlighted — select it and stop handleChipKey from also firing.
+      e.preventDefault(); e.stopPropagation();
+      _recACSelect(_recAC.hi);
+    } else {
+      _recACClose();   // no highlight → let handleChipKey add the free-typed email as-is
+    }
+  }
+}
+
+function _recACInit(){
+  if (_recAC.wired || typeof document === 'undefined' || !document.body) return;
+  _recAC.wired = true;
+  if (!document.getElementById('rec-ac-styles')){
+    var st = document.createElement('style'); st.id = 'rec-ac-styles';
+    st.textContent =
+      '.rec-ac-box{position:fixed;z-index:2147483000;background:#14110c;border:1px solid rgba(201,168,76,0.25);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.6);max-height:260px;overflow-y:auto;display:none;padding:4px}'+
+      '.rec-ac-item{padding:6px 10px;border-radius:6px;cursor:pointer}'+
+      '.rec-ac-item.active{background:rgba(201,168,76,0.16)}'+
+      '.rec-ac-item:hover{background:rgba(201,168,76,0.10)}'+
+      '.rec-ac-name{font-size:13px;font-weight:700;color:#E0DDD4}'+
+      '.rec-ac-email{font-size:11px;color:#8a8475;margin-top:1px}'+
+      '.rec-ac-badge{display:inline-block;font-size:9px;font-weight:700;color:#C9A84C;border:1px solid rgba(201,168,76,0.4);border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:1px}';
+    document.head.appendChild(st);
+  }
+  var box = document.createElement('div'); box.className = 'rec-ac-box'; box.id = 'recAcBox';
+  document.body.appendChild(box); _recAC.box = box;
+  // Select on mousedown (fires before the input's blur so focus/selection is preserved).
+  box.addEventListener('mousedown', function(e){
+    var it = e.target.closest && e.target.closest('.rec-ac-item'); if (!it) return;
+    e.preventDefault();
+    _recACSelect(parseInt(it.getAttribute('data-i'), 10));
+  });
+  // Debounced search as the user types in any To/CC/BCC input.
+  document.addEventListener('input', function(e){
+    var el = e.target;
+    if (el && el.classList && el.classList.contains('ec-chip-input')) _recACOnInput(el);
+  });
+  // Keyboard nav in CAPTURE phase so Enter on a highlighted suggestion beats handleChipKey.
+  document.addEventListener('keydown', _recACOnKeydown, true);
+  // Dismiss on outside click / scroll / resize.
+  document.addEventListener('click', function(e){
+    if (!_recACOpen()) return;
+    if (e.target === _recAC.input) return;
+    if (_recAC.box && _recAC.box.contains(e.target)) return;
+    _recACClose();
+  });
+  window.addEventListener('scroll', function(){ if (_recACOpen()) _recACClose(); }, true);
+  window.addEventListener('resize', function(){ if (_recACOpen()) _recACClose(); });
+}
+_recACInit();
 
 function toggleCcBcc() {
   var cc = document.getElementById('ccRow');
