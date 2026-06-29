@@ -85,6 +85,8 @@ a.lead:hover{text-decoration:underline}
 
 /* va productivity extras */
 .note{font-size:11px;color:var(--muted);line-height:1.5;margin-top:12px}
+.tile.muted{background:var(--surface)}
+.tile.muted .tile-val{color:var(--muted);font-size:1.15rem;font-weight:700}
 .tile.red{border-color:rgba(248,113,113,0.3)}
 .tile.red .tile-val{color:var(--red)}
 .prio{font-size:12px;font-weight:700;text-transform:capitalize}
@@ -391,13 +393,15 @@ function renderVa(d){
   var up=document.getElementById('updated');
   if(up) up.textContent = d.generated_at ? ('Updated '+new Date(d.generated_at).toLocaleString()) : '';
 
-  function tile(label,value,opts){ opts=opts||{}; return '<div class="tile'+(opts.gold?' gold':'')+(opts.red?' red':'')+'"><div class="tile-val">'+value+'</div><div class="tile-lbl">'+label+'</div></div>'; }
+  function tile(label,value,opts){ opts=opts||{}; return '<div class="tile'+(opts.gold?' gold':'')+(opts.red?' red':'')+(opts.muted?' muted':'')+'"><div class="tile-val">'+value+'</div><div class="tile-lbl">'+label+'</div></div>'; }
 
   var html='';
 
-  /* 1. KPI tiles + note */
+  /* 1. KPI tiles + note — headline numbers are MANUAL (VA) completions only;
+     system auto-completions are shown separately as context. */
   html+='<div class="sec"><div class="sec-h">Key numbers</div><div class="tiles">'
-    + tile('Completed (in range)', fmtNum(k.completed_in_range), {gold:true})
+    + tile('Completed by VA', fmtNum(k.completed_in_range), {gold:true})
+    + tile('Auto-completed by system', fmtNum(k.system_in_range), {muted:true})
     + tile('Completed last 7d', fmtNum(k.completed_7d))
     + tile('Avg / day', fmtDec(k.avg_per_day))
     + tile('Median turnaround', fmtHrs(k.median_turnaround_hrs))
@@ -406,12 +410,12 @@ function renderVa(d){
     + tile('Open now', fmtNum(k.open_now))
     + tile('Overdue now', fmtNum(k.overdue_now), {red:(Number(k.overdue_now)>0)})
     + '</div>'
-    + '<div class="note">Completions counted by task completion time. Some completions are automated bulk actions (e.g. cold-lead re-engagement), so throughput blends manual and system-completed tasks.</div>'
+    + (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
     + '</div>';
 
   /* 2. Daily throughput */
   var dt=d.daily_throughput||[];
-  html+='<div class="sec"><div class="sec-h">Daily throughput <span class="sec-sub">tasks completed per day</span></div>'
+  html+='<div class="sec"><div class="sec-h">Daily throughput <span class="sec-sub">manual (VA) completions per day · system shown lighter</span></div>'
     + (dt.length ? '<div class="chart-box"><canvas id="vaThruChart"></canvas></div>' : '<div class="empty">No data in this range.</div>')
     + '</div>';
 
@@ -487,10 +491,13 @@ function renderVa(d){
     Chart.defaults.font.size=11;
 
     if(dt.length){
+      var hasSystem=dt.some(function(x){ return Number(x.system)>0; });
+      var thruDatasets=[{ label:'VA (manual)', data:dt.map(function(x){ return Number(x.completed)||0; }), backgroundColor:GOLD, borderRadius:4, stack:'thru' }];
+      if(hasSystem) thruDatasets.push({ label:'System', data:dt.map(function(x){ return Number(x.system)||0; }), backgroundColor:'rgba(255,255,255,0.16)', borderRadius:4, stack:'thru' });
       _vaCharts.thru=new Chart(document.getElementById('vaThruChart'),{ type:'bar',
-        data:{ labels:dt.map(function(x){ return mdLabel(x.day); }), datasets:[{ label:'Completed', data:dt.map(function(x){ return Number(x.completed)||0; }), backgroundColor:GOLD, borderRadius:4 }] },
-        options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} },
-          scales:{ y:{ beginAtZero:true, grid:{color:'rgba(255,255,255,0.05)'}, ticks:{ precision:0 } }, x:{ grid:{display:false}, ticks:{ autoSkip:true, maxRotation:0 } } } } });
+        data:{ labels:dt.map(function(x){ return mdLabel(x.day); }), datasets:thruDatasets },
+        options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:hasSystem, labels:{boxWidth:11,padding:9} } },
+          scales:{ y:{ stacked:true, beginAtZero:true, grid:{color:'rgba(255,255,255,0.05)'}, ticks:{ precision:0 } }, x:{ stacked:true, grid:{display:false}, ticks:{ autoSkip:true, maxRotation:0 } } } } });
     }
     if(bp.length){
       _vaCharts.prio=new Chart(document.getElementById('vaPrioChart'),{ type:'doughnut',
