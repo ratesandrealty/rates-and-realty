@@ -30903,41 +30903,86 @@ async function recordNewVoicemail() {
     return m;
   }
 
+  // Decode HTML entities (&amp; → &, &lt; → <, …) so stored text shows correctly.
+  function _decodeEntities(s){ if(s==null) return ''; var t=document.createElement('textarea'); t.innerHTML=String(s); return t.value; }
+  // Safe text: decode entities first, THEN escape for innerHTML (avoids the &amp;amp; double-escape soup).
+  function _txt(s){ return escHtml(_decodeEntities(s)); }
+
   function openActivityDetail(e) {
     if (!e) return;
     var meta = (typeof e.metadata === 'string') ? (function(){ try { return JSON.parse(e.metadata); } catch(_) { return {}; } })() : (e.metadata || {});
     var m = actDetailModal();
     var bodyEl = m.querySelector('#actDetailBody');
-    m.querySelector('#actDetailTitle').innerHTML = escHtml(e.email_subject || e.title || (e.type || 'Activity'));
-    var chips = [];
-    function chip(label, val) { if (val) chips.push('<span style="font-size:11px;color:#C9A84C;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.25);padding:3px 9px;border-radius:20px;">' + escHtml(label) + ': ' + escHtml(String(val)) + '</span>'); }
-    chip('When', fmtTime(e.created_at) + ' · ' + timeAgo(e.created_at));
-    if (e.status) chip('Status', e.status);
+    var type = (e.type || '').toLowerCase();
+    var emailHtml = e.email_body_html || e.email_html || '';
+    var isEmail = type === 'email' || !!emailHtml || !!e.email_subject;
+    var isSms   = !isEmail && (type === 'sms' || (e.channel || '') === 'sms' || !!e.sms_body);
+    var isCall  = !isEmail && !isSms && type === 'call';
+    var inbound = (e.direction || '') === 'inbound';
 
-    var body = '', isEmail = false;
-    if (e.type === 'email' && e.email_html) {
-      isEmail = true;
-      chip('To', e.email_to || meta.to);
-      if (meta.open_count) chip('Opens', meta.open_count);
-      body = '<iframe id="actEmailFrame" sandbox="allow-same-origin" style="width:100%;height:55vh;border:1px solid rgba(255,255,255,0.1);border-radius:8px;background:#fff;"></iframe>';
-    } else if (e.type === 'sms' || e.sms_body) {
-      chip('To', e.sms_to || meta.to); chip('From', meta.from);
-      body = '<div style="white-space:pre-wrap;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:14px;">' + escHtml(e.sms_body || e.description || '') + '</div>';
-    } else {
-      if (e.email_to) chip('To', e.email_to);
-      if (meta.outcome) chip('Outcome', String(meta.outcome).replace(/_/g, ' '));
-      if (meta.duration || e.duration_seconds) chip('Duration', fmtDuration(meta.duration || e.duration_seconds));
-      var parts = [];
-      if (e.description) parts.push('<div style="white-space:pre-wrap;">' + escHtml(e.description) + '</div>');
-      if (meta.notes) parts.push('<div style="margin-top:10px;color:#aaa;"><em>' + escHtml(meta.notes) + '</em></div>');
-      if (e.page_url) parts.push('<div style="margin-top:10px;"><a href="' + escHtml(e.page_url) + '" target="_blank" style="color:#C9A84C;">' + escHtml(e.page_url) + '</a></div>');
-      if (meta.recording_url) parts.push('<div style="margin-top:10px;"><a href="' + escHtml(meta.recording_url) + '" target="_blank" style="color:#C9A84C;">▶ Listen to recording</a></div>');
-      if (meta.filenames && meta.filenames.length) parts.push('<div style="margin-top:10px;">' + escHtml(meta.filenames.join(', ')) + '</div>');
-      body = parts.join('') || '<div style="color:#777;">No additional detail recorded for this event.</div>';
+    var titleTxt = isEmail ? (e.email_subject || e.title || 'Email')
+                 : isSms   ? ('SMS ' + (inbound ? 'received' : 'sent'))
+                 : isCall  ? ('Call ' + (inbound ? 'received' : 'placed'))
+                 : (e.title || e.type || 'Activity');
+    m.querySelector('#actDetailTitle').innerHTML = _txt(titleTxt);
+
+    function statusBadge(st){
+      st = String(st || '').toLowerCase(); if(!st) return '';
+      var c = '#9aa0a6';
+      if (['sent','delivered','opened','completed','answered'].indexOf(st) !== -1) c = '#50c878';
+      else if (['failed','bounced','no_answer','undelivered','error'].indexOf(st) !== -1) c = '#f87171';
+      else if (st === 'opened' || st === 'clicked') c = '#60a0ff';
+      return '<span style="font-size:11px;font-weight:700;color:'+c+';background:'+c+'22;border:1px solid '+c+'55;padding:3px 10px;border-radius:20px;">'+escHtml(st)+'</span>';
     }
+    var chips = [];
+    function chip(label, val){ if (val==null || val==='') return; chips.push('<span style="font-size:11px;color:#E8D5A3;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.28);padding:3px 9px;border-radius:20px;">'+escHtml(label)+': '+_txt(String(val))+'</span>'); }
+    chip('When', fmtTime(e.created_at) + ' · ' + timeAgo(e.created_at));
+    if (e.status) chips.push(statusBadge(e.status));
+
+    var body = '';
+    if (isEmail) {
+      chip('To', e.email_to || meta.to);
+      chip('CC', e.email_cc || meta.cc);
+      if (meta.open_count) chip('Opens', meta.open_count);
+      var summary = e.description ? '<div style="color:#c9c9c9;font-size:12.5px;margin-bottom:12px;line-height:1.5;">'+_txt(e.description)+'</div>' : '';
+      if (emailHtml) {
+        body = summary + '<iframe id="actEmailFrame" sandbox="allow-same-origin allow-popups" style="width:100%;height:52vh;border:1px solid rgba(255,255,255,0.12);border-radius:8px;background:#fff;"></iframe>';
+      } else {
+        body = '<div style="white-space:pre-wrap;color:#ececec;">'+_txt(e.description || e.title || 'No email content recorded.')+'</div>';
+      }
+    } else if (isSms) {
+      chip(inbound ? 'From' : 'To', e.sms_to || meta.to || meta.from);
+      var msg = _txt(e.sms_body || e.body || e.description || '(no message body)');
+      body = '<div style="display:flex;'+(inbound ? 'justify-content:flex-start' : 'justify-content:flex-end')+';">'
+        + '<div style="max-width:82%;background:'+(inbound ? '#1d1d1d' : 'rgba(201,168,76,0.16)')+';border:1px solid '+(inbound ? 'rgba(255,255,255,0.10)' : 'rgba(201,168,76,0.32)')+';color:#f2f2f2;border-radius:14px;padding:10px 14px;white-space:pre-wrap;font-size:13.5px;line-height:1.5;">'+msg+'</div></div>'
+        + '<div style="text-align:'+(inbound ? 'left' : 'right')+';color:#9aa0a6;font-size:10.5px;margin-top:5px;">'+(inbound ? 'Inbound' : 'Outbound')+' · '+escHtml(fmtTime(e.created_at))+'</div>';
+    } else if (isCall) {
+      chip('Direction', inbound ? 'Inbound' : 'Outbound');
+      if (meta.outcome || meta.disposition) chip('Outcome', String(meta.outcome || meta.disposition).replace(/_/g, ' '));
+      if (meta.duration || e.duration_seconds) chip('Duration', fmtDuration(meta.duration || e.duration_seconds));
+      var cparts = [];
+      if (e.description) cparts.push('<div style="white-space:pre-wrap;color:#ececec;">'+_txt(e.description)+'</div>');
+      if (meta.notes) cparts.push('<div style="margin-top:10px;color:#bdbdbd;"><em>'+_txt(meta.notes)+'</em></div>');
+      if (meta.recording_url) cparts.push('<div style="margin-top:12px;"><a href="'+escHtml(meta.recording_url)+'" target="_blank" style="color:#E8D5A3;font-weight:600;">▶ Listen to recording</a></div>');
+      body = cparts.join('') || '<div style="color:#9aa0a6;">Call logged — no additional detail.</div>';
+    } else {
+      var oparts = [];
+      if (type === 'stage_change' || e.type === 'STAGE_CHANGE') {
+        var fr = meta.from || meta.from_stage || meta.old_stage, to = meta.to || meta.to_stage || meta.new_stage;
+        if (fr || to) oparts.push('<div style="font-size:14px;color:#fff;font-weight:600;margin-bottom:8px;">'+_txt(fr || '—')+' <span style="color:#C9A84C;">→</span> '+_txt(to || '—')+'</div>');
+      }
+      if (e.description) oparts.push('<div style="white-space:pre-wrap;color:#ececec;">'+_txt(e.description)+'</div>');
+      if (meta.note || meta.note_text) oparts.push('<div style="white-space:pre-wrap;color:#ececec;margin-top:8px;">'+_txt(meta.note || meta.note_text)+'</div>');
+      var docName = e.document_name || meta.document_name || meta.filename, docUrl = e.document_url || meta.document_url || meta.url;
+      if (docName) oparts.push('<div style="margin-top:10px;">'+(docUrl ? '<a href="'+escHtml(docUrl)+'" target="_blank" style="color:#E8D5A3;font-weight:600;">📄 '+_txt(docName)+'</a>' : '📄 '+_txt(docName))+'</div>');
+      if (meta.filenames && meta.filenames.length) oparts.push('<div style="margin-top:10px;color:#E8D5A3;">📎 '+_txt(meta.filenames.join(', '))+'</div>');
+      if (e.page_url) oparts.push('<div style="margin-top:10px;"><a href="'+escHtml(e.page_url)+'" target="_blank" style="color:#E8D5A3;word-break:break-all;">'+escHtml(e.page_url)+'</a></div>');
+      body = oparts.join('') || '<div style="color:#9aa0a6;">No additional detail recorded for this event.</div>';
+    }
+
     m.querySelector('#actDetailMeta').innerHTML = chips.join('');
     bodyEl.innerHTML = body;
-    if (isEmail) { var f = bodyEl.querySelector('#actEmailFrame'); if (f) f.srcdoc = e.email_html; }
+    if (isEmail && emailHtml) { var f = bodyEl.querySelector('#actEmailFrame'); if (f) f.srcdoc = emailHtml; }
     m.style.display = 'flex';
   }
 
