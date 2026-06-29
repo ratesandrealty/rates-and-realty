@@ -19686,32 +19686,34 @@ async function lsGeneratePreApproval() {
   try {
     showToast('Generating Pre-Approval PDF\u2026');
 
-    // Collect loan summary fields
-    // Read PITIA + loan terms LIVE from dashboard (ld-*) — single source of truth as of dc309a0
-    var loanAmount = parseFloat(document.getElementById('ld-loan-amount')?.value) || 0;
-    var value      = parseFloat(document.getElementById('ld-prop-value')?.value)  || 0;
-    var rate       = parseFloat(document.getElementById('ld-rate')?.value)        || 0;
-    var term       = parseInt(document.getElementById('ld-term')?.value)          || 360;
-    var taxes      = parseFloat(document.getElementById('ld-taxes')?.value)       || 0;
-    var ins        = parseFloat(document.getElementById('ld-ins')?.value)         || 0;
-    var hoa        = parseFloat(document.getElementById('ld-hoa')?.value)         || 0;
-    var mi         = parseFloat(document.getElementById('ld-mi')?.value)          || 0;
-    var other      = parseFloat(document.getElementById('ld-other')?.value)       || 0;
-    // VA loans never carry monthly MI — force 0 so mi_monthly and total_pitia exclude it (matches PDF).
-    if (/\bva\b/i.test(document.getElementById('ld-loan-type')?.value || '')) mi = 0;
-    // Closing-cost fields stay from Loan Summary panel — no dashboard equivalent
+    // Collect loan summary fields LIVE from the qualifier panel (ls_*) — the values the user
+    // actually edits (loan terms, rate, MI, income/debt incl. per-borrower income). The PDF is
+    // payload-driven (the edge function reads the request body, NOT the saved row), so passing
+    // these directly makes the PDF match the on-screen qualifier instead of stale ld-*/saved data.
+    var loanAmount = _lsNum('ls_loan_amount');
+    var value      = _lsNum('ls_appraised_value') || _lsNum('ls_purchase_price');
+    var price      = _lsNum('ls_purchase_price') || value;
+    var rate       = _lsNum('ls_interest_rate');
+    var term       = _lsNum('ls_loan_term_months') || 360;
+    var taxes      = _lsNum('ls_property_taxes_monthly');
+    var ins        = _lsNum('ls_insurance_monthly');
+    var hoa        = _lsNum('ls_hoa_monthly');
+    var other      = _lsNum('ls_other_monthly');
+    var loanType   = (document.getElementById('ls_loan_type') || {}).value || 'Conventional';
+    // VA loans never carry monthly MI — force 0 (ls_mi_monthly is already 0 for VA; belt-and-suspenders).
+    var mi         = /\bva\b/i.test(loanType) ? 0 : _lsNum('ls_mi_monthly');
     var down = _lsNum('ls_down_payment'), closing = _lsNum('ls_closing_costs'),
         prepaid = _lsNum('ls_prepaids'), credits = _lsNum('ls_credits');
     var pi = 0;
-    if (loanAmount && rate && term) { var r = rate/100/12; pi = loanAmount*r*Math.pow(1+r,term)/(Math.pow(1+r,term)-1); }
-    var pitia = pi + taxes + ins + hoa + mi + other;
+    if (loanAmount && rate && term) { var r = rate/100/12; pi = r===0 ? loanAmount/term : loanAmount*r*Math.pow(1+r,term)/(Math.pow(1+r,term)-1); }
+    var pitia = pi + mi + taxes + ins + hoa + other;
     var ltv = value ? (loanAmount/value*100) : 0;
-    // Read income/debt LIVE from dashboard at click time — matches what user sees in DTI display
-    var totalIncome = parseFloat(document.getElementById('ld-income')?.value) || 0;
-    var totalDebt   = parseFloat(document.getElementById('ld-debt')?.value)   || 0;
+    // Income/debt LIVE from the qualifier (combined across borrowers) — matches the on-screen DTI.
+    var totalIncome = _lsNum('ls_total_monthly_income');
+    var totalDebt   = _lsNum('ls_total_monthly_debt');
     var frontDTI = totalIncome ? (pitia/totalIncome*100) : 0;
     var backDTI = totalIncome ? ((pitia+totalDebt)/totalIncome*100) : 0;
-    // Get borrower info
+    // Borrower / property / occupancy info still comes from the saved application row.
     var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
     var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
     var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
@@ -19725,14 +19727,15 @@ async function lsGeneratePreApproval() {
     var payload = {
       borrower_name: ((app.first_name||'')+' '+(app.last_name||'')).trim(),
       co_borrower_name: app.co_borrower_first_name ? ((app.co_borrower_first_name||'')+' '+(app.co_borrower_last_name||'')).trim() : '',
-      loan_amount:loanAmount, purchase_price:value, appraised_value:value,
-      loan_type: document.getElementById('ld-loan-type')?.value || 'Conventional',
-      loan_program: document.getElementById('ls_loan_program').value || '30-Year Fixed',
-      interest_rate:rate, loan_term_months:term, ltv:ltv, cltv:ltv,
+      loan_amount:loanAmount, purchase_price:price, appraised_value:value,
+      loan_type: loanType,
+      loan_program: (document.getElementById('ls_loan_program') || {}).value || '30-Year Fixed',
+      interest_rate:rate, quoted_rate:rate, loan_term_months:term, ltv:ltv, cltv:ltv,
       pi_payment:pi, taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa, mi_monthly:mi, total_pitia:pitia,
       front_dti:frontDTI, back_dti:backDTI,
       credit_score: parseFloat(document.getElementById('ld-credit')?.value) || app.credit_score || 0,
       total_income:totalIncome, total_debt:totalDebt,
+      total_monthly_income:totalIncome, total_monthly_debt:totalDebt,
       down_payment:down, closing_costs:closing, prepaids:prepaid,
       cash_to_close: down + closing + prepaid - credits,
       property_address:app.property_address_street, property_city:app.property_address_city,

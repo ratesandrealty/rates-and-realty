@@ -177,6 +177,8 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const hoa        = parseFloat(String(d.hoa_monthly||0));
   const fDTI       = parseFloat(String(d.front_dti||0));
   const bDTI       = parseFloat(String(d.back_dti||0));
+  const incMo      = parseFloat(String(d.total_monthly_income||0));
+  const debtMo     = parseFloat(String(d.total_monthly_debt||0));
   const loanType   = v(d.loan_type,'Conventional');
   const isVALoan   = /\bva\b/i.test(loanType);
   const miEff      = isVALoan ? 0 : mi;   // VA loans never carry monthly mortgage insurance (compliance)
@@ -332,6 +334,24 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     }
   }
   y=Math.min(y,pitiaBottom)-12;
+
+  // INCOME, DEBT & RATIOS — render only when income/debt or DTI values are present.
+  if(incMo>0||debtMo>0||fDTI>0||bDTI>0){
+    T('INCOME, DEBT & RATIOS',M,y,B,6.5,GOLD); HL(M,y-3,CW,GOLD,0.6); y-=14;
+    const idr=[
+      {lbl:'TOTAL MONTHLY INCOME',val:fmtD(incMo)},
+      {lbl:'TOTAL MONTHLY DEBT',val:fmtD(debtMo)},
+      {lbl:'FRONT-END DTI',val:`${fDTI.toFixed(2)}%`},
+      {lbl:'BACK-END DTI',val:`${bDTI.toFixed(2)}%`},
+    ];
+    const cW4b=CW/4;
+    for(let i=0;i<idr.length;i++){
+      const px=M+i*cW4b;
+      T(idr[i].lbl,px,y,R,6,GRAY);
+      T(idr[i].val,px,y-12,B,9.5,DARK);
+    }
+    y-=30;
+  }
 
   T('CONDITIONS & REQUIREMENTS',M,y,B,6.5,GOLD); HL(M,y-3,CW,GOLD,0.6); y-=12;
   T('Subject to, but not limited to:',M,y,I,7.5,GRAY); y-=11;
