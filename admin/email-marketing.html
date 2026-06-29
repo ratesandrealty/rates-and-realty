@@ -359,6 +359,13 @@
               </div>
             </div>
 
+            <div class="filter-group" id="emailTagFilters">
+              <div class="filter-group-title">Tags</div>
+              <div class="checkbox-grid" id="tagFilters">
+                <div style="font-size:11px;color:var(--text-muted);padding:2px 0;">Loading tags…</div>
+              </div>
+            </div>
+
             <div class="field" style="margin-bottom:10px;">
               <input type="text" id="recipientSearch" placeholder="Search by name or email..." oninput="filterRecipients()">
             </div>
@@ -780,6 +787,7 @@ async function loadContacts() {
     allContacts = (await res.json()).filter(c => c.email);
     filteredContacts = [...allContacts];
     smsFilteredContacts = [...allContacts];
+    populateTagFilters();
     renderRecipients();
     renderSmsRecipients();
   } catch (e) {
@@ -787,15 +795,42 @@ async function loadContacts() {
   }
 }
 
+// Build the Tags chip group from the distinct tags present across loaded contacts.
+// (Filtering is client-side, so the tags already arrive in the contacts payload.)
+function populateTagFilters() {
+  const host = document.getElementById('tagFilters');
+  if (!host) return;
+  const seen = new Set();
+  allContacts.forEach(c => {
+    if (Array.isArray(c.tags)) c.tags.forEach(t => { if (t != null && String(t).trim()) seen.add(String(t)); });
+  });
+  // Sort: reengage-* first (the priority cohort), then the rest alphabetically.
+  const tags = [...seen].sort((a, b) => {
+    const ra = a.startsWith('reengage-'), rb = b.startsWith('reengage-');
+    if (ra !== rb) return ra ? -1 : 1;
+    return a.localeCompare(b);
+  });
+  if (!tags.length) {
+    host.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:2px 0;">No tags</div>';
+    return;
+  }
+  host.innerHTML = tags.map(t =>
+    '<label class="cb-label"><input type="checkbox" value="' + escHtml(t) + '" onchange="toggleCbStyle(this);filterRecipients()"> ' + escHtml(t) + '</label>'
+  ).join('');
+}
+
 function filterRecipients() {
   const statusChecked = [...document.querySelectorAll('#statusFilters input:checked')].map(i => i.value);
   const sourceChecked = [...document.querySelectorAll('#sourceFilters input:checked')].map(i => i.value);
+  const tagsChecked = [...document.querySelectorAll('#tagFilters input:checked')].map(i => i.value);
   const search = document.getElementById('recipientSearch').value.toLowerCase().trim();
 
   if (_contactType === 'leads' || _contactType === 'both') {
     filteredContacts = allContacts.filter(c => {
       if (statusChecked.length && !statusChecked.includes(c.pipeline_status)) return false;
       if (sourceChecked.length && !sourceChecked.includes(c.source)) return false;
+      // Tags: keep contacts whose tags array overlaps ANY selected tag (OR within group).
+      if (tagsChecked.length && !(Array.isArray(c.tags) && c.tags.some(t => tagsChecked.includes(t)))) return false;
       if (search) {
         const full = ((c.first_name || '') + ' ' + (c.last_name || '') + ' ' + c.email).toLowerCase();
         if (!full.includes(search)) return false;
@@ -1839,6 +1874,8 @@ function setContactType(type) {
   if (epf) epf.style.display = (type === 'partners') ? 'none' : 'block';
   var esf = document.getElementById('emailSourceFilters');
   if (esf) esf.style.display = (type === 'partners') ? 'none' : 'block';
+  var etf = document.getElementById('emailTagFilters');
+  if (etf) etf.style.display = (type === 'partners') ? 'none' : 'block';
   var spf = document.getElementById('smsPipelineFilters');
   if (spf) spf.style.display = (type === 'partners') ? 'none' : 'block';
   var ssf = document.getElementById('smsSourceFiltersWrap');
