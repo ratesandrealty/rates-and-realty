@@ -77,13 +77,16 @@ function calcMonthlyPI(loanAmount: number, ratePercent: number, termMonths = 360
   return loanAmount * r * factor / (factor - 1);
 }
 
-function calcAPR(loanAmount: number, ratePercent: number, prepaidFinanceCharges: number, termMonths = 360): number {
-  const pmt = calcMonthlyPI(loanAmount, ratePercent, termMonths);
+function calcAPR(loanAmount: number, ratePercent: number, prepaidFinanceCharges: number, monthlyMI = 0, termMonths = 360): number {
+  // Reg Z APR: payment stream is P&I plus any monthly mortgage insurance (MI is a finance
+  // charge). Prepaid finance charges (points/origination/lender fees + FHA UFMIP) reduce
+  // the amount financed. APR solves: amountFinanced = PV(payments) at APR.
+  const pmt = calcMonthlyPI(loanAmount, ratePercent, termMonths) + (monthlyMI || 0);
   const financed = loanAmount - (prepaidFinanceCharges || 0);
   if (financed <= 0 || pmt <= 0) return ratePercent;
   const pv = (i: number) => (i === 0 ? pmt * termMonths : pmt * (1 - Math.pow(1 + i, -termMonths)) / i);
-  let lo = ratePercent / 100 / 12, hi = lo + 0.05;
-  for (let k = 0; k < 80 && pv(hi) > financed; k++) hi += 0.05;
+  let lo = ratePercent / 100 / 12, hi = lo + 0.10;
+  for (let k = 0; k < 120 && pv(hi) > financed; k++) hi += 0.05;
   let i = lo;
   for (let k = 0; k < 200; k++) { i = (lo + hi) / 2; const v = pv(i);
     if (Math.abs(v - financed) < 1e-6) break; if (v > financed) lo = i; else hi = i; }
@@ -399,8 +402,11 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     const bgColor = s.recommended ? GOLD_HDR : DARK;
     rect(sx, y - hdrRowH, scenColW, hdrRowH, bgColor);
     const hdrLabel = 'Option ' + s.id + (s.recommended ? ' *' : '');
-    const sPFC = loanAmount*(s.origComp||0)/100 + ((s.points||0)>0 ? loanAmount*s.points/100 : 0) + 1350 + 185;
-    const sApr = calcAPR(loanAmount, s.rate||0, sPFC);
+    const _isFHA = (loanProduct || '').toUpperCase().includes('FHA');
+    const _ufmip = _isFHA ? loanAmount * 0.0175 : 0;            // FHA upfront MIP (prepaid finance charge)
+    const _monthlyMI = calcMI(loanProduct, ltv, loanAmount);    // FHA/conv monthly MI (ongoing finance charge)
+    const sPFC = loanAmount*(s.origComp||0)/100 + ((s.points||0)>0 ? loanAmount*s.points/100 : 0) + 1350 + 185 + _ufmip;
+    const sApr = calcAPR(loanAmount, s.rate||0, sPFC, _monthlyMI);
     const subLabel = s.label + ' | ' + (s.rate || 0).toFixed(3) + '% (APR ' + sApr.toFixed(3) + '%)';
     T(hdrLabel, sx + 4, y - hdrRowH + 7, B, 7, s.recommended ? GOLD : WHITE);
     T(subLabel, sx + 4, y - hdrRowH + 1, R, 5, s.recommended ? GOLD : LGRAY);

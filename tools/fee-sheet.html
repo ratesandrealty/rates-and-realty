@@ -1213,14 +1213,17 @@ function calcMonthlyPI(loanAmount, ratePercent, termMonths = 360) {
     const f = Math.pow(1 + r, termMonths);
     return loanAmount * r * f / (f - 1);
 }
-function calcAPR(loanAmount, ratePercent, prepaidFinanceCharges, termMonths = 360) {
-    const pmt = calcMonthlyPI(loanAmount, ratePercent, termMonths);
+function calcAPR(loanAmount, ratePercent, prepaidFinanceCharges, monthlyMI = 0, termMonths = 360) {
+    // Reg Z APR: payment stream is P&I plus any monthly mortgage insurance (MI is a finance
+    // charge). Prepaid finance charges (points/origination/lender fees + FHA UFMIP) reduce
+    // the amount financed. APR solves: amountFinanced = PV(payments) at APR.
+    const pmt = calcMonthlyPI(loanAmount, ratePercent, termMonths) + (monthlyMI || 0);
     const financed = loanAmount - (prepaidFinanceCharges || 0);
     if (financed <= 0 || pmt <= 0) return ratePercent;
     const pv = (i) => (i === 0 ? pmt * termMonths : pmt * (1 - Math.pow(1 + i, -termMonths)) / i);
     let lo = ratePercent / 100 / 12;
-    let hi = lo + 0.05;
-    for (let k = 0; k < 80 && pv(hi) > financed; k++) hi += 0.05;
+    let hi = lo + 0.10;
+    for (let k = 0; k < 120 && pv(hi) > financed; k++) hi += 0.05;
     let i = lo;
     for (let k = 0; k < 200; k++) {
         i = (lo + hi) / 2;
@@ -1392,11 +1395,19 @@ function render(inp, results) {
                     else if (s.points > 0) { pillClass = 'pill-cost'; pillText = s.points + 'pts \u2014 ' + fmtPlain(ptsAmt, 0); }
                     else { pillClass = 'pill-credit'; pillText = 'Credit \u2014 ' + fmtPlain(ptsAmt, 0); }
                     // APR-eligible Section A lender charges: origination + discount points (only when
-                    // points>0) + underwriting + admin. Third-party fees are excluded.
+                    // points>0) + underwriting + admin. Third-party fees are excluded. FHA UFMIP is a
+                    // prepaid finance charge; FHA/conv-high-LTV monthly MI is an ongoing finance charge.
+                    // MI factors mirror the PDF's calcMI (FHA 0.55%/yr, conv>80% LTV 0.50%/yr on base
+                    // loan, UFMIP 1.75%) so the on-screen APR matches the generated PDF exactly.
+                    const _prodU = (inp.loanProduct || '').toUpperCase();
+                    const _isFHA = _prodU.includes('FHA');
+                    const _ufmip = _isFHA ? inp.loanAmount * 0.0175 : 0;
+                    const _monthlyMI = _isFHA ? inp.loanAmount * 0.0055 / 12
+                        : ((_prodU.includes('CONV') && inp.ltv > 80) ? inp.loanAmount * 0.005 / 12 : 0);
                     const sPFC = inp.loanAmount * (s.origComp || 0) / 100
                         + ((s.points || 0) > 0 ? inp.loanAmount * s.points / 100 : 0)
-                        + 1350 + 185;
-                    const sApr = calcAPR(inp.loanAmount, s.rate, sPFC);
+                        + 1350 + 185 + _ufmip;
+                    const sApr = calcAPR(inp.loanAmount, s.rate, sPFC, _monthlyMI);
                     return '<div class="rate-card' + (isRec ? ' rec' : '') + '">' +
                         '<div class="rate-card-label">Option ' + s.id + ' \u2014 ' + s.label + '</div>' +
                         '<div class="rate-card-rate">' + s.rate.toFixed(3) + '%</div>' +
