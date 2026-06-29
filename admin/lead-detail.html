@@ -20171,6 +20171,19 @@ async function losUpdateIncome(id, field, value) {
   losIncome = losIncome.map(function(i){ return i.id===id ? Object.assign({},i,{[field]:value}) : i; });
   try {
     var body = {}; body[field] = value; body.updated_at = new Date().toISOString();
+    // When the OWNER changes, move the row to that owner's contact so the per-borrower
+    // income tabs (which group by contact_id) attribute it to the right borrower instead of
+    // the primary. Only remap when the owner matches a known borrower; legacy owner strings
+    // leave contact_id untouched. income_owner text itself is unchanged (already correct).
+    if (field === 'income_owner') {
+      var ownerCid = _losContactIdForOwner(value);
+      if (ownerCid) {
+        body.contact_id = ownerCid;
+        losIncome = losIncome.map(function(i){ return i.id===id ? Object.assign({},i,{contact_id:ownerCid}) : i; });
+      }
+      var appId = _losActiveApplicationId();
+      if (appId) body.application_id = appId;
+    }
     await _authClient().from('loan_income').update(body).eq('id', id);
   } catch(e) { console.warn('[income] patch', field, e); }
 }
@@ -20186,7 +20199,7 @@ async function losAddIncome() {
   var cid = (typeof losGetActiveContactId==="function" ? losGetActiveContactId() : losCid()); if (!cid) return;
   try {
     var { data: _addIncData, error: _addIncErr } = await _authClient().from('loan_income')
-      .insert({ contact_id: cid, income_owner:'Borrower', income_type:'Base Salary',
+      .insert({ contact_id: cid, application_id: _losActiveApplicationId(), income_owner:'Borrower', income_type:'Base Salary',
         employer_name:'', monthly_amount:0, annual_amount:0, is_active:true,
         sort_order: losIncome.length, created_at:new Date().toISOString(), updated_at:new Date().toISOString() })
       .select();
@@ -20460,6 +20473,25 @@ function _losBorrowerOwnerOptions(selectedValue) {
            losEscape(selectedValue) + '</option>' + opts;
   }
   return opts;
+}
+
+// Map an OWNER selection (a borrower display name, as rendered by _losBorrowerOwnerOptions)
+// to that borrower's contact_id, so a row is stored under the correct borrower. Returns null
+// for legacy/non-matching owner strings (e.g. 'Borrower'/'Joint') — caller leaves contact_id
+// untouched in that case.
+function _losContactIdForOwner(ownerName) {
+  var borrowers = Array.isArray(window.losBorrowers) ? window.losBorrowers : [];
+  var target = String(ownerName == null ? '' : ownerName).trim().toLowerCase();
+  if (!target) return null;
+  for (var i = 0; i < borrowers.length; i++) {
+    if (_borrName(borrowers[i], i).trim().toLowerCase() === target) return borrowers[i].contact_id || null;
+  }
+  return null;
+}
+function _losActiveApplicationId() {
+  if (typeof _activeBorrowerApp !== 'undefined' && _activeBorrowerApp && _activeBorrowerApp.id) return _activeBorrowerApp.id;
+  var b = (Array.isArray(window.losBorrowers) ? window.losBorrowers : [])[0];
+  return (b && b.application_id) || null;
 }
 
 async function losLoadBorrowers() {
