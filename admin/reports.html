@@ -75,6 +75,8 @@ a.lead:hover{text-decoration:underline}
 
 .two-col{display:grid;grid-template-columns:1.4fr 1fr;gap:18px}
 @media(max-width:820px){.two-col{grid-template-columns:1fr}}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:820px){.panels{grid-template-columns:1fr}}
 .chart-box{position:relative;height:260px}
 
 /* view tabs */
@@ -119,6 +121,7 @@ tr.amber td{background:rgba(224,136,76,0.10)}
     <button class="tab active" data-view="production" onclick="switchView('production')">Production</button>
     <button class="tab" data-view="va" onclick="switchView('va')">VA Productivity</button>
     <button class="tab" data-view="pv" onclick="switchView('pv')">Pipeline Velocity</button>
+    <button class="tab" data-view="re" onclick="switchView('re')">Re-engagement</button>
   </div>
 
   <div id="viewProduction">
@@ -170,6 +173,12 @@ tr.amber td{background:rgba(224,136,76,0.10)}
       <div class="empty" style="padding:60px;">Loading…</div>
     </div>
   </div>
+
+  <div id="viewRe" style="display:none">
+    <div id="reReport">
+      <div class="empty" style="padding:60px;">Loading…</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -179,6 +188,7 @@ var _charts = {};
 var _vaRange = '30d', _vaFrom = null, _vaTo = null, _vaLoaded = false;
 var _vaCharts = {};
 var _pvRange = '365d', _pvFrom = null, _pvTo = null, _pvLoaded = false;
+var _reLoaded = false;
 
 /* ── formatting ── */
 function fmtMoney(n){ if(n==null||n==='') return '—'; var v=Math.round(Number(n)); if(isNaN(v)) return '—'; return '$'+v.toLocaleString('en-US'); }
@@ -350,8 +360,10 @@ function switchView(view){
   document.getElementById('viewProduction').style.display = view==='production' ? '' : 'none';
   document.getElementById('viewVa').style.display = view==='va' ? '' : 'none';
   document.getElementById('viewPv').style.display = view==='pv' ? '' : 'none';
+  document.getElementById('viewRe').style.display = view==='re' ? '' : 'none';
   if(view==='va' && !_vaLoaded){ setVaRange('30d'); }
   if(view==='pv' && !_pvLoaded){ setPvRange('365d'); }
+  if(view==='re' && !_reLoaded){ loadReReport(); }
 }
 
 /* ── VA productivity ── */
@@ -617,6 +629,71 @@ function renderPv(d){
   html+='</div>';
 
   document.getElementById('pvReport').innerHTML=html;
+}
+
+/* ── Re-engagement (live campaign snapshot — no date range) ── */
+async function loadReReport(){
+  _reLoaded=true;
+  var rep=document.getElementById('reReport');
+  rep.innerHTML='<div class="empty" style="padding:60px;">Loading…</div>';
+  try{
+    var res=await _client.rpc('reengagement_progress_report');
+    if(res.error) throw res.error;
+    renderRe(res.data||{});
+  }catch(e){
+    rep.innerHTML='<div class="empty" style="color:var(--red);padding:50px;">Could not load report: '+esc((e&&e.message)||'error')+'</div>';
+  }
+}
+
+function renderRe(d){
+  var em=d.email||{}, cl=d.call||{};
+  var up=document.getElementById('updated');
+  if(up) up.textContent = d.generated_at ? ('Updated '+new Date(d.generated_at).toLocaleString()) : '';
+
+  function tile(label,value,opts){ opts=opts||{}; return '<div class="tile'+(opts.gold?' gold':'')+(opts.red?' red':'')+'"><div class="tile-val">'+value+'</div><div class="tile-lbl">'+label+'</div></div>'; }
+  function conv(label,value){ return '<div class="conv"><div class="conv-val">'+value+'</div><div class="conv-lbl">'+label+'</div></div>'; }
+  // Rate readout: raw pct value + '%', or '—' when null. Zeros render as "0%".
+  function rpct(n){ if(n==null||n==='') return '—'; var v=Number(n); return isNaN(v)?'—':(v+'%'); }
+
+  var html='<div class="panels">';
+
+  /* EMAIL panel */
+  html+='<div class="sec"><div class="sec-h">Email Re-engagement (279 dormant leads)</div>'
+    + '<div class="tiles">'
+      + tile('Cohort size', fmtNum(em.cohort_size))
+      + tile('Emailed', fmtNum(em.contacted))
+      + tile('Opened', fmtNum(em.opened))
+      + tile('Clicked', fmtNum(em.clicked))
+      + tile('Bounced', fmtNum(em.bounced), {red:(Number(em.bounced)>0)})
+      + tile('Progressed out of New Lead', fmtNum(em.progressed), {gold:true})
+    + '</div>'
+    + '<div class="conv-grid" style="margin-top:12px;">'
+      + conv('Open rate', rpct(em.open_rate_pct))
+      + conv('Click rate', rpct(em.click_rate_pct))
+    + '</div>'
+  + '</div>';
+
+  /* CALL panel */
+  html+='<div class="sec"><div class="sec-h">Phone Re-engagement (690 dormant leads)</div>'
+    + '<div class="tiles">'
+      + tile('Cohort size', fmtNum(cl.cohort_size))
+      + tile('Dialed', fmtNum(cl.dialed))
+      + tile('Not yet called', fmtNum(cl.not_yet_called))
+      + tile('Connected', fmtNum(cl.connected), {gold:true})
+      + tile('Voicemail', fmtNum(cl.voicemail))
+      + tile('Progressed out of New Lead', fmtNum(cl.progressed), {gold:true})
+    + '</div>'
+    + '<div class="conv-grid" style="margin-top:12px;">'
+      + conv('Connect rate', rpct(cl.connect_rate_pct))
+      + conv('Total attempts', fmtNum(cl.total_attempts))
+    + '</div>'
+  + '</div>';
+
+  html+='</div>'; // /panels
+
+  if(d.note) html+='<div class="note">'+esc(d.note)+'</div>';
+
+  document.getElementById('reReport').innerHTML=html;
 }
 
 async function init(){
