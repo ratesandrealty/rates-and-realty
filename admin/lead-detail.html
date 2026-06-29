@@ -2623,7 +2623,7 @@
               <div><label class="ls-sub">Rate %</label><input id="ls_interest_rate" type="number" step="0.001" class="ls-input" placeholder="5.990"></div>
               <div><label class="ls-sub">Term (months)</label><input id="ls_loan_term_months" type="number" class="ls-input" placeholder="360" value="360"></div>
               <div><label class="ls-sub">Credit Score</label><input id="ls_credit_score" type="number" class="ls-input" placeholder="720"></div>
-              <div><label class="ls-sub">Loan Type</label><select id="ls_loan_type" class="ls-input"><option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option><option>Jumbo</option><option>Non-QM</option></select></div>
+              <div><label class="ls-sub">Loan Type</label><select id="ls_loan_type" class="ls-input" onchange="lsRecalc()"><option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option><option>Jumbo</option><option>Non-QM</option></select></div>
               <div><label class="ls-sub">Loan Program</label><select id="ls_loan_program" class="ls-input"><option>30-Year Fixed</option><option>15-Year Fixed</option><option>20-Year Fixed</option><option>10-Year Fixed</option><option>5/1 ARM</option><option>7/1 ARM</option><option>10/1 ARM</option></select></div>
             </div>
             <div class="ls-card-label" style="margin-top:10px">Housing Expense (PITIA)</div>
@@ -19360,10 +19360,14 @@ function lsRecalc() {
   _lsSetNum('ls_pi_payment', pi);
   // LTV
   var ltv = apprV ? (loanAmt / apprV * 100) : 0;
+  // Loan type — VA loans never carry monthly mortgage insurance (only a one-time funding fee).
+  var _lsLoanType = (document.getElementById('ls_loan_type') || {}).value || '';
+  var _lsIsVA = /\bva\b/i.test(_lsLoanType);
   // MI — mode-driven (auto / % of loan / fixed $)
   var mi = 0;
   if (_lsMIMode === 'auto') {
-    if (ltv > 80) {
+    // Auto MI is suppressed entirely for VA regardless of LTV.
+    if (!_lsIsVA && ltv > 80) {
       var miRate = ltv <= 85 ? 0.0052 : ltv <= 90 ? 0.0068 : ltv <= 95 ? 0.0085 : 0.0102;
       mi = loanAmt * miRate / 12;
     }
@@ -19420,6 +19424,8 @@ function lsRecalc() {
   document.getElementById('ls_ltv_bar').style.width = Math.min(ltv, 100) + '%';
   document.getElementById('ls_ltv_bar').style.background = ltv > 97 ? '#ef4444' : ltv > 80 ? '#f97316' : '#22c55e';
   document.getElementById('ls_mi_note').textContent = ltv > 80 ? ('MI applies at ' + ltv.toFixed(1) + '% LTV — ' + _lsFmt(mi) + '/mo') : 'No MI (LTV \u2264 80%)';
+  // VA loans never carry monthly MI — suppress the "MI applies" note regardless of LTV.
+  if (_lsIsVA) document.getElementById('ls_mi_note').textContent = 'No monthly MI (VA loan)';
   // Cash to close
   var price = _lsNum('ls_purchase_price'), down = _lsNum('ls_down_payment'),
       closing = _lsNum('ls_closing_costs'), prepaid = _lsNum('ls_prepaids'),
@@ -19691,6 +19697,8 @@ async function lsGeneratePreApproval() {
     var hoa        = parseFloat(document.getElementById('ld-hoa')?.value)         || 0;
     var mi         = parseFloat(document.getElementById('ld-mi')?.value)          || 0;
     var other      = parseFloat(document.getElementById('ld-other')?.value)       || 0;
+    // VA loans never carry monthly MI — force 0 so mi_monthly and total_pitia exclude it (matches PDF).
+    if (/\bva\b/i.test(document.getElementById('ld-loan-type')?.value || '')) mi = 0;
     // Closing-cost fields stay from Loan Summary panel — no dashboard equivalent
     var down = _lsNum('ls_down_payment'), closing = _lsNum('ls_closing_costs'),
         prepaid = _lsNum('ls_prepaids'), credits = _lsNum('ls_credits');

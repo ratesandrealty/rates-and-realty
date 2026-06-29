@@ -178,6 +178,8 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const fDTI       = parseFloat(String(d.front_dti||0));
   const bDTI       = parseFloat(String(d.back_dti||0));
   const loanType   = v(d.loan_type,'Conventional');
+  const isVALoan   = /\bva\b/i.test(loanType);
+  const miEff      = isVALoan ? 0 : mi;   // VA loans never carry monthly mortgage insurance (compliance)
   const loanProg   = v(d.loan_program,'30-Year Fixed');
   const purposeRaw = v(d.loan_purpose,'Purchase');
   const purpose    = purposeRaw.charAt(0).toUpperCase() + purposeRaw.slice(1).toLowerCase();
@@ -296,10 +298,10 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     {lbl:'Principal & Interest',val:pi},
     ...(taxes>0?[{lbl:'Property Taxes',val:taxes}]:[]),
     ...(ins>0?[{lbl:"Homeowner's Insurance",val:ins}]:[]),
-    ...(mi>0?[{lbl:'Mortgage Insurance',val:mi}]:[]),
+    ...(miEff>0?[{lbl:'Mortgage Insurance',val:miEff}]:[]),
     ...(hoa>0?[{lbl:'HOA Dues',val:hoa}]:[]),
   ];
-  const totalP=parseFloat(String(d.total_pitia||0))||pitia.reduce((s,r)=>s+r.val,0);
+  const totalP=isVALoan ? pitia.reduce((s,r)=>s+r.val,0) : (parseFloat(String(d.total_pitia||0))||pitia.reduce((s,r)=>s+r.val,0));
   let pyStart=y;
   for(const row of pitia){
     HL(M,y+2,leftW,LGRAY); T(row.lbl,M+6,y-7,R,8,DARK);
