@@ -22,6 +22,8 @@ const LGRAY = rgb(0.87, 0.87, 0.87);
 const BGRAY = rgb(0.97, 0.96, 0.94);
 const GREEN = rgb(0.086, 0.60, 0.22);
 const RED   = rgb(0.82, 0.10, 0.18);
+const DGREEN= rgb(0.082, 0.502, 0.239); // #15803D — DTI within program limit
+const DRED  = rgb(0.863, 0.149, 0.149); // #DC2626 — DTI over program limit
 const INK   = rgb(0.04, 0.07, 0.28);
 
 const san = (x: any): string => x == null ? '' :
@@ -198,6 +200,14 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const fhaOK      = fDTI > 0 && fDTI <= 46.9 && bDTI <= 57;
   const vaOK       = bDTI > 0 && bDTI <= 55;
   const guideNote  = convOK?'meets Conventional guidelines':fhaOK?'meets FHA guidelines':vaOK?'meets VA guidelines':'subject to lender approval';
+  // Program-specific DTI limits for color-coding (null = no separate limit for that program).
+  const isFHALoan  = /\bfha\b/i.test(loanType);
+  const frontLimit = isFHALoan ? 46.9 : null;
+  const backLimit  = isVALoan ? 55 : (isFHALoan ? 57 : 50);
+  const frontOK    = frontLimit==null ? true : (fDTI<=frontLimit);
+  const backOK     = backLimit==null  ? true : (bDTI<=backLimit);
+  const frontColor = frontOK ? DGREEN : DRED;
+  const backColor  = backOK  ? DGREEN : DRED;
 
   const T  = (s:string,x:number,y:number,f:PDFFont,sz:number,c:any,mw?:number) => drawText(page,s,x,y,f,sz,c,mw);
   const HL = (x:number,y:number,w:number,c=LGRAY,sw=0.5) => page.drawLine({start:{x,y},end:{x:x+w,y},thickness:sw,color:c});
@@ -324,7 +334,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
       RX(cx,y-38,cardW,38,undefined,LGRAY,0.5);
       const lbl=i===0?'FRONT DTI':'BACK DTI',val=i===0?`${fDTI.toFixed(2)}%`:`${bDTI.toFixed(2)}%`;
       T(lbl,cx+(cardW-R.widthOfTextAtSize(lbl,6))/2,y-9,R,6,GRAY);
-      T(val,cx+(cardW-B.widthOfTextAtSize(val,14))/2,y-26,B,14,DARK);
+      T(val,cx+(cardW-B.widthOfTextAtSize(val,14))/2,y-26,B,14,(i===0?frontColor:backColor));
     }
     y-=44;
     for(const c of [{ok:convOK,lbl:'Conv. (Back 50% max)'},{ok:fhaOK,lbl:'FHA (Front 46.9% / Back 57%)'},{ok:vaOK,lbl:'VA (Back 55% max)'}]){
@@ -339,16 +349,16 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   if(incMo>0||debtMo>0||fDTI>0||bDTI>0){
     T('INCOME, DEBT & RATIOS',M,y,B,6.5,GOLD); HL(M,y-3,CW,GOLD,0.6); y-=14;
     const idr=[
-      {lbl:'TOTAL MONTHLY INCOME',val:fmtD(incMo)},
-      {lbl:'TOTAL MONTHLY DEBT',val:fmtD(debtMo)},
-      {lbl:'FRONT-END DTI',val:`${fDTI.toFixed(2)}%`},
-      {lbl:'BACK-END DTI',val:`${bDTI.toFixed(2)}%`},
+      {lbl:'TOTAL MONTHLY INCOME',val:fmtD(incMo),col:DARK},
+      {lbl:'TOTAL MONTHLY DEBT',val:fmtD(debtMo),col:DARK},
+      {lbl:'FRONT-END DTI',val:`${fDTI.toFixed(2)}%`,col:frontColor},
+      {lbl:'BACK-END DTI',val:`${bDTI.toFixed(2)}%`,col:backColor},
     ];
     const cW4b=CW/4;
     for(let i=0;i<idr.length;i++){
       const px=M+i*cW4b;
       T(idr[i].lbl,px,y,R,6,GRAY);
-      T(idr[i].val,px,y-12,B,9.5,DARK);
+      T(idr[i].val,px,y-12,B,9.5,(idr[i].col||DARK));
     }
     y-=30;
   }

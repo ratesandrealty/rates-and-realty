@@ -18507,6 +18507,16 @@ async function save1003() {
         .eq('id', cid)
         .then(function(r) { if (r.error) console.warn('[contacts sync 1003]', r.error); });
     }
+    // Link the co-borrower's contact to this application so combined income/DTI sums across
+    // ALL borrowers. losLoadBorrowers + the combined calc discover co-borrowers via these
+    // columns; without them a co-borrower's income never rolls into the combined total.
+    var _savedAppId = (upsertResult && upsertResult[0] && upsertResult[0].id) || existingAppId || null;
+    if (window._coBorrowerContactId && cid) {
+      _authClient().from('contacts')
+        .update({ is_co_borrower: true, primary_borrower_contact_id: cid, linked_application_id: _savedAppId, updated_at: new Date().toISOString() })
+        .eq('id', window._coBorrowerContactId)
+        .then(function(r) { if (r.error) console.warn('[co-borrower link]', r.error); });
+    }
     toast('Application saved!');
     // Sync updated data to fee sheet iframe if loaded
     if (_feeSheetLoaded) syncFeeSheetData();
@@ -19855,6 +19865,18 @@ async function initLoanSummary() {
         if (!document.getElementById('ls_interest_rate').value) _lsSetNum('ls_interest_rate', a.note_rate || a.interest_rate);
         if (!document.getElementById('ls_purchase_price').value) _lsSetNum('ls_purchase_price', a.purchase_price);
         if (!document.getElementById('ls_total_monthly_income').value) _lsSetNum('ls_total_monthly_income', a.total_monthly_income);
+        // Load the saved loan type into the qualifier dropdown (case-insensitive match) so the
+        // qualifier — and the pre-approval payload that reads ls_loan_type — reflect the real
+        // loan program (e.g. VA) instead of the default 'Conventional'.
+        if (a.loan_type) {
+          var _lt = document.getElementById('ls_loan_type');
+          if (_lt) {
+            var _want = String(a.loan_type).trim().toLowerCase();
+            for (var _i = 0; _i < _lt.options.length; _i++) {
+              if (_lt.options[_i].value.toLowerCase() === _want || _lt.options[_i].text.toLowerCase() === _want) { _lt.selectedIndex = _i; break; }
+            }
+          }
+        }
       }
     }
   } catch(e) { console.warn('[loan-summary] app load:', e); }
@@ -20541,6 +20563,24 @@ async function losLoadBorrowers() {
         });
       }
     }
+    // Canonical linkage: also include any co-borrowers linked via the contacts table
+    // (is_co_borrower + primary_borrower_contact_id = primary). Merge any not already present
+    // (dedup by contact_id) so combined income/DTI sums across EVERY borrower on the loan,
+    // regardless of how they were linked (loan_borrowers / co_borrower_contact_id / contacts).
+    try {
+      var linkRes = await fetch(base+'/rest/v1/contacts?primary_borrower_contact_id=eq.'+cid+'&is_co_borrower=eq.true&select=id,first_name,last_name,email', { headers: hdrs });
+      var linked = linkRes.ok ? (await linkRes.json() || []) : [];
+      var have = {}; losBorrowers.forEach(function(b){ if (b.contact_id) have[b.contact_id] = true; });
+      linked.forEach(function(c){
+        if (!c.id || have[c.id]) return;
+        have[c.id] = true;
+        losBorrowers.push({
+          contact_id: c.id, application_id: app.id,
+          borrower_role: 'CoBorrower', borrower_order: losBorrowers.length + 1, is_primary: false,
+          contact: c
+        });
+      });
+    } catch(le) { console.warn('[borrowers] linked co-borrower load:', le); }
   } catch(e) { console.warn('[borrowers] load:', e); losBorrowers = []; }
   renderBorrowerTabs();
 }
