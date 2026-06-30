@@ -660,6 +660,18 @@
       if(r.error){ box.innerHTML='<div class="empty">Could not load leads.</div>'; if(qpanel) qpanel.innerHTML='<div class="empty">Could not load queue.</div>'; return; }
       // Store once; render both the Shared Leads tab and the Call Queue from it.
       _leads=(r.data||[]).map(function(l,i){ l._qid='q'+i; return l; });
+      // Merge per-lead potential earnings. contacts.estimated_earnings is always 0 by design
+      // (write-only inbox); the real value lives in contact_earnings, keyed by contact_id.
+      try{
+        var _eids=_leads.map(function(l){ return l.contact_id; }).filter(Boolean);
+        if(_eids.length){
+          var er=await _authClient().from('contact_earnings').select('contact_id,estimated_earnings').in('contact_id',_eids);
+          if(!er.error && er.data){
+            var emap={}; er.data.forEach(function(x){ emap[x.contact_id]=x.estimated_earnings; });
+            _leads.forEach(function(l){ if(l.contact_id!=null && emap[l.contact_id]!=null) l.estimated_earnings=emap[l.contact_id]; });
+          }
+        }
+      }catch(_e){ /* non-fatal — cards just omit Potential */ }
       renderLeads(_leads);
       renderQueue();
     }catch(e){ box.innerHTML='<div class="empty">Could not load leads.</div>'; if(qpanel) qpanel.innerHTML='<div class="empty">Could not load queue.</div>'; }
@@ -710,6 +722,9 @@
     var stage=l.stage?'<span class="chip chip-muted">'+esc(l.stage)+'</span>':'';
     var amt=l.loan_amount?'<span style="font-size:12px;color:var(--text2);white-space:nowrap;flex-shrink:0;">'+esc(fmtMoney(l.loan_amount))+'</span>':'';
     var rec=recencyInfo(l.last_activity_at), recColor=rec.amber?'#E7B380':'#8FD79A';
+    var pot=(l.estimated_earnings!=null && Number(l.estimated_earnings)>0)
+      ? '<div style="font-size:11px;margin-top:3px;color:var(--gold);font-weight:700;">Potential: '+esc(fmtMoney(l.estimated_earnings))+'</div>'
+      : '';
     var phone=l.phone
       ? '<a class="q-phone" href="tel:'+esc(l.phone)+'">📞 '+esc(l.phone)+'</a>'
         +' <button class="q-copy" data-phone="'+esc(l.phone)+'" onclick="copyText(this.getAttribute(\'data-phone\'))">Copy</button>'
@@ -720,13 +735,14 @@
         +'<div style="min-width:0;flex:1;">'
           +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span class="q-name">'+name+'</span>'+stage+outcomeChip(l.deal_outcome)+'</div>'
           +'<div class="q-recency" style="font-size:11px;margin-top:4px;color:'+recColor+';">'+esc(rec.text)+'</div>'
+          +pot
         +'</div>'+amt
       +'</div>'
       +'<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+phone+'</div>'
       +email
       +'<div class="q-actions">'
-        +'<button class="btn-ghost" style="padding:5px 10px;" onclick="queueOpenForm(\''+qid+'\',\'call\')">📞 Call</button>'
-        +'<button class="btn-ghost" style="padding:5px 10px;" onclick="queueOpenForm(\''+qid+'\',\'sms\')">💬 SMS</button>'
+        +'<a class="btn-ghost" style="padding:5px 10px;" href="lead-detail.html?contact_id='+encodeURIComponent(l.contact_id||'')+'&act=call" target="rrLeadAction" rel="noopener" title="Call via the lead\'s page">📞 Call</a>'
+        +'<a class="btn-ghost" style="padding:5px 10px;" href="lead-detail.html?contact_id='+encodeURIComponent(l.contact_id||'')+'&act=sms" target="rrLeadAction" rel="noopener" title="Text via the lead\'s page">💬 SMS</a>'
         +'<button class="btn-ghost" style="padding:5px 10px;" onclick="queueOpenForm(\''+qid+'\',\'note\')">📝 Note</button>'
         +'<a class="btn-ghost" style="padding:5px 10px;margin-left:auto;" href="lead-detail.html?contact_id='+encodeURIComponent(l.contact_id||'')+'" target="_blank" rel="noopener">Open ↗</a>'
       +'</div>'
