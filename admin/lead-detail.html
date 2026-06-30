@@ -9819,9 +9819,10 @@ function lpRenderOrders(){
       +'</div>'
       +'<div id="lpVendDrop-'+row.type+'" style="display:none;position:absolute;left:62px;right:52px;top:34px;z-index:50;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>';
     if(o.id){
-      html+='<div style="margin-top:4px;">'
+      html+='<div style="margin-top:4px;display:flex;align-items:center;gap:12px;">'
         +'<button type="button" onclick="lpToggleRowNotes(\''+o.id+'\',this)" style="background:transparent;border:none;color:#C9A84C;font-size:10px;cursor:pointer;padding:0;font-family:inherit;">💬 Notes ('+(o.note_count||0)+')'+(o.last_follow_up_at?(' · last follow-up '+_lpFmtDT(o.last_follow_up_at)):'')+' ▾</button>'
-        +'<div id="lpRowNotes-'+o.id+'" style="display:none;"></div></div>';
+        +'<button type="button" onclick="lpOrderEmail(\''+o.id+'\')" style="background:transparent;border:none;color:#C9A84C;font-size:10px;cursor:pointer;padding:0;font-family:inherit;">✉️ Email</button>'
+        +'</div><div id="lpRowNotes-'+o.id+'" style="display:none;"></div>';
     }
     return html+'</div>';
   }).join('')
@@ -9880,7 +9881,7 @@ function lpVoeCardHtml(v){
     +'</div>'
     +'<div style="font-size:9.5px;color:#888;margin-top:4px;">Creates a reminder task for the VA / you / both on this date.</div>'
     +'<div id="lpVoeMeta-'+k+'" style="font-size:10px;color:#999;margin-top:4px;">'+lpVoeMetaHtml(v)+'</div>'
-    + (v.id ? lpRenderNotesBlock(v.id) : '<div style="font-size:9.5px;color:#666;margin-top:6px;">Save this VOE (set a borrower/status) to start its notes log.</div>')
+    + (v.id ? ('<div style="text-align:right;margin-top:6px;"><button type="button" onclick="lpOrderEmail(\''+v.id+'\')" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;padding:3px 10px;cursor:pointer;font-family:inherit;">✉️ Email</button></div>' + lpRenderNotesBlock(v.id)) : '<div style="font-size:9.5px;color:#666;margin-top:6px;">Save this VOE (set a borrower/status) to start its notes log.</div>')
   +'</div>';
 }
 function lpVoeAdd(){ _lpVoes.push({ key:'vn'+(++_lpVoeSeq), id:null, status:'not_ordered' }); lpRenderVoe(); }
@@ -9988,13 +9989,33 @@ async function _lpGetUserDisplay(){
   try{ const u=(await _authClient().auth.getUser()).data.user; _lpUserDisplay=(u && ((u.user_metadata&&u.user_metadata.full_name)||u.email))||'Staff'; }catch(_){ _lpUserDisplay='Staff'; }
   return _lpUserDisplay;
 }
+function _lpAgo(iso){
+  if(!iso) return ''; const d=new Date(iso); if(isNaN(d.getTime())) return '';
+  const s=Math.floor((Date.now()-d.getTime())/1000);
+  if(s<60) return 'just now'; const m=Math.floor(s/60); if(m<60) return m+'m ago';
+  const h=Math.floor(m/60); if(h<24) return h+'h ago'; const dy=Math.floor(h/24); if(dy<30) return dy+'d ago';
+  return _lpFmtDT(iso);
+}
+function _lpOrderById(orderId){
+  let o=_lpVoes.find(x=>String(x.id)===String(orderId)); if(o) return o;
+  for(const t in _lpOrders){ if(_lpOrders[t] && String(_lpOrders[t].id)===String(orderId)) return _lpOrders[t]; }
+  return null;
+}
 function lpRenderNotesBlock(orderId){
-  return '<div style="margin-top:6px;border-top:1px dashed rgba(255,255,255,.08);padding-top:6px;">'
-    +'<div id="lpNotes-'+orderId+'" style="max-height:150px;overflow-y:auto;margin-bottom:6px;"></div>'
-    +'<textarea id="lpNoteInput-'+orderId+'" rows="2" placeholder="Add a note… use @ to mention" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:6px 8px;font-family:inherit;resize:vertical;"></textarea>'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;">'
-      +'<label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="lpNoteFu-'+orderId+'" style="accent-color:#C9A84C;"> ↻ This is a follow-up</label>'
-      +'<span style="display:flex;align-items:center;gap:6px;"><span id="lpNoteSaved-'+orderId+'" style="font-size:10px;"></span><button type="button" onclick="lpNotePost(\''+orderId+'\',this)" style="background:#C9A84C;border:none;color:#111;border-radius:6px;font-size:11px;font-weight:700;padding:4px 12px;cursor:pointer;">Post</button></span>'
+  const o=_lpOrderById(orderId)||{};
+  const ovd = o.follow_up_at && o.status!=='received' && new Date(o.follow_up_at).getTime()<Date.now();
+  const track='<div style="font-size:10.5px;color:#999;margin-bottom:7px;display:flex;flex-wrap:wrap;gap:3px 12px;">'
+    +'<span>Last follow-up: '+(o.last_follow_up_at?lpEsc(_lpFmtDT(o.last_follow_up_at)):'—')+'</span>'
+    +'<span style="color:'+(ovd?'#f87171':'#999')+';font-weight:'+(ovd?'700':'400')+';">Next: '+(o.follow_up_at?(lpEsc(_lpFmtDT(o.follow_up_at))+(ovd?' · overdue':'')):'—')+'</span>'
+    +'<span>Received: '+(o.received_at?('<span style="color:#50c878;">'+lpEsc(_lpFmtDT(o.received_at))+'</span>'):'—')+'</span>'
+  +'</div>';
+  return '<div style="margin-top:6px;border-top:1px dashed rgba(255,255,255,.08);padding-top:8px;">'
+    +track
+    +'<div id="lpNotes-'+orderId+'" style="max-height:180px;overflow-y:auto;margin-bottom:8px;"></div>'
+    +'<textarea id="lpNoteInput-'+orderId+'" rows="2" placeholder="Add a note… use @ to mention" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#ddd;font-size:12px;padding:8px 10px;font-family:inherit;resize:vertical;"></textarea>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;">'
+      +'<label style="font-size:11px;color:#aaa;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="lpNoteFu-'+orderId+'" style="accent-color:#C9A84C;width:13px;height:13px;"> ↻ This is a follow-up</label>'
+      +'<span style="display:flex;align-items:center;gap:8px;"><span id="lpNoteSaved-'+orderId+'" style="font-size:10px;"></span><button type="button" onclick="lpNotePost(\''+orderId+'\',this)" style="background:#C9A84C;border:none;color:#111;border-radius:7px;font-size:12px;font-weight:700;padding:6px 16px;cursor:pointer;">Post</button></span>'
     +'</div></div>';
 }
 async function lpNotesLoad(orderId){
@@ -10010,11 +10031,11 @@ function lpRenderNotes(orderId, rows){
   const el=document.getElementById('lpNotes-'+orderId); if(!el) return;
   if(!rows.length){ el.innerHTML='<div style="color:#666;font-size:10px;padding:2px;">No notes yet.</div>'; return; }
   el.innerHTML=rows.map(function(n){
-    const fu=n.is_follow_up?'<span style="font-size:8.5px;font-weight:700;color:#C9A84C;border:1px solid rgba(201,168,76,.4);border-radius:3px;padding:0 4px;margin-left:5px;">↻ follow-up</span>':'';
+    const fu=n.is_follow_up?'<span style="font-size:9px;font-weight:700;color:#C9A84C;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);border-radius:10px;padding:1px 7px;margin-left:7px;">↻ follow-up</span>':'';
     const body=(typeof renderMentions==='function')?renderMentions(n.note_text||''):lpEsc(n.note_text||'');
-    return '<div style="padding:5px 2px;border-bottom:1px solid rgba(255,255,255,.04);">'
-      +'<div style="font-size:9.5px;color:#888;">'+lpEsc(n.author_display||'—')+' · '+_lpFmtDT(n.created_at)+fu+'</div>'
-      +'<div style="font-size:11px;color:#ddd;white-space:pre-wrap;margin-top:1px;">'+body+'</div>'
+    return '<div style="padding:8px 2px;border-bottom:1px solid rgba(255,255,255,.05);">'
+      +'<div style="font-size:10px;color:#888;margin-bottom:3px;">'+lpEsc(n.author_display||'—')+' · '+lpEsc(_lpAgo(n.created_at))+fu+'</div>'
+      +'<div style="font-size:12.5px;color:#e0e0e0;white-space:pre-wrap;line-height:1.45;">'+body+'</div>'
     +'</div>';
   }).join('');
 }
@@ -10041,6 +10062,42 @@ function lpToggleRowNotes(orderId, btn){
     const ta=document.getElementById('lpNoteInput-'+orderId); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta);
   }
   box.style.display='block';
+}
+/* ── Email from an order (rene / processing sender; logged back into the order's notes) ── */
+function lpOrderEmail(orderId){
+  const o=_lpOrderById(orderId)||{};
+  const toEmail=o.hr_contact_email||o.vendor_email||'';
+  const toName=o.hr_contact_name||o.vendor_name||'';
+  let ov=document.getElementById('lpOrderEmailModal');
+  if(!ov){ ov=document.createElement('div'); ov.id='lpOrderEmailModal'; ov.style.cssText='position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:20px;'; document.body.appendChild(ov); }
+  const fld='width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;margin-bottom:8px;font-family:inherit;';
+  ov.innerHTML='<div style="background:#15140f;border:1px solid rgba(201,168,76,.3);border-radius:14px;width:min(560px,96vw);max-height:90vh;overflow:auto;padding:18px;">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;"><span style="font-weight:700;color:#fff;font-size:15px;">✉️ Email — '+lpEsc(o.label||o.order_type||'order')+'</span><button onclick="document.getElementById(\'lpOrderEmailModal\').remove()" style="background:none;border:none;color:#888;font-size:22px;cursor:pointer;">&times;</button></div>'
+    +'<label style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.5px;">From</label>'
+    +'<select id="lpOeFrom" style="'+fld+'"><option value="processing" selected>Processing (processing@ratesandrealty.com)</option><option value="rene">Rene (rene@ratesandrealty.com)</option></select>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><input id="lpOeTo" type="email" placeholder="To email" value="'+lpEsc(toEmail)+'" style="'+fld+'"><input id="lpOeToName" type="text" placeholder="To name" value="'+lpEsc(toName)+'" style="'+fld+'"></div>'
+    +'<input id="lpOeCc" type="text" placeholder="CC (optional, comma-separated)" style="'+fld+'">'
+    +'<input id="lpOeSubj" type="text" placeholder="Subject" style="'+fld+'">'
+    +'<textarea id="lpOeBody" rows="8" placeholder="Write your message…" style="'+fld+'resize:vertical;"></textarea>'
+    +'<div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:4px;"><span id="lpOeSaved" style="font-size:11px;"></span><button onclick="document.getElementById(\'lpOrderEmailModal\').remove()" style="background:transparent;border:1px solid #444;color:#aaa;border-radius:8px;font-size:13px;padding:8px 16px;cursor:pointer;font-family:inherit;">Cancel</button><button onclick="lpOrderEmailSend(\''+orderId+'\',this)" style="background:#C9A84C;border:none;color:#111;border-radius:8px;font-size:13px;font-weight:700;padding:8px 18px;cursor:pointer;font-family:inherit;">Send</button></div>'
+  +'</div>';
+  ov.onclick=function(e){ if(e.target===ov) ov.remove(); };
+  setTimeout(function(){ const s=document.getElementById('lpOeSubj'); if(s) s.focus(); },50);
+}
+async function lpOrderEmailSend(orderId, btn){
+  const g=id=>((document.getElementById(id)||{}).value||'').trim();
+  const to=g('lpOeTo'); if(!to){ alert('Recipient email required.'); return; }
+  const subj=g('lpOeSubj'); if(!subj){ alert('Subject required.'); return; }
+  const html='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#222;white-space:pre-wrap;">'+lpEsc(g('lpOeBody'))+'</div>';
+  const sv=document.getElementById('lpOeSaved'); btn.disabled=true; btn.textContent='Sending…';
+  try{
+    const r=await _authClient().rpc('order_email_send',{ p_order_id:orderId, p_to_email:to, p_subject:subj, p_html:html, p_from_key:(g('lpOeFrom')||'processing'), p_to_name:g('lpOeToName')||null, p_cc:g('lpOeCc')||null });
+    if(r.error) throw r.error;
+    const ov=document.getElementById('lpOrderEmailModal'); if(ov) ov.remove();
+    if(typeof showToast==='function') showToast('Email sent ✓');
+    lpNotesLoad(orderId);   // backend logged it as a "📧 Emailed…" note
+    lpLoadTracker(lpCid());
+  }catch(e){ btn.disabled=false; btn.textContent='Send'; if(sv){ sv.textContent='Failed'; sv.style.color='#f87171'; } alert('Could not send: '+(e.message||'error')); }
 }
 function lpOrderStatusChange(type,status){
   if(!_lpOrders[type]) _lpOrders[type]={};
