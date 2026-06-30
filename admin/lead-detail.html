@@ -10013,9 +10013,10 @@ function lpRenderNotesBlock(orderId){
     +track
     +'<div id="lpNotes-'+orderId+'" style="max-height:180px;overflow-y:auto;margin-bottom:8px;"></div>'
     +'<textarea id="lpNoteInput-'+orderId+'" rows="2" placeholder="Add a note… use @ to mention" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#ddd;font-size:12px;padding:8px 10px;font-family:inherit;resize:vertical;"></textarea>'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;">'
-      +'<label style="font-size:11px;color:#aaa;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="lpNoteFu-'+orderId+'" style="accent-color:#C9A84C;width:13px;height:13px;"> ↻ This is a follow-up</label>'
-      +'<span style="display:flex;align-items:center;gap:8px;"><span id="lpNoteSaved-'+orderId+'" style="font-size:10px;"></span><button type="button" onclick="lpNotePost(\''+orderId+'\',this)" style="background:#C9A84C;border:none;color:#111;border-radius:7px;font-size:12px;font-weight:700;padding:6px 16px;cursor:pointer;">Post</button></span>'
+    +'<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:6px;">'
+      +'<span id="lpNoteSaved-'+orderId+'" style="font-size:10px;margin-right:auto;"></span>'
+      +'<button type="button" onclick="lpFollowupLog(\''+orderId+'\',this)" title="Log a follow-up now — with the note above if you typed one, otherwise just stamps the date" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.5);color:#C9A84C;border-radius:14px;font-size:12px;font-weight:700;padding:6px 14px;cursor:pointer;font-family:inherit;">↻ Followed up</button>'
+      +'<button type="button" onclick="lpNotePost(\''+orderId+'\',this)" style="background:#C9A84C;border:none;color:#111;border-radius:7px;font-size:12px;font-weight:700;padding:6px 16px;cursor:pointer;font-family:inherit;">Post</button>'
     +'</div></div>';
 }
 async function lpNotesLoad(orderId){
@@ -10040,16 +10041,33 @@ function lpRenderNotes(orderId, rows){
   }).join('');
 }
 async function lpNotePost(orderId, btn){
-  const ta=document.getElementById('lpNoteInput-'+orderId), fu=document.getElementById('lpNoteFu-'+orderId);
-  const txt=((ta&&ta.value)||'').trim(); if(!txt) return;
+  const ta=document.getElementById('lpNoteInput-'+orderId);
+  const txt=((ta&&ta.value)||'').trim(); if(!txt) return;   // regular note requires text
   const sv=document.getElementById('lpNoteSaved-'+orderId);
   btn.disabled=true; if(sv){ sv.textContent='…'; sv.style.color='#888'; }
   try{
-    const r=await _authClient().rpc('order_note_add',{ p_order_id:orderId, p_note_text:txt, p_is_follow_up:!!(fu&&fu.checked), p_author_display: await _lpGetUserDisplay() });
+    const r=await _authClient().rpc('order_note_add',{ p_order_id:orderId, p_note_text:txt, p_is_follow_up:false, p_author_display: await _lpGetUserDisplay() });
     if(r.error) throw r.error;
-    if(ta) ta.value=''; if(fu) fu.checked=false;
+    if(ta) ta.value='';
     if(sv){ sv.textContent='Saved ✓'; sv.style.color='#50c878'; setTimeout(function(){ if(sv.textContent==='Saved ✓') sv.textContent=''; },2000); }
     lpNotesLoad(orderId);   // reload newest-first (also reflects server-side @-mention handling)
+  }catch(e){ if(sv){ sv.textContent='⚠'; sv.style.color='#E5484D'; } }
+  finally{ btn.disabled=false; }
+}
+// One-tap "Followed up": logs a follow-up now (with the typed note if any, else just stamps the date).
+async function lpFollowupLog(orderId, btn){
+  const ta=document.getElementById('lpNoteInput-'+orderId);
+  const txt=((ta&&ta.value)||'').trim();
+  const sv=document.getElementById('lpNoteSaved-'+orderId);
+  btn.disabled=true; if(sv){ sv.textContent='…'; sv.style.color='#888'; }
+  try{
+    const r=await _authClient().rpc('order_followup_log',{ p_order_id:orderId, p_note_text: (txt||null), p_author_display: await _lpGetUserDisplay() });
+    if(r.error) throw r.error;
+    if(ta) ta.value='';
+    if(sv){ sv.textContent='Logged ✓'; sv.style.color='#50c878'; setTimeout(function(){ if(sv.textContent==='Logged ✓') sv.textContent=''; },2000); }
+    lpNotesLoad(orderId);          // shows the new ↻ follow-up note
+    lpLoadTracker(lpCid());        // refresh tracker + "Last follow-up"
+    const cid=lpCid(); if(cid) lpLoadOrders(cid);   // refresh card meta (Last follow-up date)
   }catch(e){ if(sv){ sv.textContent='⚠'; sv.style.color='#E5484D'; } }
   finally{ btn.disabled=false; }
 }
