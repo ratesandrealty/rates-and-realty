@@ -9766,8 +9766,10 @@ async function lpLoadVoes(cid){
     _lpBorrowers = (bRes && !bRes.error && bRes.data) ? bRes.data : [];
     const all = (vRes && !vRes.error && vRes.data) ? vRes.data : [];
     _lpVoes = all.filter(o=>o.order_type==='voe').map((o,i)=>Object.assign({}, o, { key:'v'+i }));
-  }catch(e){ _lpVoes=[]; }
-  lpRenderVoe();
+    // Merge id + tracking fields onto the single rows so they can show a notes log too.
+    all.forEach(function(o){ if(o.order_type!=='voe' && _lpOrders[o.order_type]){ const t=_lpOrders[o.order_type]; t.id=o.id; t.note_count=o.note_count; t.last_follow_up_at=o.last_follow_up_at; t.last_note_at=o.last_note_at; } });
+    lpRenderOrders();   // re-render rows (now with ids → notes toggle) + VOE cards
+  }catch(e){ _lpVoes=[]; lpRenderVoe(); }
 }
 function lpRenderOrders(){
   const body=document.getElementById('lpOrdersBody'); if(!body) return;
@@ -9786,6 +9788,11 @@ function lpRenderOrders(){
         +'<span style="font-size:10px;text-align:right;white-space:nowrap;"><span id="lpSaved-'+row.type+'"></span><span id="lpDate-'+row.type+'" style="color:#888;"> '+dateTxt+'</span></span>'
       +'</div>'
       +'<div id="lpVendDrop-'+row.type+'" style="display:none;position:absolute;left:62px;right:52px;top:34px;z-index:50;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>';
+    if(o.id){
+      html+='<div style="margin-top:4px;">'
+        +'<button type="button" onclick="lpToggleRowNotes(\''+o.id+'\',this)" style="background:transparent;border:none;color:#C9A84C;font-size:10px;cursor:pointer;padding:0;font-family:inherit;">💬 Notes ('+(o.note_count||0)+')'+(o.last_follow_up_at?(' · last follow-up '+_lpFmtDT(o.last_follow_up_at)):'')+' ▾</button>'
+        +'<div id="lpRowNotes-'+o.id+'" style="display:none;"></div></div>';
+    }
     return html+'</div>';
   }).join('')
   + '<div id="lpVoeSection" style="margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px;">'
@@ -9805,12 +9812,15 @@ function _lpFmtDT(iso){ if(!iso) return ''; const d=new Date(iso); if(isNaN(d.ge
 function lpRenderVoe(){
   const host=document.getElementById('lpVoeCards'); if(!host) return;
   host.innerHTML = _lpVoes.length ? _lpVoes.map(lpVoeCardHtml).join('') : '<div style="font-size:11px;color:#666;padding:4px 2px;">No VOEs yet. Click “+ Add VOE”.</div>';
+  // Load each saved card's notes log + wire the @-mention picker into its note box.
+  _lpVoes.forEach(function(v){ if(v.id){ lpNotesLoad(v.id); const ta=document.getElementById('lpNoteInput-'+v.id); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta); } });
 }
 function lpVoeMetaHtml(v){
   const parts=[];
-  if(v.ordered_at) parts.push('<span style="color:#888;">Ordered '+_lpFmtDT(v.ordered_at)+'</span>');
-  if(v.received_at) parts.push('<span style="color:#50c878;">Received '+_lpFmtDT(v.received_at)+'</span>');
-  if(v.follow_up_at){ const od=(v.status!=='received' && new Date(v.follow_up_at).getTime()<Date.now()); parts.push('<span style="color:'+(od?'#E5484D':'#C9A84C')+';font-weight:'+(od?'700':'400')+';">Follow-up '+_lpFmtDT(v.follow_up_at)+(od?' · overdue':'')+'</span>'); }
+  parts.push('Ordered: '+(v.ordered_at?_lpFmtDT(v.ordered_at):'—'));
+  parts.push(v.received_at ? ('<span style="color:#50c878;font-weight:700;">Received '+_lpFmtDT(v.received_at)+'</span>') : 'Received: —');
+  parts.push('Last follow-up: '+(v.last_follow_up_at?_lpFmtDT(v.last_follow_up_at):'—'));
+  parts.push('Notes: '+(v.note_count||0));
   return parts.join(' &nbsp;·&nbsp; ');
 }
 function lpVoeCardHtml(v){
@@ -9833,12 +9843,14 @@ function lpVoeCardHtml(v){
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">'+txtF('employer_name','Employer Name')+txtF('hr_contact_name','HR Contact Name')+txtF('hr_contact_phone','HR Phone')+txtF('hr_contact_email','HR Email')+'</div>'
     +'<button type="button" onclick="lpVoeVendorOpen(\''+k+'\')" style="text-align:left;width:100%;box-sizing:border-box;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px;'+(v.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
     +'<div id="lpVoeVendDrop-'+k+'" style="display:none;position:absolute;left:8px;right:8px;z-index:60;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>'
+    +'<div style="font-size:9.5px;color:#888;margin-bottom:2px;">Next follow-up (scheduled)</div>'
     +'<div style="display:grid;grid-template-columns:1fr 90px;gap:6px;align-items:center;">'
       +'<input type="datetime-local" id="lpVoeF-'+k+'-fu" value="'+_lpToLocalDT(v.follow_up_at)+'" onchange="lpVoeFollowupAt(\''+k+'\',this.value)" style="'+inp+'">'
       +'<select onchange="lpVoeField(\''+k+'\',\'follow_up_owner\',this.value)" style="'+sel+'">'+ownerOpts+'</select>'
     +'</div>'
     +'<div style="font-size:9.5px;color:#888;margin-top:4px;">Creates a reminder task for the VA / you / both on this date.</div>'
-    +'<div id="lpVoeMeta-'+k+'" style="font-size:10px;margin-top:4px;">'+lpVoeMetaHtml(v)+'</div>'
+    +'<div id="lpVoeMeta-'+k+'" style="font-size:10px;color:#999;margin-top:4px;">'+lpVoeMetaHtml(v)+'</div>'
+    + (v.id ? lpRenderNotesBlock(v.id) : '<div style="font-size:9.5px;color:#666;margin-top:6px;">Save this VOE (set a borrower/status) to start its notes log.</div>')
   +'</div>';
 }
 function lpVoeAdd(){ _lpVoes.push({ key:'vn'+(++_lpVoeSeq), id:null, status:'not_ordered' }); lpRenderVoe(); }
@@ -9933,6 +9945,71 @@ async function lpVoeVendorAddSave(k,btn){
     if(id!=null){ _lpVendCache['voe:'+k]=[{id:id,name:name,company:g('company')}].concat(_lpVendCache['voe:'+k]||[]); lpVoeVendorPick(k,id); }
     else { const d=document.getElementById('lpVoeVendDrop-'+k); if(d) d.style.display='none'; }
   }catch(e){ btn.disabled=false; btn.textContent='Save vendor'; alert('Could not save vendor: '+(e.message||'error')); }
+}
+
+/* ═══ Per-order Notes Log (timestamped, follow-up flag, @-mentions) ═══
+   Shared by VOE cards and single rows. @-mentions reuse the page's existing
+   attachMentionAutocomplete + renderMentions (team_roster handles). The server
+   parses @handles on order_note_add and fires the notifications. */
+let _lpUserDisplay = null;
+async function _lpGetUserDisplay(){
+  if(_lpUserDisplay!=null) return _lpUserDisplay;
+  try{ const u=(await _authClient().auth.getUser()).data.user; _lpUserDisplay=(u && ((u.user_metadata&&u.user_metadata.full_name)||u.email))||'Staff'; }catch(_){ _lpUserDisplay='Staff'; }
+  return _lpUserDisplay;
+}
+function lpRenderNotesBlock(orderId){
+  return '<div style="margin-top:6px;border-top:1px dashed rgba(255,255,255,.08);padding-top:6px;">'
+    +'<div id="lpNotes-'+orderId+'" style="max-height:150px;overflow-y:auto;margin-bottom:6px;"></div>'
+    +'<textarea id="lpNoteInput-'+orderId+'" rows="2" placeholder="Add a note… use @ to mention" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:6px 8px;font-family:inherit;resize:vertical;"></textarea>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;">'
+      +'<label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="lpNoteFu-'+orderId+'" style="accent-color:#C9A84C;"> ↻ This is a follow-up</label>'
+      +'<span style="display:flex;align-items:center;gap:6px;"><span id="lpNoteSaved-'+orderId+'" style="font-size:10px;"></span><button type="button" onclick="lpNotePost(\''+orderId+'\',this)" style="background:#C9A84C;border:none;color:#111;border-radius:6px;font-size:11px;font-weight:700;padding:4px 12px;cursor:pointer;">Post</button></span>'
+    +'</div></div>';
+}
+async function lpNotesLoad(orderId){
+  const el=document.getElementById('lpNotes-'+orderId); if(!el) return;
+  el.innerHTML='<div style="color:#888;font-size:10px;padding:4px;">Loading…</div>';
+  try{
+    const r=await _authClient().rpc('order_notes_list',{ p_order_id:orderId });
+    if(r.error) throw r.error;
+    lpRenderNotes(orderId, r.data||[]);
+  }catch(e){ el.innerHTML='<div style="color:#E5484D;font-size:10px;padding:4px;">Could not load notes.</div>'; }
+}
+function lpRenderNotes(orderId, rows){
+  const el=document.getElementById('lpNotes-'+orderId); if(!el) return;
+  if(!rows.length){ el.innerHTML='<div style="color:#666;font-size:10px;padding:2px;">No notes yet.</div>'; return; }
+  el.innerHTML=rows.map(function(n){
+    const fu=n.is_follow_up?'<span style="font-size:8.5px;font-weight:700;color:#C9A84C;border:1px solid rgba(201,168,76,.4);border-radius:3px;padding:0 4px;margin-left:5px;">↻ follow-up</span>':'';
+    const body=(typeof renderMentions==='function')?renderMentions(n.note_text||''):lpEsc(n.note_text||'');
+    return '<div style="padding:5px 2px;border-bottom:1px solid rgba(255,255,255,.04);">'
+      +'<div style="font-size:9.5px;color:#888;">'+lpEsc(n.author_display||'—')+' · '+_lpFmtDT(n.created_at)+fu+'</div>'
+      +'<div style="font-size:11px;color:#ddd;white-space:pre-wrap;margin-top:1px;">'+body+'</div>'
+    +'</div>';
+  }).join('');
+}
+async function lpNotePost(orderId, btn){
+  const ta=document.getElementById('lpNoteInput-'+orderId), fu=document.getElementById('lpNoteFu-'+orderId);
+  const txt=((ta&&ta.value)||'').trim(); if(!txt) return;
+  const sv=document.getElementById('lpNoteSaved-'+orderId);
+  btn.disabled=true; if(sv){ sv.textContent='…'; sv.style.color='#888'; }
+  try{
+    const r=await _authClient().rpc('order_note_add',{ p_order_id:orderId, p_note_text:txt, p_is_follow_up:!!(fu&&fu.checked), p_author_display: await _lpGetUserDisplay() });
+    if(r.error) throw r.error;
+    if(ta) ta.value=''; if(fu) fu.checked=false;
+    if(sv){ sv.textContent='Saved ✓'; sv.style.color='#50c878'; setTimeout(function(){ if(sv.textContent==='Saved ✓') sv.textContent=''; },2000); }
+    lpNotesLoad(orderId);   // reload newest-first (also reflects server-side @-mention handling)
+  }catch(e){ if(sv){ sv.textContent='⚠'; sv.style.color='#E5484D'; } }
+  finally{ btn.disabled=false; }
+}
+function lpToggleRowNotes(orderId, btn){
+  const box=document.getElementById('lpRowNotes-'+orderId); if(!box) return;
+  if(box.style.display==='block'){ box.style.display='none'; return; }
+  if(!box.getAttribute('data-init')){
+    box.innerHTML=lpRenderNotesBlock(orderId); box.setAttribute('data-init','1');
+    lpNotesLoad(orderId);
+    const ta=document.getElementById('lpNoteInput-'+orderId); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta);
+  }
+  box.style.display='block';
 }
 function lpOrderStatusChange(type,status){
   if(!_lpOrders[type]) _lpOrders[type]={};
