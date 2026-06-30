@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="/admin/js/supabase-client.js?v=2026050601"></script>
 <script src="/admin/js/auth-guard.js?v=2026062401"></script>
+  <script src="/admin/js/crm-comms.js?v=2026070101"></script>
 <style>
 :root {
   --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
@@ -1060,7 +1061,7 @@ function renderTable() {
       + '<td style="color:var(--muted);font-size:11px">' + (p.effective_loan_type||'-') + '</td>'
       + '<td><div class="tag-cell">' + renderTagMini(p.tags) + '</div></td>'
       + '<td><div class="last-touch">' + getTimeAgo(p.created_at) + '</div></td>'
-      + '<td onclick="event.stopPropagation()"><div class="row-actions"><button class="row-action-btn" title="Call" onclick="callPerson(\'' + (p.phone||'') + '\')">&#128222;</button><button class="row-action-btn" title="Email" onclick="emailPerson(\'' + (p.email||'') + '\')">&#9993;</button><button class="row-action-btn" title="View" onclick="openPerson(\'' + p.id + '\')">&rarr;</button><button class="row-action-btn" title="Delete" onclick="confirmDeleteContact(\'' + p.id + '\',\'' + name.replace(/'/g,"\\'") + '\')" style="color:#E05252;border:1px solid rgba(224,82,82,0.25);">&#128465;</button></div></td>'
+      + '<td onclick="event.stopPropagation()"><div class="row-actions"><button class="row-action-btn" title="Call" onclick="callPerson(\'' + (p.phone||'') + '\',\'' + p.id + '\',\'' + name.replace(/'/g,"\\'") + '\')">&#128222;</button><button class="row-action-btn" title="Email" onclick="emailPerson(\'' + (p.email||'') + '\',\'' + p.id + '\',\'' + name.replace(/'/g,"\\'") + '\')">&#9993;</button><button class="row-action-btn" title="View" onclick="openPerson(\'' + p.id + '\')">&rarr;</button><button class="row-action-btn" title="Delete" onclick="confirmDeleteContact(\'' + p.id + '\',\'' + name.replace(/'/g,"\\'") + '\')" style="color:#E05252;border:1px solid rgba(224,82,82,0.25);">&#128465;</button></div></td>'
       + '</tr>';
   }).join('');
 }
@@ -1436,8 +1437,8 @@ async function updateStageInline(contactId, status) {
   showToast('Stage updated to ' + status);
 }
 
-function callPerson(phone) { if (phone) window.location.href = 'tel:' + phone; }
-function emailPerson(email) { if (email) window.location.href = 'mailto:' + email; }
+function callPerson(phone, id, name) { if (typeof crmCall === 'function') crmCall(id || null, phone, name || ''); else if (phone) window.location.href = 'tel:' + phone; }
+function emailPerson(email, id, name) { if (typeof crmEmail === 'function') crmEmail({ to_email: email, to_name: name || '', contact_id: id || null }); else if (email) window.location.href = 'mailto:' + email; }
 
 function bulkEnrollCampaign() { window.location.href = 'drip-builder.html'; }
 function bulkSendEmail() { window.location.href = 'email-marketing.html'; }
@@ -2837,12 +2838,23 @@ function updateQuickSmsCount() {
   el.style.color = len > 150 ? '#e74c3c' : len > 120 ? '#C9A84C' : '#888';
 }
 
-function sendQuickSms() {
-  var msg = document.getElementById('quickSmsMsg').value;
-  if (!msg.trim()) return;
-  var count = (window._quickSmsIds || []).length;
+async function sendQuickSms() {
+  var msg = (document.getElementById('quickSmsMsg').value || '').trim();
+  if (!msg) return;
+  var ids = (window._quickSmsIds && window._quickSmsIds.length) ? window._quickSmsIds : Array.from(_selected || []);
+  if (!ids.length) { showToast('No recipients selected', true); return; }
+  var btn = document.querySelector('#quickSmsModal .btn-gold'); var orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  var sent = 0, failed = 0;
+  for (var i = 0; i < ids.length; i++) {
+    var c = (_allContacts || []).find(function(p){ return p.id === ids[i]; });
+    var phone = c && c.phone;
+    if (!phone || typeof crmSendSms !== 'function') { failed++; continue; }
+    try { await crmSendSms(ids[i], phone, msg); sent++; } catch(e){ failed++; }
+  }
+  if (btn) { btn.disabled = false; btn.textContent = orig; }
   closeQuickSms();
-  showToast('SMS sent to ' + count + ' recipient' + (count > 1 ? 's' : ''));
+  showToast(sent ? ('Text sent ✓ to ' + sent + (failed ? (' · ' + failed + ' failed') : '')) : 'Send failed' + (failed ? (' (' + failed + ')') : ''), !sent);
 }
 
 function closeBulkStage() { document.getElementById('bulkStageModal').style.display = 'none'; }

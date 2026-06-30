@@ -10,6 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/admin/js/supabase-client.js?v=2026061501"></script>
   <script src="/admin/js/auth-guard.js?v=2026062401"></script>
+  <script src="/admin/js/crm-comms.js?v=2026070101"></script>
   <style>
     :root{
       --bg:#050505; --surface:rgba(13,13,13,0.98); --surface2:rgba(20,20,20,0.98);
@@ -282,8 +283,8 @@
     else if(typeof p.tags==='string' && p.tags.trim()){ try{ var j=JSON.parse(p.tags); tags=Array.isArray(j)?j:[p.tags]; }catch(e){ tags=p.tags.split(',').map(function(s){return s.trim();}).filter(Boolean); } }
     var tagChips=tags.map(function(t){ return '<span class="chip chip-gold">'+esc(t)+'</span>'; }).join('');
     var contact=[];
-    if(p.email) contact.push('<a href="mailto:'+esc(p.email)+'">✉️ '+esc(p.email)+'</a>');
-    if(p.phone) contact.push('<a href="tel:'+esc(p.phone)+'">📞 '+esc(p.phone)+'</a>');
+    if(p.email) contact.push('<a href="#" onclick="event.preventDefault();crmEmail({to_email:\''+esc(p.email)+'\'})" style="cursor:pointer;">✉️ '+esc(p.email)+'</a>');
+    if(p.phone) contact.push('<a href="#" onclick="event.preventDefault();crmCall(null,\''+esc(p.phone)+'\',\'\',this)" style="cursor:pointer;">📞 '+esc(p.phone)+'</a>');
     document.getElementById('hdrCard').innerHTML =
       '<div class="hdr-main">'
         +'<div class="avatar" style="background:'+av.bg+';color:'+av.fg+';">'+esc(initials(p.first_name,p.last_name))+'</div>'
@@ -680,6 +681,11 @@
   /* ── Call Queue (right panel) ── */
   function _qTms(iso){ var t=iso?new Date(iso).getTime():NaN; return isNaN(t)?0:t; }
   function findLead(qid){ for(var i=0;i<_leads.length;i++){ if(_leads[i]._qid===qid) return _leads[i]; } return null; }
+  // Queue card Call / SMS → shared CRM comms (click-to-call / sms-service), keyed by the lead.
+  function qCall(qid, btn){ var l=findLead(qid); if(!l) return; if(typeof crmCall==='function') crmCall(l.contact_id||null, l.phone||'', l.name||'', btn); }
+  function qText(qid){ var l=findLead(qid); if(!l) return; if(typeof crmText==='function') crmText(l.contact_id||null, l.phone||'', l.name||''); }
+  function qEmail(qid){ var l=findLead(qid); if(!l) return; if(typeof crmEmail==='function') crmEmail({ to_email:l.email||'', to_name:l.name||'', contact_id:l.contact_id||null }); }
+  window.qCall=qCall; window.qText=qText; window.qEmail=qEmail;
   function setQueueSort(v){ _queueSort=v||'stale'; renderQueue(); }
   function sortedLeads(){
     var arr=_leads.slice();
@@ -729,7 +735,7 @@
       ? '<a class="q-phone" href="tel:'+esc(l.phone)+'">📞 '+esc(l.phone)+'</a>'
         +' <button class="q-copy" data-phone="'+esc(l.phone)+'" onclick="copyText(this.getAttribute(\'data-phone\'))">Copy</button>'
       : '<span class="muted" style="font-size:12px;">No phone</span>';
-    var email=l.email?'<div style="margin-top:4px;"><a href="mailto:'+esc(l.email)+'" style="color:var(--gold);font-size:12px;">✉️ '+esc(l.email)+'</a></div>':'';
+    var email=l.email?'<div style="margin-top:4px;"><a href="#" onclick="event.preventDefault();qEmail(\''+qid+'\')" style="color:var(--gold);font-size:12px;cursor:pointer;">✉️ '+esc(l.email)+'</a></div>':'';
     return '<div class="qcard'+(l._done?' q-done':'')+'" id="qcard-'+qid+'" data-qid="'+qid+'">'
       +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">'
         +'<div style="min-width:0;flex:1;">'
@@ -741,8 +747,8 @@
       +'<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+phone+'</div>'
       +email
       +'<div class="q-actions">'
-        +'<a class="btn-ghost" style="padding:5px 10px;" href="lead-detail.html?contact_id='+encodeURIComponent(l.contact_id||'')+'&act=call" target="rrLeadAction" rel="noopener" title="Call via the lead\'s page">📞 Call</a>'
-        +'<a class="btn-ghost" style="padding:5px 10px;" href="lead-detail.html?contact_id='+encodeURIComponent(l.contact_id||'')+'&act=sms" target="rrLeadAction" rel="noopener" title="Text via the lead\'s page">💬 SMS</a>'
+        +'<button class="btn-ghost" style="padding:5px 10px;" onclick="qCall(\''+qid+'\',this)">📞 Call</button>'
+        +'<button class="btn-ghost" style="padding:5px 10px;" onclick="qText(\''+qid+'\')">💬 SMS</button>'
         +'<button class="btn-ghost" style="padding:5px 10px;" onclick="queueOpenForm(\''+qid+'\',\'note\')">📝 Note</button>'
         +'<a class="btn-ghost" style="padding:5px 10px;margin-left:auto;" href="lead-detail.html?contact_id='+encodeURIComponent(l.contact_id||'')+'" target="_blank" rel="noopener">Open ↗</a>'
       +'</div>'
