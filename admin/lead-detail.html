@@ -2343,7 +2343,7 @@
         <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
         <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
         <div class="lp-card"><div class="lp-h">🗂️ Tasks <a onclick="switchTab('tasks', document.querySelector('.ld-tab-btn[onclick*=tasks]'))">Manage →</a></div><div id="lpTasksBody"></div></div>
-        <div class="lp-card"><div class="lp-h">🧾 Third-Party Orders</div><div id="lpOrdersBody"></div></div>
+        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">🧾 Third-Party Orders <button type="button" onclick="lpManageVendors()" style="background:transparent;border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;padding:3px 9px;cursor:pointer;font-family:inherit;">🗂️ Manage Vendors</button></div><div id="lpOrdersBody"></div></div>
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
         <div class="lp-card"><div class="lp-h">🏠 Appraisal Order</div><div id="lpApOrderBody"></div></div>
         <div class="lp-card"><div class="lp-h">🔑 Appraisal Portal</div><div id="lpAppraisalPortalBody"></div></div>
@@ -9716,54 +9716,229 @@ async function lpLoadTasks(cid){
 
 /* ═══ PROCESSING TAB — Phase 2 cards: Orders / LOE / E-Sign / VA Tasks ═══ */
 const LP_ORDER_ROWS = [
-  { type:'title',     label:'Title',     role:'title_officer'     },
-  { type:'hoi',       label:'HOI',       role:'hoi_agent'         },
-  { type:'escrow',    label:'Escrow',    role:'escrow_officer'    },
-  { type:'appraisal', label:'Appraisal', role:'appraisal_company' }
+  { type:'title',     label:'Title',     category:'title'        },
+  { type:'hoi',       label:'HOI',       category:'hoi'          },
+  { type:'escrow',    label:'Escrow',    category:'escrow'       },
+  { type:'appraisal', label:'Appraisal', category:'appraisal'    },
+  { type:'voe',       label:'VOE',       category:'voe_employer' }
 ];
 const LP_ORDER_STATUS = [
   { v:'not_ordered', t:'Not Ordered' },
   { v:'ordered',     t:'Ordered'     },
   { v:'received',    t:'Received'    }
 ];
+let _lpOrders = {};           // order_type → row state
+let _lpVendorNames = {};      // vendor_id → "Name — Company"
+let _lpVendTimers = {};       // order_type → search debounce
+let _lpVendCache = {};        // order_type → last vendor_directory_list rows
+function _lpCat(type){ const r = LP_ORDER_ROWS.find(x=>x.type===type); return r ? r.category : type; }
+function _lpDD(v){ return v ? new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : ''; }
+function _lpVendLabel(v){ return (v.name||'') + (v.company ? (' — ' + v.company) : ''); }
+
 async function lpLoadOrders(cid){
   const body = document.getElementById('lpOrdersBody'); if(!body) return;
   try{
     const cl = _authClient();
-    const [oRes, vRes] = await Promise.all([
-      cl.from('loan_orders').select('order_type,status,ordered_at,received_at').eq('contact_id',cid),
-      cl.from('loan_contacts').select('role,name,company').eq('contact_id',cid)
-    ]);
-    const oMap = {}; (oRes.data||[]).forEach(o=>{ oMap[o.order_type]=o; });
-    const vMap = {}; (vRes.data||[]).forEach(v=>{ vMap[v.role]=v; });
-    const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
-    const sel = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:3px 6px;cursor:pointer;';
-    body.innerHTML = LP_ORDER_ROWS.map(row=>{
-      const o = oMap[row.type]||{}; const v = vMap[row.role]||{};
-      const vendor = v.name || v.company || '—';
-      const st = o.status || 'not_ordered';
-      const dateTxt = st==='received' ? dd(o.received_at) : (st==='ordered' ? dd(o.ordered_at) : '');
-      const opts = LP_ORDER_STATUS.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
-      return '<div style="display:grid;grid-template-columns:78px 1fr 116px 52px;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
-        +'<span style="font-size:11px;font-weight:600;color:#C9A84C;">'+row.label+'</span>'
-        +'<span style="font-size:11px;color:'+(vendor==='—'?'#666':'#bbb')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(vendor)+'</span>'
-        +'<select onchange="lpSetOrder(\''+row.type+'\',this.value)" style="'+sel+'">'+opts+'</select>'
-        +'<span style="font-size:10px;color:#888;text-align:right;">'+dateTxt+'</span>'
-        +'</div>';
-    }).join('');
+    const oRes = await cl.from('loan_orders')
+      .select('order_type,status,vendor_id,reference,notes,employer_name,hr_contact_name,hr_contact_phone,hr_contact_email,ordered_at,received_at')
+      .eq('contact_id',cid);
+    _lpOrders = {}; (oRes.data||[]).forEach(o=>{ _lpOrders[o.order_type]=o; });
+    // Resolve names for any already-selected vendors.
+    const vids = Object.keys(_lpOrders).map(k=>_lpOrders[k].vendor_id).filter(Boolean);
+    if(vids.length){
+      try{ const vr = await cl.from('vendor_directory').select('id,name,company').in('id',vids);
+        (vr.data||[]).forEach(v=>{ _lpVendorNames[v.id]=_lpVendLabel(v); }); }catch(_){}
+    }
+    lpRenderOrders();
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load orders.</div>'; }
 }
-async function lpSetOrder(orderType, status){
-  const cid = lpCid(); if(!cid) return;
-  const now = new Date().toISOString();
-  const patch = { contact_id:cid, order_type:orderType, status:status, updated_at:now };
-  if(status==='ordered'){ patch.ordered_at = now; patch.received_at = null; }
-  else if(status==='received'){ patch.received_at = now; }
-  else { patch.ordered_at = null; patch.received_at = null; }
+function lpRenderOrders(){
+  const body=document.getElementById('lpOrdersBody'); if(!body) return;
+  const sel='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:3px 6px;cursor:pointer;';
+  body.innerHTML = LP_ORDER_ROWS.map(row=>{
+    const o=_lpOrders[row.type]||{};
+    const st=o.status||'not_ordered';
+    const dateTxt= st==='received'?_lpDD(o.received_at):(st==='ordered'?_lpDD(o.ordered_at):'');
+    const vLabel = o.vendor_id ? (_lpVendorNames[o.vendor_id]||'Vendor selected') : 'Select vendor';
+    const opts=LP_ORDER_STATUS.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
+    let html='<div style="position:relative;border-bottom:1px solid rgba(255,255,255,.05);padding:6px 4px;">'
+      +'<div style="display:grid;grid-template-columns:62px 1fr 104px 52px;gap:8px;align-items:center;">'
+        +'<span style="font-size:11px;font-weight:600;color:#C9A84C;">'+row.label+'</span>'
+        +'<button type="button" onclick="lpVendorOpen(\''+row.type+'\')" style="text-align:left;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(o.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
+        +'<select onchange="lpOrderStatusChange(\''+row.type+'\',this.value)" style="'+sel+'">'+opts+'</select>'
+        +'<span style="font-size:10px;text-align:right;white-space:nowrap;"><span id="lpSaved-'+row.type+'"></span><span id="lpDate-'+row.type+'" style="color:#888;"> '+dateTxt+'</span></span>'
+      +'</div>'
+      +'<div id="lpVendDrop-'+row.type+'" style="display:none;position:absolute;left:62px;right:52px;top:34px;z-index:50;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>';
+    if(row.type==='voe'){
+      html+='<div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
+        +_lpVoeInput(row.type,'employer_name','Employer Name',o.employer_name)
+        +_lpVoeInput(row.type,'hr_contact_name','HR Contact Name',o.hr_contact_name)
+        +_lpVoeInput(row.type,'hr_contact_phone','HR Phone',o.hr_contact_phone)
+        +_lpVoeInput(row.type,'hr_contact_email','HR Email',o.hr_contact_email)
+      +'</div>';
+    }
+    return html+'</div>';
+  }).join('');
+}
+function _lpVoeInput(type,field,ph,val){
+  return '<input type="text" id="lpVoe-'+type+'-'+field+'" placeholder="'+ph+'" value="'+lpEsc(val||'')+'" onchange="lpVoeChange(\''+type+'\',\''+field+'\',this.value)" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:5px 7px;font-family:inherit;box-sizing:border-box;">';
+}
+function lpVoeChange(type,field,val){ if(!_lpOrders[type]) _lpOrders[type]={}; _lpOrders[type][field]=(val||'').trim(); lpOrderSave(type); }
+function lpOrderStatusChange(type,status){
+  if(!_lpOrders[type]) _lpOrders[type]={};
+  const o=_lpOrders[type]; o.status=status;
+  const now=new Date().toISOString();
+  if(status==='ordered'){ o.ordered_at=o.ordered_at||now; o.received_at=null; }
+  else if(status==='received'){ o.received_at=now; }
+  else { o.ordered_at=null; o.received_at=null; }
+  const ds=document.getElementById('lpDate-'+type);
+  if(ds) ds.textContent=' '+(status==='received'?_lpDD(o.received_at):(status==='ordered'?_lpDD(o.ordered_at):''));
+  lpOrderSave(type);
+}
+async function lpOrderSave(type){
+  const cid=lpCid(); if(!cid) return;
+  const o=_lpOrders[type]||{};
+  _lpSaved(type,'…');
   try{
-    await _authClient().from('loan_orders').upsert(patch, { onConflict:'contact_id,order_type' });
-    lpLoadOrders(cid);
-  }catch(e){ alert('Could not save order status.'); }
+    const r=await _authClient().rpc('loan_order_set',{
+      p_contact_id:cid, p_order_type:type, p_status:o.status||'not_ordered',
+      p_vendor_id:o.vendor_id||null, p_reference:o.reference||null, p_notes:o.notes||null,
+      p_employer_name: type==='voe'?(o.employer_name||null):null,
+      p_hr_contact_name: type==='voe'?(o.hr_contact_name||null):null,
+      p_hr_contact_phone: type==='voe'?(o.hr_contact_phone||null):null,
+      p_hr_contact_email: type==='voe'?(o.hr_contact_email||null):null
+    });
+    if(r.error) throw r.error;
+    _lpSaved(type,'Saved ✓');
+  }catch(e){ _lpSaved(type,'⚠'); }
+}
+function _lpSaved(type,txt){
+  const el=document.getElementById('lpSaved-'+type); if(!el) return;
+  el.textContent=txt+(txt?' ':'');
+  el.style.color = txt==='Saved ✓'?'#50c878':(txt==='⚠'?'#E5484D':'#888');
+  if(txt==='Saved ✓') setTimeout(function(){ if(el.textContent.indexOf('Saved')===0) el.textContent=''; }, 2000);
+}
+/* ── per-row vendor picker (typeahead + add-new) ── */
+function lpVendorOpen(type){
+  const drop=document.getElementById('lpVendDrop-'+type); if(!drop) return;
+  if(drop.style.display==='block'){ drop.style.display='none'; return; }
+  LP_ORDER_ROWS.forEach(r=>{ if(r.type!==type){ const d=document.getElementById('lpVendDrop-'+r.type); if(d) d.style.display='none'; } });
+  drop.innerHTML='<input type="text" id="lpVendQ-'+type+'" placeholder="Search vendors…" oninput="lpVendorSearch(\''+type+'\',this.value)" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:6px 8px;margin-bottom:6px;">'
+    +'<div id="lpVendResults-'+type+'" style="max-height:180px;overflow-y:auto;"></div>'
+    +'<div onclick="lpVendorAddNew(\''+type+'\')" style="margin-top:6px;padding:6px 8px;border-top:1px solid rgba(255,255,255,.08);color:#C9A84C;font-size:12px;cursor:pointer;font-weight:600;">+ Add new vendor</div>';
+  drop.style.display='block';
+  lpVendorSearch(type,'');
+  setTimeout(function(){ const q=document.getElementById('lpVendQ-'+type); if(q) q.focus(); },40);
+}
+function lpVendorSearch(type,query){
+  clearTimeout(_lpVendTimers[type]);
+  _lpVendTimers[type]=setTimeout(async function(){
+    const res=document.getElementById('lpVendResults-'+type); if(!res) return;
+    res.innerHTML='<div style="color:#888;font-size:11px;padding:6px;">Loading…</div>';
+    try{
+      const r=await _authClient().rpc('vendor_directory_list',{ p_category:_lpCat(type), p_query:query||'' });
+      if(r.error) throw r.error;
+      const rows=r.data||[]; _lpVendCache[type]=rows;
+      if(!rows.length){ res.innerHTML='<div style="color:#888;font-size:11px;padding:6px;">No vendors yet — add one below.</div>'; return; }
+      res.innerHTML=rows.map(function(v){
+        return '<div onclick="lpOrderVendorPick(\''+type+'\',\''+v.id+'\')" style="padding:6px 8px;border-radius:6px;cursor:pointer;" onmouseover="this.style.background=\'rgba(201,168,76,.12)\'" onmouseout="this.style.background=\'transparent\'">'
+          +'<div style="font-weight:600;font-size:12px;color:#eee;">'+lpEsc(v.name||'')+'</div>'
+          +((v.company||v.usage_count)?'<div style="font-size:10px;color:#999;">'+lpEsc(v.company||'')+(v.usage_count?(' · used '+v.usage_count+'×'):'')+'</div>':'')
+        +'</div>';
+      }).join('');
+    }catch(e){ res.innerHTML='<div style="color:#E5484D;font-size:11px;padding:6px;">Could not load vendors.</div>'; }
+  },220);
+}
+function lpOrderVendorPick(type,id){
+  const v=(_lpVendCache[type]||[]).find(x=>String(x.id)===String(id))||{id:id,name:'Vendor'};
+  if(!_lpOrders[type]) _lpOrders[type]={};
+  _lpOrders[type].vendor_id=id;
+  _lpVendorNames[id]=_lpVendLabel(v);
+  const drop=document.getElementById('lpVendDrop-'+type); if(drop) drop.style.display='none';
+  lpRenderOrders();
+  lpOrderSave(type);
+}
+function lpVendorAddNew(type){
+  const drop=document.getElementById('lpVendDrop-'+type); if(!drop) return;
+  const f=function(id,ph){ return '<input type="text" id="lpNV-'+type+'-'+id+'" placeholder="'+ph+'" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:6px 8px;margin-bottom:5px;">'; };
+  drop.innerHTML='<div style="font-size:11px;color:#C9A84C;font-weight:700;margin-bottom:6px;">New '+_lpCat(type)+' vendor</div>'
+    +f('name','Name *')+f('company','Company')+f('phone','Phone')+f('email','Email')+f('website','Website')+f('notes','Notes')
+    +'<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:4px;"><button onclick="lpVendorOpen(\''+type+'\')" style="background:transparent;border:1px solid #444;color:#aaa;border-radius:6px;font-size:11px;padding:5px 10px;cursor:pointer;">Cancel</button>'
+    +'<button onclick="lpVendorAddSave(\''+type+'\',this)" style="background:#C9A84C;border:none;color:#111;border-radius:6px;font-size:11px;font-weight:700;padding:5px 12px;cursor:pointer;">Save vendor</button></div>';
+  setTimeout(function(){ const n=document.getElementById('lpNV-'+type+'-name'); if(n) n.focus(); },40);
+}
+async function lpVendorAddSave(type,btn){
+  const g=id=>((document.getElementById('lpNV-'+type+'-'+id)||{}).value||'').trim();
+  const name=g('name'); if(!name){ alert('Vendor name is required.'); return; }
+  btn.disabled=true; btn.textContent='Saving…';
+  const cat=_lpCat(type);
+  try{
+    const r=await _authClient().rpc('vendor_directory_upsert',{ p_id:null, p_category:cat, p_name:name, p_company:g('company')||null, p_phone:g('phone')||null, p_email:g('email')||null, p_website:g('website')||null, p_notes:g('notes')||null, p_role:cat });
+    if(r.error) throw r.error;
+    const v=Array.isArray(r.data)?r.data[0]:r.data;
+    const id=(v&&(v.id!=null?v.id:v))||null;
+    if(id!=null){ _lpVendCache[type]=[{id:id,name:name,company:g('company')}].concat(_lpVendCache[type]||[]); lpOrderVendorPick(type,id); }
+    else { const d=document.getElementById('lpVendDrop-'+type); if(d) d.style.display='none'; }
+  }catch(e){ btn.disabled=false; btn.textContent='Save vendor'; alert('Could not save vendor: '+(e.message||'error')); }
+}
+/* ── Vendor Directory Manager (reusable across all loans) ── */
+async function lpManageVendors(){
+  let ov=document.getElementById('lpVendMgr');
+  if(!ov){ ov=document.createElement('div'); ov.id='lpVendMgr'; ov.style.cssText='position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:20px;'; document.body.appendChild(ov); }
+  ov.innerHTML='<div style="background:#15140f;border:1px solid rgba(201,168,76,.3);border-radius:14px;width:min(620px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);"><span style="font-weight:700;color:#fff;">🗂️ Vendor Directory</span><button onclick="document.getElementById(\'lpVendMgr\').remove()" style="background:none;border:none;color:#888;font-size:22px;cursor:pointer;">&times;</button></div>'
+    +'<div style="padding:12px 18px;border-bottom:1px solid rgba(255,255,255,.06);"><input id="lpVMQ" placeholder="Search all vendors…" oninput="lpVendMgrSearch(this.value)" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;color:#eee;font-size:13px;padding:8px 10px;"></div>'
+    +'<div id="lpVMList" style="flex:1;overflow-y:auto;padding:8px 12px;"></div>'
+    +'<div style="padding:12px 18px;border-top:1px solid rgba(255,255,255,.06);text-align:right;"><button onclick="lpVendMgrAdd()" style="background:#C9A84C;border:none;color:#111;border-radius:8px;font-size:13px;font-weight:700;padding:8px 16px;cursor:pointer;">+ Add vendor</button></div>'
+  +'</div>';
+  ov.onclick=function(e){ if(e.target===ov) ov.remove(); };
+  lpVendMgrSearch('');
+}
+let _lpVMTimer=null;
+function lpVendMgrSearch(q){
+  clearTimeout(_lpVMTimer);
+  _lpVMTimer=setTimeout(async function(){
+    const list=document.getElementById('lpVMList'); if(!list) return;
+    list.innerHTML='<div style="color:#888;font-size:12px;padding:10px;">Loading…</div>';
+    try{
+      const r=await _authClient().rpc('vendor_directory_list',{ p_query:q||'' });
+      if(r.error) throw r.error;
+      const rows=r.data||[];
+      if(!rows.length){ list.innerHTML='<div style="color:#888;font-size:12px;padding:10px;">No vendors yet.</div>'; return; }
+      list.innerHTML=rows.map(function(v){
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
+          +'<div style="min-width:0;"><div style="font-size:13px;color:#eee;font-weight:600;">'+lpEsc(v.name||'')+'<span style="font-size:10px;color:#C9A84C;margin-left:6px;">'+lpEsc(v.category||'')+'</span></div>'
+          +'<div style="font-size:11px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc([v.company,v.phone,v.email].filter(Boolean).join(' · '))+(v.usage_count?(' · used '+v.usage_count+'×'):'')+'</div></div>'
+          +'<button onclick="lpVendMgrEdit('+JSON.stringify(v.id)+')" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:11px;padding:4px 10px;cursor:pointer;">Edit</button>'
+        +'</div>';
+      }).join('');
+      window._lpVMRows=rows;
+    }catch(e){ list.innerHTML='<div style="color:#E5484D;font-size:12px;padding:10px;">Could not load vendors.</div>'; }
+  },220);
+}
+function lpVendMgrAdd(){ lpVendMgrForm({}); }
+function lpVendMgrEdit(id){ const v=(window._lpVMRows||[]).find(x=>String(x.id)===String(id))||{}; lpVendMgrForm(v); }
+function lpVendMgrForm(v){
+  const list=document.getElementById('lpVMList'); if(!list) return;
+  const f=function(id,ph,val){ return '<input id="lpVMF-'+id+'" placeholder="'+ph+'" value="'+lpEsc(val||'')+'" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:7px 9px;margin-bottom:6px;">'; };
+  const cats=['title','hoi','escrow','appraisal','voe_employer','other'];
+  const catOpts=cats.map(c=>'<option value="'+c+'"'+((v.category||'')===c?' selected':'')+'>'+c+'</option>').join('');
+  list.innerHTML='<div style="padding:6px;"><div style="font-size:13px;color:#C9A84C;font-weight:700;margin-bottom:8px;">'+(v.id?'Edit vendor':'New vendor')+'</div>'
+    +'<select id="lpVMF-category" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:7px 9px;margin-bottom:6px;">'+catOpts+'</select>'
+    +f('name','Name *',v.name)+f('company','Company',v.company)+f('phone','Phone',v.phone)+f('email','Email',v.email)+f('website','Website',v.website)+f('notes','Notes',v.notes)
+    +'<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:4px;"><button onclick="lpVendMgrSearch((document.getElementById(\'lpVMQ\')||{}).value||\'\')" style="background:transparent;border:1px solid #444;color:#aaa;border-radius:6px;font-size:12px;padding:6px 12px;cursor:pointer;">Cancel</button>'
+    +'<button onclick="lpVendMgrSave('+JSON.stringify(v.id||null)+',this)" style="background:#C9A84C;border:none;color:#111;border-radius:6px;font-size:12px;font-weight:700;padding:6px 14px;cursor:pointer;">Save</button></div></div>';
+}
+async function lpVendMgrSave(id,btn){
+  const g=k=>((document.getElementById('lpVMF-'+k)||{}).value||'').trim();
+  const name=g('name'); if(!name){ alert('Name is required.'); return; }
+  const cat=g('category')||'other';
+  btn.disabled=true; btn.textContent='Saving…';
+  try{
+    const r=await _authClient().rpc('vendor_directory_upsert',{ p_id:id||null, p_category:cat, p_name:name, p_company:g('company')||null, p_phone:g('phone')||null, p_email:g('email')||null, p_website:g('website')||null, p_notes:g('notes')||null, p_role:cat });
+    if(r.error) throw r.error;
+    lpVendMgrSearch((document.getElementById('lpVMQ')||{}).value||'');
+  }catch(e){ btn.disabled=false; btn.textContent='Save'; alert('Could not save vendor: '+(e.message||'error')); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
