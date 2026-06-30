@@ -214,6 +214,19 @@ export default {
       return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
     }
 
+    // Clean-URL routing for CRM app pages (/admin/foo, /dashboard/foo →
+    // serve the underlying .html). The ASSETS binding runs with
+    // html_handling="none", so extensionless paths don't resolve on their own;
+    // this mirrors the /areas handler above. Paths that already include a dot
+    // (e.g. /admin/foo.html, /admin/js/app.js) have an extension and skip this,
+    // so direct .html links and static assets keep working unchanged.
+    if ((request.method === 'GET' || request.method === 'HEAD') &&
+        /^\/(admin|dashboard)\/[A-Za-z0-9_-]+$/.test(path)) {
+      const newUrl = new URL(request.url);
+      newUrl.pathname = path + '.html';
+      return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
+    }
+
     return withCsp(await env.ASSETS.fetch(request), path);
   }
 };

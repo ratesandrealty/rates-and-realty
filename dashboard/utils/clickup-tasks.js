@@ -98,7 +98,7 @@
     var overdue = open && due && due.getTime() < Date.now();
     var dueStr = fmtDue(t.due_date);
     var contactCell = t.contact && t.contact.id
-      ? '<a class="ct-contact" href="/admin/lead-detail.html?contact_id=' + esc(t.contact.id) + '" onclick="event.stopPropagation()">' + esc(t.contact.name) + '</a>'
+      ? '<a class="ct-contact" href="/admin/lead-detail?contact_id=' + esc(t.contact.id) + '" onclick="event.stopPropagation()">' + esc(t.contact.name) + '</a>'
       : '<span class="ct-unlinked">No lead linked</span>';
     return '<div class="ct-row' + (overdue ? ' is-overdue' : '') + (open ? '' : ' is-done') + '" data-task-id="' + esc(t.clickup_task_id) + '">'
       + '<input type="checkbox" class="ct-select-box" data-action="ct-select-row" data-task-id="' + esc(t.clickup_task_id) + '" aria-label="Select task" />'
@@ -230,7 +230,7 @@
       +   (dueStr ? '<span class="board-card-due' + (overdue ? ' is-overdue' : '') + '">' + (overdue ? '⚠ ' : '') + esc(dueStr) + '</span>' : '')
       + '</div>'
       + (t.contact && t.contact.id
-          ? '<a class="board-card-contact" href="/admin/lead-detail.html?contact_id=' + esc(t.contact.id) + '" onclick="event.stopPropagation()">' + esc(t.contact.name) + '</a>'
+          ? '<a class="board-card-contact" href="/admin/lead-detail?contact_id=' + esc(t.contact.id) + '" onclick="event.stopPropagation()">' + esc(t.contact.name) + '</a>'
           : '')
       + '</div>';
   }

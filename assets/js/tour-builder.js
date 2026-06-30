@@ -775,7 +775,7 @@
       document.removeEventListener('keydown', onEscapeKey);
     }
     // Page mode keeps the DOM in place — onClose handles navigation
-    // (typically location.href = '/admin/showings.html'). The host page
+    // (typically location.href = '/admin/showings'). The host page
     // owns the chrome, so we don't strip the mount node.
     var onClose = state.opts && state.opts.onClose;
     state = null;
@@ -1553,7 +1553,7 @@
       property_type: p.PropertyType,
       year_built: p.YearBuilt,
       photo_url: photo,
-      listing_url: p.ListingId ? ('https://beta.ratesandrealty.com/public/property-detail.html?id=' + p.ListingId) : null,
+      listing_url: p.ListingId ? ('https://homes.ratesandrealty.com/public/property-detail.html?id=' + p.ListingId) : null,
       listing_agent_name: p.ListAgentFullName,
       listing_agent_phone: showingPhone,
       listing_agent_email: p.ListAgentEmail,
@@ -2603,7 +2603,7 @@
       property_type: p.PropertyType,
       year_built: p.YearBuilt,
       photo_url: photo,
-      listing_url: p.ListingId ? ('https://beta.ratesandrealty.com/public/property-detail.html?id=' + p.ListingId) : null,
+      listing_url: p.ListingId ? ('https://homes.ratesandrealty.com/public/property-detail.html?id=' + p.ListingId) : null,
       listing_agent_name: p.ListAgentFullName,
       listing_agent_phone: showingPhone,
       listing_agent_email: p.ListAgentEmail,
@@ -2703,7 +2703,7 @@
       +     '<div class="tb-preview-summary">'
       +       stopCount + ' stop' + (stopCount === 1 ? '' : 's') + ' · '
       +       (totalDuration ? Math.round(totalDuration / 60 * 10) / 10 + 'h total · ' : '')
-      +       'link to itinerary at <code>' + esc('beta.ratesandrealty.com/tour/' + (token || 'XXX')) + '</code>'
+      +       'link to itinerary at <code>' + esc('homes.ratesandrealty.com/tour/' + (token || 'XXX')) + '</code>'
       +     '</div>'
       +   '</div>'
       + '</div>'
@@ -2757,7 +2757,7 @@
     var when = tour.scheduled_start ? fmtDateLong(tour.scheduled_start) : 'soon';
     var token = tour.share_token || 'XXX';
     return 'Hi ' + first + ', here\'s the itinerary for our ' + n + '-home tour ' + when + '. '
-      + 'Open: https://beta.ratesandrealty.com/tour/' + token + ' — Rene';
+      + 'Open: https://homes.ratesandrealty.com/tour/' + token + ' — Rene';
   }
 
   function validateSend() {
@@ -2850,7 +2850,7 @@
   // Drop-in alternative to openTourBuilder for the standalone tour-builder
   // page. Mounts the same tabs/panels into `opts.target` instead of a
   // fixed-position overlay. opts.onClose typically does
-  // location.href = '/admin/showings.html'.
+  // location.href = '/admin/showings'.
   function mountTourBuilder(opts) {
     opts = opts || {};
     if (!opts.target) throw new Error('mountTourBuilder requires opts.target');
@@ -3000,7 +3000,7 @@
         property_type: p.PropertyType,
         year_built: p.YearBuilt,
         photo_url: photo,
-        listing_url: p.ListingId ? ('https://beta.ratesandrealty.com/public/property-detail.html?id=' + p.ListingId) : null,
+        listing_url: p.ListingId ? ('https://homes.ratesandrealty.com/public/property-detail.html?id=' + p.ListingId) : null,
         listing_agent_name: p.ListAgentFullName,
         listing_agent_phone: showingPhone,
         listing_agent_email: p.ListAgentEmail,

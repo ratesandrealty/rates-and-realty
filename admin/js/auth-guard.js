@@ -82,7 +82,7 @@
       '<div style="font-size:20px;font-weight:800;letter-spacing:-0.3px">Access restricted</div>' +
       '<div style="font-size:13px;color:rgba(255,255,255,0.55);max-width:360px;line-height:1.5">' +
         'This page is limited to administrators.</div>' +
-      '<a href="/admin/people.html" style="margin-top:6px;text-decoration:none;background:#c9a84c;color:#000;' +
+      '<a href="/admin/people" style="margin-top:6px;text-decoration:none;background:#c9a84c;color:#000;' +
         'font-size:12px;font-weight:700;padding:9px 18px;border-radius:8px">Go to my workspace</a>';
     function mount() {
       document.body.appendChild(overlay);
@@ -153,13 +153,13 @@
 
     if (role && role !== 'admin') {
       const PAGE_ACCESS = {
-        'settings.html':           ['admin'],
-        'earnings-dashboard.html': ['admin'],
-        'reports.html':            ['admin'],
-        'insights.html':           ['admin'],
-        'emc-import.html':         ['admin'],
-        'referral-partners.html':  ['admin'],
-        'partner-detail.html':     ['admin'],
+        'settings':           ['admin'],
+        'earnings-dashboard': ['admin'],
+        'reports':            ['admin'],
+        'insights':           ['admin'],
+        'emc-import':         ['admin'],
+        'referral-partners':  ['admin'],
+        'partner-detail':     ['admin'],
       };
       const filename = window.location.pathname.split('/').pop();
       const allowed = PAGE_ACCESS[filename];
