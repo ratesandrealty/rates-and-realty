@@ -2343,6 +2343,7 @@
         <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
         <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
         <div class="lp-card"><div class="lp-h">🗂️ Tasks <a onclick="switchTab('tasks', document.querySelector('.ld-tab-btn[onclick*=tasks]'))">Manage →</a></div><div id="lpTasksBody"></div></div>
+        <div id="lpTrackerBar" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
         <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">🧾 Third-Party Orders <button type="button" onclick="lpManageVendors()" style="background:transparent;border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;padding:3px 9px;cursor:pointer;font-family:inherit;">🗂️ Manage Vendors</button></div><div id="lpOrdersBody"></div></div>
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
         <div class="lp-card"><div class="lp-h">🏠 Appraisal Order</div><div id="lpApOrderBody"></div></div>
@@ -9722,10 +9723,12 @@ const LP_ORDER_ROWS = [
   { type:'appraisal', label:'Appraisal', category:'appraisal'    }
 ];
 const LP_ORDER_STATUS = [
-  { v:'not_ordered', t:'Not Ordered' },
-  { v:'ordered',     t:'Ordered'     },
-  { v:'received',    t:'Received'    }
+  { v:'not_ordered',  t:'Not Ordered'  },
+  { v:'ordered',      t:'Ordered'      },
+  { v:'acknowledged', t:'Acknowledged' },
+  { v:'received',     t:'Received'      }
 ];
+const LP_TRACKER_COLORS = { grey:'#8a8a8a', red:'#f87171', yellow:'#E0B84C', green:'#50c878' };
 const LP_VOE_OWNERS = [ {v:'',t:'Owner…'}, {v:'va',t:'VA'}, {v:'me',t:'Me'}, {v:'both',t:'Both'} ];
 let _lpOrders = {};           // order_type → single-row state
 let _lpVendorNames = {};      // vendor_id → "Name — Company"
@@ -9736,6 +9739,32 @@ let _lpBorrowers = [];        // loan_borrowers_for_contact
 function _lpCat(type){ const r = LP_ORDER_ROWS.find(x=>x.type===type); return r ? r.category : type; }
 function _lpDD(v){ return v ? new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : ''; }
 function _lpVendLabel(v){ return (v.name||'') + (v.company ? (' — ' + v.company) : ''); }
+
+// Color-coded status strip above the orders section (grey/red/yellow/green per type).
+async function lpLoadTracker(cid){
+  cid = cid || lpCid(); if(!cid) return;
+  const bar=document.getElementById('lpTrackerBar'); if(!bar) return;
+  try{
+    const r=await _authClient().rpc('order_tracker',{ p_contact_id:cid });
+    if(r.error) throw r.error;
+    lpRenderTracker(r.data||[]);
+  }catch(e){ /* tracker is a non-blocking summary */ }
+}
+function lpRenderTracker(rows){
+  const bar=document.getElementById('lpTrackerBar'); if(!bar) return;
+  if(!rows || !rows.length){ bar.innerHTML=''; return; }
+  bar.innerHTML = rows.map(function(r){
+    const c = LP_TRACKER_COLORS[r.color] || '#8a8a8a';
+    let lbl = r.label || r.order_type || '';
+    if(r.order_type==='voe' && (Number(r.total)||0) > 1) lbl += ' ' + (Number(r.done)||0) + '/' + (Number(r.total)||0);
+    return '<div title="'+lpEsc(r.state||'')+'" style="display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.03);border:1px solid '+c+'55;border-radius:20px;padding:4px 11px;min-width:0;">'
+      +'<span style="width:9px;height:9px;border-radius:50%;background:'+c+';flex-shrink:0;box-shadow:0 0 6px '+c+'99;"></span>'
+      +'<span style="display:flex;flex-direction:column;line-height:1.15;min-width:0;">'
+        +'<span style="font-size:11px;font-weight:700;color:#e0e0e0;white-space:nowrap;">'+lpEsc(lbl)+'</span>'
+        +'<span style="font-size:9px;color:'+c+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;">'+lpEsc(r.state||'')+'</span>'
+      +'</span></div>';
+  }).join('');
+}
 
 async function lpLoadOrders(cid){
   const body = document.getElementById('lpOrdersBody'); if(!body) return;
@@ -9753,6 +9782,7 @@ async function lpLoadOrders(cid){
     }
     lpRenderOrders();
     lpLoadVoes(cid);                 // VOE is its own multi-card list
+    lpLoadTracker(cid);              // color-coded status strip above the section
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load orders.</div>'; }
 }
 // ── VOE multi-card list (one per borrower / job) ──
@@ -9777,7 +9807,7 @@ function lpRenderOrders(){
   body.innerHTML = LP_ORDER_ROWS.map(row=>{
     const o=_lpOrders[row.type]||{};
     const st=o.status||'not_ordered';
-    const dateTxt= st==='received'?_lpDD(o.received_at):(st==='ordered'?_lpDD(o.ordered_at):'');
+    const dateTxt= st==='received'?_lpDD(o.received_at):((st==='ordered'||st==='acknowledged')?_lpDD(o.ordered_at):'');
     const vLabel = o.vendor_id ? (_lpVendorNames[o.vendor_id]||'Vendor selected') : 'Select vendor';
     const opts=LP_ORDER_STATUS.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
     let html='<div style="position:relative;border-bottom:1px solid rgba(255,255,255,.05);padding:6px 4px;">'
@@ -9866,7 +9896,7 @@ function lpVoeBorrowerChange(k,cid){
 function lpVoeStatusChange(k,status){
   const v=_lpVoeFind(k); if(!v) return; v.status=status;
   const now=new Date().toISOString();
-  if(status==='ordered'){ v.ordered_at=v.ordered_at||now; v.received_at=null; }
+  if(status==='ordered'||status==='acknowledged'){ v.ordered_at=v.ordered_at||now; v.received_at=null; }
   else if(status==='received'){ v.received_at=now; }
   else { v.ordered_at=null; v.received_at=null; }
   lpVoeUpdateMeta(k); lpVoeSave(k);
@@ -9893,6 +9923,7 @@ async function lpVoeSave(k){
     const ret=Array.isArray(r.data)?r.data[0]:r.data;
     if(ret){ if(ret.id!=null) v.id=ret.id; if(ret.ordered_at!==undefined) v.ordered_at=ret.ordered_at; if(ret.received_at!==undefined) v.received_at=ret.received_at; }
     _lpVoeSaved(k,'Saved ✓');
+    lpLoadTracker(cid);                        // refresh the tracker bar colors live
     if(wasNew && !v.id){ lpLoadVoes(cid); }   // rebind real id (avoid duplicate inserts) if RPC didn't return it
     else lpVoeUpdateMeta(k);
   }catch(e){ _lpVoeSaved(k,'⚠'); }
@@ -10015,11 +10046,11 @@ function lpOrderStatusChange(type,status){
   if(!_lpOrders[type]) _lpOrders[type]={};
   const o=_lpOrders[type]; o.status=status;
   const now=new Date().toISOString();
-  if(status==='ordered'){ o.ordered_at=o.ordered_at||now; o.received_at=null; }
+  if(status==='ordered'||status==='acknowledged'){ o.ordered_at=o.ordered_at||now; o.received_at=null; }
   else if(status==='received'){ o.received_at=now; }
   else { o.ordered_at=null; o.received_at=null; }
   const ds=document.getElementById('lpDate-'+type);
-  if(ds) ds.textContent=' '+(status==='received'?_lpDD(o.received_at):(status==='ordered'?_lpDD(o.ordered_at):''));
+  if(ds) ds.textContent=' '+(status==='received'?_lpDD(o.received_at):((status==='ordered'||status==='acknowledged')?_lpDD(o.ordered_at):''));
   lpOrderSave(type);
 }
 async function lpOrderSave(type){
@@ -10037,6 +10068,7 @@ async function lpOrderSave(type){
     });
     if(r.error) throw r.error;
     _lpSaved(type,'Saved ✓');
+    lpLoadTracker(cid);                        // refresh the tracker bar colors live
   }catch(e){ _lpSaved(type,'⚠'); }
 }
 function _lpSaved(type,txt){
