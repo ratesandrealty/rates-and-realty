@@ -11152,6 +11152,27 @@ var _ESIGN_FIELD_TYPES = {
 };
 var _ESIGN_PALETTE = [['signature','Signature'],['initials','Initials'],['date','Date'],['name','Name'],['ssn','SSN'],['text','Text'],['number','Number']];
 var _ESIGN_SIGNER_COLORS = ['#C9A84C','#4C9AC9','#7FB069','#C97FA8','#9A7FC9','#C98A4C'];
+// Field fill modes: signer=gold (per-signer color), merge=teal, sender=green.
+var _ESIGN_FILL_COLORS = { merge:'#14B8A6', sender:'#3FB950' };
+// Merge tags surfaced in the "Merge field ▾" toolbar dropdown (friendly label → {{tag}}).
+var _ESIGN_MERGE_FIELDS = [
+  ['Loan Number','loan_number'], ['Borrower Name','borrower_name'], ['Co-Borrower Name','co_borrower_name'],
+  ['Property Address','property_address'], ['Loan Amount','loan_amount'], ['Purchase Price','purchase_price'],
+  ['Lender Name','lender_name'], ['Lender NMLS','lender_nmls'], ['Lender Address','lender_address'],
+  ['Mortgagee Clause','mortgagee_clause'], ['CPL Clause','cpl_clause'],
+  ['Loan Officer Name','lo_name'], ['LO NMLS','lo_nmls'], ['LO Company','lo_company'], ['Today’s Date','today']
+];
+var _esignMergeTag=null, _esignFillMode='signer';
+function _esignMergeFriendly(tag){ for(var i=0;i<_ESIGN_MERGE_FIELDS.length;i++){ if(_ESIGN_MERGE_FIELDS[i][1]===tag) return _ESIGN_MERGE_FIELDS[i][0]; } return tag||''; }
+function _esignMergeTagOf(value){ var m=/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/.exec(value||''); return m?m[1]:''; }
+function _esignFillColor(fill, signerIdx){ if(fill==='merge') return _ESIGN_FILL_COLORS.merge; if(fill==='sender') return _ESIGN_FILL_COLORS.sender; return _esignSignerColor(signerIdx); }
+// Long merge values (clauses, addresses) default to a bigger placement box.
+function _esignMergeSize(tag){
+  if(tag==='mortgagee_clause'||tag==='cpl_clause') return { w:280, h:96 };
+  if(tag==='property_address'||tag==='lender_address') return { w:230, h:50 };
+  if(tag==='borrower_name'||tag==='co_borrower_name'||tag==='lender_name'||tag==='lo_company') return { w:190, h:32 };
+  return { w:150, h:30 };
+}
 
 function _esignSignerColor(idx){
   // In template-edit mode there are no deal signers — color by generic slot index.
@@ -11182,19 +11203,67 @@ function _esignSetPageCursor(cur){
   var wraps=document.querySelectorAll('#esignDocPages .esign-page-wrap');
   for(var i=0;i<wraps.length;i++) wraps[i].style.cursor=cur||'';
 }
+function _esignResetMergeBtn(){ var mb=document.getElementById('esignMergeBtn'); if(mb){ mb.style.background='transparent'; mb.style.color='#2DD4BF'; } }
 function _esignArmTool(type, btn){
-  if(!_esignTemplateEdit && !_esignSigners.length) return; // palette disabled without signers (deal mode only)
+  // Signer-fill fields need a signer (deal mode); sender-fill text/number don't.
+  var isFillType=(type==='text'||type==='number');
+  if(!_esignTemplateEdit && !_esignSigners.length && !(isFillType && _esignFillMode==='sender')) return;
   if(_esignTool===type){ _esignDisarmTool(); return; }
-  _esignTool=type;
+  _esignTool=type; _esignMergeTag=null; _esignResetMergeBtn();
   _esignUpdatePaletteHighlight();
   _esignSetPageCursor('crosshair');
   var hint=document.getElementById('esignToolHint');
   var lab=(_ESIGN_FIELD_TYPES[type]&&_ESIGN_FIELD_TYPES[type].label.toLowerCase())||type;
-  if(hint) hint.textContent='Click on the document to place a '+lab;
+  var who=isFillType?(' ('+(_esignFillMode==='sender'?'you fill':'signer fills')+')'):'';
+  if(hint) hint.textContent='Click on the document to place a '+lab+who;
+}
+// Arm a MERGE field for placement (teal box that auto-fills {{tag}} at stamp time).
+function _esignArmMerge(tag){
+  _esignMergeTag=tag; _esignTool='merge';
+  _esignUpdatePaletteHighlight(); // no palette-btn matches 'merge', so all de-highlight
+  _esignSetPageCursor('crosshair');
+  var menu=document.getElementById('esignMergeMenu'); if(menu) menu.style.display='none';
+  var mb=document.getElementById('esignMergeBtn'); if(mb){ mb.style.background='#14B8A6'; mb.style.color='#06211E'; }
+  var hint=document.getElementById('esignToolHint'); if(hint) hint.textContent='Click to place merge field: '+_esignMergeFriendly(tag);
+}
+function _esignToggleMergeMenu(e){
+  if(e) e.stopPropagation();
+  var m=document.getElementById('esignMergeMenu'); if(!m) return;
+  var isOpen=(m.style.display==='block');
+  m.style.display=isOpen?'none':'block';
+  if(!isOpen){
+    var close=function(ev){ if(!(ev.target.closest && ev.target.closest('#esignMergeMenu, #esignMergeBtn'))){ m.style.display='none'; document.removeEventListener('click',close); } };
+    setTimeout(function(){ document.addEventListener('click',close); },0);
+  }
+}
+// Toggle whether newly-placed Text/Number fields are filled by the Signer or by "Me" (sender).
+function _esignSetFillMode(mode){
+  _esignFillMode=(mode==='sender')?'sender':'signer';
+  var s=document.getElementById('esignFillSigner'), me=document.getElementById('esignFillMe');
+  if(s){ s.style.background=(_esignFillMode==='signer')?'linear-gradient(135deg,#7A5020,#C9A84C)':'transparent'; s.style.color=(_esignFillMode==='signer')?'#1A0E00':'#C9A84C'; }
+  if(me){ me.style.background=(_esignFillMode==='sender')?'#3FB950':'transparent'; me.style.color=(_esignFillMode==='sender')?'#06210F':'#3FB950'; }
+  var hint=document.getElementById('esignToolHint');
+  if(hint && (_esignTool==='text'||_esignTool==='number')) hint.textContent='Click to place a '+_esignTool+' ('+(_esignFillMode==='sender'?'you fill':'signer fills')+')';
+}
+// Save fields, then stamp a preview with real merge + sender values resolved.
+async function _esignPreviewWithData(btn){
+  var doc=window._esignUploadedDoc;
+  if(!doc||!doc.id){ showToast('No document loaded', true); return; }
+  var orig=btn?btn.textContent:''; if(btn){ btn.disabled=true; btn.textContent='Preparing…'; }
+  try{
+    await _esignSaveFields(true);
+    var contactId=(typeof lpCid==='function')?lpCid():null;
+    var payload={ action:'stamp_preview', document_id:doc.id, signers:_esignSigners.map(function(s){ return s.name; }) };
+    if(contactId) payload.contact_id=contactId;
+    var json=await _esignDocsPost(payload);
+    if(json && json.url){ window.open(json.url,'_blank'); if(!contactId) showToast('Merge values fill in when attached to a deal.'); }
+    else throw new Error('No preview URL returned');
+  }catch(e){ showToast((e&&e.message)||'Could not generate preview', true); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent=orig; } }
 }
 function _esignDisarmTool(){
-  _esignTool=null;
-  _esignUpdatePaletteHighlight();
+  _esignTool=null; _esignMergeTag=null;
+  _esignUpdatePaletteHighlight(); _esignResetMergeBtn();
   _esignSetPageCursor('');
   var hint=document.getElementById('esignToolHint'); if(hint) hint.textContent='';
 }
@@ -11261,9 +11330,10 @@ function _esignWireFieldBox(box, wrap){
 }
 
 function _esignFieldLabelText(box){
+  if(box.dataset.fill==='merge'){ return 'Merge · '+_esignMergeFriendly(_esignMergeTagOf(box.dataset.value)); }
   var cfg=_ESIGN_FIELD_TYPES[box.dataset.type]||{ label:box.dataset.type };
   var lbl=cfg.label||box.dataset.type;
-  if(box.dataset.fill==='sender') return lbl+' · You';
+  if(box.dataset.fill==='sender'){ var v=(box.dataset.value||'').trim(); return 'You: '+(v?(v.length>18?v.slice(0,18)+'…':v):'(empty)'); }
   if(_esignTemplateEdit) return lbl+' · Signer '+(Number(box.dataset.signer)||1);
   return lbl+' · '+_esignSignerFirstName(Number(box.dataset.signer));
 }
@@ -11272,6 +11342,11 @@ function _esignFieldLabelText(box){
 function _esignSyncFieldFill(box){
   var labelEl=box.querySelector('.esign-field-label');
   if(labelEl) labelEl.textContent=_esignFieldLabelText(box);
+  // Recolor the box to match its fill mode (signer=gold, sender=green) — e.g. after a chip toggle.
+  var col=_esignFillColor(box.dataset.fill, Number(box.dataset.signer));
+  box.style.borderColor=col; box.style.background=col+'1F';
+  if(labelEl) labelEl.style.background=col;
+  var hnd=box.querySelector('.esign-field-handle'); if(hnd) hnd.style.background=col;
   var type=box.dataset.type;
   if(type!=='text' && type!=='number') return;
   var chip=box.querySelector('.esign-field-fillby');
@@ -11286,7 +11361,7 @@ function _esignSyncFieldFill(box){
     input.value=box.dataset.value||'';
     input.placeholder='Type value';
     input.style.cssText='position:absolute;left:4px;right:4px;top:11px;bottom:4px;width:auto;background:#fff;border:1px solid rgba(0,0,0,0.25);border-radius:3px;color:#111;font-size:11px;padding:0 5px;outline:none;box-sizing:border-box;';
-    input.addEventListener('input', function(){ box.dataset.value=input.value; _esignScheduleAutoSave(); });
+    input.addEventListener('input', function(){ box.dataset.value=input.value; var l=box.querySelector('.esign-field-label'); if(l) l.textContent=_esignFieldLabelText(box); _esignScheduleAutoSave(); });
     input.addEventListener('pointerdown', function(e){ e.stopPropagation(); });
     input.addEventListener('click', function(e){ e.stopPropagation(); });
     input.addEventListener('keydown', function(e){ e.stopPropagation(); });
@@ -11297,20 +11372,26 @@ function _esignSyncFieldFill(box){
 }
 
 function _esignCreateFieldBox(wrap, type, signerIdx, left, top, w, h, fillBy, value){
-  var color=_esignSignerColor(signerIdx);
-  var isFillable=(type==='text'||type==='number');
+  var fill=(fillBy==='merge'?'merge':(fillBy==='sender'?'sender':'signer'));
+  var color=_esignFillColor(fill, signerIdx);
+  var isMerge=(fill==='merge');
+  var isFillable=(type==='text'||type==='number') && !isMerge; // sender/signer text|number get the chip + inline input
   var box=document.createElement('div');
   box.className='esign-field';
   box.dataset.type=type;
   box.dataset.signer=String(signerIdx);
-  box.dataset.fill=(fillBy==='sender'?'sender':'signer');
+  box.dataset.fill=fill;
   box.dataset.value=value||'';
   box.style.cssText='position:absolute;left:'+left+'px;top:'+top+'px;width:'+w+'px;height:'+h+'px;'
     +'border:2px solid '+color+';background:'+color+'1F;border-radius:4px;box-sizing:border-box;cursor:move;z-index:2;';
   var html='<div class="esign-field-label" style="position:absolute;top:-1px;left:-1px;background:'+color+';color:#1A0E00;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px 0 4px 0;white-space:nowrap;pointer-events:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;z-index:4;">'+lpEsc(_esignFieldLabelText(box))+'</div>'
     +'<div class="esign-field-del" title="Delete" style="position:absolute;top:-9px;right:-9px;width:18px;height:18px;border-radius:50%;background:#E5484D;color:#fff;font-size:12px;line-height:18px;text-align:center;cursor:pointer;font-weight:700;z-index:5;">&times;</div>'
     +'<div class="esign-field-handle" style="position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;background:'+color+';border-radius:3px 0 3px 0;cursor:nwse-resize;z-index:5;"></div>';
-  if(isFillable){
+  if(isMerge){
+    // Read-only merge token shown inside the box; resolves to the real value at stamp time.
+    html+='<div class="esign-field-content" style="position:absolute;left:0;top:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;justify-content:center;padding:3px 6px;text-align:center;overflow:hidden;">'
+      +'<span style="font-size:10px;color:'+color+';font-weight:700;font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-word;pointer-events:none;">'+lpEsc(value||'')+'</span></div>';
+  } else if(isFillable){
     html+='<div class="esign-field-content" style="position:absolute;left:0;top:0;right:0;bottom:0;z-index:2;"></div>'
       +'<div class="esign-field-fillby" title="Who fills this?" style="position:absolute;top:-9px;right:16px;height:18px;line-height:16px;padding:0 6px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.5);color:#C9A84C;border-radius:9px;font-size:9px;font-weight:700;cursor:pointer;z-index:5;">'+(box.dataset.fill==='sender'?'You':'Signer')+'</div>';
   }
@@ -11325,12 +11406,22 @@ function _esignPageClick(e, wrap){
   if(!_esignTool) return;
   if(e.target && e.target.closest && e.target.closest('.esign-field')) return; // ignore clicks on existing boxes
   var rect=wrap.getBoundingClientRect();
-  var cfg=_ESIGN_FIELD_TYPES[_esignTool]||{ w:120, h:32 };
   var sel=document.getElementById('esignFieldSigner');
   var signerIdx=Number(sel&&sel.value)||1;
-  var left=Math.max(0, Math.min(e.clientX-rect.left, wrap.clientWidth-cfg.w));
-  var top=Math.max(0, Math.min(e.clientY-rect.top, wrap.clientHeight-cfg.h));
-  var box=_esignCreateFieldBox(wrap, _esignTool, signerIdx, left, top, cfg.w, cfg.h);
+  var box;
+  if(_esignTool==='merge'){
+    var tag=_esignMergeTag; if(!tag) return;
+    var sz=_esignMergeSize(tag);
+    var ml=Math.max(0, Math.min(e.clientX-rect.left, wrap.clientWidth-sz.w));
+    var mt=Math.max(0, Math.min(e.clientY-rect.top, wrap.clientHeight-sz.h));
+    box=_esignCreateFieldBox(wrap, 'text', signerIdx, ml, mt, sz.w, sz.h, 'merge', '{{'+tag+'}}');
+  } else {
+    var cfg=_ESIGN_FIELD_TYPES[_esignTool]||{ w:120, h:32 };
+    var fill=((_esignTool==='text'||_esignTool==='number') ? _esignFillMode : 'signer'); // Text/Number honor the Fill: Signer/Me toggle
+    var left=Math.max(0, Math.min(e.clientX-rect.left, wrap.clientWidth-cfg.w));
+    var top=Math.max(0, Math.min(e.clientY-rect.top, wrap.clientHeight-cfg.h));
+    box=_esignCreateFieldBox(wrap, _esignTool, signerIdx, left, top, cfg.w, cfg.h, fill, '');
+  }
   _esignSelectField(box);
   _esignScheduleAutoSave();
   // stay armed so several can be dropped; Esc/click-again disarms
@@ -11362,8 +11453,8 @@ async function _esignSaveFields(silent){
         x:b.offsetLeft/cw, y:b.offsetTop/ch,
         w:b.offsetWidth/cw, h:b.offsetHeight/ch,
         required:true,
-        fill_by:(b.dataset.fill==='sender'?'sender':'signer'),
-        value:(b.dataset.fill==='sender' ? (b.dataset.value||'') : null)
+        fill_by:(b.dataset.fill==='merge'?'merge':(b.dataset.fill==='sender'?'sender':'signer')),
+        value:((b.dataset.fill==='sender'||b.dataset.fill==='merge') ? (b.dataset.value||'') : null)
       });
     }
   }
@@ -11702,17 +11793,42 @@ function _esignRPRenderEditor(){
     ? '<option value="1">Signer 1</option><option value="2">Signer 2</option><option value="3">Signer 3</option>'
     : _esignSigners.map(function(s,i){ return '<option value="'+(i+1)+'">'+lpEsc(s.name||('Signer '+(i+1)))+'</option>'; }).join('');
   var hintText=tmpl ? 'Pick a field type, then click the page to place it' : (paletteEnabled?'':'Add a signer on the left first');
+  // Merge-field dropdown menu (friendly label → {{tag}})
+  var mergeMenu=_ESIGN_MERGE_FIELDS.map(function(mf){
+    return '<div onclick="_esignArmMerge(\''+mf[1]+'\')" style="padding:6px 12px;cursor:pointer;font-size:12px;color:#E0DDD4;white-space:nowrap;" onmouseover="this.style.background=\'rgba(20,184,166,0.15)\'" onmouseout="this.style.background=\'transparent\'">'+lpEsc(mf[0])+' <span style="color:#666;font-size:10px;">{{'+mf[1]+'}}</span></div>';
+  }).join('');
+  var mergeCtl='<div style="position:relative;">'
+    +'<button type="button" id="esignMergeBtn" onclick="_esignToggleMergeMenu(event)" style="'+_ESIGN_PALETTE_BASE+'background:transparent;color:#2DD4BF;border:1px solid rgba(45,212,191,0.45);">Merge field ▾</button>'
+    +'<div id="esignMergeMenu" style="display:none;position:absolute;top:32px;left:0;z-index:50;background:#161618;border:1px solid rgba(45,212,191,0.4);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,0.5);max-height:300px;overflow-y:auto;min-width:210px;">'+mergeMenu+'</div>'
+  +'</div>';
+  // Fill mode toggle for Text/Number: Signer vs Me (sender)
+  var fillToggle='<div style="display:flex;align-items:center;gap:5px;">'
+    +'<span style="font-size:11px;color:#888;">Fill:</span>'
+    +'<div style="display:inline-flex;border:1px solid rgba(201,168,76,0.3);border-radius:6px;overflow:hidden;">'
+      +'<button type="button" id="esignFillSigner" onclick="_esignSetFillMode(\'signer\')" style="border:none;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;padding:5px 9px;background:'+(_esignFillMode==='signer'?'linear-gradient(135deg,#7A5020,#C9A84C)':'transparent')+';color:'+(_esignFillMode==='signer'?'#1A0E00':'#C9A84C')+';">Signer</button>'
+      +'<button type="button" id="esignFillMe" onclick="_esignSetFillMode(\'sender\')" style="border:none;border-left:1px solid rgba(201,168,76,0.3);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;padding:5px 9px;background:'+(_esignFillMode==='sender'?'#3FB950':'transparent')+';color:'+(_esignFillMode==='sender'?'#06210F':'#3FB950')+';">Me</button>'
+    +'</div>'
+  +'</div>';
+  var legend='<div style="display:flex;align-items:center;gap:10px;font-size:10px;color:#888;">'
+    +'<span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#C9A84C;vertical-align:middle;margin-right:3px;"></span>Signer</span>'
+    +'<span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#14B8A6;vertical-align:middle;margin-right:3px;"></span>Merge</span>'
+    +'<span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#3FB950;vertical-align:middle;margin-right:3px;"></span>You</span>'
+  +'</div>';
   pane.innerHTML=_esignRPHeaderHTML('edit')
-    // Field toolbar (same element IDs the field-placement engine expects)
-    +'<div id="esignDocToolbar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.06);background:#141416;flex-shrink:0;">'
+    // Field toolbar (same element IDs the field-placement engine expects; wraps/scrolls on mobile via crm-mobile.css)
+    +'<div id="esignDocToolbar" class="m-scroll-x" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.06);background:#141416;flex-shrink:0;">'
       +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'+paletteHtml+'</div>'
-      +'<div style="display:flex;align-items:center;gap:6px;margin-left:6px;">'
+      +mergeCtl
+      +fillToggle
+      +'<div style="display:flex;align-items:center;gap:6px;">'
         +'<span style="font-size:11px;color:#888;">Signer:</span>'
         +'<span id="esignSignerDot" style="width:10px;height:10px;border-radius:50%;background:'+_esignSignerColor(1)+';display:inline-block;flex-shrink:0;"></span>'
         +'<select id="esignFieldSigner" onchange="_esignUpdateSignerDot()" style="height:28px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 6px;outline:none;">'+(signerOpts||'<option value="">— no signers —</option>')+'</select>'
       +'</div>'
-      +'<div style="margin-left:auto;display:flex;align-items:center;gap:10px;">'
+      +legend
+      +'<div style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
         +'<span id="esignToolHint" style="font-size:11px;color:#888;">'+lpEsc(hintText)+'</span>'
+        +'<button type="button" onclick="_esignPreviewWithData(this)" title="Save + preview with merge and typed values filled in" style="height:30px;border:1px solid rgba(45,212,191,0.45);border-radius:6px;background:transparent;color:#2DD4BF;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;font-family:inherit;">👁 Preview with data</button>'
         +'<button type="button" id="esignSaveFieldsBtn" onclick="_esignSaveFields()" style="height:30px;border:none;border-radius:6px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;padding:0 14px;">'+(tmpl?'Save template fields':'Save fields')+'</button>'
       +'</div>'
     +'</div>'
