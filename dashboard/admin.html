@@ -1084,6 +1084,46 @@
   .crm-row .crm-detail{grid-column:3;font-size:13px;color:rgba(255,255,255,.7);margin-top:2px;}
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
+  <!-- Shared CRM mobile standard (reusable utilities + safe nets) — loaded last so it wins -->
+  <link rel="stylesheet" href="/public/css/crm-mobile.css">
+  <style>
+  /* ═══════════ DASHBOARD (admin.html) — MOBILE (≤768px) ═══════════
+     Uses the shared crm-mobile.css utilities where the markup allows it
+     (.m-stack is added in-markup to the Charts row and the Communications grid).
+     The rules below cover the component-class and JS/module-rendered grids that
+     can't take a utility class directly. Desktop (≥769px) is untouched.
+     components/styles.css already stacks .metric-grid-6 / .pipeline-grid at
+     ≤720px; these unify that at ≤768px AND fix the grids it misses — the charts
+     grid (420px min was overflowing), comms (320px min), calendar/board, and the
+     inline showings KPI row. */
+  @media (max-width:768px){
+    /* KPI stat tiles — 2 per row (dense, no horizontal overflow) */
+    .metric-grid-6{grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:10px !important;}
+    .pipeline-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}
+
+    /* Charts must never force horizontal scroll: cap to 100% width, height auto */
+    .chart-panel,.chart-panel>div,#overview-bar-root,#overview-pie-root{max-width:100% !important;overflow-x:auto;}
+    .chart-panel canvas,.chart-panel svg,#overview-bar-root svg,#overview-pie-root svg{max-width:100% !important;height:auto;}
+
+    /* Insights: KPI grid 2-up; charts grid (420px min) stacks to single column */
+    .insights-charts-grid{grid-template-columns:1fr !important;}
+    .insights-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}
+
+    /* Daily panel auto-fit grid (300px min) → single column */
+    #cc-body [style*="minmax(300px"]{grid-template-columns:1fr !important;}
+
+    /* Showings KPI row (4-up inline) → 2-up */
+    #showing-stats-row{grid-template-columns:repeat(2,1fr) !important;}
+
+    /* Calendar: side layout stacks; week grid stays 7×1fr (shrinks, no overflow) */
+    .cal-layout{grid-template-columns:1fr !important;}
+    /* Task board (kanban) columns scroll sideways instead of overflowing the page */
+    .ct-board{overflow-x:auto !important;-webkit-overflow-scrolling:touch;}
+
+    /* Panels a touch tighter so their content gets real width */
+    .panel{padding-left:14px !important;padding-right:14px !important;}
+  }
+  </style>
 </head>
 <body>
   <script>(function(){ if(localStorage.getItem('rr-theme')==='light') document.body.classList.add('light'); })();</script>
@@ -1304,7 +1344,7 @@
         </script>
 
         <!-- Charts row -->
-        <div class="dashboard-section" data-section-id="charts" draggable="true" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+        <div class="dashboard-section m-stack" data-section-id="charts" draggable="true" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
           <div class="drag-handle" title="Drag to reorder">⠿</div>
           <div class="panel chart-panel" id="overview-bar-chart">
             <p class="kicker">Leads by Status</p>
@@ -1858,7 +1898,7 @@
             </div>
             <div id="comms-stats-row" class="comms-stats"></div>
           </div>
-          <div class="comms-grid">
+          <div class="comms-grid m-stack">
             <div class="inbox-list" id="inbox-list">
               <div class="inbox-list-header">
                 <input type="text" id="inbox-search" class="inbox-search" placeholder="Search name, phone, email, body…">
