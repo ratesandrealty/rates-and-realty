@@ -1672,7 +1672,13 @@ function buildODataFilter(bounds) {
     parts.push(cityClause);
     console.log('[trestle filter] city clause:', cityClause);
   } else if (!skipLocationFilter && !bounds && selectedCounties.size > 0) {
-    var countyFilters = Array.from(selectedCounties).map(function(k) { return "CountyOrParish eq '" + k + "'"; });
+    // Trestle CRMLS stores CountyOrParish as the bare county name ("Orange"),
+    // NOT "Orange County". The dropdown keys carry the " County" suffix, so
+    // strip it here or the filter matches zero rows (default-load regression).
+    var countyFilters = Array.from(selectedCounties).map(function(k) {
+      var cp = k.replace(/ County$/, '').replace(/'/g, "''");
+      return "CountyOrParish eq '" + cp + "'";
+    });
     parts.push('(' + countyFilters.join(' or ') + ')');
   } else if (!skipLocationFilter && !bounds) {
     parts.push("StateOrProvince eq 'CA'");
@@ -1806,7 +1812,7 @@ async function fetchListings(page, append, boundsOverride) {
   else base = base.replace(/\$skip=\d+/, '$skip=' + skip);
 
   console.log('[Trestle] page:', page, 'skip:', skip, 'top:', pageSize, 'bounds:', !!effectiveBounds);
-  console.log('RAW:', base);
+  console.log('[trestle-proxy] exact rawFilter →', base); // TEMP debug: OData string sent to trestle-proxy
 
   try {
     var res = await fetch(SUPABASE_URL + '/functions/v1/trestle-proxy', {
