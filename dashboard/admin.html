@@ -1308,38 +1308,72 @@
           <div id="lead-pipeline" class="pipeline-grid"></div>
         </div>
 
-        <!-- Market Watch (live mortgage rates from MND) -->
-        <div class="panel dashboard-section" data-section-id="market-rates" draggable="true" style="margin-bottom:24px;padding:20px 24px;">
+        <!-- Market Watch — consolidated compact strip (own rate data via market_watch_strip RPC) -->
+        <div class="panel dashboard-section" data-section-id="market-rates" draggable="true" style="margin-bottom:24px;padding:13px 18px;">
           <div class="drag-handle" title="Drag to reorder">⠿</div>
-          <div class="crm-section-title">
-            <div><p class="kicker">Market Watch</p><h3 style="margin:0;font-size:1.1rem;">Today's Mortgage Rates</h3></div>
-            <a href="https://www.mortgagenewsdaily.com/mortgage-rates" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none">Mortgage News Daily →</a>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px;">
+            <span style="font-size:12px;font-weight:700;letter-spacing:.05em;color:#C9A84C;">📈 Market Watch</span>
+            <span id="mw-asof" style="font-size:11px;color:#888;font-weight:500;"></span>
           </div>
-          <div id="market-rates-body" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:6px;">
-            <div style="color:#888;">Loading rates…</div>
+          <div id="mw-body" style="display:flex;align-items:center;gap:14px;min-height:56px;">
+            <div style="color:#888;font-size:12px;">Loading rates…</div>
           </div>
         </div>
         <script>
         (function(){
-          function fmtRate(v){ return (v==null||v==='') ? '—' : Number(v).toFixed(2)+'%'; }
-          async function loadMarketRates(retry){
-            var cfg = window.APP_CONFIG||{};
-            var SB = cfg.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-            var KEY = cfg.SUPABASE_ANON_KEY;
-            var body = document.getElementById('market-rates-body');
-            if(!body) return;
-            if(!KEY){ if((retry||0)<10){ return setTimeout(function(){loadMarketRates((retry||0)+1);},400);} body.innerHTML='<div style="color:#888;">Rates unavailable.</div>'; return; }
-            try{
-              var r = await fetch(SB+'/rest/v1/market_rates?select=rate_date,rate_30yr,rate_15yr,rate_fha&order=rate_date.desc&limit=1',{headers:{apikey:KEY,Authorization:'Bearer '+KEY}});
-              var rows = await r.json();
-              var d = rows && rows[0];
-              if(!d){ body.innerHTML='<div style="color:#888;">No rate data yet.</div>'; return; }
-              var asOf = d.rate_date ? new Date(d.rate_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
-              function card(label,val,gold){ return '<div style="background:#141414;border:1px solid '+(gold?'rgba(201,168,76,0.35)':'#2a2a2a')+';border-radius:8px;padding:14px 16px;"><div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;font-weight:600;">'+label+'</div><div style="font-size:24px;font-weight:700;margin-top:4px;color:'+(gold?'#C9A84C':'#fff')+';letter-spacing:-0.02em;">'+fmtRate(val)+'</div></div>'; }
-              body.innerHTML = card('30-Yr Fixed', d.rate_30yr, true) + card('15-Yr Fixed', d.rate_15yr, false) + card('30-Yr FHA', d.rate_fha, false) + '<div style="display:flex;align-items:flex-end;color:#666;font-size:11px;padding:0 4px 6px;">National avg · as of '+asOf+'</div>';
-            }catch(e){ body.innerHTML='<div style="color:#888;">Could not load rates.</div>'; }
+          function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+          function fmtVal(v){ var n=Number(v); return (v==null||v===''||isNaN(n)) ? '—' : n.toFixed(2)+'%'; }
+          function fmtDate(d){ if(!d) return ''; var t=new Date(d+'T00:00:00'); return isNaN(t)?String(d):t.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+          // change<0 (rates dropping = good) → green ▼ ; >0 → red ▲ ; 0/null → muted —
+          function change(c){
+            var n=Number(c);
+            if(c==null||c===''||isNaN(n)||n===0) return '<span style="color:#777;">—</span>';
+            if(n<0) return '<span style="color:#4ade80;">▼'+Math.abs(n).toFixed(2)+'</span>';
+            return '<span style="color:#f87171;">▲'+n.toFixed(2)+'</span>';
           }
-          if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){loadMarketRates(0);}); } else { loadMarketRates(0); }
+          function sparkline(vals){
+            vals=(vals||[]).map(Number).filter(function(v){return !isNaN(v);});
+            if(vals.length<2) return '';
+            var W=120,H=32,P=3, mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals), rg=(mx-mn)||1;
+            var sx=(W-2*P)/(vals.length-1);
+            var pts=vals.map(function(v,i){ var x=P+i*sx, y=P+(H-2*P)*(1-(v-mn)/rg); return x.toFixed(1)+','+y.toFixed(1); }).join(' ');
+            return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" style="display:block;max-width:100%;" aria-hidden="true">'
+              +'<polyline points="'+pts+'" fill="none" stroke="#C9A84C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+          }
+          function chip(rt,i){
+            var gold = (i===0);
+            return '<div style="flex:1 1 0;min-width:94px;background:#141414;border:1px solid '+(gold?'rgba(201,168,76,0.4)':'#2a2a2a')+';border-radius:9px;padding:8px 12px;">'
+              +'<div style="font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:#8a8a8a;font-weight:700;white-space:nowrap;">'+esc(rt.label||rt.key||'')+'</div>'
+              +'<div style="font-size:18px;font-weight:800;line-height:1.15;letter-spacing:-.02em;color:'+(gold?'#C9A84C':'#fff')+';">'+fmtVal(rt.value)+'</div>'
+              +'<div style="font-size:11px;font-weight:700;margin-top:1px;">'+change(rt.change)+'</div>'
+              +'</div>';
+          }
+          function unavailable(body,asof){ if(asof) asof.textContent=''; if(body) body.innerHTML='<div style="color:#888;font-size:12px;">Rates unavailable.</div>'; }
+          async function loadMW(){
+            var body=document.getElementById('mw-body'), asof=document.getElementById('mw-asof');
+            if(!body) return;
+            try{
+              // Same client-acquisition pattern the rest of the dashboard uses.
+              var sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient, w=0;
+              while(!sb && w<5000){ await new Promise(function(r){setTimeout(r,100);}); w+=100; sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient; }
+              var d, err;
+              if(sb && sb.rpc){ var res=await sb.rpc('market_watch_strip'); d=res.data; err=res.error; }
+              else {
+                var cfg=window.APP_CONFIG||{}, SB=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co', KEY=cfg.SUPABASE_ANON_KEY;
+                if(!KEY){ return unavailable(body,asof); }
+                var r=await fetch(SB+'/rest/v1/rpc/market_watch_strip',{method:'POST',headers:{apikey:KEY,Authorization:'Bearer '+KEY,'Content-Type':'application/json'},body:'{}'});
+                d=await r.json(); if(!r.ok) err={message:'http '+r.status};
+              }
+              if(err || !d || d.ok===false || !d.rates || !d.rates.length){ return unavailable(body,asof); }
+              if(asof) asof.textContent = d.as_of ? ('as of '+fmtDate(d.as_of)) : '';
+              var chips = d.rates.slice(0,5).map(chip).join('');
+              var spark = sparkline(d.spark_30yr);
+              body.innerHTML = '<div class="m-scroll-x" style="display:flex;gap:10px;flex:1 1 auto;min-width:0;">'+chips+'</div>'
+                + (spark ? '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:3px;">'+spark
+                    +'<span style="font-size:8px;font-weight:700;letter-spacing:.6px;color:#666;text-transform:uppercase;">30-Yr Trend</span></div>' : '');
+            }catch(e){ unavailable(body,asof); }
+          }
+          if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){loadMW();}); } else { loadMW(); }
         })();
         </script>
 
