@@ -12169,6 +12169,8 @@ async function openEsignSendModal(){
         +'<div id="esignLibraryPicker" style="display:none;margin-top:8px;"></div>'
       +'</div>'
     +'</div>'
+    // Merge fields + loan number + templates + lender clauses (populated by _mfInitBlock)
+    +'<div id="mfBlock" style="margin-bottom:16px;"></div>'
     // Signers
     +'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Signers</div>'
     // Suggestions
@@ -12226,6 +12228,7 @@ async function openEsignSendModal(){
   _esignRenderSigners();
   _esignRenderDocs();
   _esignLoadDocsForContact(); // reattach previously-uploaded PDFs for this contact
+  try{ _mfInitBlock(cid); }catch(e){ console.error('[esign merge] init failed', e); } // loan number + merge fields + templates + lender clauses
 
   // Load active templates
   try{
@@ -31798,6 +31801,369 @@ async function recordNewVoicemail() {
   const tryNow=()=>{const el=document.getElementById(TARGET_ID);if(el)wire(el);};
   if(document.readyState!=='loading')tryNow();else document.addEventListener('DOMContentLoaded',tryNow);
   setTimeout(tryNow,1500);
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     E-SIGN MERGE FIELDS + LOAN NUMBER + TEMPLATE CREATE + LENDER CLAUSES
+     Injected into the "Send for signature" modal left pane (#mfBlock).
+     All data via the page's _authClient().rpc(...) / .from(...) — RPCs already exist:
+       loan_number_set, esign_merge_resolve, esign_lenders_list,
+       lender_clause_set, esign_settings_set
+     Styling mirrors the dark + gold e-sign panel; mobile uses crm-mobile.css.
+═══════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  // Ordered merge tags surfaced in the panel + template toolbar.
+  var MF_TAGS = [
+    ['borrower_name','Borrower name'], ['co_borrower_name','Co-borrower name'],
+    ['loan_number','Loan number'], ['loan_amount','Loan amount'],
+    ['property_address','Property address'], ['lender_name','Lender name'],
+    ['lender_nmls','Lender NMLS'], ['lender_address','Lender address'],
+    ['mortgagee_clause','Mortgagee clause'], ['cpl_clause','CPL clause'],
+    ['lo_name','LO name'], ['lo_nmls','LO NMLS'], ['lo_company','LO company'],
+    ['today','Today’s date']
+  ];
+  var GOLD='#C9A84C';
+  window._esignMerge={}; window._esignMergeInfo={}; window._mfFillLenderId=null;
+  var _mfPanelOpen=false;
+  function esc(s){ return (typeof lpEsc==='function')?lpEsc(s):String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function toast(m,e){ if(typeof showToast==='function') showToast(m,e); }
+  function client(){ return (typeof _authClient==='function')?_authClient():null; }
+  function cid(){ return window._esignContactId || (typeof lpCid==='function'?lpCid():null); }
+
+  // ── Block skeleton inside the modal left pane ────────────────────────────
+  window._mfInitBlock=function(contactId){
+    window._esignContactId = contactId || cid();
+    var el=document.getElementById('mfBlock'); if(!el) return;
+    var inp='height:32px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:0 9px;outline:none;box-sizing:border-box;';
+    var gbtn='height:32px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:'+GOLD+';border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;font-family:inherit;';
+    el.innerHTML=''
+      +'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Loan &amp; merge fields</div>'
+      +'<div style="background:#161618;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;">'
+        // Loan number
+        +'<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:5px;">Loan number</div>'
+        +'<div style="display:flex;gap:6px;margin-bottom:10px;">'
+          +'<input id="mfLoanNumber" type="text" placeholder="e.g. 1234567890" oninput="this.dataset.dirty=\'1\'" style="flex:1;min-width:0;'+inp+'">'
+          +'<button type="button" onclick="_mfSaveLoan(this)" style="flex-shrink:0;'+gbtn+'">Save</button>'
+        +'</div>'
+        // Merge fields collapsible
+        +'<div onclick="_mfTogglePanel()" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding:2px 0;">'
+          +'<span style="font-size:11px;font-weight:700;color:'+GOLD+';">🧩 Merge fields <span id="mfLenderLbl" style="color:#888;font-weight:500;"></span></span>'
+          +'<span id="mfCaret" style="color:#888;font-size:11px;">▸</span>'
+        +'</div>'
+        +'<div id="mfPanel" style="display:none;margin-top:8px;"><div id="mfList" style="color:#666;font-size:11px;">Resolving…</div></div>'
+        // Actions
+        +'<div class="m-scroll-x" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">'
+          +'<button type="button" onclick="_mfFill()" title="Replace {{tags}} in the current template with these values" style="'+gbtn+'">✨ Fill template</button>'
+          +'<button type="button" onclick="_mfOpenCreate()" style="'+gbtn+'">＋ Create template</button>'
+          +'<button type="button" onclick="_mfOpenLenders()" title="Lender &amp; mortgagee clause settings" style="'+gbtn+'">⚙ Lender &amp; clauses</button>'
+        +'</div>'
+        // Custom templates list
+        +'<div id="mfTplList" style="margin-top:10px;"></div>'
+      +'</div>';
+    _mfResolve();
+    _mfLoadTemplates();
+  };
+
+  window._mfTogglePanel=function(){
+    _mfPanelOpen=!_mfPanelOpen;
+    var p=document.getElementById('mfPanel'), c=document.getElementById('mfCaret');
+    if(p) p.style.display=_mfPanelOpen?'block':'none';
+    if(c) c.textContent=_mfPanelOpen?'▾':'▸';
+  };
+
+  // ── Resolve merge values (optionally for a chosen lender) ────────────────
+  window._mfResolve=async function(lenderId){
+    var c=cid(); if(!c) return;
+    try{
+      var args={ p_contact_id:c }; if(lenderId) args.p_lender_id=lenderId;
+      var res=await client().rpc('esign_merge_resolve', args);
+      if(res.error) throw res.error;
+      var d=res.data||{};
+      window._esignMerge=d.merge||{};
+      window._esignMergeInfo={ has_snapshot:!!d.has_snapshot, lender_id:d.lender_id, lender_name:d.lender_name };
+      if(!lenderId) window._mfFillLenderId=d.lender_id||null;
+      var ln=document.getElementById('mfLoanNumber');
+      if(ln && !ln.dataset.dirty){ var lv=window._esignMerge.loan_number; ln.value=(lv==null?'':lv); }
+      _mfRenderList(); _mfLenderLabel();
+    }catch(e){ var l=document.getElementById('mfList'); if(l) l.innerHTML='<div style="color:#E5484D;font-size:11px;">Could not resolve merge fields.</div>'; }
+  };
+
+  function _mfLenderLabel(){
+    var el=document.getElementById('mfLenderLbl'); if(!el) return;
+    var nm=window._esignMergeInfo.lender_name;
+    el.textContent = nm ? ('· '+nm) : '';
+  }
+
+  function _mfRenderList(){
+    var box=document.getElementById('mfList'); if(!box) return;
+    var m=window._esignMerge||{};
+    box.innerHTML=MF_TAGS.map(function(t){
+      var key=t[0], label=t[1], v=m[key];
+      var has=(v!=null && String(v).trim()!=='');
+      var shown = has ? esc(String(v).length>60?String(v).slice(0,60)+'…':String(v)) : '<span style="color:#666;font-style:italic;">— not set</span>';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04);">'
+        +'<span style="flex:0 0 96px;font-size:10px;color:#8a8a8a;text-transform:uppercase;letter-spacing:.4px;">'+esc(label)+'</span>'
+        +'<span style="flex:1;min-width:0;font-size:11px;color:'+(has?'#ddd':'#666')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+shown+'</span>'
+        +'<button type="button" onclick="_mfInsert(\''+key+'\')" title="Insert {{'+key+'}}" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.3);color:'+GOLD+';border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;padding:2px 7px;">insert</button>'
+        +'</div>';
+    }).join('');
+  }
+
+  // ── Save loan number ─────────────────────────────────────────────────────
+  window._mfSaveLoan=async function(btn){
+    var ln=document.getElementById('mfLoanNumber'); if(!ln) return;
+    var val=(ln.value||'').trim(), orig=btn.textContent;
+    btn.disabled=true; btn.textContent='…';
+    try{
+      var res=await client().rpc('loan_number_set',{ p_contact_id:cid(), p_loan_number:val });
+      if(res.error) throw res.error;
+      ln.dataset.dirty=''; btn.textContent='Saved ✓';
+      setTimeout(function(){ btn.textContent=orig; btn.disabled=false; },1500);
+      _mfResolve(window._mfFillLenderId);
+    }catch(e){ btn.textContent=orig; btn.disabled=false; toast((e&&e.message)||'Could not save loan number', true); }
+  };
+
+  // ── Insert {{tag}} into the active template editor (or copy) ──────────────
+  window._mfInsert=function(tag){
+    var tok='{{'+tag+'}}', ta=document.getElementById('mfTplEditor');
+    if(ta && document.body.contains(ta)){
+      var s=ta.selectionStart||0, e=ta.selectionEnd||0;
+      ta.value=ta.value.slice(0,s)+tok+ta.value.slice(e);
+      ta.selectionStart=ta.selectionEnd=s+tok.length; ta.focus();
+      return;
+    }
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tok);
+    toast('Copied '+tok);
+  };
+
+  // ── Fill: replace {{tags}} in the current template body, preview it ───────
+  window._mfFill=async function(){
+    var ta=document.getElementById('mfTplEditor');
+    if(ta && document.body.contains(ta)){ return _mfFillInto(ta.value,'Draft template'); }
+    if(window._esignActiveTplKey){
+      try{
+        var r=await client().from('signature_templates').select('name,body_html').eq('key',window._esignActiveTplKey).limit(1);
+        var row=(r.data&&r.data[0]); if(row&&row.body_html) return _mfFillInto(row.body_html, row.name||'Template');
+      }catch(e){}
+    }
+    toast('Open or create a template first, then Fill', true);
+  };
+
+  function _mfFillInto(body, name){
+    var m=window._esignMerge||{}, unresolved=0;
+    var filled=String(body||'').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, function(_m, tag){
+      var v=m[tag.toLowerCase()];
+      if(v!=null && String(v).trim()!=='') return String(v);
+      unresolved++;
+      return '<span style="background:#FDE68A;color:#7c2d12;border-radius:3px;padding:0 3px;font-weight:600;">{{'+tag+'}}</span>';
+    });
+    var pane=document.getElementById('esignRightPane');
+    if(!pane){ toast('Preview pane not available', true); return; }
+    window._esignActiveTplKey=null; if(typeof _esignRenderDocs==='function'){ try{ _esignRenderDocs(); }catch(_){} }
+    pane.innerHTML=''
+      +'<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06);background:#131315;flex-shrink:0;">'
+        +'<div style="font-size:13px;font-weight:700;color:#E0DDD4;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(name||'Filled template')+'</div>'
+        +'<span style="flex-shrink:0;font-size:11px;color:'+(unresolved?'#E0A852':'#7BBACB')+';background:rgba(255,255,255,0.05);border-radius:8px;padding:2px 9px;">'+(unresolved? (unresolved+' unresolved'):'✓ merged')+'</span>'
+      +'</div>'
+      +'<div style="flex:1;overflow-y:auto;background:#0E0E10;padding:18px;">'
+        +'<div style="background:#fff;color:#111;border-radius:6px;padding:32px;box-shadow:0 4px 18px rgba(0,0,0,0.4);">'+filled+'</div>'
+      +'</div>';
+  }
+
+  // ── Custom templates list (Use / Rename / Delete) ────────────────────────
+  window._mfLoadTemplates=async function(){
+    var box=document.getElementById('mfTplList'); if(!box) return;
+    try{
+      var r=await client().from('signature_templates').select('id,key,name,body_html,document_type').eq('document_type','custom').order('name');
+      var rows=(r.data)||[];
+      if(!rows.length){ box.innerHTML=''; return; }
+      box.innerHTML='<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.06em;margin:2px 0 5px;">My templates</div>'
+        +rows.map(function(t){
+          var jn=esc(t.name||t.key||'Template');
+          return '<div style="display:flex;align-items:center;gap:6px;padding:5px 7px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.14);border-radius:6px;margin-bottom:5px;">'
+            +'<span style="flex:1;min-width:0;font-size:12px;color:#E0DDD4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 '+jn+'</span>'
+            +'<button type="button" onclick="_mfUseTemplate('+t.id+')" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.3);color:'+GOLD+';border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;padding:2px 8px;">Use</button>'
+            +'<button type="button" onclick="_mfOpenCreate('+t.id+')" title="Rename / edit" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,0.12);color:#aaa;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;padding:2px 8px;">Edit</button>'
+            +'<button type="button" onclick="_mfDeleteTemplate('+t.id+',this)" title="Delete" style="flex-shrink:0;background:transparent;border:none;color:#E5484D;font-size:15px;line-height:1;cursor:pointer;padding:0 3px;">&times;</button>'
+          +'</div>';
+        }).join('');
+    }catch(e){ box.innerHTML=''; }
+  };
+
+  window._mfUseTemplate=async function(id){
+    try{
+      var r=await client().from('signature_templates').select('name,body_html').eq('id',id).limit(1);
+      var row=(r.data&&r.data[0]); if(!row){ toast('Template not found', true); return; }
+      _mfFillInto(row.body_html||'', row.name||'Template');
+    }catch(e){ toast((e&&e.message)||'Could not load template', true); }
+  };
+
+  window._mfDeleteTemplate=async function(id, btn){
+    if(!confirm('Delete this template?')) return;
+    try{ var r=await client().from('signature_templates').delete().eq('id',id); if(r.error) throw r.error; toast('Template deleted'); _mfLoadTemplates(); }
+    catch(e){ toast((e&&e.message)||'Could not delete', true); }
+  };
+
+  // ── Create / edit template modal ─────────────────────────────────────────
+  function _mfOverlay(id){
+    var o=document.getElementById(id); if(o) o.remove();
+    o=document.createElement('div'); o.id=id;
+    o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:20050;display:flex;align-items:center;justify-content:center;padding:16px;';
+    o.addEventListener('click',function(e){ if(e.target===o) o.remove(); });
+    document.body.appendChild(o); return o;
+  }
+  window._mfCloseOverlay=function(id){ var o=document.getElementById(id); if(o) o.remove(); };
+
+  window._mfOpenCreate=async function(editId){
+    var o=_mfOverlay('mfCreateOverlay');
+    var name='', body='';
+    if(editId){
+      try{ var r=await client().from('signature_templates').select('name,body_html').eq('id',editId).limit(1); var row=(r.data&&r.data[0]); if(row){ name=row.name||''; body=row.body_html||''; } }catch(e){}
+    }
+    var inp='width:100%;height:34px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:13px;padding:0 10px;outline:none;box-sizing:border-box;';
+    var toolbar=MF_TAGS.map(function(t){ return '<button type="button" onclick="_mfInsert(\''+t[0]+'\')" style="background:#1A1A1D;border:1px solid rgba(201,168,76,0.25);color:'+GOLD+';border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;padding:3px 7px;font-family:inherit;">'+esc('{{'+t[0]+'}}')+'</button>'; }).join('');
+    o.innerHTML='<div style="width:640px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;overflow:hidden;box-sizing:border-box;">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.06);">'
+        +'<span style="font-size:15px;font-weight:700;color:#E0DDD4;">'+(editId?'Edit template':'Create template')+'</span>'
+        +'<button type="button" onclick="_mfCloseOverlay(\'mfCreateOverlay\')" style="background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;cursor:pointer;padding:5px 12px;">Close</button>'
+      +'</div>'
+      +'<div style="padding:16px 18px;overflow-y:auto;">'
+        +'<label style="display:block;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;">Template name</label>'
+        +'<input id="mfTplName" type="text" value="'+esc(name)+'" placeholder="e.g. CPL Acknowledgement" style="'+inp+'margin-bottom:12px;">'
+        +'<label style="display:block;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;">Insert merge tag</label>'
+        +'<div class="m-scroll-x" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;">'+toolbar+'</div>'
+        +'<label style="display:block;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;">Body (HTML — use {{tags}})</label>'
+        +'<textarea id="mfTplEditor" spellcheck="false" style="width:100%;height:240px;background:#0E0E10;border:1px solid rgba(201,168,76,0.18);border-radius:8px;color:#E0DDD4;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;padding:12px;outline:none;box-sizing:border-box;resize:vertical;">'+esc(body)+'</textarea>'
+      +'</div>'
+      +'<div style="display:flex;gap:8px;padding:12px 18px;border-top:1px solid rgba(255,255,255,0.06);">'
+        +'<button type="button" onclick="_mfFill()" style="height:36px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:'+GOLD+';border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;padding:0 14px;font-family:inherit;">✨ Fill preview</button>'
+        +'<div style="flex:1;"></div>'
+        +'<button type="button" onclick="_mfCloseOverlay(\'mfCreateOverlay\')" style="height:36px;border:1px solid rgba(201,168,76,0.15);background:transparent;color:#888;border-radius:7px;font-size:13px;cursor:pointer;padding:0 16px;">Cancel</button>'
+        +'<button type="button" id="mfTplSaveBtn" onclick="_mfSaveTemplate('+(editId||'null')+',this)" style="height:36px;border:none;border-radius:7px;background:linear-gradient(135deg,#7A5020,'+GOLD+');color:#1A0E00;font-size:13px;font-weight:700;cursor:pointer;padding:0 18px;font-family:inherit;">Save template</button>'
+      +'</div>'
+    +'</div>';
+  };
+
+  window._mfSaveTemplate=async function(editId, btn){
+    var nameEl=document.getElementById('mfTplName'), bodyEl=document.getElementById('mfTplEditor');
+    var name=(nameEl&&nameEl.value||'').trim(), body=(bodyEl&&bodyEl.value||'');
+    if(!name){ toast('Give the template a name', true); return; }
+    var used=[]; String(body).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g,function(_m,t){ var k=t.toLowerCase(); if(used.indexOf(k)<0) used.push(k); return _m; });
+    var orig=btn.textContent; btn.disabled=true; btn.textContent='Saving…';
+    try{
+      if(editId && editId!=='null' && editId!=null){
+        var u=await client().from('signature_templates').update({ name:name, body_html:body, fields:used }).eq('id',editId);
+        if(u.error) throw u.error;
+      } else {
+        var key=name.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)+'_'+Math.random().toString(36).slice(2,7);
+        var ins=await client().from('signature_templates').insert({ key:key, name:name, body_html:body, document_type:'custom', active:true, fields:used });
+        if(ins.error) throw ins.error;
+      }
+      toast('Template saved ✓');
+      _mfCloseOverlay('mfCreateOverlay'); _mfLoadTemplates();
+    }catch(e){ btn.disabled=false; btn.textContent=orig; toast((e&&e.message)||'Could not save template', true); }
+  };
+
+  // ── Lender & clauses modal ───────────────────────────────────────────────
+  window._mfOpenLenders=async function(){
+    var o=_mfOverlay('mfLenderOverlay');
+    o.innerHTML='<div style="width:600px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;background:#131315;border:1px solid rgba(201,168,76,0.3);border-radius:12px;overflow:hidden;">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.06);">'
+        +'<span style="font-size:15px;font-weight:700;color:#E0DDD4;">⚙ Lender &amp; clauses</span>'
+        +'<button type="button" onclick="_mfCloseOverlay(\'mfLenderOverlay\')" style="background:transparent;border:1px solid rgba(201,168,76,0.2);color:#888;border-radius:7px;font-size:12px;cursor:pointer;padding:5px 12px;">Close</button>'
+      +'</div>'
+      +'<div id="mfLenderBody" style="padding:16px 18px;overflow-y:auto;"><div style="color:#888;font-size:12px;">Loading lenders…</div></div>'
+    +'</div>';
+    try{
+      var res=await client().rpc('esign_lenders_list');
+      if(res.error) throw res.error;
+      window._mfLenders=(res.data)||[];
+      _mfRenderLenderBody();
+    }catch(e){ var b=document.getElementById('mfLenderBody'); if(b) b.innerHTML='<div style="color:#E5484D;font-size:12px;">Could not load lenders.</div>'; }
+  };
+
+  function _lenderOpts(selId){
+    return (window._mfLenders||[]).map(function(l){ return '<option value="'+l.id+'"'+(String(l.id)===String(selId)?' selected':'')+'>'+esc(l.name||('Lender '+l.id))+(l.has_mortgagee_clause?' ✓':'')+'</option>'; }).join('');
+  }
+  function _mfRenderLenderBody(){
+    var b=document.getElementById('mfLenderBody'); if(!b) return;
+    var lenders=window._mfLenders||[];
+    var lbl='display:block;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;';
+    var inp='width:100%;height:34px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:13px;padding:0 10px;outline:none;box-sizing:border-box;';
+    var ta='width:100%;background:#0E0E10;border:1px solid rgba(201,168,76,0.18);border-radius:8px;color:#E0DDD4;font-size:12px;padding:10px;outline:none;box-sizing:border-box;resize:vertical;';
+    var gbtn='height:34px;border:none;border-radius:7px;background:linear-gradient(135deg,#7A5020,'+GOLD+');color:#1A0E00;font-size:12px;font-weight:700;cursor:pointer;padding:0 16px;font-family:inherit;';
+    var sec='background:#161618;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:12px;margin-bottom:14px;';
+    b.innerHTML=''
+      // Merge-as lender for THIS document
+      +'<div style="'+sec+'">'
+        +'<label style="'+lbl+'">Merge this document as lender</label>'
+        +'<select id="mfMergeLender" onchange="_mfMergeAsLender(this.value)" style="'+inp+'">'+_lenderOpts(window._mfFillLenderId)+'</select>'
+        +'<div style="font-size:10px;color:#666;margin-top:5px;">Defaults to the deal’s assigned lender. Changing it re-resolves the merge values.</div>'
+      +'</div>'
+      // Per-lender clause editor
+      +'<div style="'+sec+'">'
+        +'<label style="'+lbl+'">Lender clauses <span id="mfLenderBadge"></span></label>'
+        +'<select id="mfClauseLender" onchange="_mfLenderPick(this.value)" style="'+inp+'margin-bottom:10px;"><option value="">Choose a lender…</option>'+_lenderOpts('')+'</select>'
+        +'<label style="'+lbl+'">Mortgagee clause</label>'
+        +'<textarea id="mfMortgagee" rows="3" placeholder="ISAOA/ATIMA mortgagee clause for this lender…" style="'+ta+'margin-bottom:10px;"></textarea>'
+        +'<label style="'+lbl+'">CPL clause (optional)</label>'
+        +'<textarea id="mfCpl" rows="2" placeholder="Closing Protection Letter language…" style="'+ta+'margin-bottom:10px;"></textarea>'
+        +'<button type="button" onclick="_mfSaveLenderClause(this)" style="'+gbtn+'">Save lender clauses</button>'
+      +'</div>'
+      // Defaults + LO
+      +'<div style="'+sec+'margin-bottom:0;">'
+        +'<label style="'+lbl+'">Default mortgagee clause (fallback)</label>'
+        +'<textarea id="mfDefMortgagee" rows="3" placeholder="Used when a deal’s lender has no clause on file…" style="'+ta+'margin-bottom:10px;"></textarea>'
+        +'<label style="'+lbl+'">Default lender</label>'
+        +'<select id="mfDefLender" style="'+inp+'margin-bottom:10px;"><option value="">— none —</option>'+_lenderOpts('')+'</select>'
+        +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
+          +'<div style="flex:1;min-width:120px;"><label style="'+lbl+'">LO name</label><input id="mfLoName" type="text" style="'+inp+'"></div>'
+          +'<div style="flex:1;min-width:100px;"><label style="'+lbl+'">LO NMLS</label><input id="mfLoNmls" type="text" style="'+inp+'"></div>'
+          +'<div style="flex:1;min-width:120px;"><label style="'+lbl+'">LO company</label><input id="mfLoCompany" type="text" style="'+inp+'"></div>'
+        +'</div>'
+        +'<button type="button" onclick="_mfSaveSettings(this)" style="'+gbtn+'">Save defaults</button>'
+      +'</div>';
+  }
+
+  window._mfLenderPick=function(id){
+    var badge=document.getElementById('mfLenderBadge'); if(!badge) return;
+    var l=(window._mfLenders||[]).filter(function(x){ return String(x.id)===String(id); })[0];
+    badge.innerHTML = (l && l.has_mortgagee_clause) ? '<span style="font-size:9px;font-weight:700;color:'+GOLD+';background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.35);border-radius:10px;padding:1px 7px;">has clause</span>' : '';
+  };
+
+  window._mfSaveLenderClause=async function(btn){
+    var id=(document.getElementById('mfClauseLender')||{}).value;
+    if(!id){ toast('Choose a lender first', true); return; }
+    var mort=(document.getElementById('mfMortgagee')||{}).value||'';
+    var cpl=(document.getElementById('mfCpl')||{}).value||'';
+    var orig=btn.textContent; btn.disabled=true; btn.textContent='Saving…';
+    try{
+      var res=await client().rpc('lender_clause_set',{ p_lender_id:id, p_mortgagee_clause:mort, p_cpl_clause:cpl });
+      if(res.error) throw res.error;
+      btn.textContent='Saved ✓'; setTimeout(function(){ btn.textContent=orig; btn.disabled=false; },1400);
+      _mfResolve(window._mfFillLenderId);
+    }catch(e){ btn.disabled=false; btn.textContent=orig; toast((e&&e.message)||'Could not save clause', true); }
+  };
+
+  window._mfSaveSettings=async function(btn){
+    var orig=btn.textContent; btn.disabled=true; btn.textContent='Saving…';
+    try{
+      var res=await client().rpc('esign_settings_set',{
+        p_default_mortgagee_clause:(document.getElementById('mfDefMortgagee')||{}).value||'',
+        p_default_lender_id:(document.getElementById('mfDefLender')||{}).value||null,
+        p_lo_name:(document.getElementById('mfLoName')||{}).value||'',
+        p_lo_nmls:(document.getElementById('mfLoNmls')||{}).value||'',
+        p_lo_company:(document.getElementById('mfLoCompany')||{}).value||''
+      });
+      if(res.error) throw res.error;
+      btn.textContent='Saved ✓'; setTimeout(function(){ btn.textContent=orig; btn.disabled=false; },1400);
+      _mfResolve(window._mfFillLenderId);
+    }catch(e){ btn.disabled=false; btn.textContent=orig; toast((e&&e.message)||'Could not save settings', true); }
+  };
+
+  window._mfMergeAsLender=function(id){ window._mfFillLenderId=id||null; _mfResolve(id||undefined); };
 })();
 </script>
 
