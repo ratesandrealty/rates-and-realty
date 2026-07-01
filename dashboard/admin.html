@@ -1308,49 +1308,70 @@
           <div id="lead-pipeline" class="pipeline-grid"></div>
         </div>
 
-        <!-- Market Watch — consolidated compact strip (own rate data via market_watch_strip RPC) -->
+        <!-- Market Watch — premium terminal strip (own data via market_watch_strip RPC): mortgage rates + treasury yields -->
         <div class="panel dashboard-section" data-section-id="market-rates" draggable="true" style="margin-bottom:24px;padding:13px 18px;">
           <div class="drag-handle" title="Drag to reorder">⠿</div>
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px;">
-            <span style="font-size:12px;font-weight:700;letter-spacing:.05em;color:#C9A84C;">📈 Market Watch</span>
-            <span id="mw-asof" style="font-size:11px;color:#888;font-weight:500;"></span>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:9px;min-width:0;">
+              <span style="font-size:12px;font-weight:700;letter-spacing:.05em;color:#C9A84C;white-space:nowrap;">📈 Market Watch</span>
+              <span id="mw-context"></span>
+            </div>
+            <span id="mw-asof" style="font-size:11px;color:#888;font-weight:500;white-space:nowrap;"></span>
           </div>
-          <div id="mw-body" style="display:flex;align-items:center;gap:14px;min-height:56px;">
+          <div id="mw-body" style="min-height:64px;">
             <div style="color:#888;font-size:12px;">Loading rates…</div>
           </div>
         </div>
+        <style>@media(max-width:480px){#mw-body .mw-spark{display:none!important;}}</style>
         <script>
         (function(){
           function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
           function fmtVal(v){ var n=Number(v); return (v==null||v===''||isNaN(n)) ? '—' : n.toFixed(2)+'%'; }
           function fmtDate(d){ if(!d) return ''; var t=new Date(d+'T00:00:00'); return isNaN(t)?String(d):t.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
-          // change<0 (rates dropping = good) → green ▼ ; >0 → red ▲ ; 0/null → muted —
-          function change(c){
-            var n=Number(c);
-            if(c==null||c===''||isNaN(n)||n===0) return '<span style="color:#777;">—</span>';
-            if(n<0) return '<span style="color:#4ade80;">▼'+Math.abs(n).toFixed(2)+'</span>';
-            return '<span style="color:#f87171;">▲'+n.toFixed(2)+'</span>';
+          // Lower rates/yields = good news → down is GREEN ▼, up is RED ▲, flat is muted —.
+          // Optional suffix (e.g. "this week") renders as a small muted trailing label.
+          function chg(c, suffix){
+            var n=Number(c), suf = suffix ? ('<span style="color:#7a7a7a;font-weight:600;font-size:.9em;"> '+suffix+'</span>') : '';
+            if(c==null||c===''||isNaN(n)||n===0) return '<span style="color:#777;">—</span>'+suf;
+            var col = n<0 ? '#4ade80' : '#f87171', ar = n<0 ? '▼' : '▲';
+            return '<span style="color:'+col+';">'+ar+Math.abs(n).toFixed(2)+'</span>'+suf;
           }
-          function sparkline(vals){
+          function sparkline(vals, color, W, H){
             vals=(vals||[]).map(Number).filter(function(v){return !isNaN(v);});
             if(vals.length<2) return '';
-            var W=120,H=32,P=3, mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals), rg=(mx-mn)||1;
-            var sx=(W-2*P)/(vals.length-1);
+            W=W||120; H=H||34; var P=3, mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals), rg=(mx-mn)||1, sx=(W-2*P)/(vals.length-1);
             var pts=vals.map(function(v,i){ var x=P+i*sx, y=P+(H-2*P)*(1-(v-mn)/rg); return x.toFixed(1)+','+y.toFixed(1); }).join(' ');
             return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" style="display:block;max-width:100%;" aria-hidden="true">'
-              +'<polyline points="'+pts+'" fill="none" stroke="#C9A84C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+              +'<polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>';
           }
-          function chip(rt,i){
-            var gold = (i===0);
-            return '<div style="flex:1 1 0;min-width:94px;background:#141414;border:1px solid '+(gold?'rgba(201,168,76,0.4)':'#2a2a2a')+';border-radius:9px;padding:8px 12px;">'
+          function rateChip(rt,i){
+            if(i===0){ // 30yr hero — larger, gold, with a secondary weekly-change line
+              var mo = (rt.change_mo!=null && !isNaN(Number(rt.change_mo))) ? ('Month: '+(Number(rt.change_mo)<0?'':'+')+Number(rt.change_mo).toFixed(2)) : '';
+              return '<div title="'+esc(mo)+'" style="flex:1.35 1 0;min-width:130px;background:linear-gradient(160deg,rgba(201,168,76,0.12),#141414 62%);border:1px solid rgba(201,168,76,0.45);border-radius:11px;padding:9px 14px;">'
+                +'<div style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#C9A84C;font-weight:700;white-space:nowrap;opacity:.9;">'+esc(rt.label||rt.key||'')+'</div>'
+                +'<div style="font-size:23px;font-weight:800;line-height:1.1;letter-spacing:-.02em;color:#C9A84C;">'+fmtVal(rt.value)+'</div>'
+                +'<div style="font-size:11px;font-weight:700;margin-top:1px;">'+chg(rt.change)+'</div>'
+                +'<div style="font-size:10px;font-weight:600;margin-top:1px;">'+chg(rt.change_wk,'this week')+'</div>'
+                +'</div>';
+            }
+            return '<div style="flex:1 1 0;min-width:90px;background:#141414;border:1px solid #2a2a2a;border-radius:10px;padding:9px 12px;">'
               +'<div style="font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:#8a8a8a;font-weight:700;white-space:nowrap;">'+esc(rt.label||rt.key||'')+'</div>'
-              +'<div style="font-size:18px;font-weight:800;line-height:1.15;letter-spacing:-.02em;color:'+(gold?'#C9A84C':'#fff')+';">'+fmtVal(rt.value)+'</div>'
-              +'<div style="font-size:11px;font-weight:700;margin-top:1px;">'+change(rt.change)+'</div>'
+              +'<div style="font-size:17px;font-weight:800;line-height:1.15;letter-spacing:-.02em;color:#fff;">'+fmtVal(rt.value)+'</div>'
+              +'<div style="font-size:11px;font-weight:700;margin-top:1px;">'+chg(rt.change)+'</div>'
               +'</div>';
           }
-          function unavailable(body,asof){ if(asof) asof.textContent=''; if(body) body.innerHTML='<div style="color:#888;font-size:12px;">Rates unavailable.</div>'; }
+          function yldChip(y){
+            var bench = /(^|[^0-9])10/.test(String(y.key||y.label||''));
+            return '<div style="flex:1 1 0;min-width:82px;background:rgba(255,255,255,0.02);border:1px solid #232323;border-radius:9px;padding:6px 11px;">'
+              +'<div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:#7a7a7a;font-weight:700;white-space:nowrap;">'+esc(y.label||y.key||'')+(bench?'<span style="color:#C9A84C;opacity:.85;"> · benchmark</span>':'')+'</div>'
+              +'<div style="font-size:14px;font-weight:700;line-height:1.2;color:#c9c9c9;">'+fmtVal(y.value)+'</div>'
+              +'<div style="font-size:10px;font-weight:700;margin-top:1px;">'+chg(y.change)+'</div>'
+              +'</div>';
+          }
+          function secLabel(t){ return '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:#8a8a8a;">'+t+'</div>'; }
+          function unavailable(body,asof,ctx){ if(asof) asof.textContent=''; if(ctx) ctx.innerHTML=''; if(body) body.innerHTML='<div style="color:#888;font-size:12px;">Rates unavailable.</div>'; }
           async function loadMW(){
-            var body=document.getElementById('mw-body'), asof=document.getElementById('mw-asof');
+            var body=document.getElementById('mw-body'), asof=document.getElementById('mw-asof'), ctx=document.getElementById('mw-context');
             if(!body) return;
             try{
               // Same client-acquisition pattern the rest of the dashboard uses.
@@ -1360,18 +1381,41 @@
               if(sb && sb.rpc){ var res=await sb.rpc('market_watch_strip'); d=res.data; err=res.error; }
               else {
                 var cfg=window.APP_CONFIG||{}, SB=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co', KEY=cfg.SUPABASE_ANON_KEY;
-                if(!KEY){ return unavailable(body,asof); }
+                if(!KEY){ return unavailable(body,asof,ctx); }
                 var r=await fetch(SB+'/rest/v1/rpc/market_watch_strip',{method:'POST',headers:{apikey:KEY,Authorization:'Bearer '+KEY,'Content-Type':'application/json'},body:'{}'});
                 d=await r.json(); if(!r.ok) err={message:'http '+r.status};
               }
-              if(err || !d || d.ok===false || !d.rates || !d.rates.length){ return unavailable(body,asof); }
+              if(err || !d || d.ok===false || !d.rates || !d.rates.length){ return unavailable(body,asof,ctx); }
               if(asof) asof.textContent = d.as_of ? ('as of '+fmtDate(d.as_of)) : '';
-              var chips = d.rates.slice(0,5).map(chip).join('');
-              var spark = sparkline(d.spark_30yr);
-              body.innerHTML = '<div class="m-scroll-x" style="display:flex;gap:10px;flex:1 1 auto;min-width:0;">'+chips+'</div>'
-                + (spark ? '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:3px;">'+spark
-                    +'<span style="font-size:8px;font-weight:700;letter-spacing:.6px;color:#666;text-transform:uppercase;">30-Yr Trend</span></div>' : '');
-            }catch(e){ unavailable(body,asof); }
+              if(ctx) ctx.innerHTML = d.context ? '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:#C9A84C;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.35);border-radius:999px;padding:2px 9px;white-space:nowrap;">📉 30yr '+esc(d.context)+'</span>' : '';
+
+              // TOP — Mortgage Rates (5 chips, 30yr hero) + gold 30yr sparkline
+              var sparkM = sparkline(d.spark_30yr, '#C9A84C', 124, 34);
+              var mortgage = secLabel('Mortgage Rates')
+                + '<div style="display:flex;align-items:stretch;gap:12px;margin-top:6px;">'
+                +   '<div class="m-scroll-x" style="display:flex;gap:10px;flex:1 1 auto;min-width:0;">'+ d.rates.slice(0,5).map(rateChip).join('') +'</div>'
+                +   (sparkM ? '<div class="mw-spark" style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:3px;">'+sparkM
+                        +'<span style="font-size:8px;font-weight:700;letter-spacing:.5px;color:#7a6a3a;text-transform:uppercase;">30-Yr · 30d</span></div>' : '')
+                + '</div>';
+
+              // BOTTOM — Treasury Yields (secondary/muted). Still render mortgage if this is missing.
+              var treasury='', tre=d.treasury, yields=(tre&&tre.yields)||[];
+              if(yields.length){
+                var sparkT = sparkline(tre.spark_10yr, '#8a94a6', 108, 30);
+                treasury = '<div style="margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.07);">'
+                  + '<div style="display:flex;align-items:center;gap:7px;">'
+                  +   secLabel('Treasury Yields')
+                  +   '<span title="The 10-Yr Treasury yield is the benchmark that mortgage rates track." style="font-size:9px;color:#6a6a6a;cursor:help;white-space:nowrap;">ⓘ mortgage benchmark</span>'
+                  + '</div>'
+                  + '<div style="display:flex;align-items:stretch;gap:10px;margin-top:6px;">'
+                  +   '<div class="m-scroll-x" style="display:flex;gap:8px;flex:1 1 auto;min-width:0;">'+ yields.slice(0,3).map(yldChip).join('') +'</div>'
+                  +   (sparkT ? '<div class="mw-spark" style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px;">'+sparkT
+                          +'<span style="font-size:8px;font-weight:700;letter-spacing:.5px;color:#5f6672;text-transform:uppercase;">10-Yr UST</span></div>' : '')
+                  + '</div>'
+                  + '</div>';
+              }
+              body.innerHTML = mortgage + treasury;
+            }catch(e){ unavailable(body,asof,ctx); }
           }
           if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){loadMW();}); } else { loadMW(); }
         })();
