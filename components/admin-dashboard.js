@@ -288,9 +288,9 @@ async function renderOverview() {
         <div class="metric-delta up">↑ last 7 days</div>
       </article>
       <article class="metric-card metric-card-red">
-        <strong>${data.hotLeads}</strong>
+        <strong>${(ccKpis.hot_leads != null) ? ccKpis.hot_leads : data.hotLeads}</strong>
         <span>Hot Leads</span>
-        <div class="metric-delta" style="color:var(--red);">Score 70+</div>
+        <div class="metric-delta" style="color:var(--red);">Score 50+</div>
       </article>
       <article class="metric-card metric-card-green">
         <strong>${data.closedThisMonth}</strong>
