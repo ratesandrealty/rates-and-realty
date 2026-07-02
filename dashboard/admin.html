@@ -1347,8 +1347,11 @@
           function rateChip(rt,i){
             if(i===0){ // 30yr hero — larger, gold, with a secondary weekly-change line
               var mo = (rt.change_mo!=null && !isNaN(Number(rt.change_mo))) ? ('Month: '+(Number(rt.change_mo)<0?'':'+')+Number(rt.change_mo).toFixed(2)) : '';
+              // The first/hero mortgage rate IS the conventional 30-yr — make that explicit on the label.
+              var heroLbl = String(rt.label||rt.key||'');
+              if(!/conventional/i.test(heroLbl)) heroLbl = heroLbl ? (heroLbl+' (Conventional)') : '30 Yr Conventional';
               return '<div title="'+esc(mo)+'" style="flex:1.35 1 0;min-width:130px;background:linear-gradient(160deg,rgba(201,168,76,0.12),#141414 62%);border:1px solid rgba(201,168,76,0.45);border-radius:11px;padding:9px 14px;">'
-                +'<div style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#C9A84C;font-weight:700;white-space:nowrap;opacity:.9;">'+esc(rt.label||rt.key||'')+'</div>'
+                +'<div style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#C9A84C;font-weight:700;white-space:nowrap;opacity:.9;">'+esc(heroLbl)+'</div>'
                 +'<div style="font-size:23px;font-weight:800;line-height:1.1;letter-spacing:-.02em;color:#C9A84C;">'+fmtVal(rt.value)+'</div>'
                 +'<div style="font-size:11px;font-weight:700;margin-top:1px;">'+chg(rt.change)+'</div>'
                 +'<div style="font-size:10px;font-weight:600;margin-top:1px;">'+chg(rt.change_wk,'this week')+'</div>'
@@ -1370,6 +1373,42 @@
           }
           function secLabel(t){ return '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:#8a8a8a;">'+t+'</div>'; }
           function unavailable(body,asof,ctx){ if(asof) asof.textContent=''; if(ctx) ctx.innerHTML=''; if(body) body.innerHTML='<div style="color:#888;font-size:12px;">Rates unavailable.</div>'; }
+          // Compact relative date, e.g. "2d ago" / "3h ago" / "just now".
+          function relTime(iso){
+            if(!iso) return '';
+            var t=new Date(iso); if(isNaN(t)) return '';
+            var s=Math.floor((Date.now()-t.getTime())/1000);
+            if(s<60) return 'just now';
+            var m=Math.floor(s/60); if(m<60) return m+'m ago';
+            var h=Math.floor(m/60); if(h<24) return h+'h ago';
+            var dd=Math.floor(h/24); if(dd<7) return dd+'d ago';
+            var wk=Math.floor(dd/7); if(wk<5) return wk+'w ago';
+            return t.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+          }
+          function newsRow(it){
+            var meta=[it.source?esc(it.source):'', relTime(it.published_at)].filter(Boolean).join(' · ');
+            return '<a href="'+esc(it.link||'#')+'" target="_blank" rel="noopener noreferrer" class="mw-news-row" style="display:block;text-decoration:none;padding:6px 0;border-top:1px solid rgba(255,255,255,0.05);">'
+              +'<div style="font-size:12px;font-weight:600;color:#d8d8d8;line-height:1.35;">'+esc(it.title||'')+'</div>'
+              +(meta?'<div style="font-size:10px;color:#7a7a7a;font-weight:600;margin-top:1px;">'+meta+'</div>':'')
+              +'</a>';
+          }
+          // News feed (edge fn 'news-feed', action:list) — headline links only, no fabricated summaries.
+          async function loadNews(){
+            var host=document.getElementById('mw-news'); if(!host) return;
+            try{
+              var cfg=window.APP_CONFIG||{}, SB=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co', KEY=cfg.SUPABASE_ANON_KEY;
+              if(!KEY){ host.innerHTML=''; return; }
+              var tok=KEY;
+              try{ var sb=window._dashSupabase||window._pipelineSupabase||window._supabaseClient; if(sb&&sb.auth){ var ss=await sb.auth.getSession(); if(ss&&ss.data&&ss.data.session) tok=ss.data.session.access_token; } }catch(_){}
+              var r=await fetch(SB+'/functions/v1/news-feed',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok,'apikey':KEY},body:JSON.stringify({action:'list'})});
+              var j=await r.json();
+              if(!r.ok || !j || j.ok===false || !j.items || !j.items.length){ host.innerHTML=''; return; }
+              host.innerHTML = '<div style="margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.07);">'
+                + '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:#C9A84C;">Mortgage &amp; Real Estate News</div>'
+                + '<div style="margin-top:4px;">'+ j.items.slice(0,5).map(newsRow).join('') +'</div>'
+                + '</div>';
+            }catch(e){ host.innerHTML=''; }
+          }
           async function loadMW(){
             var body=document.getElementById('mw-body'), asof=document.getElementById('mw-asof'), ctx=document.getElementById('mw-context');
             if(!body) return;
@@ -1414,7 +1453,8 @@
                   + '</div>'
                   + '</div>';
               }
-              body.innerHTML = mortgage + treasury;
+              body.innerHTML = mortgage + treasury + '<div id="mw-news"></div>';
+              loadNews();
             }catch(e){ unavailable(body,asof,ctx); }
           }
           if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){loadMW();}); } else { loadMW(); }
