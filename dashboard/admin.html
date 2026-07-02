@@ -1279,7 +1279,7 @@
             <div><p class="kicker" style="margin:0 0 2px;color:#C9A84C;">Daily</p><h3 style="margin:0;font-size:1.15rem;">⚡ Command Center</h3></div>
             <div style="display:flex;align-items:center;gap:10px;">
               <span id="cc-asof" style="font-size:11px;color:#888;"></span>
-              <button id="cc-refresh" type="button" onclick="loadCommandCenter()" class="btn btn-secondary btn-sm">↺ Refresh</button>
+              <button id="cc-refresh" type="button" onclick="loadCommandCenter(true)" class="btn btn-secondary btn-sm">↺ Refresh</button>
             </div>
           </div>
           <div id="cc-body"><div style="padding:34px;text-align:center;color:#888;font-size:13px;">Loading command center…</div></div>
@@ -5074,19 +5074,36 @@ document.addEventListener('DOMContentLoaded', function() {
     if(asof) asof.textContent = d.generated_at ? ('as of ' + new Date(d.generated_at).toLocaleString()) : '';
   }
 
-  window.loadCommandCenter = async function(){
+  // Single source of truth for the dashboard_command_center() RPC. Caches the
+  // promise so KPIs, pipeline tiles (in admin-dashboard.js) and the command center
+  // all share ONE call. Its counts are authoritative (not capped like a 1000-row fetch).
+  window._ccData = window._ccData || null;
+  window.getCommandCenterData = function(force){
+    if(!force && window._ccDataPromise) return window._ccDataPromise;
+    window._ccDataPromise = (async function(){
+      var sb = await _ccClient();
+      if(!sb) throw new Error('Supabase client not ready.');
+      var r = await sb.rpc('dashboard_command_center');
+      if(r.error) throw new Error(r.error.message || 'error');
+      window._ccData = r.data || {};
+      return window._ccData;
+    })();
+    // Let a failed fetch be retried later instead of caching the rejection forever.
+    window._ccDataPromise.catch(function(){ window._ccDataPromise = null; });
+    return window._ccDataPromise;
+  };
+
+  window.loadCommandCenter = async function(force){
     var body = document.getElementById('cc-body'); if(!body) return;
     var btn = document.getElementById('cc-refresh'); if(btn) btn.disabled = true;
     body.innerHTML = '<div style="padding:34px;text-align:center;color:#888;font-size:13px;">Loading command center…</div>';
     try{
-      var sb = await _ccClient();
-      if(!sb){ body.innerHTML = '<div style="padding:24px;text-align:center;color:#E5484D;font-size:13px;">Supabase client not ready.</div>'; return; }
-      var r = await sb.rpc('dashboard_command_center');
-      if(r.error){ body.innerHTML = '<div style="padding:24px;text-align:center;color:#E5484D;font-size:13px;">Could not load command center: '+esc(r.error.message||'error')+'</div>'; return; }
-      render(r.data || {});
+      var d = await window.getCommandCenterData(force === true);
+      render(d || {});
     }catch(e){
-      body.innerHTML = '<div style="padding:24px;text-align:center;color:#E5484D;font-size:13px;">Could not load command center.</div>';
-      console.warn('[command-center]', e && e.message || e);
+      var msg = (e && e.message) || 'error';
+      body.innerHTML = '<div style="padding:24px;text-align:center;color:#E5484D;font-size:13px;">Could not load command center: '+esc(msg)+'</div>';
+      console.warn('[command-center]', msg);
     }finally{ if(btn) btn.disabled = false; }
   };
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', window.loadCommandCenter); else window.loadCommandCenter();

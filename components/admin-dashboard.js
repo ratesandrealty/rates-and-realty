@@ -263,12 +263,23 @@ async function renderOverview() {
   const todayStr = new Date().toISOString().split("T")[0];
   const todayAppts = allAppointments.filter((a) => (a.scheduled_at || "").startsWith(todayStr)).length;
 
+  // Authoritative counts from dashboard_command_center() RPC (shared single call).
+  // These are NOT capped at 1000 rows like the client-side leads/contacts fetches,
+  // so Total Leads and per-stage counts stay correct. Degrades gracefully if unavailable.
+  let cc = null;
+  try { if (typeof window.getCommandCenterData === "function") cc = await window.getCommandCenterData(); }
+  catch (_) { cc = null; }
+  const ccKpis = (cc && cc.kpis) || {};
+  const ccTotalLeads = (ccKpis.total_leads != null) ? ccKpis.total_leads : data.totalLeads;
+  const ccStageCounts = {};
+  ((cc && cc.pipeline_by_stage) || []).forEach((x) => { if (x && x.stage != null) ccStageCounts[x.stage] = Number(x.count) || 0; });
+
   // 6 stat cards
   const summary = document.getElementById("admin-summary");
   if (summary) {
     summary.innerHTML = `
       <article class="metric-card">
-        <strong>${data.totalLeads}</strong>
+        <strong>${ccTotalLeads}</strong>
         <span>Total Leads</span>
       </article>
       <article class="metric-card metric-card-gold">
@@ -296,10 +307,11 @@ async function renderOverview() {
     `;
   }
 
-  // Pipeline stage strip
+  // Pipeline stage strip — counts come from the authoritative RPC (pipeline_by_stage),
+  // NOT a capped contacts fetch. 'Lost' isn't in pipeline_by_stage, so it shows its own
+  // count when present else 0 (never derived by subtraction).
   const pipelineRoot = document.getElementById("lead-pipeline");
   if (pipelineRoot) {
-    const { supabase } = await import("/api/supabase-client.js");
     const OVERVIEW_STAGES = [
       { key: 'New Lead',       label: 'NEW',           color: '#6B6B7A' },
       { key: 'Contacted',      label: 'CONTACTED',     color: '#5AA0E0' },
@@ -310,16 +322,8 @@ async function renderOverview() {
       { key: 'Closed',         label: 'CLOSED',        color: '#3AB06A' },
       { key: 'Lost',           label: 'LOST',          color: '#E05252' },
     ];
-    const { data: pipelineContacts } = await supabase
-      .from('contacts')
-      .select('pipeline_status');
     const countByStage = {};
-    OVERVIEW_STAGES.forEach(s => countByStage[s.key] = 0);
-    (pipelineContacts || []).forEach(c => {
-      const key = c.pipeline_status || 'New Lead';
-      if (countByStage[key] !== undefined) countByStage[key]++;
-      else countByStage['New Lead']++;
-    });
+    OVERVIEW_STAGES.forEach(s => countByStage[s.key] = ccStageCounts[s.key] || 0);
     pipelineRoot.innerHTML = OVERVIEW_STAGES.map((s) => `
       <div class="pipeline-column" onclick="navigateTo('pipeline')" style="cursor:pointer;">
         <p class="kicker" style="font-size:0.65rem;color:${s.color};">${s.label}</p>
