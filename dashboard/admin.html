@@ -1591,7 +1591,7 @@
           </div>
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;" id="showing-stats-row">
             <div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#fff;" id="stat-total-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">Total</div></div>
-            <div style="background:rgba(255,193,7,0.1);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#ffc107;" id="stat-pending-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">Pending</div></div>
+            <div style="background:rgba(255,193,7,0.1);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#ffc107;" id="stat-pending-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">New</div></div>
             <div style="background:rgba(40,167,69,0.1);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#28a745;" id="stat-confirmed-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">Confirmed</div></div>
             <div style="background:rgba(23,162,184,0.1);border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#17a2b8;" id="stat-completed-showings">—</div><div style="font-size:11px;color:#888;margin-top:2px;">Completed</div></div>
           </div>
@@ -3151,14 +3151,19 @@ async function loadShowingsWidget() {
       headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
     });
     const allShowings = await countRes.json();
-    const total = Array.isArray(allShowings) ? allShowings.length : 0;
-    const pending = Array.isArray(allShowings) ? allShowings.filter(s => s.status === 'pending' || !s.status).length : 0;
-    const confirmed = Array.isArray(allShowings) ? allShowings.filter(s => s.status === 'confirmed').length : 0;
-    const completed = Array.isArray(allShowings) ? allShowings.filter(s => s.status === 'completed').length : 0;
+    const rows = Array.isArray(allShowings) ? allShowings : [];
+    const lc = s => String(s == null ? '' : s).toLowerCase();
+    const total = rows.length;
+    // Real lifecycle statuses are 'new' and 'confirmed' (case-insensitive).
+    const confirmed = rows.filter(s => lc(s.status) === 'confirmed').length;
+    const completed = rows.filter(s => lc(s.status) === 'completed').length;
+    // "New" is the early-lifecycle bucket AND absorbs null/unknown statuses so nothing
+    // silently disappears — New + Confirmed + Completed always reconciles to Total.
+    const newCount = total - confirmed - completed;
 
     const el = id => document.getElementById(id);
     if (el('stat-total-showings')) el('stat-total-showings').textContent = total;
-    if (el('stat-pending-showings')) el('stat-pending-showings').textContent = pending;
+    if (el('stat-pending-showings')) el('stat-pending-showings').textContent = newCount;
     if (el('stat-confirmed-showings')) el('stat-confirmed-showings').textContent = confirmed;
     if (el('stat-completed-showings')) el('stat-completed-showings').textContent = completed;
 
@@ -3177,7 +3182,7 @@ async function loadShowingsWidget() {
           <div style="color:#fff;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.property_address || 'Unknown Property'}</div>
           <div style="color:#888;font-size:11px;margin-top:2px;">${s.name || s.email || 'Anonymous'} · ${s.preferred_date || '—'} ${s.preferred_time || ''}</div>
         </div>
-        <span style="padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;flex-shrink:0;background:${s.status==='confirmed'?'rgba(40,167,69,0.15)':s.status==='completed'?'rgba(23,162,184,0.15)':'rgba(255,193,7,0.15)'};color:${s.status==='confirmed'?'#28a745':s.status==='completed'?'#17a2b8':'#ffc107'};">${s.status || 'pending'}</span>
+        <span style="padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;flex-shrink:0;background:${String(s.status||'').toLowerCase()==='confirmed'?'rgba(40,167,69,0.15)':String(s.status||'').toLowerCase()==='completed'?'rgba(23,162,184,0.15)':'rgba(255,193,7,0.15)'};color:${String(s.status||'').toLowerCase()==='confirmed'?'#28a745':String(s.status||'').toLowerCase()==='completed'?'#17a2b8':'#ffc107'};">${s.status || 'new'}</span>
         <a href="/admin/showings" style="color:#c9a84c;font-size:11px;text-decoration:none;flex-shrink:0;">View →</a>
       </div>
     `).join('');
