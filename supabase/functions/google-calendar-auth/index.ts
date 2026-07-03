@@ -79,7 +79,7 @@ serve(async (req) => {
         <div style="font-size:48px;margin-bottom:16px;">&#x2705;</div>
         <h2 style="color:#c9a84c;margin-bottom:8px;">Google Connected!</h2>
         <p style="color:rgba(255,255,255,0.6);">Calendar + Drive access granted for rene@ratesandrealty.com</p>
-        <a href="https://beta.ratesandrealty.com/admin/contacts.html" style="display:inline-block;margin-top:20px;padding:12px 24px;background:#c9a84c;color:#111;border-radius:8px;text-decoration:none;font-weight:700;">Back to CRM &#x2192;</a>
+        <a href="https://admin.ratesandrealty.com/admin/contacts.html" style="display:inline-block;margin-top:20px;padding:12px 24px;background:#c9a84c;color:#111;border-radius:8px;text-decoration:none;font-weight:700;">Back to CRM &#x2192;</a>
       </div>
     </body></html>
   `, { headers: { 'Content-Type': 'text/html', ...corsHeaders } })

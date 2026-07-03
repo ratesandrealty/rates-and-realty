@@ -145,7 +145,7 @@ Deno.serve(async (req: Request) => {
 
       if (toEmail) {
         const subject = `Alert Created: ${alert.name} - I'll notify you when homes match!`;
-        const html = buildAlertConfirmEmail({ firstName, alertName: alert.name, filters: alert, frequency: alert.frequency || 'Daily', portalUrl: 'https://beta.ratesandrealty.com/public/unified-portal.html' });
+        const html = buildAlertConfirmEmail({ firstName, alertName: alert.name, filters: alert, frequency: alert.frequency || 'Daily', portalUrl: 'https://homes.ratesandrealty.com/public/unified-portal.html' });
         emailResult = await sendEmail(toEmail, firstName, subject, html);
 
         if (contact_id) {
@@ -190,7 +190,7 @@ Deno.serve(async (req: Request) => {
               portal_user_id: portal_user_id,
               title: 'Alert Created!',
               message: `Your "${alert.name}" alert is active. We'll notify you when homes match.`,
-              url: 'https://beta.ratesandrealty.com/public/unified-portal.html#alerts'
+              url: 'https://homes.ratesandrealty.com/public/unified-portal.html#alerts'
             })
           });
         } catch(pushErr) { console.warn('Push notification error:', pushErr); }

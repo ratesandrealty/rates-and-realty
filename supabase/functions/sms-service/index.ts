@@ -47,11 +47,11 @@ async function logActivity(p:{contact_id?:string;portal_user_id?:string;crm_id?:
 }
 
 const T: Record<string,(p:any)=>string> = {
-  portal_signup: p => `Hi ${p.firstName}! Welcome to Rates & Realty. Your borrower portal is ready at beta.ratesandrealty.com. Your ID: ${p.borrowerId}. Questions? Call/text Rene at (714) 472-8508. Reply STOP to opt out.`,
+  portal_signup: p => `Hi ${p.firstName}! Welcome to Rates & Realty. Your borrower portal is ready at homes.ratesandrealty.com. Your ID: ${p.borrowerId}. Questions? Call/text Rene at (714) 472-8508. Reply STOP to opt out.`,
   showing_request: p => `Hi ${p.firstName}! Got your showing request for ${p.homeCount} home${p.homeCount!==1?'s':''} on ${p.date||'your requested date'}. I'll confirm within a few hours. - Rene (714) 472-8508. Reply STOP to opt out.`,
   showing_confirm: p => `Hi ${p.firstName}! Your home tour is CONFIRMED for ${p.date} at ${p.time}. ${p.homeCount} home${p.homeCount!==1?'s':''} to visit. Check your email for the full route map. - Rene (714) 472-8508. Reply STOP to opt out.`,
   listing_alert_created: p => `Hi ${p.firstName}! Your "${p.alertName}" listing alert is active. I'll text + email you the moment a matching home hits the market. - Rene (714) 472-8508. Reply STOP to opt out.`,
-  alert_match: p => `New listing alert! ${p.beds?p.beds+'BD ':''} ${p.baths?p.baths+'BA ':''}in ${p.city}${p.price?' for $'+Number(p.price).toLocaleString():''}. ${p.address||''}. Portal: beta.ratesandrealty.com - Rene (714) 472-8508. Reply STOP to opt out.`,
+  alert_match: p => `New listing alert! ${p.beds?p.beds+'BD ':''} ${p.baths?p.baths+'BA ':''}in ${p.city}${p.price?' for $'+Number(p.price).toLocaleString():''}. ${p.address||''}. Portal: homes.ratesandrealty.com - Rene (714) 472-8508. Reply STOP to opt out.`,
   reminder: p => `Reminder: Your home tour is TOMORROW ${p.date} at ${p.time}! ${p.homeCount} home${p.homeCount!==1?'s':''} lined up. Reply CONFIRM or call (714) 472-8508. - Rene | Reply STOP to opt out.`,
   custom: p => p.message,
   manual: p => p.message,

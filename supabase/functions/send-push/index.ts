@@ -170,7 +170,7 @@ Deno.serve(async (req: Request) => {
         title,
         body: message,
         icon: icon || '/icon-192.png',
-        url: url || 'https://beta.ratesandrealty.com/public/unified-portal.html',
+        url: url || 'https://homes.ratesandrealty.com/public/unified-portal.html',
         badge: '/badge-72.png'
       });
 
