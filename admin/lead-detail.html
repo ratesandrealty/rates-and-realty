@@ -2450,6 +2450,7 @@
         <div class="lp-card"><div class="lp-h">🔑 Appraisal Portal</div><div id="lpAppraisalPortalBody"></div></div>
         <div class="lp-card"><div class="lp-h"><span>✍️ Letters of Explanation</span><button type="button" onclick="loeOpenEditor(null)" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">+ New LOE</button></div><div id="lpLoeBody"></div></div>
         <div class="lp-card"><div class="lp-h">👥 Related People</div><div id="lpRelatedBody"></div></div>
+        <div class="lp-card" id="lpShareCard" style="display:none;"><div class="lp-h">🔐 Shared with <span style="font-weight:400;color:rgba(255,255,255,.35);font-size:11px;">— VA access</span></div><div id="lpShareBody"></div></div>
         <div class="lp-card"><div class="lp-h"><span>🖊️ E-Signature Status</span><button type="button" onclick="openEsignSendModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">Send for signature</button></div><div id="lpEsignLinks"></div><div id="lpEsignBody"></div></div>
         <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><button type="button" onclick="openAssignVaModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">👤 Assign to VA</button></div><div id="lpVaTasksBody"></div></div>
       </div>
@@ -9284,6 +9285,7 @@ async function lpLoadProcessing(){
   lpLoadRelated(cid);
   lpLoadEsign(cid);
   lpLoadVaTasks();
+  lpLoadShares();
 }
 function lpGoToLender(name){
   const btn = document.querySelector('.ld-tab-btn[onclick*="lenders"]');
@@ -10785,6 +10787,97 @@ async function lpLoadRelated(cid){
       +'</div>';
     }).join('');
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load connected people.</div>'; }
+}
+
+/* ═══ SHARING / VA ACCESS (admin-only) ═══
+   Share this lead with a staff member (VA/agent/LOA). Every RPC is admin-only server-side
+   (raises "admin only" otherwise); the card is also hidden in the UI for non-admins, matching
+   the page's sessionStorage('rnr_app_role') gating. Chips = lead_share_users; picker =
+   staff_assignees (minus already-shared); share_lead / unshare_lead mutate. CRM-only — no ClickUp. */
+var _lpShareRows = [];
+function _lpShareToast(e, fallback){ var t=window.showToast||window.toast||function(){}; t((e&&e.message)||fallback, true); }
+async function lpLoadShares(){
+  var card = document.getElementById('lpShareCard'); if(!card) return;
+  var role = (sessionStorage.getItem('rnr_app_role')||'').toLowerCase();
+  if(!role){ // auth-guard hasn't published the role yet — poll briefly (same idiom as _ldEnsureVaMode)
+    if((lpLoadShares._tries=(lpLoadShares._tries||0)+1) <= 40){ setTimeout(lpLoadShares, 150); }
+    return;
+  }
+  if(role !== 'admin'){ card.style.display='none'; return; }  // admin-only surface — hide entirely
+  var cid = (typeof lpCid==='function'?lpCid():null); if(!cid){ card.style.display='none'; return; }
+  card.style.display='';
+  var body = document.getElementById('lpShareBody'); if(!body) return;
+  if(!body.innerHTML.trim()) body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
+  try{
+    var resp = await _authClient().rpc('lead_share_users', { p_contact_id: cid });
+    if(resp.error) throw resp.error;
+    _lpShareRows = resp.data || [];
+    _lpRenderShares();
+  }catch(e){ _lpShareToast(e,'Could not load sharing'); body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">'+lpEsc((e&&e.message)||'Could not load sharing')+'</div>'; }
+}
+async function _lpRenderShares(){
+  var body = document.getElementById('lpShareBody'); if(!body) return;
+  // Current shares → chips with a × remove.
+  var chips;
+  if(!_lpShareRows.length){
+    chips = '<div style="color:#888;font-size:12px;padding:4px 2px 8px;">Not shared with anyone yet.</div>';
+  } else {
+    chips = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">' + _lpShareRows.map(function(u){
+      var lbl = lpEsc(u.email||u.user_id) + ' (' + lpEsc(u.role||'—') + ')';
+      return '<span style="display:inline-flex;align-items:center;gap:6px;background:rgba(201,168,76,.10);border:1px solid rgba(201,168,76,.30);color:#C9A84C;border-radius:14px;padding:3px 6px 3px 10px;font-size:11px;font-weight:600;">'
+        + lbl
+        + '<button type="button" title="Remove access" onclick="_lpShareRemove(\''+lpEsc(String(u.user_id))+'\')" style="background:transparent;border:none;color:#C9A84C;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;">×</button>'
+        + '</span>';
+    }).join('') + '</div>';
+  }
+  body.innerHTML = chips + '<div id="lpSharePicker"><div style="color:#888;font-size:12px;padding:6px 2px;">Loading staff…</div></div>';
+  // Picker: staff_assignees minus anyone already shared.
+  try{
+    var resp = await _authClient().rpc('staff_assignees');
+    if(resp.error) throw resp.error;
+    var staff = resp.data || [];
+    var sharedIds = {}; _lpShareRows.forEach(function(u){ sharedIds[String(u.user_id)]=1; });
+    var avail = staff.filter(function(s){ return !sharedIds[String(s.user_id)]; });
+    var pk = document.getElementById('lpSharePicker'); if(!pk) return;
+    if(!avail.length){
+      pk.innerHTML = '<div style="color:#888;font-size:12px;padding:4px 2px;">'+(staff.length?'Everyone available is already shared.':'No assignable staff — add a VA under Settings.')+'</div>';
+      return;
+    }
+    var inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:5px 7px;outline:none;font-family:inherit;box-sizing:border-box;';
+    pk.innerHTML = '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+      + '<select id="lpShareSelect" style="'+inp+'flex:1;min-width:160px;">'
+      + avail.map(function(s){ return '<option value="'+lpEsc(String(s.user_id))+'">'+lpEsc(s.email||s.user_id)+' ('+lpEsc(s.role||'—')+')</option>'; }).join('')
+      + '</select>'
+      + '<button type="button" onclick="_lpShareAdd()" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;">Share</button>'
+      + '</div>';
+  }catch(e){
+    var pk2 = document.getElementById('lpSharePicker'); if(pk2) pk2.innerHTML='<div style="color:#E5484D;font-size:12px;padding:4px 2px;">'+lpEsc((e&&e.message)||'Could not load staff')+'</div>';
+  }
+}
+async function _lpShareAdd(){
+  var toastFn = window.showToast||window.toast||function(){};
+  var sel = document.getElementById('lpShareSelect');
+  var uid = sel && sel.value; if(!uid) return;
+  var optTxt = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].text) || '';
+  var email = optTxt.split(' (')[0] || 'staff';
+  var cid = (typeof lpCid==='function'?lpCid():null); if(!cid) return;
+  try{
+    var resp = await _authClient().rpc('share_lead', { p_contact_id: cid, p_user_id: uid });
+    if(resp.error) throw resp.error;
+    toastFn('Shared with '+email);
+    lpLoadShares();
+  }catch(e){ _lpShareToast(e,'Could not share'); }
+}
+async function _lpShareRemove(uid){
+  var toastFn = window.showToast||window.toast||function(){};
+  if(!uid) return;
+  var cid = (typeof lpCid==='function'?lpCid():null); if(!cid) return;
+  try{
+    var resp = await _authClient().rpc('unshare_lead', { p_contact_id: cid, p_user_id: uid });
+    if(resp.error) throw resp.error;
+    toastFn('Removed');
+    lpLoadShares();
+  }catch(e){ _lpShareToast(e,'Could not remove'); }
 }
 
 async function lpLoadEsign(cid){
