@@ -5392,6 +5392,65 @@ function _ldRestoreTabFromHash() {
   switchTab(name, btn);
 }
 
+/* ── PER-TAB VA VISIBILITY ──────────────────────────────────────────────────
+   Hide lead-detail tabs the VA isn't allowed to see. Source of truth is the
+   my_capabilities() RPC: { role, all:boolean, caps:{ tab_*:bool } }. Admins
+   (all === true) are untouched. Runs as early as the auth client + tab DOM are
+   ready so hidden tabs don't flash. switchTab name → capability key: */
+var LD_TAB_CAP = {
+  'lead-details': 'tab_lead_details',
+  'processing':   'tab_loan_processing',
+  'application':  'tab_1003',
+  'documents':    'tab_documents',
+  'conditions':   'tab_conditions',
+  'tasks':        'tab_tasks',
+  'activity':     'tab_activity',
+  'alerts':       'tab_alerts',
+  'showings':     'tab_showings'
+};
+var _ldTabsGated = false;
+async function _ldGateTabs() {
+  if (_ldTabsGated) return;
+  // Need the tab buttons/panes in the DOM before we can hide them.
+  if (document.readyState === 'loading') {
+    await new Promise(function (r) { document.addEventListener('DOMContentLoaded', r, { once: true }); });
+  }
+  var client;
+  try { client = await _waitForAuthClient(6000); } catch (e) { /* leave tabs visible */ }
+  if (!client) return;
+  var role, all = false, caps = {};
+  try {
+    var res = await client.rpc('my_capabilities');
+    if (res.error) throw res.error;
+    var d = res.data || {};
+    role = d.role; all = (d.all === true); caps = d.caps || {};
+  } catch (e) {
+    console.warn('[lead-detail] my_capabilities failed — leaving all tabs visible:', e);
+    return;
+  }
+  _ldTabsGated = true;
+  if (all) return;                                     // admins: show every tab, no change
+  var firstVisible = null, activeHidden = false;
+  Object.keys(LD_TAB_CAP).forEach(function (name) {
+    var allowed = caps[LD_TAB_CAP[name]] === true;
+    var btn = document.querySelector('.ld-tab-btn[onclick*="\'' + name + '\'"]');
+    var pane = document.getElementById('tab-' + name);
+    if (allowed) {
+      if (!firstVisible) firstVisible = { name: name, btn: btn };
+      return;
+    }
+    // Hide BOTH the button and its pane.
+    if (btn) { if (btn.classList.contains('active')) activeHidden = true; btn.style.display = 'none'; }
+    if (pane) { pane.classList.remove('active'); pane.style.display = 'none'; }
+  });
+  // If the active/default tab got hidden, jump to the first still-visible tab so the
+  // VA never lands on a blank pane.
+  if (activeHidden && firstVisible && typeof switchTab === 'function') {
+    switchTab(firstVisible.name, firstVisible.btn);
+  }
+}
+_ldGateTabs();
+
 /* ── DRIVE FOLDER STATUS PILL + SMART MATCH MODAL ── */
 window._leadDriveFolderId = null;
 window._leadDriveFolderUrl = null;

@@ -135,6 +135,8 @@ select.inp option{background:#1a1a1a;color:#fff}
 .section-head h2{font-size:16px;font-weight:800;letter-spacing:-0.2px}
 .section-count{font-size:11px;color:var(--muted);font-weight:600}
 .auto-list{max-width:1100px}
+.va-grp-head{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--gold);padding:16px 18px 6px;border-top:1px solid var(--border)}
+.va-grp-head:first-child{padding-top:10px;border-top:none}
 .auto-row{display:flex;align-items:center;gap:16px;padding:14px 18px;border-bottom:1px solid var(--border)}
 .auto-row:last-child{border-bottom:none}
 .auto-info{flex:1;min-width:0}
@@ -953,27 +955,45 @@ async function loadVaView() {
     list.innerHTML = '<div class="auto-row"><div class="auto-info"><div class="auto-desc" style="color:var(--red)">Couldn’t load VA view settings.</div></div></div>';
   }
 }
+// Group order: Fields first, then Lead tabs, then any other grp in first-seen order.
+var VA_GRP_ORDER = ['Fields', 'Lead tabs'];
 function renderVaView() {
   var list = document.getElementById('vaViewList');
   if (!_vaCaps.length) { list.innerHTML = '<div class="auto-row"><div class="auto-info"><div class="auto-desc">No capabilities to configure.</div></div></div>'; return; }
-  list.innerHTML = _vaCaps.map(function (c, idx) {
-    return '<div class="auto-row">' +
-        '<div class="auto-info">' +
-          '<div class="auto-name">' + esc(c.label || c.capability) + '</div>' +
-          (c.description ? '<div class="auto-desc">' + esc(c.description) + '</div>' : '') +
-        '</div>' +
-        '<div class="auto-ctrl"><label class="switch">' +
-          '<input type="checkbox"' + (c.allowed ? ' checked' : '') + ' id="va-sw-' + idx + '" onchange="toggleVaView(\'' + esc(c.capability) + '\', this.checked, ' + idx + ')">' +
-          '<span class="slider"></span>' +
-        '</label></div>' +
-      '</div>';
-  }).join('');
+  // Bucket caps by grp while keeping each cap's ORIGINAL index (used for the switch
+  // id + failure revert), then order the groups.
+  var groups = {}, seen = [];
+  _vaCaps.forEach(function (c, idx) {
+    var g = c.grp || 'Other';
+    if (!groups[g]) { groups[g] = []; seen.push(g); }
+    groups[g].push({ c: c, idx: idx });
+  });
+  var ordered = VA_GRP_ORDER.filter(function (g) { return groups[g]; })
+    .concat(seen.filter(function (g) { return VA_GRP_ORDER.indexOf(g) === -1; }));
+  var html = '';
+  ordered.forEach(function (g) {
+    html += '<div class="va-grp-head">' + esc(g) + '</div>';
+    html += groups[g].map(function (item) {
+      var c = item.c, idx = item.idx;
+      return '<div class="auto-row">' +
+          '<div class="auto-info">' +
+            '<div class="auto-name">' + esc(c.label || c.capability) + '</div>' +
+            (c.description ? '<div class="auto-desc">' + esc(c.description) + '</div>' : '') +
+          '</div>' +
+          '<div class="auto-ctrl"><label class="switch">' +
+            '<input type="checkbox"' + (c.allowed ? ' checked' : '') + ' id="va-sw-' + idx + '" onchange="toggleVaView(\'' + esc(c.capability) + '\', this.checked, ' + idx + ')">' +
+            '<span class="slider"></span>' +
+          '</label></div>' +
+        '</div>';
+    }).join('');
+  });
+  list.innerHTML = html;
 }
 async function toggleVaView(capability, allowed, idx) {
   var sw = document.getElementById('va-sw-' + idx);
   if (sw) sw.disabled = true;
   try {
-    var res = await _client.rpc('va_view_set', { p_capability: capability, p_allowed: allowed });
+    var res = await _client.rpc('va_view_set', { p_capability: capability, p_allowed: allowed, p_role: 'va' });
     if (res.error) throw res.error;
     // The RPC returns the updated state — re-render from it.
     _vaCaps = (res.data && res.data.capabilities) ? res.data.capabilities : _vaCaps;
