@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>My Tasks — Rates & Realty CRM</title>
+<script src="/api/env.js?v=2026033003"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/admin/js/supabase-client.js?v=2026050601"></script>
+<script src="/admin/js/auth-guard.js?v=2026062401"></script>
+<style>
+  :root {
+    --gold: #c9a84c;
+    --bg: #0d0d0d;
+    --surface: #141414;
+    --surface2: #1a1a1a;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #fff;
+    --text-muted: rgba(255,255,255,0.4);
+    --green: #52c87a;
+    --red: #e05252;
+    --orange: #e07f50;
+    --blue: #5aa0e0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  /* Header */
+  .header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px; background: var(--surface);
+    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .header h1 { font-size: 16px; font-weight: 700; flex-shrink: 0; }
+  .header-stats { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); }
+  .header-stats span strong { color: var(--gold); }
+  .header-right { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .header-right .who { font-size: 12px; color: var(--text-muted); }
+  .btn-back {
+    padding: 6px 12px; background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border); border-radius: 7px;
+    color: var(--text-muted); font-size: 12px; cursor: pointer;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .btn-gold {
+    padding: 6px 14px; background: var(--gold); border: none;
+    border-radius: 7px; color: #000; font-size: 12px;
+    font-weight: 700; cursor: pointer; white-space: nowrap;
+  }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 20px 16px 80px; }
+
+  /* Task groups */
+  .group { margin-bottom: 26px; }
+  .group-header {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.3px;
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+  .group-count {
+    font-size: 11px; background: rgba(255,255,255,0.08);
+    color: var(--text-muted); padding: 2px 8px; border-radius: 10px;
+  }
+  .group-overdue  .group-header { color: var(--red); }
+  .group-today    .group-header { color: var(--gold); }
+  .group-upcoming .group-header { color: var(--blue); }
+  .group-no_date  .group-header { color: var(--text-muted); }
+
+  /* Task card */
+  .task {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
+    display: flex; gap: 14px; align-items: flex-start;
+  }
+  .task-main { flex: 1; min-width: 0; }
+  .task-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .task-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; white-space: pre-wrap; }
+  .task-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 11px; }
+  .pill {
+    font-size: 10px; padding: 2px 8px; border-radius: 8px;
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .prio-urgent { background: rgba(224,82,82,0.15); color: #ff6b6b; }
+  .prio-high   { background: rgba(224,127,80,0.15); color: #ffa030; }
+  .prio-normal { background: rgba(90,160,224,0.15); color: #7ab6f0; }
+  .prio-low    { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5); }
+  .due { color: var(--text-muted); }
+  .due.is-overdue { color: #ff6b6b; }
+  .task-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; }
+  .task-links a { color: var(--gold); text-decoration: none; }
+  .task-links a:hover { text-decoration: underline; }
+  .clickup-link { color: var(--blue) !important; }
+  .task-actions { flex-shrink: 0; }
+  .btn-complete {
+    padding: 7px 12px; background: rgba(82,200,122,0.12);
+    border: 1px solid rgba(82,200,122,0.3); border-radius: 8px;
+    color: var(--green); font-size: 12px; font-weight: 700; cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-complete:hover { background: rgba(82,200,122,0.2); }
+  .btn-complete:disabled { opacity: 0.5; cursor: default; }
+
+  /* Empty / loading */
+  .empty, .loading { text-align: center; padding: 50px 20px; color: var(--text-muted); font-size: 13px; }
+  .empty .emoji { font-size: 34px; display: block; margin-bottom: 12px; }
+
+  /* Assign form */
+  .assign-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; margin-bottom: 26px;
+  }
+  .assign-card h2 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .assign-card .sub { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+  .field { margin-bottom: 12px; position: relative; }
+  .field label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; font-weight: 600; }
+  .field input, .field textarea, .field select {
+    width: 100%; padding: 9px 11px; background: var(--surface2);
+    border: 1px solid var(--border2); border-radius: 8px;
+    color: #fff; font-size: 13px; font-family: inherit; outline: none;
+  }
+  .field input:focus, .field textarea:focus, .field select:focus { border-color: rgba(201,168,76,0.5); }
+  .field textarea { resize: vertical; min-height: 60px; }
+  .field-row { display: flex; gap: 12px; }
+  .field-row .field { flex: 1; }
+  .contact-results {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
+    background: var(--surface2); border: 1px solid var(--border2);
+    border-radius: 8px; margin-top: 4px; max-height: 200px; overflow-y: auto;
+    display: none;
+  }
+  .contact-results.show { display: block; }
+  .contact-result {
+    padding: 8px 11px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--border);
+  }
+  .contact-result:last-child { border-bottom: none; }
+  .contact-result:hover { background: rgba(201,168,76,0.08); }
+  .contact-result small { color: var(--text-muted); }
+  .selected-contact {
+    display: none; align-items: center; gap: 8px; margin-top: 6px;
+    font-size: 12px; color: var(--green);
+  }
+  .selected-contact.show { display: flex; }
+  .selected-contact button {
+    background: none; border: none; color: var(--text-muted);
+    cursor: pointer; font-size: 14px; padding: 0;
+  }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #222; border: 1px solid var(--border2); border-radius: 10px;
+    padding: 10px 20px; font-size: 13px; color: #fff;
+    opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 9999;
+  }
+  #toast.show { opacity: 1; }
+  #toast.err { border-color: rgba(224,82,82,0.5); }
+</style>
+  <link rel="stylesheet" href="/public/css/responsive-global.css">
+</head>
+<body>
+
+<div class="header">
+  <a href="people" class="btn-back">← People</a>
+  <a href="pipeline" class="btn-back">🏁 Pipeline</a>
+  <h1>✅ My Tasks</h1>
+  <div class="header-stats">
+    <span>Open: <strong id="openCount">—</strong></span>
+  </div>
+  <div class="header-right">
+    <span class="who" id="adminUserEmail"></span>
+    <button class="btn-back" onclick="window.adminLogout && window.adminLogout()">Log out</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- Assign a task to Rene -->
+  <div class="assign-card">
+    <h2>➕ Assign a task to Rene</h2>
+    <div class="sub">Creates a task in Rene's ClickUp board and a linked CRM task assigned to him.</div>
+    <form id="assignForm" onsubmit="return submitAssign(event)">
+      <div class="field">
+        <label for="af-title">Title <span style="color:var(--red)">*</span></label>
+        <input type="text" id="af-title" required placeholder="e.g. Call borrower about missing paystub">
+      </div>
+      <div class="field">
+        <label for="af-desc">Description</label>
+        <textarea id="af-desc" placeholder="Optional details / context"></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="af-due">Due date</label>
+          <input type="date" id="af-due">
+        </div>
+        <div class="field">
+          <label for="af-prio">Priority</label>
+          <select id="af-prio">
+            <option value="urgent">Urgent</option>
+            <option value="high">High</option>
+            <option value="normal" selected>Normal</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="af-contact">Associate a contact (optional)</label>
+        <input type="text" id="af-contact" placeholder="Search contacts by name, email, or phone…" autocomplete="off"
+               oninput="onContactSearch(this.value)" onblur="setTimeout(hideContactResults, 150)">
+        <div class="contact-results" id="contactResults"></div>
+        <div class="selected-contact" id="selectedContact">
+          <span id="selectedContactLabel"></span>
+          <button type="button" title="Clear" onclick="clearSelectedContact()">✕</button>
+        </div>
+      </div>
+      <button type="submit" class="btn-gold" id="assignBtn">Create task for Rene</button>
+    </form>
+  </div>
+
+  <!-- Task list -->
+  <div id="taskList">
+    <div class="loading">Loading your tasks…</div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+// Rene (owner) — fixed CRM assignee for tasks the VA hands off.
+const RENE_UID = '59e012b0-8a20-4bd1-9b08-b5e10f76eea2';
+
+// Bucket render order + labels; empty buckets are hidden.
+const BUCKET_ORDER = [
+  { key: 'overdue',  label: '⚠️ Overdue' },
+  { key: 'today',    label: '📅 Today' },
+  { key: 'upcoming', label: '🔜 Upcoming' },
+  { key: 'no_date',  label: '🗓 No due date' },
+];
+
+let _supabase = null;      // canonical session-aware client
+let _currentUser = null;   // supabase auth user (the logged-in VA/admin)
+let _selectedContactId = null;
+
+// ── Client + current user ────────────────────────────────────────────────
+async function init() {
+  try {
+    _supabase = await window.getSupabaseClient();
+  } catch (e) {
+    console.error('[va-tasks] client init failed', e);
+    document.getElementById('taskList').innerHTML =
+      '<div class="empty">Could not connect. Please refresh.</div>';
+    return;
+  }
+
+  // Authenticated staff only. auth-guard already redirects if there is no session;
+  // getUser() gives us the real uid we need for the assignment audit trail.
+  const { data: userData, error: userErr } = await _supabase.auth.getUser();
+  if (userErr || !userData || !userData.user) {
+    console.error('[va-tasks] getUser failed', userErr);
+    window.location.replace('/auth/admin-login.html?redirect=' + encodeURIComponent(location.pathname));
+    return;
+  }
+  _currentUser = userData.user;
+  const emailEl = document.getElementById('adminUserEmail');
+  if (emailEl && _currentUser.email) emailEl.textContent = _currentUser.email;
+
+  loadTasks();
+}
+
+// ── READ: the VA's task list via RPC ─────────────────────────────────────
+async function loadTasks() {
+  const listEl = document.getElementById('taskList');
+  const { data, error } = await _supabase.rpc('va_daily_tasks');
+
+  if (error) {
+    console.error('[va-tasks] va_daily_tasks failed', error);
+    listEl.innerHTML = '<div class="empty">Could not load tasks. Please refresh.</div>';
+    return;
+  }
+
+  const tasks = Array.isArray(data) ? data : [];
+  document.getElementById('openCount').textContent = tasks.length;
+
+  if (tasks.length === 0) {
+    listEl.innerHTML =
+      '<div class="empty"><span class="emoji">🎉</span>No tasks assigned to you.</div>';
+    return;
+  }
+
+  // Group by bucket (RPC already ordered by due_date within the result set).
+  const groups = {};
+  BUCKET_ORDER.forEach(function (b) { groups[b.key] = []; });
+  tasks.forEach(function (t) {
+    const b = t.bucket && groups[t.bucket] ? t.bucket : 'no_date';
+    groups[b].push(t);
+  });
+
+  listEl.innerHTML = BUCKET_ORDER.map(function (b) {
+    const rows = groups[b.key];
+    if (!rows.length) return ''; // hide empty groups
+    return '<div class="group group-' + b.key + '">' +
+      '<div class="group-header">' + b.label +
+        ' <span class="group-count">' + rows.length + '</span></div>' +
+      rows.map(renderTask).join('') +
+    '</div>';
+  }).join('');
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function prioClass(p) {
+  const t = (p || 'normal').toLowerCase();
+  if (t === 'urgent') return 'prio-urgent';
+  if (t === 'high') return 'prio-high';
+  if (t === 'low') return 'prio-low';
+  return 'prio-normal';
+}
+
+function fmtDue(dateStr, bucket) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return esc(dateStr);
+  const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const cls = bucket === 'overdue' ? 'due is-overdue' : 'due';
+  return '<span class="' + cls + '">📅 ' + label + '</span>';
+}
+
+function renderTask(t) {
+  const prio = (t.priority || 'normal');
+  let links = '';
+  if (t.contact_name && t.contact_id) {
+    links += '<a href="lead-detail?contact_id=' + encodeURIComponent(t.contact_id) + '">👤 ' +
+      esc(t.contact_name) + '</a>';
+  } else if (t.contact_name) {
+    links += '<span style="color:var(--text-muted)">👤 ' + esc(t.contact_name) + '</span>';
+  }
+  if (t.contact_phone) {
+    const tel = String(t.contact_phone).replace(/[^0-9+]/g, '');
+    links += '<a href="tel:' + esc(tel) + '">📞 ' + esc(t.contact_phone) + '</a>';
+  }
+  if (t.clickup_url) {
+    links += '<a class="clickup-link" href="' + esc(t.clickup_url) + '" target="_blank" rel="noopener">🔗 ClickUp</a>';
+  }
+
+  return '<div class="task" data-id="' + esc(t.id) + '">' +
+    '<div class="task-main">' +
+      '<div class="task-title">' + esc(t.title || 'Untitled task') + '</div>' +
+      (t.description ? '<div class="task-desc">' + esc(t.description) + '</div>' : '') +
+      '<div class="task-meta">' +
+        '<span class="pill ' + prioClass(prio) + '">' + esc(prio) + '</span>' +
+        fmtDue(t.due_date, t.bucket) +
+      '</div>' +
+      (links ? '<div class="task-links">' + links + '</div>' : '') +
+    '</div>' +
+    '<div class="task-actions">' +
+      '<button class="btn-complete" onclick="completeTask(this, \'' + esc(t.id) + '\')">✓ Complete</button>' +
+    '</div>' +
+  '</div>';
+}
+
+// ── ACTION: complete a task ──────────────────────────────────────────────
+async function completeTask(btn, taskId) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Completing…'; }
+
+  const { error } = await _supabase
+    .from('tasks')
+    .update({ status: 'completed' })
+    .eq('id', taskId);
+
+  if (error) {
+    console.error('[va-tasks] complete failed', error);
+    showToast('⚠ Could not complete task', true);
+    if (btn) { btn.disabled = false; btn.textContent = '✓ Complete'; }
+    return;
+  }
+
+  // Remove the card immediately; re-fetch to keep counts/groups accurate.
+  const card = btn && btn.closest('.task');
+  if (card) card.remove();
+  showToast('✓ Task completed');
+  loadTasks();
+}
+
+// ── Contact association search (optional) ────────────────────────────────
+let _searchTimer = null;
+function onContactSearch(q) {
+  _selectedContactId = null; // typing invalidates any prior selection
+  document.getElementById('selectedContact').classList.remove('show');
+  clearTimeout(_searchTimer);
+  const term = (q || '').trim();
+  if (term.length < 2) { hideContactResults(); return; }
+  _searchTimer = setTimeout(function () { runContactSearch(term); }, 220);
+}
+
+async function runContactSearch(term) {
+  const box = document.getElementById('contactResults');
+  try {
+    const like = '%' + term + '%';
+    const { data, error } = await _supabase
+      .from('contacts')
+      .select('id, first_name, last_name, email, phone')
+      .or('first_name.ilike.' + like + ',last_name.ilike.' + like + ',email.ilike.' + like + ',phone.ilike.' + like)
+      .limit(8);
+    if (error) throw error;
+    const rows = data || [];
+    if (!rows.length) {
+      box.innerHTML = '<div class="contact-result"><small>No matches</small></div>';
+      box.classList.add('show');
+      return;
+    }
+    box.innerHTML = rows.map(function (c) {
+      const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || (c.email || 'Unknown');
+      const sub = [c.email, c.phone].filter(Boolean).join(' · ');
+      return '<div class="contact-result" onmousedown="pickContact(\'' + esc(c.id) + '\',\'' +
+        esc(name).replace(/'/g, '&#39;') + '\')">' + esc(name) +
+        (sub ? ' <small>' + esc(sub) + '</small>' : '') + '</div>';
+    }).join('');
+    box.classList.add('show');
+  } catch (e) {
+    console.error('[va-tasks] contact search failed', e);
+    hideContactResults();
+  }
+}
+
+function pickContact(id, name) {
+  _selectedContactId = id;
+  document.getElementById('af-contact').value = '';
+  document.getElementById('selectedContactLabel').textContent = '👤 ' + name;
+  document.getElementById('selectedContact').classList.add('show');
+  hideContactResults();
+}
+
+function clearSelectedContact() {
+  _selectedContactId = null;
+  document.getElementById('selectedContact').classList.remove('show');
+}
+
+function hideContactResults() {
+  document.getElementById('contactResults').classList.remove('show');
+}
+
+// ── ACTION: assign a task to Rene via clickup-bridge edge function ───────
+async function submitAssign(ev) {
+  ev.preventDefault();
+  const btn = document.getElementById('assignBtn');
+  const title = document.getElementById('af-title').value.trim();
+  if (!title) { showToast('Title is required', true); return false; }
+  if (!_currentUser || !_currentUser.id) { showToast('Not signed in', true); return false; }
+
+  const description = document.getElementById('af-desc').value.trim();
+  const due_date = document.getElementById('af-due').value || null;
+  const priority = document.getElementById('af-prio').value || 'normal';
+
+  const body = {
+    title: title,
+    description: description || null,
+    due_date: due_date,
+    priority: priority,
+    assigned_to: RENE_UID,               // Rene (owner) — fixed CRM assignee
+    assigned_by: _currentUser.id,        // real uid of the logged-in VA (audit trail)
+  };
+  if (_selectedContactId) body.contact_id = _selectedContactId; // omit when none
+
+  const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const key = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+
+  btn.disabled = true;
+  const prevLabel = btn.textContent;
+  btn.textContent = 'Creating…';
+
+  try {
+    const res = await fetch(base + '/functions/v1/clickup-bridge/task', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': key,
+        'Authorization': 'Bearer ' + key,
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(function () { return {}; });
+    if (!res.ok || data.error || data.success === false) {
+      throw new Error(data.error || ('ClickUp task failed (HTTP ' + res.status + ')'));
+    }
+
+    showToast('✓ Task created for Rene' + (data.clickup_task_id ? ' (ClickUp #' + data.clickup_task_id + ')' : ''));
+    document.getElementById('assignForm').reset();
+    clearSelectedContact();
+  } catch (e) {
+    console.error('[va-tasks] assign failed', e);
+    showToast('⚠ ' + (e.message || 'Could not create task'), true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+  return false;
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────
+function showToast(msg, isErr) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.classList.add('show');
+  setTimeout(function () { t.classList.remove('show'); }, 2800);
+}
+
+init();
+</script>
+</body>
+</html>

@@ -246,12 +246,28 @@
     window.APP_CONFIG.SUPABASE_ANON_KEY
   );
 
+  // Where to send a freshly signed-in user. An explicit ?redirect= always wins
+  // (matches prior behavior). Otherwise VAs land on their tasks screen; every other
+  // role keeps the existing /admin/people.html default. Role is resolved via the same
+  // current_app_role() RPC the auth-guard uses, and cached so the guard reuses it.
+  async function resolvePostLoginDest() {
+    const redirect = new URLSearchParams(window.location.search).get('redirect');
+    if (redirect) return redirect;
+    try {
+      const { data: role } = await sb.rpc('current_app_role');
+      if (role) sessionStorage.setItem('rnr_app_role', role);
+      if (role === 'va') return '/admin/va-tasks.html';
+    } catch (e) {
+      // Never strand the user on a role lookup failure — fall through to the default.
+    }
+    return '/admin/people.html';
+  }
+
   // Check if already logged in
   async function checkSession() {
     const { data: { session } } = await sb.auth.getSession();
     if (session) {
-      const redirect = new URLSearchParams(window.location.search).get('redirect');
-      window.location.href = redirect || '/admin/people.html';
+      window.location.href = await resolvePostLoginDest();
     }
   }
   checkSession();
@@ -320,9 +336,8 @@
     successMsg.style.display = 'block';
     btn.innerHTML = 'Signed in!';
 
-    setTimeout(() => {
-      const redirect = new URLSearchParams(window.location.search).get('redirect');
-      window.location.href = redirect || '/admin/people.html';
+    setTimeout(async () => {
+      window.location.href = await resolvePostLoginDest();
     }, 800);
   }
 </script>

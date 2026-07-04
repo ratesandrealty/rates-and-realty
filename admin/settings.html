@@ -345,6 +345,27 @@ select.inp option{background:#1a1a1a;color:#fff}
   </div>
 </div>
 
+<!-- View as (impersonation sign-in link) modal -->
+<div class="modal-overlay" id="viewAsModal">
+  <div class="modal">
+    <h3 id="viewAsTitle">View portal as</h3>
+    <div class="modal-sub" id="viewAsNote" style="color:var(--gold);line-height:1.55">
+      ⚠ Open in a private/incognito window so you don't get signed out of your admin account here.
+      One-time link, expires ~1 hour.
+    </div>
+    <div class="field">
+      <label>Sign-in link</label>
+      <div class="pw-group">
+        <input type="text" class="inp" id="viewAsLink" readonly autocomplete="off" style="flex:1" onclick="this.select()">
+        <button class="btn btn-gold btn-sm" type="button" id="viewAsCopyBtn" onclick="copyViewAsLink()">Copy link</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" type="button" onclick="closeViewAs()">Close</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -362,6 +383,7 @@ var ROLE_OPTIONS = [
 var _client = null;
 var _users = [];          // last loaded list (keeps temp_password in memory for reveal)
 var _resetUserId = null;
+var _viewAsLink = null;   // action_link for the currently open "View as" modal
 
 function showToast(msg) {
   var t = document.getElementById('toast');
@@ -512,8 +534,13 @@ function renderUsers() {
     var deactivateClass = u.banned ? 'btn-ghost' : 'btn-red';
     var selfDisabled = u.is_self ? ' disabled title="Not allowed on your own account"' : '';
 
+    // "View as" issues an impersonation sign-in link. Only for other users, never yourself.
+    var viewAsBtn = u.is_self ? '' :
+      '<button class="btn btn-ghost btn-sm" type="button" onclick="openViewAs(\'' + u.user_id + '\', \'' + esc(u.email).replace(/'/g, "\\'") + '\', \'' + esc(u.role) + '\')">View as</button>';
+
     var actions = '<div class="actions-cell">' +
       '<button class="btn btn-ghost btn-sm" type="button" onclick="openReset(\'' + u.user_id + '\', \'' + esc(u.email).replace(/'/g, "\\'") + '\')">Reset password</button>' +
+      viewAsBtn +
       '<button class="btn ' + deactivateClass + ' btn-sm" type="button"' + selfDisabled +
         ' onclick="setActive(\'' + u.user_id + '\', ' + (u.banned ? 'true' : 'false') + ')">' + deactivateLabel + '</button>' +
       '<button class="btn btn-red btn-sm" type="button"' + selfDisabled +
@@ -622,6 +649,55 @@ async function confirmReset() {
 // Close modal on overlay click.
 document.getElementById('resetModal').addEventListener('click', function (e) {
   if (e.target === this) closeReset();
+});
+
+/* "View as" — issue an impersonation sign-in link via admin-users (same authed
+   invocation + session-token pattern as reset_password / create above). */
+async function openViewAs(userId, email, rowRole) {
+  var args = { user_id: userId };
+  // For a VA, land the impersonated session straight on their tasks screen.
+  // Other staff omit redirect_to so admin-users uses its default landing.
+  if (rowRole === 'va') args.redirect_to = 'https://admin.ratesandrealty.com/admin/va-tasks.html';
+  var r = await adminUsers('signin_link', args);
+  if (!r.ok) { showToast(r.message); return; }   // surfaces response.message on error
+  var d = r.data || {};
+  _viewAsLink = d.action_link || '';
+  var email2 = d.target_email || email || '';
+  var role = d.role || '';
+  document.getElementById('viewAsTitle').textContent =
+    'View portal as ' + email2 + (role ? ' (' + role + ')' : '');
+  document.getElementById('viewAsLink').value = _viewAsLink;
+  var copyBtn = document.getElementById('viewAsCopyBtn');
+  if (copyBtn) copyBtn.textContent = 'Copy link';
+  document.getElementById('viewAsModal').classList.add('open');
+}
+function closeViewAs() {
+  _viewAsLink = null;
+  document.getElementById('viewAsModal').classList.remove('open');
+}
+function copyViewAsLink() {
+  if (!_viewAsLink) return;
+  var btn = document.getElementById('viewAsCopyBtn');
+  function confirmCopied() {
+    if (btn) {
+      btn.textContent = 'Copied!';
+      setTimeout(function () { if (btn) btn.textContent = 'Copy link'; }, 1600);
+    }
+    showToast('Copied to clipboard');
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(_viewAsLink).then(confirmCopied, function () { showToast('Copy failed'); });
+  } else {
+    // Fallback for browsers without the async clipboard API.
+    var inp = document.getElementById('viewAsLink');
+    if (inp) {
+      inp.select();
+      try { document.execCommand('copy'); confirmCopied(); } catch (e) { showToast('Copy not supported'); }
+    }
+  }
+}
+document.getElementById('viewAsModal').addEventListener('click', function (e) {
+  if (e.target === this) closeViewAs();
 });
 
 /* ─── GROUP 1: Event automations (ClickUp automation toggles) ──────────────

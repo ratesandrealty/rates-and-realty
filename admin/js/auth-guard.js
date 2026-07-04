@@ -160,6 +160,10 @@
         'emc-import':         ['admin'],
         'referral-partners':  ['admin'],
         'partner-detail':     ['admin'],
+        // VA daily-tasks screen: VAs (its intended users) + admins (to preview).
+        // Both URL forms listed since post-login/view-as land here as .html.
+        'va-tasks':           ['va', 'admin'],
+        'va-tasks.html':      ['va', 'admin'],
       };
       const filename = window.location.pathname.split('/').pop();
       const allowed = PAGE_ACCESS[filename];

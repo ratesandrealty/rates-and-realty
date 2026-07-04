@@ -2451,7 +2451,7 @@
         <div class="lp-card"><div class="lp-h"><span>✍️ Letters of Explanation</span><button type="button" onclick="loeOpenEditor(null)" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">+ New LOE</button></div><div id="lpLoeBody"></div></div>
         <div class="lp-card"><div class="lp-h">👥 Related People</div><div id="lpRelatedBody"></div></div>
         <div class="lp-card"><div class="lp-h"><span>🖊️ E-Signature Status</span><button type="button" onclick="openEsignSendModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">Send for signature</button></div><div id="lpEsignLinks"></div><div id="lpEsignBody"></div></div>
-        <div class="lp-card"><div class="lp-h">🌅 VA Daily Tasks</div><div id="lpVaTasksBody"></div></div>
+        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><button type="button" onclick="openAssignVaModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">👤 Assign to VA</button></div><div id="lpVaTasksBody"></div></div>
       </div>
     </div>
 
@@ -13119,6 +13119,85 @@ async function lpVaAddSuggested(title){
     if(error){ _vaToast(error,'Could not add task'); return; }
     await lpLoadVaTasks();
   }catch(e){ _vaToast(e,'Could not add task'); }
+}
+
+/* ═══ ASSIGN TASK TO VA ═══
+   CRM-only: dropdown from staff_assignees RPC, insert via va_task_add with p_assigned_to.
+   assigned_by is stamped server-side to the current admin. Does NOT touch clickup-bridge —
+   the VA is not a ClickUp member, so this stays entirely inside the CRM tasks table. */
+var _assignVaStaff = [];
+function _assignVaClose(){ var ov=document.getElementById('assignVaOverlay'); if(ov) ov.style.display='none'; }
+async function openAssignVaModal(){
+  var lbl='display:block;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;';
+  var inp='width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;outline:none;box-sizing:border-box;font-family:inherit;';
+  var ov=document.getElementById('assignVaOverlay');
+  if(!ov){ ov=document.createElement('div'); ov.id='assignVaOverlay'; ov.style.cssText='position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:20px;'; document.body.appendChild(ov); ov.onclick=function(e){ if(e.target===ov) _assignVaClose(); }; }
+  var prioOpts = VA_PRIORITIES.map(function(p){ return '<option value="'+p+'"'+(p==='normal'?' selected':'')+'>'+p.charAt(0).toUpperCase()+p.slice(1)+'</option>'; }).join('');
+  ov.innerHTML =
+    '<div style="width:100%;max-width:460px;max-height:90vh;display:flex;flex-direction:column;background:#15140f;border:1px solid rgba(201,168,76,.3);border-radius:14px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.6);">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);"><span style="font-size:14px;font-weight:700;color:#C9A84C;">👤 Assign task to VA</span><button onclick="_assignVaClose()" style="background:transparent;border:none;color:#888;font-size:18px;cursor:pointer;line-height:1;">✕</button></div>'
+    + '<div style="flex:1;overflow-y:auto;padding:16px 18px;">'
+    +   '<div style="margin-bottom:12px;"><label style="'+lbl+'">Assignee</label><select id="avAssignee" style="'+inp+'"><option>Loading staff…</option></select></div>'
+    +   '<div style="margin-bottom:12px;"><label style="'+lbl+'">Task title</label><input id="avTitle" type="text" placeholder="What should the VA do?" style="'+inp+'"></div>'
+    +   '<div style="display:flex;gap:10px;margin-bottom:12px;">'
+    +     '<div style="flex:1;"><label style="'+lbl+'">Due date <span style="text-transform:none;color:rgba(255,255,255,.3);">(optional)</span></label><input id="avDue" type="date" style="'+inp+'"></div>'
+    +     '<div style="flex:1;"><label style="'+lbl+'">Priority</label><select id="avPrio" style="'+inp+'">'+prioOpts+'</select></div>'
+    +   '</div>'
+    +   '<div><label style="'+lbl+'">Description <span style="text-transform:none;color:rgba(255,255,255,.3);">(optional)</span></label><textarea id="avDesc" rows="2" style="'+inp+'resize:vertical;"></textarea></div>'
+    +   '<div id="avMsg" style="display:none;margin-top:10px;font-size:12px;color:#E5484D;"></div>'
+    + '</div>'
+    + '<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid rgba(255,255,255,.08);"><button onclick="_assignVaClose()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-family:inherit;">Cancel</button><button id="avSubmitBtn" onclick="_assignVaSubmit()" style="background:#C9A84C;border:none;color:#000;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">Assign task</button></div>'
+    + '</div>';
+  ov.style.display='flex';
+  var sel=document.getElementById('avAssignee');
+  var submitBtn=document.getElementById('avSubmitBtn');
+  var msg=document.getElementById('avMsg');
+  function _disableSubmit(text){ submitBtn.disabled=true; submitBtn.style.opacity='.5'; submitBtn.style.cursor='not-allowed'; sel.disabled=true; msg.textContent=text; msg.style.display='block'; }
+  try{
+    var resp=await _authClient().rpc('staff_assignees');
+    var data=resp&&resp.data, error=resp&&resp.error;
+    if(error) throw error;
+    _assignVaStaff = data || [];
+    if(!_assignVaStaff.length){ sel.innerHTML='<option>No staff available</option>'; _disableSubmit('No assignable staff — add a VA under Settings.'); return; }
+    sel.disabled=false;
+    // Each option shows "{email} ({role})"; a single row is preselected by being the only option.
+    sel.innerHTML=_assignVaStaff.map(function(s){ return '<option value="'+lpEsc(s.user_id)+'">'+lpEsc(s.email||s.user_id)+' ('+lpEsc(s.role||'—')+')</option>'; }).join('');
+    setTimeout(function(){ var t=document.getElementById('avTitle'); if(t) t.focus(); }, 30);
+  }catch(e){
+    sel.innerHTML='<option>Unavailable</option>'; _disableSubmit('No assignable staff — add a VA under Settings.');
+  }
+}
+async function _assignVaSubmit(){
+  var toastFn=window.showToast||window.toast||function(){};
+  var sel=document.getElementById('avAssignee');
+  var assignedTo=sel&&sel.value;
+  if(!assignedTo || sel.disabled){ toastFn('No assignee selected.',true); return; }
+  var title=(document.getElementById('avTitle').value||'').trim();
+  if(!title){ toastFn('Task title required.',true); var ti=document.getElementById('avTitle'); if(ti) ti.focus(); return; }
+  var prio=(document.getElementById('avPrio')||{}).value||'normal';
+  var due=_vaDueToIso((document.getElementById('avDue')||{}).value);
+  var desc=(document.getElementById('avDesc').value||'').trim()||null;
+  var btn=document.getElementById('avSubmitBtn'); if(btn){ btn.disabled=true; btn.textContent='Assigning…'; }
+  try{
+    var resp=await _authClient().rpc('va_task_add', {
+      p_title: title,
+      p_priority: prio,
+      p_due_date: due,
+      p_contact_id: (typeof lpCid==='function'?lpCid():null)||null,
+      p_description: desc,
+      p_assigned_to: assignedTo
+    });
+    var error=resp&&resp.error;
+    if(error) throw error;
+    var picked=_assignVaStaff.filter(function(s){ return String(s.user_id)===String(assignedTo); })[0];
+    var who=(picked&&picked.email)||'VA';
+    toastFn('Task assigned to '+who);
+    _assignVaClose();
+    if(typeof lpLoadVaTasks==='function') lpLoadVaTasks();
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.textContent='Assign task'; }
+    toastFn((e&&e.message)||'Could not assign task',true);
+  }
 }
 
 async function lpVaComplete(id){
