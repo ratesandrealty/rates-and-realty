@@ -155,6 +155,49 @@
   }
   #toast.show { opacity: 1; }
   #toast.err { border-color: rgba(224,82,82,0.5); }
+
+  /* Help + language */
+  .icon-btn {
+    background: rgba(255,255,255,0.06); border: 1px solid var(--border2);
+    color: var(--text-muted); border-radius: 6px; width: 26px; height: 26px;
+    font-size: 12px; cursor: pointer; line-height: 1; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .icon-btn:hover { color: var(--gold); border-color: rgba(201,168,76,0.4); }
+  .lang-select {
+    padding: 6px 8px; background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border); border-radius: 7px;
+    color: var(--text-muted); font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .intro-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; margin-bottom: 20px;
+  }
+  .intro-card h2 { font-size: 15px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .intro-body { font-size: 13px; color: rgba(255,255,255,0.75); line-height: 1.6; }
+  .video-wrap {
+    position: relative; width: 100%; padding-bottom: 56.25%; height: 0;
+    margin-top: 14px; border-radius: 10px; overflow: hidden; background: #000;
+  }
+  .video-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+  /* Help modal (view + edit) */
+  .help-overlay {
+    position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .help-overlay.show { display: flex; }
+  .help-modal {
+    width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto;
+    background: var(--surface); border: 1px solid rgba(201,168,76,0.3);
+    border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+  }
+  .help-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .help-modal-head h3 { font-size: 15px; font-weight: 700; color: var(--gold); }
+  .help-modal-body { padding: 16px 18px; font-size: 13px; color: rgba(255,255,255,0.82); line-height: 1.6; }
+  .help-modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
+  .help-modal-actions:empty { display: none; }
+  .x-btn { background: transparent; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
@@ -164,10 +207,16 @@
   <a href="people" class="btn-back">← People</a>
   <a href="pipeline" class="btn-back">🏁 Pipeline</a>
   <h1>✅ My Tasks</h1>
+  <button class="icon-btn" title="Help: your daily tasks" onclick="openHelp('daily_tasks')">ℹ️</button>
   <div class="header-stats">
     <span>Open: <strong id="openCount">—</strong></span>
   </div>
   <div class="header-right">
+    <span style="font-size:14px;" title="Help language">🌐</span>
+    <select id="helpLang" class="lang-select" title="Help language" onchange="onHelpLangChange(this.value)">
+      <option value="en">English</option>
+    </select>
+    <button class="icon-btn" title="Welcome & help" onclick="openHelp('welcome')">ℹ️</button>
     <span class="who" id="adminUserEmail"></span>
     <button class="btn-back" onclick="window.adminLogout && window.adminLogout()">Log out</button>
   </div>
@@ -175,9 +224,12 @@
 
 <div class="wrap">
 
+  <!-- Welcome / video intro (va-help 'welcome' block); hidden until loaded -->
+  <div id="introCard" style="display:none;"></div>
+
   <!-- Assign a task to Rene -->
   <div class="assign-card">
-    <h2>➕ Assign a task to Rene</h2>
+    <h2>➕ Assign a task to Rene <button class="icon-btn" title="Help: assigning to Rene" onclick="openHelp('assign_rene')">ℹ️</button></h2>
     <div class="sub">Creates a task in Rene's ClickUp board and a linked CRM task assigned to him.</div>
     <form id="assignForm" onsubmit="return submitAssign(event)">
       <div class="field">
@@ -224,6 +276,32 @@
 
 </div>
 
+<!-- Help view modal -->
+<div class="help-overlay" id="helpOverlay" onclick="if(event.target===this)closeHelp()">
+  <div class="help-modal">
+    <div class="help-modal-head"><h3 id="helpModalTitle">Help</h3><button class="x-btn" title="Close" onclick="closeHelp()">✕</button></div>
+    <div class="help-modal-body" id="helpModalBody"></div>
+    <div class="help-modal-actions" id="helpModalEdit"></div>
+  </div>
+</div>
+
+<!-- Help edit modal (admin only) -->
+<div class="help-overlay" id="helpEditOverlay" onclick="if(event.target===this)closeHelpEdit()">
+  <div class="help-modal">
+    <div class="help-modal-head"><h3 id="helpEditHead">Edit help</h3><button class="x-btn" title="Close" onclick="closeHelpEdit()">✕</button></div>
+    <div class="help-modal-body">
+      <input type="hidden" id="helpEditKey">
+      <div class="field"><label for="helpEditTitle">Title</label><input type="text" id="helpEditTitle"></div>
+      <div class="field"><label for="helpEditBody">Body — Markdown (**bold**, newlines)</label><textarea id="helpEditBody" style="min-height:150px;"></textarea></div>
+      <div class="field"><label for="helpEditVideo">Video URL — Loom / YouTube (optional)</label><input type="text" id="helpEditVideo" placeholder="https://www.loom.com/share/…"></div>
+    </div>
+    <div class="help-modal-actions">
+      <button class="btn-back" onclick="closeHelpEdit()">Cancel</button>
+      <button class="btn-gold" id="helpEditSaveBtn" onclick="saveHelpEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -266,6 +344,7 @@ async function init() {
   if (emailEl && _currentUser.email) emailEl.textContent = _currentUser.email;
 
   loadTasks();
+  initHelp();
 }
 
 // ── READ: the VA's task list via RPC ─────────────────────────────────────
@@ -499,6 +578,218 @@ async function submitAssign(ev) {
     btn.textContent = prevLabel;
   }
   return false;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// MULTILINGUAL HELP + VIDEO EXPLAINER (va-help edge function)
+// ════════════════════════════════════════════════════════════════════════
+let _helpLang = localStorage.getItem('rnr_help_lang') || 'en';
+let _helpBlocks = {};       // key → { key, title, body, video_url }
+let _helpLangs = [];        // [{ code, name }]
+let _helpOpenKey = null;    // key of the currently open help view modal (for lang re-render)
+let _helpAdmin = false;     // true once rnr_app_role resolves to 'admin'
+
+// Fixed display order used as sort_order when saving a block.
+const HELP_ORDER = { welcome: 0, daily_tasks: 1, assign_rene: 2, shared_leads: 3 };
+
+// POST to va-help sending the anon key (apikey) + the user's session JWT (Bearer),
+// so the function can enforce admin-only on 'save'. Same base/fetch shape the page
+// uses for clickup-bridge, but with the real session token instead of anon.
+async function callVaHelp(body) {
+  const base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+  const anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  let token = anon;
+  try {
+    const { data } = await _supabase.auth.getSession();
+    if (data && data.session && data.session.access_token) token = data.session.access_token;
+  } catch (e) { /* fall back to anon */ }
+  const res = await fetch(base + '/functions/v1/va-help', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(function () { return {}; });
+  if (!res.ok || data.error) {
+    const err = new Error(data.error || ('va-help failed (HTTP ' + res.status + ')'));
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+// Light Markdown: escape HTML first, then **bold** and newlines. Nothing else.
+function mdToHtml(md) {
+  let h = esc(md || '');
+  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\r\n|\r|\n/g, '<br>');
+  return h;
+}
+
+// Convert Loom/YouTube share links to embeddable form; otherwise return as-is.
+function toEmbedUrl(url) {
+  const u = String(url || '').trim();
+  if (!u) return '';
+  let m;
+  if ((m = u.match(/loom\.com\/share\/([A-Za-z0-9]+)/))) return 'https://www.loom.com/embed/' + m[1];
+  if ((m = u.match(/youtube\.com\/watch\?v=([A-Za-z0-9_-]+)/))) return 'https://www.youtube.com/embed/' + m[1];
+  if ((m = u.match(/youtu\.be\/([A-Za-z0-9_-]+)/))) return 'https://www.youtube.com/embed/' + m[1];
+  return u; // already an embed URL or some other host — use as-is
+}
+
+function videoHtml(url) {
+  const embed = url ? toEmbedUrl(url) : '';
+  if (!embed) return '';
+  return '<div class="video-wrap"><iframe src="' + esc(embed) +
+    '" allowfullscreen allow="fullscreen; picture-in-picture"></iframe></div>';
+}
+
+async function initHelp() {
+  const sel = document.getElementById('helpLang');
+  if (sel) sel.value = _helpLang;         // reflect saved choice immediately
+  pollHelpAdmin();                        // reveal admin edit controls once role resolves
+  await loadHelpLanguages();
+  await loadHelpBlocks();
+}
+
+async function loadHelpLanguages() {
+  const sel = document.getElementById('helpLang');
+  try {
+    const data = await callVaHelp({ action: 'languages' });
+    _helpLangs = (data && data.languages) || [];
+    if (sel && _helpLangs.length) {
+      const codes = _helpLangs.map(function (l) { return l.code; });
+      if (codes.indexOf(_helpLang) === -1) _helpLang = codes.indexOf('en') > -1 ? 'en' : codes[0];
+      sel.innerHTML = _helpLangs.map(function (l) {
+        return '<option value="' + esc(l.code) + '">' + esc(l.name) + '</option>';
+      }).join('');
+      sel.value = _helpLang;
+    }
+  } catch (e) { console.error('[va-help] languages failed', e); }
+}
+
+async function loadHelpBlocks() {
+  try {
+    const data = await callVaHelp({ action: 'list', lang: _helpLang });
+    _helpBlocks = {};
+    ((data && data.blocks) || []).forEach(function (b) { if (b && b.key) _helpBlocks[b.key] = b; });
+    renderWelcomeCard();
+    if (_helpOpenKey) renderHelpModal(_helpOpenKey); // refresh an open panel in the new language
+  } catch (e) { console.error('[va-help] list failed', e); }
+}
+
+function onHelpLangChange(v) {
+  _helpLang = v || 'en';
+  localStorage.setItem('rnr_help_lang', _helpLang);
+  loadHelpBlocks();
+}
+
+// Poll until auth-guard publishes the role (same idiom the other pages use);
+// only a resolved 'admin' turns on the edit affordances.
+function pollHelpAdmin(attempt) {
+  attempt = attempt || 0;
+  const role = (sessionStorage.getItem('rnr_app_role') || '').toLowerCase();
+  if (role) {
+    _helpAdmin = (role === 'admin');
+    renderWelcomeCard();
+    if (_helpOpenKey) renderHelpModal(_helpOpenKey);
+    return;
+  }
+  if (attempt >= 40) return; // ~6s ceiling
+  setTimeout(function () { pollHelpAdmin(attempt + 1); }, 150);
+}
+
+function renderWelcomeCard() {
+  const el = document.getElementById('introCard');
+  if (!el) return;
+  const b = _helpBlocks['welcome'];
+  if (!b) { el.style.display = 'none'; return; }
+  const editBtn = _helpAdmin
+    ? '<button class="icon-btn" title="Edit welcome" onclick="openHelpEdit(\'welcome\')">✏️</button>' : '';
+  const sharedLink = _helpBlocks['shared_leads']
+    ? '<div style="margin-top:12px;"><a href="#" onclick="openHelp(\'shared_leads\');return false;" style="color:var(--gold);font-size:12px;text-decoration:none;">ℹ️ How shared leads work</a></div>' : '';
+  el.style.display = 'block';
+  el.innerHTML =
+    '<div class="intro-card">' +
+      '<h2>' + esc(b.title || 'Welcome') + '<span style="flex:1"></span>' + editBtn + '</h2>' +
+      '<div class="intro-body">' + mdToHtml(b.body) + '</div>' +
+      videoHtml(b.video_url) +
+      sharedLink +
+    '</div>';
+}
+
+async function openHelp(key) {
+  _helpOpenKey = key;
+  if (!_helpBlocks[key]) { await loadHelpBlocks(); }
+  renderHelpModal(key);
+  document.getElementById('helpOverlay').classList.add('show');
+}
+
+function renderHelpModal(key) {
+  const b = _helpBlocks[key];
+  const titleEl = document.getElementById('helpModalTitle');
+  const bodyEl = document.getElementById('helpModalBody');
+  const editWrap = document.getElementById('helpModalEdit');
+  if (!b) {
+    titleEl.textContent = 'Help';
+    bodyEl.innerHTML = '<div style="color:var(--text-muted)">Not available yet in this language.</div>';
+  } else {
+    titleEl.textContent = b.title || 'Help';
+    bodyEl.innerHTML = '<div>' + mdToHtml(b.body) + '</div>' + videoHtml(b.video_url);
+  }
+  editWrap.innerHTML = _helpAdmin
+    ? '<button class="btn-gold" onclick="openHelpEdit(\'' + esc(key) + '\')">✏️ Edit</button>' : '';
+}
+
+function closeHelp() {
+  _helpOpenKey = null;
+  document.getElementById('helpOverlay').classList.remove('show');
+}
+
+// ── Admin edit-in-place ──────────────────────────────────────────────────
+function openHelpEdit(key) {
+  if (!_helpAdmin) return; // hard gate — VAs never reach this
+  const b = _helpBlocks[key] || { key: key };
+  document.getElementById('helpEditKey').value = key;
+  document.getElementById('helpEditTitle').value = b.title || '';
+  document.getElementById('helpEditBody').value = b.body || '';
+  document.getElementById('helpEditVideo').value = b.video_url || '';
+  document.getElementById('helpEditHead').textContent = 'Edit help — ' + key + ' (' + _helpLang + ')';
+  document.getElementById('helpEditOverlay').classList.add('show');
+}
+
+function closeHelpEdit() {
+  document.getElementById('helpEditOverlay').classList.remove('show');
+}
+
+async function saveHelpEdit() {
+  if (!_helpAdmin) return;
+  const key = document.getElementById('helpEditKey').value;
+  const title = document.getElementById('helpEditTitle').value.trim();
+  const bodyv = document.getElementById('helpEditBody').value;
+  const video = document.getElementById('helpEditVideo').value.trim();
+  const btn = document.getElementById('helpEditSaveBtn');
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const data = await callVaHelp({
+      action: 'save',
+      key: key,
+      title: title,
+      body: bodyv,
+      video_url: video || null,
+      sort_order: (HELP_ORDER[key] != null ? HELP_ORDER[key] : 0),
+      lang: _helpLang,            // target the language currently being viewed/edited
+    });
+    if (!data || data.success !== true) throw new Error((data && data.error) || 'Save failed');
+    showToast('Saved');
+    closeHelpEdit();
+    await loadHelpBlocks();       // re-fetch so the new text/video shows immediately
+  } catch (e) {
+    console.error('[va-help] save failed', e);
+    showToast('⚠ ' + (e.message || 'Save failed'), true);
+  } finally {
+    btn.disabled = false; btn.textContent = prev;
+  }
 }
 
 // ── Toast ────────────────────────────────────────────────────────────────
