@@ -201,7 +201,7 @@
     function mountStaffChat() {
       if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
       const sc = document.createElement('script');
-      sc.src = '/admin/js/staff-chat.js?v=2026070502';
+      sc.src = '/admin/js/staff-chat.js?v=2026070503';
       document.head.appendChild(sc);
     }
     if (document.readyState === 'loading') {

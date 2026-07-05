@@ -179,13 +179,13 @@
     s.textContent = [
       // Floating bubble — flush to the bottom-right corner by default. On the dashboard
       // (AI FAB present) JS adds .sc-clear-fab to shift it left of the FAB, no overlap.
-      '.sc-bubble-btn{position:fixed;bottom:20px;right:20px;z-index:90;width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(145deg,#1f1f1f 0%,#121212 100%);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 0 1.5px rgba(201,168,76,.5),inset 0 1px 0 rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;transition:transform .15s ease,box-shadow .15s ease}',
+      '.sc-bubble-btn{position:fixed;bottom:20px;right:20px;z-index:90;width:56px!important;height:56px!important;min-width:56px;min-height:56px;max-width:56px;max-height:56px;box-sizing:border-box;flex:none;align-self:center;padding:0;line-height:0;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(145deg,#1f1f1f 0%,#121212 100%);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 0 1.5px rgba(201,168,76,.5),inset 0 1px 0 rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;transition:transform .15s ease,box-shadow .15s ease}',
       '.sc-bubble-btn.sc-clear-fab{right:84px}',
       '.sc-bubble-btn:hover{transform:scale(1.05);box-shadow:0 12px 30px rgba(0,0,0,.6),0 0 0 1.5px rgba(201,168,76,.85),inset 0 1px 0 rgba(255,255,255,.06)}',
       '.sc-bubble-btn:active{transform:scale(.97)}',
       '.sc-bubble-btn:focus-visible{outline:2px solid #C9A84C;outline-offset:3px}',
       '.sc-bubble-btn>svg{pointer-events:none}',
-      '@media(max-width:720px){.sc-bubble-btn{width:52px;height:52px;bottom:16px;right:16px}.sc-bubble-btn.sc-clear-fab{right:76px}}',
+      '@media(max-width:720px){.sc-bubble-btn{width:52px!important;height:52px!important;min-width:52px;min-height:52px;max-width:52px;max-height:52px;bottom:16px;right:16px}.sc-bubble-btn.sc-clear-fab{right:76px}}',
       '.sc-badge{position:absolute;top:-3px;right:-3px;min-width:19px;height:19px;padding:0 5px;border-radius:10px;background:#E5484D;color:#fff;font-size:10.5px;font-weight:800;display:none;align-items:center;justify-content:center;box-sizing:border-box;box-shadow:0 0 0 2px #0d0d0d,0 1px 4px rgba(0,0,0,.45)}',
       '.sc-badge.sc-pop{animation:sc-badge-pop .3s cubic-bezier(.3,1.5,.5,1)}',
       '@keyframes sc-badge-pop{0%{transform:scale(.5)}60%{transform:scale(1.25)}100%{transform:scale(1)}}',
