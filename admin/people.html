@@ -591,7 +591,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
         <div><label class="apm-label">Source</label>
-          <select id="nf_source" class="apm-input" onchange="nfSourceChanged()"><option value="">Select source...</option><option>Referral</option><option>Open House</option><option>Past Client</option><option>Website</option><option>Google</option><option>Social</option><option value="Zillow/Portal">Zillow/Portal</option><option value="__other">Other (type in)</option></select>
+          <select id="nf_source" class="apm-input" onchange="nfSourceChanged()"><option value="">Select source...</option><option>Referral</option><option>Business Partner Referral</option><option>Open House</option><option>Past Client</option><option>Website</option><option>Google</option><option>Social</option><option value="Zillow/Portal">Zillow/Portal</option><option value="__other">Other (type in)</option></select>
           <input id="nf_source_other" class="apm-input" type="text" placeholder="Enter source" style="display:none;margin-top:8px;"></div>
         <div><label class="apm-label">Language</label>
           <select id="nf_language" class="apm-input"><option value="">Select language...</option><option>English</option><option>Spanish</option><option>Vietnamese</option><option>Mandarin</option><option>Tagalog</option><option>Korean</option><option>Arabic</option><option>French</option><option>Portuguese</option><option>Other</option></select></div>
@@ -604,8 +604,8 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       </div>
 
       <!-- Referral Partner — live search -->
-      <div style="margin-bottom:14px;">
-        <label class="apm-label">Referral Partner</label>
+      <div style="margin-bottom:14px;" id="apm-referral-wrap">
+        <label class="apm-label">Referral Partner <span id="apm-referral-hint" style="display:none;color:#C9A84C;font-weight:600;font-size:11px;">— please link the partner for this Business Partner Referral</span></label>
         <div style="position:relative;">
           <input id="nf_referral_search" type="text" class="apm-input" placeholder="Search referral partners..." autocomplete="off" oninput="apmSearchReferral(this.value)">
           <div id="apm-referral-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;max-height:180px;overflow-y:auto;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,0.5);margin-top:2px;"></div>
@@ -657,6 +657,23 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       <div style="margin-bottom:20px;">
         <label class="apm-label">Notes</label>
         <textarea id="nf_notes" class="apm-input" rows="3" placeholder="Add any notes..." style="resize:vertical;min-height:70px;"></textarea>
+      </div>
+
+      <!-- Task (optional) — collapsible. On save, if a title is entered, a task is
+           attached to the new lead (public.tasks). -->
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;cursor:pointer;" onclick="apmToggleTask()">
+          <label class="apm-label" style="cursor:pointer;margin:0;">Task <span style="color:#666;font-weight:400;">(optional)</span></label>
+          <span id="apm-task-toggle" style="color:#555;font-size:12px;">+ Add a task</span>
+        </div>
+        <div id="apm-task-block" style="display:none;">
+          <div style="margin-bottom:8px;"><input id="nf_task_title" type="text" class="apm-input" placeholder="Task title (e.g. Call to introduce)"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div><label class="apm-label" style="font-size:10px;">Due date</label><input id="nf_task_due" type="date" class="apm-input"></div>
+            <div><label class="apm-label" style="font-size:10px;">Priority</label>
+              <select id="nf_task_priority" class="apm-input"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select></div>
+          </div>
+        </div>
       </div>
 
       <!-- Connected people (co-borrowers, family, etc.) -->
@@ -1659,13 +1676,19 @@ function closeNewModal() {
   document.getElementById('newModal').classList.remove('open');
   document.removeEventListener('paste', _apmShotPaste);
   if (typeof _apmShotReset === 'function') { _apmShotReset(); _apmShotTouched = []; }
-  ['nf_first','nf_last','nf_email','nf_phone','nf_birthday','nf_street','nf_city','nf_state','nf_zip','nf_notes','nf_referral_search','nf_referral_id','nf_custom_tag','nf_estimated_earnings'].forEach(function(id) {
+  ['nf_first','nf_last','nf_email','nf_phone','nf_birthday','nf_street','nf_city','nf_state','nf_zip','nf_notes','nf_referral_search','nf_referral_id','nf_custom_tag','nf_estimated_earnings','nf_task_title','nf_task_due'].forEach(function(id) {
     var el = document.getElementById(id); if (el) el.value = '';
   });
   ['nf_source','nf_language','nf_loan','nf_stage'].forEach(function(id) {
     var el = document.getElementById(id); if (el) el.selectedIndex = 0;
   });
   var _so = document.getElementById('nf_source_other'); if (_so) { _so.value = ''; _so.style.display = 'none'; }
+  // Reset the optional Task section + Business-Partner-Referral hint.
+  var _tp = document.getElementById('nf_task_priority'); if (_tp) _tp.value = 'normal';
+  var _tb = document.getElementById('apm-task-block'); if (_tb) _tb.style.display = 'none';
+  var _tt = document.getElementById('apm-task-toggle'); if (_tt) _tt.textContent = '+ Add a task';
+  var _rh = document.getElementById('apm-referral-hint'); if (_rh) _rh.style.display = 'none';
+  var _rs2 = document.getElementById('nf_referral_search'); if (_rs2) _rs2.style.borderColor = '';
   _apmTags = [];
   document.getElementById('nf_tags').value = '[]';
   // Deactivate preset chips; drop any custom chips that were added this session.
@@ -1991,6 +2014,20 @@ function nfSourceChanged(){
   if(!sel||!other) return;
   if(sel.value==='__other'){ other.style.display='block'; other.focus(); }
   else{ other.style.display='none'; other.value=''; }
+  // Business Partner Referral → encourage linking the referral partner (hint + highlight).
+  var isBpr = sel.value==='Business Partner Referral';
+  var hint=document.getElementById('apm-referral-hint'); if(hint) hint.style.display = isBpr ? 'inline' : 'none';
+  var rsrch=document.getElementById('nf_referral_search');
+  if(rsrch){ rsrch.style.borderColor = isBpr ? '#C9A84C' : ''; if(isBpr && !document.getElementById('nf_referral_id').value){ try{ rsrch.focus(); }catch(_){}} }
+}
+// Collapsible "Task" section on the Add-Person form (mirrors apmToggleAddress).
+function apmToggleTask(){
+  var block=document.getElementById('apm-task-block'), tog=document.getElementById('apm-task-toggle');
+  if(!block) return;
+  var open = block.style.display==='none';
+  block.style.display = open ? 'block' : 'none';
+  if(tog) tog.textContent = open ? '– Hide task' : '+ Add a task';
+  if(open){ var t=document.getElementById('nf_task_title'); if(t) setTimeout(function(){ t.focus(); }, 20); }
 }
 // Resolve the value that gets written to contacts.source (Other → the typed text).
 function _newLeadSource(){
@@ -2011,6 +2048,14 @@ function _apmSetSource(val){
 async function savePerson() {
   var first = document.getElementById('nf_first').value.trim();
   if (!first) { showToast('First name is required'); document.getElementById('nf_first').focus(); return; }
+  // Gently require a linked partner when the source is a Business Partner Referral —
+  // referral_partner_id is what partner reporting reads.
+  if (_newLeadSource() === 'Business Partner Referral' && !document.getElementById('nf_referral_id').value) {
+    if (!confirm('Source is "Business Partner Referral" but no referral partner is linked.\nSave without linking a partner?')) {
+      var _rs = document.getElementById('nf_referral_search'); if (_rs) _rs.focus();
+      return;
+    }
+  }
   var tags = JSON.parse(document.getElementById('nf_tags').value || '[]');
   var payload = {
     first_name: first,
@@ -2055,6 +2100,26 @@ async function savePerson() {
         const u = (await _authClient().auth.getUser()).data.user;
         await _authClient().from('contact_notes').insert({ contact_id: newId, note_text: noteVal, source: 'manual', author_user_id: (u && u.id) || null, author_display: (u && (u.user_metadata && u.user_metadata.full_name)) || (u && u.email) || 'CRM' });
       } catch (e) { /* non-fatal: contacts.notes still has it */ }
+    }
+
+    // Optional task attached to the new lead. Non-blocking — the contact is already
+    // created, so a task-insert failure must not fail the save. Mirrors lead-detail's
+    // createTask (related_table='leads' / related_id + status 'open') and also sets
+    // contact_id (what the Loan Processing tasks card + partner/task reporting read).
+    var _taskEl = document.getElementById('nf_task_title');
+    var _taskTitle = _taskEl ? _taskEl.value.trim() : '';
+    if (newId && _taskTitle) {
+      try {
+        await _authClient().from('tasks').insert({
+          title: _taskTitle,
+          due_date: (document.getElementById('nf_task_due') || {}).value || null,
+          priority: (document.getElementById('nf_task_priority') || {}).value || 'normal',
+          status: 'open',
+          contact_id: newId,
+          related_table: 'leads',
+          related_id: newId
+        });
+      } catch (e) { /* non-fatal: contact was still created */ }
     }
 
     // Connected people (co-borrowers / family) — create each contact and link both ways
