@@ -22,7 +22,7 @@
   function isStaff() { var r = role(); return !r || STAFF_ROLES.indexOf(r) >= 0; }  // empty = not resolved yet → allow
 
   var _sb = null, _threads = [], _active = null, _msgs = [], _channel = null;
-  var _open = false, _mode = 'floating', _pollId = null;   // _mode: 'floating' | 'full' | 'column'
+  var _open = false, _mode = 'floating', _pollId = null, _lastBadge = 0;   // _mode: 'floating' | 'full' | 'column'
 
   function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function localPart(email) { return ((email || '').split('@')[0]) || 'Staff'; }
@@ -112,7 +112,13 @@
   function totalUnread() { return _threads.reduce(function (s, t) { return s + (Number(t.unread) || 0); }, 0); }
   function renderBadge() {
     var n = totalUnread(), b = document.getElementById('staff-chat-badge');
-    if (b) { if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.style.display = 'flex'; } else b.style.display = 'none'; }
+    if (b) {
+      if (n > 0) {
+        b.textContent = n > 99 ? '99+' : String(n); b.style.display = 'flex';
+        if (n !== _lastBadge) { b.classList.remove('sc-pop'); void b.offsetWidth; b.classList.add('sc-pop'); }  // subtle pop on change
+      } else b.style.display = 'none';
+    }
+    _lastBadge = n;
     var fb = document.getElementById('sc-full-unread'); if (fb) fb.textContent = n > 0 ? ('· ' + n + ' unread') : '';
   }
   function threadRowsHtml() {
@@ -171,12 +177,18 @@
     if (document.getElementById('staff-chat-css')) return;
     var s = document.createElement('style'); s.id = 'staff-chat-css';
     s.textContent = [
-      // Floating bubble — left of the AI FAB (FAB is bottom:20 right:20 w52 → occupies right 20..72)
-      '.sc-bubble-btn{position:fixed;bottom:20px;right:84px;z-index:90;width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:#141414;color:#C9A84C;box-shadow:0 4px 16px rgba(0,0,0,.5),0 0 0 1px rgba(201,168,76,.35);display:flex;align-items:center;justify-content:center;transition:transform .15s ease}',
-      '.sc-bubble-btn:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 6px 20px rgba(0,0,0,.55),0 0 0 1px rgba(201,168,76,.6)}',
+      // Floating bubble — flush to the bottom-right corner by default. On the dashboard
+      // (AI FAB present) JS adds .sc-clear-fab to shift it left of the FAB, no overlap.
+      '.sc-bubble-btn{position:fixed;bottom:20px;right:20px;z-index:90;width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(145deg,#1f1f1f 0%,#121212 100%);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 0 1.5px rgba(201,168,76,.5),inset 0 1px 0 rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;transition:transform .15s ease,box-shadow .15s ease}',
+      '.sc-bubble-btn.sc-clear-fab{right:84px}',
+      '.sc-bubble-btn:hover{transform:scale(1.05);box-shadow:0 12px 30px rgba(0,0,0,.6),0 0 0 1.5px rgba(201,168,76,.85),inset 0 1px 0 rgba(255,255,255,.06)}',
+      '.sc-bubble-btn:active{transform:scale(.97)}',
+      '.sc-bubble-btn:focus-visible{outline:2px solid #C9A84C;outline-offset:3px}',
       '.sc-bubble-btn>svg{pointer-events:none}',
-      '@media(max-width:720px){.sc-bubble-btn{width:48px;height:48px;bottom:16px;right:76px}}',
-      '.sc-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#E5484D;color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;box-sizing:border-box;box-shadow:0 0 0 2px #0a0a0a}',
+      '@media(max-width:720px){.sc-bubble-btn{width:52px;height:52px;bottom:16px;right:16px}.sc-bubble-btn.sc-clear-fab{right:76px}}',
+      '.sc-badge{position:absolute;top:-3px;right:-3px;min-width:19px;height:19px;padding:0 5px;border-radius:10px;background:#E5484D;color:#fff;font-size:10.5px;font-weight:800;display:none;align-items:center;justify-content:center;box-sizing:border-box;box-shadow:0 0 0 2px #0d0d0d,0 1px 4px rgba(0,0,0,.45)}',
+      '.sc-badge.sc-pop{animation:sc-badge-pop .3s cubic-bezier(.3,1.5,.5,1)}',
+      '@keyframes sc-badge-pop{0%{transform:scale(.5)}60%{transform:scale(1.25)}100%{transform:scale(1)}}',
       // Panel
       '.sc-panel{position:fixed;bottom:84px;right:20px;z-index:95;width:340px;max-width:calc(100vw - 32px);height:460px;max-height:calc(100vh - 120px);background:#0d0d0d;border:1px solid rgba(201,168,76,.28);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;transform:scale(.94) translateY(14px);opacity:0;pointer-events:none;transition:all .18s cubic-bezier(.4,0,.2,1);transform-origin:bottom right;font-family:inherit}',
       '.sc-panel.is-open{transform:none;opacity:1;pointer-events:auto}',
@@ -267,6 +279,17 @@
       + '<div class="sc-composer"><input id="sc-input" type="text" placeholder="Message…" autocomplete="off"><button class="sc-send" data-sc-send>Send</button></div>'
       + '</div></div>';
     document.body.appendChild(panel);
+
+    // Anchor flush to the corner unless the AI FAB is present (dashboard) — then
+    // clear it. The FAB is injected by layout.js and may land after us, so re-check.
+    positionBubble();
+    setTimeout(positionBubble, 400);
+    setTimeout(positionBubble, 1200);
+  }
+  // right:20 flush by default; .sc-clear-fab shifts to right:84 beside the AI FAB.
+  function positionBubble() {
+    var btn = document.getElementById('staff-chat-bubble'); if (!btn) return;
+    btn.classList.toggle('sc-clear-fab', !!document.querySelector('.ai-agent-fab'));
   }
 
   // ── mount: embedded single-column chat (va-dashboard right column) ───────
