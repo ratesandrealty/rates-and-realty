@@ -271,8 +271,6 @@ async function renderOverview() {
   catch (_) { cc = null; }
   const ccKpis = (cc && cc.kpis) || {};
   const ccTotalLeads = (ccKpis.total_leads != null) ? ccKpis.total_leads : data.totalLeads;
-  const ccStageCounts = {};
-  ((cc && cc.pipeline_by_stage) || []).forEach((x) => { if (x && x.stage != null) ccStageCounts[x.stage] = Number(x.count) || 0; });
 
   // 6 stat cards
   const summary = document.getElementById("admin-summary");
@@ -305,31 +303,6 @@ async function renderOverview() {
         <span>Appointments Today</span>
       </article>
     `;
-  }
-
-  // Pipeline stage strip — counts come from the authoritative RPC (pipeline_by_stage),
-  // NOT a capped contacts fetch. 'Lost' isn't in pipeline_by_stage, so it shows its own
-  // count when present else 0 (never derived by subtraction).
-  const pipelineRoot = document.getElementById("lead-pipeline");
-  if (pipelineRoot) {
-    const OVERVIEW_STAGES = [
-      { key: 'New Lead',       label: 'NEW',           color: '#6B6B7A' },
-      { key: 'Contacted',      label: 'CONTACTED',     color: '#5AA0E0' },
-      { key: 'Pre-Approved',   label: 'PRE-APPROVED',  color: '#C9A84C' },
-      { key: 'Under Contract', label: 'UNDER CONTRACT',color: '#AB7FE0' },
-      { key: 'Processing',     label: 'PROCESSING',    color: '#E07F50' },
-      { key: 'Clear to Close', label: 'CLEAR TO CLOSE',color: '#52C87A' },
-      { key: 'Closed',         label: 'CLOSED',        color: '#3AB06A' },
-      { key: 'Lost',           label: 'LOST',          color: '#E05252' },
-    ];
-    const countByStage = {};
-    OVERVIEW_STAGES.forEach(s => countByStage[s.key] = ccStageCounts[s.key] || 0);
-    pipelineRoot.innerHTML = OVERVIEW_STAGES.map((s) => `
-      <div class="pipeline-column" onclick="navigateTo('pipeline')" style="cursor:pointer;">
-        <p class="kicker" style="font-size:0.65rem;color:${s.color};">${s.label}</p>
-        <div class="pipeline-count">${countByStage[s.key]}</div>
-      </div>
-    `).join("");
   }
 
   // Bar chart — leads by status
@@ -2124,7 +2097,7 @@ async function _fvLoadContacts() {
   const { url, key, auth } = getSupabaseConfig();
   try {
     const res = await fetch(
-      `${url}/rest/v1/contacts?select=id,first_name,last_name,email,pipeline_status,gdrive_folder_id,gdrive_folder_url&order=last_name.asc.nullslast`,
+      `${url}/rest/v1/contacts_secure?select=id,first_name,last_name,email,pipeline_status,gdrive_folder_id,gdrive_folder_url&order=last_name.asc.nullslast`,
       { headers: { apikey: key, Authorization: `Bearer ${auth}` } }
     );
     const data = await res.json();

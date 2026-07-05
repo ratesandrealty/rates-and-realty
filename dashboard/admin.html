@@ -1298,16 +1298,6 @@
           <article class="metric-card skeleton"><strong>—</strong><span>Appointments Today</span></article>
         </div>
 
-        <!-- Pipeline Stage Strip -->
-        <div class="panel dashboard-section" data-section-id="pipeline" draggable="true" style="margin-bottom:24px;padding:20px 24px;">
-          <div class="drag-handle" title="Drag to reorder">⠿</div>
-          <div class="crm-section-title">
-            <div><p class="kicker">Pipeline</p><h3 style="margin:0;font-size:1.1rem;">Lead Stages</h3></div>
-            <a class="btn btn-ghost btn-sm" href="#pipeline" onclick="event.preventDefault();navigateTo('pipeline');">View Board →</a>
-          </div>
-          <div id="lead-pipeline" class="pipeline-grid"></div>
-        </div>
-
         <!-- Active Pipeline Snapshot (admin-only; fed by dashboard_snapshot RPC in admin-dashboard.js) -->
         <style>
           #pipeline-snapshot-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
@@ -2694,7 +2684,7 @@
 
       _apptContactSearchTimer = setTimeout(async () => {
         const { data, error } = await supabase
-          .from('contacts')
+          .from('contacts_secure')
           .select('id, first_name, last_name, phone, email, secondary_phone')
           .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%,email.ilike.%${query}%`)
           .limit(8);
@@ -2782,7 +2772,7 @@
       _taskSearchTimer = setTimeout(async function() {
         try {
           const { data, error } = await supabase
-            .from('contacts')
+            .from('contacts_secure')
             .select('id, first_name, last_name, phone, email')
             .or('first_name.ilike.%' + query + '%,last_name.ilike.%' + query + '%,phone.ilike.%' + query + '%,email.ilike.%' + query + '%')
             .limit(8);
@@ -3855,7 +3845,7 @@ function showAssignModal(phone) {
     timer = setTimeout(async () => {
       const q = input.value.trim();
       if (!q || q.length < 2) { document.getElementById('ca-results').innerHTML = ''; return; }
-      const url = `${_SB_URL}/rest/v1/contacts?select=id,first_name,last_name,email,phone&or=(first_name.ilike.%25${encodeURIComponent(q)}%25,last_name.ilike.%25${encodeURIComponent(q)}%25,email.ilike.%25${encodeURIComponent(q)}%25,phone.ilike.%25${encodeURIComponent(q)}%25)&limit=10`;
+      const url = `${_SB_URL}/rest/v1/contacts_secure?select=id,first_name,last_name,email,phone&or=(first_name.ilike.%25${encodeURIComponent(q)}%25,last_name.ilike.%25${encodeURIComponent(q)}%25,email.ilike.%25${encodeURIComponent(q)}%25,phone.ilike.%25${encodeURIComponent(q)}%25)&limit=10`;
       const res = await fetch(url, { headers: _SB_HEADERS });
       const list = await res.json();
       document.getElementById('ca-results').innerHTML = (list || []).map(c =>
@@ -4492,7 +4482,7 @@ async function loadPipelineBoard(forceRefresh) {
   kanban.innerHTML = '<div style="color:#666;padding:40px;text-align:center;width:100%;">Loading...</div>';
 
   const { data: contacts, error } = await supabase
-    .from('contacts')
+    .from('contacts_secure')
     .select('id,first_name,last_name,email,phone,pipeline_status,loan_amount,loan_type,source,created_at,last_contact_date,lead_temperature,temperature,credit_score')
     .order('created_at', { ascending: false });
 

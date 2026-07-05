@@ -12,7 +12,7 @@ export async function getAdminDashboardData() {
   const leadsSelect = "*, contacts!contact_id(first_name, last_name, email, phone, credit_score, employer_name, monthly_income)";
 
   const [contactsResult, leadsResult, applicationsResult, documentsResult, notesResult, tasksResult] = await Promise.all([
-    supabase.from("contacts").select("*").order("created_at", { ascending: false }),
+    supabase.from("contacts_secure").select("*").order("created_at", { ascending: false }),
     supabase.from("leads").select(leadsSelect).order("created_at", { ascending: false }),
     supabase.from("mortgage_applications").select("id, loan_type, loan_amount, status, updated_at, contact_id, property_address_street").order("updated_at", { ascending: false }),
     supabase.from("uploaded_documents").select("*").order("created_at", { ascending: false }),
