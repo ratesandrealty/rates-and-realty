@@ -22,7 +22,7 @@
   function isStaff() { var r = role(); return !r || STAFF_ROLES.indexOf(r) >= 0; }  // empty = not resolved yet → allow
 
   var _sb = null, _threads = [], _active = null, _msgs = [], _channel = null;
-  var _open = false, _full = false, _pollId = null;
+  var _open = false, _mode = 'floating', _pollId = null;   // _mode: 'floating' | 'full' | 'column'
 
   function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function localPart(email) { return ((email || '').split('@')[0]) || 'Staff'; }
@@ -76,8 +76,18 @@
     catch (e) { console.warn('[staff-chat] send:', e && e.message); }
   }
   async function openDm(userId) {
-    try { var tid = await rpc('staff_dm_open', { p_other: userId }); await loadThreads(); openThread(tid); if (!_full) setOpen(true); }
+    try { var tid = await rpc('staff_dm_open', { p_other: userId }); await loadThreads(); openThread(tid); if (_mode === 'floating') setOpen(true); }
     catch (e) { console.warn('[staff-chat] dm:', e && e.message); }
+  }
+  // Embedded column (va-dashboard): auto-open the admin (Rene) DM so the composer
+  // is an instant "note to Rene".
+  async function autoOpenAdmin() {
+    try {
+      var contacts = await rpc('staff_chat_contacts') || [];
+      var admin = contacts.filter(function (c) { return (c.role || '').toLowerCase() === 'admin'; })[0]
+        || contacts.filter(function (c) { return (c.email || '').toLowerCase().indexOf('rene') === 0; })[0];
+      if (admin) await openDm(admin.user_id);
+    } catch (e) { console.warn('[staff-chat] autoOpenAdmin:', e && e.message); }
   }
 
   // ── realtime (per open thread) + background unread poll ───────────────────
@@ -133,12 +143,12 @@
   function renderMessages() {
     ['sc-messages', 'sc-full-messages'].forEach(function (id) { var h = document.getElementById(id); if (h) { h.innerHTML = messagesHtml(); h.scrollTop = h.scrollHeight; } });
     var t = _threads.filter(function (x) { return x.thread_id === _active; })[0];
-    var title = t ? nameOf(t) : (_full ? 'Select a conversation' : '');
+    var title = t ? nameOf(t) : (_mode === 'full' ? 'Select a conversation' : '');
     ['sc-conv-title', 'sc-full-conv-title'].forEach(function (id) { var h = document.getElementById(id); if (h) h.textContent = title; });
   }
 
-  function showConversation() { if (_full) return; var lv = document.getElementById('sc-list-view'), cv = document.getElementById('sc-conv-view'); if (lv) lv.style.display = 'none'; if (cv) cv.style.display = 'flex'; var i = document.getElementById('sc-input'); if (i) setTimeout(function () { i.focus(); }, 30); }
-  function showList() { if (_full) return; var lv = document.getElementById('sc-list-view'), cv = document.getElementById('sc-conv-view'); if (lv) lv.style.display = 'flex'; if (cv) cv.style.display = 'none'; }
+  function showConversation() { if (_mode === 'full') return; var lv = document.getElementById('sc-list-view'), cv = document.getElementById('sc-conv-view'); if (lv) lv.style.display = 'none'; if (cv) cv.style.display = 'flex'; var i = document.getElementById('sc-input'); if (i) setTimeout(function () { i.focus(); }, 30); }
+  function showList() { if (_mode === 'full') return; var lv = document.getElementById('sc-list-view'), cv = document.getElementById('sc-conv-view'); if (lv) lv.style.display = 'flex'; if (cv) cv.style.display = 'none'; }
   function setOpen(v) { _open = v; var p = document.getElementById('staff-chat-panel'); if (p) p.classList.toggle('is-open', v); if (v) { showList(); loadThreads(); } }
 
   // ── new-chat picker ─────────────────────────────────────────────────────
@@ -221,7 +231,13 @@
       '.sc-full-right-head{padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.06);font-size:14px;font-weight:700;color:#eee}',
       '#sc-full-threads{overflow-y:auto;flex:1;min-height:0}',
       '#sc-full-messages{overflow-y:auto;flex:1;min-height:0;padding:16px 20px;display:flex;flex-direction:column;gap:8px}',
-      '@media(max-width:720px){.sc-full{grid-template-columns:1fr}.sc-full-right{display:none}}'
+      '@media(max-width:720px){.sc-full{grid-template-columns:1fr}.sc-full-right{display:none}}',
+      // Embedded single-column mode (va-dashboard right rail)
+      '.sc-col-root{height:100%}',
+      '.sc-col{height:100%;display:flex;flex-direction:column;min-height:0}',
+      '.sc-col-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0}',
+      '.sc-col-title{font-size:13px;font-weight:700;color:#C9A84C;letter-spacing:.3px}',
+      '.sc-col .sc-panel-body{flex:1;min-height:0;display:flex;flex-direction:column}'
     ].join('');
     document.head.appendChild(s);
   }
@@ -253,9 +269,26 @@
     document.body.appendChild(panel);
   }
 
+  // ── mount: embedded single-column chat (va-dashboard right column) ───────
+  function mountColumn(rootEl) {
+    _mode = 'column';
+    rootEl.classList.add('sc-col-root');
+    rootEl.innerHTML =
+      '<div class="sc-col">'
+      + '<div class="sc-col-head"><span class="sc-col-title">💬 Chat</span>'
+      + '<button class="sc-icon" data-sc-new title="New chat">＋</button></div>'
+      + '<div class="sc-panel-body">'
+      + '<div id="sc-list-view" class="sc-list-view"><div id="sc-thread-list" class="sc-thread-list"></div></div>'
+      + '<div id="sc-conv-view" class="sc-conv-view">'
+      + '<div class="sc-conv-head"><button class="sc-icon" data-sc-back title="All chats">‹</button><span id="sc-conv-title" class="sc-conv-title"></span></div>'
+      + '<div id="sc-messages" class="sc-messages"></div>'
+      + '<div class="sc-composer"><input id="sc-input" type="text" placeholder="Message…" autocomplete="off"><button class="sc-send" data-sc-send>Send</button></div>'
+      + '</div></div></div>';
+  }
+
   // ── mount: full page ────────────────────────────────────────────────────
   function mountFull(rootEl) {
-    _full = true;
+    _mode = 'full';
     rootEl.innerHTML =
       '<div class="sc-full">'
       + '<div class="sc-full-left"><div class="sc-full-left-head"><span class="t">💬 Staff Chat <span id="sc-full-unread" style="font-size:11px;color:#888;font-weight:500;"></span></span>'
@@ -290,11 +323,21 @@
     if (!haveClient) { if (attempt < 60) setTimeout(function () { start(attempt + 1); }, 120); return; }  // ~7s cap, then give up quietly
     if (!isStaff()) return;                                    // non-staff → no chat UI
     injectCss();
-    var fullRoot = document.getElementById('staff-chat-fullpage');
-    if (fullRoot) { mountFull(fullRoot); }                     // dedicated page → two-pane, no bubble
-    else { mountFloating(); }                                  // every other admin page → floating bubble
-    wireEvents();
-    loadThreads();
+    var root = document.getElementById('staff-chat-fullpage');
+    if (root) {
+      // Embedded mode (no floating bubble). data-sc-mode="column" → single-column
+      // (va-dashboard right rail); otherwise the two-pane full page (chat.html).
+      if ((root.getAttribute('data-sc-mode') || 'full') === 'column') mountColumn(root);
+      else mountFull(root);
+      wireEvents();
+      loadThreads().then(function () {
+        if (root.getAttribute('data-sc-autoopen') === 'admin') autoOpenAdmin();
+      });
+    } else {
+      mountFloating();                                         // every other admin page → floating bubble
+      wireEvents();
+      loadThreads();
+    }
     startPoll();
   }
 

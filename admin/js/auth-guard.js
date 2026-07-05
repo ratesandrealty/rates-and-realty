@@ -191,5 +191,23 @@
     } else {
       fillEmail();
     }
+
+    // Mount the staff-to-staff Chat bubble on every staff page. auth-guard runs
+    // ONLY on authenticated admin/staff pages (never public/borrower pages), so this
+    // is the single place that reliably covers all admin CRM + VA portal pages —
+    // most of which don't load components/layout.js. staff-chat.js is role-gated
+    // (admin/agent/va/loa) and idempotent (window._staffChatLoaded); skip the
+    // <script> if the page already loads it (dashboard/admin + chat.html do).
+    function mountStaffChat() {
+      if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
+      const sc = document.createElement('script');
+      sc.src = '/admin/js/staff-chat.js?v=2026070501';
+      document.head.appendChild(sc);
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', mountStaffChat);
+    } else {
+      mountStaffChat();
+    }
   })();
 })();
