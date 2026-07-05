@@ -403,6 +403,10 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
 
     <div class="card-grid" id="cardView" style="display:none"></div>
+
+    <!-- VA "Loan Processing" board (shown only when _vaMode==='processing').
+         Populated by renderProcessingBoard() from the va_processing_board RPC. -->
+    <div class="card-grid" id="processingBoardView" style="display:none"></div>
   </div>
 </div>
 
@@ -740,8 +744,9 @@ var _sortCol = 'created_at';
 var _sortDir = 'desc';
 var _searchQ = '';
 var _activeViewId = null;
-// VA limited-workspace view: 'leads' (all shared) or 'processing' (active pipeline only).
-// Stays 'leads' for admins (poller never switches it), so the processing filter is a no-op.
+// VA limited-workspace view: 'leads' (the shared contact list) or 'processing' (a
+// dedicated board rendered from the va_processing_board RPC). Stays 'leads' for admins
+// (the poller never reveals the toggle), so the board is never shown to them.
 var _vaMode = 'leads';
 
 // Advanced filters state
@@ -1029,12 +1034,8 @@ function applyFilters() {
     if (_filterPipelines.length > 0) {
       if (_filterPipelines.indexOf(p.lead_status || p.pipeline_status) < 0) return false;
     }
-    // VA "Loan Processing" view — keep only active/in-process pipeline stages,
-    // dropping closed/dead. No-op for admins (_vaMode stays 'leads').
-    if (_vaMode === 'processing') {
-      var _st = (p.lead_status || p.pipeline_status || '').toLowerCase();
-      if (_st.indexOf('closed') >= 0 || _st.indexOf('lost') >= 0 || _st.indexOf('dead') >= 0) return false;
-    }
+    // (VA "Loan Processing" is no longer a filter over _allPeople — it renders a
+    //  dedicated board from the va_processing_board RPC; see setVaView/renderProcessingBoard.)
     // Advanced: Tags
     if (_filterTagIds.length > 0) {
       var hasAny = false;
@@ -2201,8 +2202,8 @@ function applyVaMode() {
   return true;
 }
 
-// Switch the VA in-memory view. 'leads' = all shared leads; 'processing' = active
-// pipeline only (closed/dead excluded). Re-filters the already-loaded list — no fetch.
+// Switch the VA workspace. 'leads' = the shared contact list (unchanged);
+// 'processing' = a dedicated processing board rendered from va_processing_board.
 function setVaView(view) {
   _vaMode = (view === 'processing') ? 'processing' : 'leads';
   var leadsBtn = document.getElementById('vaNavLeads');
@@ -2218,7 +2219,100 @@ function setVaView(view) {
   }
   _setActive(leadsBtn, _vaMode === 'leads');
   _setActive(procBtn, _vaMode === 'processing');
-  if (typeof applyFilters === 'function') applyFilters();
+
+  var boardEl = document.getElementById('processingBoardView');
+  var tableEl = document.getElementById('tableView');
+  var cardEl = document.getElementById('cardView');
+  var tabBar = document.querySelector('.tab-bar');
+  var filterBar = document.querySelector('.filter-bar');
+  var activeFiltersRow = document.getElementById('activeFiltersRow');
+
+  if (_vaMode === 'processing') {
+    // Hide the contact-list chrome and show the processing board.
+    if (tableEl) tableEl.style.display = 'none';
+    if (cardEl) cardEl.style.display = 'none';
+    if (tabBar) tabBar.style.display = 'none';
+    if (filterBar) filterBar.style.display = 'none';
+    if (activeFiltersRow) activeFiltersRow.style.display = 'none';
+    if (boardEl) boardEl.style.display = 'grid';
+    renderProcessingBoard();
+  } else {
+    // Restore the contact-list workspace ("My Leads" — unchanged from before).
+    if (boardEl) boardEl.style.display = 'none';
+    if (tabBar) tabBar.style.display = '';
+    if (filterBar) filterBar.style.display = '';
+    setView(_currentView);
+    if (typeof applyFilters === 'function') applyFilters();
+  }
+}
+
+// Render the VA processing board from the va_processing_board RPC (already scoped by
+// RLS to the VA's shared ACTIVE files, ordered by stage). One card per file.
+async function renderProcessingBoard() {
+  var el = document.getElementById('processingBoardView');
+  if (!el) return;
+  el.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div>Loading your processing board…</div></div>';
+
+  var rows;
+  try {
+    var client = await getSupabaseClient();   // authenticated session (JWT → RLS)
+    var res = await client.rpc('va_processing_board');
+    if (res.error) throw res.error;
+    rows = res.data || [];
+  } catch (e) {
+    console.error('[va_processing_board]', e);
+    el.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="icon">&#9888;</div><div>Could not load your processing board.</div></div>';
+    return;
+  }
+
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="icon">&#128193;</div><div>No active files shared with you yet.</div></div>';
+    return;
+  }
+
+  el.innerHTML = rows.map(function(r) {
+    var name = (r.name || '').trim() || 'Unknown Borrower';
+    var stage = r.pipeline_status || 'Processing';
+    var stColor = stageColor(stage);
+    var phone = (r.phone || '').trim();
+    var href = 'lead-detail.html?contact_id=' + encodeURIComponent(r.contact_id) + '#processing';
+
+    // One chip per count that is > 0.
+    var chips = [];
+    function chip(n, label) {
+      if (!n || Number(n) <= 0) return;
+      chips.push('<span class="tag-mini" style="background:rgba(201,168,76,0.14);color:var(--gold)">' + Number(n) + ' ' + label + '</span>');
+    }
+    chip(r.open_conditions, 'conditions');
+    chip(r.outstanding_docs, 'docs');
+    chip(r.open_intake, 'intake');
+    chip(r.open_tasks, 'tasks');
+
+    var chipsHtml;
+    if (chips.length) {
+      chipsHtml = '<div class="card-tags" style="margin-top:8px">' + chips.join('') + '</div>';
+    } else {
+      chipsHtml = '<div class="card-tags" style="margin-top:8px"><span class="tag-mini" style="background:rgba(80,200,120,0.15);color:#50c878">&#10003; Up to date</span></div>';
+    }
+
+    var nextHtml = r.next_key_date
+      ? '<div style="font-size:11px;color:var(--muted);margin-top:8px">Next: ' + (r.next_key_label || 'Key date') + ' ' + r.next_key_date + '</div>'
+      : '';
+
+    var phoneHtml = phone
+      ? '<a href="tel:' + phone.replace(/[^0-9+]/g,'') + '" onclick="event.stopPropagation()" style="font-size:12px;color:var(--muted);text-decoration:none">&#128222; ' + phone + '</a>'
+      : '<span style="font-size:12px;color:var(--muted)">No phone</span>';
+
+    return '<div class="person-card" style="cursor:pointer;text-align:left" onclick="window.location.href=\'' + href + '\'">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+        + '<div class="card-name" style="margin:0">' + name + '</div>'
+        + '<span class="tag-mini" style="background:' + stColor + '22;color:' + stColor + ';white-space:nowrap">' + stage + '</span>'
+      + '</div>'
+      + '<div style="margin-top:4px">' + phoneHtml + '</div>'
+      + chipsHtml
+      + nextHtml
+      + '</div>';
+  }).join('');
 }
 
 // Poll until auth-guard publishes the role, then apply the limited view once.

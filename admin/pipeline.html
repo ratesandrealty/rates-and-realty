@@ -185,10 +185,32 @@ const PIPELINE_STAGES = [
 let _allContacts = [];
 let _dragContactId = null;
 
+// Resolve the logged-in user's access token so REST calls run as the authenticated
+// user (VA/admin), not anon — letting contacts RLS scope the board. auth-guard.js
+// publishes window._supabaseClient asynchronously, so wait briefly for it. Falls
+// back to the anon key only if no session client ever appears.
+async function _sessionToken() {
+  let client = window._supabaseClient;
+  if (!client && typeof window.getSupabaseClient === 'function') {
+    try { client = await window.getSupabaseClient(); } catch (_) {}
+  }
+  for (let i = 0; !client && i < 40; i++) {
+    await new Promise(function (r) { setTimeout(r, 50); });
+    client = window._supabaseClient;
+  }
+  if (!client) return SUPABASE_KEY;
+  try {
+    const { data } = await client.auth.getSession();
+    if (data && data.session && data.session.access_token) return data.session.access_token;
+  } catch (_) {}
+  return SUPABASE_KEY;
+}
+
 async function loadLeads() {
+  const _token = await _sessionToken();
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/contacts?select=id,first_name,last_name,email,phone,pipeline_status,loan_type,source,lead_score,temperature,loan_amount,created_at&order=created_at.desc&limit=300`,
-    { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${_token}` } }
   );
   _allContacts = await res.json();
   if (!Array.isArray(_allContacts)) _allContacts = [];
@@ -320,9 +342,10 @@ async function onDrop(e, newStage) {
   contact.pipeline_status = newStage;
   renderBoard();
 
+  var _token = await _sessionToken();
   var res = await fetch(SUPABASE_URL + '/rest/v1/contacts?id=eq.' + _dragContactId, {
     method: 'PATCH',
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + _token, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
     body: JSON.stringify({ pipeline_status: newStage, updated_at: new Date().toISOString() })
   });
 
