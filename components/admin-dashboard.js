@@ -373,6 +373,9 @@ async function renderOverview() {
     actFeed.innerHTML = renderActivityItems(events.slice(0, 12));
   }
 
+  // Recent notes (admin-only feed) — fire-and-forget, self-contained render.
+  loadRecentNotes();
+
   // Upcoming appointments
   const apptEl = document.getElementById("overview-appointments");
   if (apptEl) renderUpcomingAppointmentsInEl(apptEl);
@@ -1257,6 +1260,59 @@ function renderActivityItems(events) {
         </div>
       </div>
     `;
+  }).join("");
+}
+
+// ── RECENT NOTES (admin dashboard only) ────────────────────────────────
+// Feeds the "Recent Notes" card from the admin-only recent_notes RPC (lead +
+// task notes, newest first). Each row links to the note's lead detail page.
+function _notesAgo(iso) {
+  if (!iso) return "";
+  let s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 0) s = 0;
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60); if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60); if (h < 24) return h + "h ago";
+  const d = Math.floor(h / 24); if (d < 7) return d + "d ago";
+  const w = Math.floor(d / 7); if (w < 5) return w + "w ago";
+  const mo = Math.floor(d / 30); if (mo < 12) return mo + "mo ago";
+  return Math.floor(d / 365) + "y ago";
+}
+async function loadRecentNotes() {
+  const feed = document.getElementById("overview-notes-feed");
+  if (!feed) return;
+  let rows = [];
+  try {
+    const sb = await _fvAuthClient();          // session-aware client → RPC carries the admin JWT
+    const { data, error } = await sb.rpc("recent_notes", { p_limit: 30 });
+    if (error) throw error;
+    rows = data || [];
+  } catch (e) {
+    console.warn("[recent_notes]", e && e.message);
+    feed.innerHTML = `<p style="color:var(--muted);padding:14px 4px;">Couldn't load notes.</p>`;
+    return;
+  }
+  if (!rows.length) {
+    feed.innerHTML = `<p style="color:var(--muted);padding:14px 4px;">No notes yet.</p>`;
+    return;
+  }
+  feed.innerHTML = rows.map((n) => {
+    const who = crmEsc(n.author_display || "Someone");
+    const contact = n.contact_name ? ` <span style="color:var(--muted);font-weight:400;">· ${crmEsc(n.contact_name)}</span>` : "";
+    const isTask = (n.source === "task");
+    const badgeColor = isTask ? "#60a0ff" : "#C9A84C";
+    const badge = `<span style="flex-shrink:0;font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:1px 6px;border-radius:8px;background:${badgeColor}22;color:${badgeColor};">${isTask ? "Task" : "Lead"}</span>`;
+    const when = `<span style="margin-left:auto;flex-shrink:0;color:var(--muted);font-size:0.7rem;">${crmEsc(_notesAgo(n.created_at))}</span>`;
+    let txt = String(n.note_text || "").replace(/\s+/g, " ").trim();
+    if (txt.length > 140) txt = txt.slice(0, 140).trim() + "…";
+    const hasContact = n.contact_id && n.contact_id !== "null";
+    const clickAttrs = hasContact
+      ? ` class="rn-row rn-click" onclick="window.location.href='../admin/lead-detail.html?contact_id=${encodeURIComponent(n.contact_id)}'"`
+      : ` class="rn-row"`;
+    return `<div${clickAttrs}>
+        <div style="display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;font-size:0.8rem;color:#eee;font-weight:600;">${who}${contact} ${badge} ${when}</div>
+        <div style="font-size:0.8rem;color:var(--muted);margin-top:3px;line-height:1.4;">${crmEsc(txt)}</div>
+      </div>`;
   }).join("");
 }
 
