@@ -2442,7 +2442,7 @@
           <div id="lpSnapshotBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;"></div></div>
         <div class="lp-card"><div class="lp-h">📅 Critical Dates</div>
           <div id="lpDatesBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;"></div></div>
-        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><button type="button" onclick="openAssignVaModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">👤 Assign to VA</button></div><div id="lpVaTasksBody"></div></div>
+        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><button type="button" id="lpAssignVaBtn" onclick="openAssignVaModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">👤 Assign to VA</button></div><div id="lpVaTasksBody"></div></div>
         <div class="lp-card"><div class="lp-h">✅ Intake / Setup Checklist</div><div id="lpIntakeBody"></div></div>
         <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
         <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
@@ -5359,6 +5359,9 @@ function _ldApplyVaMode() {
 
   // Convert button
   hideId('vahideConvert');
+
+  // "Assign to VA" — only admins assign tasks to VAs.
+  hideId('lpAssignVaBtn');
 
   // Admin-only tabs — keep Lead Details / Loan Processing / 1003 / Documents /
   // Conditions / Tasks / Activity visible for VA.
@@ -13157,7 +13160,7 @@ let _vaEditId = null;     // id of the row currently in inline-edit mode
 let _vaView = 'open';     // 'open' | 'history' (PART 4 completed-history toggle)
 let _vaCompleted = [];    // va_task_completed_history() rows (null = loading)
 const _vaHistOpen = {};   // taskId -> true when its notes/history panel is expanded
-const _vaHist = {};       // taskId -> task_history() rows
+const _vaHist = {};       // taskId -> task_activity note rows (kind='note', newest first)
 let _vaHashDone = false;   // one-shot guard for #vatask= deep-link auto-expand
 const VA_PRIORITIES = ['urgent','high','normal','low'];
 const VA_PRIO_STYLE = {
@@ -13205,10 +13208,12 @@ function _vaTab(v,label){
   const active=_vaView===v;
   return '<button type="button" onclick="lpVaSetView(\''+v+'\')" style="background:transparent;border:none;border-bottom:2px solid '+(active?'#C9A84C':'transparent')+';color:'+(active?'#C9A84C':'#888')+';font-size:12px;font-weight:600;padding:6px 10px;cursor:pointer;font-family:inherit;">'+label+'</button>';
 }
-function _vaCompletedHtml(){
+function _vaCompletedHtml(cid){
   if(_vaCompleted===null) return '<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
-  if(!_vaCompleted.length) return '<div style="color:#888;font-size:12px;padding:8px;">No completed tasks yet.</div>';
-  return _vaCompleted.map(function(t){
+  // Only this lead's completed tasks (this card is scoped to the current contact).
+  const rows = cid ? _vaCompleted.filter(function(t){ return String(t.contact_id)===String(cid); }) : _vaCompleted;
+  if(!rows.length) return '<div style="color:#888;font-size:12px;padding:8px;">No completed tasks for this lead yet.</div>';
+  return rows.map(function(t){
     const when=t.completed_at?new Date(t.completed_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
     const who=t.contact_name?'<span style="color:#888;"> · '+lpEsc(t.contact_name)+'</span>':'';
     return '<div style="padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);font-size:12px;color:#ddd;">'
@@ -13222,8 +13227,9 @@ function _vaRenderTasks(){
   const hideDelete = (typeof _ldNonAdmin==='function' && _ldNonAdmin());
   const isVa = hideDelete;   // VAs: hide the template-chip quick-add groups + delete controls
   const tabs = '<div style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,.08);">'+_vaTab('open','Open')+_vaTab('history','History')+'</div>';
-  const noteBox = _vaNoteBoxHtml();
-  if(_vaView==='history'){ body.innerHTML = tabs + noteBox + _vaCompletedHtml(); _vaLoadRecentNotes(); return; }
+  // This card is scoped to the CURRENT lead only — filter tasks to contact_id === lpCid().
+  const _cid = (typeof lpCid==='function') ? lpCid() : null;
+  if(_vaView==='history'){ body.innerHTML = tabs + _vaCompletedHtml(_cid); return; }
   // ── Suggested-task chips (grouped, compact) — ADMIN ONLY (hidden for VAs) ──
   let chips = '';
   if(!isVa){
@@ -13244,12 +13250,13 @@ function _vaRenderTasks(){
     + '<input id="vaNewDue" type="date" title="Due date (optional)" style="'+_vaInp+'">'
     + '<button type="button" onclick="lpVaAdd()" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;">+ Add</button>'
     + '</div>';
-  // ── Open list ──
+  // ── Open list (current lead only) ──
+  const _rows = _cid ? _vaTasks.filter(function(t){ return String(t.contact_id)===String(_cid); }) : _vaTasks;
   let list;
-  if(!_vaTasks.length){
-    list = '<div style="color:#888;font-size:12px;padding:8px;">No open tasks. 🎉</div>';
+  if(!_rows.length){
+    list = '<div style="color:#888;font-size:12px;padding:8px;">No open tasks for this lead. 🎉</div>';
   } else {
-    list = _vaTasks.map(function(t){
+    list = _rows.map(function(t){
       if(t.id===_vaEditId) return _vaEditRow(t);
       const prio = (t.priority||'normal').toLowerCase();
       const badge = '<span style="flex-shrink:0;'+(VA_PRIO_STYLE[prio]||VA_PRIO_STYLE.normal)+'border-radius:10px;padding:1px 7px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;">'+lpEsc(prio)+'</span>';
@@ -13271,57 +13278,9 @@ function _vaRenderTasks(){
       return row + (open ? _vaHistoryPanel(t.id) : '');
     }).join('');
   }
-  body.innerHTML = tabs + noteBox + chips + addRow + list;
-  _vaLoadRecentNotes();
-  // Attach @-mention autocomplete to any open note textareas (PART 1 reuse).
-  Object.keys(_vaHistOpen).forEach(function(id){ if(_vaHistOpen[id]){ const ta=document.getElementById('vaNote_'+id); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta); } });
-}
-
-// ── "Note to Rene" composer (inside the VA Daily Tasks card) ──
-// Shown for VAs (and admins). Submits via the add_contact_note RPC, which only
-// permits notes on shared leads for VAs (errors surface as a toast).
-function _vaNoteBoxHtml(){
-  return '<div style="margin-bottom:12px;padding:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08);border-radius:8px;">'
-    + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#C9A84C;margin-bottom:6px;">📝 Note to Rene</div>'
-    + '<textarea id="vaNoteToRene" rows="2" placeholder="Leave a note about this file for Rene…" style="'+_vaInp+'width:100%;resize:vertical;margin-bottom:6px;"></textarea>'
-    + '<div style="display:flex;justify-content:flex-end;">'
-    +   '<button type="button" onclick="lpVaAddNote()" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;">Add note</button>'
-    + '</div>'
-    + '<div id="vaNotesRecent" style="margin-top:8px;"></div>'
-    + '</div>';
-}
-async function lpVaAddNote(){
-  const ta=document.getElementById('vaNoteToRene'); if(!ta) return;
-  const txt=(ta.value||'').trim();
-  if(!txt){ if(typeof showToast==='function') showToast('Enter a note first', true); return; }
-  const cid=(typeof lpCid==='function')?lpCid():null;
-  if(!cid){ if(typeof showToast==='function') showToast('No contact loaded', true); return; }
-  try{
-    const { error } = await _authClient().rpc('add_contact_note', { p_contact_id:cid, p_note:txt });
-    if(error) throw error;
-    if(typeof showToast==='function') showToast('Note added');
-    ta.value='';
-    _vaLoadRecentNotes();
-  }catch(e){ if(typeof showToast==='function') showToast((e&&e.message)||'Could not add note', true); }
-}
-// Optional: list the few most recent notes for this contact (newest first).
-async function _vaLoadRecentNotes(){
-  const el=document.getElementById('vaNotesRecent'); if(!el) return;
-  const cid=(typeof lpCid==='function')?lpCid():null; if(!cid) return;
-  try{
-    const { data, error } = await _authClient().from('contact_notes')
-      .select('author_display,note_text,created_at').eq('contact_id',cid)
-      .order('created_at',{ascending:false}).limit(3);
-    if(error) throw error;
-    if(!data || !data.length){ el.innerHTML=''; return; }
-    el.innerHTML = data.map(function(n){
-      const when=n.created_at?new Date(n.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-      return '<div style="padding:6px 0;border-top:1px solid rgba(255,255,255,.05);font-size:11px;color:#bbb;">'
-        + '<span style="color:#ddd;">'+lpEsc(n.note_text||'')+'</span>'
-        + '<div style="font-size:9px;color:#777;margin-top:2px;">'+lpEsc(n.author_display||'—')+(when?' · '+when:'')+'</div>'
-        + '</div>';
-    }).join('');
-  }catch(e){ /* non-blocking recent-notes preview */ }
+  body.innerHTML = tabs + chips + addRow + list;
+  // Attach the staff_assignees @-mention autocomplete to any open note textareas.
+  Object.keys(_vaHistOpen).forEach(function(id){ if(_vaHistOpen[id]){ const ta=document.getElementById('vaNote_'+id); if(ta && typeof _taAttachMention==='function') _taAttachMention(ta); } });
 }
 
 function _vaEditRow(t){
@@ -13607,7 +13566,7 @@ async function notifRenderList(){
     if(!rows.length){ box.innerHTML=head+'<div style="padding:20px;text-align:center;color:#888;font-size:12px;">No notifications</div>'; return; }
     box.innerHTML=head+rows.map(function(n){
       const unread=!n.is_read, bg=unread?'rgba(201,168,76,.07)':'transparent';
-      return '<div onclick="notifOpen(\''+n.id+'\',\''+(n.contact_id||'')+'\',\''+(n.source_kind||'')+'\',\''+(n.source_id||'')+'\')" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;background:'+bg+';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\''+bg+'\'">'
+      return '<div onclick="notifOpen(\''+n.id+'\',\''+(n.contact_id||'')+'\',\''+(n.source_kind||'')+'\',\''+(n.source_id||'')+'\',\''+(n.kind||'')+'\')" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;background:'+bg+';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\''+bg+'\'">'
         +'<div style="display:flex;gap:6px;align-items:baseline;">'+(unread?'<span style="flex-shrink:0;width:7px;height:7px;border-radius:50%;background:#C9A84C;display:inline-block;"></span>':'')
         +'<span style="font-size:12px;color:#eee;font-weight:600;">'+lpEsc(n.actor_display||'Someone')+'</span>'
         +'<span style="margin-left:auto;font-size:10px;color:#777;flex-shrink:0;">'+lpEsc(relativeTime(n.created_at))+'</span></div>'
@@ -13625,15 +13584,18 @@ function notifToggle(ev){
   box.style.display='block';
   notifRenderList();
 }
-async function notifOpen(id, contactId, sourceKind, sourceId){
+async function notifOpen(id, contactId, sourceKind, sourceId, kind){
   try{ await _authClient().rpc('notification_mark_read', { p_id:id }); }catch(_){}
   notifRefreshCount();
   _notifHide();
+  // A task note is identifiable by either source_kind='task_note' (legacy) or kind='task_note'
+  // (add_task_note sets kind='task_note', source_kind='task', source_id=<task_id>).
+  const isTaskNote = !!sourceId && (sourceKind==='task_note' || kind==='task_note');
   const cur=new URLSearchParams(window.location.search).get('contact_id');
   if(contactId){
-    if(cur===contactId){ if(sourceKind==='task_note' && sourceId) _vaEnsureTaskOpen(sourceId); }
-    else { const hash=(sourceKind==='task_note'&&sourceId)?('#vatask='+encodeURIComponent(sourceId)):''; window.location.href='lead-detail?contact_id='+encodeURIComponent(contactId)+hash; }
-  } else if(sourceKind==='task_note' && sourceId){
+    if(cur===contactId){ if(isTaskNote) _vaEnsureTaskOpen(sourceId); }
+    else { const hash=isTaskNote?('#vatask='+encodeURIComponent(sourceId)):''; window.location.href='lead-detail?contact_id='+encodeURIComponent(contactId)+hash; }
+  } else if(isTaskNote){
     _vaEnsureTaskOpen(sourceId);
   }
 }
@@ -13665,26 +13627,24 @@ function _vaEventLabel(h){
   }
 }
 function _vaHistoryPanel(id){
+  // Notes-only thread, newest first (loaded from task_activity by lpVaLoadHistory).
   const rows=_vaHist[id];
   let timeline;
-  if(rows===undefined){ timeline='<div style="color:#888;font-size:11px;padding:6px;">Loading history…</div>'; }
-  else if(!rows.length){ timeline='<div style="color:#888;font-size:11px;padding:6px;">No history yet.</div>'; }
+  if(rows===undefined){ timeline='<div style="color:#888;font-size:11px;padding:6px;">Loading notes…</div>'; }
+  else if(!rows.length){ timeline='<div style="color:#888;font-size:11px;padding:6px;">No notes yet.</div>'; }
   else {
     timeline=rows.map(function(h){
       const t='<span style="color:#777;font-size:9px;margin-left:6px;">'+lpEsc(relativeTime(h.created_at))+'</span>';
-      if(h.kind==='note'){
-        return '<div style="padding:5px 6px;border-left:2px solid rgba(201,168,76,.4);margin:4px 0;background:rgba(255,255,255,.02);">'
-          +'<span style="font-size:11px;color:#C9A84C;font-weight:600;">'+lpEsc(h.actor_display||'Someone')+':</span> '
-          +'<span style="font-size:11px;color:#ddd;">'+renderMentions(h.note||'')+'</span>'+t+'</div>';
-      }
-      return '<div style="padding:3px 6px;font-size:10px;color:#888;">• '+lpEsc(_vaEventLabel(h))+t+'</div>';
+      return '<div style="padding:5px 6px;border-left:2px solid rgba(201,168,76,.4);margin:4px 0;background:rgba(255,255,255,.02);">'
+        +'<span style="font-size:11px;color:#C9A84C;font-weight:600;">'+lpEsc(h.actor_display||'Someone')+':</span> '
+        +'<span style="font-size:11px;color:#ddd;">'+renderMentions(h.note||'')+'</span>'+t+'</div>';
     }).join('');
   }
   return '<div style="padding:8px 6px 10px 30px;background:rgba(255,255,255,.015);border-bottom:1px solid rgba(255,255,255,.05);">'
     + '<div style="max-height:200px;overflow-y:auto;margin-bottom:8px;">'+timeline+'</div>'
     + '<div style="display:flex;gap:6px;align-items:flex-end;">'
-    +   '<textarea id="vaNote_'+id+'" rows="2" placeholder="Add a note… use @ to mention" style="'+_vaInp+'flex:1;resize:vertical;"></textarea>'
-    +   '<button type="button" onclick="lpVaPostNote(\''+id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;flex-shrink:0;">Post</button>'
+    +   '<textarea id="vaNote_'+id+'" rows="2" placeholder="Add a note… use @name to notify" style="'+_vaInp+'flex:1;resize:vertical;"></textarea>'
+    +   '<button type="button" onclick="lpVaPostNote(\''+id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;flex-shrink:0;">Add note</button>'
     + '</div></div>';
 }
 async function lpVaToggleHistory(id){
@@ -13693,24 +13653,95 @@ async function lpVaToggleHistory(id){
   _vaRenderTasks();              // render panel in loading state
   await lpVaLoadHistory(id);
 }
+// Read the note thread for a task from task_activity (kind='note'), newest first.
 async function lpVaLoadHistory(id){
   try{
-    const { data, error } = await _authClient().rpc('task_history', { p_task_id:id });
-    if(error){ _vaToast(error,'Could not load history'); _vaHist[id]=[]; }
+    const { data, error } = await _authClient()
+      .from('task_activity')
+      .select('note,kind,actor_display,created_at')
+      .eq('task_id', id).eq('kind','note')
+      .order('created_at', { ascending:false });
+    if(error){ _vaToast(error,'Could not load notes'); _vaHist[id]=[]; }
     else _vaHist[id]=data||[];
-  }catch(e){ _vaToast(e,'Could not load history'); _vaHist[id]=[]; }
+  }catch(e){ _vaToast(e,'Could not load notes'); _vaHist[id]=[]; }
   _vaRenderTasks();
 }
 async function lpVaPostNote(id){
   const ta=document.getElementById('vaNote_'+id); if(!ta) return;
   const body=(ta.value||'').trim(); if(!body){ ta.focus(); return; }
   try{
-    const { error } = await _authClient().rpc('task_note_add', { p_task_id:id, p_body:body });
-    if(error){ _vaToast(error,'Could not post note'); return; }
+    // add_task_note writes the note to task_activity AND notifies @mentioned people
+    // (matched on email local-part) + all admins on any VA note.
+    const { error } = await _authClient().rpc('add_task_note', { p_task_id:id, p_note:body });
+    if(error){ _vaToast(error,'Could not add note'); return; }
     ta.value='';
-    await lpVaLoadHistory(id);     // refresh this task's history
+    if(typeof showToast==='function') showToast('Note added');
+    await lpVaLoadHistory(id);     // refresh this task's note thread (prepends newest)
     if(typeof notifRefreshCount==='function') notifRefreshCount();
-  }catch(e){ _vaToast(e,'Could not post note'); }
+  }catch(e){ _vaToast(e,'Could not add note'); }
+}
+
+/* ── @mention autocomplete for the task-note composer ──
+   Source: staff_assignees() (VA/agent/loa) + Rene (admin). Inserting a pick writes
+   "@<email-local-part>" — exactly what add_task_note matches on server-side. */
+let _taMentCache=null, _taMentPromise=null;
+async function _taMentRoster(){
+  if(_taMentCache) return _taMentCache;
+  if(_taMentPromise) return _taMentPromise;
+  _taMentPromise=(async function(){
+    let list=[];
+    try{
+      const { data, error } = await _authClient().rpc('staff_assignees');
+      if(!error && Array.isArray(data)){
+        list = data.map(function(s){ return { local:String(s.email||'').split('@')[0], display:s.email||String(s.user_id||''), role:s.role||'' }; })
+                   .filter(function(x){ return x.local; });
+      }
+    }catch(_){}
+    // Always offer Rene (admin) — staff_assignees returns only VA/agent/loa.
+    if(!list.some(function(x){ return x.local.toLowerCase()==='rene'; })) list.unshift({ local:'rene', display:'Rene (Admin)', role:'admin' });
+    _taMentCache=list; return list;
+  })();
+  return _taMentPromise;
+}
+let _taMentBox=null,_taMentEl=null,_taItems=[],_taIdx=0,_taStart=-1;
+function _taMentBoxEl(){ if(_taMentBox) return _taMentBox; _taMentBox=document.createElement('div'); _taMentBox.id='taMentBox'; _taMentBox.style.cssText='position:fixed;z-index:10051;display:none;min-width:200px;max-width:300px;max-height:200px;overflow-y:auto;background:#15140f;border:1px solid rgba(201,168,76,.45);border-radius:8px;box-shadow:0 14px 34px rgba(0,0,0,.7);'; document.body.appendChild(_taMentBox); return _taMentBox; }
+function _taMentClose(){ if(_taMentBox){ _taMentBox.style.display='none'; _taMentBox.innerHTML=''; } _taMentEl=null; _taItems=[]; _taIdx=0; _taStart=-1; }
+function _taMentPosRender(){
+  const box=_taMentBoxEl();
+  if(!_taItems.length){ _taMentClose(); return; }
+  box.innerHTML=_taItems.map(function(r,i){
+    return '<div onmousedown="event.preventDefault();_taMentPick('+i+')" style="padding:6px 10px;cursor:pointer;'+(i===_taIdx?'background:rgba(201,168,76,.18);':'')+'">'
+      +'<div style="font-size:12px;color:#eee;font-weight:600;">'+lpEsc(r.display)+'</div>'
+      +'<div style="font-size:10px;color:#888;">@'+lpEsc(r.local)+(r.role?(' · '+lpEsc(r.role)):'')+'</div></div>';
+  }).join('');
+  box.style.display='block';
+  if(_taMentEl){ const rc=_taMentEl.getBoundingClientRect(); const bh=box.offsetHeight||0;
+    box.style.left=Math.max(8,Math.min(rc.left,window.innerWidth-box.offsetWidth-8))+'px';
+    box.style.top=((window.innerHeight-rc.bottom)<(bh+12)&&rc.top>(bh+12))?(Math.max(8,rc.top-bh-4)+'px'):((rc.bottom+4)+'px'); }
+}
+async function _taMentInput(el){
+  const pos=el.selectionStart||0, before=(el.value||'').slice(0,pos);
+  const m=before.match(/@([\w.\-]*)$/);
+  if(!m){ _taMentClose(); return; }
+  const q=(m[1]||'').toLowerCase();
+  const roster=await _taMentRoster();
+  const items=(roster||[]).filter(function(r){ return !q || r.local.toLowerCase().indexOf(q)!==-1 || String(r.display).toLowerCase().indexOf(q)!==-1; }).slice(0,8);
+  if(!items.length){ _taMentClose(); return; }
+  _taMentEl=el; _taItems=items; _taIdx=0; _taStart=pos-m[0].length; _taMentPosRender();
+}
+function _taMentPick(i){ const r=_taItems[i], el=_taMentEl; if(!r||!el) return; const pos=el.selectionStart||0, val=el.value||''; el.value=val.slice(0,_taStart)+'@'+r.local+' '+val.slice(pos); const caret=_taStart+r.local.length+2; el.focus(); try{ el.setSelectionRange(caret,caret); }catch(_){} _taMentClose(); }
+function _taMentKeydown(el,e){
+  if(!_taMentBox || _taMentBox.style.display==='none' || _taMentEl!==el) return;
+  if(e.key==='ArrowDown'){ e.preventDefault(); _taIdx=Math.min(_taIdx+1,_taItems.length-1); _taMentPosRender(); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); _taIdx=Math.max(_taIdx-1,0); _taMentPosRender(); }
+  else if(e.key==='Enter'){ e.preventDefault(); _taMentPick(_taIdx); }
+  else if(e.key==='Escape'){ _taMentClose(); }
+}
+function _taAttachMention(el){
+  if(!el || el._taMent) return; el._taMent=true;
+  el.addEventListener('input', function(){ _taMentInput(el); });
+  el.addEventListener('keydown', function(e){ _taMentKeydown(el,e); }, true);
+  el.addEventListener('blur', function(){ setTimeout(function(){ if(_taMentEl===el) _taMentClose(); }, 150); });
 }
 async function _vaEnsureTaskOpen(id){
   if(!document.getElementById('lpVaTasksBody')) return;
