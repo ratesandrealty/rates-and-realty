@@ -2435,6 +2435,9 @@
           <button class="lp-action" onclick="lpTextBorrower()">📱 Text Borrower</button>
         </div>
         <div class="lp-card"><div class="lp-h">🚦 Processing Timeline</div><div id="lpTimelineBody"></div></div>
+        <!-- Duplicate of #lpTrackerBar (order-tracker strip) rendered under the timeline.
+             Kept in sync with the original by lpRenderTracker() from the same order_tracker data. -->
+        <div id="lpTrackerBarTop" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px;"></div>
         <div class="lp-card"><div class="lp-h">📌 Loan Snapshot</div>
           <div id="lpSnapshotBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;"></div></div>
         <div class="lp-card"><div class="lp-h">📅 Critical Dates</div>
@@ -9904,7 +9907,11 @@ function _lpVendLabel(v){ return (v.name||'') + (v.company ? (' — ' + v.compan
 // Color-coded status strip above the orders section (grey/red/yellow/green per type).
 async function lpLoadTracker(cid){
   cid = cid || lpCid(); if(!cid) return;
-  const bar=document.getElementById('lpTrackerBar'); if(!bar) return;
+  // Proceed if EITHER tracker container is present (original strip and/or the copy
+  // under the Processing Timeline). lpRenderTracker writes to both.
+  const bar=document.getElementById('lpTrackerBar');
+  const barTop=document.getElementById('lpTrackerBarTop');
+  if(!bar && !barTop) return;
   try{
     const r=await _authClient().rpc('order_tracker',{ p_contact_id:cid });
     if(r.error) throw r.error;
@@ -9912,9 +9919,11 @@ async function lpLoadTracker(cid){
   }catch(e){ /* tracker is a non-blocking summary */ }
 }
 function lpRenderTracker(rows){
-  const bar=document.getElementById('lpTrackerBar'); if(!bar) return;
-  if(!rows || !rows.length){ bar.innerHTML=''; return; }
-  bar.innerHTML = rows.map(function(r){
+  // Both containers render identical HTML from the same data (no forked source).
+  const bars=[document.getElementById('lpTrackerBar'), document.getElementById('lpTrackerBarTop')].filter(Boolean);
+  if(!bars.length) return;
+  if(!rows || !rows.length){ bars.forEach(function(b){ b.innerHTML=''; }); return; }
+  const html = rows.map(function(r){
     const c = LP_TRACKER_COLORS[r.color] || '#8a8a8a';
     let lbl = r.label || r.order_type || '';
     if(r.order_type==='voe' && (Number(r.total)||0) > 1) lbl += ' ' + (Number(r.done)||0) + '/' + (Number(r.total)||0);
@@ -9925,6 +9934,7 @@ function lpRenderTracker(rows){
         +'<span style="font-size:12px;color:'+c+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(r.state||'')+'</span>'
       +'</span></div>';
   }).join('');
+  bars.forEach(function(b){ b.innerHTML = html; });
 }
 
 async function lpLoadOrders(cid){
