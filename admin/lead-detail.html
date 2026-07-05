@@ -9378,7 +9378,28 @@ async function lpRenderSnapshot(cid){
     : (_ro ? '<span style="color:rgba(255,255,255,.4);">—</span>' : '<span onclick="lpLenderPickerOpen(event)" style="cursor:pointer;color:#C9A84C;border:1px dashed rgba(201,168,76,.5);border-radius:6px;padding:1px 8px;font-size:12px;white-space:nowrap;">+ Select lender</span>'));
   const lenderCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Lender</div><div style="display:flex;align-items:center;gap:6px;font-size:14px;color:#fff;font-weight:600;">'+lenderInner+((c.closing_lender && !_ro)?'<span onclick="lpLenderPickerOpen(event)" title="Change lender" style="flex-shrink:0;cursor:pointer;color:rgba(255,255,255,.55);font-size:13px;">✎</span>':'')+'</div></div>';
   const ecell = (label,key,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div '+(_ro?'':'onclick="lpSnapEdit(\''+key+'\',event)" title="Click to edit" ')+'style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'+(_ro?'':'cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);')+'">'+val+'</div></div>';
+
+  // Subject Property — composed from the structured mortgage_applications.property_address_*
+  // fields (same source the loan/1003 details use, so it stays in sync). Falls back to the
+  // single property_address text field, then to a muted placeholder.
+  const _seg1 = (app.property_address_street||'') + (app.property_address_unit ? ', Unit '+app.property_address_unit : '');
+  const _stateZip = [app.property_address_state, app.property_address_zip].filter(Boolean).join(' ');
+  let _propLine = app.property_address_street
+    ? [_seg1, app.property_address_city, _stateZip].filter(Boolean).join(', ')
+    : (app.property_address || '');
+  const _propHas = !!(_propLine && _propLine.trim());
+  const _propVal = _propHas
+    ? lpEsc(_propLine)
+    : '<span style="color:rgba(255,255,255,.4);font-weight:400;">— No property address yet</span>';
+  const _countySub = app.property_address_county
+    ? '<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(app.property_address_county)+' County</div>'
+    : '';
+  const propCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Subject Property</div>'
+    + '<div '+(_ro?'':'onclick="lpSnapEdit(\'subject_property\',event)" title="Click to edit" ')+'style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'+(_ro?'':'cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);')+'"'+(_propHas?' title="'+lpEsc(_propLine)+'"':'')+'>'+_propVal+'</div>'
+    + _countySub + '</div>';
+
   el.innerHTML = cell('Borrower',lpEsc(name))
+    + propCell
     + ecell('Loan Amount','loan_amount',money(c.loan_amount))
     + ecell('Type / Purpose','type_purpose',lpEsc(tcase(c.loan_type||c.closing_loan_type||'—')+' · '+tcase(c.loan_purpose||'—')))
     + lenderCell
@@ -13777,6 +13798,42 @@ function lpSnapEdit(key, ev){
       lpRenderSnapshot(cid);
     };
     setTimeout(()=>{ const t=document.getElementById('lpSnapInT'),p=document.getElementById('lpSnapInP'); if(t)t.value=(c.loan_type||c.closing_loan_type||''); if(p)p.value=(c.loan_purpose||''); },10);
+  } else if(key==='subject_property'){
+    // Composite editor writing the structured mortgage_applications.property_address_*
+    // fields (same columns the loan/1003 details use — one source of truth).
+    bodyHtml='<div style="'+lbl+'">Street</div><input id="lpSpStreet" type="text" style="'+inStyle+'">'
+            +'<div style="'+lbl+'">Unit</div><input id="lpSpUnit" type="text" style="'+inStyle+'">'
+            +'<div style="'+lbl+'">City</div><input id="lpSpCity" type="text" style="'+inStyle+'">'
+            +'<div style="display:flex;gap:6px;"><div style="flex:1;min-width:0;"><div style="'+lbl+'">State</div><input id="lpSpState" type="text" style="'+inStyle+'"></div><div style="flex:1;min-width:0;"><div style="'+lbl+'">Zip</div><input id="lpSpZip" type="text" style="'+inStyle+'"></div></div>'
+            +'<div style="'+lbl+'">County</div><input id="lpSpCounty" type="text" style="'+inStyle+'">';
+    // Prefill from the current app row (same source the snapshot reads).
+    setTimeout(async ()=>{
+      let a={}; try{ a=(await _fetchAppRowForContact(cid))||{}; }catch(_){}
+      const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.value=(v==null?'':v); };
+      set('lpSpStreet',a.property_address_street); set('lpSpUnit',a.property_address_unit);
+      set('lpSpCity',a.property_address_city);     set('lpSpState',a.property_address_state);
+      set('lpSpZip',a.property_address_zip);       set('lpSpCounty',a.property_address_county);
+    },10);
+    commit=async ()=>{
+      const gv=id=>{ const e=document.getElementById(id); return e?(e.value.trim()||null):null; };
+      const patch={
+        property_address_street: gv('lpSpStreet'),
+        property_address_unit:   gv('lpSpUnit'),
+        property_address_city:   gv('lpSpCity'),
+        property_address_state:  gv('lpSpState'),
+        property_address_zip:    gv('lpSpZip'),
+        property_address_county: gv('lpSpCounty'),
+        updated_at:new Date().toISOString()
+      };
+      await _authClient().from('mortgage_applications').update(patch).eq('contact_id',cid);
+      // Mirror into the 1003 details form if it's currently loaded, so both views
+      // reflect the change immediately (they share the same DB columns regardless).
+      const sync=(id,v)=>{ const e=document.getElementById(id); if(e){ e.value=(v==null?'':v); e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); } };
+      sync('f_prop_street',patch.property_address_street); sync('f_prop_unit',patch.property_address_unit);
+      sync('f_prop_city',patch.property_address_city);     sync('f_prop_state',patch.property_address_state);
+      sync('f_prop_zip',patch.property_address_zip);       sync('f_prop_county',patch.property_address_county);
+      lpRenderSnapshot(cid);
+    };
   } else {
     const cfg=LP_SNAP_FIELDS[key]; if(!cfg){ return; }
     const srcEl=cfg.src?document.getElementById(cfg.src):null;
