@@ -167,6 +167,9 @@
         'va-dashboard.html':  ['va', 'admin'],
         'va-tasks':           ['va', 'admin'],
         'va-tasks.html':      ['va', 'admin'],
+        // Staff-to-staff chat: open to all internal staff roles.
+        'chat':               ['va', 'admin', 'agent', 'loa'],
+        'chat.html':          ['va', 'admin', 'agent', 'loa'],
       };
       const filename = window.location.pathname.split('/').pop();
       const allowed = PAGE_ACCESS[filename];

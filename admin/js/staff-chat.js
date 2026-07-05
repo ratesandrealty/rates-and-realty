@@ -1,0 +1,303 @@
+/* admin/js/staff-chat.js
+   Staff-to-staff chat. Renders a floating "Chat" bubble + compact panel (beside
+   the AI FAB), and a full two-pane view when a #staff-chat-fullpage container is
+   present (admin/chat.html). Uses the session-aware Supabase client and realtime.
+
+   Backend contract (all live RPCs):
+     staff_threads_list()                         -> [{thread_id,is_group,title,last_message_at,last_message,last_sender,unread,others}]
+     staff_thread_messages(p_thread, p_limit=50)  -> [{id,sender_user_id,sender_email,body,created_at,mine}]  (NEWEST FIRST)
+     staff_message_send(p_thread, p_body)         -> message (fires notifications)
+     staff_thread_mark_read(p_thread)             -> void
+     staff_chat_contacts()                        -> [{user_id,email,role}]
+     staff_dm_open(p_other)                        -> thread_id
+   Realtime: public.staff_messages INSERT, filter thread_id=eq.<id>.
+*/
+(function () {
+  'use strict';
+  if (window._staffChatLoaded) return;          // idempotent (page + any global loader)
+  window._staffChatLoaded = true;
+
+  var STAFF_ROLES = ['admin', 'agent', 'va', 'loa'];
+  function role() { return (sessionStorage.getItem('rnr_app_role') || '').toLowerCase(); }
+  function isStaff() { var r = role(); return !r || STAFF_ROLES.indexOf(r) >= 0; }  // empty = not resolved yet → allow
+
+  var _sb = null, _threads = [], _active = null, _msgs = [], _channel = null;
+  var _open = false, _full = false, _pollId = null;
+
+  function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function localPart(email) { return ((email || '').split('@')[0]) || 'Staff'; }
+  function rel(iso) {
+    if (!iso) return ''; var t = new Date(iso).getTime(); if (!isFinite(t)) return '';
+    var d = Math.max(0, (Date.now() - t) / 1000);
+    if (d < 60) return 'now'; if (d < 3600) return Math.floor(d / 60) + 'm';
+    if (d < 86400) return Math.floor(d / 3600) + 'h'; if (d < 604800) return Math.floor(d / 86400) + 'd';
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function nameOf(t) {
+    if (t.title) return t.title;
+    var o = t.others || [];
+    if (o.length === 1) return localPart(o[0].email);
+    if (o.length > 1) return o.map(function (x) { return localPart(x.email); }).join(', ');
+    return 'Conversation';
+  }
+
+  // ── data ────────────────────────────────────────────────────────────────
+  // Session-aware client: prefer the canonical getter; fall back to the one
+  // auth-guard publishes (some admin pages only expose window._supabaseClient).
+  async function client() {
+    if (_sb) return _sb;
+    if (typeof window.getSupabaseClient === 'function') { _sb = await window.getSupabaseClient(); }
+    else if (window._supabaseClient) { _sb = window._supabaseClient; }
+    return _sb;
+  }
+  async function rpc(fn, args) { var sb = await client(); var r = await sb.rpc(fn, args || {}); if (r && r.error) throw r.error; return r ? r.data : null; }
+
+  async function loadThreads() {
+    try { _threads = await rpc('staff_threads_list') || []; }
+    catch (e) { console.warn('[staff-chat] threads:', e && e.message); _threads = []; }
+    renderThreads(); renderBadge();
+  }
+  async function reloadActive() {
+    if (!_active) return;
+    try { var rows = await rpc('staff_thread_messages', { p_thread: _active, p_limit: 50 }) || []; _msgs = rows.slice().reverse(); renderMessages(); }
+    catch (e) { console.warn('[staff-chat] messages:', e && e.message); }
+  }
+  async function openThread(id) {
+    _active = id;
+    await reloadActive();
+    subscribe(id);
+    try { await rpc('staff_thread_mark_read', { p_thread: id }); } catch (_) {}
+    loadThreads();                                // refresh unread counts
+    showConversation();
+  }
+  async function send(body) {
+    body = (body || '').trim(); if (!_active || !body) return;
+    try { await rpc('staff_message_send', { p_thread: _active, p_body: body }); await reloadActive(); await rpc('staff_thread_mark_read', { p_thread: _active }); loadThreads(); }
+    catch (e) { console.warn('[staff-chat] send:', e && e.message); }
+  }
+  async function openDm(userId) {
+    try { var tid = await rpc('staff_dm_open', { p_other: userId }); await loadThreads(); openThread(tid); if (!_full) setOpen(true); }
+    catch (e) { console.warn('[staff-chat] dm:', e && e.message); }
+  }
+
+  // ── realtime (per open thread) + background unread poll ───────────────────
+  async function subscribe(threadId) {
+    var sb = await client();
+    if (_channel) { try { sb.removeChannel(_channel); } catch (_) {} _channel = null; }
+    _channel = sb.channel('staff-chat-' + threadId)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'staff_messages', filter: 'thread_id=eq.' + threadId },
+        function () {
+          if (_active === threadId) { reloadActive(); rpc('staff_thread_mark_read', { p_thread: threadId }).catch(function () {}); }
+          loadThreads();
+        })
+      .subscribe();
+  }
+  function startPoll() {
+    if (_pollId) return;
+    _pollId = setInterval(function () { if (document.visibilityState !== 'hidden') loadThreads(); }, 25000);
+  }
+
+  // ── rendering ─────────────────────────────────────────────────────────────
+  function totalUnread() { return _threads.reduce(function (s, t) { return s + (Number(t.unread) || 0); }, 0); }
+  function renderBadge() {
+    var n = totalUnread(), b = document.getElementById('staff-chat-badge');
+    if (b) { if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.style.display = 'flex'; } else b.style.display = 'none'; }
+    var fb = document.getElementById('sc-full-unread'); if (fb) fb.textContent = n > 0 ? ('· ' + n + ' unread') : '';
+  }
+  function threadRowsHtml() {
+    if (!_threads.length) return '<div class="sc-empty">No conversations yet.<br>Tap ＋ to start one.</div>';
+    return _threads.map(function (t) {
+      var unread = Number(t.unread) || 0, active = t.thread_id === _active;
+      return '<div class="sc-thread' + (active ? ' is-active' : '') + '" data-sc-thread="' + esc(t.thread_id) + '">'
+        + '<div class="sc-thread-top"><span class="sc-thread-name">' + esc(nameOf(t)) + '</span><span class="sc-thread-time">' + esc(rel(t.last_message_at)) + '</span></div>'
+        + '<div class="sc-thread-bot"><span class="sc-thread-last">' + esc(t.last_message || '') + '</span>'
+        + (unread > 0 ? '<span class="sc-thread-unread">' + (unread > 99 ? '99+' : unread) + '</span>' : '') + '</div>'
+        + '</div>';
+    }).join('');
+  }
+  function renderThreads() {
+    ['sc-thread-list', 'sc-full-threads'].forEach(function (id) { var h = document.getElementById(id); if (h) h.innerHTML = threadRowsHtml(); });
+  }
+  function messagesHtml() {
+    if (!_active) return '<div class="sc-empty">Select a conversation.</div>';
+    if (!_msgs.length) return '<div class="sc-empty">No messages yet — say hi 👋</div>';
+    return _msgs.map(function (m) {
+      var mine = !!m.mine;
+      return '<div class="sc-msg' + (mine ? ' mine' : '') + '">'
+        + (mine ? '' : '<div class="sc-msg-who">' + esc(localPart(m.sender_email)) + '</div>')
+        + '<div class="sc-msgbubble">' + esc(m.body || '') + '</div>'
+        + '<div class="sc-msg-time">' + esc(rel(m.created_at)) + '</div></div>';
+    }).join('');
+  }
+  function renderMessages() {
+    ['sc-messages', 'sc-full-messages'].forEach(function (id) { var h = document.getElementById(id); if (h) { h.innerHTML = messagesHtml(); h.scrollTop = h.scrollHeight; } });
+    var t = _threads.filter(function (x) { return x.thread_id === _active; })[0];
+    var title = t ? nameOf(t) : (_full ? 'Select a conversation' : '');
+    ['sc-conv-title', 'sc-full-conv-title'].forEach(function (id) { var h = document.getElementById(id); if (h) h.textContent = title; });
+  }
+
+  function showConversation() { if (_full) return; var lv = document.getElementById('sc-list-view'), cv = document.getElementById('sc-conv-view'); if (lv) lv.style.display = 'none'; if (cv) cv.style.display = 'flex'; var i = document.getElementById('sc-input'); if (i) setTimeout(function () { i.focus(); }, 30); }
+  function showList() { if (_full) return; var lv = document.getElementById('sc-list-view'), cv = document.getElementById('sc-conv-view'); if (lv) lv.style.display = 'flex'; if (cv) cv.style.display = 'none'; }
+  function setOpen(v) { _open = v; var p = document.getElementById('staff-chat-panel'); if (p) p.classList.toggle('is-open', v); if (v) { showList(); loadThreads(); } }
+
+  // ── new-chat picker ─────────────────────────────────────────────────────
+  async function showNewChat() {
+    var contacts = []; try { contacts = await rpc('staff_chat_contacts') || []; } catch (e) { console.warn('[staff-chat] contacts:', e && e.message); }
+    var listHtml = contacts.length
+      ? contacts.map(function (c) { return '<button class="sc-contact" data-sc-user="' + esc(c.user_id) + '"><span class="sc-contact-name">' + esc(localPart(c.email)) + '</span><span class="sc-contact-role">' + esc(c.role || '') + '</span></button>'; }).join('')
+      : '<div class="sc-empty">No staff available to message.</div>';
+    var ov = document.createElement('div'); ov.className = 'sc-newchat-ov';
+    ov.innerHTML = '<div class="sc-newchat"><div class="sc-newchat-head"><span>New chat</span><button class="sc-icon" data-sc-x>✕</button></div><div class="sc-newchat-list">' + listHtml + '</div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) {
+      if (e.target === ov || e.target.closest('[data-sc-x]')) { ov.remove(); return; }
+      var c = e.target.closest('[data-sc-user]'); if (c) { ov.remove(); openDm(c.getAttribute('data-sc-user')); }
+    });
+  }
+
+  // ── CSS ─────────────────────────────────────────────────────────────────
+  function injectCss() {
+    if (document.getElementById('staff-chat-css')) return;
+    var s = document.createElement('style'); s.id = 'staff-chat-css';
+    s.textContent = [
+      // Floating bubble — left of the AI FAB (FAB is bottom:20 right:20 w52 → occupies right 20..72)
+      '.sc-bubble-btn{position:fixed;bottom:20px;right:84px;z-index:90;width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:#141414;color:#C9A84C;box-shadow:0 4px 16px rgba(0,0,0,.5),0 0 0 1px rgba(201,168,76,.35);display:flex;align-items:center;justify-content:center;transition:transform .15s ease}',
+      '.sc-bubble-btn:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 6px 20px rgba(0,0,0,.55),0 0 0 1px rgba(201,168,76,.6)}',
+      '.sc-bubble-btn>svg{pointer-events:none}',
+      '@media(max-width:720px){.sc-bubble-btn{width:48px;height:48px;bottom:16px;right:76px}}',
+      '.sc-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#E5484D;color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;box-sizing:border-box;box-shadow:0 0 0 2px #0a0a0a}',
+      // Panel
+      '.sc-panel{position:fixed;bottom:84px;right:20px;z-index:95;width:340px;max-width:calc(100vw - 32px);height:460px;max-height:calc(100vh - 120px);background:#0d0d0d;border:1px solid rgba(201,168,76,.28);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;transform:scale(.94) translateY(14px);opacity:0;pointer-events:none;transition:all .18s cubic-bezier(.4,0,.2,1);transform-origin:bottom right;font-family:inherit}',
+      '.sc-panel.is-open{transform:none;opacity:1;pointer-events:auto}',
+      '.sc-panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0}',
+      '.sc-panel-title{font-size:13px;font-weight:700;color:#C9A84C;letter-spacing:.3px}',
+      '.sc-head-actions{display:flex;gap:2px}',
+      '.sc-icon{background:transparent;border:none;color:#888;font-size:15px;cursor:pointer;padding:4px 7px;border-radius:6px;line-height:1;font-family:inherit}',
+      '.sc-icon:hover{color:#fff;background:rgba(255,255,255,.06)}',
+      '.sc-panel-body{flex:1;min-height:0;display:flex;flex-direction:column}',
+      '.sc-list-view{flex:1;min-height:0;display:flex;flex-direction:column}',
+      '.sc-thread-list,.sc-messages{overflow-y:auto;flex:1;min-height:0}',
+      // Thread rows
+      '.sc-thread{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .12s}',
+      '.sc-thread:hover{background:rgba(255,255,255,.03)}',
+      '.sc-thread.is-active{background:rgba(201,168,76,.08)}',
+      '.sc-thread-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}',
+      '.sc-thread-name{font-size:13px;font-weight:600;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.sc-thread-time{font-size:10px;color:#777;flex-shrink:0}',
+      '.sc-thread-bot{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px}',
+      '.sc-thread-last{font-size:11.5px;color:#8a8a8a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.sc-thread-unread{flex-shrink:0;min-width:17px;height:17px;padding:0 5px;border-radius:9px;background:#C9A84C;color:#111;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;box-sizing:border-box}',
+      // Conversation
+      '.sc-conv-view{flex:1;min-height:0;display:none;flex-direction:column}',
+      '.sc-conv-head{display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0}',
+      '.sc-conv-title{font-size:13px;font-weight:700;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.sc-messages{padding:12px 14px;display:flex;flex-direction:column;gap:8px}',
+      '.sc-msg{display:flex;flex-direction:column;align-items:flex-start;max-width:82%}',
+      '.sc-msg.mine{align-self:flex-end;align-items:flex-end}',
+      '.sc-msg-who{font-size:10px;color:#C9A84C;font-weight:700;margin-bottom:2px}',
+      '.sc-msgbubble{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:#e6e6e6;padding:7px 11px;border-radius:4px 12px 12px 12px;font-size:13px;line-height:1.4;word-break:break-word;white-space:pre-wrap}',
+      '.sc-msg.mine .sc-msgbubble{background:rgba(201,168,76,.16);border-color:rgba(201,168,76,.3);color:#fff;border-radius:12px 4px 12px 12px}',
+      '.sc-msg-time{font-size:9px;color:#666;margin-top:2px}',
+      '.sc-composer{display:flex;gap:6px;padding:10px 12px;border-top:1px solid rgba(255,255,255,.06);flex-shrink:0}',
+      '.sc-composer input{flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:8px 11px;outline:none;font-family:inherit}',
+      '.sc-send{background:#C9A84C;border:none;color:#111;font-weight:700;font-size:12px;border-radius:8px;padding:0 14px;cursor:pointer;font-family:inherit}',
+      '.sc-empty{color:#888;font-size:12.5px;padding:22px 16px;text-align:center;line-height:1.6}',
+      // New-chat overlay
+      '.sc-newchat-ov{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px}',
+      '.sc-newchat{width:min(360px,94vw);max-height:80vh;display:flex;flex-direction:column;background:#0d0d0d;border:1px solid rgba(201,168,76,.3);border-radius:14px;overflow:hidden;box-shadow:0 20px 56px rgba(0,0,0,.6)}',
+      '.sc-newchat-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:14px;font-weight:700;color:#C9A84C}',
+      '.sc-newchat-list{overflow-y:auto}',
+      '.sc-contact{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,.05);color:#eee;padding:12px 16px;cursor:pointer;font-family:inherit;text-align:left}',
+      '.sc-contact:hover{background:rgba(255,255,255,.04)}',
+      '.sc-contact-name{font-size:13px;font-weight:600}',
+      '.sc-contact-role{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.4px}',
+      // Full-page two-pane
+      '.sc-full{display:grid;grid-template-columns:300px 1fr;height:100%;min-height:0}',
+      '.sc-full-left{border-right:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;min-height:0}',
+      '.sc-full-left-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.06)}',
+      '.sc-full-left-head .t{font-size:14px;font-weight:700;color:#C9A84C}',
+      '.sc-full-right{display:flex;flex-direction:column;min-height:0}',
+      '.sc-full-right-head{padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.06);font-size:14px;font-weight:700;color:#eee}',
+      '#sc-full-threads{overflow-y:auto;flex:1;min-height:0}',
+      '#sc-full-messages{overflow-y:auto;flex:1;min-height:0;padding:16px 20px;display:flex;flex-direction:column;gap:8px}',
+      '@media(max-width:720px){.sc-full{grid-template-columns:1fr}.sc-full-right{display:none}}'
+    ].join('');
+    document.head.appendChild(s);
+  }
+
+  // ── mount: floating widget ─────────────────────────────────────────────
+  function mountFloating() {
+    if (document.getElementById('staff-chat-bubble')) return;
+    var btn = document.createElement('button');
+    btn.id = 'staff-chat-bubble'; btn.className = 'sc-bubble-btn'; btn.type = 'button';
+    btn.setAttribute('aria-label', 'Staff chat'); btn.setAttribute('data-sc-toggle', '');
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true"><path d="M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H9l-4 4v-4H4a1 1 0 01-1-1V6a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 9.5h8M8 12.5h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span id="staff-chat-badge" class="sc-badge"></span>';
+    document.body.appendChild(btn);
+
+    var panel = document.createElement('div');
+    panel.id = 'staff-chat-panel'; panel.className = 'sc-panel';
+    panel.innerHTML =
+      '<div class="sc-panel-head"><span class="sc-panel-title">💬 Staff Chat</span>'
+      + '<span class="sc-head-actions">'
+      + '<button class="sc-icon" data-sc-new title="New chat">＋</button>'
+      + '<button class="sc-icon" data-sc-expand title="Open full page">⤢</button>'
+      + '<button class="sc-icon" data-sc-close title="Close">✕</button></span></div>'
+      + '<div class="sc-panel-body">'
+      + '<div id="sc-list-view" class="sc-list-view"><div id="sc-thread-list" class="sc-thread-list"></div></div>'
+      + '<div id="sc-conv-view" class="sc-conv-view">'
+      + '<div class="sc-conv-head"><button class="sc-icon" data-sc-back title="Back">‹</button><span id="sc-conv-title" class="sc-conv-title"></span></div>'
+      + '<div id="sc-messages" class="sc-messages"></div>'
+      + '<div class="sc-composer"><input id="sc-input" type="text" placeholder="Message…" autocomplete="off"><button class="sc-send" data-sc-send>Send</button></div>'
+      + '</div></div>';
+    document.body.appendChild(panel);
+  }
+
+  // ── mount: full page ────────────────────────────────────────────────────
+  function mountFull(rootEl) {
+    _full = true;
+    rootEl.innerHTML =
+      '<div class="sc-full">'
+      + '<div class="sc-full-left"><div class="sc-full-left-head"><span class="t">💬 Staff Chat <span id="sc-full-unread" style="font-size:11px;color:#888;font-weight:500;"></span></span>'
+      + '<button class="sc-icon" data-sc-new title="New chat" style="font-size:18px;">＋</button></div>'
+      + '<div id="sc-full-threads"></div></div>'
+      + '<div class="sc-full-right"><div class="sc-full-right-head"><span id="sc-full-conv-title">Select a conversation</span></div>'
+      + '<div id="sc-full-messages"></div>'
+      + '<div class="sc-composer" style="border-top:1px solid rgba(255,255,255,.06);"><input id="sc-input" type="text" placeholder="Message…" autocomplete="off"><button class="sc-send" data-sc-send>Send</button></div>'
+      + '</div></div>';
+  }
+
+  // ── events ───────────────────────────────────────────────────────────────
+  function wireEvents() {
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('[data-sc-toggle]')) { setOpen(!_open); return; }
+      if (e.target.closest('[data-sc-close]')) { setOpen(false); return; }
+      if (e.target.closest('[data-sc-expand]')) { window.location.href = '/admin/chat.html'; return; }
+      if (e.target.closest('[data-sc-back]')) { showList(); return; }
+      if (e.target.closest('[data-sc-new]')) { showNewChat(); return; }
+      if (e.target.closest('[data-sc-send]')) { var i = document.getElementById('sc-input'); if (i) { send(i.value); i.value = ''; } return; }
+      var row = e.target.closest('[data-sc-thread]'); if (row) { openThread(row.getAttribute('data-sc-thread')); return; }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.target && e.target.id === 'sc-input') { e.preventDefault(); send(e.target.value); e.target.value = ''; }
+    });
+  }
+
+  // ── init ──────────────────────────────────────────────────────────────
+  function start(attempt) {
+    attempt = attempt || 0;
+    var haveClient = (typeof window.getSupabaseClient === 'function') || !!window._supabaseClient;
+    if (!haveClient) { if (attempt < 60) setTimeout(function () { start(attempt + 1); }, 120); return; }  // ~7s cap, then give up quietly
+    if (!isStaff()) return;                                    // non-staff → no chat UI
+    injectCss();
+    var fullRoot = document.getElementById('staff-chat-fullpage');
+    if (fullRoot) { mountFull(fullRoot); }                     // dedicated page → two-pane, no bubble
+    else { mountFloating(); }                                  // every other admin page → floating bubble
+    wireEvents();
+    loadThreads();
+    startPoll();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+})();

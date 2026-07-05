@@ -377,4 +377,13 @@ if (isAdminPage || path.includes('/admin/')) {
       }
     });
   }
+
+  // Mount the staff-to-staff Chat bubble on every admin page, beside the AI FAB.
+  // staff-chat.js is idempotent (window._staffChatLoaded guard); only inject the
+  // <script> if the page doesn't already load it (dashboard + chat.html do).
+  if (!document.querySelector('script[src*="/admin/js/staff-chat.js"]')) {
+    var scScript = document.createElement('script');
+    scScript.src = '/admin/js/staff-chat.js?v=2026070501';
+    document.head.appendChild(scScript);
+  }
 }

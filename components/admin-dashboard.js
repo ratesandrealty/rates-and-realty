@@ -154,7 +154,7 @@ async function initializeAdminDashboard() {
     bindSidebarNav();
     bindDrawer();
     bindModals();
-    bindAIChat();
+    // (Legacy inline AI mini-chat removed — the AI Agent FAB is the single AI entry point.)
     await loadAll();
   } catch (error) {
     console.error('Dashboard init error:', error.message, error.stack);
