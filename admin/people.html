@@ -349,6 +349,12 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   </div>
 
   <div class="main">
+    <!-- VA-only dashboard scorecard strip (revealed + populated by applyVaMode → renderVaScorecard).
+         Hidden for admins and until the va_dashboard RPC returns. -->
+    <div id="vaScorecardStrip" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 4px 6px;">
+      <div id="vaScorecardCards" style="display:flex;gap:10px;flex-wrap:wrap;flex:1;min-width:0;"></div>
+      <a href="va-dashboard.html" style="flex-shrink:0;font-size:12px;font-weight:600;color:var(--gold);text-decoration:none;white-space:nowrap;padding:6px 10px;border:1px solid rgba(201,168,76,0.3);border-radius:8px;">📊 Open full dashboard →</a>
+    </div>
     <div class="m-views-bar">
       <button class="m-views-btn" onclick="toggleMobileViews()">&#9776; Saved Views &amp; Menu</button>
     </div>
@@ -2202,7 +2208,41 @@ function applyVaMode() {
   var nav = document.getElementById('vaNav');
   if (nav) nav.style.display = 'inline-flex';
   setVaView('leads');
+
+  // f. Load the VA dashboard scorecard strip (fire-and-forget; hides itself on error).
+  renderVaScorecard();
   return true;
+}
+
+// VA-only: compact scorecard strip above the leads content, from the va_dashboard RPC
+// (already scoped to shared leads + masked). Silently stays hidden on any error.
+async function renderVaScorecard() {
+  var strip = document.getElementById('vaScorecardStrip');
+  var host = document.getElementById('vaScorecardCards');
+  if (!strip || !host) return;
+  try {
+    var client = await getSupabaseClient();          // authenticated session (JWT → VA scoping)
+    var res = await client.rpc('va_dashboard');
+    if (res.error) throw res.error;
+    var sc = (res.data && res.data.scorecard) || {};
+    var cards = [
+      { n: sc.tasks_due,        label: 'Tasks Due' },
+      { n: sc.active_deals,     label: 'Active Deals' },
+      { n: sc.open_conditions,  label: 'Open Conditions' },
+      { n: sc.outstanding_docs, label: 'Docs Outstanding' },
+      { n: sc.shared_files,     label: 'Shared Files' },
+    ];
+    host.innerHTML = cards.map(function(c) {
+      return '<div style="background:var(--surface,#141414);border:1px solid var(--border,rgba(255,255,255,0.08));border-radius:10px;padding:8px 14px;min-width:96px;">'
+        + '<div style="font-size:1.35rem;font-weight:800;color:var(--gold);line-height:1;">' + (Number(c.n) || 0) + '</div>'
+        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-top:3px;white-space:nowrap;">' + c.label + '</div>'
+        + '</div>';
+    }).join('');
+    strip.style.display = 'flex';
+  } catch (e) {
+    console.warn('[va_dashboard scorecard]', e && e.message);
+    strip.style.display = 'none';   // hide silently, never block the page
+  }
 }
 
 // Switch the VA workspace. 'leads' = the shared contact list (unchanged);
