@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>Dashboard — Rates & Realty CRM</title>
+<script src="/api/env.js?v=2026033003"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/admin/js/supabase-client.js?v=2026050601"></script>
+<script src="/admin/js/auth-guard.js?v=2026062401"></script>
+<style>
+  :root {
+    --gold: #c9a84c;
+    --bg: #0d0d0d;
+    --surface: #141414;
+    --surface2: #1a1a1a;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #fff;
+    --text-muted: rgba(255,255,255,0.4);
+    --green: #52c87a;
+    --red: #e05252;
+    --orange: #e07f50;
+    --blue: #5aa0e0;
+    --purple: #ab7fe0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+  a { color: inherit; }
+
+  /* Header + portal nav */
+  .header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px; background: var(--surface);
+    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .header h1 { font-size: 16px; font-weight: 700; flex-shrink: 0; }
+  .portal-nav { display: flex; gap: 6px; }
+  .nav-link {
+    padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    text-decoration: none; color: var(--text-muted);
+    border: 1px solid var(--border); background: rgba(255,255,255,0.03);
+  }
+  .nav-link:hover { color: #fff; }
+  .nav-link.active { color: #000; background: var(--gold); border-color: var(--gold); }
+  .header-right { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .header-right .who { font-size: 12px; color: var(--text-muted); }
+  .btn-back {
+    padding: 6px 12px; background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border); border-radius: 7px;
+    color: var(--text-muted); font-size: 12px; cursor: pointer;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 16px 80px; }
+
+  /* Scorecard */
+  .scorecard {
+    display: grid; grid-template-columns: repeat(5, minmax(0,1fr));
+    gap: 12px; margin-bottom: 26px;
+  }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 18px; min-width: 0;
+  }
+  .stat-num { font-size: 1.9rem; font-weight: 800; color: var(--gold); line-height: 1; }
+  .stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); margin-top: 6px; }
+
+  /* Three-column layout */
+  .cols { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 16px; align-items: start; }
+  .col-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 18px; min-width: 0;
+  }
+  .col-title {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
+    color: var(--gold); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .col-body { max-height: 560px; overflow-y: auto; }
+  .empty { color: var(--text-muted); font-size: 13px; padding: 14px 4px; }
+  .err { color: var(--red); font-size: 13px; padding: 14px 4px; }
+
+  /* Task groups */
+  .group { margin-bottom: 16px; }
+  .group:last-child { margin-bottom: 0; }
+  .group-header {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; font-weight: 700; letter-spacing: .3px;
+    text-transform: uppercase; margin-bottom: 7px;
+  }
+  .group-count { font-size: 10px; background: rgba(255,255,255,0.08); color: var(--text-muted); padding: 1px 7px; border-radius: 10px; }
+  .group-overdue  .group-header { color: var(--red); }
+  .group-today    .group-header { color: var(--gold); }
+  .group-upcoming .group-header { color: var(--blue); }
+  .group-no_date  .group-header { color: var(--text-muted); }
+
+  /* Rows / cards */
+  .task-row, .file-row {
+    display: block; text-decoration: none;
+    padding: 9px 10px; border: 1px solid var(--border);
+    border-radius: 9px; margin-bottom: 7px; background: rgba(255,255,255,0.02);
+    transition: background .15s;
+  }
+  .task-row:hover, .file-row:hover, .deal-card:hover { background: rgba(255,255,255,0.04); }
+  .task-title { font-size: 13px; color: #eee; font-weight: 600; }
+  .task-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; font-size: 11px; color: var(--text-muted); }
+
+  .deal-card {
+    display: block; text-decoration: none;
+    padding: 11px 12px; border: 1px solid var(--border);
+    border-radius: 10px; margin-bottom: 9px; background: rgba(255,255,255,0.02);
+    transition: background .15s;
+  }
+  .deal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .deal-name { font-size: 13px; color: #eee; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .deal-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .deal-next { font-size: 11px; color: var(--text-muted); margin-top: 7px; }
+
+  .badge {
+    flex-shrink: 0; font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .3px; padding: 1px 7px; border-radius: 10px; white-space: nowrap;
+  }
+  .badge-stage { background: rgba(201,168,76,0.14); color: var(--gold); }
+  .badge-up   { background: rgba(82,200,122,0.16); color: var(--green); }
+  .prio { font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+  .prio-urgent { color: var(--red); }
+  .prio-high   { color: var(--orange); }
+  .prio-normal { color: var(--text-muted); }
+  .prio-low    { color: var(--text-muted); }
+  .chip {
+    font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 8px;
+    background: rgba(201,168,76,0.14); color: var(--gold); white-space: nowrap;
+  }
+  .contact-link { color: var(--gold); text-decoration: none; }
+  .contact-link:hover { text-decoration: underline; }
+  .due-overdue { color: var(--red); font-weight: 600; }
+  .due-today   { color: var(--gold); font-weight: 600; }
+
+  @media (max-width: 860px) {
+    .scorecard { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .cols { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="portal-nav">
+    <a href="va-dashboard.html" class="nav-link active">📊 Dashboard</a>
+    <a href="va-tasks.html" class="nav-link">✅ My Tasks</a>
+  </div>
+  <h1 style="margin-left:4px;">My Workspace</h1>
+  <div class="header-right">
+    <span class="who" id="adminUserEmail"></span>
+    <button class="btn-back" onclick="window.adminLogout && window.adminLogout()">Log out</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <!-- 1) Scorecard -->
+  <div class="scorecard" id="scorecard">
+    <div class="stat-card"><div class="stat-num">—</div><div class="stat-label">Tasks Due</div></div>
+    <div class="stat-card"><div class="stat-num">—</div><div class="stat-label">Active Deals</div></div>
+    <div class="stat-card"><div class="stat-num">—</div><div class="stat-label">Open Conditions</div></div>
+    <div class="stat-card"><div class="stat-num">—</div><div class="stat-label">Docs Outstanding</div></div>
+    <div class="stat-card"><div class="stat-num">—</div><div class="stat-label">Shared Files</div></div>
+  </div>
+
+  <!-- 2) Three columns -->
+  <div class="cols">
+    <div class="col-card">
+      <div class="col-title">📋 My Tasks</div>
+      <div class="col-body" id="tasksCol"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="col-card">
+      <div class="col-title">💼 Active Deals</div>
+      <div class="col-body" id="dealsCol"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="col-card">
+      <div class="col-title">🗂️ Shared Files</div>
+      <div class="col-body" id="filesCol"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Task buckets shown in My Tasks (empty buckets hidden). no_date kept so assigned
+// work with no due date is never dropped.
+const BUCKETS = [
+  { key: 'overdue',  label: '⚠️ Overdue' },
+  { key: 'today',    label: '📅 Today' },
+  { key: 'upcoming', label: '🔜 Upcoming' },
+  { key: 'no_date',  label: '🗓 No due date' },
+];
+
+let _supabase = null;
+
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function leadHref(id, hash) { return 'lead-detail.html?contact_id=' + encodeURIComponent(id) + (hash || ''); }
+function fmtDate(v) {
+  if (!v) return '';
+  const d = new Date(String(v).length <= 10 ? v + 'T00:00:00' : v);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function dueClass(bucket) { return bucket === 'overdue' ? 'due-overdue' : (bucket === 'today' ? 'due-today' : ''); }
+
+async function init() {
+  try {
+    _supabase = await window.getSupabaseClient();
+  } catch (e) {
+    console.error('[va-dashboard] client init failed', e);
+    showError('Could not connect. Please refresh.');
+    return;
+  }
+  try {
+    const { data: u } = await _supabase.auth.getUser();
+    const el = document.getElementById('adminUserEmail');
+    if (el && u && u.user) el.textContent = u.user.email || '';
+  } catch (_) {}
+  loadDashboard();
+}
+
+function showError(msg) {
+  ['tasksCol', 'dealsCol', 'filesCol'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="err">' + esc(msg) + '</div>';
+  });
+}
+
+async function loadDashboard() {
+  try {
+    const { data, error } = await _supabase.rpc('va_dashboard');   // session-aware client → carries the VA JWT
+    if (error) throw error;
+    render(data || {});
+  } catch (e) {
+    console.error('[va_dashboard]', e && e.message);
+    showError("Couldn't load dashboard");
+  }
+}
+
+function render(d) {
+  renderScorecard(d.scorecard || {});
+  renderTasks(Array.isArray(d.tasks) ? d.tasks : []);
+  renderDeals(Array.isArray(d.deals) ? d.deals : []);
+  renderFiles(Array.isArray(d.files) ? d.files : []);
+}
+
+function renderScorecard(s) {
+  const cards = [
+    { n: s.tasks_due,        label: 'Tasks Due' },
+    { n: s.active_deals,     label: 'Active Deals' },
+    { n: s.open_conditions,  label: 'Open Conditions' },
+    { n: s.outstanding_docs, label: 'Docs Outstanding' },
+    { n: s.shared_files,     label: 'Shared Files' },
+  ];
+  document.getElementById('scorecard').innerHTML = cards.map(c =>
+    '<div class="stat-card"><div class="stat-num">' + (Number(c.n) || 0) + '</div><div class="stat-label">' + esc(c.label) + '</div></div>'
+  ).join('');
+}
+
+function renderTasks(tasks) {
+  const col = document.getElementById('tasksCol');
+  if (!tasks.length) { col.innerHTML = '<div class="empty">Nothing assigned to you right now.</div>'; return; }
+  const byBucket = {};
+  tasks.forEach(t => { const b = (t.bucket || 'no_date'); (byBucket[b] = byBucket[b] || []).push(t); });
+  let html = '';
+  BUCKETS.forEach(g => {
+    const rows = byBucket[g.key];
+    if (!rows || !rows.length) return;                 // hide empty groups
+    html += '<div class="group group-' + g.key + '">'
+      + '<div class="group-header">' + g.label + '<span class="group-count">' + rows.length + '</span></div>'
+      + rows.map(taskRow).join('')
+      + '</div>';
+  });
+  col.innerHTML = html || '<div class="empty">Nothing assigned to you right now.</div>';
+}
+
+function taskRow(t) {
+  const prio = (t.priority || 'normal').toLowerCase();
+  const due = t.due_date ? '<span class="' + dueClass(t.bucket) + '">' + esc(fmtDate(t.due_date)) + '</span>' : '';
+  const who = (t.contact_id && t.contact_name)
+    ? '<a class="contact-link" href="' + leadHref(t.contact_id) + '" onclick="event.stopPropagation()">' + esc(t.contact_name) + '</a>'
+    : (t.contact_name ? esc(t.contact_name) : '');
+  const metaParts = ['<span class="prio prio-' + prio + '">' + esc(prio) + '</span>'];
+  if (due) metaParts.push(due);
+  if (who) metaParts.push(who);
+  return '<div class="task-row">'
+    + '<div class="task-title">' + esc(t.title || '(untitled)') + '</div>'
+    + '<div class="task-meta">' + metaParts.join('<span style="opacity:.4">·</span>') + '</div>'
+    + '</div>';
+}
+
+function renderDeals(deals) {
+  const col = document.getElementById('dealsCol');
+  if (!deals.length) { col.innerHTML = '<div class="empty">No active deals right now.</div>'; return; }
+  col.innerHTML = deals.map(dealCard).join('');
+}
+
+function dealCard(d) {
+  const stage = d.stage ? '<span class="badge badge-stage">' + esc(d.stage) + '</span>' : '';
+  const chips = [];
+  const chip = (n, label) => { if (Number(n) > 0) chips.push('<span class="chip">' + Number(n) + ' ' + label + '</span>'); };
+  chip(d.open_conditions, 'conditions');
+  chip(d.outstanding_docs, 'docs');
+  chip(d.open_intake, 'intake');
+  chip(d.open_tasks, 'tasks');
+  const chipsHtml = chips.length
+    ? '<div class="deal-chips">' + chips.join('') + '</div>'
+    : '<div class="deal-chips"><span class="badge badge-up">✓ Up to date</span></div>';
+  const next = d.next_key_date
+    ? '<div class="deal-next">Next: ' + esc(d.next_key_label || 'Key date') + ' ' + esc(fmtDate(d.next_key_date)) + '</div>'
+    : '';
+  return '<a class="deal-card" href="' + leadHref(d.contact_id, '#processing') + '">'
+    + '<div class="deal-head"><span class="deal-name">' + esc(d.name || 'Unknown') + '</span>' + stage + '</div>'
+    + chipsHtml + next
+    + '</a>';
+}
+
+function renderFiles(files) {
+  const col = document.getElementById('filesCol');
+  if (!files.length) { col.innerHTML = '<div class="empty">No files shared with you yet.</div>'; return; }
+  col.innerHTML = files.map(f => {
+    const stage = f.stage ? '<span class="badge badge-stage">' + esc(f.stage) + '</span>' : '';
+    const n = Number(f.open_tasks) || 0;
+    return '<a class="file-row" href="' + leadHref(f.contact_id) + '">'
+      + '<div class="deal-head"><span class="deal-name">' + esc(f.name || 'Unknown') + '</span>' + stage + '</div>'
+      + '<div class="task-meta">' + n + ' open task' + (n === 1 ? '' : 's') + '</div>'
+      + '</a>';
+  }).join('');
+}
+
+init();
+</script>
+</body>
+</html>

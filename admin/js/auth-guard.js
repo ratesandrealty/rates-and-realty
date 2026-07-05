@@ -160,8 +160,11 @@
         'emc-import':         ['admin'],
         'referral-partners':  ['admin'],
         'partner-detail':     ['admin'],
-        // VA daily-tasks screen: VAs (its intended users) + admins (to preview).
-        // Both URL forms listed since post-login/view-as land here as .html.
+        // VA dashboard (post-login landing) + daily-tasks screen: VAs (intended
+        // users) + admins (to preview). Both URL forms listed since post-login /
+        // view-as land here as .html.
+        'va-dashboard':       ['va', 'admin'],
+        'va-dashboard.html':  ['va', 'admin'],
         'va-tasks':           ['va', 'admin'],
         'va-tasks.html':      ['va', 'admin'],
       };
