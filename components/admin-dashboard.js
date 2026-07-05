@@ -376,6 +376,9 @@ async function renderOverview() {
   // Recent notes (admin-only feed) — fire-and-forget, self-contained render.
   loadRecentNotes();
 
+  // Active pipeline snapshot (admin-only widget) — fire-and-forget.
+  loadPipelineSnapshot();
+
   // Upcoming appointments
   const apptEl = document.getElementById("overview-appointments");
   if (apptEl) renderUpcomingAppointmentsInEl(apptEl);
@@ -1314,6 +1317,79 @@ async function loadRecentNotes() {
         <div style="font-size:0.8rem;color:var(--muted);margin-top:3px;line-height:1.4;">${crmEsc(txt)}</div>
       </div>`;
   }).join("");
+}
+
+// ── ACTIVE PIPELINE SNAPSHOT (admin dashboard only) ────────────────────
+// Feeds the four-column "Active Pipeline Snapshot" widget from the admin-only
+// dashboard_snapshot RPC. Every list row links to the lead's detail page.
+function _snapDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+// Build one snapshot sub-card: headline number + label + optional sub-line + row list.
+function _snapCard(num, label, subline, list, rowFn) {
+  const rows = (list && list.length)
+    ? list.map((it) => {
+        const inner = rowFn(it);
+        const hasContact = it.contact_id && it.contact_id !== "null";
+        return hasContact
+          ? `<a class="ps-row ps-click" href="../admin/lead-detail.html?contact_id=${encodeURIComponent(it.contact_id)}">${inner}</a>`
+          : `<div class="ps-row">${inner}</div>`;
+      }).join("")
+    : `<div class="ps-empty">None right now.</div>`;
+  return `<div class="ps-card">
+      <div class="ps-num">${Number(num) || 0}</div>
+      <div class="ps-label">${crmEsc(label)}</div>
+      ${subline ? `<div class="ps-sub">${subline}</div>` : ""}
+      <div class="ps-list">${rows}</div>
+    </div>`;
+}
+async function loadPipelineSnapshot() {
+  const grid = document.getElementById("pipeline-snapshot-grid");
+  if (!grid) return;
+  let snap = null;
+  try {
+    const sb = await _fvAuthClient();          // session-aware client → RPC carries the admin JWT
+    const { data, error } = await sb.rpc("dashboard_snapshot");
+    if (error) throw error;
+    snap = data || {};
+  } catch (e) {
+    console.warn("[dashboard_snapshot]", e && e.message);
+    grid.innerHTML = `<div class="ps-empty">Couldn't load snapshot.</div>`;
+    return;
+  }
+  const escrow = snap.escrow || {}, buyers = snap.active_buyers || {},
+        fees = snap.fee_sheets || {}, pre = snap.preapproved || {};
+  const nameSpan = (it) => `<div class="ps-name">${crmEsc(it.name || "Unknown")}</div>`;
+
+  // 1) In Escrow — total + purchase/refi/other breakdown; rows: name + stage badge + purpose
+  const escrowSub = `${Number(escrow.purchase) || 0} Purchase · ${Number(escrow.refinance) || 0} Refi · ${Number(escrow.other) || 0} Unspecified`;
+  const escrowCard = _snapCard(escrow.total, "In Escrow", escrowSub, escrow.list, (it) =>
+    `<div style="display:flex;align-items:center;gap:6px;justify-content:space-between;">${nameSpan(it)}${it.stage ? `<span class="ps-badge">${crmEsc(it.stage)}</span>` : ""}</div>`
+    + `<div class="ps-meta">${crmEsc(it.purpose || "—")}${it.loan_type ? " · " + crmEsc(it.loan_type) : ""}</div>`);
+
+  // 2) Active Buyers (showings) — rows: name + "{showings} showings" + Next: date
+  const buyersCard = _snapCard(buyers.total, "Active Buyers (showings)", "", buyers.list, (it) => {
+    const parts = [`${Number(it.showings) || 0} showings`];
+    if (it.next_date) parts.push(`Next: ${_snapDate(it.next_date)}`);
+    return nameSpan(it) + `<div class="ps-meta">${crmEsc(parts.join(" · "))}</div>`;
+  });
+
+  // 3) Fee Sheets Generated — rows: name + stage + relative updated_at
+  const feesCard = _snapCard(fees.total, "Fee Sheets Generated", "", fees.list, (it) => {
+    const meta = [it.stage, _notesAgo(it.updated_at)].filter(Boolean).join(" · ");
+    return nameSpan(it) + `<div class="ps-meta">${crmEsc(meta || "—")}</div>`;
+  });
+
+  // 4) Pre-Approved — rows: name + purpose/loan_type
+  const preCard = _snapCard(pre.total, "Pre-Approved", "", pre.list, (it) => {
+    const meta = [it.purpose, it.loan_type].filter(Boolean).join(" · ");
+    return nameSpan(it) + `<div class="ps-meta">${crmEsc(meta || "—")}</div>`;
+  });
+
+  grid.innerHTML = escrowCard + buyersCard + feesCard + preCard;
 }
 
 // ── INSIGHTS (was Analytics) ───────────────────────────────────────────
