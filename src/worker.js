@@ -57,6 +57,22 @@ export default {
     }
     // === END ADMIN GATE ============================================
 
+    // === ADMIN HOST ROOT → CRM LOGIN ===============================
+    // The Worker serves the shared public homepage (index.html) at "/" on every
+    // host, and bare "/admin" / "/dashboard" (no page) also SPA-fall-back to it.
+    // On the ADMIN host that's wrong — Rene expects the CRM. Send those entry
+    // paths to the admin login, which auto-forwards an already-signed-in user on
+    // to their dashboard (people / va-dashboard) and shows the login otherwise.
+    // Only these bare entry paths on the admin host are affected; every deeper
+    // admin path (/admin/people, /dashboard/admin, …) and all public hosts are
+    // untouched.
+    if (url.hostname === ADMIN_HOST &&
+        (path === '/' || path === '/admin' || path === '/admin/' ||
+         path === '/dashboard' || path === '/dashboard/')) {
+      return Response.redirect('https://' + ADMIN_HOST + '/auth/admin-login.html', 302);
+    }
+    // === END ADMIN HOST ROOT =======================================
+
     // === CANONICAL HOST REDIRECTS ==================================
     // The apex (ratesandrealty.com) is canonical for the public app. Forward the
     // www alias and the legacy beta host to it, preserving path + query, with a
