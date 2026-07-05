@@ -198,6 +198,32 @@
   .help-modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
   .help-modal-actions:empty { display: none; }
   .x-btn { background: transparent; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; }
+
+  /* Segmented view toggle */
+  .seg { display: inline-flex; gap: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 4px; margin-bottom: 20px; }
+  .seg-btn { padding: 7px 16px; background: transparent; border: none; border-radius: 7px; color: var(--text-muted); font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  .seg-btn.active { background: var(--gold); color: #000; }
+
+  /* Shared-lead cards (View 2) */
+  .lead-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .lead-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .lead-name { font-size: 15px; font-weight: 700; }
+  .stage-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; padding: 2px 8px; border-radius: 8px; background: rgba(201,168,76,0.15); color: var(--gold); }
+  .lead-head-links { margin-left: auto; display: flex; gap: 12px; align-items: center; font-size: 12px; flex-wrap: wrap; }
+  .lead-head-links a { color: var(--gold); text-decoration: none; }
+  .lead-head-links a:hover { text-decoration: underline; }
+  .mine-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; padding: 1px 6px; border-radius: 6px; background: rgba(82,200,122,0.15); color: var(--green); }
+  .shared-task { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); }
+  .shared-task-main { flex: 1; min-width: 0; }
+  .shared-task-title { font-size: 13px; color: #eee; }
+  .shared-task-meta { display: flex; gap: 8px; align-items: center; margin-top: 3px; flex-wrap: wrap; }
+  .no-tasks { font-size: 12px; color: var(--text-muted); padding: 9px 0; border-top: 1px solid var(--border); margin-top: 8px; }
+  .note-box { margin-top: 12px; }
+  .note-box textarea { width: 100%; padding: 9px 11px; background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; color: #fff; font-size: 13px; font-family: inherit; outline: none; resize: vertical; min-height: 52px; }
+  .note-box textarea:focus { border-color: rgba(201,168,76,0.5); }
+  .note-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .btn-note { padding: 6px 14px; background: rgba(201,168,76,0.14); border: 1px solid rgba(201,168,76,0.4); color: var(--gold); border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  .btn-note:disabled { opacity: 0.5; cursor: default; }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
@@ -269,9 +295,20 @@
     </form>
   </div>
 
-  <!-- Task list -->
+  <!-- Task views: My Tasks (assigned to me) / Shared files (assist Rene) -->
+  <div class="seg" id="viewSeg">
+    <button type="button" class="seg-btn active" id="segMine" onclick="setView('mine')">📋 My Tasks</button>
+    <button type="button" class="seg-btn" id="segShared" onclick="setView('shared')">🤝 Shared files</button>
+  </div>
+
+  <!-- View 1: tasks assigned directly to the VA (va_daily_tasks) -->
   <div id="taskList">
     <div class="loading">Loading your tasks…</div>
+  </div>
+
+  <!-- View 2: leads shared with the VA (va_shared_leads) -->
+  <div id="sharedList" style="display:none;">
+    <div class="loading">Loading shared files…</div>
   </div>
 
 </div>
@@ -319,6 +356,7 @@ const BUCKET_ORDER = [
 let _supabase = null;      // canonical session-aware client
 let _currentUser = null;   // supabase auth user (the logged-in VA/admin)
 let _selectedContactId = null;
+let _view = localStorage.getItem('rnr_va_view') || 'mine'; // 'mine' | 'shared'
 
 // ── Client + current user ────────────────────────────────────────────────
 async function init() {
@@ -343,8 +381,20 @@ async function init() {
   const emailEl = document.getElementById('adminUserEmail');
   if (emailEl && _currentUser.email) emailEl.textContent = _currentUser.email;
 
-  loadTasks();
+  setView(_view);   // remembers last-selected view; loads My Tasks or Shared files
   initHelp();
+}
+
+// ── View switching (segmented toggle) ────────────────────────────────────
+function setView(view) {
+  _view = (view === 'shared') ? 'shared' : 'mine';
+  localStorage.setItem('rnr_va_view', _view);
+  const mineOn = _view === 'mine';
+  document.getElementById('segMine').classList.toggle('active', mineOn);
+  document.getElementById('segShared').classList.toggle('active', !mineOn);
+  document.getElementById('taskList').style.display = mineOn ? '' : 'none';
+  document.getElementById('sharedList').style.display = mineOn ? 'none' : '';
+  if (mineOn) loadTasks(); else loadShared();
 }
 
 // ── READ: the VA's task list via RPC ─────────────────────────────────────
@@ -463,6 +513,114 @@ async function completeTask(btn, taskId) {
   if (card) card.remove();
   showToast('✓ Task completed');
   loadTasks();
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// VIEW 2: SHARED FILES (leads shared with the VA — assist Rene)
+// ════════════════════════════════════════════════════════════════════════
+async function loadShared() {
+  const el = document.getElementById('sharedList');
+  const { data, error } = await _supabase.rpc('va_shared_leads');
+
+  if (error) {
+    console.error('[va-tasks] va_shared_leads failed', error);
+    el.innerHTML = '<div class="empty">Could not load shared files. Please refresh.</div>';
+    return;
+  }
+
+  const leads = Array.isArray(data) ? data : [];
+  if (!leads.length) {
+    el.innerHTML = '<div class="empty"><span class="emoji">🤝</span>No files shared with you yet.</div>';
+    return;
+  }
+  el.innerHTML = leads.map(renderLeadCard).join('');
+}
+
+function renderLeadCard(l) {
+  const cid = String(l.contact_id || '');
+  const name = esc(l.name || 'Unknown');
+  const stage = l.pipeline_status ? '<span class="stage-badge">' + esc(l.pipeline_status) + '</span>' : '';
+  let headLinks = '';
+  if (l.phone) {
+    const tel = String(l.phone).replace(/[^0-9+]/g, '');
+    headLinks += '<a href="tel:' + esc(tel) + '">📞 ' + esc(l.phone) + '</a>';
+  }
+  headLinks += '<a href="lead-detail?contact_id=' + encodeURIComponent(cid) + '">Open lead ›</a>';
+
+  const tasks = Array.isArray(l.tasks) ? l.tasks : [];
+  let tasksHtml;
+  if (!tasks.length) {
+    tasksHtml = '<div class="no-tasks">No open tasks — add a note to help Rene.</div>';
+  } else {
+    tasksHtml = tasks.map(function (t) {
+      const prio = (t.priority || 'normal');
+      const mine = t.mine === true ? ' <span class="mine-badge">assigned to me</span>' : '';
+      return '<div class="shared-task">' +
+        '<div class="shared-task-main">' +
+          '<div class="shared-task-title">' + esc(t.title || 'Untitled task') + '</div>' +
+          '<div class="shared-task-meta">' +
+            '<span class="pill ' + prioClass(prio) + '">' + esc(prio) + '</span>' +
+            fmtDue(t.due_date, '') + mine +
+          '</div>' +
+        '</div>' +
+        '<button class="btn-complete" onclick="completeSharedTask(this, \'' + esc(String(t.id)) + '\')">✓ Complete</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  const noteBox = '<div class="note-box">' +
+    '<textarea id="note-' + esc(cid) + '" placeholder="Add a note to help Rene…"></textarea>' +
+    '<div class="note-actions"><button class="btn-note" onclick="saveNote(\'' + esc(cid) + '\', this)">Save note</button></div>' +
+  '</div>';
+
+  return '<div class="lead-card" data-cid="' + esc(cid) + '">' +
+    '<div class="lead-card-head">' +
+      '<span class="lead-name">' + name + '</span>' + stage +
+      '<span class="lead-head-links">' + headLinks + '</span>' +
+    '</div>' +
+    tasksHtml +
+    noteBox +
+  '</div>';
+}
+
+// Complete a task from a shared-lead card; re-fetch the shared view afterward.
+async function completeSharedTask(btn, taskId) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Completing…'; }
+
+  const { error } = await _supabase
+    .from('tasks')
+    .update({ status: 'completed' })
+    .eq('id', taskId);
+
+  if (error) {
+    console.error('[va-tasks] complete (shared) failed', error);
+    showToast('⚠ Could not complete task', true);
+    if (btn) { btn.disabled = false; btn.textContent = '✓ Complete'; }
+    return;
+  }
+  showToast('✓ Task completed');
+  loadShared();
+}
+
+// Add a note to a shared lead. The RPC only permits notes on leads shared with
+// the caller — surface any error message it returns.
+async function saveNote(cid, btn) {
+  const ta = document.getElementById('note-' + cid);
+  const text = (ta && ta.value || '').trim();
+  if (!text) { if (ta) ta.focus(); return; }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const { error } = await _supabase.rpc('add_contact_note', { p_contact_id: cid, p_note: text });
+    if (error) throw error;
+    showToast('Note added');
+    if (ta) ta.value = '';
+  } catch (e) {
+    console.error('[va-tasks] add_contact_note failed', e);
+    showToast('⚠ ' + (e.message || 'Could not add note'), true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save note'; }
+  }
 }
 
 // ── Contact association search (optional) ────────────────────────────────
