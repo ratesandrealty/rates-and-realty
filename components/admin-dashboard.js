@@ -310,38 +310,44 @@ async function renderOverview() {
     `;
   }
 
-  // Bar chart — leads by status
-  const barRoot = document.getElementById("overview-bar-root");
-  if (barRoot) {
-    barRoot.innerHTML = renderInlineBarChart(data.byStage, ["new","contacted","prequalified","preapproved","in_process","closed"]);
-  }
+  // Charts + recent-leads table — a bad row/data shape here must not abort the whole
+  // overview render (other widgets mount after this block), so guard + continue.
+  try {
+    // Bar chart — leads by status
+    const barRoot = document.getElementById("overview-bar-root");
+    if (barRoot) {
+      barRoot.innerHTML = renderInlineBarChart(data.byStage, ["new","contacted","prequalified","preapproved","in_process","closed"]);
+    }
 
-  // Pie chart — leads by source
-  const pieRoot = document.getElementById("overview-pie-root");
-  if (pieRoot) {
-    pieRoot.innerHTML = renderInlinePieChart(data.bySource);
-  }
+    // Pie chart — leads by source
+    const pieRoot = document.getElementById("overview-pie-root");
+    if (pieRoot) {
+      pieRoot.innerHTML = renderInlinePieChart(data.bySource);
+    }
 
-  // Recent leads table
-  const tbody = document.getElementById("overview-lead-tbody");
-  if (tbody) {
-    tbody.innerHTML = leads.slice(0, 8).map((lead) => {
-      const c = lead.contacts || {};
-      const name = `${c.first_name || ""} ${c.last_name || ""}`.trim() || "Unknown";
-      const detailHref = lead.contact_id ? `../admin/lead-detail.html?contact_id=${lead.contact_id}` : `../admin/lead-detail.html?lead_id=${lead.id}`;
-      const calcScore = lead.score || calculateLeadScore(lead, c).score;
-      const calcTier = lead.score_tier || calculateLeadScore(lead, c).tier;
-      return `
-        <tr class="lead-row" style="cursor:pointer;" data-lead-id="${lead.id}" data-detail-href="${detailHref}" onclick="window.location.href='${detailHref}'">
-          <td class="lead-name-cell"><span class="lead-name-link" style="cursor:pointer;">${name}</span><span>${c.email || ""}</span></td>
-          <td>${lead.loan_type || "—"}</td>
-          <td>${scoreBadge(calcScore, calcTier)}</td>
-          <td><span class="status-pill ${statusPillClass(lead.status)}">${lead.status || "new"}</span></td>
-          <td>${formatDate(lead.created_at)}</td>
-        </tr>
-      `;
-    }).join("") || `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted);">No leads yet.</td></tr>`;
-    bindLeadRowClicks("#overview-lead-tbody");
+    // Recent leads table
+    const tbody = document.getElementById("overview-lead-tbody");
+    if (tbody) {
+      tbody.innerHTML = leads.slice(0, 8).map((lead) => {
+        const c = lead.contacts || {};
+        const name = `${c.first_name || ""} ${c.last_name || ""}`.trim() || "Unknown";
+        const detailHref = lead.contact_id ? `../admin/lead-detail.html?contact_id=${lead.contact_id}` : `../admin/lead-detail.html?lead_id=${lead.id}`;
+        const calcScore = lead.score || calculateLeadScore(lead, c).score;
+        const calcTier = lead.score_tier || calculateLeadScore(lead, c).tier;
+        return `
+          <tr class="lead-row" style="cursor:pointer;" data-lead-id="${lead.id}" data-detail-href="${detailHref}" onclick="window.location.href='${detailHref}'">
+            <td class="lead-name-cell"><span class="lead-name-link" style="cursor:pointer;">${name}</span><span>${c.email || ""}</span></td>
+            <td>${lead.loan_type || "—"}</td>
+            <td>${scoreBadge(calcScore, calcTier)}</td>
+            <td><span class="status-pill ${statusPillClass(lead.status)}">${lead.status || "new"}</span></td>
+            <td>${formatDate(lead.created_at)}</td>
+          </tr>
+        `;
+      }).join("") || `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted);">No leads yet.</td></tr>`;
+      bindLeadRowClicks("#overview-lead-tbody");
+    }
+  } catch (e) {
+    console.error("[renderOverview] charts/leads-table render failed; continuing:", e);
   }
 
   // Activity feed
@@ -1258,13 +1264,11 @@ function _notesAgo(iso) {
 }
 async function loadRecentNotes() {
   const feed = document.getElementById("overview-notes-feed");
-  console.log("[loadRecentNotes] called; container found:", !!feed);   // TEMP diagnostic
   if (!feed) return;
   let rows = [];
   try {
     const sb = await _fvAuthClient();          // session-aware client → RPC carries the admin JWT
     const { data, error } = await sb.rpc("recent_notes", { p_limit: 30 });
-    console.log("[recent_notes] rpc result:", { rows: (data && data.length) || 0, error: error && error.message });   // TEMP diagnostic
     if (error) throw error;
     rows = data || [];
   } catch (e) {
@@ -1325,13 +1329,11 @@ function _snapCard(num, label, subline, list, rowFn) {
 }
 async function loadPipelineSnapshot() {
   const grid = document.getElementById("pipeline-snapshot-grid");
-  console.log("[loadPipelineSnapshot] called; container found:", !!grid);   // TEMP diagnostic
   if (!grid) return;
   let snap = null;
   try {
     const sb = await _fvAuthClient();          // session-aware client → RPC carries the admin JWT
     const { data, error } = await sb.rpc("dashboard_snapshot");
-    console.log("[dashboard_snapshot] rpc result:", { hasData: !!data, escrowTotal: data && data.escrow && data.escrow.total, error: error && error.message });   // TEMP diagnostic
     if (error) throw error;
     snap = data || {};
   } catch (e) {
