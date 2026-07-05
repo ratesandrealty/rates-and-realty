@@ -2108,6 +2108,19 @@
           <div></div>
         </div>
 
+        <!-- Row 1a: Lender submission status + loan number. Shown once a lender is
+             chosen. Status → contacts.lender_submission_status; Loan Number →
+             contacts.loan_number (the single shared loan number, also in the snapshot). -->
+        <div id="pricingSubmissionRow" style="display:none;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;align-items:end;">
+          <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Lender Status</label>
+            <div id="pricingSubToggle" style="display:inline-flex;border:1px solid rgba(255,255,255,0.12);border-radius:8px;overflow:hidden;">
+              <button type="button" class="sub-opt" data-sub="unsubmitted" onclick="lpSetSubmission('unsubmitted')" style="background:#C9A84C;color:#111;border:none;font-size:12px;font-weight:600;padding:8px 14px;cursor:pointer;">Unsubmitted</button>
+              <button type="button" class="sub-opt" data-sub="submitted" onclick="lpSetSubmission('submitted')" style="background:transparent;color:rgba(255,255,255,0.6);border:none;border-left:1px solid rgba(255,255,255,0.12);font-size:12px;font-weight:600;padding:8px 14px;cursor:pointer;">Submitted</button>
+            </div></div>
+          <div id="pricingLoanNumberWrap" style="display:none;"><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Loan Number</label>
+            <input id="pricingLoanNumber" type="text" placeholder="Lender loan #" autocomplete="off" oninput="this.dataset.dirty='1';lpSaveLoanNumber();" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;"></div>
+        </div>
+
         <!-- Row 1b: Loan Purpose / Loan Type (powers Earnings charts) -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Loan Purpose</label>
@@ -5176,6 +5189,20 @@ async function loadData() {
       if (error) throw error;
       contactData = data || {};
 
+      // loan_number + lender_submission_status are non-sensitive operational fields NOT
+      // exposed by the contacts_secure view — read them from the base table via the
+      // RLS-safe authed client so the Loan Snapshot + Pricing & Lender section can
+      // display/prefill them. One column of truth: contacts.loan_number.
+      try {
+        const { data: _lnRow } = await _authClient()
+          .from('contacts').select('loan_number, lender_submission_status')
+          .eq('id', contactId).single();
+        if (_lnRow) {
+          contactData.loan_number = _lnRow.loan_number || null;
+          contactData.lender_submission_status = _lnRow.lender_submission_status || 'unsubmitted';
+        }
+      } catch (_) {}
+
       // leadId === contactId now (leads is a view over contacts)
     }
 
@@ -5826,6 +5853,8 @@ async function populateUI() {
   setSelectVal('pricingLoanType', contactData.loan_type || contactData.closing_loan_type || '');
   setSelectVal('pricingLoanPurpose', contactData.loan_purpose || '');
   { const _pls = document.getElementById('pricingLenderSearch'); if (_pls && contactData.closing_lender) _pls.value = contactData.closing_lender; }
+  // Reflect current lender_submission_status + loan_number (shown only when a lender is set).
+  if (typeof lpUpdateSubmissionUI === 'function') lpUpdateSubmissionUI();
   // Populate Pricing & Lender rate/date/fee fields from the mortgage_applications row.
   // These otherwise fill only via load1003() on the Application tab, so on the Lead Details
   // tab they appear blank on refresh even though the values are saved. Programmatic .value
@@ -9435,11 +9464,24 @@ async function lpRenderSnapshot(cid){
     + '<div '+(_ro?'':'onclick="lpSnapEdit(\'subject_property\',event)" title="Click to edit" ')+'style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'+(_ro?'':'cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);')+'"'+(_propHas?' title="'+lpEsc(_propLine)+'"':'')+'>'+_propVal+'</div>'
     + _countySub + '</div>';
 
+  // LOAN # — reads contacts.loan_number ("—" when empty); the submitted/unsubmitted
+  // badge (from contacts.lender_submission_status) shows only once a lender is set.
+  const _subStatus = (c.lender_submission_status === 'submitted') ? 'submitted' : 'unsubmitted';
+  const _subBadge = c.closing_lender
+    ? '<span style="margin-left:8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:10px;white-space:nowrap;'
+      + (_subStatus === 'submitted' ? 'background:rgba(39,174,96,.16);color:#3ddc84;' : 'background:rgba(255,255,255,.08);color:rgba(255,255,255,.5);')
+      + '">' + (_subStatus === 'submitted' ? 'Submitted' : 'Unsubmitted') + '</span>'
+    : '';
+  const loanNumCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Loan #</div>'
+    + '<div style="font-size:14px;color:#fff;font-weight:600;display:flex;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+    + (c.loan_number ? lpEsc(c.loan_number) : '<span style="color:rgba(255,255,255,.4);">—</span>') + _subBadge + '</div></div>';
+
   el.innerHTML = cell('Borrower',lpEsc(name))
     + propCell
     + ecell('Loan Amount','loan_amount',money(c.loan_amount))
     + ecell('Type / Purpose','type_purpose',lpEsc(tcase(c.loan_type||c.closing_loan_type||'—')+' · '+tcase(c.loan_purpose||'—')))
     + lenderCell
+    + loanNumCell
     + lpLockedRateCellHtml(app, _ro)
     + ecell('Lock Expires','rate_lock_expiry',dd(app.rate_lock_expiry)+lockChip)
     + ecell('Pipeline','pipeline_status',lpEsc(c.pipeline_status||'—'))
@@ -18454,6 +18496,60 @@ function savePricingMeta(lenderName) {
   }, 500);
 }
 
+/* ── Lender submission status + loan number (contacts.loan_number /
+   contacts.lender_submission_status). Same RLS-safe save path as savePricingMeta;
+   the Loan Snapshot re-renders from contactData after each save. ── */
+let _loanSaveTimer = null;
+function _lpPaintToggle(status) {
+  document.querySelectorAll('#pricingSubToggle .sub-opt').forEach(function (b) {
+    var on = b.getAttribute('data-sub') === status;
+    b.style.background = on ? '#C9A84C' : 'transparent';
+    b.style.color = on ? '#111' : 'rgba(255,255,255,0.6)';
+  });
+}
+async function _lpCommitLoan() {
+  const targetId = contactId || leadId;
+  if (!targetId) return;
+  const activeBtn = document.querySelector('#pricingSubToggle .sub-opt[data-active="1"]');
+  const status = activeBtn ? activeBtn.getAttribute('data-sub') : 'unsubmitted';
+  const lnEl = document.getElementById('pricingLoanNumber');
+  const loanNumber = lnEl ? lnEl.value.trim() : '';
+  const patch = {
+    lender_submission_status: status,
+    loan_number: loanNumber || null,
+    updated_at: new Date().toISOString()
+  };
+  try {
+    const { error } = await _authClient().from('contacts').update(patch).eq('id', targetId);
+    if (error) { console.error('[lpCommitLoan] error:', error.message); if (typeof toast === 'function') toast('Could not save loan number', true); return; }
+    if (typeof contactData !== 'undefined' && contactData) { contactData.loan_number = patch.loan_number; contactData.lender_submission_status = status; }
+    if (typeof lpRenderSnapshot === 'function' && typeof lpCid === 'function') { const _c = lpCid(); if (_c) lpRenderSnapshot(_c); }
+  } catch (e) { console.error('[lpCommitLoan]', e); if (typeof toast === 'function') toast('Could not save loan number', true); }
+}
+function lpSaveLoanNumber() { clearTimeout(_loanSaveTimer); _loanSaveTimer = setTimeout(_lpCommitLoan, 500); }
+function lpSetSubmission(status) {
+  document.querySelectorAll('#pricingSubToggle .sub-opt').forEach(function (b) { b.setAttribute('data-active', b.getAttribute('data-sub') === status ? '1' : '0'); });
+  _lpPaintToggle(status);
+  const wrap = document.getElementById('pricingLoanNumberWrap'); if (wrap) wrap.style.display = (status === 'submitted') ? 'block' : 'none';
+  _lpCommitLoan();   // save immediately on toggle (loan number not required)
+}
+// Show the status row only when a lender is set; paint the toggle + prefill the
+// loan number from contactData. Called on load and whenever the lender changes.
+function lpUpdateSubmissionUI() {
+  const row = document.getElementById('pricingSubmissionRow'); if (!row) return;
+  const c = (typeof contactData !== 'undefined' && contactData) ? contactData : {};
+  const hasLender = !!(c.closing_lender
+    || (document.getElementById('pricingLenderSelect') || {}).value
+    || ((document.getElementById('pricingLenderSearch') || {}).value || '').trim());
+  row.style.display = hasLender ? 'grid' : 'none';
+  const status = c.lender_submission_status || 'unsubmitted';
+  document.querySelectorAll('#pricingSubToggle .sub-opt').forEach(function (b) { b.setAttribute('data-active', b.getAttribute('data-sub') === status ? '1' : '0'); });
+  _lpPaintToggle(status);
+  const wrap = document.getElementById('pricingLoanNumberWrap'); if (wrap) wrap.style.display = (status === 'submitted') ? 'block' : 'none';
+  const lnEl = document.getElementById('pricingLoanNumber');
+  if (lnEl && !lnEl.dataset.dirty) lnEl.value = c.loan_number || '';
+}
+
 function saveEarnings() {
   clearTimeout(_earningsSaveTimer);
   _earningsSaveTimer = setTimeout(async () => {
@@ -19971,6 +20067,10 @@ function _wireLenderCombobox() {
   const clearBtn = document.getElementById('pricingLenderClear');
   const box = document.getElementById('pricingLenderResults');
   if (!search || !hidden || !box) return;
+
+  // Lender select/clear both dispatch 'input' on the hidden field — reflect that into
+  // the submission-status row visibility (shown only when a lender is set).
+  hidden.addEventListener('input', function () { if (typeof lpUpdateSubmissionUI === 'function') lpUpdateSubmissionUI(); });
 
   const showPanel = () => { box.style.display = 'block'; };
   const hidePanel = () => { box.style.display = 'none'; };
