@@ -234,6 +234,11 @@ function navigateTo(tabKey) {
 }
 
 function renderActiveTab() {
+  // Recent Notes + Active Pipeline Snapshot fetch their own data via admin RPCs and
+  // don't depend on dashboardData. Mount them here (independent of renderOverview) so
+  // an unrelated failure earlier in renderOverview — or a null dashboardData — can't
+  // leave their containers blank.
+  if (activeTab === "overview") { loadRecentNotes(); loadPipelineSnapshot(); }
   if (!dashboardData) return;
   switch (activeTab) {
     case "overview": renderOverview(); break;
@@ -346,11 +351,8 @@ async function renderOverview() {
     actFeed.innerHTML = renderActivityItems(events.slice(0, 12));
   }
 
-  // Recent notes (admin-only feed) — fire-and-forget, self-contained render.
-  loadRecentNotes();
-
-  // Active pipeline snapshot (admin-only widget) — fire-and-forget.
-  loadPipelineSnapshot();
+  // (Recent Notes + Active Pipeline Snapshot are mounted from renderActiveTab so a
+  //  failure earlier in this function can't skip them.)
 
   // Upcoming appointments
   const apptEl = document.getElementById("overview-appointments");
@@ -1256,11 +1258,13 @@ function _notesAgo(iso) {
 }
 async function loadRecentNotes() {
   const feed = document.getElementById("overview-notes-feed");
+  console.log("[loadRecentNotes] called; container found:", !!feed);   // TEMP diagnostic
   if (!feed) return;
   let rows = [];
   try {
     const sb = await _fvAuthClient();          // session-aware client → RPC carries the admin JWT
     const { data, error } = await sb.rpc("recent_notes", { p_limit: 30 });
+    console.log("[recent_notes] rpc result:", { rows: (data && data.length) || 0, error: error && error.message });   // TEMP diagnostic
     if (error) throw error;
     rows = data || [];
   } catch (e) {
@@ -1321,11 +1325,13 @@ function _snapCard(num, label, subline, list, rowFn) {
 }
 async function loadPipelineSnapshot() {
   const grid = document.getElementById("pipeline-snapshot-grid");
+  console.log("[loadPipelineSnapshot] called; container found:", !!grid);   // TEMP diagnostic
   if (!grid) return;
   let snap = null;
   try {
     const sb = await _fvAuthClient();          // session-aware client → RPC carries the admin JWT
     const { data, error } = await sb.rpc("dashboard_snapshot");
+    console.log("[dashboard_snapshot] rpc result:", { hasData: !!data, escrowTotal: data && data.escrow && data.escrow.total, error: error && error.message });   // TEMP diagnostic
     if (error) throw error;
     snap = data || {};
   } catch (e) {
