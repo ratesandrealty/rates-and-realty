@@ -2442,6 +2442,7 @@
           <div id="lpSnapshotBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;"></div></div>
         <div class="lp-card"><div class="lp-h">📅 Critical Dates</div>
           <div id="lpDatesBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;"></div></div>
+        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><button type="button" onclick="openAssignVaModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">👤 Assign to VA</button></div><div id="lpVaTasksBody"></div></div>
         <div class="lp-card"><div class="lp-h">✅ Intake / Setup Checklist</div><div id="lpIntakeBody"></div></div>
         <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
         <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
@@ -2455,7 +2456,6 @@
         <div class="lp-card"><div class="lp-h">👥 Related People</div><div id="lpRelatedBody"></div></div>
         <div class="lp-card" id="lpShareCard" style="display:none;"><div class="lp-h">🔐 Shared with <span style="font-weight:400;color:rgba(255,255,255,.35);font-size:11px;">— VA access</span></div><div id="lpShareBody"></div></div>
         <div class="lp-card"><div class="lp-h"><span>🖊️ E-Signature Status</span><button type="button" onclick="openEsignSendModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">Send for signature</button></div><div id="lpEsignLinks"></div><div id="lpEsignBody"></div></div>
-        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><button type="button" onclick="openAssignVaModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">👤 Assign to VA</button></div><div id="lpVaTasksBody"></div></div>
       </div>
     </div>
 
@@ -13220,17 +13220,22 @@ function _vaCompletedHtml(){
 function _vaRenderTasks(){
   const body = document.getElementById('lpVaTasksBody'); if(!body) return;
   const hideDelete = (typeof _ldNonAdmin==='function' && _ldNonAdmin());
+  const isVa = hideDelete;   // VAs: hide the template-chip quick-add groups + delete controls
   const tabs = '<div style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,.08);">'+_vaTab('open','Open')+_vaTab('history','History')+'</div>';
-  if(_vaView==='history'){ body.innerHTML = tabs + _vaCompletedHtml(); return; }
-  // ── Suggested-task chips (grouped, compact) ──
-  let chips = '<div style="margin-bottom:12px;">';
-  VA_SUGGESTED.forEach(function(g){
-    chips += '<div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);margin:6px 0 4px;">'+lpEsc(g.group)+'</div>'
-      + '<div style="display:flex;flex-wrap:wrap;gap:5px;">'
-      + g.items.map(function(it){ return '<button type="button" onclick="lpVaAddSuggested(this.getAttribute(\'data-t\'))" data-t="'+lpEsc(it)+'" title="Add this task" style="background:rgba(201,168,76,.10);border:1px solid rgba(201,168,76,.30);color:#C9A84C;border-radius:14px;padding:3px 9px;cursor:pointer;font-size:10px;font-weight:600;font-family:inherit;">+ '+lpEsc(it)+'</button>'; }).join('')
-      + '</div>';
-  });
-  chips += '</div>';
+  const noteBox = _vaNoteBoxHtml();
+  if(_vaView==='history'){ body.innerHTML = tabs + noteBox + _vaCompletedHtml(); _vaLoadRecentNotes(); return; }
+  // ── Suggested-task chips (grouped, compact) — ADMIN ONLY (hidden for VAs) ──
+  let chips = '';
+  if(!isVa){
+    chips = '<div style="margin-bottom:12px;">';
+    VA_SUGGESTED.forEach(function(g){
+      chips += '<div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);margin:6px 0 4px;">'+lpEsc(g.group)+'</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:5px;">'
+        + g.items.map(function(it){ return '<button type="button" onclick="lpVaAddSuggested(this.getAttribute(\'data-t\'))" data-t="'+lpEsc(it)+'" title="Add this task" style="background:rgba(201,168,76,.10);border:1px solid rgba(201,168,76,.30);color:#C9A84C;border-radius:14px;padding:3px 9px;cursor:pointer;font-size:10px;font-weight:600;font-family:inherit;">+ '+lpEsc(it)+'</button>'; }).join('')
+        + '</div>';
+    });
+    chips += '</div>';
+  }
   // ── Add row ──
   const prioOpts = VA_PRIORITIES.map(function(p){ return '<option value="'+p+'"'+(p==='normal'?' selected':'')+'>'+p.charAt(0).toUpperCase()+p.slice(1)+'</option>'; }).join('');
   const addRow = '<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">'
@@ -13266,9 +13271,57 @@ function _vaRenderTasks(){
       return row + (open ? _vaHistoryPanel(t.id) : '');
     }).join('');
   }
-  body.innerHTML = tabs + chips + addRow + list;
+  body.innerHTML = tabs + noteBox + chips + addRow + list;
+  _vaLoadRecentNotes();
   // Attach @-mention autocomplete to any open note textareas (PART 1 reuse).
   Object.keys(_vaHistOpen).forEach(function(id){ if(_vaHistOpen[id]){ const ta=document.getElementById('vaNote_'+id); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta); } });
+}
+
+// ── "Note to Rene" composer (inside the VA Daily Tasks card) ──
+// Shown for VAs (and admins). Submits via the add_contact_note RPC, which only
+// permits notes on shared leads for VAs (errors surface as a toast).
+function _vaNoteBoxHtml(){
+  return '<div style="margin-bottom:12px;padding:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08);border-radius:8px;">'
+    + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#C9A84C;margin-bottom:6px;">📝 Note to Rene</div>'
+    + '<textarea id="vaNoteToRene" rows="2" placeholder="Leave a note about this file for Rene…" style="'+_vaInp+'width:100%;resize:vertical;margin-bottom:6px;"></textarea>'
+    + '<div style="display:flex;justify-content:flex-end;">'
+    +   '<button type="button" onclick="lpVaAddNote()" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;">Add note</button>'
+    + '</div>'
+    + '<div id="vaNotesRecent" style="margin-top:8px;"></div>'
+    + '</div>';
+}
+async function lpVaAddNote(){
+  const ta=document.getElementById('vaNoteToRene'); if(!ta) return;
+  const txt=(ta.value||'').trim();
+  if(!txt){ if(typeof showToast==='function') showToast('Enter a note first', true); return; }
+  const cid=(typeof lpCid==='function')?lpCid():null;
+  if(!cid){ if(typeof showToast==='function') showToast('No contact loaded', true); return; }
+  try{
+    const { error } = await _authClient().rpc('add_contact_note', { p_contact_id:cid, p_note:txt });
+    if(error) throw error;
+    if(typeof showToast==='function') showToast('Note added');
+    ta.value='';
+    _vaLoadRecentNotes();
+  }catch(e){ if(typeof showToast==='function') showToast((e&&e.message)||'Could not add note', true); }
+}
+// Optional: list the few most recent notes for this contact (newest first).
+async function _vaLoadRecentNotes(){
+  const el=document.getElementById('vaNotesRecent'); if(!el) return;
+  const cid=(typeof lpCid==='function')?lpCid():null; if(!cid) return;
+  try{
+    const { data, error } = await _authClient().from('contact_notes')
+      .select('author_display,note_text,created_at').eq('contact_id',cid)
+      .order('created_at',{ascending:false}).limit(3);
+    if(error) throw error;
+    if(!data || !data.length){ el.innerHTML=''; return; }
+    el.innerHTML = data.map(function(n){
+      const when=n.created_at?new Date(n.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+      return '<div style="padding:6px 0;border-top:1px solid rgba(255,255,255,.05);font-size:11px;color:#bbb;">'
+        + '<span style="color:#ddd;">'+lpEsc(n.note_text||'')+'</span>'
+        + '<div style="font-size:9px;color:#777;margin-top:2px;">'+lpEsc(n.author_display||'—')+(when?' · '+when:'')+'</div>'
+        + '</div>';
+    }).join('');
+  }catch(e){ /* non-blocking recent-notes preview */ }
 }
 
 function _vaEditRow(t){
