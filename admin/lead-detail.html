@@ -9927,14 +9927,33 @@ async function lpSaveContact(role){
   const g = f => { const e = row.querySelector('input[data-f="'+f+'"]'); return e ? (e.value||null) : null; };
   try{ await _authClient().from('loan_contacts').upsert({contact_id:cid,role:role,name:g('name'),company:g('company'),phone:g('phone'),email:g('email'),updated_at:new Date().toISOString()}, {onConflict:'contact_id,role'}); }catch(e){ console.warn('[lpSaveContact]', e.message); }
 }
+// Statuses treated as done/closed — hidden from the default (open-only) tasks view.
+const LP_TASK_DONE_STATUSES = ['completed','complete','done','cancelled','canceled','dismissed'];
+function _lpTaskIsDone(s){ return LP_TASK_DONE_STATUSES.indexOf(String(s||'').toLowerCase().trim()) >= 0; }
 async function lpLoadTasks(cid){
   const body = document.getElementById('lpTasksBody'); if(!body) return;
   try{
-    const { data } = await _authClient().from('tasks').select('title,due_date,status,clickup_url').eq('contact_id',cid).order('due_date',{ascending:true});
-    if(!data||!data.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No tasks yet.</div>'; return; }
+    const { data } = await _authClient().from('tasks').select('title,due_date,status,clickup_url,created_at').eq('contact_id',cid).order('created_at',{ascending:false});
+    const rows = data || [];
+    const open = rows.filter(t=>!_lpTaskIsDone(t.status)).slice(0,10);   // newest first, cap ~10
+    const done = rows.filter(t=>_lpTaskIsDone(t.status));
     const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
-    body.innerHTML = data.map(t=>'<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);"><span style="font-size:12px;color:#ddd;">'+(t.clickup_url?'<a href="'+lpEsc(t.clickup_url)+'" target="_blank" style="color:#ddd;text-decoration:none;">':'')+lpEsc(t.title||'')+(t.clickup_url?'</a>':'')+'</span><span style="font-size:11px;color:#888;">'+lpEsc(t.status||'')+(t.due_date?' · '+dd(t.due_date):'')+'</span></div>').join('');
+    const rowHtml = t => '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);"><span style="font-size:12px;color:#ddd;">'+(t.clickup_url?'<a href="'+lpEsc(t.clickup_url)+'" target="_blank" style="color:#ddd;text-decoration:none;">':'')+lpEsc(t.title||'')+(t.clickup_url?'</a>':'')+'</span><span style="font-size:11px;color:#888;">'+lpEsc(t.status||'')+(t.due_date?' · '+dd(t.due_date):'')+'</span></div>';
+    let html = open.length ? open.map(rowHtml).join('') : '<div style="color:#888;font-size:12px;padding:8px;">No open tasks.</div>';
+    if(done.length){
+      html += '<div style="padding:6px 6px 2px;"><a onclick="lpToggleCompletedTasks(this)" data-open="0" style="font-size:11px;color:#C9A84C;cursor:pointer;text-decoration:none;">Show completed ('+done.length+')</a></div>'
+            + '<div id="lpCompletedTasks" style="display:none;">'+done.map(rowHtml).join('')+'</div>';
+    }
+    body.innerHTML = html;
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load tasks.</div>'; }
+}
+// Collapsed-by-default reveal for completed tasks in the Loan Processing "Tasks" card.
+function lpToggleCompletedTasks(el){
+  const box = document.getElementById('lpCompletedTasks'); if(!box) return;
+  const isOpen = el.getAttribute('data-open') === '1';
+  box.style.display = isOpen ? 'none' : 'block';
+  el.setAttribute('data-open', isOpen ? '0' : '1');
+  el.textContent = (isOpen ? 'Show completed (' : 'Hide completed (') + box.children.length + ')';
 }
 
 /* ═══ PROCESSING TAB — Phase 2 cards: Orders / LOE / E-Sign / VA Tasks ═══ */
