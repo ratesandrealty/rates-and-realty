@@ -1548,11 +1548,11 @@
     Back
   </button>
   <a href="people" class="ab-back" style="text-decoration:none;flex-shrink:0;">&#128101;</a>
-  <a href="pipeline" class="ab-back" style="text-decoration:none;flex-shrink:0;">&#127937;</a>
-  <a href="guideline-ai" class="ab-back" title="Guideline AI" style="text-decoration:none;flex-shrink:0;">&#128270;</a>
-  <a href="qualifying" class="ab-back" title="Qualifying Analyzer" style="text-decoration:none;flex-shrink:0;">&#128202;</a>
-  <a href="sms-activity" class="ab-back" title="SMS Activity" style="text-decoration:none;flex-shrink:0;">&#128172;</a>
-  <a href="settings" class="ab-back" title="Settings" style="text-decoration:none;flex-shrink:0;">&#9881;</a>
+  <a href="pipeline" id="vahideNavPipeline" class="ab-back" style="text-decoration:none;flex-shrink:0;">&#127937;</a>
+  <a href="guideline-ai" id="vahideNavGuideline" class="ab-back" title="Guideline AI" style="text-decoration:none;flex-shrink:0;">&#128270;</a>
+  <a href="qualifying" id="vahideNavQualifying" class="ab-back" title="Qualifying Analyzer" style="text-decoration:none;flex-shrink:0;">&#128202;</a>
+  <a href="sms-activity" id="vahideNavSms" class="ab-back" title="SMS Activity" style="text-decoration:none;flex-shrink:0;">&#128172;</a>
+  <a href="settings" id="vahideNavSettings" class="ab-back" title="Settings" style="text-decoration:none;flex-shrink:0;">&#9881;</a>
   <button id="notifBell" onclick="notifToggle(event)" title="Notifications" style="position:relative;background:transparent;border:none;cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;padding:2px 3px;color:inherit;">&#128276;<span id="notifBadge" style="display:none;position:absolute;top:-3px;right:-4px;min-width:15px;height:15px;line-height:15px;padding:0 3px;border-radius:8px;background:#E5484D;color:#fff;font-size:9px;font-weight:700;text-align:center;box-sizing:border-box;"></span></button>
   <div class="ab-name" id="topbar-name" style="flex-shrink:0;">Loading&#8230;</div>
   <!-- Drive folder status pill -->
@@ -2428,10 +2428,10 @@
       <div style="padding:18px 22px;">
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;">
           <button class="lp-action" onclick="lpAction('Send Needs List')">📤 Send Needs List</button>
-          <button class="lp-action" onclick="lpAction('Email HOI Agent')">🏠 Email HOI Agent</button>
-          <button class="lp-action" onclick="lpAction('Order Title')">📜 Order Title</button>
-          <button class="lp-action" onclick="lpAction('Request Escrow Docs')">🗃️ Request Escrow Docs</button>
-          <button class="lp-action" onclick="lpAction('Send Realtor Update')">📨 Send Realtor Update</button>
+          <button class="lp-action" id="vahideActHoi" onclick="lpAction('Email HOI Agent')">🏠 Email HOI Agent</button>
+          <button class="lp-action" id="vahideActTitle" onclick="lpAction('Order Title')">📜 Order Title</button>
+          <button class="lp-action" id="vahideActEscrow" onclick="lpAction('Request Escrow Docs')">🗃️ Request Escrow Docs</button>
+          <button class="lp-action" id="vahideActRealtor" onclick="lpAction('Send Realtor Update')">📨 Send Realtor Update</button>
           <button class="lp-action" onclick="lpTextBorrower()">📱 Text Borrower</button>
         </div>
         <div class="lp-card"><div class="lp-h">🚦 Processing Timeline</div><div id="lpTimelineBody"></div></div>
@@ -5362,6 +5362,18 @@ function _ldApplyVaMode() {
 
   // "Assign to VA" — only admins assign tasks to VAs.
   hideId('lpAssignVaBtn');
+
+  // Top-nav entry points a VA doesn't use (declutter). Keep: Back, People (their
+  // workspace), Notifications, tabs, Logout. Hidden: Pipeline board, Qualifying
+  // Analyzer (analytics), Settings (admin), plus SMS Activity + Guideline AI
+  // (cross-lead/utility tools — hidden pending confirmation).
+  ['vahideNavPipeline','vahideNavQualifying','vahideNavSettings','vahideNavSms','vahideNavGuideline']
+    .forEach(function(id){ hideId(id); });
+
+  // Loan Processing quick-actions: hide officer/vendor emails a VA won't send.
+  // Keep the borrower-facing "Send Needs List" + "Text Borrower".
+  ['vahideActHoi','vahideActTitle','vahideActEscrow','vahideActRealtor']
+    .forEach(function(id){ hideId(id); });
 
   // Admin-only tabs — keep Lead Details / Loan Processing / 1003 / Documents /
   // Conditions / Tasks / Activity visible for VA.
@@ -22846,7 +22858,11 @@ async function loadPortalInfo(contactEmail, contactCrmId) {
     const users = await res.json();
     const user = users?.[0];
     if (!user) {
-      document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#555">Not yet registered</span> <button onclick="crmCreatePortalAccount()" style="background:none;border:none;color:#C9A84C;font-size:.72rem;cursor:pointer;text-decoration:underline">Create Account</button>';
+      // "Create Account" is a borrower-portal admin action — hide it for VAs.
+      var _createBtn = (typeof _ldNonAdmin === 'function' && _ldNonAdmin())
+        ? ''
+        : ' <button onclick="crmCreatePortalAccount()" style="background:none;border:none;color:#C9A84C;font-size:.72rem;cursor:pointer;text-decoration:underline">Create Account</button>';
+      document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#555">Not yet registered</span>' + _createBtn;
       document.getElementById('crmBorrowerId').textContent = contactCrmId || '—';
       document.getElementById('crmPassword').textContent = '—';
       const resetBtn = document.getElementById('crmResetPwBtn');
