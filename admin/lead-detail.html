@@ -2425,8 +2425,8 @@
         #tab-processing .lp-stub { opacity:0.6; }
         #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
       </style>
-      <div style="padding:18px 22px;" id="lpProcessingWrap">
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;" id="lpQuickActions">
+      <div style="padding:18px 22px;">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;">
           <button class="lp-action" onclick="lpAction('Send Needs List')">📤 Send Needs List</button>
           <button class="lp-action" onclick="lpAction('Email HOI Agent')">🏠 Email HOI Agent</button>
           <button class="lp-action" onclick="lpAction('Order Title')">📜 Order Title</button>
@@ -9345,58 +9345,6 @@ async function lpLoadProcessing(){
   lpLoadEsign(cid);
   lpLoadVaTasks();
   lpLoadShares();
-  lpApplyVaProcessingLayout();
-}
-
-// Return the .lp-card wrapper that contains a given body element id.
-function _lpCardOf(bodyId){ const b = document.getElementById(bodyId); return b ? b.closest('.lp-card') : null; }
-
-// For VAs, reorder the processing tab so the ACTIONABLE work sits at the top and the
-// admin-heavy sections collapse under an expandable "More details ▸". Admins are left
-// completely untouched. Runs once (idempotent) — the cards are static, so a single
-// DOM reshuffle is enough. Delete controls are already hidden for VAs by the renderers.
-function lpApplyVaProcessingLayout(){
-  if (window._lpVaLayoutApplied) return;
-  const role = (sessionStorage.getItem('rnr_app_role') || '').toLowerCase();
-  if (role !== 'va') return;                 // admin (or role not yet resolved) → full console
-  const wrap = document.getElementById('lpProcessingWrap');
-  if (!wrap) return;
-  window._lpVaLayoutApplied = true;
-
-  // 1. Hoist the actionable cards to the top, directly after the quick-actions row,
-  //    in the requested order: Intake → Docs → Conditions → Tasks → Critical Dates.
-  const prominent = ['lpIntakeBody','lpDocBody','lpConditionsBody','lpTasksBody','lpDatesBody'];
-  let after = document.getElementById('lpQuickActions') || wrap.firstElementChild;
-  prominent.forEach(function(id){
-    const card = _lpCardOf(id);
-    if (card && after){ after.insertAdjacentElement('afterend', card); after = card; }
-  });
-
-  // 2. Collapse the admin-heavy sections under a "More details" disclosure.
-  //    (Loan Snapshot, Third-Party Orders + its tracker strip, Transaction Contacts,
-  //     Appraisal Order, Appraisal Portal, LOE, E-Signature, Related People.)
-  const collapsedEls = [
-    _lpCardOf('lpSnapshotBody'),
-    document.getElementById('lpTrackerBar'),
-    _lpCardOf('lpOrdersBody'),
-    _lpCardOf('lpContactsBody'),
-    _lpCardOf('lpApOrderBody'),
-    _lpCardOf('lpAppraisalPortalBody'),
-    _lpCardOf('lpLoeBody'),
-    _lpCardOf('lpEsignBody'),
-    _lpCardOf('lpRelatedBody')
-  ].filter(Boolean);
-  if (!collapsedEls.length) return;
-
-  const details = document.createElement('details');
-  details.id = 'lpVaMoreDetails';
-  details.style.cssText = 'margin-top:6px;';
-  const summary = document.createElement('summary');
-  summary.textContent = 'More details';
-  summary.style.cssText = 'cursor:pointer;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#C9A84C;padding:12px 4px;border-top:1px solid rgba(255,255,255,.08);user-select:none;';
-  details.appendChild(summary);
-  collapsedEls.forEach(function(el){ details.appendChild(el); });   // moves (re-parents) each element
-  wrap.appendChild(details);
 }
 function lpGoToLender(name){
   const btn = document.querySelector('.ld-tab-btn[onclick*="lenders"]');
