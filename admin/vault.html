@@ -161,6 +161,18 @@
     try { var url = await signedUrl(it.storage_path); window.open(url, '_blank', 'noopener'); }
     catch (e) { alert('Could not open file: ' + ((e && e.message) || 'error')); }
   }
+  // Real file download (blob save with the original name), not just a tab open.
+  async function downloadItem(id) {
+    var it = itemById(id); if (!it) return;
+    try {
+      var url = await signedUrl(it.storage_path);
+      var res = await fetch(url); if (!res.ok) throw new Error('http ' + res.status);
+      var blob = await res.blob(); var obj = URL.createObjectURL(blob);
+      var a = document.createElement('a'); a.href = obj; a.download = it.file_name || 'download';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { try { URL.revokeObjectURL(obj); } catch (_) {} }, 5000);
+    } catch (e) { openItem(id); }   // fallback: open in a tab
+  }
 
   async function deleteItem(id) {
     var it = itemById(id); if (!it) return;
@@ -193,7 +205,8 @@
   document.getElementById('vaultGrid').addEventListener('click', function (e) {
     var el = e.target.closest('[data-act]'); if (!el) return;
     var act = el.getAttribute('data-act'), id = el.getAttribute('data-id');
-    if (act === 'download' || act === 'open') openItem(id);
+    if (act === 'download') downloadItem(id);
+    else if (act === 'open') openItem(id);
     else if (act === 'delete') deleteItem(id);
   });
 

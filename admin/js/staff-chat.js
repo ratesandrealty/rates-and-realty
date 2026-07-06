@@ -281,12 +281,48 @@
       });
     });
   }
-  function attViewHtml(kind, mime, url, name, size) {
+  // Real file download (works cross-origin, keeps the original file name): sign →
+  // fetch → blob → <a download>. Falls back to opening the signed URL in a new tab.
+  async function downloadAttachment(path, name) {
+    if (!path) return;
+    try {
+      var url = await signedUrl(path);
+      var res = await fetch(url); if (!res.ok) throw new Error('http ' + res.status);
+      var blob = await res.blob();
+      var obj = URL.createObjectURL(blob);
+      var a = document.createElement('a'); a.href = obj; a.download = name || 'download';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { try { URL.revokeObjectURL(obj); } catch (_) {} }, 5000);
+    } catch (e) {
+      try { var u = await signedUrl(path); window.open(u, '_blank', 'noopener'); scToast('Opened in a new tab (direct download blocked)'); }
+      catch (_) { scToast('Could not download attachment'); }
+    }
+  }
+  function openLightbox(path, name) {
+    signedUrl(path).then(function (url) {
+      var ov = document.createElement('div'); ov.className = 'sc-light-ov'; ov.id = 'sc-light-ov';
+      ov.innerHTML = '<div class="sc-light-bar"><span class="sc-light-name">' + esc(name || '') + '</span>'
+        + '<button type="button" class="sc-light-dl" data-sc-download="' + esc(path) + '" data-name="' + esc(name || 'image') + '">⬇ Download</button>'
+        + '<button type="button" class="sc-icon" data-sc-light-close aria-label="Close">✕</button></div>'
+        + '<div class="sc-light-body"><img src="' + esc(url) + '" alt="' + esc(name || '') + '"></div>';
+      document.body.appendChild(ov);
+    }).catch(function () { scToast('Could not open image'); });
+  }
+  function closeLightbox() { var ov = document.getElementById('sc-light-ov'); if (ov) ov.remove(); }
+
+  function attViewHtml(kind, mime, url, name, size, path) {
     var k = kind || kindOf(mime);
-    if (k === 'image') return '<a href="' + esc(url) + '" target="_blank" rel="noopener"><img class="sc-att-img" src="' + esc(url) + '" alt="' + esc(name) + '"></a>';
-    if (k === 'video' || k === 'recording') return '<video class="sc-att-media" controls preload="metadata" src="' + esc(url) + '"></video>';
-    if (k === 'audio') return '<audio class="sc-att-audio" controls preload="metadata" src="' + esc(url) + '"></audio>';
-    return '<a class="sc-att-file" href="' + esc(url) + '" target="_blank" rel="noopener"><span class="sc-att-fic">📄</span><span class="sc-att-fmeta"><span class="sc-att-fname">' + esc(name) + '</span><span class="sc-att-fsize">' + esc(humanSize(size)) + '</span></span></a>';
+    var dl = '" data-sc-download="' + esc(path) + '" data-name="' + esc(name) + '"';
+    if (k === 'image') return '<div class="sc-att-imgwrap">'
+      + '<img class="sc-att-img" src="' + esc(url) + '" alt="' + esc(name) + '" data-sc-light="' + esc(path) + '" data-name="' + esc(name) + '">'
+      + '<button type="button" class="sc-att-dl' + dl + ' title="Download">⬇</button></div>';
+    if (k === 'video' || k === 'recording') return '<div class="sc-att-vidwrap">'
+      + '<video class="sc-att-media" controls preload="metadata" src="' + esc(url) + '"></video>'
+      + '<button type="button" class="sc-att-dl2' + dl + '>⬇ Download</button></div>';
+    if (k === 'audio') return '<div class="sc-att-audwrap">'
+      + '<audio class="sc-att-audio" controls preload="metadata" src="' + esc(url) + '"></audio>'
+      + '<button type="button" class="sc-att-dl2' + dl + '>⬇ Download</button></div>';
+    return '<button type="button" class="sc-att-file' + dl + '><span class="sc-att-fic">📄</span><span class="sc-att-fmeta"><span class="sc-att-fname">' + esc(name) + '</span><span class="sc-att-fsize">' + esc(humanSize(size)) + '</span></span><span class="sc-att-fdl">⬇</span></button>';
   }
   function attPlaceholderHtml(a) {
     var kind = a.kind || kindOf(a.mime_type);
@@ -297,7 +333,7 @@
     Array.prototype.forEach.call(nodes, function (node) {
       node.setAttribute('data-hydrated', '1');
       signedUrl(node.getAttribute('data-sc-att')).then(function (url) {
-        node.innerHTML = attViewHtml(node.getAttribute('data-kind'), node.getAttribute('data-mime'), url, node.getAttribute('data-name'), +node.getAttribute('data-size'));
+        node.innerHTML = attViewHtml(node.getAttribute('data-kind'), node.getAttribute('data-mime'), url, node.getAttribute('data-name'), +node.getAttribute('data-size'), node.getAttribute('data-sc-att'));
         var host = node.closest('.sc-messages, #sc-full-messages'); if (host) host.scrollTop = host.scrollHeight;
       }).catch(function () {
         node.innerHTML = '<div class="sc-att-err">⚠ Couldn\'t load ' + esc(node.getAttribute('data-name')) + '</div>';
@@ -505,13 +541,28 @@
       '.sc-att-img{max-width:min(220px,100%);max-height:240px;width:auto;border-radius:8px;display:block;cursor:pointer;border:1px solid rgba(255,255,255,.1)}',
       '.sc-att-media{max-width:min(260px,100%);width:100%;border-radius:8px;background:#000;display:block}',
       '.sc-att-audio{width:230px;max-width:100%;display:block}',
-      '.sc-att-file{display:flex;align-items:center;gap:8px;text-decoration:none;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;color:#e6e6e6;max-width:min(240px,100%)}',
+      '.sc-att-file{display:flex;align-items:center;gap:8px;text-decoration:none;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;color:#e6e6e6;max-width:min(240px,100%);width:100%;text-align:left;cursor:pointer;font-family:inherit}',
       '.sc-att-file:hover{background:rgba(255,255,255,.1)}',
       '.sc-att-fic{font-size:18px;flex-shrink:0}',
       '.sc-att-fmeta{display:flex;flex-direction:column;min-width:0}',
       '.sc-att-fname{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.sc-att-fsize{font-size:10px;color:#888}',
+      '.sc-att-fdl{margin-left:auto;flex-shrink:0;color:#C9A84C;font-size:14px}',
       '.sc-msg.mine .sc-att-file{background:rgba(201,168,76,.14);border-color:rgba(201,168,76,.3)}',
+      // in-message download controls
+      '.sc-att-imgwrap{position:relative;display:inline-block;max-width:100%}',
+      '.sc-att-dl{position:absolute;top:6px;right:6px;width:28px;height:28px;border-radius:8px;border:none;background:rgba(0,0,0,.6);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:.9}',
+      '.sc-att-dl:hover{opacity:1;background:rgba(0,0,0,.82)}',
+      '.sc-att-vidwrap,.sc-att-audwrap{display:flex;flex-direction:column;gap:5px;align-items:flex-start;max-width:100%}',
+      '.sc-att-dl2{align-self:flex-start;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#e6e6e6;font-size:11px;font-weight:600;border-radius:7px;padding:4px 10px;cursor:pointer;font-family:inherit}',
+      '.sc-att-dl2:hover{background:rgba(255,255,255,.14)}',
+      // full-size image lightbox
+      '.sc-light-ov{position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.9);display:flex;flex-direction:column}',
+      '.sc-light-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;flex-shrink:0}',
+      '.sc-light-name{flex:1;min-width:0;color:#ddd;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.sc-light-dl{background:#C9A84C;border:none;color:#111;font-weight:700;font-size:12px;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;flex-shrink:0}',
+      '.sc-light-body{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 16px 16px}',
+      '.sc-light-body img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}',
       // record overlay
       '.sc-rec-ov{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:18px}',
       '.sc-rec-box{width:min(420px,94vw);background:#0d0d0d;border:1px solid rgba(201,168,76,.3);border-radius:14px;overflow:hidden;box-shadow:0 20px 56px rgba(0,0,0,.6);display:flex;flex-direction:column}',
@@ -615,6 +666,9 @@
       if (e.target.closest('[data-sc-back]')) { showList(); return; }
       if (e.target.closest('[data-sc-new]')) { showNewChat(); return; }
       if (e.target.closest('[data-sc-send]')) { send(); return; }
+      var dlb = e.target.closest('[data-sc-download]'); if (dlb) { downloadAttachment(dlb.getAttribute('data-sc-download'), dlb.getAttribute('data-name')); return; }
+      if (e.target.closest('[data-sc-light-close]') || (e.target.classList && e.target.classList.contains('sc-light-ov'))) { closeLightbox(); return; }
+      var lb = e.target.closest('[data-sc-light]'); if (lb) { openLightbox(lb.getAttribute('data-sc-light'), lb.getAttribute('data-name')); return; }
       if (e.target.closest('[data-sc-attach]')) { var f = document.getElementById('sc-file'); if (f) f.click(); return; }
       if (e.target.closest('[data-sc-record]')) { openRecordMenu(); return; }
       var rm = e.target.closest('[data-sc-tray-remove]'); if (rm) { removePending(rm.getAttribute('data-sc-tray-remove')); return; }
