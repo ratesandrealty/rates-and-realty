@@ -27,7 +27,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=2026062401"></script>
+  <script src="/admin/js/auth-guard.js?v=2026070511"></script>
   <script src="/admin/js/crm-comms.js?v=2026070101"></script>
   <script>if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
   <style>
@@ -5242,26 +5242,55 @@ async function loadData() {
    sessionStorage['rnr_copilot_handoff']. We consume it ONCE (only for the loaded lead)
    and open the SAME panels the manual buttons use, pre-filled — never auto-send. */
 function _consumeCopilotHandoff() {
-  var raw = null;
-  try { raw = sessionStorage.getItem('rnr_copilot_handoff'); } catch (e) { return; }
-  if (!raw) return;
-  var h; try { h = JSON.parse(raw); } catch (e) { try { sessionStorage.removeItem('rnr_copilot_handoff'); } catch (_) {} return; }
-  if (!h || !h.contact_id || String(h.contact_id) !== String(contactId)) return;   // only for THIS lead
-  try { sessionStorage.removeItem('rnr_copilot_handoff'); } catch (_) {}            // fire once
+  var h = null;
+  try {
+    var raw = sessionStorage.getItem('rnr_copilot_handoff');
+    if (raw) { try { h = JSON.parse(raw); } catch (e) { h = null; } }
+  } catch (e) {}
+  // Only act for THIS lead, and only if fresh (~2 min) so a stale entry never re-fires.
+  if (h) {
+    var okContact = h.contact_id && String(h.contact_id) === String(contactId);
+    var fresh = !h.ts || (Date.now() - Number(h.ts) < 120000);
+    if (!okContact || !fresh) h = null;
+  }
+  // Consume once: delete the key regardless (a matched OR stale entry is now spent).
+  try { sessionStorage.removeItem('rnr_copilot_handoff'); } catch (_) {}
+  // Fallback: allow the #copilot=loe|esign hash to open the tool (no prefill) if no payload.
+  var action = h ? h.action : null;
+  if (!action) {
+    var m = /(?:^|#)copilot=(loe|esign)\b/.exec(location.hash || '');
+    if (m) action = m[1];
+  }
+  if (!action) return;
+  var _e = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
   setTimeout(function () {
     try {
-      if (h.kind === 'esign') {
+      if (action === 'loe') {
         if (typeof loeOpenEditor !== 'function') { showToast('Letter editor unavailable', true); return; }
-        loeOpenEditor();   // new letter — builds #loeCat/#loeTitle/#loeBody synchronously; signers auto-load
-        var catMap = { credit_letter: 'credit_inquiry', loe: 'other', authorization: 'other', other: 'other' };
-        var cEl = document.getElementById('loeCat'); if (cEl) { try { cEl.value = catMap[h.doc_kind || 'other'] || 'other'; } catch (_) {} }
-        var tEl = document.getElementById('loeTitle'); if (tEl && h.title) tEl.value = h.title;
-        var bEl = document.getElementById('loeBody'); if (bEl && h.body != null) bEl.value = h.body;
-        showToast('Copilot draft loaded — review, add the signature field, then send');
-      } else if (h.kind === 'email') {
+        try { var card = document.getElementById('lpLoeBody'); if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+        loeOpenEditor(null);   // "+ New LOE" editor — builds #loeCat/#loeTitle/#loeDetails/#loeBody; signers auto-load
+        if (h) {
+          var cat = String(h.category || '');
+          var tEl = document.getElementById('loeTitle'); if (tEl && cat) tEl.value = cat;   // topic
+          var cEl = document.getElementById('loeCat');
+          if (cEl && cat) {                                                                 // best-effort select match
+            var want = cat.toLowerCase();
+            for (var i = 0; i < cEl.options.length; i++) {
+              if (cEl.options[i].value.toLowerCase() === want || (cEl.options[i].text || '').toLowerCase() === want) { cEl.selectedIndex = i; break; }
+            }
+          }
+          var dEl = document.getElementById('loeDetails'); if (dEl && h.details) dEl.value = h.details;
+        }
+        var draft = document.getElementById('loeDraftBtn'); if (draft) { try { draft.focus(); } catch (_) {} }
+        showToast('Copilot draft loaded — review, then Draft with AI / send');
+      } else if (action === 'esign') {
+        if (typeof openEsignSendModal !== 'function') { showToast('E-sign composer unavailable', true); return; }
+        openEsignSendModal();
+        if (h && h.note) { setTimeout(function () { var mEl = document.getElementById('esignPdfMessage'); if (mEl) mEl.value = h.note; }, 400); }
+        showToast('E-sign opened — add the document + signature field, then send');
+      } else if (action === 'email') {   // backward-compat with the earlier email handoff
         if (typeof openEmailComposer !== 'function') { showToast('Email composer unavailable', true); return; }
-        var _e = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
-        openEmailComposer({ subject: h.subject || '', bodyHtml: _e(h.body || '').replace(/\n/g, '<br>') });
+        openEmailComposer({ subject: (h && h.subject) || '', bodyHtml: _e((h && h.body) || '').replace(/\n/g, '<br>') });
       }
     } catch (e) { console.warn('[copilot handoff] open failed', e); }
   }, 600);
@@ -10624,10 +10653,13 @@ var LOE_CATEGORIES = [
 ];
 var LOE_CAT_LABEL = {}; LOE_CATEGORIES.forEach(function(c){ LOE_CAT_LABEL[c[0]] = c[1]; });
 var LOE_STATUS_BADGE = {
-  drafted:{ t:'Draft',  c:'#C9A84C', bg:'rgba(201,168,76,0.14)' },
-  sent:   { t:'Sent',   c:'#5B8DEF', bg:'rgba(91,141,239,0.14)' },
-  signed: { t:'Signed', c:'#3FB950', bg:'rgba(63,185,80,0.14)' },
-  voided: { t:'Voided', c:'#888888', bg:'rgba(255,255,255,0.06)' }
+  needed:   { t:'Needed',    c:'#888888', bg:'rgba(255,255,255,0.06)' },
+  requested:{ t:'Requested', c:'#888888', bg:'rgba(255,255,255,0.06)' },
+  drafting: { t:'Drafting',  c:'#C9A84C', bg:'rgba(201,168,76,0.14)' },
+  drafted:  { t:'Draft',  c:'#C9A84C', bg:'rgba(201,168,76,0.14)' },
+  sent:     { t:'Sent',   c:'#5B8DEF', bg:'rgba(91,141,239,0.14)' },
+  signed:   { t:'Signed', c:'#3FB950', bg:'rgba(63,185,80,0.14)' },
+  voided:   { t:'Voided', c:'#888888', bg:'rgba(255,255,255,0.06)' }
 };
 
 var _loeRows = [];        // last-loaded list for this lead
@@ -11109,7 +11141,7 @@ async function lpLoadEsign(cid){
     if(!data || !data.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No signature requests.</div>'; return; }
     const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
     const badge = (st)=>{
-      const m = { signed:{t:'Signed',c:'#3FB950'}, completed:{t:'Signed',c:'#3FB950'}, pending:{t:'Pending',c:'#E5984D'}, sent:{t:'Sent',c:'#5B8DEF'}, expired:{t:'Expired',c:'#E5484D'}, declined:{t:'Declined',c:'#E5484D'} };
+      const m = { signed:{t:'Signed',c:'#3FB950'}, completed:{t:'Signed',c:'#3FB950'}, pending:{t:'Pending',c:'#E5984D'}, sent:{t:'Sent',c:'#5B8DEF'}, expired:{t:'Expired',c:'#E5484D'}, declined:{t:'Declined',c:'#E5484D'}, voided:{t:'Voided',c:'#888888'} };
       const s = m[(st||'').toLowerCase()] || { t:(st||'—'), c:'#888' };
       return '<span style="border:1px solid '+s.c+'55;color:'+s.c+';border-radius:10px;padding:2px 9px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0;">'+lpEsc(s.t)+'</span>';
     };
