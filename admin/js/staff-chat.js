@@ -637,6 +637,7 @@
     try {
       var hist = _copHistory.slice(-COP_MAX_MSGS).map(function (m) {
         var e = { role: m.role, content: m.content };
+        if (m._briefing) e._briefing = true;
         if (m.actions && m.actions.length) {
           e.actions = m.actions.map(function (a) {
             var st = (a._state === 'busy' || a._state === 'error') ? 'pending' : a._state;   // interrupted → re-offerable
@@ -671,6 +672,21 @@
   }
   function copClearSaved() { try { sessionStorage.removeItem(COP_CONVO_KEY); } catch (e) {} }
 
+  // ── Auto morning briefing (in-app only; once per Pacific day) ──
+  var COP_BRIEF_KEY = 'rnr_copilot_briefing_date';
+  var COP_BRIEF_PROMPT = "Good morning — give me my briefing for today: my top priority leads to work, what's on my calendar today, and anyone who's gone stale and needs follow-up. Keep it tight and actionable.";
+  function copToday() { try { return new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' }); } catch (e) { return new Date().toDateString(); } }
+  function maybeAutoBrief() {
+    if (!copAllowed()) return;                                  // copilot is gated (not VA)
+    if (!document.getElementById('sc-cop-msgs')) return;        // only the floating copilot pane
+    if (_copBusy || _copHistory.length > 0) return;             // don't interrupt a restored/ongoing convo
+    var today = copToday(), last = null;
+    try { last = localStorage.getItem(COP_BRIEF_KEY); } catch (e) {}
+    if (last === today) return;                                 // already briefed today
+    try { localStorage.setItem(COP_BRIEF_KEY, today); } catch (e) {}   // set BEFORE async → at most once/day
+    copSend(COP_BRIEF_PROMPT, { briefing: true });
+  }
+
   function copRender() {
     var box = document.getElementById('sc-cop-msgs'); if (!box) return;
     if (!_copHistory.length && !_copBusy) {
@@ -682,11 +698,18 @@
     }
     var html = _copHistory.map(function (m) {
       var mine = m.role === 'user';
+      if (mine && m._briefing) return '<div class="cop-brief-label">☀️ Morning briefing</div>';   // auto-brief header, not a user bubble
       var bubble = '<div class="cop-msg' + (mine ? ' mine' : '') + '">' + (mine ? esc(m.content) : copMd(m.content)) + '</div>';
       if (!mine && m.actions && m.actions.length) bubble += m.actions.filter(function (a) { return a._state !== 'dismissed'; }).map(copCardHtml).join('');
       return bubble;
     }).join('');
-    if (_copBusy) html += '<div class="cop-msg cop-think"><span></span><span></span><span></span></div>';
+    if (_copBusy) {
+      var lastT = _copHistory[_copHistory.length - 1];
+      var briefing = lastT && lastT.role === 'user' && lastT._briefing;
+      html += briefing
+        ? '<div class="cop-msg cop-think cop-brief-think">☀️ Preparing your briefing… <span></span><span></span><span></span></div>'
+        : '<div class="cop-msg cop-think"><span></span><span></span><span></span></div>';
+    }
     box.innerHTML = html; box.scrollTop = box.scrollHeight;
     copPersist();
   }
@@ -694,10 +717,12 @@
     try { var cl = await client(); if (!cl) return null; var r = await cl.auth.getSession(); return (r && r.data && r.data.session) ? r.data.session.access_token : null; }
     catch (e) { return null; }
   }
-  async function copSend(text) {
+  async function copSend(text, opts) {
     text = (text || '').trim(); if (!text || _copBusy) return;
     var cfg = window.APP_CONFIG || {};
-    _copHistory.push({ role: 'user', content: text });
+    var userTurn = { role: 'user', content: text };
+    if (opts && opts.briefing) userTurn._briefing = true;       // rendered as a "Morning briefing" header
+    _copHistory.push(userTurn);
     _copBusy = true; copRender();
     var token = await copToken();
     if (!token) { _copBusy = false; _copHistory.push({ role: 'assistant', content: 'Please sign in to use the Copilot.' }); copRender(); return; }
@@ -745,7 +770,7 @@
     if (cp) cp.style.display = (tab === 'chat') ? 'flex' : 'none';
     if (kp) kp.style.display = (tab === 'copilot') ? 'flex' : 'none';
     Array.prototype.forEach.call(panel.querySelectorAll('[data-sc-tab]'), function (b) { b.classList.toggle('is-active', b.getAttribute('data-sc-tab') === tab); });
-    if (tab === 'copilot') { copRender(); var i = document.getElementById('sc-cop-input'); if (i) setTimeout(function () { i.focus(); }, 30); }
+    if (tab === 'copilot') { copRender(); maybeAutoBrief(); var i = document.getElementById('sc-cop-input'); if (i) setTimeout(function () { i.focus(); }, 30); }
   }
 
   // ── CSS ─────────────────────────────────────────────────────────────────
@@ -861,6 +886,8 @@
       '.cop-card-desc{font-size:12px;color:#ddd;line-height:1.45;margin-bottom:5px;white-space:pre-wrap;word-break:break-word}',
       '.cop-card-ta{width:100%;box-sizing:border-box;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12.5px;line-height:1.45;font-family:inherit;padding:7px 9px;min-height:66px;resize:vertical;margin-bottom:6px;outline:none}',
       '.cop-card-title{width:100%;box-sizing:border-box;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12.5px;font-weight:600;font-family:inherit;padding:6px 9px;margin-bottom:6px;outline:none}',
+      '.cop-brief-label{align-self:center;font-size:10.5px;color:#C9A84C;font-weight:700;letter-spacing:.5px;text-transform:uppercase;opacity:.85;margin:2px 0}',
+      '.cop-brief-think{color:#C9A84C;font-size:12px;font-weight:600;gap:4px}',
       '.cop-card-title:focus{border-color:rgba(201,168,76,.55)}',
       '.cop-card-ta:focus{border-color:rgba(201,168,76,.55)}',
       '.cop-card-err{font-size:11px;color:#f2a5a7;margin-bottom:6px}',
