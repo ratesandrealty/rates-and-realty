@@ -26,9 +26,10 @@
   var _pending = [], _signed = {}, _pidSeq = 0, _rec = null;               // staged attachments, signed-URL cache, recorder state
   // ── CRM Copilot (relocated from layout.js so the combined bubble is app-wide) ──
   var _tab = 'chat';                                                        // active panel tab: 'chat' | 'copilot'
-  var _copHistory = [], _copBusy = false, _copActions = {}, _copActionSeq = 0;
+  var _copHistory = [], _copBusy = false, _copActions = {}, _copActionSeq = 0, _copConvoDate = null;
   var COP_CHIPS = ["Who should I work today?", "How's my pipeline?", "Who's gone stale?", "Summarize [lead name]"];
   var COP_CONVO_KEY = 'rnr_copilot_convo', COP_MAX_MSGS = 50;               // sessionStorage: persist until logoff
+  var COP_EXPANDED_KEY = 'rnr_combo_expanded';                              // localStorage: large vs normal panel size
   function copAllowed() { return role() !== 'va'; }                        // copilot backend is admin/agent/loa-gated
 
   function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -646,7 +647,9 @@
         }
         return e;
       });
-      sessionStorage.setItem(COP_CONVO_KEY, JSON.stringify({ v: 1, seq: _copActionSeq, history: hist }));
+      // date = Pacific day the convo was last written; read back by copRestore so a new day
+      // still auto-briefs even when yesterday's conversation is rehydrated (see maybeAutoBrief).
+      sessionStorage.setItem(COP_CONVO_KEY, JSON.stringify({ v: 1, seq: _copActionSeq, date: copToday(), history: hist }));
     } catch (e) {}
   }
   function copRestore() {
@@ -657,6 +660,7 @@
     _copHistory = data.history;
     _copActions = {};
     _copActionSeq = Number(data.seq) || 0;
+    _copConvoDate = data.date || null;                          // Pacific date this convo was last saved (may be a prior day)
     _copHistory.forEach(function (m) {
       if (m.actions && m.actions.length) {
         m.actions.forEach(function (a) {
@@ -679,10 +683,14 @@
   function maybeAutoBrief() {
     if (!copAllowed()) return;                                  // copilot is gated (not VA)
     if (!document.getElementById('sc-cop-msgs')) return;        // only the floating copilot pane
-    if (_copBusy || _copHistory.length > 0) return;             // don't interrupt a restored/ongoing convo
+    if (_copBusy) return;                                       // don't interrupt an in-flight turn
     var today = copToday(), last = null;
     try { last = localStorage.getItem(COP_BRIEF_KEY); } catch (e) {}
-    if (last === today) return;                                 // already briefed today
+    if (last === today) return;                                 // already auto-briefed today
+    // Skip only if there's an ONGOING conversation from TODAY. A convo restored from a
+    // previous day is treated as stale, so a new day still auto-briefs even though history
+    // was rehydrated (_copConvoDate carries the persisted convo's Pacific date; see copPersist).
+    if (_copHistory.length > 0 && _copConvoDate === today) return;
     try { localStorage.setItem(COP_BRIEF_KEY, today); } catch (e) {}   // set BEFORE async → at most once/day
     copSend(COP_BRIEF_PROMPT, { briefing: true });
   }
@@ -692,7 +700,8 @@
     if (!_copHistory.length && !_copBusy) {
       box.innerHTML = '<div class="cop-empty"><div class="cop-empty-t">Hi 👋 I\'m your CRM Copilot.</div>'
         + '<div class="cop-empty-s">Ask about your leads, pipeline, and who to work.</div>'
-        + '<div class="cop-chips">' + COP_CHIPS.map(function (c) { return '<button class="cop-chip" data-cop-chip="' + esc(c) + '">' + esc(c) + '</button>'; }).join('') + '</div></div>';
+        + '<div class="cop-chips"><button class="cop-chip cop-chip-brief" data-cop-brief>☀️ Morning briefing</button>'
+        + COP_CHIPS.map(function (c) { return '<button class="cop-chip" data-cop-chip="' + esc(c) + '">' + esc(c) + '</button>'; }).join('') + '</div></div>';
       copPersist();
       return;
     }
@@ -772,6 +781,17 @@
     Array.prototype.forEach.call(panel.querySelectorAll('[data-sc-tab]'), function (b) { b.classList.toggle('is-active', b.getAttribute('data-sc-tab') === tab); });
     if (tab === 'copilot') { copRender(); maybeAutoBrief(); var i = document.getElementById('sc-cop-input'); if (i) setTimeout(function () { i.focus(); }, 30); }
   }
+
+  // ── expand / collapse the floating panel size (persisted; both tabs) ──
+  function scIsExpanded() { try { return localStorage.getItem(COP_EXPANDED_KEY) === '1'; } catch (e) { return false; } }
+  function scApplyExpanded() {
+    var p = document.getElementById('staff-chat-panel'); if (!p) return;
+    var on = scIsExpanded();
+    p.classList.toggle('is-expanded', on);
+    var b = p.querySelector('[data-sc-size]');
+    if (b) { b.textContent = on ? '⤡' : '⤢'; b.title = on ? 'Collapse' : 'Expand'; }
+  }
+  function scToggleExpanded() { try { localStorage.setItem(COP_EXPANDED_KEY, scIsExpanded() ? '0' : '1'); } catch (e) {} scApplyExpanded(); }
 
   // ── CSS ─────────────────────────────────────────────────────────────────
   function injectCss() {
@@ -860,6 +880,15 @@
       '.sc-tab.is-active{color:#111;background:#C9A84C}',
       '.sc-pane{flex:1;min-height:0;display:flex;flex-direction:column}',
       '.sc-panel[data-tab="copilot"] .sc-chat-only{display:none}',
+      // header controls that only apply to the Copilot tab (e.g. ☀️ on-demand briefing)
+      '.sc-cop-only{display:none}',
+      '.sc-panel[data-tab="copilot"] .sc-cop-only{display:inline-block}',
+      // Expanded (large / near-fullscreen) panel — grows up-and-left from the bottom-right
+      // anchor, respecting top+side margins so nothing is cut off. Both tabs use it: the
+      // panes already flex to fill, so messages + composer scale automatically.
+      '.sc-panel.is-expanded{width:min(1000px,calc(100vw - 40px));height:calc(100vh - 108px);max-height:calc(100vh - 108px)}',
+      '@media(max-width:480px){.sc-panel.is-expanded{left:12px;right:12px;width:auto;bottom:80px;height:calc(100vh - 96px);max-height:calc(100vh - 96px)}}',
+      '.cop-chip-brief{background:rgba(201,168,76,.18);border-color:rgba(201,168,76,.5)}',
       // Copilot pane (ported look from layout.js)
       '.cop-msgs{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}',
       '.cop-empty{color:#aaa;text-align:center;padding:16px 8px;margin:auto 0}',
@@ -988,7 +1017,9 @@
       + '<span class="sc-tabs"><button class="sc-tab is-active" data-sc-tab="chat">💬 Chat</button>' + copTabBtn + '</span>'
       + '<span class="sc-head-actions">'
       + '<button class="sc-icon sc-chat-only" data-sc-new title="New chat">＋</button>'
-      + '<button class="sc-icon sc-chat-only" data-sc-expand title="Open full page">⤢</button>'
+      + '<button class="sc-icon sc-cop-only" data-cop-brief title="Morning briefing">☀️</button>'
+      + '<button class="sc-icon sc-chat-only" data-sc-expand title="Open full page">↗</button>'
+      + '<button class="sc-icon" data-sc-size title="Expand">⤢</button>'
       + '<button class="sc-icon" data-sc-close title="Close">✕</button></span></div>'
       + '<div class="sc-panel-body">'
       + '<div id="sc-chat-pane" class="sc-pane" style="display:flex">'
@@ -1005,6 +1036,7 @@
       + '</div>';
     document.body.appendChild(panel);
     copRestore();   // rehydrate the Copilot conversation from sessionStorage (survives refresh)
+    scApplyExpanded();   // restore the last expanded/collapsed panel-size preference
 
     // Anchor flush to the corner unless the AI FAB is present (dashboard) — then
     // clear it. The FAB is injected by layout.js and may land after us, so re-check.
@@ -1055,6 +1087,10 @@
       if (e.target.closest('[data-sc-toggle]')) { setOpen(!_open); return; }
       if (e.target.closest('[data-sc-close]')) { setOpen(false); return; }
       var tabBtn = e.target.closest('[data-sc-tab]'); if (tabBtn) { scSetTab(tabBtn.getAttribute('data-sc-tab')); return; }
+      if (e.target.closest('[data-sc-size]')) { scToggleExpanded(); return; }
+      // On-demand morning briefing (header button + starter chip). Does NOT touch the
+      // once/day auto-brief guard — the user can always pull the briefing up.
+      if (e.target.closest('[data-cop-brief]')) { copSend(COP_BRIEF_PROMPT, { briefing: true }); return; }
       // Copilot: send / chips / action-card confirm+dismiss
       if (e.target.closest('[data-cop-send]')) { var ci = document.getElementById('sc-cop-input'); if (ci) { var cv = ci.value; ci.value = ''; copSend(cv); } return; }
       var chip = e.target.closest('[data-cop-chip]');
