@@ -170,6 +170,9 @@
         // Staff-to-staff chat: open to all internal staff roles.
         'chat':               ['va', 'admin', 'agent', 'loa'],
         'chat.html':          ['va', 'admin', 'agent', 'loa'],
+        // Chat attachment vault: admin only.
+        'vault':              ['admin'],
+        'vault.html':         ['admin'],
       };
       const filename = window.location.pathname.split('/').pop();
       const allowed = PAGE_ACCESS[filename];
@@ -201,7 +204,7 @@
     function mountStaffChat() {
       if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
       const sc = document.createElement('script');
-      sc.src = '/admin/js/staff-chat.js?v=2026070504';
+      sc.src = '/admin/js/staff-chat.js?v=2026070505';
       document.head.appendChild(sc);
     }
     if (document.readyState === 'loading') {

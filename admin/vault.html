@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>Vault — Rates &amp; Realty CRM</title>
+<link rel="icon" href="/assets/images/favicon.png">
+<script src="/api/env.js?v=2026033003"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/admin/js/supabase-client.js?v=2026050601"></script>
+<script src="/admin/js/auth-guard.js?v=2026070505"></script>
+<style>
+  :root { --gold:#c9a84c; --bg:#0a0a0a; --surface:#141414; --surface2:#1a1a1a; --border:rgba(255,255,255,0.08); --text:#fff; --muted:rgba(255,255,255,0.45); --red:#e0524f; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; min-height:100vh; }
+  a { color:inherit; }
+  .header { display:flex; align-items:center; gap:12px; padding:12px 20px; background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .header h1 { font-size:16px; font-weight:700; }
+  .header .spacer { flex:1; }
+  .who { font-size:12px; color:var(--muted); }
+  .btn-back { padding:6px 12px; background:rgba(255,255,255,0.06); border:1px solid var(--border); border-radius:7px; color:var(--muted); font-size:12px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:5px; }
+  .btn-back:hover { color:#fff; }
+
+  .wrap { max-width:1200px; margin:0 auto; padding:20px 16px 60px; }
+  .toolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+  .tabs { display:inline-flex; background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .tab { background:transparent; border:none; color:var(--muted); font-size:12.5px; font-weight:600; padding:8px 14px; cursor:pointer; font-family:inherit; }
+  .tab.active { background:var(--gold); color:#111; }
+  .search { flex:1; min-width:180px; max-width:340px; background:var(--surface); border:1px solid var(--border); border-radius:9px; color:#fff; font-size:13px; padding:9px 12px; outline:none; }
+  .count { font-size:12px; color:var(--muted); margin-left:auto; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:14px; }
+  .v-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; }
+  .v-thumb { aspect-ratio:16/10; background:var(--surface2); display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; cursor:pointer; }
+  .v-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+  .v-ic { font-size:40px; opacity:.55; }
+  .v-play { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  .v-play span { width:44px; height:44px; border-radius:50%; background:rgba(0,0,0,.55); border:1px solid rgba(201,168,76,.5); color:#C9A84C; display:flex; align-items:center; justify-content:center; font-size:18px; }
+  .v-body { padding:10px 12px; flex:1; min-width:0; }
+  .v-name { font-size:13px; font-weight:600; color:#eee; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .v-sub { font-size:11px; color:var(--muted); margin-top:4px; line-height:1.5; }
+  .v-kindtag { display:inline-block; font-size:9px; text-transform:uppercase; letter-spacing:.4px; font-weight:700; color:var(--gold); background:rgba(201,168,76,.14); border-radius:6px; padding:1px 6px; margin-bottom:5px; }
+  .v-actions { display:flex; border-top:1px solid var(--border); }
+  .v-act { flex:1; background:transparent; border:none; color:#cfcfcf; font-size:12px; font-weight:600; padding:9px; cursor:pointer; font-family:inherit; }
+  .v-act:hover { background:rgba(255,255,255,.05); color:#fff; }
+  .v-act.del { flex:0 0 46px; color:#e88; border-left:1px solid var(--border); }
+  .v-act.del:hover { background:rgba(224,82,79,.14); color:#ff9a9a; }
+  .empty, .err { color:var(--muted); font-size:14px; padding:50px 10px; text-align:center; }
+  .err { color:var(--red); }
+  @media (max-width:520px){ .grid { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a href="/dashboard/admin.html" class="btn-back">← Dashboard</a>
+  <a href="/admin/chat.html" class="btn-back">💬 Chat</a>
+  <h1>🗄️ Vault</h1>
+  <div class="spacer"></div>
+  <span class="who" id="adminUserEmail"></span>
+  <button class="btn-back" onclick="window.adminLogout && window.adminLogout()">Log out</button>
+</div>
+
+<div class="wrap">
+  <div class="toolbar">
+    <div class="tabs" id="vTabs">
+      <button class="tab active" data-tab="all">All</button>
+      <button class="tab" data-tab="image">Images</button>
+      <button class="tab" data-tab="video">Videos</button>
+      <button class="tab" data-tab="file">Files</button>
+    </div>
+    <input class="search" id="vSearch" type="text" placeholder="Search file name…" autocomplete="off">
+    <span class="count" id="vCount"></span>
+  </div>
+  <div id="vaultGrid" class="grid"><div class="empty">Loading…</div></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var BUCKET = 'chat-attachments';
+  var _all = [], _tab = 'all', _q = '', _sb = null, _signed = {};
+
+  function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function humanSize(b) { b = Number(b) || 0; if (b < 1024) return b + ' B'; if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'; return (b / 1048576).toFixed(1) + ' MB'; }
+  function fmtDate(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+  function tabOf(kind) { var k = (kind || '').toLowerCase(); if (k === 'image') return 'image'; if (k === 'video' || k === 'recording') return 'video'; return 'file'; }
+
+  async function client() { if (_sb) return _sb; _sb = (typeof window.getSupabaseClient === 'function') ? await window.getSupabaseClient() : window._supabaseClient; return _sb; }
+  function signedUrl(path) {
+    var now = Date.now(), c = _signed[path];
+    if (c && c.exp > now) return Promise.resolve(c.url);
+    return client().then(function (sb) {
+      return sb.storage.from(BUCKET).createSignedUrl(path, 3600).then(function (r) {
+        if (r.error || !r.data) throw (r.error || new Error('sign failed'));
+        _signed[path] = { url: r.data.signedUrl, exp: now + 55 * 60000 }; return r.data.signedUrl;
+      });
+    });
+  }
+
+  async function load() {
+    var grid = document.getElementById('vaultGrid');
+    try {
+      var sb = await client();
+      var r = await sb.rpc('chat_vault_list');
+      if (r.error) throw r.error;
+      _all = r.data || [];
+      render();
+    } catch (e) {
+      grid.innerHTML = '<div class="err">Couldn\'t load the vault: ' + esc((e && e.message) || 'error') + '</div>';
+    }
+  }
+
+  function filtered() {
+    return _all.filter(function (it) {
+      if (_tab !== 'all' && tabOf(it.kind) !== _tab) return false;
+      if (_q && (it.file_name || '').toLowerCase().indexOf(_q) === -1) return false;
+      return true;
+    });
+  }
+
+  function cardHtml(it) {
+    var t = tabOf(it.kind);
+    var thumb = (t === 'image')
+      ? '<div class="v-thumb" data-thumb="' + esc(it.storage_path) + '" data-act="open" data-id="' + esc(it.id) + '"><span class="v-ic">🖼️</span></div>'
+      : (t === 'video')
+        ? '<div class="v-thumb" data-act="open" data-id="' + esc(it.id) + '"><span class="v-ic">🎬</span><span class="v-play"><span>▶</span></span></div>'
+        : '<div class="v-thumb" data-act="open" data-id="' + esc(it.id) + '"><span class="v-ic">' + ((it.kind === 'audio') ? '🎵' : '📄') + '</span></div>';
+    var who = it.uploaded_by ? esc(it.uploaded_by) : 'Staff';
+    return '<div class="v-card" data-id="' + esc(it.id) + '" data-path="' + esc(it.storage_path) + '" data-name="' + esc(it.file_name || 'file') + '">'
+      + thumb
+      + '<div class="v-body">'
+      +   '<span class="v-kindtag">' + esc(it.kind || 'file') + '</span>'
+      +   '<div class="v-name" title="' + esc(it.file_name || '') + '">' + esc(it.file_name || 'Untitled') + '</div>'
+      +   '<div class="v-sub">' + esc(humanSize(it.size_bytes)) + ' · ' + who + '<br>' + esc(fmtDate(it.created_at)) + '</div>'
+      + '</div>'
+      + '<div class="v-actions">'
+      +   '<button class="v-act" data-act="download" data-id="' + esc(it.id) + '">⬇ Download</button>'
+      +   '<button class="v-act del" data-act="delete" data-id="' + esc(it.id) + '" title="Delete">🗑</button>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function render() {
+    var grid = document.getElementById('vaultGrid');
+    var rows = filtered();
+    document.getElementById('vCount').textContent = rows.length + ' item' + (rows.length === 1 ? '' : 's');
+    grid.innerHTML = rows.length ? rows.map(cardHtml).join('') : '<div class="empty">No attachments' + (_q ? ' match “' + esc(_q) + '”' : ' yet') + '.</div>';
+    // lazily fill image thumbnails with signed URLs
+    Array.prototype.forEach.call(grid.querySelectorAll('.v-thumb[data-thumb]'), function (el) {
+      signedUrl(el.getAttribute('data-thumb')).then(function (url) {
+        el.innerHTML = '<img src="' + url + '" alt="">';
+      }).catch(function () {});
+    });
+  }
+
+  function itemById(id) { return _all.filter(function (x) { return String(x.id) === String(id); })[0]; }
+
+  async function openItem(id) {
+    var it = itemById(id); if (!it) return;
+    try { var url = await signedUrl(it.storage_path); window.open(url, '_blank', 'noopener'); }
+    catch (e) { alert('Could not open file: ' + ((e && e.message) || 'error')); }
+  }
+
+  async function deleteItem(id) {
+    var it = itemById(id); if (!it) return;
+    if (!confirm('Delete “' + (it.file_name || 'this file') + '” from the vault? This removes it for everyone and cannot be undone.')) return;
+    try {
+      var sb = await client();
+      var r = await sb.rpc('chat_attachment_delete', { p_id: id });
+      if (r.error) throw r.error;
+      var path = (r.data && r.data.storage_path) || it.storage_path;
+      if (path) { try { await sb.storage.from(BUCKET).remove([path]); } catch (e) { /* row already gone; ignore storage miss */ } }
+      _all = _all.filter(function (x) { return String(x.id) !== String(id); });
+      render();
+    } catch (e) {
+      alert('Delete failed: ' + ((e && e.message) || 'error'));
+    }
+  }
+
+  // events
+  document.getElementById('vTabs').addEventListener('click', function (e) {
+    var b = e.target.closest('.tab'); if (!b) return;
+    _tab = b.getAttribute('data-tab');
+    Array.prototype.forEach.call(this.querySelectorAll('.tab'), function (x) { x.classList.toggle('active', x === b); });
+    render();
+  });
+  var searchT = null;
+  document.getElementById('vSearch').addEventListener('input', function () {
+    var v = this.value.trim().toLowerCase();
+    clearTimeout(searchT); searchT = setTimeout(function () { _q = v; render(); }, 180);
+  });
+  document.getElementById('vaultGrid').addEventListener('click', function (e) {
+    var el = e.target.closest('[data-act]'); if (!el) return;
+    var act = el.getAttribute('data-act'), id = el.getAttribute('data-id');
+    if (act === 'download' || act === 'open') openItem(id);
+    else if (act === 'delete') deleteItem(id);
+  });
+
+  // fill signed-in email once auth-guard publishes the session
+  (function fillEmail(n) {
+    n = n || 0;
+    try { var u = window._adminUser; if (u && u.email) { var el = document.getElementById('adminUserEmail'); if (el) el.textContent = u.email; return; } } catch (e) {}
+    if (n < 40) setTimeout(function () { fillEmail(n + 1); }, 150);
+  })();
+
+  function start() { if (typeof window.getSupabaseClient === 'function' || window._supabaseClient) load(); else setTimeout(start, 150); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+</script>
+</body>
+</html>

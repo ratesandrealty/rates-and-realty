@@ -80,10 +80,18 @@
       .map(function (p) { return { storage_path: p.storage_path, file_name: p.file_name, mime_type: p.mime_type, size_bytes: p.size_bytes, kind: p.kind }; });
     if (!body && !atts.length) return;              // nothing to send
     try {
-      await rpc('staff_message_send', { p_thread: _active, p_body: body, p_attachments: atts });
+      var row = await rpc('staff_message_send', { p_thread: _active, p_body: body, p_attachments: atts });
       if (inp) inp.value = '';
       _pending = []; renderTray(); updateSendState();
-      await reloadActive(); await rpc('staff_thread_mark_read', { p_thread: _active }); loadThreads();
+      // Optimistic: render our own message WITH the attachments we just uploaded, so the
+      // sender's bubble matches the recipient's immediately — independent of re-fetch/echo
+      // timing. reloadActive() then reconciles (it also returns attachments).
+      if (row && row.id && !_msgs.some(function (x) { return x.id === row.id; })) {
+        _msgs.push({ id: row.id, sender_user_id: row.sender_user_id || null, sender_email: null, body: body, created_at: row.created_at || new Date().toISOString(), mine: true, attachments: atts });
+        renderMessages();
+      }
+      await rpc('staff_thread_mark_read', { p_thread: _active });
+      reloadActive(); loadThreads();
     } catch (e) { console.warn('[staff-chat] send:', e && e.message); scToast('Message failed to send'); }
   }
   async function openDm(userId) {
@@ -297,50 +305,72 @@
     });
   }
 
-  // ── recording (camera/mic or screen) ─────────────────────────────────────
+  // ── recording (camera / audio-only / screen) ─────────────────────────────
   function openRecordMenu() {
     if (!_active) { scToast('Open a conversation first'); return; }
     closeRecordUi();
     var ov = document.createElement('div'); ov.className = 'sc-rec-ov'; ov.id = 'sc-rec-ov';
-    ov.innerHTML = '<div class="sc-rec-box"><div class="sc-rec-head"><span>Record</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
-      + '<div class="sc-rec-menu">'
-      + '<button type="button" class="sc-rec-opt" data-sc-rec-start="camera">🎥 Record video</button>'
-      + '<button type="button" class="sc-rec-opt" data-sc-rec-start="screen">🖥 Record screen</button>'
-      + '</div></div>';
+    ov.innerHTML = '<div class="sc-rec-box"></div>';
     document.body.appendChild(ov);
+    showRecMenu();
+  }
+  function showRecMenu() {
+    stopRecording();
+    var box = document.querySelector('#sc-rec-ov .sc-rec-box'); if (!box) return;
+    box.innerHTML = '<div class="sc-rec-head"><span>Record</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
+      + '<div class="sc-rec-menu">'
+      + '<button type="button" class="sc-rec-opt" data-sc-rec-start="camera">🎥 Record camera (myself)</button>'
+      + '<button type="button" class="sc-rec-opt" data-sc-rec-start="audio">🎙️ Record audio only</button>'
+      + '<button type="button" class="sc-rec-opt" data-sc-rec-start="screen">🖥️ Record screen</button>'
+      + '</div>';
   }
   function stopTracks() { if (_rec && _rec.stream) { try { _rec.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {} } }
   function closeRecordUi() {
-    stopTracks();
-    if (_rec && _rec.timer) { clearInterval(_rec.timer); }
+    stopRecording();
     if (_rec && _rec.previewUrl) { try { URL.revokeObjectURL(_rec.previewUrl); } catch (_) {} }
     var ov = document.getElementById('sc-rec-ov'); if (ov) ov.remove();
     _rec = null;
   }
-  async function beginRecording(kind) {
+  // Never throws: shows a clear inline "grant permission" message + a Back button.
+  function recPermError(box, mode) {
+    stopTracks();
+    var msg = (mode === 'screen')
+      ? 'Screen sharing was blocked or cancelled. Go back and try again.'
+      : 'Allow camera & microphone for this site in your browser settings, then try again.';
+    box.innerHTML = '<div class="sc-rec-head"><span>Permission needed</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
+      + '<div class="sc-rec-msg">🔒 ' + esc(msg) + '</div>'
+      + '<div class="sc-rec-ctrl"><button type="button" class="sc-rec-opt sc-rec-discard" data-sc-rec-menu>← Back</button></div>';
+  }
+  async function beginRecording(mode) {
     var box = document.querySelector('#sc-rec-ov .sc-rec-box'); if (!box) return;
-    var stream;
+    if (!navigator.mediaDevices) { recPermError(box, mode); return; }
+    var isAudio = (mode === 'audio'), stream;
     try {
-      stream = (kind === 'screen')
-        ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-        : await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    } catch (e) {
-      scToast(kind === 'screen' ? 'Screen recording was blocked or cancelled' : 'Camera / microphone permission denied');
-      return;
-    }
-    var mime = (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('video/webm')) ? 'video/webm' : '';
+      if (mode === 'screen') {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        try { var mic = await navigator.mediaDevices.getUserMedia({ audio: true }); mic.getAudioTracks().forEach(function (t) { stream.addTrack(t); }); } catch (_) { /* mic optional */ }
+      } else if (isAudio) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      }
+    } catch (e) { recPermError(box, mode); return; }
+    var recMime = isAudio ? 'audio/webm' : 'video/webm';
+    var useMime = (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(recMime)) ? recMime : '';
     var recorder;
-    try { recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
+    try { recorder = useMime ? new MediaRecorder(stream, { mimeType: useMime }) : new MediaRecorder(stream); }
     catch (e) { scToast('Recording is not supported in this browser'); try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {} return; }
     var chunks = [];
     recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
-    recorder.onstop = function () { showRecPreview(new Blob(chunks, { type: 'video/webm' })); };
-    _rec = { recorder: recorder, stream: stream, kind: kind, timer: null, blob: null, previewUrl: null };
+    recorder.onstop = function () { showRecPreview(new Blob(chunks, { type: recMime })); };
+    _rec = { recorder: recorder, stream: stream, mode: mode, isAudio: isAudio, timer: null, blob: null, previewUrl: null };
     box.innerHTML = '<div class="sc-rec-head"><span>Recording…</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
-      + '<video class="sc-rec-preview" autoplay muted playsinline></video>'
-      + '<div class="sc-rec-ctrl"><span class="sc-rec-dot"></span><span id="sc-rec-timer">0:00</span>'
+      + (isAudio
+          ? '<div class="sc-rec-audio"><span class="sc-rec-dot"></span> Recording audio…</div>'
+          : '<video class="sc-rec-preview" autoplay muted playsinline></video>')
+      + '<div class="sc-rec-ctrl">' + (isAudio ? '' : '<span class="sc-rec-dot"></span>') + '<span id="sc-rec-timer">0:00</span>'
       + '<button type="button" class="sc-rec-stop" data-sc-rec-stop>■ Stop</button></div>';
-    var v = box.querySelector('.sc-rec-preview'); if (v) v.srcObject = stream;
+    if (!isAudio) { var v = box.querySelector('.sc-rec-preview'); if (v) v.srcObject = stream; }
     try { recorder.start(); } catch (e) { scToast('Could not start recording'); closeRecordUi(); return; }
     var secs = 0;
     _rec.timer = setInterval(function () {
@@ -355,19 +385,21 @@
   }
   function showRecPreview(blob) {
     var box = document.querySelector('#sc-rec-ov .sc-rec-box'); if (!box || !_rec) return;
-    var url = URL.createObjectURL(blob);
-    _rec.blob = blob; _rec.previewUrl = url;
+    var url = URL.createObjectURL(blob); _rec.blob = blob; _rec.previewUrl = url;
     box.innerHTML = '<div class="sc-rec-head"><span>Preview</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
-      + '<video class="sc-rec-preview" controls playsinline src="' + url + '"></video>'
-      + '<div class="sc-rec-ctrl"><button type="button" class="sc-rec-opt sc-rec-discard" data-sc-rec-discard>Discard</button>'
-      + '<button type="button" class="sc-send" data-sc-rec-send>Send recording</button></div>';
+      + (_rec.isAudio
+          ? '<div class="sc-rec-audiowrap"><audio class="sc-rec-audio-el" controls src="' + url + '"></audio></div>'
+          : '<video class="sc-rec-preview" controls playsinline src="' + url + '"></video>')
+      + '<div class="sc-rec-ctrl"><button type="button" class="sc-rec-opt sc-rec-discard" data-sc-rec-menu>↺ Redo</button>'
+      + '<button type="button" class="sc-send" data-sc-rec-send>Send</button></div>';
   }
   async function sendRecording() {
     if (!_rec || !_rec.blob) return;
-    var blob = _rec.blob, label = (_rec.kind === 'screen') ? 'screen' : 'video';
-    var file = new File([blob], label + '-' + Date.now() + '.webm', { type: 'video/webm' });
+    var isAudio = _rec.isAudio, mode = _rec.mode, blob = _rec.blob;
+    var base = isAudio ? 'audio' : (mode === 'screen' ? 'screen' : 'video');
+    var file = new File([blob], base + '-' + Date.now() + '.webm', { type: isAudio ? 'audio/webm' : 'video/webm' });
     closeRecordUi();
-    await stageFile(file, 'recording');
+    await stageFile(file, isAudio ? 'audio' : 'recording');
     send();
   }
 
@@ -492,6 +524,10 @@
       '@keyframes sc-blink{50%{opacity:.25}}',
       '#sc-rec-timer{font-size:12px;color:#ddd;flex:1}',
       '.sc-rec-stop{background:#E5484D;border:none;color:#fff;font-weight:700;font-size:12px;border-radius:8px;padding:8px 14px;cursor:pointer;font-family:inherit}',
+      '.sc-rec-msg{padding:20px 18px;color:#e6c9a0;font-size:13px;line-height:1.5;text-align:center}',
+      '.sc-rec-audio{display:flex;align-items:center;justify-content:center;gap:10px;padding:34px 18px;color:#ddd;font-size:13px;font-weight:600}',
+      '.sc-rec-audiowrap{padding:24px 18px;display:flex;justify-content:center}',
+      '.sc-rec-audio-el{width:100%}',
       // toast
       '.sc-toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(10px);z-index:120;background:#1a1a1a;border:1px solid rgba(201,168,76,.4);color:#fff;font-size:12.5px;padding:9px 14px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.5);opacity:0;transition:opacity .25s,transform .25s;max-width:90vw;text-align:center}',
       '.sc-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}'
@@ -584,6 +620,7 @@
       if (e.target.classList && e.target.classList.contains('sc-rec-ov')) { stopRecording(); closeRecordUi(); return; }
       if (e.target.closest('[data-sc-rec-cancel]')) { stopRecording(); closeRecordUi(); return; }
       var rst = e.target.closest('[data-sc-rec-start]'); if (rst) { beginRecording(rst.getAttribute('data-sc-rec-start')); return; }
+      if (e.target.closest('[data-sc-rec-menu]')) { showRecMenu(); return; }
       if (e.target.closest('[data-sc-rec-stop]')) { stopRecording(); return; }
       if (e.target.closest('[data-sc-rec-discard]')) { closeRecordUi(); return; }
       if (e.target.closest('[data-sc-rec-send]')) { sendRecording(); return; }
