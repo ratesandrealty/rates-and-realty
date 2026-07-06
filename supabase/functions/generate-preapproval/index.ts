@@ -288,9 +288,10 @@ async function buildPDF(d: any): Promise<Uint8Array> {
 
   T('APPROVED LOAN PARAMETERS',M,y,B,6.5,GOLD); HL(M,y-3,CW,GOLD,0.6); y-=14;
   const params=[
-    {lbl:'LOAN AMOUNT',val:fmtD(loanAmt)},{lbl:'LOAN TYPE',val:loanType},{lbl:'PROGRAM',val:loanProg},{lbl:'INTEREST RATE*',val:fmtP(rate)},
+    (purchPrice?{lbl:'PURCHASE PRICE',val:fmtD(purchPrice),hero:true}:{lbl:'LOAN AMOUNT',val:fmtD(loanAmt),hero:true}),
+    {lbl:'LOAN TYPE',val:loanType},{lbl:'PROGRAM',val:loanProg},{lbl:'INTEREST RATE*',val:fmtP(rate)},
     {lbl:'LOAN TERM',val:`${termMo} mo`},{lbl:'LTV / CLTV',val:`${ltv.toFixed(1)}% / ${cltv.toFixed(1)}%`},
-    ...(purchPrice?[{lbl:'PURCHASE PRICE',val:fmtD(purchPrice)}]:[]),
+    ...(purchPrice?[{lbl:'LOAN AMOUNT',val:fmtD(loanAmt)}]:[]),
     ...(downPay?[{lbl:'DOWN PAYMENT',val:fmtD(downPay)}]:[]),
     {lbl:'OCCUPANCY',val:occ},
   ];
@@ -298,7 +299,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   for(let i=0;i<params.length;i++){
     const col=i%4; if(i>0&&col===0)y-=24; const px=M+col*cW4;
     T(params[i].lbl,px,y,R,6,GRAY);
-    T(params[i].val,px,y-12,B,params[i].lbl==='LOAN AMOUNT'?12:9.5,params[i].lbl==='LOAN AMOUNT'?GOLD:DARK);
+    T(params[i].val,px,y-12,B,params[i].hero?14:9.5,params[i].hero?GOLD:DARK);
   }
   y-=24;
   if(propAddr){T('SUBJECT PROPERTY',M,y,R,6,GRAY);y-=11;T(propAddr,M,y,B,9,DARK,CW);y-=4;}
