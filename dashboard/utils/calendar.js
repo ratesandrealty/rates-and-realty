@@ -331,7 +331,7 @@
       + '<button class="cal-btn-icon" data-action="popover-close" aria-label="Close">✕</button>'
       + '</div>'
       + '<div class="popover-body">'
-      +   '<div class="popover-when">' + new Date(e.start).toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '</div>'
+      +   '<div class="popover-when">' + eventStartDate(e).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) + (e.all_day ? '' : ' · ' + esc(fmtTime(e.start))) + '</div>'
       +   (e.contact_name ? '<div class="popover-row"><strong>Lead:</strong> ' + esc(e.contact_name) + '</div>' : '')
       +   (e.contact_phone ? '<div class="popover-row"><a href="tel:' + esc(String(e.contact_phone).replace(/[^0-9+]/g, '')) + '">📞 ' + esc(e.contact_phone) + '</a></div>' : '')
       +   (e.contact_email ? '<div class="popover-row"><a href="mailto:' + esc(e.contact_email) + '">✉ ' + esc(e.contact_email) + '</a></div>' : '')
