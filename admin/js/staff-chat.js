@@ -24,6 +24,11 @@
   var _sb = null, _threads = [], _active = null, _msgs = [], _channel = null;
   var _open = false, _mode = 'floating', _pollId = null, _lastBadge = 0;   // _mode: 'floating' | 'full' | 'column'
   var _pending = [], _signed = {}, _pidSeq = 0, _rec = null;               // staged attachments, signed-URL cache, recorder state
+  // ── CRM Copilot (relocated from layout.js so the combined bubble is app-wide) ──
+  var _tab = 'chat';                                                        // active panel tab: 'chat' | 'copilot'
+  var _copHistory = [], _copBusy = false, _copActions = {}, _copActionSeq = 0;
+  var COP_CHIPS = ["Who should I work today?", "How's my pipeline?", "Who's gone stale?", "Summarize [lead name]"];
+  function copAllowed() { return role() !== 'va'; }                        // copilot backend is admin/agent/loa-gated
 
   function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function localPart(email) { return ((email || '').split('@')[0]) || 'Staff'; }
@@ -178,7 +183,15 @@
 
   function showConversation() { if (_mode === 'full') return; var lv = document.getElementById('sc-list-view'), cv = document.getElementById('sc-conv-view'); if (lv) lv.style.display = 'none'; if (cv) cv.style.display = 'flex'; var i = document.getElementById('sc-input'); if (i) setTimeout(function () { i.focus(); }, 30); }
   function showList() { if (_mode === 'full') return; var lv = document.getElementById('sc-list-view'), cv = document.getElementById('sc-conv-view'); if (lv) lv.style.display = 'flex'; if (cv) cv.style.display = 'none'; }
-  function setOpen(v) { _open = v; var p = document.getElementById('staff-chat-panel'); if (p) p.classList.toggle('is-open', v); if (v) { showList(); loadThreads(); } }
+  function setOpen(v) {
+    _open = v; var p = document.getElementById('staff-chat-panel'); if (p) p.classList.toggle('is-open', v);
+    if (v) {
+      showList(); loadThreads();
+      var saved = 'chat';
+      try { saved = localStorage.getItem('rnr_combo_tab') || 'chat'; } catch (e) {}
+      scSetTab(saved);                               // restore last-used tab (default chat)
+    }
+  }
 
   // ── new-chat picker ─────────────────────────────────────────────────────
   async function showNewChat() {
@@ -439,6 +452,190 @@
     send();
   }
 
+  // ── CRM Copilot engine (ported from layout.js; reuses esc/client/scToast) ──
+  // Tiny SAFE markdown: escape first, then a limited subset (no raw HTML injection).
+  function copMd(text) {
+    var h = esc(text || '');
+    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+    h = h.replace(/^### (.+)$/gm, '<h4>$1</h4>').replace(/^## (.+)$/gm, '<h3>$1</h3>').replace(/^# (.+)$/gm, '<h3>$1</h3>');
+    h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    h = h.replace(/(?:^|\n)\s*(?:[-*]|\d+\.)\s+(.+)/g, '\n<li>$1</li>');
+    h = h.replace(/(<li>[\s\S]*?<\/li>(?:\n<li>[\s\S]*?<\/li>)*)/g, '<ul>$1</ul>');
+    h = h.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+    return h;
+  }
+  function copConfirmLabel(a) {
+    if (a.type === 'message') return a.channel === 'email' ? 'Send email' : 'Send text';
+    if (a.type === 'task') return 'Create task';
+    if (a.type === 'note') return 'Save note';
+    if (a.type === 'status') return 'Update';
+    return 'Confirm';
+  }
+  function copDoneLabel(a) {
+    if (a.type === 'message') return (a.channel === 'email' ? 'Email sent to ' : 'Text sent to ') + (a.contact_name || 'lead');
+    if (a.type === 'task') return 'Task created: ' + (a.title || '');
+    if (a.type === 'note') return 'Note saved on ' + (a.contact_name || 'lead');
+    if (a.type === 'status') return 'Updated ' + (a.contact_name || 'lead');
+    return 'Done';
+  }
+  function copCardHtml(a) {
+    if (a._state === 'done') {
+      return '<div class="cop-card done" data-cop-card="' + a.id + '"><div class="cop-card-h">✓ Done</div><div class="cop-card-sub">' + esc(copDoneLabel(a)) + '</div></div>';
+    }
+    var busy = a._state === 'busy';
+    var errHtml = (a._state === 'error') ? '<div class="cop-card-err">⚠ ' + esc(a._err || 'Failed — try again') + '</div>' : '';
+    var inner = '';
+    if (a.type === 'message') {
+      var verb = a.channel === 'email' ? '✉️ Email' : '💬 Text';
+      inner = '<div class="cop-card-h">' + verb + ' to ' + esc(a.contact_name || 'lead') + '</div>'
+        + (a.channel === 'email' && a.subject ? '<div class="cop-card-sub">Subject: ' + esc(a.subject) + '</div>' : '')
+        + '<textarea class="cop-card-ta" data-cop-body="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + esc(a.body || '') + '</textarea>';
+    } else if (a.type === 'task') {
+      inner = '<div class="cop-card-h">✅ Task: ' + esc(a.title || 'Task') + '</div>'
+        + '<div class="cop-card-meta">' + esc(a.priority || 'normal') + (a.due_date ? ' · due ' + esc(a.due_date) : '') + '</div>'
+        + (a.description ? '<div class="cop-card-desc">' + esc(a.description) + '</div>' : '');
+    } else if (a.type === 'note') {
+      inner = '<div class="cop-card-h">📝 Note on ' + esc(a.contact_name || 'lead') + '</div>'
+        + '<textarea class="cop-card-ta" data-cop-body="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + esc(a.text || '') + '</textarea>';
+    } else if (a.type === 'status') {
+      var rows = [];
+      if (a.pipeline_status) rows.push('Stage → ' + esc(a.pipeline_status));
+      if (a.lead_status) rows.push('Status → ' + esc(a.lead_status));
+      if (a.next_follow_up) rows.push('Follow-up → ' + esc(a.next_follow_up));
+      inner = '<div class="cop-card-h">🔄 Update ' + esc(a.contact_name || 'lead') + '</div>'
+        + '<div class="cop-card-desc">' + (rows.join('<br>') || '—') + '</div>';
+    } else {
+      inner = '<div class="cop-card-h">' + esc(a.type) + '</div>';
+    }
+    return '<div class="cop-card" data-cop-card="' + a.id + '">' + inner + errHtml
+      + '<div class="cop-card-actions">'
+      + '<button class="cop-card-btn" data-cop-cancel="' + a.id + '"' + (busy ? ' disabled' : '') + '>Dismiss</button>'
+      + '<button class="cop-card-btn primary" data-cop-confirm="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Working…' : copConfirmLabel(a)) + '</button>'
+      + '</div></div>';
+  }
+  function copUpdateCard(a) { var el = document.querySelector('[data-cop-card="' + a.id + '"]'); if (el) el.outerHTML = copCardHtml(a); }
+  function copCancelAction(id) { var a = _copActions[id]; if (a) a._state = 'dismissed'; var el = document.querySelector('[data-cop-card="' + id + '"]'); if (el) el.remove(); }
+  // Message send — reuses the CRM's existing edge functions: sms-service / email-service.
+  async function copSendMessage(cl, a) {
+    var cfg = window.APP_CONFIG || {};
+    var anon = cfg.SUPABASE_ANON_KEY || '', base = cfg.SUPABASE_URL || '';
+    var dest = await cl.from('contacts').select('phone,email').eq('id', a.contact_id).single();
+    if (dest.error) throw dest.error;
+    var c = dest.data || {};
+    if (a.channel === 'email') {
+      if (!c.email) throw new Error('No email on file for this lead');
+      var er = await fetch(base + '/functions/v1/email-service', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon },
+        body: JSON.stringify({ action: 'send', contact_id: a.contact_id, to: [c.email], from: 'rene@ratesandrealty.com', subject: a.subject || '', body_html: (a.body || '').replace(/\n/g, '<br>'), body_text: a.body || '' })
+      });
+      var ed = await er.json().catch(function () { return {}; });
+      if (!(ed.success || ed.id)) throw new Error(ed.error || 'Email failed');
+    } else {
+      if (!c.phone) throw new Error('No phone on file for this lead');
+      var sr = await fetch(base + '/functions/v1/sms-service', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon },
+        body: JSON.stringify({ trigger: 'manual', to_phone: c.phone, params: { message: a.body || '' }, contact_id: a.contact_id, direction: 'outbound' })
+      });
+      var sd = await sr.json().catch(function () { return {}; });
+      if (!sd.success) throw new Error(sd.error || 'SMS failed');
+    }
+  }
+  async function copExecAction(id) {
+    var a = _copActions[id];
+    if (!a || a._state === 'busy' || a._state === 'done') return;
+    a._state = 'busy'; a._err = null; copUpdateCard(a);
+    try {
+      var cl = await client();
+      if (!cl) throw new Error('Not signed in');
+      if (a.type === 'message') {
+        await copSendMessage(cl, a);
+      } else {
+        var payload = { contact_id: a.contact_id };
+        if (a.type === 'note') payload.text = a.text || '';
+        else if (a.type === 'task') { payload.title = a.title || 'Task'; payload.priority = a.priority || 'normal'; payload.due_date = a.due_date || null; payload.description = a.description || null; }
+        else if (a.type === 'status') { payload.pipeline_status = a.pipeline_status || null; payload.lead_status = a.lead_status || null; payload.next_follow_up = a.next_follow_up || null; }
+        else throw new Error('Unsupported action');
+        var r = await cl.rpc('copilot_execute_action', { p_type: a.type, p_payload: payload });
+        if (r && r.error) throw r.error;
+      }
+      a._state = 'done'; copUpdateCard(a);
+    } catch (e) {
+      a._state = 'error'; a._err = (e && e.message) ? e.message : 'Failed'; copUpdateCard(a);
+    }
+  }
+  function copRender() {
+    var box = document.getElementById('sc-cop-msgs'); if (!box) return;
+    if (!_copHistory.length && !_copBusy) {
+      box.innerHTML = '<div class="cop-empty"><div class="cop-empty-t">Hi 👋 I\'m your CRM Copilot.</div>'
+        + '<div class="cop-empty-s">Ask about your leads, pipeline, and who to work.</div>'
+        + '<div class="cop-chips">' + COP_CHIPS.map(function (c) { return '<button class="cop-chip" data-cop-chip="' + esc(c) + '">' + esc(c) + '</button>'; }).join('') + '</div></div>';
+      return;
+    }
+    var html = _copHistory.map(function (m) {
+      var mine = m.role === 'user';
+      var bubble = '<div class="cop-msg' + (mine ? ' mine' : '') + '">' + (mine ? esc(m.content) : copMd(m.content)) + '</div>';
+      if (!mine && m.actions && m.actions.length) bubble += m.actions.filter(function (a) { return a._state !== 'dismissed'; }).map(copCardHtml).join('');
+      return bubble;
+    }).join('');
+    if (_copBusy) html += '<div class="cop-msg cop-think"><span></span><span></span><span></span></div>';
+    box.innerHTML = html; box.scrollTop = box.scrollHeight;
+  }
+  async function copToken() {
+    try { var cl = await client(); if (!cl) return null; var r = await cl.auth.getSession(); return (r && r.data && r.data.session) ? r.data.session.access_token : null; }
+    catch (e) { return null; }
+  }
+  async function copSend(text) {
+    text = (text || '').trim(); if (!text || _copBusy) return;
+    var cfg = window.APP_CONFIG || {};
+    _copHistory.push({ role: 'user', content: text });
+    _copBusy = true; copRender();
+    var token = await copToken();
+    if (!token) { _copBusy = false; _copHistory.push({ role: 'assistant', content: 'Please sign in to use the Copilot.' }); copRender(); return; }
+    try {
+      var prior = _copHistory.slice(0, -1).slice(-10);
+      var res = await fetch((cfg.SUPABASE_URL || '') + '/functions/v1/crm-copilot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': cfg.SUPABASE_ANON_KEY || '', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ message: text, history: prior })
+      });
+      var data = await res.json().catch(function () { return {}; });
+      _copBusy = false;
+      if (data && data.error) {
+        _copHistory.push({ role: 'assistant', content: (res.status === 403) ? 'Copilot is available to admin/staff only.' : (data.error || 'Something went wrong.') });
+      } else {
+        var acts = null;
+        if (data && Array.isArray(data.proposed_actions) && data.proposed_actions.length) {
+          acts = [];
+          data.proposed_actions.forEach(function (pa) {
+            if (!pa || !pa.type) return;
+            var id = 'copact' + (++_copActionSeq);
+            var a = Object.assign({}, pa, { id: id, _state: 'pending' });
+            _copActions[id] = a; acts.push(a);
+          });
+        }
+        _copHistory.push({ role: 'assistant', content: (data && data.reply) || 'No response — try rephrasing.', actions: (acts && acts.length) ? acts : null });
+      }
+      copRender();
+    } catch (e) {
+      _copBusy = false; _copHistory.push({ role: 'assistant', content: 'Network error — please try again.' }); copRender();
+    }
+  }
+
+  // ── tab switching (floating panel only): 'chat' | 'copilot' ──
+  function scSetTab(tab) {
+    if (tab === 'copilot' && !copAllowed()) tab = 'chat';
+    _tab = tab;
+    try { localStorage.setItem('rnr_combo_tab', tab); } catch (e) {}
+    var panel = document.getElementById('staff-chat-panel'); if (!panel) return;
+    panel.setAttribute('data-tab', tab);
+    var cp = document.getElementById('sc-chat-pane'), kp = document.getElementById('sc-copilot-pane');
+    if (cp) cp.style.display = (tab === 'chat') ? 'flex' : 'none';
+    if (kp) kp.style.display = (tab === 'copilot') ? 'flex' : 'none';
+    Array.prototype.forEach.call(panel.querySelectorAll('[data-sc-tab]'), function (b) { b.classList.toggle('is-active', b.getAttribute('data-sc-tab') === tab); });
+    if (tab === 'copilot') { copRender(); var i = document.getElementById('sc-cop-input'); if (i) setTimeout(function () { i.focus(); }, 30); }
+  }
+
   // ── CSS ─────────────────────────────────────────────────────────────────
   function injectCss() {
     if (document.getElementById('staff-chat-css')) return;
@@ -519,6 +716,46 @@
       '.sc-col-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0}',
       '.sc-col-title{font-size:13px;font-weight:700;color:#C9A84C;letter-spacing:.3px}',
       '.sc-col .sc-panel-body{flex:1;min-height:0;display:flex;flex-direction:column}',
+      // Tabs (combined Chat + Copilot panel)
+      '.sc-tabs{display:flex;gap:4px}',
+      '.sc-tab{background:transparent;border:none;color:#888;font-size:12.5px;font-weight:700;cursor:pointer;padding:5px 10px;border-radius:8px;font-family:inherit;letter-spacing:.2px}',
+      '.sc-tab:hover{color:#ddd;background:rgba(255,255,255,.05)}',
+      '.sc-tab.is-active{color:#111;background:#C9A84C}',
+      '.sc-pane{flex:1;min-height:0;display:flex;flex-direction:column}',
+      '.sc-panel[data-tab="copilot"] .sc-chat-only{display:none}',
+      // Copilot pane (ported look from layout.js)
+      '.cop-msgs{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}',
+      '.cop-empty{color:#aaa;text-align:center;padding:16px 8px;margin:auto 0}',
+      '.cop-empty-t{font-size:14px;color:#eee;font-weight:600}.cop-empty-s{font-size:12px;color:#888;margin-top:4px}',
+      '.cop-chips{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:14px}',
+      '.cop-chip{background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.35);color:#C9A84C;font-size:11.5px;font-weight:600;border-radius:14px;padding:6px 12px;cursor:pointer;font-family:inherit}',
+      '.cop-chip:hover{background:rgba(201,168,76,.2)}',
+      '.cop-msg{max-width:88%;font-size:13px;line-height:1.5;padding:9px 12px;border-radius:4px 12px 12px 12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:#e6e6e6;word-break:break-word;align-self:flex-start}',
+      '.cop-msg.mine{align-self:flex-end;background:rgba(201,168,76,.16);border-color:rgba(201,168,76,.3);color:#fff;border-radius:12px 4px 12px 12px;white-space:pre-wrap}',
+      '.cop-msg h3{font-size:14px;margin:8px 0 4px;color:#fff}.cop-msg h4{font-size:13px;margin:6px 0 3px;color:#fff}',
+      '.cop-msg ul{margin:6px 0;padding-left:18px}.cop-msg li{margin:2px 0}',
+      '.cop-msg code{background:rgba(255,255,255,.1);border-radius:4px;padding:1px 5px;font-size:12px}.cop-msg a{color:#C9A84C}',
+      '.cop-msg.cop-think{display:flex;flex-direction:row;gap:4px;align-items:center}',
+      '.cop-think span{width:6px;height:6px;border-radius:50%;background:#C9A84C;animation:cop-blink 1.2s infinite}',
+      '.cop-think span:nth-child(2){animation-delay:.2s}.cop-think span:nth-child(3){animation-delay:.4s}',
+      '@keyframes cop-blink{0%,60%,100%{opacity:.3}30%{opacity:1}}',
+      // Copilot Phase 2 action cards
+      '.cop-card{align-self:flex-start;width:100%;max-width:92%;box-sizing:border-box;border:1px solid rgba(201,168,76,.5);background:rgba(201,168,76,.06);border-radius:10px;padding:10px 12px;margin:1px 0 3px}',
+      '.cop-card.done{border-color:rgba(82,200,122,.5);background:rgba(82,200,122,.08)}',
+      '.cop-card-h{font-size:12.5px;font-weight:700;color:#C9A84C;margin-bottom:4px}',
+      '.cop-card.done .cop-card-h{color:#52c87a}',
+      '.cop-card-sub{font-size:11px;color:#bbb;margin-bottom:5px}',
+      '.cop-card-meta{font-size:11px;color:#9a9a9a;margin-bottom:4px;text-transform:capitalize}',
+      '.cop-card-desc{font-size:12px;color:#ddd;line-height:1.45;margin-bottom:5px;white-space:pre-wrap;word-break:break-word}',
+      '.cop-card-ta{width:100%;box-sizing:border-box;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12.5px;line-height:1.45;font-family:inherit;padding:7px 9px;min-height:66px;resize:vertical;margin-bottom:6px;outline:none}',
+      '.cop-card-ta:focus{border-color:rgba(201,168,76,.55)}',
+      '.cop-card-err{font-size:11px;color:#f2a5a7;margin-bottom:6px}',
+      '.cop-card-actions{display:flex;gap:6px;justify-content:flex-end}',
+      '.cop-card-btn{font-size:11.5px;font-weight:600;border-radius:7px;padding:6px 12px;cursor:pointer;font-family:inherit;border:1px solid rgba(255,255,255,.15);background:transparent;color:#ccc}',
+      '.cop-card-btn:hover{background:rgba(255,255,255,.06);color:#fff}',
+      '.cop-card-btn.primary{background:#C9A84C;border-color:#C9A84C;color:#111}',
+      '.cop-card-btn.primary:hover{background:#d8ba63}',
+      '.cop-card-btn:disabled{opacity:.55;cursor:default}',
       // composer: attach/record buttons + staging tray
       '.sc-composer-wrap{border-top:1px solid rgba(255,255,255,.06);flex-shrink:0}',
       '.sc-cbtn{background:transparent;border:none;color:#9a9a9a;font-size:17px;cursor:pointer;padding:4px 5px;border-radius:6px;line-height:1;flex-shrink:0}',
@@ -593,25 +830,38 @@
     if (document.getElementById('staff-chat-bubble')) return;
     var btn = document.createElement('button');
     btn.id = 'staff-chat-bubble'; btn.className = 'sc-bubble-btn'; btn.type = 'button';
-    btn.setAttribute('aria-label', 'Staff chat'); btn.setAttribute('data-sc-toggle', '');
-    btn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true"><path d="M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H9l-4 4v-4H4a1 1 0 01-1-1V6a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 9.5h8M8 12.5h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span id="staff-chat-badge" class="sc-badge"></span>';
+    btn.setAttribute('aria-label', 'Staff chat & Copilot'); btn.setAttribute('data-sc-toggle', '');
+    // Hybrid icon: chat bubble + a small gold sparkle badge (Chat + Copilot).
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="23" height="23" fill="none" aria-hidden="true">'
+      + '<path d="M4 5h12a1 1 0 011 1v7a1 1 0 01-1 1H8l-4 3.5V14H4a1 1 0 01-1-1V6a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'
+      + '<path d="M7 8.5h6M7 11h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
+      + '<path d="M19 2l.85 2.65L22.5 5.5l-2.65.85L19 9l-.85-2.65L15.5 5.5l2.65-.85z" fill="#C9A84C"/></svg>'
+      + '<span id="staff-chat-badge" class="sc-badge"></span>';
     document.body.appendChild(btn);
 
+    var copTabBtn = copAllowed() ? '<button class="sc-tab" data-sc-tab="copilot">✨ Copilot</button>' : '';
     var panel = document.createElement('div');
-    panel.id = 'staff-chat-panel'; panel.className = 'sc-panel';
+    panel.id = 'staff-chat-panel'; panel.className = 'sc-panel'; panel.setAttribute('data-tab', 'chat');
     panel.innerHTML =
-      '<div class="sc-panel-head"><span class="sc-panel-title">💬 Staff Chat</span>'
+      '<div class="sc-panel-head">'
+      + '<span class="sc-tabs"><button class="sc-tab is-active" data-sc-tab="chat">💬 Chat</button>' + copTabBtn + '</span>'
       + '<span class="sc-head-actions">'
-      + '<button class="sc-icon" data-sc-new title="New chat">＋</button>'
-      + '<button class="sc-icon" data-sc-expand title="Open full page">⤢</button>'
+      + '<button class="sc-icon sc-chat-only" data-sc-new title="New chat">＋</button>'
+      + '<button class="sc-icon sc-chat-only" data-sc-expand title="Open full page">⤢</button>'
       + '<button class="sc-icon" data-sc-close title="Close">✕</button></span></div>'
       + '<div class="sc-panel-body">'
-      + '<div id="sc-list-view" class="sc-list-view"><div id="sc-thread-list" class="sc-thread-list"></div></div>'
-      + '<div id="sc-conv-view" class="sc-conv-view">'
-      + '<div class="sc-conv-head"><button class="sc-icon" data-sc-back title="Back">‹</button><span id="sc-conv-title" class="sc-conv-title"></span></div>'
-      + '<div id="sc-messages" class="sc-messages"></div>'
-      + composerHtml()
-      + '</div></div>';
+      + '<div id="sc-chat-pane" class="sc-pane" style="display:flex">'
+      +   '<div id="sc-list-view" class="sc-list-view"><div id="sc-thread-list" class="sc-thread-list"></div></div>'
+      +   '<div id="sc-conv-view" class="sc-conv-view">'
+      +   '<div class="sc-conv-head"><button class="sc-icon" data-sc-back title="Back">‹</button><span id="sc-conv-title" class="sc-conv-title"></span></div>'
+      +   '<div id="sc-messages" class="sc-messages"></div>'
+      +   composerHtml()
+      +   '</div></div>'
+      + '<div id="sc-copilot-pane" class="sc-pane" style="display:none">'
+      +   '<div id="sc-cop-msgs" class="cop-msgs"></div>'
+      +   '<div class="sc-composer-wrap"><div class="sc-composer"><input id="sc-cop-input" type="text" placeholder="Ask about your leads, pipeline…" autocomplete="off"><button class="sc-send" data-cop-send>Send</button></div></div>'
+      + '</div>'
+      + '</div>';
     document.body.appendChild(panel);
 
     // Anchor flush to the corner unless the AI FAB is present (dashboard) — then
@@ -662,6 +912,13 @@
     document.addEventListener('click', function (e) {
       if (e.target.closest('[data-sc-toggle]')) { setOpen(!_open); return; }
       if (e.target.closest('[data-sc-close]')) { setOpen(false); return; }
+      var tabBtn = e.target.closest('[data-sc-tab]'); if (tabBtn) { scSetTab(tabBtn.getAttribute('data-sc-tab')); return; }
+      // Copilot: send / chips / action-card confirm+dismiss
+      if (e.target.closest('[data-cop-send]')) { var ci = document.getElementById('sc-cop-input'); if (ci) { var cv = ci.value; ci.value = ''; copSend(cv); } return; }
+      var chip = e.target.closest('[data-cop-chip]');
+      if (chip) { var c = chip.getAttribute('data-cop-chip'); if (/\[lead name\]/i.test(c)) { var i2 = document.getElementById('sc-cop-input'); if (i2) { i2.value = 'Summarize '; i2.focus(); } } else copSend(c); return; }
+      var cfb = e.target.closest('[data-cop-confirm]'); if (cfb) { copExecAction(cfb.getAttribute('data-cop-confirm')); return; }
+      var ccb = e.target.closest('[data-cop-cancel]'); if (ccb) { copCancelAction(ccb.getAttribute('data-cop-cancel')); return; }
       if (e.target.closest('[data-sc-expand]')) { window.location.href = '/admin/chat.html'; return; }
       if (e.target.closest('[data-sc-back]')) { showList(); return; }
       if (e.target.closest('[data-sc-new]')) { showNewChat(); return; }
@@ -684,9 +941,18 @@
     });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && e.target && e.target.id === 'sc-input') { e.preventDefault(); send(); }
+      if (e.key === 'Enter' && e.target && e.target.id === 'sc-cop-input') { e.preventDefault(); var v = e.target.value; e.target.value = ''; copSend(v); }
     });
     document.addEventListener('change', function (e) {
       if (e.target && e.target.id === 'sc-file') { handleFiles(e.target.files); e.target.value = ''; }
+    });
+    // Persist Copilot action-card textarea edits back to the action model.
+    document.addEventListener('input', function (e) {
+      var t = e.target;
+      if (t && t.getAttribute && t.getAttribute('data-cop-body')) {
+        var a = _copActions[t.getAttribute('data-cop-body')];
+        if (a) { if (a.type === 'note') a.text = t.value; else a.body = t.value; }
+      }
     });
   }
 
