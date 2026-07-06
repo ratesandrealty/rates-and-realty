@@ -466,10 +466,11 @@
     h = h.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
     return h;
   }
-  // esign + email actions navigate-and-prefill (handoff) rather than execute inline.
-  function copIsHandoff(a) { return a.type === 'esign' || (a.type === 'message' && a.channel === 'email'); }
+  // loe / esign / email actions navigate-and-prefill (handoff), not inline execute.
+  function copIsHandoff(a) { return a.type === 'loe' || a.type === 'esign' || (a.type === 'message' && a.channel === 'email'); }
   function copConfirmLabel(a) {
-    if (a.type === 'esign') return '📝 Open e-sign for ' + (a.contact_name || 'lead');
+    if (a.type === 'loe') return 'Open LOE tool';
+    if (a.type === 'esign') return 'Open e-sign';
     if (a.type === 'message') return a.channel === 'email' ? ('✉️ Open in ' + (a.contact_name || 'lead')) : 'Send text';
     if (a.type === 'task') return 'Create task';
     if (a.type === 'note') return 'Save note';
@@ -478,6 +479,7 @@
   }
   function copDoneLabel(a) {
     if (a._state === 'opened') {
+      if (a.type === 'loe') return 'Opened LOE for ' + (a.contact_name || 'lead');
       if (a.type === 'esign') return 'Opened e-sign for ' + (a.contact_name || 'lead');
       return 'Opened email for ' + (a.contact_name || 'lead');
     }
@@ -495,10 +497,13 @@
     var busy = a._state === 'busy';
     var errHtml = (a._state === 'error') ? '<div class="cop-card-err">⚠ ' + esc(a._err || 'Failed — try again') + '</div>' : '';
     var inner = '';
-    if (a.type === 'esign') {
-      inner = '<div class="cop-card-h">📝 E-sign draft for ' + esc(a.contact_name || 'lead') + '</div>'
-        + '<input class="cop-card-title" data-cop-title="' + a.id + '" value="' + esc(a.title || '') + '" placeholder="Document title"' + (busy ? ' disabled' : '') + '>'
-        + '<textarea class="cop-card-ta" data-cop-body="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + esc(a.body || '') + '</textarea>';
+    if (a.type === 'loe') {
+      inner = '<div class="cop-card-h">✍️ Letter of Explanation for ' + esc(a.contact_name || 'lead') + '</div>'
+        + (a.category ? '<div class="cop-card-meta">' + esc(a.category) + '</div>' : '')
+        + '<textarea class="cop-card-ta" data-cop-details="' + a.id + '" placeholder="What should the letter explain?"' + (busy ? ' disabled' : '') + '>' + esc(a.details || '') + '</textarea>';
+    } else if (a.type === 'esign') {
+      inner = '<div class="cop-card-h">🖊️ Send for signature to ' + esc(a.contact_name || 'lead') + '</div>'
+        + '<textarea class="cop-card-ta" data-cop-note="' + a.id + '" placeholder="Note for the recipient (optional)"' + (busy ? ' disabled' : '') + '>' + esc(a.note || '') + '</textarea>';
     } else if (a.type === 'message') {
       var verb = a.channel === 'email' ? '✉️ Email' : '💬 Text';
       inner = '<div class="cop-card-h">' + verb + ' to ' + esc(a.contact_name || 'lead') + '</div>'
@@ -557,14 +562,19 @@
   // Navigate-and-prefill: store a handoff for lead-detail to consume, then go there.
   // Marks the card resolved ('opened') so it can't re-fire on refresh/return.
   function copHandoff(a) {
+    var action = (a.type === 'message') ? 'email' : a.type;   // 'loe' | 'esign' | 'email'
     try {
-      var payload = (a.type === 'esign')
-        ? { kind: 'esign', contact_id: a.contact_id, doc_kind: a.doc_kind || 'other', title: a.title || '', body: a.body || '', subject: a.subject || '' }
-        : { kind: 'email', contact_id: a.contact_id, subject: a.subject || '', body: a.body || '' };
-      sessionStorage.setItem('rnr_copilot_handoff', JSON.stringify(payload));
+      var p = { action: action, contact_id: a.contact_id, ts: Date.now() };
+      if (a.type === 'loe') { p.category = a.category || ''; p.details = a.details || ''; }
+      else if (a.type === 'esign') { p.note = a.note || ''; }
+      else { p.subject = a.subject || ''; p.body = a.body || ''; }
+      sessionStorage.setItem('rnr_copilot_handoff', JSON.stringify(p));
     } catch (e) {}
-    a._state = 'opened'; copUpdateCard(a);           // persisted by copUpdateCard before navigation
-    if (a.contact_id) window.location.href = '/admin/lead-detail.html?contact_id=' + encodeURIComponent(a.contact_id);
+    a._state = 'opened'; copUpdateCard(a);            // persisted by copUpdateCard before navigation
+    if (a.contact_id) {
+      var hash = (a.type === 'loe') ? '#copilot=loe' : (a.type === 'esign') ? '#copilot=esign' : '';
+      window.location.href = '/admin/lead-detail.html?contact_id=' + encodeURIComponent(a.contact_id) + hash;
+    }
   }
   async function copExecAction(id) {
     var a = _copActions[id];
@@ -1031,6 +1041,10 @@
         var at = _copActions[t.getAttribute('data-cop-title')]; if (at) { at.title = t.value; copPersist(); }
       } else if (t && t.getAttribute && t.getAttribute('data-cop-subject')) {
         var as = _copActions[t.getAttribute('data-cop-subject')]; if (as) { as.subject = t.value; copPersist(); }
+      } else if (t && t.getAttribute && t.getAttribute('data-cop-details')) {
+        var ad = _copActions[t.getAttribute('data-cop-details')]; if (ad) { ad.details = t.value; copPersist(); }
+      } else if (t && t.getAttribute && t.getAttribute('data-cop-note')) {
+        var an = _copActions[t.getAttribute('data-cop-note')]; if (an) { an.note = t.value; copPersist(); }
       }
     });
   }
