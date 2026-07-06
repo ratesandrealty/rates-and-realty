@@ -348,6 +348,23 @@ if (isAdminPage || path.includes('/admin/')) {
       + '.cop-composer{display:flex;gap:6px;align-items:center;padding:10px 12px;border-top:1px solid rgba(255,255,255,.06);flex-shrink:0}'
       + '.cop-composer input{flex:1 1 auto;min-width:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;outline:none;font-family:inherit}'
       + '.cop-send{flex:0 0 auto;background:#C9A84C;border:none;color:#111;font-weight:700;font-size:12px;border-radius:8px;padding:0 14px;height:36px;cursor:pointer;font-family:inherit}'
+      // Phase 2: confirm-to-execute action cards (gold border, distinct from replies)
+      + '.cop-card{align-self:flex-start;width:100%;max-width:92%;box-sizing:border-box;border:1px solid rgba(201,168,76,.5);background:rgba(201,168,76,.06);border-radius:10px;padding:10px 12px;margin:1px 0 3px}'
+      + '.cop-card.done{border-color:rgba(82,200,122,.5);background:rgba(82,200,122,.08)}'
+      + '.cop-card-h{font-size:12.5px;font-weight:700;color:#C9A84C;margin-bottom:4px}'
+      + '.cop-card.done .cop-card-h{color:#52c87a}'
+      + '.cop-card-sub{font-size:11px;color:#bbb;margin-bottom:5px}'
+      + '.cop-card-meta{font-size:11px;color:#9a9a9a;margin-bottom:4px;text-transform:capitalize}'
+      + '.cop-card-desc{font-size:12px;color:#ddd;line-height:1.45;margin-bottom:5px;white-space:pre-wrap;word-break:break-word}'
+      + '.cop-card-ta{width:100%;box-sizing:border-box;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12.5px;line-height:1.45;font-family:inherit;padding:7px 9px;min-height:66px;resize:vertical;margin-bottom:6px;outline:none}'
+      + '.cop-card-ta:focus{border-color:rgba(201,168,76,.55)}'
+      + '.cop-card-err{font-size:11px;color:#f2a5a7;margin-bottom:6px}'
+      + '.cop-card-actions{display:flex;gap:6px;justify-content:flex-end}'
+      + '.cop-card-btn{font-size:11.5px;font-weight:600;border-radius:7px;padding:6px 12px;cursor:pointer;font-family:inherit;border:1px solid rgba(255,255,255,.15);background:transparent;color:#ccc}'
+      + '.cop-card-btn:hover{background:rgba(255,255,255,.06);color:#fff}'
+      + '.cop-card-btn.primary{background:#C9A84C;border-color:#C9A84C;color:#111}'
+      + '.cop-card-btn.primary:hover{background:#d8ba63}'
+      + '.cop-card-btn:disabled{opacity:.55;cursor:default}'
       // Below 900px there isn't room for two panels side-by-side, so the Copilot
       // fills the width (like the staff-chat panel) and opening one closes the other
       // (JS below) — no overlap at any size.
@@ -367,8 +384,9 @@ if (isAdminPage || path.includes('/admin/')) {
   fab.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>';
   // ── CRM Copilot: the FAB opens a real AI chat panel. The AI Agent STATS tab
   //    stays reachable via the sidebar "AI Agent" nav link (unchanged). ──
-  var _copHistory = [];   // [{role:'user'|'assistant', content:string}] — running conversation
+  var _copHistory = [];   // [{role:'user'|'assistant', content:string, actions?:[]}] — running conversation
   var _copBusy = false;
+  var _copActions = {}, _copActionSeq = 0;   // Phase 2: confirm-to-execute action cards
   var COP_CHIPS = ["Who should I work today?", "How's my pipeline?", "Who's gone stale?", "Summarize [lead name]"];
 
   function copEsc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -384,6 +402,117 @@ if (isAdminPage || path.includes('/admin/')) {
     h = h.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
     return h;
   }
+  // ── Phase 2: action cards (confirm-to-execute) ──
+  function copConfirmLabel(a) {
+    if (a.type === 'message') return a.channel === 'email' ? 'Send email' : 'Send text';
+    if (a.type === 'task') return 'Create task';
+    if (a.type === 'note') return 'Save note';
+    if (a.type === 'status') return 'Update';
+    return 'Confirm';
+  }
+  function copDoneLabel(a) {
+    if (a.type === 'message') return (a.channel === 'email' ? 'Email sent to ' : 'Text sent to ') + (a.contact_name || 'lead');
+    if (a.type === 'task') return 'Task created: ' + (a.title || '');
+    if (a.type === 'note') return 'Note saved on ' + (a.contact_name || 'lead');
+    if (a.type === 'status') return 'Updated ' + (a.contact_name || 'lead');
+    return 'Done';
+  }
+  function copCardHtml(a) {
+    if (a._state === 'done') {
+      return '<div class="cop-card done" data-cop-card="' + a.id + '"><div class="cop-card-h">✓ Done</div><div class="cop-card-sub">' + copEsc(copDoneLabel(a)) + '</div></div>';
+    }
+    var busy = a._state === 'busy';
+    var errHtml = (a._state === 'error') ? '<div class="cop-card-err">⚠ ' + copEsc(a._err || 'Failed — try again') + '</div>' : '';
+    var inner = '';
+    if (a.type === 'message') {
+      var verb = a.channel === 'email' ? '✉️ Email' : '💬 Text';
+      inner = '<div class="cop-card-h">' + verb + ' to ' + copEsc(a.contact_name || 'lead') + '</div>'
+        + (a.channel === 'email' && a.subject ? '<div class="cop-card-sub">Subject: ' + copEsc(a.subject) + '</div>' : '')
+        + '<textarea class="cop-card-ta" data-cop-body="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + copEsc(a.body || '') + '</textarea>';
+    } else if (a.type === 'task') {
+      inner = '<div class="cop-card-h">✅ Task: ' + copEsc(a.title || 'Task') + '</div>'
+        + '<div class="cop-card-meta">' + copEsc(a.priority || 'normal') + (a.due_date ? ' · due ' + copEsc(a.due_date) : '') + '</div>'
+        + (a.description ? '<div class="cop-card-desc">' + copEsc(a.description) + '</div>' : '');
+    } else if (a.type === 'note') {
+      inner = '<div class="cop-card-h">📝 Note on ' + copEsc(a.contact_name || 'lead') + '</div>'
+        + '<textarea class="cop-card-ta" data-cop-body="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + copEsc(a.text || '') + '</textarea>';
+    } else if (a.type === 'status') {
+      var rows = [];
+      if (a.pipeline_status) rows.push('Stage → ' + copEsc(a.pipeline_status));
+      if (a.lead_status) rows.push('Status → ' + copEsc(a.lead_status));
+      if (a.next_follow_up) rows.push('Follow-up → ' + copEsc(a.next_follow_up));
+      inner = '<div class="cop-card-h">🔄 Update ' + copEsc(a.contact_name || 'lead') + '</div>'
+        + '<div class="cop-card-desc">' + (rows.join('<br>') || '—') + '</div>';
+    } else {
+      inner = '<div class="cop-card-h">' + copEsc(a.type) + '</div>';
+    }
+    return '<div class="cop-card" data-cop-card="' + a.id + '">' + inner + errHtml
+      + '<div class="cop-card-actions">'
+      + '<button class="cop-card-btn" data-cop-cancel="' + a.id + '"' + (busy ? ' disabled' : '') + '>Dismiss</button>'
+      + '<button class="cop-card-btn primary" data-cop-confirm="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Working…' : copConfirmLabel(a)) + '</button>'
+      + '</div></div>';
+  }
+  function copUpdateCard(a) {   // targeted swap so other cards (mid-edit) aren't disturbed
+    var el = document.querySelector('[data-cop-card="' + a.id + '"]');
+    if (el) el.outerHTML = copCardHtml(a);
+  }
+  function copCancelAction(id) {
+    var a = _copActions[id]; if (a) a._state = 'dismissed';
+    var el = document.querySelector('[data-cop-card="' + id + '"]'); if (el) el.remove();
+  }
+  async function copClient() {
+    return (typeof window.getSupabaseClient === 'function') ? await window.getSupabaseClient() : window._supabaseClient;
+  }
+  // Message send — reuses the CRM's existing edge functions: sms-service (SMS) /
+  // email-service (email). Both need the destination, which we resolve from contact_id.
+  async function copSendMessage(client, a) {
+    var cfg = window.APP_CONFIG || {};
+    var anon = cfg.SUPABASE_ANON_KEY || '', base = cfg.SUPABASE_URL || '';
+    var dest = await client.from('contacts').select('phone,email').eq('id', a.contact_id).single();
+    if (dest.error) throw dest.error;
+    var c = dest.data || {};
+    if (a.channel === 'email') {
+      if (!c.email) throw new Error('No email on file for this lead');
+      var er = await fetch(base + '/functions/v1/email-service', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon },
+        body: JSON.stringify({ action: 'send', contact_id: a.contact_id, to: [c.email], from: 'rene@ratesandrealty.com', subject: a.subject || '', body_html: (a.body || '').replace(/\n/g, '<br>'), body_text: a.body || '' })
+      });
+      var ed = await er.json().catch(function () { return {}; });
+      if (!(ed.success || ed.id)) throw new Error(ed.error || 'Email failed');
+    } else {
+      if (!c.phone) throw new Error('No phone on file for this lead');
+      var sr = await fetch(base + '/functions/v1/sms-service', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon },
+        body: JSON.stringify({ trigger: 'manual', to_phone: c.phone, params: { message: a.body || '' }, contact_id: a.contact_id, direction: 'outbound' })
+      });
+      var sd = await sr.json().catch(function () { return {}; });
+      if (!sd.success) throw new Error(sd.error || 'SMS failed');
+    }
+  }
+  async function copExecAction(id) {
+    var a = _copActions[id];
+    if (!a || a._state === 'busy' || a._state === 'done') return;
+    a._state = 'busy'; a._err = null; copUpdateCard(a);
+    try {
+      var client = await copClient();
+      if (!client) throw new Error('Not signed in');
+      if (a.type === 'message') {
+        await copSendMessage(client, a);
+      } else {
+        var payload = { contact_id: a.contact_id };
+        if (a.type === 'note') payload.text = a.text || '';
+        else if (a.type === 'task') { payload.title = a.title || 'Task'; payload.priority = a.priority || 'normal'; payload.due_date = a.due_date || null; payload.description = a.description || null; }
+        else if (a.type === 'status') { payload.pipeline_status = a.pipeline_status || null; payload.lead_status = a.lead_status || null; payload.next_follow_up = a.next_follow_up || null; }
+        else throw new Error('Unsupported action');
+        var r = await client.rpc('copilot_execute_action', { p_type: a.type, p_payload: payload });
+        if (r && r.error) throw r.error;
+      }
+      a._state = 'done'; copUpdateCard(a);
+    } catch (e) {
+      a._state = 'error'; a._err = (e && e.message) ? e.message : 'Failed'; copUpdateCard(a);
+    }
+  }
+
   function copMount() {
     if (document.getElementById('crm-copilot-panel')) return;
     var p = document.createElement('div'); p.id = 'crm-copilot-panel'; p.className = 'cop-panel';
@@ -405,7 +534,11 @@ if (isAdminPage || path.includes('/admin/')) {
     }
     var html = _copHistory.map(function (m) {
       var mine = m.role === 'user';
-      return '<div class="cop-msg' + (mine ? ' mine' : '') + '">' + (mine ? copEsc(m.content) : copMd(m.content)) + '</div>';
+      var bubble = '<div class="cop-msg' + (mine ? ' mine' : '') + '">' + (mine ? copEsc(m.content) : copMd(m.content)) + '</div>';
+      if (!mine && m.actions && m.actions.length) {
+        bubble += m.actions.filter(function (a) { return a._state !== 'dismissed'; }).map(copCardHtml).join('');
+      }
+      return bubble;
     }).join('');
     if (_copBusy) html += '<div class="cop-msg cop-think"><span></span><span></span><span></span></div>';
     box.innerHTML = html; box.scrollTop = box.scrollHeight;
@@ -437,7 +570,18 @@ if (isAdminPage || path.includes('/admin/')) {
       if (data && data.error) {
         _copHistory.push({ role: 'assistant', content: (res.status === 403) ? 'Copilot is available to admin/staff only.' : (data.error || 'Something went wrong.') });
       } else {
-        _copHistory.push({ role: 'assistant', content: (data && data.reply) || 'No response — try rephrasing.' });
+        // Phase 2: register any proposed_actions as pending confirm-to-execute cards.
+        var acts = null;
+        if (data && Array.isArray(data.proposed_actions) && data.proposed_actions.length) {
+          acts = [];
+          data.proposed_actions.forEach(function (pa) {
+            if (!pa || !pa.type) return;
+            var id = 'copact' + (++_copActionSeq);
+            var a = Object.assign({}, pa, { id: id, _state: 'pending' });
+            _copActions[id] = a; acts.push(a);
+          });
+        }
+        _copHistory.push({ role: 'assistant', content: (data && data.reply) || 'No response — try rephrasing.', actions: (acts && acts.length) ? acts : null });
       }
       copRender();
     } catch (e) {
@@ -475,11 +619,22 @@ if (isAdminPage || path.includes('/admin/')) {
         return;
       }
       if (e.target.closest('[data-cop-send]')) { var inp = document.getElementById('cop-input'); if (inp) { var v = inp.value; inp.value = ''; copSend(v); } return; }
+      // Phase 2 action cards: confirm / dismiss.
+      var cf = e.target.closest('[data-cop-confirm]'); if (cf) { copExecAction(cf.getAttribute('data-cop-confirm')); return; }
+      var cc = e.target.closest('[data-cop-cancel]'); if (cc) { copCancelAction(cc.getAttribute('data-cop-cancel')); return; }
       // Opening the staff-chat bubble on a narrow screen closes the Copilot (mirror of copSetOpen).
       if (window.innerWidth < 900 && e.target.closest('[data-sc-toggle]')) { var cp = document.getElementById('crm-copilot-panel'); if (cp) cp.classList.remove('is-open'); }
     });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && e.target && e.target.id === 'cop-input') { e.preventDefault(); var v = e.target.value; e.target.value = ''; copSend(v); }
+    });
+    // Persist card textarea edits back to the action model (message body / note text).
+    document.addEventListener('input', function (e) {
+      var t = e.target;
+      if (t && t.getAttribute && t.getAttribute('data-cop-body')) {
+        var a = _copActions[t.getAttribute('data-cop-body')];
+        if (a) { if (a.type === 'note') a.text = t.value; else a.body = t.value; }
+      }
     });
   }
 
