@@ -20777,7 +20777,8 @@ function lsRecalc() {
   // Auto-save (debounced)
   _lsAutoSave({ loan_amount:loanAmt, appraised_value:apprV, interest_rate:rate, loan_term_months:term, purchase_price:price, down_payment:down,
     pi_payment:pi, mi_monthly:mi, property_taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa, total_housing_payment:pitia,
-    total_monthly_income:income, total_monthly_debt:debt, front_end_dti:frontDTI, back_end_dti:backDTI, ltv:ltv, cash_to_close:ctc });
+    total_monthly_income:income, total_monthly_debt:debt, front_end_dti:frontDTI, back_end_dti:backDTI, ltv:ltv, cash_to_close:ctc,
+    credit_score:(_lsNum('ls_credit_score')||null), loan_program:((document.getElementById('ls_loan_program')||{}).value||null), loan_type:(_lsLoanType||null) });
 }
 
 function _lsAutoSave(updates) {
@@ -20785,37 +20786,33 @@ function _lsAutoSave(updates) {
   _lsSaveTimer = setTimeout(async function() {
     var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
     if (!cid) return;
-    var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-    var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
     var indicator = document.getElementById('lsSaveIndicator');
-    if (indicator) { indicator.textContent = 'Saving…'; indicator.style.opacity = '1'; indicator.style.color = '#888'; }
+    function _lsInd(txt, color, hide) { if (!indicator) return; indicator.textContent = txt; indicator.style.color = color; indicator.style.opacity = '1'; if (hide) setTimeout(function(){ indicator.style.opacity = '0'; }, 1500); }
+    _lsInd('Saving…', '#888', false);
     updates.contact_id = cid;
     updates.updated_at = new Date().toISOString();
     try {
+      // Session-aware client ONLY \u2014 never the anon key. loan_scenarios writes are
+      // RLS-gated by can_see_financials(); an anon request is silently dropped, which
+      // would lose the edit and read as "didn't save". _waitForAuthClient() returns the
+      // authed client or null (never the anon fallback).
+      var client = await _waitForAuthClient();
+      if (!client) { _lsInd('Save failed \u2014 retry', '#ef4444', false); return; }
       var r;
       if (_lsScenarioId) {
-        r = await fetch(base + '/rest/v1/loan_scenarios?id=eq.' + _lsScenarioId, {
-          method:'PATCH', headers: await _rnrAuthHeaders({'Prefer':'return=minimal'}),
-          body: JSON.stringify(updates)
-        });
+        r = await client.from('loan_scenarios').update(updates).eq('id', _lsScenarioId).select('id');
       } else {
         updates.scenario_name = 'Primary Scenario';
         updates.is_primary = true;
         updates.created_at = new Date().toISOString();
-        r = await fetch(base + '/rest/v1/loan_scenarios', {
-          method:'POST', headers: await _rnrAuthHeaders({'Prefer':'return=representation'}),
-          body: JSON.stringify(updates)
-        });
-        if (r.ok) { var rows = await r.json(); if (rows && rows[0]) _lsScenarioId = rows[0].id; }
+        r = await client.from('loan_scenarios').insert(updates).select('id').single();
+        if (!r.error && r.data && r.data.id) _lsScenarioId = r.data.id;
       }
-      if (indicator) {
-        if (r && r.ok) { indicator.textContent = 'Saved \u2713'; indicator.style.color = '#22c55e'; }
-        else { indicator.textContent = 'Save failed'; indicator.style.color = '#ef4444'; }
-        setTimeout(function(){ indicator.style.opacity = '0'; }, 1500);
-      }
+      if (r && r.error) throw r.error;
+      _lsInd('Saved \u2713', '#22c55e', true);
     } catch(e) {
-      console.warn('[loan-summary] save error:', e);
-      if (indicator) { indicator.textContent = 'Save failed'; indicator.style.color = '#ef4444'; }
+      console.warn('[loan-summary] save error:', e && e.message ? e.message : e);
+      _lsInd('Save failed \u2014 retry', '#ef4444', false);
     }
   }, 800);
 }
@@ -21231,6 +21228,9 @@ async function initLoanSummary() {
         if (s.total_monthly_debt) _lsSetNum('ls_total_monthly_debt', s.total_monthly_debt);
         if (s.purchase_price) _lsSetNum('ls_purchase_price', s.purchase_price);
         if (s.down_payment) _lsSetNum('ls_down_payment', s.down_payment);
+        if (s.credit_score) _lsSetNum('ls_credit_score', s.credit_score);
+        if (s.loan_program) { var _lspg = document.getElementById('ls_loan_program'); if (_lspg) _lspg.value = s.loan_program; }
+        if (s.loan_type) { var _lsty = document.getElementById('ls_loan_type'); if (_lsty) _lsty.value = s.loan_type; }
       }
     }
   } catch(e) { console.warn('[loan-summary] scenario load:', e); }
@@ -21267,7 +21267,7 @@ async function initLoanSummary() {
   // Wire all inputs to recalc on input
   var ids = ['ls_loan_amount','ls_interest_rate','ls_loan_term_months','ls_appraised_value',
              'ls_property_taxes_monthly','ls_insurance_monthly','ls_hoa_monthly','ls_other_monthly',
-             'ls_total_monthly_income','ls_total_monthly_debt',
+             'ls_total_monthly_income','ls_total_monthly_debt','ls_credit_score','ls_loan_program','ls_loan_type',
              'ls_purchase_price','ls_down_payment','ls_closing_costs','ls_prepaids','ls_credits'];
   ids.forEach(function(id) {
     var el = document.getElementById(id);
