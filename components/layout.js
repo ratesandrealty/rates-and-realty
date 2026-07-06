@@ -319,7 +319,39 @@ if (isAdminPage || path.includes('/admin/')) {
       // Bottom-of-page clearance so sticky footers / charts / table rows
       // don't sit under the FAB. 90px = 52 button + 20 margin + 18 safety.
       + 'body.has-ai-fab{padding-bottom:90px}'
-      + '@media(max-width:720px){body.has-ai-fab{padding-bottom:84px}}';
+      + '@media(max-width:720px){body.has-ai-fab{padding-bottom:84px}}'
+      // ── CRM Copilot chat panel (opened by the FAB) ──
+      // right:436 = clear of the staff-chat panel (right:20, width ~400) + a 16px gap,
+      // so both can sit open side-by-side on desktop without overlapping. Width is
+      // viewport-capped so it never runs off the left edge; narrow screens fill (below).
+      + '.cop-panel{position:fixed;bottom:88px;right:436px;z-index:95;width:min(400px,calc(100vw - 456px));height:520px;max-height:calc(100vh - 120px);background:#0d0d0d;border:1px solid rgba(201,168,76,.28);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;transform:scale(.95) translateY(12px);opacity:0;pointer-events:none;transition:all .16s cubic-bezier(.4,0,.2,1);transform-origin:bottom right;font-family:inherit}'
+      + '.cop-panel.is-open{transform:none;opacity:1;pointer-events:auto}'
+      + '.cop-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0}'
+      + '.cop-title{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:#C9A84C;letter-spacing:.3px}'
+      + '.cop-x{background:transparent;border:none;color:#888;font-size:14px;cursor:pointer;padding:4px 7px;border-radius:6px;line-height:1;font-family:inherit}'
+      + '.cop-x:hover{color:#fff;background:rgba(255,255,255,.06)}'
+      + '.cop-msgs{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}'
+      + '.cop-empty{color:#aaa;text-align:center;padding:16px 8px;margin:auto 0}'
+      + '.cop-empty-t{font-size:14px;color:#eee;font-weight:600}.cop-empty-s{font-size:12px;color:#888;margin-top:4px}'
+      + '.cop-chips{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:14px}'
+      + '.cop-chip{background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.35);color:#C9A84C;font-size:11.5px;font-weight:600;border-radius:14px;padding:6px 12px;cursor:pointer;font-family:inherit}'
+      + '.cop-chip:hover{background:rgba(201,168,76,.2)}'
+      + '.cop-msg{max-width:88%;font-size:13px;line-height:1.5;padding:9px 12px;border-radius:4px 12px 12px 12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:#e6e6e6;word-break:break-word;align-self:flex-start}'
+      + '.cop-msg.mine{align-self:flex-end;background:rgba(201,168,76,.16);border-color:rgba(201,168,76,.3);color:#fff;border-radius:12px 4px 12px 12px;white-space:pre-wrap}'
+      + '.cop-msg h3{font-size:14px;margin:8px 0 4px;color:#fff}.cop-msg h4{font-size:13px;margin:6px 0 3px;color:#fff}'
+      + '.cop-msg ul{margin:6px 0;padding-left:18px}.cop-msg li{margin:2px 0}'
+      + '.cop-msg code{background:rgba(255,255,255,.1);border-radius:4px;padding:1px 5px;font-size:12px}.cop-msg a{color:#C9A84C}'
+      + '.cop-msg.cop-think{display:flex;flex-direction:row;gap:4px;align-items:center}'
+      + '.cop-think span{width:6px;height:6px;border-radius:50%;background:#C9A84C;animation:cop-blink 1.2s infinite}'
+      + '.cop-think span:nth-child(2){animation-delay:.2s}.cop-think span:nth-child(3){animation-delay:.4s}'
+      + '@keyframes cop-blink{0%,60%,100%{opacity:.3}30%{opacity:1}}'
+      + '.cop-composer{display:flex;gap:6px;align-items:center;padding:10px 12px;border-top:1px solid rgba(255,255,255,.06);flex-shrink:0}'
+      + '.cop-composer input{flex:1 1 auto;min-width:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;outline:none;font-family:inherit}'
+      + '.cop-send{flex:0 0 auto;background:#C9A84C;border:none;color:#111;font-weight:700;font-size:12px;border-radius:8px;padding:0 14px;height:36px;cursor:pointer;font-family:inherit}'
+      // Below 900px there isn't room for two panels side-by-side, so the Copilot
+      // fills the width (like the staff-chat panel) and opening one closes the other
+      // (JS below) — no overlap at any size.
+      + '@media(max-width:899px){.cop-panel{left:12px;right:12px;bottom:84px;width:auto;max-height:calc(100vh - 96px)}}';
     document.head.appendChild(fabCss);
   }
   document.body.classList.add('has-ai-fab');
@@ -328,55 +360,131 @@ if (isAdminPage || path.includes('/admin/')) {
   fab.className = 'ai-agent-fab';
   fab.type = 'button';
   fab.setAttribute('data-action', 'open-ai-agent');
-  fab.setAttribute('aria-label', 'Open AI assistant');
-  fab.title = 'Ask the AI assistant';
+  fab.setAttribute('aria-label', 'Open CRM Copilot');
+  fab.title = 'Open CRM Copilot';
   // Sparkle icon — communicates "AI" at a glance without the phone-call
   // confusion the old icon caused.
   fab.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>';
-  function openAiAgent() {
-    // Inside the SPA dashboard, do the navigation OURSELVES instead of
-    // routing through `[data-crm-nav].click()` → navigateTo() → renderActiveTab().
-    // The SPA's renderActiveTab bails early when dashboardData is null
-    // (initial-load race), which makes the FAB feel "unclickable" — the
-    // section flip happens but content stays empty. Bypassing that:
-    var aiPanel = document.getElementById('tab-ai-agent');
-    if (aiPanel) {
-      [].slice.call(document.querySelectorAll('.crm-tab-panel')).forEach(function (p) {
-        p.classList.remove('is-active');
-      });
-      aiPanel.classList.add('is-active');
-      [].slice.call(document.querySelectorAll('[data-crm-nav]')).forEach(function (b) {
-        b.classList.toggle('is-active', b.getAttribute('data-crm-nav') === 'ai-agent');
-      });
-      try { localStorage.setItem('activeSection', 'ai-agent'); } catch (e) {}
-      // Fire navigateTo too so any SPA-side per-tab init still runs once
-      // dashboardData arrives (the SPA hooks into navigateTo for that).
-      if (typeof window.crmNavigateTo === 'function') {
-        try { window.crmNavigateTo('ai-agent'); } catch (e) {}
-      }
-      if (location.hash !== '#ai-agent') location.hash = '#ai-agent';
+  // ── CRM Copilot: the FAB opens a real AI chat panel. The AI Agent STATS tab
+  //    stays reachable via the sidebar "AI Agent" nav link (unchanged). ──
+  var _copHistory = [];   // [{role:'user'|'assistant', content:string}] — running conversation
+  var _copBusy = false;
+  var COP_CHIPS = ["Who should I work today?", "How's my pipeline?", "Who's gone stale?", "Summarize [lead name]"];
+
+  function copEsc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  // Tiny SAFE markdown: escape first, then a limited subset (no raw HTML injection).
+  function copMd(text) {
+    var h = copEsc(text || '');
+    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+    h = h.replace(/^### (.+)$/gm, '<h4>$1</h4>').replace(/^## (.+)$/gm, '<h3>$1</h3>').replace(/^# (.+)$/gm, '<h3>$1</h3>');
+    h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    h = h.replace(/(?:^|\n)\s*(?:[-*]|\d+\.)\s+(.+)/g, '\n<li>$1</li>');
+    h = h.replace(/(<li>[\s\S]*?<\/li>(?:\n<li>[\s\S]*?<\/li>)*)/g, '<ul>$1</ul>');
+    h = h.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+    return h;
+  }
+  function copMount() {
+    if (document.getElementById('crm-copilot-panel')) return;
+    var p = document.createElement('div'); p.id = 'crm-copilot-panel'; p.className = 'cop-panel';
+    p.innerHTML =
+      '<div class="cop-head"><span class="cop-title"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg> CRM Copilot</span>'
+      + '<button class="cop-x" data-cop-close aria-label="Close">✕</button></div>'
+      + '<div class="cop-msgs" id="cop-msgs"></div>'
+      + '<div class="cop-composer"><input id="cop-input" type="text" placeholder="Ask about your leads, pipeline…" autocomplete="off"><button class="cop-send" data-cop-send>Send</button></div>';
+    document.body.appendChild(p);
+    copRender();
+  }
+  function copRender() {
+    var box = document.getElementById('cop-msgs'); if (!box) return;
+    if (!_copHistory.length && !_copBusy) {
+      box.innerHTML = '<div class="cop-empty"><div class="cop-empty-t">Hi 👋 I\'m your CRM Copilot.</div>'
+        + '<div class="cop-empty-s">Ask about your leads, pipeline, and who to work.</div>'
+        + '<div class="cop-chips">' + COP_CHIPS.map(function (c) { return '<button class="cop-chip" data-cop-chip="' + copEsc(c) + '">' + copEsc(c) + '</button>'; }).join('') + '</div></div>';
       return;
     }
-    // Cross-page case (user is on /admin/showings.html etc.): navigate to
-    // the SPA with the hash preset.
-    location.href = '/dashboard/admin.html#ai-agent';
+    var html = _copHistory.map(function (m) {
+      var mine = m.role === 'user';
+      return '<div class="cop-msg' + (mine ? ' mine' : '') + '">' + (mine ? copEsc(m.content) : copMd(m.content)) + '</div>';
+    }).join('');
+    if (_copBusy) html += '<div class="cop-msg cop-think"><span></span><span></span><span></span></div>';
+    box.innerHTML = html; box.scrollTop = box.scrollHeight;
+  }
+  async function copToken() {
+    try {
+      var cl = (typeof window.getSupabaseClient === 'function') ? await window.getSupabaseClient() : window._supabaseClient;
+      if (!cl) return null;
+      var r = await cl.auth.getSession();
+      return (r && r.data && r.data.session) ? r.data.session.access_token : null;
+    } catch (e) { return null; }
+  }
+  async function copSend(text) {
+    text = (text || '').trim(); if (!text || _copBusy) return;
+    var cfg = window.APP_CONFIG || {};
+    _copHistory.push({ role: 'user', content: text });
+    _copBusy = true; copRender();
+    var token = await copToken();
+    if (!token) { _copBusy = false; _copHistory.push({ role: 'assistant', content: 'Please sign in to use the Copilot.' }); copRender(); return; }
+    try {
+      var prior = _copHistory.slice(0, -1).slice(-10);   // prior turns only (endpoint re-adds the message)
+      var res = await fetch((cfg.SUPABASE_URL || '') + '/functions/v1/crm-copilot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': cfg.SUPABASE_ANON_KEY || '', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ message: text, history: prior })
+      });
+      var data = await res.json().catch(function () { return {}; });
+      _copBusy = false;
+      if (data && data.error) {
+        _copHistory.push({ role: 'assistant', content: (res.status === 403) ? 'Copilot is available to admin/staff only.' : (data.error || 'Something went wrong.') });
+      } else {
+        _copHistory.push({ role: 'assistant', content: (data && data.reply) || 'No response — try rephrasing.' });
+      }
+      copRender();
+    } catch (e) {
+      _copBusy = false; _copHistory.push({ role: 'assistant', content: 'Network error — please try again.' }); copRender();
+    }
+  }
+  function copSetOpen(v) {
+    copMount();
+    var p = document.getElementById('crm-copilot-panel'); if (!p) return;
+    // Narrow screens can't show both panels side-by-side — close the staff-chat
+    // panel when the Copilot opens so they never cover each other.
+    if (v && window.innerWidth < 900) { var scp = document.getElementById('staff-chat-panel'); if (scp) scp.classList.remove('is-open'); }
+    p.classList.toggle('is-open', v);
+    try { sessionStorage.setItem('rnr_copilot_open', v ? '1' : '0'); } catch (e) {}
+    if (v) { var i = document.getElementById('cop-input'); if (i) setTimeout(function () { i.focus(); }, 40); }
+  }
+  function toggleCopilot() {
+    var p = document.getElementById('crm-copilot-panel');
+    copSetOpen(!(p && p.classList.contains('is-open')));
   }
 
-  fab.addEventListener('click', openAiAgent);
+  fab.addEventListener('click', toggleCopilot);
   document.body.appendChild(fab);
 
-  // Defensive document-level delegation. If anything ever overrides the
-  // direct fab.click handler (rare, but possible if some other script
-  // clones the button or wraps it), this catches the click from any
-  // descendant of [data-action="open-ai-agent"]. Idempotent install.
-  if (!window._aiFabDelegated) {
-    window._aiFabDelegated = true;
+  // Panel controls (close / chips / send / Enter) — delegated, installed once.
+  if (!window._copilotWired) {
+    window._copilotWired = true;
     document.addEventListener('click', function (e) {
-      if (e.target.closest('[data-action="open-ai-agent"]')) {
-        openAiAgent();
+      if (e.target.closest('[data-cop-close]')) { copSetOpen(false); return; }
+      var chip = e.target.closest('[data-cop-chip]');
+      if (chip) {
+        var c = chip.getAttribute('data-cop-chip');
+        if (/\[lead name\]/i.test(c)) { var i = document.getElementById('cop-input'); if (i) { i.value = 'Summarize '; i.focus(); } }
+        else { copSend(c); }
+        return;
       }
+      if (e.target.closest('[data-cop-send]')) { var inp = document.getElementById('cop-input'); if (inp) { var v = inp.value; inp.value = ''; copSend(v); } return; }
+      // Opening the staff-chat bubble on a narrow screen closes the Copilot (mirror of copSetOpen).
+      if (window.innerWidth < 900 && e.target.closest('[data-sc-toggle]')) { var cp = document.getElementById('crm-copilot-panel'); if (cp) cp.classList.remove('is-open'); }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.target && e.target.id === 'cop-input') { e.preventDefault(); var v = e.target.value; e.target.value = ''; copSend(v); }
     });
   }
+
+  // Restore the panel's open/closed state within the session.
+  try { if (sessionStorage.getItem('rnr_copilot_open') === '1') copSetOpen(true); } catch (e) {}
   // (Staff Chat bubble is mounted from /admin/js/auth-guard.js — the universal
   //  staff-page marker — so it reaches every admin CRM + VA page, not just the
   //  handful that load this layout.js. See auth-guard mountStaffChat().)
