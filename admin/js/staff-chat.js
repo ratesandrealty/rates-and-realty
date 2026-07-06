@@ -466,11 +466,20 @@
     h = h.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
     return h;
   }
+  // Format an ISO datetime (carries a Pacific offset) for display in Pacific,
+  // regardless of the viewer's timezone → e.g. "Fri Jul 10, 3:00 PM".
+  function copFmtWhen(iso) {
+    try {
+      var d = new Date(iso); if (isNaN(d.getTime())) return String(iso || '');
+      return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }).replace(/^(\w{3}),/, '$1');
+    } catch (e) { return String(iso || ''); }
+  }
   // loe / esign / email actions navigate-and-prefill (handoff), not inline execute.
   function copIsHandoff(a) { return a.type === 'loe' || a.type === 'esign' || (a.type === 'message' && a.channel === 'email'); }
   function copConfirmLabel(a) {
     if (a.type === 'loe') return 'Open LOE tool';
     if (a.type === 'esign') return 'Open e-sign';
+    if (a.type === 'appointment') return 'Schedule';
     if (a.type === 'message') return a.channel === 'email' ? ('✉️ Open in ' + (a.contact_name || 'lead')) : 'Send text';
     if (a.type === 'task') return 'Create task';
     if (a.type === 'note') return 'Save note';
@@ -483,6 +492,7 @@
       if (a.type === 'esign') return 'Opened e-sign for ' + (a.contact_name || 'lead');
       return 'Opened email for ' + (a.contact_name || 'lead');
     }
+    if (a.type === 'appointment') return a._doneMsg || ('Scheduled' + (a.start ? ' · ' + copFmtWhen(a.start) : ''));
     if (a.type === 'message') return (a.channel === 'email' ? 'Email sent to ' : 'Text sent to ') + (a.contact_name || 'lead');
     if (a.type === 'task') return 'Task created: ' + (a.title || '');
     if (a.type === 'note') return 'Note saved on ' + (a.contact_name || 'lead');
@@ -497,7 +507,14 @@
     var busy = a._state === 'busy';
     var errHtml = (a._state === 'error') ? '<div class="cop-card-err">⚠ ' + esc(a._err || 'Failed — try again') + '</div>' : '';
     var inner = '';
-    if (a.type === 'loe') {
+    if (a.type === 'appointment') {
+      var when = copFmtWhen(a.start);
+      var meta = when + ' · ' + ((Number(a.duration_minutes) || 30) + ' min') + (a.contact_name ? (' with ' + a.contact_name) : '');
+      inner = '<div class="cop-card-h">📅 Schedule: ' + esc(a.title || 'Appointment') + '</div>'
+        + '<div class="cop-card-meta" style="text-transform:none;">' + esc(meta) + '</div>'
+        + '<input class="cop-card-title" data-cop-title="' + a.id + '" value="' + esc(a.title || '') + '" placeholder="Title"' + (busy ? ' disabled' : '') + '>'
+        + '<textarea class="cop-card-ta" data-cop-body="' + a.id + '" placeholder="Notes (optional)"' + (busy ? ' disabled' : '') + '>' + esc(a.notes || '') + '</textarea>';
+    } else if (a.type === 'loe') {
       inner = '<div class="cop-card-h">✍️ Letter of Explanation for ' + esc(a.contact_name || 'lead') + '</div>'
         + (a.category ? '<div class="cop-card-meta">' + esc(a.category) + '</div>' : '')
         + '<textarea class="cop-card-ta" data-cop-details="' + a.id + '" placeholder="What should the letter explain?"' + (busy ? ' disabled' : '') + '>' + esc(a.details || '') + '</textarea>';
@@ -586,6 +603,19 @@
       if (!cl) throw new Error('Not signed in');
       if (a.type === 'message') {
         await copSendMessage(cl, a);
+      } else if (a.type === 'appointment') {
+        // Step (a): create the appointment via the RPC.
+        var ap = { contact_id: a.contact_id, title: a.title || 'Appointment', start: a.start, duration_minutes: (Number(a.duration_minutes) || 30), notes: a.notes || '' };
+        var ar = await cl.rpc('copilot_execute_action', { p_type: 'appointment', p_payload: ap });
+        if (ar && ar.error) throw ar.error;
+        var aptId = ar && ar.data && ar.data.appointment_id;
+        // Step (b): push to Google (same path as the CRM's syncToGoogleCalendar). Non-fatal.
+        var pending = false;
+        if (aptId) {
+          try { var gr = await cl.functions.invoke('google-calendar-sync', { body: { appointment_id: aptId } }); if (!gr || gr.error || (gr.data && gr.data.error)) pending = true; }
+          catch (ge) { pending = true; }
+        }
+        a._doneMsg = pending ? 'Created (Google sync pending)' : ('✓ Scheduled' + (a.start ? ' · ' + copFmtWhen(a.start) : ''));
       } else {
         var payload = { contact_id: a.contact_id };
         if (a.type === 'note') payload.text = a.text || '';
@@ -1036,7 +1066,7 @@
       var t = e.target;
       if (t && t.getAttribute && t.getAttribute('data-cop-body')) {
         var a = _copActions[t.getAttribute('data-cop-body')];
-        if (a) { if (a.type === 'note') a.text = t.value; else a.body = t.value; copPersist(); }
+        if (a) { if (a.type === 'note') a.text = t.value; else if (a.type === 'appointment') a.notes = t.value; else a.body = t.value; copPersist(); }
       } else if (t && t.getAttribute && t.getAttribute('data-cop-title')) {
         var at = _copActions[t.getAttribute('data-cop-title')]; if (at) { at.title = t.value; copPersist(); }
       } else if (t && t.getAttribute && t.getAttribute('data-cop-subject')) {
