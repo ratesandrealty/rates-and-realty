@@ -21025,8 +21025,11 @@ async function lsGeneratePreApproval() {
     // payload-driven (the edge function reads the request body, NOT the saved row), so passing
     // these directly makes the PDF match the on-screen qualifier instead of stale ld-*/saved data.
     var loanAmount = _lsNum('ls_loan_amount');
+    // The PDF's PURCHASE PRICE + LTV + down payment must all key off the ONE
+    // "Purchase/Appraised" input (ls_appraised_value) the user edits — NOT the
+    // separate/stale ls_purchase_price field (that's what made the PDF show a
+    // different, older purchase price than the entered value).
     var value      = _lsNum('ls_appraised_value') || _lsNum('ls_purchase_price');
-    var price      = _lsNum('ls_purchase_price') || value;
     var rate       = _lsNum('ls_interest_rate');
     var term       = _lsNum('ls_loan_term_months') || 360;
     var taxes      = _lsNum('ls_property_taxes_monthly');
@@ -21038,6 +21041,9 @@ async function lsGeneratePreApproval() {
     var mi         = /\bva\b/i.test(loanType) ? 0 : _lsNum('ls_mi_monthly');
     var down = _lsNum('ls_down_payment'), closing = _lsNum('ls_closing_costs'),
         prepaid = _lsNum('ls_prepaids'), credits = _lsNum('ls_credits');
+    // Down payment = Purchase/Appraised − loan amount, DERIVED from the same `value`
+    // that feeds purchase_price + LTV, so they can never drift apart on the PDF.
+    var downDerived = value ? Math.max(0, value - loanAmount) : down;
     var pi = 0;
     if (loanAmount && rate && term) { var r = rate/100/12; pi = r===0 ? loanAmount/term : loanAmount*r*Math.pow(1+r,term)/(Math.pow(1+r,term)-1); }
     var pitia = pi + mi + taxes + ins + hoa + other;
@@ -21061,7 +21067,7 @@ async function lsGeneratePreApproval() {
     var payload = {
       borrower_name: ((app.first_name||'')+' '+(app.last_name||'')).trim(),
       co_borrower_name: app.co_borrower_first_name ? ((app.co_borrower_first_name||'')+' '+(app.co_borrower_last_name||'')).trim() : '',
-      loan_amount:loanAmount, purchase_price:price, appraised_value:value,
+      loan_amount:loanAmount, purchase_price:value, appraised_value:value,
       loan_type: loanType,
       loan_program: (document.getElementById('ls_loan_program') || {}).value || '30-Year Fixed',
       interest_rate:rate, quoted_rate:rate, loan_term_months:term, ltv:ltv, cltv:ltv,
@@ -21070,8 +21076,8 @@ async function lsGeneratePreApproval() {
       credit_score: parseFloat(document.getElementById('ld-credit')?.value) || app.credit_score || 0,
       total_income:totalIncome, total_debt:totalDebt,
       total_monthly_income:totalIncome, total_monthly_debt:totalDebt,
-      down_payment:down, closing_costs:closing, prepaids:prepaid,
-      cash_to_close: down + closing + prepaid - credits,
+      down_payment:downDerived, closing_costs:closing, prepaids:prepaid,
+      cash_to_close: downDerived + closing + prepaid - credits,
       property_address:app.property_address_street, property_city:app.property_address_city,
       property_state:app.property_address_state, property_zip:app.property_address_zip,
       occupancy_type: app.occupancy_type || 'Primary Residence',
