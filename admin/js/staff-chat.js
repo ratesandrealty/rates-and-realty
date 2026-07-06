@@ -466,14 +466,21 @@
     h = h.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
     return h;
   }
+  // esign + email actions navigate-and-prefill (handoff) rather than execute inline.
+  function copIsHandoff(a) { return a.type === 'esign' || (a.type === 'message' && a.channel === 'email'); }
   function copConfirmLabel(a) {
-    if (a.type === 'message') return a.channel === 'email' ? 'Send email' : 'Send text';
+    if (a.type === 'esign') return '📝 Open e-sign for ' + (a.contact_name || 'lead');
+    if (a.type === 'message') return a.channel === 'email' ? ('✉️ Open in ' + (a.contact_name || 'lead')) : 'Send text';
     if (a.type === 'task') return 'Create task';
     if (a.type === 'note') return 'Save note';
     if (a.type === 'status') return 'Update';
     return 'Confirm';
   }
   function copDoneLabel(a) {
+    if (a._state === 'opened') {
+      if (a.type === 'esign') return 'Opened e-sign for ' + (a.contact_name || 'lead');
+      return 'Opened email for ' + (a.contact_name || 'lead');
+    }
     if (a.type === 'message') return (a.channel === 'email' ? 'Email sent to ' : 'Text sent to ') + (a.contact_name || 'lead');
     if (a.type === 'task') return 'Task created: ' + (a.title || '');
     if (a.type === 'note') return 'Note saved on ' + (a.contact_name || 'lead');
@@ -481,16 +488,21 @@
     return 'Done';
   }
   function copCardHtml(a) {
-    if (a._state === 'done') {
-      return '<div class="cop-card done" data-cop-card="' + a.id + '"><div class="cop-card-h">✓ Done</div><div class="cop-card-sub">' + esc(copDoneLabel(a)) + '</div></div>';
+    if (a._state === 'done' || a._state === 'opened') {
+      var ic = a._state === 'opened' ? '↗' : '✓';
+      return '<div class="cop-card done" data-cop-card="' + a.id + '"><div class="cop-card-h">' + ic + ' ' + (a._state === 'opened' ? 'Opened' : 'Done') + '</div><div class="cop-card-sub">' + esc(copDoneLabel(a)) + '</div></div>';
     }
     var busy = a._state === 'busy';
     var errHtml = (a._state === 'error') ? '<div class="cop-card-err">⚠ ' + esc(a._err || 'Failed — try again') + '</div>' : '';
     var inner = '';
-    if (a.type === 'message') {
+    if (a.type === 'esign') {
+      inner = '<div class="cop-card-h">📝 E-sign draft for ' + esc(a.contact_name || 'lead') + '</div>'
+        + '<input class="cop-card-title" data-cop-title="' + a.id + '" value="' + esc(a.title || '') + '" placeholder="Document title"' + (busy ? ' disabled' : '') + '>'
+        + '<textarea class="cop-card-ta" data-cop-body="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + esc(a.body || '') + '</textarea>';
+    } else if (a.type === 'message') {
       var verb = a.channel === 'email' ? '✉️ Email' : '💬 Text';
       inner = '<div class="cop-card-h">' + verb + ' to ' + esc(a.contact_name || 'lead') + '</div>'
-        + (a.channel === 'email' && a.subject ? '<div class="cop-card-sub">Subject: ' + esc(a.subject) + '</div>' : '')
+        + (a.channel === 'email' ? '<input class="cop-card-title" data-cop-subject="' + a.id + '" value="' + esc(a.subject || '') + '" placeholder="Subject"' + (busy ? ' disabled' : '') + '>' : '')
         + '<textarea class="cop-card-ta" data-cop-body="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + esc(a.body || '') + '</textarea>';
     } else if (a.type === 'task') {
       inner = '<div class="cop-card-h">✅ Task: ' + esc(a.title || 'Task') + '</div>'
@@ -542,9 +554,22 @@
       if (!sd.success) throw new Error(sd.error || 'SMS failed');
     }
   }
+  // Navigate-and-prefill: store a handoff for lead-detail to consume, then go there.
+  // Marks the card resolved ('opened') so it can't re-fire on refresh/return.
+  function copHandoff(a) {
+    try {
+      var payload = (a.type === 'esign')
+        ? { kind: 'esign', contact_id: a.contact_id, doc_kind: a.doc_kind || 'other', title: a.title || '', body: a.body || '', subject: a.subject || '' }
+        : { kind: 'email', contact_id: a.contact_id, subject: a.subject || '', body: a.body || '' };
+      sessionStorage.setItem('rnr_copilot_handoff', JSON.stringify(payload));
+    } catch (e) {}
+    a._state = 'opened'; copUpdateCard(a);           // persisted by copUpdateCard before navigation
+    if (a.contact_id) window.location.href = '/admin/lead-detail.html?contact_id=' + encodeURIComponent(a.contact_id);
+  }
   async function copExecAction(id) {
     var a = _copActions[id];
-    if (!a || a._state === 'busy' || a._state === 'done') return;
+    if (!a || a._state === 'busy' || a._state === 'done' || a._state === 'opened') return;
+    if (copIsHandoff(a)) { copHandoff(a); return; }   // esign + email → navigate-and-prefill (no inline execute)
     a._state = 'busy'; a._err = null; copUpdateCard(a);
     try {
       var cl = await client();
@@ -795,6 +820,8 @@
       '.cop-card-meta{font-size:11px;color:#9a9a9a;margin-bottom:4px;text-transform:capitalize}',
       '.cop-card-desc{font-size:12px;color:#ddd;line-height:1.45;margin-bottom:5px;white-space:pre-wrap;word-break:break-word}',
       '.cop-card-ta{width:100%;box-sizing:border-box;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12.5px;line-height:1.45;font-family:inherit;padding:7px 9px;min-height:66px;resize:vertical;margin-bottom:6px;outline:none}',
+      '.cop-card-title{width:100%;box-sizing:border-box;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12.5px;font-weight:600;font-family:inherit;padding:6px 9px;margin-bottom:6px;outline:none}',
+      '.cop-card-title:focus{border-color:rgba(201,168,76,.55)}',
       '.cop-card-ta:focus{border-color:rgba(201,168,76,.55)}',
       '.cop-card-err{font-size:11px;color:#f2a5a7;margin-bottom:6px}',
       '.cop-card-actions{display:flex;gap:6px;justify-content:flex-end}',
@@ -1000,6 +1027,10 @@
       if (t && t.getAttribute && t.getAttribute('data-cop-body')) {
         var a = _copActions[t.getAttribute('data-cop-body')];
         if (a) { if (a.type === 'note') a.text = t.value; else a.body = t.value; copPersist(); }
+      } else if (t && t.getAttribute && t.getAttribute('data-cop-title')) {
+        var at = _copActions[t.getAttribute('data-cop-title')]; if (at) { at.title = t.value; copPersist(); }
+      } else if (t && t.getAttribute && t.getAttribute('data-cop-subject')) {
+        var as = _copActions[t.getAttribute('data-cop-subject')]; if (as) { as.subject = t.value; copPersist(); }
       }
     });
   }

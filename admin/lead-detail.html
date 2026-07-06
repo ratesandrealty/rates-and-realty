@@ -5227,10 +5227,44 @@ async function loadData() {
       if (_act === 'call' && typeof handleCallClick === 'function') setTimeout(handleCallClick, 500);
       else if (_act === 'sms' && typeof openSmsComposer === 'function') setTimeout(openSmsComposer, 500);
     } catch(_){}
+    // Copilot handoff: the CRM Copilot's e-sign / email cards navigate here with a
+    // drafted doc. Consume it ONCE (only for THIS lead) and open the matching panel
+    // pre-filled — reusing the existing loeOpenEditor() / openEmailComposer(). No auto-send.
+    try { _consumeCopilotHandoff(); } catch(e){ console.warn('[copilot handoff]', e); }
   } catch (err) {
     console.error(err);
     showError('Error loading lead: ' + err.message);
   }
+}
+
+/* ── CRM Copilot handoff consumer ──
+   The Copilot's e-sign / email action cards navigate here with a drafted document in
+   sessionStorage['rnr_copilot_handoff']. We consume it ONCE (only for the loaded lead)
+   and open the SAME panels the manual buttons use, pre-filled — never auto-send. */
+function _consumeCopilotHandoff() {
+  var raw = null;
+  try { raw = sessionStorage.getItem('rnr_copilot_handoff'); } catch (e) { return; }
+  if (!raw) return;
+  var h; try { h = JSON.parse(raw); } catch (e) { try { sessionStorage.removeItem('rnr_copilot_handoff'); } catch (_) {} return; }
+  if (!h || !h.contact_id || String(h.contact_id) !== String(contactId)) return;   // only for THIS lead
+  try { sessionStorage.removeItem('rnr_copilot_handoff'); } catch (_) {}            // fire once
+  setTimeout(function () {
+    try {
+      if (h.kind === 'esign') {
+        if (typeof loeOpenEditor !== 'function') { showToast('Letter editor unavailable', true); return; }
+        loeOpenEditor();   // new letter — builds #loeCat/#loeTitle/#loeBody synchronously; signers auto-load
+        var catMap = { credit_letter: 'credit_inquiry', loe: 'other', authorization: 'other', other: 'other' };
+        var cEl = document.getElementById('loeCat'); if (cEl) { try { cEl.value = catMap[h.doc_kind || 'other'] || 'other'; } catch (_) {} }
+        var tEl = document.getElementById('loeTitle'); if (tEl && h.title) tEl.value = h.title;
+        var bEl = document.getElementById('loeBody'); if (bEl && h.body != null) bEl.value = h.body;
+        showToast('Copilot draft loaded — review, add the signature field, then send');
+      } else if (h.kind === 'email') {
+        if (typeof openEmailComposer !== 'function') { showToast('Email composer unavailable', true); return; }
+        var _e = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+        openEmailComposer({ subject: h.subject || '', bodyHtml: _e(h.body || '').replace(/\n/g, '<br>') });
+      }
+    } catch (e) { console.warn('[copilot handoff] open failed', e); }
+  }, 600);
 }
 
 /* ── SHARE WITH VA (admin grants/revokes a VA's access to this lead) ──
