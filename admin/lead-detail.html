@@ -20676,7 +20676,7 @@ async function _lpPrefill1003People(force) {
 /* ═══ LOAN SUMMARY / DTI CALCULATOR ═══ */
 var _lsScenarioId = null, _lsSaveTimer = null;
 function _lsNum(id) { var el = document.getElementById(id); var v = el && el.value ? parseFloat(el.value) : 0; return isNaN(v) ? 0 : v; }
-function _lsSetNum(id, v) { var el = document.getElementById(id); if (el) el.value = (v != null && !isNaN(v)) ? Math.round(v * 100) / 100 : ''; }
+function _lsSetNum(id, v, dp) { var el = document.getElementById(id); if (!el) return; var f = Math.pow(10, (dp == null ? 2 : dp)); el.value = (v != null && !isNaN(v)) ? (Math.round(v * f) / f) : ''; }
 function _lsFmt(v) { return '$' + Math.round(v || 0).toLocaleString(); }
 function _lsDtiColor(pct) { return pct < 36 ? '#22c55e' : pct < 45 ? '#eab308' : pct < 50 ? '#f97316' : '#ef4444'; }
 
@@ -20777,7 +20777,7 @@ function lsRecalc() {
   // Auto-save (debounced)
   _lsAutoSave({ loan_amount:loanAmt, appraised_value:apprV, interest_rate:rate, loan_term_months:term, purchase_price:price, down_payment:down,
     pi_payment:pi, mi_monthly:mi, property_taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa, total_housing_payment:pitia,
-    total_monthly_income:income, total_monthly_debt:debt, front_end_dti:frontDTI, back_end_dti:backDTI, ltv:ltv, cash_to_close:ctc,
+    total_monthly_income:(income||null), total_monthly_debt:(debt||null), front_end_dti:frontDTI, back_end_dti:backDTI, ltv:ltv, cash_to_close:ctc,
     credit_score:(_lsNum('ls_credit_score')||null), loan_program:((document.getElementById('ls_loan_program')||{}).value||null), loan_type:(_lsLoanType||null) });
 }
 
@@ -21189,7 +21189,7 @@ async function initLoanSummary() {
         var a = apps[0];
         if (!document.getElementById('ls_loan_amount').value) _lsSetNum('ls_loan_amount', a.loan_amount);
         if (!document.getElementById('ls_appraised_value').value) _lsSetNum('ls_appraised_value', a.appraised_value || a.purchase_price || a.property_value);
-        if (!document.getElementById('ls_interest_rate').value) _lsSetNum('ls_interest_rate', a.note_rate || a.interest_rate);
+        if (!document.getElementById('ls_interest_rate').value) _lsSetNum('ls_interest_rate', a.note_rate || a.interest_rate, 3);
         if (!document.getElementById('ls_purchase_price').value) _lsSetNum('ls_purchase_price', a.purchase_price);
         if (!document.getElementById('ls_total_monthly_income').value) _lsSetNum('ls_total_monthly_income', a.total_monthly_income);
         // Load the saved loan type into the qualifier dropdown (case-insensitive match) so the
@@ -21219,7 +21219,7 @@ async function initLoanSummary() {
         // Overlay any saved values
         if (s.loan_amount) _lsSetNum('ls_loan_amount', s.loan_amount);
         if (s.appraised_value) _lsSetNum('ls_appraised_value', s.appraised_value);
-        if (s.interest_rate) _lsSetNum('ls_interest_rate', s.interest_rate);
+        if (s.interest_rate) _lsSetNum('ls_interest_rate', s.interest_rate, 3);
         if (s.loan_term_months) _lsSetNum('ls_loan_term_months', s.loan_term_months);
         if (s.property_taxes_monthly) _lsSetNum('ls_property_taxes_monthly', s.property_taxes_monthly);
         if (s.insurance_monthly) _lsSetNum('ls_insurance_monthly', s.insurance_monthly);
@@ -22187,8 +22187,12 @@ async function renderBorrowerIncomeDebtCards() {
   // Loan-level DTI always uses the combined totals of every borrower toggled ON.
   var incInput = document.getElementById('ls_total_monthly_income');
   var debtInput = document.getElementById('ls_total_monthly_debt');
-  if (incInput) incInput.value = combinedInc.toFixed(2);
-  if (debtInput) debtInput.value = combinedDebt.toFixed(2);
+  // Only push per-borrower totals into the combined income/debt inputs when there IS
+  // per-borrower data. Previously this ran unconditionally on every open and, when a
+  // lead had no borrower income/liability records, set both to "0.00" and autosaved 0 —
+  // clobbering the manually-entered / scenario income & debt.
+  if (incInput && combinedInc > 0) incInput.value = combinedInc.toFixed(2);
+  if (debtInput && combinedDebt > 0) debtInput.value = combinedDebt.toFixed(2);
   if (typeof lsRecalc === 'function') lsRecalc();
   // Update DTI mode note
   var note = document.getElementById('losDTIModeNote');
