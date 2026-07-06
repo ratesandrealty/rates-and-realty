@@ -119,6 +119,20 @@
     } catch (e) { return ''; }
   }
 
+  // All-day events (Google all-day, CRM/ClickUp tasks) arrive as a date-only
+  // "YYYY-MM-DD" string. new Date("YYYY-MM-DD") parses as UTC midnight, which shifts
+  // a day earlier in Pacific (and any zone west of GMT) — the classic all-day
+  // off-by-one. Parse those as a LOCAL calendar date so they land on their real day.
+  // Timed events (full ISO datetimes with offset/Z) keep their true instant.
+  function eventStartDate(e) {
+    var s = e && e.start;
+    if (typeof s === 'string') {
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+      if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+    }
+    return new Date(s);
+  }
+
   function updateTitle() {
     var titleEl = document.querySelector('[data-field=cal-title]');
     var subEl = document.querySelector('[data-field=cal-subtitle]');
@@ -184,8 +198,8 @@
     var todayKey = new Date().toDateString();
     var byDay = days.map(function (d) {
       var key = d.toDateString();
-      return allEvents.filter(function (e) { return new Date(e.start).toDateString() === key; })
-        .sort(function (a, b) { return new Date(a.start).getTime() - new Date(b.start).getTime(); });
+      return allEvents.filter(function (e) { return eventStartDate(e).toDateString() === key; })
+        .sort(function (a, b) { return eventStartDate(a).getTime() - eventStartDate(b).getTime(); });
     });
     main.innerHTML = '<div class="cal-week-grid">' + days.map(function (d, i) {
       var dayEvents = byDay[i];
@@ -204,8 +218,8 @@
   function renderDay() {
     var main = document.querySelector('[data-target=cal-main]');
     var dayKey = currentDate.toDateString();
-    var dayEvents = allEvents.filter(function (e) { return new Date(e.start).toDateString() === dayKey; })
-      .sort(function (a, b) { return new Date(a.start).getTime() - new Date(b.start).getTime(); });
+    var dayEvents = allEvents.filter(function (e) { return eventStartDate(e).toDateString() === dayKey; })
+      .sort(function (a, b) { return eventStartDate(a).getTime() - eventStartDate(b).getTime(); });
     if (!dayEvents.length) {
       main.innerHTML = '<div class="cal-empty-day"><div class="cal-empty-icon">📅</div><h3>Nothing scheduled</h3><p>Click + New Event to add something</p></div>';
       return;
@@ -228,12 +242,12 @@
     var todayKey = new Date().toDateString();
     var byDay = {};
     allEvents.forEach(function (e) {
-      var key = new Date(e.start).toDateString();
+      var key = eventStartDate(e).toDateString();
       if (!byDay[key]) byDay[key] = [];
       byDay[key].push(e);
     });
     Object.keys(byDay).forEach(function (k) {
-      byDay[k].sort(function (a, b) { return new Date(a.start).getTime() - new Date(b.start).getTime(); });
+      byDay[k].sort(function (a, b) { return eventStartDate(a).getTime() - eventStartDate(b).getTime(); });
     });
     main.innerHTML = '<div class="cal-month-grid">'
       + '<div class="cal-month-header">' + ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function (n) { return '<div>' + n + '</div>'; }).join('') + '</div>'
@@ -258,7 +272,7 @@
 
   function renderAgenda() {
     var main = document.querySelector('[data-target=cal-main]');
-    var sorted = allEvents.slice().sort(function (a, b) { return new Date(a.start).getTime() - new Date(b.start).getTime(); });
+    var sorted = allEvents.slice().sort(function (a, b) { return eventStartDate(a).getTime() - eventStartDate(b).getTime(); });
     if (!sorted.length) {
       main.innerHTML = '<div class="cal-empty-day"><div class="cal-empty-icon">📭</div><h3>Calendar is clear</h3><p>Nothing in the next 30 days</p></div>';
       return;
@@ -266,7 +280,7 @@
     var groups = {};
     var order = [];
     sorted.forEach(function (e) {
-      var key = new Date(e.start).toDateString();
+      var key = eventStartDate(e).toDateString();
       if (!groups[key]) { groups[key] = []; order.push(key); }
       groups[key].push(e);
     });
@@ -288,8 +302,8 @@
     var target = document.querySelector('[data-target=cal-upcoming-list]');
     if (!target) return;
     var now = Date.now();
-    var upcoming = allEvents.filter(function (e) { return new Date(e.start).getTime() > now; })
-      .sort(function (a, b) { return new Date(a.start).getTime() - new Date(b.start).getTime(); })
+    var upcoming = allEvents.filter(function (e) { return eventStartDate(e).getTime() > now; })
+      .sort(function (a, b) { return eventStartDate(a).getTime() - eventStartDate(b).getTime(); })
       .slice(0, 5);
     if (!upcoming.length) {
       target.innerHTML = '<div class="cal-empty-mini">Nothing upcoming</div>';
@@ -299,7 +313,7 @@
       return '<div class="upcoming-item" data-event-id="' + esc(e.id) + '">'
         + '<div class="up-dot" style="background:' + esc(e.color || '#C9A84C') + '"></div>'
         + '<div class="up-body">'
-        +   '<div class="up-when">' + new Date(e.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' + esc(fmtTime(e.start)) + '</div>'
+        +   '<div class="up-when">' + eventStartDate(e).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' + esc(fmtTime(e.start)) + '</div>'
         +   '<div class="up-title">' + esc(e.title) + '</div>'
         + '</div>'
         + '</div>';

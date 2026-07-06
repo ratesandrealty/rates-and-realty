@@ -32550,6 +32550,19 @@ async function recordNewVoicemail() {
       window._esignMerge=d.merge||{};
       window._esignMergeInfo={ has_snapshot:!!d.has_snapshot, lender_id:d.lender_id, lender_name:d.lender_name };
       if(!lenderId) window._mfFillLenderId=d.lender_id||null;
+      // Single source of truth = contacts.loan_number. The resolver returns
+      // mortgage_applications.loan_number; override it with the contacts value (when set)
+      // for the field display + {{loan_number}} fills, and reconcile the app row so
+      // server-rendered docs match. contactData mirrors contacts.loan_number live.
+      try {
+        var _cLoan = (typeof contactData !== 'undefined' && contactData) ? contactData.loan_number : null;
+        if (_cLoan != null && String(_cLoan).trim() !== '') {
+          if (String((d.merge && d.merge.loan_number) || '') !== String(_cLoan)) {
+            client().rpc('loan_number_set', { p_contact_id: c, p_loan_number: String(_cLoan) });
+          }
+          window._esignMerge.loan_number = _cLoan;
+        }
+      } catch (_) {}
       var ln=document.getElementById('mfLoanNumber');
       if(ln && !ln.dataset.dirty){ var lv=window._esignMerge.loan_number; ln.value=(lv==null?'':lv); }
       _mfRenderList(); _mfLenderLabel();
@@ -32578,13 +32591,24 @@ async function recordNewVoicemail() {
   }
 
   // ── Save loan number ─────────────────────────────────────────────────────
+  // Writes the ONE shared column contacts.loan_number (same RLS-safe path as
+  // _lpCommitLoan), then syncs the Pricing section + Loan Snapshot live. Also
+  // mirrors mortgage_applications.loan_number so server-rendered e-sign docs match.
   window._mfSaveLoan=async function(btn){
     var ln=document.getElementById('mfLoanNumber'); if(!ln) return;
+    var targetId=cid(); if(!targetId){ toast('No contact selected', true); return; }
     var val=(ln.value||'').trim(), orig=btn.textContent;
     btn.disabled=true; btn.textContent='…';
     try{
-      var res=await client().rpc('loan_number_set',{ p_contact_id:cid(), p_loan_number:val });
-      if(res.error) throw res.error;
+      var up=await client().from('contacts').update({ loan_number: val||null, updated_at:new Date().toISOString() }).eq('id', targetId);
+      if(up.error) throw up.error;
+      // Mirror to mortgage_applications.loan_number (what the server doc-render reads).
+      try{ await client().rpc('loan_number_set',{ p_contact_id:targetId, p_loan_number:val }); }catch(_){}
+      // Keep the client mirror + the other two surfaces (Pricing, Snapshot) in sync.
+      if(typeof contactData!=='undefined' && contactData) contactData.loan_number = val||null;
+      var pln=document.getElementById('pricingLoanNumber'); if(pln){ pln.value=val; pln.dataset.dirty=''; }
+      if(typeof lpUpdateSubmissionUI==='function') lpUpdateSubmissionUI();
+      if(typeof lpRenderSnapshot==='function' && typeof lpCid==='function'){ var _c=lpCid(); if(_c) lpRenderSnapshot(_c); }
       ln.dataset.dirty=''; btn.textContent='Saved ✓';
       setTimeout(function(){ btn.textContent=orig; btn.disabled=false; },1500);
       _mfResolve(window._mfFillLenderId);
