@@ -28,6 +28,7 @@
   var _tab = 'chat';                                                        // active panel tab: 'chat' | 'copilot'
   var _copHistory = [], _copBusy = false, _copActions = {}, _copActionSeq = 0;
   var COP_CHIPS = ["Who should I work today?", "How's my pipeline?", "Who's gone stale?", "Summarize [lead name]"];
+  var COP_CONVO_KEY = 'rnr_copilot_convo', COP_MAX_MSGS = 50;               // sessionStorage: persist until logoff
   function copAllowed() { return role() !== 'va'; }                        // copilot backend is admin/agent/loa-gated
 
   function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -514,8 +515,8 @@
       + '<button class="cop-card-btn primary" data-cop-confirm="' + a.id + '"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Working…' : copConfirmLabel(a)) + '</button>'
       + '</div></div>';
   }
-  function copUpdateCard(a) { var el = document.querySelector('[data-cop-card="' + a.id + '"]'); if (el) el.outerHTML = copCardHtml(a); }
-  function copCancelAction(id) { var a = _copActions[id]; if (a) a._state = 'dismissed'; var el = document.querySelector('[data-cop-card="' + id + '"]'); if (el) el.remove(); }
+  function copUpdateCard(a) { var el = document.querySelector('[data-cop-card="' + a.id + '"]'); if (el) el.outerHTML = copCardHtml(a); copPersist(); }
+  function copCancelAction(id) { var a = _copActions[id]; if (a) a._state = 'dismissed'; var el = document.querySelector('[data-cop-card="' + id + '"]'); if (el) el.remove(); copPersist(); }
   // Message send — reuses the CRM's existing edge functions: sms-service / email-service.
   async function copSendMessage(cl, a) {
     var cfg = window.APP_CONFIG || {};
@@ -564,12 +565,54 @@
       a._state = 'error'; a._err = (e && e.message) ? e.message : 'Failed'; copUpdateCard(a);
     }
   }
+  // Persist the Copilot conversation to sessionStorage (survives refresh, clears on
+  // browser/session end + explicit logout). Transient states are normalized so a refresh
+  // mid-execution can't strand a card or re-offer Confirm for an already-done action.
+  function copPersist() {
+    try {
+      var hist = _copHistory.slice(-COP_MAX_MSGS).map(function (m) {
+        var e = { role: m.role, content: m.content };
+        if (m.actions && m.actions.length) {
+          e.actions = m.actions.map(function (a) {
+            var st = (a._state === 'busy' || a._state === 'error') ? 'pending' : a._state;   // interrupted → re-offerable
+            return Object.assign({}, a, { _state: st });
+          });
+        }
+        return e;
+      });
+      sessionStorage.setItem(COP_CONVO_KEY, JSON.stringify({ v: 1, seq: _copActionSeq, history: hist }));
+    } catch (e) {}
+  }
+  function copRestore() {
+    var raw = null; try { raw = sessionStorage.getItem(COP_CONVO_KEY); } catch (e) {}
+    if (!raw) return;
+    var data; try { data = JSON.parse(raw); } catch (e) { return; }
+    if (!data || !Array.isArray(data.history)) return;
+    _copHistory = data.history;
+    _copActions = {};
+    _copActionSeq = Number(data.seq) || 0;
+    _copHistory.forEach(function (m) {
+      if (m.actions && m.actions.length) {
+        m.actions.forEach(function (a) {
+          if (a._state === 'busy' || a._state === 'error') a._state = 'pending';   // never restore mid-flight
+          if (a.id) {
+            _copActions[a.id] = a;
+            var n = parseInt(String(a.id).replace(/\D/g, ''), 10);
+            if (!isNaN(n) && n > _copActionSeq) _copActionSeq = n;                  // keep new ids unique
+          }
+        });
+      }
+    });
+  }
+  function copClearSaved() { try { sessionStorage.removeItem(COP_CONVO_KEY); } catch (e) {} }
+
   function copRender() {
     var box = document.getElementById('sc-cop-msgs'); if (!box) return;
     if (!_copHistory.length && !_copBusy) {
       box.innerHTML = '<div class="cop-empty"><div class="cop-empty-t">Hi 👋 I\'m your CRM Copilot.</div>'
         + '<div class="cop-empty-s">Ask about your leads, pipeline, and who to work.</div>'
         + '<div class="cop-chips">' + COP_CHIPS.map(function (c) { return '<button class="cop-chip" data-cop-chip="' + esc(c) + '">' + esc(c) + '</button>'; }).join('') + '</div></div>';
+      copPersist();
       return;
     }
     var html = _copHistory.map(function (m) {
@@ -580,6 +623,7 @@
     }).join('');
     if (_copBusy) html += '<div class="cop-msg cop-think"><span></span><span></span><span></span></div>';
     box.innerHTML = html; box.scrollTop = box.scrollHeight;
+    copPersist();
   }
   async function copToken() {
     try { var cl = await client(); if (!cl) return null; var r = await cl.auth.getSession(); return (r && r.data && r.data.session) ? r.data.session.access_token : null; }
@@ -593,7 +637,10 @@
     var token = await copToken();
     if (!token) { _copBusy = false; _copHistory.push({ role: 'assistant', content: 'Please sign in to use the Copilot.' }); copRender(); return; }
     try {
-      var prior = _copHistory.slice(0, -1).slice(-10);
+      // API history must be CLEAN — only {role, content}. _copHistory carries UI-only
+      // fields (actions/cards) which the AI endpoint rejects ("Extra inputs not permitted"),
+      // so project them out here. Card data stays in _copHistory/_copActions for rendering.
+      var prior = _copHistory.slice(0, -1).slice(-10).map(function (m) { return { role: m.role, content: String(m.content == null ? '' : m.content) }; });
       var res = await fetch((cfg.SUPABASE_URL || '') + '/functions/v1/crm-copilot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': cfg.SUPABASE_ANON_KEY || '', 'Authorization': 'Bearer ' + token },
@@ -863,6 +910,7 @@
       + '</div>'
       + '</div>';
     document.body.appendChild(panel);
+    copRestore();   // rehydrate the Copilot conversation from sessionStorage (survives refresh)
 
     // Anchor flush to the corner unless the AI FAB is present (dashboard) — then
     // clear it. The FAB is injected by layout.js and may land after us, so re-check.
@@ -951,7 +999,7 @@
       var t = e.target;
       if (t && t.getAttribute && t.getAttribute('data-cop-body')) {
         var a = _copActions[t.getAttribute('data-cop-body')];
-        if (a) { if (a.type === 'note') a.text = t.value; else a.body = t.value; }
+        if (a) { if (a.type === 'note') a.text = t.value; else a.body = t.value; copPersist(); }
       }
     });
   }
@@ -962,6 +1010,13 @@
     var haveClient = (typeof window.getSupabaseClient === 'function') || !!window._supabaseClient;
     if (!haveClient) { if (attempt < 60) setTimeout(function () { start(attempt + 1); }, 120); return; }  // ~7s cap, then give up quietly
     if (!isStaff()) return;                                    // non-staff → no chat UI
+    // Clear the saved Copilot conversation on logout (auth-guard sets adminLogout
+    // before injecting this script). sessionStorage clears on browser close anyway.
+    if (typeof window.adminLogout === 'function' && !window.adminLogout._copWrapped) {
+      var _origLogout = window.adminLogout;
+      window.adminLogout = function () { copClearSaved(); return _origLogout.apply(this, arguments); };
+      window.adminLogout._copWrapped = true;
+    }
     injectCss();
     var root = document.getElementById('staff-chat-fullpage');
     if (root) {
