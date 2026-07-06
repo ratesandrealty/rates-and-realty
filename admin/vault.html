@@ -65,6 +65,9 @@
   .thumb .ic { font-size:38px; opacity:.5; }
   .thumb .play { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
   .thumb .play span { width:42px; height:42px; border-radius:50%; background:rgba(0,0,0,.55); border:1px solid rgba(201,168,76,.5); color:var(--gold); display:flex; align-items:center; justify-content:center; font-size:17px; }
+  .thumb.has-thumb { background:#0d0d0d; }
+  .thumb.shimmer::after { content:''; position:absolute; inset:0; background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.07) 50%, rgba(255,255,255,0) 100%); background-size:200% 100%; animation:vshimmer 1.1s ease-in-out infinite; pointer-events:none; }
+  @keyframes vshimmer { 0%{ background-position:200% 0; } 100%{ background-position:-200% 0; } }
   .src-tag { position:absolute; top:6px; left:6px; font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:2px 6px; border-radius:6px; color:#111; }
   .src-chat { background:#7bbacb; } .src-esign { background:var(--gold); } .src-borrower { background:var(--green); }
   .body { padding:9px 11px; flex:1; min-width:0; }
@@ -185,12 +188,22 @@
   var SRC_LABEL = { chat: 'Chat', esign: 'E-Sign', borrower: 'Borrower' };
   var _sb = null, _items = [], _folders = [], _signed = {}, _borrowerSecs = [], _typeCollapsed = {};
   var _section = 'all', _kind = 'all', _q = '', _group = 'none';
+  // thumbnail engine
+  var _thumbCache = {}, _pdfjsPromise = null, _thumbObserver = null, _renderQueue = [], _activeRenders = 0;
+  var MAX_RENDERS = 3, MAX_THUMB_BYTES = 25 * 1024 * 1024;
   function ex(it) { return (it && it.extra) || {}; }
 
   function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function humanSize(b) { b = Number(b) || 0; if (!b) return '—'; if (b < 1024) return b + ' B'; if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'; return (b / 1048576).toFixed(1) + ' MB'; }
   function fmtDate(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
-  function itemKind(it) { var k = (it.category || '').toLowerCase(), m = (it.mime_type || '').toLowerCase(); if (k === 'image' || m.indexOf('image/') === 0) return 'image'; if (k === 'video' || k === 'recording' || m.indexOf('video/') === 0) return 'video'; if (k === 'audio' || m.indexOf('audio/') === 0) return 'audio'; return 'doc'; }
+  function itemKind(it) {
+    var k = (it.category || '').toLowerCase(), m = (it.mime_type || '').toLowerCase(), n = (it.name || '').toLowerCase();
+    if (k === 'image' || m.indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|bmp|heic|heif|tiff?)$/.test(n)) return 'image';
+    if (k === 'video' || k === 'recording' || m.indexOf('video/') === 0 || /\.(mp4|webm|mov|m4v|avi|mkv)$/.test(n)) return 'video';
+    if (k === 'audio' || m.indexOf('audio/') === 0 || /\.(mp3|wav|ogg|m4a|aac)$/.test(n)) return 'audio';
+    return 'doc';
+  }
+  function isPdfItem(it) { return (it.mime_type || '').toLowerCase().indexOf('pdf') !== -1 || /\.pdf$/i.test(it.name || '') || it.source === 'esign'; }
   function folderById(id) { return _folders.filter(function (f) { return String(f.id) === String(id); })[0]; }
   function itemFolders(it) { try { return Array.isArray(it.folders) ? it.folders.map(String) : []; } catch (e) { return []; } }
 
@@ -303,10 +316,11 @@
   }
 
   function thumbHtml(it, k) {
-    if (k === 'image') return '<div class="thumb" data-thumb="' + esc(it.source) + ':' + esc(it.id) + '" data-open="1"><span class="ic">🖼️</span></div>';
-    if (k === 'video') return '<div class="thumb" data-open="1"><span class="ic">🎬</span><span class="play"><span>▶</span></span></div>';
-    if (k === 'audio') return '<div class="thumb" data-open="1"><span class="ic">🎵</span></div>';
-    return '<div class="thumb" data-open="1"><span class="ic">📄</span></div>';
+    var key = it.source + ':' + it.id;
+    var play = (k === 'video') ? '<span class="play"><span>▶</span></span>' : '';
+    if (_thumbCache[key]) return '<div class="thumb has-thumb" data-open="1"><img src="' + esc(_thumbCache[key]) + '" alt="">' + play + '</div>';
+    var icon = k === 'image' ? '🖼️' : k === 'video' ? '🎬' : k === 'audio' ? '🎵' : '📄';
+    return '<div class="thumb" data-thumbkey="' + esc(key) + '" data-open="1"><span class="ic">' + icon + '</span>' + play + '</div>';
   }
   function cardHtml(it) {
     var k = itemKind(it);
@@ -337,11 +351,100 @@
       + '</div>';
   }
 
-  function hydrateThumbs(sc) {
-    Array.prototype.forEach.call(sc.querySelectorAll('.thumb[data-thumb]'), function (el) {
-      var it = itemByKey(el.getAttribute('data-thumb')); if (!it) return;
-      resolveUrl(it).then(function (url) { el.innerHTML = '<img src="' + url + '" alt="">'; }).catch(function () {});
+  // ── thumbnail engine: lazy (IntersectionObserver) + concurrency-capped renders ──
+  function ensurePdfJs() {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (_pdfjsPromise) return _pdfjsPromise;
+    _pdfjsPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload = function () {
+        try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } catch (_) {}
+        resolve(window.pdfjsLib);
+      };
+      s.onerror = function () { reject(new Error('pdf.js failed to load')); };
+      document.head.appendChild(s);
     });
+    return _pdfjsPromise;
+  }
+  function queueRender(job) { _renderQueue.push(job); pumpQueue(); }
+  function pumpQueue() {
+    while (_activeRenders < MAX_RENDERS && _renderQueue.length) {
+      var job = _renderQueue.shift(); _activeRenders++;
+      Promise.resolve().then(job).catch(function () {}).then(function () { _activeRenders--; pumpQueue(); });
+    }
+  }
+  function paintThumb(el, src, isVideo) {
+    if (!el || !document.body.contains(el)) return;
+    el.classList.remove('shimmer'); el.classList.add('has-thumb');
+    el.innerHTML = '<img src="' + esc(src) + '" alt="">' + (isVideo ? '<span class="play"><span>▶</span></span>' : '');
+  }
+  function tooBig(it) { return (Number(it.size_bytes) || 0) > MAX_THUMB_BYTES; }
+
+  function renderImageThumb(el, it, key) {
+    el.classList.add('shimmer');
+    resolveUrl(it).then(function (url) { _thumbCache[key] = url; paintThumb(el, url, false); })
+      .catch(function () { el.classList.remove('shimmer'); });
+  }
+  function renderPdfThumb(el, it, key) {
+    el.classList.add('shimmer');
+    return ensurePdfJs().then(function (pdfjs) {
+      return resolveUrl(it).then(function (url) {
+        return pdfjs.getDocument({ url: url }).promise.then(function (pdf) {
+          return pdf.getPage(1).then(function (page) {
+            var base = page.getViewport({ scale: 1 });
+            var vp = page.getViewport({ scale: 240 / base.width });
+            var canvas = document.createElement('canvas');
+            canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+            return page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise.then(function () {
+              var dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+              _thumbCache[key] = dataUrl; try { pdf.destroy(); } catch (_) {}
+              paintThumb(el, dataUrl, false);
+            });
+          });
+        });
+      });
+    }).catch(function () { if (el) el.classList.remove('shimmer'); });   // fallback: keep the gray icon
+  }
+  function renderVideoThumb(el, it, key) {
+    el.classList.add('shimmer');
+    return resolveUrl(it).then(function (url) {
+      return new Promise(function (resolve) {
+        var v = document.createElement('video'); v.muted = true; v.crossOrigin = 'anonymous'; v.preload = 'metadata'; v.src = url;
+        var done = false;
+        function finish(ok, dataUrl) { if (done) return; done = true; clearTimeout(to); try { v.removeAttribute('src'); v.load(); } catch (_) {} if (ok) { _thumbCache[key] = dataUrl; paintThumb(el, dataUrl, true); } else if (el) el.classList.remove('shimmer'); resolve(); }
+        var to = setTimeout(function () { finish(false); }, 8000);
+        v.onloadeddata = function () { try { v.currentTime = Math.min(0.1, (v.duration || 1) / 2); } catch (_) { finish(false); } };
+        v.onseeked = function () {
+          try {
+            var w = 240, sc = w / (v.videoWidth || w), h = Math.round((v.videoHeight || 135) * sc);
+            var c = document.createElement('canvas'); c.width = w; c.height = h;
+            c.getContext('2d').drawImage(v, 0, 0, w, h);
+            finish(true, c.toDataURL('image/jpeg', 0.7));   // toDataURL throws if CORS-tainted → catch below
+          } catch (e) { finish(false); }
+        };
+        v.onerror = function () { finish(false); };
+      });
+    }).catch(function () { if (el) el.classList.remove('shimmer'); });
+  }
+  function hydrateOneThumb(el) {
+    var key = el.getAttribute('data-thumbkey'); if (!key) return;
+    var it = itemByKey(key); if (!it) return;
+    if (_thumbCache[key]) { paintThumb(el, _thumbCache[key], itemKind(it) === 'video'); return; }
+    var k = itemKind(it);
+    if (k === 'image') { renderImageThumb(el, it, key); return; }
+    if (isPdfItem(it) && !tooBig(it)) { queueRender(function () { return renderPdfThumb(el, it, key); }); return; }
+    if (k === 'video' && !tooBig(it)) { queueRender(function () { return renderVideoThumb(el, it, key); }); return; }
+    // audio / non-PDF docs / oversized → keep the icon
+  }
+  function hydrateThumbs(sc) {
+    if (_thumbObserver) { try { _thumbObserver.disconnect(); } catch (_) {} }
+    var nodes = sc.querySelectorAll('.thumb[data-thumbkey]');
+    if (!('IntersectionObserver' in window)) { Array.prototype.forEach.call(nodes, hydrateOneThumb); return; }
+    _thumbObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) { _thumbObserver.unobserve(en.target); hydrateOneThumb(en.target); } });
+    }, { root: sc, rootMargin: '250px 0px' });
+    Array.prototype.forEach.call(nodes, function (el) { _thumbObserver.observe(el); });
   }
   function render() {
     var rows = filtered();
