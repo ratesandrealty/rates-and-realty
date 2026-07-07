@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070614 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070616 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10367,7 +10367,7 @@ const LP_ORDER_STATUS = [
   { v:'needs_revision', t:'Needs Revision' },
   { v:'received',       t:'Received'        }
 ];
-const LP_TRACKER_COLORS = { grey:'#8a8a8a', red:'#f87171', yellow:'#E0B84C', green:'#50c878' };
+const LP_TRACKER_COLORS = { grey:'#8a8a8a', red:'#f87171', yellow:'#E0B84C', green:'#50c878', orange:'#f59e0b' };
 const LP_VOE_OWNERS = [ {v:'',t:'Owner…'}, {v:'va',t:'VA'}, {v:'me',t:'Me'}, {v:'both',t:'Both'} ];
 let _lpOrders = {};           // order_type → single-row state
 let _lpVendorNames = {};      // vendor_id → "Name — Company"
@@ -10609,13 +10609,23 @@ function lpRenderOrders(){
   body.innerHTML = LP_ORDER_ROWS.map(row=>{
     const o=_lpOrders[row.type]||{};
     const st=o.status||'not_ordered';
-    const dateTxt= st==='received'?_lpDD(o.received_at):((st==='ordered'||st==='acknowledged')?_lpDD(o.ordered_at):'');
+    const paidSt=(st==='paid');
+    const dateTxt= (st==='received'||paidSt)?_lpDD(o.received_at):((st==='ordered'||st==='acknowledged')?_lpDD(o.ordered_at):'');
     const vLabel = o.vendor_id ? (_lpVendorNames[o.vendor_id]||'Vendor selected') : 'Select vendor';
-    const opts=LP_ORDER_STATUS.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
+    // "Paid" is an appraisal-only status (placed after "Received"); loan_orders now allows it.
+    const statusList = row.type==='appraisal' ? LP_ORDER_STATUS.concat([{v:'paid',t:'Paid'}]) : LP_ORDER_STATUS;
+    const opts=statusList.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
     const nr=(st==='needs_revision');
-    const stStyle = nr ? 'border-color:rgba(224,168,82,.6);color:#E0B84C;' : '';
+    // Orange (amber ~#f59e0b) for a PAID appraisal status — distinct from the green "Client Paid" checkbox.
+    const stStyle = nr ? 'border-color:rgba(224,168,82,.6);color:#E0B84C;'
+                 : paidSt ? 'border-color:rgba(245,158,11,.75);color:#f59e0b;background:rgba(245,158,11,.14);font-weight:600;'
+                 : '';
     const revStyle = 'position:relative;z-index:2;width:100%;box-sizing:border-box;margin-top:6px;background:rgba(224,168,82,.07);border:1px solid rgba(224,168,82,.45);border-radius:7px;color:#eee;font-size:11.5px;line-height:1.4;padding:6px 8px;min-height:46px;resize:vertical;font-family:inherit;';
-    let html='<div style="position:relative;border-bottom:1px solid rgba(255,255,255,.05);padding:6px 4px;">'
+    // Whole appraisal row goes orange when status is 'paid' (tint + border + rounded).
+    const rowStyle = paidSt
+      ? 'position:relative;border:1px solid rgba(245,158,11,.55);background:rgba(245,158,11,.09);border-radius:8px;padding:6px 8px;margin-bottom:3px;'
+      : 'position:relative;border-bottom:1px solid rgba(255,255,255,.05);padding:6px 4px;';
+    let html='<div style="'+rowStyle+'">'
       +'<div style="display:grid;grid-template-columns:62px 1fr 104px 52px;gap:8px;align-items:center;">'
         +'<span class="lp-role-tag">'+lpEsc(row.label)+'</span>'
         +'<button type="button" onclick="lpVendorOpen(\''+row.type+'\')" style="text-align:left;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(o.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
@@ -10939,6 +10949,7 @@ function lpOrderStatusChange(type,status){
   if(status==='ordered'||status==='acknowledged'){ o.ordered_at=o.ordered_at||now; o.received_at=null; }
   else if(status==='received'){ o.received_at=now; }
   else if(status==='needs_revision'){ o.received_at=null; }   // keep ordered_at — it was already ordered
+  else if(status==='paid'){ /* keep ordered_at + received_at — 'paid' follows 'received' */ }
   else { o.ordered_at=null; o.received_at=null; }
   // Re-render the row from state (single source of truth) so the revision textarea + amber
   // select reliably reflect the new status; then persist. Synchronous re-render before any
