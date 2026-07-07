@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070604 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070605 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -2439,6 +2439,7 @@
         #tab-processing #lpDatesBody input.lp-date-red { border-color:#E5484D !important; box-shadow:0 0 0 1px #E5484D, 0 0 10px rgba(229,72,77,.55) !important; }
         #tab-processing #lpDatesBody input.lp-date-red.lp-date-pulse { animation:lpDatePulse 1.6s ease-in-out infinite; }
         #tab-processing #lpDatesBody input.lp-date-amber { border-color:#E0A852 !important; box-shadow:0 0 0 1px #E0A852, 0 0 9px rgba(224,168,82,.5) !important; }
+        #tab-processing #lpDatesBody input.lp-date-met { border-color:#27AE60 !important; box-shadow:0 0 0 1px #27AE60, 0 0 9px rgba(39,174,96,.45) !important; }
         @keyframes lpDatePulse { 0%,100%{ box-shadow:0 0 0 1px #E5484D, 0 0 8px rgba(229,72,77,.45);} 50%{ box-shadow:0 0 0 1px #E5484D, 0 0 17px rgba(229,72,77,.9);} }
         @keyframes lpPulse { 0%,100%{ box-shadow:0 0 0 4px rgba(201,168,76,.18);} 50%{ box-shadow:0 0 0 8px rgba(201,168,76,.04);} }
         #tab-processing .lp-stub { opacity:0.6; }
@@ -9833,11 +9834,15 @@ async function lpLoadKeyDates(cid){
   // so existing leads still display until a one-time migration renames coe → close_of_escrow.
   if(!map['close_of_escrow'] && map['coe']) map['close_of_escrow'] = map['coe'];
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:5px 7px;width:100%;';
+  const metBtn = 'margin-top:5px;font-size:9px;font-weight:600;padding:2px 8px;border-radius:5px;border:1px solid rgba(255,255,255,.15);background:transparent;color:rgba(255,255,255,.5);cursor:pointer;font-family:inherit;line-height:1.4;';
   el.innerHTML = LP_KEY_DATES.map(d=>{
-    const hk = LP_DATE_HEALTHKEY[d.key] || d.key;   // loan_health.dates date_key for glow matching
-    return '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div><input type="date" data-lp-datekey="'+hk+'" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value,\''+(d.app||'')+'\')" style="'+inp+'"></div>';
+    const hk = LP_DATE_HEALTHKEY[d.key] || d.key;   // loan_health.dates date_key for glow + met toggle
+    return '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div>'
+      + '<input type="date" data-lp-datekey="'+hk+'" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value,\''+(d.app||'')+'\')" style="'+inp+'">'
+      + '<button type="button" data-lp-metbtn="'+hk+'" data-met="0" onclick="lpToggleMet(\''+hk+'\')" style="'+metBtn+'">Mark met</button>'
+      + '</div>';
   }).join('');
-  lpApplyDateGlow();   // paint urgency from the cached loan_health
+  lpApplyDateGlow();   // paint urgency + met-toggle state from the cached loan_health
 }
 async function lpSaveDate(key, value, appcol){
   const cid = lpCid(); if(!cid) return;
@@ -9868,13 +9873,41 @@ async function lpLoadHealth(cid){
 function lpApplyDateGlow(){
   const byKey = {}; ((_lpHealth && _lpHealth.dates) || []).forEach(d=>{ byKey[d.date_key] = d; });
   document.querySelectorAll('#lpDatesBody input[data-lp-datekey]').forEach(inp=>{
-    inp.classList.remove('lp-date-red','lp-date-amber','lp-date-pulse');
+    inp.classList.remove('lp-date-met','lp-date-red','lp-date-amber','lp-date-pulse');
     const d = byKey[inp.getAttribute('data-lp-datekey')];
-    if(!d || !d.date_value) return;                        // 'ok'/unset → normal
+    if(!d) return;
+    if(d.urgency==='met'){ inp.classList.add('lp-date-met'); return; }   // completed → green (even if past)
+    if(!d.date_value) return;                                            // 'ok'/unset → normal
     if(d.urgency==='overdue'){ inp.classList.add('lp-date-red','lp-date-pulse'); }
     else if(d.urgency==='red'){ inp.classList.add('lp-date-red'); }
     else if(d.urgency==='amber'){ inp.classList.add('lp-date-amber'); }
   });
+  // Reflect met state on each date's toggle button.
+  document.querySelectorAll('#lpDatesBody [data-lp-metbtn]').forEach(btn=>{
+    const d = byKey[btn.getAttribute('data-lp-metbtn')];
+    const met = !!(d && d.urgency==='met');
+    btn.setAttribute('data-met', met?'1':'0');
+    btn.innerHTML = met ? '✓ Met' : 'Mark met';
+    btn.style.color = met ? '#68cf92' : 'rgba(255,255,255,.5)';
+    btn.style.borderColor = met ? 'rgba(39,174,96,.5)' : 'rgba(255,255,255,.15)';
+    btn.style.background = met ? 'rgba(39,174,96,.12)' : 'transparent';
+  });
+}
+// Toggle a critical date's "met/done" state via loan_date_set_met, then re-sync loan_health
+// (one source of truth → banner + all date glows + all toggle buttons re-render).
+async function lpToggleMet(dateKey){
+  const cid = lpCid(); if(!cid) return;
+  const btn = document.querySelector('#lpDatesBody [data-lp-metbtn="'+dateKey+'"]');
+  const met = !(btn && btn.getAttribute('data-met')==='1');
+  let note = null;
+  if(met){ note = prompt('Optional note (e.g. "wired to escrow 7/8") — leave blank to skip:', '') || null; }   // Part 3: EMD → escrow context
+  if(btn){ btn.disabled=true; btn.innerHTML='…'; }
+  try{
+    const { error } = await _authClient().rpc('loan_date_set_met', { p_contact_id: cid, p_date_key: dateKey, p_met: met, p_note: note });
+    if(error) throw error;
+  }catch(e){ (window.showToast||window.toast||function(){})('Could not update: '+(e&&e.message||e), true); }
+  if(btn) btn.disabled=false;
+  lpLoadHealth(cid);
 }
 function lpRenderHealth(h){
   const card=document.getElementById('lpHealthCard'), body=document.getElementById('lpHealthBody');
@@ -9887,18 +9920,24 @@ function lpRenderHealth(h){
             :                  {t:'✓ On Track',bg:'rgba(39,174,96,.16)',bd:'#27AE60',c:'#68cf92'};
   const cond=h.conditions||{}, chk=h.checklist||{};
   const summary = (h.overdue_count||0)+' overdue · '+(cond.pending||0)+' conditions pending · '+(chk.done||0)+'/'+(chk.total||0)+' tasks';
-  const urg = (h.urgent_items||[]).map(u=>{
+  // Merge urgent_items + warnings into ONE compact list. Labels are non-null now; drop any
+  // empty ones (no bare dots / empty rows). Icons only: 🔴 (overdue/red), ⚠ (amber), 🔧 (warning).
+  const rows = [];
+  (h.urgent_items||[]).forEach(u=>{
+    if(!u || !u.label) return;
     const red=(u.urgency==='overdue'||u.urgency==='red');
-    const col=red?'#ff9598':(u.urgency==='amber'?'#e8c07a':'#bbb');
-    const ic=red?'🔴':(u.urgency==='amber'?'⚠':'•');
-    return '<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:'+col+';padding:3px 0;"><span style="flex-shrink:0;">'+ic+'</span><span>'+lpEsc(u.label)+'</span></div>';
+    rows.push({ ic: red?'🔴':'⚠', col: red?'#ff9598':'#e8c07a', text: String(u.label) });
   });
-  const warn = (h.warnings||[]).map(w=>'<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#cbb489;padding:3px 0;"><span style="flex-shrink:0;">🔧</span><span>'+lpEsc(w)+'</span></div>');
-  const list = urg.concat(warn);
+  (h.warnings||[]).forEach(w=>{ if(w) rows.push({ ic:'🔧', col:'#cbb489', text:String(w) }); });
+  const MAX=4, shown=rows.slice(0,MAX), moreN=rows.length-shown.length;
+  const line = r => '<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.5;color:'+r.col+';padding:2px 0;"><span style="flex-shrink:0;">'+r.ic+'</span><span>'+lpEsc(r.text)+'</span></div>';
+  const listHtml = rows.length
+    ? shown.map(line).join('') + (moreN>0 ? '<div style="font-size:11px;color:rgba(255,255,255,.45);padding:3px 0 0;">+'+moreN+' more</div>' : '')
+    : '<div style="font-size:12px;color:#68cf92;padding:1px 0;">✓ All caught up</div>';
   body.innerHTML = '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
     + '<span style="font-size:13px;font-weight:800;padding:5px 13px;border-radius:999px;background:'+pill.bg+';border:1px solid '+pill.bd+';color:'+pill.c+';white-space:nowrap;">'+pill.t+'</span>'
-    + '<span style="font-size:12px;color:rgba(255,255,255,.6);">'+lpEsc(summary)+'</span></div>'
-    + (list.length ? '<div style="margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.07);">'+list.join('')+'</div>' : '');
+    + '<span style="font-size:12px;color:rgba(255,255,255,.62);">'+lpEsc(summary)+'</span></div>'
+    + '<div style="margin-top:9px;padding-top:8px;border-top:1px solid rgba(255,255,255,.07);">'+listHtml+'</div>';
 }
 function lpTextBorrower(){
   var b = (typeof contactData!=='undefined' && contactData) ? contactData : {};
