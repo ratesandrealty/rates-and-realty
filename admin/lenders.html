@@ -954,15 +954,15 @@ function showLenderDetail(lender) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div>
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Contact Name</label>
-          <input type="text" class="detail-input" id="edit_contact_name" value="${lender.contact_name||''}" placeholder="Rep name">
+          <input type="text" class="detail-input" id="edit_contact_name" value="${lender.rep_name||lender.contact_name||''}" placeholder="Rep name">
         </div>
         <div>
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Phone</label>
-          <input type="text" class="detail-input" id="edit_phone" value="${lender.contact_phone||''}" placeholder="(714) 000-0000">
+          <input type="text" class="detail-input" id="edit_phone" value="${lender.rep_phone||lender.contact_phone||''}" placeholder="(714) 000-0000">
         </div>
         <div style="grid-column:span 2;">
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Email</label>
-          <input type="email" class="detail-input" id="edit_email" value="${lender.contact_email||''}" placeholder="rep@lender.com">
+          <input type="email" class="detail-input" id="edit_email" value="${lender.rep_email||lender.contact_email||''}" placeholder="rep@lender.com">
         </div>
         <div>
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Min Credit Score</label>
@@ -971,6 +971,16 @@ function showLenderDetail(lender) {
         <div>
           <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Max LTV %</label>
           <input type="number" class="detail-input" id="edit_ltv" value="${lender.max_ltv||''}" placeholder="97">
+        </div>
+        <!-- Per-lender mortgagee clauses — feed the e-sign {{title_mortgagee_clause}} /
+             {{hoi_mortgagee_clause}} merge tokens via the lead_mortgagee_clauses RPC. -->
+        <div style="grid-column:span 2;">
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Title Mortgagee Clause</label>
+          <textarea class="detail-input" id="edit_title_mortgagee" rows="3" style="min-height:66px;resize:vertical;line-height:1.45;" placeholder="ISAOA/ATIMA mortgagee clause for the title company…">${lender.title_mortgagee_clause||''}</textarea>
+        </div>
+        <div style="grid-column:span 2;">
+          <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:600;">Homeowners Insurance Mortgagee Clause</label>
+          <textarea class="detail-input" id="edit_hoi_mortgagee" rows="3" style="min-height:66px;resize:vertical;line-height:1.45;" placeholder="ISAOA/ATIMA mortgagee clause for the HOI carrier…">${lender.hoi_mortgagee_clause||''}</textarea>
         </div>
         <!-- SECTION A — LENDER LINKS -->
         <div style="grid-column:span 2;">
@@ -1638,10 +1648,18 @@ async function saveLenderDetails(lenderId, clickupId) {
     document.querySelectorAll('#loanProgramsGrid input[type=checkbox]:checked')
   ).map(cb => cb.value);
 
+  // Rep contact fields are dual-written to BOTH column sets (rep_* + contact_*) so every
+  // consumer stays in sync: doc-merge / edge fns read rep_*, the lender list card reads
+  // contact_*. Mirrors the dual-write pattern already in public/lender-form.html.
+  const _repName  = document.getElementById('edit_contact_name').value;
+  const _repPhone = document.getElementById('edit_phone').value;
+  const _repEmail = document.getElementById('edit_email').value;
   const updates = {
-    contact_name: document.getElementById('edit_contact_name').value,
-    contact_phone: document.getElementById('edit_phone').value,
-    contact_email: document.getElementById('edit_email').value,
+    contact_name:  _repName,  rep_name:  _repName,
+    contact_phone: _repPhone, rep_phone: _repPhone,
+    contact_email: _repEmail, rep_email: _repEmail,
+    title_mortgagee_clause: document.getElementById('edit_title_mortgagee')?.value || null,
+    hoi_mortgagee_clause: document.getElementById('edit_hoi_mortgagee')?.value || null,
     website: document.getElementById('lenderWebsite')?.value || '',
     lender_portal: document.getElementById('lenderPortalUrl')?.value || '',
     min_credit_score: parseInt(document.getElementById('edit_credit').value) || null,
@@ -2398,7 +2416,7 @@ function renderCommercialMatches(matches, total) {
         '</div>' +
         ((m.reasons && m.reasons.length) ? '<div style="margin-bottom:12px;">' + m.reasons.slice(0, 3).map(function(r) { return '<div style="font-size:11px;color:#888;margin-bottom:2px;">' + r + '</div>'; }).join('') + '</div>' : '') +
         '<div style="display:flex;gap:8px;align-items:center;">' +
-          (m.contact_email ? '<a href="mailto:' + m.contact_email + '" style="padding:6px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;font-size:11px;text-decoration:none;">✉ ' + (m.contact_name || 'Email AE') + '</a>' : '') +
+          ((m.contact_email||m.rep_email) ? '<a href="mailto:' + (m.contact_email||m.rep_email) + '" style="padding:6px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;font-size:11px;text-decoration:none;">✉ ' + (m.contact_name || m.rep_name || 'Email AE') + '</a>' : '') +
           (m.lender_portal ? '<a href="' + m.lender_portal + '" target="_blank" style="padding:6px 12px;background:#C9A84C22;border:1px solid #C9A84C44;border-radius:6px;color:#C9A84C;font-size:11px;text-decoration:none;">🔗 Portal</a>' : '') +
         '</div></div>';
     }).join('') + '</div>';
@@ -2536,9 +2554,13 @@ async function submitNewLender() {
     lender_type: document.getElementById('newLenderType').value,
     channel: document.getElementById('newLenderChannel').value,
     nmls: document.getElementById('newLenderNMLS').value.trim() || null,
+    // Dual-write rep_* + contact_* (see saveLenderDetails) so a new lender populates both.
     contact_name: document.getElementById('newLenderAEName').value.trim() || null,
+    rep_name: document.getElementById('newLenderAEName').value.trim() || null,
     contact_phone: document.getElementById('newLenderAEPhone').value.trim() || null,
+    rep_phone: document.getElementById('newLenderAEPhone').value.trim() || null,
     contact_email: document.getElementById('newLenderAEEmail').value.trim() || null,
+    rep_email: document.getElementById('newLenderAEEmail').value.trim() || null,
     website: document.getElementById('newLenderWebsite').value.trim() || null,
     lender_portal: document.getElementById('newLenderPortal').value.trim() || null,
     revenue_notes: document.getElementById('newLenderRevenue').value.trim() || null,

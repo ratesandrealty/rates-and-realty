@@ -32563,6 +32563,7 @@ async function recordNewVoicemail() {
     ['property_address','Property address'], ['lender_name','Lender name'],
     ['lender_nmls','Lender NMLS'], ['lender_address','Lender address'],
     ['mortgagee_clause','Mortgagee clause'], ['cpl_clause','CPL clause'],
+    ['title_mortgagee_clause','Title mortgagee clause'], ['hoi_mortgagee_clause','HOI mortgagee clause'],
     ['lo_name','LO name'], ['lo_nmls','LO NMLS'], ['lo_company','LO company'],
     ['today','Today’s date']
   ];
@@ -32641,6 +32642,19 @@ async function recordNewVoicemail() {
       } catch (_) {}
       var ln=document.getElementById('mfLoanNumber');
       if(ln && !ln.dataset.dirty){ var lv=window._esignMerge.loan_number; ln.value=(lv==null?'':lv); }
+      // Per-lender mortgagee clauses via a dedicated RPC (resolves the lead's lender from
+      // contacts.closing_lender). Non-fatal: default to '' so {{title/hoi_mortgagee_clause}}
+      // fills never break when there's no lender or no clause set.
+      try {
+        var _mc = await client().rpc('lead_mortgagee_clauses', { p_contact_id: c });
+        if (_mc && _mc.error) throw _mc.error;
+        var _mcd = (_mc && _mc.data) ? (Array.isArray(_mc.data) ? _mc.data[0] : _mc.data) : null;
+        window._esignMerge.title_mortgagee_clause = (_mcd && _mcd.title_mortgagee_clause) || '';
+        window._esignMerge.hoi_mortgagee_clause = (_mcd && _mcd.hoi_mortgagee_clause) || '';
+      } catch (_) {
+        window._esignMerge.title_mortgagee_clause = window._esignMerge.title_mortgagee_clause || '';
+        window._esignMerge.hoi_mortgagee_clause = window._esignMerge.hoi_mortgagee_clause || '';
+      }
       _mfRenderList(); _mfLenderLabel();
     }catch(e){ var l=document.getElementById('mfList'); if(l) l.innerHTML='<div style="color:#E5484D;font-size:11px;">Could not resolve merge fields.</div>'; }
   };
