@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070619 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070620 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10663,8 +10663,9 @@ function lpHoiEnsureModal(){
     +'<div style="padding:16px 18px;max-height:72vh;overflow:auto;">'
       +'<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Send to — add one or more companies</div>'
       +'<div style="position:relative;display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
-        +'<input id="lpHoiRCompany" placeholder="Company" autocomplete="off" oninput="lpHoiRecipSearch(this)" onfocus="lpHoiRecipSearch(this)" style="'+INP+'">'
-        +'<input id="lpHoiRAgent" placeholder="Agent name" autocomplete="off" style="'+INP+'">'
+        +'<input id="lpHoiRCompany" placeholder="Company" autocomplete="off" oninput="lpHoiRecipSearch(this)" onfocus="lpHoiRecipSearch(this)" style="'+INP+'grid-column:1/-1;">'
+        +'<input id="lpHoiRFirst" placeholder="Agent first name" autocomplete="off" style="'+INP+'">'
+        +'<input id="lpHoiRLast" placeholder="Agent last name" autocomplete="off" style="'+INP+'">'
         +'<input id="lpHoiREmail" placeholder="Agent email" autocomplete="off" style="'+INP+'">'
         +'<input id="lpHoiRPhone" placeholder="Agent phone (optional)" autocomplete="off" style="'+INP+'">'
         +'<div id="lpHoiRDrop" style="display:none;position:absolute;left:0;top:36px;z-index:5;min-width:280px;max-width:440px;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 14px 34px rgba(0,0,0,.6);overflow:hidden;"></div>'
@@ -10708,16 +10709,20 @@ function lpHoiRecipPick(id){
   const drop=document.getElementById('lpHoiRDrop'); const v=drop&&drop._map?drop._map[id]:null; if(drop) drop.style.display='none';
   if(!v) return;
   const set=(i,val)=>{ const e=document.getElementById(i); if(e) e.value=val||''; };
-  set('lpHoiRCompany', v.company); set('lpHoiRAgent', v.name); set('lpHoiREmail', v.email); set('lpHoiRPhone', v.phone);
+  const sp=(typeof _lpSplitName==='function')?_lpSplitName(v.name||''):{first:'',last:''};
+  const first=(v.first_name!=null&&v.first_name!=='')?v.first_name:sp.first;
+  const last=(v.last_name!=null&&v.last_name!=='')?v.last_name:sp.last;
+  set('lpHoiRCompany', v.company); set('lpHoiRFirst', first); set('lpHoiRLast', last); set('lpHoiREmail', v.email); set('lpHoiRPhone', v.phone);
   const c=document.getElementById('lpHoiRCompany'); if(c) c._vendorId=v.id;
 }
 function lpHoiRecipAdd(){
-  const company=_lpHoiVal('lpHoiRCompany').trim(), agent=_lpHoiVal('lpHoiRAgent').trim(), email=_lpHoiVal('lpHoiREmail').trim(), phone=_lpHoiVal('lpHoiRPhone').trim();
+  const company=_lpHoiVal('lpHoiRCompany').trim(), first=_lpHoiVal('lpHoiRFirst').trim(), last=_lpHoiVal('lpHoiRLast').trim(), email=_lpHoiVal('lpHoiREmail').trim(), phone=_lpHoiVal('lpHoiRPhone').trim();
   if(!email){ _lpHoiToast('Add an agent email for the recipient.', true); return; }
+  const name=(first+' '+last).trim();
   const c=document.getElementById('lpHoiRCompany'); const vid=(c&&c._vendorId)||null;
   const save=!!(document.getElementById('lpHoiRSave')&&document.getElementById('lpHoiRSave').checked);
-  _lpHoiRecipients.push({ vendor_id:vid, company:company, agent_name:agent, agent_email:email, agent_phone:phone, save:save });
-  ['lpHoiRCompany','lpHoiRAgent','lpHoiREmail','lpHoiRPhone'].forEach(function(i){ const e=document.getElementById(i); if(e){ e.value=''; e._vendorId=null; } });
+  _lpHoiRecipients.push({ vendor_id:vid, company:company, agent_first:first, agent_last:last, agent_name:name, agent_email:email, agent_phone:phone, save:save });
+  ['lpHoiRCompany','lpHoiRFirst','lpHoiRLast','lpHoiREmail','lpHoiRPhone'].forEach(function(i){ const e=document.getElementById(i); if(e){ e.value=''; e._vendorId=null; } });
   lpHoiRenderRecips();
 }
 function lpHoiRecipRemove(i){ _lpHoiRecipients.splice(i,1); lpHoiRenderRecips(); }
@@ -10727,7 +10732,7 @@ function lpHoiRenderRecips(){
   if(btn){ btn.textContent='Send to '+n; btn.disabled=(n===0); btn.style.opacity=(n===0?'.5':'1'); btn.style.cursor=(n===0?'default':'pointer'); }
   if(!box) return;
   if(!n){ box.innerHTML='<div style="font-size:11px;color:#777;">No recipients yet — add one or more insurance companies above.</div>'; return; }
-  box.innerHTML=_lpHoiRecipients.map(function(r,i){ return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.22);border-radius:7px;"><div style="flex:1;min-width:0;overflow:hidden;"><span style="font-size:12px;color:#e2e2e2;font-weight:600;">'+lpEsc(r.company||r.agent_name||r.agent_email)+'</span> <span style="font-size:10px;color:#999;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+'</span></div>'+((r.save&&!r.vendor_id)?'<span style="font-size:9px;color:#C9A84C;border:1px solid rgba(201,168,76,.3);border-radius:6px;padding:1px 5px;white-space:nowrap;">will save</span>':'')+'<button title="Remove recipient" onclick="lpHoiRecipRemove('+i+')" style="background:rgba(229,115,115,.12);border:1px solid rgba(229,115,115,.4);color:#e57373;font-size:11px;font-weight:700;line-height:1;cursor:pointer;border-radius:6px;padding:3px 8px;white-space:nowrap;">✕ Remove</button></div>'; }).join('');
+  box.innerHTML=_lpHoiRecipients.map(function(r,i){ return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.22);border-radius:7px;"><div style="flex:1;min-width:0;overflow:hidden;"><span style="font-size:12px;color:#e2e2e2;font-weight:600;">'+lpEsc([r.agent_name,r.company].filter(Boolean).join(' — ')||r.agent_email||'(recipient)')+'</span> <span style="font-size:10px;color:#999;">'+lpEsc(r.agent_email||'')+'</span></div>'+((r.save&&!r.vendor_id)?'<span style="font-size:9px;color:#C9A84C;border:1px solid rgba(201,168,76,.3);border-radius:6px;padding:1px 5px;white-space:nowrap;">will save</span>':'')+'<button title="Remove recipient" onclick="lpHoiRecipRemove('+i+')" style="background:rgba(229,115,115,.12);border:1px solid rgba(229,115,115,.4);color:#e57373;font-size:11px;font-weight:700;line-height:1;cursor:pointer;border-radius:6px;padding:3px 8px;white-space:nowrap;">✕ Remove</button></div>'; }).join('');
 }
 async function lpHoiOpenComposer(){
   const cid=lpCid(); if(!cid){ _lpHoiToast('No contact selected', true); return; }
@@ -10759,7 +10764,7 @@ async function lpHoiSendAll(){
   for(let i=0;i<_lpHoiRecipients.length;i++){
     const r=_lpHoiRecipients[i];
     if(btn) btn.textContent='Sending '+(i+1)+'/'+total+'…';
-    const afn=((r.agent_name||'').trim().split(/\s+/)[0])||'there';
+    const afn=(r.agent_first||'').trim()||((r.agent_name||'').trim().split(/\s+/)[0])||'there';
     const bodyText=_lpHoiBody(afn);
     const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>'+_lpHoiSignatureHtml();
     try{
@@ -10768,7 +10773,7 @@ async function lpHoiSendAll(){
       const resp=await _authClient().functions.invoke('email-service',{ body:sendBody });
       const data=resp&&resp.data, error=resp&&resp.error;
       if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
-      try{ await _authClient().rpc('hoi_quote_log',{ p_contact_id:cid, p_vendor_id:r.vendor_id||null, p_company:r.company||null, p_agent_name:r.agent_name||null, p_agent_email:r.agent_email||null, p_agent_phone:r.agent_phone||null, p_subject:subject, p_body:bodyText }); }catch(le){ console.warn('[hoi_quote_log]', le&&le.message); }
+      try{ await _authClient().rpc('hoi_quote_log',{ p_contact_id:cid, p_vendor_id:r.vendor_id||null, p_company:r.company||null, p_agent_name:r.agent_name||null, p_agent_first:r.agent_first||null, p_agent_last:r.agent_last||null, p_agent_email:r.agent_email||null, p_agent_phone:r.agent_phone||null, p_subject:subject, p_body:bodyText }); }catch(le){ console.warn('[hoi_quote_log]', le&&le.message); }
       if(r.save && !r.vendor_id && (r.company||r.agent_name)){ try{ await _authClient().rpc('vendor_directory_upsert',{ p_id:null, p_role:'hoi_agent', p_name:r.agent_name||null, p_company:r.company||null, p_phone:r.agent_phone||null, p_email:r.agent_email||null, p_website:null, p_notes:null }); }catch(_){} }
       ok++;
     }catch(e){ fail++; console.warn('[lpHoiSend]', r.agent_email, e&&e.message); }
