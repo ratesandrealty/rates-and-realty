@@ -538,6 +538,27 @@ async function loadShared() {
     return;
   }
   el.innerHTML = leads.map(renderLeadCard).join('');
+  // Loan-health status pill per shared lead so the VA sees what's urgent/missing (read-only).
+  leads.forEach(function (l) { vaLoadHealth(String(l.contact_id || '')); });
+}
+
+function vaHealthPill(h) {
+  var st = (h && h.status) || 'on_track';
+  var m = st === 'behind'  ? { t:'🔴 Behind',  c:'#ff9598', bg:'rgba(229,72,77,.14)',  bd:'rgba(229,72,77,.4)' }
+        : st === 'at_risk' ? { t:'⚠ At Risk', c:'#e8c07a', bg:'rgba(224,168,82,.14)', bd:'rgba(224,168,82,.4)' }
+        :                    { t:'✓ On Track', c:'#7bd39a', bg:'rgba(39,174,96,.14)',  bd:'rgba(39,174,96,.4)' };
+  return '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:' + m.bg + ';border:1px solid ' + m.bd + ';color:' + m.c + ';white-space:nowrap;">' + m.t + '</span>';
+}
+async function vaLoadHealth(cid) {
+  if (!cid) return;
+  var slot = document.getElementById('vahealth-' + cid); if (!slot) return;
+  try {
+    const { data, error } = await _supabase.rpc('loan_health', { p_contact_id: cid });
+    if (error || !data) return;
+    var oc = data.overdue_count || 0, cp = (data.conditions || {}).pending || 0;
+    var bits = []; if (oc) bits.push(oc + ' overdue'); if (cp) bits.push(cp + ' cond.');
+    slot.innerHTML = vaHealthPill(data) + (bits.length ? '<span style="font-size:10px;color:var(--text-muted);margin-left:6px;">' + esc(bits.join(' · ')) + '</span>' : '');
+  } catch (e) { /* non-fatal */ }
 }
 
 function renderLeadCard(l) {
@@ -580,6 +601,7 @@ function renderLeadCard(l) {
   return '<div class="lead-card" data-cid="' + esc(cid) + '">' +
     '<div class="lead-card-head">' +
       '<span class="lead-name">' + name + '</span>' + stage +
+      '<span id="vahealth-' + esc(cid) + '" style="margin-left:2px;"></span>' +
       '<span class="lead-head-links">' + headLinks + '</span>' +
     '</div>' +
     tasksHtml +

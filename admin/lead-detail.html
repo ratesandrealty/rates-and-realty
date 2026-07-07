@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070601 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070604 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -2435,6 +2435,11 @@
         #tab-processing .lp-tl-node.active .lp-tl-dot { background:#1a1a1a; border-color:#C9A84C; color:#C9A84C; box-shadow:0 0 0 4px rgba(201,168,76,.18); animation:lpPulse 1.8s infinite; }
         #tab-processing .lp-tl-node.active .lp-tl-lbl { color:#C9A84C; font-weight:700; }
         #tab-processing .lp-tl-node.funded .lp-tl-dot { background:linear-gradient(135deg,#27AE60,#34d877); border-color:#27AE60; color:#062b14; box-shadow:0 0 14px rgba(39,174,96,.5); animation:none; }
+        /* Critical Dates urgency glow (driven by loan_health.dates urgency) */
+        #tab-processing #lpDatesBody input.lp-date-red { border-color:#E5484D !important; box-shadow:0 0 0 1px #E5484D, 0 0 10px rgba(229,72,77,.55) !important; }
+        #tab-processing #lpDatesBody input.lp-date-red.lp-date-pulse { animation:lpDatePulse 1.6s ease-in-out infinite; }
+        #tab-processing #lpDatesBody input.lp-date-amber { border-color:#E0A852 !important; box-shadow:0 0 0 1px #E0A852, 0 0 9px rgba(224,168,82,.5) !important; }
+        @keyframes lpDatePulse { 0%,100%{ box-shadow:0 0 0 1px #E5484D, 0 0 8px rgba(229,72,77,.45);} 50%{ box-shadow:0 0 0 1px #E5484D, 0 0 17px rgba(229,72,77,.9);} }
         @keyframes lpPulse { 0%,100%{ box-shadow:0 0 0 4px rgba(201,168,76,.18);} 50%{ box-shadow:0 0 0 8px rgba(201,168,76,.04);} }
         #tab-processing .lp-stub { opacity:0.6; }
         #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
@@ -2448,6 +2453,7 @@
           <button class="lp-action" id="vahideActRealtor" onclick="lpAction('Send Realtor Update')">📨 Send Realtor Update</button>
           <button class="lp-action" onclick="lpTextBorrower()">📱 Text Borrower</button>
         </div>
+        <div class="lp-card" id="lpHealthCard" style="display:none;"><div id="lpHealthBody"></div></div>
         <div class="lp-card"><div class="lp-h">🚦 Processing Timeline</div><div id="lpTimelineBody"></div></div>
         <!-- Duplicate of #lpTrackerBar (order-tracker strip) rendered under the timeline.
              Kept in sync with the original by lpRenderTracker() from the same order_tracker data. -->
@@ -9478,6 +9484,7 @@ async function lpLoadProcessing(){
   lpLoadEsign(cid);
   lpLoadVaTasks();
   lpLoadShares();
+  lpLoadHealth(cid);       // status banner + urgent list + Critical Dates glow (one source of truth)
 }
 function lpGoToLender(name){
   const btn = document.querySelector('.ld-tab-btn[onclick*="lenders"]');
@@ -9633,7 +9640,7 @@ function lpEdit(id, field, value){
     const patch = { updated_at:new Date().toISOString() }; patch[field] = value||null;
     const { error } = await _authClient().from('processing_items').update(patch).eq('id',id);
     if(error) console.warn('[lpEdit]', error.message);
-    else if(field==='status') lpRefreshTimeline();
+    else if(field==='status'){ lpRefreshTimeline(); lpLoadHealth(); }
   }, 500);
 }
 async function lpToggle(id, checked){
@@ -9686,10 +9693,15 @@ const LP_KEY_DATES = [
   {key:'cd_out',label:'CD Out'},
   {key:'signing',label:'Signing'},
   {key:'funding',label:'Funding'},
-  {key:'coe',label:'Close of Escrow'},
+  {key:'close_of_escrow',label:'Close of Escrow'},
   {key:'preapproval_expiry',label:'Preapproval Expiry',app:'preapproval_expiry'},
   {key:'credit_pulled',label:'Credit Pulled Date',app:'credit_report_pulled_date'}
 ];
+// Loan-health "on-track" system: one loan_health fetch drives the status banner, urgent
+// list, AND the Critical Dates glow. _lpHealth caches the last result. LP_DATE_HEALTHKEY
+// maps a UI date key → the loan_health.dates date_key where they differ (app-backed credit).
+let _lpHealth = null;
+const LP_DATE_HEALTHKEY = { credit_pulled: 'credit_pulled_date' };
 const LP_CONTACT_ROLES = [
   {key:'listing_agent',label:'Listing Agent'},
   {key:'listing_agent_tc',label:'Listing Agent Transaction Coordinator'},
@@ -9808,8 +9820,15 @@ async function lpLoadKeyDates(cid){
   try{ const { data } = await _authClient().from('loan_key_dates').select('date_key,date_value').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.date_key]=r.date_value; }); }catch(_){}
   // App-backed dates live on mortgage_applications — the daily proactive-followups cron watches them there.
   try{ const app = await _fetchAppRowForContact(cid); if(app){ if(app.preapproval_expiry) map['preapproval_expiry']=String(app.preapproval_expiry).slice(0,10); if(app.credit_report_pulled_date) map['credit_pulled']=String(app.credit_report_pulled_date).slice(0,10); } }catch(_){}
+  // Legacy fallback: Close of Escrow was historically stored under date_key 'coe'. Read it
+  // so existing leads still display until a one-time migration renames coe → close_of_escrow.
+  if(!map['close_of_escrow'] && map['coe']) map['close_of_escrow'] = map['coe'];
   const inp = 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:12px;padding:5px 7px;width:100%;';
-  el.innerHTML = LP_KEY_DATES.map(d=>'<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div><input type="date" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value,\''+(d.app||'')+'\')" style="'+inp+'"></div>').join('');
+  el.innerHTML = LP_KEY_DATES.map(d=>{
+    const hk = LP_DATE_HEALTHKEY[d.key] || d.key;   // loan_health.dates date_key for glow matching
+    return '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div><input type="date" data-lp-datekey="'+hk+'" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value,\''+(d.app||'')+'\')" style="'+inp+'"></div>';
+  }).join('');
+  lpApplyDateGlow();   // paint urgency from the cached loan_health
 }
 async function lpSaveDate(key, value, appcol){
   const cid = lpCid(); if(!cid) return;
@@ -9819,9 +9838,58 @@ async function lpSaveDate(key, value, appcol){
       if(app && app.id){ await _authClient().from('mortgage_applications').update({[appcol]:value||null, updated_at:new Date().toISOString()}).eq('id',app.id); }
       else { await _authClient().from('mortgage_applications').insert({contact_id:cid,[appcol]:value||null}); }
     }catch(e){ console.warn('[lpSaveDate app]', e.message); }
+    lpLoadHealth(cid);   // re-run loan_health so the banner/urgent/glow reflect the new date
     return;
   }
   try{ await _authClient().from('loan_key_dates').upsert({contact_id:cid,date_key:key,date_value:value||null,updated_at:new Date().toISOString()}, {onConflict:'contact_id,date_key'}); }catch(e){ console.warn('[lpSaveDate]', e.message); }
+  lpLoadHealth(cid);   // re-run loan_health so the banner/urgent/glow reflect the new date
+}
+
+// ── Loan health: one fetch → status banner + urgent list + Critical Dates glow ──
+async function lpLoadHealth(cid){
+  cid = cid || lpCid(); if(!cid) return;
+  try{
+    const { data, error } = await _authClient().rpc('loan_health', { p_contact_id: cid });
+    if(error) throw error;
+    _lpHealth = data || null;
+  }catch(e){ _lpHealth = null; console.warn('[loan_health]', e&&e.message); }
+  lpRenderHealth(_lpHealth);
+  lpApplyDateGlow();
+}
+function lpApplyDateGlow(){
+  const byKey = {}; ((_lpHealth && _lpHealth.dates) || []).forEach(d=>{ byKey[d.date_key] = d; });
+  document.querySelectorAll('#lpDatesBody input[data-lp-datekey]').forEach(inp=>{
+    inp.classList.remove('lp-date-red','lp-date-amber','lp-date-pulse');
+    const d = byKey[inp.getAttribute('data-lp-datekey')];
+    if(!d || !d.date_value) return;                        // 'ok'/unset → normal
+    if(d.urgency==='overdue'){ inp.classList.add('lp-date-red','lp-date-pulse'); }
+    else if(d.urgency==='red'){ inp.classList.add('lp-date-red'); }
+    else if(d.urgency==='amber'){ inp.classList.add('lp-date-amber'); }
+  });
+}
+function lpRenderHealth(h){
+  const card=document.getElementById('lpHealthCard'), body=document.getElementById('lpHealthBody');
+  if(!card||!body) return;
+  if(!h){ card.style.display='none'; return; }
+  card.style.display='block';
+  const st = h.status||'on_track';
+  const pill = st==='behind' ? {t:'🔴 Behind',bg:'rgba(229,72,77,.16)',bd:'#E5484D',c:'#ff9598'}
+            : st==='at_risk' ? {t:'⚠ At Risk',bg:'rgba(224,168,82,.16)',bd:'#E0A852',c:'#e8c07a'}
+            :                  {t:'✓ On Track',bg:'rgba(39,174,96,.16)',bd:'#27AE60',c:'#68cf92'};
+  const cond=h.conditions||{}, chk=h.checklist||{};
+  const summary = (h.overdue_count||0)+' overdue · '+(cond.pending||0)+' conditions pending · '+(chk.done||0)+'/'+(chk.total||0)+' tasks';
+  const urg = (h.urgent_items||[]).map(u=>{
+    const red=(u.urgency==='overdue'||u.urgency==='red');
+    const col=red?'#ff9598':(u.urgency==='amber'?'#e8c07a':'#bbb');
+    const ic=red?'🔴':(u.urgency==='amber'?'⚠':'•');
+    return '<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:'+col+';padding:3px 0;"><span style="flex-shrink:0;">'+ic+'</span><span>'+lpEsc(u.label)+'</span></div>';
+  });
+  const warn = (h.warnings||[]).map(w=>'<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#cbb489;padding:3px 0;"><span style="flex-shrink:0;">🔧</span><span>'+lpEsc(w)+'</span></div>');
+  const list = urg.concat(warn);
+  body.innerHTML = '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+    + '<span style="font-size:13px;font-weight:800;padding:5px 13px;border-radius:999px;background:'+pill.bg+';border:1px solid '+pill.bd+';color:'+pill.c+';white-space:nowrap;">'+pill.t+'</span>'
+    + '<span style="font-size:12px;color:rgba(255,255,255,.6);">'+lpEsc(summary)+'</span></div>'
+    + (list.length ? '<div style="margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.07);">'+list.join('')+'</div>' : '');
 }
 function lpTextBorrower(){
   var b = (typeof contactData!=='undefined' && contactData) ? contactData : {};
@@ -9869,9 +9937,16 @@ async function lpVendorSuggest(role, inputEl){
   _lpVendorSuggestTimer = setTimeout(async function(){
     let rows = [];
     try{
-      const { data, error } = await _authClient().rpc('vendor_directory_search', { p_role: role, p_query: q, p_limit: 8 });
-      if(error){ (window.showToast||function(){})('Directory search failed: '+(error.message||error), true); }
-      rows = data || [];
+      let res = await _authClient().rpc('vendor_directory_search', { p_role: role, p_query: q, p_limit: 8 });
+      if(res.error) throw res.error;
+      rows = res.data || [];
+      // Fallback: agent / underwriter / lender-AE / appraisal-company roles often have no
+      // role-specific directory rows yet — search ALL roles (p_role:null) so any known
+      // vendor can still be offered instead of showing nothing.
+      if(!rows.length){
+        const alt = await _authClient().rpc('vendor_directory_search', { p_role: null, p_query: q, p_limit: 8 });
+        if(!alt.error) rows = alt.data || [];
+      }
     }catch(e){ (window.showToast||function(){})('Directory search failed: '+(e&&e.message||e), true); }
     box._idx = -1;
     if(!rows.length){ lpVendorClose(box); return; }
@@ -9882,6 +9957,16 @@ async function lpVendorSuggest(role, inputEl){
       const sub = [v.email, v.phone].filter(Boolean).join(' · ');
       return '<div class="lp-vsopt" data-id="'+lpEsc(v.id)+'" onmousedown="event.preventDefault();" onclick="lpVendorDirPick(\''+role+'\',\''+lpEsc(v.id)+'\',this)" onmouseover="lpVendorHover(this)" style="padding:7px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);"><div style="font-weight:600;color:#ddd;font-size:12px;">'+lpEsc(title)+'</div>'+(sub?'<div style="font-size:10px;color:#888;margin-top:1px;">'+lpEsc(sub)+'</div>':'')+'</div>';
     }).join('');
+    // Anchor as a FIXED popover under the input so #lpContactsBody's overflow:auto
+    // (needed for the wide grid's horizontal scroll) can't clip the dropdown. No ancestor
+    // has a transform, so a fixed element escapes the clip. Re-positioned on each open.
+    try{
+      const r = inputEl.getBoundingClientRect();
+      const w = Math.min(Math.max(r.width, 300), 440);
+      let left = r.left; if(left + w > window.innerWidth - 8) left = window.innerWidth - 8 - w;
+      box.style.position='fixed'; box.style.top=(r.bottom+2)+'px'; box.style.left=Math.max(8,left)+'px';
+      box.style.width=w+'px'; box.style.zIndex='99999';
+    }catch(_){}
     box.style.display='block';
   }, q.length ? 200 : 0);
 }
@@ -10022,11 +10107,8 @@ async function lpVendorSaveRow(role){
   const toastFn = window.showToast||window.toast||function(){};
   if(!name && !company){ toastFn('Add a name or company first.', true); return; }
   try{
-    let existing=null;
-    if(email){ const r=await _authClient().from('vendor_directory').select('id').eq('role',role).ilike('email',email).limit(1); existing=r.data&&r.data[0]; }
-    if(!existing && name && company){ const r=await _authClient().from('vendor_directory').select('id').eq('role',role).ilike('name',name).ilike('company',company).limit(1); existing=r.data&&r.data[0]; }
-    if(existing){ await _authClient().from('vendor_directory').update({ name:name||null, company:company||null, phone:phone||null, email:email||null, updated_at:new Date().toISOString() }).eq('id', existing.id); }
-    else { await _authClient().from('vendor_directory').insert({ role:role, name:name||null, company:company||null, phone:phone||null, email:email||null }); }
+    const r = await _authClient().rpc('vendor_directory_upsert', { p_id:null, p_role:role, p_name:name||null, p_company:company||null, p_phone:phone||null, p_email:email||null, p_website:null, p_notes:null });
+    if(r.error) throw r.error;
     toastFn('Saved to vendor directory ✓');
   }catch(e){ toastFn('Save failed: '+(e&&e.message||e), true); }
 }
@@ -10040,6 +10122,12 @@ async function lpSaveContact(role){
   const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
   const g = f => { const e = row.querySelector('input[data-f="'+f+'"]'); return e ? (e.value||null) : null; };
   try{ await _authClient().from('loan_contacts').upsert({contact_id:cid,role:role,name:g('name'),company:g('company'),phone:g('phone'),email:g('email'),updated_at:new Date().toISOString()}, {onConflict:'contact_id,role'}); }catch(e){ console.warn('[lpSaveContact]', e.message); }
+  // Also capture the vendor into the shared directory so manually typed contacts become
+  // reusable/searchable everywhere next time. Best-effort — never blocks the contact save.
+  try{
+    const nm=((g('name')||'')).trim(), co=((g('company')||'')).trim();
+    if(nm||co){ await _authClient().rpc('vendor_directory_upsert', { p_id:null, p_role:role, p_name:nm||null, p_company:co||null, p_phone:((g('phone')||'')).trim()||null, p_email:((g('email')||'')).trim()||null, p_website:null, p_notes:null }); }
+  }catch(_){}
 }
 // Statuses treated as done/closed — hidden from the default (open-only) tasks view.
 const LP_TASK_DONE_STATUSES = ['completed','complete','done','cancelled','canceled','dismissed'];
