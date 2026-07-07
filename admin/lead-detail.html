@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070622 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070623 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10925,7 +10925,7 @@ function lpRenderVoe(){
   const host=document.getElementById('lpVoeCards'); if(!host) return;
   host.innerHTML = _lpVoes.length ? _lpVoes.map(lpVoeCardHtml).join('') : '<div style="font-size:11px;color:#666;padding:4px 2px;">No VOEs yet. Click “+ Add VOE”.</div>';
   // Load each saved card's notes log + wire the @-mention picker into its note box.
-  _lpVoes.forEach(function(v){ if(v.id){ lpNotesLoad(v.id); const ta=document.getElementById('lpNoteInput-'+v.id); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta); } });
+  _lpVoes.forEach(function(v){ if(v.id){ lpNotesLoad(v.id); lpVoeLoadActivity(v.id, v.key); const ta=document.getElementById('lpNoteInput-'+v.id); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta); } });
 }
 function lpVoeMetaHtml(v){
   const parts=[];
@@ -10952,6 +10952,7 @@ function lpVoeCardHtml(v){
       +'<span id="lpVoeSaved-'+k+'" style="font-size:10px;min-width:36px;text-align:right;"></span>'
     +'</div>'
     +'<input type="text" id="lpVoeF-'+k+'-label" placeholder="Label (e.g. VOE - Acme W2)" value="'+lpEsc(v.label||'')+'" onchange="lpVoeField(\''+k+'\',\'label\',this.value)" style="'+inp+'margin-bottom:6px;">'
+    +'<div style="display:flex;justify-content:flex-end;margin-bottom:4px;"><button type="button" onclick="lpVoePull(\''+k+'\')" title="Fill Employer from the CRM (voe_prefill)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#bbb;border-radius:6px;font-size:10px;font-weight:600;padding:2px 8px;cursor:pointer;font-family:inherit;">⬇ Pull employer from CRM</button></div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">'+txtF('employer_name','Employer Name')+txtF('hr_contact_name','HR Contact Name')+txtF('hr_contact_phone','HR Phone')+txtF('hr_contact_email','HR Email')+'</div>'
     +'<button type="button" onclick="lpVoeVendorOpen(\''+k+'\')" style="text-align:left;width:100%;box-sizing:border-box;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px;'+(v.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
     +'<div id="lpVoeVendDrop-'+k+'" style="display:none;position:absolute;left:8px;right:8px;z-index:60;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>'
@@ -10962,7 +10963,11 @@ function lpVoeCardHtml(v){
     +'</div>'
     +'<div style="font-size:9.5px;color:#888;margin-top:4px;">Creates a reminder task for the VA / you / both on this date.</div>'
     +'<div id="lpVoeMeta-'+k+'" style="font-size:10px;color:#999;margin-top:4px;">'+lpVoeMetaHtml(v)+'</div>'
-    + (v.id ? ('<div style="text-align:right;margin-top:6px;"><button type="button" onclick="lpOrderEmail(\''+v.id+'\')" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;padding:3px 10px;cursor:pointer;font-family:inherit;">✉️ Email</button></div>' + lpRenderNotesBlock(v.id)) : '<div style="font-size:9.5px;color:#666;margin-top:6px;">Save this VOE (set a borrower/status) to start its notes log.</div>')
+    + '<div style="display:flex;justify-content:flex-end;gap:6px;margin-top:6px;">'
+        + '<button type="button" onclick="lpVoeReqOpen(\''+k+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:700;padding:3px 10px;cursor:pointer;font-family:inherit;">📨 Send VOE Request</button>'
+        + (v.id ? '<button type="button" onclick="lpOrderEmail(\''+v.id+'\')" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;padding:3px 10px;cursor:pointer;font-family:inherit;">✉️ Email</button>' : '')
+      + '</div>'
+    + (v.id ? ('<div id="lpVoeAct-'+k+'" style="margin-top:6px;"></div>' + lpRenderNotesBlock(v.id)) : '<div style="font-size:9.5px;color:#666;margin-top:6px;">Set a borrower/status (or click “Send VOE Request”) to save this VOE and start its activity + notes.</div>')
   +'</div>';
 }
 function lpVoeAdd(){ _lpVoes.push({ key:'vn'+(++_lpVoeSeq), id:null, status:'not_ordered' }); lpRenderVoe(); }
@@ -10984,6 +10989,143 @@ async function lpVoeToggleDontNeed(){
     lpLoadVoes(cid);      // reload voe rows (re-splits not_required) → re-renders section + cards
     lpLoadTracker(cid);   // refresh top pill → green "Don't need"
   }catch(e){ toast('Could not update VOE: '+((e&&e.message)||e), true); }
+}
+/* ═══ VOE HR request — Phase 1: pull employer, email HR (VOE form attached), track activity ═══ */
+let _lpVoeCfg = null;      // app_config: voe_form_url + voe_request_cc
+let _lpVoePrefill = null;  // last voe_prefill (borrower/broker/employer/address)
+let _lpVoeReqKey = null;   // card key currently in the composer
+function _lpVoeToast(m,e){ (window.showToast||window.toast||function(){})(m,!!e); }
+async function lpVoeLoadCfg(){
+  if(_lpVoeCfg) return _lpVoeCfg;
+  _lpVoeCfg = {};
+  try{ const r=await _authClient().from('app_config').select('key,value').in('key',['voe_form_url','voe_request_cc']); (r.data||[]).forEach(function(x){ _lpVoeCfg[x.key]=x.value; }); }catch(e){ console.warn('[voe cfg]', e&&e.message); }
+  return _lpVoeCfg;
+}
+async function _lpVoePrefetch(cid){
+  try{ const r=await _authClient().rpc('voe_prefill',{ p_contact_id:cid }); if(!r.error) _lpVoePrefill=r.data||{}; }catch(e){ console.warn('[voe_prefill]', e&&e.message); }
+  return _lpVoePrefill||{};
+}
+function _lpB64FromBuf(buf){ let bin=''; const b=new Uint8Array(buf), c=0x8000; for(let i=0;i<b.length;i+=c){ bin+=String.fromCharCode.apply(null, b.subarray(i,i+c)); } return btoa(bin); }
+// 1. PULL EMPLOYER from the CRM into the card's Employer field (stays editable).
+async function lpVoePull(k){
+  const cid=lpCid(); if(!cid) return;
+  const pf=await _lpVoePrefetch(cid);
+  const emp=document.getElementById('lpVoeF-'+k+'-employer_name');
+  if(emp && pf.employer_name){ emp.value=pf.employer_name; lpVoeField(k,'employer_name',pf.employer_name); }
+  _lpVoeToast(pf.employer_name ? ('Pulled: '+pf.employer_name) : 'No employer on file — enter it manually'+(pf.borrower_full?(' for '+pf.borrower_full):''), !pf.employer_name);
+}
+// 2. SEND TO HR — composer (single recipient, VOE PDF attached, cc rene@+processing@).
+function _lpVoeSigText(b){ b=b||{}; const L=[]; if(b.name)L.push(b.name); if(b.title)L.push(b.title); if(b.phone)L.push(b.phone); if(b.nmls)L.push('NMLS #'+b.nmls); if(b.email)L.push(b.email); return L.join('\n'); }
+function _lpVoeDefaultBody(pf, hrName, employer){
+  const hrFirst=((hrName||'').trim().split(/\s+/)[0])||'there';
+  const bn=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'my client';
+  const emp=employer||pf.employer_name||'their employer';
+  const sig=_lpVoeSigText(pf.broker);
+  return 'Hello '+hrFirst+',\n\n'
+    +'I’m assisting '+bn+' with a mortgage application and need to verify their employment with '+emp+'. Please complete the attached Verification of Employment form and return it at your earliest convenience.\n\n'
+    +'Let me know if you need any additional information or a signed borrower authorization.\n\n'
+    +'Thank you,\n'+(sig||'');
+}
+function lpVoeReqEnsureModal(){
+  let ov=document.getElementById('lpVoeReqOverlay'); if(ov) return ov;
+  const INP='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12px;padding:7px 9px;width:100%;box-sizing:border-box;font-family:inherit;';
+  const LBL='display:block;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.4px;margin:9px 0 3px;';
+  ov=document.createElement('div'); ov.id='lpVoeReqOverlay';
+  ov.style.cssText='display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.62);align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto;';
+  ov.innerHTML='<div style="background:#141310;border:1px solid rgba(201,168,76,.3);border-radius:14px;max-width:620px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.6);">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);"><span style="font-size:15px;font-weight:700;color:#C9A84C;">📨 Send VOE Request to HR</span><button onclick="lpVoeReqClose()" style="background:transparent;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;">✕</button></div>'
+    +'<div style="padding:16px 18px;max-height:72vh;overflow:auto;">'
+      +'<label style="'+LBL+'">HR Email</label><input id="lpVoeReqTo" style="'+INP+'">'
+      +'<label style="'+LBL+'">HR Name</label><input id="lpVoeReqName" style="'+INP+'">'
+      +'<label style="'+LBL+'">Subject</label><input id="lpVoeReqSubject" style="'+INP+'">'
+      +'<label style="'+LBL+'">Message</label><textarea id="lpVoeReqBody" style="'+INP+'min-height:230px;resize:vertical;line-height:1.5;"></textarea>'
+      +'<div id="lpVoeReqAttach" style="font-size:10px;color:#888;margin-top:8px;line-height:1.5;"></div>'
+    +'</div>'
+    +'<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid rgba(255,255,255,.08);"><button onclick="lpVoeReqClose()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-family:inherit;">Cancel</button><button id="lpVoeReqSendBtn" onclick="lpVoeReqSend()" style="background:#C9A84C;border:none;color:#000;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">Send Request</button></div>'
+  +'</div>';
+  document.body.appendChild(ov);
+  return ov;
+}
+function lpVoeReqClose(){ const ov=document.getElementById('lpVoeReqOverlay'); if(ov) ov.style.display='none'; _lpVoeReqKey=null; }
+async function lpVoeReqOpen(k){
+  const cid=lpCid(); if(!cid){ _lpVoeToast('No contact', true); return; }
+  let v=_lpVoeFind(k); if(!v) return;
+  if(!v.id){ await lpVoeSave(k); v=_lpVoeFind(k); }              // need an order id for voe_request_log
+  if(!v || !v.id){ _lpVoeToast('Set a borrower/status first, then send.', true); return; }
+  const g=f=>{ const e=document.getElementById('lpVoeF-'+k+'-'+f); return e?(e.value||'').trim():''; };
+  const hrName=g('hr_contact_name'), hrEmail=g('hr_contact_email'), employer=g('employer_name');
+  if(!hrEmail){ _lpVoeToast('Add the HR email on this card first.', true); return; }
+  const cfgPf=await Promise.all([lpVoeLoadCfg(), _lpVoePrefetch(cid)]);
+  const cfg=cfgPf[0]||{}, pf=cfgPf[1]||{};
+  _lpVoeReqKey=k;
+  const ov=lpVoeReqEnsureModal();
+  const bn=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'';
+  const set=(id,val)=>{ const e=document.getElementById(id); if(e) e.value=val||''; };
+  set('lpVoeReqTo', hrEmail); set('lpVoeReqName', hrName);
+  set('lpVoeReqSubject', 'Request for Verification of Employment'+(bn?(' — '+bn):''));
+  set('lpVoeReqBody', _lpVoeDefaultBody(pf, hrName, employer));
+  const att=document.getElementById('lpVoeReqAttach');
+  if(att){ const cc=(cfg.voe_request_cc||''); att.innerHTML=(cfg.voe_form_url?'📎 Request_for_VOE_BLANK.pdf will be attached':'⚠ VOE form not staged yet — will send without the attachment')+(cc?('<br>CC: '+lpEsc(cc)):''); att.style.color=cfg.voe_form_url?'#888':'#c99a5b'; }
+  ov.style.display='flex';
+}
+async function lpVoeReqSend(){
+  const cid=lpCid(); const k=_lpVoeReqKey; if(!cid||!k) return;
+  const v=_lpVoeFind(k); if(!v||!v.id){ _lpVoeToast('Missing order id', true); return; }
+  const gv=id=>{ const e=document.getElementById(id); return e?(e.value||''):''; };
+  const to=gv('lpVoeReqTo').trim(), hrName=gv('lpVoeReqName').trim(), subject=gv('lpVoeReqSubject').trim(), bodyText=gv('lpVoeReqBody');
+  if(!to){ _lpVoeToast('HR email required', true); return; }
+  const btn=document.getElementById('lpVoeReqSendBtn'); if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  const cfg=_lpVoeCfg||{};
+  const gf=f=>{ const e=document.getElementById('lpVoeF-'+k+'-'+f); return e?(e.value||'').trim():''; };
+  const employer=gf('employer_name'), hrPhone=gf('hr_contact_phone');
+  const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>';
+  // Fetch the staged VOE PDF → base64 attachment (public bucket; graceful if not staged).
+  let attachments=undefined;
+  if(cfg.voe_form_url){
+    try{ const resp=await fetch(cfg.voe_form_url); if(resp.ok){ const buf=await resp.arrayBuffer(); attachments=[{ content:_lpB64FromBuf(buf), filename:'Request_for_VOE_BLANK.pdf', disposition:'attachment' }]; } else { _lpVoeToast('VOE form fetch failed ('+resp.status+') — sending without attachment', true); } }
+    catch(e){ _lpVoeToast('Could not load VOE form — sending without attachment', true); }
+  }
+  try{
+    const body={ action:'send', to_email:to, to_name:hrName, first_name:((hrName||'').split(/\s+/)[0]||''), subject:subject, html:bodyHtml, contact_id:cid };
+    if(cfg.voe_request_cc) body.cc=cfg.voe_request_cc;
+    if(attachments) body.attachments=attachments;
+    const resp=await _authClient().functions.invoke('email-service',{ body:body });
+    const data=resp&&resp.data, error=resp&&resp.error;
+    if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
+    // Stamps the order (status→ordered, HR fields, ordered_at, last_follow_up_at, reply_token) + email_log.
+    try{ await _authClient().rpc('voe_request_log',{ p_order_id:v.id, p_contact_id:cid, p_hr_name:hrName||null, p_hr_email:to||null, p_hr_phone:hrPhone||null, p_employer:employer||null, p_subject:subject, p_body_html:bodyHtml }); }catch(le){ console.warn('[voe_request_log]', le&&le.message); }
+    _lpVoeToast('VOE request sent to '+to+' ✓');
+    lpVoeReqClose();
+    lpLoadVoes(cid);      // refresh cards (status now ordered) + activity
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Send Request'; } _lpVoeToast('Send failed: '+((e&&e.message)||e), true); }
+}
+// 3. ACTIVITY — status/ordered/HR + events[] (inbound replies render distinctly for Phase 2).
+async function lpVoeLoadActivity(orderId, k){
+  const box=document.getElementById('lpVoeAct-'+k); if(!box || !orderId) return;
+  try{ const r=await _authClient().rpc('voe_activity',{ p_order_id:orderId }); if(r.error) throw r.error; lpVoeRenderActivity(box, r.data||{}); }
+  catch(e){ console.warn('[voe_activity]', e&&e.message); }
+}
+function lpVoeRenderActivity(box, a){
+  const ev=Array.isArray(a.events)?a.events:[];
+  const head=[];
+  if(a.status) head.push('Status: <b style="color:#C9A84C;">'+lpEsc(a.status)+'</b>');
+  if(a.ordered_at) head.push('Ordered '+_lpFmtDT(a.ordered_at));
+  if(a.last_follow_up_at) head.push('Last follow-up '+_lpFmtDT(a.last_follow_up_at));
+  if(a.hr_name||a.hr_email) head.push('HR: '+lpEsc([a.hr_name,a.hr_email].filter(Boolean).join(' · ')));
+  let html='<div style="border-top:1px solid rgba(255,255,255,.06);padding-top:6px;"><div style="font-size:9.5px;color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">VOE Activity</div>';
+  if(head.length) html+='<div style="font-size:10px;color:#aaa;margin-bottom:5px;">'+head.join(' &nbsp;·&nbsp; ')+'</div>';
+  if(!ev.length){ html+='<div style="font-size:10px;color:#777;">No emails yet.</div>'; }
+  else {
+    html+=ev.map(function(e){
+      const inbound=(String(e.direction||'').toLowerCase()==='inbound');
+      const who=inbound?('From '+lpEsc(e.from||e.from_email||'HR')):('To '+lpEsc(e.to||e.to_email||''));
+      const when=e.created_at?_lpFmtDT(e.created_at):(e.date?_lpFmtDT(e.date):'');
+      return '<div style="display:flex;gap:6px;align-items:flex-start;font-size:10px;padding:3px 6px;border-radius:6px;margin-bottom:2px;background:'+(inbound?'rgba(80,200,120,.08)':'rgba(255,255,255,.02)')+';border-left:2px solid '+(inbound?'#50c878':'rgba(201,168,76,.5)')+';">'
+        +'<span style="flex-shrink:0;">'+(inbound?'📥':'📤')+'</span>'
+        +'<span style="flex:1;min-width:0;"><span style="color:#ddd;">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span><span style="color:#888;"> — '+who+(when?(' · '+when):'')+'</span></span></div>';
+    }).join('');
+  }
+  box.innerHTML=html+'</div>';
 }
 function lpVoeField(k,field,val){ const v=_lpVoeFind(k); if(!v) return; v[field]=(val||'').trim(); lpVoeSave(k); }
 function lpVoeBorrowerChange(k,cid){
