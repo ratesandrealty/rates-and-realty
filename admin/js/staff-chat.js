@@ -888,8 +888,10 @@
       // top+bottom; override the base bottom:84px and max-height. The panel is a flex column
       // (header flex-shrink:0 → body flex:1 → composer flex-shrink:0), so only the message list
       // scrolls while the header and composer stay put at both sizes.
-      '.sc-panel.is-expanded{top:20px;bottom:20px;right:20px;left:auto;width:min(1000px,calc(100vw - 40px));height:auto;max-height:none}',
-      '@media(max-width:480px){.sc-panel.is-expanded{top:16px;bottom:16px;left:12px;right:12px;width:auto;height:auto;max-height:none}}',
+      // top:68px clears the site's fixed top bar (--topbar-h:48px on lead-detail/admin pages) + ~20px
+      // margin, so the tab row + ✕/size-toggle sit fully below the navbar and are never clipped under it.
+      '.sc-panel.is-expanded{top:68px;bottom:20px;right:20px;left:auto;width:min(1000px,calc(100vw - 40px));height:auto;max-height:none}',
+      '@media(max-width:480px){.sc-panel.is-expanded{top:64px;bottom:16px;left:12px;right:12px;width:auto;height:auto;max-height:none}}',
       '.cop-chip-brief{background:rgba(201,168,76,.18);border-color:rgba(201,168,76,.5)}',
       // Copilot pane (ported look from layout.js)
       '.cop-msgs{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}',
