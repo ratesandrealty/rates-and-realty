@@ -180,6 +180,8 @@
     margin-top: 14px; border-radius: 10px; overflow: hidden; background: #000;
   }
   .video-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .video-native-wrap { margin: 14px 0; }
+  .video-native-wrap video { width: 100%; max-height: 60vh; border-radius: 10px; background: #000; display: block; }
 
   /* Help modal (view + edit) */
   .help-overlay {
@@ -244,6 +246,7 @@
       <option value="en">English</option>
     </select>
     <button class="icon-btn" title="Welcome & help" onclick="openHelp('welcome')">ℹ️</button>
+    <a id="manageVideosLink" href="/admin/va-help.html" class="btn-back" title="Manage VA help videos" style="display:none;border-color:var(--gold);color:var(--gold);">🎥 Help videos</a>
     <span class="who" id="adminUserEmail"></span>
     <button class="btn-back" onclick="window.adminLogout && window.adminLogout()">Log out</button>
   </div>
@@ -795,8 +798,22 @@ function toEmbedUrl(url) {
   return u; // already an embed URL or some other host — use as-is
 }
 
+// Direct media file (e.g. a recorded webm/mp4 uploaded to the public video-messages
+// bucket) → render an inline <video controls>. Loom/YouTube (and other embed hosts)
+// stay as iframes. Detect by file extension or the Supabase public-object path.
+function isDirectVideo(url) {
+  const u = String(url || '').toLowerCase();
+  return /\.(webm|mp4|mov|m4v|ogg|ogv)(\?|#|$)/.test(u) || u.indexOf('/storage/v1/object/public/') > -1;
+}
+
 function videoHtml(url) {
-  const embed = url ? toEmbedUrl(url) : '';
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  if (isDirectVideo(raw)) {
+    return '<div class="video-native-wrap"><video controls preload="metadata" playsinline src="' +
+      esc(raw) + '"></video></div>';
+  }
+  const embed = toEmbedUrl(raw);
   if (!embed) return '';
   return '<div class="video-wrap"><iframe src="' + esc(embed) +
     '" allowfullscreen allow="fullscreen; picture-in-picture"></iframe></div>';
@@ -849,6 +866,8 @@ function pollHelpAdmin(attempt) {
   const role = (sessionStorage.getItem('rnr_app_role') || '').toLowerCase();
   if (role) {
     _helpAdmin = (role === 'admin');
+    const mv = document.getElementById('manageVideosLink');
+    if (mv) mv.style.display = _helpAdmin ? 'inline-flex' : 'none';
     renderWelcomeCard();
     if (_helpOpenKey) renderHelpModal(_helpOpenKey);
     return;
@@ -893,7 +912,8 @@ function renderHelpModal(key) {
     bodyEl.innerHTML = '<div style="color:var(--text-muted)">Not available yet in this language.</div>';
   } else {
     titleEl.textContent = b.title || 'Help';
-    bodyEl.innerHTML = '<div>' + mdToHtml(b.body) + '</div>' + videoHtml(b.video_url);
+    // How-to video ABOVE the help text so the VA sees it first.
+    bodyEl.innerHTML = videoHtml(b.video_url) + '<div>' + mdToHtml(b.body) + '</div>';
   }
   editWrap.innerHTML = _helpAdmin
     ? '<button class="btn-gold" onclick="openHelpEdit(\'' + esc(key) + '\')">✏️ Edit</button>' : '';
