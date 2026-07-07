@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <title>Vendor Directory — Rates & Realty CRM</title>
+<!-- vendor-directory.html · cache-buster v=2026070701 (Worker serves /admin/* HTML no-store) -->
 <!-- EXACT same authenticated-client bootstrap + login-redirect/admin guard as loe-center.html / referral-partners.html -->
 <script src="/admin/js/auth-guard.js?v=2026062401"></script>
 <script src="/api/env.js?v=2026033003"></script>
@@ -107,9 +108,10 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     <div class="modal-body">
       <div class="fld"><label>Role *</label><select id="vf_role"></select></div>
       <div class="fld-row">
-        <div class="fld"><label>Name</label><input type="text" id="vf_name" placeholder="Contact name"></div>
-        <div class="fld"><label>Company</label><input type="text" id="vf_company" placeholder="Company / brokerage"></div>
+        <div class="fld"><label>First Name</label><input type="text" id="vf_first" placeholder="First name"></div>
+        <div class="fld"><label>Last Name</label><input type="text" id="vf_last" placeholder="Last name"></div>
       </div>
+      <div class="fld"><label>Company</label><input type="text" id="vf_company" placeholder="Company / brokerage"></div>
       <div class="fld-row">
         <div class="fld"><label>Phone</label><input type="tel" id="vf_phone" placeholder="(714) 555-1234"></div>
         <div class="fld"><label>Email</label><input type="email" id="vf_email" placeholder="vendor@example.com"></div>
@@ -241,7 +243,7 @@ function openAddModal() {
   document.getElementById('saveVendorBtn').textContent = 'Add Vendor';
   // Default the modal role to whatever the filter is set to (if any).
   document.getElementById('vf_role').value = document.getElementById('roleFilter').value || '';
-  ['vf_name', 'vf_company', 'vf_phone', 'vf_email', 'vf_website', 'vf_notes'].forEach(id => document.getElementById(id).value = '');
+  ['vf_first', 'vf_last', 'vf_company', 'vf_phone', 'vf_email', 'vf_website', 'vf_notes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('vendorModal').classList.add('open');
   setTimeout(() => document.getElementById('vf_role').focus(), 50);
 }
@@ -252,7 +254,12 @@ function editVendor(id) {
   document.getElementById('modalTitle').textContent = '✏️ Edit Vendor';
   document.getElementById('saveVendorBtn').textContent = 'Save Changes';
   document.getElementById('vf_role').value = v.role || '';
-  document.getElementById('vf_name').value = v.name || '';
+  // Prefer stored first/last; else split the combined name on the first space
+  // (vendor_directory_list returns only the combined name, so this path runs here).
+  var _vf = v.first_name || '', _vl = v.last_name || '';
+  if (!_vf && !_vl && v.name) { var _t = String(v.name).trim(); var _i = _t.indexOf(' '); _vf = _i < 0 ? _t : _t.slice(0, _i); _vl = _i < 0 ? '' : _t.slice(_i + 1).trim(); }
+  document.getElementById('vf_first').value = _vf;
+  document.getElementById('vf_last').value = _vl;
   document.getElementById('vf_company').value = v.company || '';
   document.getElementById('vf_phone').value = v.phone || '';
   document.getElementById('vf_email').value = v.email || '';
@@ -268,7 +275,7 @@ async function saveVendor() {
   const payload = {
     p_id: _editId || null,
     p_role: document.getElementById('vf_role').value || null,
-    p_name: g('vf_name') || null,
+    p_name: ((g('vf_first') + ' ' + g('vf_last')).trim()) || null,
     p_company: g('vf_company') || null,
     p_phone: g('vf_phone') || null,
     p_email: g('vf_email') || null,
