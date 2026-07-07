@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070607 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070608 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10375,7 +10375,7 @@ function lpRenderOrders(){
     const opts=LP_ORDER_STATUS.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
     const nr=(st==='needs_revision');
     const stStyle = nr ? 'border-color:rgba(224,168,82,.6);color:#E0B84C;' : '';
-    const revStyle = 'width:100%;box-sizing:border-box;margin-top:6px;background:rgba(224,168,82,.07);border:1px solid rgba(224,168,82,.45);border-radius:7px;color:#eee;font-size:11.5px;line-height:1.4;padding:6px 8px;min-height:46px;resize:vertical;font-family:inherit;';
+    const revStyle = 'position:relative;z-index:2;width:100%;box-sizing:border-box;margin-top:6px;background:rgba(224,168,82,.07);border:1px solid rgba(224,168,82,.45);border-radius:7px;color:#eee;font-size:11.5px;line-height:1.4;padding:6px 8px;min-height:46px;resize:vertical;font-family:inherit;';
     let html='<div style="position:relative;border-bottom:1px solid rgba(255,255,255,.05);padding:6px 4px;">'
       +'<div style="display:grid;grid-template-columns:62px 1fr 104px 52px;gap:8px;align-items:center;">'
         +'<span style="font-size:11px;font-weight:600;color:#C9A84C;">'+row.label+'</span>'
@@ -10700,16 +10700,15 @@ function lpOrderStatusChange(type,status){
   else if(status==='received'){ o.received_at=now; }
   else if(status==='needs_revision'){ o.received_at=null; }   // keep ordered_at — it was already ordered
   else { o.ordered_at=null; o.received_at=null; }
-  const ds=document.getElementById('lpDate-'+type);
-  if(ds) ds.textContent=' '+(status==='received'?_lpDD(o.received_at):((status==='ordered'||status==='acknowledged')?_lpDD(o.ordered_at):''));
-  // Reveal the revision-note textarea + tint the dropdown amber when needs_revision (no full re-render).
-  const nr=(status==='needs_revision');
-  const rev=document.getElementById('lpRev-'+type); if(rev) rev.style.display = nr?'block':'none';
-  const selEl=document.getElementById('lpStatus-'+type); if(selEl){ selEl.style.borderColor = nr?'rgba(224,168,82,.6)':'rgba(255,255,255,.1)'; selEl.style.color = nr?'#E0B84C':'#ddd'; }
+  // Re-render the row from state (single source of truth) so the revision textarea + amber
+  // select reliably reflect the new status; then persist. Synchronous re-render before any
+  // typing avoids a race that would wipe the textarea.
+  lpRenderOrders();
   lpOrderSave(type);
+  if(status==='needs_revision'){ const rev=document.getElementById('lpRev-'+type); if(rev){ try{ rev.focus(); }catch(_){} } }
 }
 async function lpOrderSave(type){
-  const cid=lpCid(); if(!cid) return;
+  const cid=lpCid(); if(!cid) return false;
   const o=_lpOrders[type]||{};
   _lpSaved(type,'…');
   try{
@@ -10724,12 +10723,14 @@ async function lpOrderSave(type){
     if(r.error) throw r.error;
     _lpSaved(type,'Saved ✓');
     lpLoadTracker(cid);                        // refresh the tracker bar colors live
-  }catch(e){ _lpSaved(type,'⚠'); }
+    return true;
+  }catch(e){ _lpSaved(type,'⚠'); console.error('[lpOrderSave]', type, e); if(typeof showToast==='function') showToast('Could not save '+type+' status: '+((e&&e.message)||'error'), true); return false; }
 }
 // Patch the new loan_orders columns (revision_note / client_paid). Ensures the row exists via
-// the existing upsert RPC, then updates the column directly (backend triggers set client_paid_at).
+// the existing upsert RPC (loan_order_set has NO revision_note param), THEN updates the column
+// directly (RLS allows it; backend trigger sets client_paid_at). Errors surface via toast.
 async function lpOrderPatchFields(type, fields){
-  const cid=lpCid(); if(!cid) return;
+  const cid=lpCid(); if(!cid) return false;
   const o=_lpOrders[type]||(_lpOrders[type]={});
   _lpSaved(type,'…');
   try{
@@ -10739,7 +10740,8 @@ async function lpOrderPatchFields(type, fields){
     if(upd.error) throw upd.error;
     _lpSaved(type,'Saved ✓');
     lpLoadTracker(cid);
-  }catch(e){ _lpSaved(type,'⚠'); console.warn('[lpOrderPatchFields]', e&&e.message); }
+    return true;
+  }catch(e){ _lpSaved(type,'⚠'); console.error('[lpOrderPatchFields]', type, fields, e); if(typeof showToast==='function') showToast('Could not save '+type+': '+((e&&e.message)||'error'), true); return false; }
 }
 function lpOrderRevSave(type){
   const ta=document.getElementById('lpRev-'+type); if(!ta) return;
