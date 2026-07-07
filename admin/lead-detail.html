@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070625 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070626 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -11058,7 +11058,7 @@ async function lpVoePull(k){
 // 2. SEND TO HR — composer (single recipient, VOE PDF attached, cc rene@+processing@).
 function _lpVoeSigText(b){ b=b||{}; const L=[]; if(b.name)L.push(b.name); if(b.title)L.push(b.title); if(b.phone)L.push(b.phone); if(b.nmls)L.push('NMLS #'+b.nmls); if(b.email)L.push(b.email); return L.join('\n'); }
 function _lpVoeDefaultBody(pf, hrName, employer){
-  const hrFirst=((hrName||'').trim().split(/\s+/)[0])||'there';
+  const hrFirst=((pf&&pf.hr_first)||'').trim() || ((hrName||'').trim().split(/\s+/)[0]) || 'there';
   const bn=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'my client';
   const emp=employer||pf.employer_name||'their employer';
   const sig=_lpVoeSigText(pf.broker);
@@ -19260,14 +19260,18 @@ function createEmploymentBlock(type, index, isPrev) {
           <input class="ld-input" type="tel" id="${id}_phone" placeholder="(714) 000-0000">
         </div>
       </div>
-      <div class="ld-form-grid" style="grid-template-columns:2fr 1fr!important;gap:10px 14px;">
+      <div class="ld-form-grid" style="grid-template-columns:2fr 1fr 1fr!important;gap:10px 14px;">
         <div class="ld-field">
           <label class="ld-label">Employer Email</label>
           <input class="ld-input" type="email" id="${id}_employer_email" placeholder="hr@company.com">
         </div>
         <div class="ld-field">
-          <label class="ld-label">HR Contact Name</label>
-          <input class="ld-input" type="text" id="${id}_hr_contact" placeholder="Jane Doe">
+          <label class="ld-label">HR First Name</label>
+          <input class="ld-input" type="text" id="${id}_hr_first" placeholder="Jane">
+        </div>
+        <div class="ld-field">
+          <label class="ld-label">HR Last Name</label>
+          <input class="ld-input" type="text" id="${id}_hr_last" placeholder="Doe">
         </div>
       </div>
       <div class="ld-form-grid" style="grid-template-columns:repeat(4,1fr)!important;gap:10px 14px;">
@@ -19348,12 +19352,28 @@ function removeBlock(id) {
   document.getElementById(id)?.remove();
 }
 
+// Attach the existing Google Places helper (attachAutocompleteToBlock) to EVERY rendered employment
+// block's street input — covers the initial + loaded blocks (addEmployment already handles newly-added
+// ones). Idempotent (_acAttached guard); waits for the shared Maps loader. Reuses the same integration.
+window.lpAttachAllEmploymentAutocomplete = function(){
+  var go=function(){
+    if(!(window.google && window.google.maps && window.google.maps.places) || typeof window.attachAutocompleteToBlock!=='function') return;
+    ['employment-container','prev-employment-container'].forEach(function(cid){
+      var c=document.getElementById(cid); if(!c) return;
+      c.querySelectorAll('.employment-block').forEach(function(b){ if(b.id && !b._acAttached){ b._acAttached=true; window.attachAutocompleteToBlock(b.id); } });
+    });
+  };
+  if(window.google && window.google.maps && window.google.maps.places){ go(); }
+  else if(typeof window.loadGoogleMaps==='function'){ window.loadGoogleMaps().then(go).catch(function(){}); }
+  else { setTimeout(go, 600); }
+};
 // Initialize first employment block on Application tab open
 (function initFirstEmployment() {
   const empContainer = document.getElementById('employment-container');
   if (empContainer && !empContainer.children.length) {
     empContainer.innerHTML = createEmploymentBlock('current', 0, false);
   }
+  window.lpAttachAllEmploymentAutocomplete();
 })();
 
 /* ── 1003 — FORMER ADDRESS ── */
@@ -20794,7 +20814,10 @@ async function save1003() {
       bonus: document.getElementById(id + '_bonus')?.value || '',
       commission: document.getElementById(id + '_commission')?.value || '',
       employer_email: document.getElementById(id + '_employer_email')?.value || '',
-      employer_hr_contact: document.getElementById(id + '_hr_contact')?.value || ''
+      hr_first: document.getElementById(id + '_hr_first')?.value || '',
+      hr_last: document.getElementById(id + '_hr_last')?.value || '',
+      hr_contact: ((document.getElementById(id + '_hr_first')?.value || '') + ' ' + (document.getElementById(id + '_hr_last')?.value || '')).trim(),
+      employer_hr_contact: ((document.getElementById(id + '_hr_first')?.value || '') + ' ' + (document.getElementById(id + '_hr_last')?.value || '')).trim()
     });
   });
   document.querySelectorAll('#prev-employment-container .employment-block').forEach(block => {
@@ -20812,7 +20835,10 @@ async function save1003() {
       self_employed: document.getElementById(id + '_self_employed')?.value || 'no',
       prev_income: document.getElementById(id + '_prev_income')?.value || '',
       employer_email: document.getElementById(id + '_employer_email')?.value || '',
-      employer_hr_contact: document.getElementById(id + '_hr_contact')?.value || ''
+      hr_first: document.getElementById(id + '_hr_first')?.value || '',
+      hr_last: document.getElementById(id + '_hr_last')?.value || '',
+      hr_contact: ((document.getElementById(id + '_hr_first')?.value || '') + ' ' + (document.getElementById(id + '_hr_last')?.value || '')).trim(),
+      employer_hr_contact: ((document.getElementById(id + '_hr_first')?.value || '') + ' ' + (document.getElementById(id + '_hr_last')?.value || '')).trim()
     });
   });
   // Strip any undefined fields that might not exist in schema
@@ -21494,7 +21520,9 @@ async function load1003(overrideCid) {
           sv(id + '_self_employed', emp.self_employed);
           sv(id + '_prev_income', emp.prev_income);
           sv(id + '_employer_email', emp.employer_email);
-          sv(id + '_hr_contact', emp.employer_hr_contact);
+          { const _hn = (typeof _lpSplitName==='function') ? _lpSplitName(emp.hr_contact||emp.employer_hr_contact||'') : {first:'',last:''};
+            sv(id + '_hr_first', (emp.hr_first!=null&&emp.hr_first!=='')?emp.hr_first:_hn.first);
+            sv(id + '_hr_last',  (emp.hr_last!=null&&emp.hr_last!=='')?emp.hr_last:_hn.last); }
         } else {
           const idx = employmentCount;
           empContainer.insertAdjacentHTML('beforeend', createEmploymentBlock('current', idx, false));
@@ -21514,7 +21542,9 @@ async function load1003(overrideCid) {
           sv(id + '_bonus', emp.bonus);
           sv(id + '_commission', emp.commission);
           sv(id + '_employer_email', emp.employer_email);
-          sv(id + '_hr_contact', emp.employer_hr_contact);
+          { const _hn = (typeof _lpSplitName==='function') ? _lpSplitName(emp.hr_contact||emp.employer_hr_contact||'') : {first:'',last:''};
+            sv(id + '_hr_first', (emp.hr_first!=null&&emp.hr_first!=='')?emp.hr_first:_hn.first);
+            sv(id + '_hr_last',  (emp.hr_last!=null&&emp.hr_last!=='')?emp.hr_last:_hn.last); }
           employmentCount++;
         }
       });
@@ -21533,7 +21563,9 @@ async function load1003(overrideCid) {
         sv(id + '_employer',   data.employer_name);
         sv(id + '_phone',      data.employer_phone);
         sv(id + '_employer_email', data.employer_email);
-        sv(id + '_hr_contact',     data.employer_hr_contact);
+        { const _hn = (typeof _lpSplitName==='function') ? _lpSplitName(data.hr_contact||data.employer_hr_contact||'') : {first:'',last:''};
+          sv(id + '_hr_first', (data.hr_first!=null&&data.hr_first!=='')?data.hr_first:_hn.first);
+          sv(id + '_hr_last',  (data.hr_last!=null&&data.hr_last!=='')?data.hr_last:_hn.last); }
         sv(id + '_street',     data.employer_street);
         sv(id + '_city',       data.employer_city);
         sv(id + '_state',      data.employer_state);
@@ -21572,6 +21604,7 @@ async function load1003(overrideCid) {
         }
       }
     }
+    window.lpAttachAllEmploymentAutocomplete();   // Places autocomplete on the loaded employment street inputs
 
     // Load co-borrower data
     if (data.co_borrower_contact_id) {
