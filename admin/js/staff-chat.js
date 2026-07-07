@@ -883,11 +883,13 @@
       // header controls that only apply to the Copilot tab (e.g. ☀️ on-demand briefing)
       '.sc-cop-only{display:none}',
       '.sc-panel[data-tab="copilot"] .sc-cop-only{display:inline-block}',
-      // Expanded (large / near-fullscreen) panel — grows up-and-left from the bottom-right
-      // anchor, respecting top+side margins so nothing is cut off. Both tabs use it: the
-      // panes already flex to fill, so messages + composer scale automatically.
-      '.sc-panel.is-expanded{width:min(1000px,calc(100vw - 40px));height:calc(100vh - 108px);max-height:calc(100vh - 108px)}',
-      '@media(max-width:480px){.sc-panel.is-expanded{left:12px;right:12px;width:auto;bottom:80px;height:calc(100vh - 96px);max-height:calc(100vh - 96px)}}',
+      // Expanded (large / near-fullscreen) panel — pin TOP and bottom explicitly so the top
+      // edge (tabs + ✕ + size toggle) is always on-screen, never above 0. Height is defined by
+      // top+bottom; override the base bottom:84px and max-height. The panel is a flex column
+      // (header flex-shrink:0 → body flex:1 → composer flex-shrink:0), so only the message list
+      // scrolls while the header and composer stay put at both sizes.
+      '.sc-panel.is-expanded{top:20px;bottom:20px;right:20px;left:auto;width:min(1000px,calc(100vw - 40px));height:auto;max-height:none}',
+      '@media(max-width:480px){.sc-panel.is-expanded{top:16px;bottom:16px;left:12px;right:12px;width:auto;height:auto;max-height:none}}',
       '.cop-chip-brief{background:rgba(201,168,76,.18);border-color:rgba(201,168,76,.5)}',
       // Copilot pane (ported look from layout.js)
       '.cop-msgs{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}',
