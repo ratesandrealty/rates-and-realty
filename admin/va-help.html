@@ -3,131 +3,61 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<title>VA Help Videos — Rates & Realty CRM</title>
+<title>Help Video Manager — Rates & Realty CRM</title>
 <script src="/api/env.js?v=2026033003"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/admin/js/supabase-client.js?v=2026050601"></script>
-<script src="/admin/js/auth-guard.js?v=2026062401"></script>
+<script src="/admin/js/auth-guard.js?v=2026070604"></script>
+<script src="/admin/js/loom-recorder.js?v=2026070601"></script>
 <style>
-  :root {
-    --gold: #c9a84c;
-    --bg: #0d0d0d;
-    --surface: #141414;
-    --surface2: #1a1a1a;
-    --border: rgba(255,255,255,0.07);
-    --border2: rgba(255,255,255,0.12);
-    --text: #fff;
-    --text-muted: rgba(255,255,255,0.4);
-    --green: #52c87a;
-    --red: #e05252;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
-
-  .header {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 20px; background: var(--surface);
-    border-bottom: 1px solid var(--border); flex-wrap: wrap;
-  }
-  .header h1 { font-size: 16px; font-weight: 700; flex-shrink: 0; }
-  .header-right { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .header-right .who { font-size: 12px; color: var(--text-muted); }
-  .btn-back {
-    padding: 6px 12px; background: rgba(255,255,255,0.06);
-    border: 1px solid var(--border); border-radius: 7px;
-    color: var(--text-muted); font-size: 12px; cursor: pointer;
-    text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
-  }
-
-  .wrap { max-width: 760px; margin: 0 auto; padding: 22px 16px 80px; }
-  .intro { font-size: 13px; color: rgba(255,255,255,0.7); line-height: 1.6; margin-bottom: 20px; }
-  .intro strong { color: var(--gold); }
-
-  .loading, .empty, .denied { text-align: center; padding: 50px 20px; color: var(--text-muted); font-size: 13px; }
-  .denied .emoji, .empty .emoji { font-size: 34px; display: block; margin-bottom: 12px; }
-
-  /* Topic card */
-  .vh-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 12px; padding: 16px; margin-bottom: 16px;
-  }
-  .vh-card-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
-  .vh-title { font-size: 15px; font-weight: 700; }
-  .vh-key {
-    font-size: 10px; color: var(--text-muted); font-family: ui-monospace, monospace;
-    text-transform: uppercase; letter-spacing: 0.4px; margin-top: 3px;
-  }
-  .vh-status { margin-left: auto; font-size: 11px; color: var(--gold); display: flex; align-items: center; gap: 6px; }
-  .vh-status.err { color: var(--red); }
-  .vh-status.ok { color: var(--green); }
-
-  .vh-video { margin-bottom: 12px; }
-  .vh-video video { width: 100%; max-height: 46vh; border-radius: 10px; background: #000; display: block; }
-  .vh-novideo {
-    font-size: 12px; color: var(--text-muted); background: var(--surface2);
-    border: 1px dashed var(--border2); border-radius: 10px;
-    padding: 22px 16px; text-align: center; margin-bottom: 12px;
-  }
-
-  .vh-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .vh-btn {
-    padding: 8px 14px; background: rgba(201,168,76,0.14);
-    border: 1px solid rgba(201,168,76,0.4); border-radius: 8px;
-    color: var(--gold); font-size: 12px; font-weight: 700; cursor: pointer;
-    font-family: inherit; white-space: nowrap;
-  }
-  .vh-btn:hover { background: rgba(201,168,76,0.22); }
-  .vh-btn:disabled { opacity: 0.5; cursor: default; }
-  .vh-btn.danger { background: rgba(224,82,82,0.12); border-color: rgba(224,82,82,0.4); color: #ff7b7b; }
-  .vh-btn.danger:hover { background: rgba(224,82,82,0.2); }
-
-  .spin {
-    display: inline-block; width: 12px; height: 12px; vertical-align: middle;
-    border: 2px solid rgba(201,168,76,0.3); border-top-color: var(--gold);
-    border-radius: 50%; animation: spin 0.7s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Recorder overlay (ported from the staff-chat recorder) */
-  .rec-ov { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; padding: 18px; }
-  .rec-box { width: min(460px, 94vw); background: #0d0d0d; border: 1px solid rgba(201,168,76,0.3); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 56px rgba(0,0,0,0.6); display: flex; flex-direction: column; }
-  .rec-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 13px; font-weight: 700; color: var(--gold); }
-  .rec-x { background: transparent; border: none; color: #888; font-size: 16px; cursor: pointer; padding: 4px 7px; border-radius: 6px; line-height: 1; font-family: inherit; }
-  .rec-x:hover { color: #fff; background: rgba(255,255,255,0.06); }
-  .rec-menu { display: flex; flex-direction: column; gap: 8px; padding: 16px; }
-  .rec-opt { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: #eee; border-radius: 8px; padding: 12px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; text-align: left; }
-  .rec-opt:hover { background: rgba(255,255,255,0.09); }
-  .rec-preview { width: 100%; max-height: 50vh; background: #000; display: block; }
-  .rec-audiowrap { padding: 24px 18px; display: flex; justify-content: center; }
-  .rec-audio-el { width: 100%; }
-  .rec-audio { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 34px 18px; color: #ddd; font-size: 13px; font-weight: 600; }
-  .rec-ctrl { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid rgba(255,255,255,0.08); }
-  .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); animation: blink 1s steps(2,start) infinite; flex-shrink: 0; }
-  @keyframes blink { 50% { opacity: 0.25; } }
-  .rec-timer { font-size: 12px; color: #ddd; flex: 1; }
-  .rec-stop { background: var(--red); border: none; color: #fff; font-weight: 700; font-size: 12px; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-family: inherit; }
-  .rec-msg { padding: 20px 18px; color: #e6c9a0; font-size: 13px; line-height: 1.5; text-align: center; }
-  .rec-discard { flex: 1; }
-  .rec-save { background: var(--gold); border: none; color: #111; font-weight: 700; font-size: 12px; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-family: inherit; }
-
-  /* Toast */
-  .toast {
-    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(10px);
-    z-index: 120; background: #1a1a1a; border: 1px solid rgba(201,168,76,0.4); color: #fff;
-    font-size: 12.5px; padding: 9px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-    opacity: 0; transition: opacity 0.25s, transform 0.25s; max-width: 90vw; text-align: center;
-  }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .toast.err { border-color: rgba(224,82,82,0.5); }
+  :root { --gold:#c9a84c; --bg:#0d0d0d; --surface:#141414; --surface2:#1a1a1a; --border:rgba(255,255,255,.07); --border2:rgba(255,255,255,.12); --text:#fff; --muted:rgba(255,255,255,.4); --green:#52c87a; --red:#e05252; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; min-height:100vh; }
+  .header { display:flex; align-items:center; gap:12px; padding:12px 20px; background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .header h1 { font-size:16px; font-weight:700; flex-shrink:0; }
+  .header-right { margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .who { font-size:12px; color:var(--muted); }
+  .btn-back { padding:6px 12px; background:rgba(255,255,255,.06); border:1px solid var(--border); border-radius:7px; color:var(--muted); font-size:12px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:4px; }
+  .btn-gold { padding:7px 14px; background:var(--gold); border:none; border-radius:8px; color:#111; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap; }
+  .wrap { max-width:820px; margin:0 auto; padding:22px 16px 90px; }
+  .intro { font-size:13px; color:rgba(255,255,255,.7); line-height:1.6; margin-bottom:20px; }
+  .intro strong { color:var(--gold); }
+  .loading, .empty, .denied { text-align:center; padding:50px 20px; color:var(--muted); font-size:13px; }
+  .denied .emoji, .empty .emoji { font-size:34px; display:block; margin-bottom:12px; }
+  .group-h { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--gold); margin:22px 0 10px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .card-head { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
+  .card-key { font-size:10px; color:var(--muted); font-family:ui-monospace,monospace; text-transform:uppercase; letter-spacing:.4px; margin-top:4px; }
+  .area-badge { margin-left:auto; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--gold); background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.3); border-radius:8px; padding:2px 8px; flex-shrink:0; }
+  .card video { width:100%; max-height:44vh; border-radius:10px; background:#000; display:block; margin-bottom:10px; }
+  .no-video { font-size:12px; color:var(--muted); background:var(--surface2); border:1px dashed var(--border2); border-radius:10px; padding:20px 14px; text-align:center; margin-bottom:10px; }
+  .fld-label { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:600; display:block; margin:8px 0 4px; }
+  .inp, .ta, .sel { width:100%; box-sizing:border-box; background:rgba(255,255,255,.05); border:1px solid var(--border2); border-radius:8px; color:#eee; font-size:13px; padding:9px 11px; outline:none; font-family:inherit; }
+  .inp:focus, .ta:focus, .sel:focus { border-color:rgba(201,168,76,.5); }
+  .ta { min-height:70px; resize:vertical; line-height:1.5; }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; align-items:center; }
+  .btn { padding:8px 13px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; border:1px solid rgba(201,168,76,.4); background:rgba(201,168,76,.14); color:var(--gold); }
+  .btn:hover { background:rgba(201,168,76,.22); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn.solid { background:var(--gold); border-color:var(--gold); color:#111; }
+  .btn.danger { background:rgba(224,82,82,.12); border-color:rgba(224,82,82,.4); color:#ff7b7b; }
+  .status { font-size:11px; margin-left:auto; }
+  .status.ok { color:var(--green); } .status.err { color:var(--red); } .status.busy { color:var(--gold); }
+  .spin { display:inline-block; width:12px; height:12px; border:2px solid rgba(201,168,76,.3); border-top-color:var(--gold); border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .toast { position:fixed; bottom:26px; left:50%; transform:translateX(-50%) translateY(10px); z-index:120; background:#1a1a1a; border:1px solid rgba(201,168,76,.4); color:#fff; font-size:12.5px; padding:9px 14px; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.5); opacity:0; transition:opacity .25s,transform .25s; max-width:90vw; text-align:center; }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  .toast.err { border-color:rgba(224,82,82,.5); }
 </style>
   <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
 <body>
 
 <div class="header">
-  <a href="va-tasks.html" class="btn-back">← Back to tasks</a>
-  <h1>🎥 VA Help Videos</h1>
+  <a href="/dashboard/admin" class="btn-back">← Dashboard</a>
+  <h1>🎥 Help Video Manager</h1>
   <div class="header-right">
+    <button class="btn-gold" id="newTopicBtn">＋ New topic</button>
     <span class="who" id="adminUserEmail"></span>
     <button class="btn-back" onclick="window.adminLogout && window.adminLogout()">Log out</button>
   </div>
@@ -135,313 +65,171 @@
 
 <div class="wrap">
   <div class="intro">
-    Record or upload a short <strong>how-to explainer</strong> for each VA help topic. Whatever you save
-    here appears above the help text when a VA taps that topic's <strong>ℹ️</strong> info button.
+    Record or upload a short <strong>how-to explainer</strong> and description for each help topic. These power
+    the <strong>ⓘ</strong> info buttons across the VA portal and CRM. Topics are keyed like
+    <strong>va.daily_tasks</strong> or <strong>crm.lead.pricing</strong>.
   </div>
-  <div id="topicList"><div class="loading"><span class="spin"></span> Loading topics…</div></div>
+  <div id="groups"><div class="loading"><span class="spin"></span> Loading topics…</div></div>
 </div>
 
-<input type="file" id="vhFile" accept="video/*" style="display:none">
 <div class="toast" id="toast"></div>
 
 <script>
 'use strict';
-
 var BUCKET = 'video-messages';
-var MAX_BYTES = 100 * 1024 * 1024;   // 100 MB, same ceiling as chat recording
-var _supabase = null;
-var _topics = [];
-var _uploadKey = null;               // topic key awaiting a file-picker result
-var _rec = null;                     // recorder state
-var _recKey = null;                  // topic key the recorder is capturing for
-var _busy = {};                      // key → true while an upload/remove is in flight
+var _sb = null, _topics = [], _busy = {};
 
-function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function cssq(s){ return String(s).replace(/["\\]/g,'\\$&'); }
+function toast(msg,isErr){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.toggle('err',!!isErr); t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},3000); }
 
-function toast(msg, isErr) {
-  var t = document.getElementById('toast');
-  t.textContent = msg; t.classList.toggle('err', !!isErr); t.classList.add('show');
-  setTimeout(function () { t.classList.remove('show'); }, 3000);
-}
-
-// ── init + admin gate ─────────────────────────────────────────────────────
-async function init() {
-  try { _supabase = await window.getSupabaseClient(); }
-  catch (e) { document.getElementById('topicList').innerHTML = '<div class="empty">Could not connect. Please refresh.</div>'; return; }
-  try {
-    var u = await _supabase.auth.getUser();
-    if (u && u.data && u.data.user && u.data.user.email) document.getElementById('adminUserEmail').textContent = u.data.user.email;
-  } catch (e) {}
+async function init(){
+  try { _sb = await window.getSupabaseClient(); }
+  catch(e){ document.getElementById('groups').innerHTML='<div class="empty">Could not connect. Please refresh.</div>'; return; }
+  try { var u=await _sb.auth.getUser(); if(u&&u.data&&u.data.user&&u.data.user.email) document.getElementById('adminUserEmail').textContent=u.data.user.email; } catch(e){}
+  document.getElementById('newTopicBtn').addEventListener('click', newTopic);
   gateAdmin();
 }
-
-// The video RPCs are admin-gated server-side; this is the UX gate so non-admins
-// see a clear message instead of a broken page. Poll until the role resolves.
-function gateAdmin(attempt) {
-  attempt = attempt || 0;
-  var role = (sessionStorage.getItem('rnr_app_role') || '').toLowerCase();
-  if (role) {
-    if (role !== 'admin') {
-      document.getElementById('topicList').innerHTML =
-        '<div class="denied"><span class="emoji">🔒</span>Admins only. Ask Rene if you need access.</div>';
-      return;
-    }
-    loadTopics();
-    return;
+function gateAdmin(attempt){
+  attempt=attempt||0;
+  var role=(sessionStorage.getItem('rnr_app_role')||'').toLowerCase();
+  if(role){
+    if(role!=='admin'){ document.getElementById('groups').innerHTML='<div class="denied"><span class="emoji">🔒</span>Admins only.</div>'; document.getElementById('newTopicBtn').style.display='none'; return; }
+    loadTopics(); return;
   }
-  if (attempt >= 40) { loadTopics(); return; }   // ~6s ceiling, then try anyway (RPC still enforces)
-  setTimeout(function () { gateAdmin(attempt + 1); }, 150);
+  if(attempt>=40){ loadTopics(); return; }
+  setTimeout(function(){ gateAdmin(attempt+1); },150);
 }
 
-async function loadTopics() {
+async function loadTopics(){
   try {
-    var r = await _supabase.rpc('va_help_list');
-    if (r.error) throw r.error;
-    _topics = (r.data || []).slice().sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); });
-    renderTopics();
-  } catch (e) {
-    console.error('[va-help] list failed', e);
-    document.getElementById('topicList').innerHTML =
-      '<div class="empty">Could not load help topics.' + (e && e.message ? '<br><span style="font-size:11px;">' + esc(e.message) + '</span>' : '') + '</div>';
+    var r=await _sb.rpc('help_topics_list');
+    if(r.error) throw r.error;
+    _topics=(r.data||[]).slice().sort(function(a,b){ return String(a.topic_key).localeCompare(String(b.topic_key)); });
+    render();
+  } catch(e){
+    console.error('[help-mgr] list', e);
+    document.getElementById('groups').innerHTML='<div class="empty">Could not load topics.'+(e&&e.message?'<br><span style="font-size:11px;">'+esc(e.message)+'</span>':'')+'</div>';
   }
 }
 
-function topicCardHtml(t) {
-  var hasVideo = !!(t.video_url && String(t.video_url).trim());
-  var vid = hasVideo
-    ? '<div class="vh-video"><video controls preload="metadata" playsinline src="' + esc(t.video_url) + '"></video></div>'
-    : '<div class="vh-novideo">No explainer video yet.</div>';
-  var remove = hasVideo ? '<button class="vh-btn danger" data-remove="' + esc(t.key) + '">🗑 Remove</button>' : '';
-  return '<div class="vh-card" data-card="' + esc(t.key) + '">'
-    + '<div class="vh-card-head"><div><div class="vh-title">' + esc(t.title || t.key) + '</div>'
-    +   '<div class="vh-key">' + esc(t.key) + '</div></div>'
-    +   '<span class="vh-status" data-status="' + esc(t.key) + '"></span></div>'
+function groupLabel(area){ return area==='va'?'VA Portal':area==='crm'?'CRM':'Shared (VA + CRM)'; }
+
+function render(){
+  var host=document.getElementById('groups');
+  if(!_topics.length){ host.innerHTML='<div class="empty">No help topics yet. Tap “＋ New topic”.</div>'; return; }
+  var order=['va','crm','both'], html='';
+  order.forEach(function(area){
+    var list=_topics.filter(function(t){ return (t.area||'both')===area; });
+    if(!list.length) return;
+    html+='<div class="group-h">'+esc(groupLabel(area))+'</div>'+list.map(cardHtml).join('');
+  });
+  // any unexpected area value
+  var known=_topics.filter(function(t){ return order.indexOf(t.area||'both')>=0; }).length;
+  if(known<_topics.length){ html+='<div class="group-h">Other</div>'+_topics.filter(function(t){return order.indexOf(t.area||'both')<0;}).map(cardHtml).join(''); }
+  host.innerHTML=html;
+}
+
+function cardHtml(t){
+  var k=t.topic_key;
+  var areas=['va','crm','both'].map(function(a){ return '<option value="'+a+'"'+((t.area||'both')===a?' selected':'')+'>'+a.toUpperCase()+'</option>'; }).join('');
+  var vid=t.video_url ? '<video controls preload="metadata" playsinline src="'+esc(t.video_url)+'"></video>' : '<div class="no-video">No explainer video yet.</div>';
+  return '<div class="card" data-card="'+esc(k)+'">'
+    + '<div class="card-head"><div><div style="font-size:14px;font-weight:700;color:#fff;">'+esc(t.title||k)+'</div><div class="card-key">'+esc(k)+'</div></div>'
+    +   '<span class="area-badge">'+esc((t.area||'both'))+'</span></div>'
     + vid
-    + '<div class="vh-actions">'
-    +   '<button class="vh-btn" data-record="' + esc(t.key) + '">🎥 Record</button>'
-    +   '<button class="vh-btn" data-upload="' + esc(t.key) + '">⬆️ Upload file</button>'
-    +   remove
+    + '<label class="fld-label">Title</label><input class="inp" data-f="title" value="'+esc(t.title||'')+'" placeholder="Topic title">'
+    + '<label class="fld-label">Description</label><textarea class="ta" data-f="description" placeholder="What does this topic explain?">'+esc(t.description||'')+'</textarea>'
+    + '<label class="fld-label">Area</label><select class="sel" data-f="area" style="max-width:200px;">'+areas+'</select>'
+    + '<input type="file" accept="video/*" data-file style="display:none">'
+    + '<div class="actions">'
+    +   '<button class="btn" data-act="record">🎥 Record</button>'
+    +   '<button class="btn" data-act="upload">⬆️ Upload</button>'
+    +   (t.video_url ? '<button class="btn danger" data-act="clear">🗑 Clear video</button>' : '')
+    +   '<button class="btn solid" data-act="save">💾 Save</button>'
+    +   '<span class="status" data-status></span>'
     + '</div></div>';
 }
 
-function renderTopics() {
-  var host = document.getElementById('topicList');
-  if (!_topics.length) { host.innerHTML = '<div class="empty">No help topics found.</div>'; return; }
-  host.innerHTML = _topics.map(topicCardHtml).join('');
+function cardEl(k){ return document.querySelector('[data-card="'+cssq(k)+'"]'); }
+function setStatus(k,msg,cls){ var c=cardEl(k); if(!c) return; var s=c.querySelector('[data-status]'); if(s){ s.className='status'+(cls?' '+cls:''); s.innerHTML=msg||''; } }
+function setBusy(k,b){ _busy[k]=b; var c=cardEl(k); if(c) Array.prototype.forEach.call(c.querySelectorAll('.btn'),function(btn){ btn.disabled=b; }); }
+function readCard(k){ var c=cardEl(k); if(!c) return null; return { title:c.querySelector('[data-f="title"]').value, description:c.querySelector('[data-f="description"]').value, area:c.querySelector('[data-f="area"]').value }; }
+
+async function upsert(k, fields){
+  var r=await _sb.rpc('help_topic_upsert', {
+    p_key:k, p_title:fields.title||'', p_description:fields.description||'',
+    p_video_url:fields.video_url||'', p_video_slug:fields.video_slug||'', p_area:fields.area||'both'
+  });
+  if(r.error) throw r.error;
+  // reflect locally
+  var i=_topics.findIndex(function(t){ return t.topic_key===k; });
+  var row={ topic_key:k, title:fields.title||'', description:fields.description||'', video_url:fields.video_url||'', video_slug:fields.video_slug||'', area:fields.area||'both' };
+  if(i>=0) _topics[i]=row; else _topics.push(row);
+  return row;
 }
 
-function setStatus(key, msg, cls) {
-  var el = document.querySelector('[data-status="' + cssq(key) + '"]');
-  if (el) { el.className = 'vh-status' + (cls ? ' ' + cls : ''); el.innerHTML = msg || ''; }
-}
-function cssq(s) { return String(s).replace(/["\\]/g, '\\$&'); }
+function currentVideo(k){ var t=_topics.find(function(x){return x.topic_key===k;})||{}; return { video_url:t.video_url||'', video_slug:t.video_slug||'' }; }
 
-function setCardBusy(key, busy) {
-  _busy[key] = busy;
-  var card = document.querySelector('[data-card="' + cssq(key) + '"]');
-  if (card) Array.prototype.forEach.call(card.querySelectorAll('.vh-btn'), function (b) { b.disabled = busy; });
+async function saveCard(k){
+  if(_busy[k]) return;
+  var f=readCard(k); if(!f) return;
+  var v=currentVideo(k); f.video_url=v.video_url; f.video_slug=v.video_slug;
+  setBusy(k,true); setStatus(k,'<span class="spin"></span> Saving…','busy');
+  try { await upsert(k,f); setBusy(k,false); setStatus(k,'✓ Saved','ok'); toast('Saved'); setTimeout(function(){setStatus(k,'');},2000); }
+  catch(e){ setBusy(k,false); setStatus(k,'⚠ '+((e&&e.message)||'Failed'),'err'); toast('Save failed',true); }
 }
 
-// ── save path: upload → public URL → va_help_set_video → refresh row ──────
-async function saveVideoFor(key, file) {
-  if (_busy[key]) return;
-  if (file.size > MAX_BYTES) { toast('“' + file.name + '” is over 100 MB', true); return; }
-  setCardBusy(key, true);
-  setStatus(key, '<span class="spin"></span> Uploading…');
+async function setVideo(k, video_url, video_slug){
+  var f=readCard(k)||{}; f.video_url=video_url; f.video_slug=video_slug||'';
+  setBusy(k,true); setStatus(k,'<span class="spin"></span> Saving…','busy');
+  try { await upsert(k,f); render(); toast('Video saved'); }
+  catch(e){ setBusy(k,false); setStatus(k,'⚠ '+((e&&e.message)||'Failed'),'err'); toast('Save failed',true); }
+}
+
+async function uploadFor(k, file){
+  if(file.size>100*1024*1024){ toast('File is over 100 MB',true); return; }
+  setBusy(k,true); setStatus(k,'<span class="spin"></span> Uploading…','busy');
   try {
-    var ext = extOf(file);
-    var path = 'va-help/' + key + '-' + crypto.randomUUID() + '.' + ext;
-    var up = await _supabase.storage.from(BUCKET).upload(path, file, { contentType: file.type || 'video/webm', upsert: false });
-    if (up.error) throw up.error;
-    var pub = _supabase.storage.from(BUCKET).getPublicUrl(path);
-    var publicUrl = pub && pub.data && pub.data.publicUrl;
-    if (!publicUrl) throw new Error('Could not resolve public URL');
-    var r = await _supabase.rpc('va_help_set_video', { p_key: key, p_video_url: publicUrl });
-    if (r.error) throw r.error;
-    // Reflect locally + re-render just this card.
-    var t = _topics.filter(function (x) { return x.key === key; })[0];
-    if (t) { t.video_url = publicUrl; refreshCard(key); }
-    setCardBusy(key, false);
-    setStatus(key, '✓ Saved', 'ok');
-    toast('Explainer saved');
-    setTimeout(function () { setStatus(key, ''); }, 2500);
-  } catch (e) {
-    console.error('[va-help] save failed', e);
-    setCardBusy(key, false);
-    setStatus(key, '⚠ ' + ((e && e.message) || 'Failed'), 'err');
-    toast('Save failed: ' + ((e && e.message) || 'error'), true);
+    var ext=((file.name||'').match(/\.([a-z0-9]{2,5})$/i)||[])[1]||'webm';
+    var safe=String(k).replace(/[^a-z0-9._-]/gi,'_');
+    var path='help/'+safe+'-'+crypto.randomUUID()+'.'+ext.toLowerCase();
+    var up=await _sb.storage.from(BUCKET).upload(path,file,{contentType:file.type||'video/webm',upsert:false});
+    if(up.error) throw up.error;
+    var pub=_sb.storage.from(BUCKET).getPublicUrl(path);
+    await setVideo(k, (pub&&pub.data&&pub.data.publicUrl)||'', '');
+  } catch(e){ setBusy(k,false); setStatus(k,'⚠ '+((e&&e.message)||'Upload failed'),'err'); toast('Upload failed',true); }
+}
+
+async function newTopic(){
+  var key=(prompt('New topic key (e.g. crm.lead.pricing or va.daily_tasks):','')||'').trim();
+  if(!key) return;
+  if(!/^[a-z0-9]+(\.[a-z0-9_]+)+$/i.test(key)){ if(!confirm('“'+key+'” doesn’t look like a dotted key (e.g. crm.lead.pricing). Create it anyway?')) return; }
+  if(_topics.some(function(t){return t.topic_key===key;})){ toast('That key already exists',true); return; }
+  var area=(prompt('Area — va, crm, or both:','both')||'both').trim().toLowerCase();
+  if(['va','crm','both'].indexOf(area)<0) area='both';
+  try { await upsert(key,{title:'',description:'',video_url:'',video_slug:'',area:area}); render(); toast('Topic created'); var c=cardEl(key); if(c) c.scrollIntoView({behavior:'smooth',block:'center'}); }
+  catch(e){ toast('Could not create topic: '+((e&&e.message)||'error'),true); }
+}
+
+// Delegated card actions
+document.addEventListener('click', function(e){
+  var btn=e.target.closest('.btn[data-act]'); if(!btn) return;
+  var card=btn.closest('[data-card]'); if(!card) return;
+  var k=card.getAttribute('data-card'); var act=btn.getAttribute('data-act');
+  if(_busy[k]) return;
+  if(act==='save') saveCard(k);
+  else if(act==='clear'){ if(confirm('Remove the video for this topic?')) setVideo(k,'',''); }
+  else if(act==='upload') card.querySelector('[data-file]').click();
+  else if(act==='record'){
+    if(!window.LoomRecorder){ toast('Recorder not loaded — refresh',true); return; }
+    window.LoomRecorder.open({ context:'help', onSaved:function(v){ setVideo(k, v.public_url, v.slug||''); } });
   }
-}
-
-function refreshCard(key) {
-  var card = document.querySelector('[data-card="' + cssq(key) + '"]');
-  var t = _topics.filter(function (x) { return x.key === key; })[0];
-  if (card && t) {
-    var tmp = document.createElement('div');
-    tmp.innerHTML = topicCardHtml(t);
-    card.replaceWith(tmp.firstChild);
-  }
-}
-
-function extOf(file) {
-  var name = String(file.name || '');
-  var m = name.match(/\.([A-Za-z0-9]{2,5})$/);
-  if (m) return m[1].toLowerCase();
-  var ty = (file.type || '').toLowerCase();
-  if (ty.indexOf('mp4') > -1) return 'mp4';
-  if (ty.indexOf('quicktime') > -1) return 'mov';
-  return 'webm';
-}
-
-// Best-effort delete of the previously-stored object (only if it lives in our bucket).
-async function removeVideoFor(key) {
-  if (_busy[key]) return;
-  if (!confirm('Remove the explainer video for this topic?')) return;
-  var t = _topics.filter(function (x) { return x.key === key; })[0];
-  var oldUrl = t ? t.video_url : '';
-  setCardBusy(key, true);
-  setStatus(key, '<span class="spin"></span> Removing…');
-  try {
-    var r = await _supabase.rpc('va_help_set_video', { p_key: key, p_video_url: '' });
-    if (r.error) throw r.error;
-    var objPath = bucketPathFromUrl(oldUrl);
-    if (objPath) { try { await _supabase.storage.from(BUCKET).remove([objPath]); } catch (e) { /* non-fatal */ } }
-    if (t) { t.video_url = ''; refreshCard(key); }
-    setCardBusy(key, false);
-    setStatus(key, '');
-    toast('Explainer removed');
-  } catch (e) {
-    console.error('[va-help] remove failed', e);
-    setCardBusy(key, false);
-    setStatus(key, '⚠ ' + ((e && e.message) || 'Failed'), 'err');
-    toast('Remove failed: ' + ((e && e.message) || 'error'), true);
-  }
-}
-
-function bucketPathFromUrl(url) {
-  var u = String(url || '');
-  var marker = '/storage/v1/object/public/' + BUCKET + '/';
-  var i = u.indexOf(marker);
-  if (i === -1) return null;
-  return decodeURIComponent(u.slice(i + marker.length).split('?')[0]);
-}
-
-// ════════════════════════════════════════════════════════════════════════
-// RECORDER — ported from the staff-chat recorder (camera / screen / audio).
-// ════════════════════════════════════════════════════════════════════════
-function openRecordMenu(key) {
-  _recKey = key;
-  closeRecordUi();
-  var ov = document.createElement('div'); ov.className = 'rec-ov'; ov.id = 'rec-ov';
-  ov.innerHTML = '<div class="rec-box"></div>';
-  document.body.appendChild(ov);
-  showRecMenu();
-}
-function showRecMenu() {
-  stopRecording();
-  var box = document.querySelector('#rec-ov .rec-box'); if (!box) return;
-  box.innerHTML = '<div class="rec-head"><span>Record explainer</span><button type="button" class="rec-x" data-rec-cancel>✕</button></div>'
-    + '<div class="rec-menu">'
-    + '<button type="button" class="rec-opt" data-rec-start="camera">🎥 Record camera + mic (myself)</button>'
-    + '<button type="button" class="rec-opt" data-rec-start="screen">🖥️ Record screen (with mic)</button>'
-    + '<button type="button" class="rec-opt" data-rec-start="audio">🎙️ Record audio only</button>'
-    + '</div>';
-}
-function stopTracks() { if (_rec && _rec.stream) { try { _rec.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} } }
-function closeRecordUi() {
-  stopRecording();
-  if (_rec && _rec.previewUrl) { try { URL.revokeObjectURL(_rec.previewUrl); } catch (e) {} }
-  var ov = document.getElementById('rec-ov'); if (ov) ov.remove();
-  _rec = null;
-}
-function recPermError(box, mode) {
-  stopTracks();
-  var msg = (mode === 'screen')
-    ? 'Screen sharing was blocked or cancelled. Go back and try again.'
-    : 'Allow camera & microphone for this site in your browser settings, then try again.';
-  box.innerHTML = '<div class="rec-head"><span>Permission needed</span><button type="button" class="rec-x" data-rec-cancel>✕</button></div>'
-    + '<div class="rec-msg">🔒 ' + esc(msg) + '</div>'
-    + '<div class="rec-ctrl"><button type="button" class="rec-opt rec-discard" data-rec-menu>← Back</button></div>';
-}
-async function beginRecording(mode) {
-  var box = document.querySelector('#rec-ov .rec-box'); if (!box) return;
-  if (!navigator.mediaDevices) { recPermError(box, mode); return; }
-  var isAudio = (mode === 'audio'), stream;
-  try {
-    if (mode === 'screen') {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      try { var mic = await navigator.mediaDevices.getUserMedia({ audio: true }); mic.getAudioTracks().forEach(function (t) { stream.addTrack(t); }); } catch (e) { /* mic optional */ }
-    } else if (isAudio) {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } else {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    }
-  } catch (e) { recPermError(box, mode); return; }
-  var recMime = isAudio ? 'audio/webm' : 'video/webm';
-  var useMime = (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(recMime)) ? recMime : '';
-  var recorder;
-  try { recorder = useMime ? new MediaRecorder(stream, { mimeType: useMime }) : new MediaRecorder(stream); }
-  catch (e) { toast('Recording is not supported in this browser', true); try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (x) {} return; }
-  var chunks = [];
-  recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
-  recorder.onstop = function () { showRecPreview(new Blob(chunks, { type: recMime })); };
-  _rec = { recorder: recorder, stream: stream, mode: mode, isAudio: isAudio, timer: null, blob: null, previewUrl: null };
-  box.innerHTML = '<div class="rec-head"><span>Recording…</span><button type="button" class="rec-x" data-rec-cancel>✕</button></div>'
-    + (isAudio
-        ? '<div class="rec-audio"><span class="rec-dot"></span> Recording audio…</div>'
-        : '<video class="rec-preview" autoplay muted playsinline></video>')
-    + '<div class="rec-ctrl">' + (isAudio ? '' : '<span class="rec-dot"></span>') + '<span class="rec-timer" id="rec-timer">0:00</span>'
-    + '<button type="button" class="rec-stop" data-rec-stop>■ Stop</button></div>';
-  if (!isAudio) { var v = box.querySelector('.rec-preview'); if (v) v.srcObject = stream; }
-  try { recorder.start(); } catch (e) { toast('Could not start recording', true); closeRecordUi(); return; }
-  var secs = 0;
-  _rec.timer = setInterval(function () {
-    secs++; var t = document.getElementById('rec-timer');
-    if (t) t.textContent = Math.floor(secs / 60) + ':' + ('0' + (secs % 60)).slice(-2);
-  }, 1000);
-}
-function stopRecording() {
-  if (_rec && _rec.recorder && _rec.recorder.state !== 'inactive') { try { _rec.recorder.stop(); } catch (e) {} }
-  if (_rec && _rec.timer) { clearInterval(_rec.timer); _rec.timer = null; }
-  stopTracks();
-}
-function showRecPreview(blob) {
-  var box = document.querySelector('#rec-ov .rec-box'); if (!box || !_rec) return;
-  var url = URL.createObjectURL(blob); _rec.blob = blob; _rec.previewUrl = url;
-  box.innerHTML = '<div class="rec-head"><span>Preview</span><button type="button" class="rec-x" data-rec-cancel>✕</button></div>'
-    + (_rec.isAudio
-        ? '<div class="rec-audiowrap"><audio class="rec-audio-el" controls src="' + url + '"></audio></div>'
-        : '<video class="rec-preview" controls playsinline src="' + url + '"></video>')
-    + '<div class="rec-ctrl"><button type="button" class="rec-opt rec-discard" data-rec-menu>↺ Redo</button>'
-    + '<button type="button" class="rec-save" data-rec-save>Save explainer</button></div>';
-}
-async function saveRecording() {
-  if (!_rec || !_rec.blob || !_recKey) return;
-  var isAudio = _rec.isAudio, mode = _rec.mode, blob = _rec.blob, key = _recKey;
-  var base = isAudio ? 'audio' : (mode === 'screen' ? 'screen' : 'video');
-  var file = new File([blob], base + '.webm', { type: isAudio ? 'audio/webm' : 'video/webm' });
-  closeRecordUi();
-  await saveVideoFor(key, file);
-}
-
-// ── events ────────────────────────────────────────────────────────────────
-document.addEventListener('click', function (e) {
-  var recBtn = e.target.closest('[data-record]'); if (recBtn) { openRecordMenu(recBtn.getAttribute('data-record')); return; }
-  var upBtn = e.target.closest('[data-upload]'); if (upBtn) { _uploadKey = upBtn.getAttribute('data-upload'); document.getElementById('vhFile').click(); return; }
-  var rmBtn = e.target.closest('[data-remove]'); if (rmBtn) { removeVideoFor(rmBtn.getAttribute('data-remove')); return; }
-  // recorder overlay controls
-  if (e.target.classList && e.target.classList.contains('rec-ov')) { closeRecordUi(); return; }
-  if (e.target.closest('[data-rec-cancel]')) { closeRecordUi(); return; }
-  var rst = e.target.closest('[data-rec-start]'); if (rst) { beginRecording(rst.getAttribute('data-rec-start')); return; }
-  if (e.target.closest('[data-rec-menu]')) { showRecMenu(); return; }
-  if (e.target.closest('[data-rec-stop]')) { stopRecording(); return; }
-  if (e.target.closest('[data-rec-save]')) { saveRecording(); return; }
 });
-document.addEventListener('change', function (e) {
-  if (e.target && e.target.id === 'vhFile') {
-    var f = e.target.files && e.target.files[0];
-    var key = _uploadKey; _uploadKey = null; e.target.value = '';
-    if (f && key) saveVideoFor(key, f);
+document.addEventListener('change', function(e){
+  if(e.target && e.target.hasAttribute && e.target.hasAttribute('data-file')){
+    var card=e.target.closest('[data-card]'); var f=e.target.files&&e.target.files[0]; e.target.value='';
+    if(card && f) uploadFor(card.getAttribute('data-card'), f);
   }
 });
 

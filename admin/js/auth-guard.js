@@ -207,10 +207,19 @@
       sc.src = '/admin/js/staff-chat.js?v=2026070603';
       document.head.appendChild(sc);
     }
+    // Universal help-video ⓘ buttons (window.HelpTopic). Same app-wide, idempotent
+    // pattern — any page with [data-help-topic] gets the ⓘ; admins get inline edit.
+    function mountHelpButton() {
+      if (document.querySelector('script[src*="/admin/js/help-button.js"]')) return;
+      const hb = document.createElement('script');
+      hb.src = '/admin/js/help-button.js?v=2026070601';
+      document.head.appendChild(hb);
+    }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', mountStaffChat);
+      document.addEventListener('DOMContentLoaded', function () { mountStaffChat(); mountHelpButton(); });
     } else {
       mountStaffChat();
+      mountHelpButton();
     }
   })();
 })();
