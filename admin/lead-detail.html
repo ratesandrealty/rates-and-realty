@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070606 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070607 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10278,10 +10278,11 @@ const LP_ORDER_ROWS = [
   { type:'appraisal', label:'Appraisal', category:'appraisal'    }
 ];
 const LP_ORDER_STATUS = [
-  { v:'not_ordered',  t:'Not Ordered'  },
-  { v:'ordered',      t:'Ordered'      },
-  { v:'acknowledged', t:'Acknowledged' },
-  { v:'received',     t:'Received'      }
+  { v:'not_ordered',    t:'Not Ordered'    },
+  { v:'ordered',        t:'Ordered'        },
+  { v:'acknowledged',   t:'Acknowledged'   },
+  { v:'needs_revision', t:'Needs Revision' },
+  { v:'received',       t:'Received'        }
 ];
 const LP_TRACKER_COLORS = { grey:'#8a8a8a', red:'#f87171', yellow:'#E0B84C', green:'#50c878' };
 const LP_VOE_OWNERS = [ {v:'',t:'Owner…'}, {v:'va',t:'VA'}, {v:'me',t:'Me'}, {v:'both',t:'Both'} ];
@@ -10333,7 +10334,7 @@ async function lpLoadOrders(cid){
   try{
     const cl = _authClient();
     const oRes = await cl.from('loan_orders')
-      .select('order_type,status,vendor_id,reference,notes,ordered_at,received_at')
+      .select('order_type,status,vendor_id,reference,notes,ordered_at,received_at,revision_note,client_paid,client_paid_at,inspection_date')
       .eq('contact_id',cid);
     _lpOrders = {}; (oRes.data||[]).forEach(o=>{ if(o.order_type!=='voe') _lpOrders[o.order_type]=o; });
     // Resolve names for any already-selected single-row vendors.
@@ -10372,14 +10373,26 @@ function lpRenderOrders(){
     const dateTxt= st==='received'?_lpDD(o.received_at):((st==='ordered'||st==='acknowledged')?_lpDD(o.ordered_at):'');
     const vLabel = o.vendor_id ? (_lpVendorNames[o.vendor_id]||'Vendor selected') : 'Select vendor';
     const opts=LP_ORDER_STATUS.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
+    const nr=(st==='needs_revision');
+    const stStyle = nr ? 'border-color:rgba(224,168,82,.6);color:#E0B84C;' : '';
+    const revStyle = 'width:100%;box-sizing:border-box;margin-top:6px;background:rgba(224,168,82,.07);border:1px solid rgba(224,168,82,.45);border-radius:7px;color:#eee;font-size:11.5px;line-height:1.4;padding:6px 8px;min-height:46px;resize:vertical;font-family:inherit;';
     let html='<div style="position:relative;border-bottom:1px solid rgba(255,255,255,.05);padding:6px 4px;">'
       +'<div style="display:grid;grid-template-columns:62px 1fr 104px 52px;gap:8px;align-items:center;">'
         +'<span style="font-size:11px;font-weight:600;color:#C9A84C;">'+row.label+'</span>'
         +'<button type="button" onclick="lpVendorOpen(\''+row.type+'\')" style="text-align:left;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(o.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
-        +'<select onchange="lpOrderStatusChange(\''+row.type+'\',this.value)" style="'+sel+'">'+opts+'</select>'
+        +'<select id="lpStatus-'+row.type+'" onchange="lpOrderStatusChange(\''+row.type+'\',this.value)" style="'+sel+stStyle+'">'+opts+'</select>'
         +'<span style="font-size:10px;text-align:right;white-space:nowrap;"><span id="lpSaved-'+row.type+'"></span><span id="lpDate-'+row.type+'" style="color:#888;"> '+dateTxt+'</span></span>'
       +'</div>'
-      +'<div id="lpVendDrop-'+row.type+'" style="display:none;position:absolute;left:62px;right:52px;top:34px;z-index:50;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>';
+      +'<textarea id="lpRev-'+row.type+'" onblur="lpOrderRevSave(\''+row.type+'\')" placeholder="Revision needed — what does the vendor need to fix?" style="'+revStyle+(nr?'':'display:none;')+'">'+lpEsc(o.revision_note||'')+'</textarea>';
+    if(row.type==='appraisal'){
+      const paid=!!o.client_paid;
+      const insp=o.inspection_date?String(o.inspection_date).slice(0,10):'';
+      html+='<div style="margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:16px;">'
+        +'<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#bbb;cursor:pointer;"><input type="checkbox" id="lpApPaid"'+(paid?' checked':'')+' onchange="lpOrderClientPaid(this.checked)" style="width:14px;height:14px;accent-color:#50c878;cursor:pointer;">Client Paid <span id="lpApPaidInd" style="color:#50c878;font-weight:700;">'+(paid?'Paid ✓':'')+'</span></label>'
+        +'<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#bbb;">Inspection Scheduled <input type="date" id="lpApInsp" value="'+insp+'" onchange="lpAppraisalInspection(this.value)" style="'+sel+'padding:4px 6px;"></label>'
+      +'</div>';
+    }
+    html+='<div id="lpVendDrop-'+row.type+'" style="display:none;position:absolute;left:62px;right:52px;top:34px;z-index:50;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>';
     if(o.id){
       html+='<div style="margin-top:4px;display:flex;align-items:center;gap:12px;">'
         +'<button type="button" onclick="lpToggleRowNotes(\''+o.id+'\',this)" style="background:transparent;border:none;color:#C9A84C;font-size:10px;cursor:pointer;padding:0;font-family:inherit;">💬 Notes ('+(o.note_count||0)+')'+(o.last_follow_up_at?(' · last follow-up '+_lpFmtDT(o.last_follow_up_at)):'')+' ▾</button>'
@@ -10685,9 +10698,14 @@ function lpOrderStatusChange(type,status){
   const now=new Date().toISOString();
   if(status==='ordered'||status==='acknowledged'){ o.ordered_at=o.ordered_at||now; o.received_at=null; }
   else if(status==='received'){ o.received_at=now; }
+  else if(status==='needs_revision'){ o.received_at=null; }   // keep ordered_at — it was already ordered
   else { o.ordered_at=null; o.received_at=null; }
   const ds=document.getElementById('lpDate-'+type);
   if(ds) ds.textContent=' '+(status==='received'?_lpDD(o.received_at):((status==='ordered'||status==='acknowledged')?_lpDD(o.ordered_at):''));
+  // Reveal the revision-note textarea + tint the dropdown amber when needs_revision (no full re-render).
+  const nr=(status==='needs_revision');
+  const rev=document.getElementById('lpRev-'+type); if(rev) rev.style.display = nr?'block':'none';
+  const selEl=document.getElementById('lpStatus-'+type); if(selEl){ selEl.style.borderColor = nr?'rgba(224,168,82,.6)':'rgba(255,255,255,.1)'; selEl.style.color = nr?'#E0B84C':'#ddd'; }
   lpOrderSave(type);
 }
 async function lpOrderSave(type){
@@ -10707,6 +10725,49 @@ async function lpOrderSave(type){
     _lpSaved(type,'Saved ✓');
     lpLoadTracker(cid);                        // refresh the tracker bar colors live
   }catch(e){ _lpSaved(type,'⚠'); }
+}
+// Patch the new loan_orders columns (revision_note / client_paid). Ensures the row exists via
+// the existing upsert RPC, then updates the column directly (backend triggers set client_paid_at).
+async function lpOrderPatchFields(type, fields){
+  const cid=lpCid(); if(!cid) return;
+  const o=_lpOrders[type]||(_lpOrders[type]={});
+  _lpSaved(type,'…');
+  try{
+    const setRes=await _authClient().rpc('loan_order_set',{ p_contact_id:cid, p_order_type:type, p_status:o.status||'not_ordered', p_vendor_id:o.vendor_id||null, p_reference:o.reference||null, p_notes:o.notes||null, p_employer_name:null, p_hr_contact_name:null, p_hr_contact_phone:null, p_hr_contact_email:null });
+    if(setRes.error) throw setRes.error;
+    const upd=await _authClient().from('loan_orders').update(fields).eq('contact_id',cid).eq('order_type',type);
+    if(upd.error) throw upd.error;
+    _lpSaved(type,'Saved ✓');
+    lpLoadTracker(cid);
+  }catch(e){ _lpSaved(type,'⚠'); console.warn('[lpOrderPatchFields]', e&&e.message); }
+}
+function lpOrderRevSave(type){
+  const ta=document.getElementById('lpRev-'+type); if(!ta) return;
+  if(!_lpOrders[type]) _lpOrders[type]={};
+  _lpOrders[type].revision_note=ta.value;
+  lpOrderPatchFields(type, { revision_note: ta.value||null });
+}
+function lpOrderClientPaid(checked){
+  if(!_lpOrders.appraisal) _lpOrders.appraisal={};
+  _lpOrders.appraisal.client_paid=!!checked;
+  const ind=document.getElementById('lpApPaidInd'); if(ind) ind.textContent = checked?'Paid ✓':'';
+  lpOrderPatchFields('appraisal', { client_paid: !!checked });
+}
+// Appraisal inspection date → dedicated RPC that also fills loan_key_dates.appraisal_due, then
+// re-render Critical Dates + re-run loan_health so the Appraisal Due field + glow/banner update.
+async function lpAppraisalInspection(value){
+  const cid=lpCid(); if(!cid) return;
+  if(!_lpOrders.appraisal) _lpOrders.appraisal={};
+  _lpOrders.appraisal.inspection_date=value||null;
+  _lpSaved('appraisal','…');
+  try{
+    const r=await _authClient().rpc('sync_appraisal_inspection_date',{ p_contact_id:cid, p_inspection_date:value||null });
+    if(r.error) throw r.error;
+    _lpSaved('appraisal','Saved ✓');
+    lpLoadTracker(cid);
+    lpLoadKeyDates(cid);   // re-render Critical Dates so Appraisal Due shows the synced date
+    lpLoadHealth(cid);     // re-run loan_health → banner + date glow reflect the new appraisal_due
+  }catch(e){ _lpSaved('appraisal','⚠'); console.warn('[lpAppraisalInspection]', e&&e.message); }
 }
 function _lpSaved(type,txt){
   const el=document.getElementById('lpSaved-'+type); if(!el) return;
