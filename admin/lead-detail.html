@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070618 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070619 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10613,6 +10613,7 @@ async function lpLoadSectionDocsAll(){
 let _lpHoiRecipients = [];   // composer recipients: {vendor_id,company,agent_name,agent_email,agent_phone,save}
 let _lpHoiPrefill = {};
 let _lpHoiList = [];         // last hoi_quote_list rows (winner lookup)
+let _lpHoiMeta = {};         // hoi_quote_meta(): { cc, signature{...} }
 let _lpHoiRecipTimer = null;
 const LP_HOI_STATUS = [{v:'sent',t:'Sent'},{v:'received',t:'Received'},{v:'quoted',t:'Quoted'},{v:'declined',t:'Declined'}];
 function _lpHoiToast(m,e){ (window.showToast||window.toast||function(){})(m,!!e); }
@@ -10627,7 +10628,28 @@ function _lpHoiBody(afn){
     +'Birth Date: '+_lpHoiVal('lpHoiDob')+'\n\n'
     +'*Please confirm receipt of this email*';
 }
-function lpHoiUpdatePreview(){ const p=document.getElementById('lpHoiPreview'); if(p) p.textContent=_lpHoiBody('{agent first name}'); }
+function _lpHoiSignatureHtml(){
+  const s=(_lpHoiMeta&&_lpHoiMeta.signature)||{};
+  if(s.custom_html) return '<div style="margin-top:18px;">'+s.custom_html+'</div>';
+  const nd=[]; if(s.nmls) nd.push('NMLS #'+lpEsc(String(s.nmls))); if(s.dre) nd.push('DRE #'+lpEsc(String(s.dre)));
+  const ew=[]; if(s.email) ew.push(lpEsc(s.email)); if(s.website) ew.push(lpEsc(s.website));
+  let h='<div style="margin-top:18px;padding-top:10px;border-top:1px solid #e5e5e5;font-family:Arial,sans-serif;font-size:12px;color:#777;line-height:1.5;">';
+  if(s.name) h+='<div style="font-weight:600;color:#444;">'+lpEsc(s.name)+'</div>';
+  if(s.title) h+='<div>'+lpEsc(s.title)+'</div>';
+  if(s.phone) h+='<div>'+lpEsc(s.phone)+'</div>';
+  if(nd.length) h+='<div>'+nd.join(' · ')+'</div>';
+  if(ew.length) h+='<div>'+ew.join(' · ')+'</div>';
+  return h+'</div>';
+}
+function _lpHoiSignatureText(){
+  const s=(_lpHoiMeta&&_lpHoiMeta.signature)||{};
+  if(s.custom_html) return String(s.custom_html).replace(/<\s*br\s*\/?\s*>/gi,'\n').replace(/<\/(div|p|tr|li|h[1-6])\s*>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/\n{2,}/g,'\n').trim();
+  const lines=[]; if(s.name) lines.push(s.name); if(s.title) lines.push(s.title); if(s.phone) lines.push(s.phone);
+  const nd=[]; if(s.nmls) nd.push('NMLS #'+s.nmls); if(s.dre) nd.push('DRE #'+s.dre); if(nd.length) lines.push(nd.join(' · '));
+  const ew=[]; if(s.email) ew.push(s.email); if(s.website) ew.push(s.website); if(ew.length) lines.push(ew.join(' · '));
+  return lines.join('\n');
+}
+function lpHoiUpdatePreview(){ const p=document.getElementById('lpHoiPreview'); if(!p) return; const sig=_lpHoiSignatureText(); p.textContent=_lpHoiBody('{agent first name}')+(sig?('\n\n'+sig):''); }
 function lpHoiCloseModal(){ const ov=document.getElementById('lpHoiOverlay'); if(ov) ov.style.display='none'; }
 function lpHoiEnsureModal(){
   let ov=document.getElementById('lpHoiOverlay'); if(ov) return ov;
@@ -10641,13 +10663,13 @@ function lpHoiEnsureModal(){
     +'<div style="padding:16px 18px;max-height:72vh;overflow:auto;">'
       +'<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Send to — add one or more companies</div>'
       +'<div style="position:relative;display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
-        +'<input id="lpHoiRCompany" placeholder="Company" autocomplete="off" oninput="lpHoiRecipSearch(this)" style="'+INP+'">'
+        +'<input id="lpHoiRCompany" placeholder="Company" autocomplete="off" oninput="lpHoiRecipSearch(this)" onfocus="lpHoiRecipSearch(this)" style="'+INP+'">'
         +'<input id="lpHoiRAgent" placeholder="Agent name" autocomplete="off" style="'+INP+'">'
         +'<input id="lpHoiREmail" placeholder="Agent email" autocomplete="off" style="'+INP+'">'
         +'<input id="lpHoiRPhone" placeholder="Agent phone (optional)" autocomplete="off" style="'+INP+'">'
         +'<div id="lpHoiRDrop" style="display:none;position:absolute;left:0;top:36px;z-index:5;min-width:280px;max-width:440px;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 14px 34px rgba(0,0,0,.6);overflow:hidden;"></div>'
       +'</div>'
-      +'<div style="display:flex;align-items:center;gap:12px;margin:7px 0 4px;"><button onclick="lpHoiRecipAdd()" style="'+ABTN+'">＋ Add recipient</button><label style="font-size:10px;color:#999;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="lpHoiRSave" style="cursor:pointer;">save new to directory</label></div>'
+      +'<div style="display:flex;align-items:center;gap:12px;margin:7px 0 4px;"><button onclick="lpHoiRecipAdd()" style="'+ABTN+'">＋ Add recipient</button><label style="font-size:10px;color:#999;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="lpHoiRSave" checked style="cursor:pointer;">save new to directory</label></div>'
       +'<div id="lpHoiRecipList" style="display:flex;flex-direction:column;gap:4px;margin-bottom:14px;"></div>'
       +'<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Client info — editable, sent to all</div>'
       +'<label style="'+LBL+'">Subject</label><input id="lpHoiSubject" style="'+INP+'">'
@@ -10656,9 +10678,9 @@ function lpHoiEnsureModal(){
       +'<label style="'+LBL+'">Borrower(s)</label><input id="lpHoiBorrower" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
       +'<label style="'+LBL+'">Birth Date</label><input id="lpHoiDob" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
       +'<div style="font-size:10px;color:#888;margin-top:10px;">Each email greets that company\'s agent by first name. Preview:</div>'
-      +'<pre id="lpHoiPreview" style="white-space:pre-wrap;font-family:inherit;font-size:11px;color:#bbb;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px;margin-top:4px;"></pre>'
+      +'<pre id="lpHoiPreview" style="white-space:pre-wrap;font-family:inherit;font-size:11px;color:#bbb;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px;margin-top:4px;max-height:200px;overflow:auto;"></pre>'
     +'</div>'
-    +'<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid rgba(255,255,255,.08);"><button onclick="lpHoiCloseModal()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-family:inherit;">Cancel</button><button id="lpHoiSendBtn" onclick="lpHoiSendAll()" style="background:#C9A84C;border:none;color:#000;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">Send to 0</button></div>'
+    +'<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid rgba(255,255,255,.08);"><button onclick="lpHoiCloseModal()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-family:inherit;">Cancel</button><button id="lpHoiSendBtn" onclick="lpHoiSendAll()" disabled style="background:#C9A84C;border:none;color:#000;border-radius:8px;padding:8px 18px;cursor:default;opacity:.5;font-size:12px;font-weight:700;font-family:inherit;">Send to 0</button></div>'
   +'</div>';
   document.body.appendChild(ov);
   return ov;
@@ -10701,10 +10723,11 @@ function lpHoiRecipAdd(){
 function lpHoiRecipRemove(i){ _lpHoiRecipients.splice(i,1); lpHoiRenderRecips(); }
 function lpHoiRenderRecips(){
   const box=document.getElementById('lpHoiRecipList'); const btn=document.getElementById('lpHoiSendBtn');
-  if(btn) btn.textContent='Send to '+_lpHoiRecipients.length;
+  const n=_lpHoiRecipients.length;
+  if(btn){ btn.textContent='Send to '+n; btn.disabled=(n===0); btn.style.opacity=(n===0?'.5':'1'); btn.style.cursor=(n===0?'default':'pointer'); }
   if(!box) return;
-  if(!_lpHoiRecipients.length){ box.innerHTML='<div style="font-size:11px;color:#777;">No recipients yet — add one or more insurance companies above.</div>'; return; }
-  box.innerHTML=_lpHoiRecipients.map(function(r,i){ return '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.2);border-radius:7px;"><div style="flex:1;min-width:0;overflow:hidden;"><span style="font-size:12px;color:#e2e2e2;font-weight:600;">'+lpEsc(r.company||r.agent_name||r.agent_email)+'</span> <span style="font-size:10px;color:#999;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+'</span></div>'+((r.save&&!r.vendor_id)?'<span style="font-size:9px;color:#C9A84C;">will save</span>':'')+'<button onclick="lpHoiRecipRemove('+i+')" style="background:transparent;border:none;color:#e57373;font-size:14px;cursor:pointer;line-height:1;">✕</button></div>'; }).join('');
+  if(!n){ box.innerHTML='<div style="font-size:11px;color:#777;">No recipients yet — add one or more insurance companies above.</div>'; return; }
+  box.innerHTML=_lpHoiRecipients.map(function(r,i){ return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.22);border-radius:7px;"><div style="flex:1;min-width:0;overflow:hidden;"><span style="font-size:12px;color:#e2e2e2;font-weight:600;">'+lpEsc(r.company||r.agent_name||r.agent_email)+'</span> <span style="font-size:10px;color:#999;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+'</span></div>'+((r.save&&!r.vendor_id)?'<span style="font-size:9px;color:#C9A84C;border:1px solid rgba(201,168,76,.3);border-radius:6px;padding:1px 5px;white-space:nowrap;">will save</span>':'')+'<button title="Remove recipient" onclick="lpHoiRecipRemove('+i+')" style="background:rgba(229,115,115,.12);border:1px solid rgba(229,115,115,.4);color:#e57373;font-size:11px;font-weight:700;line-height:1;cursor:pointer;border-radius:6px;padding:3px 8px;white-space:nowrap;">✕ Remove</button></div>'; }).join('');
 }
 async function lpHoiOpenComposer(){
   const cid=lpCid(); if(!cid){ _lpHoiToast('No contact selected', true); return; }
@@ -10715,6 +10738,7 @@ async function lpHoiOpenComposer(){
   let pf={};
   try{ const r=await _authClient().rpc('hoi_quote_prefill',{ p_contact_id:cid }); if(!r.error) pf=r.data||{}; }catch(e){ console.warn('[hoi_quote_prefill]', e&&e.message); }
   _lpHoiPrefill=pf;
+  try{ const m=await _authClient().rpc('hoi_quote_meta'); if(!m.error) _lpHoiMeta=m.data||{}; }catch(e){ console.warn('[hoi_quote_meta]', e&&e.message); }
   const set=(i,v)=>{ const e=document.getElementById(i); if(e) e.value=v||''; };
   const addr=[pf.address, pf.city, [pf.state,pf.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const full=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ');
@@ -10737,9 +10761,11 @@ async function lpHoiSendAll(){
     if(btn) btn.textContent='Sending '+(i+1)+'/'+total+'…';
     const afn=((r.agent_name||'').trim().split(/\s+/)[0])||'there';
     const bodyText=_lpHoiBody(afn);
-    const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>';
+    const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>'+_lpHoiSignatureHtml();
     try{
-      const resp=await _authClient().functions.invoke('email-service',{ body:{ action:'send', to_email:r.agent_email, to_name:(r.agent_name||r.company||''), first_name:afn, subject:subject, html:bodyHtml, contact_id:cid } });
+      const sendBody={ action:'send', to_email:r.agent_email, to_name:(r.agent_name||r.company||''), first_name:afn, subject:subject, html:bodyHtml, contact_id:cid };
+      const _cc=(_lpHoiMeta&&_lpHoiMeta.cc)||''; if(_cc) sendBody.cc=_cc;   // always CC rene@ + processing@
+      const resp=await _authClient().functions.invoke('email-service',{ body:sendBody });
       const data=resp&&resp.data, error=resp&&resp.error;
       if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
       try{ await _authClient().rpc('hoi_quote_log',{ p_contact_id:cid, p_vendor_id:r.vendor_id||null, p_company:r.company||null, p_agent_name:r.agent_name||null, p_agent_email:r.agent_email||null, p_agent_phone:r.agent_phone||null, p_subject:subject, p_body:bodyText }); }catch(le){ console.warn('[hoi_quote_log]', le&&le.message); }
