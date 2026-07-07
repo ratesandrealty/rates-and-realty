@@ -14067,6 +14067,21 @@ function lpSnapEdit(key, ev){
       set('lpSpStreet',a.property_address_street); set('lpSpUnit',a.property_address_unit);
       set('lpSpCity',a.property_address_city);     set('lpSpState',a.property_address_state);
       set('lpSpZip',a.property_address_zip);       set('lpSpCounty',a.property_address_county);
+      // Fallback: if the structured split fields are all empty but the combined
+      // contacts.property_address exists, best-effort parse it into the boxes so nothing's
+      // lost. Format assumed "Street[, Unit], City, State, Zip" → split on commas: last=zip,
+      // second-last=state, third-last=city, the rest=street. Ambiguous → whole string in Street.
+      const _splitEmpty = !a.property_address_street && !a.property_address_city && !a.property_address_state && !a.property_address_zip;
+      const _combined = (c && c.property_address) ? String(c.property_address).trim() : '';
+      if(_splitEmpty && _combined){
+        const parts=_combined.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+        if(parts.length>=4){
+          set('lpSpZip',parts[parts.length-1]); set('lpSpState',parts[parts.length-2]);
+          set('lpSpCity',parts[parts.length-3]); set('lpSpStreet',parts.slice(0,parts.length-3).join(', '));
+        } else {
+          set('lpSpStreet',_combined);   // ambiguous — keep the whole string
+        }
+      }
     },10);
     commit=async ()=>{
       const gv=id=>{ const e=document.getElementById(id); return e?(e.value.trim()||null):null; };
