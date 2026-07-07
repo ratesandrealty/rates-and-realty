@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070621 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070622 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10376,6 +10376,7 @@ let _lpVendorNames = {};      // vendor_id → "Name — Company"
 let _lpVendTimers = {};       // key → search debounce
 let _lpVendCache = {};        // key → last vendor_directory_list rows
 let _lpVoes = [];             // VOE card list (multiple per loan)
+let _lpVoeNotReq = null;      // the voe loan_orders row marking VOE not-required (section "Don't Need")
 let _lpBorrowers = [];        // loan_borrowers_for_contact
 function _lpCat(type){ const r = LP_ORDER_ROWS.find(x=>x.type===type); return r ? r.category : type; }
 function _lpDD(v){ return v ? new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : ''; }
@@ -10404,11 +10405,13 @@ function lpRenderTracker(rows){
     const c = LP_TRACKER_COLORS[r.color] || '#8a8a8a';
     let lbl = r.label || r.order_type || '';
     if(r.order_type==='voe' && (Number(r.total)||0) > 1) lbl += ' ' + (Number(r.done)||0) + '/' + (Number(r.total)||0);
-    return '<div title="'+lpEsc(r.state||'')+'" style="display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:rgba(255,255,255,.03);border:1px solid '+c+'55;border-radius:12px;padding:13px 16px;min-width:0;">'
+    // not_required renders green; order_tracker labels it "Completed" — show "Don't need" instead.
+    const stateLbl = (r.status==='not_required') ? "Don't need" : (r.state||'');
+    return '<div title="'+lpEsc(stateLbl)+'" style="display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:rgba(255,255,255,.03);border:1px solid '+c+'55;border-radius:12px;padding:13px 16px;min-width:0;">'
       +'<span style="width:12px;height:12px;border-radius:50%;background:'+c+';flex-shrink:0;box-shadow:0 0 7px '+c+'99;"></span>'
       +'<span style="display:flex;flex-direction:column;line-height:1.25;min-width:0;">'
         +'<span style="font-size:15px;font-weight:700;color:#e8e8e8;white-space:nowrap;">'+lpEsc(lbl)+'</span>'
-        +'<span style="font-size:12px;color:'+c+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(r.state||'')+'</span>'
+        +'<span style="font-size:12px;color:'+c+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(stateLbl)+'</span>'
       +'</span></div>';
   }).join('');
   bars.forEach(function(b){ b.innerHTML = html; });
@@ -10443,11 +10446,13 @@ async function lpLoadVoes(cid){
     ]);
     _lpBorrowers = (bRes && !bRes.error && bRes.data) ? bRes.data : [];
     const all = (vRes && !vRes.error && vRes.data) ? vRes.data : [];
-    _lpVoes = all.filter(o=>o.order_type==='voe').map((o,i)=>Object.assign({}, o, { key:'v'+i }));
+    const voeRows = all.filter(o=>o.order_type==='voe');
+    _lpVoeNotReq = voeRows.find(function(o){ return o.status==='not_required'; }) || null;   // section "Don't Need" marker
+    _lpVoes = voeRows.filter(function(o){ return o.status!=='not_required'; }).map((o,i)=>Object.assign({}, o, { key:'v'+i }));
     // Merge id + tracking fields onto the single rows so they can show a notes log too.
     all.forEach(function(o){ if(o.order_type!=='voe' && _lpOrders[o.order_type]){ const t=_lpOrders[o.order_type]; t.id=o.id; t.note_count=o.note_count; t.last_follow_up_at=o.last_follow_up_at; t.last_note_at=o.last_note_at; } });
     lpRenderOrders();   // re-render rows (now with ids → notes toggle) + VOE cards
-  }catch(e){ _lpVoes=[]; lpRenderVoe(); }
+  }catch(e){ _lpVoes=[]; _lpVoeNotReq=null; lpRenderVoe(); }
 }
 // ── Third-Party Order drag-drop → Google Drive subfolder + CRM row ──────────
 // section_key == order row type (title/hoi/escrow/appraisal) or 'voe'. drive_section_folders
@@ -10898,9 +10903,12 @@ function lpRenderOrders(){
     return html+lpDropZoneHtml(row.type)+'</div>';
   }).join('')
   + '<div id="lpVoeSection" style="margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px;">'
-      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
-        + '<span style="font-size:11px;font-weight:700;color:#C9A84C;">VOE Orders</span>'
-        + '<button type="button" onclick="lpVoeAdd()" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">+ Add VOE</button>'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">'
+        + '<span style="font-size:11px;font-weight:700;color:#C9A84C;">VOE Orders'+(_lpVoeNotReq?' <span style="font-size:9px;font-weight:700;color:#50c878;background:rgba(80,200,120,.12);border:1px solid rgba(80,200,120,.4);border-radius:7px;padding:1px 6px;margin-left:4px;vertical-align:middle;">✓ Don\'t need</span>':'')+'</span>'
+        + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
+          + '<button type="button" onclick="lpVoeToggleDontNeed()" title="'+(_lpVoeNotReq?'VOE marked not needed — click to undo':'Mark VOE as not required for this loan')+'" style="'+(_lpVoeNotReq?'background:rgba(80,200,120,.16);border:1px solid rgba(80,200,120,.5);color:#7ee2a3;':'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#9a9a9a;')+'border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">'+(_lpVoeNotReq?'✓ Don\'t Need':'Don\'t Need')+'</button>'
+          + '<button type="button" onclick="lpVoeAdd()" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">+ Add VOE</button>'
+        + '</div>'
       + '</div>' + lpDropZoneHtml('voe') + '<div id="lpVoeCards"></div></div>';
   lpRenderVoe();
   lpLoadSectionDocsAll();   // populate each section's "already uploaded" CRM list
@@ -10958,6 +10966,25 @@ function lpVoeCardHtml(v){
   +'</div>';
 }
 function lpVoeAdd(){ _lpVoes.push({ key:'vn'+(++_lpVoeSeq), id:null, status:'not_ordered' }); lpRenderVoe(); }
+// Section-level "Don't Need": toggles a dedicated voe loan_orders row with status='not_required'
+// (→ top pill goes GREEN "Don't need"). Mark = create the marker; undo = delete it (clean, no card).
+async function lpVoeToggleDontNeed(){
+  const cid=lpCid(); const toast=window.showToast||window.toast||function(){};
+  if(!cid){ toast('No contact selected', true); return; }
+  try{
+    if(_lpVoeNotReq && _lpVoeNotReq.id){
+      const d=await _authClient().from('loan_orders').delete().eq('id', _lpVoeNotReq.id);
+      if(d.error) throw d.error;
+      toast('VOE requirement restored');
+    } else {
+      const r=await _authClient().rpc('loan_order_set',{ p_contact_id:cid, p_order_type:'voe', p_status:'not_required', p_order_id:null });
+      if(r.error) throw r.error;
+      toast('VOE marked not needed ✓');
+    }
+    lpLoadVoes(cid);      // reload voe rows (re-splits not_required) → re-renders section + cards
+    lpLoadTracker(cid);   // refresh top pill → green "Don't need"
+  }catch(e){ toast('Could not update VOE: '+((e&&e.message)||e), true); }
+}
 function lpVoeField(k,field,val){ const v=_lpVoeFind(k); if(!v) return; v[field]=(val||'').trim(); lpVoeSave(k); }
 function lpVoeBorrowerChange(k,cid){
   const v=_lpVoeFind(k); if(!v) return;
