@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070605 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070606 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -2441,6 +2441,15 @@
         #tab-processing #lpDatesBody input.lp-date-amber { border-color:#E0A852 !important; box-shadow:0 0 0 1px #E0A852, 0 0 9px rgba(224,168,82,.5) !important; }
         #tab-processing #lpDatesBody input.lp-date-met { border-color:#27AE60 !important; box-shadow:0 0 0 1px #27AE60, 0 0 9px rgba(39,174,96,.45) !important; }
         @keyframes lpDatePulse { 0%,100%{ box-shadow:0 0 0 1px #E5484D, 0 0 8px rgba(229,72,77,.45);} 50%{ box-shadow:0 0 0 1px #E5484D, 0 0 17px rgba(229,72,77,.9);} }
+        /* Focus/pulse when jumping to a date from the health banner (outline avoids the glow's !important box-shadow) */
+        #tab-processing #lpDatesBody input.lp-date-flash { animation:lpDateFlash 1.5s ease-out; }
+        @keyframes lpDateFlash { 0%{ outline:3px solid rgba(201,168,76,.9); outline-offset:2px; } 70%{ outline:3px solid rgba(201,168,76,.55); outline-offset:2px; } 100%{ outline:3px solid rgba(201,168,76,0); outline-offset:2px; } }
+        /* Interactive health-banner rows + expand toggle */
+        #tab-processing #lpHealthBody .lh-row { display:flex; gap:8px; align-items:flex-start; font-size:12px; line-height:1.5; padding:3px 6px; margin:0 -6px; border-radius:6px; }
+        #tab-processing #lpHealthBody .lh-row.clickable { cursor:pointer; }
+        #tab-processing #lpHealthBody .lh-row.clickable:hover { background:rgba(255,255,255,.06); }
+        #tab-processing #lpHealthBody .lh-toggle { font-size:11px; color:#C9A84C; cursor:pointer; padding:5px 6px 0; display:inline-block; }
+        #tab-processing #lpHealthBody .lh-toggle:hover { text-decoration:underline; }
         @keyframes lpPulse { 0%,100%{ box-shadow:0 0 0 4px rgba(201,168,76,.18);} 50%{ box-shadow:0 0 0 8px rgba(201,168,76,.04);} }
         #tab-processing .lp-stub { opacity:0.6; }
         #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
@@ -9710,7 +9719,7 @@ const LP_KEY_DATES = [
 // Loan-health "on-track" system: one loan_health fetch drives the status banner, urgent
 // list, AND the Critical Dates glow. _lpHealth caches the last result. LP_DATE_HEALTHKEY
 // maps a UI date key → the loan_health.dates date_key where they differ (app-backed credit).
-let _lpHealth = null;
+let _lpHealth = null, _lpHealthExpanded = false;
 const LP_DATE_HEALTHKEY = { credit_pulled: 'credit_pulled_date' };
 const LP_CONTACT_ROLES = [
   {key:'listing_agent',label:'Listing Agent'},
@@ -9920,24 +9929,79 @@ function lpRenderHealth(h){
             :                  {t:'✓ On Track',bg:'rgba(39,174,96,.16)',bd:'#27AE60',c:'#68cf92'};
   const cond=h.conditions||{}, chk=h.checklist||{};
   const summary = (h.overdue_count||0)+' overdue · '+(cond.pending||0)+' conditions pending · '+(chk.done||0)+'/'+(chk.total||0)+' tasks';
-  // Merge urgent_items + warnings into ONE compact list. Labels are non-null now; drop any
-  // empty ones (no bare dots / empty rows). Icons only: 🔴 (overdue/red), ⚠ (amber), 🔧 (warning).
+  // Merge urgent_items + warnings into ONE compact list. Labels are non-null now; drop empties.
+  // Each row is CLICKABLE and navigates to where it's fixed (a date field, or the Conditions tab).
   const rows = [];
   (h.urgent_items||[]).forEach(u=>{
     if(!u || !u.label) return;
     const red=(u.urgency==='overdue'||u.urgency==='red');
-    rows.push({ ic: red?'🔴':'⚠', col: red?'#ff9598':'#e8c07a', text: String(u.label) });
+    // Backend tags each item: target 'conditions', or 'date' with an exact date_key. Route by
+    // that; only fall back to type/label matching for a stale cache without target/date_key.
+    let nav=null;
+    if(u.target==='conditions' || u.type==='conditions') nav={t:'cond'};
+    else if(u.date_key) nav={t:'date',hk:u.date_key};
+    else if(/condition/i.test(u.label)) nav={t:'cond'};
+    else { const hk=_lhDateKeyFromText(u.label); if(hk) nav={t:'date',hk:hk}; }
+    rows.push({ ic: red?'🔴':'⚠', col: red?'#ff9598':'#e8c07a', text:String(u.label), nav:nav });
   });
-  (h.warnings||[]).forEach(w=>{ if(w) rows.push({ ic:'🔧', col:'#cbb489', text:String(w) }); });
-  const MAX=4, shown=rows.slice(0,MAX), moreN=rows.length-shown.length;
-  const line = r => '<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.5;color:'+r.col+';padding:2px 0;"><span style="flex-shrink:0;">'+r.ic+'</span><span>'+lpEsc(r.text)+'</span></div>';
-  const listHtml = rows.length
-    ? shown.map(line).join('') + (moreN>0 ? '<div style="font-size:11px;color:rgba(255,255,255,.45);padding:3px 0 0;">+'+moreN+' more</div>' : '')
-    : '<div style="font-size:12px;color:#68cf92;padding:1px 0;">✓ All caught up</div>';
+  (h.warnings||[]).forEach(w=>{
+    if(!w) return;
+    // Warnings may be objects { text, date_key } (new) or plain strings (stale cache).
+    const text = (typeof w==='object') ? String(w.text||'') : String(w);
+    if(!text) return;
+    let nav=null;
+    if(typeof w==='object' && w.date_key) nav={t:'date',hk:w.date_key};
+    else if(/condition/i.test(text)) nav={t:'cond'};
+    else { const hk=_lhDateKeyFromText(text); if(hk) nav={t:'date',hk:hk}; }
+    rows.push({ ic:'🔧', col:'#cbb489', text:text, nav:nav });
+  });
+  const MAX=4, moreN=Math.max(0, rows.length-MAX);
+  const visible = _lpHealthExpanded ? rows : rows.slice(0,MAX);
+  const line = r => {
+    const oc = r.nav ? (r.nav.t==='date' ? ' onclick="lpHealthGoDate(\''+r.nav.hk+'\')"' : ' onclick="lpHealthGoConditions()"') : '';
+    return '<div class="lh-row'+(r.nav?' clickable':'')+'"'+oc+' style="color:'+r.col+';"><span style="flex-shrink:0;">'+r.ic+'</span><span>'+lpEsc(r.text)+'</span></div>';
+  };
+  let listHtml;
+  if(rows.length){
+    listHtml = visible.map(line).join('');
+    if(moreN>0) listHtml += '<div class="lh-toggle" onclick="lpHealthToggleMore()">'+(_lpHealthExpanded ? 'show less' : ('+'+moreN+' more'))+'</div>';
+  } else {
+    listHtml = '<div style="font-size:12px;color:#68cf92;padding:1px 0;">✓ All caught up</div>';
+  }
   body.innerHTML = '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
     + '<span style="font-size:13px;font-weight:800;padding:5px 13px;border-radius:999px;background:'+pill.bg+';border:1px solid '+pill.bd+';color:'+pill.c+';white-space:nowrap;">'+pill.t+'</span>'
     + '<span style="font-size:12px;color:rgba(255,255,255,.62);">'+lpEsc(summary)+'</span></div>'
     + '<div style="margin-top:9px;padding-top:8px;border-top:1px solid rgba(255,255,255,.07);">'+listHtml+'</div>';
+}
+// Resolve a Critical Dates date_key from an urgent/warning label by matching LP_KEY_DATES
+// labels (longest first to avoid partial-substring collisions). Returns the loan_health key.
+function _lhDateKeyFromText(text){
+  const t = String(text||'').toLowerCase();
+  const cand = LP_KEY_DATES.map(d=>({ hk: LP_DATE_HEALTHKEY[d.key]||d.key, lbl: String(d.label).toLowerCase() }))
+    .sort((a,b)=> b.lbl.length - a.lbl.length);
+  for(let i=0;i<cand.length;i++){ if(cand[i].lbl && t.indexOf(cand[i].lbl) !== -1) return cand[i].hk; }
+  return null;
+}
+function lpHealthToggleMore(){ _lpHealthExpanded = !_lpHealthExpanded; lpRenderHealth(_lpHealth); }
+// Click a date/warning row → scroll Critical Dates into view, focus the field, brief pulse.
+function lpHealthGoDate(hk){
+  const inp = document.querySelector('#lpDatesBody input[data-lp-datekey="'+hk+'"]');
+  if(!inp) return;
+  const card = inp.closest('.lp-card') || inp;
+  try{ card.scrollIntoView({behavior:'smooth', block:'center'}); }catch(_){ try{ card.scrollIntoView(); }catch(e){} }
+  setTimeout(function(){
+    try{ inp.focus({preventScroll:true}); }catch(_){ try{ inp.focus(); }catch(e){} }
+    inp.classList.add('lp-date-flash');
+    setTimeout(function(){ inp.classList.remove('lp-date-flash'); }, 1500);
+  }, 260);
+}
+// Click a conditions row → switch to the Loan Conditions tab and scroll to the list.
+function lpHealthGoConditions(){
+  if(typeof switchTab==='function'){ try{ switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]')); }catch(_){ try{ switchTab('conditions'); }catch(e){} } }
+  setTimeout(function(){
+    const el = document.getElementById('conditions-list') || document.getElementById('tab-conditions');
+    if(el && el.scrollIntoView) el.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 220);
 }
 function lpTextBorrower(){
   var b = (typeof contactData!=='undefined' && contactData) ? contactData : {};
