@@ -9509,20 +9509,28 @@ async function lpRenderSnapshot(cid){
   const lenderCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Lender</div><div style="display:flex;align-items:center;gap:6px;font-size:14px;color:#fff;font-weight:600;">'+lenderInner+((c.closing_lender && !_ro)?'<span onclick="lpLenderPickerOpen(event)" title="Change lender" style="flex-shrink:0;cursor:pointer;color:rgba(255,255,255,.55);font-size:13px;">✎</span>':'')+'</div></div>';
   const ecell = (label,key,val) => '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">'+label+'</div><div '+(_ro?'':'onclick="lpSnapEdit(\''+key+'\',event)" title="Click to edit" ')+'style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'+(_ro?'':'cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);')+'">'+val+'</div></div>';
 
-  // Subject Property — composed from the structured mortgage_applications.property_address_*
-  // fields (same source the loan/1003 details use, so it stays in sync). Falls back to the
-  // single property_address text field, then to a muted placeholder.
+  // Subject Property — resolve from whichever source is populated so it never shows blank
+  // when the address exists somewhere. Priority: structured mortgage_applications split
+  // (reflects the snapshot popup + 1003 details) → contacts.property_address (the combined
+  // intake string Loan Details reads) → mortgage_applications.property_address → assembled
+  // contacts split (property_city/state/zip).
   const _seg1 = (app.property_address_street||'') + (app.property_address_unit ? ', Unit '+app.property_address_unit : '');
   const _stateZip = [app.property_address_state, app.property_address_zip].filter(Boolean).join(' ');
-  let _propLine = app.property_address_street
+  const _appSplit = app.property_address_street
     ? [_seg1, app.property_address_city, _stateZip].filter(Boolean).join(', ')
-    : (app.property_address || '');
+    : '';
+  const _contactsSplit = [c.property_city, c.property_state, c.property_zip].filter(Boolean).join(', ');
+  let _propLine = _appSplit
+    || (c.property_address ? String(c.property_address).trim() : '')
+    || (app.property_address ? String(app.property_address).trim() : '')
+    || _contactsSplit;
   const _propHas = !!(_propLine && _propLine.trim());
   const _propVal = _propHas
     ? lpEsc(_propLine)
     : '<span style="color:rgba(255,255,255,.4);font-weight:400;">— No property address yet</span>';
-  const _countySub = app.property_address_county
-    ? '<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(app.property_address_county)+' County</div>'
+  const _county = app.property_address_county || c.property_county || '';
+  const _countySub = _county
+    ? '<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(_county)+' County</div>'
     : '';
   const propCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Subject Property</div>'
     + '<div '+(_ro?'':'onclick="lpSnapEdit(\'subject_property\',event)" title="Click to edit" ')+'style="font-size:14px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'+(_ro?'':'cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);')+'"'+(_propHas?' title="'+lpEsc(_propLine)+'"':'')+'>'+_propVal+'</div>'
@@ -14072,6 +14080,20 @@ function lpSnapEdit(key, ev){
         updated_at:new Date().toISOString()
       };
       await _authClient().from('mortgage_applications').update(patch).eq('contact_id',cid);
+      // Keep contacts.property_address (the combined string Loan Details + doc/email merges
+      // read) in sync, so the popup edit propagates everywhere instead of only updating the
+      // split mortgage_applications columns. This was the root of the Snapshot/Details mismatch.
+      const _combined = [
+        (patch.property_address_street||'') + (patch.property_address_unit ? ', Unit '+patch.property_address_unit : ''),
+        patch.property_address_city, patch.property_address_state, patch.property_address_zip
+      ].map(function(s){ return String(s||'').trim(); }).filter(Boolean).join(', ');
+      try {
+        await _authClient().from('contacts').update({ property_address: _combined||null, updated_at:new Date().toISOString() }).eq('id',cid);
+        if(c) c.property_address = _combined||null;
+        if(typeof leadData!=='undefined' && leadData) leadData.property_address = _combined||null;
+        const _lpAddr=document.getElementById('lp-prop-addr'); if(_lpAddr) _lpAddr.value=_combined||'';
+        const _fProp=document.getElementById('f-property');   if(_fProp)  _fProp.value=_combined||'';
+      } catch(_){}
       // Mirror into the 1003 details form if it's currently loaded, so both views
       // reflect the change immediately (they share the same DB columns regardless).
       const sync=(id,v)=>{ const e=document.getElementById(id); if(e){ e.value=(v==null?'':v); e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); } };
