@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070620 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070621 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -11260,10 +11260,9 @@ async function lpAppraisalInspection(value){
   const cid=lpCid(); if(!cid) return;
   if(!_lpOrders.appraisal) _lpOrders.appraisal={};
   _lpOrders.appraisal.inspection_date=value||null;
-  // Auto-advance to "Scheduled" once an inspection date is set. GUARD: never downgrade a
-  // completed/paid appraisal — only from not_ordered/ordered/acknowledged/needs_revision.
-  const cur=(_lpOrders.appraisal.status)||'not_ordered';
-  const autoSchedule = !!(value && ['not_ordered','ordered','acknowledged','needs_revision'].indexOf(cur)>=0);
+  // Auto-advance to "Scheduled" whenever a NON-EMPTY inspection date is entered — regardless of the
+  // current status (including from Received/Paid). Clearing the date never forces a status change.
+  const autoSchedule = !!value;
   _lpSaved('appraisal','…');
   try{
     const r=await _authClient().rpc('sync_appraisal_inspection_date',{ p_contact_id:cid, p_inspection_date:value||null });
