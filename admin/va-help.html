@@ -7,7 +7,7 @@
 <script src="/api/env.js?v=2026033003"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/admin/js/supabase-client.js?v=2026050601"></script>
-<script src="/admin/js/auth-guard.js?v=2026070604"></script>
+<script src="/admin/js/auth-guard.js?v=2026070605"></script>
 <script src="/admin/js/loom-recorder.js?v=2026070601"></script>
 <style>
   :root { --gold:#c9a84c; --bg:#0d0d0d; --surface:#141414; --surface2:#1a1a1a; --border:rgba(255,255,255,.07); --border2:rgba(255,255,255,.12); --text:#fff; --muted:rgba(255,255,255,.4); --green:#52c87a; --red:#e05252; }
@@ -30,7 +30,11 @@
   .card-key { font-size:10px; color:var(--muted); font-family:ui-monospace,monospace; text-transform:uppercase; letter-spacing:.4px; margin-top:4px; }
   .area-badge { margin-left:auto; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--gold); background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.3); border-radius:8px; padding:2px 8px; flex-shrink:0; }
   .card video { width:100%; max-height:44vh; border-radius:10px; background:#000; display:block; margin-bottom:10px; }
-  .no-video { font-size:12px; color:var(--muted); background:var(--surface2); border:1px dashed var(--border2); border-radius:10px; padding:20px 14px; text-align:center; margin-bottom:10px; }
+  .no-video { font-size:12px; color:var(--muted); background:var(--surface2); border:1px dashed var(--border2); border-radius:10px; padding:20px 14px; text-align:center; margin-bottom:6px; }
+  .vid-block { margin-bottom:12px; }
+  .vid-block video { margin-bottom:6px; }
+  .vid-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .vid-lbl { font-size:11px; color:var(--muted); font-weight:600; }
   .fld-label { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:600; display:block; margin:8px 0 4px; }
   .inp, .ta, .sel { width:100%; box-sizing:border-box; background:rgba(255,255,255,.05); border:1px solid var(--border2); border-radius:8px; color:#eee; font-size:13px; padding:9px 11px; outline:none; font-family:inherit; }
   .inp:focus, .ta:focus, .sel:focus { border-color:rgba(201,168,76,.5); }
@@ -130,22 +134,34 @@ function render(){
   host.innerHTML=html;
 }
 
+// The video block: player + Replace(Record/Upload)/Delete when a video exists, else Record/Upload.
+function videoBlockHtml(t){
+  if(t.video_url){
+    return '<video controls preload="metadata" playsinline src="'+esc(t.video_url)+'"></video>'
+      + '<div class="vid-controls"><span class="vid-lbl">Replace:</span>'
+      +   '<button class="btn" data-act="record">🎥 Record</button>'
+      +   '<button class="btn" data-act="upload">⬆️ Upload</button>'
+      +   '<button class="btn danger" data-act="delete">🗑 Delete video</button>'
+      + '</div>';
+  }
+  return '<div class="no-video">No explainer video yet.</div>'
+    + '<div class="vid-controls">'
+    +   '<button class="btn" data-act="record">🎥 Record</button>'
+    +   '<button class="btn" data-act="upload">⬆️ Upload</button>'
+    + '</div>';
+}
 function cardHtml(t){
   var k=t.topic_key;
   var areas=['va','crm','both'].map(function(a){ return '<option value="'+a+'"'+((t.area||'both')===a?' selected':'')+'>'+a.toUpperCase()+'</option>'; }).join('');
-  var vid=t.video_url ? '<video controls preload="metadata" playsinline src="'+esc(t.video_url)+'"></video>' : '<div class="no-video">No explainer video yet.</div>';
   return '<div class="card" data-card="'+esc(k)+'">'
     + '<div class="card-head"><div><div style="font-size:14px;font-weight:700;color:#fff;">'+esc(t.title||k)+'</div><div class="card-key">'+esc(k)+'</div></div>'
     +   '<span class="area-badge">'+esc((t.area||'both'))+'</span></div>'
-    + vid
+    + '<div class="vid-block" data-vidblock>'+videoBlockHtml(t)+'</div>'
     + '<label class="fld-label">Title</label><input class="inp" data-f="title" value="'+esc(t.title||'')+'" placeholder="Topic title">'
     + '<label class="fld-label">Description</label><textarea class="ta" data-f="description" placeholder="What does this topic explain?">'+esc(t.description||'')+'</textarea>'
     + '<label class="fld-label">Area</label><select class="sel" data-f="area" style="max-width:200px;">'+areas+'</select>'
     + '<input type="file" accept="video/*" data-file style="display:none">'
     + '<div class="actions">'
-    +   '<button class="btn" data-act="record">🎥 Record</button>'
-    +   '<button class="btn" data-act="upload">⬆️ Upload</button>'
-    +   (t.video_url ? '<button class="btn danger" data-act="clear">🗑 Clear video</button>' : '')
     +   '<button class="btn solid" data-act="save">💾 Save</button>'
     +   '<span class="status" data-status></span>'
     + '</div></div>';
@@ -180,12 +196,31 @@ async function saveCard(k){
   catch(e){ setBusy(k,false); setStatus(k,'⚠ '+((e&&e.message)||'Failed'),'err'); toast('Save failed',true); }
 }
 
-async function setVideo(k, video_url, video_slug){
-  var f=readCard(k)||{}; f.video_url=video_url; f.video_slug=video_slug||'';
+// Video-only save/replace/delete: passes NULL for title/description/area so those are KEPT
+// (help_topic_upsert treats null as "no change"); '' video_url CLEARS the video (delete) but
+// keeps the topic row + text. Targeted refresh preserves any unsaved input edits.
+async function setVideoOnly(k, video_url, video_slug){
   setBusy(k,true); setStatus(k,'<span class="spin"></span> Saving…','busy');
-  try { await upsert(k,f); render(); toast('Video saved'); }
-  catch(e){ setBusy(k,false); setStatus(k,'⚠ '+((e&&e.message)||'Failed'),'err'); toast('Save failed',true); }
+  try {
+    var r=await _sb.rpc('help_topic_upsert', { p_key:k, p_title:null, p_description:null, p_video_url:video_url, p_video_slug:video_slug||null, p_area:null });
+    if(r.error) throw r.error;
+    var t=_topics.find(function(x){return x.topic_key===k;}); if(t){ t.video_url=video_url; t.video_slug=video_slug||''; }
+    setBusy(k,false); refreshCardVideo(k);
+    setStatus(k,'✓ '+(video_url?'Saved':'Deleted'),'ok'); toast(video_url?'Video saved':'Video deleted'); setTimeout(function(){ setStatus(k,''); },2000);
+  } catch(e){ setBusy(k,false); setStatus(k,'⚠ '+((e&&e.message)||'Failed'),'err'); toast('Save failed',true); }
 }
+// Re-render ONLY the card's video block (keeps unsaved title/description edits in the inputs).
+function refreshCardVideo(k){
+  var c=cardEl(k); if(!c) return; var vb=c.querySelector('[data-vidblock]'); var t=_topics.find(function(x){return x.topic_key===k;}); if(vb&&t) vb.innerHTML=videoBlockHtml(t);
+}
+async function deleteVideoFor(k){
+  if(_busy[k]) return;
+  if(!confirm('Remove this help video?')) return;
+  var t=_topics.find(function(x){return x.topic_key===k;}); var oldUrl=t?t.video_url:'';
+  await setVideoOnly(k, '', null);                                   // help_topic_upsert(k,null,null,'',null,null) — clears video, keeps topic + text
+  var p=bucketPath(oldUrl); if(p){ try{ await _sb.storage.from(BUCKET).remove([p]); }catch(_){} }   // best-effort, non-fatal
+}
+function bucketPath(url){ var u=String(url||''), marker='/storage/v1/object/public/'+BUCKET+'/', i=u.indexOf(marker); if(i===-1) return null; return decodeURIComponent(u.slice(i+marker.length).split('?')[0]); }
 
 async function uploadFor(k, file){
   if(file.size>100*1024*1024){ toast('File is over 100 MB',true); return; }
@@ -197,7 +232,8 @@ async function uploadFor(k, file){
     var up=await _sb.storage.from(BUCKET).upload(path,file,{contentType:file.type||'video/webm',upsert:false});
     if(up.error) throw up.error;
     var pub=_sb.storage.from(BUCKET).getPublicUrl(path);
-    await setVideo(k, (pub&&pub.data&&pub.data.publicUrl)||'', '');
+    setBusy(k,false);
+    await setVideoOnly(k, (pub&&pub.data&&pub.data.publicUrl)||'', '');
   } catch(e){ setBusy(k,false); setStatus(k,'⚠ '+((e&&e.message)||'Upload failed'),'err'); toast('Upload failed',true); }
 }
 
@@ -219,11 +255,11 @@ document.addEventListener('click', function(e){
   var k=card.getAttribute('data-card'); var act=btn.getAttribute('data-act');
   if(_busy[k]) return;
   if(act==='save') saveCard(k);
-  else if(act==='clear'){ if(confirm('Remove the video for this topic?')) setVideo(k,'',''); }
+  else if(act==='delete') deleteVideoFor(k);
   else if(act==='upload') card.querySelector('[data-file]').click();
   else if(act==='record'){
     if(!window.LoomRecorder){ toast('Recorder not loaded — refresh',true); return; }
-    window.LoomRecorder.open({ context:'help', onSaved:function(v){ setVideo(k, v.public_url, v.slug||''); } });
+    window.LoomRecorder.open({ context:'help', onSaved:function(v){ setVideoOnly(k, v.public_url, v.slug||''); } });
   }
 });
 document.addEventListener('change', function(e){

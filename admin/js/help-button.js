@@ -81,7 +81,8 @@
       '.ht-input,.ht-area{width:100%;box-sizing:border-box;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;outline:none;font-family:inherit}',
       '.ht-input:focus,.ht-ta:focus,.ht-area:focus{border-color:rgba(201,168,76,.5)}',
       '.ht-ta{width:100%;box-sizing:border-box;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;outline:none;font-family:inherit;min-height:96px;resize:vertical;line-height:1.5}',
-      '.ht-btns{display:flex;flex-wrap:wrap;gap:8px}',
+      '.ht-btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}',
+      '.ht-vlbl{font-size:11px;color:#8f8f8f;font-weight:600}',
       '.ht-btn{border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;padding:9px 14px}',
       '.ht-btn.gold{background:#C9A84C;color:#111}.ht-btn.gold:hover{background:#d8ba63}',
       '.ht-btn.gold:disabled{opacity:.55;cursor:default}',
@@ -174,9 +175,10 @@
         + '<div><div class="ht-label">Description</div><textarea class="ht-ta" id="ht-e-desc" placeholder="What does this section do?">' + esc(draft.description) + '</textarea></div>'
         + '<div><div class="ht-label">Area</div><select class="ht-area" id="ht-e-area">' + areas + '</select></div>'
         + '<div class="ht-btns">'
+        +   (draft.video_url ? '<span class="ht-vlbl">Replace:</span>' : '')
         +   '<button type="button" class="ht-btn ghost" data-ht-record>🎥 Record</button>'
         +   '<button type="button" class="ht-btn ghost" data-ht-upload>⬆️ Upload</button>'
-        +   (draft.video_url ? '<button type="button" class="ht-btn danger" data-ht-clear>🗑 Clear video</button>' : '')
+        +   (draft.video_url ? '<button type="button" class="ht-btn danger" data-ht-delete>🗑 Delete video</button>' : '')
         + '</div>'
         + '<input type="file" accept="video/*" id="ht-e-file" style="display:none">'
         + '<div class="ht-err" id="ht-e-err"></div>'
@@ -189,7 +191,7 @@
       body.querySelector('[data-ht-cancel]').addEventListener('click', function () { renderView(key, t, titleHint); });
       body.querySelector('[data-ht-record]').addEventListener('click', function () {
         ensureLoom(function () {
-          window.LoomRecorder.open({ context: 'help', onSaved: function (v) { draft.video_url = v.public_url; draft.video_slug = v.slug || ''; paint(); } });
+          window.LoomRecorder.open({ context: 'help', onSaved: function (v) { applyVideo(key, draft, v.public_url, v.slug || '', paint); } });
         });
       });
       body.querySelector('[data-ht-upload]').addEventListener('click', function () { body.querySelector('#ht-e-file').click(); });
@@ -197,7 +199,7 @@
         var f = this.files && this.files[0]; this.value = '';
         if (f) doUpload(key, f, draft, paint);
       });
-      if (body.querySelector('[data-ht-clear]')) body.querySelector('[data-ht-clear]').addEventListener('click', function () { draft.video_url = ''; draft.video_slug = ''; paint(); });
+      if (body.querySelector('[data-ht-delete]')) body.querySelector('[data-ht-delete]').addEventListener('click', function () { deleteVideo(key, draft, paint); });
       body.querySelector('[data-ht-save]').addEventListener('click', function () { doSave(key, draft, t, titleHint); });
     }
     paint();
@@ -215,11 +217,44 @@
       var up = await cl.storage.from(BUCKET).upload(path, file, { contentType: file.type || 'video/webm', upsert: false });
       if (up.error) throw up.error;
       var pub = cl.storage.from(BUCKET).getPublicUrl(path);
-      draft.video_url = (pub && pub.data && pub.data.publicUrl) || '';
-      draft.video_slug = '';
-      if (errEl) errEl.textContent = '';
-      repaint();
+      await applyVideo(key, draft, (pub && pub.data && pub.data.publicUrl) || '', '', repaint);   // persist immediately
     } catch (e) { if (errEl) errEl.textContent = '⚠ ' + ((e && e.message) || 'Upload failed'); }
+  }
+
+  // Immediately persist a video replace/add — passes null title/description/area so those are
+  // KEPT (help_topic_upsert null = no change). Updates the cache + draft, then re-paints.
+  async function applyVideo(key, draft, url, slug, repaint) {
+    var errEl = document.getElementById('ht-e-err');
+    if (errEl) errEl.innerHTML = '<span class="ht-spin" style="border-top-color:#C9A84C"></span> Saving…';
+    try {
+      var cl = await client();
+      var r = await cl.rpc('help_topic_upsert', { p_key: key, p_title: null, p_description: null, p_video_url: url, p_video_slug: slug || null, p_area: null });
+      if (r.error) throw r.error;
+      if (_cache[key]) { _cache[key].video_url = url; _cache[key].video_slug = slug || ''; }
+      draft.video_url = url; draft.video_slug = slug || '';
+      if (errEl) errEl.textContent = '';
+      if (repaint) repaint();
+    } catch (e) { if (errEl) errEl.textContent = '⚠ ' + ((e && e.message) || 'Save failed'); }
+  }
+  // Delete the video (video_url='') — keeps the topic row + title/description. Best-effort storage remove.
+  async function deleteVideo(key, draft, repaint) {
+    if (!confirm('Remove this help video?')) return;
+    var errEl = document.getElementById('ht-e-err');
+    if (errEl) errEl.innerHTML = '<span class="ht-spin" style="border-top-color:#C9A84C"></span> Removing…';
+    try {
+      var cl = await client();
+      var r = await cl.rpc('help_topic_upsert', { p_key: key, p_title: null, p_description: null, p_video_url: '', p_video_slug: null, p_area: null });
+      if (r.error) throw r.error;
+      var p = _htBucketPath(draft.video_url); if (p) { try { await cl.storage.from(BUCKET).remove([p]); } catch (_) {} }
+      if (_cache[key]) { _cache[key].video_url = ''; _cache[key].video_slug = ''; }
+      draft.video_url = ''; draft.video_slug = '';
+      if (errEl) errEl.textContent = '';
+      if (repaint) repaint();
+    } catch (e) { if (errEl) errEl.textContent = '⚠ ' + ((e && e.message) || 'Delete failed'); }
+  }
+  function _htBucketPath(url) {
+    var u = String(url || ''), marker = '/storage/v1/object/public/' + BUCKET + '/', i = u.indexOf(marker);
+    if (i === -1) return null; return decodeURIComponent(u.slice(i + marker.length).split('?')[0]);
   }
 
   async function doSave(key, draft, t, titleHint) {

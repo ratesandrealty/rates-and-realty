@@ -212,7 +212,7 @@
     function mountHelpButton() {
       if (document.querySelector('script[src*="/admin/js/help-button.js"]')) return;
       const hb = document.createElement('script');
-      hb.src = '/admin/js/help-button.js?v=2026070601';
+      hb.src = '/admin/js/help-button.js?v=2026070602';
       document.head.appendChild(hb);
     }
     if (document.readyState === 'loading') {
