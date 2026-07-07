@@ -142,38 +142,39 @@ async function getAccessToken(): Promise<string> {
 }
 
 // ── User OAuth access token (for file uploads) ───────────────────
+// Source: google_calendar_tokens id='rene' (the working, auto-refreshing Drive-scoped
+// token) via the service-role client — NOT the dead GOOGLE_DRIVE_REFRESH_TOKEN env secret.
+// Mirrors gdrive-sync's getUserAccessToken exactly. Uses the cached access_token until ~60s
+// before expiry, otherwise refreshes and writes the new token back.
 async function getUserAccessToken(): Promise<string | null> {
   try {
-    const refreshToken = Deno.env.get('GOOGLE_DRIVE_REFRESH_TOKEN');
-    const clientId     = Deno.env.get('GOOGLE_CLIENT_ID');
-    const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET');
-
-    if (!refreshToken || !clientId || !clientSecret) {
-      console.error('[drive-auth] Missing GOOGLE_DRIVE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, or GOOGLE_CLIENT_SECRET');
-      return null;
+    const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+    const { data: row } = await sb.from('google_calendar_tokens')
+      .select('access_token, refresh_token, expires_at')
+      .eq('id', USER_TOKEN_ID)
+      .maybeSingle();
+    if (!row) { console.error('[drive-auth] no google_calendar_tokens row'); return null; }
+    const expiresAt = new Date(row.expires_at).getTime();
+    if (expiresAt > Date.now() + 60000) return row.access_token;
+    if (!row.refresh_token || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+      return row.access_token || null;
     }
-
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        grant_type:    'refresh_token',
-        refresh_token: refreshToken,
-        client_id:     clientId,
-        client_secret: clientSecret,
+        grant_type: 'refresh_token', refresh_token: row.refresh_token,
+        client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
       })
     });
-
     const data = await res.json();
-    if (!res.ok || !data.access_token) {
-      console.error('[drive-auth] Token refresh failed:', JSON.stringify(data));
-      return null;
-    }
+    if (!res.ok || !data.access_token) { console.error('[drive-auth] refresh failed:', JSON.stringify(data)); return row.access_token || null; }
+    const newExpiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
+    await sb.from('google_calendar_tokens').update({
+      access_token: data.access_token, expires_at: newExpiresAt, updated_at: new Date().toISOString(),
+    }).eq('id', USER_TOKEN_ID);
     return data.access_token;
-  } catch (e: any) {
-    console.error('[drive-auth] getUserAccessToken error:', e.message);
-    return null;
-  }
+  } catch (e: any) { console.error('[drive-auth] error:', e.message); return null; }
 }
 
 // ── Drive fetch helpers ──────────────────────────────────────────
