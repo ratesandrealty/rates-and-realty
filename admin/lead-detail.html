@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070610 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070611 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -2452,6 +2452,11 @@
         #tab-processing #lpHealthBody .lh-toggle:hover { text-decoration:underline; }
         /* Friendly role/title label badge (vendor_role_labels) on suggestions + saved vendor/partner rows */
         #tab-processing .lp-role-tag { display:inline-block; font-size:9px; font-weight:700; letter-spacing:.2px; color:#C9A84C; background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.28); border-radius:8px; padding:1px 7px; line-height:1.35; white-space:normal; vertical-align:middle; }
+        /* Compact icon-only Transaction Contacts row actions (Scan / Paste / Save) */
+        #tab-processing .lp-actbtn { width:28px; height:26px; display:inline-flex; align-items:center; justify-content:center; background:#141414; border:1px solid rgba(255,255,255,.12); color:#bbb; border-radius:6px; cursor:pointer; font-size:12px; padding:0; line-height:1; flex-shrink:0; transition:background .12s,border-color .12s,color .12s; }
+        #tab-processing .lp-actbtn:hover { background:rgba(201,168,76,.14); border-color:rgba(201,168,76,.5); color:#C9A84C; }
+        #tab-processing .lp-actbtn.save { color:#C9A84C; border-color:rgba(201,168,76,.35); background:rgba(201,168,76,.10); }
+        #tab-processing .lp-actbtn:disabled { opacity:.5; cursor:default; }
         @keyframes lpPulse { 0%,100%{ box-shadow:0 0 0 4px rgba(201,168,76,.18);} 50%{ box-shadow:0 0 0 8px rgba(201,168,76,.04);} }
         #tab-processing .lp-stub { opacity:0.6; }
         #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
@@ -9321,8 +9326,8 @@ function _lpEscHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replac
 function _lpBorrowerName(){ var c=(typeof contactData!=='undefined'&&contactData)?contactData:{}; return ((c.first_name||'')+' '+(c.last_name||'')).trim()||'the borrower'; }
 function _lpFmtDob(v){ if(!v) return ''; var s=String(v).slice(0,10).split('-'); if(s.length!==3) return String(v); return s[1]+'/'+s[2]+'/'+s[0]; }
 function _lpFmtMoney(v){ if(v==null||v==='') return ''; var n=Number(String(v).replace(/[^0-9.]/g,'')); return (!isNaN(n)&&n>0)?('$'+n.toLocaleString('en-US')):String(v); }
-function _lpSubst(s, borrower, bName, vals){ s=String(s==null?'':s).replace(/\{\{\s*first_name\s*\}\}/g,(borrower.first_name||'there')).replace(/\{\{\s*borrower_name\s*\}\}/g,bName).replace(/\{\{\s*loan_amount\s*\}\}/g,(borrower.loan_amount||'')); if(vals){ Object.keys(vals).forEach(function(k){ s=s.replace(new RegExp('\\{\\{\\s*'+k+'\\s*\\}\\}','g'),(vals[k]==null?'':String(vals[k]))); }); } return s; }
-async function _lpLoadContactMap(cid){ var map={}; try{ var r=await _authClient().from('loan_contacts').select('role,name,company,email,phone').eq('contact_id',cid); (r.data||[]).forEach(function(x){ map[x.role]=x; }); }catch(e){} return map; }
+function _lpSubst(s, borrower, bName, vals){ s=String(s==null?'':s).replace(/\{\{\s*first_name\s*\}\}/g,(borrower.first_name||'there')).replace(/\{\{\s*last_name\s*\}\}/g,(borrower.last_name||'')).replace(/\{\{\s*borrower_name\s*\}\}/g,bName).replace(/\{\{\s*loan_amount\s*\}\}/g,(borrower.loan_amount||'')); if(vals){ Object.keys(vals).forEach(function(k){ s=s.replace(new RegExp('\\{\\{\\s*'+k+'\\s*\\}\\}','g'),(vals[k]==null?'':String(vals[k]))); }); } return s; }
+async function _lpLoadContactMap(cid){ var map={}; try{ var r=await _authClient().from('loan_contacts').select('role,name,first_name,last_name,company,email,phone').eq('contact_id',cid); (r.data||[]).forEach(function(x){ map[x.role]=x; }); }catch(e){} return map; }
 async function lpTemplate(key, defs){
   try{
     if(!window._lpTplCache){
@@ -9355,7 +9360,7 @@ async function lpAction(name){
   var SIG='<br><br>Best regards,<br>Rene Duarte<br>Rates &amp; Realty<br>rene@ratesandrealty.com';
   // Open the server-rendered preview-before-send modal. RAW template (tags intact)
   // goes to email-service 'preview'; the server fills tags from proc_contact_id + sample_recipient.
-  function emailRole(roleKey,roleLabel,tpl,tkey){ var rc=map[roleKey]||{}; var to=(rc.email||'').trim(); if(!to){ toastFn('No '+roleLabel+' email on file — add it under Transaction Contacts below.',true); return false; } var fn=((rc.name||'').trim().split(/\s+/)[0])||''; lpEmailPreview({to:to,toName:rc.name||roleLabel,firstName:fn,subjectRaw:tpl.subject,bodyRaw:tpl.body,cid:cid}); return true; }
+  function emailRole(roleKey,roleLabel,tpl,tkey){ var rc=map[roleKey]||{}; var to=(rc.email||'').trim(); if(!to){ toastFn('No '+roleLabel+' email on file — add it under Transaction Contacts below.',true); return false; } var fn=(rc.first_name||((rc.name||'').trim().split(/\s+/)[0])||''); var ln=(rc.last_name||''); var tn=(rc.name||((rc.first_name||'')+' '+(rc.last_name||'')).trim()||roleLabel); lpEmailPreview({to:to,toName:tn,firstName:fn,lastName:ln,subjectRaw:tpl.subject,bodyRaw:tpl.body,cid:cid}); return true; }
   function emailBorrower(tpl,tkey){ var to=(borrower.email||'').trim(); if(!to){ toastFn('No borrower email on file.',true); return false; } lpEmailPreview({to:to,toName:bName,firstName:(borrower.first_name||''),subjectRaw:tpl.subject,bodyRaw:tpl.body,cid:cid}); return true; }
   try{
     switch(name){
@@ -9444,7 +9449,7 @@ async function lpEmailPreview(o){
       subject:o.subjectRaw||'',
       html:o.bodyRaw||'',
       proc_contact_id:o.cid||null,
-      sample_recipient:{ first_name:o.firstName||'', email:o.to }
+      sample_recipient:{ first_name:o.firstName||'', last_name:o.lastName||'', email:o.to }
     }});
     var data=resp&&resp.data, error=resp&&resp.error;
     if(error || !data){ throw new Error((data&&data.error)||(error&&error.message)||'Preview failed'); }
@@ -10036,16 +10041,21 @@ async function lpLoadContacts(cid){
   const header = '<div style="'+grid+'padding:0 4px 8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);"><div>Role</div><div>Name</div><div>Company</div><div>Phone</div><div>Email</div><div></div></div>';
   el.innerHTML = header + LP_CONTACT_ROLES.map(r=>{
     const c = map[r.key]||{};
+    const cf=(c.first_name!=null&&c.first_name!=='')?c.first_name:_lpSplitName(c.name||'').first;
+    const cl=(c.last_name!=null&&c.last_name!=='')?c.last_name:_lpSplitName(c.name||'').last;
     return '<div class="lp-contact" data-role="'+r.key+'" ondragenter="lpRowDragEnter(this,event)" ondragover="lpRowDragOver(this,event)" ondragleave="lpRowDragLeave(this,event)" ondrop="lpRowDrop(\''+r.key+'\',this,event)" style="position:relative;'+grid+'align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
       +'<div><span class="lp-role-tag">'+lpEsc(lpRoleLabel(r.key))+'</span></div>'
-      +'<input data-f="name" type="text" autocomplete="off" placeholder="Name" value="'+lpEsc(c.name||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      +'<div style="display:flex;gap:5px;min-width:0;">'
+        +'<input data-f="first_name" type="text" autocomplete="off" placeholder="First" value="'+lpEsc(cf||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'flex:1;min-width:0;">'
+        +'<input data-f="last_name" type="text" autocomplete="off" placeholder="Last" value="'+lpEsc(cl||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'flex:1;min-width:0;">'
+      +'</div>'
       +'<input data-f="company" type="text" autocomplete="off" placeholder="Company" value="'+lpEsc(c.company||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<input data-f="phone" type="text" placeholder="Phone" value="'+lpEsc(c.phone||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<input data-f="email" type="email" autocomplete="off" placeholder="Email" value="'+lpEsc(c.email||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
-      +'<div style="display:flex;gap:5px;">'
-        +'<button type="button" class="lp-scan-btn" title="Scan an email-signature screenshot to auto-fill" onclick="lpScanRow(\''+r.key+'\',this)" style="'+scanbtn+'">📷 Scan</button>'
-        +'<button type="button" title="Paste a screenshot from your clipboard to auto-fill" onclick="lpPasteRow(\''+r.key+'\')" style="'+scanbtn+'">📋 Paste</button>'
-        +'<button type="button" title="Save to vendor directory" onclick="lpVendorSaveRow(\''+r.key+'\')" style="'+sbtn+'">💾 Save</button>'
+      +'<div style="display:flex;gap:4px;justify-content:flex-end;align-items:center;">'
+        +'<button type="button" class="lp-actbtn lp-scan-btn" title="Scan an email-signature screenshot to auto-fill" onclick="lpScanRow(\''+r.key+'\',this)">📷</button>'
+        +'<button type="button" class="lp-actbtn" title="Paste a screenshot from your clipboard to auto-fill" onclick="lpPasteRow(\''+r.key+'\')">📋</button>'
+        +'<button type="button" class="lp-actbtn save" title="Save to vendor directory" onclick="lpVendorSaveRow(\''+r.key+'\')">💾</button>'
       +'</div>'
       +'<input type="file" class="lp-scan-file" accept="image/*" style="display:none;" onchange="lpScanFile(\''+r.key+'\',this)">'
       +'<div class="lp-vsuggest" style="display:none;position:absolute;left:158px;top:36px;z-index:60;min-width:300px;max-width:440px;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 14px 34px rgba(0,0,0,.6);overflow:hidden;"></div>'
@@ -10126,6 +10136,15 @@ function lpVendorKey(role, inputEl, e){
   else if(e.key==='Enter'){ if(box._idx>=0 && opts[box._idx]){ e.preventDefault(); opts[box._idx].click(); } }
   else if(e.key==='Escape'){ lpVendorClose(box); }
 }
+// Name split helpers: contacts store first_name + last_name (with a combined `name` for
+// back-compat). Split a combined name on the FIRST space; fill both inputs on a row.
+function _lpSplitName(name){ const s=String(name||'').trim(); if(!s) return {first:'',last:''}; const i=s.indexOf(' '); return i<0 ? {first:s,last:''} : {first:s.slice(0,i), last:s.slice(i+1).trim()}; }
+function _lpFillName(row, first, last, combined){
+  let f=first, l=last;
+  if((f==null||f==='') && (l==null||l==='') && combined){ const sp=_lpSplitName(combined); f=sp.first; l=sp.last; }
+  const setF=function(field,val){ const e=row.querySelector('input[data-f="'+field+'"]'); if(e){ e.value=val||''; lpFlash(e); } };
+  setF('first_name', f); setF('last_name', l);
+}
 async function lpVendorDirPick(role, id, optEl){
   const row = optEl.closest('.lp-contact'); if(!row) return;
   const box = row.querySelector('.lp-vsuggest');
@@ -10135,15 +10154,16 @@ async function lpVendorDirPick(role, id, optEl){
   if(!v) return;
   const set = function(f,val){ const e=row.querySelector('input[data-f="'+f+'"]'); if(e){ e.value = val||''; lpFlash(e); } };
   if(isPartner){
-    const nm = ((v.first_name||'')+' '+(v.last_name||'')).trim() || v.name || '';
-    set('name', nm); set('company', v.company); set('phone', v.phone); set('email', v.email);
+    _lpFillName(row, v.first_name, v.last_name, v.name);
+    set('company', v.company); set('phone', v.phone); set('email', v.email);
     // Mark the row with the partner id. loan_contacts has NO referral_partner_id column (that
     // field lives on contacts / the lead), so we don't persist it here — text fill per the
     // fallback. The marker lets us wire real linking later if desired.
     row.setAttribute('data-partner-id', (v.id!=null?String(v.id):''));
     (window.showToast||window.toast||function(){})('Filled from realtor partners — review & Save ✓');
   } else {
-    set('name', v.name); set('company', v.company); set('phone', v.phone); set('email', v.email); set('website', v.website);
+    _lpFillName(row, v.first_name, v.last_name, v.name);
+    set('company', v.company); set('phone', v.phone); set('email', v.email); set('website', v.website);
     row.removeAttribute('data-partner-id');
     (window.showToast||window.toast||function(){})('Filled from directory — review & Save ✓');
   }
@@ -10206,7 +10226,7 @@ async function lpScanImage(role, file){
   if(!/^image\//.test(file.type||'')){ toastFn('Please choose an image file.', true); return; }
   const btn = row.querySelector('.lp-scan-btn');
   const orig = btn ? btn.innerHTML : '';
-  if(btn){ btn.disabled = true; btn.innerHTML = '⏳ Reading…'; }
+  if(btn){ btn.disabled = true; btn.innerHTML = '⏳'; }
   try{
     const dataUrl = await new Promise(function(res,rej){ const fr=new FileReader(); fr.onload=function(){ res(fr.result); }; fr.onerror=function(){ rej(fr.error||new Error('read failed')); }; fr.readAsDataURL(file); });
     const { data, error } = await _authClient().functions.invoke('parse-signature', { body: { image_base64: dataUrl, media_type: file.type||'image/png', role: role } });
@@ -10214,7 +10234,8 @@ async function lpScanImage(role, file){
     if(data && data.error){ toastFn('Scan failed: '+data.error+(data.detail?' — '+data.detail:''), true); return; }
     const d = (data && data.data) || {};
     const fill = function(f,val){ if(val==null || val==='') return; const e=row.querySelector('input[data-f="'+f+'"]'); if(e){ e.value=val; lpFlash(e); } };
-    fill('name', d.name); fill('company', d.company); fill('phone', d.phone); fill('email', d.email); fill('website', d.website);
+    _lpFillName(row, d.first_name, d.last_name, d.name);
+    fill('company', d.company); fill('phone', d.phone); fill('email', d.email); fill('website', d.website);
     toastFn('Signature scanned — review & Save ✓');
   }catch(e){ toastFn('Scan failed: '+(e&&e.message||e), true); }
   finally{ if(btn){ btn.disabled=false; btn.innerHTML=orig; } }
@@ -10259,7 +10280,7 @@ async function lpPasteRow(role){
 async function lpVendorSaveRow(role){
   const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
   const g = function(f){ const e=row.querySelector('input[data-f="'+f+'"]'); return e?(e.value||'').trim():''; };
-  const name=g('name'), company=g('company'), phone=g('phone'), email=g('email');
+  const name=(g('first_name')+' '+g('last_name')).trim(), company=g('company'), phone=g('phone'), email=g('email');
   const toastFn = window.showToast||window.toast||function(){};
   if(!name && !company){ toastFn('Add a name or company first.', true); return; }
   try{
@@ -10270,19 +10291,20 @@ async function lpVendorSaveRow(role){
 }
 document.addEventListener('click', function(e){
   if(e.target.closest && e.target.closest('.lp-vsuggest')) return;
-  if(e.target.matches && e.target.matches('.lp-contact input[data-f="name"], .lp-contact input[data-f="company"]')) return;
+  if(e.target.matches && e.target.matches('.lp-contact input[data-f="first_name"], .lp-contact input[data-f="last_name"], .lp-contact input[data-f="company"]')) return;
   document.querySelectorAll('.lp-vsuggest').forEach(function(b){ lpVendorClose(b); });
 });
 async function lpSaveContact(role){
   const cid = lpCid(); if(!cid) return;
   const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
   const g = f => { const e = row.querySelector('input[data-f="'+f+'"]'); return e ? (e.value||null) : null; };
-  try{ await _authClient().from('loan_contacts').upsert({contact_id:cid,role:role,name:g('name'),company:g('company'),phone:g('phone'),email:g('email'),updated_at:new Date().toISOString()}, {onConflict:'contact_id,role'}); }catch(e){ console.warn('[lpSaveContact]', e.message); }
-  // Also capture the vendor into the shared directory so manually typed contacts become
-  // reusable/searchable everywhere next time. Best-effort — never blocks the contact save.
+  const first=((g('first_name')||'')).trim(), last=((g('last_name')||'')).trim(), name=(first+' '+last).trim();
+  try{ await _authClient().from('loan_contacts').upsert({contact_id:cid,role:role,first_name:first||null,last_name:last||null,name:name||null,company:g('company'),phone:g('phone'),email:g('email'),updated_at:new Date().toISOString()}, {onConflict:'contact_id,role'}); }catch(e){ console.warn('[lpSaveContact]', e.message); }
+  // Also capture the vendor into the shared directory (vendor_directory_upsert derives first/last
+  // from p_name). Best-effort — never blocks the contact save.
   try{
-    const nm=((g('name')||'')).trim(), co=((g('company')||'')).trim();
-    if(nm||co){ await _authClient().rpc('vendor_directory_upsert', { p_id:null, p_role:role, p_name:nm||null, p_company:co||null, p_phone:((g('phone')||'')).trim()||null, p_email:((g('email')||'')).trim()||null, p_website:null, p_notes:null }); }
+    const co=((g('company')||'')).trim();
+    if(name||co){ await _authClient().rpc('vendor_directory_upsert', { p_id:null, p_role:role, p_name:name||null, p_company:co||null, p_phone:((g('phone')||'')).trim()||null, p_email:((g('email')||'')).trim()||null, p_website:null, p_notes:null }); }
   }catch(_){}
 }
 // Statuses treated as done/closed — hidden from the default (open-only) tasks view.
