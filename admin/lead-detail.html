@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070611 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070612 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -2457,6 +2457,12 @@
         #tab-processing .lp-actbtn:hover { background:rgba(201,168,76,.14); border-color:rgba(201,168,76,.5); color:#C9A84C; }
         #tab-processing .lp-actbtn.save { color:#C9A84C; border-color:rgba(201,168,76,.35); background:rgba(201,168,76,.10); }
         #tab-processing .lp-actbtn:disabled { opacity:.5; cursor:default; }
+        /* Third-Party Order drag-drop upload zones (→ Drive subfolder + CRM) */
+        #tab-processing .lp-drop { margin-top:8px; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 11px; border:1px dashed rgba(201,168,76,.35); border-radius:8px; background:rgba(201,168,76,.045); color:#9a8f6a; font-size:10.5px; cursor:pointer; transition:background .12s,border-color .12s,color .12s; }
+        #tab-processing .lp-drop:hover { background:rgba(201,168,76,.09); border-color:rgba(201,168,76,.55); color:#C9A84C; }
+        #tab-processing .lp-drop.drag { background:rgba(201,168,76,.18); border-color:#C9A84C; color:#C9A84C; }
+        #tab-processing .lp-drop .lp-drop-txt b { color:#C9A84C; font-weight:700; }
+        #tab-processing .lp-drop-stat { font-size:10px; font-weight:600; white-space:nowrap; }
         @keyframes lpPulse { 0%,100%{ box-shadow:0 0 0 4px rgba(201,168,76,.18);} 50%{ box-shadow:0 0 0 8px rgba(201,168,76,.04);} }
         #tab-processing .lp-stub { opacity:0.6; }
         #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
@@ -9496,6 +9502,7 @@ async function _lpEmailSend(){
 async function lpLoadProcessing(){
   const cid = lpCid(); if(!cid) return;
   await lpLoadRoleLabels();          // friendly role labels ready before rows/suggestions render
+  await lpLoadSectionFolders();      // drive_section_folders map ready before order drop-zones render
   lpRenderSnapshot(cid);
   lpLoadChecklist('intake','lpIntakeBody',LP_INTAKE_TEMPLATE);
   lpLoadChecklist('doc','lpDocBody',LP_DOC_TEMPLATE);
@@ -10430,6 +10437,91 @@ async function lpLoadVoes(cid){
     lpRenderOrders();   // re-render rows (now with ids → notes toggle) + VOE cards
   }catch(e){ _lpVoes=[]; lpRenderVoe(); }
 }
+// ── Third-Party Order drag-drop → Google Drive subfolder + CRM row ──────────
+// section_key == order row type (title/hoi/escrow/appraisal) or 'voe'. drive_section_folders
+// maps section_key → { folder_name, document_type }; loaded once into _lpSectionFolders. At drop
+// time we resolve-or-create the named subfolder under contactData.gdrive_folder_id via gdrive-proxy,
+// upload each file into it (server-side OAuth), then INSERT an uploaded_documents CRM row.
+let _lpSectionFolders = null;
+async function lpLoadSectionFolders(){
+  if(_lpSectionFolders) return _lpSectionFolders;
+  _lpSectionFolders = {};
+  try{ const r=await _authClient().from('drive_section_folders').select('section_key,folder_name,document_type'); (r.data||[]).forEach(function(x){ if(x&&x.section_key) _lpSectionFolders[x.section_key]={ folder_name:x.folder_name, document_type:x.document_type }; }); }catch(e){ console.warn('[lpLoadSectionFolders]', e&&e.message); }
+  return _lpSectionFolders;
+}
+function lpDropZoneHtml(sectionKey){
+  const cfg=(_lpSectionFolders&&_lpSectionFolders[sectionKey])||{};
+  const fn=cfg.folder_name||sectionKey;
+  return '<div class="lp-drop" data-section="'+sectionKey+'" onclick="lpDropClick(this)" ondragover="lpDropOver(event,this)" ondragleave="lpDropLeave(this)" ondrop="lpDropDrop(event,\''+sectionKey+'\',this)" title="Drop files or click — uploads to the '+lpEsc(fn)+' Drive folder + logs to CRM">'
+    +'<span class="lp-drop-txt">⬆︎ Drop files or click — <b>'+lpEsc(fn)+'</b></span>'
+    +'<span class="lp-drop-stat" data-drop-stat="'+sectionKey+'"></span>'
+    +'<input type="file" multiple style="display:none" onchange="lpDropInput(this,\''+sectionKey+'\')">'
+    +'</div>';
+}
+function lpDropOver(e, el){ e.preventDefault(); try{ e.dataTransfer.dropEffect='copy'; }catch(_){} el.classList.add('drag'); }
+function lpDropLeave(el){ el.classList.remove('drag'); }
+function lpDropDrop(e, sectionKey, el){ e.preventDefault(); el.classList.remove('drag'); const files=(e.dataTransfer&&e.dataTransfer.files)||[]; if(files&&files.length) lpSectionUpload(sectionKey, files); }
+function lpDropClick(el){ const inp=el.querySelector('input[type=file]'); if(inp) inp.click(); }
+function lpDropInput(inp, sectionKey){ const files=inp.files; if(files&&files.length) lpSectionUpload(sectionKey, files); inp.value=''; }
+function _lpDropStat(sectionKey){ return document.querySelector('.lp-drop[data-section="'+sectionKey+'"] [data-drop-stat]'); }
+async function lpSectionUpload(sectionKey, fileList){
+  const toastFn=window.showToast||window.toast||function(){};
+  const files=Array.prototype.slice.call(fileList||[]).filter(Boolean);
+  if(!files.length) return;
+  const cid=lpCid(); if(!cid){ toastFn('No contact selected', true); return; }
+  const root=(typeof contactData!=='undefined'&&contactData)?contactData.gdrive_folder_id:null;
+  if(!root){ toastFn('This borrower has no Drive folder yet — create/link one via “📁 Open in Drive” first.', true); return; }
+  await lpLoadSectionFolders();
+  const scfg=_lpSectionFolders[sectionKey];
+  if(!scfg||!scfg.folder_name){ toastFn('No Drive section mapping for “'+sectionKey+'”.', true); return; }
+  const folderName=scfg.folder_name, docType=scfg.document_type;
+  const cfg=window.APP_CONFIG||{}, base=cfg.SUPABASE_URL||'';
+  let token='', uid=null;
+  try{ const s=await _authClient().auth.getSession(); token=(s&&s.data&&s.data.session&&s.data.session.access_token)||''; }catch(_){}
+  try{ const u=await _authClient().auth.getUser(); uid=(u&&u.data&&u.data.user&&u.data.user.id)||null; }catch(_){}
+  const gp={ 'Authorization':'Bearer '+token, 'apikey':(cfg.SUPABASE_ANON_KEY||'') };
+  const stat=_lpDropStat(sectionKey);
+  const setStat=function(t,err){ if(stat){ stat.textContent=t; stat.style.color=err?'#f87171':'#C9A84C'; } };
+  // 1+2. Resolve-or-create the section subfolder under the borrower root.
+  setStat('resolving “'+folderName+'”…');
+  let folderId=null;
+  try{
+    const lr=await fetch(base+'/functions/v1/gdrive-proxy?action=list-folders&parentId='+encodeURIComponent(root), { headers:gp });
+    const ld=await lr.json().catch(function(){ return {}; });
+    if(!lr.ok) throw new Error((ld&&ld.error)||('list-folders HTTP '+lr.status));
+    const want=String(folderName).trim().toLowerCase();
+    const hit=((ld&&ld.files)||[]).find(function(f){ return String(f.name||'').trim().toLowerCase()===want; });
+    if(hit){ folderId=hit.id; }
+    else{
+      const cr=await fetch(base+'/functions/v1/gdrive-proxy?action=create-folder', { method:'POST', headers:Object.assign({'Content-Type':'application/json'}, gp), body:JSON.stringify({ parentId:root, name:folderName }) });
+      const cd=await cr.json().catch(function(){ return {}; });
+      if(!cr.ok||!cd.id) throw new Error((cd&&cd.error)||('create-folder HTTP '+cr.status));
+      folderId=cd.id;
+    }
+  }catch(e){ setStat('folder error', true); toastFn('Could not resolve “'+folderName+'” folder: '+((e&&e.message)||e), true); return; }
+  // 3+4. Upload each file → Drive subfolder, then log a CRM uploaded_documents row.
+  let done=0, fail=0;
+  for(let i=0;i<files.length;i++){
+    const file=files[i];
+    setStat('uploading '+(i+1)+'/'+files.length+'…');
+    try{
+      let finalFile=file;
+      if(typeof _convertToPdfIfNeeded==='function'){ try{ const cv=await _convertToPdfIfNeeded(file); if(cv&&cv.file) finalFile=cv.file; }catch(_){} }
+      const fd=new FormData(); fd.append('folderId', folderId); fd.append('file', finalFile, finalFile.name);
+      const ur=await fetch(base+'/functions/v1/gdrive-proxy?action=upload-file', { method:'POST', headers:gp, body:fd });
+      const ud=await ur.json().catch(function(){ return {}; });
+      if(!ur.ok||!ud.id) throw new Error((ud&&ud.error)||('upload HTTP '+ur.status));
+      try{
+        const ins=await _authClient().from('uploaded_documents').insert({ contact_id:cid, document_type:docType, type:docType, file_name:finalFile.name, gdrive_file_id:ud.id, gdrive_file_url:ud.webViewLink||null, status:'uploaded', uploaded_by:uid });
+        if(ins&&ins.error) console.warn('[lpSectionUpload] CRM insert:', ins.error.message);
+      }catch(ie){ console.warn('[lpSectionUpload] CRM insert:', ie&&ie.message); }
+      done++;
+    }catch(e){ fail++; console.warn('[lpSectionUpload]', (file&&file.name), e&&e.message); }
+  }
+  setStat((done?('✓ '+done+' uploaded'):'')+(fail?('  ✗ '+fail+' failed'):''), fail>0);
+  toastFn(done+' file'+(done===1?'':'s')+' → '+folderName+(fail?('  ·  '+fail+' failed'):' ✓'), fail>0);
+  if(typeof loadDocumentsGrid==='function'){ try{ loadDocumentsGrid(); }catch(_){} }
+}
 function lpRenderOrders(){
   const body=document.getElementById('lpOrdersBody'); if(!body) return;
   const sel='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:3px 6px;cursor:pointer;';
@@ -10465,13 +10557,13 @@ function lpRenderOrders(){
         +'<button type="button" onclick="lpOrderEmail(\''+o.id+'\')" style="background:transparent;border:none;color:#C9A84C;font-size:10px;cursor:pointer;padding:0;font-family:inherit;">✉️ Email</button>'
         +'</div><div id="lpRowNotes-'+o.id+'" style="display:none;"></div>';
     }
-    return html+'</div>';
+    return html+lpDropZoneHtml(row.type)+'</div>';
   }).join('')
   + '<div id="lpVoeSection" style="margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px;">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
         + '<span style="font-size:11px;font-weight:700;color:#C9A84C;">VOE Orders</span>'
         + '<button type="button" onclick="lpVoeAdd()" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">+ Add VOE</button>'
-      + '</div><div id="lpVoeCards"></div></div>';
+      + '</div>' + lpDropZoneHtml('voe') + '<div id="lpVoeCards"></div></div>';
   lpRenderVoe();
 }
 
