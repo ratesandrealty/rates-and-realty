@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070612 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070614 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -2463,6 +2463,16 @@
         #tab-processing .lp-drop.drag { background:rgba(201,168,76,.18); border-color:#C9A84C; color:#C9A84C; }
         #tab-processing .lp-drop .lp-drop-txt b { color:#C9A84C; font-weight:700; }
         #tab-processing .lp-drop-stat { font-size:10px; font-weight:600; white-space:nowrap; }
+        /* Per-section "already uploaded" CRM list under each drop zone */
+        #tab-processing .lp-seclist { margin-top:4px; display:flex; flex-direction:column; gap:2px; }
+        #tab-processing .lp-secdoc { display:flex; align-items:center; gap:8px; padding:3px 8px; border-radius:6px; font-size:10.5px; color:#cfc8b4; }
+        #tab-processing .lp-secdoc:hover { background:rgba(255,255,255,.03); }
+        #tab-processing .lp-secdoc-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        #tab-processing .lp-secdoc-badge { font-size:8.5px; font-weight:700; color:#C9A84C; background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.28); border-radius:7px; padding:0 6px; white-space:nowrap; }
+        #tab-processing .lp-secdoc-when { font-size:9.5px; color:#7f7f7f; white-space:nowrap; }
+        #tab-processing .lp-secdoc-view { font-size:9.5px; font-weight:600; color:#C9A84C; text-decoration:none; white-space:nowrap; }
+        #tab-processing .lp-secdoc-view:hover { text-decoration:underline; }
+        #tab-processing .lp-secdoc-pending { font-size:9.5px; font-weight:600; color:#c99a5b; white-space:nowrap; }
         @keyframes lpPulse { 0%,100%{ box-shadow:0 0 0 4px rgba(201,168,76,.18);} 50%{ box-shadow:0 0 0 8px rgba(201,168,76,.04);} }
         #tab-processing .lp-stub { opacity:0.6; }
         #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
@@ -10456,7 +10466,8 @@ function lpDropZoneHtml(sectionKey){
     +'<span class="lp-drop-txt">⬆︎ Drop files or click — <b>'+lpEsc(fn)+'</b></span>'
     +'<span class="lp-drop-stat" data-drop-stat="'+sectionKey+'"></span>'
     +'<input type="file" multiple style="display:none" onchange="lpDropInput(this,\''+sectionKey+'\')">'
-    +'</div>';
+    +'</div>'
+    +'<div class="lp-seclist" data-seclist="'+sectionKey+'"></div>';
 }
 function lpDropOver(e, el){ e.preventDefault(); try{ e.dataTransfer.dropEffect='copy'; }catch(_){} el.classList.add('drag'); }
 function lpDropLeave(el){ el.classList.remove('drag'); }
@@ -10499,28 +10510,98 @@ async function lpSectionUpload(sectionKey, fileList){
       folderId=cd.id;
     }
   }catch(e){ setStat('folder error', true); toastFn('Could not resolve “'+folderName+'” folder: '+((e&&e.message)||e), true); return; }
-  // 3+4. Upload each file → Drive subfolder, then log a CRM uploaded_documents row.
-  let done=0, fail=0;
+  // Per file: CRM row FIRST (the must-have — a VA upload is always recorded), then a best-effort
+  // Storage copy, then the Drive upload. Drive failure never loses the file from the CRM.
+  let done=0, drivePending=0, crmFail=0;
   for(let i=0;i<files.length;i++){
     const file=files[i];
     setStat('uploading '+(i+1)+'/'+files.length+'…');
+    let finalFile=file;
+    if(typeof _convertToPdfIfNeeded==='function'){ try{ const cv=await _convertToPdfIfNeeded(file); if(cv&&cv.file) finalFile=cv.file; }catch(_){} }
+    // a. Insert the CRM row FIRST (guaranteed record). Capture its id for later Drive-id UPDATE.
+    let rowId=null;
     try{
-      let finalFile=file;
-      if(typeof _convertToPdfIfNeeded==='function'){ try{ const cv=await _convertToPdfIfNeeded(file); if(cv&&cv.file) finalFile=cv.file; }catch(_){} }
+      const ins=await _authClient().from('uploaded_documents')
+        .insert({ contact_id:cid, document_type:docType, type:docType, file_name:finalFile.name, status:'uploaded', uploaded_by:uid, uploaded_at:new Date().toISOString() })
+        .select('id').single();
+      if(ins.error) throw ins.error;
+      rowId=ins.data && ins.data.id;
+    }catch(ie){ crmFail++; console.warn('[lpSectionUpload] CRM insert failed:', ie&&ie.message); continue; }
+    // (optional) best-effort Supabase Storage copy so the VA can open the file without Drive access.
+    try{
+      const safe=String(finalFile.name).replace(/[^a-zA-Z0-9._-]/g,'_');
+      const path=cid+'/'+docType+'/'+Date.now()+'_'+safe;
+      const up=await _authClient().storage.from('borrower-documents').upload(path, finalFile);
+      if(up && !up.error && rowId){ await _authClient().from('uploaded_documents').update({ file_path:path }).eq('id', rowId); }
+    }catch(_){}
+    // b. Drive upload via gdrive-proxy (SESSION token only — no Google popup). Stamp ids on success;
+    //    on failure keep the CRM row and mark it pending_drive.
+    try{
       const fd=new FormData(); fd.append('folderId', folderId); fd.append('file', finalFile, finalFile.name);
       const ur=await fetch(base+'/functions/v1/gdrive-proxy?action=upload-file', { method:'POST', headers:gp, body:fd });
       const ud=await ur.json().catch(function(){ return {}; });
       if(!ur.ok||!ud.id) throw new Error((ud&&ud.error)||('upload HTTP '+ur.status));
-      try{
-        const ins=await _authClient().from('uploaded_documents').insert({ contact_id:cid, document_type:docType, type:docType, file_name:finalFile.name, gdrive_file_id:ud.id, gdrive_file_url:ud.webViewLink||null, status:'uploaded', uploaded_by:uid });
-        if(ins&&ins.error) console.warn('[lpSectionUpload] CRM insert:', ins.error.message);
-      }catch(ie){ console.warn('[lpSectionUpload] CRM insert:', ie&&ie.message); }
+      if(rowId){ try{ await _authClient().from('uploaded_documents').update({ gdrive_file_id:ud.id, gdrive_file_url:ud.webViewLink||null, status:'uploaded' }).eq('id', rowId); }catch(_){} }
       done++;
-    }catch(e){ fail++; console.warn('[lpSectionUpload]', (file&&file.name), e&&e.message); }
+    }catch(e){
+      drivePending++;
+      if(rowId){ try{ await _authClient().from('uploaded_documents').update({ status:'pending_drive' }).eq('id', rowId); }catch(_){} }
+      console.warn('[lpSectionUpload] Drive upload failed (kept in CRM):', (file&&file.name), e&&e.message);
+    }
   }
-  setStat((done?('✓ '+done+' uploaded'):'')+(fail?('  ✗ '+fail+' failed'):''), fail>0);
-  toastFn(done+' file'+(done===1?'':'s')+' → '+folderName+(fail?('  ·  '+fail+' failed'):' ✓'), fail>0);
-  if(typeof loadDocumentsGrid==='function'){ try{ loadDocumentsGrid(); }catch(_){} }
+  const okCrm = done + drivePending;   // rows safely in the CRM (Drive done OR pending)
+  setStat((okCrm?('✓ '+okCrm+' in CRM'):'')+(drivePending?('  ·  '+drivePending+' Drive pending'):'')+(crmFail?('  ✗ '+crmFail+' failed'):''), crmFail>0);
+  if(okCrm===0 && crmFail>0){ toastFn('Upload failed — nothing saved ('+crmFail+').', true); }
+  else if(drivePending>0){ toastFn(okCrm+' saved to CRM · '+drivePending+' Drive sync pending', true); }
+  else{ toastFn(done+' file'+(done===1?'':'s')+' → '+folderName+' ✓', false); }
+  // Refresh THIS section's CRM list (reads uploaded_documents — no Drive/OAuth needed).
+  lpLoadSectionDocs(sectionKey);
+  // NOTE: intentionally NOT loadDocumentsGrid() — it lists Drive via the browser Google OAuth token
+  // (_ldEnsureToken) and would pop a Google sign-in (origin_mismatch). The VA has no Drive OAuth;
+  // this whole path stays 100% Supabase-session-token only.
+}
+// ── Per-section CRM doc list (read-only, no Drive access needed) ─────────────
+function lpRenderSectionDocs(sectionKey, docs){
+  const box=document.querySelector('.lp-seclist[data-seclist="'+sectionKey+'"]'); if(!box) return;
+  if(!docs || !docs.length){ box.innerHTML=''; return; }
+  box.innerHTML = docs.map(function(d){
+    const when=_lpDD(d.uploaded_at||d.created_at);
+    const badge='<span class="lp-secdoc-badge">'+lpEsc(d.document_type||'')+'</span>';
+    const link=d.gdrive_file_url
+      ? '<a href="'+lpEsc(d.gdrive_file_url)+'" target="_blank" rel="noopener" class="lp-secdoc-view">View ↗</a>'
+      : (d.status==='pending_drive' ? '<span class="lp-secdoc-pending">Drive pending</span>' : '');
+    return '<div class="lp-secdoc"><span class="lp-secdoc-name" title="'+lpEsc(d.file_name||'')+'">📄 '+lpEsc(d.file_name||'(file)')+'</span>'
+      +badge
+      +'<span class="lp-secdoc-when">'+lpEsc(when)+'</span>'
+      +link+'</div>';
+  }).join('');
+}
+async function lpLoadSectionDocs(sectionKey){
+  const cid=lpCid(); if(!cid) return;
+  const scfg=(_lpSectionFolders&&_lpSectionFolders[sectionKey])||{}; const dt=scfg.document_type; if(!dt) return;
+  try{
+    const r=await _authClient().from('uploaded_documents')
+      .select('id,file_name,document_type,gdrive_file_url,status,uploaded_at,created_at')
+      .eq('contact_id',cid).eq('document_type',dt)
+      .order('uploaded_at',{ ascending:false, nullsFirst:false });
+    if(r.error) throw r.error;
+    lpRenderSectionDocs(sectionKey, r.data||[]);
+  }catch(e){ console.warn('[lpLoadSectionDocs]', e&&e.message); }
+}
+async function lpLoadSectionDocsAll(){
+  const cid=lpCid(); if(!cid) return;
+  const keys=Object.keys(_lpSectionFolders||{});
+  const dts=[]; keys.forEach(function(k){ const dt=_lpSectionFolders[k].document_type; if(dt && dts.indexOf(dt)<0) dts.push(dt); });
+  if(!dts.length) return;
+  try{
+    const r=await _authClient().from('uploaded_documents')
+      .select('id,file_name,document_type,gdrive_file_url,status,uploaded_at,created_at')
+      .eq('contact_id',cid).in('document_type',dts)
+      .order('uploaded_at',{ ascending:false, nullsFirst:false });
+    if(r.error) throw r.error;
+    const byDt={}; (r.data||[]).forEach(function(d){ (byDt[d.document_type]=byDt[d.document_type]||[]).push(d); });
+    keys.forEach(function(k){ lpRenderSectionDocs(k, byDt[_lpSectionFolders[k].document_type]||[]); });
+  }catch(e){ console.warn('[lpLoadSectionDocsAll]', e&&e.message); }
 }
 function lpRenderOrders(){
   const body=document.getElementById('lpOrdersBody'); if(!body) return;
@@ -10565,6 +10646,7 @@ function lpRenderOrders(){
         + '<button type="button" onclick="lpVoeAdd()" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">+ Add VOE</button>'
       + '</div>' + lpDropZoneHtml('voe') + '<div id="lpVoeCards"></div></div>';
   lpRenderVoe();
+  lpLoadSectionDocsAll();   // populate each section's "already uploaded" CRM list
 }
 
 /* ═══ VOE multi-card list — one per borrower / job, with date tracking + follow-up ═══ */
