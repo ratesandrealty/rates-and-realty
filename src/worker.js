@@ -301,6 +301,16 @@ function withCsp(res, path) {
     'Content-Security-Policy',
     "script-src * 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob: *; child-src blob: *;"
   );
+  // Allow camera/mic/screen-share for same-origin documents. Without this, a restrictive
+  // default Permissions-Policy (Cloudflare edge) blocks getUserMedia/getDisplayMedia with an
+  // instant deny ("camera is not allowed in this document") — breaking the Loom recorder and
+  // the watch page. Applied to all HTML responses on every host.
+  headers.set(
+    'Permissions-Policy',
+    'camera=(self), microphone=(self), display-capture=(self)'
+  );
+  // Legacy Feature-Policy for older engines (Permissions-Policy is the authoritative one).
+  headers.set('Feature-Policy', "camera 'self'; microphone 'self'");
   // Admin app HTML must never be cached (browser or Cloudflare edge) so deploys
   // take effect immediately without a manual purge or clear-site-data. Public
   // marketing pages keep their default caching.
