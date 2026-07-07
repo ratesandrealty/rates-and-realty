@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070609 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070610 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -2450,6 +2450,8 @@
         #tab-processing #lpHealthBody .lh-row.clickable:hover { background:rgba(255,255,255,.06); }
         #tab-processing #lpHealthBody .lh-toggle { font-size:11px; color:#C9A84C; cursor:pointer; padding:5px 6px 0; display:inline-block; }
         #tab-processing #lpHealthBody .lh-toggle:hover { text-decoration:underline; }
+        /* Friendly role/title label badge (vendor_role_labels) on suggestions + saved vendor/partner rows */
+        #tab-processing .lp-role-tag { display:inline-block; font-size:9px; font-weight:700; letter-spacing:.2px; color:#C9A84C; background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.28); border-radius:8px; padding:1px 7px; line-height:1.35; white-space:normal; vertical-align:middle; }
         @keyframes lpPulse { 0%,100%{ box-shadow:0 0 0 4px rgba(201,168,76,.18);} 50%{ box-shadow:0 0 0 8px rgba(201,168,76,.04);} }
         #tab-processing .lp-stub { opacity:0.6; }
         #tab-processing .lp-stub .lp-soon { font-size:11px; color:#888; }
@@ -9488,6 +9490,7 @@ async function _lpEmailSend(){
 }
 async function lpLoadProcessing(){
   const cid = lpCid(); if(!cid) return;
+  await lpLoadRoleLabels();          // friendly role labels ready before rows/suggestions render
   lpRenderSnapshot(cid);
   lpLoadChecklist('intake','lpIntakeBody',LP_INTAKE_TEMPLATE);
   lpLoadChecklist('doc','lpDocBody',LP_DOC_TEMPLATE);
@@ -9733,6 +9736,17 @@ const LP_CONTACT_ROLES = [
   {key:'underwriter',label:'Underwriter'},
   {key:'appraisal_company',label:'Appraisal Company'}
 ];
+// Friendly role/title labels (vendor_role_labels table), loaded once and reused for the badges
+// on suggestions + saved rows. lpRoleLabel() falls back to initcap for unknown keys.
+let _lpRoleLabels = null;
+async function lpLoadRoleLabels(){
+  if(_lpRoleLabels) return _lpRoleLabels;
+  _lpRoleLabels = {};
+  try{ const r=await _authClient().from('vendor_role_labels').select('role_key,label'); (r.data||[]).forEach(function(x){ if(x&&x.role_key) _lpRoleLabels[x.role_key]=x.label; }); }catch(e){ /* fall back to initcap */ }
+  return _lpRoleLabels;
+}
+function _lpInitcap(k){ return String(k||'').replace(/_/g,' ').replace(/\b\w/g,function(c){ return c.toUpperCase(); }); }
+function lpRoleLabel(key){ if(!key) return ''; return (_lpRoleLabels && _lpRoleLabels[key]) || _lpInitcap(key); }
 let _lpVendors = [];
 let _lpVendorId = '';
 async function lpLoadAppraisalPortal(cid){
@@ -10023,7 +10037,7 @@ async function lpLoadContacts(cid){
   el.innerHTML = header + LP_CONTACT_ROLES.map(r=>{
     const c = map[r.key]||{};
     return '<div class="lp-contact" data-role="'+r.key+'" ondragenter="lpRowDragEnter(this,event)" ondragover="lpRowDragOver(this,event)" ondragleave="lpRowDragLeave(this,event)" ondrop="lpRowDrop(\''+r.key+'\',this,event)" style="position:relative;'+grid+'align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
-      +'<div style="font-size:11px;font-weight:600;color:#C9A84C;">'+r.label+'</div>'
+      +'<div><span class="lp-role-tag">'+lpEsc(lpRoleLabel(r.key))+'</span></div>'
       +'<input data-f="name" type="text" autocomplete="off" placeholder="Name" value="'+lpEsc(c.name||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<input data-f="company" type="text" autocomplete="off" placeholder="Company" value="'+lpEsc(c.company||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<input data-f="phone" type="text" placeholder="Phone" value="'+lpEsc(c.phone||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
@@ -10079,10 +10093,11 @@ async function lpVendorSuggest(role, inputEl){
         title = [nm, v.company].filter(Boolean).join(' — ');
         const cue = (v.total_closed!=null) ? (v.total_closed+' closed') : ((v.total_referrals!=null)?(v.total_referrals+' referrals'):'');
         sub = [cue, (v.email||v.phone)].filter(Boolean).join(' · ');
-        badge = ' <span style="font-size:9px;font-weight:700;color:#C9A84C;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.3);border-radius:8px;padding:1px 5px;">Partner</span>';
+        badge = ' <span class="lp-role-tag">'+lpEsc(v.title||'Realtor')+'</span>';
       } else {
         title = [v.name, v.company].filter(Boolean).join(' — ') || '(unnamed)';
         sub = [v.email, v.phone].filter(Boolean).join(' · ');
+        badge = ' <span class="lp-role-tag">'+lpEsc(lpRoleLabel(role))+'</span>';
       }
       return '<div class="lp-vsopt" data-id="'+lpEsc(v.id)+'" onmousedown="event.preventDefault();" onclick="lpVendorDirPick(\''+role+'\',\''+lpEsc(v.id)+'\',this)" onmouseover="lpVendorHover(this)" style="padding:7px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);"><div style="font-weight:600;color:#ddd;font-size:12px;">'+lpEsc(title)+badge+'</div>'+(sub?'<div style="font-size:10px;color:#888;margin-top:1px;">'+lpEsc(sub)+'</div>':'')+'</div>';
     }).join('');
@@ -10407,7 +10422,7 @@ function lpRenderOrders(){
     const revStyle = 'position:relative;z-index:2;width:100%;box-sizing:border-box;margin-top:6px;background:rgba(224,168,82,.07);border:1px solid rgba(224,168,82,.45);border-radius:7px;color:#eee;font-size:11.5px;line-height:1.4;padding:6px 8px;min-height:46px;resize:vertical;font-family:inherit;';
     let html='<div style="position:relative;border-bottom:1px solid rgba(255,255,255,.05);padding:6px 4px;">'
       +'<div style="display:grid;grid-template-columns:62px 1fr 104px 52px;gap:8px;align-items:center;">'
-        +'<span style="font-size:11px;font-weight:600;color:#C9A84C;">'+row.label+'</span>'
+        +'<span class="lp-role-tag">'+lpEsc(row.label)+'</span>'
         +'<button type="button" onclick="lpVendorOpen(\''+row.type+'\')" style="text-align:left;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(o.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
         +'<select id="lpStatus-'+row.type+'" onchange="lpOrderStatusChange(\''+row.type+'\',this.value)" style="'+sel+stStyle+'">'+opts+'</select>'
         +'<span style="font-size:10px;text-align:right;white-space:nowrap;"><span id="lpSaved-'+row.type+'"></span><span id="lpDate-'+row.type+'" style="color:#888;"> '+dateTxt+'</span></span>'
