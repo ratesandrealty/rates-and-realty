@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070624 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070625 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10909,10 +10909,11 @@ function lpRenderOrders(){
           + '<button type="button" onclick="lpVoeToggleDontNeed()" title="'+(_lpVoeNotReq?'VOE marked not needed — click to undo':'Mark VOE as not required for this loan')+'" style="'+(_lpVoeNotReq?'background:rgba(80,200,120,.16);border:1px solid rgba(80,200,120,.5);color:#7ee2a3;':'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#9a9a9a;')+'border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">'+(_lpVoeNotReq?'✓ Don\'t Need':'Don\'t Need')+'</button>'
           + '<button type="button" onclick="lpVoeAdd()" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">+ Add VOE</button>'
         + '</div>'
-      + '</div>' + lpDropZoneHtml('voe') + '<div id="lpVoeCards"></div></div>';
+      + '</div>' + '<div id="lpVoeFormCtl" style="font-size:10px;margin-bottom:6px;"></div>' + lpDropZoneHtml('voe') + '<div id="lpVoeCards"></div></div>';
   lpRenderVoe();
   lpLoadSectionDocsAll();   // populate each section's "already uploaded" CRM list
   lpHoiLoadList();          // populate the HOI quote-request tracking list
+  lpVoeFormLoad();          // app-wide VOE blank-form status/uploader control
 }
 
 /* ═══ VOE multi-card list — one per borrower / job, with date tracking + follow-up ═══ */
@@ -10989,6 +10990,46 @@ async function lpVoeToggleDontNeed(){
     lpLoadVoes(cid);      // reload voe rows (re-splits not_required) → re-renders section + cards
     lpLoadTracker(cid);   // refresh top pill → green "Don't need"
   }catch(e){ toast('Could not update VOE: '+((e&&e.message)||e), true); }
+}
+/* ═══ VOE blank-form uploader (app-wide config; set/replace from the UI) ═══ */
+let _lpVoeFormUrl = null;
+async function lpVoeFormLoad(){
+  const box=document.getElementById('lpVoeFormCtl'); if(!box) return;
+  let url=null;
+  try{ const r=await _authClient().rpc('voe_form_get'); if(!r.error){ const d=r.data; url=(typeof d==='string'?d:(d&&(d.voe_form_url||d.url)))||null; } }catch(e){ console.warn('[voe_form_get]', e&&e.message); }
+  _lpVoeFormUrl=url;
+  if(_lpVoeCfg) _lpVoeCfg.voe_form_url=url||'';   // keep the composer's cached config in sync
+  lpVoeFormRender(url);
+}
+function lpVoeFormRender(url){
+  const box=document.getElementById('lpVoeFormCtl'); if(!box) return;
+  const inp='<input type="file" id="lpVoeFormFile" accept="application/pdf,.pdf" style="display:none" onchange="lpVoeFormUpload(this)">';
+  if(url){
+    box.innerHTML='<span style="color:#8f8f8f;">📎 VOE blank form:</span> <span style="color:#7ee2a3;font-weight:600;">set ✓</span> · <a href="'+lpEsc(url)+'" target="_blank" rel="noopener" style="color:#C9A84C;text-decoration:none;">View</a> · <button type="button" onclick="lpVoeFormPick()" style="background:transparent;border:none;color:#C9A84C;font-size:10px;font-weight:600;cursor:pointer;padding:0;text-decoration:underline;font-family:inherit;">Replace</button>'+inp;
+  } else {
+    box.innerHTML='<span style="color:#c99a5b;">📎 No blank VOE form set</span> · <button type="button" onclick="lpVoeFormPick()" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;padding:2px 8px;cursor:pointer;font-family:inherit;">Upload</button>'+inp;
+  }
+}
+function lpVoeFormPick(){ const f=document.getElementById('lpVoeFormFile'); if(f) f.click(); }
+async function lpVoeFormUpload(inp){
+  const toast=window.showToast||window.toast||function(){};
+  const file=inp&&inp.files&&inp.files[0]; if(!file) return;
+  inp.value='';
+  if(!/pdf/i.test(file.type||'') && !/\.pdf$/i.test(file.name||'')){ toast('Please choose a PDF.', true); return; }
+  const box=document.getElementById('lpVoeFormCtl'); if(box) box.insertAdjacentHTML('beforeend','<span id="lpVoeFormBusy" style="color:#888;"> · uploading…</span>');
+  try{
+    const safe=String(file.name).replace(/[^a-zA-Z0-9._-]/g,'_');
+    const path='voe-forms/'+safe;
+    const up=await _authClient().storage.from('borrower-documents').upload(path, file, { upsert:true, contentType:(file.type||'application/pdf') });
+    if(up.error) throw up.error;
+    const pub=_authClient().storage.from('borrower-documents').getPublicUrl(path);
+    const url=(pub&&pub.data&&pub.data.publicUrl)||'';
+    if(!url) throw new Error('could not resolve public URL');
+    const setr=await _authClient().rpc('voe_form_set',{ p_url:url });
+    if(setr.error) throw setr.error;
+    toast('VOE blank form '+(_lpVoeFormUrl?'replaced':'set')+' ✓');
+    lpVoeFormLoad();   // re-render → "set ✓" + sync composer config
+  }catch(e){ const b=document.getElementById('lpVoeFormBusy'); if(b) b.remove(); toast('Upload failed: '+((e&&e.message)||e), true); }
 }
 /* ═══ VOE HR request — Phase 1: pull employer, email HR (VOE form attached), track activity ═══ */
 let _lpVoeCfg = null;      // app_config: voe_form_url + voe_request_cc
