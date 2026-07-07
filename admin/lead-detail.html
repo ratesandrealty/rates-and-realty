@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070617 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070618 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10605,6 +10605,210 @@ async function lpLoadSectionDocsAll(){
     keys.forEach(function(k){ lpRenderSectionDocs(k, byDt[_lpSectionFolders[k].document_type]||[]); });
   }catch(e){ console.warn('[lpLoadSectionDocsAll]', e&&e.message); }
 }
+/* ═══ HOI multi-quote-request system ═══
+   Send one HOI quote request to MANY insurance companies (borrower/property pre-filled from the CRM,
+   all editable), track each request, then pick the winner → auto-saves as the HOI Agent contact.
+   Uses hoi_quote_prefill / hoi_quote_log / hoi_quote_list RPCs + email-service 'send'. Status/quote and
+   winner-select are DIRECT hoi_quote_requests writes (no RPC exists; the hoi_qr_staff_all RLS allows it). */
+let _lpHoiRecipients = [];   // composer recipients: {vendor_id,company,agent_name,agent_email,agent_phone,save}
+let _lpHoiPrefill = {};
+let _lpHoiList = [];         // last hoi_quote_list rows (winner lookup)
+let _lpHoiRecipTimer = null;
+const LP_HOI_STATUS = [{v:'sent',t:'Sent'},{v:'received',t:'Received'},{v:'quoted',t:'Quoted'},{v:'declined',t:'Declined'}];
+function _lpHoiToast(m,e){ (window.showToast||window.toast||function(){})(m,!!e); }
+function _lpHoiVal(id){ const e=document.getElementById(id); return e?(e.value||''):''; }
+function _lpHoiFmtPrice(v){ if(v==null||v==='') return ''; const n=Number(String(v).replace(/[^0-9.]/g,'')); return isNaN(n)?String(v):('$'+n.toLocaleString('en-US')); }
+function _lpHoiFmtDate(v){ if(!v) return ''; const d=new Date(v); if(isNaN(d.getTime())) return String(v); const p=n=>String(n).padStart(2,'0'); return p(d.getMonth()+1)+'/'+p(d.getDate())+'/'+d.getFullYear(); }
+function _lpHoiBody(afn){
+  return 'Hello '+afn+', can you provide a homeowners insurance quote for a client of mine. The information of the client is below. I only included one of the borrowers. Please let me know if you need anything else.\n\n'
+    +'Address: '+_lpHoiVal('lpHoiAddress')+'\n'
+    +'Purchase Price: '+_lpHoiVal('lpHoiPrice')+'\n'
+    +'Borrower(S): '+_lpHoiVal('lpHoiBorrower')+'\n'
+    +'Birth Date: '+_lpHoiVal('lpHoiDob')+'\n\n'
+    +'*Please confirm receipt of this email*';
+}
+function lpHoiUpdatePreview(){ const p=document.getElementById('lpHoiPreview'); if(p) p.textContent=_lpHoiBody('{agent first name}'); }
+function lpHoiCloseModal(){ const ov=document.getElementById('lpHoiOverlay'); if(ov) ov.style.display='none'; }
+function lpHoiEnsureModal(){
+  let ov=document.getElementById('lpHoiOverlay'); if(ov) return ov;
+  const INP='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12px;padding:7px 9px;width:100%;box-sizing:border-box;font-family:inherit;';
+  const LBL='display:block;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.4px;margin:9px 0 3px;';
+  const ABTN='background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:7px;font-size:11px;font-weight:600;padding:6px 12px;cursor:pointer;font-family:inherit;';
+  ov=document.createElement('div'); ov.id='lpHoiOverlay';
+  ov.style.cssText='display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.62);align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto;';
+  ov.innerHTML='<div style="background:#141310;border:1px solid rgba(201,168,76,.3);border-radius:14px;max-width:680px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.6);">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);"><span style="font-size:15px;font-weight:700;color:#C9A84C;">📨 Request HOI Quotes</span><button onclick="lpHoiCloseModal()" style="background:transparent;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;">✕</button></div>'
+    +'<div style="padding:16px 18px;max-height:72vh;overflow:auto;">'
+      +'<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Send to — add one or more companies</div>'
+      +'<div style="position:relative;display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
+        +'<input id="lpHoiRCompany" placeholder="Company" autocomplete="off" oninput="lpHoiRecipSearch(this)" style="'+INP+'">'
+        +'<input id="lpHoiRAgent" placeholder="Agent name" autocomplete="off" style="'+INP+'">'
+        +'<input id="lpHoiREmail" placeholder="Agent email" autocomplete="off" style="'+INP+'">'
+        +'<input id="lpHoiRPhone" placeholder="Agent phone (optional)" autocomplete="off" style="'+INP+'">'
+        +'<div id="lpHoiRDrop" style="display:none;position:absolute;left:0;top:36px;z-index:5;min-width:280px;max-width:440px;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 14px 34px rgba(0,0,0,.6);overflow:hidden;"></div>'
+      +'</div>'
+      +'<div style="display:flex;align-items:center;gap:12px;margin:7px 0 4px;"><button onclick="lpHoiRecipAdd()" style="'+ABTN+'">＋ Add recipient</button><label style="font-size:10px;color:#999;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="lpHoiRSave" style="cursor:pointer;">save new to directory</label></div>'
+      +'<div id="lpHoiRecipList" style="display:flex;flex-direction:column;gap:4px;margin-bottom:14px;"></div>'
+      +'<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Client info — editable, sent to all</div>'
+      +'<label style="'+LBL+'">Subject</label><input id="lpHoiSubject" style="'+INP+'">'
+      +'<label style="'+LBL+'">Address</label><input id="lpHoiAddress" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
+      +'<label style="'+LBL+'">Purchase Price</label><input id="lpHoiPrice" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
+      +'<label style="'+LBL+'">Borrower(s)</label><input id="lpHoiBorrower" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
+      +'<label style="'+LBL+'">Birth Date</label><input id="lpHoiDob" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
+      +'<div style="font-size:10px;color:#888;margin-top:10px;">Each email greets that company\'s agent by first name. Preview:</div>'
+      +'<pre id="lpHoiPreview" style="white-space:pre-wrap;font-family:inherit;font-size:11px;color:#bbb;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px;margin-top:4px;"></pre>'
+    +'</div>'
+    +'<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid rgba(255,255,255,.08);"><button onclick="lpHoiCloseModal()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-family:inherit;">Cancel</button><button id="lpHoiSendBtn" onclick="lpHoiSendAll()" style="background:#C9A84C;border:none;color:#000;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">Send to 0</button></div>'
+  +'</div>';
+  document.body.appendChild(ov);
+  return ov;
+}
+function lpHoiRecipSearch(inputEl){
+  inputEl._vendorId=null;   // manual typing clears any picked vendor id
+  const q=(inputEl.value||'').trim();
+  const drop=document.getElementById('lpHoiRDrop'); if(!drop) return;
+  clearTimeout(_lpHoiRecipTimer);
+  _lpHoiRecipTimer=setTimeout(async function(){
+    let rows=[];
+    try{
+      let res=await _authClient().rpc('vendor_directory_search',{ p_role:'hoi_agent', p_query:q, p_limit:8 });
+      if(!res.error) rows=res.data||[];
+      if(!rows.length){ const a=await _authClient().rpc('vendor_directory_search',{ p_role:'hoi', p_query:q, p_limit:8 }); if(!a.error) rows=a.data||[]; }
+      if(!rows.length){ const a=await _authClient().rpc('vendor_directory_search',{ p_role:null, p_query:q, p_limit:8 }); if(!a.error) rows=a.data||[]; }
+    }catch(e){}
+    if(!rows.length){ drop.style.display='none'; drop.innerHTML=''; return; }
+    drop._map={};
+    drop.innerHTML=rows.slice(0,8).map(function(v){ drop._map[v.id]=v; const t=[v.company,v.name].filter(Boolean).join(' — ')||'(unnamed)'; const s=[v.email,v.phone].filter(Boolean).join(' · '); return '<div onmousedown="event.preventDefault();" onclick="lpHoiRecipPick(\''+lpEsc(String(v.id))+'\')" style="padding:7px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);"><div style="font-weight:600;color:#ddd;font-size:12px;">'+lpEsc(t)+'</div>'+(s?'<div style="font-size:10px;color:#888;">'+lpEsc(s)+'</div>':'')+'</div>'; }).join('');
+    drop.style.display='block';
+  }, q.length?200:0);
+}
+function lpHoiRecipPick(id){
+  const drop=document.getElementById('lpHoiRDrop'); const v=drop&&drop._map?drop._map[id]:null; if(drop) drop.style.display='none';
+  if(!v) return;
+  const set=(i,val)=>{ const e=document.getElementById(i); if(e) e.value=val||''; };
+  set('lpHoiRCompany', v.company); set('lpHoiRAgent', v.name); set('lpHoiREmail', v.email); set('lpHoiRPhone', v.phone);
+  const c=document.getElementById('lpHoiRCompany'); if(c) c._vendorId=v.id;
+}
+function lpHoiRecipAdd(){
+  const company=_lpHoiVal('lpHoiRCompany').trim(), agent=_lpHoiVal('lpHoiRAgent').trim(), email=_lpHoiVal('lpHoiREmail').trim(), phone=_lpHoiVal('lpHoiRPhone').trim();
+  if(!email){ _lpHoiToast('Add an agent email for the recipient.', true); return; }
+  const c=document.getElementById('lpHoiRCompany'); const vid=(c&&c._vendorId)||null;
+  const save=!!(document.getElementById('lpHoiRSave')&&document.getElementById('lpHoiRSave').checked);
+  _lpHoiRecipients.push({ vendor_id:vid, company:company, agent_name:agent, agent_email:email, agent_phone:phone, save:save });
+  ['lpHoiRCompany','lpHoiRAgent','lpHoiREmail','lpHoiRPhone'].forEach(function(i){ const e=document.getElementById(i); if(e){ e.value=''; e._vendorId=null; } });
+  lpHoiRenderRecips();
+}
+function lpHoiRecipRemove(i){ _lpHoiRecipients.splice(i,1); lpHoiRenderRecips(); }
+function lpHoiRenderRecips(){
+  const box=document.getElementById('lpHoiRecipList'); const btn=document.getElementById('lpHoiSendBtn');
+  if(btn) btn.textContent='Send to '+_lpHoiRecipients.length;
+  if(!box) return;
+  if(!_lpHoiRecipients.length){ box.innerHTML='<div style="font-size:11px;color:#777;">No recipients yet — add one or more insurance companies above.</div>'; return; }
+  box.innerHTML=_lpHoiRecipients.map(function(r,i){ return '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.2);border-radius:7px;"><div style="flex:1;min-width:0;overflow:hidden;"><span style="font-size:12px;color:#e2e2e2;font-weight:600;">'+lpEsc(r.company||r.agent_name||r.agent_email)+'</span> <span style="font-size:10px;color:#999;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+'</span></div>'+((r.save&&!r.vendor_id)?'<span style="font-size:9px;color:#C9A84C;">will save</span>':'')+'<button onclick="lpHoiRecipRemove('+i+')" style="background:transparent;border:none;color:#e57373;font-size:14px;cursor:pointer;line-height:1;">✕</button></div>'; }).join('');
+}
+async function lpHoiOpenComposer(){
+  const cid=lpCid(); if(!cid){ _lpHoiToast('No contact selected', true); return; }
+  _lpHoiRecipients=[];
+  const ov=lpHoiEnsureModal();
+  lpHoiRenderRecips();
+  ov.style.display='flex';
+  let pf={};
+  try{ const r=await _authClient().rpc('hoi_quote_prefill',{ p_contact_id:cid }); if(!r.error) pf=r.data||{}; }catch(e){ console.warn('[hoi_quote_prefill]', e&&e.message); }
+  _lpHoiPrefill=pf;
+  const set=(i,v)=>{ const e=document.getElementById(i); if(e) e.value=v||''; };
+  const addr=[pf.address, pf.city, [pf.state,pf.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const full=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ');
+  set('lpHoiAddress', addr);
+  set('lpHoiPrice', _lpHoiFmtPrice(pf.purchase_price));
+  set('lpHoiBorrower', full);
+  set('lpHoiDob', _lpHoiFmtDate(pf.date_of_birth));
+  set('lpHoiSubject', 'Homeowners Insurance Quote Request'+(full?(' — '+full):''));
+  lpHoiUpdatePreview();
+}
+async function lpHoiSendAll(){
+  const cid=lpCid(); if(!cid){ _lpHoiToast('No contact', true); return; }
+  if(!_lpHoiRecipients.length){ _lpHoiToast('Add at least one recipient.', true); return; }
+  const subject=_lpHoiVal('lpHoiSubject')||'Homeowners Insurance Quote Request';
+  const btn=document.getElementById('lpHoiSendBtn'); const total=_lpHoiRecipients.length;
+  if(btn){ btn.disabled=true; }
+  let ok=0, fail=0;
+  for(let i=0;i<_lpHoiRecipients.length;i++){
+    const r=_lpHoiRecipients[i];
+    if(btn) btn.textContent='Sending '+(i+1)+'/'+total+'…';
+    const afn=((r.agent_name||'').trim().split(/\s+/)[0])||'there';
+    const bodyText=_lpHoiBody(afn);
+    const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>';
+    try{
+      const resp=await _authClient().functions.invoke('email-service',{ body:{ action:'send', to_email:r.agent_email, to_name:(r.agent_name||r.company||''), first_name:afn, subject:subject, html:bodyHtml, contact_id:cid } });
+      const data=resp&&resp.data, error=resp&&resp.error;
+      if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
+      try{ await _authClient().rpc('hoi_quote_log',{ p_contact_id:cid, p_vendor_id:r.vendor_id||null, p_company:r.company||null, p_agent_name:r.agent_name||null, p_agent_email:r.agent_email||null, p_agent_phone:r.agent_phone||null, p_subject:subject, p_body:bodyText }); }catch(le){ console.warn('[hoi_quote_log]', le&&le.message); }
+      if(r.save && !r.vendor_id && (r.company||r.agent_name)){ try{ await _authClient().rpc('vendor_directory_upsert',{ p_id:null, p_role:'hoi_agent', p_name:r.agent_name||null, p_company:r.company||null, p_phone:r.agent_phone||null, p_email:r.agent_email||null, p_website:null, p_notes:null }); }catch(_){} }
+      ok++;
+    }catch(e){ fail++; console.warn('[lpHoiSend]', r.agent_email, e&&e.message); }
+  }
+  if(btn){ btn.disabled=false; btn.textContent='Send to '+total; }
+  _lpHoiToast(ok+' quote request'+(ok===1?'':'s')+' sent'+(fail?(' · '+fail+' failed'):' ✓'), fail>0);
+  if(ok>0){ _lpHoiRecipients=[]; lpHoiCloseModal(); lpHoiLoadList(); }
+}
+async function lpHoiLoadList(){
+  const box=document.getElementById('lpHoiQuotes'); if(!box) return;
+  const cid=lpCid(); if(!cid){ box.innerHTML=''; return; }
+  try{
+    const r=await _authClient().rpc('hoi_quote_list',{ p_contact_id:cid });
+    if(r.error) throw r.error;
+    _lpHoiList=r.data||[];
+    lpHoiRenderList(_lpHoiList);
+  }catch(e){ console.warn('[hoi_quote_list]', e&&e.message); }
+}
+function lpHoiRenderList(rows){
+  const box=document.getElementById('lpHoiQuotes'); if(!box) return;
+  if(!rows||!rows.length){ box.innerHTML=''; return; }
+  const ctl='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#ddd;font-size:11px;padding:3px 6px;';
+  box.innerHTML='<div style="font-size:10px;font-weight:700;color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px;margin:2px 0 5px;">Quote requests ('+rows.length+')</div>'+rows.map(function(r){
+    const seld=!!r.is_selected;
+    const when=r.sent_at?_lpDD(r.sent_at):(r.created_at?_lpDD(r.created_at):'');
+    const stOpts=LP_HOI_STATUS.map(s=>'<option value="'+s.v+'"'+(((r.status||'sent')===s.v)?' selected':'')+'>'+s.t+'</option>').join('');
+    const amt=(r.quote_amount!=null&&r.quote_amount!=='')?('$'+Number(r.quote_amount).toLocaleString('en-US')):'';
+    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border:1px solid '+(seld?'rgba(80,200,120,.5)':'rgba(255,255,255,.08)')+';background:'+(seld?'rgba(80,200,120,.08)':'rgba(255,255,255,.02)')+';border-radius:8px;margin-bottom:4px;">'
+      +'<div style="flex:1;min-width:150px;"><div style="font-size:12px;font-weight:600;color:#e2e2e2;">'+lpEsc(r.company_name||r.agent_name||'(company)')+(seld?' <span style="color:#50c878;font-size:10px;">✓ Selected</span>':'')+'</div><div style="font-size:10px;color:#888;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+(when?(' · '+when):'')+'</div></div>'
+      +'<select onchange="lpHoiStatusChange(\''+r.id+'\',this.value)" style="'+ctl+'">'+stOpts+'</select>'
+      +'<input placeholder="$ quote" value="'+lpEsc(amt)+'" onchange="lpHoiQuoteAmount(\''+r.id+'\',this.value)" style="'+ctl+'width:88px;">'
+      +(seld?'<span style="font-size:11px;color:#50c878;font-weight:700;">Winner</span>':'<button onclick="lpHoiSelect(\''+r.id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">Select ✓</button>')
+      +'</div>';
+  }).join('');
+}
+async function lpHoiStatusChange(id, status){
+  try{ const r=await _authClient().from('hoi_quote_requests').update({ status:status, updated_at:new Date().toISOString() }).eq('id',id); if(r.error) throw r.error; const row=(_lpHoiList||[]).find(function(x){return String(x.id)===String(id);}); if(row) row.status=status; }
+  catch(e){ _lpHoiToast('Status save failed: '+((e&&e.message)||e), true); }
+}
+async function lpHoiQuoteAmount(id, valStr){
+  const num=parseFloat(String(valStr||'').replace(/[^0-9.]/g,''));
+  const amount=isNaN(num)?null:num;
+  try{ const r=await _authClient().from('hoi_quote_requests').update({ quote_amount:amount, updated_at:new Date().toISOString() }).eq('id',id); if(r.error) throw r.error; lpHoiLoadList(); }
+  catch(e){ _lpHoiToast('Quote save failed: '+((e&&e.message)||e), true); }
+}
+async function lpHoiSelect(id){
+  const cid=lpCid(); if(!cid) return;
+  const row=(_lpHoiList||[]).find(function(x){ return String(x.id)===String(id); });
+  if(!row){ _lpHoiToast('Row not found — refresh.', true); return; }
+  try{
+    await _authClient().from('hoi_quote_requests').update({ is_selected:false }).eq('contact_id',cid);
+    const up=await _authClient().from('hoi_quote_requests').update({ is_selected:true, updated_at:new Date().toISOString() }).eq('id',id);
+    if(up.error) throw up.error;
+    const nm=(row.agent_name||'').trim(); const sp=(typeof _lpSplitName==='function')?_lpSplitName(nm):{first:nm,last:''};
+    await _authClient().from('loan_contacts').upsert({ contact_id:cid, role:'hoi_agent', name:nm||null, first_name:sp.first||null, last_name:sp.last||null, company:row.company_name||null, email:row.agent_email||null, phone:row.agent_phone||null, updated_at:new Date().toISOString() }, { onConflict:'contact_id,role' });
+    _lpHoiToast('Selected — HOI Agent set to '+(row.company_name||nm||'this agent')+' ✓');
+    lpHoiLoadList();
+    if(typeof lpLoadContacts==='function') lpLoadContacts(cid);
+  }catch(e){ _lpHoiToast('Select failed: '+((e&&e.message)||e), true); }
+}
+// Close the recipient autocomplete on outside click.
+document.addEventListener('click', function(e){
+  const drop=document.getElementById('lpHoiRDrop'); if(!drop || drop.style.display==='none') return;
+  if(e.target.closest && (e.target.closest('#lpHoiRDrop') || e.target.id==='lpHoiRCompany')) return;
+  drop.style.display='none';
+});
 function lpRenderOrders(){
   const body=document.getElementById('lpOrdersBody'); if(!body) return;
   const sel='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:3px 6px;cursor:pointer;';
@@ -10639,6 +10843,12 @@ function lpRenderOrders(){
         +'<span style="font-size:10px;text-align:right;white-space:nowrap;"><span id="lpSaved-'+row.type+'"></span><span id="lpDate-'+row.type+'" style="color:#888;"> '+dateTxt+'</span></span>'
       +'</div>'
       +'<textarea id="lpRev-'+row.type+'" onblur="lpOrderRevSave(\''+row.type+'\')" placeholder="Revision needed — what does the vendor need to fix?" style="'+revStyle+(nr?'':'display:none;')+'">'+lpEsc(o.revision_note||'')+'</textarea>';
+    if(row.type==='hoi'){
+      html+='<div style="margin-top:8px;">'
+        +'<button type="button" onclick="lpHoiOpenComposer()" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:5px 12px;cursor:pointer;">📨 Request Quotes</button>'
+        +'<div id="lpHoiQuotes" style="margin-top:8px;"></div>'
+      +'</div>';
+    }
     if(row.type==='appraisal'){
       const paid=!!o.client_paid;
       const insp=o.inspection_date?String(o.inspection_date).slice(0,10):'';
@@ -10663,6 +10873,7 @@ function lpRenderOrders(){
       + '</div>' + lpDropZoneHtml('voe') + '<div id="lpVoeCards"></div></div>';
   lpRenderVoe();
   lpLoadSectionDocsAll();   // populate each section's "already uploaded" CRM list
+  lpHoiLoadList();          // populate the HOI quote-request tracking list
 }
 
 /* ═══ VOE multi-card list — one per borrower / job, with date tracking + follow-up ═══ */
