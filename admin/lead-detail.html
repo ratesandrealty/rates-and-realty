@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070630 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070631 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -11102,7 +11102,7 @@ function _lpVoeDefaultBody(pf, hrName, employer){
   const sig = name ? (name+(nmls?(' · NMLS '+nmls):'')) : (nmls?('NMLS '+nmls):'');
   return 'Hello,\n\n'
     +'My name is '+(name||'____________')+'. I am helping '+bn+' apply for a mortgage loan, and the lender is requesting a verification of employment form to be completed. Can you please help me with this?\n\n'
-    +'Please provide the current year and last 2 years of pay history (include breakdown of base, overtime, etc.). Also, in the "year to date thru" section (screenshot below), please provide the date of the last pay day the calculations are being done for. Complete fully — and if it doesn\'t apply, put an X, N/A, or just leave blank. Let me know if you have any questions.\n\n'
+    +'Please provide the current year and last 2 years of pay history (include breakdown of base, overtime, etc.). Also, in the "year to date thru" section of the attached form, please provide the date of the last pay day the calculations are being done for. Complete fully — and if it doesn\'t apply, put an X, N/A, or just leave blank. Let me know if you have any questions.\n\n'
     +'*Please confirm receipt of this email*\n\n'
     +'Thank you,\n'+sig;
 }
@@ -11145,7 +11145,17 @@ async function lpVoeReqOpen(k){
   set('lpVoeReqSubject', 'Verification of Employment Request'+(bn?(' — '+bn):''));
   set('lpVoeReqBody', _lpVoeDefaultBody(pf, hrName, employer));
   const att=document.getElementById('lpVoeReqAttach');
-  if(att){ const cc=(cfg.voe_request_cc||''); att.innerHTML=(cfg.voe_form_url?'📎 Request_for_VOE_BLANK.pdf will be attached':'⚠ VOE form not staged yet — will send without the attachment')+(cc?('<br>CC: '+lpEsc(cc)):''); att.style.color=cfg.voe_form_url?'#888':'#c99a5b'; }
+  if(att){
+    const cc=(cfg.voe_request_cc||''); const ccLine=cc?('<br>CC: '+lpEsc(cc)):'';
+    const renderAtt=extra=>{ att.innerHTML=(cfg.voe_form_url?('📎 Request_for_VOE_BLANK.pdf'+(extra||'')+' will be attached'):'⚠ VOE form not staged yet — will send without the attachment')+ccLine; att.style.color=cfg.voe_form_url?'#888':'#c99a5b'; };
+    renderAtt('');
+    // Display-only: if a signed borrower authorization is on file, list it too. Actual attach happens in lpVoeReqSend.
+    if(cfg.voe_form_url){
+      _authClient().rpc('voe_borrower_auth_request',{ p_contact_id:cid })
+        .then(function(r){ const a=(r&&!r.error)?(Array.isArray(r.data)?r.data[0]:r.data):null; if(a && a.found===true && _lpVoeReqKey===k) renderAtt(' + Borrower_Authorization_signed.pdf'); })
+        .catch(function(){});
+    }
+  }
   ov.style.display='flex';
 }
 async function lpVoeReqSend(){
