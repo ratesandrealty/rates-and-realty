@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070627 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070628 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -11126,15 +11126,24 @@ async function lpVoeReqSend(){
     try{ const resp=await fetch(cfg.voe_form_url); if(resp.ok){ const buf=await resp.arrayBuffer(); attachments=[{ content:_lpB64FromBuf(buf), filename:'Request_for_VOE_BLANK.pdf', disposition:'attachment' }]; } else { _lpVoeToast('VOE form fetch failed ('+resp.status+') — sending without attachment', true); } }
     catch(e){ _lpVoeToast('Could not load VOE form — sending without attachment', true); }
   }
+  // Log FIRST so the reply_token exists BEFORE we send — HR replies route back to us via reply_to.
+  // voe_request_log → { reply_token, email_log_id, order_id }; it also stamps the order (status→ordered,
+  // HR fields, ordered_at, last_follow_up_at, reply_token) + writes email_log.
+  let reply_token=null;
+  try{
+    const lr=await _authClient().rpc('voe_request_log',{ p_order_id:v.id, p_contact_id:cid, p_hr_name:hrName||null, p_hr_email:to||null, p_hr_phone:hrPhone||null, p_employer:employer||null, p_subject:subject, p_body_html:bodyHtml });
+    if(lr.error) throw lr.error;
+    const ret=Array.isArray(lr.data)?lr.data[0]:lr.data;
+    reply_token=(ret && ret.reply_token)||null;
+  }catch(le){ console.warn('[voe_request_log]', le&&le.message); }
   try{
     const body={ action:'send', to_email:to, to_name:hrName, first_name:((hrName||'').split(/\s+/)[0]||''), subject:subject, html:bodyHtml, contact_id:cid };
     if(cfg.voe_request_cc) body.cc=cfg.voe_request_cc;
+    if(reply_token) body.reply_to='rene+'+reply_token+'@ratesandrealty.com';   // HR replies routable by token
     if(attachments) body.attachments=attachments;
     const resp=await _authClient().functions.invoke('email-service',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
     if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
-    // Stamps the order (status→ordered, HR fields, ordered_at, last_follow_up_at, reply_token) + email_log.
-    try{ await _authClient().rpc('voe_request_log',{ p_order_id:v.id, p_contact_id:cid, p_hr_name:hrName||null, p_hr_email:to||null, p_hr_phone:hrPhone||null, p_employer:employer||null, p_subject:subject, p_body_html:bodyHtml }); }catch(le){ console.warn('[voe_request_log]', le&&le.message); }
     _lpVoeToast('VOE request sent to '+to+' ✓');
     lpVoeReqClose();
     lpLoadVoes(cid);      // refresh cards (status now ordered) + activity
