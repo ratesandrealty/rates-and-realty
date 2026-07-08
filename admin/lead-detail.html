@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070626 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070627 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -20,7 +20,7 @@
   <link rel="stylesheet" href="/public/css/responsive.css?v=2026033001">
   <style>
     /* Google Places Autocomplete dark theme */
-    .pac-container{background:#161616!important;border:1px solid #C9A84C44!important;border-radius:10px!important;box-shadow:0 8px 32px rgba(0,0,0,.7)!important;margin-top:4px!important;font-family:inherit!important;overflow:hidden;}
+    .pac-container{z-index:100002!important;background:#161616!important;border:1px solid #C9A84C44!important;border-radius:10px!important;box-shadow:0 8px 32px rgba(0,0,0,.7)!important;margin-top:4px!important;font-family:inherit!important;overflow:hidden;}
     .pac-item{background:#161616!important;color:#ccc!important;border-top:1px solid #1e1e1e!important;padding:10px 14px!important;cursor:pointer!important;font-size:13px!important;}
     .pac-item:hover,.pac-item-selected{background:#1a1a14!important;}
     .pac-item-query{color:#e0e0e0!important;font-size:13px!important;font-weight:500!important;}
@@ -2346,7 +2346,7 @@
           </div>
           <div class="ld-field span-3">
             <label class="ld-label">Property Address</label>
-            <input class="ld-input" type="text" id="f-property" placeholder="123 Main St, City, State ZIP" autocomplete="off" oninput="addressAutocomplete(this); if(typeof lpPropEstSyncBtn==='function') lpPropEstSyncBtn();">
+            <input class="ld-input" type="text" id="f-property" placeholder="123 Main St, City, State ZIP" autocomplete="off" oninput="if(typeof lpPropEstSyncBtn==='function') lpPropEstSyncBtn();">
             <!-- Property estimate (RentCast via property-lookup edge fn) -->
             <div id="lpPropEst" style="margin-top:10px;border:1px solid rgba(201,168,76,0.25);border-radius:10px;background:rgba(201,168,76,0.04);padding:12px 14px;">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
@@ -15030,68 +15030,36 @@ function lpSnapEdit(key, ev){
     };
     setTimeout(()=>{ const t=document.getElementById('lpSnapInT'),p=document.getElementById('lpSnapInP'); if(t)t.value=(c.loan_type||c.closing_loan_type||''); if(p)p.value=(c.loan_purpose||''); },10);
   } else if(key==='subject_property'){
-    // Composite editor writing the structured mortgage_applications.property_address_*
-    // fields (same columns the loan/1003 details use — one source of truth).
-    bodyHtml='<div style="'+lbl+'">Street</div><input id="lpSpStreet" type="text" style="'+inStyle+'">'
-            +'<div style="'+lbl+'">Unit</div><input id="lpSpUnit" type="text" style="'+inStyle+'">'
-            +'<div style="'+lbl+'">City</div><input id="lpSpCity" type="text" style="'+inStyle+'">'
-            +'<div style="display:flex;gap:6px;"><div style="flex:1;min-width:0;"><div style="'+lbl+'">State</div><input id="lpSpState" type="text" style="'+inStyle+'"></div><div style="flex:1;min-width:0;"><div style="'+lbl+'">Zip</div><input id="lpSpZip" type="text" style="'+inStyle+'"></div></div>'
-            +'<div style="'+lbl+'">County</div><input id="lpSpCounty" type="text" style="'+inStyle+'">';
-    // Prefill from the current app row (same source the snapshot reads).
+    // Single Google Places address line (replaces the old 6-field popup). Free-typed text allowed.
+    bodyHtml='<div style="'+lbl+'">Property Address</div><input id="lpSpAddr" type="text" autocomplete="off" placeholder="Start typing an address…" style="'+inStyle+'"><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:1px;">Pick a Google suggestion, or type freely.</div>';
+    var _spParsed=null;   // set on a Places selection → also syncs the structured 1003 columns
     setTimeout(async ()=>{
-      let a={}; try{ a=(await _fetchAppRowForContact(cid))||{}; }catch(_){}
-      const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.value=(v==null?'':v); };
-      set('lpSpStreet',a.property_address_street); set('lpSpUnit',a.property_address_unit);
-      set('lpSpCity',a.property_address_city);     set('lpSpState',a.property_address_state);
-      set('lpSpZip',a.property_address_zip);       set('lpSpCounty',a.property_address_county);
-      // Fallback: if the structured split fields are all empty but the combined
-      // contacts.property_address exists, best-effort parse it into the boxes so nothing's
-      // lost. Format assumed "Street[, Unit], City, State, Zip" → split on commas: last=zip,
-      // second-last=state, third-last=city, the rest=street. Ambiguous → whole string in Street.
-      const _splitEmpty = !a.property_address_street && !a.property_address_city && !a.property_address_state && !a.property_address_zip;
-      const _combined = (c && c.property_address) ? String(c.property_address).trim() : '';
-      if(_splitEmpty && _combined){
-        const parts=_combined.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
-        if(parts.length>=4){
-          set('lpSpZip',parts[parts.length-1]); set('lpSpState',parts[parts.length-2]);
-          set('lpSpCity',parts[parts.length-3]); set('lpSpStreet',parts.slice(0,parts.length-3).join(', '));
-        } else {
-          set('lpSpStreet',_combined);   // ambiguous — keep the whole string
-        }
-      }
+      const el=document.getElementById('lpSpAddr'); if(!el) return;
+      let combined = (c && c.property_address) ? String(c.property_address).trim() : '';
+      if(!combined){ try{ const a=(await _fetchAppRowForContact(cid))||{}; const seg1=(a.property_address_street||'')+(a.property_address_unit?', Unit '+a.property_address_unit:''); const sz=[a.property_address_state,a.property_address_zip].filter(Boolean).join(' '); combined = a.property_address_street ? [seg1,a.property_address_city,sz].filter(Boolean).join(', ') : (a.property_address||''); }catch(_){}}
+      el.value=combined;
+      if(typeof window.attachPlacesAddress==='function') window.attachPlacesAddress(el, { onFill:function(p, ie){ _spParsed=p; ie.value=p.formatted || [p.street,p.city,[p.state,p.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '); } });
+      el.focus();
     },10);
     commit=async ()=>{
-      const gv=id=>{ const e=document.getElementById(id); return e?(e.value.trim()||null):null; };
-      const patch={
-        property_address_street: gv('lpSpStreet'),
-        property_address_unit:   gv('lpSpUnit'),
-        property_address_city:   gv('lpSpCity'),
-        property_address_state:  gv('lpSpState'),
-        property_address_zip:    gv('lpSpZip'),
-        property_address_county: gv('lpSpCounty'),
-        updated_at:new Date().toISOString()
-      };
-      await _authClient().from('mortgage_applications').update(patch).eq('contact_id',cid);
-      // Keep contacts.property_address (the combined string Loan Details + doc/email merges
-      // read) in sync, so the popup edit propagates everywhere instead of only updating the
-      // split mortgage_applications columns. This was the root of the Snapshot/Details mismatch.
-      const _combined = [
-        (patch.property_address_street||'') + (patch.property_address_unit ? ', Unit '+patch.property_address_unit : ''),
-        patch.property_address_city, patch.property_address_state, patch.property_address_zip
-      ].map(function(s){ return String(s||'').trim(); }).filter(Boolean).join(', ');
-      try {
-        await _authClient().from('contacts').update({ property_address: _combined||null, updated_at:new Date().toISOString() }).eq('id',cid);
-        if(c) c.property_address = _combined||null;
-        if(typeof leadData!=='undefined' && leadData) leadData.property_address = _combined||null;
-        const _lpAddr=document.getElementById('lp-prop-addr'); if(_lpAddr) _lpAddr.value=_combined||'';
-        const _fProp=document.getElementById('f-property');   if(_fProp)  _fProp.value=_combined||'';
-      } catch(_){}
-      // Mirror into the 1003 details form if it's currently loaded, so both views
-      // reflect the change immediately (they share the same DB columns regardless).
-      const sync=(id,v)=>{ const e=document.getElementById(id); if(e){ e.value=(v==null?'':v); e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); } };
-      sync('f_prop_street',patch.property_address_street); sync('f_prop_unit',patch.property_address_unit);
-      sync('f_prop_city',patch.property_address_city);     sync('f_prop_state',patch.property_address_state);
-      sync('f_prop_zip',patch.property_address_zip);       sync('f_prop_county',patch.property_address_county);
+      const el=document.getElementById('lpSpAddr'); const addr=el?(el.value||'').trim():'';
+      const p=_spParsed;
+      // contacts is the display + merge source: save the combined line; add parsed city/state/zip on a pick.
+      const patch={ property_address: addr||null, updated_at:new Date().toISOString() };
+      if(p){ patch.property_city=p.city||null; patch.property_state=p.state||null; patch.property_zip=p.zip||null; }
+      try{
+        await _authClient().from('contacts').update(patch).eq('id',cid);
+        if(c){ c.property_address=addr||null; if(p){ c.property_city=p.city||null; c.property_state=p.state||null; c.property_zip=p.zip||null; } }
+        if(typeof leadData!=='undefined' && leadData) leadData.property_address=addr||null;
+        const _lpAddr=document.getElementById('lp-prop-addr'); if(_lpAddr) _lpAddr.value=addr||'';
+        const _fProp=document.getElementById('f-property');   if(_fProp)  _fProp.value=addr||'';
+      }catch(_){}
+      // On a Places pick, keep the structured mortgage_applications columns (+ 1003 form inputs) in sync.
+      if(p){
+        try{ await _authClient().from('mortgage_applications').update({ property_address_street:p.street||null, property_address_city:p.city||null, property_address_state:p.state||null, property_address_zip:p.zip||null, property_address_county:p.county||null, updated_at:new Date().toISOString() }).eq('contact_id',cid); }catch(_){}
+        const sync=(id,v)=>{ const e=document.getElementById(id); if(e){ e.value=(v==null?'':v); e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); } };
+        sync('f_prop_street',p.street); sync('f_prop_city',p.city); sync('f_prop_state',p.state); sync('f_prop_zip',p.zip); sync('f_prop_county',p.county);
+      }
       lpRenderSnapshot(cid);
     };
   } else {
@@ -15122,8 +15090,8 @@ function lpSnapEdit(key, ev){
   document.getElementById('lpSnapCancel').onclick=close;
   document.getElementById('lpSnapSave').onclick=async ()=>{ try{ await commit(); }catch(e){ alert('Could not save.'); } close(); };
   const first=panel.querySelector('input,select'); if(first) setTimeout(()=>first.focus(),30);
-  panel.addEventListener('keydown',function(e){ if(e.key==='Enter' && e.target.tagName!=='SELECT'){ document.getElementById('lpSnapSave').click(); } if(e.key==='Escape') close(); });
-  setTimeout(()=>{ const off=(e)=>{ if(!panel.contains(e.target)){ close(); document.removeEventListener('mousedown',off); } }; document.addEventListener('mousedown',off); },0);
+  panel.addEventListener('keydown',function(e){ if(e.key==='Enter' && e.target.tagName!=='SELECT'){ var _pac=document.querySelector('.pac-container'); var _pacOpen=_pac && _pac.offsetParent!==null && _pac.querySelector('.pac-item'); if(!_pacOpen) document.getElementById('lpSnapSave').click(); } if(e.key==='Escape') close(); });
+  setTimeout(()=>{ const off=(e)=>{ if(!panel.contains(e.target) && !(e.target.closest && e.target.closest('.pac-container'))){ close(); document.removeEventListener('mousedown',off); } }; document.addEventListener('mousedown',off); },0);
 }
 
 function switchTab(name, btn) {
@@ -19978,6 +19946,40 @@ function attachAutoSave() {
   });
 }
 
+/* ── Shared Google Places helper for a SINGLE address input (reused by the Loan Snapshot editor
+   and the Lead Details property field). Fills the FULL formatted address, or calls opts.onFill
+   with the parsed components. Waits for the shared window.loadGoogleMaps loader. ── */
+window.attachPlacesAddress = function(inputEl, opts){
+  opts=opts||{};
+  var go=function(){
+    if(!inputEl || inputEl._placesAttached) return;
+    if(!(window.google && window.google.maps && window.google.maps.places)) return;
+    inputEl._placesAttached=true;
+    try{
+      var ac=new google.maps.places.Autocomplete(inputEl, { componentRestrictions:{country:'us'}, fields:['address_components','formatted_address'], types:['address'] });
+      inputEl.addEventListener('keydown', function(e){ if(e.key==='Enter') e.preventDefault(); });
+      ac.addListener('place_changed', function(){
+        var p=ac.getPlace(); if(!p || !p.address_components) return;
+        var num='',route='',city='',state='',zip='',county='';
+        p.address_components.forEach(function(comp){ var t=comp.types;
+          if(t.indexOf('street_number')>=0) num=comp.long_name;
+          if(t.indexOf('route')>=0) route=comp.long_name;
+          if(t.indexOf('locality')>=0) city=comp.long_name;
+          if(t.indexOf('administrative_area_level_1')>=0) state=comp.short_name;
+          if(t.indexOf('postal_code')>=0) zip=comp.long_name;
+          if(t.indexOf('administrative_area_level_2')>=0) county=(comp.long_name||'').replace(/ County$/i,'');
+        });
+        var street=(num+' '+route).trim();
+        var parsed={ street:street, city:city, state:state, zip:zip, county:county, formatted:(p.formatted_address||'') };
+        if(typeof opts.onFill==='function'){ opts.onFill(parsed, inputEl); }
+        else { inputEl.value=parsed.formatted || [street,city,[state,zip].filter(Boolean).join(' ')].filter(Boolean).join(', '); inputEl.dispatchEvent(new Event('input',{bubbles:true})); inputEl.dispatchEvent(new Event('change',{bubbles:true})); }
+      });
+    }catch(e){ inputEl._placesAttached=false; console.warn('[attachPlacesAddress]', e&&e.message); }
+  };
+  if(window.google && window.google.maps && window.google.maps.places){ go(); }
+  else if(typeof window.loadGoogleMaps==='function'){ window.loadGoogleMaps().then(go).catch(function(){}); }
+  else { setTimeout(go, 600); }
+};
 /* ── ADDRESS AUTOCOMPLETE ── */
 function initAddressAutocomplete() {
   if (!window.google || !window.google.maps || !window.google.maps.places) return;
@@ -20017,7 +20019,20 @@ function initAddressAutocomplete() {
 }
 // Load Maps + Places, then wire autocomplete.
 if (typeof window.loadGoogleMaps === 'function') {
-  window.loadGoogleMaps().then(initAddressAutocomplete).catch(function(e) {
+  window.loadGoogleMaps().then(function(){
+    initAddressAutocomplete();
+    // Lead Details property field → Google Places (fills the full address + saves city/state/zip).
+    // Was previously Nominatim/OSM via addressAutocomplete(), which showed no Google suggestions.
+    var _fp=document.getElementById('f-property');
+    if(_fp && typeof window.attachPlacesAddress==='function'){
+      window.attachPlacesAddress(_fp, { onFill:function(p, el){
+        el.value = p.formatted || [p.street, p.city, [p.state,p.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+        el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+        var cid=(typeof lpCid==='function')?lpCid():null;
+        if(cid){ try{ _authClient().from('contacts').update({ property_city:p.city||null, property_state:p.state||null, property_zip:p.zip||null, updated_at:new Date().toISOString() }).eq('id',cid).then(function(){},function(){}); }catch(_){} }
+      }});
+    }
+  }).catch(function(e) {
     console.warn('[AddressAC] Maps load failed:', e.message);
   });
 }
