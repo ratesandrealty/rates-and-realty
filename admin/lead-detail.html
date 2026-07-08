@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070628 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070630 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -10358,7 +10358,8 @@ const LP_ORDER_ROWS = [
   { type:'title',     label:'Title',     category:'title'        },
   { type:'hoi',       label:'HOI',       category:'hoi'          },
   { type:'escrow',    label:'Escrow',    category:'escrow'       },
-  { type:'appraisal', label:'Appraisal', category:'appraisal'    }
+  { type:'appraisal', label:'Appraisal', category:'appraisal'    },
+  { type:'payoff',    label:'Mortgage Payoff', category:'payoff'  }
 ];
 const LP_ORDER_STATUS = [
   { v:'not_ordered',    t:'Not Ordered'    },
@@ -10865,17 +10866,25 @@ function lpRenderOrders(){
                  : schedSt ? 'border-color:rgba(59,130,246,.75);color:#60a5fa;background:rgba(59,130,246,.14);font-weight:600;'
                  : '';
     const revStyle = 'position:relative;z-index:2;width:100%;box-sizing:border-box;margin-top:6px;background:rgba(224,168,82,.07);border:1px solid rgba(224,168,82,.45);border-radius:7px;color:#eee;font-size:11.5px;line-height:1.4;padding:6px 8px;min-height:46px;resize:vertical;font-family:inherit;';
+    // Payoff-only: status 'not_required' → GREEN "Don't need" (tinted row + badge in place of the select).
+    const nreqPayoff = (row.type==='payoff' && st==='not_required');
     // Whole appraisal row tints: 'paid' → orange, 'scheduled' → blue (border + bg + rounded).
-    const rowStyle = paidSt
+    const rowStyle = nreqPayoff
+      ? 'position:relative;border:1px solid rgba(80,200,120,.45);background:rgba(80,200,120,.08);border-radius:8px;padding:6px 8px;margin-bottom:3px;'
+      : paidSt
       ? 'position:relative;border:1px solid rgba(245,158,11,.55);background:rgba(245,158,11,.09);border-radius:8px;padding:6px 8px;margin-bottom:3px;'
       : schedSt
       ? 'position:relative;border:1px solid rgba(59,130,246,.55);background:rgba(59,130,246,.09);border-radius:8px;padding:6px 8px;margin-bottom:3px;'
       : 'position:relative;border-bottom:1px solid rgba(255,255,255,.05);padding:6px 4px;';
+    // Status cell: the normal <select>, or a static green "Don't need" pill when payoff is marked not_required.
+    const statusCell = nreqPayoff
+      ? '<span style="'+sel+'border-color:rgba(80,200,120,.5);color:#7ee2a3;background:rgba(80,200,120,.12);text-align:center;font-weight:600;">Don\'t need</span>'
+      : '<select id="lpStatus-'+row.type+'" onchange="lpOrderStatusChange(\''+row.type+'\',this.value)" style="'+sel+stStyle+'">'+opts+'</select>';
     let html='<div style="'+rowStyle+'">'
       +'<div style="display:grid;grid-template-columns:62px 1fr 104px 52px;gap:8px;align-items:center;">'
         +'<span class="lp-role-tag">'+lpEsc(row.label)+'</span>'
         +'<button type="button" onclick="lpVendorOpen(\''+row.type+'\')" style="text-align:left;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(o.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
-        +'<select id="lpStatus-'+row.type+'" onchange="lpOrderStatusChange(\''+row.type+'\',this.value)" style="'+sel+stStyle+'">'+opts+'</select>'
+        +statusCell
         +'<span style="font-size:10px;text-align:right;white-space:nowrap;"><span id="lpSaved-'+row.type+'"></span><span id="lpDate-'+row.type+'" style="color:#888;"> '+dateTxt+'</span></span>'
       +'</div>'
       +'<textarea id="lpRev-'+row.type+'" onblur="lpOrderRevSave(\''+row.type+'\')" placeholder="Revision needed — what does the vendor need to fix?" style="'+revStyle+(nr?'':'display:none;')+'">'+lpEsc(o.revision_note||'')+'</textarea>';
@@ -10891,6 +10900,12 @@ function lpRenderOrders(){
       html+='<div style="margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:16px;">'
         +'<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#bbb;cursor:pointer;"><input type="checkbox" id="lpApPaid"'+(paid?' checked':'')+' onchange="lpOrderClientPaid(this.checked)" style="width:14px;height:14px;accent-color:#50c878;cursor:pointer;">Client Paid <span id="lpApPaidInd" style="color:#50c878;font-weight:700;">'+(paid?'Paid ✓':'')+'</span></label>'
         +'<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#bbb;">Inspection Scheduled <input type="date" id="lpApInsp" value="'+insp+'" onchange="lpAppraisalInspection(this.value)" style="'+sel+'padding:4px 6px;"></label>'
+      +'</div>';
+    }
+    if(row.type==='payoff'){
+      // "Don't Need" toggle — identical behavior to the VOE section's: not_required (green) ↔ not_ordered.
+      html+='<div style="margin-top:8px;">'
+        +'<button type="button" onclick="lpPayoffToggleDontNeed()" title="'+(nreqPayoff?'Mortgage Payoff marked not needed — click to undo':'Mark Mortgage Payoff as not required for this loan')+'" style="'+(nreqPayoff?'background:rgba(80,200,120,.16);border:1px solid rgba(80,200,120,.5);color:#7ee2a3;':'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#9a9a9a;')+'border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;font-family:inherit;">'+(nreqPayoff?'✓ Don\'t Need':'Don\'t Need')+'</button>'
       +'</div>';
     }
     html+='<div id="lpVendDrop-'+row.type+'" style="display:none;position:absolute;left:62px;right:52px;top:34px;z-index:50;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>';
@@ -10991,6 +11006,24 @@ async function lpVoeToggleDontNeed(){
     lpLoadTracker(cid);   // refresh top pill → green "Don't need"
   }catch(e){ toast('Could not update VOE: '+((e&&e.message)||e), true); }
 }
+// Mortgage Payoff "Don't Need" — single-row equivalent of the VOE toggle. Flips the ONE payoff
+// order between not_required (green "Don't need") and not_ordered, reusing its existing p_order_id.
+async function lpPayoffToggleDontNeed(){
+  const cid=lpCid(); const toast=window.showToast||window.toast||function(){};
+  if(!cid){ toast('No contact selected', true); return; }
+  const o=_lpOrders['payoff']||{};
+  const turnOn = (o.status!=='not_required');   // ON → not_required (green); OFF → back to not_ordered
+  try{
+    const r=await _authClient().rpc('loan_order_set',{
+      p_contact_id:cid, p_order_type:'payoff', p_status: turnOn?'not_required':'not_ordered',
+      p_order_id:o.id||null, p_vendor_id:o.vendor_id||null, p_reference:o.reference||null, p_notes:o.notes||null,
+      p_employer_name:null, p_hr_contact_name:null, p_hr_contact_phone:null, p_hr_contact_email:null
+    });
+    if(r.error) throw r.error;
+    toast(turnOn?'Mortgage Payoff marked not needed ✓':'Mortgage Payoff requirement restored');
+    lpLoadOrders(cid);   // reload single rows (payoff status updated) + refresh tracker pill
+  }catch(e){ toast('Could not update Mortgage Payoff: '+((e&&e.message)||e), true); }
+}
 /* ═══ VOE blank-form uploader (app-wide config; set/replace from the UI) ═══ */
 let _lpVoeFormUrl = null;
 async function lpVoeFormLoad(){
@@ -11039,7 +11072,7 @@ function _lpVoeToast(m,e){ (window.showToast||window.toast||function(){})(m,!!e)
 async function lpVoeLoadCfg(){
   if(_lpVoeCfg) return _lpVoeCfg;
   _lpVoeCfg = {};
-  try{ const r=await _authClient().from('app_config').select('key,value').in('key',['voe_form_url','voe_request_cc']); (r.data||[]).forEach(function(x){ _lpVoeCfg[x.key]=x.value; }); }catch(e){ console.warn('[voe cfg]', e&&e.message); }
+  try{ const r=await _authClient().from('app_config').select('key,value').in('key',['voe_form_url','voe_request_cc','voe_ytd_screenshot_url']); (r.data||[]).forEach(function(x){ _lpVoeCfg[x.key]=x.value; }); }catch(e){ console.warn('[voe cfg]', e&&e.message); }
   return _lpVoeCfg;
 }
 async function _lpVoePrefetch(cid){
@@ -11058,14 +11091,20 @@ async function lpVoePull(k){
 // 2. SEND TO HR — composer (single recipient, VOE PDF attached, cc rene@+processing@).
 function _lpVoeSigText(b){ b=b||{}; const L=[]; if(b.name)L.push(b.name); if(b.title)L.push(b.title); if(b.phone)L.push(b.phone); if(b.nmls)L.push('NMLS #'+b.nmls); if(b.email)L.push(b.email); return L.join('\n'); }
 function _lpVoeDefaultBody(pf, hrName, employer){
-  const hrFirst=((pf&&pf.hr_first)||'').trim() || ((hrName||'').trim().split(/\s+/)[0]) || 'there';
-  const bn=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'my client';
-  const emp=employer||pf.employer_name||'their employer';
-  const sig=_lpVoeSigText(pf.broker);
-  return 'Hello '+hrFirst+',\n\n'
-    +'I’m assisting '+bn+' with a mortgage application and need to verify their employment with '+emp+'. Please complete the attached Verification of Employment form and return it at your earliest convenience.\n\n'
-    +'Let me know if you need any additional information or a signed borrower authorization.\n\n'
-    +'Thank you,\n'+(sig||'');
+  pf=pf||{};
+  const bk=pf.broker||{};
+  const name=(bk.name||'').trim();
+  const nmls=(bk.nmls==null?'':String(bk.nmls)).trim();
+  // borrower_full fills the "helping ___" blank; empty ⇒ literal underscores for hand-typing pre-send.
+  const bn=(pf.borrower_full||'').trim()
+        || [pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ').trim()
+        || '____________';
+  const sig = name ? (name+(nmls?(' · NMLS '+nmls):'')) : (nmls?('NMLS '+nmls):'');
+  return 'Hello,\n\n'
+    +'My name is '+(name||'____________')+'. I am helping '+bn+' apply for a mortgage loan, and the lender is requesting a verification of employment form to be completed. Can you please help me with this?\n\n'
+    +'Please provide the current year and last 2 years of pay history (include breakdown of base, overtime, etc.). Also, in the "year to date thru" section (screenshot below), please provide the date of the last pay day the calculations are being done for. Complete fully — and if it doesn\'t apply, put an X, N/A, or just leave blank. Let me know if you have any questions.\n\n'
+    +'*Please confirm receipt of this email*\n\n'
+    +'Thank you,\n'+sig;
 }
 function lpVoeReqEnsureModal(){
   let ov=document.getElementById('lpVoeReqOverlay'); if(ov) return ov;
@@ -11103,7 +11142,7 @@ async function lpVoeReqOpen(k){
   const bn=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'';
   const set=(id,val)=>{ const e=document.getElementById(id); if(e) e.value=val||''; };
   set('lpVoeReqTo', hrEmail); set('lpVoeReqName', hrName);
-  set('lpVoeReqSubject', 'Request for Verification of Employment'+(bn?(' — '+bn):''));
+  set('lpVoeReqSubject', 'Verification of Employment Request'+(bn?(' — '+bn):''));
   set('lpVoeReqBody', _lpVoeDefaultBody(pf, hrName, employer));
   const att=document.getElementById('lpVoeReqAttach');
   if(att){ const cc=(cfg.voe_request_cc||''); att.innerHTML=(cfg.voe_form_url?'📎 Request_for_VOE_BLANK.pdf will be attached':'⚠ VOE form not staged yet — will send without the attachment')+(cc?('<br>CC: '+lpEsc(cc)):''); att.style.color=cfg.voe_form_url?'#888':'#c99a5b'; }
@@ -11119,12 +11158,45 @@ async function lpVoeReqSend(){
   const cfg=_lpVoeCfg||{};
   const gf=f=>{ const e=document.getElementById('lpVoeF-'+k+'-'+f); return e?(e.value||'').trim():''; };
   const employer=gf('employer_name'), hrPhone=gf('hr_contact_phone');
-  const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>';
+  // Optional inline "year to date thru" screenshot — set app_config.voe_ytd_screenshot_url to an image URL to embed it. Empty ⇒ text only.
+  const ytdImg=(cfg.voe_ytd_screenshot_url||'').trim();
+  const imgHtml=ytdImg?('<div style="margin-top:14px;"><img src="'+lpEsc(ytdImg)+'" alt="&quot;Year to date thru&quot; section" style="max-width:100%;border:1px solid #ddd;border-radius:6px;"></div>'):'';
+  const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+imgHtml+'</div>';
   // Fetch the staged VOE PDF → base64 attachment (public bucket; graceful if not staged).
   let attachments=undefined;
   if(cfg.voe_form_url){
     try{ const resp=await fetch(cfg.voe_form_url); if(resp.ok){ const buf=await resp.arrayBuffer(); attachments=[{ content:_lpB64FromBuf(buf), filename:'Request_for_VOE_BLANK.pdf', disposition:'attachment' }]; } else { _lpVoeToast('VOE form fetch failed ('+resp.status+') — sending without attachment', true); } }
     catch(e){ _lpVoeToast('Could not load VOE form — sending without attachment', true); }
+  }
+  // SECOND attachment — the SIGNED borrower authorization. voe_borrower_auth_request → { found, envelope_id, title }.
+  // esign-docs returns a 1-hour signed URL, so we fetch it NOW (client-side) and inline as base64, matching the
+  // VA-form path above (email-service takes base64 `content`, not URLs). Never send silently without it.
+  try{
+    const bar=await _authClient().rpc('voe_borrower_auth_request',{ p_contact_id:cid });
+    if(bar.error) throw bar.error;
+    const auth=Array.isArray(bar.data)?bar.data[0]:bar.data;
+    if(auth && auth.found && auth.envelope_id){
+      const appc=window.APP_CONFIG||{};
+      const SB=appc.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co', anon=appc.SUPABASE_ANON_KEY||'';
+      let tok=anon; try{ const s=await _authClient().auth.getSession(); if(s&&s.data&&s.data.session) tok=s.data.session.access_token; }catch(_){}
+      const dr=await fetch(SB+'/functions/v1/esign-docs',{ method:'POST', headers:{ 'Content-Type':'application/json','apikey':anon,'Authorization':'Bearer '+tok }, body:JSON.stringify({ action:'download', envelope_id:auth.envelope_id }) });
+      let dj=null; try{ dj=await dr.json(); }catch(_){}
+      if(!dr.ok || !dj || !dj.url) throw new Error((dj&&(dj.error||dj.message))||('auth download failed ('+dr.status+')'));
+      const pr=await fetch(dj.url);                                   // 1-hour signed URL — fetch at send time
+      if(!pr.ok) throw new Error('auth PDF fetch failed ('+pr.status+')');
+      const pbuf=await pr.arrayBuffer();
+      if(!attachments) attachments=[];
+      attachments.push({ content:_lpB64FromBuf(pbuf), filename:'Borrower_Authorization_signed.pdf', disposition:'attachment' });
+    } else if(auth && auth.found===false){
+      if(!confirm('No signed borrower authorization is on file for this borrower. Send the VOE request without it?')){
+        if(btn){ btn.disabled=false; btn.textContent='Send Request'; }
+        return;
+      }
+    }
+  }catch(be){
+    if(btn){ btn.disabled=false; btn.textContent='Send Request'; }
+    _lpVoeToast('Borrower authorization error: '+((be&&be.message)||be)+' — not sent', true);
+    return;
   }
   // Log FIRST so the reply_token exists BEFORE we send — HR replies route back to us via reply_to.
   // voe_request_log → { reply_token, email_log_id, order_id }; it also stamps the order (status→ordered,
@@ -11603,7 +11675,7 @@ function lpVendMgrEdit(id){ const v=(window._lpVMRows||[]).find(x=>String(x.id)=
 function lpVendMgrForm(v){
   const list=document.getElementById('lpVMList'); if(!list) return;
   const f=function(id,ph,val){ return '<input id="lpVMF-'+id+'" placeholder="'+ph+'" value="'+lpEsc(val||'')+'" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:7px 9px;margin-bottom:6px;">'; };
-  const cats=['title','hoi','escrow','appraisal','voe_employer','other'];
+  const cats=['title','hoi','escrow','appraisal','payoff','voe_employer','other'];
   const catOpts=cats.map(c=>'<option value="'+c+'"'+((v.category||'')===c?' selected':'')+'>'+c+'</option>').join('');
   list.innerHTML='<div style="padding:6px;"><div style="font-size:13px;color:#C9A84C;font-weight:700;margin-bottom:8px;">'+(v.id?'Edit vendor':'New vendor')+'</div>'
     +'<select id="lpVMF-category" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:7px 9px;margin-bottom:6px;">'+catOpts+'</select>'
