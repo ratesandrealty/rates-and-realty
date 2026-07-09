@@ -1,4 +1,7 @@
-// SMS AI Assistant (staff ops line) — v32
+// SMS AI Assistant (staff ops line) — v33
+// v33: create_clickup_task + list_my_tasks_today call clickup-bridge with clean headers (no stray
+//      Authorization bearer, which was 401'ing at the gateway). Attachment call keeps the RAW
+//      CLICKUP_API_TOKEN (no Bearer). v32 = initial rebuild.
 // Rebuilt 2026-07-09 from a recovered spec after the deployed v31 was overwritten with a placeholder
 // stub. This is the STAFF assistant on the 888 line (authorized senders only), NOT the lead bot.
 // Scaffold mirrors ai-sms-bot (raw Anthropic tool-loop, per-turn logging) but: parses the raw Twilio
@@ -246,8 +249,11 @@ function matchCandidate(body: string, cands: any[]): any | null {
 async function toolCreateTask(input: any) {
   const name = (input.name || "").trim();
   if (!name) return { success: false, message: "name required" };
+  // clickup-bridge is verify_jwt=false — call it with CLEAN headers. A stray Authorization
+  // bearer gets 401'd at the gateway (~17ms) before reaching the bridge/ClickUp. The bridge
+  // holds CLICKUP_API_TOKEN and talks to ClickUp with the RAW token (no Bearer) itself.
   const res = await fetch(`${SUPABASE_URL}/functions/v1/clickup-bridge/task`, {
-    method: "POST", headers: { "Content-Type": "application/json", "apikey": ANON_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
+    method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title: name, due_date: input.due_date || undefined }),
   });
   const j = await res.json().catch(() => ({} as any));
@@ -364,7 +370,7 @@ async function toolSearchHistory(input: any) {
 }
 async function toolTasksToday() {
   const url = `${SUPABASE_URL}/functions/v1/clickup-bridge/tasks?status=open&due=today&list_id=${CLICKUP_TODO_LIST_ID}&limit=50`;
-  const res = await fetch(url, { headers: { "apikey": ANON_KEY, "Authorization": `Bearer ${SERVICE_KEY}` } });
+  const res = await fetch(url); // clickup-bridge is verify_jwt=false — no auth header (a stray bearer 401s at the gateway)
   const j = await res.json().catch(() => ({} as any));
   if (!res.ok) return { success: false, message: "clickup bridge error " + res.status };
   const tasks = (j.tasks || []).map((t: any) => ({ title: t.title || t.name, status: t.status, priority: t.priority, due_date: t.due_date, url: t.url }));
