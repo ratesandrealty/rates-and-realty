@@ -1309,22 +1309,33 @@ function _snapDate(iso) {
   if (isNaN(d)) return "";
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
-// Build one snapshot sub-card: headline number + label + optional sub-line + row list.
+// Small pill chip; `alt` = muted/secondary variant.
+function _snapChip(txt, alt) {
+  return txt ? `<span class="ps-chip${alt ? " alt" : ""}">${crmEsc(txt)}</span>` : "";
+}
+// One card: gold category header + big gold count + optional sub-line, then up to SNAP_CAP
+// clickable name rows (each name + chip[s]), and a "+N more" when the total exceeds what's shown.
+const SNAP_CAP = 5;
 function _snapCard(num, label, subline, list, rowFn) {
-  const rows = (list && list.length)
-    ? list.map((it) => {
+  list = list || [];
+  const shown = list.slice(0, SNAP_CAP);
+  const rows = shown.length
+    ? shown.map((it) => {
         const inner = rowFn(it);
         const hasContact = it.contact_id && it.contact_id !== "null";
         return hasContact
-          ? `<a class="ps-row ps-click" href="../admin/lead-detail.html?contact_id=${encodeURIComponent(it.contact_id)}">${inner}</a>`
+          ? `<a class="ps-row" href="../admin/lead-detail.html?contact_id=${encodeURIComponent(it.contact_id)}">${inner}</a>`
           : `<div class="ps-row">${inner}</div>`;
       }).join("")
     : `<div class="ps-empty">None right now.</div>`;
+  const moreN = Math.max(0, (Number(num) || 0) - shown.length);
+  const more = moreN > 0 ? `<div class="ps-more">+${moreN} more</div>` : "";
   return `<div class="ps-card">
+      <div class="ps-cat">${crmEsc(label)}</div>
       <div class="ps-num">${Number(num) || 0}</div>
-      <div class="ps-label">${crmEsc(label)}</div>
       ${subline ? `<div class="ps-sub">${subline}</div>` : ""}
       <div class="ps-list">${rows}</div>
+      ${more}
     </div>`;
 }
 async function loadPipelineSnapshot() {
@@ -1343,34 +1354,26 @@ async function loadPipelineSnapshot() {
   }
   const escrow = snap.escrow || {}, buyers = snap.active_buyers || {},
         fees = snap.fee_sheets || {}, pre = snap.preapproved || {};
-  const nameSpan = (it) => `<div class="ps-name">${crmEsc(it.name || "Unknown")}</div>`;
+  const name = (it) => `<span class="ps-name">${crmEsc(it.name || "Unknown")}</span>`;
 
-  // 1) In Escrow — total + purchase/refi/other breakdown; rows: name + stage badge + purpose
+  // 1) Active Pipeline (in-escrow deals) — stage chip + loan_type chip; sub-line = purchase/refi split
   const escrowSub = `${Number(escrow.purchase) || 0} Purchase · ${Number(escrow.refinance) || 0} Refi · ${Number(escrow.other) || 0} Unspecified`;
-  const escrowCard = _snapCard(escrow.total, "In Escrow", escrowSub, escrow.list, (it) =>
-    `<div style="display:flex;align-items:center;gap:6px;justify-content:space-between;">${nameSpan(it)}${it.stage ? `<span class="ps-badge">${crmEsc(it.stage)}</span>` : ""}</div>`
-    + `<div class="ps-meta">${crmEsc(it.purpose || "—")}${it.loan_type ? " · " + crmEsc(it.loan_type) : ""}</div>`);
+  const escrowCard = _snapCard(escrow.total, "Active Pipeline", escrowSub, escrow.list, (it) =>
+    name(it) + _snapChip(it.stage) + _snapChip(it.loan_type, true));
 
-  // 2) Active Buyers (showings) — rows: name + "{showings} showings" + Next: date
-  const buyersCard = _snapCard(buyers.total, "Active Buyers (showings)", "", buyers.list, (it) => {
-    const parts = [`${Number(it.showings) || 0} showings`];
-    if (it.next_date) parts.push(`Next: ${_snapDate(it.next_date)}`);
-    return nameSpan(it) + `<div class="ps-meta">${crmEsc(parts.join(" · "))}</div>`;
-  });
+  // 2) Pre-Approved — loan_type / purpose chips
+  const preCard = _snapCard(pre.total, "Pre-Approved", "", pre.list, (it) =>
+    name(it) + _snapChip(it.loan_type || it.purpose) + _snapChip(it.loan_type && it.purpose ? it.purpose : "", true));
 
-  // 3) Fee Sheets Generated — rows: name + stage + relative updated_at
-  const feesCard = _snapCard(fees.total, "Fee Sheets Generated", "", fees.list, (it) => {
-    const meta = [it.stage, _notesAgo(it.updated_at)].filter(Boolean).join(" · ");
-    return nameSpan(it) + `<div class="ps-meta">${crmEsc(meta || "—")}</div>`;
-  });
+  // 3) Fee Sheets — stage chip + relative updated_at chip
+  const feesCard = _snapCard(fees.total, "Fee Sheets", "", fees.list, (it) =>
+    name(it) + _snapChip(it.stage) + _snapChip(_notesAgo(it.updated_at), true));
 
-  // 4) Pre-Approved — rows: name + purpose/loan_type
-  const preCard = _snapCard(pre.total, "Pre-Approved", "", pre.list, (it) => {
-    const meta = [it.purpose, it.loan_type].filter(Boolean).join(" · ");
-    return nameSpan(it) + `<div class="ps-meta">${crmEsc(meta || "—")}</div>`;
-  });
+  // 4) Active Buyers — showings chip + next-showing date chip
+  const buyersCard = _snapCard(buyers.total, "Active Buyers", "", buyers.list, (it) =>
+    name(it) + _snapChip(`${Number(it.showings) || 0} showings`) + _snapChip(it.next_date ? `Next ${_snapDate(it.next_date)}` : "", true));
 
-  grid.innerHTML = escrowCard + buyersCard + feesCard + preCard;
+  grid.innerHTML = escrowCard + preCard + feesCard + buyersCard;
 }
 
 // ── INSIGHTS (was Analytics) ───────────────────────────────────────────
