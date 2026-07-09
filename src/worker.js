@@ -311,10 +311,15 @@ function withCsp(res, path) {
   );
   // Legacy Feature-Policy for older engines (Permissions-Policy is the authoritative one).
   headers.set('Feature-Policy', "camera 'self'; microphone 'self'");
-  // Admin app HTML must never be cached (browser or Cloudflare edge) so deploys
-  // take effect immediately without a manual purge or clear-site-data. Public
-  // marketing pages keep their default caching.
-  if (path && path.indexOf('/admin/') === 0) {
+  // CRM app HTML (both /admin/* AND /dashboard/*) must never be cached (browser or
+  // Cloudflare edge) so deploys take effect immediately without a manual purge or
+  // clear-site-data. The relocation logic lives in the HTML's inline render(), so a
+  // stale /dashboard/admin doc runs the OLD render() even though the versioned JS is
+  // fresh — which is exactly why the dashboard looked unchanged. Cover the exact
+  // route (no trailing slash) too. Public marketing pages keep their default caching.
+  const p = path || '';
+  const isAppHtml = p === '/admin' || p.indexOf('/admin/') === 0 || p === '/dashboard' || p.indexOf('/dashboard/') === 0;
+  if (isAppHtml) {
     headers.set('Cache-Control', 'no-store, must-revalidate');
     headers.set('Pragma', 'no-cache');
     headers.set('Expires', '0');
