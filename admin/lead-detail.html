@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070631 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070632 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -11099,7 +11099,8 @@ function _lpVoeDefaultBody(pf, hrName, employer){
   const bn=(pf.borrower_full||'').trim()
         || [pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ').trim()
         || '____________';
-  const sig = name ? (name+(nmls?(' · NMLS '+nmls):'')) : (nmls?('NMLS '+nmls):'');
+  // broker.nmls already carries the "NMLS #..." prefix — do NOT prepend "NMLS " again.
+  const sig = name ? (name+(nmls?(' · '+nmls):'')) : nmls;
   return 'Hello,\n\n'
     +'My name is '+(name||'____________')+'. I am helping '+bn+' apply for a mortgage loan, and the lender is requesting a verification of employment form to be completed. Can you please help me with this?\n\n'
     +'Please provide the current year and last 2 years of pay history (include breakdown of base, overtime, etc.). Also, in the "year to date thru" section of the attached form, please provide the date of the last pay day the calculations are being done for. Complete fully — and if it doesn\'t apply, put an X, N/A, or just leave blank. Let me know if you have any questions.\n\n'
@@ -11221,7 +11222,7 @@ async function lpVoeReqSend(){
   try{
     const body={ action:'send', to_email:to, to_name:hrName, first_name:((hrName||'').split(/\s+/)[0]||''), subject:subject, html:bodyHtml, contact_id:cid };
     if(cfg.voe_request_cc) body.cc=cfg.voe_request_cc;
-    if(reply_token) body.reply_to='rene+'+reply_token+'@ratesandrealty.com';   // HR replies routable by token
+    body.reply_to='rene@ratesandrealty.com';   // plain broker inbox — inbound poller matches replies by HR sender address (plus-address wasn't delivering)
     if(attachments) body.attachments=attachments;
     const resp=await _authClient().functions.invoke('email-service',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
@@ -11250,14 +11251,60 @@ function lpVoeRenderActivity(box, a){
   else {
     html+=ev.map(function(e){
       const inbound=(String(e.direction||'').toLowerCase()==='inbound');
-      const who=inbound?('From '+lpEsc(e.from||e.from_email||'HR')):('To '+lpEsc(e.to||e.to_email||''));
-      const when=e.created_at?_lpFmtDT(e.created_at):(e.date?_lpFmtDT(e.date):'');
-      return '<div style="display:flex;gap:6px;align-items:flex-start;font-size:10px;padding:3px 6px;border-radius:6px;margin-bottom:2px;background:'+(inbound?'rgba(80,200,120,.08)':'rgba(255,255,255,.02)')+';border-left:2px solid '+(inbound?'#50c878':'rgba(201,168,76,.5)')+';">'
-        +'<span style="flex-shrink:0;">'+(inbound?'📥':'📤')+'</span>'
-        +'<span style="flex:1;min-width:0;"><span style="color:#ddd;">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span><span style="color:#888;"> — '+who+(when?(' · '+when):'')+'</span></span></div>';
+      const ind=inbound?'↓ Received':'↑ Sent';
+      const party=inbound?('from '+lpEsc(e.from||'HR')):('to '+lpEsc(e.to||''));
+      const when=e.at?_lpFmtDT(e.at):'';
+      return '<div class="lpVoeEvRow" data-email-id="'+lpEsc(String(e.id==null?'':e.id))+'" style="display:flex;gap:6px;align-items:flex-start;font-size:10px;padding:3px 6px;border-radius:6px;margin-bottom:2px;cursor:pointer;background:'+(inbound?'rgba(80,200,120,.08)':'rgba(255,255,255,.02)')+';border-left:2px solid '+(inbound?'#50c878':'rgba(201,168,76,.5)')+';">'
+        +'<span style="flex-shrink:0;font-weight:700;color:'+(inbound?'#50c878':'#C9A84C')+';">'+ind+'</span>'
+        +'<span style="flex:1;min-width:0;"><span style="color:#ddd;">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span><span style="color:#888;"> — '+party+(when?(' · '+when):'')+'</span></span></div>';
     }).join('');
   }
   box.innerHTML=html+'</div>';
+  // Row click → open the full email (voe_email_get). data-attr + listener avoids inline-onclick escaping of ids.
+  const rows=box.querySelectorAll('.lpVoeEvRow');
+  for(let i=0;i<rows.length;i++){ rows[i].addEventListener('click', function(){ const id=this.getAttribute('data-email-id'); if(id) lpVoeEmailOpen(id); }); }
+}
+function lpVoeEmailEnsureModal(){
+  let ov=document.getElementById('lpVoeEmailOverlay'); if(ov) return ov;
+  ov=document.createElement('div'); ov.id='lpVoeEmailOverlay';
+  ov.style.cssText='display:none;position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.62);align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto;';
+  ov.innerHTML='<div style="background:#141310;border:1px solid rgba(201,168,76,.3);border-radius:14px;max-width:720px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;max-height:88vh;">'
+    +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);">'
+      +'<div style="min-width:0;"><div id="lpVoeEmailSubject" style="font-size:14px;font-weight:700;color:#C9A84C;word-break:break-word;">Email</div><div id="lpVoeEmailMeta" style="font-size:10.5px;color:#999;margin-top:4px;line-height:1.5;"></div></div>'
+      +'<button onclick="lpVoeEmailClose()" style="background:transparent;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;flex-shrink:0;">✕</button>'
+    +'</div>'
+    +'<div id="lpVoeEmailBody" style="padding:14px 18px;overflow:auto;"></div>'
+  +'</div>';
+  ov.addEventListener('click', function(e){ if(e.target===ov) lpVoeEmailClose(); });   // click backdrop to close
+  document.body.appendChild(ov);
+  return ov;
+}
+function lpVoeEmailClose(){ const ov=document.getElementById('lpVoeEmailOverlay'); if(ov) ov.style.display='none'; }
+async function lpVoeEmailOpen(emailId){
+  const ov=lpVoeEmailEnsureModal();
+  const subjEl=document.getElementById('lpVoeEmailSubject'), metaEl=document.getElementById('lpVoeEmailMeta'), bodyEl=document.getElementById('lpVoeEmailBody');
+  subjEl.textContent='Email'; metaEl.textContent=''; bodyEl.innerHTML='<div style="font-size:11px;color:#888;">Loading…</div>';
+  ov.style.display='flex';
+  let d=null;
+  try{ const r=await _authClient().rpc('voe_email_get',{ p_email_log_id:emailId }); if(r.error) throw r.error; d=Array.isArray(r.data)?r.data[0]:r.data; }
+  catch(e){ metaEl.textContent=''; bodyEl.innerHTML='<div style="font-size:11px;color:#E5484D;">Could not load email: '+lpEsc((e&&e.message)||String(e))+'</div>'; return; }
+  if(!d || d.found===false){ subjEl.textContent='Email'; metaEl.textContent=''; bodyEl.innerHTML='<div style="font-size:11px;color:#888;">Email not available.</div>'; return; }
+  const inbound=(String(d.direction||'').toLowerCase()==='inbound');
+  subjEl.textContent=d.subject||'(no subject)';
+  const metaBits=['<span style="color:'+(inbound?'#50c878':'#C9A84C')+';font-weight:700;">'+(inbound?'↓ Received':'↑ Sent')+'</span>'];
+  if(d.from) metaBits.push('From: '+lpEsc(d.from));
+  if(d.to) metaBits.push('To: '+lpEsc(d.to));
+  if(d.cc) metaBits.push('CC: '+lpEsc(d.cc));
+  if(d.at) metaBits.push(lpEsc(_lpFmtDT(d.at)));
+  metaEl.innerHTML=metaBits.join(' &nbsp;·&nbsp; ');
+  const html=(d.body_html||'').trim();
+  if(html){
+    bodyEl.innerHTML='<iframe id="lpVoeEmailFrame" sandbox="allow-same-origin allow-popups" style="width:100%;height:56vh;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#fff;"></iframe>';
+    const f=document.getElementById('lpVoeEmailFrame'); if(f) f.srcdoc=html;
+  } else {
+    const txt=(d.body_text||'').trim();
+    bodyEl.innerHTML=txt?('<div style="white-space:pre-wrap;font-size:12px;line-height:1.55;color:#e8e8e8;">'+lpEsc(txt)+'</div>'):'<div style="font-size:11px;color:#888;">No email body.</div>';
+  }
 }
 function lpVoeField(k,field,val){ const v=_lpVoeFind(k); if(!v) return; v[field]=(val||'').trim(); lpVoeSave(k); }
 function lpVoeBorrowerChange(k,cid){
