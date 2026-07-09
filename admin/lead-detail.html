@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070632 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070633 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -11107,81 +11107,74 @@ function _lpVoeDefaultBody(pf, hrName, employer){
     +'*Please confirm receipt of this email*\n\n'
     +'Thank you,\n'+sig;
 }
-function lpVoeReqEnsureModal(){
-  let ov=document.getElementById('lpVoeReqOverlay'); if(ov) return ov;
-  const INP='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:7px;color:#eee;font-size:12px;padding:7px 9px;width:100%;box-sizing:border-box;font-family:inherit;';
-  const LBL='display:block;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.4px;margin:9px 0 3px;';
-  ov=document.createElement('div'); ov.id='lpVoeReqOverlay';
-  ov.style.cssText='display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.62);align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto;';
-  ov.innerHTML='<div style="background:#141310;border:1px solid rgba(201,168,76,.3);border-radius:14px;max-width:620px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.6);">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);"><span style="font-size:15px;font-weight:700;color:#C9A84C;">📨 Send VOE Request to HR</span><button onclick="lpVoeReqClose()" style="background:transparent;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;">✕</button></div>'
-    +'<div style="padding:16px 18px;max-height:72vh;overflow:auto;">'
-      +'<label style="'+LBL+'">HR Email</label><input id="lpVoeReqTo" style="'+INP+'">'
-      +'<label style="'+LBL+'">HR Name</label><input id="lpVoeReqName" style="'+INP+'">'
-      +'<label style="'+LBL+'">Subject</label><input id="lpVoeReqSubject" style="'+INP+'">'
-      +'<label style="'+LBL+'">Message</label><textarea id="lpVoeReqBody" style="'+INP+'min-height:230px;resize:vertical;line-height:1.5;"></textarea>'
-      +'<div id="lpVoeReqAttach" style="font-size:10px;color:#888;margin-top:8px;line-height:1.5;"></div>'
-    +'</div>'
-    +'<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid rgba(255,255,255,.08);"><button onclick="lpVoeReqClose()" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-family:inherit;">Cancel</button><button id="lpVoeReqSendBtn" onclick="lpVoeReqSend()" style="background:#C9A84C;border:none;color:#000;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">Send Request</button></div>'
-  +'</div>';
-  document.body.appendChild(ov);
-  return ov;
-}
-function lpVoeReqClose(){ const ov=document.getElementById('lpVoeReqOverlay'); if(ov) ov.style.display='none'; _lpVoeReqKey=null; }
+// VOE composer REUSES the rich "New Email" composer (openEmailComposer) pre-filled, with a
+// VOE-specific onSend (_voeComposerSend) that preserves the full send pipeline (voe_request_log +
+// email-service reply_to + VOE-form/auth attachments). The old standalone modal was removed.
 async function lpVoeReqOpen(k){
-  const cid=lpCid(); if(!cid){ _lpVoeToast('No contact', true); return; }
+  const cid=lpCid(); if(!cid){ showToast('No contact', true); return; }
   let v=_lpVoeFind(k); if(!v) return;
   if(!v.id){ await lpVoeSave(k); v=_lpVoeFind(k); }              // need an order id for voe_request_log
-  if(!v || !v.id){ _lpVoeToast('Set a borrower/status first, then send.', true); return; }
+  if(!v || !v.id){ showToast('Set a borrower/status first, then send.', true); return; }
   const g=f=>{ const e=document.getElementById('lpVoeF-'+k+'-'+f); return e?(e.value||'').trim():''; };
-  const hrName=g('hr_contact_name'), hrEmail=g('hr_contact_email'), employer=g('employer_name');
-  if(!hrEmail){ _lpVoeToast('Add the HR email on this card first.', true); return; }
+  const hrName=g('hr_contact_name'), hrEmail=g('hr_contact_email'), hrPhone=g('hr_contact_phone'), employer=g('employer_name');
+  if(!hrEmail){ showToast('Add the HR email on this card first.', true); return; }
   const cfgPf=await Promise.all([lpVoeLoadCfg(), _lpVoePrefetch(cid)]);
   const cfg=cfgPf[0]||{}, pf=cfgPf[1]||{};
   _lpVoeReqKey=k;
-  const ov=lpVoeReqEnsureModal();
   const bn=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'';
-  const set=(id,val)=>{ const e=document.getElementById(id); if(e) e.value=val||''; };
-  set('lpVoeReqTo', hrEmail); set('lpVoeReqName', hrName);
-  set('lpVoeReqSubject', 'Verification of Employment Request'+(bn?(' — '+bn):''));
-  set('lpVoeReqBody', _lpVoeDefaultBody(pf, hrName, employer));
-  const att=document.getElementById('lpVoeReqAttach');
-  if(att){
-    const cc=(cfg.voe_request_cc||''); const ccLine=cc?('<br>CC: '+lpEsc(cc)):'';
-    const renderAtt=extra=>{ att.innerHTML=(cfg.voe_form_url?('📎 Request_for_VOE_BLANK.pdf'+(extra||'')+' will be attached'):'⚠ VOE form not staged yet — will send without the attachment')+ccLine; att.style.color=cfg.voe_form_url?'#888':'#c99a5b'; };
-    renderAtt('');
-    // Display-only: if a signed borrower authorization is on file, list it too. Actual attach happens in lpVoeReqSend.
-    if(cfg.voe_form_url){
-      _authClient().rpc('voe_borrower_auth_request',{ p_contact_id:cid })
-        .then(function(r){ const a=(r&&!r.error)?(Array.isArray(r.data)?r.data[0]:r.data):null; if(a && a.found===true && _lpVoeReqKey===k) renderAtt(' + Borrower_Authorization_signed.pdf'); })
-        .catch(function(){});
-    }
+  const subject='Verification of Employment Request'+(bn?(' — '+bn):'');
+  const bodyText=_lpVoeDefaultBody(pf, hrName, employer);
+  const bodyHtml='<div>'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>';
+  // CC: composer auto-adds rene@ + processing@; also seed any configured voe_request_cc extras.
+  const ccExtra=String(cfg.voe_request_cc||'').split(/[;,]/).map(s=>s.trim()).filter(Boolean);
+  // Everything the VOE send pipeline needs, captured now (HR name/phone aren't composer fields).
+  const st={ k:k, cid:cid, orderId:v.id, hrName:hrName, hrPhone:hrPhone, employer:employer, cfg:cfg };
+  const attachNote=cfg.voe_form_url ? '📎 Request_for_VOE_BLANK.pdf will be attached'
+                                    : '⚠ VOE form not staged yet — will send without the attachment';
+  await openEmailComposer({
+    to: hrEmail,
+    cc: ccExtra,
+    subject: subject,
+    bodyHtml: bodyHtml,
+    title: '📨 Send VOE Request to HR',
+    sendLabel: 'Send VOE Request &#10148;',
+    attachNote: attachNote,
+    hideDraftSchedule: true,                 // VOE must go through voe_request_log — no generic draft/schedule
+    onSend: function(){ return _voeComposerSend(st); }
+  });
+  // Reflect the signed borrower authorization in the attachment note if one is on file (display only).
+  if(cfg.voe_form_url){
+    _authClient().rpc('voe_borrower_auth_request',{ p_contact_id:cid })
+      .then(function(r){ const a=(r&&!r.error)?(Array.isArray(r.data)?r.data[0]:r.data):null; if(a && a.found===true && _lpVoeReqKey===k){ const n=document.getElementById('ecAttachNote'); if(n) n.textContent='📎 Request_for_VOE_BLANK.pdf + Borrower_Authorization_signed.pdf will be attached'; } })
+      .catch(function(){});
   }
-  ov.style.display='flex';
 }
-async function lpVoeReqSend(){
-  const cid=lpCid(); const k=_lpVoeReqKey; if(!cid||!k) return;
-  const v=_lpVoeFind(k); if(!v||!v.id){ _lpVoeToast('Missing order id', true); return; }
-  const gv=id=>{ const e=document.getElementById(id); return e?(e.value||''):''; };
-  const to=gv('lpVoeReqTo').trim(), hrName=gv('lpVoeReqName').trim(), subject=gv('lpVoeReqSubject').trim(), bodyText=gv('lpVoeReqBody');
-  if(!to){ _lpVoeToast('HR email required', true); return; }
-  const btn=document.getElementById('lpVoeReqSendBtn'); if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
-  const cfg=_lpVoeCfg||{};
-  const gf=f=>{ const e=document.getElementById('lpVoeF-'+k+'-'+f); return e?(e.value||'').trim():''; };
-  const employer=gf('employer_name'), hrPhone=gf('hr_contact_phone');
-  // Optional inline "year to date thru" screenshot — set app_config.voe_ytd_screenshot_url to an image URL to embed it. Empty ⇒ text only.
+// VOE send via the shared composer — mirrors the original lpVoeReqSend pipeline EXACTLY, only sourcing
+// subject / body / recipients from the composer DOM. Preserves: VOE-form + signed-auth attachments (with
+// the confirm() gate), voe_request_log (token + order status), reply_to, CC, and the ytd screenshot embed.
+async function _voeComposerSend(st){
+  const cid=st.cid, k=st.k;
+  const to=(getChipEmails('toChips')[0]||'').trim();
+  if(!to){ showToast('HR email required', true); return; }
+  const btn=document.getElementById('ecSendBtn'); const restore=()=>{ if(btn){ btn.disabled=false; btn.innerHTML='Send VOE Request &#10148;'; } };
+  if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  const cfg=st.cfg||{};
+  const subject=(document.getElementById('subjectInput')?.value||'').trim();
+  const editor=document.getElementById('emailEditor');
+  const hrName=st.hrName, hrPhone=st.hrPhone, employer=st.employer;
+  const ccEmails=getChipEmails('ccChips');
+  // Optional inline "year to date thru" screenshot — set app_config.voe_ytd_screenshot_url to embed it.
   const ytdImg=(cfg.voe_ytd_screenshot_url||'').trim();
   const imgHtml=ytdImg?('<div style="margin-top:14px;"><img src="'+lpEsc(ytdImg)+'" alt="&quot;Year to date thru&quot; section" style="max-width:100%;border:1px solid #ddd;border-radius:6px;"></div>'):'';
-  const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+imgHtml+'</div>';
+  const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+stripMarkdownFences(editor?.innerHTML?.trim()||'')+imgHtml+'</div>';
   // Fetch the staged VOE PDF → base64 attachment (public bucket; graceful if not staged).
   let attachments=undefined;
   if(cfg.voe_form_url){
-    try{ const resp=await fetch(cfg.voe_form_url); if(resp.ok){ const buf=await resp.arrayBuffer(); attachments=[{ content:_lpB64FromBuf(buf), filename:'Request_for_VOE_BLANK.pdf', disposition:'attachment' }]; } else { _lpVoeToast('VOE form fetch failed ('+resp.status+') — sending without attachment', true); } }
-    catch(e){ _lpVoeToast('Could not load VOE form — sending without attachment', true); }
+    try{ const resp=await fetch(cfg.voe_form_url); if(resp.ok){ const buf=await resp.arrayBuffer(); attachments=[{ content:_lpB64FromBuf(buf), filename:'Request_for_VOE_BLANK.pdf', disposition:'attachment' }]; } else { showToast('VOE form fetch failed ('+resp.status+') — sending without attachment', true); } }
+    catch(e){ showToast('Could not load VOE form — sending without attachment', true); }
   }
   // SECOND attachment — the SIGNED borrower authorization. voe_borrower_auth_request → { found, envelope_id, title }.
-  // esign-docs returns a 1-hour signed URL, so we fetch it NOW (client-side) and inline as base64, matching the
-  // VA-form path above (email-service takes base64 `content`, not URLs). Never send silently without it.
+  // esign-docs returns a 1-hour signed URL, so we fetch it NOW (client-side) and inline as base64. Never send silently without it.
   try{
     const bar=await _authClient().rpc('voe_borrower_auth_request',{ p_contact_id:cid });
     if(bar.error) throw bar.error;
@@ -11199,14 +11192,11 @@ async function lpVoeReqSend(){
       if(!attachments) attachments=[];
       attachments.push({ content:_lpB64FromBuf(pbuf), filename:'Borrower_Authorization_signed.pdf', disposition:'attachment' });
     } else if(auth && auth.found===false){
-      if(!confirm('No signed borrower authorization is on file for this borrower. Send the VOE request without it?')){
-        if(btn){ btn.disabled=false; btn.textContent='Send Request'; }
-        return;
-      }
+      if(!confirm('No signed borrower authorization is on file for this borrower. Send the VOE request without it?')){ restore(); return; }
     }
   }catch(be){
-    if(btn){ btn.disabled=false; btn.textContent='Send Request'; }
-    _lpVoeToast('Borrower authorization error: '+((be&&be.message)||be)+' — not sent', true);
+    restore();
+    showToast('Borrower authorization error: '+((be&&be.message)||be)+' — not sent', true);
     return;
   }
   // Log FIRST so the reply_token exists BEFORE we send — HR replies route back to us via reply_to.
@@ -11214,23 +11204,23 @@ async function lpVoeReqSend(){
   // HR fields, ordered_at, last_follow_up_at, reply_token) + writes email_log.
   let reply_token=null;
   try{
-    const lr=await _authClient().rpc('voe_request_log',{ p_order_id:v.id, p_contact_id:cid, p_hr_name:hrName||null, p_hr_email:to||null, p_hr_phone:hrPhone||null, p_employer:employer||null, p_subject:subject, p_body_html:bodyHtml });
+    const lr=await _authClient().rpc('voe_request_log',{ p_order_id:st.orderId, p_contact_id:cid, p_hr_name:hrName||null, p_hr_email:to||null, p_hr_phone:hrPhone||null, p_employer:employer||null, p_subject:subject, p_body_html:bodyHtml });
     if(lr.error) throw lr.error;
     const ret=Array.isArray(lr.data)?lr.data[0]:lr.data;
     reply_token=(ret && ret.reply_token)||null;
   }catch(le){ console.warn('[voe_request_log]', le&&le.message); }
   try{
     const body={ action:'send', to_email:to, to_name:hrName, first_name:((hrName||'').split(/\s+/)[0]||''), subject:subject, html:bodyHtml, contact_id:cid };
-    if(cfg.voe_request_cc) body.cc=cfg.voe_request_cc;
-    body.reply_to='rene@ratesandrealty.com';   // plain broker inbox — inbound poller matches replies by HR sender address (plus-address wasn't delivering)
+    if(ccEmails && ccEmails.length) body.cc=ccEmails;
+    body.reply_to='rene@ratesandrealty.com';   // plain broker inbox — inbound poller matches replies by HR sender address
     if(attachments) body.attachments=attachments;
     const resp=await _authClient().functions.invoke('email-service',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
     if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
-    _lpVoeToast('VOE request sent to '+to+' ✓');
-    lpVoeReqClose();
+    showToast('VOE request sent to '+to+' ✓');
+    closeEmailComposer();
     lpLoadVoes(cid);      // refresh cards (status now ordered) + activity
-  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Send Request'; } _lpVoeToast('Send failed: '+((e&&e.message)||e), true); }
+  }catch(e){ restore(); showToast('Send failed: '+((e&&e.message)||e), true); }
 }
 // 3. ACTIVITY — status/ordered/HR + events[] (inbound replies render distinctly for Phase 2).
 async function lpVoeLoadActivity(orderId, k){
@@ -30538,13 +30528,34 @@ async function openEmailComposer(opts) {
   document.getElementById('ecDiscardBtn').addEventListener('click', closeEmailComposer);
   overlay.addEventListener('click', function(e) { if (e.target === overlay) closeEmailComposer(); });
 
-  // Wire draft + send
+  // Wire draft + send. opts.onSend (e.g. the VOE composer) overrides the default send path so
+  // callers can run their own pipeline (voe_request_log + email-service reply_to + attachments).
   document.getElementById('ecDraftBtn').addEventListener('click', saveEmailDraft);
-  document.getElementById('ecSendBtn').addEventListener('click', sendEmailFromComposer);
+  document.getElementById('ecSendBtn').addEventListener('click', (opts && typeof opts.onSend === 'function') ? opts.onSend : sendEmailFromComposer);
   if (opts && (opts.to || opts.subject || opts.bodyHtml)) {
     if (opts.to) { var _tc = document.getElementById('toChips'); if (_tc) { _tc.innerHTML = '<div class="ec-chip"><span>' + String(opts.to).replace(/</g,'&lt;') + '</span><button onclick="this.parentElement.remove()">✕</button></div><input class="ec-chip-input" id="toInput" placeholder="Add recipient..." onkeydown="handleChipKey(event,\'toChips\')">'; } }
     if (opts.subject != null) { var _si = document.getElementById('subjectInput'); if (_si) _si.value = opts.subject; }
     if (opts.bodyHtml != null) { var _ed = document.getElementById('emailEditor'); if (_ed) _ed.innerHTML = opts.bodyHtml; }
+  }
+  // Caller customizations (VOE composer, etc.) — all additive & guarded; the normal New Email path is untouched.
+  if (opts) {
+    if (opts.title) { var _hdrT = overlay.querySelector('.ec-header-title'); if (_hdrT) _hdrT.textContent = opts.title; }
+    if (opts.sendLabel) { var _sBtn = document.getElementById('ecSendBtn'); if (_sBtn) _sBtn.innerHTML = opts.sendLabel; }
+    if (opts.hideDraftSchedule) {
+      var _dBtn = document.getElementById('ecDraftBtn'); if (_dBtn) _dBtn.style.display = 'none';
+      var _schBtn = overlay.querySelector('.ec-schedule-btn'); if (_schBtn) _schBtn.style.display = 'none';
+    }
+    if (opts.attachNote) {
+      var _apRow = document.getElementById('attachPills');
+      if (_apRow) {
+        var _note = document.createElement('span');
+        _note.id = 'ecAttachNote';
+        _note.style.cssText = 'font-size:11px;color:#8a8475;display:inline-flex;align-items:center;gap:4px;';
+        _note.textContent = opts.attachNote;
+        _apRow.appendChild(_note);
+        _apRow.style.display = 'flex';
+      }
+    }
   }
 
   (function(){
