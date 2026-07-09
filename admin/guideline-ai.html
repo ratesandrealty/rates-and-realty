@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
   <title>Guideline AI — Rates & Realty CRM</title>
-  <!-- guideline-ai.html · cache-buster v=2026070801 (Worker serves /admin/* HTML no-store) -->
+  <!-- guideline-ai.html · cache-buster v=2026070802 (Worker serves /admin/* HTML no-store) -->
   <script src="/admin/js/auth-guard.js?v=2026062401"></script>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -547,16 +547,6 @@ async function _waitForAuthClient(maxMs) {
   return window._supabaseClient || null;
 }
 
-// Pulls the current user's access_token so JWT-gated edge fns (e.g. textract-ocr) accept the call.
-async function _getUserAccessToken() {
-  const c = await _waitForAuthClient();
-  if (!c) return null;
-  try {
-    const { data } = await c.auth.getSession();
-    return data && data.session ? data.session.access_token : null;
-  } catch (_) { return null; }
-}
-
 const LOAN_TYPE_COLORS = {
   'Conventional': '#4A90E2', 'FHA': '#E67E22', 'VA': '#27AE60',
   'USDA': '#8E44AD', 'Jumbo': '#C0392B', 'Non-QM': '#16A085',
@@ -930,7 +920,7 @@ async function _glSendLenderFile(file, lenderId, jwt) {
     })
   });
   var result = await resp.json().catch(function() { return null; });
-  if (!resp.ok || !result || !result.success) throw new Error((result && result.error) || ('OCR failed (' + resp.status + ')'));
+  if (!resp.ok || !result || !result.success) { var e = new Error((result && result.error) || ('OCR failed (' + resp.status + ')')); e.status = resp.status; throw e; }
   return true;
 }
 
@@ -954,39 +944,106 @@ async function _glSendGlobalFile(file, sourceType, sourceName, jwt) {
     })
   });
   var result = await resp.json().catch(function() { return null; });
-  if (!resp.ok || !result || !result.success) throw new Error((result && result.error) || ('OCR failed (' + resp.status + ')'));
+  if (!resp.ok || !result || !result.success) { var e = new Error((result && result.error) || ('OCR failed (' + resp.status + ')')); e.status = resp.status; throw e; }
   return true;
 }
 
-// Shared batch runner: filter to PDFs, send sequentially (so the async ingest queue isn't
-// hammered), track "Uploading i of N…" progress + a summary toast, then refresh via onDone.
-// opts = { fileList, sendOne(file, jwt), label?, buttonEl?, onDone? }
+// Normalized dedup key for a guideline: filename without .pdf, trimmed + lowercased.
+// title is stored as file.name minus .pdf for both scopes, so it's the reliable common key.
+function _glNameKey(s) { return String(s || '').replace(/\.pdf$/i, '').trim().toLowerCase(); }
+
+// Existing guideline name-keys for a scope, so a re-drop of the full set only ingests the missing files.
+// scope = { kind:'lender', lenderId } | { kind:'global', sourceType }. Best-effort — a failed query
+// returns an empty set (upload proceeds; the edge fn still owns final upsert behavior).
+async function _glExistingKeys(scope) {
+  var keys = new Set();
+  if (!scope || !scope.kind) return keys;
+  try {
+    var q = _authClient().from('lender_guidelines').select('file_name,title').eq('is_active', true);
+    if (scope.kind === 'lender') q = q.eq('lender_id', scope.lenderId);
+    else q = q.is('lender_id', null).eq('source_type', scope.sourceType);
+    var res = await q;
+    if (res.error) { console.warn('[guideline-batch] dup-check query failed:', res.error.message); return keys; }
+    var pfx = (scope.kind === 'global' && scope.sourceType) ? (scope.sourceType + '__').toLowerCase() : '';
+    (res.data || []).forEach(function(r) {
+      if (r.title) keys.add(_glNameKey(r.title));
+      if (r.file_name) {
+        var fn = String(r.file_name);
+        if (pfx && fn.toLowerCase().indexOf(pfx) === 0) fn = fn.slice(pfx.length);   // strip sourceType__ prefix
+        keys.add(_glNameKey(fn));
+      }
+    });
+  } catch (e) { console.warn('[guideline-batch] dup-check threw:', e); }
+  return keys;
+}
+
+// Current access token, optionally forcing a refresh first. getSession() auto-refreshes when near
+// expiry; forceRefresh is used after a 401 to guarantee a new token before the retry.
+async function _glFreshToken(client, forceRefresh) {
+  try {
+    if (forceRefresh && client && client.auth && typeof client.auth.refreshSession === 'function') {
+      try { await client.auth.refreshSession(); } catch (_) {}
+    }
+    var s = await client.auth.getSession();
+    return (s && s.data && s.data.session) ? s.data.session.access_token : null;
+  } catch (_) { return null; }
+}
+
+// Shared batch runner: filter to PDFs, skip duplicates + non-PDFs, send sequentially (so the async
+// ingest queue isn't hammered), track "Uploading i of N…" progress + a summary toast, refresh via onDone.
+// A FRESH token is fetched per file (long runs would otherwise 401 once the initial token expires),
+// with a single refresh-and-retry on 401. opts = { fileList, sendOne(file, jwt), scope?, label?, buttonEl?, onDone? }
 async function _glRunBatch(opts) {
   var all = Array.prototype.slice.call(opts.fileList || []);
   var pdfs = all.filter(_glIsPdf);
-  var skipped = all.length - pdfs.length;
+  var skipped = all.length - pdfs.length;   // non-PDF
   if (!pdfs.length) {
     showToast(skipped ? ('⚠ Skipped ' + skipped + ' non-PDF file' + (skipped > 1 ? 's' : '') + ' — PDF only') : 'No files selected');
     return;
   }
-  // textract-ocr has verify_jwt=true — must send a real user JWT (anon key 401s). Fetch once per batch.
-  var jwt = await _getUserAccessToken();
-  if (!jwt) { showToast('⚠ Session expired — sign in and retry'); return; }
+  // textract-ocr has verify_jwt=true — must send a real user JWT (anon key 401s). Client is stable;
+  // the token is re-read per file below so long batches survive token expiry.
+  var client = await _waitForAuthClient();
+  if (!client) { showToast('⚠ Session unavailable — sign in and retry'); return; }
+
+  var existing = await _glExistingKeys(opts.scope);   // pre-existing filenames for this lender/scope
 
   var btn = opts.buttonEl, origText = btn ? btn.textContent : null;
   if (btn) btn.disabled = true;
-  var ok = 0, fail = 0;
+  var ok = 0, fail = 0, dup = 0;
   for (var i = 0; i < pdfs.length; i++) {
-    var prog = 'Uploading ' + (i + 1) + ' of ' + pdfs.length + '…';
-    _glProgressShow((opts.label ? opts.label + ' — ' : '') + prog);
-    if (btn) btn.textContent = prog;
-    try { await opts.sendOne(pdfs[i], jwt); ok++; }
-    catch (err) { fail++; console.error('[guideline-batch] file failed:', pdfs[i] && pdfs[i].name, err); }
+    var file = pdfs[i];
+    var key = _glNameKey(file.name);
+    if (key && existing.has(key)) { dup++; continue; }   // already uploaded for this scope → skip
+
+    _glProgressShow((opts.label ? opts.label + ' — ' : '') + 'Uploading ' + (i + 1) + ' of ' + pdfs.length + '…');
+    if (btn) btn.textContent = 'Uploading ' + (i + 1) + '/' + pdfs.length + '…';
+
+    var jwt = await _glFreshToken(client, false);
+    if (!jwt) jwt = await _glFreshToken(client, true);   // one refresh attempt if no token at all
+    if (!jwt) { fail++; console.error('[guideline-batch] no access token for:', file.name); continue; }
+
+    try {
+      await opts.sendOne(file, jwt); ok++; if (key) existing.add(key);
+    } catch (err) {
+      if (err && err.status === 401) {
+        // Token expired mid-batch — refresh once and retry this single file before failing it.
+        var jwt2 = await _glFreshToken(client, true);
+        if (jwt2) {
+          try { await opts.sendOne(file, jwt2); ok++; if (key) existing.add(key); continue; }
+          catch (err2) { fail++; console.error('[guideline-batch] retry after 401 failed:', file.name, err2); continue; }
+        }
+        fail++; console.error('[guideline-batch] 401 and no refreshed token:', file.name); continue;
+      }
+      fail++; console.error('[guideline-batch] file failed:', file.name, err);
+    }
   }
   _glProgressHide();
   if (btn) { btn.textContent = origText; btn.disabled = false; }
 
-  var summary = ok + ' uploaded' + (fail ? (', ' + fail + ' failed') : '');
+  var summary = ok + ' uploaded';
+  if (dup) summary += ', ' + dup + ' skipped (already uploaded)';
+  if (fail) summary += ', ' + fail + ' failed';
   if (skipped) summary += ', ' + skipped + ' skipped (non-PDF)';
   showToast((fail ? '⚠ ' : '✅ ') + summary);
   if (typeof opts.onDone === 'function') { try { opts.onDone(); } catch (_) {} }
@@ -1000,6 +1057,7 @@ function _glDropOnEl(el, fileList) {
     _glRunBatch({
       fileList: fileList,
       label: el.getAttribute('data-source-name') || '',
+      scope: { kind: 'lender', lenderId: lenderId },
       sendOne: function(file, jwt) { return _glSendLenderFile(file, lenderId, jwt); },
       onDone: function() { loadLenderGuidelinesList(lenderId); }
     });
@@ -1008,6 +1066,7 @@ function _glDropOnEl(el, fileList) {
     _glRunBatch({
       fileList: fileList,
       label: sn,
+      scope: { kind: 'global', sourceType: st },
       sendOne: function(file, jwt) { return _glSendGlobalFile(file, st, sn, jwt); },
       onDone: function() { loadGlobalGuidelineCounts(); if (typeof renderReferenceLibrary === 'function') renderReferenceLibrary(); }
     });
@@ -1053,6 +1112,7 @@ function triggerLenderGuidelineUpload(lenderId, lenderName, buttonEl) {
       fileList: e.target.files,
       label: lenderName,
       buttonEl: buttonEl,
+      scope: { kind: 'lender', lenderId: lenderId },
       sendOne: function(file, jwt) { return _glSendLenderFile(file, lenderId, jwt); },
       onDone: function() { loadLenderGuidelinesList(lenderId); }
     });
@@ -1242,6 +1302,7 @@ function uploadGlobalGuideline(sourceType, sourceName, buttonEl) {
       fileList: e.target.files,
       label: sourceName,
       buttonEl: buttonEl,
+      scope: { kind: 'global', sourceType: sourceType },
       sendOne: function(file, jwt) { return _glSendGlobalFile(file, sourceType, sourceName, jwt); },
       onDone: function() { loadGlobalGuidelineCounts(); if (typeof renderReferenceLibrary === 'function') renderReferenceLibrary(); }
     });
