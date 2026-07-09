@@ -2664,7 +2664,7 @@
   <script type="module" src="/components/layout.js?v=20260712"></script>
   <!-- Staff-to-staff chat: floating Chat bubble (beside the AI FAB) + realtime. -->
   <script src="/admin/js/staff-chat.js?v=2026070603"></script>
-  <script type="module" src="/components/admin-dashboard.js?v=20260709b"></script>
+  <script type="module" src="/components/admin-dashboard.js?v=20260709c"></script>
   <script src="/dashboard/utils/insights.js?v=2026050402"></script>
   <script src="/dashboard/utils/calendar.js?v=2026061301"></script>
   <script src="/dashboard/utils/clickup-widget.js?v=2026050401"></script>
@@ -2924,20 +2924,46 @@
     });
   });
 
+  // Layout version — BUMP whenever the authored default section order changes so stale
+  // per-browser saved orders are auto-discarded (one reload adopts the new default; no
+  // manual dragging / devtools). Previously there was NO version and NO default array:
+  // a saved order silently overrode the authored DOM forever, so relocating sections in
+  // admin.html never changed the live layout for anyone who had ever dragged.
+  const LAYOUT_VERSION = 2;
+  const ORDER_KEY = 'dashboardSectionOrder';
+  const VERSION_KEY = 'dashboardLayoutVersion';
+  // Default order when nothing valid is saved: lead with Market Watch then the Active
+  // Pipeline Snapshot, directly under the pinned Daily widget (#command-center, not a
+  // draggable section). Ids absent from the DOM are skipped; any section missing from
+  // this list is appended last so it is never stranded ahead of the ordered sections.
+  const DEFAULT_SECTION_ORDER = ['market-rates','pipeline-snapshot','showing-requests','stats','charts','activity','recent-notes','appointments','clickup-today','deals-referrals'];
+
   function saveSectionOrder() {
     const order = [...document.querySelectorAll('.dashboard-sections-wrapper .dashboard-section')].map(el => el.dataset.sectionId);
-    localStorage.setItem('dashboardSectionOrder', JSON.stringify(order));
+    localStorage.setItem(ORDER_KEY, JSON.stringify(order));
+    localStorage.setItem(VERSION_KEY, String(LAYOUT_VERSION));
+  }
+
+  function applySectionOrder(order, parent) {
+    const listed = new Set(order);
+    order.forEach(id => { const el = parent.querySelector(`[data-section-id="${id}"]`); if (el) parent.appendChild(el); });
+    [...parent.querySelectorAll('.dashboard-section')].forEach(el => { if (!listed.has(el.dataset.sectionId)) parent.appendChild(el); });
   }
 
   function restoreSectionOrder() {
-    const saved = localStorage.getItem('dashboardSectionOrder');
-    if (!saved) return;
-    try {
-      const order = JSON.parse(saved);
-      const parent = document.querySelector('.dashboard-sections-wrapper');
-      if (!parent) return;
-      order.forEach(id => { const el = parent.querySelector(`[data-section-id="${id}"]`); if (el) parent.appendChild(el); });
-    } catch(e) {}
+    const parent = document.querySelector('.dashboard-sections-wrapper');
+    if (!parent) return;
+    let order = null;
+    const savedVer = localStorage.getItem(VERSION_KEY);
+    const saved = localStorage.getItem(ORDER_KEY);
+    // Only honor a saved order when its stored version matches the current LAYOUT_VERSION.
+    if (saved && String(savedVer) === String(LAYOUT_VERSION)) {
+      try { order = JSON.parse(saved); } catch (e) { order = null; }
+    }
+    // Stale (version mismatch), corrupt, or absent → adopt the new default and re-save it.
+    if (!Array.isArray(order)) order = DEFAULT_SECTION_ORDER.slice();
+    applySectionOrder(order, parent);
+    saveSectionOrder();   // persist effective order + current version → stale data gone after one load
   }
   restoreSectionOrder();
 })();
