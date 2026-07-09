@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
   <title>Guideline AI — Rates & Realty CRM</title>
+  <!-- guideline-ai.html · cache-buster v=2026070801 (Worker serves /admin/* HTML no-store) -->
   <script src="/admin/js/auth-guard.js?v=2026062401"></script>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -167,6 +168,8 @@
       margin-bottom: 8px; transition: border-color 0.15s;
     }
     .agency-card:hover { border-color: rgba(255,255,255,0.15); }
+    /* Drag-and-drop highlight for any guideline upload card (agency, reference library, per-lender). */
+    .gl-drop-over { outline: 2px dashed #C9A84C !important; outline-offset: -3px; background: rgba(201,168,76,0.09) !important; }
     .agency-icon {
       width: 36px; height: 36px; border-radius: 8px; display: flex;
       align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0;
@@ -789,10 +792,10 @@ function renderLenderPopup(lender) {
         return '<span style="display:inline-block;padding:2px 7px;border-radius:8px;font-size:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--text);margin:2px;">' + p + '</span>';
       }).join('') + '</div></div>' : '') +
 
-    // Guidelines
-    '<div style="border-top:1px solid #222;padding-top:16px;margin-top:4px;">' +
+    // Guidelines (whole section is a drag-drop target → data-scope="lender")
+    '<div data-gl-drop data-scope="lender" data-lender-id="' + lender.id + '" data-source-name="' + escapeHtmlGai(lender.name || '') + '" title="Drop PDFs here to upload" style="border-top:1px solid #222;padding-top:16px;margin-top:4px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-        '<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;">Guidelines</div>' +
+        '<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;">Guidelines <span style="text-transform:none;letter-spacing:0;color:#444;">· drop PDFs or</span></div>' +
         '<button onclick="triggerLenderGuidelineUpload(\'' + lender.id + '\', \'' + safeNameAttr + '\', this)" style="background:#C9A84C22;border:1px solid #C9A84C44;color:#C9A84C;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;font-family:inherit;">+ Upload PDF</button>' +
       '</div>' +
       '<div id="lenderGuidelinesList_' + lender.id + '" style="min-height:40px;"><div style="color:#555;font-size:12px;text-align:center;padding:12px;">Loading...</div></div>' +
@@ -879,64 +882,180 @@ async function deleteGuideline(id, title, lenderId) {
   if (typeof loadLenderGuidelinesList === 'function') loadLenderGuidelinesList(lenderId);
 }
 
-// ── LENDER GUIDELINE UPLOAD ─────────────────────
+// ── GUIDELINE UPLOAD — shared multi-file / drag-drop plumbing ───────────────
+// Backend/ingest is UNCHANGED: each file still goes through the SAME single-file
+// textract-ocr 'start' call — we just loop it once per file (sequentially) and add
+// multi-select, drag-drop, and progress on top. The per-file senders below ARE the
+// original calls, extracted verbatim so they can be looped.
+function _glIsPdf(f) {
+  return !!f && (((f.name || '') && /\.pdf$/i.test(f.name)) || (f.type || '').includes('pdf'));
+}
+function _glReadBase64(file) {
+  return new Promise(function(res, rej) {
+    var r = new FileReader();
+    r.onload = function() { res(r.result.split(',')[1]); };
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+// Persistent progress pill (distinct from the transient showToast): show → update → hide.
+var _glProgressEl = null;
+function _glProgressShow(text) {
+  if (!_glProgressEl) {
+    _glProgressEl = document.createElement('div');
+    _glProgressEl.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:10000;background:#1a1a1a;color:#C9A84C;border:1px solid #C9A84C55;padding:12px 20px;border-radius:10px;font-weight:700;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+    document.body.appendChild(_glProgressEl);
+  }
+  _glProgressEl.textContent = text;
+}
+function _glProgressHide() { if (_glProgressEl) { _glProgressEl.remove(); _glProgressEl = null; } }
+
+// Per-file sender — LENDER scope (unchanged payload from the old single-file handler).
+async function _glSendLenderFile(file, lenderId, jwt) {
+  // Edge fn v76 owns BOTH the storage upload AND the lender_guidelines upsert — do NOT
+  // pre-insert or pre-upload here (would create a duplicate row/file).
+  var base64 = await _glReadBase64(file);
+  var resp = await fetch(SB_URL + '/functions/v1/textract-ocr', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + jwt },
+    body: JSON.stringify({
+      action: 'start',
+      file_base64: base64,
+      file_name: file.name,
+      file_type: 'application/pdf',
+      lender_id: lenderId,
+      category: 'General Guidelines',
+      title: file.name.replace(/\.pdf$/i, '')
+      // source_type omitted → edge fn defaults to 'lender' (correct for per-lender docs)
+    })
+  });
+  var result = await resp.json().catch(function() { return null; });
+  if (!resp.ok || !result || !result.success) throw new Error((result && result.error) || ('OCR failed (' + resp.status + ')'));
+  return true;
+}
+
+// Per-file sender — GLOBAL/agency scope (unchanged payload, incl. sourceType-scoped filename).
+async function _glSendGlobalFile(file, sourceType, sourceName, jwt) {
+  var base64 = await _glReadBase64(file);
+  // Prefix file_name with sourceType so two agencies uploading the same filename don't
+  // silently overwrite each other (edge fn storage upload uses upsert:true). Title stays clean.
+  var scopedName = sourceType + '__' + file.name;
+  var resp = await fetch(SB_URL + '/functions/v1/textract-ocr', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + jwt },
+    body: JSON.stringify({
+      action: 'start',
+      file_base64: base64,
+      file_name: scopedName,
+      file_type: 'application/pdf',
+      source_type: sourceType,
+      category: sourceName,
+      title: file.name.replace(/\.pdf$/i, '')
+    })
+  });
+  var result = await resp.json().catch(function() { return null; });
+  if (!resp.ok || !result || !result.success) throw new Error((result && result.error) || ('OCR failed (' + resp.status + ')'));
+  return true;
+}
+
+// Shared batch runner: filter to PDFs, send sequentially (so the async ingest queue isn't
+// hammered), track "Uploading i of N…" progress + a summary toast, then refresh via onDone.
+// opts = { fileList, sendOne(file, jwt), label?, buttonEl?, onDone? }
+async function _glRunBatch(opts) {
+  var all = Array.prototype.slice.call(opts.fileList || []);
+  var pdfs = all.filter(_glIsPdf);
+  var skipped = all.length - pdfs.length;
+  if (!pdfs.length) {
+    showToast(skipped ? ('⚠ Skipped ' + skipped + ' non-PDF file' + (skipped > 1 ? 's' : '') + ' — PDF only') : 'No files selected');
+    return;
+  }
+  // textract-ocr has verify_jwt=true — must send a real user JWT (anon key 401s). Fetch once per batch.
+  var jwt = await _getUserAccessToken();
+  if (!jwt) { showToast('⚠ Session expired — sign in and retry'); return; }
+
+  var btn = opts.buttonEl, origText = btn ? btn.textContent : null;
+  if (btn) btn.disabled = true;
+  var ok = 0, fail = 0;
+  for (var i = 0; i < pdfs.length; i++) {
+    var prog = 'Uploading ' + (i + 1) + ' of ' + pdfs.length + '…';
+    _glProgressShow((opts.label ? opts.label + ' — ' : '') + prog);
+    if (btn) btn.textContent = prog;
+    try { await opts.sendOne(pdfs[i], jwt); ok++; }
+    catch (err) { fail++; console.error('[guideline-batch] file failed:', pdfs[i] && pdfs[i].name, err); }
+  }
+  _glProgressHide();
+  if (btn) { btn.textContent = origText; btn.disabled = false; }
+
+  var summary = ok + ' uploaded' + (fail ? (', ' + fail + ' failed') : '');
+  if (skipped) summary += ', ' + skipped + ' skipped (non-PDF)';
+  showToast((fail ? '⚠ ' : '✅ ') + summary);
+  if (typeof opts.onDone === 'function') { try { opts.onDone(); } catch (_) {} }
+}
+
+// Drop routing by scope — reused by both the delegated drop handler and (indirectly) the pickers.
+function _glDropOnEl(el, fileList) {
+  var scope = el.getAttribute('data-scope');
+  if (scope === 'lender') {
+    var lenderId = el.getAttribute('data-lender-id');
+    _glRunBatch({
+      fileList: fileList,
+      label: el.getAttribute('data-source-name') || '',
+      sendOne: function(file, jwt) { return _glSendLenderFile(file, lenderId, jwt); },
+      onDone: function() { loadLenderGuidelinesList(lenderId); }
+    });
+  } else if (scope === 'global') {
+    var st = el.getAttribute('data-source-type'), sn = el.getAttribute('data-source-name') || '';
+    _glRunBatch({
+      fileList: fileList,
+      label: sn,
+      sendOne: function(file, jwt) { return _glSendGlobalFile(file, st, sn, jwt); },
+      onDone: function() { loadGlobalGuidelineCounts(); if (typeof renderReferenceLibrary === 'function') renderReferenceLibrary(); }
+    });
+  }
+}
+
+// Delegated drag-drop (attached once): survives the card re-renders. A drop anywhere inside a
+// [data-gl-drop] card highlights it and runs the same per-file batch.
+var _glDragEl = null;
+function setupGuidelineDropZones() {
+  if (window._glDropWired) return;
+  window._glDropWired = true;
+  document.addEventListener('dragover', function(e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-gl-drop]') : null;
+    if (!el) return;
+    e.preventDefault();                                  // required so 'drop' fires
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    if (_glDragEl && _glDragEl !== el) _glDragEl.classList.remove('gl-drop-over');
+    _glDragEl = el; el.classList.add('gl-drop-over');
+  });
+  document.addEventListener('dragleave', function(e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-gl-drop]') : null;
+    if (el && _glDragEl === el && !el.contains(e.relatedTarget)) { el.classList.remove('gl-drop-over'); _glDragEl = null; }
+  });
+  document.addEventListener('drop', function(e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-gl-drop]') : null;
+    if (!el) return;
+    e.preventDefault();
+    if (_glDragEl) { _glDragEl.classList.remove('gl-drop-over'); _glDragEl = null; }
+    var files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) _glDropOnEl(el, files);
+  });
+}
+
+// ── LENDER GUIDELINE UPLOAD (multi-file picker; drag-drop handled via delegation) ──
 function triggerLenderGuidelineUpload(lenderId, lenderName, buttonEl) {
   var input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.pdf';
-  input.onchange = async function(e) {
-    var file = e.target.files[0];
-    if (!file) return;
-    var origText = buttonEl.textContent;
-    buttonEl.textContent = 'Uploading...';
-    buttonEl.disabled = true;
-    try {
-      // textract-ocr has verify_jwt=true — must send a real user JWT (anon key 401s).
-      var jwt = await _getUserAccessToken();
-      if (!jwt) {
-        alert('Session expired — please sign in and retry.');
-        buttonEl.textContent = origText; buttonEl.disabled = false; return;
-      }
-      // Read file to base64. Edge fn v76 owns BOTH the storage upload AND the lender_guidelines
-      // upsert — do NOT pre-insert or pre-upload here (would create duplicate row/file).
-      var base64 = await new Promise(function(res, rej) {
-        var r = new FileReader();
-        r.onload = function() { res(r.result.split(',')[1]); };
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
-      var resp = await fetch(SB_URL + '/functions/v1/textract-ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + jwt },
-        body: JSON.stringify({
-          action: 'start',
-          file_base64: base64,
-          file_name: file.name,
-          file_type: 'application/pdf',
-          lender_id: lenderId,
-          category: 'General Guidelines',
-          title: file.name.replace(/\.pdf$/i, '')
-          // source_type omitted → edge fn defaults to 'lender' (correct for per-lender docs)
-        })
-      });
-      var result = await resp.json().catch(function() { return null; });
-      if (!resp.ok || !result || !result.success) {
-        var msg = (result && result.error) || ('OCR failed (' + resp.status + ')');
-        console.error('[lender-guideline-upload] non-OK response:', resp.status, result);
-        buttonEl.textContent = '❌ Failed';
-        alert('Guideline upload failed: ' + msg);
-        setTimeout(function() { buttonEl.textContent = origText; buttonEl.disabled = false; }, 3000);
-        return;
-      }
-      buttonEl.textContent = '✅ Indexed!';
-      loadLenderGuidelinesList(lenderId);
-      setTimeout(function() { buttonEl.textContent = origText; buttonEl.disabled = false; }, 3000);
-    } catch(err) {
-      console.error('[lender-guideline-upload] threw:', err);
-      buttonEl.textContent = '❌ Failed';
-      alert('Guideline upload failed: ' + (err && err.message ? err.message : err));
-      setTimeout(function() { buttonEl.textContent = origText; buttonEl.disabled = false; }, 3000);
-    }
+  input.accept = '.pdf,application/pdf';
+  input.multiple = true;
+  input.onchange = function(e) {
+    _glRunBatch({
+      fileList: e.target.files,
+      label: lenderName,
+      buttonEl: buttonEl,
+      sendOne: function(file, jwt) { return _glSendLenderFile(file, lenderId, jwt); },
+      onDone: function() { loadLenderGuidelinesList(lenderId); }
+    });
   };
   input.click();
 }
@@ -1010,7 +1129,7 @@ async function renderReferenceLibrary() {
   } catch(e) { console.warn('[ref-counts]', e); }
   grid.innerHTML = REFERENCE_SOURCES.map(function(src) {
     var c = counts[src.key] || 0;
-    return '<div style="background:#161616;border:1px solid #222;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
+    return '<div data-gl-drop data-scope="global" data-source-type="' + escapeHtmlGai(src.key) + '" data-source-name="' + escapeHtmlGai(src.label) + '" title="Drop PDFs here to upload" style="background:#161616;border:1px solid #222;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<div style="display:flex;align-items:center;gap:8px;">' +
         '<span style="font-size:20px;">' + src.icon + '</span>' +
         '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#fff;">' + src.label + '</div>' +
@@ -1081,7 +1200,7 @@ async function agencyDocDeleteThenRefresh(id, title, sourceType, sourceName) {
 function renderAgencyCards() {
   var container = document.getElementById('agencyCards');
   container.innerHTML = GLOBAL_AGENCY_LINKS.map(function(a) {
-    return '<div class="agency-card">' +
+    return '<div class="agency-card" data-gl-drop data-scope="global" data-source-type="' + escapeHtmlGai(a.source_type) + '" data-source-name="' + escapeHtmlGai(a.label) + '" title="Drop PDFs here to upload">' +
       '<div class="agency-icon" style="background:' + a.color + '22;color:' + a.color + ';">' + a.icon + '</div>' +
       '<div class="agency-info">' +
         '<div class="agency-name">' + a.label + '</div>' +
@@ -1112,63 +1231,20 @@ async function loadGlobalGuidelineCounts() {
   } catch(e) { /* non-fatal */ }
 }
 
+// ── GLOBAL/AGENCY GUIDELINE UPLOAD (multi-file picker; drag-drop handled via delegation) ──
 function uploadGlobalGuideline(sourceType, sourceName, buttonEl) {
   var input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.pdf';
-  input.onchange = async function(e) {
-    var file = e.target.files[0];
-    if (!file) return;
-    var origText = buttonEl.textContent;
-    buttonEl.textContent = '...';
-    buttonEl.disabled = true;
-    try {
-      // textract-ocr has verify_jwt=true — must send a real user JWT.
-      var jwt = await _getUserAccessToken();
-      if (!jwt) {
-        alert('Session expired — please sign in and retry.');
-        buttonEl.textContent = origText; buttonEl.disabled = false; return;
-      }
-      // Read file to base64 (edge fn v76 owns storage upload + lender_guidelines upsert).
-      var base64 = await new Promise(function(res, rej) {
-        var r = new FileReader();
-        r.onload = function() { res(r.result.split(',')[1]); };
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
-      // Multi-agency safety: edge fn computes safeFileName from file_name with no agency
-      // awareness, and storage upload uses upsert:true — two agencies uploading the same
-      // filename would silently overwrite each other. Prefix file_name with sourceType
-      // to keep storage paths unique per agency. Title stays clean (original filename).
-      var scopedName = sourceType + '__' + file.name;
-      var resp = await fetch(SB_URL + '/functions/v1/textract-ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + jwt },
-        body: JSON.stringify({
-          action: 'start',
-          file_base64: base64,
-          file_name: scopedName,
-          file_type: 'application/pdf',
-          source_type: sourceType,    // v76 edge fn now persists this; agency stays visible in Reference Library
-          category: sourceName,
-          title: file.name.replace(/\.pdf$/i, '')
-        })
-      });
-      var result = await resp.json().catch(function() { return null; });
-      if (!resp.ok || !result || !result.success) {
-        var msg = (result && result.error) || ('OCR failed (' + resp.status + ')');
-        console.error('[global-guideline-upload] non-OK response:', resp.status, result);
-        showToast('❌ Upload failed: ' + msg);
-        buttonEl.textContent = origText; buttonEl.disabled = false; return;
-      }
-      showToast('✅ ' + file.name + ' uploaded to ' + sourceName);
-      loadGlobalGuidelineCounts();
-    } catch(err) {
-      console.error('[global-guideline-upload] threw:', err);
-      showToast('❌ Upload failed: ' + (err && err.message ? err.message : err));
-    }
-    buttonEl.textContent = origText;
-    buttonEl.disabled = false;
+  input.accept = '.pdf,application/pdf';
+  input.multiple = true;
+  input.onchange = function(e) {
+    _glRunBatch({
+      fileList: e.target.files,
+      label: sourceName,
+      buttonEl: buttonEl,
+      sendOne: function(file, jwt) { return _glSendGlobalFile(file, sourceType, sourceName, jwt); },
+      onDone: function() { loadGlobalGuidelineCounts(); if (typeof renderReferenceLibrary === 'function') renderReferenceLibrary(); }
+    });
   };
   input.click();
 }
@@ -1363,6 +1439,7 @@ document.addEventListener('DOMContentLoaded', function() {
   renderAgencyCards();
   loadGlobalGuidelineCounts();
   renderReferenceLibrary();
+  setupGuidelineDropZones();   // delegated drag-drop for all guideline cards
 });
 </script>
 
