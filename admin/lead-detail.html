@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070635 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070636 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -11249,7 +11249,8 @@ function lpVoeRenderActivity(box, a){
   if(head.length) html+='<div style="font-size:10px;color:#aaa;margin-bottom:5px;">'+head.join(' &nbsp;·&nbsp; ')+'</div>';
   if(!ev.length){ html+='<div style="font-size:10px;color:#777;">No emails yet.</div>'; }
   else {
-    html+=ev.map(function(e){
+    // Per-event row markup — unchanged (do NOT alter row markup or the click-to-open behavior).
+    const rowHtml=function(e){
       const inbound=(String(e.direction||'').toLowerCase()==='inbound');
       const ind=inbound?'↓ Received':'↑ Sent';
       const party=inbound?('from '+lpEsc(e.from||'HR')):('to '+lpEsc(e.to||''));
@@ -11260,7 +11261,31 @@ function lpVoeRenderActivity(box, a){
       return '<div class="lpVoeEvRow" data-email-id="'+lpEsc(String(e.id==null?'':e.id))+'" style="display:flex;gap:6px;align-items:flex-start;font-size:10px;padding:3px 6px;border-radius:6px;margin-bottom:2px;cursor:pointer;background:'+(inbound?'rgba(80,200,120,.08)':'rgba(255,255,255,.02)')+';border-left:2px solid '+(inbound?'#50c878':'rgba(201,168,76,.5)')+';">'
         +'<span style="flex-shrink:0;font-weight:700;color:'+(inbound?'#50c878':'#C9A84C')+';">'+ind+'</span>'
         +'<span style="flex:1;min-width:0;"><span style="color:#ddd;">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span><span style="color:#888;"> — '+party+(when?(' · '+when):'')+'</span>'+previewHtml+'</span></div>';
-    }).join('');
+    };
+    // Group by thread_key (the HR email tying a send+reply trail). One distinct thread ⇒ render flat
+    // (keep the common single-HR case clean); multiple threads ⇒ one labeled group each.
+    const keyOf=function(e){ return (e && e.thread_key!=null && String(e.thread_key).trim()!=='') ? String(e.thread_key) : ''; };
+    const groups={}, order=[];
+    ev.forEach(function(e){ const k=keyOf(e); if(!(k in groups)){ groups[k]=[]; order.push(k); } groups[k].push(e); });
+    if(order.length<=1){ html+=ev.map(rowHtml).join(''); }
+    else {
+      const newest=function(k){ let m=0; groups[k].forEach(function(e){ const t=e.at?Date.parse(e.at):0; if(t>m) m=t; }); return m; };
+      order.sort(function(a,b){ return newest(b)-newest(a); });   // newest thread first
+      html+=order.map(function(k){
+        const arr=groups[k], first=arr[0]||{};
+        const label=(first.thread_label!=null?String(first.thread_label):'').trim();
+        const email=(k||'').trim();
+        const shown=label||email||'(unknown)';
+        const latest=first.at?_lpFmtDT(first.at):'';   // arr is newest-first ⇒ arr[0] is the latest
+        const emailShown=email && email!==shown;
+        const header='<div style="display:flex;align-items:baseline;gap:6px;margin:7px 0 3px;padding-top:5px;border-top:1px solid rgba(255,255,255,.05);">'
+          +'<span style="font-size:10px;font-weight:700;color:#C9A84C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%;">'+lpEsc(shown)+'</span>'
+          +(emailShown?('<span style="font-size:9px;color:#777;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">'+lpEsc(email)+'</span>'):'<span style="flex:1;"></span>')
+          +'<span style="font-size:9px;color:#666;flex-shrink:0;">'+arr.length+(latest?(' · '+latest):'')+'</span>'
+        +'</div>';
+        return header+arr.map(rowHtml).join('');
+      }).join('');
+    }
   }
   box.innerHTML=html+'</div>';
   // Row click → open the full email (voe_email_get). data-attr + listener avoids inline-onclick escaping of ids.
