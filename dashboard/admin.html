@@ -1301,17 +1301,6 @@
 
         <div class="dashboard-sections-wrapper">
 
-        <!-- 6 Stat Cards -->
-        <div class="metric-grid metric-grid-6 dashboard-section" data-section-id="stats" draggable="true" id="admin-summary">
-          <div class="drag-handle" title="Drag to reorder">⠿</div>
-          <article class="metric-card skeleton"><strong>—</strong><span>Total Leads</span></article>
-          <article class="metric-card skeleton"><strong>—</strong><span>New This Week</span></article>
-          <article class="metric-card skeleton"><strong>—</strong><span>Hot Leads</span></article>
-          <article class="metric-card skeleton"><strong>—</strong><span>Closed This Month</span></article>
-          <article class="metric-card skeleton"><strong>—</strong><span>Conversion Rate</span></article>
-          <article class="metric-card skeleton"><strong>—</strong><span>Appointments Today</span></article>
-        </div>
-
         <!-- Market Watch — premium terminal strip (own data via market_watch_strip RPC): mortgage rates + treasury yields -->
         <div class="panel dashboard-section" data-section-id="market-rates" draggable="true" style="margin-bottom:24px;padding:13px 18px;">
           <div class="drag-handle" title="Drag to reorder">⠿</div>
@@ -1488,10 +1477,6 @@
         })();
         </script>
 
-        <!-- ⬇ Relocated below Market Watch: ACTIVE PIPELINE timeline (fed by dashboard_command_center().pipeline_by_stage,
-             rendered by the Command Center's render() into #cc-pipeline-bar), then the Active Pipeline Snapshot. -->
-        <div id="cc-pipeline-bar" style="margin-bottom:24px;"></div>
-
         <!-- Active Pipeline Snapshot (admin-only; fed by dashboard_snapshot RPC in admin-dashboard.js) -->
         <style>
           #pipeline-snapshot-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(244px,1fr)); gap:14px; }
@@ -1518,6 +1503,17 @@
             <div><p class="kicker">Snapshot</p><h3 style="margin:0;font-size:1.1rem;">Active Pipeline Snapshot</h3></div>
           </div>
           <div id="pipeline-snapshot-grid"></div>
+        </div>
+
+        <!-- 6 Stat Cards (moved below Market Watch + Active Pipeline Snapshot) -->
+        <div class="metric-grid metric-grid-6 dashboard-section" data-section-id="stats" draggable="true" id="admin-summary">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
+          <article class="metric-card skeleton"><strong>—</strong><span>Total Leads</span></article>
+          <article class="metric-card skeleton"><strong>—</strong><span>New This Week</span></article>
+          <article class="metric-card skeleton"><strong>—</strong><span>Hot Leads</span></article>
+          <article class="metric-card skeleton"><strong>—</strong><span>Closed This Month</span></article>
+          <article class="metric-card skeleton"><strong>—</strong><span>Conversion Rate</span></article>
+          <article class="metric-card skeleton"><strong>—</strong><span>Appointments Today</span></article>
         </div>
 
         <!-- Charts row -->
@@ -2668,7 +2664,7 @@
   <script type="module" src="/components/layout.js?v=20260712"></script>
   <!-- Staff-to-staff chat: floating Chat bubble (beside the AI FAB) + realtime. -->
   <script src="/admin/js/staff-chat.js?v=2026070603"></script>
-  <script type="module" src="/components/admin-dashboard.js?v=20260709a"></script>
+  <script type="module" src="/components/admin-dashboard.js?v=20260709b"></script>
   <script src="/dashboard/utils/insights.js?v=2026050402"></script>
   <script src="/dashboard/utils/calendar.js?v=2026061301"></script>
   <script src="/dashboard/utils/clickup-widget.js?v=2026050401"></script>
@@ -5025,24 +5021,6 @@ document.addEventListener('DOMContentLoaded', function() {
       + '<div>'+inner+'</div></div>';
   }
 
-  function _pipeline(stages){
-    stages = stages || [];
-    var total = stages.reduce(function(s,x){ return s + (Number(x.count)||0); }, 0) || 1;
-    var bar = stages.map(function(x,i){
-      var endcap = (i===0 || i===stages.length-1);
-      var pct = Math.max(2, Math.round((Number(x.count)||0)/total*100));
-      var bg = endcap ? 'rgba(255,255,255,0.12)' : 'linear-gradient(90deg,rgba(201,168,76,0.55),rgba(201,168,76,0.85))';
-      return '<div title="'+esc(x.stage)+': '+(x.count||0)+'" style="flex:'+pct+' '+pct+' 0;min-width:18px;height:14px;background:'+bg+';"></div>';
-    }).join('');
-    var chips = stages.map(function(x,i){
-      var endcap = (i===0 || i===stages.length-1);
-      return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:'+(endcap?'#888':'#ddd')+';">'
-        + '<span style="font-weight:700;color:'+(endcap?'#aaa':'#C9A84C')+';">'+(x.count||0)+'</span>'+esc(x.stage)+'</span>';
-    }).join('<span style="color:#555;">›</span>');
-    return _card('Active Pipeline', '',
-      '<div style="display:flex;gap:2px;border-radius:6px;overflow:hidden;margin-bottom:10px;">'+bar+'</div>'
-      + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">'+chips+'</div>');
-  }
 
   function _attention(rows){
     rows = rows || [];
@@ -5113,9 +5091,6 @@ document.addEventListener('DOMContentLoaded', function() {
       + _attention(d.attention) + _tasks(d.todays_tasks) + _hot(d.hot_leads) + _activity(d.recent_activity)
       + '</div>';
     body.innerHTML = _kpis(d.kpis) + _newLeads(d.new_leads_recent, d.kpis && d.kpis.new_leads) + grid;
-    // ACTIVE PIPELINE bar relocated out of #cc-body to its own container directly below Market Watch.
-    var pbar = document.getElementById('cc-pipeline-bar');
-    if(pbar) pbar.innerHTML = _pipeline(d.pipeline_by_stage);
     var asof = document.getElementById('cc-asof');
     if(asof) asof.textContent = d.generated_at ? ('as of ' + new Date(d.generated_at).toLocaleString()) : '';
   }
