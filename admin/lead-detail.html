@@ -10969,7 +10969,11 @@ function lpVoeCardHtml(v){
     +'</div>'
     +'<input type="text" id="lpVoeF-'+k+'-label" placeholder="Label (e.g. VOE - Acme W2)" value="'+lpEsc(v.label||'')+'" onchange="lpVoeField(\''+k+'\',\'label\',this.value)" style="'+inp+'margin-bottom:6px;">'
     +'<div style="display:flex;justify-content:flex-end;margin-bottom:4px;"><button type="button" onclick="lpVoePull(\''+k+'\')" title="Fill Employer from the CRM (voe_prefill)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#bbb;border-radius:6px;font-size:10px;font-weight:600;padding:2px 8px;cursor:pointer;font-family:inherit;">⬇ Pull employer from CRM</button></div>'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">'+txtF('employer_name','Employer Name')+txtF('hr_contact_name','HR Contact Name')+txtF('hr_contact_phone','HR Phone')+txtF('hr_contact_email','HR Email')+'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">'
+      +'<div style="grid-column:1 / -1;">'+txtF('employer_name','Employer Name')+'</div>'
+      +txtF('hr_contact_first_name','HR First Name')+txtF('hr_contact_last_name','HR Last Name')
+      +txtF('hr_contact_phone','HR Phone')+txtF('hr_contact_email','HR Email')
+    +'</div>'
     +'<button type="button" onclick="lpVoeVendorOpen(\''+k+'\')" style="text-align:left;width:100%;box-sizing:border-box;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px;'+(v.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
     +'<div id="lpVoeVendDrop-'+k+'" style="display:none;position:absolute;left:8px;right:8px;z-index:60;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;"></div>'
     +'<div style="font-size:9.5px;color:#888;margin-bottom:2px;">Next follow-up (scheduled)</div>'
@@ -11090,7 +11094,7 @@ async function lpVoePull(k){
 }
 // 2. SEND TO HR — composer (single recipient, VOE PDF attached, cc rene@+processing@).
 function _lpVoeSigText(b){ b=b||{}; const L=[]; if(b.name)L.push(b.name); if(b.title)L.push(b.title); if(b.phone)L.push(b.phone); if(b.nmls)L.push('NMLS #'+b.nmls); if(b.email)L.push(b.email); return L.join('\n'); }
-function _lpVoeDefaultBody(pf, hrName, employer){
+function _lpVoeDefaultBody(pf, hrName, employer, hrFirst){
   pf=pf||{};
   const bk=pf.broker||{};
   const name=(bk.name||'').trim();
@@ -11101,7 +11105,10 @@ function _lpVoeDefaultBody(pf, hrName, employer){
         || '____________';
   // broker.nmls already carries the "NMLS #..." prefix — do NOT prepend "NMLS " again.
   const sig = name ? (name+(nmls?(' · '+nmls):'')) : nmls;
-  return 'Hello,\n\n'
+  // Personalize the greeting with the HR first name when present; empty ⇒ plain "Hello,".
+  const hf=(hrFirst||'').trim();
+  const greeting = hf ? ('Hello '+hf+',') : 'Hello,';
+  return greeting+'\n\n'
     +'My name is '+(name||'____________')+'. I am helping '+bn+' apply for a mortgage loan, and the lender is requesting a verification of employment form to be completed. Can you please help me with this?\n\n'
     +'Please provide the current year and last 2 years of pay history (include breakdown of base, overtime, etc.). Also, in the "year to date thru" section of the attached form, please provide the date of the last pay day the calculations are being done for. Complete fully — and if it doesn\'t apply, put an X, N/A, or just leave blank. Let me know if you have any questions.\n\n'
     +'*Please confirm receipt of this email*\n\n'
@@ -11116,14 +11123,17 @@ async function lpVoeReqOpen(k){
   if(!v.id){ await lpVoeSave(k); v=_lpVoeFind(k); }              // need an order id for voe_request_log
   if(!v || !v.id){ showToast('Set a borrower/status first, then send.', true); return; }
   const g=f=>{ const e=document.getElementById('lpVoeF-'+k+'-'+f); return e?(e.value||'').trim():''; };
-  const hrName=g('hr_contact_name'), hrEmail=g('hr_contact_email'), hrPhone=g('hr_contact_phone'), employer=g('employer_name');
+  // HR name is now split into first/last fields; recompose the full name for the send pipeline.
+  const hrFirst=g('hr_contact_first_name'), hrLast=g('hr_contact_last_name');
+  const hrName=[hrFirst,hrLast].filter(Boolean).join(' ').trim();
+  const hrEmail=g('hr_contact_email'), hrPhone=g('hr_contact_phone'), employer=g('employer_name');
   if(!hrEmail){ showToast('Add the HR email on this card first.', true); return; }
   const cfgPf=await Promise.all([lpVoeLoadCfg(), _lpVoePrefetch(cid)]);
   const cfg=cfgPf[0]||{}, pf=cfgPf[1]||{};
   _lpVoeReqKey=k;
   const bn=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'';
   const subject='Verification of Employment Request'+(bn?(' — '+bn):'');
-  const bodyText=_lpVoeDefaultBody(pf, hrName, employer);
+  const bodyText=_lpVoeDefaultBody(pf, hrName, employer, hrFirst);
   const bodyHtml='<div>'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>';
   // CC: composer auto-adds rene@ + processing@; also seed any configured voe_request_cc extras.
   const ccExtra=String(cfg.voe_request_cc||'').split(/[;,]/).map(s=>s.trim()).filter(Boolean);
@@ -11326,7 +11336,8 @@ async function lpVoeSave(k){
       p_contact_id:cid, p_order_type:'voe', p_status:v.status||'not_ordered',
       p_order_id:v.id||null,
       p_borrower_contact_id:v.borrower_contact_id||null, p_label:v.label||null,
-      p_employer_name:v.employer_name||null, p_hr_contact_name:v.hr_contact_name||null,
+      p_employer_name:v.employer_name||null,
+      p_hr_contact_first_name:v.hr_contact_first_name||null, p_hr_contact_last_name:v.hr_contact_last_name||null,
       p_hr_contact_phone:v.hr_contact_phone||null, p_hr_contact_email:v.hr_contact_email||null,
       p_vendor_id:v.vendor_id||null, p_reference:v.reference||null, p_notes:v.notes||null,
       p_follow_up_at:v.follow_up_at||null, p_follow_up_owner:v.follow_up_owner||null
