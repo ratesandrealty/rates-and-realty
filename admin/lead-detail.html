@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070639 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070640 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -21367,7 +21367,7 @@ async function loadDocuments(cid) {
   try {
     const { data: docs, error } = await _authClient()
       .from('uploaded_documents')
-      .select('id, document_type, file_name, file_size, file_path, storage_path, gdrive_file_id, gdrive_file_url, uploaded_at')
+      .select('id, document_type, type, file_name, file_size, file_path, storage_path, file_url, gdrive_file_id, gdrive_file_url, uploaded_at')
       .eq('contact_id', cid)
       .order('uploaded_at', { ascending: false });
     if (error) { console.warn('[documents]', error.message); return; }
@@ -21398,6 +21398,16 @@ function _docWhen(dateStr) {
 
 // Render the document rows (or the empty state) into #documentsList. Each row:
 // type badge · file name + size · relative time · Drive/Preview/Download buttons.
+// Classify an uploaded_documents row by extension/type for preview handling.
+function _docKind(d) {
+  const name = (d.file_name || '').toLowerCase();
+  const ext = (name.split('.').pop() || '');
+  const t = (d.document_type || d.type || '').toLowerCase();
+  if (ext === 'pdf' || t.indexOf('pdf') >= 0) return 'pdf';
+  if (['jpg','jpeg','png','webp','gif'].indexOf(ext) >= 0) return 'image';
+  if (['heic','heif'].indexOf(ext) >= 0) return 'heic';
+  return 'other';
+}
 function _renderDocuments(docs) {
   const list = document.getElementById('documentsList');
   if (!list) return;
@@ -21406,25 +21416,43 @@ function _renderDocuments(docs) {
     return;
   }
   const BTN = 'background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer;text-decoration:none;white-space:nowrap;line-height:1;display:inline-flex;align-items:center;';
+  const THUMB = 'flex:0 0 auto;width:46px;height:46px;border-radius:8px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:22px;overflow:hidden;';
   list.innerHTML = docs.map(d => {
+    const kind = _docKind(d);
     const path = d.file_path || d.storage_path || '';
     const size = _docSize(d.file_size);
-    const isPdf = (d.file_name || '').toLowerCase().endsWith('.pdf');
-    const drive = d.gdrive_file_url
-      ? `<a href="${esc(d.gdrive_file_url)}" target="_blank" rel="noopener" style="${BTN}">Drive</a>` : '';
-    const preview = (isPdf && path)
-      ? `<button type="button" class="doc-preview" data-path="${esc(path)}" title="Preview" style="${BTN}">&#128065;</button>` : '';
-    const download = path
-      ? `<button type="button" class="doc-download" data-path="${esc(path)}" style="${BTN}">Download</button>` : '';
+    const openUrl = d.gdrive_file_url || d.file_url || '';
+    // Type-aware thumbnail (click → preview).
+    let thumb;
+    if (kind === 'image') {
+      thumb = d.file_url
+        ? `<div class="doc-thumb doc-imgview" data-url="${esc(d.file_url)}" title="View" style="${THUMB}cursor:pointer;"><img src="${esc(d.file_url)}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.parentNode.textContent='🖼️'"></div>`
+        : (path ? `<div class="doc-thumb doc-preview" data-path="${esc(path)}" title="View" style="${THUMB}cursor:pointer;">🖼️</div>` : `<div style="${THUMB}">🖼️</div>`);
+    } else if (kind === 'pdf') {
+      thumb = path ? `<div class="doc-thumb doc-preview" data-path="${esc(path)}" title="View PDF" style="${THUMB}cursor:pointer;">📄</div>` : `<div style="${THUMB}">📄</div>`;
+    } else if (kind === 'heic') {
+      thumb = `<div style="${THUMB}" title="HEIC preview not supported">🖼️</div>`;
+    } else {
+      thumb = `<div style="${THUMB}">📎</div>`;
+    }
+    const nameHtml = `<span class="doc-name" data-doc-id="${esc(String(d.id))}" data-name="${esc(d.file_name || '')}" title="Click to rename" style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text;border-bottom:1px dashed transparent;">${esc(d.file_name || 'Untitled')}</span>`;
+    const meta = [size, _docWhen(d.uploaded_at)].filter(Boolean).map(esc).join(' · ');
+    const heicNote = (kind === 'heic')
+      ? `<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:2px;">Preview not available — ${d.gdrive_file_url ? `<a href="${esc(d.gdrive_file_url)}" target="_blank" rel="noopener" style="color:#C9A84C;">Open in Drive</a>` : 'no Drive link yet'}</div>` : '';
+    const view = openUrl ? `<a href="${esc(openUrl)}" target="_blank" rel="noopener" style="${BTN}">View ↗</a>` : '';
+    const download = path ? `<button type="button" class="doc-download" data-path="${esc(path)}" style="${BTN}">Download</button>` : '';
     return `
       <div style="display:flex;align-items:center;gap:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 12px;">
-        <span style="flex:0 0 auto;background:rgba(201,168,76,0.12);color:#C9A84C;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;letter-spacing:0.3px;white-space:nowrap;">${esc(d.document_type || 'Document')}</span>
+        ${thumb}
         <div style="flex:1 1 auto;min-width:0;">
-          <div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(d.file_name || 'Untitled')}</div>
-          ${size ? `<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:2px;">${esc(size)}</div>` : ''}
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <span style="flex:0 0 auto;background:rgba(201,168,76,0.12);color:#C9A84C;font-size:10px;font-weight:600;padding:3px 9px;border-radius:12px;letter-spacing:0.3px;white-space:nowrap;">${esc(d.document_type || 'Document')}</span>
+            ${nameHtml}
+          </div>
+          ${meta ? `<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:3px;">${meta}</div>` : ''}
+          ${heicNote}
         </div>
-        <span style="flex:0 0 auto;font-size:11px;color:rgba(255,255,255,0.4);white-space:nowrap;">${esc(_docWhen(d.uploaded_at))}</span>
-        <div style="flex:0 0 auto;display:flex;gap:6px;">${drive}${preview}${download}</div>
+        <div style="flex:0 0 auto;display:flex;gap:6px;">${view}${download}</div>
       </div>`;
   }).join('');
 }
@@ -21448,6 +21476,10 @@ function _wireDocumentsHandlers() {
   if (!list || list.dataset.docsWired === 'true') return;
   list.dataset.docsWired = 'true';
   list.addEventListener('click', async function(e) {
+    const nameEl = e.target.closest('.doc-name');
+    if (nameEl) { _docStartRename(nameEl); return; }                 // inline rename
+    const iv = e.target.closest('.doc-imgview');
+    if (iv) { if (iv.dataset.url) _openDocPreview(iv.dataset.url); return; }   // image lightbox
     const pv = e.target.closest('.doc-preview');
     const dl = e.target.closest('.doc-download');
     const btn = pv || dl;
@@ -21459,6 +21491,44 @@ function _wireDocumentsHandlers() {
     if (pv) _openDocPreview(url);
     else window.open(url, '_blank', 'noopener');
   });
+}
+// Inline document rename → RPC document_rename(p_id, p_new_name). Enter saves; Escape/blur cancels.
+function _docStartRename(span) {
+  if (span.dataset.editing === '1') return;
+  const id = span.dataset.docId;
+  const cur = span.dataset.name || span.textContent || '';
+  span.dataset.editing = '1';
+  const input = document.createElement('input');
+  input.type = 'text'; input.value = cur;
+  input.style.cssText = 'font-size:13px;background:#131315;border:1px solid rgba(201,168,76,0.45);border-radius:5px;color:#fff;padding:2px 7px;width:min(280px,60vw);outline:none;font-family:inherit;';
+  span.replaceWith(input); input.focus(); input.select();
+  let done = false;
+  const restore = () => { if (!input.parentNode) return; input.replaceWith(span); span.dataset.editing = ''; };
+  const cancel = () => { if (done) return; done = true; restore(); };
+  const save = async () => {
+    if (done) return;
+    const nv = (input.value || '').trim();
+    if (!nv || nv === cur) { cancel(); return; }
+    done = true; input.disabled = true;
+    try {
+      const r = await _authClient().rpc('document_rename', { p_id: id, p_new_name: nv });
+      if (r.error) throw r.error;
+      const ret = Array.isArray(r.data) ? r.data[0] : r.data;
+      const newName = (ret && ret.file_name) || nv;
+      span.textContent = newName; span.dataset.name = newName;
+      restore();
+      if (typeof showToast === 'function') showToast('Renamed ✓');
+    } catch (err) {
+      done = false; input.disabled = false;
+      if (typeof showToast === 'function') showToast('Rename failed: ' + ((err && err.message) || err), true);
+      input.focus();
+    }
+  };
+  input.addEventListener('keydown', function(ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', cancel);   // blur cancels (Enter is the explicit save)
 }
 
 // Lazily-built inline PDF preview modal (one shared instance, reused per click).
