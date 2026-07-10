@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070644 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070645 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -7768,7 +7768,10 @@ function _ldDocQuickView(id) {
 }
 function _ldDocDownload(id) {
   const f = (_allDocs || []).find((x) => x.id === id);
-  if (f && typeof downloadDocument === 'function') downloadDocument(f.webContentLink || f.webViewLink, f.name);
+  if (!f) return;
+  // Robust path: stream bytes via gdrive-proxy (server auth as the app's Drive account) so the
+  // download never depends on the browser's active Google account. Falls back to the pinned link.
+  _ldProxyDownload(f.id, f.name, f.webContentLink || f.webViewLink);
 }
 async function _ldDocRename(id) {
   const f = (_allDocs || []).find((x) => x.id === id); if (!f) return;
@@ -8103,8 +8106,15 @@ async function openDocViewerForFile(file) {
     + (file.size ? ' · ' + _ldFormatSize(file.size) : '');
   const dlLink = document.getElementById('doc-viewer-download');
   const otLink = document.getElementById('doc-viewer-open-tab');
-  if (dlLink) { dlLink.href = file.webContentLink || file.webViewLink || '#'; dlLink.removeAttribute('download'); }
-  if (otLink) otLink.href = file.webViewLink || '#';
+  if (dlLink) {
+    // Download → stream via gdrive-proxy (server-authed as the app's Drive account), not a raw
+    // usercontent link that would use the browser's authuser=0 account and 403.
+    dlLink.href = '#';
+    dlLink.removeAttribute('download');
+    dlLink.onclick = (e) => { e.preventDefault(); _ldProxyDownload(file.id, file.name, file.webContentLink || file.webViewLink); };
+  }
+  // Open-in-Drive still needs the Drive web UI → pin the correct account by EMAIL (authuser=email).
+  if (otLink) { const _ot = file.webViewLink || '#'; otLink.href = (window.pinGoogleUrl && _ot !== '#') ? window.pinGoogleUrl(_ot) : _ot; }
   const zoomEl = document.getElementById('docZoomLevel');
   if (zoomEl) zoomEl.textContent = '100%';
   const saveBtn = document.getElementById('doc-viewer-save-btn');
@@ -8339,6 +8349,35 @@ async function downloadDocument(fileUrl, fileName) {
     URL.revokeObjectURL(url);
     showToast('Downloading ' + (fileName || 'document'));
   } catch(err) { window.open(fileUrl, '_blank'); }
+}
+
+// Robust Drive download: stream bytes from gdrive-proxy, which authenticates SERVER-SIDE as the
+// app's Drive account (google_calendar_tokens id='rene', the file owner). This makes downloads
+// independent of the browser's active Google account (the authuser=0 → 403 bug). If the proxy is
+// unreachable, fall back to opening the pinned (authuser=<email>) webContentLink.
+async function _ldProxyDownload(fileId, fileName, fallbackUrl) {
+  if (!fileId) { if (fallbackUrl) downloadDocument(window.pinGoogleUrl ? window.pinGoogleUrl(fallbackUrl) : fallbackUrl, fileName); return; }
+  const cfg = window.APP_CONFIG || {};
+  const base = cfg.SUPABASE_URL || '';
+  let token = '';
+  try { const s = await _authClient().auth.getSession(); token = (s && s.data && s.data.session && s.data.session.access_token) || ''; } catch(_) {}
+  const gp = { 'Authorization': 'Bearer ' + token, 'apikey': (cfg.SUPABASE_ANON_KEY || '') };
+  try {
+    showToast('Downloading ' + (fileName || 'document') + '…');
+    // v44 contract: fileId=<id> + download=1 → attachment stream (auth handled server-side).
+    const res = await fetch(base + '/functions/v1/gdrive-proxy?action=download&download=1&fileId=' + encodeURIComponent(fileId), { headers: gp });
+    if (!res.ok) throw new Error('proxy HTTP ' + res.status);
+    const blob = await res.blob();
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u; a.download = fileName || 'document';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(u);
+  } catch (e) {
+    console.warn('[proxy download] failed, falling back to pinned Drive link:', e);
+    if (fallbackUrl) window.open(window.pinGoogleUrl ? window.pinGoogleUrl(fallbackUrl) : fallbackUrl, '_blank', 'noopener');
+    else showToast('Download failed', true);
+  }
 }
 
 function docViewerZoom(delta) {
@@ -21795,7 +21834,8 @@ async function _scan1003ApplyNow() {
   } catch (e) { showToast('Apply failed: ' + ((e && e.message) || e), true); }
   if (btn) { btn.disabled = false; btn.textContent = 'Apply to 1003'; }
 }
-// Documents TAB (Drive): fetch bytes via Drive ?alt=media (gdrive-proxy has no download action) → scan.
+// Documents TAB (Drive): fetch bytes via gdrive-proxy (server-authed as the app's Drive account —
+// no browser Google popup / no authuser dependency) → scan.
 async function scanDriveTo1003(driveFileId, ev) {
   if (ev) { ev.stopPropagation(); if (ev.preventDefault) ev.preventDefault(); }
   var file = (_allDocs || []).find(function(f) { return f.id === driveFileId; });
@@ -21804,9 +21844,14 @@ async function scanDriveTo1003(driveFileId, ev) {
   if (!mt) { showToast('Can’t scan this type (PDF/JPG/PNG/WEBP/GIF only)', true); return; }
   _scan1003Open('Fetching from Drive…');
   try {
-    var token = await _ldEnsureToken();
-    var res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.id) + '?alt=media', { headers: { Authorization: 'Bearer ' + token } });
-    if (!res.ok) { if (res.status === 401 || res.status === 403) _ldClearToken(); throw new Error('Drive fetch failed (' + res.status + ')'); }
+    var cfg = window.APP_CONFIG || {};
+    var base = cfg.SUPABASE_URL || '';
+    var sTok = '';
+    try { var s = await _authClient().auth.getSession(); sTok = (s && s.data && s.data.session && s.data.session.access_token) || ''; } catch(_) {}
+    var gp = { 'Authorization': 'Bearer ' + sTok, 'apikey': (cfg.SUPABASE_ANON_KEY || '') };
+    // v44 contract: fileId=<id>, no download flag → inline byte stream for scanning.
+    var res = await fetch(base + '/functions/v1/gdrive-proxy?action=download&fileId=' + encodeURIComponent(file.id), { headers: gp });
+    if (!res.ok) throw new Error('Drive fetch failed (' + res.status + ')');
     await _scan1003Run(await res.arrayBuffer(), mt, file.name);
   } catch (e) { _scan1003Error((e && e.message) || String(e)); }
 }
