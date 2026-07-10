@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070646 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070647 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -16637,13 +16637,44 @@ const COND_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/extract-c
 async function loadConditions() {
   const contactId = new URLSearchParams(window.location.search).get('contact_id');
   if (!contactId) return;
-  const res = await fetch(COND_FN, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'get_conditions', contact_id: contactId })
-  });
-  const data = await res.json();
-  renderConditions(data.conditions || []);
+
+  // Primary source: condition_list RPC — returns rows WITH their attachments[]
+  // (id, condition_text, category, status, stage, sort_order, cleared_at, notes,
+  //  attachments:[{id,file_name,file_url,gdrive_file_id,uploaded_document_id,attached_at}]).
+  let conditions = null;
+  try {
+    const { data, error } = await _authClient().rpc('condition_list', { p_contact_id: contactId });
+    if (error) throw error;
+    conditions = Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.warn('[conditions] condition_list RPC failed, falling back to get_conditions:', e && e.message);
+  }
+
+  // Loan-info header card comes from the latest approval doc for this contact
+  // (previously it rode along on the get_conditions response as condition_documents).
+  let loanDoc = null;
+  try {
+    const { data: docs } = await _authClient().from('condition_documents')
+      .select('*').eq('contact_id', contactId)
+      .order('created_at', { ascending: false }).limit(1);
+    if (docs && docs.length) loanDoc = docs[0];
+  } catch (_) {}
+
+  // Fallback: if the RPC failed, use the edge function (no attachments, but keeps the tab alive).
+  if (conditions === null) {
+    try {
+      const res = await fetch(COND_FN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get_conditions', contact_id: contactId })
+      });
+      const data = await res.json();
+      conditions = data.conditions || [];
+      if (!loanDoc && conditions[0] && conditions[0].condition_documents) loanDoc = conditions[0].condition_documents;
+    } catch (_) { conditions = []; }
+  }
+
+  renderConditions(conditions, loanDoc);
 }
 
 function buildLoanInfoCard(doc) {
@@ -16699,7 +16730,8 @@ function buildLoanInfoCard(doc) {
     }).join('') + '</div>';
 }
 
-function renderConditions(conditions) {
+function renderConditions(conditions, loanDoc) {
+  conditions = conditions || [];
   var list = document.getElementById('conditions-list');
   var progressText = document.getElementById('conditions-progress-text');
   var progressBar = document.getElementById('conditions-progress-bar');
@@ -16718,8 +16750,8 @@ function renderConditions(conditions) {
   if (progressText) progressText.textContent = cleared + ' of ' + total + ' conditions cleared (' + pct + '%)';
   if (progressBar) progressBar.style.width = pct + '%';
 
-  // Loan info header card
-  var doc = conditions[0] && conditions[0].condition_documents ? conditions[0].condition_documents : null;
+  // Loan info header card (loanDoc = latest condition_documents row; legacy fallback kept)
+  var doc = loanDoc || (conditions[0] && conditions[0].condition_documents ? conditions[0].condition_documents : null);
   var html = buildLoanInfoCard(doc);
 
   // Re-extract button
@@ -16775,6 +16807,12 @@ function renderConditions(conditions) {
           + '<option value="PTD"' + (c.stage==='PTD'?' selected':'') + '>PTD</option>'
           + '<option value="PTF"' + (c.stage==='PTF'?' selected':'') + '>PTF</option>'
           + '</select>'
+          + '<select onchange="condSetStatus(\'' + c.id + '\',this.value)" title="Set condition status" style="font-size:10px;background:#131315;border:1px solid ' + statusBorder + ';border-radius:4px;color:' + statusColor + ';padding:1px 4px;cursor:pointer;">'
+          + '<option value="pending"' + (c.status==='pending'||!c.status?' selected':'') + '>Pending</option>'
+          + '<option value="in_review"' + (c.status==='in_review'?' selected':'') + '>In review</option>'
+          + '<option value="cleared"' + (c.status==='cleared'?' selected':'') + '>Cleared</option>'
+          + '<option value="waived"' + (c.status==='waived'?' selected':'') + '>Waived</option>'
+          + '</select>'
           + (c.cleared_at ? '<span style="font-size:10px;color:#555;">Cleared ' + new Date(c.cleared_at).toLocaleDateString() + '</span>' : '')
           + '</div>'
           + '</div>'
@@ -16787,7 +16825,8 @@ function renderConditions(conditions) {
           + '<div id="nh-' + c.id + '" style="margin-bottom:8px;font-size:.78rem;color:var(--muted);">Loading notes...</div>'
           + '<div style="display:flex;gap:6px;"><input type="text" id="ni-' + c.id + '" placeholder="Add a note..." style="flex:1;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.78rem;outline:none;">'
           + '<button class="cond-save-btn" data-save-id="' + c.id + '" style="padding:5px 12px;background:var(--gold);border:none;border-radius:6px;color:#000;font-size:.72rem;font-weight:700;cursor:pointer;">Save</button></div>'
-          + '</div>';
+          + '</div>'
+          + '<div id="ca-' + c.id + '" style="padding:2px 18px 12px 54px;">' + renderCondAttachments(c) + '</div>';
       });
     }
 
@@ -16811,11 +16850,199 @@ async function updateConditionStage(conditionId, stage) {
 }
 
 async function toggleCondition(id, checked) {
-  await fetch(COND_FN, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'update_condition', condition_id: id, status: checked ? 'cleared' : 'pending', cleared_by: 'Rene' })
-  });
+  await condSetStatus(id, checked ? 'cleared' : 'pending');
+}
+
+// ── Conditions ↔ documents linking ──────────────────────────────────────────
+// Status control (pending/in_review/cleared/waived) via condition_set_status RPC.
+async function condSetStatus(conditionId, status) {
+  try {
+    const { error } = await _authClient().rpc('condition_set_status', { p_condition_id: conditionId, p_status: status });
+    if (error) throw error;
+  } catch (e) {
+    (window.showToast || window.toast || function(){})('Could not update status: ' + (e && e.message || e), true);
+  }
+  loadConditions();
+}
+
+// Inline attachment chips (View / Download / Detach) + the "Attach document(s)" button.
+function renderCondAttachments(c) {
+  var cfg = window.APP_CONFIG || {};
+  var base = cfg.SUPABASE_URL || '';
+  var atts = Array.isArray(c.attachments) ? c.attachments : [];
+  var chips = atts.map(function(a) {
+    var name = _ldDriveEsc(a.file_name || 'Document');
+    var fid  = a.gdrive_file_id || '';
+    var dl   = fid ? (base + '/functions/v1/gdrive-proxy?action=download&download=1&fileId=' + encodeURIComponent(fid)) : (a.file_url || '#');
+    var viewBtn = fid
+      ? '<span onclick="condViewAttachment(\'' + fid + '\',\'' + String(a.file_name||'Document').replace(/'/g,"\\'") + '\',\'' + String(a.file_url||'').replace(/'/g,"\\'") + '\')" title="View" style="cursor:pointer;color:#7BBCE8;font-size:11px;">View</span>'
+      : (a.file_url ? '<a href="' + _ldDriveEsc(a.file_url) + '" target="_blank" rel="noopener" style="color:#7BBCE8;font-size:11px;text-decoration:none;">View</a>' : '');
+    return '<span style="display:inline-flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:16px;padding:4px 10px;margin:0 6px 6px 0;font-size:11px;">'
+      + '<span style="color:#6FD98F;">&#128206;</span>'
+      + '<span style="color:var(--text);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name + '</span>'
+      + viewBtn
+      + '<a href="' + _ldDriveEsc(dl) + '" download title="Download" style="color:#C9A84C;font-size:11px;text-decoration:none;">Download</a>'
+      + '<span onclick="condDetach(\'' + a.id + '\')" title="Detach" style="cursor:pointer;color:#F07878;font-weight:700;line-height:1;">&times;</span>'
+      + '</span>';
+  }).join('');
+  return chips
+    + '<button onclick="condOpenPicker(\'' + c.id + '\')" style="display:inline-flex;align-items:center;gap:6px;background:none;border:1px dashed rgba(201,168,76,0.4);border-radius:16px;color:#C9A84C;font-size:11px;padding:4px 12px;cursor:pointer;vertical-align:top;">'
+    + '<span>&#128206;</span> Attach document(s)</button>';
+}
+
+async function condViewAttachment(gdriveFileId, fileName, fileUrl) {
+  if (typeof openDocViewerForFile === 'function' && gdriveFileId) {
+    // Reuse the Drive viewer — it streams bytes via gdrive-proxy (server-authed, no Google popup).
+    openDocViewerForFile({ id: gdriveFileId, name: fileName || 'Document', mimeType: '', webViewLink: fileUrl || '' }, []);
+  } else if (fileUrl && typeof openPdfViewer === 'function') {
+    openPdfViewer(fileUrl, fileName || 'Document');
+  } else if (fileUrl) {
+    window.open(fileUrl, '_blank', 'noopener');
+  }
+}
+
+async function condDetach(attachmentId) {
+  if (!confirm('Detach this document from the condition? (The file stays in Drive.)')) return;
+  try {
+    const { error } = await _authClient().rpc('condition_detach', { p_attachment_id: attachmentId });
+    if (error) throw error;
+  } catch (e) {
+    (window.showToast || window.toast || function(){})('Could not detach: ' + (e && e.message || e), true);
+  }
+  loadConditions();
+}
+
+// ── Document picker (lists the contact's Drive files via gdrive-proxy list-files) ──
+var _condPicker = { conditionId: null, folderId: null, rootId: null, trail: [], files: [], selected: {} };
+
+async function condOpenPicker(conditionId) {
+  var rootId = (typeof contactData !== 'undefined' && contactData && contactData.gdrive_folder_id) || null;
+  if (!rootId) { (window.showToast || window.toast || function(){})('No Drive folder linked to this contact yet.', true); return; }
+  _condPicker = { conditionId: conditionId, folderId: rootId, rootId: rootId, trail: [{ id: rootId, name: 'All Documents' }], files: [], selected: {} };
+  _condEnsurePickerModal();
+  document.getElementById('cond-picker-modal').style.display = 'flex';
+  document.getElementById('cond-picker-clear').checked = false;
+  await _condPickerLoad(rootId, 'All Documents', false);
+}
+
+function _condEnsurePickerModal() {
+  if (document.getElementById('cond-picker-modal')) return;
+  var wrap = document.createElement('div');
+  wrap.id = 'cond-picker-modal';
+  wrap.style.cssText = 'display:none;position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;padding:20px;';
+  wrap.innerHTML =
+      '<div style="background:var(--surface,#161618);border:1px solid var(--border);border-radius:14px;width:100%;max-width:560px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.6);">'
+    +   '<div style="display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--border);">'
+    +     '<span style="font-size:1rem;">&#128206;</span>'
+    +     '<div style="flex:1;"><div style="font-size:.9rem;font-weight:700;color:var(--gold);">Attach document(s)</div>'
+    +       '<div id="cond-picker-crumbs" style="font-size:.7rem;color:var(--muted);margin-top:2px;"></div></div>'
+    +     '<button onclick="condPickerClose()" style="background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;line-height:1;">&times;</button>'
+    +   '</div>'
+    +   '<div id="cond-picker-list" style="flex:1;overflow-y:auto;padding:8px 10px;min-height:120px;"></div>'
+    +   '<div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+    +     '<label style="display:flex;align-items:center;gap:7px;font-size:.78rem;color:var(--text);cursor:pointer;flex:1;">'
+    +       '<input type="checkbox" id="cond-picker-clear" style="accent-color:#C9A84C;"> Mark this condition cleared</label>'
+    +     '<button onclick="condPickerClose()" style="padding:7px 14px;background:none;border:1px solid var(--border);border-radius:7px;color:var(--muted);font-size:.78rem;cursor:pointer;">Cancel</button>'
+    +     '<button id="cond-picker-confirm" onclick="condConfirmAttach()" style="padding:7px 16px;background:var(--gold);border:none;border-radius:7px;color:#000;font-size:.78rem;font-weight:700;cursor:pointer;">Attach</button>'
+    +   '</div>'
+    + '</div>';
+  document.body.appendChild(wrap);
+}
+
+async function _condPickerLoad(folderId, folderName, isDrill) {
+  var listEl = document.getElementById('cond-picker-list');
+  _condPicker.folderId = folderId;
+  if (isDrill) _condPicker.trail.push({ id: folderId, name: folderName });
+  _condRenderCrumbs();
+  listEl.innerHTML = '<div style="padding:28px;text-align:center;color:var(--muted);font-size:.8rem;">Loading Drive files…</div>';
+  var cfg = window.APP_CONFIG || {}, base = cfg.SUPABASE_URL || '';
+  var token = '';
+  try { var s = await _authClient().auth.getSession(); token = (s && s.data && s.data.session && s.data.session.access_token) || ''; } catch (_) {}
+  var gp = { 'Authorization': 'Bearer ' + token, 'apikey': (cfg.SUPABASE_ANON_KEY || '') };
+  try {
+    var r = await fetch(base + '/functions/v1/gdrive-proxy?action=list-files&folderId=' + encodeURIComponent(folderId), { headers: gp });
+    var d = await r.json().catch(function(){ return {}; });
+    if (!r.ok) throw new Error((d && d.error) || ('list-files HTTP ' + r.status));
+    _condPicker.files = Array.isArray(d.files) ? d.files : [];
+  } catch (e) {
+    listEl.innerHTML = '<div style="padding:24px;text-align:center;color:#E0A0A0;font-size:.8rem;">Could not load files: ' + _ldDriveEsc(e && e.message || String(e)) + '</div>';
+    return;
+  }
+  _condRenderPickerList();
+}
+
+function _condRenderCrumbs() {
+  var el = document.getElementById('cond-picker-crumbs');
+  if (!el) return;
+  el.innerHTML = _condPicker.trail.map(function(c, i) {
+    var last = i === _condPicker.trail.length - 1;
+    return '<span onclick="_condPickerNavTo(' + i + ')" style="cursor:pointer;color:' + (last ? '#f0ebe0' : 'rgba(201,168,76,0.9)') + ';">' + _ldDriveEsc(c.name) + '</span>';
+  }).join('<span style="color:rgba(255,255,255,0.25);margin:0 5px;">/</span>');
+}
+
+async function _condPickerNavTo(i) {
+  var target = _condPicker.trail[i];
+  if (!target) return;
+  _condPicker.trail = _condPicker.trail.slice(0, i + 1);
+  await _condPickerLoad(target.id, target.name, false);
+}
+
+var LD_FOLDER_MIME_COND = 'application/vnd.google-apps.folder';
+function _condRenderPickerList() {
+  var listEl = document.getElementById('cond-picker-list');
+  var folders = _condPicker.files.filter(function(f){ return f.mimeType === LD_FOLDER_MIME_COND; });
+  var files   = _condPicker.files.filter(function(f){ return f.mimeType !== LD_FOLDER_MIME_COND; });
+  if (!folders.length && !files.length) {
+    listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:.8rem;">This folder is empty.</div>';
+    return;
+  }
+  var html = folders.map(function(f) {
+    return '<div onclick="_condPickerLoad(\'' + f.id + '\',\'' + String(f.name||'Folder').replace(/'/g,"\\'") + '\',true)" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'">'
+      + '<span style="font-size:1rem;">&#128193;</span>'
+      + '<span style="flex:1;font-size:.82rem;color:var(--text);">' + _ldDriveEsc(f.name || 'Folder') + '</span>'
+      + '<span style="font-size:.7rem;color:var(--muted);">open &rsaquo;</span></div>';
+  }).join('');
+  html += files.map(function(f) {
+    var checked = _condPicker.selected[f.id] ? 'checked' : '';
+    var emoji = (typeof _ldFileIconEmoji === 'function') ? _ldFileIconEmoji(f.mimeType, f.name) : '📎';
+    return '<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'">'
+      + '<input type="checkbox" ' + checked + ' onchange="_condPickerToggle(\'' + f.id + '\',this.checked)" style="accent-color:#C9A84C;flex-shrink:0;">'
+      + '<span style="font-size:1rem;">' + emoji + '</span>'
+      + '<span style="flex:1;font-size:.82rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _ldDriveEsc(f.name || 'File') + '</span>'
+      + (f.size ? '<span style="font-size:.68rem;color:var(--muted);">' + (typeof _ldFormatSize==='function'?_ldFormatSize(f.size):'') + '</span>' : '')
+      + '</label>';
+  }).join('');
+  listEl.innerHTML = html;
+}
+
+function _condPickerToggle(fileId, on) {
+  var f = _condPicker.files.find(function(x){ return x.id === fileId; });
+  if (!f) return;
+  if (on) _condPicker.selected[fileId] = { file_name: f.name || 'Document', gdrive_file_id: f.id, file_url: f.webViewLink || '' };
+  else delete _condPicker.selected[fileId];
+}
+
+function condPickerClose() {
+  var m = document.getElementById('cond-picker-modal');
+  if (m) m.style.display = 'none';
+}
+
+async function condConfirmAttach() {
+  var docs = Object.keys(_condPicker.selected).map(function(k){ return _condPicker.selected[k]; });
+  if (!docs.length) { (window.showToast || window.toast || function(){})('Select at least one document.', true); return; }
+  var clear = !!(document.getElementById('cond-picker-clear') && document.getElementById('cond-picker-clear').checked);
+  var btn = document.getElementById('cond-picker-confirm');
+  if (btn) { btn.disabled = true; btn.textContent = 'Attaching…'; }
+  try {
+    const { error } = await _authClient().rpc('condition_attach', { p_condition_id: _condPicker.conditionId, p_docs: docs, p_clear: clear });
+    if (error) throw error;
+    (window.showToast || window.toast || function(){})('Attached ' + docs.length + ' document' + (docs.length !== 1 ? 's' : '') + (clear ? ' · condition cleared ✓' : ' ✓'));
+  } catch (e) {
+    (window.showToast || window.toast || function(){})('Attach failed: ' + (e && e.message || e), true);
+    if (btn) { btn.disabled = false; btn.textContent = 'Attach'; }
+    return;
+  }
+  condPickerClose();
   loadConditions();
 }
 
