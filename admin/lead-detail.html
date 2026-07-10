@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070640 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070641 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -7446,7 +7446,7 @@ function renderDocsGrid() {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <span style="font-size:10px;font-weight:700;color:${docType ? 'rgba(201,168,76,0.9)' : 'rgba(255,255,255,0.35)'};background:${docType ? 'rgba(201,168,76,0.12)' : 'rgba(255,255,255,0.05)'};padding:3px 10px;border-radius:10px;text-transform:uppercase;letter-spacing:.4px;">${docType || 'No type'}</span>
           <div style="display:flex;gap:6px;align-items:center;">
-            <button onclick="scanDriveDoc('${_ldDriveEsc(f.id)}', event)" title="Scan with AI" style="font-size:10px;font-weight:700;color:#1a1a1a;background:linear-gradient(135deg,#f2cf85,#C9A84C);border:none;padding:3px 10px;border-radius:6px;cursor:pointer;letter-spacing:.3px;">🔍 Scan</button>
+            <button onclick="scanDriveTo1003('${_ldDriveEsc(f.id)}', event)" title="Scan this file into the 1003" style="font-size:10px;font-weight:700;color:#1a1a1a;background:linear-gradient(135deg,#f2cf85,#C9A84C);border:none;padding:3px 10px;border-radius:6px;cursor:pointer;letter-spacing:.3px;">🔍 1003</button>
             ${isPdf ? '<span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);background:rgba(255,255,255,0.06);padding:3px 8px;border-radius:6px;">PDF</span>' : ''}
             <button onclick="_ldDocMenu(event,'${_ldDriveEsc(f.id)}','file')" title="Actions" style="font-size:14px;line-height:1;color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.06);border:none;padding:2px 9px;border-radius:6px;cursor:pointer;">⋯</button>
           </div>
@@ -21439,6 +21439,8 @@ function _renderDocuments(docs) {
     const meta = [size, _docWhen(d.uploaded_at)].filter(Boolean).map(esc).join(' · ');
     const heicNote = (kind === 'heic')
       ? `<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:2px;">Preview not available — ${d.gdrive_file_url ? `<a href="${esc(d.gdrive_file_url)}" target="_blank" rel="noopener" style="color:#C9A84C;">Open in Drive</a>` : 'no Drive link yet'}</div>` : '';
+    const canScan = (kind === 'pdf' || kind === 'image');
+    const scan = canScan ? `<button type="button" class="doc-scan1003" data-url="${esc(d.file_url || '')}" data-path="${esc(path)}" data-name="${esc(d.file_name || '')}" title="Scan into the 1003" style="${BTN}">🔍 1003</button>` : '';
     const view = openUrl ? `<a href="${esc(openUrl)}" target="_blank" rel="noopener" style="${BTN}">View ↗</a>` : '';
     const download = path ? `<button type="button" class="doc-download" data-path="${esc(path)}" style="${BTN}">Download</button>` : '';
     return `
@@ -21452,7 +21454,7 @@ function _renderDocuments(docs) {
           ${meta ? `<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:3px;">${meta}</div>` : ''}
           ${heicNote}
         </div>
-        <div style="flex:0 0 auto;display:flex;gap:6px;">${view}${download}</div>
+        <div style="flex:0 0 auto;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">${scan}${view}${download}</div>
       </div>`;
   }).join('');
 }
@@ -21478,6 +21480,8 @@ function _wireDocumentsHandlers() {
   list.addEventListener('click', async function(e) {
     const nameEl = e.target.closest('.doc-name');
     if (nameEl) { _docStartRename(nameEl); return; }                 // inline rename
+    const sc = e.target.closest('.doc-scan1003');
+    if (sc) { scanUploadedTo1003(sc.dataset.url, sc.dataset.path, sc.dataset.name); return; }   // scan → 1003
     const iv = e.target.closest('.doc-imgview');
     if (iv) { if (iv.dataset.url) _openDocPreview(iv.dataset.url); return; }   // image lightbox
     const pv = e.target.closest('.doc-preview');
@@ -21529,6 +21533,136 @@ function _docStartRename(span) {
     else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
   });
   input.addEventListener('blur', cancel);   // blur cancels (Enter is the explicit save)
+}
+
+/* ═══ SCAN → 1003 (shared by both doc lists) ═══
+   Fetch file bytes → base64 → scan-doc-to-1003 { file, media_type } → review modal
+   (approve/edit; 6 context-only keys shown read-only, never sent) → apply_1003_fields
+   { p_fields, p_contact_id } (server whitelists columns). Then reload the 1003. */
+var SCAN1003_FN = (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/scan-doc-to-1003';
+var SCAN1003_CONTEXT_KEYS = ['ytd_gross_income','pay_frequency','bank_name','account_type','account_last4','ending_balance'];
+function _scan1003MediaType(mime, name) {
+  var m = (mime || '').toLowerCase(), ext = ((name || '').split('.').pop() || '').toLowerCase();
+  if (m.indexOf('pdf') >= 0 || ext === 'pdf') return 'application/pdf';
+  if (m.indexOf('jpeg') >= 0 || m.indexOf('jpg') >= 0 || ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (m.indexOf('png') >= 0 || ext === 'png') return 'image/png';
+  if (m.indexOf('webp') >= 0 || ext === 'webp') return 'image/webp';
+  if (m.indexOf('gif') >= 0 || ext === 'gif') return 'image/gif';
+  return null; // e.g. HEIC — not scannable
+}
+function _bufToB64(buf) { var b = new Uint8Array(buf), s = '', c = 0x8000; for (var i = 0; i < b.length; i += c) s += String.fromCharCode.apply(null, b.subarray(i, i + c)); return btoa(s); }
+function _scan1003Modal() {
+  var m = document.getElementById('scan1003Modal');
+  if (m) return m;
+  m = document.createElement('div'); m.id = 'scan1003Modal';
+  m.style.cssText = 'display:none;position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.7);align-items:center;justify-content:center;padding:24px 16px;';
+  m.innerHTML = '<div style="background:#0F0F11;border:1px solid rgba(201,168,76,0.25);border-radius:14px;max-width:560px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.72);overflow:hidden;">'
+    + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid rgba(201,168,76,0.14);">'
+      + '<div><div style="font-size:14px;font-weight:700;color:#C9A84C;">🔍 Scan → 1003</div><div id="scan1003Sub" style="font-size:11px;color:#888;margin-top:3px;"></div></div>'
+      + '<button onclick="_scan1003Close()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;">✕</button>'
+    + '</div>'
+    + '<div id="scan1003Body" style="flex:1;overflow-y:auto;padding:12px 18px;"></div>'
+    + '<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid rgba(201,168,76,0.12);">'
+      + '<button onclick="_scan1003Close()" style="background:transparent;border:1px solid rgba(255,255,255,0.15);color:#aaa;border-radius:8px;padding:8px 16px;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>'
+      + '<button id="scan1003Apply" onclick="_scan1003ApplyNow()" disabled style="background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;color:#1A0E00;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Apply to 1003</button>'
+    + '</div>'
+  + '</div>';
+  m.addEventListener('click', function(e) { if (e.target === m) _scan1003Close(); });
+  document.body.appendChild(m);
+  return m;
+}
+function _scan1003Open(statusText) {
+  var m = _scan1003Modal();
+  var body = document.getElementById('scan1003Body'); if (body) body.innerHTML = '<div style="text-align:center;padding:36px;color:#888;font-size:13px;">⏳ ' + lpEsc(statusText || 'Scanning…') + '</div>';
+  var sub = document.getElementById('scan1003Sub'); if (sub) sub.textContent = '';
+  var ab = document.getElementById('scan1003Apply'); if (ab) ab.disabled = true;
+  m.style.display = 'flex';
+}
+function _scan1003Close() { var m = document.getElementById('scan1003Modal'); if (m) m.style.display = 'none'; }
+function _scan1003Error(msg) { var b = document.getElementById('scan1003Body'); if (b) b.innerHTML = '<div style="text-align:center;padding:30px;color:#E5484D;font-size:12px;">' + lpEsc(msg) + '</div>'; var ab = document.getElementById('scan1003Apply'); if (ab) ab.disabled = true; }
+function _scan1003Review(fields, detected, found) {
+  fields = fields || {};
+  var rows = [];
+  Object.keys(fields).forEach(function(k) {
+    var v = fields[k];
+    if (v == null || v === '') return;
+    var label = k.replace(/_/g, ' ');
+    if (SCAN1003_CONTEXT_KEYS.indexOf(k) >= 0) {
+      rows.push('<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;opacity:0.55;">'
+        + '<span style="width:14px;flex-shrink:0;"></span>'
+        + '<span style="flex:0 0 44%;font-size:11px;color:#888;text-transform:capitalize;">' + lpEsc(label) + ' <span style="font-size:9px;color:#666;">(reference)</span></span>'
+        + '<span style="flex:1;min-width:0;font-size:12px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + lpEsc(String(v)) + '</span>'
+      + '</div>');
+    } else {
+      rows.push('<div class="scan1003-row" data-key="' + lpEsc(k) + '" style="display:flex;align-items:center;gap:8px;padding:6px 4px;">'
+        + '<input type="checkbox" class="scan1003-chk" checked style="flex-shrink:0;accent-color:#C9A84C;">'
+        + '<span style="flex:0 0 44%;font-size:11px;color:#C9A84C;text-transform:capitalize;">' + lpEsc(label) + '</span>'
+        + '<input type="text" class="scan1003-val" value="' + lpEsc(String(v)) + '" style="flex:1;min-width:0;background:#131315;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:12px;padding:4px 8px;outline:none;font-family:inherit;">'
+      + '</div>');
+    }
+  });
+  var sub = document.getElementById('scan1003Sub'); if (sub) sub.textContent = (detected ? ('Detected: ' + detected + ' · ') : '') + (found != null ? found : rows.length) + ' field(s) found — review, then apply.';
+  var body = document.getElementById('scan1003Body'); if (body) body.innerHTML = rows.length ? rows.join('') : '<div style="color:#888;font-size:12px;padding:24px;text-align:center;">No fields detected in this document.</div>';
+  var ab = document.getElementById('scan1003Apply'); if (ab) ab.disabled = !rows.some(function(r){ return r.indexOf('scan1003-row') >= 0; });
+}
+async function _scan1003Run(bytesBuf, mediaType, label) {
+  _scan1003Open('Reading ' + (label || 'document') + '…');
+  try {
+    var res = await fetch(SCAN1003_FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file: _bufToB64(bytesBuf), media_type: mediaType }) });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data || data.ok !== true) throw new Error((data && (data.error || data.detail)) || ('scan failed (' + res.status + ')'));
+    _scan1003Review(data.fields || {}, data.detected_doc_type, data.found);
+  } catch (e) { _scan1003Error((e && e.message) || String(e)); }
+}
+async function _scan1003ApplyNow() {
+  var cid = (typeof lpCid === 'function' ? lpCid() : null); if (!cid) { showToast('No contact', true); return; }
+  var out = {};
+  document.querySelectorAll('#scan1003Body .scan1003-row').forEach(function(row) {
+    var chk = row.querySelector('.scan1003-chk'); if (!chk || !chk.checked) return;
+    var val = (row.querySelector('.scan1003-val') || {}).value;
+    if (val != null && String(val).trim() !== '') out[row.getAttribute('data-key')] = String(val).trim();
+  });
+  if (!Object.keys(out).length) { showToast('Nothing selected to apply', true); return; }
+  var btn = document.getElementById('scan1003Apply'); if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+  try {
+    var payload = { p_fields: out, p_contact_id: cid };
+    if (typeof _activeBorrowerApp !== 'undefined' && _activeBorrowerApp && _activeBorrowerApp.id) payload.p_application_id = _activeBorrowerApp.id;
+    var r = await _authClient().rpc('apply_1003_fields', payload);
+    if (r.error) throw r.error;
+    var d = Array.isArray(r.data) ? r.data[0] : r.data;
+    showToast('Applied ' + ((d && d.applied) || 0) + ' field(s) to the 1003 ✓');
+    _scan1003Close();
+    if (typeof load1003 === 'function') load1003(cid);
+  } catch (e) { showToast('Apply failed: ' + ((e && e.message) || e), true); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Apply to 1003'; }
+}
+// Documents TAB (Drive): fetch bytes via Drive ?alt=media (gdrive-proxy has no download action) → scan.
+async function scanDriveTo1003(driveFileId, ev) {
+  if (ev) { ev.stopPropagation(); if (ev.preventDefault) ev.preventDefault(); }
+  var file = (_allDocs || []).find(function(f) { return f.id === driveFileId; });
+  if (!file) { showToast('File not found in current grid', true); return; }
+  var mt = _scan1003MediaType(file.mimeType, file.name);
+  if (!mt) { showToast('Can’t scan this type (PDF/JPG/PNG/WEBP/GIF only)', true); return; }
+  _scan1003Open('Fetching from Drive…');
+  try {
+    var token = await _ldEnsureToken();
+    var res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.id) + '?alt=media', { headers: { Authorization: 'Bearer ' + token } });
+    if (!res.ok) { if (res.status === 401 || res.status === 403) _ldClearToken(); throw new Error('Drive fetch failed (' + res.status + ')'); }
+    await _scan1003Run(await res.arrayBuffer(), mt, file.name);
+  } catch (e) { _scan1003Error((e && e.message) || String(e)); }
+}
+// #documentsList (uploaded_documents): fetch bytes from file_url (or a signed URL from storage_path) → scan.
+async function scanUploadedTo1003(url, path, name) {
+  var mt = _scan1003MediaType('', name);
+  if (!mt) { showToast('Can’t scan this type (PDF/JPG/PNG/WEBP/GIF only)', true); return; }
+  _scan1003Open('Loading ' + (name || 'document') + '…');
+  try {
+    var fetchUrl = url || (path ? await _signedDocUrl(path) : '');
+    if (!fetchUrl) throw new Error('No file URL available');
+    var res = await fetch(fetchUrl);
+    if (!res.ok) throw new Error('fetch failed (' + res.status + ')');
+    await _scan1003Run(await res.arrayBuffer(), mt, name);
+  } catch (e) { _scan1003Error((e && e.message) || String(e)); }
 }
 
 // Lazily-built inline PDF preview modal (one shared instance, reused per click).
