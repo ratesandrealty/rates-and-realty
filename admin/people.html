@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <title>People — Rates & Realty CRM</title>
-<!-- people.html · cache-buster v=2026070901 (Worker serves /admin/* HTML no-store) -->
+<!-- people.html · cache-buster v=2026070902 (Worker serves /admin/* HTML no-store) -->
 <script src="/api/env.js?v=2026033003"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -1741,7 +1741,11 @@ function _apmShotPaste(e){
   var items=(e.clipboardData&&e.clipboardData.items)||[];
   for(var i=0;i<items.length;i++){
     if(items[i].type && items[i].type.indexOf('image')===0){
-      var f=items[i].getAsFile(); if(f){ e.preventDefault(); apmShotHandle(f); } return;
+      var f=items[i].getAsFile(); if(!f) return;
+      e.preventDefault();
+      var row=_apmPasteTargetRow();          // paste fills the connected block it happened on…
+      if(row) _apmCpShotHandle(f, row); else apmShotHandle(f);   // …otherwise the main form
+      return;
     }
   }
 }
@@ -1870,7 +1874,12 @@ function apmAddConnected() {
   row.className = 'apm-connected-row';
   row.style.cssText = 'border:1px solid #2a2a2a;border-radius:8px;padding:10px;margin-bottom:8px;background:#0d0d0d;';
   row.innerHTML =
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+    '<div class="cp-shot-zone" onclick="_apmCpShotPick(this)" ondragover="_apmCpShotDragOver(event,this)" ondragleave="_apmCpShotDragLeave(event,this)" ondrop="_apmCpShotDrop(event,this)" style="border:1px dashed #C9A84C66;background:#C9A84C08;border-radius:7px;padding:7px 8px;margin-bottom:8px;text-align:center;cursor:pointer;">'
+      + '<div class="cp-shot-idle" style="color:#C9A84C;font-size:11px;font-weight:600;">📋 Paste, drop, or upload a screenshot to fill</div>'
+      + '<div class="cp-shot-status" style="display:none;font-size:11px;"></div>'
+      + '<input type="file" class="cp-shot-file" accept="image/*" onchange="_apmCpShotFileChange(event,this)" style="display:none;">'
+    + '</div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
       + '<span style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.6px;">Connected person</span>'
       + '<button type="button" onclick="this.closest(\'.apm-connected-row\').remove()" title="Remove" style="background:transparent;border:none;color:#888;cursor:pointer;font-size:15px;line-height:1;">&times;</button>'
     + '</div>'
@@ -1894,6 +1903,60 @@ function apmAddConnected() {
       + '<option value="Other">Other</option>'
     + '</select>';
   list.appendChild(row);
+  // Track hover so a Ctrl+V with no focused field still fills the block under the cursor.
+  row.addEventListener('mouseenter', function(){ _apmHoverRow=row; });
+  row.addEventListener('mouseleave', function(){ if(_apmHoverRow===row) _apmHoverRow=null; });
+}
+
+/* ── Per-connected-block screenshot extractor (reuses _apmDownscaleToJpegB64 + the edge fn) ── */
+var _apmHoverRow=null;
+function _apmCpShotPick(zone){ if(zone.__busy) return; var f=zone.querySelector('.cp-shot-file'); if(f) f.click(); }
+function _apmCpShotDragOver(e, zone){ e.preventDefault(); zone.style.background='#C9A84C18'; zone.style.borderColor='#C9A84C'; }
+function _apmCpShotDragLeave(e, zone){ zone.style.background='#C9A84C08'; zone.style.borderColor='#C9A84C66'; }
+function _apmCpShotDrop(e, zone){
+  e.preventDefault(); _apmCpShotDragLeave(e, zone);
+  var files=(e.dataTransfer&&e.dataTransfer.files)||[];
+  for(var i=0;i<files.length;i++){ if((files[i].type||'').indexOf('image/')===0){ _apmCpShotHandle(files[i], zone.closest('.apm-connected-row')); return; } }
+}
+function _apmCpShotFileChange(e, input){ var f=input.files&&input.files[0]; input.value=''; if(f) _apmCpShotHandle(f, input.closest('.apm-connected-row')); }
+function _apmCpStatus(row, html, busy){
+  if(!row) return;
+  var s=row.querySelector('.cp-shot-status'), idle=row.querySelector('.cp-shot-idle'), zone=row.querySelector('.cp-shot-zone');
+  if(!s) return;
+  if(idle) idle.style.display='none'; s.style.display='block'; s.innerHTML=html;
+  if(zone){ zone.__busy=!!busy; zone.style.pointerEvents=busy?'none':''; zone.style.opacity=busy?'0.85':'1'; }
+}
+async function _apmCpShotHandle(file, row){
+  if(!row || row.__shotBusy) return;
+  if(!/^image\//.test(file.type||'')){ _apmCpStatus(row, '<span style="color:#f87171;">Please use an image file.</span>', false); return; }
+  row.__shotBusy=true;
+  _apmCpStatus(row, '<span class="apm-spin"></span>Reading screenshot…', true);
+  try{
+    var base64=await _apmDownscaleToJpegB64(file, 1600, 0.8);
+    var resp=await _authClient().functions.invoke('extract-lead-from-image', { body:{ image:base64, media_type:'image/jpeg' } });
+    var data=resp&&resp.data, error=resp&&resp.error;
+    if(error || !data || data.ok!==true){
+      var msg=(data&&data.error) || (error&&error.message) || "Couldn't read that image";
+      _apmCpStatus(row, '<span style="color:#f87171;">'+_apmEsc(msg)+'</span>', false);
+      return;
+    }
+    var f=data.fields||{}, n=0;
+    // Fill ONLY this block's name/email/phone; ignore address/notes/etc.; leave the relationship as-is.
+    [['.cp-first', f.first_name], ['.cp-last', f.last_name], ['.cp-email', f.email], ['.cp-phone', f.phone]].forEach(function(p){
+      if(p[1]==null) return; var el=row.querySelector(p[0]); if(!el) return; var v=String(p[1]).trim(); if(v){ el.value=v; n++; }
+    });
+    _apmCpStatus(row, '<span style="color:#4ade80;font-weight:600;">✓ Filled '+n+' field'+(n===1?'':'s')+' — review and save.</span>', false);
+  }catch(err){
+    _apmCpStatus(row, '<span style="color:#f87171;">Image too large or unreadable — try a smaller/clearer screenshot.</span>', false);
+  }finally{ row.__shotBusy=false; }
+}
+// Which connected block (if any) a paste belongs to: focused field's block, else the hovered block.
+function _apmPasteTargetRow(){
+  var ae=document.activeElement;
+  var row=(ae && ae.closest) ? ae.closest('.apm-connected-row') : null;
+  if(row) return row;
+  if(_apmHoverRow && document.body.contains(_apmHoverRow)) return _apmHoverRow;
+  return null;
 }
 
 function _apmNormalizeRel(t) { return String(t || '').trim().toLowerCase().replace(/[\s-]+/g, '_'); }
