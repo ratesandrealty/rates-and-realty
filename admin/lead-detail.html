@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070645 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070646 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -3819,8 +3819,14 @@
           <!-- Row 1: filename + Download / Open / Close -->
           <div style="padding:14px 20px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); flex-shrink:0;">
             <div style="min-width:0; flex:1;">
-              <div id="doc-viewer-name" style="font-weight:600; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+              <div id="doc-viewer-name" onclick="_docViewerStartRename()" title="Click to rename" style="font-weight:600; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:text;"></div>
               <div id="doc-viewer-meta" style="font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px;"></div>
+            </div>
+            <!-- Doc browser nav (Prev / "N of M" / Next) — shown when the folder has >1 file -->
+            <div id="doc-viewer-nav" style="display:none; align-items:center; gap:6px; flex-shrink:0; margin:0 14px;">
+              <button id="doc-viewer-prev" onclick="_docViewerStep(-1)" title="Previous (←)" style="padding:6px 12px; background:rgba(255,255,255,0.08); border:none; border-radius:8px; color:#fff; font-size:15px; line-height:1; cursor:pointer;">‹</button>
+              <span id="doc-viewer-counter" style="font-size:12px; color:rgba(255,255,255,0.6); min-width:62px; text-align:center; white-space:nowrap;"></span>
+              <button id="doc-viewer-next" onclick="_docViewerStep(1)" title="Next (→)" style="padding:6px 12px; background:rgba(255,255,255,0.08); border:none; border-radius:8px; color:#fff; font-size:15px; line-height:1; cursor:pointer;">›</button>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-shrink:0; margin-left:16px;">
               <a id="doc-viewer-download" href="#" download style="padding:7px 14px; background:rgba(255,255,255,0.08); border-radius:8px; color:#fff; text-decoration:none; font-size:13px;">Download</a>
@@ -3841,6 +3847,8 @@
             <button id="doc-viewer-crop-apply-btn" onclick="docViewerApplyCrop()" style="display:none; padding:6px 14px; background:linear-gradient(135deg,#7A5020,#C9A84C); border:none; border-radius:6px; color:#1A0E00; font-weight:700; font-size:12px; cursor:pointer; font-family:inherit;">Apply Crop</button>
             <button id="doc-viewer-crop-cancel-btn" onclick="docViewerCancelCrop()" style="display:none; padding:6px 14px; background:#1a1a1a; border:1px solid rgba(255,255,255,0.2); border-radius:6px; color:#fff; cursor:pointer; font-size:12px; font-family:inherit;">Cancel</button>
           </div>
+          <!-- Thumbnail filmstrip (jump to any doc in the folder) — populated when nav list has >1 file -->
+          <div id="doc-viewer-filmstrip" style="display:none; gap:8px; padding:8px 16px; background:#0d0d0d; border-bottom:1px solid #222; overflow-x:auto; flex-shrink:0;"></div>
           <div id="doc-viewer-body" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:block; padding:16px 0; background:#0a0a0a;"></div>
         </div>
       </div>
@@ -7781,11 +7789,9 @@ async function _ldDocRename(id) {
   const nm = input.trim();
   if (!nm || nm === f.name) return;
   try {
-    await _ldDocDriveFetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id), {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nm })
-    });
+    // Proxy rename (server-authed) → updates the grid model + syncs uploaded_documents (if any).
+    await _ldRenameDriveFile(id, nm);
     if (typeof toast === 'function') toast('Renamed');
-    loadDocumentsGrid();
   } catch (e) { _ldDocActionErr(e, 'Rename'); }
 }
 async function _ldDocDelete(id) {
@@ -8075,7 +8081,7 @@ function _ldDriveEsc(s) {
 // Open the in-app viewer for a Google Drive file object. Handles PDFs
 // (pdf.js canvas) and images (<img> with CSS transform). Other types
 // get a fallback link to Drive.
-async function openDocViewerForFile(file) {
+async function openDocViewerForFile(file, navList) {
   const modal = document.getElementById('doc-viewer-modal');
   const body  = document.getElementById('doc-viewer-body');
   if (!modal || !body || !file) return;
@@ -8083,7 +8089,11 @@ async function openDocViewerForFile(file) {
   // Reset any previous viewer state.
   if (_docViewerState.objectUrl) { try { URL.revokeObjectURL(_docViewerState.objectUrl); } catch (_) {} }
   if (_docViewerState.pdfDoc)    { try { _docViewerState.pdfDoc.destroy(); } catch (_) {} }
-  _docViewerState = { file: file, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null };
+  // Folder nav list so Prev/Next/filmstrip can browse without closing (defaults to the current grid).
+  const _navList = (navList && navList.length) ? navList : _ldViewerNavList();
+  let _navIdx = _navList.findIndex(function(x){ return x && x.id === file.id; });
+  if (_navIdx < 0) { _navList.length ? _navIdx = 0 : _navIdx = -1; }
+  _docViewerState = { file: file, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null, navList: _navList, navIdx: _navIdx };
   _docViewerScale = 1.0;
   _docViewerRotation = 0;
   _docViewerCropMode = false;
@@ -8104,17 +8114,22 @@ async function openDocViewerForFile(file) {
   if (nameEl) nameEl.textContent = file.name || 'Document';
   if (metaEl) metaEl.textContent = ((file.mimeType || '').replace('application/', '') || 'file')
     + (file.size ? ' · ' + _ldFormatSize(file.size) : '');
+  const _cfg = window.APP_CONFIG || {};
+  const _base = _cfg.SUPABASE_URL || '';
   const dlLink = document.getElementById('doc-viewer-download');
   const otLink = document.getElementById('doc-viewer-open-tab');
   if (dlLink) {
-    // Download → stream via gdrive-proxy (server-authed as the app's Drive account), not a raw
-    // usercontent link that would use the browser's authuser=0 account and 403.
-    dlLink.href = '#';
-    dlLink.removeAttribute('download');
-    dlLink.onclick = (e) => { e.preventDefault(); _ldProxyDownload(file.id, file.name, file.webContentLink || file.webViewLink); };
+    // Download → gdrive-proxy attachment stream (server-authed as the app's Drive account); the
+    // Content-Disposition carries the filename. No usercontent/authuser=0 link, no 403.
+    dlLink.href = _base + '/functions/v1/gdrive-proxy?action=download&download=1&fileId=' + encodeURIComponent(file.id);
+    dlLink.setAttribute('download', '');
+    dlLink.onclick = null;
   }
   // Open-in-Drive still needs the Drive web UI → pin the correct account by EMAIL (authuser=email).
   if (otLink) { const _ot = file.webViewLink || '#'; otLink.href = (window.pinGoogleUrl && _ot !== '#') ? window.pinGoogleUrl(_ot) : _ot; }
+  // Browser nav (Prev/Next/counter) + thumbnail filmstrip.
+  _docViewerUpdateNav();
+  _docViewerRenderFilmstrip();
   const zoomEl = document.getElementById('docZoomLevel');
   if (zoomEl) zoomEl.textContent = '100%';
   const saveBtn = document.getElementById('doc-viewer-save-btn');
@@ -8139,10 +8154,12 @@ async function openDocViewerForFile(file) {
   const isImage = mime.indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|bmp)$/.test(nm);
 
   try {
-    const token = await _ldEnsureToken();
+    // Bytes via gdrive-proxy inline stream (server-authed) — no browser Google session / popup.
+    let _sTok = '';
+    try { const _s = await _authClient().auth.getSession(); _sTok = (_s && _s.data && _s.data.session && _s.data.session.access_token) || ''; } catch(_) {}
     const res = await fetch(
-      'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.id) + '?alt=media',
-      { headers: { Authorization: 'Bearer ' + token } }
+      _base + '/functions/v1/gdrive-proxy?action=download&fileId=' + encodeURIComponent(file.id),
+      { headers: { 'Authorization': 'Bearer ' + _sTok, 'apikey': (_cfg.SUPABASE_ANON_KEY || '') } }
     );
     if (!res.ok) throw new Error('Drive fetch failed: HTTP ' + res.status);
     const buf = await res.arrayBuffer();
@@ -8331,10 +8348,132 @@ function _ldOpenViewerFromCard(el) {
   const isPdf   = mt.indexOf('pdf') !== -1 || nm.endsWith('.pdf');
   const isImage = mt.indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|bmp)$/.test(nm);
   if (isPdf || isImage) {
-    openDocViewerForFile(file);
+    openDocViewerForFile(file, _ldViewerNavList());
   } else {
     window.open(file.webViewLink || '#', '_blank', 'noopener');
   }
+}
+
+// ── Doc-viewer browser: nav list, prev/next, filmstrip, keyboard, rename ──────
+// The list the viewer browses = the current grid's non-folder files honoring the active filter,
+// so the "N of M" counter matches what's on screen. navList entries are the SAME object refs as
+// _allDocs, so a rename that mutates f.name is reflected everywhere.
+function _ldViewerNavList() {
+  const all = (typeof _allDocs !== 'undefined' && _allDocs) ? _allDocs : [];
+  return all.filter(function(f){ return f && f.mimeType !== LD_FOLDER_MIME; })
+            .filter(function(f){ return (typeof _ldDocMatches === 'function') ? _ldDocMatches(f, _currentDocFilter) : true; });
+}
+
+function _docViewerUpdateNav() {
+  const st = _docViewerState || {};
+  const list = st.navList || [];
+  const nav = document.getElementById('doc-viewer-nav');
+  const counter = document.getElementById('doc-viewer-counter');
+  const prev = document.getElementById('doc-viewer-prev');
+  const next = document.getElementById('doc-viewer-next');
+  if (nav) nav.style.display = (list.length > 1) ? 'flex' : 'none';
+  if (counter) counter.textContent = list.length ? ((st.navIdx + 1) + ' of ' + list.length) : '';
+  if (prev) { const d = st.navIdx <= 0; prev.disabled = d; prev.style.opacity = d ? '0.35' : '1'; prev.style.cursor = d ? 'default' : 'pointer'; }
+  if (next) { const d = st.navIdx >= list.length - 1; next.disabled = d; next.style.opacity = d ? '0.35' : '1'; next.style.cursor = d ? 'default' : 'pointer'; }
+}
+
+function _docViewerGoTo(i) {
+  const st = _docViewerState; if (!st || !st.navList) return;
+  if (i < 0 || i >= st.navList.length) return;
+  openDocViewerForFile(st.navList[i], st.navList);
+}
+function _docViewerStep(delta) {
+  const st = _docViewerState; if (!st || !st.navList) return;
+  _docViewerGoTo((st.navIdx || 0) + delta);
+}
+
+function _docViewerRenderFilmstrip() {
+  const strip = document.getElementById('doc-viewer-filmstrip');
+  const st = _docViewerState || {};
+  const list = st.navList || [];
+  if (!strip) return;
+  if (list.length <= 1) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
+  strip.style.display = 'flex';
+  strip.innerHTML = list.map(function(f, i){
+    const thumb = f.thumbnailLink ? String(f.thumbnailLink).replace(/=s\d+$/, '=s96') : '';
+    const inner = thumb
+      ? '<img src="' + _ldDriveEsc(thumb) + '" alt="" loading="lazy" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;">'
+      : '<span style="font-size:20px;">' + ((typeof _ldFileIconEmoji === 'function') ? _ldFileIconEmoji(f.mimeType, f.name) : '📄') + '</span>';
+    const on = i === st.navIdx;
+    return '<div onclick="_docViewerGoTo(' + i + ')" title="' + _ldDriveEsc(f.name || '') + '" style="flex:0 0 auto;width:46px;height:58px;border-radius:6px;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.05);border:2px solid ' + (on ? '#C9A84C' : 'transparent') + ';">' + inner + '</div>';
+  }).join('');
+  const active = strip.children[st.navIdx];
+  if (active) { try { active.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch(_) {} }
+}
+
+// Keyboard nav: ←/→ step through the folder (ignored while the title input is focused). Bound once.
+if (!window._docViewerNavBound) {
+  window._docViewerNavBound = true;
+  document.addEventListener('keydown', function(e){
+    const m = document.getElementById('doc-viewer-modal');
+    if (!m || m.style.display === 'none' || !m.style.display) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); _docViewerStep(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); _docViewerStep(1); }
+  });
+}
+
+// Shared rename: proxy rename → update local grid model → sync uploaded_documents (if matched).
+async function _ldRenameDriveFile(fileId, newName) {
+  const name = String(newName || '').trim();
+  if (!fileId || !name) throw new Error('name required');
+  const cfg = window.APP_CONFIG || {};
+  const base = cfg.SUPABASE_URL || '';
+  let tok = '';
+  try { const s = await _authClient().auth.getSession(); tok = (s && s.data && s.data.session && s.data.session.access_token) || ''; } catch(_) {}
+  const res = await fetch(base + '/functions/v1/gdrive-proxy?action=rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok, 'apikey': (cfg.SUPABASE_ANON_KEY || '') },
+    body: JSON.stringify({ fileId: fileId, name: name })
+  });
+  const data = await res.json().catch(function(){ return {}; });
+  if (!res.ok || (data && data.error)) throw new Error((data && data.error) || ('rename HTTP ' + res.status));
+  const finalName = (data && data.name) || name;
+  const f = ((typeof _allDocs !== 'undefined' && _allDocs) ? _allDocs : []).find(function(x){ return x.id === fileId; });
+  if (f) f.name = finalName;
+  if (_docViewerState && _docViewerState.file && _docViewerState.file.id === fileId) _docViewerState.file.name = finalName;
+  if (typeof renderDocsGrid === 'function') { try { renderDocsGrid(); } catch(_) {} }
+  // Keep the uploaded_documents row (if any) in sync — match by gdrive_file_id → document_rename RPC.
+  try {
+    const q = await _authClient().from('uploaded_documents').select('id').eq('gdrive_file_id', fileId).maybeSingle();
+    if (q && q.data && q.data.id) { await _authClient().rpc('document_rename', { p_id: q.data.id, p_new_name: finalName }); }
+  } catch(e) { console.warn('[rename] uploaded_documents sync skipped:', e && e.message); }
+  return finalName;
+}
+
+// Viewer title → click-to-edit. Enter/blur saves, Escape cancels.
+function _docViewerStartRename() {
+  const nameEl = document.getElementById('doc-viewer-name');
+  const st = _docViewerState;
+  if (!nameEl || !st || !st.file || document.getElementById('doc-viewer-name-input')) return;
+  const cur = st.file.name || '';
+  nameEl.innerHTML = '<input id="doc-viewer-name-input" value="' + _ldDriveEsc(cur) + '" style="width:100%;font-size:15px;font-weight:600;background:#0f0f0f;border:1px solid rgba(201,168,76,0.55);border-radius:6px;color:#fff;padding:4px 8px;box-sizing:border-box;">';
+  const inp = document.getElementById('doc-viewer-name-input');
+  if (!inp) return;
+  inp.focus();
+  const dot = cur.lastIndexOf('.');
+  try { inp.setSelectionRange(0, dot > 0 ? dot : cur.length); } catch(_) {}
+  let done = false;
+  const finish = async function(save) {
+    if (done) return; done = true;
+    const val = inp.value.trim();
+    if (save && val && val !== cur) {
+      try { const fn = await _ldRenameDriveFile(st.file.id, val); nameEl.textContent = fn; if (typeof showToast === 'function') showToast('Renamed'); }
+      catch(e) { nameEl.textContent = cur; if (typeof showToast === 'function') showToast('Rename failed: ' + ((e && e.message) || ''), true); }
+    } else { nameEl.textContent = cur; }
+  };
+  inp.addEventListener('keydown', function(e){
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  inp.addEventListener('blur', function(){ finish(true); });
 }
 
 async function downloadDocument(fileUrl, fileName) {
