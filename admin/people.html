@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <title>People — Rates & Realty CRM</title>
+<!-- people.html · cache-buster v=2026070901 (Worker serves /admin/* HTML no-store) -->
 <script src="/api/env.js?v=2026033003"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -1807,14 +1808,39 @@ function apmShotClear(){
   if(typeof nfSourceChanged==='function') nfSourceChanged(); // re-hide the Other box if source was reset
   _apmShotTouched=[]; _apmShotReset();
 }
+// Downscale a pasted/dropped image (full-res screenshots overflow the edge fn payload limit):
+// draw to a canvas capped at maxEdge px on the long side, export JPEG, return base64 WITHOUT
+// the "data:image/jpeg;base64," prefix.
+function _apmDownscaleToJpegB64(file, maxEdge, quality){
+  return new Promise(function(resolve, reject){
+    var url=URL.createObjectURL(file);
+    var img=new Image();
+    img.onload=function(){
+      try{
+        var w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+        if(!w || !h){ URL.revokeObjectURL(url); reject(new Error('empty image')); return; }
+        var scale=Math.min(1, maxEdge/Math.max(w,h));
+        var cw=Math.max(1, Math.round(w*scale)), ch=Math.max(1, Math.round(h*scale));
+        var cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+        cv.getContext('2d').drawImage(img, 0, 0, cw, ch);
+        var dataUrl=cv.toDataURL('image/jpeg', quality);
+        URL.revokeObjectURL(url);
+        resolve((dataUrl.split(',')[1])||'');
+      }catch(e){ URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror=function(){ URL.revokeObjectURL(url); reject(new Error('could not decode image')); };
+    img.src=url;
+  });
+}
 async function apmShotHandle(file){
   if(_apmShotBusy) return;
   if(!/^image\//.test(file.type||'')){ _apmShotStatusHtml('<span style="color:#f87171;">Please use an image file.</span> <a href="#" onclick="_apmShotReset();return false;" style="color:#888;text-decoration:underline;margin-left:6px;">Try again</a>', false); return; }
   _apmShotBusy=true;
   _apmShotStatusHtml('<span class="apm-spin"></span>Reading screenshot…', true);
   try{
-    var dataUrl=await new Promise(function(res,rej){ var fr=new FileReader(); fr.onload=function(){res(fr.result);}; fr.onerror=function(){rej(fr.error||new Error('read failed'));}; fr.readAsDataURL(file); });
-    var resp=await _authClient().functions.invoke('extract-lead-from-image', { body:{ image:dataUrl, media_type:file.type||'image/png' } });
+    // Downscale to a JPEG (max 1600px long edge, q0.8) → base64 without the data: prefix.
+    var base64=await _apmDownscaleToJpegB64(file, 1600, 0.8);
+    var resp=await _authClient().functions.invoke('extract-lead-from-image', { body:{ image:base64, media_type:'image/jpeg' } });
     var data=resp&&resp.data, error=resp&&resp.error;
     if(error || !data || data.ok!==true){
       var msg=(data&&data.error) || (error&&error.message) || "Couldn't read that image";
@@ -1823,7 +1849,7 @@ async function apmShotHandle(file){
     }
     _apmShotFill(data.fields||{}, data.found);
   }catch(err){
-    _apmShotStatusHtml('<span style="color:#f87171;">'+_apmEsc((err&&err.message)||"Couldn't read that image")+'</span> <a href="#" onclick="_apmShotReset();return false;" style="color:#888;text-decoration:underline;margin-left:6px;">Try another</a>', false);
+    _apmShotStatusHtml('<span style="color:#f87171;">Image too large or unreadable — try a smaller/clearer screenshot.</span> <a href="#" onclick="_apmShotReset();return false;" style="color:#888;text-decoration:underline;margin-left:6px;">Try another</a>', false);
   }finally{ _apmShotBusy=false; }
 }
 
