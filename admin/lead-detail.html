@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070637 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070638 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -31687,6 +31687,14 @@ var SMS_STORAGE = 'https://ljywhvbmsibwnssxpesh.supabase.co/storage/v1/object';
 var _tcState = { cid:null, name:'', digits:'', toPhone:null };
 function _tcFmt(iso){ if(!iso) return ''; try{ return new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_){ return String(iso); } }
 function _tcLocalInput(d){ var p=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+// Contacts store RAW 10-digit phones (no +1/formatting). Normalize: strip non-digits;
+// 11 digits starting with 1 → drop the leading 1; then E.164 as +1XXXXXXXXXX. Returns
+// { digits, e164 } — digits empty only when there are genuinely no digits.
+function _tcNormPhone(raw){
+  var d=String(raw==null?'':raw).replace(/\D/g,'');
+  if(d.length===11 && d.charAt(0)==='1') d=d.slice(1);
+  return { digits:d, e164: d ? ('+1'+d) : null };
+}
 function _tcCharCount(){ var ta=document.getElementById('tcBody'), c=document.getElementById('tcCount'); if(!c) return; var n=ta?ta.value.length:0; var segs=n===0?1:(n<=160?1:Math.ceil(n/153)); c.textContent=n+'/160'+(segs>1?(' · '+segs+' segs'):''); c.style.color=n>160?'#f87171':(n>140?'#C9A84C':'#555'); }
 
 function _tcEnsureModal(){
@@ -31734,14 +31742,20 @@ function _tcToggleSchedule(){
 function openTextComposer(){
   var cid=(typeof lpCid==='function'?lpCid():null) || new URLSearchParams(location.search).get('contact_id');
   if(!cid){ showToast('No contact', true); return; }
-  var c=window.contactData||{};
-  var name=[c.first_name,c.last_name].filter(Boolean).join(' ').trim()||'Contact';
-  var digits=String(c.phone||c.secondary_phone||'').replace(/\D/g,'');
-  if(!digits && !_isVaSession()){ showToast('No phone number on file', true); return; }
-  _tcState={ cid:cid, name:name, digits:digits, toPhone:_smsDest(digits) };
+  // Source phone EXACTLY like the working Call button + legacy openSmsComposer: the BARE
+  // `contactData` global (a top-level `let`, so window.contactData is undefined — the original
+  // bug), phone || secondary_phone, with the sidebar tel-link dataset as a final fallback.
+  var name=[ (contactData&&contactData.first_name), (contactData&&contactData.last_name) ].filter(Boolean).join(' ').trim()||'Contact';
+  var raw=(contactData && (contactData.phone || contactData.secondary_phone)) || '';
+  if(!String(raw).replace(/\D/g,'')){ var _pl=document.getElementById('sidebar-phone-link'); if(_pl && _pl.dataset && _pl.dataset.phone) raw=_pl.dataset.phone; }
+  var norm=_tcNormPhone(raw);
+  var toPhone=_isVaSession()?null:norm.e164;   // VA sessions: server resolves by contact_id
+  if(!norm.digits && !_isVaSession()){ showToast('No phone number on file', true); return; }
+  _tcState={ cid:cid, name:name, digits:norm.digits, toPhone:toPhone };
   var ov=_tcEnsureModal();
   document.getElementById('tcTitle').textContent='Text — '+name;
-  document.getElementById('tcSub').textContent = digits ? ('('+digits.slice(0,3)+') '+digits.slice(3,6)+'-'+digits.slice(6)) : (_isVaSession()?'routed by contact':'No phone on file');
+  var _d=norm.digits;
+  document.getElementById('tcSub').textContent = (_d.length>=10) ? ('('+_d.slice(0,3)+') '+_d.slice(3,6)+'-'+_d.slice(6,10)) : (_d ? _d : (_isVaSession()?'routed by contact':'No phone on file'));
   var ta=document.getElementById('tcBody'); if(ta) ta.value='';
   var mu=document.getElementById('tcMedia'); if(mu) mu.value='';
   _tcHideSchedule(); _tcCharCount();
