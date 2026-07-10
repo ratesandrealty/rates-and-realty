@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070643 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070644 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -6823,31 +6823,72 @@ function _fileToBase64(file) {
   });
 }
 
+// heic2any (CDN, lazy-loaded on first HEIC — CSP script-src is '*', so no CSP change / no
+// local vendoring needed). The convert-to-pdf edge fn CANNOT decode HEIC (pdf-lib only embeds
+// PNG/JPEG; the fn returns 415 for HEIC), and browsers can't render HEIC either — so we
+// rasterize HEIC→JPEG in the browser first, then feed that JPEG through the normal image→PDF
+// path. One shared promise so concurrent uploads only inject the script once.
+let _heic2anyPromise = null;
+function _loadHeic2any() {
+  if (typeof window.heic2any === 'function') return Promise.resolve();
+  if (_heic2anyPromise) return _heic2anyPromise;
+  _heic2anyPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => { _heic2anyPromise = null; reject(new Error('heic2any CDN load failed')); };
+    document.head.appendChild(s);
+  });
+  return _heic2anyPromise;
+}
+// HEIC/HEIF → JPEG File in the browser. Returns null on failure (caller keeps the original).
+async function _heicToJpeg(file) {
+  try {
+    await _loadHeic2any();
+    const out = await window.heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
+    const blob = Array.isArray(out) ? out[0] : out;
+    const name = file.name.replace(/\.(heic|heif)$/i, '.jpg');
+    return new File([blob], name, { type: 'image/jpeg' });
+  } catch (e) {
+    console.warn('[heic2any] HEIC→JPEG failed:', e);
+    return null;
+  }
+}
+
 async function _convertToPdfIfNeeded(file) {
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-  // HEIC/HEIF often arrive with an empty or 'image/heic' type — detect by extension too so
-  // they route through the same convert-to-pdf edge fn (browsers can't render HEIC natively).
-  const isHeic = /\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type || '');
-  const isSupported = _convertibleTypes.includes(file.type) || file.type === 'text/plain' || isHeic;
   if (isPdf) return { file, converted: false };
-  if (!isSupported) return { file, converted: false };
+  // HEIC/HEIF often arrive with an EMPTY File.type — always match by extension. Rasterize to
+  // JPEG client-side first (heic2any), then let the standard image→PDF path handle it.
+  const isHeic = /\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type || '');
+  let work = file;
+  if (isHeic) {
+    toast('Converting HEIC ' + file.name + '…');
+    const jpeg = await _heicToJpeg(file);
+    if (!jpeg) { toast('Could not read HEIC — uploading original.', true); return { file, converted: false }; }
+    work = jpeg; // now a real image/jpeg; falls through to the normal image branch below
+  }
+  const isSupported = _convertibleTypes.includes(work.type) || work.type === 'text/plain';
+  // Non-convertible non-HEIC: leave untouched. A HEIC that became JPEG but somehow isn't
+  // "supported" still returns the JPEG (viewable) rather than the original HEIC.
+  if (!isSupported) return { file: work, converted: false };
   try {
-    toast('Converting ' + file.name + ' to PDF…');
-    const base64 = await _fileToBase64(file);
+    toast('Converting ' + work.name + ' to PDF…');
+    const base64 = await _fileToBase64(work);
     const res = await fetch(_CONVERT_FN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_base64: base64, mime_type: (isHeic ? (file.type || 'image/heic') : file.type), file_name: file.name })
+      body: JSON.stringify({ file_base64: base64, mime_type: work.type, file_name: work.name })
     });
     if (res.status === 415) {
       toast('This file type cannot be auto-converted. File saved in original format.', true);
-      return { file, converted: false };
+      return { file: work, converted: false };
     }
     const data = await res.json();
-    if (!res.ok || !data.success) return { file, converted: false };
+    if (!res.ok || !data.success) return { file: work, converted: false };
     const pdfBytes = Uint8Array.from(atob(data.pdf_base64), c => c.charCodeAt(0));
     return { file: new File([pdfBytes], data.pdf_name, { type: 'application/pdf' }), converted: true };
-  } catch(e) { console.warn('PDF conversion failed, using original:', e); return { file, converted: false }; }
+  } catch(e) { console.warn('PDF conversion failed, using original:', e); return { file: work, converted: false }; }
 }
 
 function handleDocUpload(docType) {
@@ -7540,12 +7581,17 @@ function renderDocsGrid() {
     const typeLabel = docType || 'Untagged';
     const safeName = (f.name || 'Untitled').replace(/"/g, '&quot;');
     const isPdf = (f.mimeType || '').includes('pdf');
-    const isImage = (f.mimeType || '').indexOf('image/') === 0;
+    // Drive generates a thumbnail for PDFs (first page) AND images. Render it for ANY file that
+    // has one — not just images — and bump the size (trailing =sNNN → =s400) for a crisp card.
+    // Fall back to the type icon only when Drive returns no thumbnailLink. Lazy-load so a folder
+    // of many docs doesn't fetch every thumbnail up front; the icon shows behind until it loads
+    // (and re-appears via onerror if the thumbnail 404s).
     const thumbLink = f.thumbnailLink || '';
-    const previewBlock = (isImage && thumbLink)
+    const sizedThumb = thumbLink ? thumbLink.replace(/=s\d+$/, '=s400') : '';
+    const previewBlock = thumbLink
       ? `<div style="position:relative;width:100%;height:120px;margin-bottom:10px;background:rgba(0,0,0,0.25);border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;">
           <span style="font-size:32px;">${icon}</span>
-          <img src="${thumbLink}" alt="" referrerpolicy="no-referrer" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'">
+          <img src="${sizedThumb}" alt="" loading="lazy" referrerpolicy="no-referrer" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'">
         </div>`
       : `<div style="font-size:32px;margin-bottom:10px;text-align:center;">${icon}</div>`;
     return `

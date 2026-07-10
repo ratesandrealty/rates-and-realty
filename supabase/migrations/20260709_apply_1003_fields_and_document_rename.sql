@@ -1,12 +1,14 @@
 -- Backfill of two RPCs that were deployed to the live DB via MCP but never tracked in the repo
 -- (same source-drift gap that lost sms-assistant). Definitions pulled verbatim via
--- pg_get_functiondef on 2026-07-09.
+-- pg_get_functiondef; apply_1003_fields re-pulled 2026-07-10 after the auto-create change.
 --
---  • apply_1003_fields — applies OCR/scan fields to the newest mortgage_applications row for a
---    contact. Staff-only. Server-side WHITELIST: only the listed 1003 columns are writable, and
---    null/blank values are ignored — so callers may pass the whole approved object safely. The
---    6 "context-only" scan keys (ytd_gross_income, pay_frequency, bank_name, account_type,
---    account_last4, ending_balance) are intentionally NOT in the whitelist.
+--  • apply_1003_fields — applies OCR/scan fields to a contact's 1003. Staff-only. Server-side
+--    WHITELIST: only the listed 1003 columns are writable, and null/blank values are ignored —
+--    so callers may pass the whole approved object safely. The 6 "context-only" scan keys
+--    (ytd_gross_income, pay_frequency, bank_name, account_type, account_last4, ending_balance)
+--    are intentionally NOT in the whitelist. UPDATED 2026-07-10: when p_contact_id is given but
+--    the contact has no mortgage_applications row yet, the function AUTO-CREATES one (rather than
+--    raising 'no application found'), and returns created_application:true so the caller knows.
 --  • document_rename — renames an uploaded_documents row (file_name only; the Drive copy is not
 --    renamed yet). Returns gdrive_file_id so a future gdrive-proxy rename can be wired.
 -- Used by admin/lead-detail.html (Scan → 1003 + inline document rename).
@@ -18,7 +20,7 @@ CREATE OR REPLACE FUNCTION public.apply_1003_fields(p_fields jsonb, p_applicatio
  SET search_path TO 'public'
 AS $function$
 declare
-  v_role text; v_app_id uuid; k text; sets text := ''; v_applied text[] := '{}';
+  v_role text; v_app_id uuid; k text; sets text := ''; v_applied text[] := '{}'; v_created boolean := false;
   -- whitelist: only these mortgage_applications columns may be written from OCR
   allowed text[] := array[
     'first_name','middle_name','last_name','suffix','ssn','date_of_birth','marital_status','citizenship',
@@ -42,8 +44,15 @@ begin
   if v_app_id is null and p_contact_id is not null then
     select id into v_app_id from public.mortgage_applications
      where contact_id = p_contact_id order by created_at desc limit 1;
+    -- auto-create the 1003 for this contact if none exists yet
+    if v_app_id is null then
+      insert into public.mortgage_applications(contact_id, created_at, updated_at)
+      values(p_contact_id, now(), now())
+      returning id into v_app_id;
+      v_created := true;
+    end if;
   end if;
-  if v_app_id is null then raise exception 'no application found'; end if;
+  if v_app_id is null then raise exception 'no application and no contact given'; end if;
 
   for k in select jsonb_object_keys(p_fields) loop
     if k = any(allowed)
@@ -55,12 +64,14 @@ begin
     end if;
   end loop;
 
-  if sets = '' then return jsonb_build_object('applied', 0, 'application_id', v_app_id); end if;
+  if sets <> '' then
+    execute format('update public.mortgage_applications set %s updated_at = now() where id = %L',
+                   sets, v_app_id);
+  end if;
 
-  execute format('update public.mortgage_applications set %s updated_at = now() where id = %L',
-                 sets, v_app_id);
-
-  return jsonb_build_object('applied', array_length(v_applied,1), 'fields', v_applied, 'application_id', v_app_id);
+  return jsonb_build_object('applied', coalesce(array_length(v_applied,1),0),
+                            'fields', v_applied, 'application_id', v_app_id,
+                            'created_application', v_created);
 end; $function$;
 
 CREATE OR REPLACE FUNCTION public.document_rename(p_id uuid, p_new_name text)
