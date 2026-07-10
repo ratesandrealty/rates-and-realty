@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070641 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070643 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -3874,9 +3874,10 @@
 
           <!-- Global type + footer -->
           <div style="padding:16px 24px;border-top:1px solid rgba(255,255,255,0.07);flex-shrink:0;">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+              <button type="button" id="bulk-autoname-btn" onclick="bulkAutoNameSort()" title="AI reads each file to name + set its type" style="background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;color:#1A0E00;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">✨ Auto-name &amp; sort</button>
               <span style="font-size:12px;color:#888;white-space:nowrap;">Set all to:</span>
-              <select id="bulk-type-all" onchange="setBulkTypeAll(this.value)" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#ccc;padding:7px 10px;border-radius:8px;font-size:12px;cursor:pointer;">
+              <select id="bulk-type-all" onchange="setBulkTypeAll(this.value)" style="flex:1;min-width:130px;background:#1a1a1a;border:1px solid #333;color:#ccc;padding:7px 10px;border-radius:8px;font-size:12px;cursor:pointer;">
                 <option value="">— pick type for all —</option>
                 <option value="w2">W-2</option>
                 <option value="pay_stubs">Pay Stubs</option>
@@ -3887,6 +3888,7 @@
                 <option value="other">Other</option>
               </select>
             </div>
+            <label style="display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#aaa;cursor:pointer;user-select:none;margin-bottom:14px;"><input type="checkbox" id="bulk-convert-pdf" checked style="accent-color:#C9A84C;"> Convert images to PDF on upload</label>
             <div style="display:flex;gap:10px;align-items:center;">
               <div id="bulk-upload-status" style="flex:1;font-size:12px;color:#888;"></div>
               <button onclick="closeDocUploadModal()" style="padding:9px 20px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#aaa;cursor:pointer;font-size:13px;">Cancel</button>
@@ -5071,18 +5073,28 @@
 // v2026033003
 /* ── INIT ── */
 const { createClient } = window.supabase;
+// Session-aware from the start: same URL + anon key + default storage key as auth-guard's
+// client, with persistSession/autoRefreshToken made explicit (not relying on library
+// defaults). Because it shares the storage key (`sb-<project-ref>-auth-token`), it reads the
+// SAME logged-in session from localStorage that admin-login persisted, and supabase-js awaits
+// that session load before every request — so `sb` attaches the user's JWT, satisfying RLS.
 const sb = createClient(
   window.APP_CONFIG.SUPABASE_URL,
-  window.APP_CONFIG.SUPABASE_ANON_KEY
+  window.APP_CONFIG.SUPABASE_ANON_KEY,
+  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
 );
 
 // Authenticated client helper (Tier 1 auth migration C1).
-// Returns window._supabaseClient which is session-aware (set up by admin/js/supabase-client.js).
-// Falls back to local anon `sb` only when the auth client isn't ready yet — logs an error in that case
-// because the call will fail on RLS-locked tables.
+// Prefers window._supabaseClient (assigned by auth-guard.js). That assignment is ASYNC:
+// auth-guard lazily injects the supabase-js CDN, creates a client, then awaits getSession()
+// before setting the global — so early page-load code can reach _authClient() first. Rather
+// than fall back to a throwaway anon client (which spam-logged and implied no JWT), we adopt
+// `sb`: it shares auth-guard's storage key and therefore the SAME session, so it is authed,
+// not anon. Adopting it into the global also converges the page and auth-guard on one instance
+// (auth-guard's getClient() returns early if window._supabaseClient is already set).
 function _authClient() {
   if (window._supabaseClient) return window._supabaseClient;
-  console.error('[auth] window._supabaseClient not ready — falling back to anon. Call will fail on RLS-locked tables.');
+  window._supabaseClient = sb;   // session-aware; RLS sees the logged-in user, not anon
   return sb;
 }
 // Returns REST headers carrying the current user's session JWT (falls back to anon
@@ -6812,8 +6824,11 @@ function _fileToBase64(file) {
 }
 
 async function _convertToPdfIfNeeded(file) {
-  const isPdf = file.type === 'application/pdf';
-  const isSupported = _convertibleTypes.includes(file.type) || file.type === 'text/plain';
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  // HEIC/HEIF often arrive with an empty or 'image/heic' type — detect by extension too so
+  // they route through the same convert-to-pdf edge fn (browsers can't render HEIC natively).
+  const isHeic = /\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type || '');
+  const isSupported = _convertibleTypes.includes(file.type) || file.type === 'text/plain' || isHeic;
   if (isPdf) return { file, converted: false };
   if (!isSupported) return { file, converted: false };
   try {
@@ -6822,7 +6837,7 @@ async function _convertToPdfIfNeeded(file) {
     const res = await fetch(_CONVERT_FN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_base64: base64, mime_type: file.type, file_name: file.name })
+      body: JSON.stringify({ file_base64: base64, mime_type: (isHeic ? (file.type || 'image/heic') : file.type), file_name: file.name })
     });
     if (res.status === 415) {
       toast('This file type cannot be auto-converted. File saved in original format.', true);
@@ -7002,21 +7017,48 @@ function showDocUploadModal() {
   renderBulkFileList();
 }
 
+// Per-staged-file overrides (AI/edited name + AI-set type), keyed by the File object so no
+// index-syncing is needed on add/remove. Thumbnail object URLs are revoked on each re-render.
+var _bulkMeta = new WeakMap();
+var _bulkThumbUrls = [];
+function _bulkName(f) { var m = _bulkMeta.get(f); return (m && m.name != null) ? m.name : f.name; }
+function _bulkType(f) { var m = _bulkMeta.get(f); return m ? m.type : null; }
+function bulkNameEdit(i, val) { var f = _pendingDocFiles[i]; if (!f) return; var m = _bulkMeta.get(f) || {}; m.name = val; _bulkMeta.set(f, m); }
+function _bulkRevokeThumbs() { _bulkThumbUrls.forEach(function(u) { try { URL.revokeObjectURL(u); } catch (_) {} }); _bulkThumbUrls = []; }
+function _bulkOpenFile(i) { var f = _pendingDocFiles[i]; if (!f) return; try { _openDocPreview(URL.createObjectURL(f)); } catch (_) {} }
 function renderBulkFileList() {
   const list = document.getElementById('bulk-upload-file-list');
+  if (!list) return;
+  _bulkRevokeThumbs();
   if (!_pendingDocFiles.length) {
     list.innerHTML = '<div style="text-align:center;padding:32px;color:#555;font-size:13px;">No files selected</div>';
     return;
   }
+  const THUMB = 'flex:0 0 auto;width:44px;height:44px;border-radius:7px;background:rgba(0,0,0,0.28);border:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:20px;overflow:hidden;';
   list.innerHTML = _pendingDocFiles.map((f, i) => {
-    const ext  = f.name.split('.').pop().toLowerCase();
-    const icon = ext === 'pdf' ? '📄' : ['jpg','jpeg','png','gif','webp','bmp','tiff'].includes(ext) ? '🖼️' : '📎';
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    const isHeicF = ['heic','heif'].includes(ext) || /heic|heif/i.test(f.type || '');
+    const isPdfF = ext === 'pdf' || f.type === 'application/pdf';
+    const isImg = !isHeicF && (['jpg','jpeg','png','gif','webp','bmp'].includes(ext) || (f.type || '').indexOf('image/') === 0);
+    let thumb;
+    if (isHeicF) {
+      thumb = `<div style="${THUMB}" title="HEIC — converts to PDF on upload">🖼️</div>`;
+    } else if (isImg) {
+      const u = URL.createObjectURL(f); _bulkThumbUrls.push(u);
+      thumb = `<div title="Click to enlarge" onclick="_openDocPreview('${u}')" style="${THUMB}cursor:pointer;"><img src="${u}" style="width:100%;height:100%;object-fit:cover;"></div>`;
+    } else if (isPdfF) {
+      thumb = `<div title="Open PDF" onclick="_bulkOpenFile(${i})" style="${THUMB}cursor:pointer;">📄</div>`;
+    } else {
+      thumb = `<div style="${THUMB}">📎</div>`;
+    }
     const size = f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB';
-    const willConvert = f.type !== 'application/pdf' && (_convertibleTypes.includes(f.type) || f.type === 'text/plain');
+    const willConvert = !isPdfF && (_convertibleTypes.includes(f.type) || f.type === 'text/plain' || isHeicF);
+    const nm = _bulkName(f);
     return `<div class="bulk-file-row" id="bulk-row-${i}">
-      <span class="bulk-file-icon">${icon}</span>
+      ${thumb}
       <div style="flex:1;min-width:0;">
-        <div class="bulk-file-name" title="${f.name}">${f.name}${willConvert ? ' <span style="color:#C9A84C;font-size:10px;">→PDF</span>' : ''}</div>
+        <input class="bulk-file-name-inp" id="bulk-name-${i}" value="${lpEsc(nm)}" oninput="bulkNameEdit(${i}, this.value)" style="width:100%;box-sizing:border-box;background:#131315;border:1px solid rgba(201,168,76,0.15);border-radius:6px;color:#eee;font-size:12px;padding:4px 8px;outline:none;font-family:inherit;">
+        ${willConvert ? '<div style="font-size:10px;color:#C9A84C;margin-top:2px;">→ PDF on upload</div>' : ''}
         <div class="bulk-progress-bar" id="bulk-bar-${i}" style="display:none;"><div class="bulk-progress-fill" id="bulk-fill-${i}" style="width:0%"></div></div>
       </div>
       <span class="bulk-file-size">${size}</span>
@@ -7034,11 +7076,13 @@ function renderBulkFileList() {
     </div>`;
   }).join('');
 
-  // Auto-detect type from filename
+  // Type: AI-set (from Auto-name) wins; otherwise fall back to filename auto-detect.
   _pendingDocFiles.forEach((f, i) => {
-    const n = f.name.toLowerCase();
     const sel = document.getElementById(`bulk-type-${i}`);
     if (!sel) return;
+    const aiType = _bulkType(f);
+    if (aiType) { sel.value = aiType; return; }
+    const n = _bulkName(f).toLowerCase();
     if (n.includes('w2') || n.includes('w-2')) sel.value = 'w2';
     else if (n.includes('pay') || n.includes('stub')) sel.value = 'pay_stubs';
     else if (n.includes('bank') || n.includes('statement')) sel.value = 'bank_statements';
@@ -7050,6 +7094,71 @@ function renderBulkFileList() {
 
   document.getElementById('bulk-upload-status').textContent =
     `${_pendingDocFiles.length} file${_pendingDocFiles.length > 1 ? 's' : ''} ready`;
+}
+// Downscale an image File to JPEG base64 (no data: prefix) — mirrors people.html's _apmDownscaleToJpegB64.
+function _bulkImgToJpegB64(file, maxEdge, quality) {
+  return new Promise(function(resolve, reject) {
+    var url = URL.createObjectURL(file), img = new Image();
+    img.onload = function() {
+      try {
+        var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+        if (!w || !h) { URL.revokeObjectURL(url); reject(new Error('empty image')); return; }
+        var scale = Math.min(1, maxEdge / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+        var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+        cv.getContext('2d').drawImage(img, 0, 0, cw, ch);
+        var d = cv.toDataURL('image/jpeg', quality); URL.revokeObjectURL(url);
+        resolve((d.split(',')[1]) || '');
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = function() { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
+    img.src = url;
+  });
+}
+// Map scan-doc-to-1003 detected_doc_type → the staging dropdown value.
+function _bulkTypeFromDetected(dt) {
+  var s = String(dt || '').toLowerCase();
+  if (s.indexOf('w-2') >= 0 || s.indexOf('w2') >= 0) return 'w2';
+  if (s.indexOf('pay') >= 0 && s.indexOf('stub') >= 0) return 'pay_stubs';
+  if (s.indexOf('paystub') >= 0) return 'pay_stubs';
+  if (s.indexOf('bank') >= 0) return 'bank_statements';
+  if (s.indexOf('driver') >= 0 || s.indexOf('license') >= 0 || s.indexOf('gov') >= 0 || s === 'id' || s.indexOf(' id') >= 0) return 'gov_id';
+  if (s.indexOf('tax') >= 0 || s.indexOf('1040') >= 0 || s.indexOf('return') >= 0) return 'tax_returns';
+  if (s.indexOf('purchase') >= 0 || s.indexOf('contract') >= 0) return 'purchase_contract';
+  return 'other';
+}
+// ✨ Auto-name & sort: classify each staged file, then set its type + name (editable after).
+async function bulkAutoNameSort() {
+  if (!_pendingDocFiles.length) { toast('No files to name', true); return; }
+  var btn = document.getElementById('bulk-autoname-btn'), orig = btn ? btn.innerHTML : '';
+  if (btn) btn.disabled = true;
+  var c = (typeof contactData !== 'undefined' && contactData) || {};
+  var borrowerName = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
+  var statusEl = document.getElementById('bulk-upload-status');
+  var total = _pendingDocFiles.length, ok = 0;
+  for (var i = 0; i < _pendingDocFiles.length; i++) {
+    var f = _pendingDocFiles[i];
+    if (btn) btn.textContent = '✨ ' + (i + 1) + '/' + total + '…';
+    if (statusEl) statusEl.textContent = 'Reading ' + (i + 1) + ' of ' + total + '…';
+    try {
+      var ext = (f.name.split('.').pop() || '').toLowerCase();
+      var isImg = ['jpg','jpeg','png','gif','webp','bmp'].indexOf(ext) >= 0 || ((f.type || '').indexOf('image/') === 0 && ext !== 'heic' && ext !== 'heif');
+      var b64, mt;
+      if (f.type === 'application/pdf' || ext === 'pdf') { b64 = await _fileToBase64(f); mt = 'application/pdf'; }
+      else if (isImg) { b64 = await _bulkImgToJpegB64(f, 1600, 0.8); mt = 'image/jpeg'; }
+      else { continue; }   // HEIC/unknown — skip classify (leave the row unchanged)
+      var resp = await _authClient().functions.invoke('scan-doc-to-1003', { body: { file: b64, media_type: mt, mode: 'classify' } });
+      var data = resp && resp.data;
+      if (!data || data.ok !== true) continue;
+      var m = _bulkMeta.get(f) || {};
+      if (data.detected_doc_type) { m.type = _bulkTypeFromDetected(data.detected_doc_type); var sel = document.getElementById('bulk-type-' + i); if (sel && m.type) sel.value = m.type; }
+      if (data.suggested_name) { var nm = String(data.suggested_name).trim() + (borrowerName ? (' — ' + borrowerName) : '') + (ext ? ('.' + ext) : ''); m.name = nm; var inp = document.getElementById('bulk-name-' + i); if (inp) inp.value = nm; }
+      _bulkMeta.set(f, m); ok++;
+    } catch (e) { console.warn('[bulkAutoNameSort]', e && e.message); }   // leave row unchanged, continue
+  }
+  if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  if (statusEl) statusEl.textContent = 'Named ' + ok + ' of ' + total;
+  toast('Auto-named ' + ok + ' of ' + total);
 }
 
 function removeBulkFile(i) {
@@ -7114,13 +7223,17 @@ async function confirmDocUpload() {
     if (fill) fill.style.width = '30%';
 
     try {
-      // Convert image to PDF if needed.
+      // Convert image/HEIC → PDF if the toggle is on; then apply the (AI/edited) override name.
       let finalFile = file;
       let converted = false;
-      if (typeof _convertToPdfIfNeeded === 'function') {
+      const doConvert = (document.getElementById('bulk-convert-pdf') || {}).checked !== false;
+      if (doConvert && typeof _convertToPdfIfNeeded === 'function') {
         const r = await _convertToPdfIfNeeded(file);
         finalFile = r.file; converted = r.converted;
       }
+      let uploadName = _bulkName(file);
+      if (converted && !/\.pdf$/i.test(uploadName)) uploadName = uploadName.replace(/\.[^.]+$/, '') + '.pdf';
+      if (uploadName && uploadName !== finalFile.name) finalFile = new File([finalFile], uploadName, { type: finalFile.type });
       if (fill) fill.style.width = '50%';
 
       console.log('[DocUpload] uploading:', finalFile.name, finalFile.type, finalFile.size, '→ folder', folderId);

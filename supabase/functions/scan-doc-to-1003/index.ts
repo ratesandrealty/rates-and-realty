@@ -1,14 +1,14 @@
-// scan-doc-to-1003 v1 — Claude-vision doc reader that extracts 1003 (URLA) fields for review.
-// On-demand: frontend sends a doc (base64 image OR pdf) + optional doc_type; returns mapped
-// 1003 fields (mortgage_applications column names) for the user to approve, then prefill the form.
-// Does NOT write to the DB — review-first by design. verify_jwt=false (CORS-safe).
+// scan-doc-to-1003 v2 — Claude-vision doc reader.
+//  - default mode: extract full 1003 (URLA) fields for review (claude-sonnet-4-6).
+//  - mode:'classify': FAST (claude-haiku-4-5) -> just { detected_doc_type, suggested_name }
+//    for the upload modal's auto-name/auto-type streamlining.
+// Accepts base64 image OR pdf. Never writes to DB. verify_jwt=false (CORS-safe).
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type, x-supabase-api-version, x-region, x-requested-with' };
 const ANTHROPIC_KEY = Deno.env.get('ANTHROPIC_API_KEY');
 
-// Extractable 1003 fields -> mortgage_applications columns. null when not present in the doc.
 const FIELDS = [
   'first_name','middle_name','last_name','suffix','ssn','date_of_birth','marital_status','citizenship',
   'home_phone','cell_phone','email',
@@ -56,10 +56,17 @@ Return exactly these keys:
 
 Rules:
 - Amounts: plain numbers only, no $ or commas.
-- Income: if a pay stub shows a per-period amount, CONVERT base_income to a MONTHLY figure using pay_frequency (weekly*52/12, biweekly*26/12, semimonthly*2, monthly as-is) and report pay_frequency. If you cannot determine frequency, leave base_income null and put the raw figure logic in null rather than guessing.
+- Income: if a pay stub shows a per-period amount, CONVERT base_income to a MONTHLY figure using pay_frequency (weekly*52/12, biweekly*26/12, semimonthly*2, monthly as-is) and report pay_frequency. If you cannot determine frequency, leave base_income null rather than guessing.
 - Phones/SSN: digits only.
 - Dates: YYYY-MM-DD.
 - Do not invent data. Return the JSON object only.`;
+
+const CLASSIFY_PROMPT = `You are a mortgage loan-doc organizer. Look at the attached document and return ONLY a JSON object (no markdown):
+{
+  "detected_doc_type": "one of exactly: W-2, Pay Stub, Bank Statement, Gov ID, Tax Return, Insurance, Appraisal, Purchase Contract, Other",
+  "suggested_name": "a short, clean, human-readable file name WITHOUT extension, capturing the document. Prefer the pattern '<Year if visible> <Doc Type>' and add the employer or bank if clearly shown. Examples: '2024 W-2', 'Pay Stub - Acme (Jun 2026)', 'Bank Statement - Chase (May 2026)', 'Driver License'. Keep it under ~50 chars, no slashes or quotes."
+}
+Use only what is visible. Do not invent employer/bank names. Return the JSON object only.`;
 
 function cleanB64(b64: string): string {
   let s = b64.includes(',') ? b64.split(',')[1] : b64;
@@ -86,6 +93,7 @@ Deno.serve(async (req: Request) => {
     if (!raw) return bad('file (base64) required');
     const data = cleanB64(raw);
     const mime = body.media_type || body.mime_type || '';
+    const classify = body.mode === 'classify';
 
     const source = isPdf(mime)
       ? { type:'document', source:{ type:'base64', media_type:'application/pdf', data } }
@@ -95,9 +103,9 @@ Deno.serve(async (req: Request) => {
       method: 'POST',
       headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version':'2023-06-01', 'content-type':'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1500,
-        messages: [{ role:'user', content: [ source, { type:'text', text: PROMPT } ] }]
+        model: classify ? 'claude-haiku-4-5' : 'claude-sonnet-4-6',
+        max_tokens: classify ? 300 : 1500,
+        messages: [{ role:'user', content: [ source, { type:'text', text: classify ? CLASSIFY_PROMPT : PROMPT } ] }]
       })
     });
     if (!res.ok) { const t = await res.text(); console.error('Claude error:', t); return bad('AI request failed', t.slice(0,300)); }
@@ -106,6 +114,11 @@ Deno.serve(async (req: Request) => {
     let parsed: any = {};
     try { parsed = JSON.parse(text.replace(/```json|```/g,'').trim()); }
     catch (e) { console.error('parse error:', e, text.slice(0,300)); return bad('Could not read the document. Try a clearer scan.'); }
+
+    if (classify) {
+      return ok({ ok:true, detected_doc_type: parsed.detected_doc_type || 'Other',
+                  suggested_name: (parsed.suggested_name || '').replace(/[\\/\"']/g,'').slice(0,60) || null });
+    }
 
     const fields: Record<string, any> = {};
     let found = 0;
