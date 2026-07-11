@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026070655 -->
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026070656 -->
 <title>Loan Estimate | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
@@ -346,8 +346,13 @@ function renderRate(snap){
 function _propTypeLabel(t){ return ({sfr:'Single Family',condo:'Condo',multifamily:'2-4 Unit',townhouse:'Townhouse'})[String(t||'').toLowerCase()] || esc(t||''); }
 function renderProperty(snap){
     const data=snap.data||{}, c=data.common||{};
+    // Property mode reads data.property_scenarios ONLY — never data.scenarios (that A/B/C rate
+    // array is rate-mode data; reading it here is what leaked a 9% par-rate onto property sheets).
     const cols=Array.isArray(data.property_scenarios)?data.property_scenarios.slice():[];
-    if(!cols.length){ return renderRate(snap); }   // no property columns → fall back to rate options
+    if(!cols.length){
+        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Property Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1><div class="payhero"><div class="lbl" style="color:var(--muted)">No property scenarios saved for this estimate.</div></div></div>'+preparedBlock();
+        return;
+    }
     let recIdx=cols.findIndex(p=>p.recommended); if(recIdx<0)recIdx=0;
     const results=cols.map(col=>calcPropertyColumn(c, col));
     const rec=results[recIdx], recCol=cols[recIdx];
