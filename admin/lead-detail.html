@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070648 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070649 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -3815,20 +3815,23 @@
           <div id="doc-cond-quickview-body" style="padding:0 16px 12px;"></div>
         </div>
 
+        <!-- Breadcrumb row (rendered by renderDocsGrid; kept above the action bar) -->
+        <div id="docs-breadcrumb-row" style="padding:0 24px;"></div>
+
+        <!-- Inline bulk-selection action bar (below breadcrumb, above grid; shown when ≥1 selected) -->
+        <div id="doc-sel-bar" style="display:none;margin:0 24px 12px;">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#161618;border:1px solid rgba(201,168,76,0.45);border-radius:12px;padding:10px 16px;">
+            <span id="doc-sel-count" style="font-size:13px;font-weight:700;color:var(--gold);">0 selected</span>
+            <button onclick="docBulkAssignOpen()" style="padding:7px 16px;background:var(--gold);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:700;cursor:pointer;">Assign to condition ▾</button>
+            <button onclick="_docClearSelection()" style="padding:7px 14px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer;">Clear selection</button>
+          </div>
+        </div>
+
         <!-- Documents grid -->
         <div id="docs-list" style="padding:0 24px 24px; display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px;">
           <div style="grid-column:1/-1; text-align:center; padding:48px; color:rgba(255,255,255,0.3);">
             <div style="font-size:40px; margin-bottom:8px;">📁</div>
             <p>No documents uploaded yet</p>
-          </div>
-        </div>
-
-        <!-- Sticky bulk-selection action bar (shown when ≥1 file selected) -->
-        <div id="doc-sel-bar" style="display:none;position:sticky;bottom:16px;z-index:20;margin:0 24px;">
-          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#161618;border:1px solid rgba(201,168,76,0.45);border-radius:12px;padding:10px 16px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
-            <span id="doc-sel-count" style="font-size:13px;font-weight:700;color:var(--gold);">0 selected</span>
-            <button onclick="docBulkAssignOpen()" style="padding:7px 16px;background:var(--gold);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:700;cursor:pointer;">Assign to condition ▾</button>
-            <button onclick="_docClearSelection()" style="padding:7px 14px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer;">Clear selection</button>
           </div>
         </div>
       </div>
@@ -7475,6 +7478,8 @@ async function loadDocumentsGrid() {
     _allDocs = [];
     _docCwd = null; _docTrail = [];
     window._currentContactDocs = [];
+    const _bcRow0 = document.getElementById('docs-breadcrumb-row');
+    if (_bcRow0) _bcRow0.innerHTML = '';
     container.innerHTML = `
       <div style="grid-column:1/-1;text-align:center;padding:48px 20px;color:rgba(255,255,255,0.5);">
         <div style="font-size:40px;margin-bottom:10px;">📁</div>
@@ -7647,7 +7652,10 @@ function renderDocsGrid() {
       </div>`;
   }).join('');
 
-  let body = breadcrumb + foldersHtml + filesHtml;
+  // Breadcrumb now lives in its own static row above the action bar (placement only).
+  const _bcRow = document.getElementById('docs-breadcrumb-row');
+  if (_bcRow) _bcRow.innerHTML = breadcrumb;
+  let body = foldersHtml + filesHtml;
   if (!foldersHtml && !filesHtml) {
     body += '<div style="grid-column:1/-1;text-align:center;padding:40px;color:rgba(255,255,255,0.3);"><div style="font-size:40px;margin-bottom:8px;">📁</div><p>This folder is empty</p></div>';
   }
