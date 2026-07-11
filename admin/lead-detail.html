@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070647 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070648 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -3800,7 +3800,19 @@
           <button class="doc-filter-btn" onclick="filterDocs('gov_id',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Gov ID</button>
           <button class="doc-filter-btn" onclick="filterDocs('tax_returns',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Tax Returns</button>
           <button class="doc-filter-btn" onclick="filterDocs('other',this)" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;">Other</button>
+          <button id="doc-selectall-btn" onclick="_docSelectAllToggle()" title="Select / deselect all files in view" style="background:#1a1a1a;border:1px solid rgba(201,168,76,0.4);color:#C9A84C;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;font-family:inherit;">☑ Select all</button>
           <button id="syncToGdriveBtn" onclick="openContactDriveFolder()" title="Open this borrower's GDrive folder" style="margin-left:auto;background:#1a1a1a;border:1px solid #C9A84C;color:#C9A84C;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;">📁 Open in Drive</button>
+        </div>
+
+        <!-- Conditions quick-view (read-only glance; full manage on the Conditions tab) -->
+        <div id="doc-cond-quickview" style="margin:0 24px 16px;background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.18);border-radius:12px;overflow:hidden;">
+          <div onclick="toggleDocCondQuickview()" style="display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;user-select:none;">
+            <span id="doc-cond-quickview-caret" style="color:var(--muted);font-size:12px;transition:transform .15s;">▾</span>
+            <span style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--gold);">Conditions</span>
+            <span id="doc-cond-quickview-summary" style="font-size:11px;color:var(--muted);"></span>
+            <div style="flex:1;min-width:40px;height:6px;background:rgba(255,255,255,0.07);border-radius:3px;overflow:hidden;max-width:180px;margin-left:auto;"><div id="doc-cond-quickview-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#7A5020,#C9A84C);transition:width .3s;"></div></div>
+          </div>
+          <div id="doc-cond-quickview-body" style="padding:0 16px 12px;"></div>
         </div>
 
         <!-- Documents grid -->
@@ -3808,6 +3820,15 @@
           <div style="grid-column:1/-1; text-align:center; padding:48px; color:rgba(255,255,255,0.3);">
             <div style="font-size:40px; margin-bottom:8px;">📁</div>
             <p>No documents uploaded yet</p>
+          </div>
+        </div>
+
+        <!-- Sticky bulk-selection action bar (shown when ≥1 file selected) -->
+        <div id="doc-sel-bar" style="display:none;position:sticky;bottom:16px;z-index:20;margin:0 24px;">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#161618;border:1px solid rgba(201,168,76,0.45);border-radius:12px;padding:10px 16px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+            <span id="doc-sel-count" style="font-size:13px;font-weight:700;color:var(--gold);">0 selected</span>
+            <button onclick="docBulkAssignOpen()" style="padding:7px 16px;background:var(--gold);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:700;cursor:pointer;">Assign to condition ▾</button>
+            <button onclick="_docClearSelection()" style="padding:7px 14px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer;">Clear selection</button>
           </div>
         </div>
       </div>
@@ -7443,6 +7464,7 @@ function openContactDriveFolder() {
 async function loadDocumentsGrid() {
   const container = document.getElementById('docs-list');
   if (!container) return;
+  try { loadDocCondQuickview(false); } catch (_) {}
 
   // Source of truth: contactData.gdrive_folder_id (same column the File Vault
   // and the header "View Drive Folder" pill both read from). Everything on
@@ -7602,10 +7624,14 @@ function renderDocsGrid() {
           <img src="${sizedThumb}" alt="" loading="lazy" referrerpolicy="no-referrer" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'">
         </div>`
       : `<div style="font-size:32px;margin-bottom:10px;text-align:center;">${icon}</div>`;
+    const _selId = _ldDriveEsc(f.id);
     return `
-      <div data-drive-id="${_ldDriveEsc(f.id)}" onclick="_ldOpenViewerFromCard(this)" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;"
+      <div data-drive-id="${_selId}" data-sel-card="${_selId}" onclick="_ldOpenViewerFromCard(this)" style="position:relative;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;${_docSel[f.id] ? 'box-shadow:0 0 0 2px #C9A84C inset;' : ''}"
         onmouseenter="this.style.borderColor='rgba(201,168,76,0.35)';this.style.background='rgba(255,255,255,0.07)'"
         onmouseleave="this.style.borderColor='rgba(255,255,255,0.08)';this.style.background='rgba(255,255,255,0.04)'">
+        <label onclick="event.stopPropagation()" title="Select" style="position:absolute;top:8px;left:8px;z-index:3;display:flex;width:24px;height:24px;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);border-radius:6px;cursor:pointer;">
+          <input type="checkbox" data-sel-id="${_selId}" ${_docSel[f.id] ? 'checked' : ''} onchange="_docSelToggle('${_selId}',this.checked)" style="accent-color:#C9A84C;cursor:pointer;margin:0;width:15px;height:15px;">
+        </label>
         ${previewBlock}
         <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${safeName}</div>
         <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:8px;">${typeLabel}${size ? ' · ' + size : ''}</div>
@@ -7627,6 +7653,7 @@ function renderDocsGrid() {
   }
   container.innerHTML = body;
   try { _ldPopulateFolderPageBadges(); } catch (_) {}
+  try { _docSelSync(); } catch (_) {}
 }
 
 // ── Drag-drop upload into a subfolder + PDF page badges ───────────
@@ -16674,6 +16701,8 @@ async function loadConditions() {
     } catch (_) { conditions = []; }
   }
 
+  // Share the fetched list with the Documents-tab quick-view cache (avoids a re-fetch).
+  _condListCache = conditions;
   renderConditions(conditions, loanDoc);
 }
 
@@ -16795,7 +16824,7 @@ function renderConditions(conditions, loanDoc) {
         var statusBorder = isCleared ? 'rgba(82,200,122,0.25)' : isWaived ? 'rgba(167,139,250,0.25)' : c.status === 'in_review' ? 'rgba(201,168,76,0.25)' : 'rgba(224,82,82,0.25)';
         var checked = isCleared ? 'checked' : '';
 
-        html += '<div class="cond-row" style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid rgba(201,168,76,0.06);" onmouseover="this.style.background=\'#161618\'" onmouseout="this.style.background=\'\'">'
+        html += '<div class="cond-row" id="condrow-' + c.id + '" style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid rgba(201,168,76,0.06);" onmouseover="this.style.background=\'#161618\'" onmouseout="this.style.background=\'\'">'
           + '<input type="checkbox" class="cond-check" ' + checked + ' onchange="toggleCondition(\'' + c.id + '\', this.checked)" style="margin-top:3px;accent-color:#C9A84C;flex-shrink:0;">'
           + '<div style="flex:1;min-width:0;">'
           + '<div style="font-size:13px;color:' + (isCleared ? '#555' : '#E0DDD4') + ';' + (isCleared ? 'text-decoration:line-through;' : '') + 'line-height:1.5;">' + (c.condition_text || '') + '</div>'
@@ -17044,6 +17073,235 @@ async function condConfirmAttach() {
   }
   condPickerClose();
   loadConditions();
+}
+
+// ══ Documents tab: multi-select + bulk assign-to-condition + conditions quick-view ══
+var _docSel = {};            // client-only selection: { fileId: { file_name, gdrive_file_id, file_url } }
+var _condListCache = null;   // cached condition_list result (shared with the Conditions tab)
+
+function _docSelToggle(id, on) {
+  var f = (typeof _allDocs !== 'undefined' ? _allDocs : []).find(function(x){ return x.id === id; });
+  if (on) {
+    _docSel[id] = f
+      ? { file_name: f.name || 'Document', gdrive_file_id: f.id, file_url: f.webViewLink || '' }
+      : { file_name: 'Document', gdrive_file_id: id, file_url: '' };
+  } else {
+    delete _docSel[id];
+  }
+  _docSelSync();
+}
+
+function _docVisibleFiles() {
+  var FOLDER = (typeof LD_FOLDER_MIME !== 'undefined') ? LD_FOLDER_MIME : 'application/vnd.google-apps.folder';
+  var all = (typeof _allDocs !== 'undefined' && _allDocs) ? _allDocs : [];
+  return all
+    .filter(function(f){ return f.mimeType !== FOLDER; })
+    .filter(function(f){ return (typeof _ldDocMatches === 'function') ? _ldDocMatches(f, _currentDocFilter) : true; });
+}
+
+function _docSelSync() {
+  var n = Object.keys(_docSel).length;
+  var bar = document.getElementById('doc-sel-bar');
+  var cnt = document.getElementById('doc-sel-count');
+  if (bar) bar.style.display = n ? 'block' : 'none';
+  if (cnt) cnt.textContent = n + ' selected';
+  document.querySelectorAll('[data-sel-card]').forEach(function(card){
+    var cid = card.getAttribute('data-sel-card');
+    var on = !!_docSel[cid];
+    card.style.boxShadow = on ? '0 0 0 2px #C9A84C inset' : '';
+    var cb = card.querySelector('input[data-sel-id]');
+    if (cb) cb.checked = on;
+  });
+  var btn = document.getElementById('doc-selectall-btn');
+  if (btn) {
+    var vis = _docVisibleFiles();
+    var allSel = vis.length && vis.every(function(f){ return _docSel[f.id]; });
+    btn.textContent = allSel ? '☐ Select none' : '☑ Select all';
+  }
+}
+
+function _docSelectAllToggle() {
+  var vis = _docVisibleFiles();
+  var allSel = vis.length && vis.every(function(f){ return _docSel[f.id]; });
+  if (allSel) {
+    vis.forEach(function(f){ delete _docSel[f.id]; });
+  } else {
+    vis.forEach(function(f){ _docSel[f.id] = { file_name: f.name || 'Document', gdrive_file_id: f.id, file_url: f.webViewLink || '' }; });
+  }
+  _docSelSync();
+}
+
+function _docClearSelection() { _docSel = {}; _docSelSync(); }
+
+// Shared condition_list cache — used by the quick-view, the bulk-assign picker, and the Conditions tab.
+async function _condListCached(force) {
+  if (!force && Array.isArray(_condListCache)) return _condListCache;
+  var contactId = new URLSearchParams(window.location.search).get('contact_id');
+  if (!contactId) return [];
+  try {
+    const { data, error } = await _authClient().rpc('condition_list', { p_contact_id: contactId });
+    if (error) throw error;
+    _condListCache = Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.warn('[conditions] condition_list (cached) failed:', e && e.message);
+    if (!Array.isArray(_condListCache)) _condListCache = [];
+  }
+  return _condListCache;
+}
+
+function _condStatusMeta(status) {
+  var s = status || 'pending';
+  if (s === 'cleared')   return { label: 'Cleared',   color: '#6FD98F', bg: 'rgba(82,200,122,0.12)' };
+  if (s === 'waived')    return { label: 'Waived',    color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' };
+  if (s === 'in_review') return { label: 'In review', color: '#C9A84C', bg: 'rgba(201,168,76,0.12)' };
+  return { label: 'Pending', color: '#F07878', bg: 'rgba(224,82,82,0.12)' };
+}
+
+// ── Conditions quick-view (Documents tab, read-only glance) ──
+async function loadDocCondQuickview(force) {
+  if (!document.getElementById('doc-cond-quickview-body')) return;
+  var conds = await _condListCached(!!force);
+  _renderDocCondQuickview(conds);
+}
+
+function _renderDocCondQuickview(conds) {
+  conds = Array.isArray(conds) ? conds : [];
+  var body = document.getElementById('doc-cond-quickview-body');
+  var summary = document.getElementById('doc-cond-quickview-summary');
+  var bar = document.getElementById('doc-cond-quickview-bar');
+  var total = conds.length;
+  var cleared = conds.filter(function(c){ return c.status === 'cleared'; }).length;
+  var pct = total ? Math.round(cleared / total * 100) : 0;
+  if (summary) summary.textContent = total ? (cleared + ' of ' + total + ' cleared') : 'No conditions';
+  if (bar) bar.style.width = pct + '%';
+  if (!body) return;
+  if (!total) {
+    body.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:2px 0 4px;">No conditions yet — upload an approval letter on the Conditions tab.</div>';
+    return;
+  }
+  body.innerHTML = conds.map(function(c){
+    var m = _condStatusMeta(c.status);
+    var attN = Array.isArray(c.attachments) ? c.attachments.length : 0;
+    var text = (c.condition_text || '').trim();
+    return '<div onclick="docQuickviewGotoCondition(\'' + c.id + '\')" title="Open on the Conditions tab" style="display:flex;align-items:center;gap:10px;padding:6px 6px;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;border-radius:6px;" onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">'
+      + '<span style="flex:1;min-width:0;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _ldDriveEsc(text || 'Condition') + '</span>'
+      + (attN ? '<span style="font-size:10px;color:#6FD98F;white-space:nowrap;">&#128206; ' + attN + '</span>' : '')
+      + '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:' + m.bg + ';color:' + m.color + ';white-space:nowrap;">' + m.label + '</span>'
+      + '</div>';
+  }).join('');
+}
+
+function toggleDocCondQuickview() {
+  var body = document.getElementById('doc-cond-quickview-body');
+  var caret = document.getElementById('doc-cond-quickview-caret');
+  if (!body) return;
+  var hidden = body.style.display === 'none';
+  body.style.display = hidden ? 'block' : 'none';
+  if (caret) caret.style.transform = hidden ? '' : 'rotate(-90deg)';
+}
+
+function docQuickviewGotoCondition(condId) {
+  var btn = document.querySelector('.ld-tab-btn[onclick*="conditions"]');
+  switchTab('conditions', btn);
+  var tries = 0;
+  (function waitRow(){
+    var row = document.getElementById('condrow-' + condId);
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      var prev = row.style.background;
+      row.style.transition = 'background .4s';
+      row.style.background = 'rgba(201,168,76,0.18)';
+      setTimeout(function(){ row.style.background = prev || ''; }, 1400);
+      return;
+    }
+    if (tries++ < 20) setTimeout(waitRow, 150);
+  })();
+}
+
+// ── Bulk assign selected docs → one condition (single condition_attach call) ──
+async function docBulkAssignOpen() {
+  var ids = Object.keys(_docSel);
+  if (!ids.length) { (window.showToast || window.toast || function(){})('Select at least one document first.', true); return; }
+  _docBulkEnsureModal();
+  document.getElementById('doc-bulk-modal').style.display = 'flex';
+  document.getElementById('doc-bulk-count').textContent = ids.length + ' document' + (ids.length !== 1 ? 's' : '') + ' selected';
+  document.getElementById('doc-bulk-clear').checked = false;
+  var listEl = document.getElementById('doc-bulk-list');
+  listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:.82rem;">Loading conditions…</div>';
+  var conds = await _condListCached(false);
+  if (!conds.length) {
+    listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:.82rem;">No conditions for this contact yet. Add them on the Conditions tab.</div>';
+    return;
+  }
+  listEl.innerHTML = conds.map(function(c){
+    var m = _condStatusMeta(c.status);
+    var attN = Array.isArray(c.attachments) ? c.attachments.length : 0;
+    var text = (c.condition_text || '').trim();
+    return '<label style="display:flex;align-items:flex-start;gap:10px;padding:9px 8px;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;border-radius:6px;" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'">'
+      + '<input type="radio" name="doc-bulk-cond" value="' + c.id + '" style="accent-color:#C9A84C;margin-top:2px;flex-shrink:0;">'
+      + '<span style="flex:1;min-width:0;font-size:12px;color:var(--text);line-height:1.45;">' + _ldDriveEsc(text || 'Condition')
+      +   '<span style="display:block;margin-top:3px;">'
+      +     '<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;background:' + m.bg + ';color:' + m.color + ';">' + m.label + '</span>'
+      +     (attN ? ' <span style="font-size:10px;color:#6FD98F;">&#128206; ' + attN + ' attached</span>' : ' <span style="font-size:10px;color:var(--muted);">none attached</span>')
+      +   '</span>'
+      + '</span></label>';
+  }).join('');
+}
+
+function _docBulkEnsureModal() {
+  if (document.getElementById('doc-bulk-modal')) return;
+  var wrap = document.createElement('div');
+  wrap.id = 'doc-bulk-modal';
+  wrap.style.cssText = 'display:none;position:fixed;inset:0;z-index:10060;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;padding:20px;';
+  wrap.innerHTML =
+      '<div style="background:var(--surface,#161618);border:1px solid var(--border);border-radius:14px;width:100%;max-width:560px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.6);">'
+    +   '<div style="display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--border);">'
+    +     '<span style="font-size:1rem;">&#128206;</span>'
+    +     '<div style="flex:1;"><div style="font-size:.9rem;font-weight:700;color:var(--gold);">Assign to condition</div>'
+    +       '<div id="doc-bulk-count" style="font-size:.7rem;color:var(--muted);margin-top:2px;"></div></div>'
+    +     '<button onclick="docBulkAssignClose()" style="background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;line-height:1;">&times;</button>'
+    +   '</div>'
+    +   '<div id="doc-bulk-list" style="flex:1;overflow-y:auto;padding:8px 10px;min-height:120px;"></div>'
+    +   '<div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+    +     '<label style="display:flex;align-items:center;gap:7px;font-size:.78rem;color:var(--text);cursor:pointer;flex:1;">'
+    +       '<input type="checkbox" id="doc-bulk-clear" style="accent-color:#C9A84C;"> Mark condition cleared</label>'
+    +     '<button onclick="docBulkAssignClose()" style="padding:7px 14px;background:none;border:1px solid var(--border);border-radius:7px;color:var(--muted);font-size:.78rem;cursor:pointer;">Cancel</button>'
+    +     '<button id="doc-bulk-confirm" onclick="docBulkAssignConfirm()" style="padding:7px 16px;background:var(--gold);border:none;border-radius:7px;color:#000;font-size:.78rem;font-weight:700;cursor:pointer;">Attach</button>'
+    +   '</div>'
+    + '</div>';
+  document.body.appendChild(wrap);
+}
+
+function docBulkAssignClose() {
+  var m = document.getElementById('doc-bulk-modal');
+  if (m) m.style.display = 'none';
+}
+
+async function docBulkAssignConfirm() {
+  var picked = document.querySelector('input[name="doc-bulk-cond"]:checked');
+  if (!picked) { (window.showToast || window.toast || function(){})('Pick a condition to attach to.', true); return; }
+  var condId = picked.value;
+  var docs = Object.keys(_docSel).map(function(k){ return _docSel[k]; });
+  if (!docs.length) { (window.showToast || window.toast || function(){})('No documents selected.', true); return; }
+  var clear = !!(document.getElementById('doc-bulk-clear') && document.getElementById('doc-bulk-clear').checked);
+  var btn = document.getElementById('doc-bulk-confirm');
+  if (btn) { btn.disabled = true; btn.textContent = 'Attaching…'; }
+  var condText = '';
+  var cc = (Array.isArray(_condListCache) ? _condListCache : []).find(function(c){ return c.id === condId; });
+  if (cc) condText = (cc.condition_text || '').trim().slice(0, 40);
+  try {
+    const { error } = await _authClient().rpc('condition_attach', { p_condition_id: condId, p_docs: docs, p_clear: clear });
+    if (error) throw error;
+  } catch (e) {
+    (window.showToast || window.toast || function(){})('Attach failed: ' + (e && e.message || e), true);
+    if (btn) { btn.disabled = false; btn.textContent = 'Attach'; }
+    return;
+  }
+  (window.showToast || window.toast || function(){})('Attached ' + docs.length + ' doc' + (docs.length !== 1 ? 's' : '') + (condText ? ' to “' + condText + '”' : '') + (clear ? ' · cleared ✓' : ' ✓'));
+  docBulkAssignClose();
+  _docClearSelection();
+  await loadDocCondQuickview(true);   // force-refresh the shared cache + quick-view
+  if (btn) { btn.disabled = false; btn.textContent = 'Attach'; }
 }
 
 async function loadCondNotes(conditionId) {
