@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- dashboard/admin.html · cache-buster v=20260710a (Worker serves dashboard HTML no-store) -->
+  <!-- dashboard/admin.html · cache-buster v=20260711a (Worker serves dashboard HTML no-store) -->
   <!-- CSP is set by the Cloudflare Worker via withCsp() in src/worker.js.
        Meta CSP removed: when both meta + HTTP header are present, browsers
        apply the intersection per directive, which can mask whichever one
@@ -1632,8 +1632,9 @@
 
         </div>
 
-        <!-- SHOWINGS WIDGET -->
-        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:24px;margin-top:24px;">
+        <!-- SHOWINGS WIDGET — now a normal, reorderable section -->
+        <div class="dashboard-section" data-section-id="showing-requests" draggable="true" style="position:relative;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:24px;margin-top:24px;margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
             <div>
               <div style="font-size:11px;letter-spacing:0.1em;color:#888;margin-bottom:4px;">REAL ESTATE</div>
@@ -2932,7 +2933,7 @@
   // manual dragging / devtools). Previously there was NO version and NO default array:
   // a saved order silently overrode the authored DOM forever, so relocating sections in
   // admin.html never changed the live layout for anyone who had ever dragged.
-  const LAYOUT_VERSION = 3;
+  const LAYOUT_VERSION = 4;
   const ORDER_KEY = 'dashboardSectionOrder';
   const VERSION_KEY = 'dashboardLayoutVersion';
   const HIDDEN_KEY = 'dashboardHiddenSections';
@@ -3018,6 +3019,12 @@ const DASH_SECTION_NAMES = {
   'appointments':'Appointments', 'clickup-today':'ClickUp Today', 'deals-referrals':'Deals & Referrals'
 };
 function _dashSectionName(id){ return DASH_SECTION_NAMES[id] || id.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase()); }
+// Fallback tile icon when a live scaled-clone thumbnail can't be produced.
+const DASH_SECTION_ICONS = {
+  'command-center':'⚡','market-rates':'📈','pipeline-snapshot':'📊','showing-requests':'🏠',
+  'stats':'🔢','charts':'📉','activity':'📝','recent-notes':'🗒️','appointments':'📅',
+  'clickup-today':'✅','deals-referrals':'🤝'
+};
 
 let _arrangeDragRow = null;
 
@@ -3025,7 +3032,7 @@ function openLayoutArrange() {
   const api = window._dashLayout;
   if (!api) return;
   _arrangeEnsureModal();
-  // Build rows from the sections actually present in the DOM (current order), marking hidden.
+  // Build rows from the sections actually present in the DOM (current live order), marking hidden.
   const parent = api.parent();
   const present = parent ? [...parent.querySelectorAll('.dashboard-section')].map(el => el.dataset.sectionId) : api.currentOrder();
   const hidden = new Set(api.getHidden());
@@ -3033,14 +3040,17 @@ function openLayoutArrange() {
   list.innerHTML = present.map(id => _arrangeRowHtml(id, hidden.has(id))).join('');
   _arrangeWireRows();
   document.getElementById('layoutArrangeModal').style.display = 'flex';
+  _arrangeRenderThumbs();   // live scaled-clone snapshots (no data re-fetch)
 }
 
 function _arrangeRowHtml(id, isHidden) {
   return '<div class="arrange-row" draggable="true" data-arr-id="' + id + '" data-arr-hidden="' + (isHidden ? '1' : '0') + '"'
-    + ' style="display:flex;align-items:center;gap:10px;padding:9px 10px;margin-bottom:6px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:9px;cursor:grab;' + (isHidden ? 'opacity:.5;' : '') + '">'
-    + '<span style="color:rgba(255,255,255,0.3);font-size:15px;">⠿</span>'
-    + '<span class="arrange-name" style="flex:1;font-size:13px;color:#e8e8e8;">' + _dashSectionName(id) + '</span>'
-    + '<button type="button" onclick="_arrangeToggleHide(this)" title="Show / hide" style="background:none;border:none;cursor:pointer;font-size:15px;line-height:1;padding:2px 4px;">' + (isHidden ? '🚫' : '👁') + '</button>'
+    + ' style="display:flex;align-items:center;gap:11px;padding:9px 10px;margin-bottom:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:9px;cursor:grab;">'
+    + '<span class="arrange-grip" title="Drag to reorder" style="color:rgba(255,255,255,0.3);font-size:15px;">⠿</span>'
+    + '<div class="arrange-thumb" data-thumb-for="' + id + '" style="width:104px;height:64px;flex-shrink:0;overflow:hidden;border-radius:7px;border:1px solid rgba(255,255,255,0.1);background:#0e0e0e;position:relative;' + (isHidden ? 'opacity:.35;' : '') + '"></div>'
+    + '<span class="arrange-name" style="flex:1;font-size:13px;font-weight:600;color:#e8e8e8;' + (isHidden ? 'opacity:.5;' : '') + '">' + _dashSectionName(id) + '</span>'
+    + '<span class="arrange-hstate" style="font-size:10px;color:#888;letter-spacing:.04em;' + (isHidden ? '' : 'display:none;') + '">HIDDEN</span>'
+    + '<button type="button" onclick="_arrangeToggleHide(this)" title="Show / hide" style="background:none;border:none;cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;">' + (isHidden ? '🚫' : '👁') + '</button>'
     + '</div>';
 }
 
@@ -3049,8 +3059,51 @@ function _arrangeToggleHide(btn) {
   if (!row) return;
   const nowHidden = row.getAttribute('data-arr-hidden') !== '1';
   row.setAttribute('data-arr-hidden', nowHidden ? '1' : '0');
-  row.style.opacity = nowHidden ? '.5' : '';
+  const thumb = row.querySelector('.arrange-thumb'); if (thumb) thumb.style.opacity = nowHidden ? '.35' : '';
+  const name  = row.querySelector('.arrange-name');  if (name)  name.style.opacity  = nowHidden ? '.5'  : '';
+  const hst   = row.querySelector('.arrange-hstate'); if (hst)  hst.style.display   = nowHidden ? '' : 'none';
   btn.textContent = nowHidden ? '🚫' : '👁';
+}
+
+// Render a small live snapshot of each section by cloning its node into a fixed box and
+// scaling it down (transform:scale). No widget data is re-fetched — the clone captures the
+// current DOM. Falls back to an emoji tile when the section is missing.
+function _arrangeRenderThumbs() {
+  const api = window._dashLayout; if (!api) return;
+  const parent = api.parent(); if (!parent) return;
+  const boxW = 104;
+  document.querySelectorAll('#layoutArrangeList .arrange-thumb').forEach(box => {
+    const id = box.getAttribute('data-thumb-for');
+    const src = parent.querySelector('[data-section-id="' + id + '"]');
+    box.innerHTML = '';
+    if (!src) { box.innerHTML = _arrangeThumbFallback(id); return; }
+    let w = Math.round(src.getBoundingClientRect().width);
+    if (!w) w = Math.round(parent.getBoundingClientRect().width) || 800; // hidden/zero-width → assume wrapper width
+    try {
+      const clone = src.cloneNode(true);
+      clone.querySelectorAll('.drag-handle').forEach(h => h.remove());
+      clone.removeAttribute('id');
+      clone.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
+      clone.style.display = '';        // render even if the live section is currently hidden
+      clone.style.margin = '0';
+      clone.style.width = w + 'px';
+      clone.style.maxWidth = 'none';
+      clone.style.transform = 'scale(' + (boxW / w) + ')';
+      clone.style.transformOrigin = 'top left';
+      clone.style.pointerEvents = 'none';
+      const holder = document.createElement('div');
+      holder.style.cssText = 'position:absolute;top:0;left:0;width:' + w + 'px;';
+      holder.appendChild(clone);
+      box.appendChild(holder);
+    } catch (e) {
+      box.innerHTML = _arrangeThumbFallback(id);
+    }
+  });
+}
+
+function _arrangeThumbFallback(id) {
+  const ic = DASH_SECTION_ICONS[id] || '📊';
+  return '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:26px;">' + ic + '</div>';
 }
 
 function _arrangeWireRows() {
@@ -3058,7 +3111,7 @@ function _arrangeWireRows() {
   if (!list) return;
   [...list.querySelectorAll('.arrange-row')].forEach(row => {
     row.addEventListener('dragstart', e => { _arrangeDragRow = row; row.style.opacity = '0.3'; e.dataTransfer.effectAllowed = 'move'; });
-    row.addEventListener('dragend', () => { row.style.opacity = row.getAttribute('data-arr-hidden') === '1' ? '.5' : ''; });
+    row.addEventListener('dragend', () => { row.style.opacity = ''; });
     row.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
     row.addEventListener('drop', e => {
       e.preventDefault(); e.stopPropagation();
@@ -3077,7 +3130,7 @@ function _arrangeEnsureModal() {
   wrap.id = 'layoutArrangeModal';
   wrap.style.cssText = 'display:none;position:fixed;inset:0;z-index:11000;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;padding:20px;';
   wrap.innerHTML =
-      '<div style="background:#161616;border:1px solid rgba(201,168,76,0.35);border-radius:14px;width:100%;max-width:420px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.6);">'
+      '<div style="background:#161616;border:1px solid rgba(201,168,76,0.35);border-radius:14px;width:100%;max-width:480px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.6);">'
     +   '<div style="display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid rgba(255,255,255,0.08);">'
     +     '<span style="font-size:1rem;">▦</span>'
     +     '<div style="flex:1;"><div style="font-size:.92rem;font-weight:700;color:#C9A84C;">Arrange dashboard</div>'
