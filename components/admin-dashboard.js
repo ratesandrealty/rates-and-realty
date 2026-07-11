@@ -1366,14 +1366,13 @@ function _snapRow(it, chips) {
     + `<div class="ps-rowbody"><span class="ps-name">${crmEsc((it && it.name) || "Unknown")}</span>`
     + `<div class="ps-pills">${chips}</div></div>`;
 }
-// One card: accent header + hero count + spark + optional sub-line, up to SNAP_CAP rows, "+N more".
-const SNAP_CAP = 5;
+// One card: accent header + hero count + spark + optional sub-line, then ALL rows (the lane
+// scrolls in-box at ~5 rows tall — no "+N more").
 function _snapCard(num, label, subline, list, rowFn, accent) {
   list = list || [];
   const acc = accent || ["#C9A84C", "rgba(201,168,76,0.14)"];
-  const shown = list.slice(0, SNAP_CAP);
-  const rows = shown.length
-    ? shown.map((it) => {
+  const rows = list.length
+    ? list.map((it) => {
         const inner = rowFn(it);
         const hasContact = it.contact_id && it.contact_id !== "null";
         return hasContact
@@ -1381,14 +1380,11 @@ function _snapCard(num, label, subline, list, rowFn, accent) {
           : `<div class="ps-row">${inner}</div>`;
       }).join("")
     : `<div class="ps-empty">None right now.</div>`;
-  const moreN = Math.max(0, (Number(num) || 0) - shown.length);
-  const more = moreN > 0 ? `<div class="ps-more">+${moreN} more</div>` : "";
   return `<div class="ps-card" style="--acc:${acc[0]};--acc-soft:${acc[1]}">
       <div class="ps-head"><span class="ps-cat">${crmEsc(label)}</span><span class="ps-num">${Number(num) || 0}</span></div>
       <div class="ps-spark"></div>
       ${subline ? `<div class="ps-sub">${subline}</div>` : ""}
       <div class="ps-list">${rows}</div>
-      ${more}
     </div>`;
 }
 async function loadPipelineSnapshot() {
