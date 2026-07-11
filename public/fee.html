@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026070654 -->
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026070655 -->
 <title>Loan Estimate | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
@@ -177,25 +177,44 @@ function calcScenario(inp, sc){
         prepaidInterest,prepaidInsurance,subtotalE,taxReserve,insReserve,subtotalF,totalOther,totalClosing,lenderCreditLine,cashToClose,
         pi,monthlyTax,monthlyIns,mi,totalMonthly };
 }
-// Adapter: build the compute `inp` from the frozen common block (mirrors readSidebarInputs).
-function inpFromCommon(c){
-    c=c||{};
-    const purchasePrice=parseCurrency(c.purchasePrice);
-    const downPct=parseFloat(c.downPct)||0;
+// Product short-code → full label (verbatim: tools/fee-sheet.html PRODUCT_CODE_TO_FULL).
+const PRODUCT_CODE_TO_FULL={conv30:'Conv 30yr Fixed',conv15:'Conv 15yr Fixed',fha30:'FHA 30yr Fixed',va30:'VA 30yr Fixed',usda30:'USDA 30yr Fixed',jumbo30:'Jumbo 30yr Fixed'};
+// Build the compute `inp` from the frozen common block + optional per-column overrides —
+// mirrors tools/fee-sheet.html readSidebarInputs EXACTLY, including the property-mode tax
+// rule (usePctTax = overrides.purchasePrice != null || taxMode==='pct').
+function buildInp(c, ov){
+    c=c||{}; ov=ov||{};
+    const purchasePrice=(ov.purchasePrice!=null)?Number(ov.purchasePrice):parseCurrency(c.purchasePrice);
+    const downPct=(ov.downPct!=null)?Number(ov.downPct):(parseFloat(c.downPct)||0);
     const downPayment=purchasePrice*downPct/100;
     const loanAmount=Math.max(0,purchasePrice-downPayment);
-    const loanProduct=c.loanProduct||'';
+    const loanProduct=(ov.loanProduct!=null)?ov.loanProduct:(c.loanProduct||'');
     const vaConfig={ firstUse:true, exempt:false };   // not captured in the draft → tool defaults
     const govFee=computeGovUpfrontFee(loanProduct, loanAmount, downPct, vaConfig);
     const totalLoanAmount=(govFee&&govFee.financed)?+(loanAmount+govFee.amount).toFixed(2):loanAmount;
     const ltv=purchasePrice>0?(loanAmount/purchasePrice*100):0;
     let annualTax;
-    if((c.taxMode||'pct')==='pct'){ const pct=parseFloat(c.taxPct)||1.25; annualTax=purchasePrice*pct/100; }
+    const usePctTax=(ov.purchasePrice!=null)||((c.taxMode||'pct')==='pct');
+    if(usePctTax){ const pct=parseFloat(c.taxPct)||1.25; annualTax=purchasePrice*pct/100; }
     else { const at=parseCurrency(c.annualTax); annualTax=at>0?at:purchasePrice*0.0125; }
-    const ins=parseCurrency(c.annualInsurance); const annualInsurance=ins>0?ins:1800;
+    const insIn=parseCurrency(c.annualInsurance);
+    const annualInsurance=(ov.annualInsurance!=null)?Number(ov.annualInsurance):(insIn>0?insIn:1800);
     return { borrowerName:c.borrowerName||'Borrower', propertyAddress:c.propertyAddress||'', purchasePrice, downPct, downPayment,
-        loanAmount, totalLoanAmount, govFee, vaConfig, ltv, loanProduct, lockPeriod:c.lockPeriod||'', propertyType:c.propertyType||'',
-        creditScore:c.creditScore||'', state:c.state||'CA', county:c.county||'', annualTax, annualInsurance };
+        loanAmount, totalLoanAmount, govFee, vaConfig, ltv, loanProduct, lockPeriod:c.lockPeriod||'',
+        propertyType:(ov.propertyType!=null)?ov.propertyType:(c.propertyType||''), creditScore:c.creditScore||'',
+        state:c.state||'CA', county:c.county||'', annualTax, annualInsurance, hoa:ov.hoa||0, monthlyRent:ov.monthlyRent||0 };
+}
+function inpFromCommon(c){ return buildInp(c, null); }
+// One property-comparison column (verbatim path: applyColumnOverrides → calcScenario + net
+// payment). Net payment = PITI + HOA − gross rent (matches the admin tool to the dollar).
+function calcPropertyColumn(c, col){
+    const inp=buildInp(c, { purchasePrice:col.purchasePrice, downPct:(col.downPct!=null?col.downPct:20),
+        loanProduct:PRODUCT_CODE_TO_FULL[col.loanProduct]||col.loanProduct, propertyType:col.propertyType, hoa:col.hoa, monthlyRent:col.monthlyRent });
+    const sc={ id:col.id, label:col.label, rate:col.rate, points:0, origComp:1.5, lenderCredits:0, recommended:!!col.recommended };
+    const r=calcScenario(inp, sc);
+    r.monthlyHoa=col.hoa||0; r.monthlyRent=col.monthlyRent||0;
+    r.netPayment=r.totalMonthly + r.monthlyHoa - r.monthlyRent;
+    r.inp=inp; return r;
 }
 
 // ── heloc compute (verbatim: tools/fee-sheet.html) ──
@@ -323,6 +342,56 @@ function renderRate(snap){
     document.getElementById('app').innerHTML=h;
 }
 
+// ── PROPERTY-COMPARISON render (mode 'property' → SFR/Condo/2-4 Unit columns) ──
+function _propTypeLabel(t){ return ({sfr:'Single Family',condo:'Condo',multifamily:'2-4 Unit',townhouse:'Townhouse'})[String(t||'').toLowerCase()] || esc(t||''); }
+function renderProperty(snap){
+    const data=snap.data||{}, c=data.common||{};
+    const cols=Array.isArray(data.property_scenarios)?data.property_scenarios.slice():[];
+    if(!cols.length){ return renderRate(snap); }   // no property columns → fall back to rate options
+    let recIdx=cols.findIndex(p=>p.recommended); if(recIdx<0)recIdx=0;
+    const results=cols.map(col=>calcPropertyColumn(c, col));
+    const rec=results[recIdx], recCol=cols[recIdx];
+    const name=snap.borrower_name||c.borrowerName||'Borrower';
+
+    let h='<div class="hero">'
+      +'<div class="eyebrow">Property Comparison</div>'
+      +'<h1>'+esc(name)+'</h1>'
+      +'<div class="product"><span class="badge">'+cols.length+' properties compared</span>'+(c.lockPeriod?'<span class="badge">🔒 '+esc(c.lockPeriod)+'</span>':'')+'</div>'
+      +'<div class="payhero"><div class="lbl">'+esc(recCol.label)+' · Est. Monthly'+(rec.monthlyRent?' after rent':'')+'</div>'
+        +'<div class="amt">'+fmt(rec.netPayment,0)+'<small>/mo</small></div>'
+        +'<div class="rate">'+fmt(recCol.purchasePrice,0)+' · '+esc(_helocRate(recCol.rate))+'% · '+(recCol.downPct)+'% down</div>'
+      +'</div></div>';
+
+    h+='<div class="sec"><div class="sec-title">Property Options</div><div class="opts">';
+    cols.forEach((col,i)=>{
+        const r=results[i];
+        h+='<div class="opt'+(i===recIdx?' rec':'')+'">'
+          +'<div class="opt-head"><span class="opt-name">'+esc(col.label)+(i===recIdx?' <span class="badge rec">Recommended</span>':'')+'</span>'
+            +'<span class="opt-rate">'+fmt(r.netPayment,0)+'<span style="font-size:.42em;color:var(--muted);font-weight:700">/mo</span></span></div>'
+          +'<div class="opt-meta">'
+            +'<div class="m"><div class="k">Price</div><div class="v">'+fmt(col.purchasePrice,0)+'</div></div>'
+            +'<div class="m"><div class="k">Rate</div><div class="v">'+esc(_helocRate(col.rate))+'%</div></div>'
+            +'<div class="m"><div class="k">Down</div><div class="v">'+(col.downPct)+'%</div></div>'
+          +'</div>'
+          +'<div class="rows" style="margin-top:10px">'
+            + row('Property Type', _propTypeLabel(col.propertyType))
+            + row('Loan Amount', fmt(r.inp.loanAmount,0))
+            + row('Principal &amp; Interest', fmt(r.pi))
+            + row('Property Taxes', fmt(r.monthlyTax))
+            + row("Homeowner's Insurance", fmt(r.monthlyIns))
+            + (r.mi>0?row('Mortgage Insurance', fmt(r.mi)):'')
+            + (r.monthlyHoa>0?row('HOA Dues', fmt(r.monthlyHoa)):'')
+            + (r.monthlyRent>0?row('Rental Income', fmt(-r.monthlyRent)):'')
+            + row(r.monthlyRent>0?'Net Monthly (after rent)':'Total Monthly Payment', fmt(r.netPayment), 'total')
+            + row('Estimated Cash to Close', fmt(r.cashToClose), 'sub')
+          +'</div>'
+        +'</div>';
+    });
+    h+='</div></div>';
+    h+=disclaimer(snap.created_at)+preparedBlock();
+    document.getElementById('app').innerHTML=h;
+}
+
 // ── HELOC render ──
 function renderHeloc(snap){
     const data=snap.data||{}, hd=data.heloc||{};
@@ -415,7 +484,11 @@ function renderError(msg){
         if(!data){ renderNotFound(); return; }
         const mode = (data.data && data.data.mode) || 'rate';
         document.title = (data.borrower_name?data.borrower_name+' — ':'')+'Loan Estimate | Rates & Realty';
-        if(mode==='heloc') renderHeloc(data); else renderRate(data);
+        // Mirror the admin tool per mode: property → SFR/Condo/2-4 Unit comparison;
+        // heloc → heloc; rate/single (and any unknown) → A/B/C rate scenarios.
+        if(mode==='heloc') renderHeloc(data);
+        else if(mode==='property') renderProperty(data);
+        else renderRate(data);
     }catch(e){ console.error('[fee] init', e); renderError(e && e.message); }
 })();
 </script>

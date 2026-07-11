@@ -272,7 +272,12 @@ export default {
     if (/^\/fee\/[A-Za-z0-9]+$/.test(path)) {
       const newUrl = new URL(request.url);
       newUrl.pathname = '/public/fee.html';
-      return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
+      const feeRes = withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
+      // Never cache the shell so render fixes take effect immediately (the snapshot data is
+      // always fetched live from the RPC anyway).
+      const fh = new Headers(feeRes.headers);
+      fh.set('Cache-Control', 'no-store, must-revalidate');
+      return new Response(feeRes.body, { status: feeRes.status, statusText: feeRes.statusText, headers: fh });
     }
 
     // Clean-URL routing for county area pages (/areas/slug → /areas/slug.html)
