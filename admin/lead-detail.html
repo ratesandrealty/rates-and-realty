@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070652 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070653 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -32758,17 +32758,6 @@ function _tcNormPhone(raw){
 function _tcCharCount(){ var ta=document.getElementById('tcBody'), c=document.getElementById('tcCount'); if(!c) return; var n=ta?ta.value.length:0; var segs=n===0?1:(n<=160?1:Math.ceil(n/153)); c.textContent=n+'/160'+(segs>1?(' · '+segs+' segs'):''); c.style.color=n>160?'#f87171':(n>140?'#C9A84C':'#555'); }
 
 function _tcEnsureModal(){
-  if(!document.getElementById('tcCalStyles')){
-    var st=document.createElement('style'); st.id='tcCalStyles';
-    st.textContent='#tcCal .tccal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}'
-      +'#tcCal .tccal-dow{text-align:center;font-size:9px;color:#777;padding:2px 0;}'
-      +'#tcCal .tccal-day{text-align:center;font-size:11px;padding:5px 0;border-radius:6px;color:#E0DDD4;cursor:pointer;}'
-      +'#tcCal .tccal-day:hover{background:rgba(201,168,76,0.18);}'
-      +'#tcCal .tccal-day.sel{background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-weight:700;}'
-      +'#tcCal .tccal-day.today{border:1px solid rgba(201,168,76,0.5);}'
-      +'#tcCal .tccal-past{text-align:center;font-size:11px;padding:5px 0;color:#3a3a3a;cursor:not-allowed;}';
-    document.head.appendChild(st);
-  }
   var ov=document.getElementById('tcOverlay'); if(ov) return ov;
   ov=document.createElement('div'); ov.id='tcOverlay';
   ov.style.cssText='display:none;position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.66);align-items:center;justify-content:center;padding:24px 16px;';
@@ -32827,7 +32816,7 @@ function _tcEnsureModal(){
           +'<div style="position:relative;">'
             +'<input id="tcSchedDate" type="text" placeholder="MM/DD/YYYY" autocomplete="off" inputmode="numeric" onclick="_tcCalOpen()" oninput="_tcSchedValidate()" onchange="_tcSchedValidate()" style="width:108px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px 0 0 6px;color:#E0DDD4;font-size:12px;padding:6px 8px;outline:none;font-family:inherit;box-sizing:border-box;vertical-align:top;">'
             +'<button type="button" data-tccal-btn="1" onclick="_tcCalToggle()" title="Open calendar" style="border:1px solid rgba(201,168,76,0.2);border-left:none;background:#131315;color:#C9A84C;border-radius:0 6px 6px 0;padding:6px 8px;font-size:12px;cursor:pointer;vertical-align:top;">📅</button>'
-            +'<div id="tcCal" style="display:none;position:absolute;top:34px;left:0;z-index:6;width:224px;background:#0F0F11;border:1px solid rgba(201,168,76,0.28);border-radius:10px;padding:10px;box-shadow:0 14px 40px rgba(0,0,0,0.6);"></div>'
+            +'<div id="tcCal" style="display:none;position:fixed;z-index:100050;width:236px;background:#0F0F11;border:1px solid rgba(201,168,76,0.4);border-radius:10px;padding:10px;box-shadow:0 16px 48px rgba(0,0,0,0.75);"></div>'
           +'</div>'
         +'</div>'
         +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'
@@ -32949,12 +32938,27 @@ function _tcTimeTyped(){
 // ── Calendar popup (month grid, past days disabled) ──
 function _tcCalOpen(){
   var cal=document.getElementById('tcCal'); if(!cal) return;
+  // Portal out of the composer footer (max-height/overflow-y:auto would clip an absolutely
+  // positioned popup). As a fixed child of <body> it can't be clipped by that overflow.
+  if(cal.parentElement!==document.body) document.body.appendChild(cal);
   var pd=_tcParseDate((document.getElementById('tcSchedDate')||{}).value||'');
   var base=pd? new Date(pd.y,pd.mo-1,1) : new Date();
   _tcCalState={ y:base.getFullYear(), m:base.getMonth() };
-  _tcCalRender();
-  cal.style.display='block';
+  cal.style.display='block';   // visible first so offsetHeight is measurable
+  _tcCalRender();              // fills the 7-col grid, then positions (flips up if no room below)
   if(!window.__tcCalOutsideBound){ window.__tcCalOutsideBound=true; document.addEventListener('click', _tcCalOutside, true); }
+}
+// Position the fixed popup against the date field; flip above when there isn't room below.
+function _tcCalPosition(){
+  var cal=document.getElementById('tcCal'), field=document.getElementById('tcSchedDate');
+  if(!cal||!field) return;
+  var r=field.getBoundingClientRect(), calH=cal.offsetHeight||300, calW=cal.offsetWidth||236, vw=window.innerWidth, vh=window.innerHeight;
+  var left=Math.max(8, Math.min(r.left, vw-calW-8));
+  var top;
+  if(r.bottom+6+calH <= vh-8) top=r.bottom+6;          // room below
+  else if(r.top-6-calH >= 8) top=r.top-6-calH;         // flip above
+  else top=Math.max(8, vh-calH-8);                     // clamp within viewport
+  cal.style.left=left+'px'; cal.style.top=top+'px';
 }
 function _tcCalToggle(){ var cal=document.getElementById('tcCal'); if(!cal) return; if(cal.style.display==='block'){ cal.style.display='none'; } else { _tcCalOpen(); } }
 function _tcCalClose(){ var cal=document.getElementById('tcCal'); if(cal) cal.style.display='none'; }
@@ -32976,21 +32980,30 @@ function _tcCalRender(){
   var today=new Date(); today.setHours(0,0,0,0);
   var sel=_tcParseDate((document.getElementById('tcSchedDate')||{}).value||'');
   var title=first.toLocaleString('en-US',{month:'long',year:'numeric'});
+  // Inline styles for layout so the grid never depends on an injected stylesheet.
+  var GRID='display:grid;grid-template-columns:repeat(7,1fr);gap:2px;';
+  var CELL='text-align:center;font-size:11px;padding:6px 0;border-radius:6px;box-sizing:border-box;';
+  var NAV='background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:6px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;';
   var h='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
-    +'<button type="button" onclick="_tcCalNav(-1)" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:6px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;">‹</button>'
+    +'<button type="button" onclick="_tcCalNav(-1)" style="'+NAV+'">‹</button>'
     +'<span style="font-size:12px;font-weight:700;color:#E0DDD4;">'+lpEsc(title)+'</span>'
-    +'<button type="button" onclick="_tcCalNav(1)" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:6px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;">›</button>'
-  +'</div><div class="tccal-grid">';
-  ['S','M','T','W','T','F','S'].forEach(function(w){ h+='<div class="tccal-dow">'+w+'</div>'; });
+    +'<button type="button" onclick="_tcCalNav(1)" style="'+NAV+'">›</button>'
+  +'</div><div style="'+GRID+'">';
+  ['S','M','T','W','T','F','S'].forEach(function(w){ h+='<div style="text-align:center;font-size:9px;color:#777;padding:2px 0;">'+w+'</div>'; });
   for(var i=0;i<startDow;i++) h+='<div></div>';
   for(var day=1;day<=daysIn;day++){
     var cd=new Date(y,m,day); cd.setHours(0,0,0,0);
-    if(cd.getTime()<today.getTime()){ h+='<div class="tccal-past">'+day+'</div>'; continue; }
-    var cls='tccal-day'+((sel&&sel.y===y&&sel.mo===m+1&&sel.d===day)?' sel':'')+((cd.getTime()===today.getTime())?' today':'');
-    h+='<div class="'+cls+'" onclick="_tcCalPick('+y+','+m+','+day+')">'+day+'</div>';
+    if(cd.getTime()<today.getTime()){ h+='<div style="'+CELL+'color:#3a3a3a;cursor:not-allowed;">'+day+'</div>'; continue; }
+    var isSel=(sel&&sel.y===y&&sel.mo===m+1&&sel.d===day), isToday=(cd.getTime()===today.getTime());
+    var st=CELL+'cursor:pointer;color:#E0DDD4;';
+    if(isSel) st+='background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-weight:700;';
+    else if(isToday) st+='border:1px solid rgba(201,168,76,0.5);';
+    var hov=isSel?'':' onmouseover="this.style.background=\'rgba(201,168,76,0.18)\'" onmouseout="this.style.background=\'\'"';
+    h+='<div style="'+st+'"'+hov+' onclick="_tcCalPick('+y+','+m+','+day+')">'+day+'</div>';
   }
   h+='</div>';
   host.innerHTML=h;
+  _tcCalPosition();
 }
 // Block scheduling in the past: disable Schedule + inline note when the time is missing/invalid/<= now.
 function _tcSchedValidate(){
