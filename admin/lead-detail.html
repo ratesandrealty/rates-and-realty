@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070650 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070651 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -32806,10 +32806,18 @@ function _tcEnsureModal(){
           +'</div>'
         +'</div>'
       +'</div>'
-      +'<div id="tcSchedRow" style="display:none;align-items:center;gap:8px;margin-top:8px;padding:8px 10px;background:#131315;border:1px solid rgba(201,168,76,0.2);border-radius:8px;">'
-        +'<span style="font-size:11px;color:#C9A84C;font-weight:600;white-space:nowrap;">Send at</span>'
-        +'<input id="tcSchedAt" type="datetime-local" style="flex:1;min-width:0;background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:12px;padding:5px 8px;outline:none;font-family:inherit;">'
-        +'<button onclick="_tcSchedule()" style="background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;color:#1A0E00;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">Schedule</button>'
+      +'<div id="tcSchedQueue" style="display:none;margin-top:8px;"></div>'
+      +'<div id="tcSchedRow" style="display:none;flex-direction:column;gap:8px;margin-top:8px;padding:10px;background:#131315;border:1px solid rgba(201,168,76,0.2);border-radius:8px;">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:5px;">'
+          +[['1h','In 1 hour'],['3h','In 3 hours'],['tom9','Tomorrow 9 AM'],['tom13','Tomorrow 1 PM'],['mon9','Next Monday 9 AM']].map(function(p){ return '<button type="button" onclick="_tcSchedPreset(\''+p[0]+'\')" style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:14px;font-size:10.5px;padding:4px 10px;cursor:pointer;font-family:inherit;white-space:nowrap;">'+p[1]+'</button>'; }).join('')
+        +'</div>'
+        +'<div style="display:flex;align-items:center;gap:8px;">'
+          +'<span style="font-size:11px;color:#C9A84C;font-weight:600;white-space:nowrap;">Send at</span>'
+          +'<input id="tcSchedAt" type="datetime-local" oninput="_tcSchedValidate()" onchange="_tcSchedValidate()" style="flex:1;min-width:0;background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:12px;padding:5px 8px;outline:none;font-family:inherit;">'
+          +'<span id="tcSchedTz" title="Your timezone" style="font-size:11px;color:#888;white-space:nowrap;">—</span>'
+          +'<button id="tcSchedBtn" onclick="_tcSchedule()" style="background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;color:#1A0E00;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">Schedule</button>'
+        +'</div>'
+        +'<div id="tcSchedNote" style="display:none;font-size:10.5px;color:#f87171;">Pick a future time</div>'
       +'</div>'
       +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;">'
         +'<button id="tcSchedToggle" onclick="_tcToggleSchedule()" style="background:transparent;border:1px solid rgba(201,168,76,0.28);color:#C9A84C;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;">🕐 Schedule</button>'
@@ -32829,7 +32837,65 @@ function _tcToggleSchedule(){
   r.style.display='flex';
   var inp=document.getElementById('tcSchedAt');
   if(inp && !inp.value){ var d=new Date(Date.now()+3600000); d.setSeconds(0,0); inp.value=_tcLocalInput(d); }
+  _tcSchedTzLabel(); _tcSchedValidate();
   setTimeout(function(){ if(inp) inp.focus(); }, 30);
+}
+// Quick presets → fill "Send at" (still editable). All computed in LOCAL time; sms_schedule
+// receives when.toISOString() (UTC) so the cron fires at the right absolute moment.
+function _tcPresetDate(k){
+  var now=new Date(), d;
+  if(k==='1h'){ d=new Date(now.getTime()+3600000); }
+  else if(k==='3h'){ d=new Date(now.getTime()+3*3600000); }
+  else if(k==='tom9'){ d=new Date(now); d.setDate(d.getDate()+1); d.setHours(9,0,0,0); }
+  else if(k==='tom13'){ d=new Date(now); d.setDate(d.getDate()+1); d.setHours(13,0,0,0); }
+  else if(k==='mon9'){ d=new Date(now); var add=((8-d.getDay())%7)||7; d.setDate(d.getDate()+add); d.setHours(9,0,0,0); }
+  else { d=new Date(now.getTime()+3600000); }
+  d.setSeconds(0,0);
+  return d;
+}
+function _tcSchedPreset(k){
+  var inp=document.getElementById('tcSchedAt'); if(inp){ inp.value=_tcLocalInput(_tcPresetDate(k)); }
+  _tcSchedValidate();
+}
+// Block scheduling in the past: disable Schedule + inline note when the chosen time is <= now.
+function _tcSchedValidate(){
+  var inp=document.getElementById('tcSchedAt'), btn=document.getElementById('tcSchedBtn'), note=document.getElementById('tcSchedNote');
+  var v=inp?inp.value:'', ok=false;
+  if(v){ var t=new Date(v).getTime(); ok = !isNaN(t) && t>Date.now(); }
+  if(btn){ btn.disabled=!ok; btn.style.opacity=ok?'1':'0.5'; btn.style.cursor=ok?'pointer':'not-allowed'; }
+  if(note){ note.style.display=ok?'none':'block'; }
+  return ok;
+}
+// Show the viewer's timezone next to the field (short name, e.g. "PDT") so send time is unambiguous.
+function _tcSchedTzLabel(){
+  var el=document.getElementById('tcSchedTz'); if(!el) return;
+  try{
+    var parts=new Intl.DateTimeFormat('en-US',{ timeZoneName:'short' }).formatToParts(new Date());
+    var tz=(parts.find(function(p){ return p.type==='timeZoneName'; })||{}).value||'';
+    el.textContent=tz||'local';
+    el.title='Sends at this local time ('+(Intl.DateTimeFormat().resolvedOptions().timeZone||'local')+')';
+  }catch(_){ el.textContent='local'; }
+}
+// Compact management view of this contact's pending scheduled texts (from the same sms_thread
+// events). Each row: send time + preview + cancel (× → sms_cancel_scheduled).
+function _tcRenderSchedQueue(events){
+  var box=document.getElementById('tcSchedQueue'); if(!box) return;
+  var sched=(Array.isArray(events)?events:[]).filter(function(e){ return e.is_scheduled; });
+  if(!sched.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display='block';
+  box.innerHTML='<div style="font-size:10.5px;color:#C9A84C;font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-bottom:5px;">🕐 Scheduled ('+sched.length+')</div>'
+    + sched.map(function(e){
+        var when=e.scheduled_at?_tcFmt(e.scheduled_at):'';
+        var raw=String(e.body||'').replace(/\s+/g,' ');
+        var preview=lpEsc(raw.slice(0,42))+(raw.length>42?'…':'');
+        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;margin-bottom:4px;background:#0C0C0E;border:1px solid rgba(201,168,76,0.18);border-radius:8px;">'
+          +'<div style="flex:1;min-width:0;">'
+            +'<div style="font-size:11px;color:#E0DDD4;font-weight:600;">'+lpEsc(when)+'</div>'
+            +'<div style="font-size:10.5px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+preview+'</div>'
+          +'</div>'
+          +'<button type="button" onclick="_tcCancelScheduled(\''+lpEsc(String(e.id))+'\')" title="Cancel scheduled text" style="flex-shrink:0;background:none;border:none;color:#E5484D;font-size:15px;cursor:pointer;line-height:1;">✕</button>'
+        +'</div>';
+      }).join('');
 }
 function openTextComposer(){
   var cid=(typeof lpCid==='function'?lpCid():null) || new URLSearchParams(location.search).get('contact_id');
@@ -32863,7 +32929,7 @@ function openTextComposer(){
 function _tcRenderThread(events){
   var box=document.getElementById('tcThread'); if(!box) return;
   events=Array.isArray(events)?events:[];
-  if(!events.length){ box.innerHTML='<div style="color:#666;font-size:12px;text-align:center;padding:28px 8px;">No messages yet. Start the conversation below.</div>'; return; }
+  if(!events.length){ box.innerHTML='<div style="color:#666;font-size:12px;text-align:center;padding:28px 8px;">No messages yet. Start the conversation below.</div>'; _tcRenderSchedQueue(events); return; }
   box.innerHTML=events.map(function(e){
     var media=e.media_url ? '<div style="margin-top:6px;"><img src="'+lpEsc(e.media_url)+'" style="max-width:190px;border-radius:8px;display:block;"></div>' : '';
     var bodyHtml='<div style="white-space:pre-wrap;word-break:break-word;">'+lpEsc(e.body||'')+'</div>'+media;
@@ -32891,6 +32957,7 @@ function _tcRenderThread(events){
     +'</div>';
   }).join('');
   box.scrollTop=box.scrollHeight;
+  _tcRenderSchedQueue(events);
 }
 async function _tcLoadThread(){
   var box=document.getElementById('tcThread'); if(box) box.innerHTML='<div style="color:#666;font-size:12px;text-align:center;padding:28px;">Loading…</div>';
@@ -32930,7 +32997,7 @@ async function _tcSchedule(){
   var when=new Date(atVal);
   if(isNaN(when.getTime())){ showToast('Invalid date/time', true); return; }
   if(when.getTime() <= Date.now()){ showToast('Pick a future time', true); return; }
-  var btn=document.querySelector('#tcSchedRow button');
+  var btn=document.getElementById('tcSchedBtn');
   if(btn){ btn.disabled=true; btn.textContent='…'; }
   try{
     if(_tcState.blast){
