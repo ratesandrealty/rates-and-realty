@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070651 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070652 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -32758,6 +32758,17 @@ function _tcNormPhone(raw){
 function _tcCharCount(){ var ta=document.getElementById('tcBody'), c=document.getElementById('tcCount'); if(!c) return; var n=ta?ta.value.length:0; var segs=n===0?1:(n<=160?1:Math.ceil(n/153)); c.textContent=n+'/160'+(segs>1?(' · '+segs+' segs'):''); c.style.color=n>160?'#f87171':(n>140?'#C9A84C':'#555'); }
 
 function _tcEnsureModal(){
+  if(!document.getElementById('tcCalStyles')){
+    var st=document.createElement('style'); st.id='tcCalStyles';
+    st.textContent='#tcCal .tccal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}'
+      +'#tcCal .tccal-dow{text-align:center;font-size:9px;color:#777;padding:2px 0;}'
+      +'#tcCal .tccal-day{text-align:center;font-size:11px;padding:5px 0;border-radius:6px;color:#E0DDD4;cursor:pointer;}'
+      +'#tcCal .tccal-day:hover{background:rgba(201,168,76,0.18);}'
+      +'#tcCal .tccal-day.sel{background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-weight:700;}'
+      +'#tcCal .tccal-day.today{border:1px solid rgba(201,168,76,0.5);}'
+      +'#tcCal .tccal-past{text-align:center;font-size:11px;padding:5px 0;color:#3a3a3a;cursor:not-allowed;}';
+    document.head.appendChild(st);
+  }
   var ov=document.getElementById('tcOverlay'); if(ov) return ov;
   ov=document.createElement('div'); ov.id='tcOverlay';
   ov.style.cssText='display:none;position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.66);align-items:center;justify-content:center;padding:24px 16px;';
@@ -32811,13 +32822,27 @@ function _tcEnsureModal(){
         +'<div style="display:flex;flex-wrap:wrap;gap:5px;">'
           +[['1h','In 1 hour'],['3h','In 3 hours'],['tom9','Tomorrow 9 AM'],['tom13','Tomorrow 1 PM'],['mon9','Next Monday 9 AM']].map(function(p){ return '<button type="button" onclick="_tcSchedPreset(\''+p[0]+'\')" style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:14px;font-size:10.5px;padding:4px 10px;cursor:pointer;font-family:inherit;white-space:nowrap;">'+p[1]+'</button>'; }).join('')
         +'</div>'
-        +'<div style="display:flex;align-items:center;gap:8px;">'
+        +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
           +'<span style="font-size:11px;color:#C9A84C;font-weight:600;white-space:nowrap;">Send at</span>'
-          +'<input id="tcSchedAt" type="datetime-local" oninput="_tcSchedValidate()" onchange="_tcSchedValidate()" style="flex:1;min-width:0;background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:12px;padding:5px 8px;outline:none;font-family:inherit;">'
-          +'<span id="tcSchedTz" title="Your timezone" style="font-size:11px;color:#888;white-space:nowrap;">—</span>'
-          +'<button id="tcSchedBtn" onclick="_tcSchedule()" style="background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;color:#1A0E00;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">Schedule</button>'
+          +'<div style="position:relative;">'
+            +'<input id="tcSchedDate" type="text" placeholder="MM/DD/YYYY" autocomplete="off" inputmode="numeric" onclick="_tcCalOpen()" oninput="_tcSchedValidate()" onchange="_tcSchedValidate()" style="width:108px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px 0 0 6px;color:#E0DDD4;font-size:12px;padding:6px 8px;outline:none;font-family:inherit;box-sizing:border-box;vertical-align:top;">'
+            +'<button type="button" data-tccal-btn="1" onclick="_tcCalToggle()" title="Open calendar" style="border:1px solid rgba(201,168,76,0.2);border-left:none;background:#131315;color:#C9A84C;border-radius:0 6px 6px 0;padding:6px 8px;font-size:12px;cursor:pointer;vertical-align:top;">📅</button>'
+            +'<div id="tcCal" style="display:none;position:absolute;top:34px;left:0;z-index:6;width:224px;background:#0F0F11;border:1px solid rgba(201,168,76,0.28);border-radius:10px;padding:10px;box-shadow:0 14px 40px rgba(0,0,0,0.6);"></div>'
+          +'</div>'
         +'</div>'
-        +'<div id="tcSchedNote" style="display:none;font-size:10.5px;color:#f87171;">Pick a future time</div>'
+        +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'
+          +'<input id="tcSchedTime" type="text" placeholder="2:30 PM" autocomplete="off" oninput="_tcSchedValidate()" onchange="_tcTimeTyped()" style="width:90px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:12px;padding:6px 8px;outline:none;font-family:inherit;box-sizing:border-box;">'
+          +'<span style="font-size:10px;color:#666;">or</span>'
+          +'<select id="tcSchedHour" onchange="_tcTimeFromDials()" title="Hour" style="background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:12px;padding:5px 4px;outline:none;font-family:inherit;cursor:pointer;">'+Array.from({length:12},function(_,i){var h=i+1;return '<option value="'+h+'">'+h+'</option>';}).join('')+'</select>'
+          +'<span style="color:#666;">:</span>'
+          +'<select id="tcSchedMin" onchange="_tcTimeFromDials()" title="Minute" style="background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:12px;padding:5px 4px;outline:none;font-family:inherit;cursor:pointer;">'+Array.from({length:12},function(_,i){var m=String(i*5).padStart(2,'0');return '<option value="'+m+'">'+m+'</option>';}).join('')+'</select>'
+          +'<select id="tcSchedAmpm" onchange="_tcTimeFromDials()" title="AM/PM" style="background:#1A1A1D;border:1px solid rgba(201,168,76,0.2);border-radius:6px;color:#E0DDD4;font-size:12px;padding:5px 4px;outline:none;font-family:inherit;cursor:pointer;"><option value="AM">AM</option><option value="PM">PM</option></select>'
+          +'<span id="tcSchedTz" title="Your timezone" style="font-size:11px;color:#888;white-space:nowrap;margin-left:2px;">—</span>'
+        +'</div>'
+        +'<div style="display:flex;align-items:center;gap:8px;">'
+          +'<span id="tcSchedNote" style="display:none;font-size:10.5px;color:#f87171;">Pick a future time</span>'
+          +'<button id="tcSchedBtn" onclick="_tcSchedule()" style="margin-left:auto;background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;color:#1A0E00;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">Schedule</button>'
+        +'</div>'
       +'</div>'
       +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;">'
         +'<button id="tcSchedToggle" onclick="_tcToggleSchedule()" style="background:transparent;border:1px solid rgba(201,168,76,0.28);color:#C9A84C;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;">🕐 Schedule</button>'
@@ -32831,39 +32856,148 @@ function _tcEnsureModal(){
 }
 function closeTextComposer(){ var ov=document.getElementById('tcOverlay'); if(ov) ov.style.display='none'; document.body.style.overflow=''; }
 function _tcHideSchedule(){ var r=document.getElementById('tcSchedRow'); if(r) r.style.display='none'; }
+var _tcCalState={ y:0, m:0 };   // calendar view month (0-11)
 function _tcToggleSchedule(){
   var r=document.getElementById('tcSchedRow'); if(!r) return;
   if(r.style.display==='flex'){ r.style.display='none'; return; }
   r.style.display='flex';
-  var inp=document.getElementById('tcSchedAt');
-  if(inp && !inp.value){ var d=new Date(Date.now()+3600000); d.setSeconds(0,0); inp.value=_tcLocalInput(d); }
+  var di=document.getElementById('tcSchedDate');
+  if(di && !di.value){ _tcSetSchedFields(_tcRound5(new Date(Date.now()+3600000))); }
   _tcSchedTzLabel(); _tcSchedValidate();
-  setTimeout(function(){ if(inp) inp.focus(); }, 30);
+  setTimeout(function(){ if(di) di.focus(); }, 30);
 }
-// Quick presets → fill "Send at" (still editable). All computed in LOCAL time; sms_schedule
+function _tcRound5(d){ d.setSeconds(0,0); d.setMinutes(Math.round(d.getMinutes()/5)*5,0,0); return d; }
+// Quick presets → fill the picker (still editable). Computed in LOCAL time; sms_schedule
 // receives when.toISOString() (UTC) so the cron fires at the right absolute moment.
 function _tcPresetDate(k){
   var now=new Date(), d;
-  if(k==='1h'){ d=new Date(now.getTime()+3600000); }
-  else if(k==='3h'){ d=new Date(now.getTime()+3*3600000); }
+  if(k==='1h'){ d=_tcRound5(new Date(now.getTime()+3600000)); }
+  else if(k==='3h'){ d=_tcRound5(new Date(now.getTime()+3*3600000)); }
   else if(k==='tom9'){ d=new Date(now); d.setDate(d.getDate()+1); d.setHours(9,0,0,0); }
   else if(k==='tom13'){ d=new Date(now); d.setDate(d.getDate()+1); d.setHours(13,0,0,0); }
   else if(k==='mon9'){ d=new Date(now); var add=((8-d.getDay())%7)||7; d.setDate(d.getDate()+add); d.setHours(9,0,0,0); }
-  else { d=new Date(now.getTime()+3600000); }
+  else { d=_tcRound5(new Date(now.getTime()+3600000)); }
   d.setSeconds(0,0);
   return d;
 }
-function _tcSchedPreset(k){
-  var inp=document.getElementById('tcSchedAt'); if(inp){ inp.value=_tcLocalInput(_tcPresetDate(k)); }
+function _tcSchedPreset(k){ _tcSetSchedFields(_tcPresetDate(k)); _tcSchedValidate(); }
+
+// ── Date/time parsing + the ONE local-Date → UTC path ──
+function _tcParseDate(s){
+  s=String(s||'').trim();
+  var m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);          // MM/DD/YYYY
+  if(m) return { y:+m[3], mo:+m[1], d:+m[2] };
+  var iso=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);           // YYYY-MM-DD (lenient)
+  if(iso) return { y:+iso[1], mo:+iso[2], d:+iso[3] };
+  return null;
+}
+function _tcParseTime(s){
+  s=String(s||'').trim().toLowerCase();
+  if(!s) return null;
+  var m=s.match(/^(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/);
+  if(!m) return null;
+  var h=+m[1], min=m[2]?+m[2]:0, ap=m[3]?m[3][0]:null;
+  if(min>59) return null;
+  if(ap){ if(h<1||h>12) return null; h=h%12; if(ap==='p') h+=12; }   // 12-hour
+  else { if(h>23) return null; }                                    // 24-hour literal
+  return { h24:h, min:min };
+}
+// Single source of truth: build a LOCAL Date from the two text fields' numeric components.
+// Never parses a string that could be read as UTC → no drift. Rejects impossible dates.
+function _tcComputeSchedDate(){
+  var pd=_tcParseDate((document.getElementById('tcSchedDate')||{}).value||'');
+  var pt=_tcParseTime((document.getElementById('tcSchedTime')||{}).value||'');
+  if(!pd||!pt) return null;
+  var d=new Date(pd.y, pd.mo-1, pd.d, pt.h24, pt.min, 0, 0);
+  if(isNaN(d.getTime())) return null;
+  if(d.getFullYear()!==pd.y || d.getMonth()!==pd.mo-1 || d.getDate()!==pd.d) return null;   // e.g. 02/31 rolled over
+  return d;
+}
+function _tcFmtDateField(d){ var p=function(n){return String(n).padStart(2,'0');}; return p(d.getMonth()+1)+'/'+p(d.getDate())+'/'+d.getFullYear(); }
+function _tcFmtTimeField(d){ var h=d.getHours(), m=d.getMinutes(), ap=h>=12?'PM':'AM', h12=h%12||12; return h12+':'+String(m).padStart(2,'0')+' '+ap; }
+function _tcSetSelect(id,val){ var s=document.getElementById(id); if(s) s.value=String(val); }
+function _tcSyncDialsFrom(h24,min){
+  var ap=h24>=12?'PM':'AM', h12=h24%12||12, m5=Math.round(min/5)*5; if(m5===60) m5=55;
+  _tcSetSelect('tcSchedHour', String(h12));
+  _tcSetSelect('tcSchedMin', String(m5).padStart(2,'0'));
+  _tcSetSelect('tcSchedAmpm', ap);
+}
+// Fill both text fields + dials from a Date, and point the calendar at that month.
+function _tcSetSchedFields(d){
+  var di=document.getElementById('tcSchedDate'), ti=document.getElementById('tcSchedTime');
+  if(di) di.value=_tcFmtDateField(d);
+  if(ti) ti.value=_tcFmtTimeField(d);
+  _tcSyncDialsFrom(d.getHours(), d.getMinutes());
+  _tcCalState={ y:d.getFullYear(), m:d.getMonth() };
+  if(document.getElementById('tcCal') && document.getElementById('tcCal').style.display!=='none') _tcCalRender();
+}
+// Dials → compose "h:mm AM/PM" into the typeable time field (which is the truth).
+function _tcTimeFromDials(){
+  var ti=document.getElementById('tcSchedTime'); if(!ti) return;
+  var h=(document.getElementById('tcSchedHour')||{}).value||'12';
+  var m=(document.getElementById('tcSchedMin')||{}).value||'00';
+  var ap=(document.getElementById('tcSchedAmpm')||{}).value||'AM';
+  ti.value=h+':'+m+' '+ap;
   _tcSchedValidate();
 }
-// Block scheduling in the past: disable Schedule + inline note when the chosen time is <= now.
+// Typed time → best-effort sync of the dials (if it parses), then validate.
+function _tcTimeTyped(){
+  var pt=_tcParseTime((document.getElementById('tcSchedTime')||{}).value||'');
+  if(pt) _tcSyncDialsFrom(pt.h24, pt.min);
+  _tcSchedValidate();
+}
+// ── Calendar popup (month grid, past days disabled) ──
+function _tcCalOpen(){
+  var cal=document.getElementById('tcCal'); if(!cal) return;
+  var pd=_tcParseDate((document.getElementById('tcSchedDate')||{}).value||'');
+  var base=pd? new Date(pd.y,pd.mo-1,1) : new Date();
+  _tcCalState={ y:base.getFullYear(), m:base.getMonth() };
+  _tcCalRender();
+  cal.style.display='block';
+  if(!window.__tcCalOutsideBound){ window.__tcCalOutsideBound=true; document.addEventListener('click', _tcCalOutside, true); }
+}
+function _tcCalToggle(){ var cal=document.getElementById('tcCal'); if(!cal) return; if(cal.style.display==='block'){ cal.style.display='none'; } else { _tcCalOpen(); } }
+function _tcCalClose(){ var cal=document.getElementById('tcCal'); if(cal) cal.style.display='none'; }
+function _tcCalOutside(e){
+  var cal=document.getElementById('tcCal'); if(!cal || cal.style.display!=='block') return;
+  if(e.target.closest && (e.target.closest('#tcCal') || e.target.closest('#tcSchedDate') || e.target.closest('[data-tccal-btn]'))) return;
+  cal.style.display='none';
+}
+function _tcCalNav(delta){ var m=_tcCalState.m+delta, y=_tcCalState.y; if(m<0){m=11;y--;} else if(m>11){m=0;y++;} _tcCalState={y:y,m:m}; _tcCalRender(); }
+function _tcCalPick(y,m,day){
+  var di=document.getElementById('tcSchedDate');
+  if(di){ var p=function(n){return String(n).padStart(2,'0');}; di.value=p(m+1)+'/'+p(day)+'/'+y; }
+  _tcCalClose(); _tcSchedValidate();
+}
+function _tcCalRender(){
+  var host=document.getElementById('tcCal'); if(!host) return;
+  var y=_tcCalState.y, m=_tcCalState.m;
+  var first=new Date(y,m,1), startDow=first.getDay(), daysIn=new Date(y,m+1,0).getDate();
+  var today=new Date(); today.setHours(0,0,0,0);
+  var sel=_tcParseDate((document.getElementById('tcSchedDate')||{}).value||'');
+  var title=first.toLocaleString('en-US',{month:'long',year:'numeric'});
+  var h='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
+    +'<button type="button" onclick="_tcCalNav(-1)" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:6px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;">‹</button>'
+    +'<span style="font-size:12px;font-weight:700;color:#E0DDD4;">'+lpEsc(title)+'</span>'
+    +'<button type="button" onclick="_tcCalNav(1)" style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:6px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;">›</button>'
+  +'</div><div class="tccal-grid">';
+  ['S','M','T','W','T','F','S'].forEach(function(w){ h+='<div class="tccal-dow">'+w+'</div>'; });
+  for(var i=0;i<startDow;i++) h+='<div></div>';
+  for(var day=1;day<=daysIn;day++){
+    var cd=new Date(y,m,day); cd.setHours(0,0,0,0);
+    if(cd.getTime()<today.getTime()){ h+='<div class="tccal-past">'+day+'</div>'; continue; }
+    var cls='tccal-day'+((sel&&sel.y===y&&sel.mo===m+1&&sel.d===day)?' sel':'')+((cd.getTime()===today.getTime())?' today':'');
+    h+='<div class="'+cls+'" onclick="_tcCalPick('+y+','+m+','+day+')">'+day+'</div>';
+  }
+  h+='</div>';
+  host.innerHTML=h;
+}
+// Block scheduling in the past: disable Schedule + inline note when the time is missing/invalid/<= now.
 function _tcSchedValidate(){
-  var inp=document.getElementById('tcSchedAt'), btn=document.getElementById('tcSchedBtn'), note=document.getElementById('tcSchedNote');
-  var v=inp?inp.value:'', ok=false;
-  if(v){ var t=new Date(v).getTime(); ok = !isNaN(t) && t>Date.now(); }
+  var when=_tcComputeSchedDate(), ok = !!when && when.getTime()>Date.now();
+  var btn=document.getElementById('tcSchedBtn'), note=document.getElementById('tcSchedNote');
   if(btn){ btn.disabled=!ok; btn.style.opacity=ok?'1':'0.5'; btn.style.cursor=ok?'pointer':'not-allowed'; }
-  if(note){ note.style.display=ok?'none':'block'; }
+  if(note){ note.textContent = when ? 'Pick a future time' : 'Enter a valid date & time'; note.style.display=ok?'none':'block'; }
   return ok;
 }
 // Show the viewer's timezone next to the field (short name, e.g. "PDT") so send time is unambiguous.
@@ -32992,10 +33126,8 @@ async function _tcSendNow(){
 async function _tcSchedule(){
   var ta=document.getElementById('tcBody'); var msg=((ta&&ta.value)||'').trim();
   if(!msg){ showToast('Type a message to schedule', true); return; }
-  var atVal=((document.getElementById('tcSchedAt')||{}).value)||'';
-  if(!atVal){ showToast('Pick a date & time', true); return; }
-  var when=new Date(atVal);
-  if(isNaN(when.getTime())){ showToast('Invalid date/time', true); return; }
+  var when=_tcComputeSchedDate();
+  if(!when){ showToast('Enter a valid date & time', true); return; }
   if(when.getTime() <= Date.now()){ showToast('Pick a future time', true); return; }
   var btn=document.getElementById('tcSchedBtn');
   if(btn){ btn.disabled=true; btn.textContent='…'; }
