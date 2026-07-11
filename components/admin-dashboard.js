@@ -1313,11 +1313,64 @@ function _snapDate(iso) {
 function _snapChip(txt, alt) {
   return txt ? `<span class="ps-chip${alt ? " alt" : ""}">${crmEsc(txt)}</span>` : "";
 }
-// One card: gold category header + big gold count + optional sub-line, then up to SNAP_CAP
-// clickable name rows (each name + chip[s]), and a "+N more" when the total exceeds what's shown.
+// ── Active Pipeline Snapshot render (presentation only; data via dashboard_snapshot RPC) ──
+// Lane accents — one per cohort, [solid, soft]. Drives each card's --acc / --acc-soft.
+const SNAP_ACCENTS = {
+  escrow: ["#E0A93B", "rgba(224,169,59,0.14)"],   // amber  — Active Pipeline
+  pre:    ["#34D399", "rgba(52,211,153,0.14)"],    // emerald — Pre-Approved
+  fees:   ["#38BDF8", "rgba(56,189,248,0.14)"],    // sky    — Fee Sheets
+  buyers: ["#A78BFA", "rgba(167,139,250,0.14)"],   // violet — Active Buyers
+};
+// Semantic status → [text colour, fill] by keyword.
+function _snapStatusColors(txt) {
+  const t = String(txt || "").toLowerCase();
+  if (/under contract|in escrow|clear to close|to close|\bctc\b/.test(t)) return ["#34D399", "rgba(52,211,153,0.15)"];
+  if (/approv/.test(t))                                                   return ["#4ADE80", "rgba(74,222,128,0.15)"];
+  if (/process|submit|underwrit|in review|conditional/.test(t))          return ["#E0A93B", "rgba(224,169,59,0.15)"];
+  if (/contact|nurtur|follow|working|warm/.test(t))                      return ["#38BDF8", "rgba(56,189,248,0.15)"];
+  if (/new/.test(t))                                                      return ["#A78BFA", "rgba(167,139,250,0.15)"];
+  if (/lost|dead|cold|denied/.test(t))                                    return ["#f87171", "rgba(248,113,113,0.14)"];
+  return ["#C9A84C", "rgba(201,168,76,0.15)"];
+}
+function _snapStatusChip(txt) {
+  if (!txt) return "";
+  const [c, b] = _snapStatusColors(txt);
+  return `<span class="ps-chip status" style="--pc:${c};--pb:${b}">${crmEsc(txt)}</span>`;
+}
+function _snapNeutralChip(txt) { return txt ? `<span class="ps-chip neutral">${crmEsc(txt)}</span>` : ""; }
+// "1 Showing" / "3 Showings" — count + noun with correct singular/plural.
+function _snapCount(n, singular) { const c = Number(n) || 0; return `${c} ${singular}${c === 1 ? "" : "s"}`; }
+// Loan-type chip — outlined + per-type tint, visually distinct from filled status pills.
+function _snapLoanColor(txt) {
+  const t = String(txt || "").toLowerCase();
+  if (t.includes("fha")) return "#5AA0E0";
+  if (/\bva\b|veteran/.test(t)) return "#6FD98F";
+  if (t.includes("usda")) return "#E0A93B";
+  if (t.includes("jumbo")) return "#A78BFA";
+  if (t.includes("conv")) return "#C9A84C";
+  return "#9a9a9a";
+}
+function _snapLoanChip(txt) {
+  return txt ? `<span class="ps-chip loan" style="--lc:${_snapLoanColor(txt)}">${crmEsc(txt)}</span>` : "";
+}
+// Initials avatar (lane-tinted via CSS).
+function _snapAvatar(it) {
+  const nm = String((it && it.name) || "").trim();
+  const p = nm.split(/\s+/).filter(Boolean);
+  let ini = ((p[0] || "")[0] || "") + (p.length > 1 ? ((p[p.length - 1] || "")[0] || "") : "");
+  return `<span class="ps-avatar">${crmEsc((ini || "?").toUpperCase())}</span>`;
+}
+// One row body: avatar + FULL name (wraps, never truncated) + pill chips.
+function _snapRow(it, chips) {
+  return _snapAvatar(it)
+    + `<div class="ps-rowbody"><span class="ps-name">${crmEsc((it && it.name) || "Unknown")}</span>`
+    + `<div class="ps-pills">${chips}</div></div>`;
+}
+// One card: accent header + hero count + spark + optional sub-line, up to SNAP_CAP rows, "+N more".
 const SNAP_CAP = 5;
-function _snapCard(num, label, subline, list, rowFn) {
+function _snapCard(num, label, subline, list, rowFn, accent) {
   list = list || [];
+  const acc = accent || ["#C9A84C", "rgba(201,168,76,0.14)"];
   const shown = list.slice(0, SNAP_CAP);
   const rows = shown.length
     ? shown.map((it) => {
@@ -1330,9 +1383,9 @@ function _snapCard(num, label, subline, list, rowFn) {
     : `<div class="ps-empty">None right now.</div>`;
   const moreN = Math.max(0, (Number(num) || 0) - shown.length);
   const more = moreN > 0 ? `<div class="ps-more">+${moreN} more</div>` : "";
-  return `<div class="ps-card">
-      <div class="ps-cat">${crmEsc(label)}</div>
-      <div class="ps-num">${Number(num) || 0}</div>
+  return `<div class="ps-card" style="--acc:${acc[0]};--acc-soft:${acc[1]}">
+      <div class="ps-head"><span class="ps-cat">${crmEsc(label)}</span><span class="ps-num">${Number(num) || 0}</span></div>
+      <div class="ps-spark"></div>
       ${subline ? `<div class="ps-sub">${subline}</div>` : ""}
       <div class="ps-list">${rows}</div>
       ${more}
@@ -1354,24 +1407,24 @@ async function loadPipelineSnapshot() {
   }
   const escrow = snap.escrow || {}, buyers = snap.active_buyers || {},
         fees = snap.fee_sheets || {}, pre = snap.preapproved || {};
-  const name = (it) => `<span class="ps-name">${crmEsc(it.name || "Unknown")}</span>`;
 
-  // 1) Active Pipeline (in-escrow deals) — stage chip + loan_type chip; sub-line = purchase/refi split
+  // 1) Active Pipeline (in-escrow deals) — status pill + loan chip; sub-line = purchase/refi split
   const escrowSub = `${Number(escrow.purchase) || 0} Purchase · ${Number(escrow.refinance) || 0} Refi · ${Number(escrow.other) || 0} Unspecified`;
   const escrowCard = _snapCard(escrow.total, "Active Pipeline", escrowSub, escrow.list, (it) =>
-    name(it) + _snapChip(it.stage) + _snapChip(it.loan_type, true));
+    _snapRow(it, _snapStatusChip(it.stage) + _snapLoanChip(it.loan_type)), SNAP_ACCENTS.escrow);
 
-  // 2) Pre-Approved — loan_type / purpose chips
+  // 2) Pre-Approved — loan chip + purpose (neutral)
   const preCard = _snapCard(pre.total, "Pre-Approved", "", pre.list, (it) =>
-    name(it) + _snapChip(it.loan_type || it.purpose) + _snapChip(it.loan_type && it.purpose ? it.purpose : "", true));
+    _snapRow(it, _snapLoanChip(it.loan_type) + _snapNeutralChip(it.purpose)), SNAP_ACCENTS.pre);
 
-  // 3) Fee Sheets — stage chip + relative updated_at chip
+  // 3) Fee Sheets — status pill + relative updated_at (neutral)
   const feesCard = _snapCard(fees.total, "Fee Sheets", "", fees.list, (it) =>
-    name(it) + _snapChip(it.stage) + _snapChip(_notesAgo(it.updated_at), true));
+    _snapRow(it, _snapStatusChip(it.stage) + _snapNeutralChip(_notesAgo(it.updated_at))), SNAP_ACCENTS.fees);
 
-  // 4) Active Buyers — showings chip + next-showing date chip
+  // 4) Active Buyers — showings count (accent pill) + next-showing date (neutral)
   const buyersCard = _snapCard(buyers.total, "Active Buyers", "", buyers.list, (it) =>
-    name(it) + _snapChip(`${Number(it.showings) || 0} showings`) + _snapChip(it.next_date ? `Next ${_snapDate(it.next_date)}` : "", true));
+    _snapRow(it, `<span class="ps-chip status" style="--pc:#A78BFA;--pb:rgba(167,139,250,0.15)">${_snapCount(it.showings, "Showing")}</span>`
+      + _snapNeutralChip(it.next_date ? `Next ${_snapDate(it.next_date)}` : "")), SNAP_ACCENTS.buyers);
 
   grid.innerHTML = escrowCard + preCard + feesCard + buyersCard;
 }

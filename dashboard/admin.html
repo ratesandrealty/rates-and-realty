@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- dashboard/admin.html · cache-buster v=20260711b (Worker serves dashboard HTML no-store) -->
+  <!-- dashboard/admin.html · cache-buster v=20260711c (Worker serves dashboard HTML no-store) -->
   <!-- CSP is set by the Cloudflare Worker via withCsp() in src/worker.js.
        Meta CSP removed: when both meta + HTTP header are present, browsers
        apply the intersection per directive, which can mask whichever one
@@ -1482,21 +1482,39 @@
 
         <!-- Active Pipeline Snapshot (admin-only; fed by dashboard_snapshot RPC in admin-dashboard.js) -->
         <style>
-          #pipeline-snapshot-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(244px,1fr)); gap:14px; }
-          #pipeline-snapshot-grid .ps-card { background:#0c0c0e; border:1px solid rgba(201,168,76,0.16); border-radius:12px; padding:16px 16px 12px; display:flex; flex-direction:column; min-width:0; }
-          #pipeline-snapshot-grid .ps-cat { font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.7px; color:#C9A84C; }
-          #pipeline-snapshot-grid .ps-num { font-size:2.15rem; font-weight:800; color:#C9A84C; line-height:1.05; margin-top:2px; }
-          #pipeline-snapshot-grid .ps-sub { font-size:0.68rem; color:var(--muted); margin-top:4px; }
-          #pipeline-snapshot-grid .ps-list { margin-top:10px; display:flex; flex-direction:column; }
-          #pipeline-snapshot-grid .ps-row { display:flex; align-items:center; gap:8px; padding:6px 4px; border-top:1px solid rgba(255,255,255,0.05); text-decoration:none; color:inherit; border-radius:6px; }
+          /* Active Pipeline Snapshot — colour-coded "lanes": one accent per cohort drives the
+             whole card via --acc / --acc-soft. 2-wide on desktop, 1-col on narrow. Names never
+             truncate (they wrap). */
+          #pipeline-snapshot-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+          @media (max-width:720px){ #pipeline-snapshot-grid { grid-template-columns:1fr; } }
+          #pipeline-snapshot-grid .ps-card {
+            --acc:#C9A84C; --acc-soft:rgba(201,168,76,0.14);
+            position:relative; background:linear-gradient(180deg,rgba(255,255,255,0.022),rgba(255,255,255,0)) , #0c0c0e;
+            border:1px solid rgba(255,255,255,0.07); border-left:3px solid var(--acc);
+            border-radius:14px; padding:15px 18px 12px; min-width:0;
+            transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+          }
+          #pipeline-snapshot-grid .ps-card:hover { transform:translateY(-2px); box-shadow:0 12px 30px rgba(0,0,0,0.45); border-color:var(--acc); }
+          #pipeline-snapshot-grid .ps-head { display:flex; align-items:baseline; gap:10px; }
+          #pipeline-snapshot-grid .ps-cat { font-size:0.66rem; font-weight:800; text-transform:uppercase; letter-spacing:.09em; color:var(--acc); }
+          #pipeline-snapshot-grid .ps-num { margin-left:auto; font-size:2.4rem; font-weight:900; color:var(--acc); line-height:1; letter-spacing:-0.02em; }
+          #pipeline-snapshot-grid .ps-spark { height:3px; border-radius:2px; margin:7px 0 3px; background:linear-gradient(90deg,var(--acc),transparent); opacity:.85; }
+          #pipeline-snapshot-grid .ps-sub { font-size:0.66rem; color:var(--muted); letter-spacing:.02em; }
+          #pipeline-snapshot-grid .ps-list { margin-top:9px; display:flex; flex-direction:column; }
+          #pipeline-snapshot-grid .ps-row { display:flex; align-items:center; gap:10px; padding:7px 5px; border-top:1px solid rgba(255,255,255,0.05); text-decoration:none; color:inherit; border-radius:8px; }
           #pipeline-snapshot-grid .ps-row:first-child { border-top:none; }
-          #pipeline-snapshot-grid a.ps-row { transition:background .15s; }
-          #pipeline-snapshot-grid a.ps-row:hover { background:rgba(201,168,76,0.07); }
-          #pipeline-snapshot-grid .ps-name { flex:1; min-width:0; font-size:0.82rem; color:#eee; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-          #pipeline-snapshot-grid .ps-chip { flex-shrink:0; font-size:0.58rem; font-weight:700; text-transform:uppercase; letter-spacing:.3px; padding:2px 7px; border-radius:9px; background:rgba(201,168,76,0.15); color:#C9A84C; white-space:nowrap; max-width:50%; overflow:hidden; text-overflow:ellipsis; }
-          #pipeline-snapshot-grid .ps-chip.alt { background:rgba(255,255,255,0.06); color:#aaa; }
-          #pipeline-snapshot-grid .ps-more { padding:9px 4px 2px; font-size:0.7rem; color:var(--muted); }
-          #pipeline-snapshot-grid a.ps-more { color:#C9A84C; text-decoration:none; }
+          #pipeline-snapshot-grid a.ps-row { transition:background .14s; }
+          #pipeline-snapshot-grid a.ps-row:hover { background:var(--acc-soft); }
+          #pipeline-snapshot-grid .ps-avatar { flex-shrink:0; width:28px; height:28px; border-radius:50%; background:var(--acc-soft); color:var(--acc); border:1px solid rgba(255,255,255,0.08); font-size:0.64rem; font-weight:800; letter-spacing:.02em; display:flex; align-items:center; justify-content:center; }
+          #pipeline-snapshot-grid .ps-rowbody { flex:1; min-width:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+          #pipeline-snapshot-grid .ps-name { margin-right:auto; font-size:0.85rem; color:#ececec; font-weight:600; word-break:break-word; }
+          #pipeline-snapshot-grid .ps-pills { display:flex; gap:6px; flex-shrink:0; flex-wrap:wrap; }
+          #pipeline-snapshot-grid .ps-chip { font-size:0.6rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:999px; white-space:nowrap; line-height:1.5; }
+          #pipeline-snapshot-grid .ps-chip.status { background:var(--pb); color:var(--pc); }
+          #pipeline-snapshot-grid .ps-chip.neutral { background:rgba(255,255,255,0.06); color:#b7b7b7; }
+          #pipeline-snapshot-grid .ps-chip.loan { background:transparent; border:1px solid var(--lc); color:var(--lc); font-weight:800; }
+          #pipeline-snapshot-grid .ps-more { padding:9px 5px 2px; font-size:0.7rem; color:var(--muted); }
+          #pipeline-snapshot-grid a.ps-more { color:var(--acc); text-decoration:none; font-weight:600; }
           #pipeline-snapshot-grid a.ps-more:hover { text-decoration:underline; }
           #pipeline-snapshot-grid .ps-empty { font-size:0.74rem; color:var(--muted); padding:12px 2px; }
         </style>
@@ -2668,7 +2686,7 @@
   <script type="module" src="/components/layout.js?v=20260712"></script>
   <!-- Staff-to-staff chat: floating Chat bubble (beside the AI FAB) + realtime. -->
   <script src="/admin/js/staff-chat.js?v=2026070603"></script>
-  <script type="module" src="/components/admin-dashboard.js?v=20260709c"></script>
+  <script type="module" src="/components/admin-dashboard.js?v=20260711c"></script>
   <script src="/dashboard/utils/insights.js?v=2026050402"></script>
   <script src="/dashboard/utils/calendar.js?v=2026061301"></script>
   <script src="/dashboard/utils/clickup-widget.js?v=2026050401"></script>
