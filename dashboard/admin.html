@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <!-- dashboard/admin.html · cache-buster v=20260710a (Worker serves dashboard HTML no-store) -->
   <!-- CSP is set by the Cloudflare Worker via withCsp() in src/worker.js.
        Meta CSP removed: when both meta + HTTP header are present, browsers
        apply the intersection per directive, which can mask whichever one
@@ -1282,13 +1283,17 @@
           </div>
           <div class="flex-gap">
             <button id="notifBell" type="button" onclick="notifToggle(event)" title="Notifications" style="position:relative;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#e8d5a3;cursor:pointer;font-size:15px;line-height:1;padding:6px 11px;">🔔<span id="notifBadge" style="display:none;position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;line-height:16px;padding:0 3px;border-radius:8px;background:#E5484D;color:#fff;font-size:9px;font-weight:700;text-align:center;box-sizing:border-box;">0</span></button>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="openLayoutArrange()" title="Arrange dashboard sections">▦ Arrange</button>
             <button class="btn btn-secondary btn-sm" id="refresh-btn">↺ Refresh</button>
             <button class="btn btn-primary btn-sm" id="new-lead-btn">+ New Lead</button>
           </div>
         </div>
 
-        <!-- ⚡ DAILY COMMAND CENTER (single RPC: dashboard_command_center) -->
-        <section id="command-center" class="panel" style="margin-bottom:24px;padding:18px 20px;border:1px solid rgba(201,168,76,0.20);background:linear-gradient(180deg,rgba(201,168,76,0.05),rgba(201,168,76,0.01));border-radius:14px;">
+        <div class="dashboard-sections-wrapper">
+
+        <!-- ⚡ DAILY COMMAND CENTER (single RPC: dashboard_command_center) — now a normal, reorderable section -->
+        <div id="command-center" class="panel dashboard-section" data-section-id="command-center" draggable="true" style="margin-bottom:24px;padding:18px 20px;border:1px solid rgba(201,168,76,0.20);background:linear-gradient(180deg,rgba(201,168,76,0.05),rgba(201,168,76,0.01));border-radius:14px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
             <div><p class="kicker" style="margin:0 0 2px;color:#C9A84C;">Daily</p><h3 style="margin:0;font-size:1.15rem;">⚡ Command Center</h3></div>
             <div style="display:flex;align-items:center;gap:10px;">
@@ -1297,9 +1302,7 @@
             </div>
           </div>
           <div id="cc-body"><div style="padding:34px;text-align:center;color:#888;font-size:13px;">Loading command center…</div></div>
-        </section>
-
-        <div class="dashboard-sections-wrapper">
+        </div>
 
         <!-- Market Watch — premium terminal strip (own data via market_watch_strip RPC): mortgage rates + treasury yields -->
         <div class="panel dashboard-section" data-section-id="market-rates" draggable="true" style="margin-bottom:24px;padding:13px 18px;">
@@ -2929,14 +2932,15 @@
   // manual dragging / devtools). Previously there was NO version and NO default array:
   // a saved order silently overrode the authored DOM forever, so relocating sections in
   // admin.html never changed the live layout for anyone who had ever dragged.
-  const LAYOUT_VERSION = 2;
+  const LAYOUT_VERSION = 3;
   const ORDER_KEY = 'dashboardSectionOrder';
   const VERSION_KEY = 'dashboardLayoutVersion';
-  // Default order when nothing valid is saved: lead with Market Watch then the Active
-  // Pipeline Snapshot, directly under the pinned Daily widget (#command-center, not a
-  // draggable section). Ids absent from the DOM are skipped; any section missing from
-  // this list is appended last so it is never stranded ahead of the ordered sections.
-  const DEFAULT_SECTION_ORDER = ['market-rates','pipeline-snapshot','showing-requests','stats','charts','activity','recent-notes','appointments','clickup-today','deals-referrals'];
+  const HIDDEN_KEY = 'dashboardHiddenSections';
+  // Default order when nothing valid is saved: Market Watch first, then the Daily Command
+  // Center (now a normal reorderable section), then the Active Pipeline Snapshot, then the
+  // rest. Ids absent from the DOM are skipped; any section missing from this list is
+  // appended last so it is never stranded ahead of the ordered sections.
+  const DEFAULT_SECTION_ORDER = ['market-rates','command-center','pipeline-snapshot','showing-requests','stats','charts','activity','recent-notes','appointments','clickup-today','deals-referrals'];
 
   function saveSectionOrder() {
     const order = [...document.querySelectorAll('.dashboard-sections-wrapper .dashboard-section')].map(el => el.dataset.sectionId);
@@ -2944,10 +2948,27 @@
     localStorage.setItem(VERSION_KEY, String(LAYOUT_VERSION));
   }
 
-  function applySectionOrder(order, parent) {
+  // Hidden set is only honored when its version matches (same gate as the order).
+  function getSavedHidden() {
+    const savedVer = localStorage.getItem(VERSION_KEY);
+    if (String(savedVer) !== String(LAYOUT_VERSION)) return [];
+    try { const h = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]'); return Array.isArray(h) ? h : []; }
+    catch (e) { return []; }
+  }
+  function saveHidden(hidden) {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify(Array.isArray(hidden) ? hidden : []));
+    localStorage.setItem(VERSION_KEY, String(LAYOUT_VERSION));
+  }
+
+  function applySectionOrder(order, parent, hidden) {
     const listed = new Set(order);
+    const hide = new Set(hidden || []);
     order.forEach(id => { const el = parent.querySelector(`[data-section-id="${id}"]`); if (el) parent.appendChild(el); });
     [...parent.querySelectorAll('.dashboard-section')].forEach(el => { if (!listed.has(el.dataset.sectionId)) parent.appendChild(el); });
+    // Hidden sections → display:none (skipped from the rendered dashboard); others shown.
+    [...parent.querySelectorAll('.dashboard-section')].forEach(el => {
+      el.style.display = hide.has(el.dataset.sectionId) ? 'none' : '';
+    });
   }
 
   function restoreSectionOrder() {
@@ -2962,11 +2983,138 @@
     }
     // Stale (version mismatch), corrupt, or absent → adopt the new default and re-save it.
     if (!Array.isArray(order)) order = DEFAULT_SECTION_ORDER.slice();
-    applySectionOrder(order, parent);
+    applySectionOrder(order, parent, getSavedHidden());
     saveSectionOrder();   // persist effective order + current version → stale data gone after one load
   }
   restoreSectionOrder();
+
+  // API for the Arrange / Layout-Map panel (mini-map reorder + show/hide).
+  window._dashLayout = {
+    LAYOUT_VERSION: LAYOUT_VERSION,
+    defaultOrder: () => DEFAULT_SECTION_ORDER.slice(),
+    parent: () => document.querySelector('.dashboard-sections-wrapper'),
+    currentOrder: () => [...document.querySelectorAll('.dashboard-sections-wrapper .dashboard-section')].map(el => el.dataset.sectionId),
+    getHidden: getSavedHidden,
+    apply: (order, hidden) => { const p = document.querySelector('.dashboard-sections-wrapper'); if (p) applySectionOrder(order, p, hidden); },
+    saveOrder: saveSectionOrder,
+    saveHidden: saveHidden,
+    resetDefault: () => {
+      localStorage.removeItem(ORDER_KEY); localStorage.removeItem(HIDDEN_KEY);
+      localStorage.setItem(VERSION_KEY, String(LAYOUT_VERSION));
+      const p = document.querySelector('.dashboard-sections-wrapper');
+      if (p) applySectionOrder(DEFAULT_SECTION_ORDER.slice(), p, []);
+      saveSectionOrder();
+    }
+  };
 })();
+
+// ── Dashboard Arrange / Layout-Map panel ──────────────────────────────────────
+// A compact modal mini-map: drag rows to reorder sections + eye toggle to show/hide,
+// then Save writes order + hidden set (at the current LAYOUT_VERSION) and re-applies.
+const DASH_SECTION_NAMES = {
+  'command-center':'Command Center', 'market-rates':'Market Watch',
+  'pipeline-snapshot':'Active Pipeline Snapshot', 'showing-requests':'Showing Requests',
+  'stats':'Stats', 'charts':'Charts', 'activity':'Activity', 'recent-notes':'Notes',
+  'appointments':'Appointments', 'clickup-today':'ClickUp Today', 'deals-referrals':'Deals & Referrals'
+};
+function _dashSectionName(id){ return DASH_SECTION_NAMES[id] || id.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase()); }
+
+let _arrangeDragRow = null;
+
+function openLayoutArrange() {
+  const api = window._dashLayout;
+  if (!api) return;
+  _arrangeEnsureModal();
+  // Build rows from the sections actually present in the DOM (current order), marking hidden.
+  const parent = api.parent();
+  const present = parent ? [...parent.querySelectorAll('.dashboard-section')].map(el => el.dataset.sectionId) : api.currentOrder();
+  const hidden = new Set(api.getHidden());
+  const list = document.getElementById('layoutArrangeList');
+  list.innerHTML = present.map(id => _arrangeRowHtml(id, hidden.has(id))).join('');
+  _arrangeWireRows();
+  document.getElementById('layoutArrangeModal').style.display = 'flex';
+}
+
+function _arrangeRowHtml(id, isHidden) {
+  return '<div class="arrange-row" draggable="true" data-arr-id="' + id + '" data-arr-hidden="' + (isHidden ? '1' : '0') + '"'
+    + ' style="display:flex;align-items:center;gap:10px;padding:9px 10px;margin-bottom:6px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:9px;cursor:grab;' + (isHidden ? 'opacity:.5;' : '') + '">'
+    + '<span style="color:rgba(255,255,255,0.3);font-size:15px;">⠿</span>'
+    + '<span class="arrange-name" style="flex:1;font-size:13px;color:#e8e8e8;">' + _dashSectionName(id) + '</span>'
+    + '<button type="button" onclick="_arrangeToggleHide(this)" title="Show / hide" style="background:none;border:none;cursor:pointer;font-size:15px;line-height:1;padding:2px 4px;">' + (isHidden ? '🚫' : '👁') + '</button>'
+    + '</div>';
+}
+
+function _arrangeToggleHide(btn) {
+  const row = btn.closest('.arrange-row');
+  if (!row) return;
+  const nowHidden = row.getAttribute('data-arr-hidden') !== '1';
+  row.setAttribute('data-arr-hidden', nowHidden ? '1' : '0');
+  row.style.opacity = nowHidden ? '.5' : '';
+  btn.textContent = nowHidden ? '🚫' : '👁';
+}
+
+function _arrangeWireRows() {
+  const list = document.getElementById('layoutArrangeList');
+  if (!list) return;
+  [...list.querySelectorAll('.arrange-row')].forEach(row => {
+    row.addEventListener('dragstart', e => { _arrangeDragRow = row; row.style.opacity = '0.3'; e.dataTransfer.effectAllowed = 'move'; });
+    row.addEventListener('dragend', () => { row.style.opacity = row.getAttribute('data-arr-hidden') === '1' ? '.5' : ''; });
+    row.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    row.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (_arrangeDragRow && _arrangeDragRow !== row) {
+        const rows = [...list.querySelectorAll('.arrange-row')];
+        if (rows.indexOf(_arrangeDragRow) < rows.indexOf(row)) row.after(_arrangeDragRow);
+        else row.before(_arrangeDragRow);
+      }
+    });
+  });
+}
+
+function _arrangeEnsureModal() {
+  if (document.getElementById('layoutArrangeModal')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'layoutArrangeModal';
+  wrap.style.cssText = 'display:none;position:fixed;inset:0;z-index:11000;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;padding:20px;';
+  wrap.innerHTML =
+      '<div style="background:#161616;border:1px solid rgba(201,168,76,0.35);border-radius:14px;width:100%;max-width:420px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.6);">'
+    +   '<div style="display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid rgba(255,255,255,0.08);">'
+    +     '<span style="font-size:1rem;">▦</span>'
+    +     '<div style="flex:1;"><div style="font-size:.92rem;font-weight:700;color:#C9A84C;">Arrange dashboard</div>'
+    +       '<div style="font-size:.7rem;color:#888;margin-top:2px;">Drag to reorder · eye toggles show/hide</div></div>'
+    +     '<button onclick="closeLayoutArrange()" style="background:none;border:none;color:#888;font-size:1.3rem;cursor:pointer;line-height:1;">×</button>'
+    +   '</div>'
+    +   '<div id="layoutArrangeList" style="flex:1;overflow-y:auto;padding:12px 14px;"></div>'
+    +   '<div style="padding:12px 18px;border-top:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:10px;">'
+    +     '<button onclick="_arrangeResetDefault()" style="padding:7px 13px;background:none;border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#bbb;font-size:12px;cursor:pointer;">Reset to default</button>'
+    +     '<span style="flex:1;"></span>'
+    +     '<button onclick="closeLayoutArrange()" style="padding:7px 13px;background:none;border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#bbb;font-size:12px;cursor:pointer;">Cancel</button>'
+    +     '<button onclick="_arrangeSave()" style="padding:7px 16px;background:#C9A84C;border:none;border-radius:8px;color:#000;font-size:12px;font-weight:700;cursor:pointer;">Save</button>'
+    +   '</div>'
+    + '</div>';
+  wrap.addEventListener('click', e => { if (e.target === wrap) closeLayoutArrange(); });
+  document.body.appendChild(wrap);
+}
+
+function closeLayoutArrange() { const m = document.getElementById('layoutArrangeModal'); if (m) m.style.display = 'none'; }
+
+function _arrangeSave() {
+  const api = window._dashLayout; if (!api) return;
+  const list = document.getElementById('layoutArrangeList');
+  const rows = [...list.querySelectorAll('.arrange-row')];
+  const order = rows.map(r => r.getAttribute('data-arr-id'));
+  const hidden = rows.filter(r => r.getAttribute('data-arr-hidden') === '1').map(r => r.getAttribute('data-arr-id'));
+  api.apply(order, hidden);
+  api.saveOrder();
+  api.saveHidden(hidden);
+  closeLayoutArrange();
+}
+
+function _arrangeResetDefault() {
+  const api = window._dashLayout; if (!api) return;
+  api.resetDefault();
+  openLayoutArrange();  // rebuild the modal list to reflect the reset
+}
 
 // ── CRM Health Scan (Scans tab) ───────────────────────────
 // Resolves the same authenticated admin client the rest of this page uses
