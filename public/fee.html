@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026070654 -->
+<title>Loan Estimate | Rates &amp; Realty</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
+<meta property="og:title" content="Your Loan Estimate — Rates &amp; Realty">
+<meta property="og:description" content="A personalized mortgage estimate prepared by Rene Duarte.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/assets/images/favicon.png">
+<script src="/api/env.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--gold:#C9A84C;--gold-light:#e8c96d;--dark:#0a0a0a;--panel:#111214;--panel-2:#16171a;--border:#242527;--text:#eee;--muted:#8a8c90;--green:#4ADE80;--radius:16px}
+  html{overflow-x:hidden}
+  body{background:radial-gradient(1200px 600px at 50% -10%,rgba(201,168,76,0.06),transparent 60%),var(--dark);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden;padding-bottom:40px}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:640px;margin:0 auto;padding:0 16px}
+  /* top bar */
+  .topbar{display:flex;align-items:center;justify-content:center;gap:10px;padding:20px 16px 10px}
+  .topbar img{height:34px}
+  .topbar .brand{font-size:1.05rem;font-weight:800;color:var(--gold);letter-spacing:.01em}
+  /* hero */
+  .hero{margin-top:8px;background:linear-gradient(180deg,rgba(201,168,76,0.10),rgba(201,168,76,0.02)),var(--panel);border:1px solid rgba(201,168,76,0.28);border-radius:var(--radius);padding:22px 20px;text-align:center}
+  .eyebrow{font-size:.66rem;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
+  .hero h1{font-size:1.5rem;font-weight:800;margin:6px 0 2px;text-wrap:balance}
+  .hero .addr{font-size:.85rem;color:var(--muted)}
+  .hero .product{display:inline-flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;justify-content:center}
+  .badge{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:4px 10px;border-radius:999px;background:rgba(201,168,76,0.14);color:var(--gold);border:1px solid rgba(201,168,76,0.25)}
+  .badge.rec{background:rgba(74,222,128,0.14);color:var(--green);border-color:rgba(74,222,128,0.3)}
+  .payhero{margin-top:18px;padding-top:16px;border-top:1px dashed rgba(201,168,76,0.25)}
+  .payhero .lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .payhero .amt{font-size:2.6rem;font-weight:900;color:var(--gold);line-height:1.05;letter-spacing:-.02em}
+  .payhero .amt small{font-size:1rem;font-weight:700;color:var(--muted)}
+  .payhero .rate{font-size:.85rem;color:var(--text);margin-top:2px}
+  /* section */
+  .sec{margin-top:16px}
+  .sec-title{font-size:.7rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:0 4px 8px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px}
+  .kv .k{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .kv .v{font-size:.98rem;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+  /* payment breakdown rows */
+  .rows{display:flex;flex-direction:column}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid rgba(255,255,255,0.05);font-size:.9rem}
+  .row:first-child{border-top:none}
+  .row .rl{color:#cfcfcf}
+  .row .rv{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .row.total{border-top:1px solid rgba(201,168,76,0.35);margin-top:2px;padding-top:11px}
+  .row.total .rl{color:var(--gold);font-weight:800}
+  .row.total .rv{color:var(--gold);font-size:1.05rem}
+  .row.sub .rl{font-weight:700;color:#e6e6e6}
+  .row.sub .rv{color:#e6e6e6}
+  .credit{color:var(--green)}
+  /* option cards */
+  .opts{display:flex;flex-direction:column;gap:10px}
+  .opt{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .opt.rec{border-color:rgba(74,222,128,0.4);box-shadow:0 0 0 1px rgba(74,222,128,0.15) inset}
+  .opt-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .opt-name{font-size:.95rem;font-weight:800}
+  .opt-rate{font-size:1.35rem;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums}
+  .opt-meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+  .opt-meta .m{background:rgba(255,255,255,0.03);border-radius:8px;padding:8px 6px;text-align:center}
+  .opt-meta .m .k{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .opt-meta .m .v{font-size:.9rem;font-weight:700;font-variant-numeric:tabular-nums}
+  details{margin-top:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px}
+  summary{cursor:pointer;font-size:.78rem;color:var(--gold);font-weight:700;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:' ▾';color:var(--muted)}
+  details[open] summary::after{content:' ▴'}
+  .disclaimer{font-size:.68rem;color:#6f6f6f;line-height:1.5;margin-top:16px;padding:0 4px;text-wrap:pretty}
+  /* footer / CTA */
+  .prepared{margin-top:20px;background:linear-gradient(180deg,rgba(201,168,76,0.08),transparent),var(--panel);border:1px solid rgba(201,168,76,0.22);border-radius:var(--radius);padding:20px;text-align:center}
+  .prepared .by{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .prepared .nm{font-size:1.1rem;font-weight:800;color:var(--text);margin-top:2px}
+  .prepared .lic{font-size:.68rem;color:var(--muted);margin-top:3px}
+  .cta{display:flex;gap:10px;margin-top:14px;justify-content:center;flex-wrap:wrap}
+  .cta a{display:inline-flex;align-items:center;gap:7px;font-size:.9rem;font-weight:800;padding:11px 20px;border-radius:10px}
+  .cta .call{background:linear-gradient(135deg,#7A5020,var(--gold));color:#1A0E00}
+  .cta .text{background:transparent;border:1px solid rgba(201,168,76,0.4);color:var(--gold)}
+  /* states */
+  .center{min-height:70vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}
+  .spinner{width:34px;height:34px;border:3px solid rgba(201,168,76,0.2);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .muted{color:var(--muted);font-size:.9rem}
+  @media (max-width:420px){ .grid2{grid-template-columns:1fr} .opt-meta{grid-template-columns:1fr 1fr} .payhero .amt{font-size:2.2rem} }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <img src="/assets/images/logo.png" alt="Rates &amp; Realty" onerror="this.onerror=null;this.src='/assets/images/logo.svg'">
+    <span class="brand">Rates &amp; Realty</span>
+  </div>
+  <div class="wrap">
+    <div id="app"><div class="center"><div><div class="spinner"></div><div class="muted">Loading your estimate…</div></div></div></div>
+  </div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   PUBLIC FEE-SHEET SNAPSHOT PAGE — /fee/<slug>
+   Reads the slug from the path, fetches the frozen snapshot via the PUBLIC RPC
+   get_fee_sheet_snapshot (anon), and renders a branded fee sheet. The math
+   below is COPIED VERBATIM from tools/fee-sheet.html so the numbers match the
+   staff tool to the dollar. Snapshot only — never editable, never other data.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+// ── formatting (verbatim: tools/fee-sheet.html) ──
+const fmt = (n, decimals=2) => {
+    if (n == null || isNaN(n)) return '$0.00';
+    const abs = Math.abs(n);
+    const str = abs.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+    return n < 0 ? '<span class="credit">($'+str+')</span>' : '$'+str;
+};
+const parseCurrency = s => {
+    if (!s) return 0;
+    return parseFloat(String(s).replace(/[^0-9.\-]/g, '')) || 0;
+};
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// ── rate-mode compute (verbatim: tools/fee-sheet.html) ──
+function calcAppraisal(propertyType){ if(propertyType==='Condo')return 695; if(propertyType==='2-4 Unit')return 895; return 595; }
+function calcRecordingFee(state){ const map={CA:125,TX:100,FL:150,NY:250}; return map[state]||125; }
+function calcTitleLender(purchasePrice){ if(purchasePrice<=500000)return 450; if(purchasePrice<=1000000)return Math.round(450+(purchasePrice-500000)/1000*1.75); return Math.round(1325+(purchasePrice-1000000)/1000*1.50); }
+function calcEscrow(purchasePrice){ return Math.max(purchasePrice/1000*2,500); }
+function calcPI(loanAmount, annualRate, termYears){ if(loanAmount<=0||annualRate<=0)return 0; const r=annualRate/100/12, n=termYears*12; return loanAmount*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1); }
+function getLoanTermYears(product){ return String(product||'').includes('15yr')?15:30; }
+function calcMI(inp, rate){
+    const product=inp.loanProduct, ltv=inp.ltv, totalLoanAmount=inp.totalLoanAmount||inp.loanAmount;
+    if(product.startsWith('FHA')) return totalLoanAmount*0.0055/12;
+    if(product.startsWith('VA')) return 0;
+    if(product.startsWith('USDA')) return totalLoanAmount*0.0035/12;
+    if(ltv<=80) return 0;
+    return inp.loanAmount*0.003/12;
+}
+function computeGovUpfrontFee(loanProduct, baseLoanAmount, downPaymentPct, vaConfig){
+    if(!loanProduct||!baseLoanAmount) return null;
+    const product=loanProduct.toUpperCase();
+    const startsWithWord=(w)=>product===w||product.startsWith(w+' ');
+    vaConfig=vaConfig||{};
+    if(startsWithWord('FHA')){ const rate=0.0175; return {label:'FHA Upfront MIP (UFMIP, 1.75%)',rate,amount:+(baseLoanAmount*rate).toFixed(2),financed:true}; }
+    if(startsWithWord('VA')){
+        if(vaConfig.exempt) return null;
+        const dp=downPaymentPct||0; let rate;
+        if(vaConfig.firstUse!==false){ if(dp<5)rate=0.0215; else if(dp<10)rate=0.0150; else rate=0.0125; }
+        else { if(dp<5)rate=0.0330; else if(dp<10)rate=0.0150; else rate=0.0125; }
+        const useLabel=vaConfig.firstUse!==false?'1st use':'subsequent';
+        return {label:'VA Funding Fee ('+useLabel+', '+(rate*100).toFixed(2)+'%)',rate,amount:+(baseLoanAmount*rate).toFixed(2),financed:true};
+    }
+    if(startsWithWord('USDA')){ const rate=0.01; return {label:'USDA Upfront Guarantee Fee (1.00%)',rate,amount:+(baseLoanAmount*rate).toFixed(2),financed:true}; }
+    return null;
+}
+function calcScenario(inp, sc){
+    const la=inp.loanAmount, totalLa=inp.totalLoanAmount||la, pp=inp.purchasePrice;
+    const govFeeAmount=(inp.govFee&&inp.govFee.financed)?inp.govFee.amount:0;
+    const origFee=la*sc.origComp/100, discountPoints=la*sc.points/100, uwFee=1350, adminFee=185;
+    const subtotalA=origFee+discountPoints+uwFee+adminFee;
+    const appraisal=calcAppraisal(inp.propertyType), creditReport=65, floodCert=12, taxService=85, mersReg=24.95, processingFee=995;
+    const subtotalB=appraisal+creditReport+floodCert+taxService+mersReg+processingFee+govFeeAmount;
+    const titleLender=calcTitleLender(pp), escrow=calcEscrow(pp), recording=calcRecordingFee(inp.state), notary=175, loanTieIn=150, messengerFee=125, subEscrowFee=50;
+    const subtotalC=titleLender+escrow+recording+notary+loanTieIn+messengerFee+subEscrowFee;
+    const totalLoanCosts=subtotalA+subtotalB+subtotalC;
+    const dailyInterest=la*(sc.rate/100)/365, prepaidInterest=dailyInterest*3, prepaidInsurance=inp.annualInsurance;
+    const subtotalE=prepaidInterest+prepaidInsurance;
+    const taxReserve=inp.annualTax/12*3, insReserve=inp.annualInsurance/12*2, subtotalF=taxReserve+insReserve;
+    const totalOther=subtotalE+subtotalF, totalClosing=totalLoanCosts+totalOther;
+    const lenderCreditLine=sc.lenderCredits;
+    const cashToClose=inp.downPayment+totalClosing-lenderCreditLine-govFeeAmount;
+    const termYears=getLoanTermYears(inp.loanProduct);
+    const pi=calcPI(totalLa,sc.rate,termYears), monthlyTax=inp.annualTax/12, monthlyIns=inp.annualInsurance/12, mi=calcMI(inp,sc.rate);
+    const totalMonthly=pi+monthlyTax+monthlyIns+mi;
+    return { origFee,discountPoints,uwFee,adminFee,subtotalA,govFeeAmount,appraisal,creditReport,floodCert,taxService,mersReg,processingFee,subtotalB,
+        titleLender,escrow,recording,notary,loanTieIn,messengerFee,subEscrowFee,subtotalC,totalLoanCosts,
+        prepaidInterest,prepaidInsurance,subtotalE,taxReserve,insReserve,subtotalF,totalOther,totalClosing,lenderCreditLine,cashToClose,
+        pi,monthlyTax,monthlyIns,mi,totalMonthly };
+}
+// Adapter: build the compute `inp` from the frozen common block (mirrors readSidebarInputs).
+function inpFromCommon(c){
+    c=c||{};
+    const purchasePrice=parseCurrency(c.purchasePrice);
+    const downPct=parseFloat(c.downPct)||0;
+    const downPayment=purchasePrice*downPct/100;
+    const loanAmount=Math.max(0,purchasePrice-downPayment);
+    const loanProduct=c.loanProduct||'';
+    const vaConfig={ firstUse:true, exempt:false };   // not captured in the draft → tool defaults
+    const govFee=computeGovUpfrontFee(loanProduct, loanAmount, downPct, vaConfig);
+    const totalLoanAmount=(govFee&&govFee.financed)?+(loanAmount+govFee.amount).toFixed(2):loanAmount;
+    const ltv=purchasePrice>0?(loanAmount/purchasePrice*100):0;
+    let annualTax;
+    if((c.taxMode||'pct')==='pct'){ const pct=parseFloat(c.taxPct)||1.25; annualTax=purchasePrice*pct/100; }
+    else { const at=parseCurrency(c.annualTax); annualTax=at>0?at:purchasePrice*0.0125; }
+    const ins=parseCurrency(c.annualInsurance); const annualInsurance=ins>0?ins:1800;
+    return { borrowerName:c.borrowerName||'Borrower', propertyAddress:c.propertyAddress||'', purchasePrice, downPct, downPayment,
+        loanAmount, totalLoanAmount, govFee, vaConfig, ltv, loanProduct, lockPeriod:c.lockPeriod||'', propertyType:c.propertyType||'',
+        creditScore:c.creditScore||'', state:c.state||'CA', county:c.county||'', annualTax, annualInsurance };
+}
+
+// ── heloc compute (verbatim: tools/fee-sheet.html) ──
+function _helocMoney(n){ if(n==null||isNaN(n))return '$0'; return '$'+Math.round(n).toLocaleString('en-US'); }
+function helocCompute(card, drawAmount, origPct, autopay){
+    const rate=parseFloat(card.rate)||0, term=parseInt(card.term,10)||0;
+    const origFee=drawAmount*(origPct/100), totalLoan=drawAmount+origFee;
+    const effRate=autopay?Math.max(0,rate-0.25):rate;
+    const r=effRate/100/12, n=term*12; let monthly;
+    if(n<=0)monthly=0; else if(r<=0)monthly=totalLoan/n; else monthly=totalLoan*r*Math.pow(1+r,n)/(Math.pow(1+r,n)-1);
+    return { origFee, totalLoan, monthly, effRate, rate, term };
+}
+function _helocRate(r){ let s=(parseFloat(r)||0).toFixed(3); s=s.replace(/\.?0+$/,''); return s; }
+
+// ── shared UI bits ──
+const PHONE='+17144728508', PHONE_DISP='(714) 472-8508';
+function preparedBlock(){
+    return '<div class="prepared">'
+      +'<div class="by">Prepared by</div>'
+      +'<div class="nm">Rene Duarte, Rates &amp; Realty</div>'
+      +'<div class="lic">NMLS #1416824 &middot; CA DRE #01986350</div>'
+      +'<div class="cta">'
+        +'<a class="call" href="tel:'+PHONE+'">📞 Call Rene</a>'
+        +'<a class="text" href="sms:'+PHONE+'">💬 Text Rene</a>'
+      +'</div></div>';
+}
+function disclaimer(created){
+    const when = created ? new Date(created).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
+    return '<div class="disclaimer">Estimate only — this is not a Loan Estimate, pre-approval, or commitment to lend. '
+      +'Figures are based on the information provided and are subject to change with credit approval, property details, '
+      +'final underwriting, and market rates.'+(when?' Prepared '+esc(when)+'.':'')+'</div>';
+}
+function row(label, value, cls){ return '<div class="row '+(cls||'')+'"><span class="rl">'+label+'</span><span class="rv">'+value+'</span></div>'; }
+function kv(k,v){ return '<div class="kv"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+
+// ── RATE / SINGLE render ──
+function renderRate(snap){
+    const data=snap.data||{}, c=data.common||{}, mode=data.mode||'rate';
+    const inp=inpFromCommon(c);
+    let scenarios=Array.isArray(data.scenarios)?data.scenarios.slice():[];
+    if(mode==='single') scenarios=scenarios.slice(0,1);
+    if(!scenarios.length) scenarios=[{id:'A',label:'Estimate',rate:0,points:0,origComp:0,lenderCredits:0,recommended:true}];
+    let recIdx=scenarios.findIndex(s=>s.recommended); if(recIdx<0)recIdx=0;
+    const rec=scenarios[recIdx], recR=calcScenario(inp,rec);
+    const name=snap.borrower_name||inp.borrowerName||'Borrower';
+    const termYears=getLoanTermYears(inp.loanProduct);
+
+    let h='<div class="hero">'
+      +'<div class="eyebrow">Loan Estimate</div>'
+      +'<h1>'+esc(name)+'</h1>'
+      +(inp.propertyAddress?'<div class="addr">'+esc(inp.propertyAddress)+'</div>':'')
+      +'<div class="product">'
+        +(inp.loanProduct?'<span class="badge">'+esc(inp.loanProduct)+'</span>':'')
+        +(inp.lockPeriod?'<span class="badge">🔒 '+esc(inp.lockPeriod)+'</span>':'')
+      +'</div>'
+      +'<div class="payhero"><div class="lbl">Estimated Monthly Payment</div>'
+        +'<div class="amt">'+fmt(recR.totalMonthly,0)+'<small>/mo</small></div>'
+        +'<div class="rate">'+esc(_helocRate(rec.rate))+'% rate'+(rec.label?' · '+esc(rec.label):'')+' · '+termYears+'-yr</div>'
+      +'</div></div>';
+
+    // Loan summary
+    h+='<div class="sec"><div class="sec-title">Loan Summary</div><div class="card"><div class="grid2">'
+      + kv('Purchase Price', fmt(inp.purchasePrice,0))
+      + kv('Down Payment', fmt(inp.downPayment,0)+' · '+(inp.downPct||0)+'%')
+      + kv('Loan Amount', fmt(inp.loanAmount,0))
+      + kv('Rate', esc(_helocRate(rec.rate))+'%')
+      + kv('Term', termYears+' years')
+      + kv('Credit Score', esc(inp.creditScore||'—'))
+      + (inp.propertyType?kv('Property Type', esc(inp.propertyType)):'')
+      + (inp.lockPeriod?kv('Rate Lock', esc(inp.lockPeriod)):'')
+      +'</div></div></div>';
+
+    // Monthly breakdown (recommended)
+    h+='<div class="sec"><div class="sec-title">Estimated Monthly Payment</div><div class="card"><div class="rows">'
+      + row('Principal &amp; Interest', fmt(recR.pi))
+      + row('Property Taxes', fmt(recR.monthlyTax))
+      + row("Homeowner's Insurance", fmt(recR.monthlyIns))
+      + (recR.mi>0?row('Mortgage Insurance', fmt(recR.mi)):'')
+      + row('Total Monthly Payment', fmt(recR.totalMonthly), 'total')
+      +'</div></div></div>';
+
+    // Rate options (rate mode with >1 scenario)
+    if(scenarios.length>1){
+        h+='<div class="sec"><div class="sec-title">Rate Options</div><div class="opts">';
+        scenarios.forEach((s,i)=>{
+            const r=calcScenario(inp,s);
+            const pts = s.points>0 ? (s.points+' pts') : (s.points<0 ? 'credit' : 'no points');
+            h+='<div class="opt'+(i===recIdx?' rec':'')+'">'
+              +'<div class="opt-head"><span class="opt-name">'+esc(s.label||('Option '+(s.id||''))) +(i===recIdx?' <span class="badge rec">Recommended</span>':'')+'</span><span class="opt-rate">'+esc(_helocRate(s.rate))+'%</span></div>'
+              +'<div class="opt-meta">'
+                +'<div class="m"><div class="k">Monthly</div><div class="v">'+fmt(r.totalMonthly,0)+'</div></div>'
+                +'<div class="m"><div class="k">Points</div><div class="v">'+esc(pts)+'</div></div>'
+                +'<div class="m"><div class="k">Cash to Close</div><div class="v">'+fmt(r.cashToClose,0)+'</div></div>'
+              +'</div></div>';
+        });
+        h+='</div></div>';
+    }
+
+    // Closing costs (recommended) — summary + itemized detail
+    h+='<div class="sec"><div class="sec-title">Estimated Closing Costs</div><div class="card"><div class="rows">'
+      + row('Total Loan Costs', fmt(recR.totalLoanCosts))
+      + row('Total Other Costs', fmt(recR.totalOther))
+      + row('Total Closing Costs', fmt(recR.totalClosing), 'sub')
+      + (rec.lenderCredits?row('Lender Credits', fmt(-recR.lenderCreditLine)):'')
+      + row('Down Payment', fmt(inp.downPayment))
+      + row('Estimated Cash to Close', fmt(recR.cashToClose), 'total')
+      +'</div>'
+      +'<details><summary>See itemized closing costs</summary><div class="rows" style="margin-top:8px">'
+        + row('Origination &amp; Discount', fmt(recR.origFee+recR.discountPoints))
+        + row('Underwriting Fee', fmt(recR.uwFee))
+        + row('Admin Fee', fmt(recR.adminFee))
+        + (recR.govFeeAmount?row((inp.govFee&&inp.govFee.label)||'Gov Upfront Fee', fmt(recR.govFeeAmount)):'')
+        + row('Appraisal', fmt(recR.appraisal))
+        + row('Credit / Flood / Tax Service', fmt(recR.creditReport+recR.floodCert+recR.taxService))
+        + row('MERS &amp; Processing', fmt(recR.mersReg+recR.processingFee))
+        + row("Title — Lender's Policy", fmt(recR.titleLender))
+        + row('Escrow / Settlement', fmt(recR.escrow))
+        + row('Recording &amp; Other Title', fmt(recR.recording+recR.notary+recR.loanTieIn+recR.messengerFee+recR.subEscrowFee))
+        + row('Prepaid Interest &amp; Insurance', fmt(recR.subtotalE))
+        + row('Tax &amp; Insurance Reserves', fmt(recR.subtotalF))
+      +'</div></details>'
+      +'</div></div>';
+
+    h+=disclaimer(snap.created_at)+preparedBlock();
+    document.getElementById('app').innerHTML=h;
+}
+
+// ── HELOC render ──
+function renderHeloc(snap){
+    const data=snap.data||{}, hd=data.heloc||{};
+    const name=snap.borrower_name||(data.common&&data.common.borrowerName)||'Borrower';
+    const draw=parseCurrency(hd.draw), value=parseCurrency(hd.value), balance=parseCurrency(hd.balance);
+    const cltv=parseFloat(hd.cltv)||0, autopay=!!hd.autopay;
+    const origOptions=Array.isArray(hd.origOptions)?hd.origOptions:[2.99];
+    const origSel=(typeof hd.origSelected==='number'&&hd.origSelected>=0&&hd.origSelected<origOptions.length)?hd.origSelected:0;
+    const origPct=parseFloat(origOptions[origSel])||0;
+    let cards=Array.isArray(hd.cards)?hd.cards.slice():[];
+    if(!cards.length) cards=[{type:'fixed',term:30,rate:0,selected:true}];
+    let selIdx=cards.findIndex(c=>c.selected); if(selIdx<0)selIdx=0;
+    const selCard=cards[selIdx], selR=helocCompute(selCard, draw, origPct, autopay);
+
+    let h='<div class="hero">'
+      +'<div class="eyebrow">HELOC Estimate</div>'
+      +'<h1>'+esc(name)+'</h1>'
+      +'<div class="product"><span class="badge">Home Equity Line</span>'+(autopay?'<span class="badge">AutoPay −0.25%</span>':'')+'</div>'
+      +'<div class="payhero"><div class="lbl">Estimated Monthly Payment</div>'
+        +'<div class="amt">'+_helocMoney(selR.monthly)+'<small>/mo</small></div>'
+        +'<div class="rate">'+esc(_helocRate(selR.effRate))+'% · '+selR.term+'yr '+esc(selCard.type||'fixed')+(autopay&&selR.rate!==selR.effRate?' (AutoPay)':'')+'</div>'
+      +'</div></div>';
+
+    // Rate options
+    h+='<div class="sec"><div class="sec-title">Rate Options</div><div class="opts">';
+    cards.forEach((card,i)=>{
+        const r=helocCompute(card, draw, origPct, autopay);
+        h+='<div class="opt'+(i===selIdx?' rec':'')+'">'
+          +'<div class="opt-head"><span class="opt-name">'+esc(r.term)+'yr '+esc(card.type||'fixed')+(i===selIdx?' <span class="badge rec">Selected</span>':'')+'</span><span class="opt-rate">'+esc(_helocRate(r.effRate))+'%</span></div>'
+          +'<div class="opt-meta">'
+            +'<div class="m"><div class="k">Monthly</div><div class="v">'+_helocMoney(r.monthly)+'</div></div>'
+            +'<div class="m"><div class="k">Term</div><div class="v">'+esc(r.term)+' yrs</div></div>'
+            +'<div class="m"><div class="k">Type</div><div class="v">'+esc(card.type||'fixed')+'</div></div>'
+          +'</div></div>';
+    });
+    h+='</div></div>';
+
+    // Loan breakdown
+    h+='<div class="sec"><div class="sec-title">Loan Breakdown</div><div class="card"><div class="rows">'
+      + row('Initial Draw Amount', _helocMoney(draw))
+      + row('Origination Fee ('+esc(_helocRate(origPct))+'%)', _helocMoney(selR.origFee))
+      + row('Total Loan Amount', _helocMoney(selR.totalLoan), 'sub')
+      + row('Term', selR.term+' yrs / '+(selR.term*12)+' mo.')
+      + (value>0?row('Home Value', _helocMoney(value)):'')
+      + (cltv?row('CLTV', esc(_helocRate(cltv))+'%'):'')
+      + (balance>0?row('Existing Balance', _helocMoney(balance)):'')
+      + row('Cash Required at Closing', '$0')
+      + row('Estimated Monthly Payment', _helocMoney(selR.monthly), 'total')
+      + (autopay?row('AutoPay Discount', '−0.25% APR (effective '+esc(_helocRate(selR.effRate))+'%)'):'')
+      +'</div></div></div>';
+
+    // Origination options
+    if(origOptions.length>1){
+        h+='<div class="sec"><div class="sec-title">Origination Options</div><div class="card"><div class="rows">';
+        origOptions.forEach((o,i)=>{ const pct=parseFloat(o)||0; h+=row(esc(_helocRate(pct))+'% origination'+(i===origSel?' <span class="badge rec" style="margin-left:6px">Selected</span>':''), _helocMoney(draw*pct/100)); });
+        h+='</div></div></div>';
+    }
+
+    h+=disclaimer(snap.created_at)+preparedBlock();
+    document.getElementById('app').innerHTML=h;
+}
+
+function renderNotFound(){
+    document.getElementById('app').innerHTML='<div class="center"><div>'
+      +'<div style="font-size:2rem;margin-bottom:8px">🔗</div>'
+      +'<h1 style="font-size:1.3rem;color:var(--gold);margin-bottom:8px">Link expired or not found</h1>'
+      +'<p class="muted" style="max-width:340px;margin:0 auto 18px">This fee-sheet link is no longer available. Reach out to Rene for an updated estimate.</p>'
+      +'<div class="cta" style="justify-content:center"><a class="call" href="tel:'+PHONE+'">📞 Call Rene</a><a class="text" href="sms:'+PHONE+'">💬 Text Rene</a></div>'
+      +'</div></div>';
+}
+function renderError(msg){
+    document.getElementById('app').innerHTML='<div class="center"><div>'
+      +'<div style="font-size:2rem;margin-bottom:8px">⚠️</div>'
+      +'<h1 style="font-size:1.2rem;color:var(--gold);margin-bottom:8px">Couldn\'t load this estimate</h1>'
+      +'<p class="muted" style="max-width:340px;margin:0 auto">'+esc(msg||'Please try again in a moment.')+'</p>'
+      +'</div></div>';
+}
+
+// ── init ──
+(async function(){
+    try{
+        const m = location.pathname.match(/\/fee\/([A-Za-z0-9]+)/);
+        const slug = m ? m[1] : '';
+        if(!slug){ renderNotFound(); return; }
+        const cfg = window.APP_CONFIG || {};
+        if(typeof window.supabase==='undefined' || !cfg.SUPABASE_URL){ renderError('Configuration unavailable.'); return; }
+        const client = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+        const { data, error } = await client.rpc('get_fee_sheet_snapshot', { p_slug: slug });
+        if(error){ console.warn('[fee]', error.message); renderError('This estimate is temporarily unavailable.'); return; }
+        if(!data){ renderNotFound(); return; }
+        const mode = (data.data && data.data.mode) || 'rate';
+        document.title = (data.borrower_name?data.borrower_name+' — ':'')+'Loan Estimate | Rates & Realty';
+        if(mode==='heloc') renderHeloc(data); else renderRate(data);
+    }catch(e){ console.error('[fee] init', e); renderError(e && e.message); }
+})();
+</script>
+</body>
+</html>

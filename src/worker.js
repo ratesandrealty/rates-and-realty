@@ -266,6 +266,15 @@ export default {
       }
     }
 
+    // Public fee-sheet snapshot page: /fee/<slug> → serve the branded page (reads the slug
+    // client-side, fetches the frozen snapshot via get_fee_sheet_snapshot with anon). Mirrors
+    // the /areas clean-URL rewrite; the slug is validated, then the static shell is served.
+    if (/^\/fee\/[A-Za-z0-9]+$/.test(path)) {
+      const newUrl = new URL(request.url);
+      newUrl.pathname = '/public/fee.html';
+      return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
+    }
+
     // Clean-URL routing for county area pages (/areas/slug → /areas/slug.html)
     if (/^\/areas\/[a-z0-9-]+$/.test(path)) {
       const newUrl = new URL(request.url);

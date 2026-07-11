@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070653 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070654 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -32785,6 +32785,7 @@ function _tcEnsureModal(){
       +'<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">'
         +'<div id="tcMediaZone" onclick="_tcMediaPick()" ondragover="event.preventDefault();this.style.borderColor=\'#C9A84C\';" ondragleave="this.style.borderColor=\'rgba(201,168,76,0.25)\';" ondrop="_tcMediaDrop(event)" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:5px;border:1px dashed rgba(201,168,76,0.25);border-radius:8px;padding:8px;font-size:11px;color:#888;cursor:pointer;text-align:center;">📎 Drop image or <span style="color:#C9A84C;">click to attach</span></div>'
         +'<button type="button" onclick="_tcStartVideo()" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:8px;padding:8px 10px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap;">📹 Record</button>'
+        +'<button type="button" id="tcFeeBtn" onclick="_tcFeeSheetLink()" title="Create a hosted fee-sheet link and add it to the message" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:8px;padding:8px 10px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap;">📄 Fee sheet link</button>'
         +'<span id="tcCount" style="font-size:10px;color:#555;white-space:nowrap;flex-shrink:0;">0/160</span>'
         +'<input type="file" id="tcMediaFile" accept="image/*" onchange="_tcMediaFileChosen(this)" style="display:none;">'
       +'</div>'
@@ -33167,6 +33168,26 @@ async function _tcCancelScheduled(id){
     _tcLoadThread();
   }catch(e){ showToast('Cancel failed: '+((e&&e.message)||e), true); }
 }
+// ── SMS a fee sheet: freeze a snapshot → hosted short link → append to the message ──
+async function _tcFeeSheetLink(){
+  var cid=(_tcState&&_tcState.cid) || (typeof lpCid==='function'?lpCid():null) || new URLSearchParams(location.search).get('contact_id');
+  if(!cid){ showToast('No contact', true); return; }
+  var btn=document.getElementById('tcFeeBtn'); if(btn){ btn.disabled=true; btn.style.opacity='0.6'; }
+  try{
+    var r=await _authClient().rpc('create_fee_sheet_snapshot', { p_contact_id: cid });
+    if(r.error) throw r.error;
+    var res=r.data||{};
+    if(!res.url) throw new Error('No link returned');
+    var ta=document.getElementById('tcBody');
+    if(ta){ var cur=(ta.value||'').replace(/\s+$/,''); ta.value=(cur?cur+'\n':'')+res.url; _tcCharCount(); ta.focus(); }
+    showToast('Fee sheet link added' + (res.slug ? ' · '+res.slug : ''));
+  }catch(e){
+    // e.g. "no fee sheet draft for this contact — build/save one first"
+    showToast((e&&e.message)||String(e), true);
+  }
+  if(btn){ btn.disabled=false; btn.style.opacity='1'; }
+}
+
 // ── Media / video / blast helpers for the Text composer ──────────────────────
 function _tcMedia(){ return _tcState.mediaUrl || (((document.getElementById('tcMediaUrl')||{}).value)||'').trim() || null; }
 function _tcSafeName(n){ return (String(n||'file').replace(/[^a-zA-Z0-9._-]+/g,'_') || 'file').slice(-80); }
