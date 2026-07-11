@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026070649 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026070650 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -16928,14 +16928,34 @@ function renderCondAttachments(c) {
 }
 
 async function condViewAttachment(gdriveFileId, fileName, fileUrl) {
-  if (typeof openDocViewerForFile === 'function' && gdriveFileId) {
-    // Reuse the Drive viewer — it streams bytes via gdrive-proxy (server-authed, no Google popup).
-    openDocViewerForFile({ id: gdriveFileId, name: fileName || 'Document', mimeType: '', webViewLink: fileUrl || '' }, []);
-  } else if (fileUrl && typeof openPdfViewer === 'function') {
-    openPdfViewer(fileUrl, fileName || 'Document');
-  } else if (fileUrl) {
-    window.open(fileUrl, '_blank', 'noopener');
+  // No Drive file id (uploaded_document_id-only attach) → open the stored URL in a new tab.
+  if (!gdriveFileId || typeof openDocViewerForFile !== 'function') {
+    if (fileUrl) { window.open(fileUrl, '_blank', 'noopener'); }
+    else { (window.showToast || window.toast || function(){})('No viewable file for this attachment.', true); }
+    return;
   }
+  // The #doc-viewer-modal markup lives inside the Documents tab panel; opened from the
+  // Conditions tab that panel is display:none, which also hides its position:fixed child.
+  // Reparent the modal to <body> (idempotent) so it renders above whichever tab is active.
+  try {
+    var _m = document.getElementById('doc-viewer-modal');
+    if (_m && _m.parentElement !== document.body) document.body.appendChild(_m);
+  } catch (_) {}
+  // Map the attachment to the EXACT shape openDocViewerForFile expects:
+  //   id = Drive file id (att.gdrive_file_id, NOT the condition_attachments row id),
+  //   name, mimeType (inferred from the file name), webViewLink.
+  var nm  = String(fileName || 'Document');
+  var low = nm.toLowerCase();
+  var mime = /\.pdf$/.test(low)      ? 'application/pdf'
+           : /\.png$/.test(low)      ? 'image/png'
+           : /\.(jpe?g)$/.test(low)  ? 'image/jpeg'
+           : /\.gif$/.test(low)      ? 'image/gif'
+           : /\.webp$/.test(low)     ? 'image/webp'
+           : /\.bmp$/.test(low)      ? 'image/bmp'
+           : /\.tiff?$/.test(low)    ? 'image/tiff'
+           : 'application/pdf';  // sensible default for condition docs
+  // Streams bytes via gdrive-proxy (server-authed, no Google popup).
+  openDocViewerForFile({ id: gdriveFileId, name: nm, mimeType: mime, webViewLink: fileUrl || '' }, []);
 }
 
 async function condDetach(attachmentId) {
