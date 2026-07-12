@@ -1,10 +1,9 @@
-// sms-draft-assist v2 — AI helper that drafts an SMS for the composer.
-// Input: { contact_id, instruction? }  (instruction optional: 'follow up on the e-sign',
-//         'ask if they got pre-approved', etc. If omitted -> a smart context-aware follow-up.)
+// sms-draft-assist v3 — AI helper that drafts an SMS for the composer.
+// Input: { contact_id, instruction? }  (instruction optional. May request a language,
+//         e.g. 'follow up in Spanish' -> the drafts MUST be in that language.)
 // Pulls contact context + recent SMS thread, asks Claude for 2-3 short draft options.
-// Returns { ok, drafts:[...], contact_name }. Does NOT send anything. verify_jwt=false, CORS-safe.
-// v2: removed non-existent 'pipeline_stage' column (was erroring the whole select -> null
-//     context + name falling back to 'there'). Now selects only real columns.
+// Returns { ok, drafts:[...], contact_name }. Does NOT send. verify_jwt=false, CORS-safe.
+// v3: honor language requested in the instruction (Spanish etc.).
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -29,15 +28,15 @@ Deno.serve(async (req: Request) => {
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    // contact context (only columns that exist on contacts)
     const { data: c, error: cErr } = await sb.from('contacts')
       .select('first_name,last_name,loan_type,loan_purpose,temperature,lead_source,tags,notes')
       .eq('id', contactId).maybeSingle();
     if (cErr) console.error('contact select error:', cErr.message);
     const name = (c ? `${c.first_name||''} ${c.last_name||''}`.trim() : '') || 'there';
     const firstName = (c?.first_name || '').trim();
+    const tagsArr = Array.isArray(c?.tags) ? c.tags.map((t:any)=>String(t).toLowerCase()) : [];
+    const spanishHint = tagsArr.includes('spanish speaker') || tagsArr.includes('spanish');
 
-    // recent conversation (last ~10 messages)
     let thread: any[] = [];
     try {
       const { data: t } = await sb.rpc('sms_thread', { p_contact_id: contactId });
@@ -56,17 +55,18 @@ Deno.serve(async (req: Request) => {
       c?.loan_type ? `Loan type: ${c.loan_type}` : '',
       c?.temperature ? `Lead temperature: ${c.temperature}` : '',
       c?.lead_source ? `Lead source: ${c.lead_source}` : '',
-      Array.isArray(c?.tags) && c.tags.length ? `Tags: ${c.tags.join(', ')}` : '',
+      tagsArr.length ? `Tags: ${tagsArr.join(', ')}` : '',
       c?.notes ? `Notes: ${String(c.notes).slice(0,300)}` : '',
     ].filter(Boolean).join('\n');
 
-    const sys = `You are Rene Duarte, a warm, professional mortgage loan officer at Rates & Realty. You are drafting a SMS text message to a lead. Rules:
+    const sys = `You are Rene Duarte, a warm, professional mortgage loan officer at Rates & Realty, drafting an SMS text to a lead. Rules:
+- LANGUAGE: If the draft request specifies a language (e.g. "in Spanish", "en español"), write the ENTIRE draft in that language. Otherwise write in English${spanishHint ? ' (NOTE: this lead is tagged as a Spanish speaker — if the request does not specify a language, still default to English unless asked, but Spanish is likely welcome)' : ''}. Match the language of the request precisely.
 - Tone: ${tone}. Sound like a real person, not a template. No emojis unless natural.
 - Keep it SHORT — ideally under 300 characters, SMS-appropriate. One clear ask or point.
 - Address the lead by first name when known${firstName ? ` (their first name is ${firstName})` : ''}. Sign off as "- Rene" only if it reads naturally.
 - Never invent facts (rates, numbers, approvals) not present in the context.
 - If there's a prior conversation, make the draft a natural continuation.
-Return ONLY a JSON array of 2-3 distinct draft strings (different angles/wordings), no markdown, no keys — e.g. ["draft one", "draft two"].`;
+Return ONLY a JSON array of 2-3 distinct draft strings (different angles/wordings), no markdown, no keys — e.g. ["draft one", "draft two"]. If a language was requested, ALL drafts must be in that language.`;
 
     const user = `LEAD CONTEXT:\n${ctx || '(minimal context)'}\n\nRECENT CONVERSATION:\n${convo || '(no prior messages)'}\n\nDRAFT REQUEST: ${instruction || 'Write a helpful, natural follow-up text to re-engage or move this lead forward based on the context and conversation.'}`;
 
