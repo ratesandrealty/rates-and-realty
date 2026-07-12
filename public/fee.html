@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026070656 -->
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071110 -->
 <title>Loan Estimate | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
@@ -72,6 +72,15 @@
   summary::-webkit-details-marker{display:none}
   summary::after{content:' ▾';color:var(--muted)}
   details[open] summary::after{content:' ▴'}
+  /* per-scenario fee-detail toggle */
+  .fee-details{margin-top:12px;border-top:1px solid rgba(201,168,76,0.18);padding-top:10px}
+  .fee-details summary{font-size:.76rem}
+  .fee-details .fee-body{margin-top:8px;overflow:hidden}
+  .fee-details[open] .fee-body{animation:feeExpand .28s ease}
+  @keyframes feeExpand{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+  .fee-details .row{font-size:.83rem;padding:7px 0}
+  .row.cat{border-top:none;padding:11px 0 2px}
+  .row.cat .rl{font-size:.62rem;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--gold)}
   .disclaimer{font-size:.68rem;color:#6f6f6f;line-height:1.5;margin-top:16px;padding:0 4px;text-wrap:pretty}
   /* footer / CTA */
   .prepared{margin-top:20px;background:linear-gradient(180deg,rgba(201,168,76,0.08),transparent),var(--panel);border:1px solid rgba(201,168,76,0.22);border-radius:var(--radius);padding:20px;text-align:center}
@@ -248,7 +257,80 @@ function disclaimer(created){
       +'final underwriting, and market rates.'+(when?' Prepared '+esc(when)+'.':'')+'</div>';
 }
 function row(label, value, cls){ return '<div class="row '+(cls||'')+'"><span class="rl">'+label+'</span><span class="rv">'+value+'</span></div>'; }
+function catRow(label){ return '<div class="row cat"><span class="rl">'+label+'</span></div>'; }
 function kv(k,v){ return '<div class="kv"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+
+// Itemized closing-cost breakdown for ONE scenario — grouped/labeled like tools/fee-sheet.html.
+// PRESENTATION ONLY: every value is read off the already-computed calcScenario result `r`; the
+// subtotal reconciles to the SAME cashToClose already shown (down + totalClosing − lenderCredit
+// − financed gov fee). Negative points / lender credits are already inside r.discountPoints /
+// r.lenderCreditLine, so they are never double-counted here. `sc` = scenario (points/credits),
+// `rinp` = the compute input for this scenario (per-column in property mode).
+function feeBreakdown(r, sc, rinp){
+    sc = sc || { points:0, lenderCredits:0 };
+    rinp = rinp || {};
+    const down = (rinp.downPayment!=null) ? rinp.downPayment : 0;
+    const govFinanced = !!(rinp.govFee && rinp.govFee.financed && r.govFeeAmount);
+    const govLabel = (rinp.govFee && rinp.govFee.label) || 'Upfront Gov Fee';
+    return '<div class="rows fee-body">'
+      + catRow('A · Origination Charges')
+      + row('Origination Fee', fmt(r.origFee))
+      + (r.discountPoints?row('Discount Points', fmt(r.discountPoints)):'')
+      + row('Underwriting Fee', fmt(r.uwFee))
+      + row('Admin Fee', fmt(r.adminFee))
+      + row('Subtotal A', fmt(r.subtotalA), 'sub')
+      + catRow('B · Services You Cannot Shop For')
+      + (r.govFeeAmount?row(esc(govLabel), fmt(r.govFeeAmount)):'')
+      + row('Appraisal Fee', fmt(r.appraisal))
+      + row('Credit Report', fmt(r.creditReport))
+      + row('Flood Certification', fmt(r.floodCert))
+      + row('Tax Service Fee', fmt(r.taxService))
+      + row('MERS Registration', fmt(r.mersReg))
+      + row('Processing Fee', fmt(r.processingFee))
+      + row('Subtotal B', fmt(r.subtotalB), 'sub')
+      + catRow('C · Services You Can Shop For')
+      + row("Title — Lender's Policy", fmt(r.titleLender))
+      + row('Escrow / Settlement Fee', fmt(r.escrow))
+      + row('Recording Fees', fmt(r.recording))
+      + row('Notary Fee', fmt(r.notary))
+      + row('Loan Tie-In Fee', fmt(r.loanTieIn))
+      + row('Messenger Fee', fmt(r.messengerFee))
+      + row('Sub-Escrow Fee', fmt(r.subEscrowFee))
+      + row('Subtotal C', fmt(r.subtotalC), 'sub')
+      + row('Total Loan Costs (A+B+C)', fmt(r.totalLoanCosts), 'sub')
+      + catRow('E · Prepaids')
+      + row('Prepaid Interest (3 days)', fmt(r.prepaidInterest))
+      + row("Homeowner's Insurance (12 mo)", fmt(r.prepaidInsurance))
+      + row('Subtotal E', fmt(r.subtotalE), 'sub')
+      + catRow('F · Initial Escrow at Closing')
+      + row('Property Tax Reserve (3 mo)', fmt(r.taxReserve))
+      + row('Hazard Insurance Reserve (2 mo)', fmt(r.insReserve))
+      + row('Subtotal F', fmt(r.subtotalF), 'sub')
+      + row('Total Other Costs (E+F)', fmt(r.totalOther), 'sub')
+      + row('Total Closing Costs', fmt(r.totalClosing), 'sub')
+      + (r.lenderCreditLine?row('Less: Lender Credits', fmt(-r.lenderCreditLine)):'')
+      + (govFinanced?row('Less: Financed ('+esc(govLabel)+')', fmt(-r.govFeeAmount)):'')
+      + row('Down Payment', fmt(down))
+      + row('Estimated Cash to Close', fmt(r.cashToClose), 'total')
+      +'</div>';
+}
+// HELOC has no closing-cost schedule (cash at closing = $0); surface the per-option loan
+// breakdown instead — same figures the "Loan Breakdown" section shows, but per card.
+function helocBreakdown(r, draw, value, cltv, balance, origPct, autopay){
+    return '<div class="rows fee-body">'
+      + row('Initial Draw Amount', _helocMoney(draw))
+      + row('Origination Fee ('+esc(_helocRate(origPct))+'%)', _helocMoney(r.origFee))
+      + row('Total Loan Amount', _helocMoney(r.totalLoan), 'sub')
+      + row('Term', r.term+' yrs / '+(r.term*12)+' mo.')
+      + row('Effective Rate', esc(_helocRate(r.effRate))+'%'+((autopay&&r.rate!==r.effRate)?' (AutoPay −0.25%)':''))
+      + (value>0?row('Home Value', _helocMoney(value)):'')
+      + (cltv?row('CLTV', esc(_helocRate(cltv))+'%'):'')
+      + (balance>0?row('Existing Balance', _helocMoney(balance)):'')
+      + row('Cash Required at Closing', '$0', 'sub')
+      + row('Estimated Monthly Payment', _helocMoney(r.monthly), 'total')
+      +'</div>';
+}
+function feeDetails(inner){ return '<details class="fee-details"><summary>View fee details</summary>'+inner+'</details>'; }
 
 // ── RATE / SINGLE render ──
 function renderRate(snap){
@@ -308,7 +390,9 @@ function renderRate(snap){
                 +'<div class="m"><div class="k">Monthly</div><div class="v">'+fmt(r.totalMonthly,0)+'</div></div>'
                 +'<div class="m"><div class="k">Points</div><div class="v">'+esc(pts)+'</div></div>'
                 +'<div class="m"><div class="k">Cash to Close</div><div class="v">'+fmt(r.cashToClose,0)+'</div></div>'
-              +'</div></div>';
+              +'</div>'
+              + feeDetails(feeBreakdown(r, s, inp))
+              +'</div>';
         });
         h+='</div></div>';
     }
@@ -322,20 +406,7 @@ function renderRate(snap){
       + row('Down Payment', fmt(inp.downPayment))
       + row('Estimated Cash to Close', fmt(recR.cashToClose), 'total')
       +'</div>'
-      +'<details><summary>See itemized closing costs</summary><div class="rows" style="margin-top:8px">'
-        + row('Origination &amp; Discount', fmt(recR.origFee+recR.discountPoints))
-        + row('Underwriting Fee', fmt(recR.uwFee))
-        + row('Admin Fee', fmt(recR.adminFee))
-        + (recR.govFeeAmount?row((inp.govFee&&inp.govFee.label)||'Gov Upfront Fee', fmt(recR.govFeeAmount)):'')
-        + row('Appraisal', fmt(recR.appraisal))
-        + row('Credit / Flood / Tax Service', fmt(recR.creditReport+recR.floodCert+recR.taxService))
-        + row('MERS &amp; Processing', fmt(recR.mersReg+recR.processingFee))
-        + row("Title — Lender's Policy", fmt(recR.titleLender))
-        + row('Escrow / Settlement', fmt(recR.escrow))
-        + row('Recording &amp; Other Title', fmt(recR.recording+recR.notary+recR.loanTieIn+recR.messengerFee+recR.subEscrowFee))
-        + row('Prepaid Interest &amp; Insurance', fmt(recR.subtotalE))
-        + row('Tax &amp; Insurance Reserves', fmt(recR.subtotalF))
-      +'</div></details>'
+      + feeDetails(feeBreakdown(recR, rec, inp))
       +'</div></div>';
 
     h+=disclaimer(snap.created_at)+preparedBlock();
@@ -390,6 +461,7 @@ function renderProperty(snap){
             + row(r.monthlyRent>0?'Net Monthly (after rent)':'Total Monthly Payment', fmt(r.netPayment), 'total')
             + row('Estimated Cash to Close', fmt(r.cashToClose), 'sub')
           +'</div>'
+          + feeDetails(feeBreakdown(r, col, r.inp))
         +'</div>';
     });
     h+='</div></div>';
@@ -430,7 +502,9 @@ function renderHeloc(snap){
             +'<div class="m"><div class="k">Monthly</div><div class="v">'+_helocMoney(r.monthly)+'</div></div>'
             +'<div class="m"><div class="k">Term</div><div class="v">'+esc(r.term)+' yrs</div></div>'
             +'<div class="m"><div class="k">Type</div><div class="v">'+esc(card.type||'fixed')+'</div></div>'
-          +'</div></div>';
+          +'</div>'
+          + feeDetails(helocBreakdown(r, draw, value, cltv, balance, origPct, autopay))
+          +'</div>';
     });
     h+='</div></div>';
 
