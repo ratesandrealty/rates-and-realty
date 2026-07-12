@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071140 -->
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071210 -->
 <title>Loan Estimate | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
@@ -67,6 +67,11 @@
   .opt-meta .m{background:rgba(255,255,255,0.03);border-radius:8px;padding:8px 6px;text-align:center}
   .opt-meta .m .k{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
   .opt-meta .m .v{font-size:.9rem;font-weight:700;font-variant-numeric:tabular-nums}
+  /* loan-type + property-type pills */
+  .typebadges{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .typebadges.center{justify-content:center;margin-top:12px}
+  .tb{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:700;color:#e6e0cf;background:rgba(201,168,76,0.10);border:1px solid rgba(201,168,76,0.28);border-radius:999px;padding:4px 10px;white-space:nowrap}
+  .tb .em{font-size:.85rem;line-height:1}
   details{margin-top:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px}
   summary{cursor:pointer;font-size:.78rem;color:var(--gold);font-weight:700;list-style:none}
   summary::-webkit-details-marker{display:none}
@@ -142,8 +147,9 @@ function calcMI(inp, rate){
     if(product.startsWith('FHA')) return totalLoanAmount*0.0055/12;
     if(product.startsWith('VA')) return 0;
     if(product.startsWith('USDA')) return totalLoanAmount*0.0035/12;
+    // Conventional PMI — flat 0.20% on base loan, only when LTV > 80% (matches tools/fee-sheet.html).
     if(ltv<=80) return 0;
-    return inp.loanAmount*0.003/12;
+    return inp.loanAmount*0.002/12;
 }
 function computeGovUpfrontFee(loanProduct, baseLoanAmount, downPaymentPct, vaConfig){
     if(!loanProduct||!baseLoanAmount) return null;
@@ -361,9 +367,9 @@ function renderRate(snap){
       +'<h1>'+esc(name)+'</h1>'
       +(inp.propertyAddress?'<div class="addr">'+esc(inp.propertyAddress)+'</div>':'')
       +'<div class="product">'
-        +(inp.loanProduct?'<span class="badge">'+esc(inp.loanProduct)+'</span>':'')
         +(inp.lockPeriod?'<span class="badge">🔒 '+esc(inp.lockPeriod)+'</span>':'')
       +'</div>'
+      + typeBadges(inp.loanProduct, inp.propertyType, true)
       +'<div class="payhero"><div class="lbl">Estimated Monthly Payment</div>'
         +'<div class="amt">'+fmt(recR.totalMonthly,0)+'<small>/mo</small></div>'
         +'<div class="rate">'+esc(_helocRate(rec.rate))+'% rate'+(rec.label?' · '+esc(rec.label):'')+' · '+termYears+'-yr</div>'
@@ -377,7 +383,8 @@ function renderRate(snap){
       + kv('Rate', esc(_helocRate(rec.rate))+'%')
       + kv('Term', termYears+' years')
       + kv('Credit Score', esc(inp.creditScore||'—'))
-      + (inp.propertyType?kv('Property Type', esc(inp.propertyType)):'')
+      + (inp.propertyType?kv('Property Type', esc(propTypeMeta(inp.propertyType).label)):'')
+      + (inp.loanProduct?kv('Loan Type', esc(loanTypeMeta(inp.loanProduct).label)):'')
       + (inp.lockPeriod?kv('Rate Lock', esc(inp.lockPeriod)):'')
       +'</div></div></div>';
 
@@ -427,6 +434,38 @@ function renderRate(snap){
 
 // ── PROPERTY-COMPARISON render (mode 'property' → SFR/Condo/2-4 Unit columns) ──
 function _propTypeLabel(t){ return ({sfr:'Single Family',condo:'Condo',multifamily:'2-4 Unit',townhouse:'Townhouse'})[String(t||'').toLowerCase()] || esc(t||''); }
+// Human-readable label + emoji for a loan product — accepts either a short code ('conv30')
+// or a full string ('Conv 30yr Fixed' / 'FHA 30yr Fixed'), so it works for per-column codes
+// AND the common.loanProduct full strings used by rate/single mode.
+function loanTypeMeta(v){
+    const s=String(v||'').toLowerCase();
+    let prog='Conventional', emoji='🏦';
+    if(s.includes('fha')){ prog='FHA'; emoji='📋'; }
+    else if(s.includes('usda')){ prog='USDA'; emoji='🌾'; }
+    else if(/(^|[^a-z])va([^a-z]|\d|$)/.test(s)||s.startsWith('va')){ prog='VA'; emoji='🎖️'; }
+    else if(s.includes('jumbo')){ prog='Jumbo'; emoji='💎'; }
+    else { prog='Conventional'; emoji='🏦'; }
+    const term = s.includes('15') ? '15yr' : (s.includes('20') ? '20yr' : '30yr');
+    return { label: prog+' '+term, emoji };
+}
+// Human-readable label + emoji for a property type — tolerant of codes ('sfr') or labels ('SFR').
+function propTypeMeta(t){
+    const s=String(t||'').toLowerCase();
+    if(s.includes('condo')) return { label:'Condo', emoji:'🏢' };
+    if(s.includes('multi')||s.includes('2-4')||s.includes('unit')) return { label:'2-4 Unit', emoji:'🏘️' };
+    if(s.includes('town')) return { label:'Townhouse', emoji:'🏡' };
+    if(s.includes('manuf')) return { label:'Manufactured', emoji:'🏚️' };
+    if(s.includes('sfr')||s.includes('single')||s.includes('family')) return { label:'Single Family', emoji:'🏠' };
+    return { label: t?esc(String(t)):'—', emoji:'🏠' };
+}
+// Small pill pair (loan type + property type) shown on each scenario card / in the hero.
+function typeBadges(loanVal, propVal, center){
+    const L=loanTypeMeta(loanVal), P=propTypeMeta(propVal);
+    let h='<div class="typebadges'+(center?' center':'')+'">';
+    if(loanVal) h+='<span class="tb">'+esc(L.label)+' <span class="em">'+L.emoji+'</span></span>';
+    if(propVal) h+='<span class="tb">'+esc(P.label)+' <span class="em">'+P.emoji+'</span></span>';
+    return h+'</div>';
+}
 function renderProperty(snap){
     const data=snap.data||{}, c=data.common||{};
     // Property mode reads data.property_scenarios ONLY — never data.scenarios (that A/B/C rate
@@ -456,13 +495,13 @@ function renderProperty(snap){
         h+='<div class="opt'+(i===recIdx?' rec':'')+'">'
           +'<div class="opt-head"><span class="opt-name">'+esc(col.label)+(i===recIdx?' <span class="badge rec">Recommended</span>':'')+'</span>'
             +'<span class="opt-rate">'+fmt(r.netPayment,0)+'<span style="font-size:.42em;color:var(--muted);font-weight:700">/mo</span></span></div>'
+          + typeBadges(col.loanProduct, col.propertyType)
           +'<div class="opt-meta">'
             +'<div class="m"><div class="k">Price</div><div class="v">'+fmt(col.purchasePrice,0)+'</div></div>'
             +'<div class="m"><div class="k">Rate</div><div class="v">'+esc(_helocRate(col.rate))+'%</div></div>'
             +'<div class="m"><div class="k">Down</div><div class="v">'+(col.downPct)+'%</div></div>'
           +'</div>'
           +'<div class="rows" style="margin-top:10px">'
-            + row('Property Type', _propTypeLabel(col.propertyType))
             + row('Loan Amount', fmt(r.inp.loanAmount,0))
             + row('Principal &amp; Interest', fmt(r.pi))
             + row('Property Taxes', fmt(r.monthlyTax))
@@ -512,13 +551,13 @@ function renderPrice(snap){
         h+='<div class="opt'+(i===recIdx?' rec':'')+'">'
           +'<div class="opt-head"><span class="opt-name">'+esc(col.label)+(i===recIdx?' <span class="badge rec">Recommended</span>':'')+'</span>'
             +'<span class="opt-rate">'+fmt(col.purchasePrice,0)+'</span></div>'
+          + typeBadges(col.loanProduct, col.propertyType)
           +'<div class="opt-meta">'
             +'<div class="m"><div class="k">Rate</div><div class="v">'+esc(_helocRate(col.rate))+'%</div></div>'
             +'<div class="m"><div class="k">Monthly</div><div class="v">'+fmt(r.totalMonthly,0)+'</div></div>'
             +'<div class="m"><div class="k">Cash to Close</div><div class="v">'+fmt(r.cashToClose,0)+'</div></div>'
           +'</div>'
           +'<div class="rows" style="margin-top:10px">'
-            + row('Property Type', _propTypeLabel(col.propertyType))
             + row('Down Payment', fmt(r.inp.downPayment,0)+' · '+(col.downPct)+'%')
             + row('Loan Amount', fmt(r.inp.loanAmount,0))
             + (pts!=='no points'?row('Points', esc(pts)):'')
