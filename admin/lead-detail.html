@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026071270 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026071280 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -9640,7 +9640,15 @@ async function lpLoadAppLoanDetails(){
       var appId=(typeof _activeBorrowerApp!=='undefined' && _activeBorrowerApp && _activeBorrowerApp.id) ? _activeBorrowerApp.id : app.id;
       var btVal=app.borrower_type;
       if(appId && (btVal==null || btVal==='')){
-        try{ var _r=await _authClient().from('mortgage_applications').select('borrower_type').eq('id',appId).maybeSingle(); btVal=_r && _r.data ? _r.data.borrower_type : null; }catch(_){}
+        // Await the session-attached client so the JWT is present — otherwise this base-table
+        // read races auth-guard and hits RLS anonymously (the mortgage_applications 403). Fully
+        // guarded either way so a failure never throws / blocks the rest of init.
+        try{
+          var _bc=(typeof _waitForAuthClient==='function') ? await _waitForAuthClient() : null;
+          _bc=_bc || _authClient();
+          var _r=await _bc.from('mortgage_applications').select('borrower_type').eq('id',appId).maybeSingle();
+          btVal=_r && _r.data ? _r.data.borrower_type : null;
+        }catch(_){}
       }
       bt.value=btVal||'';
       console.log('[lpLoadAppLoanDetails] borrower_type read:', btVal, '→ f-borrower-type.value:', bt.value);
@@ -32812,6 +32820,23 @@ function _tcEnsureModal(){
           +['New Lead','Contacted','Pre-Approved','Under Contract','Processing'].map(function(s){ return '<button type="button" onclick="_tcQuickAddStage(\''+s+'\')" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:#bbb;border-radius:12px;font-size:10px;padding:3px 8px;cursor:pointer;font-family:inherit;">'+s+'</button>'; }).join('')
         +'</div>'
       +'</div>'
+      +'<div style="margin-bottom:8px;">'
+        +'<button id="tc-draft-btn" type="button" onclick="toggleTcDraftPanel()" style="font-size:11px;padding:6px 13px;background:linear-gradient(135deg,#C9A84C,#a87a30);border:none;border-radius:16px;color:#111;cursor:pointer;font-weight:700;display:inline-flex;align-items:center;gap:5px;font-family:inherit;">✨ Draft</button>'
+        +'<div id="tc-draft-panel" style="display:none;margin-top:8px;background:#0C0C0E;border:1px solid rgba(201,168,76,0.2);border-radius:10px;padding:12px;">'
+          +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;"><span style="font-size:10px;color:#C9A84C;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">✨ AI Draft Assist</span><button type="button" onclick="toggleTcDraftPanel()" style="background:none;border:none;color:#666;font-size:16px;cursor:pointer;line-height:1;padding:0 2px;">✕</button></div>'
+          +'<div style="display:flex;gap:6px;">'
+            +'<input id="tc-draft-instruction" type="text" placeholder="What should it say? (optional — blank = smart follow-up)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();runTcDraftAssist();}" style="flex:1;min-width:0;background:#131315;border:1px solid rgba(201,168,76,0.18);border-radius:6px;padding:8px 10px;color:#E0DDD4;font-size:12px;outline:none;font-family:inherit;">'
+            +'<button id="tc-draft-generate" type="button" onclick="runTcDraftAssist()" style="background:#C9A84C;color:#111;border:none;border-radius:6px;padding:8px 16px;font-weight:700;font-size:11px;cursor:pointer;white-space:nowrap;font-family:inherit;">Generate</button>'
+          +'</div>'
+          +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">'
+            +'<button type="button" class="sms-draft-chip" onclick="tcDraftQuickChip(\'Follow up on our last conversation\')">Follow up</button>'
+            +'<button type="button" class="sms-draft-chip" onclick="tcDraftQuickChip(\'Check in and see how things are going\')">Check in</button>'
+            +'<button type="button" class="sms-draft-chip" onclick="tcDraftQuickChip(\'Ask for the documents we still need\')">Ask for docs</button>'
+            +'<button type="button" class="sms-draft-chip" onclick="tcDraftQuickChip(\'Re-engage this cold lead\')">Re-engage cold lead</button>'
+          +'</div>'
+          +'<div id="tc-draft-results" style="margin-top:10px;display:none;flex-direction:column;gap:6px;"></div>'
+        +'</div>'
+      +'</div>'
       +'<textarea id="tcBody" placeholder="Type a message…" oninput="_tcCharCount()" style="width:100%;box-sizing:border-box;min-height:64px;max-height:150px;resize:vertical;background:#131315;border:1px solid rgba(201,168,76,0.18);border-radius:8px;color:#E0DDD4;font-size:13px;line-height:1.45;padding:9px 11px;outline:none;font-family:inherit;"></textarea>'
       +'<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">'
         +'<div id="tcMediaZone" onclick="_tcMediaPick()" ondragover="event.preventDefault();this.style.borderColor=\'#C9A84C\';" ondragleave="this.style.borderColor=\'rgba(201,168,76,0.25)\';" ondrop="_tcMediaDrop(event)" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:5px;border:1px dashed rgba(201,168,76,0.25);border-radius:8px;padding:8px;font-size:11px;color:#888;cursor:pointer;text-align:center;">📎 Drop image or <span style="color:#C9A84C;">click to attach</span></div>'
@@ -32876,6 +32901,52 @@ function _tcEnsureModal(){
   return ov;
 }
 function closeTextComposer(){ var ov=document.getElementById('tcOverlay'); if(ov) ov.style.display='none'; document.body.style.overflow=''; }
+
+/* ── AI Draft Assist for the Text composer (sms-draft-assist edge fn) — context/thread-aware,
+   draft-only. Fills tcBody; never sends. Independent of any page fetch (built into the composer
+   template, guarded runtime), so an unrelated failure can't block it. ── */
+function toggleTcDraftPanel(){
+  var p=document.getElementById('tc-draft-panel'); if(!p) return;
+  var show=(p.style.display==='none'||!p.style.display);
+  p.style.display=show?'block':'none';
+  if(show){ var i=document.getElementById('tc-draft-instruction'); setTimeout(function(){ if(i) i.focus(); },50); }
+}
+function tcDraftQuickChip(text){ var i=document.getElementById('tc-draft-instruction'); if(i){ i.value=text; i.focus(); } }
+async function runTcDraftAssist(){
+  var results=document.getElementById('tc-draft-results');
+  var cid=(typeof _tcState!=='undefined' && _tcState && _tcState.cid) || (typeof lpCid==='function'?lpCid():null) || new URLSearchParams(location.search).get('contact_id');
+  if(!cid){ if(results){ results.style.display='flex'; results.innerHTML='<div style="color:#f87171;font-size:11px;">No contact selected</div>'; } return; }
+  var instruction=(document.getElementById('tc-draft-instruction')?.value||'').trim();
+  var genBtn=document.getElementById('tc-draft-generate'); var origTxt=genBtn?genBtn.textContent:'';
+  if(genBtn){ genBtn.disabled=true; genBtn.textContent='…'; genBtn.style.opacity='0.7'; }
+  if(results){ results.style.display='flex'; results.innerHTML='<div style="color:#888;font-size:11px;font-style:italic;display:flex;align-items:center;gap:8px;"><span class="sms-draft-spin"></span>Drafting a few options… (~5s)</div>'; }
+  try{
+    var body={ contact_id: cid }; if(instruction) body.instruction=instruction;
+    // _loeInvoke throws on transport errors AND on a { error } body.
+    var data=await _loeInvoke('sms-draft-assist', body);
+    var drafts=Array.isArray(data.drafts)?data.drafts.filter(function(d){ return d && String(d).trim(); }):[];
+    if(data.ok===false || !drafts.length) throw new Error(data.message||data.error||'No drafts returned');
+    renderTcDraftCards(drafts);
+  }catch(e){
+    if(results) results.innerHTML='<div style="color:#f87171;font-size:11px;padding:2px 0;">Couldn\'t draft: '+String((e&&e.message)||e).replace(/</g,'&lt;')+'</div>';
+  }
+  if(genBtn){ genBtn.disabled=false; genBtn.textContent=origTxt||'Generate'; genBtn.style.opacity='1'; }
+}
+function renderTcDraftCards(drafts){
+  var results=document.getElementById('tc-draft-results'); if(!results) return;
+  var head='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;"><span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.08em;">Tap a draft to use it</span><button type="button" onclick="runTcDraftAssist()" style="background:none;border:none;color:#C9A84C;font-size:10px;cursor:pointer;font-weight:600;font-family:inherit;">↻ Regenerate</button></div>';
+  var cards=drafts.map(function(d){
+    var attr=String(d).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+    var disp=String(d).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    return '<button type="button" class="sms-draft-card" data-msg="'+attr+'" onclick="tcDraftPick(this)">'+disp+'</button>';
+  }).join('');
+  results.innerHTML=head+cards;
+}
+function tcDraftPick(el){
+  var msg=el.getAttribute('data-msg')||el.textContent||'';
+  var ta=document.getElementById('tcBody');
+  if(ta){ ta.value=msg; if(typeof _tcCharCount==='function') _tcCharCount(); ta.focus(); }
+}
 function _tcHideSchedule(){ var r=document.getElementById('tcSchedRow'); if(r) r.style.display='none'; }
 var _tcCalState={ y:0, m:0 };   // calendar view month (0-11)
 function _tcToggleSchedule(){
