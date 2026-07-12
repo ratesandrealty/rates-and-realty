@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071210 -->
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071230 -->
 <title>Loan Estimate | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
@@ -475,9 +475,13 @@ function renderProperty(snap){
         document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Property Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1><div class="payhero"><div class="lbl" style="color:var(--muted)">No property scenarios saved for this estimate.</div></div></div>'+preparedBlock();
         return;
     }
-    let recIdx=cols.findIndex(p=>p.recommended); if(recIdx<0)recIdx=0;
+    // recIdx is -1 when NO column is recommended — do not force-default to 0. Badge/ring key
+    // off each column's own recommended flag; the hero just uses a neutral first column for the
+    // summary number (no "recommended" labeling, no green badge/ring).
+    const recIdx=cols.findIndex(p=>p.recommended);
+    const heroIdx = recIdx>=0 ? recIdx : 0;
     const results=cols.map(col=>calcPropertyColumn(c, col));
-    const rec=results[recIdx], recCol=cols[recIdx];
+    const rec=results[heroIdx], recCol=cols[heroIdx];
     const name=snap.borrower_name||c.borrowerName||'Borrower';
 
     let h='<div class="hero">'
@@ -492,8 +496,8 @@ function renderProperty(snap){
     h+='<div class="sec"><div class="sec-title">Property Options</div><div class="opts">';
     cols.forEach((col,i)=>{
         const r=results[i];
-        h+='<div class="opt'+(i===recIdx?' rec':'')+'">'
-          +'<div class="opt-head"><span class="opt-name">'+esc(col.label)+(i===recIdx?' <span class="badge rec">Recommended</span>':'')+'</span>'
+        h+='<div class="opt'+(col.recommended?' rec':'')+'">'
+          +'<div class="opt-head"><span class="opt-name">'+esc(col.label)+(col.recommended?' <span class="badge rec">Recommended</span>':'')+'</span>'
             +'<span class="opt-rate">'+fmt(r.netPayment,0)+'<span style="font-size:.42em;color:var(--muted);font-weight:700">/mo</span></span></div>'
           + typeBadges(col.loanProduct, col.propertyType)
           +'<div class="opt-meta">'
@@ -530,9 +534,13 @@ function renderPrice(snap){
         document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Price Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1><div class="payhero"><div class="lbl" style="color:var(--muted)">No price scenarios saved for this estimate.</div></div></div>'+preparedBlock();
         return;
     }
-    let recIdx=cols.findIndex(p=>p.recommended); if(recIdx<0)recIdx=0;
+    // recIdx is -1 when NO column is recommended — do not force-default to 0. Badge/ring key
+    // off each column's own recommended flag; the hero just uses a neutral first column for the
+    // summary number (no "recommended" labeling, no green badge/ring).
+    const recIdx=cols.findIndex(p=>p.recommended);
+    const heroIdx = recIdx>=0 ? recIdx : 0;
     const results=cols.map(col=>calcPriceColumn(c, col));
-    const rec=results[recIdx], recCol=cols[recIdx];
+    const rec=results[heroIdx], recCol=cols[heroIdx];
     const name=snap.borrower_name||c.borrowerName||'Borrower';
 
     let h='<div class="hero">'
@@ -548,8 +556,8 @@ function renderPrice(snap){
     cols.forEach((col,i)=>{
         const r=results[i];
         const pts = (col.points>0) ? (col.points+' pts') : (col.points<0 ? 'credit' : 'no points');
-        h+='<div class="opt'+(i===recIdx?' rec':'')+'">'
-          +'<div class="opt-head"><span class="opt-name">'+esc(col.label)+(i===recIdx?' <span class="badge rec">Recommended</span>':'')+'</span>'
+        h+='<div class="opt'+(col.recommended?' rec':'')+'">'
+          +'<div class="opt-head"><span class="opt-name">'+esc(col.label)+(col.recommended?' <span class="badge rec">Recommended</span>':'')+'</span>'
             +'<span class="opt-rate">'+fmt(col.purchasePrice,0)+'</span></div>'
           + typeBadges(col.loanProduct, col.propertyType)
           +'<div class="opt-meta">'
