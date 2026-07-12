@@ -280,6 +280,17 @@ export default {
       return new Response(feeRes.body, { status: feeRes.status, statusText: feeRes.statusText, headers: fh });
     }
 
+    // Public CMA snapshot page: /cma/<slug> → serve the branded page (reads the slug
+    // client-side, fetches the frozen snapshot via get_cma_snapshot with anon). Mirrors /fee.
+    if (/^\/cma\/[A-Za-z0-9]+$/.test(path)) {
+      const newUrl = new URL(request.url);
+      newUrl.pathname = '/public/cma.html';
+      const cmaRes = withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
+      const ch = new Headers(cmaRes.headers);
+      ch.set('Cache-Control', 'no-store, must-revalidate');
+      return new Response(cmaRes.body, { status: cmaRes.status, statusText: cmaRes.statusText, headers: ch });
+    }
+
     // Clean-URL routing for county area pages (/areas/slug → /areas/slug.html)
     if (/^\/areas\/[a-z0-9-]+$/.test(path)) {
       const newUrl = new URL(request.url);

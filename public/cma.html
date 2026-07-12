@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<!-- cma.html · public branded CMA snapshot · cache-buster v=2026071320 -->
+<title>Home Value Report | Rates &amp; Realty</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="Your personalized home value report (CMA) from Rates &amp; Realty.">
+<meta property="og:title" content="Your Home Value Report — Rates &amp; Realty">
+<meta property="og:description" content="A comparative market analysis prepared by Rene Duarte.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/assets/images/favicon.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/api/env.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--gold:#C9A84C;--gold-light:#e8c96d;--dark:#0a0a0a;--panel:#111214;--panel-2:#16171a;--border:#242527;--text:#eee;--muted:#8a8c90;--green:#4ADE80;--blue:#60a5fa;--amber:#e0a100;--red:#f87171;--radius:16px}
+  html{overflow-x:hidden}
+  body{background:radial-gradient(1200px 600px at 50% -10%,rgba(201,168,76,0.06),transparent 60%),var(--dark);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden;padding-bottom:40px}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:680px;margin:0 auto;padding:0 16px}
+  /* top bar */
+  .topbar{display:flex;align-items:center;justify-content:center;gap:10px;padding:20px 16px 10px}
+  .topbar img{height:34px}
+  .topbar .brand{font-size:1.05rem;font-weight:800;color:var(--gold);letter-spacing:.01em}
+  /* hero */
+  .hero{margin-top:8px;background:linear-gradient(180deg,rgba(201,168,76,0.10),rgba(201,168,76,0.02)),var(--panel);border:1px solid rgba(201,168,76,0.28);border-radius:var(--radius);padding:22px 20px;text-align:center}
+  .eyebrow{font-size:.66rem;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
+  .hero h1{font-size:1.5rem;font-weight:800;margin:6px 0 2px;text-wrap:balance}
+  .hero .addr{font-size:.9rem;color:var(--muted)}
+  .chips{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:12px}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;color:#efe8d4;background:rgba(201,168,76,0.10);border:1px solid rgba(201,168,76,0.28);border-radius:999px;padding:4px 11px;white-space:nowrap}
+  .avm{margin-top:18px;padding-top:16px;border-top:1px dashed rgba(201,168,76,0.25)}
+  .avm .lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .avm .amt{font-size:2.6rem;font-weight:900;color:var(--gold);line-height:1.05;letter-spacing:-.02em}
+  .avm .range{font-size:.85rem;color:var(--text);margin-top:2px}
+  .gauge{margin:12px auto 0;max-width:340px}
+  .gauge .bar{position:relative;height:6px;border-radius:999px;background:rgba(255,255,255,0.08)}
+  .gauge .fill{position:absolute;left:0;top:0;height:6px;border-radius:999px;background:linear-gradient(90deg,#7A5020,var(--gold))}
+  .gauge .dot{position:absolute;top:-3px;width:12px;height:12px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 3px rgba(201,168,76,.25);transform:translateX(-50%)}
+  .gauge .ends{display:flex;justify-content:space-between;font-size:.66rem;color:var(--muted);margin-top:6px}
+  /* section */
+  .sec{margin-top:16px}
+  .sec-title{font-size:.7rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:0 4px 8px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+  /* metric cards */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .metric{background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.18);border-radius:10px;padding:10px 8px;text-align:center}
+  .metric .k{font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .metric .v{font-size:.98rem;font-weight:800;color:var(--text);margin-top:2px;font-variant-numeric:tabular-nums}
+  /* comps */
+  .comps{display:flex;flex-direction:column;gap:10px}
+  .comp{display:flex;gap:12px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px;align-items:stretch}
+  .comp-photo{flex-shrink:0;width:96px;min-height:96px;border-radius:9px;background-size:cover;background-position:center;background-color:var(--panel-2);position:relative;overflow:hidden}
+  .comp-photo.ph{display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:rgba(201,168,76,.4)}
+  .comp-body{flex:1;min-width:0;display:flex;flex-direction:column}
+  .comp-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .comp-addr{font-size:.86rem;font-weight:700;color:var(--text);line-height:1.3}
+  .comp-price{font-size:1.05rem;font-weight:900;color:var(--gold);margin-top:4px;font-variant-numeric:tabular-nums}
+  .comp-price .pps{font-size:.72rem;color:var(--muted);font-weight:700}
+  .comp-meta{font-size:.72rem;color:var(--muted);margin-top:3px;line-height:1.5}
+  .comp-link{display:inline-block;margin-top:5px;font-size:.72rem;font-weight:700;color:var(--gold)}
+  .badge{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:3px 8px;border-radius:999px;white-space:nowrap;flex-shrink:0}
+  .b-sold{background:rgba(74,222,128,.14);color:var(--green);border:1px solid rgba(74,222,128,.3)}
+  .b-active{background:rgba(96,165,250,.14);color:var(--blue);border:1px solid rgba(96,165,250,.3)}
+  .b-gray{background:rgba(148,163,184,.14);color:#94a3b8;border:1px solid rgba(148,163,184,.3)}
+  .b-amber{background:rgba(224,161,0,.14);color:var(--amber);border:1px solid rgba(224,161,0,.3)}
+  /* map */
+  .cma-map{height:320px;border-radius:12px;border:1px solid var(--border);overflow:hidden;background:#0c0c0e}
+  .leaflet-container{background:#0c0c0e}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:8px;font-size:.68rem;color:var(--muted)}
+  .legend .d{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  /* rows / tables */
+  .rows{display:flex;flex-direction:column}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.05);font-size:.85rem}
+  .row:first-child{border-top:none}
+  .row .rl{color:#cfcfcf}
+  .row .rv{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .row.total{border-top:1px solid rgba(201,168,76,0.35);margin-top:2px;padding-top:10px}
+  .row.total .rl{color:var(--gold);font-weight:800}
+  .row.total .rv{color:var(--gold);font-size:1.02rem}
+  .green{color:var(--green)!important}.rednum{color:var(--red)!important}
+  /* rental estimate */
+  .rentbig{text-align:center;padding:6px 0 10px}
+  .rentbig .amt{font-size:2rem;font-weight:900;color:var(--gold);line-height:1}
+  .rentbig .amt small{font-size:.9rem;color:var(--muted);font-weight:700}
+  .rentbig .range{font-size:.8rem;color:var(--muted);margin-top:2px}
+  /* strategy cards */
+  .strat{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px}
+  .strat h3{font-size:.95rem;font-weight:800;color:var(--text);display:flex;align-items:center;gap:7px}
+  .strat p.desc{font-size:.76rem;color:var(--muted);margin:4px 0 10px;line-height:1.5}
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:rgba(255,255,255,0.03);border-radius:8px;padding:8px 10px}
+  .stat .k{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+  .stat .v{font-size:.98rem;font-weight:800;margin-top:1px;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;font-size:.62rem;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:auto}
+  .pill-pass{background:rgba(74,222,128,.14);color:var(--green);border:1px solid rgba(74,222,128,.3)}
+  .pill-review{background:rgba(224,161,0,.14);color:var(--amber);border:1px solid rgba(224,161,0,.3)}
+  /* footer / CTA */
+  .prepared{margin-top:20px;background:linear-gradient(180deg,rgba(201,168,76,0.08),transparent),var(--panel);border:1px solid rgba(201,168,76,0.22);border-radius:var(--radius);padding:20px;text-align:center}
+  .prepared .by{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .prepared .nm{font-size:1.1rem;font-weight:800;color:var(--text);margin-top:2px}
+  .prepared .lic{font-size:.68rem;color:var(--muted);margin-top:3px}
+  .cta{display:flex;gap:10px;margin-top:14px;justify-content:center;flex-wrap:wrap}
+  .cta a{display:inline-flex;align-items:center;gap:7px;font-size:.9rem;font-weight:800;padding:11px 20px;border-radius:10px}
+  .cta .call{background:linear-gradient(135deg,#7A5020,var(--gold));color:#1A0E00}
+  .cta .text{background:transparent;border:1px solid rgba(201,168,76,0.4);color:var(--gold)}
+  .disclaimer{font-size:.68rem;color:#6f6f6f;line-height:1.5;margin-top:16px;padding:0 4px;text-wrap:pretty}
+  /* states */
+  .center{min-height:70vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}
+  .spinner{width:34px;height:34px;border:3px solid rgba(201,168,76,0.2);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .muted{color:var(--muted);font-size:.9rem}
+  @media (max-width:440px){ .metrics{grid-template-columns:1fr 1fr} .comp-photo{width:76px;min-height:76px} .stat-grid{grid-template-columns:1fr 1fr} .avm .amt{font-size:2.2rem} }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <img src="/assets/images/logo.png" alt="Rates &amp; Realty" onerror="this.onerror=null;this.src='/assets/images/logo.svg'">
+    <span class="brand">Rates &amp; Realty</span>
+  </div>
+  <div class="wrap">
+    <div id="app"><div class="center"><div><div class="spinner"></div><div class="muted">Loading your report…</div></div></div></div>
+  </div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   PUBLIC CMA SNAPSHOT PAGE — /cma/<slug>
+   Reads the slug from the path, fetches the frozen snapshot via the PUBLIC RPC
+   get_cma_snapshot (anon), and renders a branded, mobile-first CMA. Snapshot
+   only — never editable. The data was frozen by generate-cma (mode:'snapshot')
+   from the same _cmaBuildPayload() the CMA PDF uses (photos rehosted to the
+   public cma-photos bucket, rental comps re-fetched, acquisition pre-computed).
+   ═══════════════════════════════════════════════════════════════════════════ */
+const PHONE='+17144728508';
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const money=n=>{const x=parseFloat(n);return (n==null||isNaN(x))?'—':'$'+Math.round(x).toLocaleString('en-US');};
+const moneyK=n=>{const x=parseFloat(n);return isNaN(x)?'—':'$'+Math.round(x/1000).toLocaleString('en-US')+'k';};
+const numf=n=>{const x=parseFloat(n);return (n==null||isNaN(x))?'—':Math.round(x).toLocaleString('en-US');};
+const pct=(n,d)=>{const x=parseFloat(n);return (n==null||isNaN(x))?'—':x.toFixed(d==null?1:d)+'%';};
+const dshort=s=>{if(!s)return '—';const d=new Date(s);return isNaN(d.getTime())?'—':((d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2));};
+function propTypeMeta(t){const s=String(t||'').toLowerCase();
+  if(s.includes('condo'))return{label:'Condo',emoji:'🏢'};
+  if(s.includes('multi')||s.includes('2-4')||s.includes('unit')||s.includes('plex'))return{label:'2-4 Unit',emoji:'🏘️'};
+  if(s.includes('town'))return{label:'Townhouse',emoji:'🏡'};
+  if(s.includes('manuf')||s.includes('mobile'))return{label:'Manufactured',emoji:'🏚️'};
+  if(s.includes('land')||s.includes('lot'))return{label:'Land',emoji:'🌱'};
+  if(s.includes('sfr')||s.includes('single')||s.includes('family')||s.includes('residential'))return{label:'Single Family',emoji:'🏠'};
+  return{label:t?esc(String(t)):'Home',emoji:'🏠'};}
+function statusMeta(st){const v=String(st||'').toLowerCase();
+  if(/sold|closed|off-?market/.test(v))return{label:'Sold',cls:'b-sold',color:'#4ADE80'};
+  if(/withdraw/.test(v))return{label:'Withdrawn',cls:'b-gray',color:'#94a3b8'};
+  if(/cancel/.test(v))return{label:'Canceled',cls:'b-amber',color:'#e0a100'};
+  if(/pend/.test(v))return{label:'Pending',cls:'b-amber',color:'#e0a100'};
+  return{label:'Active',cls:'b-active',color:'#60a5fa'};}
+function row(label,value,cls){return '<div class="row '+(cls||'')+'"><span class="rl">'+label+'</span><span class="rv">'+value+'</span></div>';}
+function metric(k,v){return '<div class="metric"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>';}
+function stat(k,v,cls){return '<div class="stat"><div class="k">'+k+'</div><div class="v'+(cls?' '+cls:'')+'">'+v+'</div></div>';}
+
+function preparedBlock(){
+  return '<div class="prepared">'
+    +'<div class="by">Prepared by</div>'
+    +'<div class="nm">Rene Duarte, Rates &amp; Realty</div>'
+    +'<div class="lic">NMLS #1416824 &middot; CA DRE #01986350</div>'
+    +'<div class="cta">'
+      +'<a class="call" href="tel:'+PHONE+'">📞 Call Rene</a>'
+      +'<a class="text" href="sms:'+PHONE+'">💬 Text Rene</a>'
+    +'</div></div>';
+}
+function disclaimer(created){
+  const when=created?new Date(created).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'';
+  return '<div class="disclaimer">This Comparative Market Analysis is for informational purposes only. The estimated value is an '
+    +'automated valuation (AVM) based on comparable sales and is not an appraisal, an offer to lend, or a guarantee of value. '
+    +'Actual value is subject to a licensed appraisal, property condition, and current market conditions.'+(when?' Prepared '+esc(when)+'.':'')+'</div>';
+}
+
+// ── subject property chips ──
+function subjectChips(subj){
+  const pm=propTypeMeta(subj.propertyType);
+  let h='<div class="chips">';
+  h+='<span class="chip">'+pm.emoji+' '+esc(pm.label)+'</span>';
+  if(subj.bedrooms!=null) h+='<span class="chip">🛏 '+esc(subj.bedrooms)+' bd</span>';
+  if(subj.bathrooms!=null) h+='<span class="chip">🛁 '+esc(subj.bathrooms)+' ba</span>';
+  if(subj.squareFootage!=null) h+='<span class="chip">📐 '+numf(subj.squareFootage)+' sqft</span>';
+  return h+'</div>';
+}
+
+// ── comp card ──
+function compCard(c){
+  const sm=statusMeta(c.status);
+  const photo=c.photoUrl
+    ? '<div class="comp-photo" style="background-image:url(\''+esc(c.photoUrl)+'\')"></div>'
+    : '<div class="comp-photo ph">🏠</div>';
+  const meta=[
+    (c.bedrooms!=null?esc(c.bedrooms)+' bd':null),
+    (c.bathrooms!=null?esc(c.bathrooms)+' ba':null),
+    (c.squareFootage!=null?numf(c.squareFootage)+' sqft':null),
+    (c.distance!=null?parseFloat(c.distance).toFixed(2)+' mi':null),
+    dshort(c.removedDate||c.lastSeenDate||c.listedDate)
+  ].filter(Boolean).join(' · ');
+  const link=c.listingUrl?'<a class="comp-link" href="'+esc(c.listingUrl)+'" target="_blank" rel="noopener">View listing ↗</a>':'';
+  return '<div class="comp">'+photo+'<div class="comp-body">'
+    +'<div class="comp-top"><span class="comp-addr">'+esc(c.address||'—')+'</span><span class="badge '+sm.cls+'">'+sm.label+'</span></div>'
+    +'<div class="comp-price">'+money(c.price)+(c.pricePerSqft!=null?' <span class="pps">· $'+numf(c.pricePerSqft)+'/sqft</span>':'')+'</div>'
+    +'<div class="comp-meta">'+meta+'</div>'+link
+    +'</div></div>';
+}
+
+// ── Leaflet map (subject + comp pins) ──
+function initMap(subj, comps){
+  if(typeof L==='undefined') { var el=document.getElementById('cma-map'); if(el) el.parentElement.style.display='none'; return; }
+  const pts=[];
+  const sLat=parseFloat(subj.latitude), sLng=parseFloat(subj.longitude);
+  const hasSubj=!isNaN(sLat)&&!isNaN(sLng);
+  try{
+    const map=L.map('cma-map',{scrollWheelZoom:false,attributionControl:true});
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+      subdomains:'abcd',maxZoom:19,attribution:'© OpenStreetMap © CARTO'}).addTo(map);
+    if(hasSubj){
+      L.circleMarker([sLat,sLng],{radius:9,color:'#fff',weight:2,fillColor:'#C9A84C',fillOpacity:1})
+        .addTo(map).bindPopup('<b>Subject</b><br>'+esc(subj.address||''));
+      pts.push([sLat,sLng]);
+    }
+    (comps||[]).forEach(function(c){
+      const la=parseFloat(c.latitude), ln=parseFloat(c.longitude); if(isNaN(la)||isNaN(ln))return;
+      const sm=statusMeta(c.status);
+      L.circleMarker([la,ln],{radius:7,color:'#0c0c0e',weight:1.5,fillColor:sm.color,fillOpacity:0.95})
+        .addTo(map).bindPopup('<b>'+esc(c.address||'')+'</b><br>'+money(c.price)+' · '+sm.label);
+      pts.push([la,ln]);
+    });
+    if(pts.length>1) map.fitBounds(pts,{padding:[30,30]});
+    else if(pts.length===1) map.setView(pts[0],14);
+    else { map.parentNode; document.getElementById('cma-map').parentElement.style.display='none'; }
+    setTimeout(function(){ map.invalidateSize(); }, 150);
+  }catch(e){ console.warn('[cma map]',e); var el2=document.getElementById('cma-map'); if(el2) el2.parentElement.style.display='none'; }
+}
+
+// ── main render ──
+function renderCma(snap){
+  const d=snap.data||{};
+  const subj=d.subject||{}, val=d.value||{}, stats=d.stats||{};
+  const comps=Array.isArray(d.comps)?d.comps:[];
+  const name=snap.borrower_name||d.borrower_name||'Your Home Value Report';
+  const addr=d.property_address||subj.address||'';
+  const est=parseFloat(val.estimate), low=parseFloat(val.low), high=parseFloat(val.high);
+  const hasMap=(subj.latitude!=null&&subj.longitude!=null)||comps.some(c=>c.latitude!=null&&c.longitude!=null);
+
+  let h='<div class="hero">'
+    +'<div class="eyebrow">Comparative Market Analysis</div>'
+    +'<h1>'+esc(name)+'</h1>'
+    +(addr?'<div class="addr">'+esc(addr)+'</div>':'')
+    +subjectChips(subj)
+    +'<div class="avm"><div class="lbl">Estimated Market Value</div>'
+      +'<div class="amt">'+money(est)+'</div>'
+      +((!isNaN(low)&&!isNaN(high))?'<div class="range">'+money(low)+' – '+money(high)+' likely range</div>':'')
+    +'</div>';
+  if(!isNaN(low)&&!isNaN(high)&&high>low&&!isNaN(est)){
+    const frac=Math.max(0,Math.min(1,(est-low)/(high-low)))*100;
+    h+='<div class="gauge"><div class="bar"><div class="fill" style="width:'+frac.toFixed(1)+'%"></div><div class="dot" style="left:'+frac.toFixed(1)+'%"></div></div>'
+      +'<div class="ends"><span>'+moneyK(low)+'</span><span>'+moneyK(high)+'</span></div></div>';
+  }
+  h+='</div>';
+
+  // Market metrics
+  h+='<div class="sec"><div class="sec-title">Market Snapshot</div><div class="card"><div class="metrics">'
+    + metric('Avg $/SqFt', stats.avgPricePerSqft!=null?'$'+numf(stats.avgPricePerSqft):'—')
+    + metric('Median', moneyK(stats.medianPrice))
+    + metric('Average', moneyK(stats.avgPrice))
+    + metric('Comps', String(stats.compCount!=null?stats.compCount:comps.length))
+    +'</div>'
+    + (stats.radiusMiles!=null?'<div style="text-align:center;font-size:.68rem;color:var(--muted);margin-top:10px">Based on '+ (stats.compCount!=null?stats.compCount:comps.length) +' comparable'+((stats.compCount===1)?'':'s')+' within '+esc(stats.radiusMiles)+' mile'+(String(stats.radiusMiles)==='1'?'':'s')+'</div>':'')
+    +'</div></div>';
+
+  // Map
+  if(hasMap){
+    h+='<div class="sec"><div class="sec-title">Map of Comparables</div>'
+      +'<div id="cma-map" class="cma-map"></div>'
+      +'<div class="legend"><span><span class="d" style="background:#C9A84C"></span>Subject</span>'
+        +'<span><span class="d" style="background:#4ADE80"></span>Sold</span>'
+        +'<span><span class="d" style="background:#60a5fa"></span>Active</span>'
+        +'<span><span class="d" style="background:#94a3b8"></span>Off-market</span></div>'
+      +'</div>';
+  }
+
+  // Comps
+  if(comps.length){
+    h+='<div class="sec"><div class="sec-title">Comparable Sales</div><div class="comps">'
+      + comps.map(compCard).join('')
+      +'</div></div>';
+  }
+
+  // Rental
+  if(d.include_rentals && d.rental){ h+=renderRental(d.rental); }
+
+  // Acquisition
+  if(d.include_acquisition && d.acquisition){ h+=renderAcquisition(d.acquisition); }
+
+  h+=disclaimer(snap.created_at||d.generated_at)+preparedBlock();
+  document.getElementById('app').innerHTML=h;
+  if(hasMap) initMap(subj, comps);
+}
+
+// ── rental section ──
+function renderRental(r){
+  const est=parseFloat(r.estimate), low=parseFloat(r.low), high=parseFloat(r.high);
+  const rc=Array.isArray(r.comps)?r.comps:[];
+  const rents=rc.map(c=>parseFloat(c.rent)).filter(x=>!isNaN(x));
+  const avg=rents.length?Math.round(rents.reduce((a,b)=>a+b,0)/rents.length):null;
+  const med=(function(a){if(!a.length)return null;const s=[...a].sort((x,y)=>x-y),m=Math.floor(s.length/2);return s.length%2?s[m]:Math.round((s[m-1]+s[m])/2);})(rents);
+  let h='<div class="sec"><div class="sec-title">Rental Market</div><div class="card">'
+    +'<div class="rentbig"><div class="amt">'+money(est)+'<small>/mo</small></div>'
+      +((!isNaN(low)&&!isNaN(high))?'<div class="range">'+money(low)+' – '+money(high)+' / mo likely range</div>':'')+'</div>'
+    +'<div class="metrics">'
+      + metric('Avg Rent', avg!=null?money(avg):'—')
+      + metric('Median', med!=null?money(med):'—')
+      + metric('Rent Comps', String(rc.length))
+    +'</div>';
+  if(rc.length){
+    h+='<div class="rows" style="margin-top:12px">';
+    rc.forEach(function(c){
+      const sub=[(c.bedrooms!=null?c.bedrooms+' bd':null),(c.bathrooms!=null?c.bathrooms+' ba':null),(c.squareFootage!=null?numf(c.squareFootage)+' sf':null),(c.distance!=null?parseFloat(c.distance).toFixed(2)+' mi':null)].filter(Boolean).join(' · ');
+      h+='<div class="row"><span class="rl">'+esc(c.address||'—')+'<br><span style="font-size:.68rem;color:var(--muted)">'+sub+'</span></span><span class="rv">'+money(c.rent)+'/mo</span></div>';
+    });
+    h+='</div>';
+  }
+  h+='</div></div>';
+  return h;
+}
+
+// ── acquisition (investment analysis) section — renders the frozen computeDeal result ──
+function renderAcquisition(a){
+  const R=(a.results||{}), P=(a.property||{});
+  const flip=R.flip||{}, brrrr=R.brrrr||{}, bh=R.buy_hold||{};
+  const cf=n=>{const x=parseFloat(n);return (isNaN(x))?'—':(x<0?'rednum':'green');};
+  let h='<div class="sec"><div class="sec-title">Investment Analysis</div>';
+  h+='<div style="font-size:.76rem;color:var(--muted);margin:0 4px 10px;line-height:1.5">Three ways to look at this property as an investment — a quick flip, a rent-and-refinance (BRRRR), or a long-term rental.</div>';
+
+  // Fix & Flip
+  h+='<div class="strat"><h3>🔨 Fix &amp; Flip'
+    +(flip.rule_70_pass!=null?'<span class="pill '+(flip.rule_70_pass?'pill-pass':'pill-review')+'">'+(flip.rule_70_pass?'70% rule ✓':'Review deal')+'</span>':'')+'</h3>'
+    +'<p class="desc">Buy under market, renovate, and resell for a one-time profit.</p>'
+    +'<div class="stat-grid">'
+      + stat('Est. Profit', money(flip.gross_profit), cf(flip.gross_profit))
+      + stat('Return (ROI)', pct(flip.roi))
+      + stat('Annualized', pct(flip.annualized_roi))
+      + stat('Cash Needed', money(flip.cash_needed))
+    +'</div></div>';
+
+  // BRRRR
+  h+='<div class="strat"><h3>🔁 BRRRR</h3>'
+    +'<p class="desc">Buy, renovate, rent, then refinance to pull most of your cash back out and keep it long-term.</p>'
+    +'<div class="stat-grid">'
+      + stat('Monthly Cash Flow', money(brrrr.cash_flow)+'/mo', cf(brrrr.cash_flow))
+      + stat('Cash Left In', money(brrrr.cash_left))
+      + stat('DSCR', brrrr.dscr!=null?parseFloat(brrrr.dscr).toFixed(2):'—')
+      + stat('Cash-on-Cash', pct(brrrr.coc), cf(brrrr.coc))
+    +'</div></div>';
+
+  // Buy & Hold
+  h+='<div class="strat"><h3>🏡 Buy &amp; Hold</h3>'
+    +'<p class="desc">Buy and rent on a standard mortgage for steady monthly cash flow and slow equity growth.</p>'
+    +'<div class="stat-grid">'
+      + stat('Monthly Cash Flow', money(bh.cash_flow)+'/mo', cf(bh.cash_flow))
+      + stat('Cash Invested', money(bh.cash_invested))
+      + stat('DSCR', bh.dscr!=null?parseFloat(bh.dscr).toFixed(2):'—')
+      + stat('Cash-on-Cash', pct(bh.coc), cf(bh.coc))
+    +'</div></div>';
+
+  // Property fundamentals + equity projection
+  h+='<div class="card"><div class="rows">'
+    + row('Cap Rate', pct(P.cap_rate))
+    + row('Net Operating Income', money(P.noi_annual)+' / yr')
+    + row('Projected Equity — Year 1', money(P.equity_y1))
+    + row('Projected Equity — Year 5', money(P.equity_y5))
+    + row('Projected Equity — Year 10', money(P.equity_y10))
+    +'</div><div style="font-size:.66rem;color:var(--muted);margin-top:8px;line-height:1.5">DSCR of 1.0+ means the rent covers the loan payment. Cash-on-Cash is annual cash flow divided by the cash invested. Equity projection assumes '+pct(P.appreciation_pct)+' annual appreciation.</div></div>';
+
+  return h+'</div>';
+}
+
+function renderNotFound(){
+  document.getElementById('app').innerHTML='<div class="center"><div>'
+    +'<div style="font-size:2rem;margin-bottom:8px">🔗</div>'
+    +'<h1 style="font-size:1.3rem;color:var(--gold);margin-bottom:8px">Link expired or not found</h1>'
+    +'<p class="muted" style="max-width:340px;margin:0 auto 18px">This home-value report is no longer available. Reach out to Rene for an updated one.</p>'
+    +'<div class="cta" style="justify-content:center"><a class="call" href="tel:'+PHONE+'">📞 Call Rene</a><a class="text" href="sms:'+PHONE+'">💬 Text Rene</a></div>'
+    +'</div></div>';
+}
+function renderError(msg){
+  document.getElementById('app').innerHTML='<div class="center"><div>'
+    +'<div style="font-size:2rem;margin-bottom:8px">⚠️</div>'
+    +'<h1 style="font-size:1.2rem;color:var(--gold);margin-bottom:8px">Couldn\'t load this report</h1>'
+    +'<p class="muted" style="max-width:340px;margin:0 auto">'+esc(msg||'Please try again in a moment.')+'</p>'
+    +'</div></div>';
+}
+
+// ── init ──
+(async function(){
+  try{
+    const m=location.pathname.match(/\/cma\/([A-Za-z0-9]+)/);
+    const slug=m?m[1]:'';
+    if(!slug){ renderNotFound(); return; }
+    const cfg=window.APP_CONFIG||{};
+    if(typeof window.supabase==='undefined'||!cfg.SUPABASE_URL){ renderError('Configuration unavailable.'); return; }
+    const client=window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+    const { data, error }=await client.rpc('get_cma_snapshot', { p_slug: slug });
+    if(error){ console.warn('[cma]', error.message); renderError('This report is temporarily unavailable.'); return; }
+    if(!data || !data.data){ renderNotFound(); return; }
+    document.title=(data.borrower_name?data.borrower_name+' — ':'')+'Home Value Report | Rates & Realty';
+    renderCma(data);
+  }catch(e){ console.error('[cma] init', e); renderError(e&&e.message); }
+})();
+</script>
+</body>
+</html>

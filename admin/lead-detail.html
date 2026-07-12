@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026071310 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026071320 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -32843,6 +32843,7 @@ function _tcEnsureModal(){
         +'<button type="button" onclick="_tcStartVideo()" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:8px;padding:8px 10px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap;">📹 Record</button>'
         +'<button type="button" id="tcFeeBtn" onclick="_tcFeeSheetLink()" title="Create a hosted fee-sheet link and add it to the message" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:8px;padding:8px 10px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap;">📄 Fee sheet link</button>'
         +'<button type="button" id="tcHsBtn" onclick="tcToggleHomeSearch()" title="Insert a home-search link (homes.ratesandrealty.com/s/…)" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:8px;padding:8px 10px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap;">🏠 Home search</button>'
+        +'<button type="button" id="tcCmaBtn" onclick="_tcCmaLink()" title="Create a hosted CMA link and add it to the message (pull comps first in the Deal Analyzer)" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.25);color:#C9A84C;border-radius:8px;padding:8px 10px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap;">📊 CMA link</button>'
         +'<span id="tcCount" style="font-size:10px;color:#555;white-space:nowrap;flex-shrink:0;">0/160</span>'
         +'<input type="file" id="tcMediaFile" accept="image/*" onchange="_tcMediaFileChosen(this)" style="display:none;">'
       +'</div>'
@@ -33317,6 +33318,30 @@ async function _tcFeeSheetLink(){
     showToast('Fee sheet link added' + (res.slug ? ' · '+res.slug : ''));
   }catch(e){
     // e.g. "no fee sheet draft for this contact — build/save one first"
+    showToast((e&&e.message)||String(e), true);
+  }
+  if(btn){ btn.disabled=false; btn.style.opacity='1'; }
+}
+
+// ── SMS a CMA: freeze the current Deal-Analyzer CMA (generate-cma mode:'snapshot') → hosted
+// /cma/<slug> link → append to the message. Requires comps to have been pulled first. ──
+async function _tcCmaLink(){
+  var cid=(_tcState&&_tcState.cid) || (typeof lpCid==='function'?lpCid():null) || new URLSearchParams(location.search).get('contact_id');
+  if(!cid){ showToast('No contact', true); return; }
+  // _cmaBuildPayload() returns null unless comps have been pulled (window._daCmaData set).
+  var payload = (typeof _cmaBuildPayload==='function') ? _cmaBuildPayload() : null;
+  if(!payload){ showToast('Pull comps first in the Deal Analyzer.', true); return; }
+  payload.mode='snapshot';
+  payload.contact_id=cid;
+  var btn=document.getElementById('tcCmaBtn'); if(btn){ btn.disabled=true; btn.style.opacity='0.6'; }
+  try{
+    // Authed invoke (verify_jwt); _loeInvoke surfaces transport + {error} body errors as throws.
+    var res=await _loeInvoke('generate-cma', payload);
+    if(!res || res.ok===false || !res.url) throw new Error((res&&(res.error||res.message))||'No link returned');
+    var ta=document.getElementById('tcBody');
+    if(ta){ var cur=(ta.value||'').replace(/\s+$/,''); ta.value=(cur?cur+'\n':'')+res.url; if(typeof _tcCharCount==='function') _tcCharCount(); ta.focus(); }
+    showToast('CMA link added' + (res.slug ? ' · '+res.slug : ''));
+  }catch(e){
     showToast((e&&e.message)||String(e), true);
   }
   if(btn){ btn.disabled=false; btn.style.opacity='1'; }
