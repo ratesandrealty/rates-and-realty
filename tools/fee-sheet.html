@@ -139,7 +139,7 @@
         .mode-toggle-label { font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 6px; text-transform: uppercase; }
         .mode-toggle { display: flex; gap: 0; }
         .mode-toggle button {
-            flex: 1; padding: 8px 12px; font-size: 12px;
+            flex: 1; padding: 8px 7px; font-size: 11px; line-height: 1.2;
             background: transparent; color: #888; cursor: pointer;
             border: 1px solid #555; transition: all .2s;
         }
@@ -609,6 +609,7 @@
             <button id="modeBtnRate" type="button" onclick="setMode('rate')" class="active">Rate Comparison</button>
             <button id="modeBtnSingle" type="button" onclick="setMode('single')">Single Rate</button>
             <button id="modeBtnProperty" type="button" onclick="setMode('property')">Property Comparison</button>
+            <button id="modeBtnPrice" type="button" onclick="setMode('price')">Price Comparison</button>
             <button id="modeBtnHeloc" type="button" onclick="setMode('heloc')">HELOC</button>
         </div>
     </div>
@@ -829,6 +830,11 @@ const scenarios = [
 // Populated lazily from defaultPropertyScenarios() the first time the user switches into property mode.
 let _currentMode = 'rate';
 let propertyScenarios = [];
+// Price-comparison mode: each column is a different PURCHASE PRICE POINT with EVERY field
+// editable per column (price + rate/points/origComp/lenderCredits like Rate Comparison,
+// plus per-column down%, property type and loan product like Property Comparison). Flows
+// through the SAME calcScenario path as every other mode.
+let priceScenarios = [];
 
 function defaultPropertyScenarios() {
     return [
@@ -836,6 +842,20 @@ function defaultPropertyScenarios() {
         { id: 'P2', label: 'Condo',     propertyType: 'condo',       purchasePrice: 500000, downPct: 20, hoa: 350, monthlyRent: 0,    rate: 7.000, loanProduct: 'conv30', recommended: false },
         { id: 'P3', label: '2-4 Unit',  propertyType: 'multifamily', purchasePrice: 800000, downPct: 25, hoa: 0,   monthlyRent: 2400, rate: 7.250, loanProduct: 'conv30', recommended: false }
     ];
+}
+
+function defaultPriceScenarios() {
+    return [
+        { id: 'PP1', label: 'Price A', purchasePrice: 700000, downPct: 20, propertyType: 'sfr', loanProduct: 'conv30', rate: 6.875, points: 0, origComp: 1.5, lenderCredits: 0, recommended: true },
+        { id: 'PP2', label: 'Price B', purchasePrice: 800000, downPct: 20, propertyType: 'sfr', loanProduct: 'conv30', rate: 6.875, points: 0, origComp: 1.5, lenderCredits: 0, recommended: false },
+        { id: 'PP3', label: 'Price C', purchasePrice: 900000, downPct: 20, propertyType: 'sfr', loanProduct: 'conv30', rate: 6.875, points: 0, origComp: 1.5, lenderCredits: 0, recommended: false }
+    ];
+}
+// Allocate the next unique PPn id (max existing + 1) so add/remove never collides.
+function nextPriceId() {
+    let max = 0;
+    (priceScenarios || []).forEach(function (p) { const n = parseInt(String(p.id).replace(/\D/g, ''), 10); if (n > max) max = n; });
+    return 'PP' + (max + 1);
 }
 
 function buildScenarioCards() {
@@ -939,11 +959,112 @@ function togglePropertyRecommend(i) {
     notifyParentOfChange();
 }
 
+// ── Price-comparison cards ──
+// Fully independent editable column per price point. Mirrors the rate-card fields
+// (label/rate/points/origComp/lenderCredits/recommend) AND the property-card per-column
+// fields (purchase price / down% / property type / loan product), plus add/remove column.
+function buildPriceCards() {
+    const container = $('scenarioCards');
+    container.innerHTML = '';
+    if (!priceScenarios || priceScenarios.length === 0) {
+        priceScenarios = defaultPriceScenarios();
+    }
+    priceScenarios.forEach((p, i) => {
+        const card = document.createElement('div');
+        card.className = 'scenario-card' + (p.recommended ? ' recommended' : '');
+        card.innerHTML = `
+            <div class="scenario-header" style="margin-bottom:8px;">
+                <h3 style="margin:0;">${p.label || ('Price ' + (i + 1))}</h3>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button class="btn-recommend ${p.recommended ? 'active' : ''}" onclick="togglePriceRecommend(${i})">&#9733; Recommend</button>
+                    ${priceScenarios.length > 1 ? `<button type="button" title="Remove column" onclick="removePriceColumn(${i})" style="background:transparent;border:1px solid #663;color:#c88;border-radius:6px;font-size:14px;line-height:1;cursor:pointer;padding:3px 8px;font-family:inherit;">&times;</button>` : ''}
+                </div>
+            </div>
+            <div class="field"><label>Label</label><input type="text" value="${p.label}" onchange="priceScenarios[${i}].label=this.value;buildPriceCards();recalc()"></div>
+            <div class="row2">
+                <div class="field"><label>Purchase Price $</label><input type="number" step="5000" value="${p.purchasePrice}" onchange="priceScenarios[${i}].purchasePrice=parseFloat(this.value)||0;recalc()"></div>
+                <div class="field"><label>Down %</label><input type="number" step="0.5" min="0" max="100" value="${p.downPct != null ? p.downPct : 20}" onchange="priceScenarios[${i}].downPct=parseFloat(this.value)||0;recalc()"></div>
+            </div>
+            <div class="row2">
+                <div class="field"><label>Rate %</label><input type="number" step="0.125" value="${p.rate}" onchange="priceScenarios[${i}].rate=parseFloat(this.value)||0;recalc()"></div>
+                <div class="field"><label>Points %</label><input type="number" step="0.125" value="${p.points}" onchange="priceScenarios[${i}].points=parseFloat(this.value)||0;recalc()"></div>
+            </div>
+            <div class="row2">
+                <div class="field"><label>Orig Comp %</label><input type="number" step="0.125" value="${p.origComp != null ? p.origComp : 1.5}" onchange="priceScenarios[${i}].origComp=parseFloat(this.value)||0;recalc()"></div>
+                <div class="field"><label>Lender Credits $</label><input type="number" step="100" value="${p.lenderCredits || 0}" onchange="priceScenarios[${i}].lenderCredits=parseFloat(this.value)||0;recalc()"></div>
+            </div>
+            <div class="field"><label>Property Type</label>
+                <select onchange="priceScenarios[${i}].propertyType=this.value;recalc()">
+                    <option value="sfr"          ${p.propertyType==='sfr' ? 'selected' : ''}>Single Family</option>
+                    <option value="condo"        ${p.propertyType==='condo' ? 'selected' : ''}>Condo</option>
+                    <option value="multifamily"  ${p.propertyType==='multifamily' ? 'selected' : ''}>2-4 Unit</option>
+                    <option value="townhouse"    ${p.propertyType==='townhouse' ? 'selected' : ''}>Townhouse</option>
+                    <option value="manufactured" ${p.propertyType==='manufactured' ? 'selected' : ''}>Manufactured</option>
+                </select>
+            </div>
+            <div class="field"><label>Loan Product</label>
+                <select onchange="priceScenarios[${i}].loanProduct=this.value;recalc()">
+                    <option value="conv30"  ${p.loanProduct==='conv30' ? 'selected' : ''}>Conv 30yr Fixed</option>
+                    <option value="conv15"  ${p.loanProduct==='conv15' ? 'selected' : ''}>Conv 15yr Fixed</option>
+                    <option value="fha30"   ${p.loanProduct==='fha30' ? 'selected' : ''}>FHA 30yr Fixed</option>
+                    <option value="va30"    ${p.loanProduct==='va30' ? 'selected' : ''}>VA 30yr Fixed</option>
+                    <option value="usda30"  ${p.loanProduct==='usda30' ? 'selected' : ''}>USDA 30yr Fixed</option>
+                    <option value="jumbo30" ${p.loanProduct==='jumbo30' ? 'selected' : ''}>Jumbo 30yr Fixed</option>
+                </select>
+            </div>`;
+        container.appendChild(card);
+    });
+    const addWrap = document.createElement('div');
+    addWrap.style.cssText = 'margin-top:4px;';
+    addWrap.innerHTML = `<button type="button" onclick="addPriceColumn()" style="width:100%;background:transparent;border:1px dashed #C9A84C;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:8px;font-family:inherit;">+ Add price point</button>`;
+    container.appendChild(addWrap);
+}
+
+function addPriceColumn() {
+    if (!priceScenarios || priceScenarios.length === 0) priceScenarios = defaultPriceScenarios();
+    const last = priceScenarios[priceScenarios.length - 1] || {};
+    priceScenarios.push({
+        id: nextPriceId(),
+        label: 'Price ' + String.fromCharCode(65 + priceScenarios.length),
+        purchasePrice: (last.purchasePrice || 700000) + 100000,
+        downPct: (last.downPct != null ? last.downPct : 20),
+        propertyType: last.propertyType || 'sfr',
+        loanProduct: last.loanProduct || 'conv30',
+        rate: (last.rate != null ? last.rate : 6.875),
+        points: 0,
+        origComp: (last.origComp != null ? last.origComp : 1.5),
+        lenderCredits: 0,
+        recommended: false
+    });
+    buildPriceCards();
+    recalc();
+    notifyParentOfChange();
+}
+
+function removePriceColumn(i) {
+    if (!priceScenarios || priceScenarios.length <= 1) return;
+    const wasRec = !!priceScenarios[i].recommended;
+    priceScenarios.splice(i, 1);
+    if (wasRec && !priceScenarios.some(p => p.recommended)) priceScenarios[0].recommended = true;
+    buildPriceCards();
+    recalc();
+    notifyParentOfChange();
+}
+
+function togglePriceRecommend(i) {
+    priceScenarios.forEach((p, idx) => { p.recommended = (idx === i) ? !p.recommended : false; });
+    buildPriceCards();
+    recalc();
+    notifyParentOfChange();
+}
+
 // Dispatcher — mounts the right cards into #scenarioCards based on _currentMode.
 function renderCards() {
     if (_currentMode === 'heloc') { return; } // HELOC builds its own panel
     if (_currentMode === 'property') {
         buildPropertyCards();
+    } else if (_currentMode === 'price') {
+        buildPriceCards();
     } else {
         // Both 'rate' and 'single' use the rate-mode card builder.
         // buildScenarioCards reads the global scenarios array; single mode hides
@@ -962,17 +1083,19 @@ function renderCards() {
 
 // Mode toggle handler. Wired to the toggle pill buttons.
 function setMode(newMode) {
-    if (newMode !== 'rate' && newMode !== 'single' && newMode !== 'property' && newMode !== 'heloc') return;
+    if (newMode !== 'rate' && newMode !== 'single' && newMode !== 'property' && newMode !== 'price' && newMode !== 'heloc') return;
     if (_currentMode === newMode) return;
     _currentMode = newMode;
     // Update toggle button visuals.
     const rateBtn = document.getElementById('modeBtnRate');
     const singleBtn = document.getElementById('modeBtnSingle');
     const propBtn = document.getElementById('modeBtnProperty');
+    const priceBtn = document.getElementById('modeBtnPrice');
     const helocBtn = document.getElementById('modeBtnHeloc');
     if (rateBtn) rateBtn.classList.toggle('active', newMode === 'rate');
     if (singleBtn) singleBtn.classList.toggle('active', newMode === 'single');
     if (propBtn) propBtn.classList.toggle('active', newMode === 'property');
+    if (priceBtn) priceBtn.classList.toggle('active', newMode === 'price');
     if (helocBtn) helocBtn.classList.toggle('active', newMode === 'heloc');
     // Swap the HELOC panel in/out for the purchase/refi panel. Borrower fields +
     // the mode toggle stay visible; only the mode-specific bodies swap.
@@ -1324,8 +1447,15 @@ const quoteId = genQuoteId();
 function render(inp, results) {
     // Single mode: limit scenarios to first element so headers/pills/columns match results.
     const displayedScenarios = (inp.mode === 'single') ? scenarios.slice(0, 1) : scenarios;
-    const recIdx = (inp.mode === 'property')
-        ? (propertyScenarios || []).findIndex(p => p.recommended)
+    // Per-column modes (property + price) share the same column-layout treatment: no summary
+    // strip, per-column headers/down, per-column gov fee. `colScenarios` is the array that
+    // backs the columns for THIS mode (strict — never cross arrays).
+    const isCol = (inp.mode === 'property' || inp.mode === 'price');
+    const colScenarios = (inp.mode === 'property') ? (propertyScenarios || [])
+        : (inp.mode === 'price') ? (priceScenarios || [])
+        : displayedScenarios;
+    const recIdx = isCol
+        ? colScenarios.findIndex(p => p.recommended)
         : scenarios.findIndex(s => s.recommended);
     const today = new Date();
     const dateStr = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -1353,7 +1483,7 @@ function render(inp, results) {
     const html = `
         ${_fsReportHeader(inp.borrowerName, inp.propertyAddress, dateStr)}
 
-        ${(inp.mode === 'property') ? '' : `<div class="summary-strip">
+        ${isCol ? '' : `<div class="summary-strip">
             <div class="item"><div class="lbl">Purchase Price</div><div class="val">${fmtPlain(inp.purchasePrice, 0)}</div></div>
             <div class="item"><div class="lbl">Loan Amount</div><div class="val">${fmtPlain(inp.loanAmount, 0)}</div></div>
             <div class="item"><div class="lbl">LTV</div><div class="val">${inp.ltv.toFixed(1)}%</div></div>
@@ -1362,7 +1492,7 @@ function render(inp, results) {
         </div>`}
 
         ${(() => {
-            if (inp.mode === 'property') return '';
+            if (isCol) return '';
             const info = getLoanLimitInfo(inp.county, inp.loanAmount);
             if (!info) return '';
             return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 14px;margin-bottom:12px;background:#f9f9f7;border:1px solid #eee;border-radius:4px;font-size:11px;color:#666;">' +
@@ -1374,13 +1504,13 @@ function render(inp, results) {
         <div style="display:flex;gap:0;">
             <div style="width:40%;flex-shrink:0;"></div>
             <div class="rate-cards" style="flex:1;">
-                ${(inp.mode === 'property') ? results.map((r, i) => {
-                    const p = propertyScenarios[i];
+                ${isCol ? results.map((r, i) => {
+                    const p = colScenarios[i];
                     const isRec = i === recIdx;
                     const colInp = r.inp || inp;
                     return '<div class="rate-card' + (isRec ? ' rec' : '') + '">' +
                         '<div class="rate-card-label" style="font-size:11px;color:#1A1A1A;font-weight:700;letter-spacing:1.5px;margin-bottom:4px;">' + (p ? p.label : ('Col ' + (i+1))) + '</div>' +
-                        '<div class="rate-card-rate">' + (p ? p.rate.toFixed(3) : '0.000') + '%</div>' +
+                        '<div class="rate-card-rate">' + (p ? (p.rate || 0).toFixed(3) : '0.000') + '%</div>' +
                         '<div class="rate-card-apr" style="font-size:12px;line-height:1.55;margin-top:6px;color:#3a3a3a;">' +
                             'Price: <strong>' + fmtPlain(colInp.purchasePrice, 0) + '</strong><br>' +
                             'Loan: <strong>' + fmtPlain(colInp.loanAmount, 0) + '</strong><br>' +
@@ -1421,7 +1551,7 @@ function render(inp, results) {
         <table class="fee-table">
             <thead><tr>
                 <th>Fee Description</th>
-                ${results.map((r, i) => `<th class="${thClass(i)}">${(inp.mode === 'property') ? (r.headerLabel.split(' · ')[0]) : ('Option ' + displayedScenarios[i].id)}</th>`).join('')}
+                ${results.map((r, i) => `<th class="${thClass(i)}">${isCol ? (r.headerLabel.split(' · ')[0]) : ('Option ' + displayedScenarios[i].id)}</th>`).join('')}
             </tr></thead>
             <tbody>
                 ${catHeader('A. Origination Charges')}
@@ -1433,8 +1563,8 @@ function render(inp, results) {
 
                 ${catHeader('B. Services You Cannot Shop For')}
                 ${(() => {
-                    if (inp.mode === 'property') {
-                        // Property mode: render gov-fee row when ANY column has a non-zero gov fee.
+                    if (isCol) {
+                        // Per-column modes: render gov-fee row when ANY column has a non-zero gov fee.
                         // Use a smart label: if all non-zero columns share the same label, show it;
                         // otherwise show generic "Upfront Gov Fee".
                         const labels = results.filter(r => r.govFeeAmount > 0 && r.govFeeLabel).map(r => r.govFeeLabel);
@@ -1454,11 +1584,11 @@ function render(inp, results) {
                 ${row('Processing Fee', r => r.processingFee)}
                 ${row('Subtotal B', r => r.subtotalB, true)}
                 ${(() => {
-                    if (inp.mode === 'property') {
-                        // Property mode: one note per column that has a financed gov fee.
+                    if (isCol) {
+                        // Per-column modes: one note per column that has a financed gov fee.
                         const notes = results.map((r, i) => {
                             if (!r.govFeeFinanced) return '';
-                            const colLabel = (propertyScenarios[i] && propertyScenarios[i].label) ? propertyScenarios[i].label : ('Col ' + (i+1));
+                            const colLabel = (colScenarios[i] && colScenarios[i].label) ? colScenarios[i].label : ('Col ' + (i+1));
                             return `<tr class="financed-note"><td colspan="${results.length + 1}" style="font-size:10px;color:#888;padding:2px 8px 6px;font-style:italic;">
                                 ✱ ${colLabel}: ${r.govFeeFinanced.label} financed into loan amount: $${r.govFeeFinanced.loanAmount.toLocaleString('en-US')} → $${r.govFeeFinanced.totalLoanAmount.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}
                             </td></tr>`;
@@ -1500,7 +1630,7 @@ function render(inp, results) {
 
                 ${catHeader('I. Lender Credits')}
                 ${row('Lender Credits', r => r.lenderCreditLine > 0 ? -r.lenderCreditLine : 0)}
-                ${row('Points Credit (if negative pts)', (r, i) => scenarios[i].points < 0 ? scenarios[i].points / 100 * inp.loanAmount : 0)}
+                ${isCol ? '' : row('Points Credit (if negative pts)', (r, i) => scenarios[i].points < 0 ? scenarios[i].points / 100 * inp.loanAmount : 0)}
             </tbody>
         </table>
 
@@ -1509,20 +1639,26 @@ function render(inp, results) {
             <table class="fee-table">
                 <thead><tr>
                     <th></th>
-                    ${displayedScenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}</th>`).join('')}
+                    ${(isCol
+                        ? results.map((r, i) => `<th class="${thClass(i)}">${(colScenarios[i] && colScenarios[i].label) ? colScenarios[i].label : ('Col ' + (i + 1))}</th>`)
+                        : displayedScenarios.map((s, i) => `<th class="${thClass(i)}">Option ${s.id}</th>`)).join('')}
                 </tr></thead>
                 <tbody>
-                    ${row('Down Payment', r => (inp.mode === 'property' && r.inp) ? r.inp.downPayment : inp.downPayment)}
+                    ${row('Down Payment', r => (isCol && r.inp) ? r.inp.downPayment : inp.downPayment)}
                     ${row('Total Closing Costs (H)', r => r.totalClosing)}
                     ${row('Less: Lender Credits', (r, i) => {
+                        // Column modes (property/price): only the explicit per-column lender-credit
+                        // line. Negative points are already inside Section A per column, so they are
+                        // NOT re-subtracted here — keeps admin cash-to-close == r.cashToClose == public.
+                        if (isCol) return r.lenderCreditLine > 0 ? -r.lenderCreditLine : 0;
                         let c = 0;
                         if (r.lenderCreditLine > 0) c -= r.lenderCreditLine;
                         if (scenarios[i].points < 0) c += scenarios[i].points / 100 * inp.loanAmount;
                         return c;
                     })}
                     ${(() => {
-                        // Less: Financed row — mode-aware. Property mode renders when ANY column has a financed gov fee.
-                        if (inp.mode === 'property') {
+                        // Less: Financed row — mode-aware. Column modes render when ANY column has a financed gov fee.
+                        if (isCol) {
                             const anyFinanced = results.some(r => r.govFeeFinanced);
                             if (!anyFinanced) return '';
                             const labels = results.filter(r => r.govFeeFinanced).map(r => r.govFeeFinanced.label);
@@ -1533,17 +1669,17 @@ function render(inp, results) {
                         return inp.govFee && inp.govFee.financed ? row(`Less: Financed (${inp.govFee.label})`, () => -inp.govFee.amount) : '';
                     })()}
                     ${row('Estimated Funds Needed', (r, i) => {
+                        // Column modes: calcScenario already produced the exact per-column cash-to-close
+                        // (down + totalClosing − lenderCredit − financedGovFee, negative points folded
+                        // into Section A). Use it verbatim so admin ties to the public snapshot.
+                        if (isCol) return r.cashToClose;
                         let credits = 0;
                         if (r.lenderCreditLine > 0) credits += r.lenderCreditLine;
-                        // Points are a rate-mode concept — property cards have no points field.
-                        if (inp.mode !== 'property' && scenarios[i] && scenarios[i].points < 0) {
+                        if (scenarios[i] && scenarios[i].points < 0) {
                             credits += Math.abs(scenarios[i].points / 100 * inp.loanAmount);
                         }
-                        // Per-column down payment + per-column financed gov fee in property mode.
-                        const colDown = (inp.mode === 'property' && r.inp) ? r.inp.downPayment : inp.downPayment;
-                        const colFinanced = (inp.mode === 'property')
-                            ? (r.govFeeFinanced ? (r.govFeeFinanced.totalLoanAmount - r.govFeeFinanced.loanAmount) : 0)
-                            : ((inp.govFee && inp.govFee.financed) ? inp.govFee.amount : 0);
+                        const colDown = inp.downPayment;
+                        const colFinanced = (inp.govFee && inp.govFee.financed) ? inp.govFee.amount : 0;
                         return colDown + r.totalClosing - credits - colFinanced;
                     }, false, true)}
                 </tbody>
@@ -1577,7 +1713,7 @@ function render(inp, results) {
         </div>
 
         ${(() => {
-            if (inp.mode === 'property') return '';
+            if (isCol) return '';
             const county = inp.county || 'Los Angeles';
             const info = getLoanLimitInfo(county, inp.loanAmount);
             if (!info) {
@@ -1712,6 +1848,36 @@ function calcPropertyColumn(col) {
     return result;
 }
 
+// Price-comparison column: same per-column input synthesis as property mode (own purchase
+// price / down% / product / property type), but the synthetic scenario carries THIS column's
+// own rate/points/origComp/lenderCredits — so the full A–H fee table + PITI + cash-to-close
+// come straight out of calcScenario, per column, to the dollar.
+function calcPriceColumn(col) {
+    const inp = applyColumnOverrides(readSidebarInputs(), col);
+    const sc = {
+        id: col.id,
+        label: col.label,
+        rate: col.rate,
+        points: col.points || 0,
+        origComp: (col.origComp != null) ? col.origComp : 1.5,
+        lenderCredits: col.lenderCredits || 0,
+        recommended: !!col.recommended
+    };
+    const result = calcScenario(inp, sc);
+    result.headerLabel = col.label + ' · $' + Math.round(col.purchasePrice / 1000) + 'K';
+    result.monthlyHoa = 0;
+    result.monthlyRent = 0;
+    result.netPayment = result.totalMonthly;
+    result.inp = inp;
+    result.govFeeLabel = (inp.govFee && inp.govFee.label) ? inp.govFee.label : null;
+    result.govFeeFinanced = (inp.govFee && inp.govFee.financed) ? {
+        label: inp.govFee.label,
+        loanAmount: inp.loanAmount,
+        totalLoanAmount: inp.totalLoanAmount
+    } : null;
+    return result;
+}
+
 function recalc() {
     if (_currentMode === 'heloc') { helocRecalc(); return; }
     if (_currentMode === 'property') {
@@ -1722,6 +1888,14 @@ function recalc() {
         const baseInp = getInputs();
         baseInp.mode = 'property';
         const results = propertyScenarios.map(calcPropertyColumn);
+        render(baseInp, results);
+    } else if (_currentMode === 'price') {
+        if (!priceScenarios || priceScenarios.length === 0) {
+            priceScenarios = defaultPriceScenarios();
+        }
+        const baseInp = getInputs();
+        baseInp.mode = 'price';
+        const results = priceScenarios.map(calcPriceColumn);
         render(baseInp, results);
     } else {
         const inp = getInputs();
@@ -1879,6 +2053,9 @@ function collectFeeSheetDraft() {
         property_scenarios: (propertyScenarios || []).map(function (p) {
             return { id: p.id, label: p.label, propertyType: p.propertyType, purchasePrice: p.purchasePrice, downPct: (p.downPct != null ? p.downPct : 20), hoa: p.hoa, monthlyRent: p.monthlyRent, rate: p.rate, loanProduct: p.loanProduct, recommended: !!p.recommended };
         }),
+        price_scenarios: (priceScenarios || []).map(function (p) {
+            return { id: p.id, label: p.label, purchasePrice: p.purchasePrice, downPct: (p.downPct != null ? p.downPct : 20), propertyType: p.propertyType, loanProduct: p.loanProduct, rate: p.rate, points: p.points || 0, origComp: (p.origComp != null ? p.origComp : 1.5), lenderCredits: p.lenderCredits || 0, recommended: !!p.recommended };
+        }),
         heloc: {
             value: v('heloc_value'),
             balance: v('heloc_balance'),
@@ -1932,6 +2109,11 @@ function applyFeeSheetDraft(obj) {
                 return { id: p.id || 'P?', label: p.label || '', propertyType: p.propertyType || 'sfr', purchasePrice: p.purchasePrice || 0, downPct: (p.downPct != null ? p.downPct : 20), hoa: p.hoa || 0, monthlyRent: p.monthlyRent || 0, rate: p.rate || 0, loanProduct: p.loanProduct || 'conv30', recommended: !!p.recommended };
             });
         }
+        if (Array.isArray(obj.price_scenarios) && obj.price_scenarios.length) {
+            priceScenarios = obj.price_scenarios.map(function (p) {
+                return { id: p.id || 'PP?', label: p.label || '', purchasePrice: p.purchasePrice || 0, downPct: (p.downPct != null ? p.downPct : 20), propertyType: p.propertyType || 'sfr', loanProduct: p.loanProduct || 'conv30', rate: p.rate || 0, points: p.points || 0, origComp: (p.origComp != null ? p.origComp : 1.5), lenderCredits: p.lenderCredits || 0, recommended: !!p.recommended };
+            });
+        }
 
         // HELOC section.
         var h = obj.heloc || {};
@@ -1952,7 +2134,7 @@ function applyFeeSheetDraft(obj) {
         if (targetMode !== _currentMode) {
             setMode(targetMode);
         } else {
-            ['rate', 'single', 'property', 'heloc'].forEach(function (m) {
+            ['rate', 'single', 'property', 'price', 'heloc'].forEach(function (m) {
                 var b = document.getElementById('modeBtn' + m.charAt(0).toUpperCase() + m.slice(1));
                 if (b) b.classList.toggle('active', m === _currentMode);
             });
@@ -2002,6 +2184,21 @@ function notifyParentOfChange() {
                     monthlyRent: p.monthlyRent,
                     rate: p.rate,
                     loanProduct: p.loanProduct,
+                    recommended: !!p.recommended
+                };
+            }),
+            price_scenarios: priceScenarios.map(function(p) {
+                return {
+                    id: p.id,
+                    label: p.label,
+                    purchasePrice: p.purchasePrice,
+                    downPct: (p.downPct != null) ? p.downPct : 20,
+                    propertyType: p.propertyType,
+                    loanProduct: p.loanProduct,
+                    rate: p.rate,
+                    points: p.points || 0,
+                    origComp: (p.origComp != null) ? p.origComp : 1.5,
+                    lenderCredits: p.lenderCredits || 0,
                     recommended: !!p.recommended
                 };
             }),
@@ -2680,7 +2877,7 @@ recalc();
             if (c.annualTax) $('annualTax').value = '$' + Number(c.annualTax).toLocaleString('en-US');
             if (c.annualInsurance) $('annualInsurance').value = '$' + Number(c.annualInsurance).toLocaleString('en-US');
             // Restore mode (v2+). Default to 'rate' for v1 blobs.
-            if (d.mode === 'rate' || d.mode === 'single' || d.mode === 'property') {
+            if (d.mode === 'rate' || d.mode === 'single' || d.mode === 'property' || d.mode === 'price') {
                 _currentMode = d.mode;
             } else {
                 _currentMode = 'rate';
@@ -2698,6 +2895,24 @@ recalc();
                         monthlyRent: p.monthlyRent || 0,
                         rate: p.rate || 0,
                         loanProduct: p.loanProduct || 'conv30',
+                        recommended: !!p.recommended
+                    };
+                });
+            }
+            // Restore price_scenarios (v2+). Empty/missing means price mode never used yet.
+            if (Array.isArray(d.price_scenarios) && d.price_scenarios.length > 0) {
+                priceScenarios = d.price_scenarios.map(function(p) {
+                    return {
+                        id: p.id || 'PP?',
+                        label: p.label || '',
+                        purchasePrice: p.purchasePrice || 0,
+                        downPct: (p.downPct != null) ? p.downPct : 20,
+                        propertyType: p.propertyType || 'sfr',
+                        loanProduct: p.loanProduct || 'conv30',
+                        rate: p.rate || 0,
+                        points: p.points || 0,
+                        origComp: (p.origComp != null) ? p.origComp : 1.5,
+                        lenderCredits: p.lenderCredits || 0,
                         recommended: !!p.recommended
                     };
                 });
@@ -2747,6 +2962,8 @@ recalc();
                 const singleBtnR = document.getElementById('modeBtnSingle');
                 if (singleBtnR) singleBtnR.classList.toggle('active', _currentMode === 'single');
                 propBtn.classList.toggle('active', _currentMode === 'property');
+                const priceBtnR = document.getElementById('modeBtnPrice');
+                if (priceBtnR) priceBtnR.classList.toggle('active', _currentMode === 'price');
             }
             _origRecalc(); // don't trigger auto-save back
         }

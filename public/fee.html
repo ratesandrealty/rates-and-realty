@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071110 -->
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071140 -->
 <title>Loan Estimate | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
@@ -224,6 +224,18 @@ function calcPropertyColumn(c, col){
     r.monthlyHoa=col.hoa||0; r.monthlyRent=col.monthlyRent||0;
     r.netPayment=r.totalMonthly + r.monthlyHoa - r.monthlyRent;
     r.inp=inp; return r;
+}
+// One price-comparison column (verbatim path: applyColumnOverrides → calcScenario). Same
+// per-column input synthesis as property mode, but the scenario carries THIS column's own
+// rate/points/origComp/lenderCredits so the fee schedule + cash-to-close match the admin tool
+// to the dollar. Mirrors tools/fee-sheet.html calcPriceColumn.
+function calcPriceColumn(c, col){
+    const inp=buildInp(c, { purchasePrice:col.purchasePrice, downPct:(col.downPct!=null?col.downPct:20),
+        loanProduct:PRODUCT_CODE_TO_FULL[col.loanProduct]||col.loanProduct, propertyType:col.propertyType });
+    const sc={ id:col.id, label:col.label, rate:col.rate, points:col.points||0, origComp:(col.origComp!=null?col.origComp:1.5), lenderCredits:col.lenderCredits||0, recommended:!!col.recommended };
+    const r=calcScenario(inp, sc);
+    r.netPayment=r.totalMonthly;
+    r.inp=inp; r.sc=sc; return r;
 }
 
 // ── heloc compute (verbatim: tools/fee-sheet.html) ──
@@ -469,6 +481,62 @@ function renderProperty(snap){
     document.getElementById('app').innerHTML=h;
 }
 
+// ── PRICE-COMPARISON render (mode 'price' → per purchase-price-point columns) ──
+function renderPrice(snap){
+    const data=snap.data||{}, c=data.common||{};
+    // Price mode reads data.price_scenarios ONLY — never data.scenarios / data.property_scenarios.
+    // Strict per-mode array selection (same discipline that fixed the earlier 9% par-rate leak).
+    const cols=Array.isArray(data.price_scenarios)?data.price_scenarios.slice():[];
+    if(!cols.length){
+        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Price Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1><div class="payhero"><div class="lbl" style="color:var(--muted)">No price scenarios saved for this estimate.</div></div></div>'+preparedBlock();
+        return;
+    }
+    let recIdx=cols.findIndex(p=>p.recommended); if(recIdx<0)recIdx=0;
+    const results=cols.map(col=>calcPriceColumn(c, col));
+    const rec=results[recIdx], recCol=cols[recIdx];
+    const name=snap.borrower_name||c.borrowerName||'Borrower';
+
+    let h='<div class="hero">'
+      +'<div class="eyebrow">Price Comparison</div>'
+      +'<h1>'+esc(name)+'</h1>'
+      +'<div class="product"><span class="badge">'+cols.length+' price points</span>'+(c.lockPeriod?'<span class="badge">🔒 '+esc(c.lockPeriod)+'</span>':'')+'</div>'
+      +'<div class="payhero"><div class="lbl">'+esc(recCol.label)+' · Est. Monthly</div>'
+        +'<div class="amt">'+fmt(rec.totalMonthly,0)+'<small>/mo</small></div>'
+        +'<div class="rate">'+fmt(recCol.purchasePrice,0)+' · '+esc(_helocRate(recCol.rate))+'% · '+(recCol.downPct)+'% down</div>'
+      +'</div></div>';
+
+    h+='<div class="sec"><div class="sec-title">Price Options</div><div class="opts">';
+    cols.forEach((col,i)=>{
+        const r=results[i];
+        const pts = (col.points>0) ? (col.points+' pts') : (col.points<0 ? 'credit' : 'no points');
+        h+='<div class="opt'+(i===recIdx?' rec':'')+'">'
+          +'<div class="opt-head"><span class="opt-name">'+esc(col.label)+(i===recIdx?' <span class="badge rec">Recommended</span>':'')+'</span>'
+            +'<span class="opt-rate">'+fmt(col.purchasePrice,0)+'</span></div>'
+          +'<div class="opt-meta">'
+            +'<div class="m"><div class="k">Rate</div><div class="v">'+esc(_helocRate(col.rate))+'%</div></div>'
+            +'<div class="m"><div class="k">Monthly</div><div class="v">'+fmt(r.totalMonthly,0)+'</div></div>'
+            +'<div class="m"><div class="k">Cash to Close</div><div class="v">'+fmt(r.cashToClose,0)+'</div></div>'
+          +'</div>'
+          +'<div class="rows" style="margin-top:10px">'
+            + row('Property Type', _propTypeLabel(col.propertyType))
+            + row('Down Payment', fmt(r.inp.downPayment,0)+' · '+(col.downPct)+'%')
+            + row('Loan Amount', fmt(r.inp.loanAmount,0))
+            + (pts!=='no points'?row('Points', esc(pts)):'')
+            + row('Principal &amp; Interest', fmt(r.pi))
+            + row('Property Taxes', fmt(r.monthlyTax))
+            + row("Homeowner's Insurance", fmt(r.monthlyIns))
+            + (r.mi>0?row('Mortgage Insurance', fmt(r.mi)):'')
+            + row('Total Monthly Payment', fmt(r.totalMonthly), 'total')
+            + row('Estimated Cash to Close', fmt(r.cashToClose), 'sub')
+          +'</div>'
+          + feeDetails(feeBreakdown(r, r.sc, r.inp))
+        +'</div>';
+    });
+    h+='</div></div>';
+    h+=disclaimer(snap.created_at)+preparedBlock();
+    document.getElementById('app').innerHTML=h;
+}
+
 // ── HELOC render ──
 function renderHeloc(snap){
     const data=snap.data||{}, hd=data.heloc||{};
@@ -564,9 +632,11 @@ function renderError(msg){
         const mode = (data.data && data.data.mode) || 'rate';
         document.title = (data.borrower_name?data.borrower_name+' — ':'')+'Loan Estimate | Rates & Realty';
         // Mirror the admin tool per mode: property → SFR/Condo/2-4 Unit comparison;
-        // heloc → heloc; rate/single (and any unknown) → A/B/C rate scenarios.
+        // price → per purchase-price-point columns; heloc → heloc; rate/single
+        // (and any unknown) → A/B/C rate scenarios. STRICT per-mode arrays — no cross-leak.
         if(mode==='heloc') renderHeloc(data);
         else if(mode==='property') renderProperty(data);
+        else if(mode==='price') renderPrice(data);
         else renderRate(data);
     }catch(e){ console.error('[fee] init', e); renderError(e && e.message); }
 })();
