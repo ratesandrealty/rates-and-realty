@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071230 -->
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071250 -->
 <title>Loan Estimate | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
@@ -72,6 +72,11 @@
   .typebadges.center{justify-content:center;margin-top:12px}
   .tb{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:700;color:#e6e0cf;background:rgba(201,168,76,0.10);border:1px solid rgba(201,168,76,0.28);border-radius:999px;padding:4px 10px;white-space:nowrap}
   .tb .em{font-size:.85rem;line-height:1}
+  /* borrower / connected-people chips (header) */
+  .people{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:12px}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:.74rem;font-weight:700;color:#efe8d4;background:rgba(201,168,76,0.10);border:1px solid rgba(201,168,76,0.28);border-radius:999px;padding:4px 12px;white-space:nowrap}
+  .chip .pi{font-size:.8rem;line-height:1;opacity:.85}
+  .chip .rel{color:var(--muted);font-weight:600}
   details{margin-top:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px}
   summary{cursor:pointer;font-size:.78rem;color:var(--gold);font-weight:700;list-style:none}
   summary::-webkit-details-marker{display:none}
@@ -277,6 +282,20 @@ function disclaimer(created){
 function row(label, value, cls){ return '<div class="row '+(cls||'')+'"><span class="rl">'+label+'</span><span class="rv">'+value+'</span></div>'; }
 function catRow(label){ return '<div class="row cat"><span class="rl">'+label+'</span></div>'; }
 function kv(k,v){ return '<div class="kv"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+// Header-level list of ALL borrowers / connected people (data._people, Primary first). Rendered
+// as a centered wrapping row of dark/gold chips — one per person, with a person icon and an
+// optional muted relationship sub-label. Only shown when 2+ people exist (the lone primary is
+// already the <h1> title). Missing/empty _people (older snapshots) → '' (no row, never errors).
+function peopleRow(data){
+    const people = Array.isArray(data && data._people) ? data._people.filter(p => p && p.name) : [];
+    if(people.length < 2) return '';
+    let h='<div class="people">';
+    people.forEach(p=>{
+        const rel = p.relationship ? '<span class="rel"> · '+esc(p.relationship)+'</span>' : '';
+        h += '<span class="chip"><span class="pi">👤</span><span class="nm">'+esc(p.name)+rel+'</span></span>';
+    });
+    return h+'</div>';
+}
 
 // Itemized closing-cost breakdown for ONE scenario — grouped/labeled like tools/fee-sheet.html.
 // PRESENTATION ONLY: every value is read off the already-computed calcScenario result `r`; the
@@ -365,6 +384,7 @@ function renderRate(snap){
     let h='<div class="hero">'
       +'<div class="eyebrow">Loan Estimate</div>'
       +'<h1>'+esc(name)+'</h1>'
+      + peopleRow(data)
       +(inp.propertyAddress?'<div class="addr">'+esc(inp.propertyAddress)+'</div>':'')
       +'<div class="product">'
         +(inp.lockPeriod?'<span class="badge">🔒 '+esc(inp.lockPeriod)+'</span>':'')
@@ -472,7 +492,7 @@ function renderProperty(snap){
     // array is rate-mode data; reading it here is what leaked a 9% par-rate onto property sheets).
     const cols=Array.isArray(data.property_scenarios)?data.property_scenarios.slice():[];
     if(!cols.length){
-        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Property Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1><div class="payhero"><div class="lbl" style="color:var(--muted)">No property scenarios saved for this estimate.</div></div></div>'+preparedBlock();
+        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Property Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1>'+peopleRow(data)+'<div class="payhero"><div class="lbl" style="color:var(--muted)">No property scenarios saved for this estimate.</div></div></div>'+preparedBlock();
         return;
     }
     // recIdx is -1 when NO column is recommended — do not force-default to 0. Badge/ring key
@@ -487,6 +507,7 @@ function renderProperty(snap){
     let h='<div class="hero">'
       +'<div class="eyebrow">Property Comparison</div>'
       +'<h1>'+esc(name)+'</h1>'
+      + peopleRow(data)
       +'<div class="product"><span class="badge">'+cols.length+' properties compared</span>'+(c.lockPeriod?'<span class="badge">🔒 '+esc(c.lockPeriod)+'</span>':'')+'</div>'
       +'<div class="payhero"><div class="lbl">'+esc(recCol.label)+' · Est. Monthly'+(rec.monthlyRent?' after rent':'')+'</div>'
         +'<div class="amt">'+fmt(rec.netPayment,0)+'<small>/mo</small></div>'
@@ -531,7 +552,7 @@ function renderPrice(snap){
     // Strict per-mode array selection (same discipline that fixed the earlier 9% par-rate leak).
     const cols=Array.isArray(data.price_scenarios)?data.price_scenarios.slice():[];
     if(!cols.length){
-        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Price Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1><div class="payhero"><div class="lbl" style="color:var(--muted)">No price scenarios saved for this estimate.</div></div></div>'+preparedBlock();
+        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Price Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1>'+peopleRow(data)+'<div class="payhero"><div class="lbl" style="color:var(--muted)">No price scenarios saved for this estimate.</div></div></div>'+preparedBlock();
         return;
     }
     // recIdx is -1 when NO column is recommended — do not force-default to 0. Badge/ring key
@@ -546,6 +567,7 @@ function renderPrice(snap){
     let h='<div class="hero">'
       +'<div class="eyebrow">Price Comparison</div>'
       +'<h1>'+esc(name)+'</h1>'
+      + peopleRow(data)
       +'<div class="product"><span class="badge">'+cols.length+' price points</span>'+(c.lockPeriod?'<span class="badge">🔒 '+esc(c.lockPeriod)+'</span>':'')+'</div>'
       +'<div class="payhero"><div class="lbl">'+esc(recCol.label)+' · Est. Monthly</div>'
         +'<div class="amt">'+fmt(rec.totalMonthly,0)+'<small>/mo</small></div>'
@@ -601,6 +623,7 @@ function renderHeloc(snap){
     let h='<div class="hero">'
       +'<div class="eyebrow">HELOC Estimate</div>'
       +'<h1>'+esc(name)+'</h1>'
+      + peopleRow(data)
       +'<div class="product"><span class="badge">Home Equity Line</span>'+(autopay?'<span class="badge">AutoPay −0.25%</span>':'')+'</div>'
       +'<div class="payhero"><div class="lbl">Estimated Monthly Payment</div>'
         +'<div class="amt">'+_helocMoney(selR.monthly)+'<small>/mo</small></div>'
