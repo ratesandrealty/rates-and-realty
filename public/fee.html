@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071250 -->
+<!-- fee.html · public branded fee-sheet snapshot · cache-buster v=2026071260 -->
 <title>Loan Estimate | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized loan estimate from Rates &amp; Realty.">
@@ -296,6 +296,13 @@ function peopleRow(data){
     });
     return h+'</div>';
 }
+// Header borrower display: when the people-chip row is showing (2+ people) the chips ARE the
+// borrower list, so we DROP the big <h1> name to avoid rendering the primary twice. With 0/1
+// person (no chip row) we keep the <h1> name exactly as before.
+function headerName(name, data){
+    const ppl = peopleRow(data);
+    return ppl ? ppl : '<h1>'+esc(name)+'</h1>';
+}
 
 // Itemized closing-cost breakdown for ONE scenario — grouped/labeled like tools/fee-sheet.html.
 // PRESENTATION ONLY: every value is read off the already-computed calcScenario result `r`; the
@@ -383,8 +390,7 @@ function renderRate(snap){
 
     let h='<div class="hero">'
       +'<div class="eyebrow">Loan Estimate</div>'
-      +'<h1>'+esc(name)+'</h1>'
-      + peopleRow(data)
+      + headerName(name, data)
       +(inp.propertyAddress?'<div class="addr">'+esc(inp.propertyAddress)+'</div>':'')
       +'<div class="product">'
         +(inp.lockPeriod?'<span class="badge">🔒 '+esc(inp.lockPeriod)+'</span>':'')
@@ -492,7 +498,7 @@ function renderProperty(snap){
     // array is rate-mode data; reading it here is what leaked a 9% par-rate onto property sheets).
     const cols=Array.isArray(data.property_scenarios)?data.property_scenarios.slice():[];
     if(!cols.length){
-        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Property Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1>'+peopleRow(data)+'<div class="payhero"><div class="lbl" style="color:var(--muted)">No property scenarios saved for this estimate.</div></div></div>'+preparedBlock();
+        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Property Comparison</div>'+headerName(snap.borrower_name||c.borrowerName||'Borrower', data)+'<div class="payhero"><div class="lbl" style="color:var(--muted)">No property scenarios saved for this estimate.</div></div></div>'+preparedBlock();
         return;
     }
     // recIdx is -1 when NO column is recommended — do not force-default to 0. Badge/ring key
@@ -506,8 +512,7 @@ function renderProperty(snap){
 
     let h='<div class="hero">'
       +'<div class="eyebrow">Property Comparison</div>'
-      +'<h1>'+esc(name)+'</h1>'
-      + peopleRow(data)
+      + headerName(name, data)
       +'<div class="product"><span class="badge">'+cols.length+' properties compared</span>'+(c.lockPeriod?'<span class="badge">🔒 '+esc(c.lockPeriod)+'</span>':'')+'</div>'
       +'<div class="payhero"><div class="lbl">'+esc(recCol.label)+' · Est. Monthly'+(rec.monthlyRent?' after rent':'')+'</div>'
         +'<div class="amt">'+fmt(rec.netPayment,0)+'<small>/mo</small></div>'
@@ -552,7 +557,7 @@ function renderPrice(snap){
     // Strict per-mode array selection (same discipline that fixed the earlier 9% par-rate leak).
     const cols=Array.isArray(data.price_scenarios)?data.price_scenarios.slice():[];
     if(!cols.length){
-        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Price Comparison</div><h1>'+esc(snap.borrower_name||c.borrowerName||'Borrower')+'</h1>'+peopleRow(data)+'<div class="payhero"><div class="lbl" style="color:var(--muted)">No price scenarios saved for this estimate.</div></div></div>'+preparedBlock();
+        document.getElementById('app').innerHTML='<div class="hero"><div class="eyebrow">Price Comparison</div>'+headerName(snap.borrower_name||c.borrowerName||'Borrower', data)+'<div class="payhero"><div class="lbl" style="color:var(--muted)">No price scenarios saved for this estimate.</div></div></div>'+preparedBlock();
         return;
     }
     // recIdx is -1 when NO column is recommended — do not force-default to 0. Badge/ring key
@@ -566,8 +571,7 @@ function renderPrice(snap){
 
     let h='<div class="hero">'
       +'<div class="eyebrow">Price Comparison</div>'
-      +'<h1>'+esc(name)+'</h1>'
-      + peopleRow(data)
+      + headerName(name, data)
       +'<div class="product"><span class="badge">'+cols.length+' price points</span>'+(c.lockPeriod?'<span class="badge">🔒 '+esc(c.lockPeriod)+'</span>':'')+'</div>'
       +'<div class="payhero"><div class="lbl">'+esc(recCol.label)+' · Est. Monthly</div>'
         +'<div class="amt">'+fmt(rec.totalMonthly,0)+'<small>/mo</small></div>'
@@ -622,8 +626,7 @@ function renderHeloc(snap){
 
     let h='<div class="hero">'
       +'<div class="eyebrow">HELOC Estimate</div>'
-      +'<h1>'+esc(name)+'</h1>'
-      + peopleRow(data)
+      + headerName(name, data)
       +'<div class="product"><span class="badge">Home Equity Line</span>'+(autopay?'<span class="badge">AutoPay −0.25%</span>':'')+'</div>'
       +'<div class="payhero"><div class="lbl">Estimated Monthly Payment</div>'
         +'<div class="amt">'+_helocMoney(selR.monthly)+'<small>/mo</small></div>'
