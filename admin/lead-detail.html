@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026071300 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026071310 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -32856,11 +32856,13 @@ function _tcEnsureModal(){
         +'</div>'
         +'<div id="tcHsSaved"></div>'
         +'<div id="tcHsNew" style="display:none;">'
-          +'<input id="tcHsCity" class="tcHsIn" type="text" placeholder="City (e.g. Anaheim)" style="margin-bottom:6px;">'
+          +'<input id="tcHsCity" class="tcHsIn" type="text" list="tcHsCityList" autocomplete="off" placeholder="Anaheim, Santa Ana, … (comma-separated)" style="margin-bottom:6px;">'
+          +'<datalist id="tcHsCityList">'+['Anaheim','Santa Ana','Irvine','Huntington Beach','Garden Grove','Westminster','Costa Mesa','Fullerton','Orange','Fountain Valley','Newport Beach','Tustin','Yorba Linda','Mission Viejo','Lake Forest','Buena Park','Cypress','Brea','Placentia','Laguna Niguel'].map(function(_c){return '<option value="'+_c+'"></option>';}).join('')+'</datalist>'
           +'<div style="display:flex;gap:6px;margin-bottom:6px;">'
-            +'<input id="tcHsCounty" class="tcHsIn" type="text" placeholder="County" value="Orange">'
+            +'<select id="tcHsCounty" class="tcHsIn" onchange="tcHsCountyChange()"><option value="Orange" selected>Orange</option><option value="Los Angeles">Los Angeles</option><option value="Riverside">Riverside</option><option value="San Bernardino">San Bernardino</option><option value="San Diego">San Diego</option><option value="Ventura">Ventura</option><option value="Kern">Kern</option><option value="Imperial">Imperial</option><option value="__other__">Other…</option></select>'
             +'<select id="tcHsType" class="tcHsIn"><option value="">Any type</option><option value="SFR">Single Family</option><option value="Condo">Condo</option><option value="Townhouse">Townhouse</option><option value="Multi">Multi-Family</option></select>'
           +'</div>'
+          +'<input id="tcHsCountyOther" class="tcHsIn" type="text" placeholder="Enter county name" style="display:none;margin-bottom:6px;">'
           +'<div style="display:flex;gap:6px;margin-bottom:6px;">'
             +'<input id="tcHsMinPrice" class="tcHsIn" type="text" inputmode="numeric" placeholder="Min $">'
             +'<input id="tcHsMaxPrice" class="tcHsIn" type="text" inputmode="numeric" placeholder="Max $">'
@@ -33347,6 +33349,13 @@ function tcToggleHomeSearch(){
   p.style.display=show?'block':'none';
   if(show){ tcHsTab('saved'); tcHsLoadSaved(); }
 }
+function tcHsCountyChange(){
+  var sel=document.getElementById('tcHsCounty'), oth=document.getElementById('tcHsCountyOther');
+  if(!sel||!oth) return;
+  var isOther=(sel.value==='__other__');
+  oth.style.display=isOther?'block':'none';
+  if(isOther){ setTimeout(function(){ oth.focus(); },30); } else { oth.value=''; }
+}
 function tcHsTab(which){
   var isNew=(which==='new');
   var saved=document.getElementById('tcHsSaved'), neu=document.getElementById('tcHsNew');
@@ -33398,7 +33407,11 @@ async function tcHsGenerate(){
   var cid=_tcHsCid();
   if(!cid){ showToast('No contact', true); return; }
   var g=function(id){ var e=document.getElementById(id); return e?(e.value||'').trim():''; };
-  var filters={ cities:g('tcHsCity'), county:g('tcHsCounty'), minPrice:g('tcHsMinPrice'), maxPrice:g('tcHsMaxPrice'), minBeds:g('tcHsMinBeds'), propType:g('tcHsType') };
+  // County: dropdown value, or the free-text "Other…" input when selected.
+  var county=g('tcHsCounty'); if(county==='__other__') county=g('tcHsCountyOther');
+  // Cities: one or more comma-separated — trim + drop blanks so the RPC emits a clean cities= list.
+  var cities=g('tcHsCity').split(',').map(function(x){ return x.trim(); }).filter(Boolean).join(',');
+  var filters={ cities:cities, county:county, minPrice:g('tcHsMinPrice'), maxPrice:g('tcHsMaxPrice'), minBeds:g('tcHsMinBeds'), propType:g('tcHsType') };
   var name=g('tcHsName');
   var btn=document.getElementById('tcHsGenBtn'); var orig=btn?btn.textContent:'';
   if(btn){ btn.disabled=true; btn.textContent='Generating…'; btn.style.opacity='0.7'; }
