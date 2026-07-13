@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026071340 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026071350 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -16190,18 +16190,40 @@ async function daPrintCMA(){
     if(!result.success||!result.pdf)throw new Error(result.error||'PDF generation failed');
     var bc=atob(result.pdf);var ba=new Uint8Array(bc.length);for(var k=0;k<bc.length;k++)ba[k]=bc.charCodeAt(k);
     var blob=new Blob([ba],{type:'application/pdf'});var blobUrl=URL.createObjectURL(blob);
-    var fileName='CMA - '+((d.subject&&d.subject.address)||borrowerName)+'.pdf';
+    var _cmaYmd=(function(){var dd=new Date();var p=function(n){return String(n).padStart(2,'0');};return dd.getFullYear()+'-'+p(dd.getMonth()+1)+'-'+p(dd.getDate());})();
+    var fileName='CMA - '+((d.subject&&d.subject.address)||borrowerName)+' - '+_cmaYmd+'.pdf';
     if(st){st.textContent='';}
     var popup=window.open('','_blank','width=1100,height=850,scrollbars=no,resizable=yes');
-    if(!popup){var a=document.createElement('a');a.href=blobUrl;a.download=fileName;a.click();return;}
+    if(popup){
     popup.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+fileName+'</title><style>*{margin:0;padding:0;box-sizing:border-box;}html,body{height:100%;background:#404040;font-family:sans-serif;display:flex;flex-direction:column;}.toolbar{background:#111;border-bottom:2px solid #C9A84C;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}.title{color:#C9A84C;font-weight:700;font-size:14px;}.sub{color:#888;font-size:12px;margin-top:2px;}.btns{display:flex;gap:10px;}.btn{padding:8px 18px;border-radius:6px;border:none;font-weight:700;font-size:13px;cursor:pointer;}.btn-print{background:#2a2a2a;color:#eee;border:1px solid #444;}.btn-dl{background:#C9A84C;color:#111;}.btn-close{background:transparent;color:#888;border:1px solid #444;}iframe{flex:1;border:none;width:100%;}</style></head><body><div class="toolbar"><div><div class="title">🏘️ Comparative Market Analysis</div><div class="sub">'+((d.subject&&d.subject.address)||'')+(includeAcq?' · incl. Acquisition Analysis':'')+'</div></div><div class="btns"><button class="btn btn-print" onclick="document.getElementById(\'pf\').contentWindow.print()">🖨️ Print</button><button class="btn btn-dl" onclick="dl()">⬇️ Download PDF</button><button class="btn btn-close" onclick="window.close()">✕ Close</button></div></div><iframe id="pf" src="'+blobUrl+'" type="application/pdf"></iframe><script>function dl(){var a=document.createElement(\'a\');a.href=\''+blobUrl+'\';a.download=\''+fileName+'\';a.click();}<\/script></body></html>');
     popup.document.close();
+    } else { var _a=document.createElement('a'); _a.href=blobUrl; _a.download=fileName; _a.click(); }
     setTimeout(function(){URL.revokeObjectURL(blobUrl);},600000);
-    // ── Log CMA PDF export (activity_events + lead score) ──
-    var _pcid=_cmaCid();
-    if(_pcid){
-      _cmaScoreEvent(_pcid,'cma_pdf_exported',{ address:(d.subject&&d.subject.address)||'', comp_count:(d.comps&&d.comps.length)||0, include_acquisition:includeAcq, include_rentals:(document.getElementById('da-cma-include-rentals')?document.getElementById('da-cma-include-rentals').checked:false) }, 'cma_pdf_'+_cmaDay(_pcid));
+    // ── ONE action: the PDF is already in hand (above). Now (best-effort, never blocking it)
+    //    fire the score, create the shareable /cma link, save the PDF to the lead's Drive
+    //    "CMA" folder, and bind the Drive PDF to the snapshot. Failures degrade gracefully. ──
+    var cid=_cmaCid();
+    if(cid){
+      var incRent=(document.getElementById('da-cma-include-rentals')?document.getElementById('da-cma-include-rentals').checked:false);
+      _cmaScoreEvent(cid,'cma_pdf_exported',{ address:propertyAddress, comp_count:(d.comps&&d.comps.length)||0, include_acquisition:includeAcq, include_rentals:incRent }, 'cma_pdf_'+_cmaDay(cid));
+      var _done=[], _slug=null, _linkUrl=null;
+      try{
+        var _sp=(typeof _cmaBuildPayload==='function')?_cmaBuildPayload():null;
+        if(_sp){ _sp.mode='snapshot'; _sp.contact_id=cid;
+          var _sr=await _loeInvoke('generate-cma', _sp);
+          if(_sr && _sr.slug){ _slug=_sr.slug; _linkUrl=_sr.url; _done.push('link created');
+            _cmaScoreEvent(cid,'cma_link_shared',{ slug:_slug, url:_linkUrl, address:propertyAddress }, 'cma_link_'+cid+'_'+_slug);
+          }
+        }
+      }catch(_e1){ console.warn('[cma] snapshot create failed:', _e1&&_e1.message); showToast('CMA link could not be created (your PDF is fine)', true); }
+      try{
+        var _dr=await _cmaSaveToDrive(cid, fileName, blob);
+        if(_dr && _dr.fileId){ _done.push('saved to Drive');
+          if(_slug){ try{ await _authClient().rpc('cma_snapshot_attach_pdf',{ p_slug:_slug, p_pdf_url:_dr.url, p_pdf_file_id:_dr.fileId, p_pdf_name:fileName }); }catch(_ae){ console.warn('[cma] attach_pdf failed:', _ae&&_ae.message); } }
+        } else if(_dr && _dr.skipped){ console.warn('[cma] Drive save skipped:', _dr.reason); showToast('PDF ready — no Drive folder for this lead, so it wasn’t saved to Drive', true); }
+      }catch(_e2){ console.warn('[cma] Drive save failed:', _e2&&_e2.message); showToast('PDF ready — Drive save failed', true); }
       if(typeof loadCmaHistory==='function') loadCmaHistory();
+      if(st){ st.style.color='var(--muted)'; st.textContent='CMA ready'+(_done.length?(' · '+_done.join(' · ')):''); }
     }
   }catch(e){if(st){st.style.color='#e05252';st.textContent='CMA failed: '+e.message;}else alert('CMA failed: '+e.message);}
 }
@@ -16239,38 +16261,82 @@ function _cmaLogGenerated(){
 }
 
 var _cmaHistDate=function(s){ if(!s)return''; var d=new Date(s); return isNaN(d.getTime())?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'}); };
+
+/* ── Drive save: resolve-or-create a "CMA" subfolder under the lead's gdrive_folder_id and
+   upload the PDF into it (server-authed via gdrive-proxy, Supabase session token only — no
+   Google popup). Mirrors the lpSectionUpload pattern. Returns {fileId,url} | {skipped} | throws. */
+var _cmaDriveFolderCache={};
+async function _cmaEnsureCmaFolder(root, gp, base){
+  if(_cmaDriveFolderCache[root]) return _cmaDriveFolderCache[root];
+  var lr=await fetch(base+'/functions/v1/gdrive-proxy?action=list-folders&parentId='+encodeURIComponent(root),{ headers:gp });
+  var ld=await lr.json().catch(function(){ return {}; });
+  if(!lr.ok) throw new Error((ld&&ld.error)||('list-folders HTTP '+lr.status));
+  var hit=((ld&&ld.files)||[]).find(function(f){ return String(f.name||'').trim().toLowerCase()==='cma'; });
+  var fid;
+  if(hit){ fid=hit.id; }
+  else{
+    var cr=await fetch(base+'/functions/v1/gdrive-proxy?action=create-folder',{ method:'POST', headers:Object.assign({'Content-Type':'application/json'}, gp), body:JSON.stringify({ parentId:root, name:'CMA' }) });
+    var cd=await cr.json().catch(function(){ return {}; });
+    if(!cr.ok||!cd.id) throw new Error((cd&&cd.error)||('create-folder HTTP '+cr.status));
+    fid=cd.id;
+  }
+  _cmaDriveFolderCache[root]=fid; return fid;
+}
+async function _cmaSaveToDrive(cid, fileName, pdfBlob){
+  var root=(typeof contactData!=='undefined'&&contactData)?contactData.gdrive_folder_id:null;
+  if(!root) return { skipped:true, reason:'no gdrive_folder_id' };
+  var cfg=window.APP_CONFIG||{}, base=cfg.SUPABASE_URL||'';
+  var token=''; try{ var s=await _authClient().auth.getSession(); token=(s&&s.data&&s.data.session&&s.data.session.access_token)||''; }catch(_){}
+  var gp={ 'Authorization':'Bearer '+token, 'apikey':(cfg.SUPABASE_ANON_KEY||'') };
+  var folderId=await _cmaEnsureCmaFolder(root, gp, base);
+  var fd=new FormData(); fd.append('folderId', folderId); fd.append('file', pdfBlob, fileName);
+  var ur=await fetch(base+'/functions/v1/gdrive-proxy?action=upload-file',{ method:'POST', headers:gp, body:fd });
+  var ud=await ur.json().catch(function(){ return {}; });
+  if(!ur.ok||!ud.id) throw new Error((ud&&ud.error)||('upload HTTP '+ur.status));
+  return { fileId:ud.id, url:ud.webViewLink||null };
+}
+function _cmaCopyFallback(url){ try{ var ta=document.createElement('textarea'); ta.value=url; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); var ok=document.execCommand('copy'); document.body.removeChild(ta); return ok; }catch(_){ return false; } }
+function _cmaCopyLink(enc){
+  var url=decodeURIComponent(enc||''); if(!url){ showToast('No link', true); return; }
+  var done=function(){ showToast('Link copied'); }, fail=function(){ showToast('Copy failed', true); };
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(url).then(done).catch(function(){ _cmaCopyFallback(url)?done():fail(); }); }
+    else { _cmaCopyFallback(url)?done():fail(); }
+  }catch(_){ _cmaCopyFallback(url)?done():fail(); }
+}
+
+// Generated CMAs — driven by cma_history(contact_id): each snapshot with its /cma link, saved
+// Drive PDF (if any), and view_count, newest first. Two actions per row: Download PDF + Copy link.
 async function loadCmaHistory(){
   var cid=_cmaCid();
   var list=document.getElementById('da-cma-history-list');
   var cntEl=document.getElementById('da-cma-history-count');
   if(!cid || !list) return;
   try{
-    var sb=_authClient();
-    var res=await Promise.all([
-      sb.from('cma_snapshots').select('slug,property_address,view_count,created_at,include_acquisition,include_rentals').eq('contact_id',cid).order('created_at',{ascending:false}).limit(50),
-      sb.from('activity_events').select('type,metadata,created_at').or('contact_id.eq.'+cid+',lead_id.eq.'+cid).in('type',['cma_pdf_exported','cma_generated']).order('created_at',{ascending:false}).limit(50)
-    ]);
-    var rows=[];
-    ((res[0]&&res[0].data)||[]).forEach(function(s){ rows.push({kind:'link',date:s.created_at,address:s.property_address||'',slug:s.slug,views:s.view_count||0}); });
-    ((res[1]&&res[1].data)||[]).forEach(function(a){ var m=a.metadata||{}; rows.push({kind:(a.type==='cma_pdf_exported'?'pdf':'gen'),date:a.created_at,address:m.address||''}); });
-    rows.sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
+    var r=await _authClient().rpc('cma_history',{ p_contact_id: cid });
+    if(r.error) throw r.error;
+    var rows=Array.isArray(r.data)?r.data:[];
     if(cntEl) cntEl.textContent='('+rows.length+')';
     if(!rows.length){ list.innerHTML='<div style="font-size:.74rem;color:var(--muted);padding:6px 0;">No CMAs generated yet for this lead.</div>'; return; }
-    var badge={ link:['📤 Shared link','#4ade80','rgba(74,222,128,.12)','rgba(74,222,128,.3)'], pdf:['📄 PDF','#60a5fa','rgba(96,165,250,.12)','rgba(96,165,250,.3)'], gen:['📊 Generated','#C9A84C','rgba(201,168,76,.1)','rgba(201,168,76,.28)'] };
-    list.innerHTML=rows.map(function(r){
-      var b=badge[r.kind]||badge.gen;
-      var when=_cmaHistDate(r.date);
-      var link='';
-      if(r.kind==='link'){
-        var url='homes.ratesandrealty.com/cma/'+r.slug;
-        link='<div style="margin-top:3px;font-size:.7rem;"><a href="https://'+_cmaEsc(url)+'" target="_blank" rel="noopener" style="color:var(--gold);font-family:ui-monospace,Menlo,monospace;">'+_cmaEsc(url)+'</a> <span style="color:var(--muted);">· '+r.views+' view'+(r.views===1?'':'s')+'</span></div>';
-      }
-      return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(128,128,128,.12);">'
+    var BTN='font-size:.68rem;font-weight:700;padding:4px 9px;border-radius:6px;border:1px solid rgba(201,168,76,.3);background:transparent;color:#C9A84C;cursor:pointer;font-family:inherit;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;';
+    var BTN_OFF='font-size:.68rem;font-weight:700;padding:4px 9px;border-radius:6px;border:1px solid #333;background:transparent;color:#666;font-family:inherit;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;opacity:.5;cursor:not-allowed;';
+    var CHIP='display:inline-block;font-size:.56rem;font-weight:800;padding:1px 6px;border-radius:999px;background:rgba(201,168,76,.1);color:#C9A84C;border:1px solid rgba(201,168,76,.28);margin-left:5px;vertical-align:middle;';
+    list.innerHTML=rows.map(function(s){
+      var when=_cmaHistDate(s.created_at), slug=s.slug||'';
+      var link=s.link_url||('https://homes.ratesandrealty.com/cma/'+slug);
+      var linkDisp=String(link).replace(/^https?:\/\//,'');
+      var views=(s.view_count!=null?s.view_count:0);
+      var chips=(s.include_acquisition?'<span style="'+CHIP+'">Acq</span>':'')+(s.include_rentals?'<span style="'+CHIP+'">Rentals</span>':'');
+      var dl=s.pdf_drive_url
+        ? '<a href="'+_cmaEsc(s.pdf_drive_url)+'" target="_blank" rel="noopener" style="'+BTN+'" title="'+_cmaEsc(s.pdf_file_name||'Open PDF in Drive')+'">⬇ PDF</a>'
+        : '<span style="'+BTN_OFF+'" title="No saved PDF for this one">⬇ PDF</span>';
+      var copy='<button type="button" style="'+BTN+'" onclick="_cmaCopyLink(\''+encodeURIComponent(link)+'\')">🔗 Copy link</button>';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid rgba(128,128,128,.12);">'
         +'<div style="min-width:0;flex:1;">'
-          +'<span style="display:inline-block;font-size:.62rem;font-weight:800;padding:2px 8px;border-radius:999px;color:'+b[1]+';background:'+b[2]+';border:1px solid '+b[3]+';">'+b[0]+'</span>'
-          +'<div style="font-size:.78rem;color:var(--text);margin-top:4px;overflow:hidden;text-overflow:ellipsis;">'+(_cmaEsc(r.address)||'CMA')+'</div>'+link
+          +'<div style="font-size:.78rem;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(_cmaEsc(s.property_address)||'CMA')+chips+'</div>'
+          +'<div style="margin-top:2px;font-size:.7rem;"><a href="'+_cmaEsc(link)+'" target="_blank" rel="noopener" style="color:#C9A84C;font-family:ui-monospace,Menlo,monospace;">'+_cmaEsc(linkDisp)+'</a> <span style="color:var(--muted);">· '+views+' view'+(views===1?'':'s')+' · '+when+'</span></div>'
         +'</div>'
-        +'<div style="font-size:.7rem;color:var(--muted);white-space:nowrap;flex-shrink:0;">'+when+'</div>'
+        +'<div style="display:flex;gap:6px;flex-shrink:0;align-items:center;">'+dl+copy+'</div>'
       +'</div>';
     }).join('');
   }catch(e){ console.warn('[cma history]',e); if(list) list.innerHTML='<div style="font-size:.72rem;color:#e05252;padding:6px 0;">Could not load CMA history.</div>'; }
