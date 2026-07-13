@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<!-- cma.html · public branded CMA snapshot · cache-buster v=2026071340 -->
+<!-- cma.html · public branded CMA snapshot · cache-buster v=2026071360 -->
 <title>Home Value Report | Rates &amp; Realty</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Your personalized home value report (CMA) from Rates &amp; Realty.">
@@ -74,6 +74,18 @@
   .leaflet-container{background:#0c0c0e}
   .legend{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:8px;font-size:.68rem;color:var(--muted)}
   .legend .d{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  /* map ↔ list interactivity */
+  .comp-num{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;color:#0c0c0e;font-size:.62rem;font-weight:900;margin-right:6px;cursor:pointer;vertical-align:middle;flex-shrink:0;font-variant-numeric:tabular-nums}
+  .comp.flash{border-color:var(--gold);box-shadow:0 0 0 2px rgba(201,168,76,.4)}
+  .comp{transition:border-color .2s,box-shadow .2s}
+  .cma-pin div,.cma-pin span{cursor:pointer}
+  .leaflet-tooltip.cma-tt{background:#111214;border:1px solid rgba(201,168,76,.35);color:#eee;font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;box-shadow:0 3px 10px rgba(0,0,0,.55);white-space:nowrap}
+  .leaflet-tooltip.cma-tt b{color:var(--gold);font-weight:800}
+  .leaflet-tooltip.cma-tt.leaflet-tooltip-top::before{border-top-color:rgba(201,168,76,.35)}
+  .leaflet-popup.cma-pop-wrap .leaflet-popup-content-wrapper{background:#111214;color:#eee;border:1px solid rgba(201,168,76,.3);border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.6)}
+  .leaflet-popup.cma-pop-wrap .leaflet-popup-content{margin:10px 12px;font-family:'Segoe UI',system-ui,sans-serif;line-height:1.35}
+  .leaflet-popup.cma-pop-wrap .leaflet-popup-tip{background:#111214;border:1px solid rgba(201,168,76,.3)}
+  .leaflet-popup.cma-pop-wrap a.leaflet-popup-close-button{color:#8a8c90}
   /* rows / tables */
   .rows{display:flex;flex-direction:column}
   .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.05);font-size:.85rem}
@@ -190,7 +202,7 @@ function subjectChips(subj){
 }
 
 // ── comp card ──
-function compCard(c){
+function compCard(c, i){
   const sm=statusMeta(c.status);
   // Each comp shows its OWN rehosted photo (public cma-photos URL). The house-icon placeholder
   // is used only when a comp genuinely has no photo — or if the image fails to load (onerror).
@@ -205,38 +217,86 @@ function compCard(c){
     dshort(c.removedDate||c.lastSeenDate||c.listedDate)
   ].filter(Boolean).join(' · ');
   const link=c.listingUrl?'<a class="comp-link" href="'+esc(c.listingUrl)+'" target="_blank" rel="noopener">View listing ↗</a>':'';
-  return '<div class="comp">'+photo+'<div class="comp-body">'
-    +'<div class="comp-top"><span class="comp-addr">'+esc(c.address||'—')+'</span><span class="badge '+sm.cls+'">'+sm.label+'</span></div>'
+  // Number badge matches the map pin (same number + status color); click it to focus the pin.
+  const num='<span class="comp-num" style="background:'+sm.color+'" onclick="_cmaFocusPin('+i+')" title="Show on map">'+(i+1)+'</span>';
+  return '<div class="comp" id="comp-'+i+'">'+photo+'<div class="comp-body">'
+    +'<div class="comp-top"><span class="comp-addr">'+num+esc(c.address||'—')+'</span><span class="badge '+sm.cls+'">'+sm.label+'</span></div>'
     +'<div class="comp-price">'+money(c.price)+(c.pricePerSqft!=null?' <span class="pps">· $'+numf(c.pricePerSqft)+'/sqft</span>':'')+'</div>'
     +'<div class="comp-meta">'+meta+'</div>'+link
     +'</div></div>';
 }
 
-// ── Leaflet map (subject + comp pins) ──
+// ── Leaflet map (subject + numbered, interactive comp pins) ──
+var _cmaMap=null, _cmaMarkers={};
+// Numbered comp pin (status-colored) / distinct gold subject pin — Leaflet divIcons.
+function _pinIcon(n, color){
+  return L.divIcon({ className:'cma-pin',
+    html:'<span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:'+color+';border:2px solid #0c0c0e;box-shadow:0 1px 5px rgba(0,0,0,.55);color:#0c0c0e;font-size:11px;font-weight:800;font-family:system-ui,sans-serif;">'+n+'</span>',
+    iconSize:[24,24], iconAnchor:[12,12], popupAnchor:[0,-13], tooltipAnchor:[0,-13] });
+}
+function _subjIcon(){
+  return L.divIcon({ className:'cma-pin',
+    html:'<span style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:#C9A84C;border:2px solid #fff;box-shadow:0 1px 7px rgba(0,0,0,.6);color:#1A0E00;font-size:15px;line-height:1;">★</span>',
+    iconSize:[28,28], iconAnchor:[14,14], popupAnchor:[0,-15], tooltipAnchor:[0,-15] });
+}
+// Hover glimpse: "<street> — $price · Xbd/Yba · Z sqft"
+function _pinTooltip(c){
+  var bd=[]; if(c.bedrooms!=null) bd.push(esc(c.bedrooms)+'bd'); if(c.bathrooms!=null) bd.push(esc(c.bathrooms)+'ba');
+  var tail=[bd.join('/'),(c.squareFootage!=null?numf(c.squareFootage)+' sqft':'')].filter(Boolean).join(' · ');
+  return '<b>'+esc(String(c.address||'—').split(',')[0])+'</b> — '+money(c.price)+(tail?' · '+tail:'');
+}
+// Click popup: a mini comp card (thumbnail + details + listing link).
+function _pinPopup(c, i){
+  var sm=statusMeta(c.status);
+  var thumb=c.photoUrl?'<div style="width:100%;height:82px;border-radius:6px;overflow:hidden;margin-bottom:7px;background:#16171a;"><img src="'+esc(c.photoUrl)+'" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\'"></div>':'';
+  var meta=[(c.bedrooms!=null?esc(c.bedrooms)+' bd':null),(c.bathrooms!=null?esc(c.bathrooms)+' ba':null),(c.squareFootage!=null?numf(c.squareFootage)+' sqft':null)].filter(Boolean).join(' · ');
+  var dist=c.distance!=null?parseFloat(c.distance).toFixed(2)+' mi away':'';
+  var sub=[meta,dist].filter(Boolean).join(' · ');
+  var link=c.listingUrl?'<div style="margin-top:7px;"><a href="'+esc(c.listingUrl)+'" target="_blank" rel="noopener" style="color:#C9A84C;font-weight:700;font-size:11px;">View listing ↗</a></div>':'';
+  return thumb
+    +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:'+sm.color+';color:#0c0c0e;font-size:10px;font-weight:900;flex-shrink:0;">'+(i+1)+'</span><span class="badge '+sm.cls+'">'+sm.label+'</span></div>'
+    +'<div style="font-weight:700;font-size:12.5px;color:#eee;line-height:1.3;">'+esc(c.address||'—')+'</div>'
+    +'<div style="font-size:14px;font-weight:900;color:#C9A84C;margin-top:3px;">'+money(c.price)+(c.pricePerSqft!=null?' <span style="font-size:10px;color:#8a8c90;font-weight:700;">· $'+numf(c.pricePerSqft)+'/sqft</span>':'')+'</div>'
+    +(sub?'<div style="font-size:11px;color:#8a8c90;margin-top:2px;">'+sub+'</div>':'')+link;
+}
+// Map → list: scroll the matching comp card into view + brief flash.
+function _cmaFocusCard(i){
+  var el=document.getElementById('comp-'+i); if(!el) return;
+  try{ el.scrollIntoView({behavior:'smooth',block:'center'}); }catch(_){ el.scrollIntoView(); }
+  el.classList.add('flash'); setTimeout(function(){ el.classList.remove('flash'); }, 1600);
+}
+// List → map: pan to a comp's pin + open its popup.
+function _cmaFocusPin(i){
+  var mk=_cmaMarkers[i];
+  if(_cmaMap && mk){ _cmaMap.setView(mk.getLatLng(), Math.max(_cmaMap.getZoom(), 15), {animate:true}); mk.openPopup(); }
+}
 function initMap(subj, comps){
   if(typeof L==='undefined') { var el=document.getElementById('cma-map'); if(el) el.parentElement.style.display='none'; return; }
   const pts=[];
   const sLat=parseFloat(subj.latitude), sLng=parseFloat(subj.longitude);
   const hasSubj=!isNaN(sLat)&&!isNaN(sLng);
   try{
-    const map=L.map('cma-map',{scrollWheelZoom:false,attributionControl:true});
+    const map=L.map('cma-map',{scrollWheelZoom:false,attributionControl:true}); _cmaMap=map; _cmaMarkers={};
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
       subdomains:'abcd',maxZoom:19,attribution:'© OpenStreetMap © CARTO'}).addTo(map);
     if(hasSubj){
-      L.circleMarker([sLat,sLng],{radius:9,color:'#fff',weight:2,fillColor:'#C9A84C',fillOpacity:1})
-        .addTo(map).bindPopup('<b>Subject</b><br>'+esc(subj.address||''));
+      L.marker([sLat,sLng],{icon:_subjIcon(),zIndexOffset:1000}).addTo(map)
+        .bindTooltip('Subject: '+esc(subj.address||''),{direction:'top',className:'cma-tt',offset:[0,-2]});
       pts.push([sLat,sLng]);
     }
-    (comps||[]).forEach(function(c){
+    (comps||[]).forEach(function(c,i){
       const la=parseFloat(c.latitude), ln=parseFloat(c.longitude); if(isNaN(la)||isNaN(ln))return;
       const sm=statusMeta(c.status);
-      L.circleMarker([la,ln],{radius:7,color:'#0c0c0e',weight:1.5,fillColor:sm.color,fillOpacity:0.95})
-        .addTo(map).bindPopup('<b>'+esc(c.address||'')+'</b><br>'+money(c.price)+' · '+sm.label);
+      const mk=L.marker([la,ln],{icon:_pinIcon(i+1, sm.color)}).addTo(map);
+      mk.bindTooltip(_pinTooltip(c),{direction:'top',className:'cma-tt',offset:[0,-2]});
+      mk.bindPopup(_pinPopup(c,i),{className:'cma-pop-wrap',maxWidth:236,minWidth:200});
+      mk.on('popupopen', (function(idx){ return function(){ _cmaFocusCard(idx); }; })(i));
+      _cmaMarkers[i]=mk;
       pts.push([la,ln]);
     });
-    if(pts.length>1) map.fitBounds(pts,{padding:[30,30]});
+    if(pts.length>1) map.fitBounds(pts,{padding:[34,34]});
     else if(pts.length===1) map.setView(pts[0],14);
-    else { map.parentNode; document.getElementById('cma-map').parentElement.style.display='none'; }
+    else { document.getElementById('cma-map').parentElement.style.display='none'; }
     setTimeout(function(){ map.invalidateSize(); }, 150);
   }catch(e){ console.warn('[cma map]',e); var el2=document.getElementById('cma-map'); if(el2) el2.parentElement.style.display='none'; }
 }
