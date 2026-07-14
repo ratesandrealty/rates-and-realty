@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026071370 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026071390 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -1348,6 +1348,20 @@
       .form-grid-4, .form-grid-3, .form-grid-2 {
         grid-template-columns: 1fr !important;
       }
+      /* Lead Details forms: three of these grids carry an INLINE
+         `grid-template-columns:…!important` (Lead Information 3-col, Contact
+         names 2-col, Email/Mobile/Secondary 3-col). An author stylesheet cannot
+         override an inline !important, so the cols-3/1fr rules above silently
+         miss them and they stay cramped side-by-side at 390px. Flip the grid
+         container to a flex column instead: `display` is set by the .ld-form-grid
+         CLASS (not inline), so this higher-specificity !important wins and the
+         inline column template becomes inert — every field goes full-width.
+         Phones ≤480 only; tablets 481–768 keep the established 2-col grid. */
+      #tab-lead-details .ld-form-grid {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+      }
       body { font-size: 13px !important; }
       h1, h2 { font-size: clamp(18px, 6vw, 28px) !important; }
     }
@@ -1542,6 +1556,64 @@
     #tab-fee-sheet .ld-btn-sm{ flex:1 1 40% !important; min-height:44px !important; justify-content:center; white-space:nowrap; }
     #feeSheetSaveStatus{ flex:1 1 100% !important; text-align:left !important; min-width:0 !important; }
     #feeSheetIframe{ height:calc(100vh - 165px) !important; }
+
+    /* ══ READ + ACT (phone workflow) ══════════════════════════════════════════
+       The left sidebar holds the ENTIRE act toolkit — contact info, the Call /
+       Text / Email / Task buttons, and the Recent Messages preview — but an
+       earlier ≤900 rule sets `.ld-sidebar{display:none !important}`, so on a phone
+       Rene can't act on the lead at all. This block is the last ≤768 rule, so it
+       wins the cascade: show the sidebar STACKED full-width above the tabs, give
+       the action buttons + contact links 44px tap targets, and stack the cramped
+       inline field grids in Lead Details / loan snapshot to one column. ── */
+    .ld-sidebar{
+      display:flex !important; flex-direction:column !important;
+      width:100% !important; max-width:100% !important; height:auto !important;
+      position:relative !important; opacity:1 !important;
+      border-right:none !important; border-bottom:1px solid rgba(255,255,255,0.08) !important;
+      padding:14px 16px !important;
+    }
+    /* Call / Text / Email / Task + phone/email quick links → ≥44px tap targets */
+    .ld-sidebar #sidebar-phone-link, .ld-sidebar #sidebar-email-link{ min-height:44px !important; font-size:13px !important; }
+    .ld-sidebar div:has(> #sidebarCallBtn){ gap:8px !important; }
+    .ld-sidebar div:has(> #sidebarCallBtn) > button{ min-height:44px !important; font-size:13px !important; padding:10px 6px !important; }
+    /* Lead Details + Processing loan-snapshot: stack cramped inline field grids to 1 column
+       (works for the inline grids WITHOUT !important — Pricing rows, Deal Earnings,
+       Loan Snapshot, Critical Dates. The .ld-form-grid grids that carry inline
+       !important are handled by the flex-column rule in the ≤480 block above). */
+    #tab-lead-details [style*="grid-template-columns"],
+    #tab-processing .lp-card [style*="grid-template-columns"]{ grid-template-columns:1fr !important; }
+
+    /* ── LENDERS TAB ────────────────────────────────────────────────────────────
+       The tab body is a `grid-template-columns:220px 1fr` split (filter aside |
+       lender list). An earlier ≤900 rule hides every <aside> on mobile, so the
+       list was auto-placed into the leftover 220px track and squished (and its
+       minmax(290px) cards then overflowed). Collapse the split to one full-width
+       column so the lender grid/table gets the whole viewport. The filter aside
+       stays hidden exactly as before; the top search box still filters. ── */
+    #tab-lenders [style*="grid-template-columns:220px 1fr"]{ grid-template-columns:1fr !important; }
+
+    /* Guidelines section header: the right-hand button cluster (+Add Lender /
+       Manage Lenders / Guideline AI / collapse) had no wrap, so the collapse
+       toggle clipped off the right edge. Let both header groups wrap. */
+    #leadGuidelinesSection > div:first-child{ flex-wrap:wrap !important; }
+    #leadGuidelinesSection > div:first-child > div{ flex-wrap:wrap !important; }
+
+    /* ── TAP TARGETS: primary interactive controls → ≥44px on phones.
+       Form inputs/selects and the main per-tab action buttons + CTAs. Dense
+       secondary filter/chip rows (doc filters, lender pills, activity filters,
+       guideline quick-chips) are deliberately left compact so wrapped rows don't
+       balloon vertically — big tappable chips read worse than they act. ── */
+    .ld-input, .ld-select,
+    .ld-btn-save, .ld-btn-cancel, .ld-add-task-btn,
+    #tab-processing .lp-action,
+    #tab-documents button[onclick*="triggerDocFileInput"],
+    #tab-documents button[onclick*="openDocScanPicker"],
+    #tab-documents button[onclick*="openContactDriveFolder"],
+    #tab-activity button[onclick*="logManualNote"],
+    #tab-lenders .lender-hdr-btn,
+    #tab-lenders #addLenderBtn,
+    #tab-lenders #guidelineAIInput,
+    #tab-lenders #guidelineAISendBtn{ min-height:44px !important; }
   }
   </style>
   <!-- Shared CRM mobile standard (reusable utilities + safe nets) — loaded last so it wins -->
