@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026071510 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026071520 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -21855,6 +21855,48 @@ function render1003Summary(app) {
     .reduce(function(s, l) { return s + (l && !l.is_payoff ? (parseFloat(l.monthly_payment) || 0) : 0); }, 0);
   const effectiveMonthlyDebt = losDebtTotal || app.monthly_debt || 0;
 
+  // COSMETIC PARITY with the editable 1003: when a co-borrower tab is active this
+  // read-only summary is still built from the PRIMARY row (that's where co_borrower_*
+  // live), so remap the borrower-specific flat fields to the co twins for DISPLAY.
+  // Otherwise the summary shows the primary's name / employer / declarations — the same
+  // lie that made the MISMO import look broken. The co_borrower_* mirror is partial, so
+  // blank every field with no twin instead of falling through to the primary's value.
+  // Loan/property (shared) and the asset/income/debt totals (already the co-borrower's
+  // via the losAssets/losIncome/losLiabilities globals in individual mode) are left alone.
+  if (typeof _lp1003CoActive === 'function' && _lp1003CoActive()) {
+    app = Object.assign({}, app, {
+      // 1A personal
+      first_name: app.co_borrower_first_name, middle_name: app.co_borrower_middle_name,
+      last_name: app.co_borrower_last_name, suffix: app.co_borrower_suffix,
+      date_of_birth: app.co_borrower_dob, marital_status: app.co_borrower_marital_status,
+      citizenship: app.co_borrower_citizenship, cell_phone: app.co_borrower_cell_phone,
+      email: app.co_borrower_email, ssn: app.co_borrower_ssn || null,
+      // 1B current address (no co twin: unit / years / rent / previous address)
+      current_address_street: app.co_borrower_current_street, current_address_unit: null,
+      current_address_city: app.co_borrower_current_city, current_address_state: app.co_borrower_current_state,
+      current_address_zip: app.co_borrower_current_zip, current_housing_type: app.co_borrower_housing_type,
+      current_address_years: null, current_rent_amount: null,
+      former_address_street: null, former_address_city: null, former_address_state: null,
+      former_address_zip: null, former_address_years: null,
+      // 2 employment (partial mirror — blank OT/bonus/commission/address/self-emp/prev/2nd job)
+      employer_name: app.co_borrower_employer, employer_phone: app.co_borrower_employer_phone,
+      position_title: app.co_borrower_title, employment_start_date: app.co_borrower_start_date,
+      base_income: app.co_borrower_base_income, is_self_employed: null, years_in_line_of_work: null,
+      overtime_income: null, bonus_income: null, commission_income: null,
+      employer_street: null, employer_city: null, employer_state: null, employer_zip: null,
+      prev_employer_name: null, employer2_name: null,
+      // 3 credit score has no co twin
+      credit_score: null,
+      // 5 declarations — only 4 co twins; blank the rest
+      decl_outstanding_judgments: app.co_borrower_decl_judgments,
+      decl_delinquent_federal: app.co_borrower_decl_federal,
+      decl_foreclosure: app.co_borrower_decl_foreclosure,
+      decl_bankruptcy: app.co_borrower_decl_bankruptcy,
+      decl_primary_residence: null, decl_deed_in_lieu: null, decl_short_sale: null,
+      decl_cosigner: null, decl_family_relationship_seller: null, decl_applying_other_mortgage: null,
+    });
+  }
+
   el.innerHTML = `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:12px 16px;background:#161616;border-radius:8px;border:1px solid #1e1e1e;">
       <div><div style="color:#555;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Borrower ID</div><div style="color:#C9A84C;font-size:14px;font-weight:600;font-family:monospace;">${app.borrower_id || 'Not assigned'}</div></div>
@@ -22191,6 +22233,35 @@ async function save1003() {
     delete cleanData.ssn;
     // Personal columns with no co twin: don't write them (would hit primary inline).
     _LP_1A_NOTWIN.forEach(function(m) { delete cleanData[m[1]]; });
+
+    // EMPLOYMENT (CRITICAL): save1003 always targets the PRIMARY row (getContactId).
+    // The 1B block on a co-borrower tab IS the co-borrower's employment, so route the
+    // first current block into the partial co_borrower_* mirror and DROP the primary
+    // employment JSON + flat income columns. Without this, saving on the co-borrower
+    // panel overwrote the PRIMARY's employment (data.employments + base_income/etc.)
+    // with whatever the co-borrower panel showed — silent cross-borrower corruption.
+    var _coEmp = employments.find(function(e){ return e && e.type === 'current'; }) || null;
+    cleanData.co_borrower_employer       = (_coEmp && _coEmp.employer) || null;
+    cleanData.co_borrower_employer_phone = (_coEmp && _coEmp.phone) || null;
+    cleanData.co_borrower_title          = (_coEmp && _coEmp.title) || null;
+    cleanData.co_borrower_start_date     = _coEmp ? toISODate(_coEmp.start_date) : null;
+    cleanData.co_borrower_base_income    = (_coEmp && parseFloat(_coEmp.base)) || 0;
+    delete cleanData.employments;
+    delete cleanData.base_income;
+    delete cleanData.overtime_income;
+    delete cleanData.bonus_income;
+    delete cleanData.commission_income;
+
+    // DECLARATIONS: only 4 co twins exist. Route them and DROP every primary decl_* /
+    // military column so a co-borrower save can never touch the primary's declarations.
+    cleanData.co_borrower_decl_judgments   = gr('decl_judgments') === 'yes';
+    cleanData.co_borrower_decl_federal     = gr('decl_federal') === 'yes';
+    cleanData.co_borrower_decl_foreclosure = gr('decl_foreclosure') === 'yes';
+    cleanData.co_borrower_decl_bankruptcy  = gr('decl_bankruptcy') === 'yes';
+    ['decl_primary_residence','decl_family_relationship_seller','decl_borrowed_funds',
+     'decl_applying_other_mortgage','decl_cosigner','decl_outstanding_judgments',
+     'decl_delinquent_federal','decl_deed_in_lieu','decl_short_sale','decl_foreclosure',
+     'decl_bankruptcy','military_service','military_status'].forEach(function(k){ delete cleanData[k]; });
   }
 
   console.log('Saving 1003 with fields:', Object.keys(cleanData));
@@ -22993,25 +23064,61 @@ async function load1003(overrideCid) {
   })());
 
     if (data.credit_type) { sr('credit_type', data.credit_type); window._lp1003HasSavedCreditType = true; }
-    sr('decl_primary', data.decl_primary_residence ? 'yes' : 'no');
-    sr('decl_family', data.decl_family_relationship_seller ? 'yes' : 'no');
-    sr('decl_borrowed', data.decl_borrowed_funds ? 'yes' : 'no');
-    sr('decl_other_mortgage', data.decl_applying_other_mortgage ? 'yes' : 'no');
-    sr('decl_cosigner', data.decl_cosigner ? 'yes' : 'no');
-    sr('decl_judgments', data.decl_outstanding_judgments ? 'yes' : 'no');
-    sr('decl_federal', data.decl_delinquent_federal ? 'yes' : 'no');
-    sr('decl_deed', data.decl_deed_in_lieu ? 'yes' : 'no');
-    sr('decl_short_sale', data.decl_short_sale ? 'yes' : 'no');
-    sr('decl_foreclosure', data.decl_foreclosure ? 'yes' : 'no');
-    sr('decl_bankruptcy', data.decl_bankruptcy ? 'yes' : 'no');
-    sr('military_service', data.military_service ? 'yes' : 'no');
-    if (data.military_service) toggleMilitary(true);
+    // Declarations bind to the ACTIVE borrower. The schema mirrors only 4 declarations
+    // for the co-borrower (judgments / delinquent-federal / foreclosure / bankruptcy);
+    // when a co-borrower is active read those and leave every no-twin declaration blank
+    // so the PRIMARY's answers never show — or get re-saved — on the co-borrower's panel.
+    // The tab switch already unchecks all decl_* radios, so "blank" needs no explicit clear.
+    if (_coActive) {
+      sr('decl_judgments',   data.co_borrower_decl_judgments   ? 'yes' : 'no');
+      sr('decl_federal',     data.co_borrower_decl_federal     ? 'yes' : 'no');
+      sr('decl_foreclosure', data.co_borrower_decl_foreclosure ? 'yes' : 'no');
+      sr('decl_bankruptcy',  data.co_borrower_decl_bankruptcy  ? 'yes' : 'no');
+      if (typeof toggleMilitary === 'function') toggleMilitary(false);
+    } else {
+      sr('decl_primary', data.decl_primary_residence ? 'yes' : 'no');
+      sr('decl_family', data.decl_family_relationship_seller ? 'yes' : 'no');
+      sr('decl_borrowed', data.decl_borrowed_funds ? 'yes' : 'no');
+      sr('decl_other_mortgage', data.decl_applying_other_mortgage ? 'yes' : 'no');
+      sr('decl_cosigner', data.decl_cosigner ? 'yes' : 'no');
+      sr('decl_judgments', data.decl_outstanding_judgments ? 'yes' : 'no');
+      sr('decl_federal', data.decl_delinquent_federal ? 'yes' : 'no');
+      sr('decl_deed', data.decl_deed_in_lieu ? 'yes' : 'no');
+      sr('decl_short_sale', data.decl_short_sale ? 'yes' : 'no');
+      sr('decl_foreclosure', data.decl_foreclosure ? 'yes' : 'no');
+      sr('decl_bankruptcy', data.decl_bankruptcy ? 'yes' : 'no');
+      sr('military_service', data.military_service ? 'yes' : 'no');
+      if (data.military_service) toggleMilitary(true);
+    }
     sv('f_military_status', data.military_status);
 
     // Load employment blocks
     const _hasRealEmployments = Array.isArray(data.employments) && data.employments.some(e =>
       e && (e.employer || e.title || e.base || e.start_date || e.phone || e.street || e.city));
-    if (_hasRealEmployments) {
+    if (_coActive) {
+      // CO-BORROWER: employment lives in the PARTIAL co_borrower_* mirror on the primary
+      // row — only employer / phone / title / start_date / base_income exist (there is NO
+      // co twin for employer address, OT/bonus/commission, self-employed, email/HR, or
+      // previous employer). Render ONE current block from those columns and leave every
+      // no-twin field blank, so the primary's employment (data.employments / employer_name)
+      // can NEVER leak onto the co-borrower's panel. Without this the 1B section showed the
+      // primary's employer regardless of the borrower toggle.
+      const empContainer = document.getElementById('employment-container');
+      const prevContainer = document.getElementById('prev-employment-container');
+      if (empContainer) {
+        empContainer.innerHTML = createEmploymentBlock('current', 0, false);
+        employmentCount = 1;
+        const id = 'current_emp_0';
+        sv(id + '_employer',   data.co_borrower_employer);
+        sv(id + '_phone',      data.co_borrower_employer_phone);
+        sv(id + '_title',      data.co_borrower_title);
+        sv(id + '_start_date', data.co_borrower_start_date);
+        sv(id + '_base',       data.co_borrower_base_income);
+      }
+      // No co-borrower previous-employment columns exist — clear the section so it
+      // doesn't retain the primary's previous employer.
+      if (prevContainer) { prevContainer.innerHTML = ''; prevEmploymentCount = 0; }
+    } else if (_hasRealEmployments) {
       const empContainer = document.getElementById('employment-container');
       const prevContainer = document.getElementById('prev-employment-container');
       empContainer.innerHTML = '';
