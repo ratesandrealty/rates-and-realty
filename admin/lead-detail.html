@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026071400 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026071500 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -1068,31 +1068,8 @@
     }
 
     /* ── MISMO / XML ── */
-    .mismo-drop-zone {
-      border: 2px dashed var(--gold-bdr);
-      border-radius: 16px;
-      padding: 48px 24px;
-      text-align: center;
-      cursor: pointer;
-      transition: all .2s;
-      background: var(--gold-bg);
-      margin-bottom: 20px;
-    }
-    .mismo-drop-zone.drag-over {
-      border-color: var(--gold);
-      background: rgba(201,168,76,0.15);
-    }
-    .mismo-drop-zone.parsed {
-      border-color: rgba(74,222,128,.4);
-      background: rgba(74,222,128,.05);
-    }
-    .mismo-drop-icon { font-size: 2.4rem; margin-bottom: 10px; opacity: .7; }
-    .mismo-drop-title {
-      font-family: 'Cormorant Garamond', serif;
-      font-size: 1.25rem; font-weight: 600;
-      color: var(--text); margin-bottom: 6px;
-    }
-    .mismo-drop-sub { font-size: 0.82rem; color: var(--muted); }
+    /* NOTE: the .mismo-drop-zone / .mismo-drop-* rules were removed with the
+       standalone MISMO tab — the import now uses the button + file-input flow. */
     .mismo-parse-result {
       background: var(--surface2);
       border: 1px solid rgba(74,222,128,.25);
@@ -4243,8 +4220,11 @@
         <div style="font-size:0.88rem;font-weight:700;color:#4ade80;">✓ File Parsed Successfully</div>
         <div style="display:flex;gap:10px;">
           <button class="ld-btn-cancel" onclick="clearMISMOParse()">Clear</button>
-          <button class="ld-btn-save" onclick="applyMISMOData()">Apply to Application Tab</button>
-          <button type="button" onclick="importMismoToDB()" style="padding:8px 16px;background:#C9A84C;color:#111;border:none;border-radius:8px;font-weight:700;font-size:.78rem;cursor:pointer;font-family:inherit;margin-left:6px">📥 Import to DB</button>
+          <!-- The legacy single-borrower "Apply to Application Tab" (applyMISMOData) button was
+               removed: it parsed only borrower 1 and targeted removed field IDs. Import to DB
+               routes through the mismo-import edge fn, which maps borrower 1 → primary and
+               borrower 2 → co_borrower_* correctly. -->
+          <button type="button" onclick="importMismoToDB()" style="padding:8px 16px;background:#C9A84C;color:#111;border:none;border-radius:8px;font-weight:700;font-size:.78rem;cursor:pointer;font-family:inherit;margin-left:6px">📥 Import to DB (both borrowers)</button>
         </div>
       </div>
       <div class="mismo-field-grid" id="mismo-preview-fields"></div>
@@ -19645,16 +19625,19 @@ function toast(msg, isError = false) {
 ══════════════════════════════════════════════ */
 let mismoData = null;
 
+// Legacy drag handlers for the removed #mismo-drop-zone — null-guarded so they
+// can never throw if wired to a missing element. (The active flow is the
+// "MISMO Import" button + hidden file input.)
 function mismoOnDragOver(e) {
   e.preventDefault();
-  document.getElementById('mismo-drop-zone').classList.add('drag-over');
+  const dz = document.getElementById('mismo-drop-zone'); if (dz) dz.classList.add('drag-over');
 }
 function mismoOnDragLeave(e) {
-  document.getElementById('mismo-drop-zone').classList.remove('drag-over');
+  const dz = document.getElementById('mismo-drop-zone'); if (dz) dz.classList.remove('drag-over');
 }
 function mismoOnDrop(e) {
   e.preventDefault();
-  document.getElementById('mismo-drop-zone').classList.remove('drag-over');
+  const dz = document.getElementById('mismo-drop-zone'); if (dz) dz.classList.remove('drag-over');
   const file = e.dataTransfer.files[0];
   if (file) handleMISMOFile(file);
 }
@@ -20069,18 +20052,31 @@ function handleMISMOFile(file) {
   if (!file || !file.name.endsWith('.xml')) { toast('Please select a .xml file', true); return; }
   const reader = new FileReader();
   reader.onload = (ev) => {
+    // Step 1 — PARSE. A failure here is a genuine XML/format problem.
+    let parsed;
     try {
-      mismoData = parseMISMO(ev.target.result, file.name);
+      parsed = parseMISMO(ev.target.result, file.name);
+    } catch (err) {
+      console.error('[mismo-import] XML parse failed:', err);
+      toast('Invalid MISMO XML — could not read the file: ' + (err && err.message || err), true);
+      return;
+    }
+    // Step 2 — PREVIEW / UI. Guarded so a missing DOM element (e.g. the old
+    // #mismo-drop-zone, removed with the standalone MISMO tab) can never surface
+    // as a false "Parse error". One missing element must not crash the import.
+    try {
+      mismoData = parsed;
       mismoData._rawXml = ev.target.result;
       mismoData._fileName = file.name;
       showMISMOPreview(mismoData);
-      document.getElementById('mismo-drop-zone').classList.add('parsed');
-      document.getElementById('mismo-drop-zone').querySelector('.mismo-drop-title').textContent = '✓ ' + file.name;
-      toast('✓ MISMO file parsed — click "Import to DB" to save');
+      const n = mismoData._borrowerCount || 1;
+      toast('✓ Parsed ' + n + ' borrower' + (n === 1 ? '' : 's') + ' — click "Import to DB" to apply', false);
     } catch (err) {
-      toast('Parse error: ' + err.message, true);
+      console.error('[mismo-import] preview render failed (non-fatal, XML was valid):', err);
+      toast('File parsed OK, but the on-screen preview could not render: ' + (err && err.message || err), true);
     }
   };
+  reader.onerror = () => toast('Could not read the selected file', true);
   reader.readAsText(file);
 }
 
@@ -20139,13 +20135,33 @@ async function handleMismoImportSuccess(result) {
   } catch(e) { console.warn('[mismo-import] contact sync:', e); }
 
   var bcount = result.borrower_count || (result.borrowers ? result.borrowers.length : 1);
-  toast('✓ Imported — ' + bcount + ' borrower' + (bcount===1?'':'s') + ' · reloading…');
+  // Report exactly which borrowers were filled + their role, so co-borrower data is
+  // visibly attributed (borrower 1 → primary, borrower 2 → co-borrower) and never silently dropped.
+  var who = (result.borrowers || []).map(function(b){
+    return (b.name || 'Borrower') + ' (' + (String(b.role) === 'CoBorrower' ? 'co-borrower' : 'primary') + ')';
+  }).join(', ');
+  var liabN = (result.liabilities_imported != null) ? (' · ' + result.liabilities_imported + ' liabilities') : '';
+  toast('✓ Imported ' + bcount + ' borrower' + (bcount===1?'':'s') + (who ? ' — ' + who : '') + liabN + ' · reloading…');
+  // LOUD: surface any server warnings (e.g. 3+ borrowers where only 1 & 2 map to
+  // primary/co-borrower fields). A borrower must never be lost silently.
+  var hasWarn = Array.isArray(result.warnings) && result.warnings.length > 0;
+  // Hold the reload longer when there are warnings so they stay readable.
+  var reloadDelay = hasWarn ? 6000 : 1200;
+  if (hasWarn) {
+    console.warn('[mismo-import] warnings:', result.warnings);
+    // Show the warning(s) as one red toast and PIN it until the reload — the shared
+    // toast() otherwise auto-hides at 3.2s, well before the 6s reloadDelay, which
+    // would make the "hold longer" intent a no-op. A borrower must never be lost silently.
+    toast('⚠️ ' + result.warnings.join('  •  '), true);
+    var _wt = document.getElementById('ld-toast');
+    if (_wt) { clearTimeout(_wt._t); }
+  }
   // Reload page to show all freshly-synced data, or nav to primary borrower's page if different
   const urlCid = new URLSearchParams(location.search).get('contact_id');
   if (urlCid === primaryCid) {
-    setTimeout(() => location.reload(), 1200);
+    setTimeout(() => location.reload(), reloadDelay);
   } else {
-    setTimeout(() => { location.href = '/admin/lead-detail?contact_id=' + primaryCid; }, 1200);
+    setTimeout(() => { location.href = '/admin/lead-detail?contact_id=' + primaryCid; }, reloadDelay);
   }
 }
 
@@ -20290,16 +20306,29 @@ function parseMISMO(xmlStr, filename) {
     if (creditor || balance || payment) liabs.push({ creditor, type, balance, monthly_payment: payment, payoff_required: payoff });
   }
 
-  return { borrower, addr, employment, loan, property, liabilities: liabs, filename };
+  // Borrower party count. NOTE: this client parse only fully extracts borrower 1
+  // (for the preview); the mismo-import edge function does the full per-borrower
+  // split (borrower 1 → primary, borrower 2 → co_borrower_*) on "Import to DB".
+  let _borrowerCount = 1;
+  try {
+    const bel = doc.getElementsByTagNameNS('*', 'BORROWER');
+    if (bel && bel.length) _borrowerCount = bel.length;
+  } catch (_e) {}
+
+  return { borrower, addr, employment, loan, property, liabilities: liabs, filename, _borrowerCount };
 }
 
 function showMISMOPreview(d) {
   const el = document.getElementById('mismo-parse-result');
   const fields = document.getElementById('mismo-preview-fields');
+  if (!el || !fields) { console.warn('[mismo-import] preview container missing — skipping preview render'); return; }
   el.classList.add('show');
+  el.style.display = 'block'; // inline style="display:none" would otherwise defeat the .show class
 
+  const bc = d._borrowerCount || 1;
   const rows = [
-    ['Borrower', [d.borrower.first_name, d.borrower.last_name].filter(Boolean).join(' ') || '—'],
+    ['Borrowers in file', bc + (bc > 1 ? ' — borrower 2+ maps to the co-borrower on Import to DB' : '')],
+    ['Borrower 1 (primary)', [d.borrower.first_name, d.borrower.last_name].filter(Boolean).join(' ') || '—'],
     ['DOB', d.borrower.dob || '—'],
     ['SSN Last 4', d.borrower.ssn_last4 ? '••••' + d.borrower.ssn_last4 : '—'],
     ['Email', d.borrower.email || '—'],
@@ -20444,11 +20473,17 @@ async function applyMISMOData() {
 
 function clearMISMOParse() {
   mismoData = null;
-  document.getElementById('mismo-parse-result').classList.remove('show');
-  document.getElementById('mismo-preview-fields').innerHTML = '';
+  const pr = document.getElementById('mismo-parse-result');
+  if (pr) { pr.classList.remove('show'); pr.style.display = 'none'; }
+  const pf = document.getElementById('mismo-preview-fields');
+  if (pf) pf.innerHTML = '';
+  // #mismo-drop-zone was removed with the old MISMO tab — guard in case it's absent.
   const dz = document.getElementById('mismo-drop-zone');
-  dz.classList.remove('parsed', 'drag-over');
-  dz.querySelector('.mismo-drop-title').textContent = 'Drop MISMO 3.4 XML here';
+  if (dz) {
+    dz.classList.remove('parsed', 'drag-over');
+    const t = dz.querySelector('.mismo-drop-title');
+    if (t) t.textContent = 'Drop MISMO 3.4 XML here';
+  }
 }
 
 /* ── 1003 APPLICATION — EMPLOYMENT BLOCKS ── */
