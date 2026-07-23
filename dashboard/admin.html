@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- dashboard/admin.html · cache-buster v=20260716a (Worker serves dashboard HTML no-store) -->
+  <!-- dashboard/admin.html · cache-buster v=20260723a (Worker serves dashboard HTML no-store) -->
   <!-- CSP is set by the Cloudflare Worker via withCsp() in src/worker.js.
        Meta CSP removed: when both meta + HTTP header are present, browsers
        apply the intersection per directive, which can mask whichever one
@@ -1130,6 +1130,46 @@
        with an .m-stack fallback + slide-over thread, so no rule is needed for it.) */
     .settings-row{ grid-template-columns:1fr !important; align-items:stretch !important; gap:6px !important; }
     .bot-stats{ grid-template-columns:1fr !important; }
+
+    /* ══ MOBILE DASHBOARD NAV — content-first top tab-strip ═══════════════════════
+       ROOT CAUSE fixed here: the sidebar carries an unconditional
+       `min-height:calc(100vh-76px)` (components/styles.css:1032, mirrored on
+       .dashboard-sidebar-layout). The later generic responsive-global.css re-shows
+       the sidebar (display:flex !important @≤768) and tries a fixed 56px bottom-nav
+       @≤480 — but never resets that min-height, so `height:56px` is defeated and the
+       sidebar fills the viewport (a fixed overlay ≤480, a full-height top block
+       481–768), pushing dashboard content below the fold. This block loads LAST and
+       uses #crmSidebar / .dashboard-sidebar-layout so it outranks the generic
+       !important rules: drop the grid, reset the min-height, and turn the sidebar
+       into a compact ~52px sticky, horizontally-scrollable strip at the top so the
+       dashboard content is what you see on load. All ≤768/≤480 → desktop and
+       iPad-landscape (≥769) are untouched. */
+    .dashboard-sidebar-layout{ display:block !important; min-height:0 !important; }
+    #crmSidebar{
+      display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important;
+      align-items:center !important; gap:4px !important;
+      position:sticky !important; top:0 !important; bottom:auto !important; left:auto !important; right:auto !important;
+      width:100% !important; height:auto !important; min-height:0 !important; max-height:none !important;
+      padding:6px 10px !important;
+      overflow-x:auto !important; overflow-y:hidden !important; -webkit-overflow-scrolling:touch;
+      border-right:none !important; border-bottom:1px solid var(--line-soft,#222) !important;
+      background:rgba(8,8,8,0.97) !important; z-index:50 !important;
+    }
+    #crmSidebar .crm-sidebar-brand{ flex:0 0 auto !important; padding:0 6px 0 0 !important; margin:0 !important; border:none !important; }
+    #crmSidebar .crm-sidebar-brand-label,
+    #crmSidebar .crm-sidebar-label{ display:none !important; }
+    #crmSidebar .crm-sidebar-section{ display:flex !important; flex-direction:row !important; flex:0 0 auto !important; gap:4px !important; padding:0 !important; margin:0 !important; }
+    #crmSidebar .crm-sidebar-footer{ display:flex !important; flex-direction:row !important; flex:0 0 auto !important; gap:4px !important; margin:0 !important; padding:0 0 0 6px !important; border:none !important; }
+    #crmSidebar .crm-nav-link{ flex:0 0 auto !important; width:auto !important; white-space:nowrap !important; padding:8px 12px !important; min-height:40px !important; }
+    #crmSidebar .crm-sidebar-footer > *{ flex:0 0 auto !important; width:auto !important; min-height:40px !important; white-space:nowrap !important; }
+    .crm-main{ padding:16px 14px 40px !important; }
+  }
+  @media (max-width:480px){
+    /* Neutralize the generic ≤480 bottom-nav assumptions so the top strip wins at
+       phone widths too (position/min-height via #crmSidebar; drop the body pad the
+       bottom-nav added). */
+    #crmSidebar{ position:sticky !important; top:0 !important; bottom:auto !important; height:auto !important; min-height:0 !important; }
+    body{ padding-bottom:0 !important; }
   }
   </style>
 </head>
