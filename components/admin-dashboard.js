@@ -158,14 +158,32 @@ async function initializeAdminDashboard() {
     await loadAll();
   } catch (error) {
     console.error('Dashboard init error:', error.message, error.stack);
-    document.querySelector(".crm-main")?.insertAdjacentHTML("afterbegin", `
-      <div class="panel" style="margin-bottom:24px;">
-        <p class="kicker">Access Restricted</p>
-        <h2>CRM access is limited to your internal team.</h2>
-        <p style="color:var(--muted);">Add your email to <code>/api/env.js</code> ADMIN_EMAILS and sign in with that account.</p>
-        <p style="color:var(--muted);font-size:0.8rem;margin-top:8px;">Debug: ${error.message || error}</p>
-      </div>
-    `);
+    const main = document.querySelector(".crm-main");
+    if (!main) return;
+    const msg = String((error && error.message) || error || '');
+    // Only requireAdmin()/requireUser() throw these — a genuine permission/auth
+    // denial. Every OTHER exception (a TDZ, a network blip, a code error) is NOT a
+    // permissions problem, so never show "access restricted" for it — that misled
+    // real admins into thinking they'd lost access.
+    const isAccessDenial = /Admin access required|Authentication required/i.test(msg);
+    if (isAccessDenial) {
+      main.insertAdjacentHTML("afterbegin", `
+        <div class="panel" style="margin-bottom:24px;">
+          <p class="kicker">Access Restricted</p>
+          <h2>CRM access is limited to your internal team.</h2>
+          <p style="color:var(--muted);">Add your email to <code>/api/env.js</code> ADMIN_EMAILS and sign in with that account.</p>
+        </div>
+      `);
+    } else {
+      main.insertAdjacentHTML("afterbegin", `
+        <div class="panel" style="margin-bottom:24px;">
+          <p class="kicker">Couldn’t load the dashboard</p>
+          <h2>Something went wrong while loading — this is usually temporary.</h2>
+          <p style="color:var(--muted);"><a href="#" onclick="location.reload();return false;" style="color:var(--gold-strong,#d7af52);text-decoration:underline;">Reload</a> to try again.</p>
+          <p style="color:var(--muted);font-size:0.8rem;margin-top:8px;">Debug: ${msg}</p>
+        </div>
+      `);
+    }
   }
 }
 

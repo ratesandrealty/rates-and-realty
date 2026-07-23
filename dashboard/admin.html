@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- dashboard/admin.html · cache-buster v=20260723a (Worker serves dashboard HTML no-store) -->
+  <!-- dashboard/admin.html · cache-buster v=20260723b (Worker serves dashboard HTML no-store) -->
   <!-- CSP is set by the Cloudflare Worker via withCsp() in src/worker.js.
        Meta CSP removed: when both meta + HTTP header are present, browsers
        apply the intersection per directive, which can mask whichever one
@@ -1163,6 +1163,24 @@
     #crmSidebar .crm-nav-link{ flex:0 0 auto !important; width:auto !important; white-space:nowrap !important; padding:8px 12px !important; min-height:40px !important; }
     #crmSidebar .crm-sidebar-footer > *{ flex:0 0 auto !important; width:auto !important; min-height:40px !important; white-space:nowrap !important; }
     .crm-main{ padding:16px 14px 40px !important; }
+
+    /* ── PAGE HEADER (≤768): title row, then a wrapped actions row — no overlap ──
+       Two generic mobile rules broke this header (bell / Arrange / Refresh / +New
+       Lead colliding with the "CRM Dashboard / Pipeline Overview" title):
+         1) responsive.css `[class*="flex"]:not(...):not(...){flex-direction:column}`
+            caught `.flex-gap` (specificity 0,3,0 !important) → actions stacked;
+         2) responsive.css `…, button {width:100%}` → the bell + buttons went
+            full-width, one per row.
+       Fix: stack the HEADER (title over actions), but force `.flex-gap` back to a
+       wrapping ROW and every action to content-width with 44px targets. Selectors
+       are prefixed with `.crm-main` so they reach (0,3,0)+ and win over rule (1);
+       `.flex-gap > *` (0,3,0) beats the (0,1,0) button-width rule for the bell too.
+       Applies to every .crm-page-header (all tab headers) for consistency. */
+    .crm-main .crm-page-header{ flex-direction:column !important; align-items:stretch !important; gap:12px !important; }
+    .crm-main .crm-page-header .crm-page-title{ width:100% !important; }
+    .crm-main .crm-page-header .flex-gap{ flex-direction:row !important; flex-wrap:wrap !important; justify-content:flex-start !important; width:100% !important; gap:8px !important; }
+    .crm-main .crm-page-header .flex-gap > *{ width:auto !important; max-width:none !important; flex:0 1 auto !important; min-height:44px !important; box-sizing:border-box !important; }
+    .crm-main .crm-page-header .flex-gap .btn{ padding:10px 14px !important; }
   }
   @media (max-width:480px){
     /* Neutralize the generic ≤480 bottom-nav assumptions so the top strip wins at
@@ -2735,7 +2753,7 @@
   <script type="module" src="/components/layout.js?v=20260712"></script>
   <!-- Staff-to-staff chat: floating Chat bubble (beside the AI FAB) + realtime. -->
   <script src="/admin/js/staff-chat.js?v=2026070603"></script>
-  <script type="module" src="/components/admin-dashboard.js?v=20260711d"></script>
+  <script type="module" src="/components/admin-dashboard.js?v=20260723b"></script>
   <script src="/dashboard/utils/insights.js?v=2026050402"></script>
   <script src="/dashboard/utils/calendar.js?v=2026061301"></script>
   <script src="/dashboard/utils/clickup-widget.js?v=2026050401"></script>
