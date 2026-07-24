@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026072302 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026072303 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -1704,7 +1704,35 @@
     /* Inputs/selects never exceed their now-full-width stacked cell (guards the qualifier
        + pre-approval form fields against any grid min-content overflow at 390px). */
     #app-content-scroll input, #app-content-scroll select, #app-content-scroll textarea{ max-width:100% !important; box-sizing:border-box !important; }
-    #tab-application [style*="grid-template-columns"] > *{ min-width:0 !important; }
+    /* Collapse fully: a flattened grid (grid-template-columns:1fr) is DEFEATED when a child
+       carries an explicit `grid-column:3/span 2` / `span 3` (e.g. the Cash-to-Close "Est. Cash"
+       box, the borrower/employment section spans) — the browser spawns implicit columns and the
+       4-up cram/label-overlap returns. Reset every grid child to auto placement so the single
+       column actually holds. min-width:0 keeps long values from forcing width back open. */
+    #tab-application [style*="grid-template-columns"] > *{ min-width:0 !important; grid-column:auto !important; }
+    /* Containment guard (belt-and-braces): the 1003 tab never contributes a sideways scroll to
+       the page, regardless of any wide table/chip strip inside its own overflow:auto scrollers.
+       Height is content-driven so overflow-y stays effectively visible (no nested scrollbar). */
+    #tab-application{ overflow-x:hidden; }
+  }
+  </style>
+  <style>
+  /* ════════════ LEAD-DETAIL 1003 TAB — TABLET / iPAD LANDSCAPE (769–1199px) ════════════
+     The ≤768 rules cover iPad PORTRAIT; nothing fired between 769 and desktop, so iPad
+     LANDSCAPE (1024) rendered the full desktop 2-up: the Loan Terms | Income&Debt columns
+     and the 4-up Cash-to-Close / qualifier grids were squeezed into the ~766px content area
+     beside the 170px sections rail — cramped, with an internal horizontal scroll. Collapse
+     the big grids to one/two columns so the form breathes. Desktop (≥1200, incl. 1280) is
+     untouched, so the desktop pixel-diff stays zero. */
+  @media (min-width:769px) and (max-width:1199px){
+    #tab-application{ overflow-x:hidden; }
+    /* Loan Terms | Income&Debt: stack the two cards */
+    #loanTermsGridWrap > [style*="grid-template-columns"]{ grid-template-columns:1fr !important; }
+    /* Any 4-up field grid (Cash-to-Close + the per-borrower section grids) → 2-up */
+    #tab-application [style*="grid-template-columns:repeat(4"]{ grid-template-columns:1fr 1fr !important; }
+    /* Reset explicit spans so the collapsed grids don't re-spawn implicit columns */
+    #tab-application [style*="grid-template-columns"] > *{ grid-column:auto !important; min-width:0 !important; }
+    #app-content-scroll input, #app-content-scroll select, #app-content-scroll textarea{ max-width:100% !important; box-sizing:border-box !important; }
   }
   </style>
   <!-- Shared CRM mobile standard (reusable utilities + safe nets) — loaded last so it wins -->
