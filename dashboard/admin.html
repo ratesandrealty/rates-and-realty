@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- dashboard/admin.html · cache-buster v=20260723b (Worker serves dashboard HTML no-store) -->
+  <!-- dashboard/admin.html · cache-buster v=20260723c (Worker serves dashboard HTML no-store) -->
   <!-- CSP is set by the Cloudflare Worker via withCsp() in src/worker.js.
        Meta CSP removed: when both meta + HTTP header are present, browsers
        apply the intersection per directive, which can mask whichever one
@@ -1181,6 +1181,20 @@
     .crm-main .crm-page-header .flex-gap{ flex-direction:row !important; flex-wrap:wrap !important; justify-content:flex-start !important; width:100% !important; gap:8px !important; }
     .crm-main .crm-page-header .flex-gap > *{ width:auto !important; max-width:none !important; flex:0 1 auto !important; min-height:44px !important; box-sizing:border-box !important; }
     .crm-main .crm-page-header .flex-gap .btn{ padding:10px 14px !important; }
+
+    /* ── RECENT ACTIVITY (and all Command Center cards): stop horizontal overflow ──
+       The Command Center cards (📡 Recent Activity, Attention, Tasks, Hot Leads,
+       KPIs) render as items of a `minmax(Npx,1fr)` grid. Grid items default to
+       min-width:auto (= the min-content of their `white-space:nowrap` rows), so the
+       track couldn't shrink and each card blew ~117px past the viewport, clipping
+       rows mid-word ("Note by rene@ratesandrealty.cor…") instead of ellipsis-ing.
+       min-width:0 on the grid items lets them shrink so the rows' existing
+       `flex:1;min-width:0;ellipsis` engages — primary title kept, the trailing
+       "· channel · direction" meta truncates. Also net the .activity-row feed's
+       flex/grid children so long labels/emails shrink rather than force width. */
+    #cc-body [style*="minmax("] > *{ min-width:0 !important; }
+    .activity-row > *{ min-width:0 !important; }
+    .activity-meta, .activity-label, .activity-body{ min-width:0 !important; }
   }
   @media (max-width:480px){
     /* Neutralize the generic ≤480 bottom-nav assumptions so the top strip wins at
@@ -3028,10 +3042,71 @@
   // appended last so it is never stranded ahead of the ordered sections.
   const DEFAULT_SECTION_ORDER = ['market-rates','command-center','pipeline-snapshot','showing-requests','stats','charts','activity','recent-notes','appointments','clickup-today','deals-referrals'];
 
+  // ══ SERVER-SIDE LAYOUT SYNC (per-user, cross-device) ═══════════════════════════
+  // localStorage stays the fast local cache + offline fallback; the server (RLS'd to
+  // each user) becomes the source of truth once seeded. dashboard_layout_get/save are
+  // live. Rene rearranges on his laptop → the same order + hidden set appears on his
+  // phone and iPad.
+  //
+  // Snapshot the PRE-EXISTING localStorage NOW, before restoreSectionOrder() (below)
+  // gets a chance to overwrite it with defaults. _hadLocalLayout is true only for a
+  // REAL prior save at the current version — this is what guards the migration so a
+  // fresh phone can never seed the server with a default and clobber the laptop layout.
+  const _layoutSnapshot = (function () {
+    let order = null, hidden = null;
+    try { const s = localStorage.getItem(ORDER_KEY); if (s) order = JSON.parse(s); } catch (e) {}
+    try { const h = localStorage.getItem(HIDDEN_KEY); if (h) hidden = JSON.parse(h); } catch (e) {}
+    return { order, hidden, ver: localStorage.getItem(VERSION_KEY) };
+  })();
+  const _hadLocalLayout = Array.isArray(_layoutSnapshot.order)
+    && String(_layoutSnapshot.ver) === String(LAYOUT_VERSION);
+  // Server writes are suppressed until the initial get/migrate settles, so the
+  // restore-time saveSectionOrder() below never pushes a default up to the server.
+  let _layoutServerReady = false;
+
+  async function _layoutClient() {
+    if (window._supabaseClient) return window._supabaseClient;
+    if (typeof window.getSupabaseClient === 'function') { try { return await window.getSupabaseClient(); } catch (e) {} }
+    if (window._dashSupabase) return window._dashSupabase;
+    return null;
+  }
+  async function _serverLayoutGet() {
+    try {
+      const sb = await _layoutClient(); if (!sb) return null;
+      const { data, error } = await sb.rpc('dashboard_layout_get');
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      return (row && row.section_order != null) ? row : null;   // null = user never saved
+    } catch (e) { console.warn('[layout] server get failed (using local):', e && e.message); return null; }
+  }
+  function _serverLayoutSave(order, hidden, ver) {
+    // fire-and-forget — a server failure must never break the UI, only log.
+    (async () => {
+      try {
+        const sb = await _layoutClient(); if (!sb) return;
+        const { error } = await sb.rpc('dashboard_layout_save', {
+          section_order: Array.isArray(order) ? order : [],
+          hidden_sections: Array.isArray(hidden) ? hidden : [],
+          layout_version: ver
+        });
+        if (error) throw error;
+      } catch (e) { console.warn('[layout] server save failed (local kept):', e && e.message); }
+    })();
+  }
+  // Push the current effective layout to the server (both saveSectionOrder and
+  // saveHidden call this, so drag-reorder AND the Arrange panel sync). No-op until
+  // the initial server sync has settled.
+  function _persistServer() {
+    if (!_layoutServerReady) return;
+    const order = [...document.querySelectorAll('.dashboard-sections-wrapper .dashboard-section')].map(el => el.dataset.sectionId);
+    _serverLayoutSave(order, getSavedHidden(), LAYOUT_VERSION);
+  }
+
   function saveSectionOrder() {
     const order = [...document.querySelectorAll('.dashboard-sections-wrapper .dashboard-section')].map(el => el.dataset.sectionId);
     localStorage.setItem(ORDER_KEY, JSON.stringify(order));
     localStorage.setItem(VERSION_KEY, String(LAYOUT_VERSION));
+    _persistServer();
   }
 
   // Hidden set is only honored when its version matches (same gate as the order).
@@ -3044,6 +3119,7 @@
   function saveHidden(hidden) {
     localStorage.setItem(HIDDEN_KEY, JSON.stringify(Array.isArray(hidden) ? hidden : []));
     localStorage.setItem(VERSION_KEY, String(LAYOUT_VERSION));
+    _persistServer();
   }
 
   function applySectionOrder(order, parent, hidden) {
@@ -3073,6 +3149,32 @@
     saveSectionOrder();   // persist effective order + current version → stale data gone after one load
   }
   restoreSectionOrder();
+
+  // After the fast local paint, reconcile with the server: apply the user's saved
+  // layout if the server has one (this is how the phone/iPad pick up the laptop's
+  // arrangement), otherwise seed the server from a real prior LOCAL layout (this is
+  // how the laptop's existing arrangement is captured without Rene redoing it).
+  async function syncServerLayout() {
+    const parent = document.querySelector('.dashboard-sections-wrapper');
+    if (!parent) { _layoutServerReady = true; return; }
+    try {
+      const srv = await _serverLayoutGet();
+      if (srv && Array.isArray(srv.section_order) && String(srv.layout_version) === String(LAYOUT_VERSION)) {
+        const hidden = Array.isArray(srv.hidden_sections) ? srv.hidden_sections : [];
+        applySectionOrder(srv.section_order, parent, hidden);   // server is authoritative
+        try {
+          localStorage.setItem(ORDER_KEY, JSON.stringify(srv.section_order));
+          localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden));
+          localStorage.setItem(VERSION_KEY, String(LAYOUT_VERSION));   // mirror → fast correct next paint
+        } catch (e) {}
+      } else if (_hadLocalLayout) {
+        _serverLayoutSave(_layoutSnapshot.order, Array.isArray(_layoutSnapshot.hidden) ? _layoutSnapshot.hidden : [], LAYOUT_VERSION);
+      }
+    } finally {
+      _layoutServerReady = true;   // user-initiated saves now sync to the server
+    }
+  }
+  syncServerLayout();
 
   // API for the Arrange / Layout-Map panel (mini-map reorder + show/hide).
   window._dashLayout = {
