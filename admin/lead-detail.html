@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026072300 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026072301 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -2800,6 +2800,7 @@
           <button type="button" class="ls-actbtn ls-actbtn--primary" onclick="save1003()">&#128190; Save Application</button>
           <button type="button" id="download1003Btn" class="ls-actbtn" onclick="openForm1003Modal()">&#128065; View 1003 PDF</button>
           <button type="button" id="lsPreApprovalBtn" class="ls-actbtn ls-actbtn--primary" onclick="lsGeneratePreApproval()">&#128196; Generate Pre-Approval</button>
+          <button type="button" id="lsEmailPreApprovalBtn" class="ls-actbtn" onclick="emailPreApprovalPdf()" title="Email a public link to the pre-approval (borrower or realtor partner)">&#128231; Email PDF</button>
           <button type="button" class="ls-actbtn" onclick="triggerMISMOImport()">&#128229; MISMO Import</button>
           <button type="button" id="exportMismoLpBtn" class="ls-actbtn" onclick="exportMISMO()">&#128228; Export to LendingPad (MISMO 3.4)</button>
           <button type="button" id="ls1003PdfBtn" class="ls-actbtn" onclick="lsGenerate1003()">&#128203; Export 1003</button>
@@ -24162,6 +24163,9 @@ async function lsGeneratePreApproval() {
 
     var contactName = payload.borrower_name || 'Borrower';
     var fileName = 'Pre-Approval \u2014 ' + contactName + '.pdf';
+    // Stash the freshly generated PDF so "\ud83d\udce7 Email PDF" shares the exact same bytes
+    // (no re-generation / drift). Refreshed every time Rene regenerates.
+    window._lastPreApprovalPdf = { b64: result.pdf, borrowerName: contactName, fileName: fileName };
 
     // Open PDF viewer popup with toolbar
     var popup = window.open('', '_blank', 'width=1100,height=850,scrollbars=no,resizable=yes');
@@ -33421,23 +33425,180 @@ async function _cmaPdfBase64(){
   if(!result.success||!result.pdf) throw new Error(result.error||'PDF generation failed');
   return result.pdf;
 }
-async function emailFeeSheet(){
-  var to = (window.contactData && contactData.email) || '';
-  if (!to){ showToast('No borrower email on file', true); return; }
-  var btn = document.getElementById('emailFeeSheetBtn'), oh = btn ? btn.innerHTML : '';
-  if (btn){ btn.disabled = true; btn.innerHTML = 'Preparing…'; }
-  try {
-    var b64 = await _feeSheetPdfBase64();           // generate the PDF first so there's always an attachment
-    var cid = (window.contactData && contactData.id) || new URLSearchParams(location.search).get('contact_id');
-    var cc = await _leadReferralPartnerCC(cid);
-    var name = _emailPdfBorrowerName(), first = (window.contactData && contactData.first_name) || 'there';
-    openEmailComposer({
-      to: to, cc: cc, subject: 'Your Fee Sheet — Rates & Realty',
-      bodyHtml: '<p>Hi ' + _recACEsc(first) + ',</p><p>Attached is your personalized fee sheet. Let me know if you have any questions.</p><p>Best,<br>Rene Duarte</p>',
-      attachments: [{ filename: 'Fee Sheet - ' + name + '.pdf', content: b64 }]
+/* ═══ SHARE A GENERATED PDF VIA A PUBLIC LINK ═══════════════════════════════════
+   Rene's decision: email a LINK (not an attachment). The link must open for someone
+   NOT logged into any Google/Supabase account. Approach (validated against the DB):
+     · upload the PDF to the PUBLIC `borrower-documents` bucket → getPublicUrl (opens
+       unauthenticated), then wrap it in a /s/<slug> short link (clean link + click_count
+       so Rene sees if the realtor opened it);
+     · ALSO upload a copy to the lead's Drive folder (gdrive-proxy) for Rene's records;
+     · recipient picker from share_recipients(p_contact_id) — Borrower + Realtor Partner;
+     · send via email-service, log each send (record_event). PDF stays downloadable if
+       anything fails, and every failure is surfaced (toast + console.error). ── */
+var _SHFLD='width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;margin:0;font-family:inherit;';
+function _shEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _b64ToBlob(b64,type){ var bc=atob(b64), a=new Uint8Array(bc.length); for(var i=0;i<bc.length;i++) a[i]=bc.charCodeAt(i); return new Blob([a],{type:type||'application/pdf'}); }
+async function _uploadPublicPdf(blob, fileName, cid){
+  var safe=String(fileName||'document.pdf').replace(/[^a-zA-Z0-9._-]/g,'_');
+  var path=(cid||'unknown')+'/'+Date.now()+'_'+safe;
+  // Purpose-built public bucket for shareable letters/sheets (public read + write).
+  var up=await _authClient().storage.from('approval-letters').upload(path, blob, { contentType:'application/pdf', upsert:true });
+  if(up && up.error) throw up.error;
+  var pub=_authClient().storage.from('approval-letters').getPublicUrl(path);
+  return (pub && pub.data && pub.data.publicUrl) || null;
+}
+async function _makeShortLink(destUrl, cid){
+  // Clean /s/<slug> link (worker resolves via short-link fn, bumps click_count, 302s).
+  // Falls back to the raw public URL if the slug/insert fails — both open unauthenticated.
+  try{
+    var s=await _authClient().rpc('gen_feesheet_slug');
+    var slug=Array.isArray(s.data)?s.data[0]:s.data;
+    if(s.error||slug==null) throw (s.error||new Error('no slug'));
+    if(slug && typeof slug==='object') slug=slug.gen_feesheet_slug||Object.values(slug)[0];
+    var ins=await _authClient().from('short_links').insert({ slug:String(slug), destination_url:destUrl, contact_id:cid||null });
+    if(ins.error) throw ins.error;
+    return 'https://ratesandrealty.com/s/'+slug;
+  }catch(e){ console.error('[sharePdf] short link create failed — using raw public URL:', e); return destUrl; }
+}
+async function _uploadPdfToLeadDrive(blob, fileName, cid){
+  try{
+    var root=(window.contactData && contactData.gdrive_folder_id)||null;
+    if(!root){ console.warn('[sharePdf] lead has no Drive folder — records copy skipped'); return null; }
+    var cfg=window.APP_CONFIG||{}, base=cfg.SUPABASE_URL||'', anon=cfg.SUPABASE_ANON_KEY||'';
+    var token=''; try{ var ss=await _authClient().auth.getSession(); token=(ss&&ss.data&&ss.data.session&&ss.data.session.access_token)||''; }catch(_){}
+    var fd=new FormData(); fd.append('folderId', root); fd.append('file', blob, fileName);
+    var ur=await fetch(base+'/functions/v1/gdrive-proxy?action=upload-file', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'apikey':anon }, body:fd });
+    var ud=await ur.json().catch(function(){ return {}; });
+    if(!ur.ok||!ud.id) throw new Error((ud&&ud.error)||('HTTP '+ur.status));
+    return { id:ud.id, url:ud.webViewLink||null };
+  }catch(e){ console.error('[sharePdf] Drive records copy failed:', e); return null; }
+}
+async function _shareRecipients(cid){
+  try{ var r=await _authClient().rpc('share_recipients',{ p_contact_id:cid }); if(r.error) throw r.error; return (Array.isArray(r.data)?r.data[0]:r.data)||{}; }
+  catch(e){ console.error('[sharePdf] share_recipients failed:', e); return {}; }
+}
+function _logShareEvent(cid, eventType, metadata){
+  try{ if(typeof scorerApi==='function') scorerApi('record_event',{ contact_id:cid, event_type:eventType, metadata:metadata||{} }).catch(function(){}); }catch(_){}
+}
+
+// The composer: recipient chips (share_recipients) + free-text, editable subject/body with the
+// public link, per-recipient send, activity logging. Download stays available throughout.
+async function openSharePdfComposer(opts){
+  opts=opts||{};
+  var cid=(window.contactData && contactData.id) || new URLSearchParams(location.search).get('contact_id');
+  if(!opts.b64){ showToast('Generate the PDF first', true); return; }
+  var blob=_b64ToBlob(opts.b64);
+  var downloadUrl=URL.createObjectURL(blob);
+  var fileName=opts.fileName||'Document.pdf';
+  var docLabel=opts.docLabel||'Document';
+  var state={ link:null, recipients:{}, driveDone:false };
+  var chosen={};
+
+  var ov=document.getElementById('sharePdfModal'); if(ov) ov.remove();
+  ov=document.createElement('div'); ov.id='sharePdfModal';
+  ov.style.cssText='position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:20px;';
+  ov.innerHTML='<div style="background:#15140f;border:1px solid rgba(201,168,76,.3);border-radius:14px;width:min(560px,96vw);max-height:92vh;overflow:auto;padding:20px;">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;"><span style="font-weight:700;color:#fff;font-size:15px;">📧 Email '+_shEsc(docLabel)+'</span><button type="button" id="shpdfClose" style="background:none;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;">&times;</button></div>'
+    +'<div id="shpdfLinkStat" style="font-size:11.5px;color:#c99a5b;margin-bottom:12px;">Preparing shareable link…</div>'
+    +'<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:6px;">Recipients</div>'
+    +'<div id="shpdfChips" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"><div style="color:#888;font-size:12px;">Loading recipients…</div></div>'
+    +'<input id="shpdfExtra" type="email" placeholder="+ another email (optional)" style="'+_SHFLD+'">'
+    +'<label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);display:block;margin:10px 0 4px;">Subject</label>'
+    +'<input id="shpdfSubj" type="text" value="'+_shEsc(opts.subjectPrefill||'')+'" style="'+_SHFLD+'">'
+    +'<label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);display:block;margin:10px 0 4px;">Message</label>'
+    +'<textarea id="shpdfBody" rows="5" style="'+_SHFLD+'resize:vertical;"></textarea>'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;">'
+      +'<a id="shpdfDl" href="'+downloadUrl+'" download="'+_shEsc(fileName)+'" style="background:transparent;border:1px solid #444;color:#ccc;border-radius:8px;font-size:12px;font-weight:600;padding:8px 14px;text-decoration:none;">⬇ Download PDF</a>'
+      +'<span id="shpdfSendStat" style="font-size:11.5px;margin-left:auto;"></span>'
+      +'<button type="button" id="shpdfSend" disabled style="background:#C9A84C;border:none;color:#111;border-radius:8px;font-size:13px;font-weight:700;padding:9px 20px;cursor:not-allowed;opacity:.6;">Send link</button>'
+    +'</div></div>';
+  document.body.appendChild(ov);
+  function close(){ ov.remove(); URL.revokeObjectURL(downloadUrl); }
+  ov.querySelector('#shpdfClose').onclick=close;
+  ov.onclick=function(e){ if(e.target===ov) close(); };
+
+  function updateSendState(){
+    var extra=(ov.querySelector('#shpdfExtra').value||'').trim();
+    var any=Object.keys(chosen).length>0 || /.+@.+\..+/.test(extra);
+    var ok=any && !!state.link;
+    var b=ov.querySelector('#shpdfSend'); b.disabled=!ok; b.style.opacity=ok?'1':'.6'; b.style.cursor=ok?'pointer':'not-allowed';
+  }
+  function renderChips(){
+    var chips=ov.querySelector('#shpdfChips'); var rec=state.recipients||{};
+    var items=[];
+    if(rec.borrower) items.push({label:'Borrower', r:rec.borrower});
+    if(rec.has_partner && rec.partner) items.push({label:'Realtor Partner', r:rec.partner});
+    if(!items.length){ chips.innerHTML='<div style="color:#888;font-size:12px;">No borrower/partner on file — use the email field below.</div>'; return; }
+    chips.innerHTML=items.map(function(it){
+      var email=(it.r.email||'').trim(); var disabled=!email; var on=email && chosen[email.toLowerCase()];
+      var sub=[it.r.name, it.r.company, email].filter(Boolean).join(' · ') || 'no email on file';
+      return '<label style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid '+(on?'rgba(201,168,76,.6)':'rgba(255,255,255,.12)')+';border-radius:9px;background:'+(on?'rgba(201,168,76,.08)':'rgba(255,255,255,.02)')+';cursor:'+(disabled?'not-allowed':'pointer')+';opacity:'+(disabled?'.5':'1')+';">'
+        +'<input type="checkbox" data-email="'+_shEsc(email)+'" data-name="'+_shEsc(it.r.name||'')+'"'+(on?' checked':'')+(disabled?' disabled':'')+' style="width:16px;height:16px;accent-color:#C9A84C;flex-shrink:0;">'
+        +'<span style="min-width:0;"><span style="font-size:12.5px;font-weight:600;color:#eee;">'+_shEsc(it.label)+'</span><span style="display:block;font-size:11px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+_shEsc(sub)+'</span></span></label>';
+    }).join('');
+    chips.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.onchange=function(){ var em=(cb.dataset.email||'').toLowerCase(); if(!em) return; if(cb.checked) chosen[em]={ email:cb.dataset.email, name:cb.dataset.name }; else delete chosen[em]; renderChips(); updateSendState(); };
     });
-  } catch(e){ showToast('Could not prepare fee sheet: ' + (e.message || 'error'), true); }
-  finally { if (btn){ btn.disabled = false; btn.innerHTML = oh; } }
+  }
+
+  // Publish (public link + drive copy) and load recipients in parallel.
+  var pubP=(async function(){ try{ var url=await _uploadPublicPdf(blob, fileName, cid); if(!url) throw new Error('no public URL'); state.link=await _makeShortLink(url, cid); }catch(e){ console.error('[sharePdf] publish failed:', e); state.link=null; } })();
+  var driveP=(async function(){ var r=await _uploadPdfToLeadDrive(blob, fileName, cid); state.driveDone=!!r; })();
+  var recP=(async function(){ state.recipients=await _shareRecipients(cid); })();
+  await Promise.allSettled([pubP, recP]);
+
+  var linkStat=ov.querySelector('#shpdfLinkStat');
+  if(state.link){ linkStat.textContent='✓ Shareable link ready — opens without any login.'; linkStat.style.color='#7ee2a3'; }
+  else { linkStat.textContent='⚠ Could not create the public link. The PDF is still downloadable below — retry, or check the console.'; linkStat.style.color='#f0a0a0'; }
+  var rn=(state.recipients&&state.recipients.borrower&&state.recipients.borrower.name||'').split(' ')[0]||'there';
+  ov.querySelector('#shpdfBody').value='Hi '+rn+',\n\nHere is your '+docLabel+':\n'+(state.link||'[link pending]')+'\n\nBest,\nRene Duarte\nRates & Realty';
+  renderChips(); updateSendState();
+  ov.querySelector('#shpdfExtra').oninput=updateSendState;
+  driveP.then(function(){ if(state.driveDone && state.link){ linkStat.textContent='✓ Link ready — opens without login. Copy filed to the lead\'s Drive folder.'; } });
+
+  ov.querySelector('#shpdfSend').onclick=async function(){
+    var sendBtn=this, stat=ov.querySelector('#shpdfSendStat');
+    var recips=Object.keys(chosen).map(function(k){ return chosen[k]; });
+    var extra=(ov.querySelector('#shpdfExtra').value||'').trim();
+    if(/.+@.+\..+/.test(extra)) recips.push({ email:extra, name:'' });
+    if(!recips.length || !state.link) return;
+    var subject=(ov.querySelector('#shpdfSubj').value||'').trim()||opts.subjectPrefill||docLabel;
+    var bodyText=(ov.querySelector('#shpdfBody').value||'');
+    var linkAnchor='<a href="'+_shEsc(state.link)+'">'+_shEsc(state.link)+'</a>';
+    var html='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#222;white-space:pre-wrap;">'+_shEsc(bodyText).split(_shEsc(state.link)).join(linkAnchor)+'</div>';
+    sendBtn.disabled=true; sendBtn.style.opacity='.6'; sendBtn.style.cursor='not-allowed'; stat.textContent='Sending…'; stat.style.color='#888';
+    var okN=0, failN=0;
+    for(var i=0;i<recips.length;i++){
+      var r=recips[i];
+      try{
+        var resp=await _authClient().functions.invoke('email-service',{ body:{ action:'send', to_email:r.email, to_name:r.name||'', first_name:((r.name||'').split(' ')[0]||''), subject:subject, html:html, contact_id:cid, reply_to:'rene@ratesandrealty.com' } });
+        var data=resp&&resp.data, error=resp&&resp.error;
+        if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
+        okN++; _logShareEvent(cid, opts.eventType||'pdf_link_emailed', { to:r.email, doc:docLabel, link:state.link });
+      }catch(e){ failN++; console.error('[sharePdf] send failed to '+r.email+':', e); }
+    }
+    if(failN===0){ stat.textContent='Sent ✓ ('+okN+')'; stat.style.color='#7ee2a3'; showToast(docLabel+' link sent ✓'); setTimeout(close, 1200); }
+    else { stat.textContent='Sent '+okN+' · '+failN+' failed (see console)'; stat.style.color='#f0a0a0'; sendBtn.disabled=false; sendBtn.style.opacity='1'; sendBtn.style.cursor='pointer'; showToast('Some sends failed ('+failN+') — the PDF is still downloadable', true); }
+  };
+}
+
+// "📧 Email PDF" on the pre-approval generator — shares the last-generated pre-approval bytes.
+async function emailPreApprovalPdf(){
+  var g=window._lastPreApprovalPdf;
+  if(!g || !g.b64){ showToast('Generate the Pre-Approval first, then Email PDF', true); return; }
+  openSharePdfComposer({ b64:g.b64, fileName:g.fileName, docLabel:'Pre-Approval', subjectPrefill:'Pre-Approval — '+g.borrowerName, eventType:'preapproval_link_emailed' });
+}
+
+// Fee sheet: generate fresh, then share the LINK (was a base64 attachment) via the same picker.
+async function emailFeeSheet(){
+  var btn=document.getElementById('emailFeeSheetBtn'), oh=btn?btn.innerHTML:'';
+  if(btn){ btn.disabled=true; btn.innerHTML='Preparing…'; }
+  try{
+    var b64=await _feeSheetPdfBase64();
+    var name=_emailPdfBorrowerName();
+    openSharePdfComposer({ b64:b64, fileName:'Fee Sheet — '+name+'.pdf', docLabel:'Fee Sheet', subjectPrefill:'Fee Sheet — '+name, eventType:'fee_sheet_link_emailed' });
+  }catch(e){ console.error('[emailFeeSheet]', e); showToast('Could not prepare fee sheet: '+(e.message||'error'), true); }
+  finally{ if(btn){ btn.disabled=false; btn.innerHTML=oh; } }
 }
 async function emailCMA(){
   var to = (window.contactData && contactData.email) || '';
