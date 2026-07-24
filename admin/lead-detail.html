@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- lead-detail.html · cache-buster v=2026072303 (Worker serves /admin/* HTML no-store) -->
+  <!-- lead-detail.html · cache-buster v=2026072402 (Worker serves /admin/* HTML no-store) -->
   <script src="/api/env.js?v=20260412b"></script>
   <!-- pinGoogleUrl helper — append ?authuser=email to Google links to skip account picker -->
   <script src="/assets/js/utils.js?v=2026050301"></script>
@@ -1738,6 +1738,7 @@
   <!-- Shared CRM mobile standard (reusable utilities + safe nets) — loaded last so it wins -->
   <link rel="stylesheet" href="/public/css/crm-mobile.css">
   <script src="/assets/js/tour-builder.js" defer></script>
+  <script src="/admin/js/inbox.js?v=2026072401" defer></script>
 </head>
 <body class="admin-page">
 
@@ -2698,6 +2699,13 @@
           <div id="lpProcRequestView" style="display:none;"></div>
           <div id="lpProcDocsView" style="display:none;"></div>
           <div id="lpProcTimelineView"></div>
+        </div>
+        <div class="lp-card" id="lpEmailThreadsCard">
+          <div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+            <span>📧 Email Threads</span>
+            <button type="button" onclick="lpLoadEmailThreads()" style="font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:4px 10px;background:transparent;color:#999;cursor:pointer;font-family:inherit;">↻ Refresh</button>
+          </div>
+          <div id="lpEmailThreadsBody"><div style="color:#888;font-size:12px;padding:6px 2px;">Loading…</div></div>
         </div>
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
         <div class="lp-card"><div class="lp-h">🏠 Appraisal Order</div><div id="lpApOrderBody"></div></div>
@@ -10123,6 +10131,7 @@ async function lpLoadProcessing(){
   lpLoadAppraisalPortal(cid);
   lpLoadOrders(cid);
   lpLoadProcDocs(cid);   // 🗂️ Processing Documents & Activity workspace (order_timeline)
+  lpLoadEmailThreads(cid); // 📧 Email Threads filed on this loan (lead_email_threads)
   lpLoadLoe(cid);
   lpLoadRelated(cid);
   lpLoadEsign(cid);
@@ -12207,6 +12216,44 @@ async function lpLoadProcDocs(cid){
   }catch(e){ _lpTimeline=[]; console.warn('[lpLoadProcDocs]', e&&e.message); }
   // repaint whichever view is showing
   lpProcView(_lpPdView, document.querySelector('#lpProcDocsCard .lp-pd-tab[data-pdview="'+_lpPdView+'"]'));
+}
+
+/* ── 📧 Email Threads filed on this loan ──
+   Reads lead_email_threads(contact_id) (aggregated from email_log for threads filed to
+   this borrower). Clicking a thread opens the SAME sandboxed viewer as the Inbox
+   (GmailInbox.openThread from /admin/js/inbox.js), which calls gmail-inbox get_thread —
+   mailbox comes from the stored row and access is re-checked server-side by role. */
+var _lpEmailThreads = [];
+async function lpLoadEmailThreads(cid){
+  cid=cid||lpCid(); const host=document.getElementById('lpEmailThreadsBody'); if(!host) return;
+  if(!cid){ host.innerHTML='<div style="color:#888;font-size:12px;padding:6px 2px;">No lead selected.</div>'; return; }
+  try{
+    const r=await _authClient().rpc('lead_email_threads',{ p_contact_id:cid });
+    if(r.error) throw r.error;
+    _lpEmailThreads = Array.isArray(r.data) ? r.data : [];
+  }catch(e){ _lpEmailThreads=[]; host.innerHTML='<div style="color:#E5484D;font-size:12px;padding:6px 2px;">Could not load email threads: '+lpEsc((e&&e.message)||String(e))+'</div>'; return; }
+  lpRenderEmailThreads();
+}
+function lpRenderEmailThreads(){
+  const host=document.getElementById('lpEmailThreadsBody'); if(!host) return;
+  const rows=_lpEmailThreads||[];
+  if(!rows.length){ host.innerHTML='<div style="color:#888;font-size:12px;padding:6px 2px;">No email threads filed on this loan yet. Tag a thread from the Inbox to file it here.</div>'; return; }
+  host.innerHTML='<div style="display:flex;flex-direction:column;gap:6px;">'+rows.map(function(t){
+    const inbound=String(t.last_direction||'').toLowerCase()==='inbound';
+    const dir='<span style="color:'+(inbound?'#50c878':'#C9A84C')+';font-weight:700;">'+(inbound?'↓':'↑')+'</span>';
+    const cnt=(t.message_count>1)?'<span style="font-size:10px;color:#888;border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:0 5px;margin-left:6px;">'+t.message_count+'</span>':'';
+    return '<div class="lp-em-row" data-tid="'+lpEsc(t.thread_id)+'" data-mb="'+lpEsc(t.mailbox||'')+'" style="padding:9px 11px;border:1px solid rgba(255,255,255,.07);border-radius:9px;background:rgba(255,255,255,.02);cursor:pointer;">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;"><span style="font-size:13px;color:#eee;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+dir+' '+lpEsc(t.subject||'(no subject)')+cnt+'</span><span style="font-size:11px;color:#888;flex-shrink:0;">'+lpEsc(_lpFmtDT(t.last_at))+'</span></div>'
+      +'<div style="font-size:11px;color:#888;margin-top:3px;">'+lpEsc(t.last_from||'')+(t.mailbox?(' &nbsp;·&nbsp; '+lpEsc(t.mailbox)):'')+'</div></div>';
+  }).join('')+'</div>';
+  Array.prototype.forEach.call(host.querySelectorAll('.lp-em-row'), function(row){
+    row.addEventListener('click', function(){
+      const tid=row.getAttribute('data-tid'), mb=row.getAttribute('data-mb');
+      if(!window.GmailInbox||!window.GmailInbox.openThread){ alert('Inbox viewer not loaded — reload the page.'); return; }
+      if(!mb){ alert('This thread has no mailbox recorded.'); return; }
+      window.GmailInbox.openThread({ client:_authClient(), mailbox:mb, threadId:tid, onChanged:function(){ lpLoadEmailThreads(); } });
+    });
+  });
 }
 
 /* ── View 1: Request Update (notes + request templates) ──

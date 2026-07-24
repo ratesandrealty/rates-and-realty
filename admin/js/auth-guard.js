@@ -167,6 +167,13 @@
         'va-dashboard.html':  ['va', 'admin'],
         'va-tasks':           ['va', 'admin'],
         'va-tasks.html':      ['va', 'admin'],
+        // Gmail inbox surfaces. Admin inbox exposes the mailbox switcher (rene@ +
+        // processing@); the VA inbox is processing@ only (also enforced server-side
+        // by gmail-inbox, which 403s any mailbox a role may not touch).
+        'inbox':              ['admin'],
+        'inbox.html':         ['admin'],
+        'va-inbox':           ['va', 'admin'],
+        'va-inbox.html':      ['va', 'admin'],
         // Staff-to-staff chat: open to all internal staff roles.
         'chat':               ['va', 'admin', 'agent', 'loa'],
         'chat.html':          ['va', 'admin', 'agent', 'loa'],
