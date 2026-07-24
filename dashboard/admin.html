@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <!-- dashboard/admin.html · cache-buster v=20260723c (Worker serves dashboard HTML no-store) -->
+  <!-- dashboard/admin.html · cache-buster v=20260723d (Worker serves dashboard HTML no-store) -->
   <!-- CSP is set by the Cloudflare Worker via withCsp() in src/worker.js.
        Meta CSP removed: when both meta + HTTP header are present, browsers
        apply the intersection per directive, which can mask whichever one
@@ -3065,32 +3065,49 @@
   let _layoutServerReady = false;
 
   async function _layoutClient() {
-    if (window._supabaseClient) return window._supabaseClient;
-    if (typeof window.getSupabaseClient === 'function') { try { return await window.getSupabaseClient(); } catch (e) {} }
-    if (window._dashSupabase) return window._dashSupabase;
-    return null;
+    // Use the SAME session-aware client the rest of the dashboard's data calls use
+    // (set by the supabase-client module as window._dashSupabase). WAIT for it — this
+    // runs during initial load and the client is constructed async (same timing class
+    // as the config.js TLA bug); returning null too early is how the RPC never fired.
+    let sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient;
+    let waited = 0;
+    while (!sb && waited < 5000) { await new Promise(r => setTimeout(r, 100)); waited += 100; sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient; }
+    if (!sb && typeof window.getSupabaseClient === 'function') { try { sb = await window.getSupabaseClient(); } catch (e) {} }
+    // Make sure the persisted session is loaded so the RPC carries the user's JWT (RLS
+    // scopes each row to auth.uid()).
+    if (sb && sb.auth && sb.auth.getSession) { try { await sb.auth.getSession(); } catch (e) {} }
+    return sb || null;
   }
   async function _serverLayoutGet() {
     try {
-      const sb = await _layoutClient(); if (!sb) return null;
+      const sb = await _layoutClient();
+      if (!sb) { console.error('[layout] server get: no Supabase client resolved'); return null; }
       const { data, error } = await sb.rpc('dashboard_layout_get');
       if (error) throw error;
       const row = Array.isArray(data) ? data[0] : data;
+      console.info('[layout] server get →', row);
       return (row && row.section_order != null) ? row : null;   // null = user never saved
-    } catch (e) { console.warn('[layout] server get failed (using local):', e && e.message); return null; }
+    } catch (e) { console.error('[layout] server get FAILED (using local):', e); return null; }
   }
   function _serverLayoutSave(order, hidden, ver) {
-    // fire-and-forget — a server failure must never break the UI, only log.
+    // fire-and-forget — a server failure must never break the UI, but it MUST surface in
+    // the console (a swallowed error is exactly what hid this bug). Param names MUST match
+    // the function signature: dashboard_layout_save(p_section_order, p_hidden_sections,
+    // p_layout_version). supabase-js/PostgREST resolve the function by the keys passed, so
+    // unprefixed names 404 (PGRST202) silently — that was the root cause of zero rows.
     (async () => {
       try {
-        const sb = await _layoutClient(); if (!sb) return;
-        const { error } = await sb.rpc('dashboard_layout_save', {
-          section_order: Array.isArray(order) ? order : [],
-          hidden_sections: Array.isArray(hidden) ? hidden : [],
-          layout_version: ver
-        });
+        const sb = await _layoutClient();
+        if (!sb) { console.error('[layout] server save: no Supabase client resolved'); return; }
+        const params = {
+          p_section_order: Array.isArray(order) ? order : [],
+          p_hidden_sections: Array.isArray(hidden) ? hidden : [],
+          p_layout_version: ver
+        };
+        const { data, error } = await sb.rpc('dashboard_layout_save', params);
         if (error) throw error;
-      } catch (e) { console.warn('[layout] server save failed (local kept):', e && e.message); }
+        console.info('[layout] server save ✓', params, '→', data);
+      } catch (e) { console.error('[layout] server save FAILED (local kept):', e); }
     })();
   }
   // Push the current effective layout to the server (both saveSectionOrder and
@@ -3157,9 +3174,11 @@
   async function syncServerLayout() {
     const parent = document.querySelector('.dashboard-sections-wrapper');
     if (!parent) { _layoutServerReady = true; return; }
+    console.info('[layout] sync start — local snapshot:', _layoutSnapshot, '| _hadLocalLayout:', _hadLocalLayout, '| version:', LAYOUT_VERSION);
     try {
       const srv = await _serverLayoutGet();
       if (srv && Array.isArray(srv.section_order) && String(srv.layout_version) === String(LAYOUT_VERSION)) {
+        console.info('[layout] applying SERVER layout (authoritative) → mirroring to localStorage');
         const hidden = Array.isArray(srv.hidden_sections) ? srv.hidden_sections : [];
         applySectionOrder(srv.section_order, parent, hidden);   // server is authoritative
         try {
@@ -3168,7 +3187,10 @@
           localStorage.setItem(VERSION_KEY, String(LAYOUT_VERSION));   // mirror → fast correct next paint
         } catch (e) {}
       } else if (_hadLocalLayout) {
+        console.info('[layout] server empty → MIGRATING this device\'s local layout up to the server');
         _serverLayoutSave(_layoutSnapshot.order, Array.isArray(_layoutSnapshot.hidden) ? _layoutSnapshot.hidden : [], LAYOUT_VERSION);
+      } else {
+        console.info('[layout] no server layout and no real prior local layout → default (nothing to sync)');
       }
     } finally {
       _layoutServerReady = true;   // user-initiated saves now sync to the server
