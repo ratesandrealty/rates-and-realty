@@ -45,10 +45,11 @@ serve(async (req) => {
         })
       }
 
-      // Get public URL
-      const { data: urlData } = supabase.storage
+      // Private bucket: sign a short-lived URL for the immediate response only; persist the
+      // PATH (never a public/signed URL). Consumers re-sign from storage_path on demand.
+      const { data: signedData } = await supabase.storage
         .from('borrower-documents')
-        .getPublicUrl(storage_path)
+        .createSignedUrl(storage_path, 3600)
 
       // Insert DB record
       const { error: dbError } = await supabase
@@ -60,7 +61,7 @@ serve(async (req) => {
           type: document_type,
           file_name: file_name,
           file_path: storage_path,
-          file_url: urlData.publicUrl,
+          file_url: null,
           status: 'received',
           file_size: file_size,
           uploaded_at: new Date().toISOString()
@@ -75,7 +76,7 @@ serve(async (req) => {
 
       return new Response(JSON.stringify({
         success: true,
-        file_url: urlData.publicUrl,
+        file_url: signedData?.signedUrl || null,
         storage_path
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }

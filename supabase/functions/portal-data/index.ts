@@ -62,8 +62,10 @@ Deno.serve(async (req: Request) => {
         .upload(storage_path, bytes, { contentType: file.type || 'application/octet-stream', upsert: true });
       if (upErr) return err('Storage upload failed: ' + upErr.message, 500);
 
-      const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(storage_path);
-      const file_url = urlData.publicUrl;
+      // Private bucket: persist the PATH only (never a public/signed URL). Sign a short-lived
+      // URL just for the immediate response so the just-uploaded doc renders without a reload.
+      const { data: signedNew } = await sb.storage.from('borrower-documents').createSignedUrl(storage_path, 3600);
+      const file_url = signedNew?.signedUrl || null;
 
       const { data: inserted, error: dbErr } = await sb.from('uploaded_documents').insert({
         contact_id,
@@ -71,7 +73,7 @@ Deno.serve(async (req: Request) => {
         type: category,
         file_name: file.name,
         file_path: storage_path,
-        file_url,
+        file_url: null,
         file_size: file.size,
         status: 'received',
         uploaded_at: new Date().toISOString(),
@@ -300,7 +302,22 @@ Deno.serve(async (req: Request) => {
         .order('uploaded_at', { ascending: false });
 
       if (error) return err(error.message, 500);
-      return ok({ documents: data || [] });
+
+      // Private bucket: sign each doc's file_path fresh at request time (never return a public
+      // or persisted URL). Signed at render so a borrower page left open doesn't accumulate
+      // expired links — the next get_documents re-signs. gdrive_file_url (Drive copy) is left
+      // as-is. 1-hour TTL.
+      const docs = data || [];
+      await Promise.all(docs.map(async (d: any) => {
+        const p = d.file_path || d.storage_path;
+        if (p) {
+          const { data: s } = await sb.storage.from('borrower-documents').createSignedUrl(p, 3600);
+          d.file_url = s?.signedUrl || d.gdrive_file_url || null;
+        } else {
+          d.file_url = d.gdrive_file_url || null;
+        }
+      }));
+      return ok({ documents: docs });
     }
 
     // ─── UPDATE SHOWING STATUS ───────────────────────────────────────────

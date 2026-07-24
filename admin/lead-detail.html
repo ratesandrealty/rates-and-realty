@@ -7612,13 +7612,15 @@ async function syncAllDocsToDrive() {
   showDriveUploadHelper();
 }
 
-function showDriveUploadHelper() {
+async function showDriveUploadHelper() {
   const docs = window._currentContactDocs || [];
+  // Sign each in memory (never persisted) — no public bucket URL in the download list.
+  await Promise.all(docs.map(async d => { d._u = await _docFileUrl(d); }));
 
   let linksHtml = '';
   if (docs.length > 0) {
     linksHtml = docs.map(doc => {
-      const url = doc.file_url || doc.public_url;
+      const url = doc._u;
       const name = doc.file_name || doc.title || 'document';
       if (!url) return '';
       return `<a href="${url}" download="${name}" target="_blank" style="
@@ -8173,7 +8175,8 @@ async function convertDocToPdf(doc) {
   const btn = document.getElementById('convert-btn-' + doc.id);
   if (btn) { btn.disabled = true; btn.textContent = 'Converting…'; btn.style.opacity = '0.6'; }
   try {
-    const fileUrl = doc.file_url || `${window.APP_CONFIG.SUPABASE_URL}/storage/v1/object/public/borrower-documents/${doc.file_path}`;
+    const fileUrl = await _docFileUrl(doc);
+    if (!fileUrl) throw new Error('No source file to convert');
     const fileRes = await fetch(fileUrl);
     if (!fileRes.ok) throw new Error('Could not fetch file');
     const blob = await fileRes.blob();
@@ -8215,10 +8218,10 @@ async function convertDocToPdf(doc) {
     });
     const uploadData = await uploadRes.json();
     if (uploadData.error) throw new Error(uploadData.error);
-    const newFileUrl = uploadData.file_url || `${window.APP_CONFIG.SUPABASE_URL}/storage/v1/object/public/borrower-documents/${pdfPath}`;
+    // Store the PATH only — never a public (or signed) URL. Reads sign on demand.
     await sb.from('uploaded_documents').update({
       file_name: convData.pdf_name,
-      file_url: newFileUrl,
+      file_url: null,
       file_path: pdfPath,
       file_size: convData.pdf_size
     }).eq('id', doc.id);
@@ -8230,7 +8233,7 @@ async function convertDocToPdf(doc) {
   }
 }
 
-function openDocViewer(docId) {
+async function openDocViewer(docId) {
   const doc = _allDocs.find(d => String(d.id) === String(docId));
   if (!doc) return;
   const modal = document.getElementById('doc-viewer-modal');
@@ -8238,7 +8241,7 @@ function openDocViewer(docId) {
   document.getElementById('doc-viewer-name').textContent = doc.file_name;
   const size = doc.file_size ? (doc.file_size > 1048576 ? (doc.file_size/1048576).toFixed(1)+' MB' : (doc.file_size/1024).toFixed(0)+' KB') : '';
   document.getElementById('doc-viewer-meta').textContent = (doc.document_type||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) + (size?' · '+size:'');
-  const fileUrl = doc.file_url || `${window.APP_CONFIG.SUPABASE_URL}/storage/v1/object/public/borrower-documents/${doc.file_path}`;
+  const fileUrl = await _docFileUrl(doc);
   _docViewerCurrentUrl = fileUrl;
   _docViewerScale = 1.0;
   _docViewerRotation = 0;
@@ -11562,14 +11565,19 @@ async function lpPayoffToggleDontNeed(){
   }catch(e){ toast('Could not update Mortgage Payoff: '+((e&&e.message)||e), true); }
 }
 /* ═══ VOE blank-form uploader (app-wide config; set/replace from the UI) ═══ */
-let _lpVoeFormUrl = null;
+// The blank VOE form lives in borrower-documents (voe-forms/…). We store the PATH in app_config
+// (not a URL) and sign on demand. _voeFormPath tolerates a legacy stored public URL by pulling
+// the path back out of it, so old rows keep working after the bucket flips to private.
+let _lpVoeFormUrl = null;   // the STORED value (path going forward; legacy may be a full URL)
+function _voeFormPath(v){ if(!v) return ''; const m=String(v).match(/\/borrower-documents\/(.+?)(?:\?|$)/); return m?decodeURIComponent(m[1]):String(v); }
+async function _voeFormSignedUrl(v){ const p=_voeFormPath(v); if(!p) return ''; return (await _signedDocUrl(p))||''; }
 async function lpVoeFormLoad(){
   const box=document.getElementById('lpVoeFormCtl'); if(!box) return;
   let url=null;
   try{ const r=await _authClient().rpc('voe_form_get'); if(!r.error){ const d=r.data; url=(typeof d==='string'?d:(d&&(d.voe_form_url||d.url)))||null; } }catch(e){ console.warn('[voe_form_get]', e&&e.message); }
   _lpVoeFormUrl=url;
-  if(_lpVoeCfg) _lpVoeCfg.voe_form_url=url||'';   // keep the composer's cached config in sync
-  lpVoeFormRender(url);
+  if(_lpVoeCfg) _lpVoeCfg.voe_form_url=url||'';   // keep the composer's cached config in sync (stored path)
+  lpVoeFormRender(url ? await _voeFormSignedUrl(url) : null);   // sign for the View link
 }
 function lpVoeFormRender(url){
   const box=document.getElementById('lpVoeFormCtl'); if(!box) return;
@@ -11592,10 +11600,8 @@ async function lpVoeFormUpload(inp){
     const path='voe-forms/'+safe;
     const up=await _authClient().storage.from('borrower-documents').upload(path, file, { upsert:true, contentType:(file.type||'application/pdf') });
     if(up.error) throw up.error;
-    const pub=_authClient().storage.from('borrower-documents').getPublicUrl(path);
-    const url=(pub&&pub.data&&pub.data.publicUrl)||'';
-    if(!url) throw new Error('could not resolve public URL');
-    const setr=await _authClient().rpc('voe_form_set',{ p_url:url });
+    // Store the PATH (not a public URL) — signed on demand at display/attach time.
+    const setr=await _authClient().rpc('voe_form_set',{ p_url:path });
     if(setr.error) throw setr.error;
     toast('VOE blank form '+(_lpVoeFormUrl?'replaced':'set')+' ✓');
     lpVoeFormLoad();   // re-render → "set ✓" + sync composer config
@@ -11713,7 +11719,9 @@ async function _voeComposerSend(st){
   // Fetch the staged VOE PDF → base64 attachment (public bucket; graceful if not staged).
   let attachments=undefined;
   if(cfg.voe_form_url){
-    try{ const resp=await fetch(cfg.voe_form_url); if(resp.ok){ const buf=await resp.arrayBuffer(); attachments=[{ content:_lpB64FromBuf(buf), filename:'Request_for_VOE_BLANK.pdf', disposition:'attachment' }]; } else { showToast('VOE form fetch failed ('+resp.status+') — sending without attachment', true); } }
+    // Sign the stored path on demand (bucket is private) before fetching the bytes to attach.
+    const _voeSigned=await _voeFormSignedUrl(cfg.voe_form_url);
+    try{ const resp=await fetch(_voeSigned); if(resp.ok){ const buf=await resp.arrayBuffer(); attachments=[{ content:_lpB64FromBuf(buf), filename:'Request_for_VOE_BLANK.pdf', disposition:'attachment' }]; } else { showToast('VOE form fetch failed ('+resp.status+') — sending without attachment', true); } }
     catch(e){ showToast('Could not load VOE form — sending without attachment', true); }
   }
   // SECOND attachment — the SIGNED borrower authorization. voe_borrower_auth_request → { found, envelope_id, title }.
@@ -22931,7 +22939,7 @@ async function loadDocuments(cid) {
       .eq('contact_id', cid)
       .order('uploaded_at', { ascending: false });
     if (error) { console.warn('[documents]', error.message); return; }
-    _renderDocuments(docs || []);
+    await _renderDocuments(docs || []);
     _wireDocumentsHandlers();
   } catch (e) { console.warn('[documents]', e.message); }
 }
@@ -22968,25 +22976,28 @@ function _docKind(d) {
   if (['heic','heif'].indexOf(ext) >= 0) return 'heic';
   return 'other';
 }
-function _renderDocuments(docs) {
+async function _renderDocuments(docs) {
   const list = document.getElementById('documentsList');
   if (!list) return;
   if (!docs.length) {
     list.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.4);line-height:1.5;">No documents uploaded yet. Text photos to the assistant with the borrower&rsquo;s name to add documents.</div>`;
     return;
   }
+  // Pre-sign every row IN MEMORY (never persisted) so the render is synchronous but no cell
+  // ever falls back to a public /object/public/borrower-documents/ URL.
+  await Promise.all(docs.map(async d => { d._u = await _docFileUrl(d); }));
   const BTN = 'background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.4);color:#C9A84C;font-size:11px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer;text-decoration:none;white-space:nowrap;line-height:1;display:inline-flex;align-items:center;';
   const THUMB = 'flex:0 0 auto;width:46px;height:46px;border-radius:8px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:22px;overflow:hidden;';
   list.innerHTML = docs.map(d => {
     const kind = _docKind(d);
     const path = d.file_path || d.storage_path || '';
     const size = _docSize(d.file_size);
-    const openUrl = d.gdrive_file_url || d.file_url || '';
+    const openUrl = d._u || '';
     // Type-aware thumbnail (click → preview).
     let thumb;
     if (kind === 'image') {
-      thumb = d.file_url
-        ? `<div class="doc-thumb doc-imgview" data-url="${esc(d.file_url)}" title="View" style="${THUMB}cursor:pointer;"><img src="${esc(d.file_url)}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.parentNode.textContent='🖼️'"></div>`
+      thumb = d._u
+        ? `<div class="doc-thumb doc-imgview" data-url="${esc(d._u)}" title="View" style="${THUMB}cursor:pointer;"><img src="${esc(d._u)}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.parentNode.textContent='🖼️'"></div>`
         : (path ? `<div class="doc-thumb doc-preview" data-path="${esc(path)}" title="View" style="${THUMB}cursor:pointer;">🖼️</div>` : `<div style="${THUMB}">🖼️</div>`);
     } else if (kind === 'pdf') {
       thumb = path ? `<div class="doc-thumb doc-preview" data-path="${esc(path)}" title="View PDF" style="${THUMB}cursor:pointer;">📄</div>` : `<div style="${THUMB}">📄</div>`;
@@ -23000,7 +23011,7 @@ function _renderDocuments(docs) {
     const heicNote = (kind === 'heic')
       ? `<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:2px;">Preview not available — ${d.gdrive_file_url ? `<a href="${esc(d.gdrive_file_url)}" target="_blank" rel="noopener" style="color:#C9A84C;">Open in Drive</a>` : 'no Drive link yet'}</div>` : '';
     const canScan = (kind === 'pdf' || kind === 'image');
-    const scan = canScan ? `<button type="button" class="doc-scan1003" data-url="${esc(d.file_url || '')}" data-path="${esc(path)}" data-name="${esc(d.file_name || '')}" title="Scan into the 1003" style="${BTN}">🔍 1003</button>` : '';
+    const scan = canScan ? `<button type="button" class="doc-scan1003" data-url="${esc(d._u || '')}" data-path="${esc(path)}" data-name="${esc(d.file_name || '')}" title="Scan into the 1003" style="${BTN}">🔍 1003</button>` : '';
     const view = openUrl ? `<a href="${esc(openUrl)}" target="_blank" rel="noopener" style="${BTN}">View ↗</a>` : '';
     const download = path ? `<button type="button" class="doc-download" data-path="${esc(path)}" style="${BTN}">Download</button>` : '';
     return `
@@ -23019,15 +23030,26 @@ function _renderDocuments(docs) {
   }).join('');
 }
 
-// Generate a 5-minute signed URL for a storage object in borrower-documents.
+// Generate a 1-hour signed URL for a storage object in the (now private) borrower-documents
+// bucket. SECURITY: borrower-documents holds PII (pay stubs, W2s, IDs, bank statements). We
+// NEVER build /object/public/ URLs and NEVER persist a signed URL — always sign the stored
+// file_path on demand, at display time, so links expire and can't leak.
 async function _signedDocUrl(path) {
   try {
     const { data, error } = await _authClient().storage
       .from('borrower-documents')
-      .createSignedUrl(path, 300);
+      .createSignedUrl(path, 3600);
     if (error) { console.warn('[documents] signed url', error.message); return null; }
     return data ? data.signedUrl : null;
   } catch (e) { console.warn('[documents] signed url', e.message); return null; }
+}
+// Best display/fetch URL for an uploaded_documents row WITHOUT ever using a public bucket URL:
+// prefer a fresh signed URL for the bucket file (direct + fetchable), else the Drive copy.
+async function _docFileUrl(doc) {
+  if (!doc) return '';
+  const p = doc.file_path || doc.storage_path;
+  if (p) { const s = await _signedDocUrl(p); if (s) return s; }
+  return doc.gdrive_file_url || doc.webViewLink || '';
 }
 
 // Bind the delegated click handler once (Download → open signed URL in a new
@@ -26575,7 +26597,6 @@ async function startOCR(file, docType) {
             .from('borrower-documents')
             .upload(path, _selectedOCRFile, { upsert: true });
           if (!uploadError) {
-            const { data: urlData } = sb.storage.from('borrower-documents').getPublicUrl(path);
             await sb.from('uploaded_documents').insert({
               contact_id: contactId || null,
               lead_id: leadId || null,
@@ -26583,7 +26604,7 @@ async function startOCR(file, docType) {
               type: docType,
               file_name: _selectedOCRFile.name,
               file_path: path,
-              file_url: urlData.publicUrl,
+              file_url: null,
               status: 'received',
               file_size: _selectedOCRFile.size,
               uploaded_at: new Date().toISOString()
@@ -29316,6 +29337,8 @@ async function openDocScanPicker() {
   }
 
   const iconMap = { pdf:'📄', jpg:'🖼️', jpeg:'🖼️', png:'🖼️', docx:'📝' };
+  // Pre-sign each doc in memory (never persisted) — no public bucket URL in the picker.
+  await Promise.all(docs.map(async d => { d._u = await _docFileUrl(d); }));
   list.innerHTML = docs.map(doc => {
     const ext = (doc.file_name||'').split('.').pop().toLowerCase();
     const icon = iconMap[ext] || '📎';
@@ -29323,7 +29346,7 @@ async function openDocScanPicker() {
     const type = (doc.document_type||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
     return `
       <div id="docpick_${doc.id}" onclick="toggleDocScanSelect('${doc.id}')"
-        data-file-url="${doc.file_url || ''}" data-file-name="${doc.file_name}" data-file-type="${ext}"
+        data-file-url="${doc._u || ''}" data-file-name="${doc.file_name}" data-file-type="${ext}"
         style="background:rgba(255,255,255,0.04);border:2px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;cursor:pointer;transition:all .15s;text-align:center;">
         <div style="font-size:36px;margin-bottom:8px;">${icon}</div>
         <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${doc.file_name}">${doc.file_name}</div>
@@ -33428,7 +33451,7 @@ async function _cmaPdfBase64(){
 /* ═══ SHARE A GENERATED PDF VIA A PUBLIC LINK ═══════════════════════════════════
    Rene's decision: email a LINK (not an attachment). The link must open for someone
    NOT logged into any Google/Supabase account. Approach (validated against the DB):
-     · upload the PDF to the PUBLIC `borrower-documents` bucket → getPublicUrl (opens
+     · upload the PDF to the PUBLIC `approval-letters` bucket → getPublicUrl (opens
        unauthenticated), then wrap it in a /s/<slug> short link (clean link + click_count
        so Rene sees if the realtor opened it);
      · ALSO upload a copy to the lead's Drive folder (gdrive-proxy) for Rene's records;
