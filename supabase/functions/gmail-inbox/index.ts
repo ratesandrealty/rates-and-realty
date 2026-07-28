@@ -172,20 +172,58 @@ function utf8ToB64(str: string): string {
 }
 function b64url(b64: string): string { return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
 function encSubject(s: string): string { return /[^\x00-\x7F]/.test(s) ? `=?UTF-8?B?${utf8ToB64(s)}?=` : s }
-function buildMime(o: { from: string; to: string; cc?: string; subject: string; html: string; inReplyTo?: string | null; references?: string | null }): string {
+function b64Body(s: string): string { return utf8ToB64(s).replace(/(.{76})/g, '$1\r\n') }
+
+// Strip HTML to a readable plain-text fallback (server-side safety net — the composer
+// normally sends its own body_text derived from the sanitized DOM).
+function htmlToText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// multipart/alternative: text/plain + text/html. HTML-only mail gets spam-scored, and some
+// clients (and every screen reader fallback) want the text part. Stage 2 wraps this whole
+// entity in a multipart/mixed with base64 attachment parts.
+function buildMime(o: {
+  from: string; to: string; cc?: string; bcc?: string; subject: string
+  html: string; text?: string; inReplyTo?: string | null; references?: string | null
+}): string {
+  const boundary = 'alt_' + crypto.randomUUID().replace(/-/g, '')
+  const text = (o.text && o.text.trim()) ? o.text : htmlToText(o.html)
   const h: string[] = []
   h.push(`From: ${o.from}`)
   h.push(`To: ${o.to}`)
   if (o.cc) h.push(`Cc: ${o.cc}`)
+  // Gmail honors a Bcc header on send and strips it from every delivered copy.
+  if (o.bcc) h.push(`Bcc: ${o.bcc}`)
   h.push(`Subject: ${encSubject(o.subject)}`)
   if (o.inReplyTo) h.push(`In-Reply-To: ${o.inReplyTo}`)
   if (o.references) h.push(`References: ${o.references}`)
   h.push('MIME-Version: 1.0')
-  h.push('Content-Type: text/html; charset="UTF-8"')
-  h.push('Content-Transfer-Encoding: base64')
+  h.push(`Content-Type: multipart/alternative; boundary="${boundary}"`)
   h.push('')
-  const body = utf8ToB64(o.html).replace(/(.{76})/g, '$1\r\n')
-  return h.join('\r\n') + '\r\n' + body
+  const parts = [
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    b64Body(text),
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    b64Body(o.html),
+    `--${boundary}--`,
+    '',
+  ]
+  return h.join('\r\n') + '\r\n' + parts.join('\r\n')
 }
 
 serve(async (req) => {
@@ -262,13 +300,21 @@ serve(async (req) => {
       const m = await matchContact(svc, participants)
       let persisted = null
       if (m.contact_id) persisted = await persistMessages(svc, rows, m.contact_id)
-      const messages = rows.map((r: any, i: number) => ({
-        id: r.gmail_message_id, direction: r.direction,
-        from: { email: r.from_email, name: r.from_name },
-        to: r.to_emails || [], cc: splitAddrs(r.cc_email), subject: r.subject,
-        date: r.created_at, body_html: r.body_html, body_text: r.body_text,
-        attachments: r.attachments || [], unread: (msgs[i].labelIds || []).includes('UNREAD'),
-      }))
+      // reply_to / message_id are read straight off the Gmail headers rather than added to
+      // `rows` — those objects are spread into the email_log insert and have no such columns.
+      const messages = rows.map((r: any, i: number) => {
+        const mh = msgs[i]?.payload?.headers
+        return {
+          id: r.gmail_message_id, direction: r.direction,
+          from: { email: r.from_email, name: r.from_name },
+          to: r.to_emails || [], cc: splitAddrs(r.cc_email), subject: r.subject,
+          // Reply must honor Reply-To (mailing lists, no-reply relays) over From.
+          reply_to: parseEmail(hdr(mh, 'Reply-To')),
+          message_id: hdr(mh, 'Message-ID'),
+          date: r.created_at, body_html: r.body_html, body_text: r.body_text,
+          attachments: r.attachments || [], unread: (msgs[i].labelIds || []).includes('UNREAD'),
+        }
+      })
       return ok({ thread_id: threadId, matched: m, persisted, messages })
     }
 
@@ -276,7 +322,9 @@ serve(async (req) => {
       const to = String(body.to || '').trim()
       const subject = String(body.subject || '')
       const html = String(body.body_html || '')
+      const text = body.body_text ? String(body.body_text) : ''
       const cc = body.cc ? String(body.cc).trim() : ''
+      const bcc = body.bcc ? String(body.bcc).trim() : ''
       if (!to || !subject || !html) return err('to, subject, body_html required')
       const threadId = body.thread_id ? String(body.thread_id) : ''
       let inReplyTo: string | null = body.in_reply_to ? String(body.in_reply_to) : null
@@ -296,7 +344,7 @@ serve(async (req) => {
           }
         }
       }
-      const raw = b64url(utf8ToB64(buildMime({ from: mailbox, to, cc, subject, html, inReplyTo, references })))
+      const raw = b64url(utf8ToB64(buildMime({ from: mailbox, to, cc, bcc, subject, html, text, inReplyTo, references })))
       const sendBody: any = { raw }
       if (threadId) sendBody.threadId = threadId
       const sr = await gmailApi(mailbox, 'messages/send', { method: 'POST', body: JSON.stringify(sendBody) })

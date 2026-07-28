@@ -8,6 +8,11 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/admin/js/supabase-client.js?v=2026050601"></script>
 <script src="/admin/js/auth-guard.js?v=2026062401"></script>
+<!-- DOMPurify (Cure53 v3.4.12, vendored + SRI-pinned): the signature is embedded in every
+     outbound email, so it is sanitized here on save as well as in the composer on send. -->
+<script src="/admin/js/vendor/purify.min.js?v=3.4.12"
+        integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
+        crossorigin="anonymous"></script>
 <style>
 :root {
   --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
@@ -170,6 +175,20 @@ select.inp option{background:#1a1a1a;color:#fff}
 
 #toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
 #toast.show{opacity:1}
+/* email signature editor */
+.sig-tools{display:flex;gap:2px;flex-wrap:wrap}
+.sig-tools button{min-width:32px;height:32px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:#ccc;cursor:pointer;font-size:13px;font-family:inherit}
+.sig-tools button:hover{background:rgba(255,255,255,.1);color:#fff}
+.sig-ed{min-height:130px;background:#0a0a0a;border:1px solid var(--border2);border-radius:9px;padding:12px 14px;color:#fff;font-size:13.5px;line-height:1.6;outline:none;overflow-y:auto;max-height:320px;word-wrap:break-word}
+.sig-ed:focus{border-color:var(--gold)}
+.sig-ed:empty:before{content:attr(data-ph);color:#555}
+.sig-ed a{color:#8ab4f8}
+@media (max-width:768px){
+  .sig-tools{width:100%}
+  .sig-tools button{flex:1;min-height:40px}
+  .sig-ed{min-height:150px}
+  #sigMailbox{max-width:100%!important;width:100%}
+}
 </style>
 <link rel="stylesheet" href="/public/css/responsive-global.css">
 </head>
@@ -193,6 +212,7 @@ select.inp option{background:#1a1a1a;color:#fff}
     <div class="ss-item active" id="navUsers">👥 Users &amp; Roles</div>
     <div class="ss-item" onclick="document.getElementById('navAutomations').scrollIntoView({behavior:'smooth'})">⚡ Automations</div>
     <div class="ss-item" onclick="document.getElementById('navVaView').scrollIntoView({behavior:'smooth'})">🖥️ VA View</div>
+    <div class="ss-item" onclick="document.getElementById('navSig').scrollIntoView({behavior:'smooth'})">✍️ Email signatures</div>
     <div class="ss-item" onclick="location.href='/admin/va-help'">🎥 Help Videos</div>
   </div>
 
@@ -297,6 +317,35 @@ select.inp option{background:#1a1a1a;color:#fff}
       <div class="card" style="padding:6px 0;">
         <div class="auto-list" id="vaViewList">
           <div class="auto-row"><div class="auto-info"><div class="auto-desc">Loading…</div></div></div>
+        </div>
+      </div>
+
+      <!-- Email signatures — auto-appended by the CRM inbox composer (email_signature_set) -->
+      <div class="section-head" id="navSig">
+        <h2>Email signatures</h2>
+        <span class="section-count" id="sigSaved" style="color:var(--green);display:none;">Saved ✓</span>
+      </div>
+      <div class="card-sub" style="max-width:1100px;margin:-6px 0 12px;">Appended automatically to every reply and forward sent from the CRM inbox. Each mailbox has its own. Staff can see and edit a signature inline on a single message; only admins can change the saved default here.</div>
+      <div class="card" style="padding:14px 16px;max-width:1100px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+          <select class="inp" id="sigMailbox" style="max-width:280px;">
+            <option value="rene@ratesandrealty.com">rene@ratesandrealty.com</option>
+            <option value="processing@ratesandrealty.com">processing@ratesandrealty.com</option>
+          </select>
+          <div style="flex:1"></div>
+          <div class="sig-tools" id="sigTools">
+            <button type="button" data-c="bold" title="Bold"><b>B</b></button>
+            <button type="button" data-c="italic" title="Italic"><i>I</i></button>
+            <button type="button" data-c="underline" title="Underline"><u>U</u></button>
+            <button type="button" data-c="_link" title="Insert link">🔗</button>
+            <button type="button" data-c="removeFormat" title="Clear formatting">✖</button>
+          </div>
+        </div>
+        <div class="sig-ed" id="sigEditor" contenteditable="true" data-ph="Type your signature — name, title, phone, NMLS…"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">
+          <button class="btn btn-gold btn-sm" type="button" id="sigSaveBtn" onclick="saveSignature()">Save signature</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="loadSignature()">Revert</button>
+          <span id="sigStatus" style="font-size:12px;color:var(--muted);"></span>
         </div>
       </div>
 
@@ -940,6 +989,125 @@ async function init() {
   loadAutomations();
   loadSchedAutomations();
   loadVaView();
+  initSignature();
+}
+
+/* ── Email signatures (email_signature_get / email_signature_set, admin-only to set) ──
+ * The signature is embedded verbatim into outbound mail, so it is sanitized with
+ * DOMPurify on paste and again on save. The composer sanitizes it a third time on send.
+ * No bespoke sanitizer — same vendored Cure53 build the inbox composer uses.          */
+var SIG_PURIFY_CFG = {
+  ALLOWED_TAGS: ['p','div','span','br','hr','b','strong','i','em','u','s','a','ul','ol','li',
+    'table','thead','tbody','tr','td','th','img','font','small'],
+  ALLOWED_ATTR: ['href','title','target','rel','style','align','dir','src','alt','width','height',
+    'border','colspan','rowspan','cellpadding','cellspacing','valign','bgcolor','color','face','size','class'],
+  ALLOW_DATA_ATTR: false,
+  FORBID_TAGS: ['script','style','iframe','object','embed','form','input','button','meta','link','base','svg','math'],
+  FORBID_ATTR: ['srcset','formaction','action','background','poster','xlink:href','ping'],
+  ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|cid:|data:image\/(?:png|gif|jpe?g|webp);base64,)/i,
+  // See inbox.js: DOMPurify URI-checks every attribute value that isn't marked URI-safe,
+  // so presentational attributes must be listed here or they get stripped.
+  ADD_URI_SAFE_ATTR: ['align','dir','lang','target','rel','width','height','border',
+    'colspan','rowspan','cellpadding','cellspacing','valign','bgcolor','color','face','size']
+};
+function sigSanitize(html) {
+  if (!window.DOMPurify || typeof window.DOMPurify.sanitize !== 'function') {
+    throw new Error('Sanitizer (DOMPurify) failed to load — reload the page before editing the signature.');
+  }
+  return window.DOMPurify.sanitize(String(html == null ? '' : html), SIG_PURIFY_CFG);
+}
+
+function initSignature() {
+  var ed = document.getElementById('sigEditor');
+  var tools = document.getElementById('sigTools');
+  if (!ed || !tools) return;
+
+  ed.addEventListener('paste', function (e) {
+    e.preventDefault();
+    var cb = e.clipboardData || window.clipboardData;
+    if (!cb) return;
+    var html = '';
+    try { html = cb.getData('text/html'); } catch (_) {}
+    var out;
+    if (html && html.trim()) {
+      try { out = sigSanitize(html); } catch (err) { out = esc(cb.getData('text/plain') || ''); }
+    } else {
+      out = esc(cb.getData('text/plain') || '').replace(/\r?\n/g, '<br>');
+    }
+    try { document.execCommand('insertHTML', false, out); } catch (_) {}
+  });
+
+  Array.prototype.forEach.call(tools.querySelectorAll('button[data-c]'), function (b) {
+    b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    b.addEventListener('click', function () {
+      var cmd = b.getAttribute('data-c');
+      ed.focus();
+      if (cmd === '_link') {
+        var url = window.prompt('Link URL:', 'https://');
+        if (!url) return;
+        url = url.trim();
+        if (!/^(https?:|mailto:|tel:)/i.test(url)) { showToast('Only http, https, mailto and tel links are allowed.'); return; }
+        try { document.execCommand('createLink', false, url); } catch (_) {}
+        return;
+      }
+      try { document.execCommand(cmd, false, null); } catch (_) {}
+    });
+  });
+
+  document.getElementById('sigMailbox').addEventListener('change', loadSignature);
+  loadSignature();
+}
+
+async function loadSignature() {
+  var ed = document.getElementById('sigEditor');
+  var st = document.getElementById('sigStatus');
+  var mb = document.getElementById('sigMailbox').value;
+  st.style.color = 'var(--muted)';
+  st.textContent = 'Loading…';
+  try {
+    var r = await _client.rpc('email_signature_get', { p_mailbox: mb });
+    if (r.error) throw r.error;
+    ed.innerHTML = r.data ? sigSanitize(String(r.data)) : '';
+    st.textContent = r.data ? '' : 'No signature set for this mailbox yet.';
+  } catch (e) {
+    ed.innerHTML = '';
+    st.style.color = 'var(--red)';
+    st.textContent = 'Couldn’t load: ' + (e.message || e);
+  }
+}
+
+async function saveSignature() {
+  var ed = document.getElementById('sigEditor');
+  var btn = document.getElementById('sigSaveBtn');
+  var st = document.getElementById('sigStatus');
+  var mb = document.getElementById('sigMailbox').value;
+  var clean;
+  try {
+    clean = sigSanitize(ed.innerHTML);
+  } catch (e) {
+    st.style.color = 'var(--red)';
+    st.textContent = e.message;
+    return;
+  }
+  btn.disabled = true;
+  st.style.color = 'var(--muted)';
+  st.textContent = 'Saving…';
+  try {
+    var r = await _client.rpc('email_signature_set', { p_mailbox: mb, p_html: clean });
+    if (r.error) throw r.error;
+    ed.innerHTML = clean; // show exactly what was stored
+    st.style.color = 'var(--green)';
+    st.textContent = 'Saved for ' + mb;
+    var badge = document.getElementById('sigSaved');
+    badge.style.display = '';
+    setTimeout(function () { badge.style.display = 'none'; }, 2500);
+    showToast('Signature saved');
+  } catch (e) {
+    st.style.color = 'var(--red)';
+    st.textContent = 'Save failed: ' + (e.message || e);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* ── VA View — admin controls for what the VA role can see (va_view_get / va_view_set) ── */
