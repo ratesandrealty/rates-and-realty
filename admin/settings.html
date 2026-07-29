@@ -18,7 +18,7 @@
      with the ADD_URI_SAFE_ATTR fix that keeps table-based signatures intact. Loading
      it here is inert: the IIFE only defines window.GmailInbox; styles and DOM are
      injected on mount(), which this page never calls. -->
-<script src="/admin/js/inbox.js?v=2026072803"></script>
+<script src="/admin/js/inbox.js?v=2026072804"></script>
 <style>
 :root {
   --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
@@ -397,6 +397,8 @@ select.inp option{background:#1a1a1a;color:#fff}
 
         <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">
           <button class="btn btn-gold btn-sm" type="button" id="sigSaveBtn" onclick="saveSignature()">Save signature</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="sigRehostBtn" onclick="rehostSignatureImages()"
+            title="Copy externally-hosted images into our own public storage">🖼 Re-host images</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadSignature()">Revert</button>
           <span id="sigStatus" style="font-size:12px;color:var(--muted);"></span>
         </div>
@@ -1199,6 +1201,92 @@ function sigDiagnose(rawHtml, cleanHtml) {
       ? 'Links whose href was rejected (only http, https, mailto, tel are allowed): ' +
         droppedHrefs.map(function (h) { return '<code>' + String(h).replace(/[&<>"]/g, '') + '</code>'; }).join(' ')
       : '');
+}
+
+/**
+ * Copy externally-hosted signature images into our own public bucket.
+ *
+ * Why: Gmail rewrites signature images to ci3.googleusercontent.com/mail-sig/…,
+ * a Gmail-internal proxy. It serves publicly today (Access-Control-Allow-Origin: *),
+ * but it is Google's cache keyed to Rene's Gmail signature — when that rotates or the
+ * signature changes there, every already-sent email silently loses its headshot.
+ * Copying to email-assets makes the URL ours and permanent.
+ *
+ * Also downscales: the headshot is a 1080x1080 / 717 KB JPEG rendered at 96x96.
+ */
+async function rehostSignatureImages() {
+  var ed = document.getElementById('sigEditor');
+  var st = document.getElementById('sigStatus');
+  var btn = document.getElementById('sigRehostBtn');
+  var BUCKET = 'email-assets';
+  var doc = document.implementation.createHTMLDocument('');
+  doc.body.innerHTML = ed.innerHTML;
+  var SB = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
+  var imgs = [].slice.call(doc.querySelectorAll('img')).filter(function (im) {
+    var s = im.getAttribute('src') || '';
+    return /^https?:/i.test(s) && (!SB || s.indexOf(SB) !== 0);
+  });
+  if (!imgs.length) {
+    st.style.color = 'var(--muted)';
+    st.textContent = 'No externally-hosted images to re-host.';
+    return;
+  }
+  btn.disabled = true;
+  st.style.color = 'var(--muted)';
+  var done = 0, failed = [];
+  for (var i = 0; i < imgs.length; i++) {
+    var im = imgs[i], src = im.getAttribute('src');
+    st.textContent = 'Re-hosting image ' + (i + 1) + ' of ' + imgs.length + '…';
+    try {
+      var resp = await fetch(src, { mode: 'cors' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      var blob = await resp.blob();
+      if (!/^image\//.test(blob.type)) throw new Error('not an image (' + (blob.type || 'unknown') + ')');
+      var scaled = await _sigDownscale(blob);
+      var ext = ((scaled.type || 'image/jpeg').split('/')[1] || 'jpg').replace(/[^a-z0-9]/gi, '');
+      var path = 'signature/' + Date.now() + '-' + i + '.' + ext;
+      var up = await _client.storage.from(BUCKET).upload(path, scaled, { contentType: scaled.type || 'image/jpeg', upsert: false });
+      if (up.error) throw new Error(up.error.message);
+      var pub = _client.storage.from(BUCKET).getPublicUrl(path);
+      var url = pub && pub.data && pub.data.publicUrl;
+      if (!url) throw new Error('no public URL returned');
+      im.setAttribute('src', url);
+      done++;
+    } catch (e) {
+      // Loud and specific — a silently skipped image looks fine here and breaks
+      // in the recipient's inbox weeks later.
+      failed.push((src || '').slice(0, 60) + ' → ' + ((e && e.message) || e));
+    }
+  }
+  var clean = sigSanitize(doc.body.innerHTML);
+  ed.innerHTML = clean;
+  sigRenderPreview(clean);
+  btn.disabled = false;
+  if (failed.length) {
+    st.style.color = 'var(--red)';
+    st.textContent = done + ' re-hosted, ' + failed.length + ' FAILED — press Save only if you accept that. ' + failed.join(' | ');
+  } else {
+    st.style.color = 'var(--green)';
+    st.textContent = done + ' image(s) re-hosted to our storage. Press Save signature to keep it.';
+  }
+}
+function _sigDownscale(blob) {
+  return new Promise(function (resolve) {
+    if (/svg|gif/i.test(blob.type)) { resolve(blob); return; }   // don't flatten animation
+    var img = new Image(), u = URL.createObjectURL(blob);
+    img.onload = function () {
+      URL.revokeObjectURL(u);
+      var MAX = 600, w = img.naturalWidth, h = img.naturalHeight;
+      if (Math.max(w, h) <= MAX && blob.size <= 400 * 1024) { resolve(blob); return; }
+      var s = Math.min(1, MAX / Math.max(w, h));
+      var cv = document.createElement('canvas');
+      cv.width = Math.round(w * s); cv.height = Math.round(h * s);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      cv.toBlob(function (b) { resolve(b || blob); }, 'image/jpeg', 0.86);
+    };
+    img.onerror = function () { URL.revokeObjectURL(u); resolve(blob); };
+    img.src = u;
+  });
 }
 
 /** Import tab: take the pasted HTML, sanitize, load into the visual editor + preview. */

@@ -1,5 +1,5 @@
 /* inbox.js — Gmail inbox shared component (admin inbox, VA inbox, lead-detail viewer).
- * v=2026072803
+ * v=2026072804
  *
  * Talks ONLY to the `gmail-inbox` edge function. The mailbox is resolved server-side
  * from the caller's JWT role (admin=rene@|processing@, va=processing@ only, else 403);
@@ -93,6 +93,59 @@
         node.setAttribute('target', '_blank');
         node.setAttribute('rel', 'noopener noreferrer');
       }
+    });
+
+    /* ── CSS DECLARATION FILTER ────────────────────────────────────────────────
+     * DOMPurify never URI-checks `style`: it ships in DEFAULT_URI_SAFE_ATTRIBUTES,
+     * so ALLOWED_URI_REGEXP has never applied to CSS values. This is NOT fixable
+     * through the allowlist — removing `style` would flatten every branded
+     * signature — so it is filtered here instead.
+     *
+     * It matters because signature HTML renders in the MAIN admin document in three
+     * places (composer signature node, Settings preview, Settings editor), not only
+     * inside the sandboxed reading iframe. A position:fixed block in a signature
+     * could cover the admin UI; a url() to an attacker host is a tracking beacon
+     * that fires on page load.
+     *
+     * Drops the offending DECLARATION only, never the whole attribute — losing one
+     * bad rule must not flatten the other 40 that make the block look right.
+     *
+     * Deliberately NOT checked: @import (needs a <style> element, which is in
+     * FORBID_TAGS) and expression() (dead since IE10). Dead checks rot.            */
+    // Split on top-level ';' only. A naive raw.split(';') corrupts inline images:
+    // url(data:image/png;base64,…) contains a semicolon, so it would be cut in half
+    // and the surviving fragment silently dropped as malformed.
+    function splitDecls(s) {
+      var out = [], buf = '', depth = 0;
+      for (var i = 0; i < s.length; i++) {
+        var c = s.charAt(i);
+        if (c === '(') depth++;
+        else if (c === ')') depth = depth > 0 ? depth - 1 : 0;
+        if (c === ';' && depth === 0) { out.push(buf); buf = ''; continue; }
+        buf += c;
+      }
+      out.push(buf);
+      return out;
+    }
+    DP.addHook('uponSanitizeAttribute', function (node, data) {
+      if (data.attrName !== 'style') return;
+      var raw = String(data.attrValue == null ? '' : data.attrValue);
+      var kept = splitDecls(raw).filter(function (decl) {
+        if (!decl.trim()) return false;
+        var i = decl.indexOf(':');
+        if (i < 0) return false;
+        var prop = decl.slice(0, i).trim().toLowerCase();
+        var val = decl.slice(i + 1);
+        // Overlay vectors: a signature has no business escaping its own flow.
+        if (prop === 'position' && /^\s*(fixed|absolute)\s*$/i.test(val)) return false;
+        // Every url() in this declaration must be https: or an inline data:image.
+        var re = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi, m;
+        while ((m = re.exec(val)) !== null) {
+          if (!/^(?:https:|data:image\/)/i.test(m[2].trim())) return false;
+        }
+        return true;
+      }).join(';');
+      data.attrValue = kept;
     });
     _hookInstalled = true;
   }
@@ -211,6 +264,14 @@
       '.gm-tools button{min-width:30px;height:30px;border-radius:6px;border:1px solid transparent;background:transparent;color:#bbb;cursor:pointer;font-size:13px;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;padding:0 6px}',
       '.gm-tools button:hover{background:rgba(255,255,255,.08);color:#fff}',
       '.gm-tools .sep{width:1px;height:18px;background:var(--border2,rgba(255,255,255,.14));margin:0 5px;flex-shrink:0}',
+      '.gm-tools button.wide{min-width:auto;padding:0 10px;font-size:11.5px;font-weight:700}',
+      '.gm-tools select{height:30px;background:#0d0d0d;color:#ccc;border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:6px;font-size:11.5px;font-family:inherit;padding:0 4px;max-width:104px;cursor:pointer}',
+      '.gm-tools select:hover{color:#fff}',
+      '.gm-emoji{display:flex;flex-wrap:wrap;gap:2px;max-height:210px;overflow-y:auto}',
+      '.gm-emoji button{width:34px;height:34px;border:none;background:transparent;border-radius:7px;font-size:19px;cursor:pointer;line-height:1;padding:0}',
+      '.gm-emoji button:hover{background:rgba(201,168,76,.18)}',
+      '.gm-ai-note{font-size:10.5px;line-height:1.5;color:#8a8a8a;padding:7px 8px 2px;border-top:1px solid rgba(255,255,255,.08);margin-top:5px}',
+      '.gm-ed img{max-width:100%;height:auto}',
       '.gm-ed{min-height:130px;max-height:40vh;overflow-y:auto;padding:12px 16px;color:#fff;font-size:13.5px;line-height:1.6;outline:none;word-wrap:break-word}',
       '.gm-ed:empty:before{content:attr(data-ph);color:#666}',
       '.gm-ed a{color:#8ab4f8}',
@@ -337,6 +398,9 @@
       '  .gm-note{margin-left:12px;margin-right:12px}',
       '  .gm-tools{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:5px 8px}',
       '  .gm-tools button{min-width:38px;height:38px;flex-shrink:0}',
+      '  .gm-tools button.wide{min-width:auto;padding:0 12px}',
+      '  .gm-tools select{height:38px;flex-shrink:0;max-width:92px}',
+      '  .gm-emoji button{width:40px;height:40px}',
       '  .gm-tools .sep{flex-shrink:0}',
       '  .gm-send{flex:1;min-height:46px;padding:12px 22px;order:-1}',   /* Send first in the bar on a phone */
       '  .gm-cmp-hint,.gm-why{order:3;flex-basis:100%;min-width:0}',
@@ -809,23 +873,142 @@
 
   // ── formatting toolbar (execCommand — the only contentEditable API with universal support) ──
   var TOOLS = [
+    { sel: 'font', t: 'Font' },
+    { sel: 'size', t: 'Size' },
+    { c: '_color', l: '<span style="border-bottom:3px solid currentColor">A</span>', t: 'Text colour' },
+    { sep: 1 },
     { c: 'bold', l: '<b>B</b>', t: 'Bold (Ctrl+B)' },
     { c: 'italic', l: '<i>I</i>', t: 'Italic (Ctrl+I)' },
     { c: 'underline', l: '<u>U</u>', t: 'Underline (Ctrl+U)' },
     { sep: 1 },
+    { c: 'justifyLeft', l: '&#8801;', t: 'Align left' },
+    { c: 'justifyCenter', l: '&#8803;', t: 'Align centre' },
+    { c: 'justifyRight', l: '&#8802;', t: 'Align right' },
+    { sep: 1 },
     { c: 'insertUnorderedList', l: '&bull;&nbsp;', t: 'Bulleted list' },
     { c: 'insertOrderedList', l: '1.', t: 'Numbered list' },
+    { c: 'outdent', l: '&#8676;', t: 'Decrease indent' },
+    { c: 'indent', l: '&#8677;', t: 'Increase indent' },
+    { c: 'formatBlock:blockquote', l: '&#8220;', t: 'Quote' },
     { sep: 1 },
+    { c: '_emoji', l: '&#128512;', t: 'Emoji' },
+    { c: '_image', l: '&#128247;', t: 'Insert image' },
     { c: '_link', l: '&#128279;', t: 'Insert link' },
+    { c: '_insert', l: 'Insert &#9662;', t: 'Insert a button', wide: 1 },
+    { sep: 1 },
     { c: 'removeFormat', l: '&#10006;', t: 'Clear formatting' }
   ];
+  var FONTS = ['Arial', 'Georgia', 'Times New Roman', 'Verdana', 'Tahoma', 'Courier New'];
+  var SIZES = [['2', 'Small'], ['3', 'Normal'], ['4', 'Large'], ['5', 'Huge']];
+  var EMOJI = ('😀 😁 😊 🙂 😉 👍 👏 🙏 💪 🎉 ✅ ❌ ⚠️ ⭐ 🔥 💡 📌 📎 📅 📞 ✉️ 📄 🏠 🔑 💰 📈 📉 🕐 ' +
+    '🙌 👀 🤝 ✍️ 🎯 🚀 ❤️ 😅 😍 🤔 👋 💯').split(' ');
 
-  function wireEditor(ed, tools) {
+  /* ── Insert-buttons menu ───────────────────────────────────────────────────
+   * Only URLs verified to resolve to what they claim get a button. Three of the
+   * four CTAs in Rene's Gmail signature are dead and are deliberately ABSENT:
+   *   Apply Now  emortgagecapital1.shapeportal.com → 302 → setshape.com
+   *              marketing page (his Shape tenant is not provisioned)
+   *   Reviews    www.emortgagecapital.com serves "Welcome to LWC Communities!"
+   *              on every path — the whole domain is someone else's site
+   *   Schedule   ratesandrealty.com/meeting/... serves the marketing homepage
+   * Shipping a button that silently goes nowhere is worse than not shipping it.
+   * Add them back here once there is a live URL.                              */
+  var INSERT_BTNS = [
+    { k: 'upload', label: '📄 Document Upload', bg: '#1a6fb5', fg: '#ffffff',
+      url: 'https://documentguardian.com/filedrop/rduarte@emortgagecapital.com' }
+  ];
+
+  function btnHtml(b) {
+    return '<a href="' + esc(b.url) + '" target="_blank" rel="noopener noreferrer" ' +
+      'style="display:inline-block;font-size:12px;font-weight:700;color:' + b.fg +
+      ';background:' + b.bg + ';border-radius:20px;padding:8px 18px;margin:2px 6px 2px 0;' +
+      'text-decoration:none;letter-spacing:.04em;font-family:Arial,sans-serif">' +
+      esc(b.label.replace(/^[^\w]+\s*/, '')) + '</a>&nbsp;';
+  }
+
+  /** YouTube/Loom → clickable thumbnail. Mail clients can't embed video. */
+  function videoThumbHtml(url) {
+    var yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+    var lm = url.match(/loom\.com\/(?:share|embed)\/([A-Za-z0-9]{8,})/);
+    var thumb = yt ? 'https://img.youtube.com/vi/' + yt[1] + '/hqdefault.jpg'
+      : (lm ? 'https://cdn.loom.com/sessions/thumbnails/' + lm[1] + '-with-play.gif' : null);
+    if (!thumb) return null;
+    return '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" ' +
+      'style="display:inline-block;text-decoration:none">' +
+      '<img src="' + esc(thumb) + '" alt="Watch the video" width="480" ' +
+      'style="max-width:100%;border-radius:8px;display:block"></a>' +
+      '<div style="font-size:12px;color:#666;margin-top:4px">▶ Click the image to watch</div>';
+  }
+
+  /* ── image upload → PUBLIC bucket ──────────────────────────────────────────
+   * email-assets is public-read so recipients load images with no auth. Never
+   * borrower-documents: that bucket is private and its URLs 400 for recipients.
+   * Downscaled before upload — Rene's headshot is a 717 KB 1080px JPEG rendered
+   * at 96px, which is ~7000x more bytes than the pixels need.                 */
+  var EMAIL_BUCKET = 'email-assets';
+  var MAX_EDGE = 1200, MAX_BYTES = 3 * 1024 * 1024;
+
+  function downscale(file) {
+    return new Promise(function (resolve) {
+      if (!/^image\//.test(file.type) || /svg/i.test(file.type)) { resolve(file); return; }
+      var img = new Image(), url = URL.createObjectURL(file);
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth, h = img.naturalHeight;
+        if (Math.max(w, h) <= MAX_EDGE && file.size <= MAX_BYTES) { resolve(file); return; }
+        var s = Math.min(1, MAX_EDGE / Math.max(w, h));
+        var cv = document.createElement('canvas');
+        cv.width = Math.round(w * s); cv.height = Math.round(h * s);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        cv.toBlob(function (b) { resolve(b || file); }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
+
+  async function uploadEmailImage(cl, file) {
+    if (file.size > MAX_BYTES * 4) throw new Error('That image is ' + Math.round(file.size / 1048576) + ' MB — too large. Use one under 12 MB.');
+    var blob = await downscale(file);
+    var ext = (blob.type && blob.type.split('/')[1] || 'jpg').replace(/[^a-z0-9]/gi, '');
+    var path = 'composer/' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+    var up = await cl.storage.from(EMAIL_BUCKET).upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: false });
+    if (up.error) throw new Error('Upload failed: ' + up.error.message);
+    var pub = cl.storage.from(EMAIL_BUCKET).getPublicUrl(path);
+    var url = pub && pub.data && pub.data.publicUrl;
+    if (!url) throw new Error('Upload succeeded but no public URL came back — check the email-assets bucket is public.');
+    return url;
+  }
+  function imgHtml(url) {
+    return '<img src="' + esc(url) + '" alt="" style="max-width:100%;height:auto;display:block;margin:6px 0">';
+  }
+
+  function wireEditor(ed, tools, cl) {
     // Paste: strip to sanitized HTML. This is the primary ingress for hostile markup.
     ed.addEventListener('paste', function (e) {
-      e.preventDefault();
       var cb = e.clipboardData || window.clipboardData;
       if (!cb) return;
+      // Pasted screenshot: upload to public storage and insert the hosted URL. A
+      // raw data: URI would work in the editor but bloats the MIME and is stripped
+      // by several mail clients, so it must not be left inline.
+      var items = cb.items ? Array.prototype.slice.call(cb.items) : [];
+      var imgItem = items.filter(function (it) { return it.kind === 'file' && /^image\//.test(it.type); })[0];
+      if (imgItem && cl) {
+        e.preventDefault();
+        var file = imgItem.getAsFile();
+        if (!file) return;
+        try { document.execCommand('insertHTML', false, '<span data-upl="1" style="color:#888;font-size:12px">Uploading pasted image…</span>'); } catch (_) {}
+        uploadEmailImage(cl, file).then(function (url) {
+          var ph = ed.querySelector('[data-upl]');
+          if (ph) ph.outerHTML = sanitize(imgHtml(url));
+        }).catch(function (err) {
+          var ph = ed.querySelector('[data-upl]');
+          if (ph) ph.remove();
+          alert('Pasted image upload failed.\n\n' + ((err && err.message) || err));
+        });
+        return;
+      }
+      e.preventDefault();
       var html = '';
       try { html = cb.getData('text/html'); } catch (_) {}
       var out;
@@ -849,18 +1032,145 @@
       try { document.execCommand('insertHTML', false, sanitize(html)); } catch (_) {}
     });
     if (!tools) return;
+
+    // Everything inserted goes in as HTML through execCommand, so it lands in the
+    // same contentEditable and leaves via the same sanitize() on send. No bypass.
+    function insertHTML(html) {
+      ed.focus();
+      try { document.execCommand('insertHTML', false, sanitize(html)); }
+      catch (_) { ed.innerHTML += sanitize(html); }
+    }
+
+    Array.prototype.forEach.call(tools.querySelectorAll('select[data-sel]'), function (s) {
+      s.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      s.addEventListener('change', function () {
+        ed.focus();
+        try {
+          if (s.getAttribute('data-sel') === 'font') document.execCommand('fontName', false, s.value);
+          else document.execCommand('fontSize', false, s.value);
+        } catch (_) {}
+        s.selectedIndex = 0;
+      });
+    });
+
     Array.prototype.forEach.call(tools.querySelectorAll('button[data-c]'), function (b) {
       // mousedown+preventDefault keeps the caret/selection inside the editor
       b.addEventListener('mousedown', function (e) { e.preventDefault(); });
       b.addEventListener('click', function () {
         var cmd = b.getAttribute('data-c');
         ed.focus();
+
         if (cmd === '_link') {
           var url = window.prompt('Link URL:', 'https://');
           if (!url) return;
           url = url.trim();
           if (!/^(https?:|mailto:|tel:)/i.test(url)) { alert('Only http, https, mailto and tel links are allowed.'); return; }
           try { document.execCommand('createLink', false, url); } catch (_) {}
+          return;
+        }
+
+        if (cmd === '_color') {
+          var picker = document.createElement('input');
+          picker.type = 'color'; picker.value = '#1a6fb5';
+          picker.style.cssText = 'position:fixed;left:-9999px';
+          document.body.appendChild(picker);
+          picker.addEventListener('change', function () {
+            ed.focus();
+            try { document.execCommand('foreColor', false, picker.value); } catch (_) {}
+            picker.remove();
+          });
+          picker.click();
+          return;
+        }
+
+        if (cmd === '_emoji') {
+          var box = document.createElement('div');
+          box.className = 'gm-pop-menu gm-emoji';
+          box.innerHTML = EMOJI.map(function (e) {
+            return '<button type="button" data-e="' + e + '">' + e + '</button>';
+          }).join('');
+          var pop = portalPopover(b, box, { width: 292 });
+          Array.prototype.forEach.call(box.querySelectorAll('[data-e]'), function (x) {
+            x.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+            x.addEventListener('click', function () { insertHTML(x.getAttribute('data-e')); pop.close(); });
+          });
+          return;
+        }
+
+        if (cmd === '_image') {
+          var menu = document.createElement('div');
+          menu.className = 'gm-pop-menu';
+          menu.innerHTML =
+            '<div class="gm-pop-item" data-i="file">⬆️ Upload an image…</div>' +
+            '<div class="gm-pop-item" data-i="url">🔗 Insert by URL…</div>' +
+            '<div class="gm-pop-item" data-i="video">🎥 Video link (thumbnail)…</div>' +
+            '<div class="gm-ai-note">Uploads go to public storage so recipients can load them.</div>';
+          var ipop = portalPopover(b, menu, { width: 268 });
+          menu.querySelector('[data-i="url"]').addEventListener('click', function () {
+            ipop.close();
+            var u = window.prompt('Image URL (https):', 'https://');
+            if (!u) return;
+            u = u.trim();
+            if (!/^https:/i.test(u)) { alert('Image URLs must be https so they load in the recipient’s mail client.'); return; }
+            insertHTML(imgHtml(u));
+          });
+          menu.querySelector('[data-i="video"]').addEventListener('click', function () {
+            ipop.close();
+            var u = window.prompt('YouTube or Loom link:', 'https://');
+            if (!u) return;
+            var html = videoThumbHtml(u.trim());
+            if (!html) { alert('That does not look like a YouTube or Loom link.\n\nEmail cannot embed video, so a recognisable link is needed to build the thumbnail.'); return; }
+            insertHTML(html);
+          });
+          menu.querySelector('[data-i="file"]').addEventListener('click', function () {
+            ipop.close();
+            var inp = document.createElement('input');
+            inp.type = 'file'; inp.accept = 'image/*';
+            inp.style.cssText = 'position:fixed;left:-9999px';
+            document.body.appendChild(inp);
+            inp.addEventListener('change', async function () {
+              var f = inp.files && inp.files[0];
+              inp.remove();
+              if (!f) return;
+              if (!cl) { alert('Not signed in — cannot upload.'); return; }
+              var mark = '<span data-upl="1" style="color:#888;font-size:12px">Uploading ' + esc(f.name) + '…</span>';
+              insertHTML(mark);
+              try {
+                var url = await uploadEmailImage(cl, f);
+                var ph = ed.querySelector('[data-upl]');
+                if (ph) ph.outerHTML = sanitize(imgHtml(url)); else insertHTML(imgHtml(url));
+              } catch (err) {
+                var ph2 = ed.querySelector('[data-upl]');
+                if (ph2) ph2.remove();
+                // Loud: a swallowed upload error leaves a broken image in real mail.
+                alert('Image upload failed.\n\n' + ((err && err.message) || err));
+              }
+            });
+            inp.click();
+          });
+          return;
+        }
+
+        if (cmd === '_insert') {
+          var im = document.createElement('div');
+          im.className = 'gm-pop-menu';
+          im.innerHTML = INSERT_BTNS.map(function (x) {
+            return '<div class="gm-pop-item" data-b="' + x.k + '">' + esc(x.label) + '</div>';
+          }).join('') +
+          '<div class="gm-ai-note">Apply Now, Reviews and Schedule a Call are not listed — those URLs in the Gmail signature no longer resolve. Ask Rene for live links.</div>';
+          var bpop = portalPopover(b, im, { width: 300 });
+          Array.prototype.forEach.call(im.querySelectorAll('[data-b]'), function (x) {
+            x.addEventListener('click', function () {
+              var def = INSERT_BTNS.filter(function (y) { return y.k === x.getAttribute('data-b'); })[0];
+              bpop.close();
+              if (def) insertHTML(btnHtml(def));
+            });
+          });
+          return;
+        }
+
+        if (cmd.indexOf('formatBlock:') === 0) {
+          try { document.execCommand('formatBlock', false, cmd.split(':')[1]); } catch (_) {}
           return;
         }
         try { document.execCommand(cmd, false, null); } catch (_) {}
@@ -932,8 +1242,17 @@
       '<input class="gm-subj" data-f="subject" type="text" autocomplete="off" value="' + esc(subject) + '"></div>');
 
     h.push('<div class="gm-tools" data-gm="tools">' + TOOLS.map(function (t) {
-      return t.sep ? '<span class="sep"></span>'
-        : '<button type="button" data-c="' + t.c + '" title="' + esc(t.t) + '">' + t.l + '</button>';
+      if (t.sep) return '<span class="sep"></span>';
+      if (t.sel === 'font') {
+        return '<select data-sel="font" title="Font"><option value="">Font</option>' +
+          FONTS.map(function (f) { return '<option value="' + f + '">' + f + '</option>'; }).join('') + '</select>';
+      }
+      if (t.sel === 'size') {
+        return '<select data-sel="size" title="Size"><option value="">Size</option>' +
+          SIZES.map(function (s) { return '<option value="' + s[0] + '">' + s[1] + '</option>'; }).join('') + '</select>';
+      }
+      return '<button type="button"' + (t.wide ? ' class="wide"' : '') +
+        ' data-c="' + t.c + '" title="' + esc(t.t) + '">' + t.l + '</button>';
     }).join('') + '</div>');
 
     // ── ✨ AI assistant. Summarize buttons only appear when there is something to
@@ -1014,8 +1333,8 @@
     }
     function clearNote() { noteEl.className = 'gm-note'; noteEl.innerHTML = ''; }
 
-    wireEditor(edEl, mountEl.querySelector('[data-gm="tools"]'));
-    wireEditor(sigEl, null);
+    wireEditor(edEl, mountEl.querySelector('[data-gm="tools"]'), cl);
+    wireEditor(sigEl, null, cl);
 
     // Cc/Bcc toggles
     Array.prototype.forEach.call(mountEl.querySelectorAll('.gm-ccbcc button'), function (b) {
