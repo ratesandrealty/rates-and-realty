@@ -18096,18 +18096,26 @@ function uploadApprovalLetter(input) {
 
 async function uploadApprovalToStorage(file, contactId) {
   var SB_ST = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-  var AK = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
   var safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   var path = contactId + '/' + Date.now() + '_' + safeName;
+  // 🔴 Must use the signed-in user's token. This sent `Bearer <SUPABASE_ANON_KEY>`,
+  // which storage evaluates as role `anon` — it only worked while approval-letters
+  // carried a FOR ALL TO public policy. Writes are authenticated-only now, so the
+  // anon-key path 403s. The old code swallowed that into console.warn + return null,
+  // so the letter silently failed to attach with no visible error.
   try {
-    var res = await fetch(SB_ST + '/storage/v1/object/approval-letters/' + path, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + AK, 'Content-Type': file.type, 'x-upsert': 'true' },
-      body: file
-    });
-    if (!res.ok) { console.warn('Storage upload failed:', await res.text()); return null; }
+    var _cl = _authClient();
+    if (!_cl) throw new Error('Not signed in');
+    var up = await _cl.storage.from('approval-letters')
+      .upload(path, file, { contentType: file.type || 'application/pdf', upsert: true });
+    if (up.error) throw new Error(up.error.message);
     return { path: path, url: SB_ST + '/storage/v1/object/public/approval-letters/' + path };
-  } catch(e) { console.warn('Storage upload error:', e); return null; }
+  } catch(e) {
+    // Loud: a swallowed failure here means the borrower's letter is missing.
+    console.error('Approval-letter upload FAILED:', e);
+    showToast && showToast('Approval letter upload failed: ' + ((e && e.message) || e));
+    return null;
+  }
 }
 
 async function processConditionFile(file) {

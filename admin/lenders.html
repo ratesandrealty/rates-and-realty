@@ -1942,15 +1942,24 @@ async function uploadGuidelinePDFs(files) {
     try {
       setFileStatus('uploading…');
 
-      // STEP A — Upload raw PDF bytes to Supabase storage via REST
-      // (no JS SDK loaded on this page; equivalent to supabase.storage.upload)
+      // STEP A — Upload raw PDF bytes to Supabase storage.
+      // 🔴 Uses the SIGNED-IN USER'S access token, not SUPABASE_ANON_KEY. The anon key
+      // is evaluated by storage as role `anon`; it only worked while lender-guidelines
+      // allowed anonymous writes. Once INSERT/UPDATE are authenticated-only this would
+      // 403 on every upload.
+      let _sess = null;
+      try { _sess = (await _authClient().auth.getSession()).data.session; } catch (_) {}
+      if (!_sess || !_sess.access_token) {
+        setFileStatus('not signed in — reload and try again');
+        continue;
+      }
       const storageRes = await fetch(
         `${SB_URL}/storage/v1/object/lender-guidelines/${encodeURIComponent(fileName)}`,
         {
           method: 'POST',
           headers: {
             'apikey': SB_KEY,
-            'Authorization': `Bearer ${SB_KEY}`,
+            'Authorization': `Bearer ${_sess.access_token}`,
             'Content-Type': 'application/pdf',
             'x-upsert': 'true'
           },
