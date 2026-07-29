@@ -1809,14 +1809,17 @@ async function useVideo() {
   showToast('Uploading video...');
   try {
     var sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
-    var sbKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
     var fileName = 'video-' + Date.now() + '.webm';
-    var res = await fetch(sbUrl + '/storage/v1/object/video-messages/' + fileName, {
-      method: 'POST',
-      headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'video/webm' },
-      body: _videoBlob
-    });
-    if (!res.ok) throw new Error('Upload failed: ' + res.status);
+    // 🔴 Must upload with the SIGNED-IN USER'S token, not the anon key. This used to
+    // send `Authorization: Bearer <SUPABASE_ANON_KEY>`, which storage sees as role
+    // `anon` — it only worked because video-messages carried a FOR ALL TO public
+    // policy that let anonymous callers write. That policy is gone; writes now
+    // require an authenticated JWT, so the anon-key path would 403 here.
+    var _vmCl = window._supabaseClient;
+    if (!_vmCl) throw new Error('Not signed in — reload the page and try again.');
+    var up = await _vmCl.storage.from('video-messages')
+      .upload(fileName, _videoBlob, { contentType: 'video/webm', upsert: false });
+    if (up.error) throw new Error('Upload failed: ' + up.error.message);
     var videoUrl = sbUrl + '/storage/v1/object/public/video-messages/' + fileName;
     var duration = Math.floor(_videoSeconds / 60) + ':' + (_videoSeconds % 60 < 10 ? '0' : '') + (_videoSeconds % 60);
 
