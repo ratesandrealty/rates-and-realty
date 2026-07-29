@@ -13,6 +13,12 @@
 <script src="/admin/js/vendor/purify.min.js?v=3.4.12"
         integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
         crossorigin="anonymous"></script>
+<!-- inbox.js exports the composer's sanitize() + PURIFY_CFG. The signature editor
+     reuses that exact helper so there is ONE allowlist for outbound HTML — the one
+     with the ADD_URI_SAFE_ATTR fix that keeps table-based signatures intact. Loading
+     it here is inert: the IIFE only defines window.GmailInbox; styles and DOM are
+     injected on mount(), which this page never calls. -->
+<script src="/admin/js/inbox.js?v=2026072803"></script>
 <style>
 :root {
   --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
@@ -183,11 +189,34 @@ select.inp option{background:#1a1a1a;color:#fff}
 .sig-ed:focus{border-color:var(--gold)}
 .sig-ed:empty:before{content:attr(data-ph);color:#555}
 .sig-ed a{color:#8ab4f8}
+.sig-tabs{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+.sig-tabs button{padding:7px 14px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.03);color:#aaa;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+.sig-tabs button.on{background:rgba(201,168,76,.15);border-color:var(--gold);color:var(--gold)}
+.sig-ta{width:100%;min-height:180px;max-height:340px;background:#0a0a0a;border:1px solid var(--border2);border-radius:9px;padding:12px 14px;color:#d6d6d6;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.55;outline:none;resize:vertical;box-sizing:border-box}
+.sig-ta:focus{border-color:var(--gold)}
+.sig-hint{font-size:11.5px;color:var(--muted);line-height:1.55;margin-bottom:8px}
+.sig-prev-head{display:flex;align-items:baseline;gap:8px;margin:16px 0 6px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--gold)}
+.sig-prev-note{font-weight:600;letter-spacing:0;text-transform:none;color:var(--muted);font-size:11px}
+/* White, because that is the surface the recipient's mail client renders on. */
+.sig-prev{background:#fff;color:#1a1a1a;border:1px solid var(--border2);border-radius:9px;padding:14px;overflow-x:auto;max-height:460px;overflow-y:auto}
+.sig-prev img{max-width:100%}
+.sig-prev-empty{color:#999;font-size:12.5px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.sig-diag{margin-top:10px;border-radius:8px;padding:10px 12px;font-size:11.5px;line-height:1.6}
+.sig-diag.ok{background:rgba(82,200,122,.09);border:1px solid rgba(82,200,122,.35);color:#8fe0ab}
+.sig-diag.warn{background:rgba(251,146,60,.09);border:1px solid rgba(251,146,60,.4);color:#fdba74}
+.sig-diag b{display:block;margin-bottom:3px}
+.sig-diag code{background:rgba(0,0,0,.35);border-radius:4px;padding:1px 5px;word-break:break-all}
 @media (max-width:768px){
   .sig-tools{width:100%}
   .sig-tools button{flex:1;min-height:40px}
   .sig-ed{min-height:150px}
   #sigMailbox{max-width:100%!important;width:100%}
+  .sig-tabs button{flex:1;min-height:40px}
+  .sig-ta{min-height:150px;font-size:11.5px}
+  .sig-prev{padding:10px;max-height:340px}
+}
+@media (max-width:480px){
+  .sig-prev{padding:8px}
 }
 </style>
 <link rel="stylesheet" href="/public/css/responsive-global.css">
@@ -341,12 +370,45 @@ select.inp option{background:#1a1a1a;color:#fff}
             <button type="button" data-c="removeFormat" title="Clear formatting">✖</button>
           </div>
         </div>
-        <div class="sig-ed" id="sigEditor" contenteditable="true" data-ph="Type your signature — name, title, phone, NMLS…"></div>
+        <!-- Two ways in. Visual editing is the default; Import is for the one-time
+             paste of the branded block out of Gmail. -->
+        <div class="sig-tabs" id="sigTabs">
+          <button type="button" class="on" data-sigtab="visual">✍️ Visual editor</button>
+          <button type="button" data-sigtab="import">&lt;/&gt; Import from HTML</button>
+        </div>
+
+        <div data-sigpane="visual">
+          <div class="sig-ed" id="sigEditor" contenteditable="true" data-ph="Type your signature — name, title, phone, NMLS…"></div>
+        </div>
+
+        <div data-sigpane="import" style="display:none">
+          <div class="sig-hint">
+            In Gmail: <b>Settings → See all settings → Signature</b>. Select the whole signature,
+            copy, and paste below — or paste the raw HTML source if you have it. Pasting rich
+            content works too; either way it is sanitized before it is saved.
+          </div>
+          <textarea class="sig-ta" id="sigImport" spellcheck="false"
+            placeholder="Paste your Gmail signature HTML here…"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+            <button class="btn btn-gold btn-sm" type="button" id="sigImportBtn" onclick="importSignatureHtml()">Load into editor →</button>
+            <span class="sig-hint" style="margin:0">Loads it into the visual editor and the preview. Nothing is saved until you press <b>Save signature</b>.</span>
+          </div>
+        </div>
+
         <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">
           <button class="btn btn-gold btn-sm" type="button" id="sigSaveBtn" onclick="saveSignature()">Save signature</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadSignature()">Revert</button>
           <span id="sigStatus" style="font-size:12px;color:var(--muted);"></span>
         </div>
+
+        <!-- Live preview: rendered from the SAME sanitized HTML that gets stored, on a
+             white background, because that is what the recipient's mail client shows. -->
+        <div class="sig-prev-head">
+          <span>Live preview</span>
+          <span class="sig-prev-note">exactly what gets appended to outgoing mail</span>
+        </div>
+        <div class="sig-prev" id="sigPreview"><div class="sig-prev-empty">Nothing to preview yet.</div></div>
+        <div id="sigDiag" class="sig-diag" style="display:none"></div>
       </div>
 
       <!-- Other settings -->
@@ -996,25 +1058,23 @@ async function init() {
  * The signature is embedded verbatim into outbound mail, so it is sanitized with
  * DOMPurify on paste and again on save. The composer sanitizes it a third time on send.
  * No bespoke sanitizer — same vendored Cure53 build the inbox composer uses.          */
-var SIG_PURIFY_CFG = {
-  ALLOWED_TAGS: ['p','div','span','br','hr','b','strong','i','em','u','s','a','ul','ol','li',
-    'table','thead','tbody','tr','td','th','img','font','small'],
-  ALLOWED_ATTR: ['href','title','target','rel','style','align','dir','src','alt','width','height',
-    'border','colspan','rowspan','cellpadding','cellspacing','valign','bgcolor','color','face','size','class'],
-  ALLOW_DATA_ATTR: false,
-  FORBID_TAGS: ['script','style','iframe','object','embed','form','input','button','meta','link','base','svg','math'],
-  FORBID_ATTR: ['srcset','formaction','action','background','poster','xlink:href','ping'],
-  ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|cid:|data:image\/(?:png|gif|jpe?g|webp);base64,)/i,
-  // See inbox.js: DOMPurify URI-checks every attribute value that isn't marked URI-safe,
-  // so presentational attributes must be listed here or they get stripped.
-  ADD_URI_SAFE_ATTR: ['align','dir','lang','target','rel','width','height','border',
-    'colspan','rowspan','cellpadding','cellspacing','valign','bgcolor','color','face','size']
-};
+/* 🔴 ONE SANITIZE PATH. This page used to declare its own SIG_PURIFY_CFG — a second,
+ * NARROWER allowlist than the composer's. That is exactly how a branded signature gets
+ * silently mangled: save through allowlist A, send through allowlist B, and whatever
+ * only A permitted is quietly dropped on the way out.
+ *
+ * The signature now goes through window.GmailInbox.sanitize — the composer's own
+ * helper (admin/js/inbox.js, function `sanitize`, config `PURIFY_CFG`), the one
+ * carrying the ADD_URI_SAFE_ATTR fix that keeps width/height/colspan/rowspan/bgcolor/
+ * align/valign/cellpadding/cellspacing/border and inline style alive on table markup.
+ * Do NOT reintroduce a local config here.                                            */
 function sigSanitize(html) {
-  if (!window.DOMPurify || typeof window.DOMPurify.sanitize !== 'function') {
-    throw new Error('Sanitizer (DOMPurify) failed to load — reload the page before editing the signature.');
+  var GI = window.GmailInbox;
+  if (!GI || typeof GI.sanitize !== 'function') {
+    throw new Error('Sanitizer not available — /admin/js/inbox.js failed to load. ' +
+      'Reload the page; the signature will not be saved unsanitized.');
   }
-  return window.DOMPurify.sanitize(String(html == null ? '' : html), SIG_PURIFY_CFG);
+  return GI.sanitize(String(html == null ? '' : html));
 }
 
 function initSignature() {
@@ -1054,8 +1114,121 @@ function initSignature() {
     });
   });
 
+  // Tabs: visual editor / raw-HTML import.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-sigtab]'), function (b) {
+    b.addEventListener('click', function () {
+      var want = b.getAttribute('data-sigtab');
+      Array.prototype.forEach.call(document.querySelectorAll('[data-sigtab]'), function (x) {
+        x.classList.toggle('on', x === b);
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('[data-sigpane]'), function (p) {
+        p.style.display = p.getAttribute('data-sigpane') === want ? '' : 'none';
+      });
+    });
+  });
+
+  // Keep the preview honest while typing — it renders the SANITIZED html, not the
+  // raw editor DOM, so what you see is what will actually be sent.
+  ed.addEventListener('input', function () { sigRenderPreview(ed.innerHTML); });
+
   document.getElementById('sigMailbox').addEventListener('change', loadSignature);
   loadSignature();
+}
+
+/** Render the preview from sanitized HTML. Never renders raw input. */
+function sigRenderPreview(html) {
+  var box = document.getElementById('sigPreview');
+  if (!box) return '';
+  var clean;
+  try { clean = sigSanitize(html); }
+  catch (e) {
+    box.innerHTML = '';
+    box.appendChild(Object.assign(document.createElement('div'),
+      { className: 'sig-prev-empty', textContent: e.message }));
+    return '';
+  }
+  if (!clean.trim()) {
+    box.innerHTML = '<div class="sig-prev-empty">Nothing to preview yet.</div>';
+    return '';
+  }
+  box.innerHTML = clean;
+  return clean;
+}
+
+/**
+ * Report what the sanitizer actually changed, element-by-element, instead of letting
+ * it happen silently. A branded signature that loses its buttons should say so on
+ * screen, not just look subtly wrong in the recipient's inbox.
+ */
+function sigDiagnose(rawHtml, cleanHtml) {
+  var box = document.getElementById('sigDiag');
+  if (!box) return;
+  function parse(h) { var d = document.implementation.createHTMLDocument(''); d.body.innerHTML = h; return d.body; }
+  var a = parse(rawHtml), b = parse(cleanHtml);
+  var counts = function (root) {
+    return {
+      img: root.querySelectorAll('img').length,
+      link: root.querySelectorAll('a[href]').length,
+      table: root.querySelectorAll('table').length,
+      styled: root.querySelectorAll('[style]').length
+    };
+  };
+  var A = counts(a), B = counts(b), lost = [];
+  if (B.img < A.img) lost.push((A.img - B.img) + ' image(s)');
+  if (B.link < A.link) lost.push((A.link - B.link) + ' link(s)');
+  if (B.table < A.table) lost.push((A.table - B.table) + ' table(s)');
+  if (B.styled < A.styled) lost.push((A.styled - B.styled) + ' styled element(s)');
+
+  // Which hrefs disappeared — the actionable detail when a CTA button breaks.
+  var hrefsA = [].map.call(a.querySelectorAll('a[href]'), function (x) { return x.getAttribute('href'); });
+  var hrefsB = [].map.call(b.querySelectorAll('a[href]'), function (x) { return x.getAttribute('href'); });
+  var droppedHrefs = hrefsA.filter(function (h) { return hrefsB.indexOf(h) === -1; });
+
+  box.style.display = '';
+  if (!lost.length && !droppedHrefs.length) {
+    box.className = 'sig-diag ok';
+    box.innerHTML = '<b>Sanitizer kept everything.</b>' +
+      B.table + ' table(s), ' + B.img + ' image(s), ' + B.link + ' link(s), ' +
+      B.styled + ' styled element(s) — all preserved.';
+    return;
+  }
+  box.className = 'sig-diag warn';
+  box.innerHTML = '<b>The sanitizer removed something — check the preview.</b>' +
+    (lost.length ? 'Dropped: ' + lost.join(', ') + '.<br>' : '') +
+    (droppedHrefs.length
+      ? 'Links whose href was rejected (only http, https, mailto, tel are allowed): ' +
+        droppedHrefs.map(function (h) { return '<code>' + String(h).replace(/[&<>"]/g, '') + '</code>'; }).join(' ')
+      : '');
+}
+
+/** Import tab: take the pasted HTML, sanitize, load into the visual editor + preview. */
+function importSignatureHtml() {
+  var ta = document.getElementById('sigImport');
+  var ed = document.getElementById('sigEditor');
+  var st = document.getElementById('sigStatus');
+  var raw = (ta.value || '').trim();
+  if (!raw) {
+    st.style.color = 'var(--red)';
+    st.textContent = 'Paste your signature HTML first.';
+    return;
+  }
+  var clean;
+  try { clean = sigSanitize(raw); }
+  catch (e) { st.style.color = 'var(--red)'; st.textContent = e.message; return; }
+  if (!clean.trim()) {
+    st.style.color = 'var(--red)';
+    st.textContent = 'Nothing survived sanitizing — that does not look like signature HTML.';
+    sigDiagnose(raw, clean);
+    return;
+  }
+  ed.innerHTML = clean;
+  sigRenderPreview(clean);
+  sigDiagnose(raw, clean);
+  // Jump to the visual tab so the result is visible immediately.
+  var vis = document.querySelector('[data-sigtab="visual"]');
+  if (vis) vis.click();
+  st.style.color = 'var(--muted)';
+  st.textContent = 'Loaded into the editor — review the preview, then Save signature.';
 }
 
 async function loadSignature() {
@@ -1067,12 +1240,19 @@ async function loadSignature() {
   try {
     var r = await _client.rpc('email_signature_get', { p_mailbox: mb });
     if (r.error) throw r.error;
-    ed.innerHTML = r.data ? sigSanitize(String(r.data)) : '';
+    var saved = r.data ? sigSanitize(String(r.data)) : '';
+    ed.innerHTML = saved;
+    sigRenderPreview(saved);
+    var dg = document.getElementById('sigDiag');
+    if (dg) dg.style.display = 'none';
     st.textContent = r.data ? '' : 'No signature set for this mailbox yet.';
   } catch (e) {
     ed.innerHTML = '';
+    sigRenderPreview('');
     st.style.color = 'var(--red)';
-    st.textContent = 'Couldn’t load: ' + (e.message || e);
+    // Loud on purpose: a silent failure here looks identical to "no signature set",
+    // and the composer would then send mail with no signature and no warning.
+    st.textContent = 'Couldn’t load the saved signature: ' + (e.message || e);
   }
 }
 
@@ -1081,21 +1261,24 @@ async function saveSignature() {
   var btn = document.getElementById('sigSaveBtn');
   var st = document.getElementById('sigStatus');
   var mb = document.getElementById('sigMailbox').value;
+  var raw = ed.innerHTML;
   var clean;
   try {
-    clean = sigSanitize(ed.innerHTML);
+    clean = sigSanitize(raw);
   } catch (e) {
     st.style.color = 'var(--red)';
     st.textContent = e.message;
     return;
   }
+  sigDiagnose(raw, clean);   // say what changed BEFORE it goes to the server
   btn.disabled = true;
   st.style.color = 'var(--muted)';
   st.textContent = 'Saving…';
   try {
     var r = await _client.rpc('email_signature_set', { p_mailbox: mb, p_html: clean });
     if (r.error) throw r.error;
-    ed.innerHTML = clean; // show exactly what was stored
+    ed.innerHTML = clean;        // show exactly what was stored
+    sigRenderPreview(clean);     // preview renders the stored bytes, not the draft DOM
     st.style.color = 'var(--green)';
     st.textContent = 'Saved for ' + mb;
     var badge = document.getElementById('sigSaved');

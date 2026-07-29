@@ -1725,5 +1725,16 @@
     });
   }
 
-  window.GmailInbox = { mount: mount, openThread: openThread, openCompose: openCompose };
+  /**
+   * `sanitize` and `PURIFY_CFG` are exported so OTHER surfaces (the Settings
+   * signature editor) can reuse the composer's exact sanitize path instead of
+   * declaring a second config that drifts. There must be exactly one allowlist:
+   * it is the one carrying the ADD_URI_SAFE_ATTR fix that keeps table-based
+   * signature HTML (width/colspan/bgcolor/cellpadding/valign) from being mangled.
+   * Anything that will end up in outbound mail must go through THIS function.
+   */
+  window.GmailInbox = {
+    mount: mount, openThread: openThread, openCompose: openCompose,
+    sanitize: sanitize, sanitizerReady: sanitizerReady, PURIFY_CFG: PURIFY_CFG
+  };
 })();
