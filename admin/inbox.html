@@ -49,17 +49,28 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <script src="/admin/js/vendor/purify.min.js?v=3.4.12"
         integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
         crossorigin="anonymous"></script>
-<script src="/admin/js/inbox.js?v=2026072802"></script>
+<script src="/admin/js/inbox.js?v=2026072803"></script>
 <script>
 (function(){
   // Wait for auth-guard to establish the authenticated Supabase client, then mount.
   var tries=0;
+  // Deep link: /admin/inbox?mailbox=processing@… opens that mailbox instead of the first.
+  // mount() takes mailboxes[0] as the initial state.mailbox, so ORDER the list rather than
+  // adding a new option — both stay in the switcher, and an unknown/absent value is ignored.
+  // The server still re-checks the role, so this can only pick between mailboxes, not grant one.
+  var MAILBOXES = ['rene@ratesandrealty.com','processing@ratesandrealty.com'];
+  try {
+    var want = (new URLSearchParams(location.search).get('mailbox') || '').trim().toLowerCase();
+    if (want && MAILBOXES.indexOf(want) > 0) {
+      MAILBOXES = [want].concat(MAILBOXES.filter(function(m){ return m !== want; }));
+    }
+  } catch (_) {}
   (function waitClient(){
     if (window._supabaseClient){
       window.GmailInbox.mount({
         el:'#inboxHost',
         client:window._supabaseClient,
-        mailboxes:['rene@ratesandrealty.com','processing@ratesandrealty.com'],
+        mailboxes:MAILBOXES,
         showSwitcher:true
       });
       return;

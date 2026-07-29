@@ -1754,6 +1754,108 @@
           <div id="recent-showings-list"><div style="color:#666;text-align:center;padding:20px;font-size:13px;">Loading...</div></div>
         </div>
 
+        <!-- ══ OVERVIEW MINI-WIDGETS ═══════════════════════════════════════════════
+             Four compact cards: headline count + a few rows + click-through. Each is a
+             normal reorderable .dashboard-section, so the Arrange panel picks them up
+             from the DOM automatically (drag + eye toggle + dashboard_layout_save).
+             Shared .ovw-* namespace; loaders live in the mini-widgets IIFE below. ══ -->
+        <style>
+          .ovw-head-link { font-size:11px; color:rgba(201,168,76,0.75); text-decoration:none; white-space:nowrap; }
+          .ovw-head-link:hover { color:#C9A84C; }
+          .ovw-count { font-size:1.6rem; font-weight:800; color:#fff; line-height:1; }
+          .ovw-count-sub { font-size:11px; color:#888; margin-left:7px; font-weight:600; letter-spacing:.02em; }
+          .ovw-list { margin-top:11px; }
+          .ovw-row { display:flex; align-items:center; gap:10px; padding:9px 8px; border-radius:8px; cursor:pointer; transition:background .15s; border-bottom:1px solid rgba(255,255,255,0.05); }
+          .ovw-row:last-child { border-bottom:none; }
+          .ovw-row:hover { background:rgba(255,255,255,0.04); }
+          .ovw-row-main { flex:1; min-width:0; }
+          .ovw-row-t { font-size:12.5px; color:#eee; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+          .ovw-row-s { font-size:11px; color:#888; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+          .ovw-tag { font-size:9.5px; font-weight:800; letter-spacing:.04em; padding:2px 7px; border-radius:999px; flex-shrink:0; text-transform:uppercase; }
+          .ovw-tag.rene { background:rgba(201,168,76,0.16); color:#C9A84C; }
+          .ovw-tag.proc { background:rgba(96,160,255,0.16); color:#8ab4f8; }
+          .ovw-dot { width:7px; height:7px; border-radius:50%; background:#C9A84C; flex-shrink:0; }
+          .ovw-empty { font-size:12px; color:#666; padding:14px 2px; line-height:1.5; }
+          .ovw-err { font-size:11.5px; color:#fdba74; background:rgba(251,146,60,0.08); border:1px solid rgba(251,146,60,0.28); border-radius:8px; padding:8px 10px; margin-top:10px; line-height:1.45; }
+          .ovw-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+          .ovw-stat { background:rgba(255,255,255,0.03); border-radius:10px; padding:12px 10px; text-align:center; }
+          .ovw-stat b { display:block; font-size:1.25rem; font-weight:800; color:#fff; line-height:1.1; }
+          .ovw-stat span { display:block; font-size:10px; color:#888; margin-top:3px; letter-spacing:.03em; }
+          .ovw-age { font-size:10.5px; font-weight:800; padding:2px 8px; border-radius:999px; flex-shrink:0; white-space:nowrap; }
+          .ovw-age.ok { background:rgba(255,255,255,0.06); color:#aaa; }
+          .ovw-age.warn { background:rgba(251,146,60,0.14); color:#fdba74; }
+          .ovw-age.bad { background:rgba(248,113,113,0.14); color:#fca5a5; }
+          /* iPad landscape: same layout, tightened type so 3 stats never wrap. */
+          @media (min-width:769px) and (max-width:1199px) {
+            .ovw-count { font-size:1.45rem; }
+            .ovw-stat b { font-size:1.1rem; }
+            .ovw-stat { padding:11px 7px; }
+          }
+          @media (max-width:768px) {
+            .ovw-row { padding:11px 8px; min-height:44px; }   /* real touch targets */
+            .ovw-stats { gap:6px; }
+            .ovw-stat { padding:10px 6px; }
+          }
+          @media (max-width:480px) {
+            /* Stats stack into label/value lines — three columns at 320px is unreadable. */
+            .ovw-stats { grid-template-columns:1fr; }
+            .ovw-stat { display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 12px; }
+            .ovw-stat b { font-size:1.05rem; }
+            .ovw-stat span { margin-top:0; }
+            .ovw-row { flex-wrap:wrap; }
+            .ovw-tag, .ovw-age { order:-1; }   /* badge leads the row once it wraps */
+            .ovw-count { font-size:1.4rem; }
+          }
+        </style>
+
+        <!-- 📬 Inbox — recent Primary threads across rene@ + processing@ -->
+        <div class="panel dashboard-section" data-section-id="inbox-mini" draggable="true" style="margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
+          <div class="crm-section-title">
+            <div><p class="kicker">Gmail</p><h3 style="margin:0;font-size:1.1rem;">📬 Inbox</h3></div>
+            <a href="/admin/inbox" class="ovw-head-link">Open Inbox →</a>
+          </div>
+          <div id="ovw-inbox-count" class="ovw-count">—</div>
+          <div id="ovw-inbox-list" class="ovw-list"><div class="ovw-empty">Loading…</div></div>
+        </div>
+
+        <!-- 🗂️ VA Activity — va_activity_summary(7) -->
+        <div class="panel dashboard-section" data-section-id="va-activity" draggable="true" style="margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
+          <div class="crm-section-title">
+            <div><p class="kicker">Last 7 days</p><h3 style="margin:0;font-size:1.1rem;">🗂️ VA Activity</h3></div>
+            <a href="/admin/va-dashboard" class="ovw-head-link">VA Board →</a>
+          </div>
+          <div class="ovw-stats" id="ovw-va-stats">
+            <div class="ovw-stat"><b id="ovw-va-docs">—</b><span>DOCS UPLOADED</span></div>
+            <div class="ovw-stat"><b id="ovw-va-notes">—</b><span>NOTES ADDED</span></div>
+            <div class="ovw-stat"><b id="ovw-va-reqs">—</b><span>REQUESTS SENT</span></div>
+          </div>
+          <div id="ovw-va-list" class="ovw-list"><div class="ovw-empty">Loading…</div></div>
+        </div>
+
+        <!-- 🏦 Third-Party Orders — stale_orders_summary (deals quietly stalling) -->
+        <div class="panel dashboard-section" data-section-id="stale-orders" draggable="true" style="margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
+          <div class="crm-section-title">
+            <div><p class="kicker">Processing</p><h3 style="margin:0;font-size:1.1rem;">🏦 Third-Party Orders</h3></div>
+            <a href="/admin/pipeline" class="ovw-head-link">Pipeline →</a>
+          </div>
+          <div id="ovw-orders-count" class="ovw-count">—</div>
+          <div id="ovw-orders-list" class="ovw-list"><div class="ovw-empty">Loading…</div></div>
+        </div>
+
+        <!-- 💬 Unread Replies — unread_sms_summary -->
+        <div class="panel dashboard-section" data-section-id="unread-replies" draggable="true" style="margin-bottom:24px;">
+          <div class="drag-handle" title="Drag to reorder">⠿</div>
+          <div class="crm-section-title">
+            <div><p class="kicker">Text</p><h3 style="margin:0;font-size:1.1rem;">💬 Unread Replies</h3></div>
+            <a href="/admin/sms-activity" class="ovw-head-link">All Texts →</a>
+          </div>
+          <div id="ovw-sms-count" class="ovw-count">—</div>
+          <div id="ovw-sms-list" class="ovw-list"><div class="ovw-empty">Loading…</div></div>
+        </div>
+
         </div><!-- /dashboard-sections-wrapper -->
       </section>
 
@@ -3044,7 +3146,13 @@
   // Center (now a normal reorderable section), then the Active Pipeline Snapshot, then the
   // rest. Ids absent from the DOM are skipped; any section missing from this list is
   // appended last so it is never stranded ahead of the ordered sections.
-  const DEFAULT_SECTION_ORDER = ['market-rates','command-center','pipeline-snapshot','showing-requests','stats','charts','activity','recent-notes','appointments','clickup-today','deals-referrals'];
+  // NOTE ON THE VERSION: adding the four mini-widgets below does NOT bump LAYOUT_VERSION.
+  // Bumping discards every saved order AND hidden set, and syncServerLayout() ignores a
+  // server layout whose version differs — so a bump would throw away the cross-device
+  // arrangement to gain nothing. applySectionOrder() already appends any section missing
+  // from a saved order, so the new widgets appear at the end of an existing arrangement,
+  // visible and draggable, with nothing lost. Bump only when EXISTING ids get reordered.
+  const DEFAULT_SECTION_ORDER = ['market-rates','command-center','pipeline-snapshot','showing-requests','stats','charts','activity','recent-notes','appointments','clickup-today','deals-referrals','inbox-mini','va-activity','stale-orders','unread-replies'];
 
   // ══ SERVER-SIDE LAYOUT SYNC (per-user, cross-device) ═══════════════════════════
   // localStorage stays the fast local cache + offline fallback; the server (RLS'd to
@@ -3229,14 +3337,17 @@ const DASH_SECTION_NAMES = {
   'command-center':'Command Center', 'market-rates':'Market Watch',
   'pipeline-snapshot':'Active Pipeline Snapshot', 'showing-requests':'Showing Requests',
   'stats':'Stats', 'charts':'Charts', 'activity':'Activity', 'recent-notes':'Notes',
-  'appointments':'Appointments', 'clickup-today':'ClickUp Today', 'deals-referrals':'Deals & Referrals'
+  'appointments':'Appointments', 'clickup-today':'ClickUp Today', 'deals-referrals':'Deals & Referrals',
+  'inbox-mini':'Inbox', 'va-activity':'VA Activity',
+  'stale-orders':'Third-Party Orders', 'unread-replies':'Unread Replies'
 };
 function _dashSectionName(id){ return DASH_SECTION_NAMES[id] || id.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase()); }
 // Fallback tile icon when a live scaled-clone thumbnail can't be produced.
 const DASH_SECTION_ICONS = {
   'command-center':'⚡','market-rates':'📈','pipeline-snapshot':'📊','showing-requests':'🏠',
   'stats':'🔢','charts':'📉','activity':'📝','recent-notes':'🗒️','appointments':'📅',
-  'clickup-today':'✅','deals-referrals':'🤝'
+  'clickup-today':'✅','deals-referrals':'🤝',
+  'inbox-mini':'📬','va-activity':'🗂️','stale-orders':'🏦','unread-replies':'💬'
 };
 
 let _arrangeDragRow = null;
@@ -3664,6 +3775,265 @@ async function loadShowingsWidget() {
 }
 // Load widget on page init
 document.addEventListener('DOMContentLoaded', loadShowingsWidget);
+
+/* ══ OVERVIEW MINI-WIDGETS ════════════════════════════════════════════════════════
+ * Inbox / VA Activity / Third-Party Orders / Unread Replies.
+ *
+ * Each renders a headline count + a few rows and is click-through. They load
+ * independently: one failing RPC (or a 403 from the Gmail function for a non-admin
+ * role) degrades that card only and never blanks the others.
+ * ════════════════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+  var MB_RENE = 'rene@ratesandrealty.com';
+  var MB_PROC = 'processing@ratesandrealty.com';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function el(id) { return document.getElementById(id); }
+
+  // Same client the rest of the dashboard's data calls use; constructed async, so wait.
+  async function client() {
+    var sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient, w = 0;
+    while (!sb && w < 5000) {
+      await new Promise(function (r) { setTimeout(r, 100); });
+      w += 100;
+      sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient;
+    }
+    return sb || null;
+  }
+  function leadHref(cid, hash) {
+    return '/admin/lead-detail?contact_id=' + encodeURIComponent(cid || '') + (hash || '');
+  }
+  function go(href) { window.location.href = href; }
+  function ago(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    var m = Math.floor((Date.now() - d.getTime()) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + 'm ago';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + 'h ago';
+    var dd = Math.floor(h / 24);
+    if (dd < 7) return dd + 'd ago';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  // RPCs return jsonb; supabase-js hands it back as an object (or a 1-element array).
+  function unwrap(data) { return Array.isArray(data) ? (data[0] || {}) : (data || {}); }
+  function fail(box, msg) {
+    if (box) box.innerHTML = '<div class="ovw-err">' + esc(msg || 'Could not load.') + '</div>';
+  }
+  // Rows are click-through; keep them reachable by keyboard as well as mouse.
+  function wireRows(box) {
+    if (!box) return;
+    Array.prototype.forEach.call(box.querySelectorAll('[data-href]'), function (r) {
+      r.setAttribute('tabindex', '0');
+      r.setAttribute('role', 'link');
+      r.addEventListener('click', function () { go(r.getAttribute('data-href')); });
+      r.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(r.getAttribute('data-href')); }
+      });
+    });
+  }
+
+  /* ── 📬 Inbox ────────────────────────────────────────────────────────────────
+   * The deployed gmail-inbox `list_threads` takes a `labels` ARRAY, not a `category`
+   * param — a category tab is the INTERSECTION INBOX ∧ CATEGORY_*. Primary is
+   * CATEGORY_PERSONAL. When a mailbox has Gmail's tabbed inbox switched off that
+   * intersection is empty, so fall back to plain INBOX rather than report a
+   * convincing but false "0 recent".
+   */
+  async function loadInbox() {
+    var box = el('ovw-inbox-list'), cnt = el('ovw-inbox-count');
+    if (!box) return;
+    var sb = await client();
+    if (!sb) { fail(box, 'Session not ready.'); return; }
+
+    async function fetchOne(mailbox) {
+      async function call(labels) {
+        var r = await sb.functions.invoke('gmail-inbox', {
+          body: { action: 'list_threads', mailbox: mailbox, labels: labels }
+        });
+        if (r.error) {
+          var msg = r.error.message || 'request failed';
+          try { if (r.error.context && r.error.context.json) { var j = await r.error.context.json(); if (j && j.error) msg = j.error; } } catch (_) {}
+          throw new Error(msg);
+        }
+        if (r.data && r.data.error) throw new Error(r.data.error);
+        return (r.data && r.data.threads) || [];
+      }
+      var t = await call(['INBOX', 'CATEGORY_PERSONAL']);
+      if (!t.length) t = await call(['INBOX']);
+      return t.map(function (x) {
+        return { id: x.id, subject: x.subject, from: x.from, date: x.date, unread: x.unread, mailbox: mailbox };
+      });
+    }
+
+    // allSettled, not all: one mailbox erroring must still show the other.
+    var settled = await Promise.allSettled([fetchOne(MB_RENE), fetchOne(MB_PROC)]);
+    var threads = [], failed = [];
+    settled.forEach(function (s, i) {
+      var mb = i === 0 ? MB_RENE : MB_PROC;
+      if (s.status === 'fulfilled') threads = threads.concat(s.value);
+      else failed.push({ mailbox: mb, msg: (s.reason && s.reason.message) || 'unavailable' });
+    });
+
+    if (failed.length === 2) {
+      if (cnt) cnt.textContent = '—';
+      fail(box, 'Inbox unavailable — ' + failed[0].msg);
+      return;
+    }
+
+    threads.sort(function (a, b) { return new Date(b.date || 0) - new Date(a.date || 0); });
+    var unread = threads.filter(function (t) { return t.unread; }).length;
+    if (cnt) {
+      cnt.innerHTML = threads.length +
+        '<span class="ovw-count-sub">recent' + (unread ? ' · ' + unread + ' unread' : '') + '</span>';
+    }
+
+    var top = threads.slice(0, 4);
+    box.innerHTML = (top.length ? top.map(function (t) {
+      var who = (t.from && (t.from.name || t.from.email)) || '(unknown sender)';
+      var isProc = t.mailbox === MB_PROC;
+      return '<div class="ovw-row" data-href="/admin/inbox?mailbox=' + encodeURIComponent(t.mailbox) + '">' +
+        (t.unread ? '<span class="ovw-dot"></span>' : '') +
+        '<div class="ovw-row-main">' +
+          '<div class="ovw-row-t">' + esc(who) + '</div>' +
+          '<div class="ovw-row-s">' + esc(t.subject || '(no subject)') + ' · ' + esc(ago(t.date)) + '</div>' +
+        '</div>' +
+        '<span class="ovw-tag ' + (isProc ? 'proc' : 'rene') + '">' + (isProc ? 'processing@' : 'rene@') + '</span>' +
+      '</div>';
+    }).join('') : '<div class="ovw-empty">Nothing recent in Primary.</div>') +
+    // A partial failure is stated, not swallowed — otherwise a silently missing mailbox
+    // reads as "quiet inbox".
+    (failed.length === 1
+      ? '<div class="ovw-err">' + esc(failed[0].mailbox.split('@')[0]) + '@ unavailable — ' + esc(failed[0].msg) + '</div>'
+      : '');
+    wireRows(box);
+  }
+
+  /* ── 🗂️ VA Activity ─────────────────────────────────────────────────────────── */
+  async function loadVaActivity() {
+    var box = el('ovw-va-list');
+    if (!box) return;
+    var sb = await client();
+    if (!sb) { fail(box, 'Session not ready.'); return; }
+    try {
+      var r = await sb.rpc('va_activity_summary', { p_days: 7 });
+      if (r.error) throw r.error;
+      var d = unwrap(r.data);
+      var docs = d.docs_uploaded || 0, notes = d.notes_added || 0, reqs = d.requests_sent || 0;
+      if (el('ovw-va-docs')) el('ovw-va-docs').textContent = docs;
+      if (el('ovw-va-notes')) el('ovw-va-notes').textContent = notes;
+      if (el('ovw-va-reqs')) el('ovw-va-reqs').textContent = reqs;
+
+      var recent = Array.isArray(d.recent) ? d.recent.slice(0, 4) : [];
+      if (!recent.length) {
+        // Zero is a real, healthy state — say so plainly instead of looking broken.
+        box.innerHTML = '<div class="ovw-empty">No VA activity in the last 7 days.</div>';
+        return;
+      }
+      // kind comes back as the raw 'request' / 'note' discriminator — label it for a human.
+      var KIND = { request: 'Update request', note: 'Note' };
+      box.innerHTML = recent.map(function (it) {
+        var href = it.contact_id ? leadHref(it.contact_id) : '/admin/va-dashboard';
+        var kind = KIND[it.kind] || it.kind || '';
+        return '<div class="ovw-row" data-href="' + esc(href) + '">' +
+          '<div class="ovw-row-main">' +
+            '<div class="ovw-row-t">' + esc(it.label || kind || 'Activity') + '</div>' +
+            '<div class="ovw-row-s">' + esc(kind) + (it.ts ? ' · ' + esc(ago(it.ts)) : '') + '</div>' +
+          '</div></div>';
+      }).join('');
+      wireRows(box);
+    } catch (e) {
+      fail(box, 'VA activity unavailable — ' + ((e && e.message) || e));
+    }
+  }
+
+  /* ── 🏦 Third-Party Orders ───────────────────────────────────────────────────── */
+  async function loadStaleOrders() {
+    var box = el('ovw-orders-list'), cnt = el('ovw-orders-count');
+    if (!box) return;
+    var sb = await client();
+    if (!sb) { fail(box, 'Session not ready.'); return; }
+    try {
+      var r = await sb.rpc('stale_orders_summary');
+      if (r.error) throw r.error;
+      var d = unwrap(r.data);
+      var n = d.not_ordered_count || 0;
+      if (cnt) cnt.innerHTML = n + '<span class="ovw-count-sub">order' + (n === 1 ? '' : 's') + ' not placed</span>';
+
+      var items = Array.isArray(d.items) ? d.items.slice() : [];
+      if (!items.length) {
+        box.innerHTML = '<div class="ovw-empty">All third-party orders are placed. Nothing stalling.</div>';
+        return;
+      }
+      // Oldest first — the whole point of the card is what has been sitting longest.
+      items.sort(function (a, b) { return (b.age_days || 0) - (a.age_days || 0); });
+      box.innerHTML = items.slice(0, 5).map(function (it) {
+        var age = it.age_days || 0;
+        var cls = age >= 7 ? 'bad' : (age >= 3 ? 'warn' : 'ok');
+        return '<div class="ovw-row" data-href="' + esc(leadHref(it.contact_id, '#processing')) + '">' +
+          '<div class="ovw-row-main">' +
+            '<div class="ovw-row-t">' + esc(it.order_type || 'Order') + ' · ' + esc(it.borrower || 'Unknown borrower') + '</div>' +
+            '<div class="ovw-row-s">' + esc(it.status || 'not ordered') + '</div>' +
+          '</div>' +
+          '<span class="ovw-age ' + cls + '">' + age + 'd</span>' +
+        '</div>';
+      }).join('');
+      wireRows(box);
+    } catch (e) {
+      if (cnt) cnt.textContent = '—';
+      fail(box, 'Orders unavailable — ' + ((e && e.message) || e));
+    }
+  }
+
+  /* ── 💬 Unread Replies ───────────────────────────────────────────────────────── */
+  async function loadUnreadSms() {
+    var box = el('ovw-sms-list'), cnt = el('ovw-sms-count');
+    if (!box) return;
+    var sb = await client();
+    if (!sb) { fail(box, 'Session not ready.'); return; }
+    try {
+      var r = await sb.rpc('unread_sms_summary');
+      if (r.error) throw r.error;
+      var d = unwrap(r.data);
+      var n = d.unread_count || 0;
+      var items = Array.isArray(d.items) ? d.items.slice(0, 4) : [];
+
+      if (cnt) cnt.innerHTML = n + '<span class="ovw-count-sub">unread</span>';
+      if (!n && !items.length) {
+        // Collapse to one quiet line at zero. Deliberately NOT display:none — a section
+        // that vanishes looks broken in the Arrange panel, and hiding is Rene's call
+        // via the eye toggle, not ours.
+        if (cnt) cnt.innerHTML = '0<span class="ovw-count-sub">unread</span>';
+        box.innerHTML = '<div class="ovw-empty">All caught up — no unread replies.</div>';
+        return;
+      }
+      box.innerHTML = items.map(function (it) {
+        return '<div class="ovw-row" data-href="' + esc(leadHref(it.contact_id, '#text')) + '">' +
+          '<span class="ovw-dot"></span>' +
+          '<div class="ovw-row-main">' +
+            '<div class="ovw-row-t">' + esc(it.preview || '(no preview)') + '</div>' +
+            '<div class="ovw-row-s">' + esc(ago(it.at)) + '</div>' +
+          '</div></div>';
+      }).join('');
+      wireRows(box);
+    } catch (e) {
+      if (cnt) cnt.textContent = '—';
+      fail(box, 'Unread replies unavailable — ' + ((e && e.message) || e));
+    }
+  }
+
+  function loadAll() { loadInbox(); loadVaActivity(); loadStaleOrders(); loadUnreadSms(); }
+  window._ovwReload = loadAll;   // for the dashboard Refresh button / console
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadAll);
+  else loadAll();
+})();
 
 // ── Communications Inbox + Activity Feed ───────────────────
 const _SB_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';

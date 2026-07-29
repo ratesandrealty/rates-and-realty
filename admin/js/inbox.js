@@ -1,5 +1,5 @@
 /* inbox.js — Gmail inbox shared component (admin inbox, VA inbox, lead-detail viewer).
- * v=2026072802
+ * v=2026072803
  *
  * Talks ONLY to the `gmail-inbox` edge function. The mailbox is resolved server-side
  * from the caller's JWT role (admin=rene@|processing@, va=processing@ only, else 403);
@@ -225,10 +225,42 @@
       '.gm-qt-box{display:none;margin-top:8px;border-left:2px solid #333;padding-left:10px}',
       '.gm-qt-box.open{display:block}',
       '.gm-qt-frame{width:100%;border:0;background:#fff;border-radius:6px;min-height:60px}',
-      '.gm-cmp-bar{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--border,rgba(255,255,255,.08));flex-wrap:wrap}',
-      '.gm-send{background:var(--g);border:1px solid var(--g);color:#161616;border-radius:8px;padding:9px 22px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit}',
-      '.gm-send:hover{filter:brightness(1.08)}',
-      '.gm-send:disabled{opacity:.5;cursor:default;filter:none}',
+      /* 🔴 STICKY FOOTER: Send must never scroll out of reach. The composer's own
+       * scroller is the .gm-pane / .gm-cmp ancestor, so sticky-bottom pins the bar to
+       * the bottom of the visible composer instead of the bottom of a long document.
+       * The background is opaque on purpose — a translucent bar lets the editor text
+       * show through underneath the button. */
+      '.gm-cmp-bar{position:sticky;bottom:0;z-index:3;display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--border,rgba(255,255,255,.14));flex-wrap:wrap;background:#0d0d0d;box-shadow:0 -6px 14px rgba(0,0,0,.35)}',
+      /* 🔴 SEND VISIBILITY — the "greyed out" bug.
+       * --g is declared on .gm-inbox ONLY. openCompose()/openThread() portal the
+       * composer into a .gm-modal on <body>, OUTSIDE .gm-inbox, so var(--g) there
+       * resolved to nothing: `background:var(--g)` became invalid-at-computed-value-
+       * time (→ transparent) while color stayed #161616 — near-black text on a
+       * see-through button, which reads exactly like a disabled control. The literal
+       * fallback below is what actually fixes it; --g is also declared on .gm-modal
+       * so every other gold accent inside a portalled composer resolves too. */
+      '.gm-send{background:var(--g,#c9a84c);border:1px solid var(--g,#c9a84c);color:#161616;border-radius:8px;padding:11px 24px;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;box-shadow:0 1px 0 rgba(255,255,255,.18) inset}',
+      '.gm-send:hover:not(:disabled){filter:brightness(1.08)}',
+      /* Disabled must read as deliberate, not broken: dimmed but still legible. */
+      '.gm-send:disabled{background:rgba(201,168,76,.28);border-color:rgba(201,168,76,.4);color:rgba(22,22,22,.65);cursor:not-allowed;filter:none;box-shadow:none}',
+      '.gm-why{font-size:11.5px;color:#8a8a8a;flex:1;min-width:110px}',
+      /* ── AI assistant ── */
+      '.gm-ai-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));background:rgba(201,168,76,.04)}',
+      '.gm-ai-btn{display:inline-flex;align-items:center;gap:5px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.32);color:var(--g,#c9a84c);border-radius:16px;padding:5px 11px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}',
+      '.gm-ai-btn:hover:not(:disabled){background:rgba(201,168,76,.2)}',
+      '.gm-ai-btn:disabled{opacity:.45;cursor:default}',
+      '.gm-ai-lbl{font-size:10.5px;font-weight:800;letter-spacing:.06em;color:#8a7a45;text-transform:uppercase;margin-right:2px}',
+      '.gm-ai-out{margin:0 16px 10px;border:1px solid rgba(201,168,76,.3);background:rgba(201,168,76,.06);border-radius:9px;padding:11px 13px;font-size:12.5px;line-height:1.6;color:#e8e2d2;display:none}',
+      '.gm-ai-out.on{display:block}',
+      '.gm-ai-out h5{margin:0 0 5px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--g,#c9a84c)}',
+      '.gm-ai-out .gm-ai-x{float:right;background:none;border:none;color:#888;cursor:pointer;font-size:15px;line-height:1;padding:0 2px}',
+      '.gm-ai-out.bad{border-color:rgba(248,113,113,.45);background:rgba(248,113,113,.08);color:#fca5a5}',
+      '.gm-ai-spin{display:inline-block;width:11px;height:11px;border:2px solid rgba(201,168,76,.3);border-top-color:var(--g,#c9a84c);border-radius:50%;animation:gm-spin .7s linear infinite;vertical-align:-1px}',
+      '@keyframes gm-spin{to{transform:rotate(360deg)}}',
+      /* ── signature toggle ── */
+      '.gm-sig-tog{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:#9a9a9a;cursor:pointer;user-select:none;white-space:nowrap}',
+      '.gm-sig-tog input{width:14px;height:14px;accent-color:var(--g,#c9a84c);cursor:pointer;margin:0}',
+      '.gm-sig-tog.off{color:#6a6a6a}',
       '.gm-cmp-hint{flex:1;min-width:120px;font-size:11.5px;color:#666}',
       /* loud, persistent send result — replaces the old 2.6s toast */
       '.gm-note{margin:12px 16px 0;border-radius:9px;padding:11px 13px;font-size:12.5px;line-height:1.55;display:none}',
@@ -276,7 +308,10 @@
       '.gm-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--g);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
       '.gm-back{display:none}',
       /* modal (lead-detail viewer) */
-      '.gm-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px}',
+      // --g is redeclared here because .gm-modal is portalled to <body>, outside
+      // .gm-inbox where it is normally defined. See the .gm-send note above — this
+      // is the other half of the greyed-out-Send fix.
+      '.gm-modal{--g:var(--gold,#c9a84c);position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px}',
       '.gm-modal .gm-modal-card{width:820px;max-width:96vw;height:86vh;background:var(--surface,#111);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:14px;display:flex;flex-direction:column;overflow:hidden}',
       '.gm-modal-close{background:none;border:none;color:#999;font-size:22px;cursor:pointer;line-height:1}',
       '@media (min-width:769px) and (max-width:1199px){',
@@ -303,8 +338,16 @@
       '  .gm-tools{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:5px 8px}',
       '  .gm-tools button{min-width:38px;height:38px;flex-shrink:0}',
       '  .gm-tools .sep{flex-shrink:0}',
-      '  .gm-send{flex:1;min-height:44px;padding:11px 22px}',
-      '  .gm-cmp-hint{order:3;flex-basis:100%;min-width:0}',
+      '  .gm-send{flex:1;min-height:46px;padding:12px 22px;order:-1}',   /* Send first in the bar on a phone */
+      '  .gm-cmp-hint,.gm-why{order:3;flex-basis:100%;min-width:0}',
+      /* The sticky bar is the one thing that must stay reachable on mobile; give it
+       * safe-area padding so it clears the iOS home indicator. */
+      '  .gm-cmp-bar{padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}',
+      '  .gm-ai-bar{padding:8px 12px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}',
+      '  .gm-ai-btn{min-height:38px;flex-shrink:0}',
+      '  .gm-ai-lbl{flex-shrink:0}',
+      '  .gm-ai-out{margin-left:12px;margin-right:12px}',
+      '  .gm-sig-tog{min-height:38px}',
       /* folders/categories: horizontal scroll strips with real touch targets */
       '  .gm-folders{padding:8px;gap:6px}',
       '  .gm-folders button{min-height:38px;padding:8px 13px}',
@@ -327,6 +370,11 @@
       '  .gm-compose{width:100%;border-radius:10px}',
       '  .gm-tb{gap:6px}',
       '  .gm-folders button .i{margin:0}',
+      '  .gm-ai-btn{padding:5px 9px;font-size:11px}',
+      '  .gm-sig-tog{flex-basis:100%;order:2}',
+      '}',
+      '@media (min-width:769px) and (max-width:1199px){',
+      '  .gm-ai-btn{padding:5px 9px}',
       '}'
     ].join('\n');
     document.head.appendChild(s);
@@ -697,9 +745,10 @@
   }
 
   // ── recipient chip field ──
-  function chipField(host, initial, cl) {
+  function chipField(host, initial, cl, onChange) {
     var vals = dedupe(initial || []);
     var inp = host.querySelector('input');
+    function changed() { if (onChange) { try { onChange(); } catch (_) {} } }
     function render() {
       Array.prototype.forEach.call(host.querySelectorAll('.gm-chip'), function (c) { c.remove(); });
       vals.forEach(function (v, idx) {
@@ -708,7 +757,7 @@
         if (!RE_EMAIL.test(v)) c.title = 'Doesn’t look like a valid email address';
         var i = document.createElement('i'); i.textContent = v;
         var b = document.createElement('b'); b.textContent = '×';
-        b.addEventListener('click', function () { vals.splice(idx, 1); render(); });
+        b.addEventListener('click', function () { vals.splice(idx, 1); render(); changed(); });
         c.appendChild(i); c.appendChild(b);
         host.insertBefore(c, inp);
       });
@@ -717,9 +766,9 @@
       if (!inp.value.trim()) return;
       vals = dedupe(vals.concat(parseAddrs(inp.value)));
       inp.value = '';
-      render();
+      render(); changed();
     }
-    function addValue(email) { vals = dedupe(vals.concat([email])); render(); }
+    function addValue(email) { vals = dedupe(vals.concat([email])); render(); changed(); }
 
     // ⚠ Attach autocomplete FIRST — see attachAutocomplete: on Enter it calls
     // stopImmediatePropagation() to beat the raw-text commit registered just below, and at
@@ -730,15 +779,30 @@
       if (e.key === 'Enter' || e.key === ',' || e.key === ';' || e.key === 'Tab') {
         if (inp.value.trim()) { e.preventDefault(); commit(); }
       } else if (e.key === 'Backspace' && !inp.value && vals.length) {
-        vals.pop(); render();
+        vals.pop(); render(); changed();
       }
     });
     inp.addEventListener('blur', commit);
     inp.addEventListener('paste', function () { setTimeout(commit, 0); });
+    inp.addEventListener('input', changed);   // keeps the Send gate live while typing
     render();
     return {
       get: function () { commit(); return vals.slice(); },
       count: function () { return vals.length + (inp.value.trim() ? 1 : 0); },
+      /**
+       * How many RECIPIENTS would actually be sent to — what the Send button gates on.
+       * Counts committed chips that look like real addresses, PLUS a valid address
+       * still sitting uncommitted in the input. That last part matters: without it,
+       * typing a full address and going straight for Send leaves the button disabled,
+       * so the click lands on a dead control and is swallowed — the blur that would
+       * have committed the chip fires too late to help.
+       */
+      valid: function () {
+        var n = vals.filter(function (v) { return RE_EMAIL.test(v); }).length;
+        var pending = inp.value.trim();
+        if (pending && RE_EMAIL.test(pending)) n++;
+        return n;
+      },
       focus: function () { inp.focus(); }
     };
   }
@@ -872,6 +936,18 @@
         : '<button type="button" data-c="' + t.c + '" title="' + esc(t.t) + '">' + t.l + '</button>';
     }).join('') + '</div>');
 
+    // ── ✨ AI assistant. Summarize buttons only appear when there is something to
+    // summarize: a tagged contact, or a thread. Draft/Improve are always available. ──
+    var aiContactId = cfg.contactId || pre.contact_id || null;
+    var aiHasThread = !!(msgs && msgs.length);
+    h.push('<div class="gm-ai-bar" data-gm="aibar"><span class="gm-ai-lbl">✨ AI</span>' +
+      (aiContactId ? '<button type="button" class="gm-ai-btn" data-ai="summarize_client">Summarize client</button>' : '') +
+      (aiHasThread ? '<button type="button" class="gm-ai-btn" data-ai="summarize_thread">Summarize thread</button>' : '') +
+      '<button type="button" class="gm-ai-btn" data-ai="draft_reply">Draft reply</button>' +
+      '<button type="button" class="gm-ai-btn" data-ai="improve">Improve my draft</button>' +
+      '</div>');
+    h.push('<div class="gm-ai-out" data-gm="aiout"></div>');
+
     h.push('<div class="gm-ed" data-f="body" contenteditable="true" data-ph="Write your message…"></div>');
     h.push('<div class="gm-sig-l" data-gm="sigl" style="display:none">Signature — click to edit</div>');
     h.push('<div class="gm-sig" data-f="sig" contenteditable="true" style="display:none"></div>');
@@ -882,8 +958,12 @@
     }
 
     h.push('<div class="gm-note" data-gm="note"></div>');
-    h.push('<div class="gm-cmp-bar"><button class="gm-send" data-c="send">Send</button>' +
+    h.push('<div class="gm-cmp-bar">' +
+      '<button class="gm-send" data-c="send" disabled>Send</button>' +
       '<button class="gm-btn plain" data-c="close">Discard</button>' +
+      '<label class="gm-sig-tog" data-gm="sigtog" style="display:none">' +
+        '<input type="checkbox" data-gm="sigchk"><span data-gm="siglbl">Signature on</span></label>' +
+      '<span class="gm-why" data-gm="why"></span>' +
       '<span class="gm-cmp-hint" data-gm="hint"></span></div>');
     h.push('</div>');
     mountEl.innerHTML = h.join('');
@@ -896,9 +976,29 @@
     var subjEl = mountEl.querySelector('[data-f="subject"]');
     var sendBtn = mountEl.querySelector('[data-c="send"]');
 
-    var toF = chipField(mountEl.querySelector('[data-f="to"]'), rec.to, cl);
-    var ccF = chipField(mountEl.querySelector('[data-f="cc"]'), rec.cc, cl);
-    var bccF = chipField(mountEl.querySelector('[data-f="bcc"]'), preBcc, cl);
+    var whyEl = mountEl.querySelector('[data-gm="why"]');
+
+    /* ── SEND GATE ────────────────────────────────────────────────────────────
+     * Send enables on: at least one valid recipient AND a non-empty body.
+     * Forward is exempt from the body half — forwarding a thread with no added
+     * note is a normal thing to do, and the quoted message is the payload. */
+    var bodyRequired = !(mode === 'forward' && quoteHtml);
+    function bodyHasContent() {
+      return (edEl.innerHTML || '').replace(/<br\s*\/?>|&nbsp;|<div>\s*<\/div>|<p>\s*<\/p>|\s/gi, '') !== '';
+    }
+    var _sent = false;
+    function refreshSend() {
+      if (_sent) return;                       // frozen after a successful send
+      var nTo = toF ? toF.valid() : 0;
+      var okBody = !bodyRequired || bodyHasContent();
+      sendBtn.disabled = !(nTo && okBody);
+      whyEl.textContent = nTo ? (okBody ? '' : 'Write a message to send.') : 'Add a recipient to send.';
+    }
+
+    var toF = chipField(mountEl.querySelector('[data-f="to"]'), rec.to, cl, refreshSend);
+    var ccF = chipField(mountEl.querySelector('[data-f="cc"]'), rec.cc, cl, refreshSend);
+    var bccF = chipField(mountEl.querySelector('[data-f="bcc"]'), preBcc, cl, refreshSend);
+    edEl.addEventListener('input', refreshSend);
 
     // Draft body: sanitized before it ever reaches the editor — a draft's stored HTML is not
     // trustworthy just because it lives in our own mailbox.
@@ -946,13 +1046,149 @@
       });
     }
 
-    // Signature (async — never blocks typing)
+    /* ── SIGNATURE (async — never blocks typing) ───────────────────────────────
+     * The signature lives in its OWN contentEditable, never inside the body. That
+     * is what makes double-append structurally impossible: send composes
+     * body + signature + quote fresh each time from separate nodes, so editing and
+     * re-sending can't stack a second copy. The toggle only decides whether that
+     * one node is included. Last choice is remembered across composers. */
+    var SIG_KEY = 'gmComposerSignatureOn';
     var sigLoaded = '';
+    var sigOn = (function () {
+      try { var v = localStorage.getItem(SIG_KEY); return v === null ? true : v === '1'; }
+      catch (_) { return true; }
+    })();
+    var sigTog = mountEl.querySelector('[data-gm="sigtog"]');
+    var sigChk = mountEl.querySelector('[data-gm="sigchk"]');
+    var sigLbl = mountEl.querySelector('[data-gm="siglbl"]');
+
+    function applySig() {
+      var have = !!sigLoaded;
+      sigTog.style.display = have ? '' : 'none';   // no signature on file → no toggle
+      sigChk.checked = sigOn;
+      sigTog.classList.toggle('off', !sigOn);
+      sigLbl.textContent = sigOn ? 'Signature on' : 'Signature off';
+      var show = have && sigOn;
+      sigEl.style.display = show ? '' : 'none';
+      sigL.style.display = show ? '' : 'none';
+    }
+    sigChk.addEventListener('change', function () {
+      sigOn = sigChk.checked;
+      try { localStorage.setItem(SIG_KEY, sigOn ? '1' : '0'); } catch (_) {}
+      applySig();
+    });
     getSignature(cl, mailbox).then(function (sig) {
       if (!sig) return;
-      sigLoaded = sig;
       try { sigEl.innerHTML = sanitize(sig); } catch (_) { return; }
-      sigEl.style.display = ''; sigL.style.display = '';
+      sigLoaded = sig;
+      applySig();
+    });
+    applySig();
+
+    /* ── ✨ AI ASSISTANT ───────────────────────────────────────────────────────
+     * Everything the model writes lands in the SAME contentEditable Rene types in,
+     * so it is fully editable afterwards and — critically — leaves via the identical
+     * DOMPurify path on send. AI output is sanitized here too (defence in depth: it
+     * arrives as HTML over the network and is not trusted just because we asked for it).
+     */
+    var aiOut = mountEl.querySelector('[data-gm="aiout"]');
+    var aiBar = mountEl.querySelector('[data-gm="aibar"]');
+
+    function aiShow(kind, title, html) {
+      aiOut.className = 'gm-ai-out on' + (kind === 'bad' ? ' bad' : '');
+      aiOut.innerHTML = '<button class="gm-ai-x" data-gm="aix" title="Dismiss">×</button>' +
+        '<h5>' + esc(title) + '</h5><div>' + html + '</div>';
+      var x = aiOut.querySelector('[data-gm="aix"]');
+      if (x) x.addEventListener('click', function () { aiOut.className = 'gm-ai-out'; aiOut.innerHTML = ''; });
+    }
+    function aiBusy(on) {
+      Array.prototype.forEach.call(aiBar.querySelectorAll('[data-ai]'), function (b) { b.disabled = on; });
+    }
+    // Thread text is sent from here rather than re-fetched server-side — the browser
+    // already has the full thread from get_thread, so a refetch would be a second
+    // Gmail round trip per click for bytes we're holding.
+    function threadText() {
+      return (msgs || []).map(function (m) {
+        var who = m.direction === 'outbound' ? 'Rene (us)' : ((m.from && (m.from.name || m.from.email)) || 'them');
+        var when = m.date ? String(m.date).slice(0, 10) : '';
+        return '--- ' + who + ' ' + when + '\n' + String(m.body_text || '').slice(0, 4000);
+      }).join('\n\n').slice(0, 40000);
+    }
+    async function callAI(action, extra) {
+      var r = await cl.functions.invoke('compose-ai', {
+        body: Object.assign({ action: action }, extra || {})
+      });
+      if (r.error) {
+        var msg = r.error.message || 'request failed';
+        try { if (r.error.context && r.error.context.json) { var j = await r.error.context.json(); if (j && j.error) msg = j.error; } } catch (_) {}
+        throw new Error(msg);
+      }
+      if (r.data && r.data.ok === false) throw new Error(r.data.error || 'request failed');
+      return r.data || {};
+    }
+
+    Array.prototype.forEach.call(mountEl.querySelectorAll('[data-ai]'), function (btn) {
+      btn.addEventListener('click', async function () {
+        var action = btn.getAttribute('data-ai');
+        var label = btn.textContent;
+        if (action === 'improve' && !bodyHasContent()) {
+          aiShow('bad', 'Nothing to improve', 'Write a draft first, then Improve will rewrite it.');
+          return;
+        }
+        var instruction = '';
+        if (action === 'draft_reply') {
+          instruction = window.prompt(
+            'Anything specific for this reply? (optional — e.g. "decline politely", "ask for the updated CD")', '') || '';
+          if (instruction === null) return;
+        }
+        aiBusy(true);
+        aiShow('', label, '<span class="gm-ai-spin"></span> Working…');
+        try {
+          var payload;
+          if (action === 'summarize_client') payload = { contact_id: aiContactId };
+          else if (action === 'summarize_thread') payload = { thread_text: threadText(), thread_id: cfg.threadId || null, mailbox: mailbox };
+          else if (action === 'draft_reply') payload = { thread_text: threadText(), contact_id: aiContactId, mailbox: mailbox, instruction: instruction };
+          else payload = { draft_text: edEl.innerHTML };
+
+          var res = await callAI(action, payload);
+
+          if (action === 'summarize_client' || action === 'summarize_thread') {
+            // Read-only briefing — never touches the message body.
+            aiShow('', label, esc(res.text || '').replace(/\n/g, '<br>'));
+            return;
+          }
+
+          var clean = sanitize(res.html || '');
+          if (!clean.trim()) { aiShow('bad', label, 'The AI returned nothing usable. Try again.'); return; }
+
+          if (action === 'improve') {
+            // Destructive — swap in place, but keep the original one undo away.
+            var prev = edEl.innerHTML;
+            edEl.innerHTML = clean;
+            aiShow('', 'Draft improved', 'Your message was rewritten — edit it freely. ' +
+              '<button class="gm-ai-btn" data-gm="aiundo" style="margin-left:6px">Undo</button>');
+            var u = aiOut.querySelector('[data-gm="aiundo"]');
+            if (u) u.addEventListener('click', function () {
+              edEl.innerHTML = prev; refreshSend();
+              aiShow('', 'Reverted', 'Your original draft is back.');
+            });
+          } else {
+            // draft_reply: replacing silently would destroy typing in progress, so
+            // only an empty body is replaced outright — otherwise append and say so.
+            if (bodyHasContent()) {
+              edEl.innerHTML = edEl.innerHTML + '<br>' + clean;
+              aiShow('', 'Draft appended', 'You had already written something, so the suggestion was added below it rather than replacing it.');
+            } else {
+              edEl.innerHTML = clean;
+              aiShow('', 'Draft inserted', 'Edit it as you like before sending.');
+            }
+          }
+          refreshSend();
+          edEl.focus();
+        } catch (e) {
+          aiShow('bad', label + ' failed', esc((e && e.message) || String(e)));
+        } finally { aiBusy(false); }
+      });
     });
 
     function close() {
@@ -970,6 +1206,7 @@
 
     // focus: an empty recipient list means start there; otherwise start writing
     if (mode === 'forward' || (mode === 'new' && !rec.to.length)) toF.focus(); else edEl.focus();
+    refreshSend();   // set the initial enabled/disabled state from the prefilled values
 
     sendBtn.addEventListener('click', async function () {
       clearNote();
@@ -987,7 +1224,9 @@
       var composed;
       try {
         var parts = ['<div dir="ltr">' + edEl.innerHTML + '</div>'];
-        if (sigEl.style.display !== 'none' && sigEl.innerHTML.trim()) {
+        // Signature is appended from its own node, gated on the toggle. Composed
+        // fresh every send, so a re-send after an edit cannot stack a second copy.
+        if (sigOn && sigLoaded && sigEl.innerHTML.trim()) {
           parts.push('<br><div class="gmail_signature">' + sigEl.innerHTML + '</div>');
         }
         if (quoteHtml) parts.push('<br>' + quoteHtml);
@@ -1025,7 +1264,11 @@
           when + ' · from <b>' + esc(mailbox) + '</b><br>' + filed +
           (res && res.message_id ? '<br>Gmail id <code>' + esc(res.message_id) + '</code>' : ''));
         // Freeze the composer: the message is gone, editing it now means nothing.
+        // _sent latches so refreshSend() can't re-enable the button behind us.
+        _sent = true;
+        whyEl.textContent = '';
         sendBtn.textContent = 'Sent ✓';
+        aiBusy(true);
         [edEl, sigEl].forEach(function (n) { n.setAttribute('contenteditable', 'false'); });
         subjEl.disabled = true;
         Array.prototype.forEach.call(mountEl.querySelectorAll('.gm-chips input,.gm-tools button'), function (n) { n.disabled = true; });
@@ -1157,6 +1400,9 @@
         mountComposer(host.querySelector('[data-gm="cmp"]'), {
           client: cl, mailbox: mailbox, threadId: threadId,
           mode: b.getAttribute('data-cmp'), msgs: msgs, subject: subj,
+          // Filed thread → the AI panel can brief on the borrower. Null when the
+          // thread isn't tagged, which just hides "Summarize client".
+          contactId: filedId,
           actsEl: host.querySelector('[data-gm="acts"]'),
           onDone: function () { renderThread(host, ctx); }
         });
