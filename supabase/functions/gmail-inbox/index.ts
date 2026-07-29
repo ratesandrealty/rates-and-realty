@@ -1,7 +1,12 @@
 // gmail-inbox — CRM live inbox backend over Gmail Domain-Wide Delegation.
 //
-// Architecture C: the inbox is LIVE from Gmail; we persist to email_log ONLY when a
-// thread is tagged to a borrower or a participant matches a known contact/vendor.
+// Architecture C: the inbox is LIVE from Gmail. INBOUND is persisted to email_log only when
+// the thread is tagged to a borrower or a participant matches a known contact/vendor — that
+// keeps newsletters and rate-sheet blasts out of the record.
+//
+// OUTBOUND IS ALWAYS PERSISTED. Mail sent from the CRM was sent deliberately by a human, so
+// it is a business record even when nobody on it matches a contact. Unmatched sends are
+// logged with contact_id = null (logged, just unfiled) rather than dropped.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔴 SECURITY BOUNDARY (enforced in resolveMailbox, before any Gmail call):
@@ -14,7 +19,8 @@
 // rene@ holds 160k+ personal messages; a VA reaching it would be a serious breach.
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Actions: list_threads, get_thread, send, modify, tag, untag.
+// Actions: list_threads, get_thread, send, modify, tag, untag,
+//          list_drafts, get_draft, delete_draft.
 // verify_jwt: true (pinned in config.toml) — the gateway rejects unauthenticated calls.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -262,7 +268,15 @@ serve(async (req) => {
     if (action === 'list_threads') {
       let path = 'threads?maxResults=25'
       if (body.q) path += `&q=${encodeURIComponent(String(body.q))}`
-      if (body.label) path += `&labelIds=${encodeURIComponent(String(body.label))}`
+      // `labels` (array) ANDs multiple system labels — needed for a category tab, which is
+      // INBOX + CATEGORY_*. `label` (string) is kept for backward compatibility.
+      const labels: string[] = Array.isArray(body.labels)
+        ? body.labels.map((l: any) => String(l)).filter(Boolean)
+        : (body.label ? [String(body.label)] : [])
+      for (const l of labels) path += `&labelIds=${encodeURIComponent(l)}`
+      // threads.list hides SPAM and TRASH unless asked; without this the Trash folder is
+      // always empty no matter what labelIds say.
+      if (body.include_spam_trash) path += '&includeSpamTrash=true'
       if (body.page_token) path += `&pageToken=${encodeURIComponent(String(body.page_token))}`
       const lr = await gmailApi(mailbox, path)
       const lj = await lr.json()
@@ -351,7 +365,7 @@ serve(async (req) => {
       const sj = await sr.json()
       if (!sr.ok) return err('send failed: ' + JSON.stringify(sj.error || sj), 502)
 
-      // Persist the sent message ONLY if the thread is tagged or a recipient matches.
+      // ── Always log the send. Contact matching decides FILING, never whether we record it. ──
       const resolvedThread = sj.threadId
       let cid: string | null = null
       let matched_by: string | null = null
@@ -361,12 +375,101 @@ serve(async (req) => {
         const m = await matchContact(svc, [...splitAddrs(to), ...splitAddrs(cc)])
         if (m.contact_id) { cid = m.contact_id; matched_by = m.matched_by }
       }
-      let persisted = null
-      if (cid || matched_by === 'tag') {
-        const gm = await gmailApi(mailbox, `messages/${sj.id}?format=full`)
-        if (gm.ok) { const gj = await gm.json(); persisted = await persistMessages(svc, [messageToRow(mailbox, resolvedThread, gj)], cid) }
+
+      // Prefer the message Gmail actually stored — real Message-ID headers, true internalDate,
+      // final body. If that read fails the mail has still gone out, so fall back to a row built
+      // from what we sent rather than losing the record entirely. Both paths carry the same
+      // gmail_message_id, and the UNIQUE index on it makes a retry a no-op instead of a dup.
+      let row: any
+      const gm = await gmailApi(mailbox, `messages/${sj.id}?format=full`)
+      if (gm.ok) {
+        row = messageToRow(mailbox, resolvedThread, await gm.json())
+      } else {
+        const nowIso = new Date().toISOString()
+        const toList = splitAddrs(to)
+        row = {
+          gmail_message_id: sj.id,
+          gmail_thread_id: resolvedThread,
+          direction: 'outbound',
+          mailbox,
+          from_email: mailbox,
+          from_name: null,
+          to_email: toList[0] || null,
+          to_emails: toList.length ? toList : null,
+          to_name: null,
+          cc_email: cc || null,
+          subject,
+          body_html: html || null,
+          body_text: text || null,
+          attachments: null,
+          status: 'sent',
+          created_at: nowIso,
+          sent_at: nowIso,
+          participants: [],
+        }
       }
+      // cid may be null — that is a logged-but-unfiled row, which is the point.
+      const persisted = await persistMessages(svc, [row], cid)
       return ok({ ok: true, message_id: sj.id, thread_id: resolvedThread, persisted, filed_as: matched_by })
+    }
+
+    // ── Drafts: read-only for now (compose-from-draft). Draft autosave is a later stage. ──
+    if (action === 'list_drafts') {
+      const dr = await gmailApi(mailbox, 'drafts?maxResults=25')
+      const dj = await dr.json()
+      if (!dr.ok) return err('list_drafts failed: ' + JSON.stringify(dj.error || dj), 502)
+      const drafts = await Promise.all((dj.drafts || []).map(async (d: any) => {
+        const mid = d.message && d.message.id
+        if (!mid) return { id: d.id, subject: null, to: [], date: null, snippet: '' }
+        const mr = await gmailApi(mailbox, `messages/${mid}?format=metadata&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Date`)
+        if (!mr.ok) return { id: d.id, subject: null, to: [], date: null, snippet: '' }
+        const mj = await mr.json()
+        const mh = mj.payload?.headers
+        return {
+          id: d.id,
+          message_id: mid,
+          thread_id: mj.threadId || null,
+          subject: hdr(mh, 'Subject'),
+          to: splitAddrs(hdr(mh, 'To')),
+          date: mj.internalDate ? new Date(Number(mj.internalDate)).toISOString() : null,
+          snippet: mj.snippet || '',
+        }
+      }))
+      return ok({ drafts })
+    }
+
+    if (action === 'get_draft') {
+      const draftId = String(body.draft_id || '')
+      if (!draftId) return err('draft_id required')
+      const dr = await gmailApi(mailbox, `drafts/${draftId}?format=full`)
+      const dj = await dr.json()
+      if (!dr.ok) return err('get_draft failed: ' + JSON.stringify(dj.error || dj), 502)
+      const msg = dj.message || {}
+      const mh = msg.payload?.headers
+      const acc = { text: '', html: '' }
+      walk(msg.payload, acc)
+      return ok({
+        draft_id: dj.id,
+        thread_id: msg.threadId || null,
+        // Bcc survives on a draft (it is only stripped from delivered copies), so restore it.
+        to: splitAddrs(hdr(mh, 'To')),
+        cc: splitAddrs(hdr(mh, 'Cc')),
+        bcc: splitAddrs(hdr(mh, 'Bcc')),
+        subject: hdr(mh, 'Subject') || '',
+        body_html: acc.html || null,
+        body_text: acc.text || null,
+      })
+    }
+
+    if (action === 'delete_draft') {
+      const draftId = String(body.draft_id || '')
+      if (!draftId) return err('draft_id required')
+      const dr = await gmailApi(mailbox, `drafts/${draftId}`, { method: 'DELETE' })
+      if (!dr.ok && dr.status !== 404) {
+        const dj = await dr.json().catch(() => ({}))
+        return err('delete_draft failed: ' + JSON.stringify(dj.error || dj), 502)
+      }
+      return ok({ ok: true, draft_id: draftId })
     }
 
     if (action === 'modify') {
