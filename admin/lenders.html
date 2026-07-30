@@ -2028,6 +2028,15 @@ function showToast(msg) {
   setTimeout(() => t.remove(), 3000);
 }
 
+// HTML-escape for values interpolated into innerHTML below. lender_guidelines rows
+// can originate from an outside lender via the public lender-form, so titles and
+// filenames are untrusted input on this page.
+function escHtmlDoc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c];
+  });
+}
+
 // ── LOAD LENDER DOCS (single source of truth: lender_guidelines) ────
 async function loadLenderDocs(lenderId) {
   const container = document.getElementById('lender-docs-list');
@@ -2056,14 +2065,20 @@ async function loadLenderDocs(lenderId) {
       const badge = doc.ocr_status === 'completed' ? '✅' : (doc.ocr_status === 'pending' ? '⏳' : '📄');
       const label = doc.title || doc.file_name || 'Untitled';
       const meta = [doc.category, doc.source_type].filter(Boolean).join(' · ');
-      // Escape title for inline onclick JS string + HTML attr (outer "..." attr, inner '...' JS literal).
-      const safeTitle = String(label).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      // title/file_name are lender-supplied (uploaded through the public lender form).
+      // The edge function strips HTML-significant characters on new inserts, but this
+      // table has other producers and a backfill history, so escape at render too.
+      const eUrl = escHtmlDoc(url), eLabel = escHtmlDoc(label), eMeta = escHtmlDoc(meta);
+      // For the inline onclick: JS-escape for the '...' string literal FIRST, then
+      // HTML-escape for the attribute. The browser decodes the entities back before
+      // parsing the JS, so both layers land correctly.
+      const safeTitle = escHtmlDoc(String(label).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
       return `<div style="display:flex;align-items:stretch;gap:0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:6px;transition:border-color 0.15s;" onmouseover="this.style.borderColor='rgba(201,168,76,0.35)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.06)'">
-        <a href="${url}" target="_blank" style="flex:1;display:flex;align-items:center;gap:10px;padding:9px 12px;text-decoration:none;color:inherit;min-width:0;">
+        <a href="${eUrl}" target="_blank" style="flex:1;display:flex;align-items:center;gap:10px;padding:9px 12px;text-decoration:none;color:inherit;min-width:0;">
           <span style="font-size:16px;">${badge}</span>
           <div style="flex:1;min-width:0;">
-            <div style="font-size:12px;font-weight:600;color:#f0ebe0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${label}</div>
-            ${meta ? `<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">${meta}</div>` : ''}
+            <div style="font-size:12px;font-weight:600;color:#f0ebe0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${eLabel}</div>
+            ${eMeta ? `<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">${eMeta}</div>` : ''}
           </div>
           <span style="font-size:10px;color:rgba(255,255,255,0.3);">↗</span>
         </a>

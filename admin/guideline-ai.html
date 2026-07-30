@@ -833,14 +833,17 @@ async function loadLenderGuidelinesList(lenderId) {
       return;
     }
     container.innerHTML = data.map(function(g) {
-      var safeTitle = String(g.title || g.file_name || 'this document').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      // title/file_name/category are lender-supplied (public lender-form uploads), so
+      // escape at render. JS-escape for the onclick string literal first, then
+      // HTML-escape for the attribute — entities decode back before the JS is parsed.
+      var safeTitle = escapeHtmlGai(String(g.title || g.file_name || 'this document').replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
       return '<div style="display:flex;align-items:center;gap:8px;padding:8px;background:#161616;border:1px solid #222;border-radius:6px;margin-bottom:6px;">' +
         '<span style="font-size:18px;">📄</span>' +
         '<div style="flex:1;min-width:0;">' +
-          '<div style="font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (g.title || g.file_name) + '</div>' +
-          '<div style="font-size:10px;color:#555;margin-top:1px;">' + (g.category || 'General') + ' · ' + (g.ocr_status === 'completed' ? '✅ Indexed' : '⏳ Processing') + '</div>' +
+          '<div style="font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtmlGai(g.title || g.file_name || '') + '</div>' +
+          '<div style="font-size:10px;color:#555;margin-top:1px;">' + escapeHtmlGai(g.category || 'General') + ' · ' + (g.ocr_status === 'completed' ? '✅ Indexed' : '⏳ Processing') + '</div>' +
         '</div>' +
-        (g.file_url ? '<a href="' + g.file_url + '" target="_blank" style="color:#C9A84C;font-size:11px;text-decoration:none;flex-shrink:0;">View</a>' : '') +
+        (g.file_url ? '<a href="' + escapeHtmlGai(g.file_url) + '" target="_blank" style="color:#C9A84C;font-size:11px;text-decoration:none;flex-shrink:0;">View</a>' : '') +
         '<button onclick="deleteGuideline(\'' + g.id + '\', \'' + safeTitle + '\', \'' + lenderId + '\')" title="Delete" style="background:none;border:none;color:#555;cursor:pointer;font-size:13px;padding:2px 6px;flex-shrink:0;transition:color 0.15s;" onmouseover="this.style.color=\'#f87171\'" onmouseout="this.style.color=\'#555\'">🗑</button>' +
       '</div>';
     }).join('');
