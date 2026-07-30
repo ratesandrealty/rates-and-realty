@@ -26,6 +26,12 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { gmailApi } from '../_shared/gmail-dwd.ts'
+// MIME building lives in _shared/mime.ts so its boundary nesting can be unit-tested
+// (nothing in this file is importable — it calls serve() at module load).
+import {
+  buildMime, b64url, utf8ToB64, htmlToText, safeMime,
+  type OutAttachment,
+} from '../_shared/mime.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -169,68 +175,7 @@ async function matchContact(svc: any, emails: string[]) {
   return { contact_id: null, matched_by: 'none' }
 }
 
-// ── MIME building for send (UTF-8 safe, base64 body) ──
-function utf8ToB64(str: string): string {
-  const bytes = new TextEncoder().encode(str)
-  let bin = ''
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
-  return btoa(bin)
-}
-function b64url(b64: string): string { return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
-function encSubject(s: string): string { return /[^\x00-\x7F]/.test(s) ? `=?UTF-8?B?${utf8ToB64(s)}?=` : s }
-function b64Body(s: string): string { return utf8ToB64(s).replace(/(.{76})/g, '$1\r\n') }
-
-// Strip HTML to a readable plain-text fallback (server-side safety net — the composer
-// normally sends its own body_text derived from the sanitized DOM).
-function htmlToText(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, '\n\n').trim()
-}
-
-// multipart/alternative: text/plain + text/html. HTML-only mail gets spam-scored, and some
-// clients (and every screen reader fallback) want the text part. Stage 2 wraps this whole
-// entity in a multipart/mixed with base64 attachment parts.
-function buildMime(o: {
-  from: string; to: string; cc?: string; bcc?: string; subject: string
-  html: string; text?: string; inReplyTo?: string | null; references?: string | null
-}): string {
-  const boundary = 'alt_' + crypto.randomUUID().replace(/-/g, '')
-  const text = (o.text && o.text.trim()) ? o.text : htmlToText(o.html)
-  const h: string[] = []
-  h.push(`From: ${o.from}`)
-  h.push(`To: ${o.to}`)
-  if (o.cc) h.push(`Cc: ${o.cc}`)
-  // Gmail honors a Bcc header on send and strips it from every delivered copy.
-  if (o.bcc) h.push(`Bcc: ${o.bcc}`)
-  h.push(`Subject: ${encSubject(o.subject)}`)
-  if (o.inReplyTo) h.push(`In-Reply-To: ${o.inReplyTo}`)
-  if (o.references) h.push(`References: ${o.references}`)
-  h.push('MIME-Version: 1.0')
-  h.push(`Content-Type: multipart/alternative; boundary="${boundary}"`)
-  h.push('')
-  const parts = [
-    `--${boundary}`,
-    'Content-Type: text/plain; charset="UTF-8"',
-    'Content-Transfer-Encoding: base64',
-    '',
-    b64Body(text),
-    `--${boundary}`,
-    'Content-Type: text/html; charset="UTF-8"',
-    'Content-Transfer-Encoding: base64',
-    '',
-    b64Body(o.html),
-    `--${boundary}--`,
-    '',
-  ]
-  return h.join('\r\n') + '\r\n' + parts.join('\r\n')
-}
+// (MIME helpers now live in ../_shared/mime.ts — see the import above.)
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -358,7 +303,43 @@ serve(async (req) => {
           }
         }
       }
-      const raw = b64url(utf8ToB64(buildMime({ from: mailbox, to, cc, bcc, subject, html, text, inReplyTo, references })))
+      /* ── attachments ────────────────────────────────────────────────────────
+       * The client uploads to the PRIVATE email-attachments bucket first and sends
+       * only storage paths, so a 20MB file never has to survive a base64 JSON body.
+       * Bytes are pulled here with the service role. The path is confined to this
+       * mailbox's own prefix — a client cannot name someone else's object and have
+       * it mailed out. */
+      const attIn = Array.isArray(body.attachments) ? body.attachments : []
+      const ATT_MAX_TOTAL = 20 * 1024 * 1024
+      const outAtts: OutAttachment[] = []
+      const attMeta: Array<Record<string, unknown>> = []
+      if (attIn.length > 25) return err('Too many attachments (25 max)')
+      let attTotal = 0
+      for (const a of attIn) {
+        const path = String((a && a.path) || '')
+        if (!path) return err('attachment missing path')
+        if (path.includes('..') || !path.startsWith(mailbox + '/')) {
+          return err('attachment path outside this mailbox')
+        }
+        const dl = await svc.storage.from('email-attachments').download(path)
+        if (dl.error || !dl.data) {
+          return err(`attachment not found in storage: ${String((a && a.name) || path)}`, 404)
+        }
+        const buf = new Uint8Array(await dl.data.arrayBuffer())
+        attTotal += buf.byteLength
+        if (attTotal > ATT_MAX_TOTAL) {
+          return err(`attachments exceed the 20MB limit (${(attTotal / 1024 / 1024).toFixed(1)}MB)`, 413)
+        }
+        const name = String((a && a.name) || path.split('/').pop() || 'attachment')
+        const mime = safeMime(String((a && a.mime) || dl.data.type || ''))
+        outAtts.push({ name, mime, bytes: buf })
+        attMeta.push({ name, mime, size: buf.byteLength, bucket: 'email-attachments', path })
+      }
+
+      const raw = b64url(utf8ToB64(buildMime({
+        from: mailbox, to, cc, bcc, subject, html, text, inReplyTo, references,
+        attachments: outAtts,
+      })))
       const sendBody: any = { raw }
       if (threadId) sendBody.threadId = threadId
       const sr = await gmailApi(mailbox, 'messages/send', { method: 'POST', body: JSON.stringify(sendBody) })
@@ -410,7 +391,24 @@ serve(async (req) => {
       }
       // cid may be null — that is a logged-but-unfiled row, which is the point.
       const persisted = await persistMessages(svc, [row], cid)
-      return ok({ ok: true, message_id: sj.id, thread_id: resolvedThread, persisted, filed_as: matched_by })
+
+      /* Link the persisted copies to the email_log row. Written after the upsert
+       * rather than inside `row` because the Gmail-read path builds `row` from the
+       * stored message, whose own attachment metadata has no bucket/path — these are
+       * OUR retained copies, retrievable later via a signed URL. */
+      if (attMeta.length) {
+        const { error: attErr } = await svc.from('email_log')
+          .update({ attachments: attMeta })
+          .eq('gmail_message_id', sj.id)
+        // The mail is already delivered; a bookkeeping failure must not read as a
+        // send failure, so surface it in the response instead of throwing.
+        if (attErr) console.error('[send] attachment link failed:', attErr.message)
+      }
+
+      return ok({
+        ok: true, message_id: sj.id, thread_id: resolvedThread, persisted,
+        filed_as: matched_by, attachments: attMeta.length,
+      })
     }
 
     // ── Drafts: read-only for now (compose-from-draft). Draft autosave is a later stage. ──

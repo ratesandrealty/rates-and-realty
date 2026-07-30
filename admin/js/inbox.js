@@ -241,13 +241,19 @@
       '.gm-att{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted,#bbb);background:rgba(255,255,255,.04);border:1px solid var(--border2,rgba(255,255,255,.12));border-radius:6px;padding:4px 8px;margin:6px 6px 0 0}',
       /* ── composer ── */
       '.gm-acts{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border,rgba(255,255,255,.1))}',
-      '.gm-cmp{border-top:2px solid var(--g);background:#0d0d0d}',
+      // Flex column so header / fields / toolbar / footer stay put and only .gm-scroll
+      // moves. Without min-height:0 a flex child refuses to shrink below its content
+      // and the "scroller" silently pushes the footer off-screen instead of scrolling.
+      '.gm-cmp{border-top:2px solid var(--g);background:#0d0d0d;display:flex;flex-direction:column;min-height:0}',
+      // The one scrolling region: body + signature + quote.
+      '.gm-scroll{flex:1;min-height:0;overflow-y:auto;max-height:46vh}',
       '.gm-cmp-head{display:flex;align-items:center;gap:8px;padding:9px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,.08))}',
       '.gm-cmp-title{font-size:13px;font-weight:800;color:var(--g);flex:1;min-width:0}',
       '.gm-x{background:none;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;padding:0 4px;font-family:inherit}',
       '.gm-x:hover{color:#fff}',
       '.gm-fld{display:flex;align-items:flex-start;gap:8px;padding:6px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,.06))}',
-      '.gm-fld-l{font-size:12px;color:var(--muted,#888);width:40px;flex-shrink:0;padding-top:7px;font-weight:700}',
+      // 56px so the full word "Subject" fits without wrapping (was 40px for "Subj").
+      '.gm-fld-l{font-size:12px;color:var(--muted,#888);width:56px;flex-shrink:0;padding-top:7px;font-weight:700}',
       '.gm-chips{flex:1;display:flex;flex-wrap:wrap;gap:5px;align-items:center;min-width:0}',
       '.gm-chip{display:inline-flex;align-items:center;gap:5px;max-width:100%;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.38);color:#f0e2be;border-radius:14px;padding:3px 9px;font-size:12px}',
       '.gm-chip.bad{background:rgba(248,113,113,.13);border-color:rgba(248,113,113,.5);color:#fca5a5}',
@@ -260,7 +266,9 @@
       '.gm-ccbcc button:hover{color:#fff;background:rgba(255,255,255,.06)}',
       '.gm-ccbcc button.on{color:var(--g)}',
       '.gm-subj{flex:1;min-width:0;background:transparent;border:none;outline:none;color:#fff;font-size:13px;font-weight:600;font-family:inherit;padding:5px 2px}',
-      '.gm-tools{display:flex;gap:1px;padding:5px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));flex-wrap:wrap;align-items:center}',
+      // ONE row, never wrapping: anything that doesn't fit lives in the "⋯" overflow
+      // menu instead. flex-wrap:wrap is what put a lone ✕ on a second row.
+      '.gm-tools{display:flex;gap:1px;padding:5px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));flex-wrap:nowrap;align-items:center;flex-shrink:0}',
       '.gm-tools button{min-width:30px;height:30px;border-radius:6px;border:1px solid transparent;background:transparent;color:#bbb;cursor:pointer;font-size:13px;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;padding:0 6px}',
       '.gm-tools button:hover{background:rgba(255,255,255,.08);color:#fff}',
       '.gm-tools .sep{width:1px;height:18px;background:var(--border2,rgba(255,255,255,.14));margin:0 5px;flex-shrink:0}',
@@ -272,7 +280,9 @@
       '.gm-emoji button:hover{background:rgba(201,168,76,.18)}',
       '.gm-ai-note{font-size:10.5px;line-height:1.5;color:#8a8a8a;padding:7px 8px 2px;border-top:1px solid rgba(255,255,255,.08);margin-top:5px}',
       '.gm-ed img{max-width:100%;height:auto}',
-      '.gm-ed{min-height:130px;max-height:40vh;overflow-y:auto;padding:12px 16px;color:#fff;font-size:13.5px;line-height:1.6;outline:none;word-wrap:break-word}',
+      // No own scroller / max-height any more — .gm-scroll is the single scrolling
+      // region, so the body just grows and the reclaimed signature height goes here.
+      '.gm-ed{min-height:200px;padding:12px 16px;color:#fff;font-size:13.5px;line-height:1.6;outline:none;word-wrap:break-word}',
       '.gm-ed:empty:before{content:attr(data-ph);color:#666}',
       '.gm-ed a{color:#8ab4f8}',
       '.gm-ed ul,.gm-ed ol{padding-left:22px;margin:6px 0}',
@@ -280,6 +290,30 @@
       '.gm-sig{padding:6px 16px 10px;color:#b8b8b8;font-size:12.5px;line-height:1.5;outline:none}',
       '.gm-sig:focus{background:rgba(255,255,255,.03)}',
       '.gm-sig-l{font-size:10px;color:#666;padding:0 16px;text-transform:uppercase;letter-spacing:.5px;font-weight:700}',
+      /* ── collapsed signature (Gmail parity) ──────────────────────────────────
+       * Rene's real signature is ~350px of branded HTML and swallowed the compose
+       * area. Gmail hides it behind a small ••• affordance sitting inline where the
+       * signature will go; expanding reveals the same editable node. Nothing about
+       * send composition changes — the sig still lives in its own contentEditable. */
+      '.gm-sig-wrap{padding:2px 16px 10px}',
+      '.gm-sig-dots{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:18px;padding:0 7px;border:none;border-radius:9px;background:rgba(255,255,255,.10);color:#9a9a9a;font-size:12px;line-height:1;letter-spacing:1px;cursor:pointer;font-family:inherit}',
+      '.gm-sig-dots:hover{background:rgba(255,255,255,.18);color:#fff}',
+      '.gm-sig-dots.on{background:rgba(201,168,76,.20);color:var(--g,#c9a84c)}',
+      /* ── attachment chips ── */
+      '.gm-att{display:none;flex-wrap:wrap;gap:6px;padding:8px 16px;border-top:1px solid var(--border,rgba(255,255,255,.06));flex-shrink:0}',
+      '.gm-att.on{display:flex}',
+      '.gm-att-chip{display:inline-flex;align-items:center;gap:7px;max-width:290px;background:rgba(255,255,255,.06);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:8px;padding:5px 8px;font-size:11.5px;color:#ddd}',
+      '.gm-att-chip .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-att-chip .s{color:#888;flex-shrink:0}',
+      '.gm-att-chip .x{background:none;border:none;color:#888;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;flex-shrink:0}',
+      '.gm-att-chip .x:hover{color:#f87171}',
+      '.gm-att-chip.err{border-color:rgba(248,113,113,.5);color:#fca5a5}',
+      '.gm-att-chip.busy{opacity:.6}',
+      /* ── video recorder (ported from email-marketing.html) ── */
+      '.gm-vid-box{display:flex;flex-direction:column;gap:8px;align-items:center}',
+      '.gm-vid-box video{width:100%;max-width:320px;border-radius:8px;background:#000;display:block}',
+      '.gm-vid-t{font-size:12px;color:#bbb;font-variant-numeric:tabular-nums}',
+      '.gm-vid-row{display:flex;gap:8px;align-items:center}',
       '.gm-qt{padding:0 16px 10px}',
       '.gm-qt-btn{background:rgba(255,255,255,.06);border:1px solid var(--border2,rgba(255,255,255,.14));color:#999;border-radius:6px;padding:0 10px;font-size:14px;cursor:pointer;letter-spacing:2px;line-height:1.6;font-family:inherit}',
       '.gm-qt-btn:hover{color:#fff}',
@@ -348,9 +382,20 @@
       '.gm-cats button.on{color:var(--g);border-bottom-color:var(--g)}',
       '.gm-hint{padding:8px 14px;font-size:11.5px;line-height:1.5;color:#fdba74;background:rgba(251,146,60,.09);border-bottom:1px solid rgba(251,146,60,.3);flex-shrink:0}',
       '.gm-draft-tag{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.4px;color:#fca5a5;border:1px solid rgba(248,113,113,.45);border-radius:4px;padding:0 4px;margin-right:6px;vertical-align:middle}',
-      // Must out-specify '.gm-modal .gm-modal-card' (0,2,0) below, which pins height:86vh —
-      // as a bare '.gm-compose-card' this rule was dead and the compose card was always 86vh.
-      '.gm-modal .gm-modal-card.gm-compose-card{height:auto;max-height:92vh}',
+      /* ── compose modal sizing ────────────────────────────────────────────────
+       * height:auto let the card grow to fit its content, so the CTA row and footer
+       * ended up clipped at the bottom of the viewport. A definite height gives the
+       * inner flex column something to divide up, which is what lets the body
+       * scroll while the header, toolbar and Send bar stay visible. */
+      '.gm-modal .gm-modal-card.gm-compose-card{height:86vh;max-height:92vh}',
+      // .gm-pane normally scrolls; in the compose modal the inner .gm-scroll owns
+      // scrolling instead, so this ancestor must not also scroll.
+      '.gm-compose-card .gm-pane{overflow:hidden;display:flex;flex-direction:column;min-height:0}',
+      '.gm-compose-card .gm-pane>[data-gm="cmp"]{flex:1;min-height:0;display:flex;flex-direction:column}',
+      '.gm-compose-card .gm-cmp{flex:1;min-height:0}',
+      // In the modal the scroller takes all remaining height; the 46vh cap is only
+      // for the inline (reply-in-thread) case where the pane itself scrolls.
+      '.gm-compose-card .gm-scroll{max-height:none}',
       /* ── recipient autocomplete (body-portalled, position:fixed) ── */
       '.gm-ac{background:#141414;border:1px solid var(--border2,rgba(255,255,255,.18));border-radius:10px;padding:5px;box-shadow:0 14px 36px rgba(0,0,0,.6);max-height:260px;overflow-y:auto}',
       '.gm-ac-item{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:7px;cursor:pointer;font-size:12.5px}',
@@ -364,6 +409,10 @@
       '.gm-pop-menu input{width:100%;background:#0a0a0a;border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:7px;padding:8px;color:#fff;font-size:13px;font-family:inherit;box-sizing:border-box}',
       '.gm-pop-res{max-height:220px;overflow-y:auto;margin-top:6px}',
       '.gm-pop-item{padding:8px 9px;border-radius:6px;cursor:pointer;font-size:12.5px;color:#eee}',
+      // The AI menu renders <button data-ai> as menu rows, so strip button chrome and
+      // let them fill the popover width like the <div> items do.
+      'button.gm-pop-item{display:block;width:100%;text-align:left;background:none;border:none;font-family:inherit}',
+      'button.gm-pop-item:disabled{opacity:.5;cursor:default}',
       '.gm-pop-item:hover{background:rgba(201,168,76,.12)}',
       '.gm-pop-item .e{color:var(--muted,#888);font-size:11px}',
       '.gm-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--g);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
@@ -872,6 +921,9 @@
   }
 
   // ── formatting toolbar (execCommand — the only contentEditable API with universal support) ──
+  /* One row only. Anything not here lives in the "⋯" overflow menu (TOOLS_MORE) so
+   * the toolbar can never wrap — a wrapped row was putting a lone ✕ (Clear
+   * formatting) on a second line and stealing height from the body. */
   var TOOLS = [
     { sel: 'font', t: 'Font' },
     { sel: 'size', t: 'Size' },
@@ -881,22 +933,29 @@
     { c: 'italic', l: '<i>I</i>', t: 'Italic (Ctrl+I)' },
     { c: 'underline', l: '<u>U</u>', t: 'Underline (Ctrl+U)' },
     { sep: 1 },
-    { c: 'justifyLeft', l: '&#8801;', t: 'Align left' },
-    { c: 'justifyCenter', l: '&#8803;', t: 'Align centre' },
-    { c: 'justifyRight', l: '&#8802;', t: 'Align right' },
-    { sep: 1 },
     { c: 'insertUnorderedList', l: '&bull;&nbsp;', t: 'Bulleted list' },
     { c: 'insertOrderedList', l: '1.', t: 'Numbered list' },
-    { c: 'outdent', l: '&#8676;', t: 'Decrease indent' },
-    { c: 'indent', l: '&#8677;', t: 'Increase indent' },
-    { c: 'formatBlock:blockquote', l: '&#8220;', t: 'Quote' },
     { sep: 1 },
-    { c: '_emoji', l: '&#128512;', t: 'Emoji' },
-    { c: '_image', l: '&#128247;', t: 'Insert image' },
     { c: '_link', l: '&#128279;', t: 'Insert link' },
-    { c: '_insert', l: 'Insert &#9662;', t: 'Insert a button', wide: 1 },
+    { c: '_attach', l: '&#128206;', t: 'Attach files' },
+    { c: '_image', l: '&#128247;', t: 'Insert image' },
+    { c: '_video', l: '&#127909;', t: 'Record a video message' },
+    { c: '_emoji', l: '&#128512;', t: 'Emoji' },
     { sep: 1 },
-    { c: 'removeFormat', l: '&#10006;', t: 'Clear formatting' }
+    { c: '_insert', l: 'Insert &#9662;', t: 'Insert a button', wide: 1 },
+    { c: '_ai', l: '&#10024; AI &#9662;', t: 'AI assistant', wide: 1 },
+    { c: '_more', l: '&#8943;', t: 'More formatting' }
+  ];
+  /* Overflow menu contents. Plain execCommand items, dispatched through the very
+   * same data-c handler as the visible buttons — no second code path. */
+  var TOOLS_MORE = [
+    { c: 'justifyLeft', l: 'Align left' },
+    { c: 'justifyCenter', l: 'Align centre' },
+    { c: 'justifyRight', l: 'Align right' },
+    { c: 'outdent', l: 'Decrease indent' },
+    { c: 'indent', l: 'Increase indent' },
+    { c: 'formatBlock:blockquote', l: 'Quote' },
+    { c: 'removeFormat', l: 'Clear formatting' }
   ];
   var FONTS = ['Arial', 'Georgia', 'Times New Roman', 'Verdana', 'Tahoma', 'Courier New'];
   var SIZES = [['2', 'Small'], ['3', 'Normal'], ['4', 'Large'], ['5', 'Huge']];
@@ -926,18 +985,27 @@
       esc(b.label.replace(/^[^\w]+\s*/, '')) + '</a>&nbsp;';
   }
 
-  /** YouTube/Loom → clickable thumbnail. Mail clients can't embed video. */
+  /* The one thumbnail renderer. Mail clients can't embed video, so every video —
+   * YouTube, Loom, or a recorded message in our own bucket — becomes the same
+   * clickable poster + caption. Recorded video reuses this directly (see the _video
+   * hook) rather than growing a second markup path. */
+  function thumbLinkHtml(href, thumbSrc, caption) {
+    return '<a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer" ' +
+      'style="display:inline-block;text-decoration:none">' +
+      '<img src="' + esc(thumbSrc) + '" alt="Watch the video" width="480" ' +
+      'style="max-width:100%;border-radius:8px;display:block"></a>' +
+      '<div style="font-size:12px;color:#666;margin-top:4px">▶ ' +
+      esc(caption || 'Click the image to watch') + '</div>';
+  }
+
+  /** YouTube/Loom → clickable thumbnail. */
   function videoThumbHtml(url) {
     var yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
     var lm = url.match(/loom\.com\/(?:share|embed)\/([A-Za-z0-9]{8,})/);
     var thumb = yt ? 'https://img.youtube.com/vi/' + yt[1] + '/hqdefault.jpg'
       : (lm ? 'https://cdn.loom.com/sessions/thumbnails/' + lm[1] + '-with-play.gif' : null);
     if (!thumb) return null;
-    return '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" ' +
-      'style="display:inline-block;text-decoration:none">' +
-      '<img src="' + esc(thumb) + '" alt="Watch the video" width="480" ' +
-      'style="max-width:100%;border-radius:8px;display:block"></a>' +
-      '<div style="font-size:12px;color:#666;margin-top:4px">▶ Click the image to watch</div>';
+    return thumbLinkHtml(url, thumb, 'Click the image to watch');
   }
 
   /* ── image upload → PUBLIC bucket ──────────────────────────────────────────
@@ -983,7 +1051,11 @@
     return '<img src="' + esc(url) + '" alt="" style="max-width:100%;height:auto;display:block;margin:6px 0">';
   }
 
-  function wireEditor(ed, tools, cl) {
+  /* hooks: composer-scoped actions that need mailbox/attachment state, which lives in
+   * mountComposer. Passing them in keeps ONE dispatch path for every toolbar button
+   * rather than a second click handler bolted on elsewhere. */
+  function wireEditor(ed, tools, cl, hooks) {
+    hooks = hooks || {};
     // Paste: strip to sanitized HTML. This is the primary ingress for hostile markup.
     ed.addEventListener('paste', function (e) {
       var cb = e.clipboardData || window.clipboardData;
@@ -1041,6 +1113,50 @@
       catch (_) { ed.innerHTML += sanitize(html); }
     }
 
+    // Hand the sanitizing insert back to the composer so the video hook inserts
+    // through the identical path as everything else.
+    hooks.insertHTML = insertHTML;
+
+    // Shared by the visible buttons and the "⋯" overflow menu.
+    function runCmd(cmd) {
+      if (cmd.indexOf('formatBlock:') === 0) {
+        try { document.execCommand('formatBlock', false, cmd.split(':')[1]); } catch (_) {}
+        return;
+      }
+      try { document.execCommand(cmd, false, null); } catch (_) {}
+    }
+
+    var fontSel = tools.querySelector('select[data-sel="font"]');
+    var sizeSel = tools.querySelector('select[data-sel="size"]');
+
+    /* Reflect the caret's actual font/size in the dropdowns instead of snapping back
+     * to a placeholder. queryCommandValue('fontName') comes back quoted and sometimes
+     * as a full stack ("Arial", sans-serif), so match on the first family name. */
+    function syncFontSize() {
+      // selectionchange is a document-level listener but the editor is per-composer, so
+      // self-detach once this editor is gone — otherwise every reopen leaks another one.
+      if (!ed.isConnected) { document.removeEventListener('selectionchange', syncFontSize); return; }
+      if (!ed.contains(document.activeElement) && document.activeElement !== ed) return;
+      try {
+        if (fontSel) {
+          var fn = String(document.queryCommandValue('fontName') || '').replace(/['"]/g, '');
+          var first = fn.split(',')[0].trim().toLowerCase();
+          for (var i = 0; i < fontSel.options.length; i++) {
+            if (fontSel.options[i].value.toLowerCase() === first) { fontSel.selectedIndex = i; break; }
+          }
+        }
+        if (sizeSel) {
+          var fs = String(document.queryCommandValue('fontSize') || '');
+          for (var j = 0; j < sizeSel.options.length; j++) {
+            if (sizeSel.options[j].value === fs) { sizeSel.selectedIndex = j; break; }
+          }
+        }
+      } catch (_) {}
+    }
+    document.addEventListener('selectionchange', syncFontSize);
+    ed.addEventListener('keyup', syncFontSize);
+    ed.addEventListener('mouseup', syncFontSize);
+
     Array.prototype.forEach.call(tools.querySelectorAll('select[data-sel]'), function (s) {
       s.addEventListener('mousedown', function (e) { e.stopPropagation(); });
       s.addEventListener('change', function () {
@@ -1049,7 +1165,7 @@
           if (s.getAttribute('data-sel') === 'font') document.execCommand('fontName', false, s.value);
           else document.execCommand('fontSize', false, s.value);
         } catch (_) {}
-        s.selectedIndex = 0;
+        // Selection keeps whatever was just applied — no reset to index 0.
       });
     });
 
@@ -1059,6 +1175,29 @@
       b.addEventListener('click', function () {
         var cmd = b.getAttribute('data-c');
         ed.focus();
+
+        // Overflow menu: the formatting commands that no longer fit on the single row.
+        if (cmd === '_more') {
+          var mm = document.createElement('div');
+          mm.className = 'gm-pop-menu';
+          mm.innerHTML = TOOLS_MORE.map(function (m) {
+            return '<div class="gm-pop-item" data-mc="' + esc(m.c) + '">' + m.l + '</div>';
+          }).join('');
+          var mpop = portalPopover(b, mm, { width: 200 });
+          Array.prototype.forEach.call(mm.querySelectorAll('[data-mc]'), function (it) {
+            it.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+            it.addEventListener('click', function () {
+              ed.focus();
+              runCmd(it.getAttribute('data-mc'));
+              mpop.close();
+            });
+          });
+          return;
+        }
+
+        if (cmd === '_ai') { if (hooks.ai) hooks.ai(b); return; }
+        if (cmd === '_attach') { if (hooks.attach) hooks.attach(); return; }
+        if (cmd === '_video') { if (hooks.video) hooks.video(b); return; }
 
         if (cmd === '_link') {
           var url = window.prompt('Link URL:', 'https://');
@@ -1169,11 +1308,7 @@
           return;
         }
 
-        if (cmd.indexOf('formatBlock:') === 0) {
-          try { document.execCommand('formatBlock', false, cmd.split(':')[1]); } catch (_) {}
-          return;
-        }
-        try { document.execCommand(cmd, false, null); } catch (_) {}
+        runCmd(cmd);
       });
     });
   }
@@ -1238,44 +1373,64 @@
       '<span class="gm-chips" data-f="cc"><input type="text" autocomplete="off" spellcheck="false"></span></div>');
     h.push('<div class="gm-fld" data-r="bcc"' + (showBcc ? '' : ' style="display:none"') + '><span class="gm-fld-l">Bcc</span>' +
       '<span class="gm-chips" data-f="bcc"><input type="text" autocomplete="off" spellcheck="false"></span></div>');
-    h.push('<div class="gm-fld"><span class="gm-fld-l">Subj</span>' +
+    h.push('<div class="gm-fld"><span class="gm-fld-l">Subject</span>' +
       '<input class="gm-subj" data-f="subject" type="text" autocomplete="off" value="' + esc(subject) + '"></div>');
 
     h.push('<div class="gm-tools" data-gm="tools">' + TOOLS.map(function (t) {
       if (t.sep) return '<span class="sep"></span>';
+      // No "Font"/"Size" placeholder option: the control shows what the caret is
+      // actually in, and syncFontSize() keeps it in step with the selection.
       if (t.sel === 'font') {
-        return '<select data-sel="font" title="Font"><option value="">Font</option>' +
+        return '<select data-sel="font" title="Font">' +
           FONTS.map(function (f) { return '<option value="' + f + '">' + f + '</option>'; }).join('') + '</select>';
       }
       if (t.sel === 'size') {
-        return '<select data-sel="size" title="Size"><option value="">Size</option>' +
-          SIZES.map(function (s) { return '<option value="' + s[0] + '">' + s[1] + '</option>'; }).join('') + '</select>';
+        return '<select data-sel="size" title="Size">' +
+          SIZES.map(function (s) {
+            return '<option value="' + s[0] + '"' + (s[0] === '3' ? ' selected' : '') + '>' + s[1] + '</option>';
+          }).join('') + '</select>';
       }
       return '<button type="button"' + (t.wide ? ' class="wide"' : '') +
         ' data-c="' + t.c + '" title="' + esc(t.t) + '">' + t.l + '</button>';
     }).join('') + '</div>');
 
-    // ── ✨ AI assistant. Summarize buttons only appear when there is something to
-    // summarize: a tagged contact, or a thread. Draft/Improve are always available. ──
+    /* ── ✨ AI. The four buttons used to occupy their own always-visible row; they
+     * now live behind the "AI ▾" toolbar button, which reclaims that row for the body.
+     * The buttons themselves are unchanged and still carry data-ai, so the existing
+     * handler binds to them wherever they are rendered — see aiMenuHtml(). */
     var aiContactId = cfg.contactId || pre.contact_id || null;
     var aiHasThread = !!(msgs && msgs.length);
-    h.push('<div class="gm-ai-bar" data-gm="aibar"><span class="gm-ai-lbl">✨ AI</span>' +
-      (aiContactId ? '<button type="button" class="gm-ai-btn" data-ai="summarize_client">Summarize client</button>' : '') +
-      (aiHasThread ? '<button type="button" class="gm-ai-btn" data-ai="summarize_thread">Summarize thread</button>' : '') +
-      '<button type="button" class="gm-ai-btn" data-ai="draft_reply">Draft reply</button>' +
-      '<button type="button" class="gm-ai-btn" data-ai="improve">Improve my draft</button>' +
-      '</div>');
-    h.push('<div class="gm-ai-out" data-gm="aiout"></div>');
+    function aiMenuHtml() {
+      return (aiContactId ? '<button type="button" class="gm-pop-item" data-ai="summarize_client">Summarize client</button>' : '') +
+        (aiHasThread ? '<button type="button" class="gm-pop-item" data-ai="summarize_thread">Summarize thread</button>' : '') +
+        '<button type="button" class="gm-pop-item" data-ai="draft_reply">Draft reply</button>' +
+        '<button type="button" class="gm-pop-item" data-ai="improve">Improve my draft</button>';
+    }
+    // Kept in the DOM (hidden) so aiBusy()/binding have a stable container even while
+    // the menu popover is closed.
+    h.push('<div class="gm-ai-bar" data-gm="aibar" style="display:none"></div>');
 
+    /* Everything from here to the note is the ONE scrolling region. Header, fields,
+     * toolbar, attachment row and Send bar all sit outside it and stay put. */
+    h.push('<div class="gm-scroll" data-gm="scroll">');
+    h.push('<div class="gm-ai-out" data-gm="aiout"></div>');
     h.push('<div class="gm-ed" data-f="body" contenteditable="true" data-ph="Write your message…"></div>');
-    h.push('<div class="gm-sig-l" data-gm="sigl" style="display:none">Signature — click to edit</div>');
-    h.push('<div class="gm-sig" data-f="sig" contenteditable="true" style="display:none"></div>');
+    /* Collapsed by default, Gmail-style: a ••• chip inline where the signature goes.
+     * Expanding shows the same editable node — the signature is never inlined into
+     * the body, so send-time composition is unchanged. */
+    h.push('<div class="gm-sig-wrap" data-gm="sigwrap" style="display:none">' +
+      '<button type="button" class="gm-sig-dots" data-gm="sigdots" title="Show signature">•••</button>' +
+      '<div class="gm-sig-l" data-gm="sigl" style="display:none">Signature — click to edit</div>' +
+      '<div class="gm-sig" data-f="sig" contenteditable="true" style="display:none"></div>' +
+      '</div>');
 
     if (quoteHtml) {
       h.push('<div class="gm-qt"><button class="gm-qt-btn" data-c="quote" title="Show quoted text">•••</button>' +
         '<div class="gm-qt-box" data-gm="qtbox"><iframe class="gm-qt-frame" sandbox="allow-same-origin"></iframe></div></div>');
     }
+    h.push('</div>');   // /.gm-scroll
 
+    h.push('<div class="gm-att" data-gm="att"></div>');
     h.push('<div class="gm-note" data-gm="note"></div>');
     h.push('<div class="gm-cmp-bar">' +
       '<button class="gm-send" data-c="send" disabled>Send</button>' +
@@ -1310,8 +1465,12 @@
       if (_sent) return;                       // frozen after a successful send
       var nTo = toF ? toF.valid() : 0;
       var okBody = !bodyRequired || bodyHasContent();
-      sendBtn.disabled = !(nTo && okBody);
-      whyEl.textContent = nTo ? (okBody ? '' : 'Write a message to send.') : 'Add a recipient to send.';
+      // An attachment still uploading has no storage path yet, so sending now would
+      // silently drop it. Block instead, and say why.
+      var waiting = attPending();
+      sendBtn.disabled = !(nTo && okBody) || waiting;
+      whyEl.textContent = waiting ? 'Waiting for attachments to finish uploading…'
+        : (nTo ? (okBody ? '' : 'Write a message to send.') : 'Add a recipient to send.');
     }
 
     var toF = chipField(mountEl.querySelector('[data-f="to"]'), rec.to, cl, refreshSend);
@@ -1333,7 +1492,27 @@
     }
     function clearNote() { noteEl.className = 'gm-note'; noteEl.innerHTML = ''; }
 
-    wireEditor(edEl, mountEl.querySelector('[data-gm="tools"]'), cl);
+    /* hooks are read at click time, so the functions below can be declared later in
+     * this scope (they are hoisted function declarations). wireEditor also writes
+     * insertHTML back onto this object for the video path. */
+    var edHooks = {
+      attach: function () { pickAttachments(); },
+      video: function (btn) { openVideoRecorder(btn); },
+      ai: function (btn) {
+        if (_aiBusy) return;
+        var am = document.createElement('div');
+        am.className = 'gm-pop-menu';
+        am.innerHTML = aiMenuHtml();
+        var apop = portalPopover(btn, am, { width: 240 });
+        bindAi(am);
+        // Every AI action writes into the body or the AI output panel, so the menu has
+        // done its job the moment one is clicked.
+        Array.prototype.forEach.call(am.querySelectorAll('[data-ai]'), function (x) {
+          x.addEventListener('click', function () { setTimeout(function () { apop.close(); }, 0); });
+        });
+      }
+    };
+    wireEditor(edEl, mountEl.querySelector('[data-gm="tools"]'), cl, edHooks);
     wireEditor(sigEl, null, cl);
 
     // Cc/Bcc toggles
@@ -1381,6 +1560,15 @@
     var sigChk = mountEl.querySelector('[data-gm="sigchk"]');
     var sigLbl = mountEl.querySelector('[data-gm="siglbl"]');
 
+    /* Collapsed is the default state, matching Gmail. sigExpanded is per-composer and
+     * deliberately NOT persisted — collapsed is what reclaims the height, so every
+     * new composer should start that way. The "Signature on" toggle is separate and
+     * still persisted: it decides whether the signature is SENT, not whether it's
+     * shown. Off ⇒ the whole affordance disappears. */
+    var sigExpanded = false;
+    var sigWrap = mountEl.querySelector('[data-gm="sigwrap"]');
+    var sigDots = mountEl.querySelector('[data-gm="sigdots"]');
+
     function applySig() {
       var have = !!sigLoaded;
       sigTog.style.display = have ? '' : 'none';   // no signature on file → no toggle
@@ -1388,9 +1576,18 @@
       sigTog.classList.toggle('off', !sigOn);
       sigLbl.textContent = sigOn ? 'Signature on' : 'Signature off';
       var show = have && sigOn;
-      sigEl.style.display = show ? '' : 'none';
-      sigL.style.display = show ? '' : 'none';
+      sigWrap.style.display = show ? '' : 'none';
+      sigEl.style.display = (show && sigExpanded) ? '' : 'none';
+      sigL.style.display = (show && sigExpanded) ? '' : 'none';
+      sigDots.classList.toggle('on', sigExpanded);
+      sigDots.title = sigExpanded ? 'Hide signature' : 'Show signature';
+      sigDots.setAttribute('aria-expanded', sigExpanded ? 'true' : 'false');
     }
+    sigDots.addEventListener('click', function () {
+      sigExpanded = !sigExpanded;
+      applySig();
+      if (sigExpanded) sigEl.focus();
+    });
     sigChk.addEventListener('change', function () {
       sigOn = sigChk.checked;
       try { localStorage.setItem(SIG_KEY, sigOn ? '1' : '0'); } catch (_) {}
@@ -1404,6 +1601,286 @@
     });
     applySig();
 
+    /* ── ATTACHMENTS ───────────────────────────────────────────────────────────
+     * Files upload to the PRIVATE email-attachments bucket with the authenticated
+     * client, and the send payload carries their storage paths — not their bytes.
+     * gmail-inbox then downloads each path service-side to build the multipart/mixed
+     * MIME. Two reasons for that shape: a 20MB attachment is ~27MB as base64 JSON,
+     * which is a hostile request body; and the persisted copy the spec asks for falls
+     * out of the same upload instead of needing a second one. */
+    var ATT_BUCKET = 'email-attachments';
+    var ATT_MAX_TOTAL = 20 * 1024 * 1024;    // 20MB across all attachments
+    var atts = [];
+    var attEl = mountEl.querySelector('[data-gm="att"]');
+
+    function fmtBytes(n) {
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+      return (n / 1024 / 1024).toFixed(1) + ' MB';
+    }
+    // Failed uploads don't count toward the cap — they were never attached, so charging
+    // the budget for them would block a legitimate retry.
+    function attTotal() {
+      return (atts || []).reduce(function (s, a) {
+        return a.state === 'error' ? s : s + (a.size || 0);
+      }, 0);
+    }
+    // Defensive on `atts`: refreshSend() runs during chipField construction, which
+    // happens before this block's `var atts = []` has executed.
+    function attPending() {
+      return (atts || []).some(function (a) { return a.state === 'uploading'; });
+    }
+    function renderAtts() {
+      attEl.classList.toggle('on', atts.length > 0);
+      attEl.innerHTML = atts.map(function (a) {
+        var cls = 'gm-att-chip' + (a.state === 'error' ? ' err' : (a.state === 'uploading' ? ' busy' : ''));
+        var note = a.state === 'uploading' ? ' · uploading…' : (a.state === 'error' ? ' · failed' : '');
+        return '<span class="' + cls + '" title="' + esc(a.name + (a.error ? ' — ' + a.error : '')) + '">' +
+          '<span class="n">📎 ' + esc(a.name) + '</span>' +
+          '<span class="s">' + fmtBytes(a.size) + esc(note) + '</span>' +
+          '<button type="button" class="x" data-att="' + esc(a.id) + '" title="Remove">×</button></span>';
+      }).join('');
+      Array.prototype.forEach.call(attEl.querySelectorAll('[data-att]'), function (x) {
+        x.addEventListener('click', function () { removeAtt(x.getAttribute('data-att')); });
+      });
+      refreshSend();
+    }
+    function removeAtt(id) {
+      var a = atts.filter(function (x) { return x.id === id; })[0];
+      atts = atts.filter(function (x) { return x.id !== id; });
+      renderAtts();
+      // Best-effort tidy of the stored object; an orphan is harmless and the send
+      // record is what matters, so a failure here must not block anything.
+      if (a && a.path) {
+        try { cl.storage.from(ATT_BUCKET).remove([a.path]).catch(function () {}); } catch (_) {}
+      }
+    }
+    function safeAttName(n) {
+      return (String(n || 'file').replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^[._]+/, '') || 'file').slice(-120);
+    }
+    async function addFiles(files) {
+      var list = Array.prototype.slice.call(files || []);
+      if (!list.length) return;
+      for (var i = 0; i < list.length; i++) {
+        var f = list[i];
+        // Loud, specific refusal — never a silent drop.
+        if (attTotal() + f.size > ATT_MAX_TOTAL) {
+          note('bad', 'Attachment too large',
+            esc(f.name) + ' is ' + fmtBytes(f.size) + '. The 20MB total limit would be exceeded' +
+            (atts.length ? ' (' + fmtBytes(attTotal()) + ' already attached)' : '') +
+            '. Remove something or send a link instead.');
+          continue;
+        }
+        var rec2 = {
+          id: 'a' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+          name: f.name, size: f.size, mime: f.type || 'application/octet-stream',
+          path: null, state: 'uploading', error: null
+        };
+        atts.push(rec2);
+        renderAtts();
+        /* eslint-disable no-loop-func */
+        (function (r, file) {
+          var path = mailbox + '/' + Date.now() + '_' + Math.random().toString(36).slice(2, 7) +
+            '/' + safeAttName(file.name);
+          cl.storage.from(ATT_BUCKET).upload(path, file, {
+            contentType: r.mime, upsert: false
+          }).then(function (res) {
+            if (res && res.error) throw new Error(res.error.message);
+            r.path = path; r.state = 'ready';
+            renderAtts();
+          }).catch(function (e) {
+            r.state = 'error';
+            r.error = (e && e.message) || 'upload failed';
+            renderAtts();
+            note('bad', 'Attachment upload failed', esc(r.name) + ' — ' + esc(r.error) +
+              '. Remove it and retry, or send without it.');
+          });
+        })(rec2, f);
+        /* eslint-enable no-loop-func */
+      }
+    }
+    function pickAttachments() {
+      var inp = document.createElement('input');
+      inp.type = 'file';
+      inp.multiple = true;
+      inp.style.cssText = 'position:fixed;left:-9999px';
+      document.body.appendChild(inp);
+      inp.addEventListener('change', function () {
+        addFiles(inp.files);
+        inp.remove();
+      });
+      inp.click();
+    }
+
+    /* ── RECORD VIDEO ──────────────────────────────────────────────────────────
+     * Ported from admin/email-marketing.html: same getUserMedia + MediaRecorder
+     * state machine, same 120s cap, same authenticated upload to video-messages
+     * (window._supabaseClient — NOT the anon key; that bucket's write policy is
+     * authenticated-only). What differs is only the shell: a popover instead of that
+     * page's fixed modal, and insertion through thumbLinkHtml + the composer's
+     * sanitizing insertHTML instead of a Quill call. */
+    var VID_BUCKET = 'video-messages';
+    function openVideoRecorder(anchor) {
+      var box = document.createElement('div');
+      box.className = 'gm-pop-menu gm-vid-box';
+      box.innerHTML =
+        '<video data-v="pre" autoplay muted playsinline></video>' +
+        '<video data-v="play" controls playsinline style="display:none"></video>' +
+        '<div class="gm-vid-t" data-v="t">0:00</div>' +
+        '<div class="gm-vid-row">' +
+          '<button type="button" class="gm-ai-btn" data-v="rec">● Record</button>' +
+          '<button type="button" class="gm-ai-btn" data-v="use" style="display:none">Insert</button>' +
+          '<button type="button" class="gm-ai-btn" data-v="re" style="display:none">Retake</button>' +
+        '</div>' +
+        '<div class="gm-ai-note" data-v="msg">Up to 2 minutes. The video uploads and is inserted as a clickable thumbnail — mail clients can’t play video inline.</div>';
+
+      // onClose must be supplied up front (portalPopover reads opts.onClose), but the
+      // teardown it needs is defined below — so route through a holder.
+      var cleanup = null;
+      var pop = portalPopover(anchor, box, {
+        width: 340,
+        onClose: function () { if (cleanup) cleanup(); }
+      });
+      var pre = box.querySelector('[data-v="pre"]');
+      var play = box.querySelector('[data-v="play"]');
+      var tEl = box.querySelector('[data-v="t"]');
+      var recB = box.querySelector('[data-v="rec"]');
+      var useB = box.querySelector('[data-v="use"]');
+      var reB = box.querySelector('[data-v="re"]');
+      var msg = box.querySelector('[data-v="msg"]');
+
+      var stream = null, mr = null, chunks = [], blob = null, secs = 0, tick = null, objUrl = null;
+
+      function stopStream() {
+        if (tick) { clearInterval(tick); tick = null; }
+        if (mr && mr.state === 'recording') { try { mr.stop(); } catch (_) {} }
+        if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+        if (objUrl) { try { URL.revokeObjectURL(objUrl); } catch (_) {} objUrl = null; }
+      }
+      // Releasing the camera when the popover closes is not optional — the capture
+      // light staying on after dismissal is alarming and looks like a bug.
+      cleanup = stopStream;
+
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(function (s) {
+        stream = s;
+        pre.srcObject = s;
+      }).catch(function () {
+        msg.innerHTML = '<b>Camera unavailable.</b> Grant camera and microphone access, then reopen this menu.';
+        recB.disabled = true;
+      });
+
+      function fmtT(n) { return Math.floor(n / 60) + ':' + (n % 60 < 10 ? '0' : '') + (n % 60); }
+
+      recB.addEventListener('click', function () {
+        if (mr && mr.state === 'recording') { mr.stop(); return; }
+        if (!stream) return;
+        chunks = [];
+        try { mr = new MediaRecorder(stream, { mimeType: 'video/webm' }); }
+        catch (_) { try { mr = new MediaRecorder(stream); } catch (e2) { msg.textContent = 'Recording is not supported in this browser.'; return; } }
+        mr.ondataavailable = function (e) { if (e.data && e.data.size > 0) chunks.push(e.data); };
+        mr.onstop = function () {
+          if (tick) { clearInterval(tick); tick = null; }
+          blob = new Blob(chunks, { type: 'video/webm' });
+          objUrl = URL.createObjectURL(blob);
+          pre.style.display = 'none';
+          play.src = objUrl;
+          play.style.display = '';
+          recB.style.display = 'none';
+          useB.style.display = '';
+          reB.style.display = '';
+          msg.textContent = 'Recorded ' + fmtT(secs) + ' · ' + fmtBytes(blob.size);
+        };
+        mr.start();
+        secs = 0; tEl.textContent = '0:00';
+        recB.textContent = '■ Stop';
+        tick = setInterval(function () {
+          secs++;
+          tEl.textContent = fmtT(secs);
+          if (secs >= 120) { try { mr.stop(); } catch (_) {} }   // same 2-minute cap
+        }, 1000);
+      });
+
+      reB.addEventListener('click', function () {
+        blob = null;
+        if (objUrl) { try { URL.revokeObjectURL(objUrl); } catch (_) {} objUrl = null; }
+        play.style.display = 'none';
+        play.removeAttribute('src');
+        pre.style.display = '';
+        pre.srcObject = stream;
+        useB.style.display = 'none';
+        reB.style.display = 'none';
+        recB.style.display = '';
+        recB.textContent = '● Record';
+        secs = 0; tEl.textContent = '0:00';
+        msg.textContent = 'Up to 2 minutes.';
+      });
+
+      /* Grab a real frame for the poster so the emailed thumbnail shows the video
+       * instead of a generic block, then hand it to the same thumbLinkHtml renderer
+       * used for YouTube and Loom. */
+      function posterBlob() {
+        return new Promise(function (resolve) {
+          try {
+            var c = document.createElement('canvas');
+            var w = play.videoWidth || 480, hh = play.videoHeight || 270;
+            c.width = w; c.height = hh;
+            c.getContext('2d').drawImage(play, 0, 0, w, hh);
+            c.toBlob(function (b) { resolve(b); }, 'image/jpeg', 0.8);
+          } catch (_) { resolve(null); }
+        });
+      }
+
+      useB.addEventListener('click', async function () {
+        if (!blob) return;
+        useB.disabled = true; reB.disabled = true;
+        msg.textContent = 'Uploading…';
+        try {
+          // The bucket's write policy is authenticated-only; _supabaseClient carries
+          // the session. Anything else 403s.
+          var vcl = window._supabaseClient || cl;
+          if (!vcl) throw new Error('Not signed in — reload the page and try again.');
+          var stamp = Date.now();
+          var vname = 'inbox-' + stamp + '.webm';
+          var up = await vcl.storage.from(VID_BUCKET).upload(vname, blob, {
+            contentType: 'video/webm', upsert: false
+          });
+          if (up && up.error) throw new Error(up.error.message);
+          var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
+          var videoUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + encodeURIComponent(vname);
+
+          // Poster is a nicety: if the frame grab or its upload fails, fall back to a
+          // plain link rather than losing the recording.
+          var thumbUrl = null;
+          try {
+            var pb = await posterBlob();
+            if (pb) {
+              var pname = 'inbox-' + stamp + '-poster.jpg';
+              var pu = await vcl.storage.from(VID_BUCKET).upload(pname, pb, {
+                contentType: 'image/jpeg', upsert: false
+              });
+              if (!(pu && pu.error)) {
+                thumbUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + encodeURIComponent(pname);
+              }
+            }
+          } catch (_) {}
+
+          var html = thumbUrl
+            ? thumbLinkHtml(videoUrl, thumbUrl, 'Click to watch (' + fmtT(secs) + ')')
+            : '<a href="' + esc(videoUrl) + '" target="_blank" rel="noopener noreferrer">' +
+              '▶ Watch my video message (' + esc(fmtT(secs)) + ')</a>';
+
+          // Same sanitizing insert as every other toolbar action (wireEditor writes
+          // insertHTML onto the hooks object it was handed).
+          if (edHooks.insertHTML) edHooks.insertHTML(html); else edEl.innerHTML += sanitize(html);
+          refreshSend();
+          pop.close();
+        } catch (e) {
+          useB.disabled = false; reB.disabled = false;
+          msg.innerHTML = '<b>Upload failed.</b> ' + esc((e && e.message) || String(e));
+        }
+      });
+    }
+
     /* ── ✨ AI ASSISTANT ───────────────────────────────────────────────────────
      * Everything the model writes lands in the SAME contentEditable Rene types in,
      * so it is fully editable afterwards and — critically — leaves via the identical
@@ -1412,6 +1889,7 @@
      */
     var aiOut = mountEl.querySelector('[data-gm="aiout"]');
     var aiBar = mountEl.querySelector('[data-gm="aibar"]');
+    var _aiBusy = false;
 
     function aiShow(kind, title, html) {
       aiOut.className = 'gm-ai-out on' + (kind === 'bad' ? ' bad' : '');
@@ -1421,7 +1899,11 @@
       if (x) x.addEventListener('click', function () { aiOut.className = 'gm-ai-out'; aiOut.innerHTML = ''; });
     }
     function aiBusy(on) {
+      // The buttons now live in a body-portalled popover that may be open or closed,
+      // so latch the state too — the AI ▾ button consults _aiBusy before opening.
+      _aiBusy = !!on;
       Array.prototype.forEach.call(aiBar.querySelectorAll('[data-ai]'), function (b) { b.disabled = on; });
+      Array.prototype.forEach.call(document.querySelectorAll('.gm-pop-menu [data-ai]'), function (b) { b.disabled = on; });
     }
     // Thread text is sent from here rather than re-fetched server-side — the browser
     // already has the full thread from get_thread, so a refetch would be a second
@@ -1446,7 +1928,11 @@
       return r.data || {};
     }
 
-    Array.prototype.forEach.call(mountEl.querySelectorAll('[data-ai]'), function (btn) {
+    /* The AI buttons are now rendered on demand inside the "AI ▾" popover, so binding
+     * has to happen per-render instead of once at mount. Same handler, same buttons —
+     * bindAi() is called with the popover's root each time it opens. */
+    function bindAi(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('[data-ai]'), function (btn) {
       btn.addEventListener('click', async function () {
         var action = btn.getAttribute('data-ai');
         var label = btn.textContent;
@@ -1509,6 +1995,7 @@
         } finally { aiBusy(false); }
       });
     });
+    }   // /bindAi
 
     function close() {
       if (cfg.onClose) { cfg.onClose(); return; }   // modal compose closes the overlay
@@ -1538,6 +2025,14 @@
       if (!subjVal) { note('bad', 'Add a subject', 'Subject can’t be empty.'); subjEl.focus(); return; }
       var bodyEmpty = (edEl.innerHTML || '').replace(/<br>|\s|&nbsp;|<div><\/div>/gi, '') === '';
       if (bodyEmpty && mode !== 'forward' && !window.confirm('Send with an empty message body?')) return;
+      // Never let a failed upload leave silently. Sending is still allowed, but only
+      // as an explicit choice.
+      var failedAtts = (atts || []).filter(function (a) { return a.state === 'error'; });
+      if (failedAtts.length && !window.confirm(
+        failedAtts.length + ' attachment' + (failedAtts.length > 1 ? 's' : '') +
+        ' failed to upload and will NOT be attached:\n\n' +
+        failedAtts.map(function (a) { return '• ' + a.name; }).join('\n') +
+        '\n\nSend anyway?')) return;
 
       // ── assemble, then sanitize the WHOLE composed body as the last gate ──
       var composed;
@@ -1566,6 +2061,15 @@
         to: to.join(', '), subject: subjVal,
         body_html: composed, body_text: bodyText
       };
+      // Only uploaded attachments travel — paths, not bytes. gmail-inbox fetches each
+      // one service-side to build the multipart/mixed body and records the same list
+      // on the email_log row.
+      var readyAtts = (atts || []).filter(function (a) { return a.state === 'ready' && a.path; });
+      if (readyAtts.length) {
+        payload.attachments = readyAtts.map(function (a) {
+          return { path: a.path, name: a.name, size: a.size, mime: a.mime };
+        });
+      }
       // Compose/draft is a NEW conversation — sending it with a thread_id would staple it
       // onto an unrelated thread.
       if (mode !== 'new' && cfg.threadId) payload.thread_id = cfg.threadId;
