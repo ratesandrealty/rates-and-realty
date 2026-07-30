@@ -19,7 +19,7 @@
 // rene@ holds 160k+ personal messages; a VA reaching it would be a serious breach.
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Actions: list_threads, get_thread, send, modify, tag, untag,
+// Actions: list_threads, get_thread, send, modify, tag, untag, label_counts,
 //          list_drafts, get_draft, delete_draft.
 // verify_jwt: true (pinned in config.toml) — the gateway rejects unauthenticated calls.
 
@@ -32,6 +32,9 @@ import {
   buildMime, b64url, utf8ToB64, htmlToText, safeMime,
   type OutAttachment,
 } from '../_shared/mime.ts'
+// The attachment download below runs as the service role and bypasses storage RLS, so
+// this predicate is the actual authorization control. Kept in _shared to be testable.
+import { attachmentPathError } from '../_shared/attach.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -74,6 +77,25 @@ function splitAddrs(v: string | null): string[] {
   if (!v) return []
   return v.split(',').map((s) => parseEmail(s)).filter((x): x is string => !!x)
 }
+/* Gmail returns `snippet` ALREADY HTML-entity-encoded ("That&#39;s great news!"). The
+ * client then esc()s it for safe rendering, which double-encodes it and shows the raw
+ * entity to the user. Decode once here, at the boundary where the encoded form arrives,
+ * so every consumer holds plain text and the client's esc() is correct on its own.
+ * Subject/From headers are NOT entity-encoded by Gmail and must not be touched. */
+function decodeEntities(s: string | null | undefined): string {
+  if (!s) return ''
+  return String(s)
+    .replace(/&#(\d+);/g, (_m, d) => { try { return String.fromCodePoint(Number(d)) } catch { return _m } })
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hx) => { try { return String.fromCodePoint(parseInt(hx, 16)) } catch { return _m } })
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    // &amp; LAST, or "&amp;lt;" would decode all the way to "<".
+    .replace(/&amp;/g, '&')
+}
+
 function b64urlDecode(data: string): string {
   try {
     const b = data.replace(/-/g, '+').replace(/_/g, '/')
@@ -126,7 +148,7 @@ function messageToRow(mailbox: string, threadId: string, msg: any) {
     cc_email: ccRaw || null,
     subject: hdr(headers, 'Subject'),
     body_html: acc.html || null,
-    body_text: acc.text || (msg.snippet || null),
+    body_text: acc.text || (msg.snippet ? decodeEntities(msg.snippet) : null),
     attachments: atts.length ? atts : null,
     status: dir === 'inbound' ? 'received' : 'sent',
     created_at: iso,
@@ -210,6 +232,25 @@ serve(async (req) => {
   const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: `Bearer ${jwt}` } }, auth: { persistSession: false } })
 
   try {
+    /* Unread badges for the left rail. labels.list does NOT carry counts — only
+     * labels.get does — so this is one call per label, issued in parallel and once per
+     * mailbox load rather than per render. "Archived" is deliberately absent: it is not
+     * a Gmail label but a search expression, so it has no count to read. */
+    if (action === 'label_counts') {
+      const ids = ['INBOX', 'SENT', 'DRAFT', 'STARRED', 'TRASH']
+      const counts: Record<string, { unread: number; total: number }> = {}
+      await Promise.all(ids.map(async (id) => {
+        const r = await gmailApi(mailbox, `labels/${id}`)
+        if (!r.ok) return
+        const j = await r.json()
+        counts[id] = {
+          unread: Number(j.threadsUnread || 0),
+          total: Number(j.threadsTotal || 0),
+        }
+      }))
+      return ok({ counts })
+    }
+
     if (action === 'list_threads') {
       let path = 'threads?maxResults=25'
       if (body.q) path += `&q=${encodeURIComponent(String(body.q))}`
@@ -228,14 +269,14 @@ serve(async (req) => {
       if (!lr.ok) return err('list failed: ' + JSON.stringify(lj.error || lj), 502)
       const detailed = await Promise.all((lj.threads || []).map(async (t: any) => {
         const mr = await gmailApi(mailbox, `threads/${t.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`)
-        if (!mr.ok) return { id: t.id, snippet: t.snippet, subject: null, from: null, date: null, unread: false, message_count: 0 }
+        if (!mr.ok) return { id: t.id, snippet: decodeEntities(t.snippet), subject: null, from: null, date: null, unread: false, message_count: 0 }
         const mj = await mr.json()
         const ms = mj.messages || []
         const first = ms[0]
         const last = ms[ms.length - 1]
         const fromRaw = last ? hdr(last.payload?.headers, 'From') : null
         return {
-          id: t.id, snippet: t.snippet,
+          id: t.id, snippet: decodeEntities(t.snippet),
           subject: first ? hdr(first.payload?.headers, 'Subject') : null,
           from: { email: parseEmail(fromRaw), name: parseName(fromRaw) },
           date: last?.internalDate ? new Date(Number(last.internalDate)).toISOString() : null,
@@ -316,11 +357,14 @@ serve(async (req) => {
       if (attIn.length > 25) return err('Too many attachments (25 max)')
       let attTotal = 0
       for (const a of attIn) {
+        /* THE control for this fetch. The download below uses the service role and so
+         * bypasses storage RLS completely — attachmentPathError() is what confines the
+         * path to the prefix of the mailbox the server derived from the caller's JWT
+         * (see step 3 above), not to anything the client claimed. 403, not 400: this is
+         * an authorization refusal. */
         const path = String((a && a.path) || '')
-        if (!path) return err('attachment missing path')
-        if (path.includes('..') || !path.startsWith(mailbox + '/')) {
-          return err('attachment path outside this mailbox')
-        }
+        const pathErr = attachmentPathError(path, mailbox)
+        if (pathErr) return err(pathErr, pathErr === 'attachment missing path' ? 400 : 403)
         const dl = await svc.storage.from('email-attachments').download(path)
         if (dl.error || !dl.data) {
           return err(`attachment not found in storage: ${String((a && a.name) || path)}`, 404)
@@ -430,7 +474,7 @@ serve(async (req) => {
           subject: hdr(mh, 'Subject'),
           to: splitAddrs(hdr(mh, 'To')),
           date: mj.internalDate ? new Date(Number(mj.internalDate)).toISOString() : null,
-          snippet: mj.snippet || '',
+          snippet: decodeEntities(mj.snippet),
         }
       }))
       return ok({ drafts })
