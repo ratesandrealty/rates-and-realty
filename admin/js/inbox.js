@@ -1077,6 +1077,32 @@
       esc(caption || 'Click the image to watch') + '</div>';
   }
 
+  /* Pick the best recording container/codec available, MP4 first.
+   * Probed in Chrome 150 on this machine — every candidate below reports supported,
+   * so the MP4 branch wins there; the WebM fallbacks exist for browsers that cannot
+   * record MP4 (notably Firefox). Bitrates are pinned rather than left to the
+   * implementation default, which is what produced soft, over-compressed video. */
+  var REC_MIMES = [
+    { mime: 'video/mp4;codecs="avc1.42E01E,mp4a.40.2"', ext: 'mp4' },
+    { mime: 'video/mp4;codecs=avc1', ext: 'mp4' },
+    { mime: 'video/mp4', ext: 'mp4' },
+    { mime: 'video/webm;codecs=vp9,opus', ext: 'webm' },
+    { mime: 'video/webm;codecs=vp8,opus', ext: 'webm' },
+    { mime: 'video/webm', ext: 'webm' }
+  ];
+  var REC_BITS = { videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000 };
+  function pickRecordMime() {
+    for (var i = 0; i < REC_MIMES.length; i++) {
+      var c = REC_MIMES[i];
+      try {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported(c.mime)) {
+          return { mime: c.mime, ext: c.ext, opts: Object.assign({ mimeType: c.mime }, REC_BITS) };
+        }
+      } catch (_) {}
+    }
+    return { mime: '', ext: 'webm', opts: Object.assign({}, REC_BITS) };
+  }
+
   /* Split a message body into the part actually written now and the quoted trailer
    * ("On <date> <sender> wrote:" + the whole prior thread). Gmail marks its own with
    * .gmail_quote; other clients use a cite blockquote or a bare "On … wrote:" line.
@@ -1853,6 +1879,12 @@
       var msg = box.querySelector('[data-v="msg"]');
 
       var stream = null, mr = null, chunks = [], blob = null, secs = 0, tick = null, objUrl = null;
+      var recExt = 'webm', recMime = 'video/webm';
+      // Poster captured DURING recording (see grabPoster) rather than from the
+      // playback element afterwards: the live stream is guaranteed to have a decoded
+      // frame available, whereas the <video> may not have painted one yet when the
+      // user clicks Insert immediately after stopping.
+      var posterBlob = null;
 
       function stopStream() {
         if (tick) { clearInterval(tick); tick = null; }
@@ -1864,9 +1896,19 @@
       // light staying on after dismissal is alarming and looks like a bug.
       cleanup = stopStream;
 
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(function (s) {
+      /* Unconstrained getUserMedia gave whatever the driver defaulted to — 640x480 on
+       * Rene's machine. Ask for 720p30 explicitly, and turn on the three audio
+       * cleanups, because these are recorded in a home office on a laptop mic. */
+      navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      }).then(function (s) {
         stream = s;
         pre.srcObject = s;
+        var t = s.getVideoTracks()[0];
+        var st = t && t.getSettings ? t.getSettings() : null;
+        if (st && st.width) msg.textContent = 'Ready · ' + st.width + '×' + st.height +
+          (st.frameRate ? ' @' + Math.round(st.frameRate) + 'fps' : '') + ' · up to 2 minutes.';
       }).catch(function () {
         msg.innerHTML = '<b>Camera unavailable.</b> Grant camera and microphone access, then reopen this menu.';
         recB.disabled = true;
@@ -1878,8 +1920,19 @@
         if (mr && mr.state === 'recording') { mr.stop(); return; }
         if (!stream) return;
         chunks = [];
-        try { mr = new MediaRecorder(stream, { mimeType: 'video/webm' }); }
-        catch (_) { try { mr = new MediaRecorder(stream); } catch (e2) { msg.textContent = 'Recording is not supported in this browser.'; return; } }
+        /* Codec preference: MP4/H.264 first. Recipients open these on phones and WebM
+         * has real playback gaps on older iOS, so an MP4 that plays everywhere beats a
+         * marginally smaller WebM that silently fails for some of them. Verified on
+         * this machine (Chrome 150): video/mp4;codecs=avc1 IS supported for recording,
+         * so this chain actually takes the first branch rather than falling through. */
+        var chosen = pickRecordMime();
+        try { mr = new MediaRecorder(stream, chosen.opts); }
+        catch (_) {
+          try { mr = new MediaRecorder(stream); chosen = { mime: '', ext: 'webm', opts: {} }; }
+          catch (e2) { msg.textContent = 'Recording is not supported in this browser.'; return; }
+        }
+        recExt = chosen.ext;
+        recMime = chosen.mime || 'video/webm';
         mr.ondataavailable = function (e) { if (e.data && e.data.size > 0) chunks.push(e.data); };
         mr.onstop = function () {
           if (tick) { clearInterval(tick); tick = null; }
@@ -1896,6 +1949,8 @@
         mr.start();
         secs = 0; tEl.textContent = '0:00';
         recB.textContent = '■ Stop';
+        // Grab the poster a beat in — frame 0 is usually the camera still warming up.
+        setTimeout(grabPoster, 1200);
         tick = setInterval(function () {
           secs++;
           tEl.textContent = fmtT(secs);
@@ -1918,19 +1973,19 @@
         msg.textContent = 'Up to 2 minutes.';
       });
 
-      /* Grab a real frame for the poster so the emailed thumbnail shows the video
-       * instead of a generic block, then hand it to the same thumbLinkHtml renderer
-       * used for YouTube and Loom. */
-      function posterBlob() {
-        return new Promise(function (resolve) {
-          try {
-            var c = document.createElement('canvas');
-            var w = play.videoWidth || 480, hh = play.videoHeight || 270;
-            c.width = w; c.height = hh;
-            c.getContext('2d').drawImage(play, 0, 0, w, hh);
-            c.toBlob(function (b) { resolve(b); }, 'image/jpeg', 0.8);
-          } catch (_) { resolve(null); }
-        });
+      /* Real frame for the poster, taken off the LIVE preview while recording. Used
+       * both as the <video poster> on the landing page and as the emailed thumbnail
+       * image — the old behaviour fell back to a generic "Click to watch" chip. */
+      function grabPoster() {
+        if (posterBlob || !stream) return;
+        try {
+          var w = pre.videoWidth || 1280, hh = pre.videoHeight || 720;
+          if (!w || !hh) return;
+          var c = document.createElement('canvas');
+          c.width = w; c.height = hh;
+          c.getContext('2d').drawImage(pre, 0, 0, w, hh);
+          c.toBlob(function (b) { if (b) posterBlob = b; }, 'image/jpeg', 0.82);
+        } catch (_) {}
       }
 
       useB.addEventListener('click', async function () {
@@ -1942,29 +1997,60 @@
           // the session. Anything else 403s.
           var vcl = window._supabaseClient || cl;
           if (!vcl) throw new Error('Not signed in — reload the page and try again.');
-          var stamp = Date.now();
-          var vname = 'inbox-' + stamp + '.webm';
-          var up = await vcl.storage.from(VID_BUCKET).upload(vname, blob, {
-            contentType: 'video/webm', upsert: false
+
+          /* PRIVACY: the object name IS the access control here — video-messages is
+           * public-read so anyone holding the URL can watch. The old name was
+           * inbox-<epoch-ms>.webm, and epoch-ms is trivially walkable: guess a
+           * plausible millisecond and you have someone else's video. Use an
+           * unguessable id, and follow the convention loom-recorder.js already
+           * established (videos/<uuid>.<ext>) instead of inventing a second one. */
+          var uuid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+            : Array.from(crypto.getRandomValues(new Uint8Array(16)))
+                .map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+          var vpath = 'videos/' + uuid + '.' + recExt;
+          var up = await vcl.storage.from(VID_BUCKET).upload(vpath, blob, {
+            contentType: recMime, upsert: false
           });
           if (up && up.error) throw new Error(up.error.message);
           var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
-          var videoUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + encodeURIComponent(vname);
+          var videoUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + vpath;
 
           // Poster is a nicety: if the frame grab or its upload fails, fall back to a
           // plain link rather than losing the recording.
           var thumbUrl = null;
           try {
-            var pb = await posterBlob();
-            if (pb) {
-              var pname = 'inbox-' + stamp + '-poster.jpg';
-              var pu = await vcl.storage.from(VID_BUCKET).upload(pname, pb, {
+            grabPoster();   // last chance, if the 1.2s timer never fired
+            if (posterBlob) {
+              var ppath = 'videos/' + uuid + '-poster.jpg';
+              var pu = await vcl.storage.from(VID_BUCKET).upload(ppath, posterBlob, {
                 contentType: 'image/jpeg', upsert: false
               });
               if (!(pu && pu.error)) {
-                thumbUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + encodeURIComponent(pname);
+                thumbUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + ppath;
               }
             }
+          } catch (_) {}
+
+          /* Register the video so it has a shareable slug. video_create is the same
+           * RPC loom-recorder.js uses, so both recorders produce one kind of row and
+           * the /v/<token> landing page has a single source to resolve. Non-fatal:
+           * the message still sends with the direct link if this fails. */
+          // Param names are exactly video_create's signature (p_duration / p_size,
+          // no p_mime_type) — a mismatch would 404 the RPC and be swallowed below,
+          // silently leaving the video unregistered.
+          var vslug = null;
+          try {
+            var vc = await vcl.rpc('video_create', {
+              p_title: 'Video message · ' + new Date().toLocaleDateString(),
+              p_storage_path: vpath,
+              p_public_url: videoUrl,
+              p_duration: secs,
+              p_size: blob.size,
+              p_kind: 'inbox',
+              p_contact_id: cfg.contactId || null,
+              p_context: 'email'
+            });
+            if (vc && !vc.error && vc.data) vslug = vc.data.slug || null;
           } catch (_) {}
 
           var html = thumbUrl
