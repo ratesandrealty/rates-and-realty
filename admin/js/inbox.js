@@ -171,6 +171,23 @@
       .replace(/<\/(p|div|li|tr|h[1-6]|blockquote|pre)>/gi, '\n');
     return (t.content.textContent || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   }
+  /* Sender avatar. No image source exists for arbitrary senders, so this is initials
+   * on a colour derived from the address — stable per sender, which is what makes a
+   * list scannable. Hue only; saturation/lightness fixed so every chip stays legible
+   * against the dark rows and the dark initials stay readable on top. */
+  function avatarHtml(name, email) {
+    var key = String(email || name || '?').toLowerCase();
+    var h = 0;
+    for (var i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 360;
+    var label = String(name || email || '?').trim();
+    var parts = label.split(/[\s@._-]+/).filter(Boolean);
+    var initials = parts.length > 1
+      ? (parts[0][0] + parts[1][0])
+      : (label.slice(0, 2) || '?');
+    return '<span class="gm-av" style="background:hsl(' + h + ',52%,62%)" aria-hidden="true">' +
+      esc(initials.toUpperCase()) + '</span>';
+  }
+
   function fmtDate(d) {
     if (!d) return '';
     try {
@@ -205,35 +222,88 @@
     var s = document.createElement('style');
     s.id = 'gm-inbox-styles';
     s.textContent = [
-      '.gm-inbox{--g:var(--gold,#c9a84c);display:flex;flex-direction:column;min-height:480px;height:calc(100vh - 120px);background:var(--surface,#111);border:1px solid var(--border2,rgba(255,255,255,.12));border-radius:12px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text,#fff)}',
-      '.gm-tb{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));flex-wrap:wrap;flex-shrink:0}',
-      '.gm-sw{display:flex;gap:4px}',
-      '.gm-sw button{padding:6px 12px;border-radius:18px;border:1px solid var(--border2,rgba(255,255,255,.12));background:transparent;color:var(--muted,#999);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}',
-      '.gm-sw button.active{background:rgba(201,168,76,.15);color:var(--g);border-color:var(--g)}',
+      /* ── SHELL ───────────────────────────────────────────────────────────────
+       * A ROW: fixed-width rail | everything else. The old column layout stacked a
+       * Compose row and a folder row above the panes, which cost two full-width
+       * rows of vertical space to hold about a dozen controls. height:100% (not a
+       * viewport calc) so the host page owns the sizing.                          */
+      '.gm-inbox{--g:var(--gold,#c9a84c);display:flex;flex-direction:row;min-height:0;height:100%;width:100%;background:var(--surface,#111);border:1px solid var(--border2,rgba(255,255,255,.12));border-radius:12px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text,#fff)}',
+      '.gm-rail{width:200px;flex-shrink:0;display:flex;flex-direction:column;gap:10px;padding:10px;border-right:1px solid var(--border,rgba(255,255,255,.08));background:#0d0d0d;overflow-y:auto;min-height:0}',
+      '.gm-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}',
+      '.gm-tb{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));flex-shrink:0}',
+      /* Mailbox switcher. Deliberately NOT styled like the folder buttons below it:
+       * choosing rene@ vs processing@ crosses a server-enforced security boundary
+       * (a va is refused rene@ outright), so it must not read as another filter. */
+      '.gm-sw{display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid rgba(201,168,76,.28);border-radius:9px;background:rgba(201,168,76,.05)}',
+      '.gm-sw-l{font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:rgba(201,168,76,.75);padding:0 2px 2px}',
+      '.gm-sw button{display:flex;align-items:center;gap:6px;width:100%;text-align:left;padding:6px 8px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--muted,#999);font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.gm-sw button:hover{background:rgba(255,255,255,.05);color:#ddd}',
+      '.gm-sw button.active{background:rgba(201,168,76,.18);color:var(--g);border-color:rgba(201,168,76,.5)}',
+      '.gm-sw button .k{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0;opacity:.55}',
+      '.gm-sw button.active .k{opacity:1}',
+      /* Vertical folder list with unread badges. */
+      '.gm-fold{display:flex;flex-direction:column;gap:2px}',
+      '.gm-fold button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 9px;border-radius:7px;border:1px solid transparent;background:transparent;color:var(--muted,#999);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}',
+      '.gm-fold button:hover{background:rgba(255,255,255,.05);color:#ddd}',
+      '.gm-fold button.on{background:rgba(201,168,76,.14);color:var(--g);border-color:rgba(201,168,76,.35);font-weight:800}',
+      '.gm-fold .i{font-size:13px;width:16px;flex-shrink:0;text-align:center}',
+      '.gm-fold .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-fold .c{font-size:10.5px;font-weight:800;color:var(--g);background:rgba(201,168,76,.16);border-radius:9px;padding:1px 6px;flex-shrink:0}',
+      '.gm-fold button.on .c{background:rgba(201,168,76,.28)}',
       '.gm-search{flex:1;min-width:150px;display:flex;gap:6px}',
       '.gm-search input{flex:1;min-width:0;background:#0d0d0d;border:1px solid var(--border2,rgba(255,255,255,.12));border-radius:8px;padding:8px 10px;color:#fff;font-size:13px;font-family:inherit}',
       '.gm-btn{background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:var(--g);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}',
       '.gm-btn:hover{background:rgba(201,168,76,.22)}',
       '.gm-btn.plain{background:transparent;border-color:var(--border2,rgba(255,255,255,.14));color:var(--muted,#aaa)}',
       '.gm-body{display:flex;flex:1;min-height:0}',
-      '.gm-list{width:340px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--border,rgba(255,255,255,.08))}',
-      '.gm-pane{flex:1;overflow-y:auto;min-width:0;padding:0}',
-      '.gm-row{padding:11px 14px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));cursor:pointer}',
+      // .gm-list is a COLUMN now: category tabs pinned on top, rows scrolling under
+      // them. The tabs used to span the full width including the reading pane, where
+      // they mean nothing — they only ever filtered this column.
+      '.gm-list{width:340px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--border,rgba(255,255,255,.08))}',
+      // Exactly one scroll region per column. The page itself does not scroll, so the
+      // two stacked scrollbars on the right edge collapse to one per pane.
+      '.gm-rows{flex:1;min-height:0;overflow-y:auto}',
+      '.gm-pane{flex:1;overflow-y:auto;min-width:0;min-height:0;padding:0}',
+      /* ── thread rows: ~96px → ~64px ────────────────────────────────────────
+       * line 1 sender + time, line 2 subject, line 3 one-line snippet, with an
+       * avatar column beside them. */
+      '.gm-row{display:flex;gap:9px;padding:8px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));cursor:pointer;align-items:flex-start}',
       '.gm-row:hover{background:rgba(255,255,255,.03)}',
       '.gm-row.active{background:rgba(201,168,76,.08)}',
       '.gm-row.unread .gm-row-subj{font-weight:800;color:#fff}',
+      '.gm-av{width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#12100b;margin-top:1px;user-select:none}',
+      '.gm-rowmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}',
       '.gm-row-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}',
-      '.gm-row-from{font-size:12.5px;color:#ddd;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.gm-row-date{font-size:11px;color:var(--muted,#888);flex-shrink:0}',
-      '.gm-row-subj{font-size:13px;color:#eee;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.gm-row-snip{font-size:12px;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.gm-row-from{font-size:12px;color:#ddd;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.gm-row-date{font-size:10.5px;color:var(--muted,#888);flex-shrink:0}',
+      '.gm-row-subj{font-size:12.5px;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35}',
+      '.gm-row-snip{font-size:11.5px;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35}',
+      // Filed-to-lead chip, so filing is visible in the list instead of only after
+      // opening the thread.
+      '.gm-row-filed{display:inline-flex;align-items:center;gap:3px;max-width:100%;font-size:10px;font-weight:700;color:#7ee2a0;background:rgba(80,200,120,.13);border:1px solid rgba(80,200,120,.32);border-radius:9px;padding:0 5px;margin-top:2px;align-self:flex-start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.gm-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--g);margin-right:6px;vertical-align:middle}',
       '.gm-cnt{display:inline-block;font-size:10px;color:var(--muted,#888);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:9px;padding:0 5px;margin-left:6px}',
       '.gm-empty{padding:40px 20px;text-align:center;color:var(--muted,#888);font-size:13px}',
-      '.gm-phead{position:sticky;top:0;background:var(--surface,#111);border-bottom:1px solid var(--border,rgba(255,255,255,.08));padding:12px 16px;z-index:2}',
-      '.gm-psubj{font-size:15px;font-weight:800;color:#fff;margin:0 0 6px}',
-      '.gm-pacts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}',
-      '.gm-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px;background:rgba(80,200,120,.14);color:#50c878;border:1px solid rgba(80,200,120,.4)}',
+      /* Header is now ONE line: subject + filed chip + a ▾ actions menu, instead of
+       * a subject line followed by a full row of Filed/Re-file/Unfile/Archive. */
+      '.gm-phead{position:sticky;top:0;background:var(--surface,#111);border-bottom:1px solid var(--border,rgba(255,255,255,.08));padding:9px 14px;z-index:2;display:flex;align-items:center;gap:8px}',
+      '.gm-psubj{font-size:14px;font-weight:800;color:#fff;margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-pacts{display:flex;gap:6px;align-items:center;flex-shrink:0}',
+      '.gm-badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:12px;background:rgba(80,200,120,.14);color:#50c878;border:1px solid rgba(80,200,120,.4);white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis}',
+      '.gm-badge.none{background:rgba(255,255,255,.05);color:var(--muted,#999);border-color:var(--border2,rgba(255,255,255,.14))}',
+      /* Collapsed older messages: one-line stubs. A 4-message thread opens showing
+       * the newest message only, which is the one being replied to. */
+      '.gm-stub{display:flex;align-items:baseline;gap:8px;padding:7px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));cursor:pointer;font-size:12px}',
+      '.gm-stub:hover{background:rgba(255,255,255,.04)}',
+      '.gm-stub .w{font-weight:700;color:#ccc;flex-shrink:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-stub .s{flex:1;min-width:0;color:var(--muted,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-stub .d{color:var(--muted,#777);font-size:11px;flex-shrink:0}',
+      '.gm-stubbar{display:flex;align-items:center;gap:8px;padding:6px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,.06))}',
+      '.gm-stubbar button{background:none;border:none;color:var(--g);font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;padding:0}',
+      // Quoted-trailer toggle: the "On <date> <sender> wrote:" block is split out of
+      // the message body and rendered only on request.
+      '.gm-qtog{background:rgba(255,255,255,.08);border:none;border-radius:9px;color:#9a9a9a;font-size:12px;line-height:1;letter-spacing:1px;padding:2px 8px;margin:6px 0 0;cursor:pointer;font-family:inherit}',
+      '.gm-qtog:hover{background:rgba(255,255,255,.16);color:#fff}',
       '.gm-msg{padding:12px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,.06))}',
       '.gm-mmeta{font-size:12px;color:var(--muted,#999);margin-bottom:8px;line-height:1.5}',
       '.gm-mdir{font-weight:700}',
@@ -273,6 +343,10 @@
       '.gm-tools button:hover{background:rgba(255,255,255,.08);color:#fff}',
       '.gm-tools .sep{width:1px;height:18px;background:var(--border2,rgba(255,255,255,.14));margin:0 5px;flex-shrink:0}',
       '.gm-tools button.wide{min-width:auto;padding:0 10px;font-size:11.5px;font-weight:700}',
+      // Attach adds a FILE to the message; its neighbours insert content into the body.
+      // Different job, different look — it was unfindable as another grey glyph.
+      '.gm-tools button.accent{background:rgba(201,168,76,.13);border-color:rgba(201,168,76,.42);color:var(--g,#c9a84c);gap:4px}',
+      '.gm-tools button.accent:hover{background:rgba(201,168,76,.24);color:#fff}',
       '.gm-tools select{height:30px;background:#0d0d0d;color:#ccc;border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:6px;font-size:11.5px;font-family:inherit;padding:0 4px;max-width:104px;cursor:pointer}',
       '.gm-tools select:hover{color:#fff}',
       '.gm-emoji{display:flex;flex-wrap:wrap;gap:2px;max-height:210px;overflow-y:auto}',
@@ -369,13 +443,9 @@
       // It must NOT be position:absolute — .gm-pane/.gm-list are overflow:auto and clip it.
       '.gm-pop-menu{z-index:10050;width:280px;max-width:78vw;background:#141414;border:1px solid var(--border2,rgba(255,255,255,.16));border-radius:10px;padding:8px;box-shadow:0 12px 30px rgba(0,0,0,.5)}',
       /* ── compose button, folders, category tabs ── */
-      '.gm-compose{background:var(--g);border:1px solid var(--g);color:#161616;border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0}',
+      // Full-width at the top of the rail, Gmail-style.
+      '.gm-compose{display:block;width:100%;background:var(--g);border:1px solid var(--g);color:#161616;border-radius:9px;padding:9px 12px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0}',
       '.gm-compose:hover{filter:brightness(1.08)}',
-      '.gm-folders{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));overflow-x:auto;flex-shrink:0;-webkit-overflow-scrolling:touch}',
-      '.gm-folders button{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:16px;border:1px solid transparent;background:transparent;color:var(--muted,#999);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0}',
-      '.gm-folders button:hover{background:rgba(255,255,255,.05);color:#ddd}',
-      '.gm-folders button.on{background:rgba(201,168,76,.15);color:var(--g);border-color:rgba(201,168,76,.45)}',
-      '.gm-folders .i{font-size:13px}',
       '.gm-cats{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));overflow-x:auto;flex-shrink:0;-webkit-overflow-scrolling:touch}',
       '.gm-cats button{padding:9px 14px;border:none;background:transparent;color:var(--muted,#888);font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;border-bottom:2px solid transparent;flex-shrink:0}',
       '.gm-cats button:hover{color:#ddd}',
@@ -425,13 +495,20 @@
       '.gm-modal .gm-modal-card{width:820px;max-width:96vw;height:86vh;background:var(--surface,#111);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:14px;display:flex;flex-direction:column;overflow:hidden}',
       '.gm-modal-close{background:none;border:none;color:#999;font-size:22px;cursor:pointer;line-height:1}',
       '@media (min-width:769px) and (max-width:1199px){',
+      '  .gm-rail{width:172px}',
       '  .gm-list{width:290px}',
       '  .gm-ed{max-height:34vh}',
-      '  .gm-folders button{padding:6px 10px}',
       '  .gm-cats button{padding:9px 11px}',
       '}',
       '@media (max-width:768px){',
-      '  .gm-inbox{height:auto;min-height:calc(100vh - 90px)}',
+      // Phone: a 200px rail beside a 100%-wide list leaves nothing for either, so the
+      // shell goes back to a column and the rail becomes a horizontal strip.
+      '  .gm-inbox{flex-direction:column;height:auto;min-height:calc(100vh - 90px)}',
+      '  .gm-rail{width:100%;flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;border-right:none;border-bottom:1px solid var(--border,rgba(255,255,255,.08));overflow-x:auto}',
+      '  .gm-sw{flex-direction:row;align-items:center;padding:4px 6px}',
+      '  .gm-sw-l{display:none}',
+      '  .gm-fold{flex-direction:row;gap:6px;flex:1;min-width:0;overflow-x:auto}',
+      '  .gm-fold button{width:auto;min-height:38px;padding:8px 12px;flex-shrink:0}',
       '  .gm-list{width:100%}',
       '  .gm-body .gm-pane{display:none}',
       '  .gm-inbox.gm-show-pane .gm-list{display:none}',
@@ -461,11 +538,9 @@
       '  .gm-ai-lbl{flex-shrink:0}',
       '  .gm-ai-out{margin-left:12px;margin-right:12px}',
       '  .gm-sig-tog{min-height:38px}',
-      /* folders/categories: horizontal scroll strips with real touch targets */
-      '  .gm-folders{padding:8px;gap:6px}',
-      '  .gm-folders button{min-height:38px;padding:8px 13px}',
+      /* categories: horizontal scroll strip with real touch targets */
       '  .gm-cats button{min-height:42px;padding:10px 14px}',
-      '  .gm-compose{min-height:40px;padding:9px 16px;order:-1}',
+      '  .gm-compose{min-height:40px;padding:9px 16px;width:auto;order:-1}',
       '  .gm-ac{max-height:46vh}',
       '  .gm-ac-n{max-width:100%}',
       '  .gm-ac-item{flex-wrap:wrap;gap:4px 8px;padding:10px 9px}',
@@ -482,7 +557,7 @@
       '  .gm-chips input{min-width:100%}',
       '  .gm-compose{width:100%;border-radius:10px}',
       '  .gm-tb{gap:6px}',
-      '  .gm-folders button .i{margin:0}',
+      '  .gm-fold button .i{margin:0}',
       '  .gm-ai-btn{padding:5px 9px;font-size:11px}',
       '  .gm-sig-tog{flex-basis:100%;order:2}',
       '}',
@@ -936,15 +1011,19 @@
     { c: 'insertUnorderedList', l: '&bull;&nbsp;', t: 'Bulleted list' },
     { c: 'insertOrderedList', l: '1.', t: 'Numbered list' },
     { sep: 1 },
-    { c: '_link', l: '&#128279;', t: 'Insert link' },
-    { c: '_attach', l: '&#128206;', t: 'Attach files' },
-    { c: '_image', l: '&#128247;', t: 'Insert image' },
-    { c: '_video', l: '&#127909;', t: 'Record a video message' },
-    { c: '_emoji', l: '&#128512;', t: 'Emoji' },
+    { c: '_link', l: '&#128279;', t: 'Insert a hyperlink into the message (Ctrl+K)' },
     { sep: 1 },
-    { c: '_insert', l: 'Insert &#9662;', t: 'Insert a button', wide: 1 },
-    { c: '_ai', l: '&#10024; AI &#9662;', t: 'AI assistant', wide: 1 },
-    { c: '_more', l: '&#8943;', t: 'More formatting' }
+    /* Attach is the odd one out and is styled that way: it adds a FILE to the
+     * message, while its neighbours insert content INTO the body. Rene could not
+     * find it among identical grey glyphs, so it gets a label and its own colour. */
+    { c: '_attach', l: '&#128206; Attach', t: 'Attach a file — sent with the message (20MB max)', wide: 1, accent: 1 },
+    { c: '_image', l: '&#128247;', t: 'Insert an image into the message body' },
+    { c: '_video', l: '&#127909;', t: 'Record a video message and insert it as a thumbnail' },
+    { c: '_emoji', l: '&#128512;', t: 'Insert an emoji' },
+    { sep: 1 },
+    { c: '_insert', l: 'Insert &#9662;', t: 'Insert a call-to-action button', wide: 1 },
+    { c: '_ai', l: '&#10024; AI &#9662;', t: 'AI assistant — draft, improve or summarize', wide: 1 },
+    { c: '_more', l: '&#8943;', t: 'More formatting — alignment, indent, quote, clear formatting' }
   ];
   /* Overflow menu contents. Plain execCommand items, dispatched through the very
    * same data-c handler as the visible buttons — no second code path. */
@@ -996,6 +1075,29 @@
       'style="max-width:100%;border-radius:8px;display:block"></a>' +
       '<div style="font-size:12px;color:#666;margin-top:4px">▶ ' +
       esc(caption || 'Click the image to watch') + '</div>';
+  }
+
+  /* Split a message body into the part actually written now and the quoted trailer
+   * ("On <date> <sender> wrote:" + the whole prior thread). Gmail marks its own with
+   * .gmail_quote; other clients use a cite blockquote or a bare "On … wrote:" line.
+   * Conservative on purpose: if no confident boundary is found, nothing is hidden —
+   * showing an extra quote is a much smaller failure than hiding real content. */
+  function splitQuoted(html) {
+    var s = String(html || '');
+    if (!s) return { main: s, quoted: '' };
+    var candidates = [
+      s.search(/<div[^>]+class="[^"]*gmail_quote[^"]*"/i),
+      s.search(/<blockquote[^>]+type="cite"/i),
+      s.search(/<div[^>]+id="appendonsend"/i),
+      // Bare textual trailer, e.g. "On Tue, Jul 8, 2026 at 9:14 AM Bob <b@x> wrote:"
+      s.search(/On\s+[^<]{6,120}\s+wrote:\s*(<br|<\/div|<blockquote)/i)
+    ].filter(function (i) { return i > -1; });
+    if (!candidates.length) return { main: s, quoted: '' };
+    var cut = Math.min.apply(null, candidates);
+    // A boundary in the first few characters means the whole message IS a quote;
+    // hiding all of it would leave an empty bubble.
+    if (cut < 24) return { main: s, quoted: '' };
+    return { main: s.slice(0, cut), quoted: s.slice(cut) };
   }
 
   /** YouTube/Loom → clickable thumbnail. */
@@ -1381,17 +1483,18 @@
       // No "Font"/"Size" placeholder option: the control shows what the caret is
       // actually in, and syncFontSize() keeps it in step with the selection.
       if (t.sel === 'font') {
-        return '<select data-sel="font" title="Font">' +
+        return '<select data-sel="font" title="Font family for the selected text" aria-label="Font">' +
           FONTS.map(function (f) { return '<option value="' + f + '">' + f + '</option>'; }).join('') + '</select>';
       }
       if (t.sel === 'size') {
-        return '<select data-sel="size" title="Size">' +
+        return '<select data-sel="size" title="Text size for the selected text" aria-label="Size">' +
           SIZES.map(function (s) {
             return '<option value="' + s[0] + '"' + (s[0] === '3' ? ' selected' : '') + '>' + s[1] + '</option>';
           }).join('') + '</select>';
       }
-      return '<button type="button"' + (t.wide ? ' class="wide"' : '') +
-        ' data-c="' + t.c + '" title="' + esc(t.t) + '">' + t.l + '</button>';
+      var cls = [t.wide ? 'wide' : '', t.accent ? 'accent' : ''].filter(Boolean).join(' ');
+      return '<button type="button"' + (cls ? ' class="' + cls + '"' : '') +
+        ' data-c="' + t.c + '" title="' + esc(t.t) + '" aria-label="' + esc(t.t) + '">' + t.l + '</button>';
     }).join('') + '</div>');
 
     /* ── ✨ AI. The four buttons used to occupy their own always-visible row; they
@@ -2153,28 +2256,52 @@
     // which the old inline heuristic here ignored.
     var last = msgs[msgs.length - 1] || {};
 
+    /* ── header: ONE line ──────────────────────────────────────────────────────
+     * Subject, the filed state as a chip, and everything actionable behind a ▾.
+     * This used to be a subject line plus a full row of Filed/Re-file/Unfile/
+     * Archive buttons, which cost a whole row of the reading pane permanently. */
     var h = [];
     h.push('<div class="gm-phead">');
-    if (ctx.modal) h.push('<div style="display:flex;justify-content:space-between;align-items:start;gap:10px"><div class="gm-psubj">' + esc(subj) + '</div><button class="gm-modal-close" data-gm="close">×</button></div>');
-    else h.push('<button class="gm-btn plain gm-back" data-gm="back" style="margin-bottom:8px">‹ Back</button><div class="gm-psubj">' + esc(subj) + '</div>');
+    if (!ctx.modal) h.push('<button class="gm-btn plain gm-back" data-gm="back">‹</button>');
+    h.push('<div class="gm-psubj" title="' + esc(subj) + '">' + esc(subj) + '</div>');
     h.push('<div class="gm-pacts">');
-    if (filedId) h.push('<span class="gm-badge" title="Filed via ' + esc(filedVia || '') + '">🏷 Filed to ' + esc(filedNm || 'lead') + '</span>');
-    if (ctx.allowTag !== false) {
-      h.push('<span class="gm-pop"><button class="gm-btn" data-gm="tagbtn">🏷 ' + (filedId ? 'Re-file' : 'Tag borrower') + '</button></span>');
-      if (filedId) h.push('<button class="gm-btn plain" data-gm="unfile">Unfile</button>');
-    }
-    h.push('<button class="gm-btn plain" data-gm="archive">Archive</button>');
+    h.push('<span class="gm-badge' + (filedId ? '' : ' none') + '"' +
+      (filedId ? ' title="Filed via ' + esc(filedVia || '') + '"' : ' title="Not filed to a lead"') + '>' +
+      (filedId ? '🏷 ' + esc(filedNm || 'lead') : '🏷 Not filed') + '</span>');
+    h.push('<button class="gm-btn plain" data-gm="acts" title="Thread actions">▾</button>');
+    if (ctx.modal) h.push('<button class="gm-modal-close" data-gm="close">×</button>');
     h.push('</div></div>');
 
+    /* ── messages ──────────────────────────────────────────────────────────────
+     * Only the newest is expanded. The rest are one-line stubs — a 4-message thread
+     * opens showing one message, not four, and the one shown is the one being
+     * replied to. Click a stub to expand it in place. */
+    var newest = msgs.length - 1;
+    if (msgs.length > 1) {
+      h.push('<div class="gm-stubbar"><button data-gm="expandall">Expand all ' + msgs.length + ' messages</button></div>');
+    }
     msgs.forEach(function (m, i) {
       var inbound = m.direction === 'inbound';
-      var meta = ['<span class="gm-mdir" style="color:' + (inbound ? '#50c878' : '#c9a84c') + '">' + (inbound ? '↓ ' + esc((m.from && m.from.name) || (m.from && m.from.email) || '') : '↑ You') + '</span>'];
+      var who = inbound ? ((m.from && (m.from.name || m.from.email)) || 'them') : 'You';
+      if (i !== newest) {
+        h.push('<div class="gm-stub" data-stub="' + i + '" title="Click to expand">' +
+          '<span class="w">' + (inbound ? '↓ ' : '↑ ') + esc(who) + '</span>' +
+          '<span class="s">' + esc(m.body_text ? String(m.body_text).replace(/\s+/g, ' ').slice(0, 200) : '') + '</span>' +
+          '<span class="d">' + esc(m.date ? fmtDate(m.date) : '') + '</span></div>');
+      }
+      var meta = ['<span class="gm-mdir" style="color:' + (inbound ? '#50c878' : '#c9a84c') + '">' + (inbound ? '↓ ' + esc(who) : '↑ You') + '</span>'];
       if (m.from && m.from.email) meta.push(esc(m.from.email));
       if (m.to && m.to.length) meta.push('to ' + esc(m.to.join(', ')));
       if (m.date) meta.push(fmtDate(m.date));
-      h.push('<div class="gm-msg">');
+      h.push('<div class="gm-msg" data-msg="' + i + '"' + (i !== newest ? ' style="display:none"' : '') + '>');
       h.push('<div class="gm-mmeta">' + meta.join(' &nbsp;·&nbsp; ') + '</div>');
       h.push('<iframe class="gm-frame" data-fi="' + i + '" sandbox="allow-same-origin allow-popups"></iframe>');
+      // The quoted trailer gets its own frame, rendered only when asked for. It has
+      // to be a separate frame: the iframes carry no allow-scripts, so nothing inside
+      // one can toggle itself.
+      h.push('<div data-qt="' + i + '" style="display:none">' +
+        '<button class="gm-qtog" data-qtog="' + i + '" title="Show quoted text">•••</button>' +
+        '<iframe class="gm-frame" data-qi="' + i + '" sandbox="allow-same-origin allow-popups" style="display:none"></iframe></div>');
       if (m.attachments && m.attachments.length) {
         h.push('<div>' + m.attachments.map(function (a) { return '<span class="gm-att">📎 ' + esc(a.filename || 'attachment') + '</span>'; }).join('') + '</div>');
       }
@@ -2199,9 +2326,50 @@
     msgs.forEach(function (m, i) {
       var f = host.querySelector('.gm-frame[data-fi="' + i + '"]');
       if (!f) return;
+      var split = splitQuoted(m.body_html);
       autoFit(f, 0); // 0 = uncapped: long rate sheets must render in full
-      f.srcdoc = wrapBody(m.body_html, m.body_text);
+      f.srcdoc = wrapBody(split.main || m.body_html, m.body_text);
+      // Only offer the toggle when there is genuinely a trailer to hide.
+      if (split.quoted) {
+        var box = host.querySelector('[data-qt="' + i + '"]');
+        if (box) box.style.display = '';
+        var qf = host.querySelector('.gm-frame[data-qi="' + i + '"]');
+        if (qf) { autoFit(qf, 0); qf.setAttribute('data-src', split.quoted); }
+      }
     });
+
+    // Quoted-trailer toggles. srcdoc is set on first open so a long thread's quotes
+    // are never parsed unless someone asks for them.
+    Array.prototype.forEach.call(host.querySelectorAll('[data-qtog]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var i = btn.getAttribute('data-qtog');
+        var qf = host.querySelector('.gm-frame[data-qi="' + i + '"]');
+        if (!qf) return;
+        var open = qf.style.display !== 'none';
+        if (!open && !qf.srcdoc) qf.srcdoc = wrapBody(qf.getAttribute('data-src') || '', '');
+        qf.style.display = open ? 'none' : '';
+        btn.title = open ? 'Show quoted text' : 'Hide quoted text';
+      });
+    });
+
+    // Stubs → expand that message in place.
+    function expandMsg(i) {
+      var stub = host.querySelector('[data-stub="' + i + '"]');
+      var msg = host.querySelector('[data-msg="' + i + '"]');
+      if (stub) stub.style.display = 'none';
+      if (msg) msg.style.display = '';
+    }
+    Array.prototype.forEach.call(host.querySelectorAll('[data-stub]'), function (st) {
+      st.addEventListener('click', function () { expandMsg(st.getAttribute('data-stub')); });
+    });
+    var expandAll = host.querySelector('[data-gm="expandall"]');
+    if (expandAll) {
+      expandAll.addEventListener('click', function () {
+        msgs.forEach(function (_m, i) { expandMsg(i); });
+        var bar = expandAll.closest('.gm-stubbar');
+        if (bar) bar.remove();
+      });
+    }
 
     // mark the thread read (best-effort) + clear the list dot
     invoke(cl, mailbox, 'modify', { thread_id: threadId, mark_read: true }).then(function () {
@@ -2212,10 +2380,36 @@
     function wire(sel, fn) { var el = host.querySelector(sel); if (el) el.addEventListener('click', fn); }
     wire('[data-gm="back"]', function () { if (ctx.onBack) ctx.onBack(); });
     wire('[data-gm="close"]', function () { if (ctx.onClose) ctx.onClose(); });
-    wire('[data-gm="archive"]', async function (e) {
-      e.target.disabled = true;
+    /* Thread actions moved off the header row into this ▾ menu. Same operations,
+     * same calls — only the affordance changed, so the header costs one line total
+     * instead of a permanent button row. */
+    async function doArchive() {
       try { await invoke(cl, mailbox, 'modify', { thread_id: threadId, archive: true }); toast('Archived'); if (ctx.onArchived) ctx.onArchived(threadId); }
-      catch (err) { toast(err.message); e.target.disabled = false; }
+      catch (err) { toast(err.message); }
+    }
+    async function doUnfile() {
+      try { await invoke(cl, mailbox, 'untag', { thread_id: threadId, unfile: true }); toast('Unfiled'); renderThread(host, ctx); if (ctx.onChanged) ctx.onChanged(); }
+      catch (err) { toast(err.message); }
+    }
+    wire('[data-gm="acts"]', function (e) {
+      var anchor = e.currentTarget;
+      var menu = document.createElement('div');
+      menu.className = 'gm-pop-menu';
+      var items = [];
+      if (ctx.allowTag !== false) items.push('<div class="gm-pop-item" data-a="tag">🏷 ' + (filedId ? 'Re-file to another lead' : 'Tag borrower') + '</div>');
+      if (filedId && ctx.allowTag !== false) items.push('<div class="gm-pop-item" data-a="unfile">Unfile from ' + esc(filedNm || 'lead') + '</div>');
+      items.push('<div class="gm-pop-item" data-a="archive">🗄 Archive thread</div>');
+      menu.innerHTML = items.join('');
+      var pop = portalPopover(anchor, menu, { width: 240 });
+      Array.prototype.forEach.call(menu.querySelectorAll('[data-a]'), function (it) {
+        it.addEventListener('click', function () {
+          var a = it.getAttribute('data-a');
+          pop.close();
+          if (a === 'archive') doArchive();
+          else if (a === 'unfile') doUnfile();
+          else openTagPopover(anchor);
+        });
+      });
     });
     // Reply / Reply all / Forward → mount the composer
     Array.prototype.forEach.call(host.querySelectorAll('[data-cmp]'), function (b) {
@@ -2231,16 +2425,10 @@
         });
       });
     });
-    wire('[data-gm="unfile"]', async function (e) {
-      e.target.disabled = true;
-      try { await invoke(cl, mailbox, 'untag', { thread_id: threadId, unfile: true }); toast('Unfiled'); renderThread(host, ctx); if (ctx.onChanged) ctx.onChanged(); }
-      catch (err) { toast(err.message); e.target.disabled = false; }
-    });
     // tag popover
     var tagPop = null;
-    wire('[data-gm="tagbtn"]', function (e) {
+    function openTagPopover(btn) {
       if (tagPop) { tagPop.close(); tagPop = null; return; }
-      var btn = e.target;
       var menu = document.createElement('div'); menu.className = 'gm-pop-menu';
       menu.innerHTML = '<input type="text" placeholder="Search contacts…"><div class="gm-pop-res"></div>';
       // Body-portalled: as an absolutely-positioned child it was clipped by .gm-pane's
@@ -2270,7 +2458,7 @@
           });
         }, 220);
       });
-    });
+    }
   }
 
   /* ══════════════════════════════════════════════════════════════════════════
@@ -2317,33 +2505,58 @@
     var showSwitcher = !!opts.showSwitcher && mailboxes.length > 1;
     var state = {
       mailbox: mailboxes[0], q: '', threads: [], drafts: [], active: null,
-      folder: 'INBOX', category: 'CATEGORY_PERSONAL', primaryFellBack: false
+      folder: 'INBOX', category: 'CATEGORY_PERSONAL', primaryFellBack: false,
+      // thread_id -> lead name (or null when checked and unfiled). Cached so the
+      // list can re-render without re-querying every scroll/refresh.
+      filed: {}
     };
 
     var root = document.createElement('div'); root.className = 'gm-inbox';
-    var sw = showSwitcher ? '<div class="gm-sw">' + mailboxes.map(function (m, i) {
-      return '<button data-mb="' + esc(m) + '"' + (i === 0 ? ' class="active"' : '') + '>' + esc(m.split('@')[0]) + '@</button>';
+    /* Mailbox switcher stays visually separate from the folder list under it. These
+     * are not the same kind of control: folders filter what you see, the mailbox
+     * decides WHOSE mail you may see at all, and the server refuses a va asking for
+     * rene@. Styling them alike would invite treating it as another filter. */
+    var sw = showSwitcher ? '<div class="gm-sw"><div class="gm-sw-l">Mailbox</div>' + mailboxes.map(function (m, i) {
+      return '<button data-mb="' + esc(m) + '"' + (i === 0 ? ' class="active"' : '') +
+        ' title="' + esc(m) + '"><span class="k"></span>' + esc(m.split('@')[0]) + '@</button>';
     }).join('') + '</div>' : '';
+
+    var HINT = 'Gmail · ' + mailboxes.join(' / ') + ' — tag a thread to file it on a lead';
+
     root.innerHTML =
-      '<div class="gm-tb">' +
+      '<div class="gm-rail">' +
         '<button class="gm-compose" data-gm="compose">✏️ Compose</button>' + sw +
-        '<div class="gm-search"><input type="text" placeholder="Search mail (Gmail syntax: from: subject: is:unread …)"><button class="gm-btn" data-gm="go">Search</button></div>' +
-        '<button class="gm-btn plain" data-gm="refresh">↻</button>' +
+        '<div class="gm-fold" data-gm="fold">' + FOLDERS.map(function (f) {
+          return '<button data-fd="' + f.k + '"' + (f.k === 'INBOX' ? ' class="on"' : '') +
+            ' title="' + esc(f.label) + '"><span class="i">' + f.icon + '</span>' +
+            '<span class="n">' + esc(f.label) + '</span>' +
+            '<span class="c" data-cnt="' + f.k + '" style="display:none"></span></button>';
+        }).join('') + '</div>' +
       '</div>' +
-      '<div class="gm-folders">' + FOLDERS.map(function (f) {
-        return '<button data-fd="' + f.k + '"' + (f.k === 'INBOX' ? ' class="on"' : '') + '>' +
-          '<span class="i">' + f.icon + '</span>' + esc(f.label) + '</button>';
-      }).join('') + '</div>' +
-      '<div class="gm-cats" data-gm="cats">' + CATEGORIES.map(function (c) {
-        return '<button data-ct="' + c.k + '"' + (c.k === 'CATEGORY_PERSONAL' ? ' class="on"' : '') + '>' + esc(c.label) + '</button>';
-      }).join('') + '</div>' +
-      '<div class="gm-hint" data-gm="hint" style="display:none"></div>' +
-      '<div class="gm-body"><div class="gm-list"><div class="gm-empty">Loading…</div></div><div class="gm-pane"><div class="gm-empty">Select a thread to read.</div></div></div>';
+      '<div class="gm-main">' +
+        // ONE row: search + refresh. The old page-title row and its hint are gone;
+        // the hint survives as this tooltip and as the reading pane's empty state.
+        '<div class="gm-tb" title="' + esc(HINT) + '">' +
+          '<div class="gm-search"><input type="text" placeholder="Search mail (Gmail syntax: from: subject: is:unread …)"><button class="gm-btn" data-gm="go">Search</button></div>' +
+          '<button class="gm-btn plain" data-gm="refresh" title="Refresh">↻</button>' +
+        '</div>' +
+        '<div class="gm-hint" data-gm="hint" style="display:none"></div>' +
+        '<div class="gm-body">' +
+          '<div class="gm-list">' +
+            // Category tabs belong to this column only — they never filtered the pane.
+            '<div class="gm-cats" data-gm="cats">' + CATEGORIES.map(function (c) {
+              return '<button data-ct="' + c.k + '"' + (c.k === 'CATEGORY_PERSONAL' ? ' class="on"' : '') + '>' + esc(c.label) + '</button>';
+            }).join('') + '</div>' +
+            '<div class="gm-rows" data-gm="rows"><div class="gm-empty">Loading…</div></div>' +
+          '</div>' +
+          '<div class="gm-pane"><div class="gm-empty">Select a thread to read.<br><span style="font-size:11.5px;opacity:.7">' + esc(HINT) + '</span></div></div>' +
+        '</div>' +
+      '</div>';
     el.innerHTML = ''; el.appendChild(root);
 
-    var listEl = root.querySelector('.gm-list'), paneEl = root.querySelector('.gm-pane'),
+    var listEl = root.querySelector('[data-gm="rows"]'), paneEl = root.querySelector('.gm-pane'),
         searchEl = root.querySelector('.gm-search input'), catsEl = root.querySelector('[data-gm="cats"]'),
-        hintEl = root.querySelector('[data-gm="hint"]');
+        hintEl = root.querySelector('[data-gm="hint"]'), foldEl = root.querySelector('[data-gm="fold"]');
 
     function folder() { return FOLDERS.filter(function (f) { return f.k === state.folder; })[0] || FOLDERS[0]; }
     function setHint(msg) {
@@ -2373,14 +2586,88 @@
       }
       listEl.innerHTML = state.threads.map(function (t) {
         var from = (t.from && (t.from.name || t.from.email)) || '';
+        var filed = state.filed[t.id];
         return '<div class="gm-row' + (t.unread ? ' unread' : '') + (state.active === t.id ? ' active' : '') + '" data-tid="' + esc(t.id) + '">' +
-          '<div class="gm-row-top"><span class="gm-row-from">' + (t.unread ? '<span class="gm-dot"></span>' : '') + esc(from) + '</span><span class="gm-row-date">' + esc(fmtDate(t.date)) + '</span></div>' +
-          '<div class="gm-row-subj">' + esc(t.subject || '(no subject)') + (t.message_count > 1 ? '<span class="gm-cnt">' + t.message_count + '</span>' : '') + '</div>' +
-          '<div class="gm-row-snip">' + esc(t.snippet || '') + '</div></div>';
+          avatarHtml(from, (t.from && t.from.email) || '') +
+          '<div class="gm-rowmain">' +
+            '<div class="gm-row-top"><span class="gm-row-from">' + (t.unread ? '<span class="gm-dot"></span>' : '') + esc(from) + '</span>' +
+            '<span class="gm-row-date">' + esc(fmtDate(t.date)) + '</span></div>' +
+            '<div class="gm-row-subj">' + esc(t.subject || '(no subject)') + (t.message_count > 1 ? '<span class="gm-cnt">' + t.message_count + '</span>' : '') + '</div>' +
+            '<div class="gm-row-snip">' + esc(t.snippet || '') + '</div>' +
+            (filed ? '<span class="gm-row-filed" title="Filed to ' + esc(filed) + '">🏷 ' + esc(filed) + '</span>' : '') +
+          '</div></div>';
       }).join('');
       Array.prototype.forEach.call(listEl.querySelectorAll('[data-tid]'), function (r) {
         r.addEventListener('click', function () { openThread(r.getAttribute('data-tid')); });
       });
+      loadFiledChips();
+    }
+
+    /* Filed-to-lead chips. email_thread_tags holds the explicit tags; resolve the
+     * visible thread ids in ONE query rather than per row, then fill in the chips.
+     * Deliberately after render so a slow/failed lookup never delays the list. */
+    function loadFiledChips() {
+      var ids = state.threads.map(function (t) { return t.id; }).filter(function (id) {
+        return !(id in state.filed);
+      });
+      if (!ids.length) return;
+      cl.from('email_thread_tags').select('gmail_thread_id,contact_id').in('gmail_thread_id', ids)
+        .then(function (r) {
+          if (r.error || !r.data || !r.data.length) {
+            ids.forEach(function (id) { state.filed[id] = null; });
+            return;
+          }
+          var byThread = {};
+          r.data.forEach(function (x) { byThread[x.gmail_thread_id] = x.contact_id; });
+          var cids = Object.keys(byThread).map(function (k) { return byThread[k]; })
+            .filter(function (v, i, a) { return v && a.indexOf(v) === i; });
+          if (!cids.length) { ids.forEach(function (id) { state.filed[id] = null; }); return; }
+          return cl.from('contacts').select('id,first_name,last_name,name').in('id', cids).then(function (c) {
+            var nm = {};
+            (c.data || []).forEach(function (x) {
+              nm[x.id] = (x.name || [x.first_name, x.last_name].filter(Boolean).join(' ') || '').trim() || 'lead';
+            });
+            ids.forEach(function (id) {
+              state.filed[id] = byThread[id] ? (nm[byThread[id]] || 'lead') : null;
+            });
+            renderFiledChips();
+          });
+        }).catch(function () {});
+    }
+    // Patch chips into the existing rows — re-rendering the whole list would fight
+    // with scroll position and the active-row highlight.
+    function renderFiledChips() {
+      Array.prototype.forEach.call(listEl.querySelectorAll('[data-tid]'), function (row) {
+        var id = row.getAttribute('data-tid');
+        var name = state.filed[id];
+        var existing = row.querySelector('.gm-row-filed');
+        if (!name) { if (existing) existing.remove(); return; }
+        if (existing) { existing.textContent = '🏷 ' + name; existing.title = 'Filed to ' + name; return; }
+        var main = row.querySelector('.gm-rowmain');
+        if (!main) return;
+        var chip = document.createElement('span');
+        chip.className = 'gm-row-filed';
+        chip.title = 'Filed to ' + name;
+        chip.textContent = '🏷 ' + name;
+        main.appendChild(chip);
+      });
+    }
+
+    /* Unread badges in the rail. Archived has none by design — it is a search
+     * expression, not a Gmail label, so there is no count to read. */
+    function loadCounts() {
+      invoke(cl, state.mailbox, 'label_counts', {}).then(function (r) {
+        var counts = (r && r.counts) || {};
+        FOLDERS.forEach(function (f) {
+          var el2 = foldEl.querySelector('[data-cnt="' + f.k + '"]');
+          if (!el2) return;
+          var c = counts[f.k];
+          // Drafts has no "unread" concept — show the total instead.
+          var n = c ? (f.k === 'DRAFT' ? c.total : c.unread) : 0;
+          if (n > 0) { el2.textContent = n > 999 ? '999+' : String(n); el2.style.display = ''; }
+          else { el2.style.display = 'none'; }
+        });
+      }).catch(function () {});
     }
 
     function renderDrafts() {
@@ -2422,6 +2709,7 @@
           }
         }
         renderList();
+        loadCounts();
       } catch (e) { listEl.innerHTML = '<div class="gm-empty">' + esc(e.message) + '</div>'; }
     }
 
@@ -2460,6 +2748,9 @@
         b.classList.add('active'); state.mailbox = b.getAttribute('data-mb'); state.active = null;
         // Category availability is per-mailbox, so re-test the Primary fallback.
         state.primaryFellBack = false;
+        // Thread ids and their filings are per-mailbox; carrying the cache across
+        // would paint one mailbox's lead names onto the other's rows.
+        state.filed = {};
         paneEl.innerHTML = '<div class="gm-empty">Select a thread to read.</div>'; loadThreads();
       });
     });

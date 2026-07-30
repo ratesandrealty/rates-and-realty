@@ -12,16 +12,21 @@
 <style>
 :root{--gold:#c9a84c;--gold2:#e4b84e;--bg:#0a0a0a;--surface:#111;--surface2:#181818;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#fff;--muted:rgba(255,255,255,0.38)}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
-.topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;position:sticky;top:0;z-index:100}
+/* The page is a fixed-height app shell: topbar, then the inbox filling the rest.
+   The page itself never scrolls — the thread list and reading pane own scrolling. */
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;height:100%;overflow:hidden;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100}
 .topbar-brand{font-weight:800;font-size:14px;color:var(--gold)}
 .topbar a{color:var(--muted);text-decoration:none;font-size:12px;font-weight:600;padding:6px 10px;border-radius:6px;transition:all .15s}
 .topbar a:hover{color:#fff;background:rgba(255,255,255,0.05)}
 .topbar a.active{color:var(--gold);background:rgba(201,168,76,0.1)}
-.main{max-width:1180px;margin:0 auto;padding:16px 16px 8px}
-.page-title{font-size:18px;font-weight:800;margin-bottom:12px}
-.page-title small{font-size:12px;color:var(--muted);font-weight:600;margin-left:8px}
-@media (max-width:768px){ .topbar{overflow-x:auto} .main{padding:10px 10px 4px} }
+/* Was max-width:1180px;margin:0 auto — on a 1920px screen that is a 370px dead
+   gutter each side, which is the "empty sidebar" in the screenshot. There is no
+   sidebar on this page; the left rail now lives in that reclaimed width. */
+.main{flex:1;min-height:0;display:flex;padding:10px 12px 12px}
+#inboxHost{flex:1;min-width:0;min-height:0;display:flex}
+@media (max-width:768px){ .topbar{overflow-x:auto} .main{padding:0} body{overflow:auto} }
 </style>
 </head>
 <body>
@@ -40,7 +45,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 </div>
 
 <div class="main">
-  <div class="page-title">📥 Inbox <small>Gmail · rene@ / processing@ — tag a thread to file it on a lead</small></div>
+  <!-- The old page-title row ("Inbox — Gmail · rene@ / processing@ — tag a thread
+       to file it on a lead") is gone: the mailbox is shown in the rail switcher and
+       the hint is a tooltip on the search row plus the reading pane's empty state. -->
   <div id="inboxHost"><div style="padding:40px;text-align:center;color:var(--muted)">Loading inbox…</div></div>
 </div>
 
@@ -49,7 +56,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <script src="/admin/js/vendor/purify.min.js?v=3.4.12"
         integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
         crossorigin="anonymous"></script>
-<script src="/admin/js/inbox.js?v=247c773cc4"></script>
+<script src="/admin/js/inbox.js?v=4421200b05"></script>
 <script>
 (function(){
   // Wait for auth-guard to establish the authenticated Supabase client, then mount.
