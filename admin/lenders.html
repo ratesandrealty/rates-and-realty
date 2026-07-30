@@ -2084,10 +2084,18 @@ async function deleteGuideline(id, title, lenderId) {
   if (!confirm('Delete "' + title + '"? This permanently removes the document and its AI index. This cannot be undone.')) return;
   let storagePath = null;
   try {
-    const pre = await _authClient().from('lender_guidelines').select('file_url').eq('id', id).maybeSingle();
-    if (pre && pre.data && pre.data.file_url) {
-      const m = pre.data.file_url.match(/\/storage\/v1\/object\/public\/lender-guidelines\/(.+)$/);
-      if (m) storagePath = decodeURIComponent(m[1]);
+    // Read the storage key from its own column. Regex-parsing file_url used to be
+    // the only option, but that couples deletes to the bucket staying public —
+    // the /object/public/ marker vanishes the moment it goes private. file_url is
+    // kept as a fallback only for any row predating the storage_path backfill.
+    const pre = await _authClient().from('lender_guidelines').select('storage_path,file_url').eq('id', id).maybeSingle();
+    if (pre && pre.data) {
+      if (pre.data.storage_path) {
+        storagePath = pre.data.storage_path;
+      } else if (pre.data.file_url) {
+        const m = pre.data.file_url.match(/\/storage\/v1\/object\/(?:public\/)?lender-guidelines\/(.+)$/);
+        if (m) storagePath = decodeURIComponent(m[1]);
+      }
     }
   } catch (_) { /* ignore — pre-fetch is best-effort */ }
   const { error } = await _authClient().from('lender_guidelines').delete().eq('id', id);

@@ -520,8 +520,10 @@
 // ── Lender Form Upgrades: Autosave + Upload ───────────────────────
 var LF_AUTOSAVE_DELAY = 3000;
 var LF_AUTOSAVE_TIMER = null;
-var LF_BUCKET = 'lender-guidelines';
 var LF_LENDER_ID = null;
+// Token-gated mint/finalize/list endpoint. Uploads no longer touch storage or the
+// lender_guidelines table directly — the anon key cannot write either any more.
+var LF_EDGE_FN = SB_URL + '/functions/v1/lender-upload';
 
 // Hook into the page's token fetch to capture lender id
 (function() {
@@ -544,13 +546,8 @@ var LF_LENDER_ID = null;
   };
 })();
 
-function lfGetSB() {
-  var c = window.APP_CONFIG || window.__env || {};
-  return {
-    url: c.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co',
-    key: c.SUPABASE_ANON_KEY || ''
-  };
-}
+// lfGetSB() removed: this page no longer uses the anon key for anything. Storage
+// and lender_guidelines are both reached through the token-gated edge function.
 
 // ── Autosave ──────────────────────────────────────────────────────
 function lfSetStatus(msg, color) {
@@ -621,10 +618,7 @@ function lfHandleFiles(files) {
 }
 
 async function lfUploadFile(file) {
-  var sb = lfGetSB();
   var lenderId = LF_LENDER_ID || window.__lfLenderId;
-  var safeName = file.name.replace(/\s+/g,'-');
-  var path = (lenderId ? lenderId + '/' : 'portal/') + Date.now() + '_' + safeName;
   var rowId = 'lfr_' + Math.random().toString(36).slice(2,8);
 
   var list = document.getElementById('lfFileList');
@@ -640,41 +634,75 @@ async function lfUploadFile(file) {
   function st(msg,col){ var e=document.getElementById(rowId+'_s'); if(e){e.textContent=msg;e.style.color=col||'rgba(255,255,255,0.4)';} }
 
   try {
-    var up = await fetch(sb.url+'/storage/v1/object/'+LF_BUCKET+'/'+encodeURIComponent(path),{
-      method:'POST', headers:{'Authorization':'Bearer '+sb.key,'Content-Type':file.type||'application/octet-stream','x-upsert':'true'}, body:file
-    });
-    if(!up.ok){ st('Upload failed','#e55'); return; }
-    st('Saving...','rgba(255,255,255,0.4)');
-    var pubUrl = sb.url+'/storage/v1/object/public/'+LF_BUCKET+'/'+encodeURIComponent(path);
-    var ins = await fetch(sb.url+'/rest/v1/lender_guidelines',{
-      method:'POST',
-      headers:{'Authorization':'Bearer '+sb.key,'apikey':sb.key,'Content-Type':'application/json','Prefer':'return=minimal'},
+    // Step 1 — mint. The edge function validates TOKEN against lenders.form_token
+    // and picks the storage path itself, inside this lender's own prefix. We send
+    // the filename only as a hint; the returned `path` is authoritative.
+    var mintRes = await fetch(LF_EDGE_FN, {
+      method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        lender_id:lenderId||null, file_name:file.name, file_url:pubUrl,
-        source_type:'lender', ocr_status:'pending', upload_source:'lender_portal',
-        is_active:true, title:file.name.replace(/\.[^.]+$/,'').replace(/[-_]/g,' '),
-        created_at:new Date().toISOString(), updated_at:new Date().toISOString()
+        action:'mint', token:TOKEN,
+        file_name:file.name,
+        content_type:file.type || 'application/octet-stream',
+        size:file.size
       })
     });
-    st(ins.ok ? '✓ Uploaded' : '✓ Stored (log pending)', ins.ok ? '#4caf50' : '#f5a623');
+    var mint = await mintRes.json().catch(function(){ return {}; });
+    if (!mintRes.ok || !mint.signed_url) {
+      st(mint.error || 'Upload failed', '#e55');
+      return;
+    }
+
+    // Step 2 — PUT the bytes at the signed URL. Single path, upsert disabled, so
+    // this URL cannot overwrite anything or be replayed against another object.
+    var up = await fetch(mint.signed_url, {
+      method:'PUT',
+      headers:{'Content-Type':file.type || 'application/octet-stream'},
+      body:file
+    });
+    if(!up.ok){ st('Upload failed','#e55'); return; }
+
+    // Step 3 — finalize. Records the lender_guidelines row server-side (the old
+    // client-side insert used the anon key and was silently refused by RLS).
+    st('Saving...','rgba(255,255,255,0.4)');
+    var finRes = await fetch(LF_EDGE_FN, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ action:'finalize', token:TOKEN, path:mint.path, file_name:file.name })
+    });
+    var fin = await finRes.json().catch(function(){ return {}; });
+    if (finRes.ok && fin.success) {
+      st('✓ Uploaded', '#4caf50');
+      if (lenderId) lfLoadExistingDocs(lenderId);
+    } else {
+      // The bytes are stored but unregistered — say so instead of showing a tick.
+      st(fin.error || 'Stored, but not recorded', '#f5a623');
+    }
   } catch(e){ st('Error: '+e.message,'#e55'); }
 }
 
+function lfEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
 async function lfLoadExistingDocs(lenderId) {
-  var sb = lfGetSB();
   var container = document.getElementById('lfExistingDocs');
   if (!container || !lenderId) return;
   try {
-    var res = await fetch(sb.url+'/rest/v1/lender_guidelines?lender_id=eq.'+lenderId+'&is_active=eq.true&order=created_at.desc&limit=20',{
-      headers:{'Authorization':'Bearer '+sb.key,'apikey':sb.key}
+    // Was an anon-key REST select, which RLS answered with [] — the panel never
+    // rendered. Served by the edge function now, scoped to the token's lender.
+    var res = await fetch(LF_EDGE_FN, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ action:'list', token:TOKEN })
     });
-    var docs = await res.json();
+    var payload = await res.json().catch(function(){ return {}; });
+    var docs = payload && payload.docs;
     if (!docs || !docs.length) return;
     container.innerHTML = '<p style="font-size:12px;color:rgba(255,255,255,0.3);margin-bottom:10px;">Previously uploaded</p>' +
       docs.map(function(d){
-        return '<a href="'+d.file_url+'" target="_blank" style="display:flex;align-items:center;gap:8px;'+
+        return '<a href="'+lfEsc(d.file_url)+'" target="_blank" style="display:flex;align-items:center;gap:8px;'+
           'background:rgba(255,255,255,0.03);border-radius:6px;padding:8px 12px;margin-bottom:6px;'+
-          'color:#C9A84C;text-decoration:none;font-size:12px;">📄 '+d.file_name+'</a>';
+          'color:#C9A84C;text-decoration:none;font-size:12px;">📄 '+lfEsc(d.file_name)+'</a>';
       }).join('');
   } catch(e){}
 }
