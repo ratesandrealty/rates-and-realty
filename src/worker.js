@@ -87,6 +87,129 @@ export default {
     }
     // === END CANONICAL HOST REDIRECTS ==============================
 
+    /* === VIDEO LANDING PAGE (/v/{slug}) ============================
+     * Canonical route for a personal video. Three sub-paths, all same-origin so
+     * a recipient never sees ljywhvbmsibwnssxpesh.supabase.co:
+     *   /v/{slug}          the page
+     *   /v/{slug}/media    the video bytes, proxied WITH Range support
+     *   /v/{slug}/track    engagement events  -> video-track
+     *   /v/{slug}/chat     AI assistant       -> video-chat
+     * Range matters: without it Safari refuses to play and nobody can seek. */
+    {
+      const SB = env.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+      const seg = path.split('/').filter(Boolean);
+
+      // Legacy links already in inboxes must keep resolving. 301 to canonical.
+      if ((path === '/watch.html' || path === '/watch') && url.searchParams.get('v')) {
+        return Response.redirect(
+          `${url.origin}/v/${encodeURIComponent(url.searchParams.get('v'))}`, 301);
+      }
+
+      if (seg[0] === 'v' && seg[1]) {
+        const slug = decodeURIComponent(seg[1]).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+        const sub = seg[2] || '';
+        const viewerIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+        const viewerUa = request.headers.get('user-agent') || '';
+
+        const resolve = async () => {
+          const r = await fetch(`${SB}/rest/v1/rpc/video_get_public`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${env.SUPABASE_ANON_KEY}` },
+            body: JSON.stringify({ p_slug: slug }),
+          });
+          if (!r.ok) return null;
+          const j = await r.json();
+          return j && j.found ? j : null;
+        };
+
+        // ── event + chat relays: keep Supabase off the client entirely ──
+        if (sub === 'track' || sub === 'chat') {
+          if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+          const fn = sub === 'track' ? 'video-track' : 'video-chat';
+          const payload = await request.text();
+          const up = await fetch(`${SB}/functions/v1/${fn}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: env.SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+              // The viewer's real IP/UA under OUR header names — the functions
+              // trust these because only this Worker can set them.
+              'x-viewer-ip': viewerIp,
+              'x-viewer-ua': viewerUa,
+            },
+            body: payload,
+          });
+          return new Response(up.body, {
+            status: up.status,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+          });
+        }
+
+        // ── media proxy with Range passthrough ──
+        if (sub === 'media') {
+          const meta = await resolve();
+          if (!meta || !meta.storage_path) return new Response('Not found', { status: 404 });
+          const origin = `${SB}/storage/v1/object/public/video-messages/${meta.storage_path
+            .split('/').map(encodeURIComponent).join('/')}`;
+          const fwd = new Headers();
+          const range = request.headers.get('range');
+          if (range) fwd.set('range', range);
+          const up = await fetch(origin, { method: request.method === 'HEAD' ? 'HEAD' : 'GET', headers: fwd });
+          /* Supabase storage flattens its errors to HTTP 400 with the real status in
+           * the JSON body. Passing that through would hand a <video> element a 400
+           * and a JSON payload; surface a plain 404 instead so the player fails
+           * cleanly and nothing about the origin leaks. */
+          if (up.status !== 200 && up.status !== 206) {
+            return new Response('Video unavailable', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+          }
+          const h = new Headers();
+          // Copy only what a media element needs; drop anything naming the origin.
+          ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']
+            .forEach((k) => { const v = up.headers.get(k); if (v) h.set(k, v); });
+          if (!h.has('accept-ranges')) h.set('accept-ranges', 'bytes');
+          if (!h.has('content-type')) h.set('content-type', meta.mime_type || 'video/mp4');
+          h.set('Cache-Control', 'private, max-age=3600');
+          h.set('X-Content-Type-Options', 'nosniff');
+          return new Response(up.body, { status: up.status, headers: h });
+        }
+
+        // ── poster proxy (same reasoning as media) ──
+        if (sub === 'poster') {
+          const meta = await resolve();
+          if (!meta || !meta.poster_url) return new Response('Not found', { status: 404 });
+          const up = await fetch(meta.poster_url);
+          const h = new Headers();
+          ['content-type', 'content-length', 'etag'].forEach((k) => { const v = up.headers.get(k); if (v) h.set(k, v); });
+          h.set('Cache-Control', 'private, max-age=3600');
+          return new Response(up.body, { status: up.status, headers: h });
+        }
+
+        // ── the page ──
+        if (!sub) {
+          const meta = await resolve();
+          if (!meta) {
+            return new Response(videoNotFoundHtml(), {
+              status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+            });
+          }
+          // CTA buttons come from app_config; a key that is unset simply has no
+          // button. Only Document Upload is confirmed working today.
+          let ctas = {};
+          try {
+            const cr = await fetch(`${SB}/rest/v1/app_config?select=key,value&key=like.video_cta_*`, {
+              headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${env.SUPABASE_ANON_KEY}` },
+            });
+            if (cr.ok) for (const row of await cr.json()) ctas[row.key] = row.value;
+          } catch (_) { /* no config → no optional buttons, page still works */ }
+          return new Response(videoPageHtml(slug, meta, ctas), {
+            headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+          });
+        }
+      }
+    }
+    // === END VIDEO LANDING PAGE ====================================
+
     // === SHORT-LINK REDIRECTOR (/r/{id}) ============================
     // Pretty-URL handler for SMS links generated by track-event v4.
     // Proxies to the Supabase track-event function which logs the click,
@@ -350,4 +473,141 @@ function withCsp(res, path) {
     headers.set('Expires', '0');
   }
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
+/* ── /v/{slug} page rendering ────────────────────────────────────────────────
+ * Server-rendered so the video and poster resolve on first paint. Mobile-first:
+ * most of these open on a phone.
+ *
+ * The chat renders replies with textContent, never innerHTML. That is stronger
+ * than sanitising — no HTML is parsed at all — and it means this page adds no
+ * second sanitize path to maintain alongside window.GmailInbox.sanitize. */
+function vEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function videoShell(inner, title) {
+  return '<!doctype html><html lang="en"><head>' +
+'<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">' +
+'<meta name="robots" content="noindex,nofollow">' +
+'<title>' + vEsc(title || 'A message from Rene Duarte') + '</title><style>' +
+'*{box-sizing:border-box;margin:0;padding:0}' +
+"body{background:#0a0a0a;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}" +
+'.wrap{max-width:680px;margin:0 auto;padding:0 16px 48px}' +
+'.hdr{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);position:sticky;top:0;background:rgba(10,10,10,.94);z-index:5}' +
+'.brand{font-weight:800;font-size:15px;color:#c9a84c}' +
+'.player{margin:16px 0 14px;border-radius:14px;overflow:hidden;background:#000;border:1px solid rgba(255,255,255,.1)}' +
+'video{width:100%;display:block;max-height:70vh;background:#000}' +
+'h1{font-size:19px;font-weight:800;margin:0 0 6px}' +
+'.who{color:rgba(255,255,255,.62);font-size:13.5px;margin-bottom:18px}' +
+'.who b{color:#c9a84c;font-weight:700}' +
+'.ctas{display:grid;grid-template-columns:1fr;gap:9px;margin-bottom:24px}' +
+'@media(min-width:520px){.ctas{grid-template-columns:1fr 1fr}}' +
+'.cta{display:flex;align-items:center;justify-content:center;gap:8px;padding:15px 16px;border-radius:11px;text-decoration:none;font-weight:700;font-size:14.5px;border:1px solid rgba(201,168,76,.42);background:rgba(201,168,76,.1);color:#c9a84c;min-height:52px}' +
+'.cta.primary{background:#c9a84c;color:#141414;border-color:#c9a84c}' +
+'.card{border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:15px;background:#111}' +
+'.card h2{font-size:14.5px;font-weight:800;margin-bottom:4px}' +
+'.card p{font-size:12.5px;color:rgba(255,255,255,.55);margin-bottom:12px}' +
+'#log{display:flex;flex-direction:column;gap:9px;max-height:320px;overflow-y:auto;margin-bottom:11px}' +
+'.msg{padding:10px 12px;border-radius:11px;font-size:13.5px;white-space:pre-wrap;word-wrap:break-word}' +
+'.msg.u{background:rgba(201,168,76,.14);color:#f0e4c0;align-self:flex-end;max-width:85%}' +
+'.msg.a{background:rgba(255,255,255,.06);color:#e8e8e8;align-self:flex-start;max-width:92%}' +
+'.row{display:flex;gap:8px}' +
+'#q{flex:1;min-width:0;background:#0a0a0a;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:13px;color:#fff;font-size:16px;font-family:inherit}' +
+'#send{background:#c9a84c;color:#141414;border:none;border-radius:10px;padding:0 18px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit}' +
+'#send:disabled{opacity:.5}' +
+'footer{margin-top:30px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08);font-size:11.5px;color:rgba(255,255,255,.42);text-align:center;line-height:1.7}' +
+'</style></head><body>' +
+'<div class="hdr"><span class="brand">Rates &amp; Realty</span></div>' +
+'<div class="wrap">' + inner +
+'<footer>Rene Duarte &middot; NMLS #1795044<br>' +
+'Operates under E Mortgage Capital, Inc. &middot; Broker NMLS #1416824' +
+'<span style="display:inline-block;margin-top:6px;font-size:11px">&#8962; Equal Housing Opportunity</span>' +
+'</footer></div></body></html>';
+}
+
+function videoNotFoundHtml() {
+  return videoShell(
+    '<div style="padding:64px 0;text-align:center">' +
+    '<div style="font-size:34px;margin-bottom:10px">&#128279;</div>' +
+    '<h1>This link isn&rsquo;t available</h1>' +
+    '<p style="color:rgba(255,255,255,.55);font-size:14px;margin-top:8px">It may have been removed. Call Rene at ' +
+    '<a href="tel:+17144728508" style="color:#c9a84c">714-472-8508</a> and he&rsquo;ll resend it.</p></div>',
+    'Link not available');
+}
+
+function videoPageHtml(slug, meta, ctas) {
+  var s = encodeURIComponent(slug);
+  /* Optional CTAs: a key that is unset renders NO button. Only Document Upload is
+   * confirmed working; Apply Now / Schedule / Reviews stay absent until their URLs
+   * are verified, rather than shipping a button that silently goes nowhere. */
+  var optional = [
+    ['video_cta_schedule_url', '&#128197; Schedule a call'],
+    ['video_cta_apply_url', '&#128221; Apply now'],
+    ['video_cta_upload_url', '&#128196; Upload documents'],
+    ['video_cta_reviews_url', '&#11088; Reviews']
+  ].filter(function (p) { return ctas[p[0]] && /^https?:\/\//i.test(ctas[p[0]]); })
+   .map(function (p) {
+     return '<a class="cta" data-cta="' + vEsc(p[0]) + '" href="' + vEsc(ctas[p[0]]) +
+            '" target="_blank" rel="noopener noreferrer">' + p[1] + '</a>';
+   }).join('');
+
+  var poster = meta.poster_url ? ' poster="/v/' + s + '/poster"' : '';
+  var inner =
+    '<div class="player"><video id="v" controls playsinline preload="metadata"' + poster + '>' +
+    '<source src="/v/' + s + '/media" type="' + vEsc(meta.mime_type || 'video/mp4') + '"></video></div>' +
+    '<h1>' + vEsc(meta.title || 'A quick message for you') + '</h1>' +
+    '<div class="who"><b>Rene Duarte</b> &middot; Mortgage loan officer &middot; NMLS #1795044</div>' +
+    '<div class="ctas">' +
+      '<a class="cta primary" data-cta="call" href="tel:+17144728508">&#128222; Call 714-472-8508</a>' +
+      optional +
+    '</div>' +
+    '<div class="card"><h2>Questions? Ask here</h2>' +
+    '<p>General questions about the process, programs or documents. For anything about numbers or approval, Rene will call you back.</p>' +
+    '<div id="log"></div><div class="row">' +
+    '<input id="q" placeholder="Type your question&hellip;" autocomplete="off" enterkeyhint="send">' +
+    '<button id="send">Send</button></div></div>' +
+    '<script>' + videoPageScript(slug) + '<\/script>';
+  return videoShell(inner, meta.title || 'A message from Rene Duarte');
+}
+
+function videoPageScript(slug) {
+  return '(function(){var SLUG=' + JSON.stringify(slug) + ';' +
+  'var sid=(function(){try{var k="rrv_"+SLUG,v=sessionStorage.getItem(k);' +
+  'if(!v){v=(crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2));sessionStorage.setItem(k,v);}' +
+  'return v;}catch(e){return String(Math.random()).slice(2);}})();' +
+  'var sent={};' +
+  'function track(ev,pct){if(sent[ev])return;sent[ev]=1;' +
+  'var u="/v/"+encodeURIComponent(SLUG)+"/track";' +
+  'var b=JSON.stringify({slug:SLUG,event:ev,session_id:sid,percent:pct||0});' +
+  'try{if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([b],{type:"application/json"}));}' +
+  'else{fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:b,keepalive:true});}}catch(e){}}' +
+  'track("page_opened");' +
+  'var v=document.getElementById("v");' +
+  'v.addEventListener("play",function(){track("play_started");});' +
+  'v.addEventListener("timeupdate",function(){if(!v.duration)return;' +
+  'var p=Math.floor(v.currentTime/v.duration*100);' +
+  'if(p>=50)track("watched_50",p);if(p>=75)track("watched_75",p);if(p>=90)track("completed",p);});' +
+  'v.addEventListener("ended",function(){track("completed",100);});' +
+  'Array.prototype.forEach.call(document.querySelectorAll("[data-cta]"),function(a){' +
+  'a.addEventListener("click",function(){sent["cta_clicked"]=0;track("cta_clicked");});});' +
+  'var log=document.getElementById("log"),q=document.getElementById("q"),send=document.getElementById("send");' +
+  // textContent, never innerHTML — nothing from the model is ever parsed as HTML.
+  'function add(role,text){var d=document.createElement("div");' +
+  'd.className="msg "+(role==="user"?"u":"a");d.textContent=text;' +
+  'log.appendChild(d);log.scrollTop=log.scrollHeight;}' +
+  'var greeted=false;' +
+  'function ask(){var t=(q.value||"").trim();if(!t)return;' +
+  'if(!greeted){greeted=true;track("chat_started");}' +
+  'add("user",t);q.value="";send.disabled=true;' +
+  'fetch("/v/"+encodeURIComponent(SLUG)+"/chat",{method:"POST",headers:{"Content-Type":"application/json"},' +
+  'body:JSON.stringify({slug:SLUG,session_id:sid,message:t})})' +
+  '.then(function(r){return r.json();})' +
+  '.then(function(j){add("assistant",(j&&j.reply)||"Sorry — please call Rene at 714-472-8508.");})' +
+  '.catch(function(){add("assistant","Sorry — please call Rene at 714-472-8508.");})' +
+  '.then(function(){send.disabled=false;q.focus();});}' +
+  'send.addEventListener("click",ask);' +
+  'q.addEventListener("keydown",function(e){if(e.key==="Enter")ask();});})();';
 }
