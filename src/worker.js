@@ -563,6 +563,12 @@ function videoShell(inner, title) {
 '#q{flex:1;min-width:0;background:#0a0a0a;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:13px;color:#fff;font-size:16px;font-family:inherit}' +
 '#send{background:#c9a84c;color:#141414;border:none;border-radius:10px;padding:0 18px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit}' +
 '#send:disabled{opacity:.5}' +
+'.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}' +
+'.chips:empty{display:none}' +
+'.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;color:#7ee2a0;background:rgba(80,200,120,.13);border:1px solid rgba(80,200,120,.32);border-radius:11px;padding:3px 9px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+'.sugg{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}' +
+'.sugg button{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:#ccc;border-radius:14px;padding:7px 12px;font-size:12px;cursor:pointer;font-family:inherit;text-align:left;min-height:34px}' +
+'.sugg button:hover{background:rgba(201,168,76,.12);border-color:rgba(201,168,76,.4);color:#f0e4c0}' +
 'footer{margin-top:30px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08);font-size:11.5px;color:rgba(255,255,255,.42);text-align:center;line-height:1.7}' +
 '</style></head><body>' +
 '<div class="hdr"><span class="brand">Rates &amp; Realty</span></div>' +
@@ -611,7 +617,17 @@ function videoPageHtml(slug, meta, ctas) {
     '</div>' +
     '<div class="card"><h2>Questions? Ask here</h2>' +
     '<p>General questions about the process, programs or documents. For anything about numbers or approval, Rene will call you back.</p>' +
-    '<div id="log"></div><div class="row">' +
+    // Chips echo back what the assistant recorded, so nothing is stored invisibly
+    // and a mis-heard name is obvious immediately.
+    '<div id="chips" class="chips"></div>' +
+    '<div id="log"></div>' +
+    // Most visitors do not know what they are allowed to ask. Three openers.
+    '<div id="sugg" class="sugg">' +
+      '<button data-s="What documents do I need?">What documents do I need?</button>' +
+      '<button data-s="How long does the process take?">How long does the process take?</button>' +
+      '<button data-s="What\'s the difference between FHA and conventional?">FHA vs conventional?</button>' +
+    '</div>' +
+    '<div class="row">' +
     '<input id="q" placeholder="Type your question&hellip;" autocomplete="off" enterkeyhint="send">' +
     '<button id="send">Send</button></div></div>' +
     '<script>' + videoPageScript(slug) + '<\/script>';
@@ -646,21 +662,45 @@ function videoPageScript(slug) {
   'v.addEventListener("ended",function(){track("completed",100);});' +
   'Array.prototype.forEach.call(document.querySelectorAll("[data-cta]"),function(a){' +
   'a.addEventListener("click",function(){sent["cta_clicked"]=0;track("cta_clicked");});});' +
-  'var log=document.getElementById("log"),q=document.getElementById("q"),send=document.getElementById("send");' +
+  'var log=document.getElementById("log"),q=document.getElementById("q"),send=document.getElementById("send"),' +
+  'chips=document.getElementById("chips"),sugg=document.getElementById("sugg");' +
   // textContent, never innerHTML — nothing from the model is ever parsed as HTML.
   'function add(role,text){var d=document.createElement("div");' +
   'd.className="msg "+(role==="user"?"u":"a");d.textContent=text;' +
   'log.appendChild(d);log.scrollTop=log.scrollHeight;}' +
+  /* Echo captured fields back. Same textContent rule: these values came from a
+   * visitor via a model, so they are never parsed as markup. */
+  'function chipsOf(f){chips.textContent="";if(!f)return;' +
+  'var items=[];if(f.name)items.push("\\uD83D\\uDC64 "+f.name);' +
+  'if(f.phone)items.push("\\uD83D\\uDCDE "+f.phone+(f.consent_given?" \\u2713":""));' +
+  'if(f.email)items.push("\\u2709 "+f.email);' +
+  'items.forEach(function(t){var c=document.createElement("span");c.className="chip";c.textContent=t;chips.appendChild(c);});' +
+  'if(items.length){var h=document.createElement("span");h.className="chip";' +
+  'h.style.cssText="background:transparent;border-color:rgba(255,255,255,.14);color:rgba(255,255,255,.5);font-weight:600";' +
+  'h.textContent="Rene has this \\u2014 tell me if anything is wrong";chips.appendChild(h);}}' +
   'var greeted=false;' +
-  'function ask(){var t=(q.value||"").trim();if(!t)return;' +
+  'function hideSugg(){if(sugg)sugg.style.display="none";}' +
+  'function ask(text){var t=(text||q.value||"").trim();if(!t)return;' +
   'if(!greeted){greeted=true;track("chat_started");}' +
-  'add("user",t);q.value="";send.disabled=true;' +
+  'hideSugg();add("user",t);q.value="";send.disabled=true;' +
   'fetch("/v/"+encodeURIComponent(SLUG)+"/chat",{method:"POST",headers:{"Content-Type":"application/json"},' +
   'body:JSON.stringify({slug:SLUG,session_id:sid,message:t})})' +
   '.then(function(r){return r.json();})' +
-  '.then(function(j){add("assistant",(j&&j.reply)||"Sorry — please call Rene at 714-472-8508.");})' +
+  '.then(function(j){add("assistant",(j&&j.reply)||"Sorry — please call Rene at 714-472-8508.");' +
+  'if(j&&j.fields)chipsOf(j.fields);})' +
   '.catch(function(){add("assistant","Sorry — please call Rene at 714-472-8508.");})' +
   '.then(function(){send.disabled=false;q.focus();});}' +
-  'send.addEventListener("click",ask);' +
-  'q.addEventListener("keydown",function(e){if(e.key==="Enter")ask();});})();';
+  'send.addEventListener("click",function(){ask();});' +
+  'q.addEventListener("keydown",function(e){if(e.key==="Enter")ask();});' +
+  'if(sugg)Array.prototype.forEach.call(sugg.querySelectorAll("[data-s]"),function(b){' +
+  'b.addEventListener("click",function(){ask(b.getAttribute("data-s"));});});' +
+  /* Rehydrate on load so a reload does not restart the conversation. Read-only on
+   * the server and outside the spend limiter, so refreshing costs nothing. */
+  'fetch("/v/"+encodeURIComponent(SLUG)+"/chat",{method:"POST",headers:{"Content-Type":"application/json"},' +
+  'body:JSON.stringify({slug:SLUG,session_id:sid,action:"history"})})' +
+  '.then(function(r){return r.json();}).then(function(j){' +
+  'var m=(j&&j.messages)||[];if(m.length){greeted=true;hideSugg();' +
+  'm.forEach(function(x){add(x.role==="user"?"user":"assistant",x.content);});}' +
+  'if(j&&j.fields)chipsOf(j.fields);}).catch(function(){});' +
+  '})();';
 }

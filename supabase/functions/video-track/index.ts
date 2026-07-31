@@ -118,6 +118,18 @@ Deno.serve(async (req) => {
   const jwt = String(req.headers.get('x-viewer-jwt') || '').replace(/^Bearer\s+/i, '').trim();
   const staffCookie = req.headers.get('x-viewer-staff') === '1';
 
+  /* INTERNAL CALLER. video-chat captures a lead whose contact is known only to it:
+   * videos.contact_id means "who Rene SENT this to" and is deliberately not
+   * rewritten when a stranger on a forwarded link leaves their details. Without a
+   * contact on the event, trigger_score_recalc() returns early (it skips null
+   * contact_id) and the capture scores nothing.
+   *
+   * Trusted ONLY on an exact service-role key match. Public traffic reaches this
+   * function through the Worker, which always sets Authorization to the ANON key,
+   * so a visitor can never assert a contact_id and attribute events to a stranger. */
+  const authTok = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  const isInternal = !!authTok && authTok === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
   const { data: vid } = await sb.from('videos')
     .select('id,slug,title,contact_id,created_by,view_count').eq('slug', slug).maybeSingle();
   if (!vid) return ok({ ok: false, error: 'not found' });
@@ -129,7 +141,8 @@ Deno.serve(async (req) => {
   const self = await selfViewReason({ jwt, staffCookie, preview: !!body.preview });
   if (self) return ok({ ok: true, suppressed: 'self:' + self });
 
-  const contactId: string | null = vid.contact_id || null;
+  const claimed = isInternal && typeof body.contact_id === 'string' ? body.contact_id.trim() : '';
+  const contactId: string | null = claimed || vid.contact_id || null;
 
   /* Prior milestones for THIS video. Keyed on video_slug, and read from
    * metadata->>milestone rather than the `type` column: a repeat is stored as
