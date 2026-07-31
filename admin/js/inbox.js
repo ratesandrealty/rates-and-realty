@@ -333,7 +333,21 @@
       '.gm-mmeta{font-size:12px;color:var(--muted,#999);margin-bottom:8px;line-height:1.5}',
       '.gm-mdir{font-weight:700}',
       '.gm-frame{width:100%;border:1px solid var(--border2,rgba(255,255,255,.1));border-radius:8px;background:#fff;min-height:80px}',
-      '.gm-att{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted,#bbb);background:rgba(255,255,255,.04);border:1px solid var(--border2,rgba(255,255,255,.12));border-radius:6px;padding:4px 8px;margin:6px 6px 0 0}',
+      /* RECEIVED attachments, in the reading pane. Named .gm-rx-att, NOT .gm-att:
+       * the composer's own attachment tray further down this stylesheet is also
+       * .gm-att and is display:none until it gets .on. Same class, later rule,
+       * so it won. The chips were being rendered correctly and then hidden —
+       * which is why a thread Gmail showed as having an attachment appeared to
+       * have none. Two different things must not share a class name. */
+      '.gm-rx-atts{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}',
+      '.gm-rx-att{display:inline-flex;align-items:center;gap:8px;max-width:300px;background:rgba(255,255,255,.05);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:8px;padding:6px 9px;font-size:11.5px;color:#ddd;cursor:pointer;font-family:inherit;text-align:left}',
+      '.gm-rx-att:hover{background:rgba(201,168,76,.1);border-color:rgba(201,168,76,.4)}',
+      '.gm-rx-att .ic{font-size:15px;flex-shrink:0}',
+      '.gm-rx-att .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}',
+      '.gm-rx-att .s{color:#888;flex-shrink:0;font-size:10.5px}',
+      '.gm-rx-att .go{color:var(--g);flex-shrink:0;font-size:10.5px;font-weight:700}',
+      '.gm-rx-att.busy{opacity:.55;cursor:default}',
+      '.gm-rx-att.err{border-color:rgba(248,113,113,.5);color:#fca5a5}',
       /* ── composer ── */
       '.gm-acts{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border,rgba(255,255,255,.1))}',
       // Flex column so header / fields / toolbar / footer stay put and only .gm-scroll
@@ -1199,6 +1213,47 @@
     return { main: s.slice(0, cut).replace(/[\s>\-]+$/, ''), quoted: s.slice(cut) };
   }
   function snippetMain(text) { return splitQuotedText(text).main; }
+
+  /* ── RECEIVED ATTACHMENTS ───────────────────────────────────────────────────
+   * Metadata comes down with the thread; BYTES ONLY ON CLICK. Gmail returns
+   * base64url, so a 25MB file is ~33MB of JSON — fetching every attachment of
+   * every message just to draw a chip would be slow and, on a big thread,
+   * fatal. */
+  function attSize(n) {
+    var b = Number(n) || 0;
+    if (b < 1024) return b + ' B';
+    if (b < 1024 * 1024) return Math.round(b / 1024) + ' KB';
+    return (b / 1024 / 1024).toFixed(b < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+  }
+  function attExt(name) {
+    var m = String(name || '').match(/\.([A-Za-z0-9]{1,6})$/);
+    return m ? m[1].toLowerCase() : '';
+  }
+  function attIcon(mime, name) {
+    var t = String(mime || '').toLowerCase(), e = attExt(name);
+    if (t.indexOf('pdf') > -1 || e === 'pdf') return '📄';
+    if (t.indexOf('image/') === 0 || ['png','jpg','jpeg','gif','webp','heic','bmp'].indexOf(e) > -1) return '🖼';
+    if (t.indexOf('spreadsheet') > -1 || t.indexOf('excel') > -1 || ['xls','xlsx','csv'].indexOf(e) > -1) return '📊';
+    if (t.indexOf('word') > -1 || ['doc','docx'].indexOf(e) > -1) return '📝';
+    if (t.indexOf('zip') > -1 || ['zip','rar','7z'].indexOf(e) > -1) return '🗜';
+    if (t.indexOf('audio/') === 0) return '🎵';
+    if (t.indexOf('video/') === 0) return '🎬';
+    return '📎';
+  }
+  // Only formats a browser renders natively get a preview tab; the rest download.
+  function attCanPreview(mime, name) {
+    var t = String(mime || '').toLowerCase(), e = attExt(name);
+    return t.indexOf('pdf') > -1 || e === 'pdf' ||
+      t.indexOf('image/') === 0 || ['png','jpg','jpeg','gif','webp','bmp'].indexOf(e) > -1;
+  }
+  function b64urlToBlob(data, mime) {
+    var b = String(data || '').replace(/-/g, '+').replace(/_/g, '/');
+    var pad = b.length % 4 ? new Array(5 - (b.length % 4)).join('=') : '';
+    var bin = atob(b + pad);
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime || 'application/octet-stream' });
+  }
 
   /** YouTube/Loom → clickable thumbnail. */
   function videoThumbHtml(url) {
@@ -2480,8 +2535,26 @@
       h.push('<div data-qt="' + i + '" style="display:none">' +
         '<button class="gm-qtog" data-qtog="' + i + '" title="Show quoted text">•••</button>' +
         '<iframe class="gm-frame" data-qi="' + i + '" sandbox="allow-same-origin allow-popups" style="display:none"></iframe></div>');
+      /* Attachment chips. Bytes are NOT fetched here — only the metadata Gmail
+       * already returned with the thread. The click handler pulls the file. */
       if (m.attachments && m.attachments.length) {
-        h.push('<div>' + m.attachments.map(function (a) { return '<span class="gm-att">📎 ' + esc(a.filename || 'attachment') + '</span>'; }).join('') + '</div>');
+        h.push('<div class="gm-rx-atts">' + m.attachments.map(function (a) {
+          var name = a.filename || 'attachment';
+          var canPreview = attCanPreview(a.mimeType, name);
+          return '<button type="button" class="gm-rx-att" ' +
+            'data-att-msg="' + esc(m.id || m.gmail_message_id || '') + '" ' +
+            'data-att-id="' + esc(a.attachmentId || '') + '" ' +
+            'data-att-part="' + esc(a.partId == null ? '' : a.partId) + '" ' +
+            'data-att-name="' + esc(name) + '" ' +
+            'data-att-mime="' + esc(a.mimeType || '') + '" ' +
+            'data-att-preview="' + (canPreview ? '1' : '0') + '" ' +
+            'title="' + esc(name) + (a.size ? ' · ' + attSize(a.size) : '') + '">' +
+            '<span class="ic">' + attIcon(a.mimeType, name) + '</span>' +
+            '<span class="n">' + esc(name) + '</span>' +
+            (a.size ? '<span class="s">' + esc(attSize(a.size)) + '</span>' : '') +
+            '<span class="go">' + (canPreview ? 'Open' : 'Download') + '</span>' +
+            '</button>';
+        }).join('') + '</div>');
       }
       h.push('</div>');
     });
@@ -2514,6 +2587,49 @@
         var qf = host.querySelector('.gm-frame[data-qi="' + i + '"]');
         if (qf) { autoFit(qf, 0); qf.setAttribute('data-src', split.quoted); }
       }
+    });
+
+    /* Attachment chips — the ONLY place bytes are fetched, and only for the one
+     * file clicked. Previewable types open in a tab, everything else downloads;
+     * both go through a blob URL, so nothing is ever navigated to a Gmail URL
+     * that would need its own auth. */
+    Array.prototype.forEach.call(host.querySelectorAll('.gm-rx-att'), function (btn) {
+      btn.addEventListener('click', async function () {
+        if (btn.classList.contains('busy')) return;
+        var msgId = btn.getAttribute('data-att-msg');
+        var attId = btn.getAttribute('data-att-id');
+        var name = btn.getAttribute('data-att-name') || 'attachment';
+        var preview = btn.getAttribute('data-att-preview') === '1';
+        if (!msgId || !attId) return;
+        var go = btn.querySelector('.go'), original = go ? go.textContent : '';
+        btn.classList.add('busy'); btn.classList.remove('err');
+        if (go) go.textContent = 'Opening…';
+        try {
+          var r = await invoke(cl, mailbox, 'get_attachment', {
+            message_id: msgId, attachment_id: attId, part_id: btn.getAttribute('data-att-part') || ''
+          });
+          var blob = b64urlToBlob(r.data_b64url, r.mime_type);
+          var url = URL.createObjectURL(blob);
+          if (preview) {
+            window.open(url, '_blank', 'noopener');
+          } else {
+            var a = document.createElement('a');
+            a.href = url; a.download = r.filename || name;
+            document.body.appendChild(a); a.click(); a.remove();
+          }
+          // Long enough for the tab/download to take the handle, then reclaim it.
+          setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 60000);
+          if (go) go.textContent = original;
+        } catch (e) {
+          // Surface the server's own words — 403 and 413 both say something useful.
+          btn.classList.add('err');
+          if (go) go.textContent = 'Failed';
+          btn.title = (e && e.message) || 'Could not open this attachment';
+          toast((e && e.message) || 'Could not open this attachment');
+        } finally {
+          btn.classList.remove('busy');
+        }
+      });
     });
 
     // Quoted-trailer toggles. srcdoc is set on first open so a long thread's quotes

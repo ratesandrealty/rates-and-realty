@@ -106,20 +106,97 @@ function b64urlDecode(data: string): string {
     return new TextDecoder('utf-8').decode(bytes)
   } catch { return '' }
 }
+/* Takes the LARGEST text/html and text/plain part, not the first.
+ *
+ * "First wins" is wrong on nested mail and it was actively breaking two things.
+ * On thread 19fb8d82 the first text/html encountered is a 476-byte fragment, so
+ * that is what the reading pane rendered — a truncated body — AND it is what the
+ * inline-image test below was handed, which left it with no cid: references to
+ * match and produced phantom attachments. The real body was further down the
+ * tree. Largest-wins is a crude heuristic but it is right in every case here:
+ * the substantive body is never the smallest candidate. */
 function walk(part: any, acc: { text: string; html: string }) {
   if (!part) return
   const mt = (part.mimeType || '').toLowerCase()
   const d = part.body && part.body.data
-  if (mt === 'text/plain' && d && !acc.text) acc.text = b64urlDecode(d)
-  else if (mt === 'text/html' && d && !acc.html) acc.html = b64urlDecode(d)
+  if (mt === 'text/plain' && d) {
+    const t = b64urlDecode(d)
+    if (t.length > acc.text.length) acc.text = t
+  } else if (mt === 'text/html' && d) {
+    const h = b64urlDecode(d)
+    if (h.length > acc.html.length) acc.html = h
+  }
   if (Array.isArray(part.parts)) for (const p of part.parts) walk(p, acc)
 }
+/* Recursive, because real mail nests: multipart/mixed wrapping a
+ * multipart/alternative, with attachments as siblings at whatever depth the
+ * sending client chose. Content-ID and Content-Disposition come along because
+ * they are the only way to tell a real attachment from an inline image. */
 function collectAttachments(part: any, out: any[]) {
   if (!part) return
   if (part.filename && part.body && part.body.attachmentId) {
-    out.push({ filename: part.filename, mimeType: part.mimeType || null, size: part.body.size || null, attachmentId: part.body.attachmentId })
+    const h = part.headers || []
+    const cid = (hdr(h, 'Content-ID') || '').replace(/^<|>$/g, '').trim()
+    const disp = (hdr(h, 'Content-Disposition') || '').trim().toLowerCase()
+    out.push({
+      filename: part.filename,
+      mimeType: part.mimeType || null,
+      size: part.body.size || null,
+      attachmentId: part.body.attachmentId,
+      partId: part.partId || null,
+      contentId: cid || null,
+      disposition: disp ? disp.split(';')[0] : null,
+    })
   }
   if (Array.isArray(part.parts)) for (const p of part.parts) collectAttachments(p, out)
+}
+
+/* INLINE IMAGES ARE NOT ATTACHMENTS.
+ *
+ * Rene's signature carries five images. Each is a real MIME part with a filename
+ * and an attachmentId, so a naive "has filename" test reports five attachments on
+ * every reply he has ever sent. They are not attachments — they are pixels the
+ * HTML already draws, referenced as src="cid:...".
+ *
+ * CONTENT-DISPOSITION CANNOT BE TRUSTED TO MEAN WHAT IT SAYS, and this was
+ * measured rather than assumed. On a real signature-bearing thread, Gmail's own
+ * ten inline images arrive as:
+ *     filename image003.png · contentId ii_19fb05c5c3b7605c1153
+ *     Content-Disposition: ATTACHMENT
+ * while the 52KB body HTML references every one of them as
+ * src="cid:ii_19fb05c5c3b7605c1153". Gmail labels its inline images
+ * `attachment`. So "disposition says attachment → keep" keeps all ten, which is
+ * exactly the phantom-attachment behaviour this filter exists to prevent.
+ *
+ * The cid: reference is the reliable signal, so it decides FIRST and outranks
+ * the disposition header:
+ *   1. Content-ID referenced as cid: in the body → INLINE, drop. Whatever the
+ *      disposition claims, the markup is already drawing it.
+ *   2. Content-Disposition: inline → drop.
+ *   3. otherwise, a filename means a real attachment → keep.
+ *
+ * This depends on holding the REAL body HTML, which is why walk() takes the
+ * largest text/html part rather than the first — with a truncated body there are
+ * no cid: references to find and rule 1 silently stops working. */
+function filterRealAttachments(atts: any[], html: string): any[] {
+  const body = String(html || '')
+  /* A stricter variant was tried and REVERTED: "a Content-ID plus a body with no
+   * cid: reference anywhere ⇒ inline". It cleaned up the last three phantoms
+   * (thread 19fb8d82, whose 476-byte body references nothing), but it also hid a
+   * genuine DMARC report — enterprise.protection.outlook.com!….xml.gz, a real
+   * attachment carrying a Content-ID in a message with no cid: markup. Hiding a
+   * real attachment recreates the exact bug this work exists to fix, and a few
+   * spurious chips on one vendor's footer does not. So the looser rule stands
+   * and those three logos are accepted as noise. */
+  return atts.filter((a) => {
+    if (!a.filename) return false
+    if (a.contentId) {
+      const id = a.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      if (new RegExp('cid:' + id, 'i').test(body)) return false
+    }
+    if (a.disposition === 'inline') return false
+    return true
+  })
 }
 
 // Gmail message → email_log row shape (plus a non-column `participants` for matching).
@@ -131,8 +208,10 @@ function messageToRow(mailbox: string, threadId: string, msg: any) {
   const ccRaw = hdr(headers, 'Cc')
   const acc = { text: '', html: '' }
   walk(msg.payload, acc)
-  const atts: any[] = []
-  collectAttachments(msg.payload, atts)
+  const attsRaw: any[] = []
+  collectAttachments(msg.payload, attsRaw)
+  // Inline signature images are dropped here, against the HTML that will render.
+  const atts = filterRealAttachments(attsRaw, acc.html)
   const dir = fromEmail === mailbox.toLowerCase() ? 'outbound' : 'inbound'
   const iso = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null
   return {
@@ -259,6 +338,83 @@ serve(async (req) => {
         }
       }))
       return ok({ counts })
+    }
+
+    /* ── INBOUND ATTACHMENT DOWNLOAD ──────────────────────────────────────────
+     * The SAME confused-deputy shape _shared/attach.ts guards on the send side,
+     * pointing the other way. There, a client names a storage path and the server
+     * fetches it with the service role. Here, a client names a Gmail messageId
+     * and the server fetches it with an IMPERSONATED MAILBOX. In both cases the
+     * caller supplies the identifier and the server supplies the privilege, so
+     * the identifier has to be checked against the caller's own boundary before
+     * anything is read.
+     *
+     * `mailbox` is the server-derived one (step 3 above: verified JWT →
+     * auth_user_roles → allowedMailboxes), never a value the client sent. Every
+     * Gmail call below impersonates THAT mailbox, so a message belonging to
+     * rene@ simply does not exist for a va — Gmail answers 404 and we answer 403.
+     * The explicit lookup is not redundant with that: it also proves the
+     * attachmentId belongs to this message rather than being a bare id lifted
+     * from somewhere else, and it yields the size so an oversized part can be
+     * refused BEFORE its bytes are pulled.
+     *
+     * Bytes are fetched ONLY here, on an explicit click — never while rendering
+     * a thread. Gmail hands back base64url, so a 25MB file is ~33MB of JSON;
+     * pulling every attachment of every message on open would be an OOM waiting
+     * to happen. */
+    if (action === 'get_attachment') {
+      const messageId = String(body.message_id || '').trim()
+      const attachmentId = String(body.attachment_id || '').trim()
+      if (!messageId || !attachmentId) return err('message_id and attachment_id required', 400)
+
+      // 1. Ownership + membership, in the caller's own mailbox.
+      const mr = await gmailApi(mailbox, `messages/${encodeURIComponent(messageId)}?format=full`)
+      if (!mr.ok) {
+        return err(`forbidden: message not in ${mailbox}`, 403)
+      }
+      const mj = await mr.json()
+      const parts: any[] = []
+      collectAttachments(mj.payload, parts)
+      /* Match on partId FIRST. Gmail's attachmentId is not stable across
+       * responses — the id handed out with threads.get can be rejected by
+       * messages.attachments.get minutes later, which is exactly what happened
+       * in testing (403 "not part of that message" for an attachment plainly on
+       * that message). partId addresses the position in the MIME tree and does
+       * not drift, so the client sends that and the server resolves a FRESH
+       * attachmentId from its own read. Ownership is unaffected: this lookup
+       * runs inside the caller's impersonated mailbox either way. */
+      const partId = String(body.part_id || '').trim()
+      let part = partId ? parts.find((p) => String(p.partId) === partId) : null
+      if (!part) part = parts.find((p) => p.attachmentId === attachmentId)
+      if (!part) return err('forbidden: attachment is not part of that message', 403)
+      // Always use the id from THIS read, never the client's.
+      const freshId = part.attachmentId
+
+      // 2. Cap BEFORE the bytes move. Fail loudly rather than OOM the function.
+      const ATT_DOWNLOAD_MAX = 15 * 1024 * 1024
+      if (part.size && part.size > ATT_DOWNLOAD_MAX) {
+        return err(`attachment is ${(part.size / 1024 / 1024).toFixed(1)}MB — too large to open here (limit ${ATT_DOWNLOAD_MAX / 1024 / 1024}MB). Open it in Gmail.`, 413)
+      }
+
+      // 3. Now the bytes.
+      const ar = await gmailApi(mailbox, `messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(freshId)}`)
+      if (!ar.ok) {
+        const t = await ar.text()
+        console.error('[get_attachment] gmail fetch failed', ar.status, t.slice(0, 200))
+        return err('could not read the attachment from Gmail', 502)
+      }
+      const aj = await ar.json()
+      const data = String(aj.data || '')
+      // Gmail's own size can disagree with the encoded length; re-check the real one.
+      if (data.length > ATT_DOWNLOAD_MAX * 1.4) {
+        return err('attachment is too large to open here. Open it in Gmail.', 413)
+      }
+      return ok({
+        filename: part.filename,
+        mime_type: part.mimeType || 'application/octet-stream',
+        size: aj.size ?? part.size ?? null,
+        data_b64url: data,
+      })
     }
 
     if (action === 'list_threads') {
