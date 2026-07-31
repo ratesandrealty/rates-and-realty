@@ -1849,6 +1849,9 @@
      * page's fixed modal, and insertion through thumbLinkHtml + the composer's
      * sanitizing insertHTML instead of a Quill call. */
     var VID_BUCKET = 'video-messages';
+    // Public origin that serves /v/<slug>. Matches loom-recorder.js so both
+    // recorders hand out the same shape of link.
+    var WATCH_BASE = 'https://ratesandrealty.com';
     function openVideoRecorder(anchor) {
       var box = document.createElement('div');
       box.className = 'gm-pop-menu gm-vid-box';
@@ -2015,48 +2018,63 @@
           var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
           var videoUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + vpath;
 
-          // Poster is a nicety: if the frame grab or its upload fails, fall back to a
-          // plain link rather than losing the recording.
-          var thumbUrl = null;
-          try {
-            grabPoster();   // last chance, if the 1.2s timer never fired
-            if (posterBlob) {
-              var ppath = 'videos/' + uuid + '-poster.jpg';
-              var pu = await vcl.storage.from(VID_BUCKET).upload(ppath, posterBlob, {
-                contentType: 'image/jpeg', upsert: false
-              });
-              if (!(pu && pu.error)) {
-                thumbUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + ppath;
-              }
-            }
-          } catch (_) {}
+          /* Anything already written when a later step fails gets removed, so a
+           * half-finished save leaves no orphaned objects in the bucket. */
+          var written = [vpath];
+          async function rollback() {
+            try { await vcl.storage.from(VID_BUCKET).remove(written); } catch (_) {}
+          }
 
-          /* Register the video so it has a shareable slug. video_create is the same
-           * RPC loom-recorder.js uses, so both recorders produce one kind of row and
-           * the /v/<token> landing page has a single source to resolve. Non-fatal:
-           * the message still sends with the direct link if this fails. */
-          // Param names are exactly video_create's signature (p_duration / p_size,
-          // no p_mime_type) — a mismatch would 404 the RPC and be swallowed below,
-          // silently leaving the video unregistered.
-          var vslug = null;
-          try {
-            var vc = await vcl.rpc('video_create', {
-              p_title: 'Video message · ' + new Date().toLocaleDateString(),
-              p_storage_path: vpath,
-              p_public_url: videoUrl,
-              p_duration: secs,
-              p_size: blob.size,
-              p_kind: 'inbox',
-              p_contact_id: cfg.contactId || null,
-              p_context: 'email'
-            });
-            if (vc && !vc.error && vc.data) vslug = vc.data.slug || null;
-          } catch (_) {}
+          /* POSTER — fatal on failure, not "a nicety".
+           * It was swallowed by a bare catch and an `if (!error)`, so a poster that
+           * never uploaded silently downgraded the message to a bare text link and
+           * left the landing page with no <video poster> — a partial save that
+           * reported success. The recording is still in the buffer at this point, so
+           * failing here costs a retry, not the take. */
+          grabPoster();   // last chance, if the 1.2s timer never fired
+          if (!posterBlob) {
+            await rollback();
+            throw new Error('Could not capture a thumbnail frame from this recording. Re-record and try again.');
+          }
+          var ppath = 'videos/' + uuid + '-poster.jpg';
+          var pu = await vcl.storage.from(VID_BUCKET).upload(ppath, posterBlob, {
+            contentType: 'image/jpeg', upsert: false
+          });
+          if (pu && pu.error) {
+            await rollback();
+            throw new Error('Thumbnail upload failed: ' + pu.error.message);
+          }
+          written.push(ppath);
+          var thumbUrl = base + '/storage/v1/object/public/' + VID_BUCKET + '/' + ppath;
 
-          var html = thumbUrl
-            ? thumbLinkHtml(videoUrl, thumbUrl, 'Click to watch (' + fmtT(secs) + ')')
-            : '<a href="' + esc(videoUrl) + '" target="_blank" rel="noopener noreferrer">' +
-              '▶ Watch my video message (' + esc(fmtT(secs)) + ')</a>';
+          /* Register the video so it has a shareable slug — also fatal now.
+           * video_create is the same RPC loom-recorder.js uses, so both recorders
+           * produce one kind of row and the /v/<slug> landing page has a single
+           * source to resolve. Without a slug there IS no landing page, so nothing
+           * about the send is trackable: that is a failed save, not a degraded one.
+           * Param names are exactly video_create's signature (p_duration / p_size,
+           * no p_mime_type) — the old bare catch meant a mismatch would 404 the RPC
+           * and be swallowed, silently leaving the video unregistered. */
+          var vc = await vcl.rpc('video_create', {
+            p_title: 'Video message · ' + new Date().toLocaleDateString(),
+            p_storage_path: vpath,
+            p_public_url: videoUrl,
+            p_duration: secs,
+            p_size: blob.size,
+            p_kind: 'inbox',
+            p_contact_id: cfg.contactId || null,
+            p_context: 'email'
+          });
+          if (vc && vc.error) { await rollback(); throw new Error('Could not register the video: ' + vc.error.message); }
+          var vslug = vc && vc.data && vc.data.slug;
+          if (!vslug) { await rollback(); throw new Error('Could not register the video — no share link was issued.'); }
+
+          /* Link to the landing page, never to storage. The direct supabase.co URL
+           * put the origin in the recipient's inbox and bypassed /v/<slug> tracking
+           * entirely, so none of the milestones could ever fire. */
+          var watchUrl = WATCH_BASE + '/v/' + encodeURIComponent(vslug);
+          var posterUrl = WATCH_BASE + '/v/' + encodeURIComponent(vslug) + '/poster';
+          var html = thumbLinkHtml(watchUrl, posterUrl, 'Click to watch (' + fmtT(secs) + ')');
 
           // Same sanitizing insert as every other toolbar action (wireEditor writes
           // insertHTML onto the hooks object it was handed).

@@ -127,6 +127,28 @@ export default {
           if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
           const fn = sub === 'track' ? 'video-track' : 'video-chat';
           const payload = await request.text();
+
+          /* SELF-VIEW SIGNAL — the viewer's own session, preserved.
+           * `Authorization` on the upstream call MUST be the anon key or the
+           * function won't invoke, so setting it here overwrites whatever the
+           * browser sent. That is why video-track's staff check never fired: it
+           * read `authorization` and only ever saw the anon key. Carry the real
+           * viewer identity in separate headers instead.
+           *   x-viewer-jwt   — the viewer's Supabase access token, when the page
+           *                    is opened somewhere a session exists (admin host).
+           *   x-viewer-staff — the cross-subdomain marker auth-guard.js sets on
+           *                    .ratesandrealty.com; the only signal that survives
+           *                    on the apex, where admin localStorage is unreadable.
+           * Both are suppression HINTS, never grants: the worst a forged value can
+           * do is stop the forger's own view from scoring. */
+          let viewerJwt = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+          try {
+            const b = JSON.parse(payload);
+            if (!viewerJwt && b && typeof b.viewer_token === 'string') viewerJwt = b.viewer_token.trim();
+          } catch (_) { /* body isn't ours to validate; the function re-parses it */ }
+          if (viewerJwt === env.SUPABASE_ANON_KEY) viewerJwt = '';
+          const staffCookie = /(?:^|;\s*)rr_staff=1(?:;|$)/.test(request.headers.get('cookie') || '');
+
           const up = await fetch(`${SB}/functions/v1/${fn}`, {
             method: 'POST',
             headers: {
@@ -137,6 +159,8 @@ export default {
               // trust these because only this Worker can set them.
               'x-viewer-ip': viewerIp,
               'x-viewer-ua': viewerUa,
+              'x-viewer-jwt': viewerJwt.slice(0, 4096),
+              'x-viewer-staff': staffCookie ? '1' : '0',
             },
             body: payload,
           });
@@ -434,9 +458,29 @@ export default {
       return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
     }
 
-    return withCsp(await env.ASSETS.fetch(request), path);
+    return withAssetCache(withCsp(await env.ASSETS.fetch(request), path), url);
   }
 };
+
+/* Cache policy for STATIC assets (never HTML — withCsp already pins app HTML to
+ * no-store, which is what makes the ?v=<hash> scheme work at all).
+ *
+ * The asset binding serves everything as `public, max-age=0, must-revalidate`,
+ * so every hashed asset still costs a conditional round-trip on each page load
+ * even though its URL can never change content. Anything requested WITH a ?v=
+ * pin is immutable by construction — the HTML mints a new URL when the bytes
+ * change — so it is safe to cache hard. Unpinned URLs keep must-revalidate:
+ * caching /admin/js/inbox.js hard with no pin in the URL would strand a stale
+ * copy forever, which is the exact failure this scheme exists to prevent. */
+function withAssetCache(res, url) {
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('text/html')) return res;
+  if (!url.searchParams.has('v')) return res;
+  if (res.status !== 200) return res;
+  const h = new Headers(res.headers);
+  h.set('Cache-Control', 'public, max-age=31536000, immutable');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
 
 // Inject a relaxed CSP into HTML responses so pdf.js can spawn its worker
 // from a blob: URL. The asset bundler doesn't let us set per-page headers,
@@ -579,9 +623,18 @@ function videoPageScript(slug) {
   'if(!v){v=(crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2));sessionStorage.setItem(k,v);}' +
   'return v;}catch(e){return String(Math.random()).slice(2);}})();' +
   'var sent={};' +
+  /* Self-view signal from the page itself. sendBeacon cannot set headers, so the
+   * viewer's own access token rides in the body and the Worker lifts it into
+   * x-viewer-jwt. Only readable when a session exists on THIS origin (i.e. the
+   * admin host); on the apex the rr_staff cookie does the job instead. */
+  'var tok="";try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);' +
+  'if(k&&/^sb-.*-auth-token$/.test(k)){var j=JSON.parse(localStorage.getItem(k)||"{}");' +
+  'if(j&&j.access_token){tok=j.access_token;break;}}}}catch(e){}' +
+  'var prev=/[?&]preview=1/.test(location.search);' +
   'function track(ev,pct){if(sent[ev])return;sent[ev]=1;' +
   'var u="/v/"+encodeURIComponent(SLUG)+"/track";' +
-  'var b=JSON.stringify({slug:SLUG,event:ev,session_id:sid,percent:pct||0});' +
+  'var b=JSON.stringify({slug:SLUG,event:ev,session_id:sid,percent:pct||0,' +
+  'viewer_token:tok||undefined,preview:prev||undefined});' +
   'try{if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([b],{type:"application/json"}));}' +
   'else{fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:b,keepalive:true});}}catch(e){}}' +
   'track("page_opened");' +

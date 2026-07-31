@@ -36,6 +36,21 @@
     await loadScript('/api/env.js');
   }
 
+  /* Cookie on the PARENT domain so admin.* and the apex share it. Only set on a
+   * real ratesandrealty.com host — on localhost a Domain= cookie is silently
+   * dropped, so skip it rather than pretend it took. */
+  function setStaffMarker(on) {
+    try {
+      var h = location.hostname;
+      if (h !== 'ratesandrealty.com' && h.indexOf('.ratesandrealty.com') === -1) return;
+      document.cookie = 'rr_staff=' + (on ? '1' : '') +
+        '; Domain=.ratesandrealty.com; Path=/; Max-Age=' + (on ? 2592000 : 0) +
+        '; SameSite=Lax; Secure';
+    } catch (err) {
+      console.warn('[auth-guard] staff marker not set:', err);
+    }
+  }
+
   async function getClient() {
     // Preferred path: canonical getter from /admin/js/supabase-client.js
     if (typeof window.getSupabaseClient === 'function') {
@@ -125,6 +140,15 @@
 
     window._adminUser = session.user;
 
+    /* STAFF BROWSER MARKER — self-view suppression for /v/<slug>.
+     * The CRM runs on admin.ratesandrealty.com; video links open on the apex,
+     * where this session's localStorage is unreadable, so the landing page has
+     * no way to tell Rene from a borrower. A cookie scoped to the parent domain
+     * does cross the subdomain boundary. It carries NO secret and grants
+     * nothing — video-track only uses it to decide not to score the view — so a
+     * plain flag is the right shape here, not a token. */
+    setStaffMarker(true);
+
     // Logout helper. Capture the client at init time (matches current semantics).
     window.adminLogout = async function () {
       try {
@@ -132,6 +156,7 @@
       } catch (err) {
         console.error('[auth-guard] signOut failed:', err);
       }
+      setStaffMarker(false);
       window.location.replace('/auth/admin-login.html');
     };
 
