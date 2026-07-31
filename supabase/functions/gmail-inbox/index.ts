@@ -466,8 +466,12 @@ serve(async (req) => {
          * real INBOX threads: 1 true positive, 19 true negatives, ZERO false
          * positives and ZERO misses.
          *
-         * It stays a HINT, not a promise — the authoritative list is computed
-         * when the thread is opened and the filter runs over the real parts. */
+         * NOT RENDERED. Measured over 38 threads it is 7 TP / 0 FP / 23 TN /
+         * 8 FN — reliable when true, but ~47% recall, and a clip whose absence
+         * means "unknown" reads to a human as "no attachment". It is computed
+         * and returned so the measurement is reproducible and so a decision to
+         * switch this list to format=full (which would make it exact) has
+         * somewhere to land, but no UI consumes it. */
         const hasAttachment = ms.some((x: any) => (x.payload?.mimeType || '') === 'multipart/mixed')
         return {
           id: t.id, snippet: decodeEntities(t.snippet),

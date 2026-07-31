@@ -301,7 +301,6 @@
       '.gm-row-top{display:flex;gap:6px;align-items:center;height:16px;line-height:16px;overflow:hidden}',
       '.gm-row-from{flex:1;min-width:0;font-size:12px;line-height:16px;color:#ddd;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.gm-row-date{font-size:10.5px;line-height:16px;color:var(--muted,#888);flex-shrink:0}',
-      '.gm-row-clip{font-size:11px;line-height:16px;flex-shrink:0;opacity:.75}',
       '.gm-row-subj{font-size:12.5px;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
       '.gm-row-snip{font-size:11.5px;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
       // Filed-to-lead chip. Inline on line 1 (see the row-height note above), and it
@@ -677,13 +676,38 @@
     try {
       var d = f.contentDocument;
       if (!d || !d.body) return;
+
+      /* COLLAPSE BEFORE MEASURING. This is the whole fix, and without it the
+       * function is a ratchet that can only grow.
+       *
+       * documentElement.scrollHeight/offsetHeight return max(content, VIEWPORT),
+       * and the viewport of an iframe is its own current height. So each call
+       * measured at least the height set by the previous call, then added 28 —
+       * and autoFit calls this a lot: onload, +120ms, +600ms, the 900ms
+       * backstop, once per image, and once per ResizeObserver firing, which the
+       * height change itself triggers. An iframe starts at the HTML default of
+       * 150px, so roughly fourteen passes gives 150 + 14×28 ≈ 542px. That is the
+       * ~550px card holding 151 characters — the number is arithmetic, not
+       * content.
+       *
+       * Setting height to 0 first forces the document to report CONTENT height.
+       * It happens inside one synchronous block, so there is no paint between
+       * the collapse and the restore and nothing flickers. */
+      var prev = f.style.height;
+      f.style.height = '0px';
+      var de = d.documentElement;
       var h = Math.max(
         d.body.scrollHeight, d.body.offsetHeight,
-        d.documentElement ? d.documentElement.scrollHeight : 0,
-        d.documentElement ? d.documentElement.offsetHeight : 0
+        de ? de.scrollHeight : 0, de ? de.offsetHeight : 0
       );
-      if (!h) return;
-      f.style.height = (cap ? Math.min(h + 24, cap) : h + 28) + 'px';
+      if (!h) { f.style.height = prev; return; }
+      var next = (cap ? Math.min(h + 24, cap) : h + 28);
+
+      /* Don't rewrite a height that is already right. A ResizeObserver watching
+       * a body whose size we just changed will fire again; if every firing wrote
+       * a new value, the two would chase each other forever. */
+      var cur = parseInt(prev, 10) || 0;
+      f.style.height = (Math.abs(cur - next) <= 2 ? cur : next) + 'px';
     } catch (_) { if (!f.style.height) f.style.height = (cap || 360) + 'px'; }
   }
 
@@ -3172,10 +3196,6 @@
           '<div class="gm-rowmain">' +
             '<div class="gm-row-top"><span class="gm-row-from">' + (t.unread ? '<span class="gm-dot"></span>' : '') + esc(from) + '</span>' +
             (filed ? '<span class="gm-row-filed" title="Filed to ' + esc(filed) + '">🏷 ' + esc(filed) + '</span>' : '') +
-            // Attachment hint from the list response — see the note in
-            // gmail-inbox list_threads. Costs no extra API call, and it is a
-            // HINT: the thread view computes the authoritative list.
-            (t.has_attachment ? '<span class="gm-row-clip" title="Has an attachment">📎</span>' : '') +
             '<span class="gm-row-date">' + esc(fmtDate(t.date)) + '</span></div>' +
             '<div class="gm-row-subj">' + esc(t.subject || '(no subject)') + (t.message_count > 1 ? '<span class="gm-cnt">' + t.message_count + '</span>' : '') + '</div>' +
             // Quoted trailer trimmed off the preview — see splitQuotedText().
