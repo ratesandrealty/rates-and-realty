@@ -151,6 +151,23 @@ function collectAttachments(part: any, out: any[]) {
   if (Array.isArray(part.parts)) for (const p of part.parts) collectAttachments(p, out)
 }
 
+/* One classifier for attachment type, so the list icon and the chip icon in the
+ * thread view cannot drift apart. Extension is checked as well as MIME because
+ * senders mislabel: the eLEND threads carry files named *.html with a PDF-ish
+ * intent, and DMARC reports arrive as application/gzip named *.xml.gz. */
+function attKind(mime: string | null, name: string | null): string {
+  const t = String(mime || '').toLowerCase()
+  const m = String(name || '').match(/\.([A-Za-z0-9]{1,6})$/)
+  const e = m ? m[1].toLowerCase() : ''
+  if (t.includes('pdf') || e === 'pdf') return 'pdf'
+  if (t.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic'].includes(e)) return 'image'
+  if (t.includes('spreadsheet') || t.includes('excel') || ['xls', 'xlsx', 'csv'].includes(e)) return 'sheet'
+  if (t.includes('word') || t.includes('opendocument.text') || ['doc', 'docx', 'rtf', 'odt'].includes(e)) return 'doc'
+  if (t.includes('zip') || t.includes('gzip') || t.includes('compressed') || ['zip', 'gz', 'rar', '7z'].includes(e)) return 'archive'
+  if (t.includes('calendar') || e === 'ics') return 'calendar'
+  return 'other'
+}
+
 /* INLINE IMAGES ARE NOT ATTACHMENTS.
  *
  * Rene's signature carries five images. Each is a real MIME part with a filename
@@ -442,7 +459,18 @@ serve(async (req) => {
       const lj = await lr.json()
       if (!lr.ok) return err('list failed: ' + JSON.stringify(lj.error || lj), 502)
       const detailed = await Promise.all((lj.threads || []).map(async (t: any) => {
-        const mr = await gmailApi(mailbox, `threads/${t.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`)
+        /* format=full, not metadata. Measured, not assumed: +110ms wall clock per
+         * page (415ms vs 305ms for 25 threads) and ZERO additional quota —
+         * threads.get bills 10 units whichever format is asked for, so the page
+         * still costs 25×10 + 10 = 260 units either way. The extra ~4.3MB is
+         * Gmail→function only; this function parses it and returns the same
+         * small summary, so the browser payload is unchanged.
+         *
+         * metadata cannot do this job at all: it returns payload.mimeType and no
+         * parts, so it can say "this thread has some non-alternative structure"
+         * (47% recall, measured) but never "this is a PDF". Rene asked for a PDF
+         * icon; only the parts tree carries MIME types. */
+        const mr = await gmailApi(mailbox, `threads/${t.id}?format=full`)
         if (!mr.ok) return { id: t.id, snippet: decodeEntities(t.snippet), subject: null, from: null, date: null, unread: false, message_count: 0 }
         const mj = await mr.json()
         const ms = mj.messages || []
@@ -472,7 +500,35 @@ serve(async (req) => {
          * and returned so the measurement is reproducible and so a decision to
          * switch this list to format=full (which would make it exact) has
          * somewhere to land, but no UI consumes it. */
-        const hasAttachment = ms.some((x: any) => (x.payload?.mimeType || '') === 'multipart/mixed')
+        /* Real attachment summary, from the same filter the thread view uses —
+         * so the list and the opened thread can never disagree. Inline signature
+         * images are excluded here exactly as they are there. */
+        const attTypes: Record<string, number> = {}
+        let attCount = 0
+        for (const msg of ms) {
+          const raw: any[] = []
+          collectAttachments(msg.payload, raw)
+          if (!raw.length) continue
+          /* Only decode the body when it can actually change the answer.
+           * filterRealAttachments consults the HTML solely to test whether a
+           * Content-ID is cid:-referenced, so a message whose parts carry NO
+           * Content-ID needs no body at all. walk() base64-decodes every
+           * text/html part it finds, which on a 25-thread page is the bulk of
+           * both the memory and the CPU — and most attachments (every one of
+           * the 68 PDFs in processing@, for instance) have no Content-ID. */
+          const needsBody = raw.some((a) => !!a.contentId)
+          let html = ''
+          if (needsBody) {
+            const acc = { text: '', html: '' }
+            walk(msg.payload, acc)
+            html = acc.html
+          }
+          for (const a of filterRealAttachments(raw, html)) {
+            attCount++
+            const k = attKind(a.mimeType, a.filename)
+            attTypes[k] = (attTypes[k] || 0) + 1
+          }
+        }
         return {
           id: t.id, snippet: decodeEntities(t.snippet),
           subject: first ? hdr(first.payload?.headers, 'Subject') : null,
@@ -480,7 +536,10 @@ serve(async (req) => {
           date: last?.internalDate ? new Date(Number(last.internalDate)).toISOString() : null,
           unread: ms.some((x: any) => (x.labelIds || []).includes('UNREAD')),
           message_count: ms.length,
-          has_attachment: hasAttachment,
+          has_attachment: attCount > 0,
+          attachment_count: attCount,
+          // e.g. { pdf: 2, image: 1 } — the client picks one icon, or a count.
+          attachment_types: attCount ? attTypes : null,
         }
       }))
       return ok({ threads: detailed, next_page_token: lj.nextPageToken || null })

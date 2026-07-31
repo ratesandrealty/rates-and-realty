@@ -301,6 +301,8 @@
       '.gm-row-top{display:flex;gap:6px;align-items:center;height:16px;line-height:16px;overflow:hidden}',
       '.gm-row-from{flex:1;min-width:0;font-size:12px;line-height:16px;color:#ddd;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.gm-row-date{font-size:10.5px;line-height:16px;color:var(--muted,#888);flex-shrink:0}',
+      '.gm-att-mark{display:inline-flex;align-items:center;gap:2px;font-size:11px;line-height:16px;flex-shrink:0;opacity:.85}',
+      '.gm-att-mark b{font-size:9.5px;font-weight:800;color:var(--muted,#999)}',
       '.gm-row-subj{font-size:12.5px;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
       '.gm-row-snip{font-size:11.5px;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
       // Filed-to-lead chip. Inline on line 1 (see the row-height note above), and it
@@ -323,6 +325,7 @@
       '.gm-stub .w{font-weight:700;color:#ccc;flex-shrink:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.gm-stub .s{flex:1;min-width:0;color:var(--muted,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.gm-stub .d{color:var(--muted,#777);font-size:11px;flex-shrink:0}',
+      '.gm-stub .gm-att-mark{margin-right:2px}',
       '.gm-stubbar{display:flex;align-items:center;gap:8px;padding:6px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,.06))}',
       '.gm-stubbar button{background:none;border:none;color:var(--g);font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;padding:0}',
       // Quoted-trailer toggle: the "On <date> <sender> wrote:" block is split out of
@@ -661,7 +664,12 @@
       'body{margin:0;padding:14px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1a1a;background:#fff;line-height:1.5;word-wrap:break-word;overflow-x:auto}' +
       'img{max-width:100%;height:auto}a{color:#1155cc}' +
       'blockquote{border-left:3px solid #ddd;margin:0;padding-left:12px;color:#555}' +
-      '</style></head><body>' + inner + '</body></html>';
+      '</style></head><body>' +
+      // A wrapper whose height is PURE CONTENT. body/documentElement heights are
+      // max(content, viewport) and the viewport is the iframe's own height, which
+      // is what made fitFrame a ratchet. A div has no viewport floor.
+      '<div id="__fit">' + inner + '</div>' +
+      '</body></html>';
   }
 
   /**
@@ -693,6 +701,19 @@
        * Setting height to 0 first forces the document to report CONTENT height.
        * It happens inside one synchronous block, so there is no paint between
        * the collapse and the restore and nothing flickers. */
+      /* Measure the wrapper if wrapBody built one — its height is content only,
+       * with no viewport floor, so this is exact and needs no collapse. The
+       * collapse path below stays for any frame not built by wrapBody. */
+      var fit = d.getElementById('__fit');
+      if (fit) {
+        var fh = Math.max(fit.scrollHeight, Math.ceil(fit.getBoundingClientRect().height));
+        if (fh) {
+          var want = (cap ? Math.min(fh + 24, cap) : fh + 28);
+          var now = parseInt(f.style.height, 10) || 0;
+          if (Math.abs(now - want) > 2) f.style.height = want + 'px';
+          return;
+        }
+      }
       var prev = f.style.height;
       f.style.height = '0px';
       var de = d.documentElement;
@@ -1273,6 +1294,50 @@
     var m = String(name || '').match(/\.([A-Za-z0-9]{1,6})$/);
     return m ? m[1].toLowerCase() : '';
   }
+  /* Mirrors attKind() in gmail-inbox. The server sends attachment_types on list
+   * rows (already classified there); this classifies locally for thread chips
+   * and collapsed stubs. ONE vocabulary — pdf|image|sheet|doc|archive|calendar|
+   * other — so a file shows the SAME icon in the list, on a stub, and on its
+   * chip. Extension is checked as well as MIME because senders mislabel. */
+  function attKindOf(mime, name) {
+    var t = String(mime || '').toLowerCase(), e = attExt(name);
+    if (t.indexOf('pdf') > -1 || e === 'pdf') return 'pdf';
+    if (t.indexOf('image/') === 0 || ['png','jpg','jpeg','gif','webp','bmp','heic'].indexOf(e) > -1) return 'image';
+    if (t.indexOf('spreadsheet') > -1 || t.indexOf('excel') > -1 || ['xls','xlsx','csv'].indexOf(e) > -1) return 'sheet';
+    if (t.indexOf('word') > -1 || t.indexOf('opendocument.text') > -1 || ['doc','docx','rtf','odt'].indexOf(e) > -1) return 'doc';
+    if (t.indexOf('zip') > -1 || t.indexOf('gzip') > -1 || t.indexOf('compressed') > -1 || ['zip','gz','rar','7z'].indexOf(e) > -1) return 'archive';
+    if (t.indexOf('calendar') > -1 || e === 'ics') return 'calendar';
+    return 'other';
+  }
+  var KIND_ICON = { pdf: '📄', image: '🖼', sheet: '📊', doc: '📝', archive: '🗜', calendar: '📅', other: '📎' };
+  var KIND_LABEL = { pdf: 'PDF', image: 'image', sheet: 'spreadsheet', doc: 'document', archive: 'archive', calendar: 'calendar invite', other: 'attachment' };
+  function kindIcon(k) { return KIND_ICON[k] || KIND_ICON.other; }
+
+  /* One mark for a set of attachments: the dominant type's icon plus a count,
+   * never N icons in a row. A collapsed stub is a single line, and five
+   * paperclips on it tell you less than "3" does. */
+  function attSummaryHtml(list) {
+    if (!list || !list.length) return '';
+    var counts = {};
+    list.forEach(function (a) { var k = attKindOf(a.mimeType, a.filename); counts[k] = (counts[k] || 0) + 1; });
+    var kinds = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+    var title = list.map(function (a) {
+      return (a.filename || 'attachment') + (a.size ? ' (' + attSize(a.size) + ')' : '');
+    }).join('\n');
+    return '<span class="gm-att-mark" title="' + esc(title) + '">' +
+      kindIcon(kinds[0]) + (list.length > 1 ? '<b>' + list.length + '</b>' : '') + '</span>';
+  }
+  // Same shape, built from the server's pre-classified counts on a list row.
+  function attSummaryFromTypes(types, count) {
+    if (!count) return '';
+    var kinds = Object.keys(types || {}).sort(function (a, b) { return types[b] - types[a]; });
+    var title = kinds.map(function (k) {
+      return types[k] + ' ' + KIND_LABEL[k] + (types[k] > 1 ? 's' : '');
+    }).join(', ');
+    return '<span class="gm-att-mark" title="' + esc(title) + '">' +
+      kindIcon(kinds[0] || 'other') + (count > 1 ? '<b>' + count + '</b>' : '') + '</span>';
+  }
+
   function attIcon(mime, name) {
     var t = String(mime || '').toLowerCase(), e = attExt(name);
     if (t.indexOf('pdf') > -1 || e === 'pdf') return '📄';
@@ -2810,6 +2875,10 @@
         h.push('<div class="gm-stub" data-stub="' + i + '" title="Click to expand">' +
           '<span class="w">' + (inbound ? '↓ ' : '↑ ') + esc(who) + '</span>' +
           '<span class="s">' + esc(m.body_text ? String(m.body_text).replace(/\s+/g, ' ').slice(0, 200) : '') + '</span>' +
+          // get_thread already returned this message's parts, so the stub costs
+          // nothing extra. Survives expand/collapse: the stub element is never
+          // re-rendered, only shown or hidden.
+          attSummaryHtml(m.attachments) +
           '<span class="d">' + esc(m.date ? fmtDate(m.date) : '') + '</span></div>');
       }
       var meta = ['<span class="gm-mdir" style="color:' + (inbound ? '#50c878' : '#c9a84c') + '">' + (inbound ? '↓ ' + esc(who) : '↑ You') + '</span>'];
@@ -2840,7 +2909,7 @@
             'data-att-preview="' + (canPreview ? '1' : '0') + '" ' +
             'data-att-size="' + (a.size || 0) + '" ' +
             'title="' + esc(name) + (a.size ? ' · ' + attSize(a.size) : '') + '">' +
-            '<span class="ic">' + attIcon(a.mimeType, name) + '</span>' +
+            '<span class="ic">' + kindIcon(attKindOf(a.mimeType, name)) + '</span>' +
             '<span class="n">' + esc(name) + '</span>' +
             (a.size ? '<span class="s">' + esc(attSize(a.size)) + '</span>' : '') +
             '<span class="go">' + (canPreview ? 'Open' : 'Download') + '</span>' +
@@ -3196,6 +3265,7 @@
           '<div class="gm-rowmain">' +
             '<div class="gm-row-top"><span class="gm-row-from">' + (t.unread ? '<span class="gm-dot"></span>' : '') + esc(from) + '</span>' +
             (filed ? '<span class="gm-row-filed" title="Filed to ' + esc(filed) + '">🏷 ' + esc(filed) + '</span>' : '') +
+            attSummaryFromTypes(t.attachment_types, t.attachment_count) +
             '<span class="gm-row-date">' + esc(fmtDate(t.date)) + '</span></div>' +
             '<div class="gm-row-subj">' + esc(t.subject || '(no subject)') + (t.message_count > 1 ? '<span class="gm-cnt">' + t.message_count + '</span>' : '') + '</div>' +
             // Quoted trailer trimmed off the preview — see splitQuotedText().
