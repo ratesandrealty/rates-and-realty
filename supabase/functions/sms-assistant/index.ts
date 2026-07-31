@@ -42,7 +42,11 @@ const STORAGE_BUCKET = "borrower-documents";
 const GOOGLE_CALENDAR_ID = "primary";
 const GOOGLE_TIMEZONE = "America/Los_Angeles";
 const GOOGLE_TOKEN_ROW_ID = "rene";
-const ADMIN_LEAD_URL_BASE = "https://beta.ratesandrealty.com/admin/lead-detail.html?cid=";
+/* ?contact_id=, not ?cid=. lead-detail reads contact_id | lead_id | id and has
+ * never read cid, so every link this line has produced since 288fae0
+ * (2026-07-09) opened a page with no contact. beta is fine — it 302s to the
+ * admin host preserving the query — the parameter name was the whole bug. */
+const ADMIN_LEAD_URL_BASE = "https://beta.ratesandrealty.com/admin/lead-detail.html?contact_id=";
 const OCR_CRON_SECRET = "rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1";
 /* KEYS, not labels. See DOC_TYPES below for why this changed. */
 const OCR_DOC_TYPES = ["pay_stubs", "w2", "bank_statements", "tax_returns"]; // only these trigger ocr-mms-upload
@@ -151,7 +155,44 @@ async function logTurn(row: any) {
 }
 
 // ── Direct Twilio send (from the 888 staff line) + media fetch ─────────────────
-async function sendSms(to: string, body: string): Promise<{ sid?: string; error?: string }> {
+/* ── UNROUTABLE TEST NUMBERS ────────────────────────────────────────────────
+ * +1 555 555 XXXX. NPA 555 is not assignable under the NANP and 555-01XX is
+ * the reserved fictional range, so no handset can ever receive one of these.
+ * That is the point: the guarantee is "cannot reach a person", not "we try not
+ * to". Earlier this session I drove five test messages through this function
+ * with Rene's real number as the sender and Twilio delivered every one of them
+ * to his phone, because nothing here could tell a test from a real turn.
+ *
+ * Two symmetric rules, both hard failures:
+ *   1. In test mode, a send to anything OUTSIDE this range is refused.
+ *   2. In real mode, a turn carrying a test-fixture MessageSid is refused
+ *      outright — that is exactly the shape of what I did wrong
+ *      (SMtest_pending_proof_02 from +17144728508).
+ *
+ * Test mode additionally requires a shared secret header. The Twilio webhook
+ * has no signature validation, so without it anyone who guessed the URL could
+ * POST From=+15555550001 and get an authorized session against the CRM tools.
+ * The reserved number alone is an identifier, not a credential. */
+const TEST_PHONE_RE = /^\+1555555\d{4}$/;
+const TEST_FIXTURE_SID_RE = /^(SMtest|MMtest|TEST)/i;
+const SMS_TEST_KEY = Deno.env.get("SMS_TEST_KEY") || "";
+function isTestPhone(p: string): boolean { return TEST_PHONE_RE.test((p || "").trim()); }
+
+/* testMode is passed explicitly, never read from a module global: Deno serves
+ * requests concurrently and a global would let a real turn observe a test
+ * turn's flag. */
+async function sendSms(to: string, body: string, testMode = false): Promise<{ sid?: string; error?: string }> {
+  if (testMode) {
+    if (!isTestPhone(to)) {
+      const msg = `BLOCKED: test-mode send to non-reserved destination ${to}`;
+      console.error("[sms-assistant] " + msg);
+      return { error: msg };
+    }
+    const preview = (body || "").substring(0, SMS_MAX_LENGTH);
+    console.log("[sms-assistant] TEST MODE — not dispatched to Twilio:", JSON.stringify({ to, body: preview }));
+    return { sid: "TESTSID_" + Date.now().toString(36) };
+  }
+  if (isTestPhone(to)) { return { error: `BLOCKED: real-mode send to reserved test number ${to}` }; }
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) return { error: "Twilio not configured" };
   const auth = btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`);
   const params = new URLSearchParams({ To: to, From: SMS_ASSISTANT_FROM_NUMBER, Body: (body || "").substring(0, SMS_MAX_LENGTH) });
@@ -682,34 +723,130 @@ async function extractCaptionTargets(caption: string): Promise<{ name: string; d
     return { name: m ? m[1].trim() : "", docType: inferDocType(cap), stage: aliasStage };
   }
 }
-async function saveBorrowerDocument(contact: any, mediaList: { url: string; contentType: string }[], docType: string | null, loanStage: string | null = null) {
+/* SPLIT IS THE DEFAULT; merging is opt-in via the caption.
+ *
+ * Rene texted two images with one caption. One was his borrower's paystub, the
+ * other a CoreLogic Credco Credit Score Disclosure — two unrelated documents
+ * merged into a single PDF and stamped pay_stubs, because a row carries ONE
+ * document_type and ONE loan_stage. Merging by default guarantees a mislabel
+ * whenever a batch is mixed, and a batch is usually mixed: people photograph
+ * whatever is on the table.
+ *
+ * The reverse mistake is cheap to fix (a genuinely multi-page statement arrives
+ * as N rows, and someone merges or ignores them). The mislabel is not: the file
+ * is filed under a type it isn't, and OCR reads two documents as one.
+ *
+ * These phrases opt into merging. They all assert that the images are ONE
+ * document, either by naming pages or by saying so. */
+const MERGE_PHRASES: RegExp[] = [
+  /\bpages?\s*\d+\s*(?:-|–|—|to|thru|through|and|&)\s*\d+\b/i,  // "pages 1-2", "page 1 and 2"
+  /\b\d+\s*pages?\s+of\b/i,                                      // "3 pages of one bank statement"
+  /\b(all|both)\s+pages?\b/i,                                    // "both pages", "all pages"
+  /\bsame\s+(document|doc|statement|paystub|pay\s?stub|form|file|report|letter)\b/i,
+  /\b(one|single)\s+(document|doc|statement|paystub|pay\s?stub|form|file|report|letter)\b/i,
+  /\bmulti-?page\b/i,
+  /\b(combine|merge)\b/i,
+  /\bone\s+file\b/i,
+  /\bfront\s+(and|&)\s+back\b/i,                                 // an ID is one document
+  /\bcontinued\b/i,
+];
+function wantsMerge(caption: string): boolean {
+  const c = (caption || "").trim();
+  if (!c) return false;
+  return MERGE_PHRASES.some((re) => re.test(c));
+}
+
+type SavedDoc = { uploaded_id: string; file_name: string; document_type: string; loan_stage: string | null; ocr: boolean; pages: number };
+
+/* Writes ONE row and ONE object per image unless the caption asked for a merge.
+ * Every file gets its own OCR job: OCR over a PDF holding two unrelated
+ * documents returns interleaved text that is worse than useless for extraction,
+ * while each split file yields clean text for its own document. */
+async function saveBorrowerDocument(
+  contact: any,
+  mediaList: { url: string; contentType: string }[],
+  docType: string | null,
+  loanStage: string | null = null,
+  caption = "",
+): Promise<{ files: SavedDoc[]; merged: boolean }> {
   const imgs: { bytes: Uint8Array; contentType: string }[] = [];
   for (const md of mediaList) {
     try { const m = await fetchTwilioMedia(md.url); imgs.push({ bytes: m.bytes, contentType: md.contentType || m.contentType }); }
     catch (e) { console.error("[doc] media fetch failed", e); }
   }
   if (!imgs.length) throw new Error("no media downloaded");
-  let bytes: Uint8Array, fileExt: string, mime: string;
-  try { bytes = await imagesToPdf(imgs); fileExt = "pdf"; mime = "application/pdf"; }
-  catch (e) { console.error("[doc] pdf embed failed, storing raw", e); bytes = imgs[0].bytes; mime = imgs[0].contentType || "image/jpeg"; fileExt = extFromType(mime); }
+
   const typeLabel = docType && DOC_TYPE_KEYS.includes(docType) ? docType : "other";
   const slug = typeLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "document";
-  const safe = `${slug}_${Date.now()}.${fileExt}`;
-  const path = `${contact.id}/${slug}/${safe}`;
-  const up = await sb.storage.from(STORAGE_BUCKET).upload(path, bytes, { contentType: mime, upsert: true });
-  if (up.error) throw new Error("storage upload: " + up.error.message);
-  /* document_type is WHAT it is; loan_stage is WHERE IN THE FILE it belongs.
-   * A paystub can arrive for the initial submission or to clear a condition —
-   * same type, different stage — so these cannot share one field. */
-  const { data: ins, error } = await sb.from("uploaded_documents").insert({ contact_id: contact.id, document_type: typeLabel, loan_stage: loanStage, file_name: safe, file_size: bytes.byteLength, storage_path: path, file_path: path, status: "received", uploaded_at: new Date().toISOString() }).select("id").single();
-  if (error) throw new Error("doc insert: " + error.message);
-  const uploadedId = ins.id;
-  let ocr = false;
-  if (OCR_DOC_TYPES.includes(typeLabel)) {
-    try { await fetch(`${SUPABASE_URL}/functions/v1/ocr-mms-upload`, { method: "POST", headers: { "Content-Type": "application/json", "x-cron-secret": OCR_CRON_SECRET }, body: JSON.stringify({ uploaded_document_id: uploadedId }) }); ocr = true; }
-    catch (e) { console.error("[doc] ocr trigger failed", e); }
+  const merged = imgs.length > 1 && wantsMerge(caption);
+  /* One timestamp for the whole message so a batch sorts together, plus a
+   * 1-based index so two images from one text can never collide on a path. */
+  const stamp = Date.now();
+
+  const groups: { bytes: Uint8Array; mime: string; ext: string; pages: number; idx: number | null }[] = [];
+  if (merged) {
+    try {
+      groups.push({ bytes: await imagesToPdf(imgs), mime: "application/pdf", ext: "pdf", pages: imgs.length, idx: null });
+    } catch (e) {
+      console.error("[doc] pdf embed failed on merge, falling back to split", e);
+      imgs.forEach((im, i) => groups.push({ bytes: im.bytes, mime: im.contentType || "image/jpeg", ext: extFromType(im.contentType || "image/jpeg"), pages: 1, idx: i + 1 }));
+    }
+  } else {
+    for (let i = 0; i < imgs.length; i++) {
+      const im = imgs[i];
+      try {
+        groups.push({ bytes: await imagesToPdf([im]), mime: "application/pdf", ext: "pdf", pages: 1, idx: imgs.length > 1 ? i + 1 : null });
+      } catch (e) {
+        console.error("[doc] pdf embed failed, storing raw image", e);
+        groups.push({ bytes: im.bytes, mime: im.contentType || "image/jpeg", ext: extFromType(im.contentType || "image/jpeg"), pages: 1, idx: imgs.length > 1 ? i + 1 : null });
+      }
+    }
   }
-  return { uploaded_id: uploadedId, file_name: safe, ocr, pages: imgs.length };
+
+  const files: SavedDoc[] = [];
+  const errors: string[] = [];
+  for (const g of groups) {
+    const safe = `${slug}_${stamp}${g.idx ? `_${g.idx}` : ""}.${g.ext}`;
+    const path = `${contact.id}/${slug}/${safe}`;
+    try {
+      const up = await sb.storage.from(STORAGE_BUCKET).upload(path, g.bytes, { contentType: g.mime, upsert: true });
+      if (up.error) throw new Error("storage upload: " + up.error.message);
+      /* document_type is WHAT it is; loan_stage is WHERE IN THE FILE it belongs.
+       * A paystub can arrive for the initial submission or to clear a condition —
+       * same type, different stage — so these cannot share one field. */
+      const { data: ins, error } = await sb.from("uploaded_documents").insert({ contact_id: contact.id, document_type: typeLabel, loan_stage: loanStage, file_name: safe, file_size: g.bytes.byteLength, storage_path: path, file_path: path, status: "received", uploaded_at: new Date().toISOString() }).select("id").single();
+      if (error) throw new Error("doc insert: " + error.message);
+      let ocr = false;
+      if (OCR_DOC_TYPES.includes(typeLabel)) {
+        try { await fetch(`${SUPABASE_URL}/functions/v1/ocr-mms-upload`, { method: "POST", headers: { "Content-Type": "application/json", "x-cron-secret": OCR_CRON_SECRET }, body: JSON.stringify({ uploaded_document_id: ins.id }) }); ocr = true; }
+        catch (e) { console.error("[doc] ocr trigger failed", e); }
+      }
+      files.push({ uploaded_id: ins.id, file_name: safe, document_type: typeLabel, loan_stage: loanStage, ocr, pages: g.pages });
+    } catch (e: any) {
+      /* One image failing must not discard the others. Partial success is
+       * reported as partial success, never as "saved". */
+      errors.push(`${safe}: ${e?.message || String(e)}`);
+      console.error("[doc] save failed for", safe, e);
+    }
+  }
+  if (!files.length) throw new Error(errors.join("; ") || "no files saved");
+  if (errors.length) console.error("[doc] partial save,", errors.length, "failed:", errors.join("; "));
+  return { files, merged };
+}
+
+/* Per-FILE confirmation. "✅ Saved 2 page(s)" hid that one of Rene's two images
+ * was a credit disclosure filed as a paystub; a line per file makes a mislabel
+ * visible in the reply itself, while he still has the documents in hand. */
+function describeSaved(res: { files: SavedDoc[]; merged: boolean }, who: string, url: string): string {
+  const head = res.merged
+    ? `✅ Saved 1 file (${res.files[0]?.pages ?? 1} pages, merged) to ${who}:`
+    : `✅ Saved ${res.files.length} file(s) to ${who}:`;
+  const lines = res.files.map((f, i) => {
+    const stage = f.loan_stage ? ` · ${f.loan_stage}` : "";
+    const ocr = f.ocr ? " · OCR queued" : "";
+    return `${i + 1}. ${docTypeLabel(f.document_type)}${stage}${ocr}`;
+  });
+  return [head, ...lines, url].join("\n");
 }
 
 // ── Main handler ────────────────────────────────────────────────────────────────
@@ -737,8 +874,30 @@ Deno.serve(async (req: Request) => {
   let metadata: any = {};
   let authorized = false, rejectReason: string | null = null, authSource: string | null = null;
 
+  /* Test mode = reserved sender AND the shared secret. Both, or neither. */
+  const testKeyOk = !!SMS_TEST_KEY && req.headers.get("x-sms-test-key") === SMS_TEST_KEY;
+  const testMode = isTestPhone(fromPhone) && testKeyOk;
+
   try {
     if (!fromPhone) return twiml();
+
+    /* A reserved number without the secret is someone probing the webhook. */
+    if (isTestPhone(fromPhone) && !testKeyOk) {
+      rejectReason = "test_number_without_key";
+      metadata = { path: "reject", reason: rejectReason };
+      await logTurn({ from_phone: fromPhone, to_phone: toPhone, inbound_text: body || null, twilio_message_sid: sid, authorized: false, reject_reason: rejectReason, outbound_text: null, outbound_sent_at: null, claude_model: null, claude_input_tokens: null, claude_output_tokens: null, tool_calls: null, duration_ms: Date.now() - t0, error_message: null, metadata });
+      return twiml();
+    }
+
+    /* A test fixture aimed at a REAL number. This is the one that actually
+     * happened, so it fails closed before anything else runs. */
+    if (!testMode && TEST_FIXTURE_SID_RE.test(sid || "")) {
+      rejectReason = "test_fixture_on_real_number";
+      metadata = { path: "reject", reason: rejectReason, sid, from_phone: fromPhone };
+      console.error("[sms-assistant] REFUSED: fixture sid", sid, "from real number", fromPhone);
+      await logTurn({ from_phone: fromPhone, to_phone: toPhone, inbound_text: body || null, twilio_message_sid: sid, authorized: false, reject_reason: rejectReason, outbound_text: null, outbound_sent_at: null, claude_model: null, claude_input_tokens: null, claude_output_tokens: null, tool_calls: null, duration_ms: Date.now() - t0, error_message: null, metadata });
+      return twiml();
+    }
 
     /* OPT-OUT BEFORE AUTHORIZATION — deliberately in this order.
      *
@@ -769,7 +928,7 @@ Deno.serve(async (req: Request) => {
       return twiml();
     }
 
-    const auth = await isAuthorized(fromPhone);
+    const auth = testMode ? { ok: true, source: "test_fixture" } : await isAuthorized(fromPhone);
     authorized = auth.ok; authSource = auth.source;
     if (!authorized) {
       rejectReason = "not_authorized"; metadata = { path: "reject", auth_source: null };
@@ -809,10 +968,11 @@ Deno.serve(async (req: Request) => {
             // pending row; carry it through so answering "which borrower?" does
             // not quietly lose "initial loan submission".
             const pendStage = pending.payload?.loan_stage || null;
-            const saved = await saveBorrowerDocument(contact, pending.payload?.media || [], pending.payload?.document_type || inferDocType(pending.payload?.caption || ""), pendStage);
+            const pendCaption = pending.payload?.caption || "";
+            const saved = await saveBorrowerDocument(contact, pending.payload?.media || [], pending.payload?.document_type || inferDocType(pendCaption), pendStage, pendCaption);
             await resolvePending(pending.id, chosen.contact_id);
-            outboundText = `✅ Saved ${saved.pages} page(s) to ${fullName(contact)}'s documents${pendStage ? ` under ${pendStage}` : ""}.${saved.ocr ? " OCR queued." : ""} ${ADMIN_LEAD_URL_BASE}${contact.id}`;
-            metadata = { path: "doc_upload_resolved", auth_source: authSource, contact_id: contact.id, contact_name: fullName(contact), uploaded_id: saved.uploaded_id, ocr: saved.ocr, media_count: (pending.payload?.media || []).length };
+            outboundText = describeSaved(saved, `${fullName(contact)}'s documents`, `${ADMIN_LEAD_URL_BASE}${contact.id}`);
+            metadata = { path: "doc_upload_resolved", auth_source: authSource, contact_id: contact.id, contact_name: fullName(contact), uploaded_ids: saved.files.map((f) => f.uploaded_id), files_saved: saved.files.length, merged: saved.merged, ocr: saved.files.some((f) => f.ocr), media_count: (pending.payload?.media || []).length };
           } catch (e: any) { errorMessage = e?.message || String(e); outboundText = `Couldn't save those documents: ${errorMessage}`; metadata = { path: "doc_upload_resolved", auth_source: authSource, error: errorMessage }; }
         }
       // ── Voice memo → whisper → assistant ──
@@ -846,9 +1006,9 @@ Deno.serve(async (req: Request) => {
         }
         if (target) {
           try {
-            const saved = await saveBorrowerDocument(target, images, docType, loanStage);
-            outboundText = `✅ Saved ${saved.pages} page(s) to ${fullName(target)}'s documents as "${docTypeLabel(docType)}"${loanStage ? ` under ${loanStage}` : ""}.${saved.ocr ? " OCR queued." : ""} ${ADMIN_LEAD_URL_BASE}${target.id}`;
-            metadata = { path: "doc_image", auth_source: authSource, contact_id: target.id, contact_name: fullName(target), uploaded_id: saved.uploaded_id, document_type: docType, loan_stage: loanStage, media_count: images.length, ocr: saved.ocr };
+            const saved = await saveBorrowerDocument(target, images, docType, loanStage, body || "");
+            outboundText = describeSaved(saved, `${fullName(target)}'s documents`, `${ADMIN_LEAD_URL_BASE}${target.id}`);
+            metadata = { path: "doc_image", auth_source: authSource, contact_id: target.id, contact_name: fullName(target), uploaded_ids: saved.files.map((f) => f.uploaded_id), document_type: docType, loan_stage: loanStage, media_count: images.length, files_saved: saved.files.length, merged: saved.merged, ocr: saved.files.some((f) => f.ocr) };
           } catch (e: any) { errorMessage = e?.message || String(e); outboundText = `Couldn't save those documents: ${errorMessage}`; metadata = { path: "doc_image", auth_source: authSource, error: errorMessage }; }
         } else {
           /* Only PROMISE to remember if the write actually succeeded. writePending
@@ -881,7 +1041,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (outboundText && !replySid) {
-    const s = await sendSms(fromPhone, outboundText);
+    const s = await sendSms(fromPhone, outboundText, testMode);
     if (s.sid) { replySid = s.sid; sentAt = new Date().toISOString(); }
     if (s.error && !errorMessage) errorMessage = "send: " + s.error;
   }
@@ -890,7 +1050,8 @@ Deno.serve(async (req: Request) => {
     from_phone: fromPhone, to_phone: toPhone, inbound_text: body || null, twilio_message_sid: sid,
     authorized, reject_reason: rejectReason, outbound_text: outboundText || null, outbound_sent_at: sentAt,
     claude_model: calledClaude ? CLAUDE_MODEL : null, claude_input_tokens: tokensIn || null, claude_output_tokens: tokensOut || null,
-    tool_calls: toolCalls.length ? toolCalls : null, duration_ms: Date.now() - t0, error_message: errorMessage, metadata,
+    tool_calls: toolCalls.length ? toolCalls : null, duration_ms: Date.now() - t0, error_message: errorMessage,
+    metadata: testMode ? { ...metadata, test_mode: true } : metadata,
   });
 
   return twiml();
