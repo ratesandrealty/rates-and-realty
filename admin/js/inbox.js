@@ -303,6 +303,7 @@
       '.gm-row-date{font-size:10.5px;line-height:16px;color:var(--muted,#888);flex-shrink:0}',
       '.gm-att-mark{display:inline-flex;align-items:center;gap:2px;font-size:11px;line-height:16px;flex-shrink:0;opacity:.85}',
       '.gm-att-mark b{font-size:9.5px;font-weight:800;color:var(--muted,#999)}',
+      '.gm-att-mark i{font-style:normal;font-size:9px;font-weight:700;color:var(--muted,#777);opacity:.9}',
       '.gm-row-subj{font-size:12.5px;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
       '.gm-row-snip{font-size:11.5px;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
       // Filed-to-lead chip. Inline on line 1 (see the row-height note above), and it
@@ -1313,29 +1314,58 @@
   var KIND_LABEL = { pdf: 'PDF', image: 'image', sheet: 'spreadsheet', doc: 'document', archive: 'archive', calendar: 'calendar invite', other: 'attachment' };
   function kindIcon(k) { return KIND_ICON[k] || KIND_ICON.other; }
 
-  /* One mark for a set of attachments: the dominant type's icon plus a count,
-   * never N icons in a row. A collapsed stub is a single line, and five
-   * paperclips on it tell you less than "3" does. */
+  /* ONE renderer for both call sites, so a thread's mark is identical in the
+   * list and on a collapsed stub.
+   *
+   * THE NUMBER BESIDE AN ICON IS ALWAYS THAT ICON'S OWN COUNT. The previous
+   * version paired the dominant type's icon with the thread TOTAL, so
+   * {pdf:16, other:1, image:1, sheet:1, doc:2} rendered as "PDF 21" — a PDF
+   * icon asserting twenty-one PDFs when there are sixteen. A reader cannot tell
+   * that from a miscount, which makes the whole indicator untrustworthy.
+   *
+   * Mixed threads get a separate "+N" for everything that is not the dominant
+   * type, so the two numbers never contradict each other:
+   *     one type,  one file   ->  [PDF]
+   *     one type,  N files    ->  [PDF] 16
+   *     mixed                 ->  [PDF] 16 +5
+   * The tooltip always carries the full breakdown. */
+  function attMarkHtml(counts, title) {
+    var kinds = Object.keys(counts).sort(function (a, b) {
+      return counts[b] - counts[a] || a.localeCompare(b);
+    });
+    if (!kinds.length) return '';
+    var lead = kinds[0];
+    var leadN = counts[lead];
+    var others = kinds.slice(1).reduce(function (n, k) { return n + counts[k]; }, 0);
+    return '<span class="gm-att-mark" title="' + esc(title) + '">' +
+      kindIcon(lead) +
+      (leadN > 1 ? '<b>' + leadN + '</b>' : '') +
+      (others > 0 ? '<i>+' + others + '</i>' : '') +
+      '</span>';
+  }
+
+  // From a message's own attachment array (thread view: stubs and messages).
   function attSummaryHtml(list) {
     if (!list || !list.length) return '';
     var counts = {};
-    list.forEach(function (a) { var k = attKindOf(a.mimeType, a.filename); counts[k] = (counts[k] || 0) + 1; });
-    var kinds = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+    list.forEach(function (a) {
+      var k = attKindOf(a.mimeType, a.filename);
+      counts[k] = (counts[k] || 0) + 1;
+    });
     var title = list.map(function (a) {
       return (a.filename || 'attachment') + (a.size ? ' (' + attSize(a.size) + ')' : '');
     }).join('\n');
-    return '<span class="gm-att-mark" title="' + esc(title) + '">' +
-      kindIcon(kinds[0]) + (list.length > 1 ? '<b>' + list.length + '</b>' : '') + '</span>';
+    return attMarkHtml(counts, title);
   }
-  // Same shape, built from the server's pre-classified counts on a list row.
+
+  // From the server's pre-classified per-type counts (list rows).
   function attSummaryFromTypes(types, count) {
-    if (!count) return '';
-    var kinds = Object.keys(types || {}).sort(function (a, b) { return types[b] - types[a]; });
+    if (!count || !types) return '';
+    var kinds = Object.keys(types).sort(function (a, b) { return types[b] - types[a]; });
     var title = kinds.map(function (k) {
       return types[k] + ' ' + KIND_LABEL[k] + (types[k] > 1 ? 's' : '');
     }).join(', ');
-    return '<span class="gm-att-mark" title="' + esc(title) + '">' +
-      kindIcon(kinds[0] || 'other') + (count > 1 ? '<b>' + count + '</b>' : '') + '</span>';
+    return attMarkHtml(types, title);
   }
 
   function attIcon(mime, name) {
