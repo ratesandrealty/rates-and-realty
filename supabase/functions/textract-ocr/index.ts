@@ -1,9 +1,96 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// @ts-ignore
+import { extractText, getDocumentProxy } from 'https://esm.sh/unpdf@0.12.1'
+// @ts-ignore
+import { PDFDocument } from 'https://esm.sh/pdf-lib@1.17.1'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
-const MAX_BASE64_BYTES = 28 * 1024 * 1024 // ~21 MB raw, well under Anthropic 32 MB cap
+/* 28 MB of base64 ≈ 21 MB of PDF. The Anthropic 32 MB request cap no longer
+ * binds here: whole documents are never sent to the model any more — text is
+ * extracted locally, and vision sees 25-page slices. What binds now is edge
+ * function memory. Peak residency when splitting is roughly 4x the file: the
+ * raw bytes, pdf-lib's parsed source document, the copied output, and the
+ * base64 of the slice. At 21 MB that is ~85 MB against a ~150 MB ceiling. */
+const MAX_BASE64_BYTES = 28 * 1024 * 1024
+
+
+function decodeBase64(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+function toBase64(bytes: Uint8Array): string {
+  let s = ''
+  const CH = 0x8000   // chunked, or a large PDF blows the call stack
+  for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode(...bytes.subarray(i, i + CH))
+  return btoa(s)
+}
+/** Extract pages [from..to] (1-based, inclusive) as a standalone PDF. */
+async function slicePdf(bytes: Uint8Array, from: number, to: number): Promise<Uint8Array> {
+  const src = await PDFDocument.load(bytes, { ignoreEncryption: true })
+  const out = await PDFDocument.create()
+  const idx: number[] = []
+  for (let i = from - 1; i <= to - 1 && i < src.getPageCount(); i++) idx.push(i)
+  const copied = await out.copyPages(src, idx)
+  copied.forEach((pg: any) => out.addPage(pg))
+  return await out.save()
+}
+/** OCR one page-range slice. Throws on any non-200 so the caller can halve. */
+async function visionOcr(slice: Uint8Array, key: string): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'pdfs-2024-09-25' },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 8192,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(slice) } },
+        { type: 'text', text: 'Transcribe all text from these pages verbatim, preserving headings and table structure as plain text. Output only the transcription.' },
+      ] }],
+    }),
+  })
+  if (!r.ok) throw new Error(`Claude ${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`)
+  const d = await r.json()
+  return d.content?.[0]?.text || ''
+}
+/** Summarize from TEXT. No document block, so no page or token ceiling. */
+async function summarizeGuideline(text: string, docCategory: string, key: string): Promise<any> {
+  const prompt = `You are reviewing a lender ${docCategory.toLowerCase()} document. Extract a structured summary as JSON ONLY. Do not include any prose outside the JSON.
+
+{
+  "summary": "2-3 sentence plain-English summary of what this document covers",
+  "loan_programs": ["list","of","loan programs covered, e.g. FHA, VA, Conventional, Jumbo, DSCR, Bank Statement"],
+  "min_fico": 0,
+  "max_ltv": 0,
+  "max_dti": 0,
+  "min_loan_amount": 0,
+  "max_loan_amount": 0,
+  "states_available": ["CA","NV"],
+  "key_requirements": ["bullet of one important requirement, overlay, or rule"]
+}
+
+Rules:
+- Return ONLY the JSON object, no markdown, no backticks, no commentary.
+- Use 0 for unknown numeric fields, [] for unknown arrays, "" for unknown strings.
+- Do not invent values. If the doc doesn't say it, leave it empty/zero.
+- key_requirements should capture overlays, restrictions, and unusual rules.
+
+DOCUMENT TEXT:
+${text}`
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 2048, messages: [{ role: 'user', content: prompt }] }),
+  })
+  if (!r.ok) throw new Error(`Claude ${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`)
+  const d = await r.json()
+  const t: string = d.content?.[0]?.text || '{}'
+  const m = t.match(/\{[\s\S]*\}/)
+  return m ? JSON.parse(m[0]) : {}
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -56,134 +143,200 @@ serve(async (req) => {
     // ─────────────────────────────────────────────────────────
     // BRANCH A — LENDER DOCUMENT (guidelines, rate sheet, etc.)
     // Triggered by lender_id or category being present.
+    //
+    // ORDER MATTERS. The old flow called Claude with the whole PDF as one
+    // document block and only uploaded to storage afterwards, so a document
+    // that tripped an Anthropic limit was lost entirely — that is why
+    // "Jumbo A+ Underwriting Guidelines 4.23.21" and "Oaktree Funding Platinum
+    // Advantage 9.1.24" are in neither the corpus nor the bucket. Now the file
+    // is stored and the row exists BEFORE any model call, so the worst case is
+    // a document with no summary, never a document that vanished.
+    //
+    // Then: text layer first. 86 of 90 guidelines sampled from the live corpus
+    // (95%) have an extractable text layer at a median 1,882 chars/page — for
+    // those the model never sees a PDF at all, so neither the 100-page cap nor
+    // the 200k-token cap can apply, and the call costs a fraction as much.
+    // Vision is the fallback for genuinely scanned documents, batched.
     // ─────────────────────────────────────────────────────────
     if (lender_id || category) {
       const docCategory = category || 'General'
-      const lenderPrompt = `You are reviewing a lender ${docCategory.toLowerCase()} document. Extract a structured summary as JSON ONLY. Do not include any prose outside the JSON.
-
-{
-  "summary": "2-3 sentence plain-English summary of what this document covers",
-  "loan_programs": ["list","of","loan programs covered, e.g. FHA, VA, Conventional, Jumbo, DSCR, Bank Statement"],
-  "min_fico": 0,
-  "max_ltv": 0,
-  "max_dti": 0,
-  "min_loan_amount": 0,
-  "max_loan_amount": 0,
-  "states_available": ["CA","NV"],
-  "key_requirements": [
-    "bullet of one important requirement, overlay, or rule"
-  ],
-  "raw_excerpt": "first ~1500 chars of the document text exactly as printed, for keyword search"
-}
-
-Rules:
-- Return ONLY the JSON object, no markdown, no backticks, no commentary.
-- Use 0 for unknown numeric fields, [] for unknown arrays, "" for unknown strings.
-- Do not invent values. If the doc doesn't say it, leave it empty/zero.
-- key_requirements should capture overlays, restrictions, and unusual rules — anything a loan officer would need to know.`
-
-      let claudeResp: Response
-      try {
-        claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'pdfs-2024-09-25' },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 2048,
-            messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: lenderPrompt }] }]
-          })
-        })
-      } catch (fetchErr) {
-        return jsonErr(502, 'Anthropic request failed: ' + (fetchErr as Error).message)
-      }
-
-      if (!claudeResp.ok) {
-        const errText = await claudeResp.text().catch(() => '')
-        console.error('[lender] Claude error:', claudeResp.status, errText.substring(0, 400))
-        return jsonErr(502, `Claude API ${claudeResp.status}: ${errText.substring(0, 200)}`)
-      }
-
-      const cd = await claudeResp.json()
-      const text: string = cd.content?.[0]?.text || '{}'
-      console.log('[lender] Claude raw:', text.substring(0, 300))
-
-      let parsed: any = {}
-      try {
-        const m = text.match(/\{[\s\S]*\}/)
-        if (m) parsed = JSON.parse(m[0])
-      } catch (e) {
-        console.error('[lender] JSON parse failed:', (e as Error).message)
-      }
-
-      const summary = String(parsed.summary || '')
-      const loanPrograms = Array.isArray(parsed.loan_programs) ? parsed.loan_programs.map(String) : []
-      const minFico = Number(parsed.min_fico) > 0 ? Math.round(Number(parsed.min_fico)) : null
-      const maxLtv = Number(parsed.max_ltv) > 0 ? Number(parsed.max_ltv) : null
-      const states = Array.isArray(parsed.states_available) ? parsed.states_available.map(String) : []
-      const keyReqs = Array.isArray(parsed.key_requirements) ? parsed.key_requirements.map(String) : []
-      const rawExcerpt = String(parsed.raw_excerpt || '')
-
-      // Upload the raw PDF to the lender-guidelines storage bucket so Guideline AI
-      // (and the lender modal preview) can fetch it via a public URL.
+      const pdfBytes = decodeBase64(file_base64)
       const safeFileName = (file_name || 'document.pdf').replace(/[^a-zA-Z0-9._-]/g, '_')
+
+      // ── 1. STORE FIRST ──────────────────────────────────────────────────
       let publicUrl: string | null = null
       try {
-        const fileBytes = Uint8Array.from(atob(file_base64), (c) => c.charCodeAt(0))
-        const { error: storageErr } = await sb.storage
-          .from('lender-guidelines')
-          .upload(safeFileName, fileBytes, { contentType: 'application/pdf', upsert: true })
-        if (storageErr) {
-          console.error('[lender] Storage upload failed:', storageErr.message)
-        } else {
-          publicUrl = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/lender-guidelines/${encodeURIComponent(safeFileName)}`
-        }
-      } catch (storageEx) {
-        console.error('[lender] Storage exception:', (storageEx as Error).message)
+        const up = await sb.storage.from('lender-guidelines')
+          .upload(safeFileName, pdfBytes, { contentType: 'application/pdf', upsert: true })
+        if (up.error) throw new Error(up.error.message)
+        publicUrl = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/lender-guidelines/${encodeURIComponent(safeFileName)}`
+      } catch (e) {
+        // Storage is the one step whose failure genuinely loses the document.
+        return jsonErr(500, 'Storage upload failed, nothing was saved: ' + (e as Error).message)
       }
 
-      // Upsert into lender_guidelines (onConflict: lender_id + file_name).
-      // Same lender re-uploading the same filename overwrites the existing row.
-      const { data: row, error: upsertErr } = await sb.from('lender_guidelines').upsert({
+      const { data: row0, error: upsertErr0 } = await sb.from('lender_guidelines').upsert({
         lender_id: lender_id || null,
         title: title || file_name?.replace(/\.pdf$/i, '') || 'Untitled',
         category: docCategory,
         file_name: safeFileName,
         file_url: publicUrl,
         file_type: file_type || 'application/pdf',
+        file_size: pdfBytes.byteLength,
         version: version || null,
         content_notes: notes || null,
         is_active: true,
-        ocr_status: 'completed',
-        ocr_text: rawExcerpt,
+        ocr_status: 'processing',
+        upload_source: 'lender_modal',
+        source_type: 'lender',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'lender_id,file_name' }).select('id').single()
+      if (upsertErr0) return jsonErr(500, 'DB upsert failed: ' + upsertErr0.message)
+      const guidelineId = row0!.id
+
+      // ── 2. TEXT LAYER ───────────────────────────────────────────────────
+      let pageTexts: string[] = []
+      let pageCount = 0
+      try {
+        const pdf = await getDocumentProxy(pdfBytes)
+        pageCount = pdf.numPages
+        const r = await extractText(pdf, { mergePages: false })
+        pageTexts = Array.isArray(r?.text) ? r.text.map((t: any) => String(t ?? '')) : [String(r?.text ?? '')]
+      } catch (e) {
+        console.error('[lender] text extraction failed:', (e as Error).message)
+      }
+      const totalChars = pageTexts.reduce((n, t) => n + t.trim().length, 0)
+      const pagesWithText = pageTexts.filter((t) => t.trim().length > 50).length
+      const charsPerPage = pageCount ? Math.round(totalChars / pageCount) : 0
+      // Same test the corpus was measured with: real text on most pages, not a
+      // header stamped over a scan.
+      const hasTextLayer = charsPerPage >= 200 && pagesWithText >= Math.ceil(pageCount * 0.6)
+
+      let fullText = ''
+      const failedRanges: string[] = []
+      let batchLog: any[] = []
+      let method = 'text-layer'
+
+      if (hasTextLayer) {
+        fullText = pageTexts.join('\n\n')
+      } else {
+        // ── 3. VISION FALLBACK, BATCHED BY PAGE RANGE ─────────────────────
+        // Batch size is derived from the token ceiling, not guessed. A PDF page
+        // costs roughly 1,600 image tokens plus its text; at the corpus median
+        // (1,882 chars/page ≈ 470 tokens) that is ~2,070 tokens/page, and at the
+        // densest page observed (6,787 chars ≈ 1,700 tokens) ~3,300. The ceiling
+        // is 200,000 for prompt+output. 25 pages is 52k–83k tokens across that
+        // whole range — a 2.4x margin at worst-observed density — and it is the
+        // same PAGE_BATCH_SIZE chunk-guidelines-large already uses, so there is
+        // one number to reason about rather than two. Oaktree failed at 204,090
+        // tokens, i.e. it was sent as ~100 pages at once; 25 could not.
+        //
+        // The 400 is never caught as a surprise: page count is known up front,
+        // so batches are planned. Adaptive halving exists only for documents
+        // denser than anything measured.
+        method = 'vision'
+        const PAGE_BATCH = 25
+        for (let start = 1; start <= pageCount; ) {
+          let size = Math.min(PAGE_BATCH, pageCount - start + 1)
+          let done = false
+          while (!done && size >= 1) {
+            const endP = start + size - 1
+            try {
+              const slice = await slicePdf(pdfBytes, start, endP)
+              const txt = await visionOcr(slice, ANTHROPIC_KEY!)
+              fullText += (fullText ? '\n\n' : '') + txt
+              batchLog.push({ pages: `${start}-${endP}`, ok: true, chars: txt.length })
+              start = endP + 1
+              done = true
+            } catch (e) {
+              const msg = String((e as Error).message || e)
+              if (size > 1) {
+                console.warn(`[lender] pages ${start}-${endP} failed (${msg.slice(0, 80)}), halving`)
+                batchLog.push({ pages: `${start}-${endP}`, ok: false, retrying_smaller: true, error: msg.slice(0, 120) })
+                size = Math.floor(size / 2)
+              } else {
+                // ── 4. PARTIAL SUCCESS: skip the page, keep the document ────
+                failedRanges.push(String(start))
+                batchLog.push({ pages: String(start), ok: false, error: msg.slice(0, 120) })
+                start = start + 1
+                done = true
+              }
+            }
+          }
+        }
+      }
+
+      // ── 5. SUMMARY FROM TEXT, never from the whole PDF ──────────────────
+      // Bounded so a 300-page guideline cannot reproduce the token failure the
+      // document block caused. The summary does not need every page; the
+      // chunker indexes the full text separately for retrieval.
+      const SUMMARY_CHAR_BUDGET = 120_000   // ~30k tokens, well inside the ceiling
+      const excerpt = fullText.slice(0, SUMMARY_CHAR_BUDGET)
+      let summary = '', loanPrograms: string[] = [], keyReqs: string[] = [], states: string[] = []
+      let minFico: number | null = null, maxLtv: number | null = null
+      let summaryError: string | null = null
+
+      if (excerpt.trim().length > 0) {
+        try {
+          const parsed = await summarizeGuideline(excerpt, docCategory, ANTHROPIC_KEY!)
+          summary = String(parsed.summary || '')
+          loanPrograms = Array.isArray(parsed.loan_programs) ? parsed.loan_programs.map(String) : []
+          keyReqs = Array.isArray(parsed.key_requirements) ? parsed.key_requirements.map(String) : []
+          states = Array.isArray(parsed.states_available) ? parsed.states_available.map(String) : []
+          minFico = Number(parsed.min_fico) > 0 ? Math.round(Number(parsed.min_fico)) : null
+          maxLtv = Number(parsed.max_ltv) > 0 ? Number(parsed.max_ltv) : null
+        } catch (e) {
+          // The document is already stored and its text extracted. A failed
+          // summary is a missing field, not a failed upload.
+          summaryError = String((e as Error).message || e).slice(0, 200)
+          console.error('[lender] summary failed:', summaryError)
+        }
+      }
+
+      const ocrStatus = failedRanges.length ? 'partial' : (fullText.trim() ? 'completed' : 'no_text')
+      const { error: upErr } = await sb.from('lender_guidelines').update({
+        ocr_status: ocrStatus,
+        ocr_text: fullText.slice(0, 1_000_000),
+        ocr_page_count: pageCount,
         ocr_completed_at: new Date().toISOString(),
-        extracted_text: rawExcerpt,
-        ai_summary: summary,
-        ai_indexed_at: new Date().toISOString(),
+        extracted_text: fullText.slice(0, 1_000_000),
+        ai_summary: summary || null,
+        ai_indexed_at: summary ? new Date().toISOString() : null,
         key_requirements: keyReqs.length ? keyReqs : null,
         min_fico: minFico,
         max_ltv: maxLtv,
         states_available: states.length ? states : null,
         loan_types: loanPrograms.length ? loanPrograms : null,
-        upload_source: 'lender_modal',
-        source_type: 'lender',
+        // Let the existing chunker pipeline index it — this path does not chunk.
+        chunk_status: null,
+        chunked_at: null,
+        chunk_count: 0,
         updated_at: new Date().toISOString()
-      }, { onConflict: 'lender_id,file_name' }).select('id').single()
+      }).eq('id', guidelineId)
+      if (upErr) console.error('[lender] final update failed:', upErr.message)
 
-      if (upsertErr) {
-        console.error('[lender] DB upsert failed:', upsertErr.message)
-        return jsonErr(500, 'DB upsert failed: ' + upsertErr.message)
-      }
-
+      // ── 6. REPORT WHAT HAPPENED, INCLUDING WHAT DIDN'T ──────────────────
       return new Response(JSON.stringify({
         success: true,
-        document_id: row?.id,
+        partial: failedRanges.length > 0,
+        document_id: guidelineId,
         file_url: publicUrl,
+        method,
+        page_count: pageCount,
+        chars_extracted: fullText.length,
+        chars_per_page: charsPerPage,
+        pages_failed: failedRanges,
+        batches: batchLog,
+        summary_error: summaryError,
         summary,
         loan_programs: loanPrograms,
         min_fico: minFico,
         max_ltv: maxLtv,
         states_available: states,
-        key_requirements: keyReqs
+        key_requirements: keyReqs,
+        message: failedRanges.length
+          ? `Indexed ${pageCount - failedRanges.length} of ${pageCount} pages. Pages ${failedRanges.join(', ')} could not be read.`
+          : `Indexed ${pageCount} page(s) via ${method}.`
       }), { headers: jsonHeaders() })
     }
 
