@@ -354,6 +354,28 @@
     return Array.from(boxes).map(function(b){return b.value;});
   }
 
+  /* Checked boxes UNION stored values this grid's vocabulary cannot represent.
+   * Case-insensitive comparison, but the ORIGINAL stored string is what gets
+   * written back — casing and spelling are preserved exactly. If the grid is
+   * missing from the DOM, the stored array is returned untouched rather than an
+   * empty one: an absent grid is not an instruction to delete. */
+  function mergeChecked(containerId, vocabulary, original) {
+    var orig = Array.isArray(original) ? original : [];
+    var el = document.getElementById(containerId);
+    if (!el) return orig.slice();
+    var checked = getCheckedValues(containerId);
+    var vocabLC = (vocabulary || []).map(function(v){ return String(v).toLowerCase(); });
+    var unknown = orig.filter(function(v){
+      return vocabLC.indexOf(String(v).trim().toLowerCase()) === -1;
+    });
+    var seen = Object.create(null);
+    return checked.concat(unknown).filter(function(v){
+      var k = String(v).trim().toLowerCase();
+      if (seen[k]) return false;
+      seen[k] = 1; return true;
+    });
+  }
+
   function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = v == null ? '' : v; }
   function getVal(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; }
   function getNum(id) { var v = getVal(id); return v === '' ? null : (parseFloat(v) || null); }
@@ -425,6 +447,15 @@
       setVal('f_key_overlays', l.key_overlays);
       setVal('f_exception_process', l.exception_process);
       setVal('f_submission_checklist', l.submission_checklist);
+      /* SAFETY: keep what was STORED, verbatim, before the grids filter it to
+       * their own vocabulary. This form's 50-item program list and 14-item type
+       * list cannot draw everything the record holds — 671 of 1,132 stored
+       * program values and 4 of 577 type values fall outside them — and the save
+       * below writes only checked boxes, so anything undrawable was deleted.
+       * These originals are unioned back in on save. Nothing is normalised. */
+      window._origLoanTypes = Array.isArray(l.loan_types) ? l.loan_types.slice() : [];
+      window._origLoanPrograms = Array.isArray(l.loan_programs) ? l.loan_programs.slice()
+        : (Array.isArray(l.programs) ? l.programs.slice() : []);
       buildMultiGrid('loanTypesGrid', LOAN_TYPES, l.loan_types || []);
       buildMultiGrid('loanProgramsGrid', LOAN_PROGRAMS, l.loan_programs || l.programs || []);
       showState('form');
@@ -462,8 +493,8 @@
         avg_app_to_fund: getNum('f_avg_app_to_fund'),
         states_licensed: states,
         notes: getVal('f_notes'),
-        loan_types: getCheckedValues('loanTypesGrid'),
-        loan_programs: getCheckedValues('loanProgramsGrid'),
+        loan_types: mergeChecked('loanTypesGrid', LOAN_TYPES, window._origLoanTypes),
+        loan_programs: mergeChecked('loanProgramsGrid', LOAN_PROGRAMS, window._origLoanPrograms),
         // Compensation & Fees
         compensation_type: getVal('f_compensation_type'),
         compensation_bps: getNum('f_compensation_bps'),

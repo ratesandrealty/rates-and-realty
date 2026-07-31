@@ -1627,6 +1627,14 @@ function renderLoanProgramsChecklist(rawPrograms) {
     const isChecked = activeLC.indexOf(p.toLowerCase()) >= 0 ? ' checked' : '';
     return '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;"><input type="checkbox" value="'+safe+'" style="accent-color:#C9A84C;"'+isChecked+'>'+p+'</label>';
   }).join('');
+  /* SAFETY: keep the STORED array verbatim, before any filtering.
+   * 1,007 of 1,132 stored values are not in LOAN_PROGRAMS_LIST — legitimate
+   * programs this grid simply cannot draw (DSCR, ITIN, Texas 50(a)(6),
+   * Non-Warr Condo…). The line below filters them out of the edit state, and
+   * the save then wrote that filtered array back, deleting them. This original
+   * is what the save unions back in. Verbatim: original casing and spelling are
+   * preserved, nothing is normalised. */
+  window._editLoanProgramsOriginal = active.slice();
   window._editLoanProgramsList = active.filter(a => LOAN_PROGRAMS_LIST.some(p => p.toLowerCase() === a.toLowerCase()));
 }
 
@@ -1653,9 +1661,30 @@ function toggleLoanTypeChip(t) {
 
 async function saveLenderDetails(lenderId, clickupId) {
   // Snapshot checked loan programs from checklist
-  window._editLoanProgramsList = Array.from(
-    document.querySelectorAll('#loanProgramsGrid input[type=checkbox]:checked')
-  ).map(cb => cb.value);
+  /* Checked boxes UNION stored-values-the-grid-cannot-represent.
+   * Without the union this is a full-array overwrite from a 36-item vocabulary,
+   * which silently deletes everything else on the record. The comparison is
+   * case-insensitive but the OUTPUT keeps the original stored string, so a
+   * value stored as "Bank Statement/Non QM" is written back exactly that way.
+   *
+   * If the grid is not in the DOM at all, write nothing rather than an empty
+   * array — an absent grid must never be read as "the user unchecked
+   * everything". */
+  const _pgGrid = document.getElementById('loanProgramsGrid');
+  const _pgOriginal = Array.isArray(window._editLoanProgramsOriginal) ? window._editLoanProgramsOriginal : [];
+  if (!_pgGrid) {
+    window._editLoanProgramsList = _pgOriginal.slice();
+  } else {
+    const _pgChecked = Array.from(_pgGrid.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
+    const _pgVocabLC = LOAN_PROGRAMS_LIST.map(p => p.toLowerCase());
+    const _pgUnknown = _pgOriginal.filter(v => _pgVocabLC.indexOf(String(v).trim().toLowerCase()) === -1);
+    const _seen = Object.create(null);
+    window._editLoanProgramsList = _pgChecked.concat(_pgUnknown).filter(function (v) {
+      const k = String(v).trim().toLowerCase();
+      if (_seen[k]) return false;
+      _seen[k] = 1; return true;
+    });
+  }
 
   // Rep contact fields are dual-written to BOTH column sets (rep_* + contact_*) so every
   // consumer stays in sync: doc-merge / edge fns read rep_*, the lender list card reads
