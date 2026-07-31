@@ -247,11 +247,22 @@
       hb.src = '/admin/js/help-button.js?v=2026070602';
       document.head.appendChild(hb);
     }
+    // Universal task capture (📌 + Ctrl+Shift+K). Same reasoning as the two
+    // above: auth-guard is the only script guaranteed on every authenticated
+    // staff page, so it is the single place that reliably mounts an app-wide
+    // widget. Idempotent via window._taskCaptureLoaded.
+    function mountTaskCapture() {
+      if (document.querySelector('script[src*="/admin/js/task-capture.js"]')) return;
+      const tc = document.createElement('script');
+      tc.src = '/admin/js/task-capture.js?v=2026073101';
+      document.head.appendChild(tc);
+    }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { mountStaffChat(); mountHelpButton(); });
+      document.addEventListener('DOMContentLoaded', function () { mountStaffChat(); mountHelpButton(); mountTaskCapture(); });
     } else {
       mountStaffChat();
       mountHelpButton();
+      mountTaskCapture();
     }
   })();
 })();

@@ -26,6 +26,55 @@ function isDeletedErr(e: any): boolean {
   return m.includes(" 404") || m.includes("item_013") || m.includes("not found");
 }
 
+/* Target list, configurable. app_config wins over the env default so the capture
+ * widget can be pointed at a different list without a redeploy. Falls back to the
+ * env var, then the historical hardcoded id, so nothing that works today breaks. */
+async function resolveListId(explicit?: string): Promise<string> {
+  if (explicit) return String(explicit);
+  try {
+    const { data } = await sb.from("app_config").select("value").eq("key", "clickup_capture_list_id").maybeSingle();
+    const v = data && typeof data.value === "string" ? data.value.replace(/^"|"$/g, "").trim() : "";
+    if (v) return v;
+  } catch (_) { /* config unreadable → env default */ }
+  return CLICKUP_TODO_LIST_ID;
+}
+
+/* Attach BYTES to a ClickUp task, not a URL.
+ *
+ * A Supabase signed URL would expire and leave a dead link in ClickUp forever;
+ * a public URL would mean a public bucket, which is exactly what the private
+ * task-screenshots bucket exists to avoid. ClickUp stores its own copy.
+ *
+ * multipart/form-data, so Content-Type must NOT be set by hand — the boundary
+ * comes from FormData. And the token goes in raw: ClickUp v2 personal tokens are
+ * NOT Bearer, which is the same mistake that was 401ing sms-assistant before its
+ * v33 fix. clickupFetch() is deliberately not reused here because it forces
+ * application/json. */
+async function attachToClickup(taskId: string, bytes: Uint8Array, contentType: string, filename: string) {
+  if (!CLICKUP_TOKEN) throw new Error("CLICKUP_API_TOKEN not set");
+  const fd = new FormData();
+  fd.append("attachment", new Blob([bytes as unknown as BlobPart], { type: contentType || "application/octet-stream" }), filename);
+  const res = await fetch(`https://api.clickup.com/api/v2/task/${encodeURIComponent(taskId)}/attachment`, {
+    method: "POST",
+    headers: { "Authorization": CLICKUP_TOKEN },
+    body: fd,
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`ClickUp attach ${res.status}: ${t.substring(0, 200)}`);
+  }
+  return await res.json().catch(() => ({}));
+}
+
+function b64ToBytes(b64: string): Uint8Array {
+  const clean = String(b64 || "").replace(/^data:[^;]+;base64,/, "").replace(/-/g, "+").replace(/_/g, "/");
+  const pad = clean.length % 4 ? "=".repeat(4 - (clean.length % 4)) : "";
+  const bin = atob(clean + pad);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 async function pruneCacheRow(id: string) {
   await sb.from("clickup_task_cache").delete().eq("clickup_task_id", id);
   await sb.from("tasks").update({ status: "completed", updated_at: new Date().toISOString() }).eq("clickup_task_id", id);
@@ -205,7 +254,7 @@ async function resolveContacts(body: any) {
 
 async function createTask(body: any) {
   if (!body.title) throw new Error("title required");
-  const listId = body.list_id || CLICKUP_TODO_LIST_ID;
+  const listId = await resolveListId(body.list_id);
   const payload: any = { name: body.title };
   if (body.description) payload.description = body.description;
   if (body.due_date) payload.due_date = new Date(body.due_date).getTime();
@@ -244,6 +293,23 @@ async function createTask(body: any) {
     });
   }
   return { success: true, clickup_task_id: created.id, url: created.url };
+}
+
+/* Screenshot → ClickUp. Called after the task exists, so a failed attachment
+ * never costs the task itself — the caller reports it separately. */
+async function attachTask(body: any) {
+  if (!body.clickup_task_id) throw new Error("clickup_task_id required");
+  if (!body.data_b64) throw new Error("data_b64 required");
+  const bytes = b64ToBytes(body.data_b64);
+  const MAX = 10 * 1024 * 1024;
+  if (bytes.length > MAX) throw new Error(`screenshot is ${(bytes.length / 1024 / 1024).toFixed(1)}MB, over the ${MAX / 1024 / 1024}MB limit`);
+  const r = await attachToClickup(
+    String(body.clickup_task_id),
+    bytes,
+    String(body.content_type || "image/png"),
+    String(body.filename || "screenshot.png"),
+  );
+  return { success: true, attachment_id: r?.id || null, url: r?.url || null, bytes: bytes.length };
 }
 
 async function commentTask(body: any) {
@@ -389,6 +455,7 @@ Deno.serve(async (req) => {
       if (sub === "delete") return j(await deleteTask(body));
       if (sub === "relink") return j(await relinkTask(body));
       if (sub === "comment") return j(await commentTask(body));
+      if (sub === "attach") return j(await attachTask(body));
       return j(await createTask(body));
     }
     if (req.method === "POST" && action === "auto-link-contacts") {
