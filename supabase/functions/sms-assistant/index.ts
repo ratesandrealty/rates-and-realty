@@ -13,6 +13,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { verifyTwilioRequest, twilioForbidden } from "../_shared/twilio-signature.ts";
 import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -106,15 +107,14 @@ function twiml(): Response {
 }
 
 // ── Inbound parse (raw Twilio webhook; JSON also accepted for testing) ─────────
-async function parseInbound(req: Request) {
-  const ct = req.headers.get("content-type") || "";
+function parseInboundFrom(ct: string, raw: string) {
   let p: URLSearchParams;
   if (ct.includes("application/json")) {
-    const j = await req.json().catch(() => ({} as any));
+    let j: any = {};
+    try { j = JSON.parse(raw); } catch { j = {}; }
     p = new URLSearchParams();
     for (const k of Object.keys(j || {})) p.set(k, String((j as any)[k] ?? ""));
   } else {
-    const raw = await req.text();
     p = new URLSearchParams(raw);
   }
   const num = parseInt(p.get("NumMedia") || "0", 10) || 0;
@@ -176,6 +176,11 @@ async function logTurn(row: any) {
 const TEST_PHONE_RE = /^\+1555555\d{4}$/;
 const TEST_FIXTURE_SID_RE = /^(SMtest|MMtest|TEST)/i;
 const SMS_TEST_KEY = Deno.env.get("SMS_TEST_KEY") || "";
+/* Every document written by fixture traffic lands here, never on a real record.
+ * The outbound guard stops SMS reaching a handset but says nothing about DB
+ * writes: earlier test runs put five rows and five objects on a live contact's
+ * file and I had to delete them afterwards. Deleting is not a control. */
+const TEST_CONTACT_ID = Deno.env.get("SMS_TEST_CONTACT_ID") || "";
 function isTestPhone(p: string): boolean { return TEST_PHONE_RE.test((p || "").trim()); }
 
 /* testMode is passed explicitly, never read from a module global: Deno serves
@@ -768,13 +773,28 @@ async function saveBorrowerDocument(
   docType: string | null,
   loanStage: string | null = null,
   caption = "",
-): Promise<{ files: SavedDoc[]; merged: boolean; failed: number }> {
+  testMode = false,
+): Promise<{ files: SavedDoc[]; merged: boolean; failed: number; redirected?: string; contact: any }> {
   const imgs: { bytes: Uint8Array; contentType: string }[] = [];
   for (const md of mediaList) {
     try { const m = await fetchTwilioMedia(md.url); imgs.push({ bytes: m.bytes, contentType: md.contentType || m.contentType }); }
     catch (e) { console.error("[doc] media fetch failed", e); }
   }
   if (!imgs.length) throw new Error("no media downloaded");
+
+  /* FIXTURE TRAFFIC CANNOT TOUCH A REAL RECORD. Not "should not" — the swap
+   * happens here, below every caller, so there is no code path that reaches the
+   * storage upload with a real contact id while testMode is set. */
+  let redirected: string | undefined;
+  if (testMode) {
+    if (!TEST_CONTACT_ID) throw new Error("test mode: SMS_TEST_CONTACT_ID is not configured, refusing to write to a real record");
+    if (contact?.id !== TEST_CONTACT_ID) {
+      const { data: tc } = await sb.from("contacts").select(CONTACT_COLS).eq("id", TEST_CONTACT_ID).maybeSingle();
+      if (!tc) throw new Error("test mode: designated test contact not found, refusing to write");
+      redirected = `${fullName(contact)} -> ${fullName(tc)}`;
+      contact = tc;
+    }
+  }
 
   /* REFUSE BEFORE STORING when the borrower has no Drive folder.
    *
@@ -868,13 +888,17 @@ async function saveBorrowerDocument(
   }
   if (!files.length) throw new Error(errors.join("; ") || "no files saved");
   if (errors.length) console.error("[doc] partial save,", errors.length, "failed:", errors.join("; "));
-  return { files, merged, failed: errors.length };
+  /* The effective contact, which is NOT the requested one in test mode. Callers
+   * build the confirmation from this so the reply names where the file actually
+   * went — a confirmation that names a borrower whose record was never written
+   * is the same lie as "Saved" over a failed write. */
+  return { files, merged, failed: errors.length, redirected, contact };
 }
 
 /* Per-FILE confirmation. "✅ Saved 2 page(s)" hid that one of Rene's two images
  * was a credit disclosure filed as a paystub; a line per file makes a mislabel
  * visible in the reply itself, while he still has the documents in hand. */
-function describeSaved(res: { files: SavedDoc[]; merged: boolean; failed?: number }, who: string, url: string): string {
+function describeSaved(res: { files: SavedDoc[]; merged: boolean; failed?: number; redirected?: string }, who: string, url: string): string {
   const head = res.merged
     ? `✅ Saved 1 file (${res.files[0]?.pages ?? 1} pages, merged) to ${who}:`
     : `✅ Saved ${res.files.length} file(s) to ${who}:`;
@@ -884,6 +908,7 @@ function describeSaved(res: { files: SavedDoc[]; merged: boolean; failed?: numbe
     return `${i + 1}. ${docTypeLabel(f.document_type)}${stage}${ocr}`;
   });
   const tail = res.failed ? [`⚠️ ${res.failed} image(s) could NOT be saved — resend them.`] : [];
+  if (res.redirected) tail.push(`[TEST MODE] redirected ${res.redirected}`);
   return [head, ...lines, ...tail, url].join("\n");
 }
 
@@ -900,8 +925,23 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const t0 = Date.now();
 
+  /* SIGNATURE FIRST — before parsing, before logging, before any DB call.
+   * This endpoint is the SMS webhook for +18886881231 and for two messaging
+   * services; until now anyone who knew the URL could POST a From= of their
+   * choosing and drive an authorized session against the CRM tools. The body is
+   * read once here and handed to the parser, because a Request body cannot be
+   * consumed twice. */
+  const ctype = req.headers.get("content-type") || "";
+  let rawBody = "";
+  try { rawBody = await req.text(); } catch { return twilioForbidden(); }
+  const auth = await verifyTwilioRequest(req, rawBody, { authToken: TWILIO_AUTH_TOKEN, testKey: SMS_TEST_KEY });
+  if (!auth.ok) {
+    console.error("[sms-assistant] REJECTED unsigned/invalid webhook:", auth.reason, "url=", auth.url);
+    return twilioForbidden();
+  }
+
   let inbound;
-  try { inbound = await parseInbound(req); } catch { return twiml(); }
+  try { inbound = parseInboundFrom(ctype, rawBody); } catch { return twiml(); }
   const fromPhone = inbound.from, toPhone = inbound.to, body = inbound.body, sid = inbound.sid;
   const media = inbound.media;
   const images = media.filter((m) => /^image\//i.test(m.contentType));
@@ -912,9 +952,11 @@ Deno.serve(async (req: Request) => {
   let metadata: any = {};
   let authorized = false, rejectReason: string | null = null, authSource: string | null = null;
 
-  /* Test mode = reserved sender AND the shared secret. Both, or neither. */
-  const testKeyOk = !!SMS_TEST_KEY && req.headers.get("x-sms-test-key") === SMS_TEST_KEY;
-  const testMode = isTestPhone(fromPhone) && testKeyOk;
+  /* Decided by verifyTwilioRequest: mode "test" means the reserved range AND
+   * the shared secret both checked out. Anything else reached here by way of a
+   * valid Twilio signature. */
+  const testMode = auth.mode === "test";
+  const testKeyOk = testMode;
 
   try {
     if (!fromPhone) return twiml();
@@ -1007,10 +1049,11 @@ Deno.serve(async (req: Request) => {
             // not quietly lose "initial loan submission".
             const pendStage = pending.payload?.loan_stage || null;
             const pendCaption = pending.payload?.caption || "";
-            const saved = await saveBorrowerDocument(contact, pending.payload?.media || [], pending.payload?.document_type || inferDocType(pendCaption), pendStage, pendCaption);
+            const saved = await saveBorrowerDocument(contact, pending.payload?.media || [], pending.payload?.document_type || inferDocType(pendCaption), pendStage, pendCaption, testMode);
             await resolvePending(pending.id, chosen.contact_id);
-            outboundText = describeSaved(saved, `${fullName(contact)}'s documents`, `${ADMIN_LEAD_URL_BASE}${contact.id}`);
-            metadata = { path: "doc_upload_resolved", auth_source: authSource, contact_id: contact.id, contact_name: fullName(contact), uploaded_ids: saved.files.map((f) => f.uploaded_id), files_saved: saved.files.length, merged: saved.merged, ocr: saved.files.some((f) => f.ocr), media_count: (pending.payload?.media || []).length };
+            const _r = saved.contact || contact;
+            outboundText = describeSaved(saved, `${fullName(_r)}'s documents`, `${ADMIN_LEAD_URL_BASE}${_r.id}`);
+            metadata = { path: "doc_upload_resolved", auth_source: authSource, contact_id: _r.id, contact_name: fullName(_r), uploaded_ids: saved.files.map((f) => f.uploaded_id), files_saved: saved.files.length, merged: saved.merged, ocr: saved.files.some((f) => f.ocr), media_count: (pending.payload?.media || []).length };
           } catch (e: any) { errorMessage = e?.message || String(e); outboundText = `Couldn't save those documents: ${errorMessage}`; metadata = { path: "doc_upload_resolved", auth_source: authSource, error: errorMessage }; }
         }
       // ── Voice memo → whisper → assistant ──
@@ -1044,9 +1087,10 @@ Deno.serve(async (req: Request) => {
         }
         if (target) {
           try {
-            const saved = await saveBorrowerDocument(target, images, docType, loanStage, body || "");
-            outboundText = describeSaved(saved, `${fullName(target)}'s documents`, `${ADMIN_LEAD_URL_BASE}${target.id}`);
-            metadata = { path: "doc_image", auth_source: authSource, contact_id: target.id, contact_name: fullName(target), uploaded_ids: saved.files.map((f) => f.uploaded_id), document_type: docType, loan_stage: loanStage, media_count: images.length, files_saved: saved.files.length, merged: saved.merged, ocr: saved.files.some((f) => f.ocr) };
+            const saved = await saveBorrowerDocument(target, images, docType, loanStage, body || "", testMode);
+            const _t = saved.contact || target;
+            outboundText = describeSaved(saved, `${fullName(_t)}'s documents`, `${ADMIN_LEAD_URL_BASE}${_t.id}`);
+            metadata = { path: "doc_image", auth_source: authSource, contact_id: _t.id, contact_name: fullName(_t), uploaded_ids: saved.files.map((f) => f.uploaded_id), document_type: docType, loan_stage: loanStage, media_count: images.length, files_saved: saved.files.length, merged: saved.merged, ocr: saved.files.some((f) => f.ocr) };
           } catch (e: any) { errorMessage = e?.message || String(e); outboundText = `Couldn't save those documents: ${errorMessage}`; metadata = { path: "doc_image", auth_source: authSource, error: errorMessage }; }
         } else {
           /* Only PROMISE to remember if the write actually succeeded. writePending

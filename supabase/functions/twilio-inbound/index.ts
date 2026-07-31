@@ -1,4 +1,5 @@
 // twilio-inbound v30: inbound-reply notifications to Rene.
+import { verifyTwilioRequest, twilioForbidden } from "../_shared/twilio-signature.ts";
 //   On a MATCHED contact (non-opt-out) we now generate a 1-line AI summary (claude-haiku-4-5),
 //   call the notify_inbound_reply RPC (inserts the dashboard bell app_notifications row AND
 //   returns { owner_cell, sms_text, deep_link, contact_name, enabled }), and text Rene ONE
@@ -131,6 +132,15 @@ Deno.serve(async (req: Request) => {
   try {
     rawText = await req.text();
     stepLog.push("got_body");
+    /* SIGNATURE FIRST. This is the SMS webhook for +18668919394 and
+     * +17149092526. Everything below trusts From= to identify a contact and to
+     * record opt-outs, so an unsigned caller could suppress any number or
+     * fabricate inbound traffic. */
+    const _sig = await verifyTwilioRequest(req, rawText, { authToken: Deno.env.get("TWILIO_AUTH_TOKEN") || "", testKey: Deno.env.get("SMS_TEST_KEY") || "" });
+    if (!_sig.ok) {
+      console.error("[twilio-inbound] REJECTED:", _sig.reason, "url=", _sig.url);
+      return twilioForbidden();
+    }
     const params = new URLSearchParams(rawText);
     parsedParams = Object.fromEntries(params.entries());
     stepLog.push(`parsed_${Object.keys(parsedParams).length}_params`);

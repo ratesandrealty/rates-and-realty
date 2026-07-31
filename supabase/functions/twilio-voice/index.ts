@@ -1,3 +1,4 @@
+import { verifyTwilioRequest, twilioForbidden } from "../_shared/twilio-signature.ts";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -53,6 +54,30 @@ Deno.serve(async (req) => {
   console.log(`[twilio-voice] ${req.method} ct="${contentType}" sub="${subAction || ''}"`);
 
   try {
+    /* SIGNATURE on the Twilio-called paths ONLY.
+     *
+     * This function serves two different callers. Twilio POSTs form-urlencoded
+     * webhooks (incoming voice on +18668919394, the outbound_connect TwiML from
+     * click-to-call, and recordingStatusCallback) and fetches play_voicemail
+     * TwiML. The browser calls the JSON admin actions — get_token, make_call,
+     * voicemail_drop, call_status, log_call — which carry no Twilio signature
+     * and must not be made to. Validating those would break the dialer;
+     * validating nothing leaves anyone who knows the URL able to inject call
+     * records and TwiML. So the split is by caller shape, not by convenience.
+     *
+     * play_voicemail is fetched by Twilio and may arrive as GET, so it is
+     * validated against an empty parameter set — the signature then covers the
+     * URL alone, including the ?url= it is told to play. */
+    const _isTwilioShape = contentType.includes('application/x-www-form-urlencoded') || subAction === 'play_voicemail';
+    if (_isTwilioShape) {
+      const _raw = contentType.includes('application/x-www-form-urlencoded') ? await req.clone().text() : '';
+      const _sig = await verifyTwilioRequest(req, _raw, { authToken: AUTH_TOKEN, testKey: Deno.env.get('SMS_TEST_KEY') || '' });
+      if (!_sig.ok) {
+        console.error('[twilio-voice] REJECTED:', _sig.reason, 'url=', _sig.url);
+        return twilioForbidden();
+      }
+    }
+
     // Sub-action: play voicemail TwiML (called by Twilio when dropping a voicemail)
     if (subAction === 'play_voicemail') {
       const vmUrl = reqUrl.searchParams.get('url') || '';

@@ -8,6 +8,20 @@
 # Twilio posts the staff-line (888) SMS/MMS webhook here with no auth header.
 verify_jwt = false
 
+# Twilio posts here with no auth header either — SMS for +18668919394 and
+# +17149092526. NOT pinning these is how a routine `supabase functions deploy`
+# silently flipped them to verify_jwt=true and 401'd every real inbound message
+# until the next deploy. Authentication for these endpoints is the
+# X-Twilio-Signature check in _shared/twilio-signature.ts, not a JWT.
+[functions.twilio-inbound]
+verify_jwt = false
+
+# Voice webhooks + recordingStatusCallback + play_voicemail TwiML, all from
+# Twilio. The browser-facing JSON actions on this same function are a separate
+# concern and are not signature-checked.
+[functions.twilio-voice]
+verify_jwt = false
+
 [functions.portal-data]
 # The borrower portal (unified-portal.html) calls this with NO Supabase JWT — it must
 # stay verify_jwt=false or the portal 401s and every borrower-facing surface breaks.
