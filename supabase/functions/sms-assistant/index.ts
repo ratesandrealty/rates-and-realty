@@ -44,7 +44,8 @@ const GOOGLE_TIMEZONE = "America/Los_Angeles";
 const GOOGLE_TOKEN_ROW_ID = "rene";
 const ADMIN_LEAD_URL_BASE = "https://beta.ratesandrealty.com/admin/lead-detail.html?cid=";
 const OCR_CRON_SECRET = "rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1";
-const OCR_DOC_TYPES = ["Pay Stubs", "W-2", "Bank Statements"]; // only these trigger ocr-mms-upload
+/* KEYS, not labels. See DOC_TYPES below for why this changed. */
+const OCR_DOC_TYPES = ["pay_stubs", "w2", "bank_stmts", "tax_returns"]; // only these trigger ocr-mms-upload
 const CLICKUP_TODO_LIST_ID = Deno.env.get("CLICKUP_LIST_ID_TODO") || "901708416155";
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -180,7 +181,12 @@ async function findContacts(name: string): Promise<any[]> {
   const ors: string[] = [];
   for (const t of toks) { ors.push(`first_name.ilike.%${t}%`); ors.push(`last_name.ilike.%${t}%`); }
   ors.push(`email.ilike.%${q}%`); ors.push(`phone.ilike.%${last10(q) || q}%`);
-  const { data } = await sb.from("contacts").select(CONTACT_COLS).or(ors.join(",")).limit(40);
+  /* ORDER BY, so a candidate list is never an arbitrary slice of an unordered
+   * result. Previously `.limit(40)` had no ordering and the caller took the
+   * first 5 — which is how Rene got five strangers while the borrower he named
+   * sat somewhere in the other 35. */
+  const { data } = await sb.from("contacts").select(CONTACT_COLS)
+    .or(ors.join(",")).order("last_name", { ascending: true }).order("first_name", { ascending: true }).limit(40);
   const rows = data || [];
   if (toks.length > 1) {
     const strong = rows.filter((c: any) => {
@@ -189,6 +195,19 @@ async function findContacts(name: string): Promise<any[]> {
     });
     if (strong.length) return strong;
   }
+  /* CONFIDENCE GATE. The old code fell back to the unfiltered rows here, so a
+   * junk query returned 40 "candidates" that matched nothing meaningful:
+   * "Upload these to initial loan submission Juan Davila" matched 90 contacts on
+   * the token "to" alone (Nieto, Hector, Margarito, Roberto...).
+   *
+   * A multi-token query whose tokens do not ALL appear in one name is not a
+   * weak match, it is a wrong question — return nothing and let the caller ask
+   * a better one. Single-token queries keep the loose behaviour, because "Juan"
+   * legitimately means "show me the Juans".
+   *
+   * Threshold: for multi-token queries, require at least one row where every
+   * token appears (the `strong` set above). Otherwise zero. No partial credit. */
+  if (toks.length > 1) return [];
   return rows;
 }
 async function buildBorrowerMatch(c: any) {
@@ -223,12 +242,20 @@ async function getPending(fromPhone: string) {
     .order("created_at", { ascending: false }).limit(1);
   return data && data[0] ? data[0] : null;
 }
+/* THROWS on failure. It used to read data?.id and return null on error, never
+ * looking at `error` — so when the kind check constraint rejected every insert,
+ * the caller carried on and told Rene "which borrower?" while nothing had been
+ * remembered. A promise to remember, made after the write failed, is worse than
+ * a refusal: he answers, and the answer lands nowhere. The caller now has to
+ * deal with the failure. */
 async function writePending(fromPhone: string, kind: string, payload: any, candidates: any[]) {
-  const { data } = await sb.from("pending_clarifications").insert({
+  const { data, error } = await sb.from("pending_clarifications").insert({
     from_phone: fromPhone, kind, payload, candidates,
     expires_at: new Date(Date.now() + PENDING_EXPIRY_MIN * 60000).toISOString(),
   }).select("id").single();
-  return data?.id || null;
+  if (error) throw new Error(`pending write failed: ${error.message}`);
+  if (!data?.id) throw new Error("pending write returned no id");
+  return data.id;
 }
 async function resolvePending(id: string, resolvedWith: any) {
   await sb.from("pending_clarifications").update({ resolved_at: new Date().toISOString(), resolved_with: resolvedWith }).eq("id", id);
@@ -416,6 +443,30 @@ Rules:
 - If a borrower name matches more than one person, ask which one (the tool returns candidates) instead of guessing.
 - Format money like $4,200/mo and dates in a friendly Pacific format (e.g. Jul 9, 3:00 PM).
 - If a tool returns success:false or empty results, say so briefly — do not fabricate.
+
+WHAT THIS LINE CAN DO WITH FILES — you have been wrong about this before.
+- This number RECEIVES IMAGES. Texting photos of a document to this line files them
+  on a borrower's record in the CRM: they are downloaded, combined into a PDF,
+  stored in the private borrower-documents bucket, and listed under that
+  borrower's documents. Pay stubs, W-2s and bank statements are additionally
+  queued for OCR.
+- That upload runs BEFORE you are called — a message carrying images never
+  reaches you. So if a staff member refers to images they just sent, they went
+  down that path, not to you.
+- A message can also name the loan stage ("initial loan submission", "conditions")
+  and the file is tagged with it.
+- If the borrower could not be identified, the line asks which borrower and holds
+  the images; the reply naming the borrower is handled by that same path.
+
+NEVER ASSERT A CAPABILITY LIMIT ABOUT THIS CRM. Do not tell staff that you or the
+system "cannot" receive files, upload documents, access a record, or perform an
+action, and never redirect them to the LOS or another system on that basis. You
+do not have a reliable picture of what the wider CRM can do, and you have
+previously invented a limit that was false and cost a real upload.
+If something did not work, report ONLY what was attempted and what came back —
+"the lookup returned no match for X", "that tool errored with Y" — and then ask
+for what would let you retry. Absence of a tool in your list is not evidence the
+system lacks the feature.
 Respond with ONLY the SMS text to send back.`;
 }
 
@@ -504,20 +555,103 @@ async function transcribeAudio(url: string, contentType: string): Promise<string
   if (!res.ok) throw new Error(`whisper ${res.status} ${j.error?.message || ""}`);
   return j.text || "";
 }
+/* The document-type vocabulary the Loan Detail page already uses — DOC_TYPES in
+ * admin/lead-detail.html. That checklist matches with
+ *     uploaded.find(u => u.document_type === dt.key)
+ * an EXACT key comparison, so a row typed "Pay Stubs" (the LABEL) is invisible
+ * on the very checklist meant to display it. This path was writing labels;
+ * seven rows in uploaded_documents carry "Pay Stubs" and none of them show.
+ * Write the key. */
+const DOC_TYPES: { key: string; label: string }[] = [
+  { key: "w2", label: "W-2 Forms" },
+  { key: "pay_stubs", label: "Pay Stubs" },
+  { key: "bank_stmts", label: "Bank Statements" },
+  { key: "id", label: "Government ID" },
+  { key: "tax_returns", label: "Tax Returns (1040)" },
+  { key: "purchase_contract", label: "Purchase Contract" },
+  { key: "other", label: "Other Documents" },
+];
+const DOC_TYPE_KEYS = DOC_TYPES.map((d) => d.key);
+function docTypeLabel(key: string | null): string {
+  return DOC_TYPES.find((d) => d.key === key)?.label || "Other Documents";
+}
 function inferDocType(caption: string): string | null {
   const s = (caption || "").toLowerCase();
-  if (/\bw-?2\b/.test(s)) return "W-2";
-  if (/pay\s?stub|paystub/.test(s)) return "Pay Stubs";
-  if (/bank\s?statement/.test(s)) return "Bank Statements";
+  if (/\bw-?2\b/.test(s)) return "w2";
+  if (/pay\s?stub|paystub/.test(s)) return "pay_stubs";
+  if (/bank\s?statement/.test(s)) return "bank_stmts";
+  if (/tax\s?return|1040/.test(s)) return "tax_returns";
+  if (/purchase\s?(contract|agreement)/.test(s)) return "purchase_contract";
+  if (/driver'?s? licen[cs]e|passport|\bgov(ernment)?\s?id\b/.test(s)) return "id";
   return null;
 }
-function extractNameFromCaption(caption: string): string {
-  const s = (caption || "")
-    .replace(/\b(w-?2|pay\s?stub[s]?|paystub[s]?|bank\s?statement[s]?|doc(ument)?s?|for|from|here('?s)?|attached|please|thanks?|the)\b/ig, " ")
-    .replace(/[^a-z\s'-]/ig, " ").replace(/\s+/g, " ").trim();
-  return s.length >= 2 ? s : "";
+/* The 11 stages the Loan Processing tab already renders (LP_TIMELINE in
+ * admin/lead-detail.html). NOT a third vocabulary — the same labels, so a
+ * document filed by SMS lands somewhere the UI can already talk about. */
+const LOAN_STAGES = [
+  "Intake", "Docs In", "Submitted to Lender", "Disclosures Out", "Underwriting",
+  "Conditional Approval", "Conditions / Docs In", "Clear to Close",
+  "Docs Out / Signing", "Funded", "Purchased",
+];
+
+/* Caption -> { name, stage }, by MODEL rather than by denylist.
+ *
+ * The old extractNameFromCaption stripped ~12 stopwords and handed whatever
+ * remained to findContacts as a name. On "Upload these to initial loan
+ * submission for Juan Davila" that left EIGHT tokens including "to", which
+ * matches 90 contacts. A denylist cannot generalise over arbitrary captions —
+ * every verb Rene has not used yet becomes a search term.
+ *
+ * The general assistant already extracts names correctly from the same
+ * sentences; this gives the MMS path the same capability instead of a worse
+ * parallel one. Falls back to a conservative regex ONLY if the model call
+ * fails, so a transient API error degrades to asking rather than to garbage. */
+/* Returns THREE things, because a caption legitimately carries three:
+ *   name    — which borrower's file
+ *   docType — WHAT the document is        (DOC_TYPES key)
+ *   stage   — WHERE IN THE FILE it belongs (LOAN_STAGES label)
+ * docType and stage are separate fields and cannot be collapsed: a pay stub
+ * sent for the initial submission and one sent to clear a condition are the
+ * same TYPE at different STAGES. */
+async function extractCaptionTargets(caption: string): Promise<{ name: string; docType: string | null; stage: string | null }> {
+  const cap = (caption || "").trim();
+  if (!cap) return { name: "", docType: null, stage: null };
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5",
+        max_tokens: 200,
+        system:
+          "Extract from a loan officer's text message that accompanied document images.\n" +
+          "Return ONLY minified JSON: {\"name\":\"<person named, or empty>\",\"doc_type\":\"<key, or empty>\",\"stage\":\"<one of the allowed stages, or empty>\"}\n" +
+          "name: the BORROWER's name only. Not the document type, not the loan stage, not verbs. Empty string if no person is named.\n" +
+          "doc_type: WHAT the images are. One of these keys, else empty: " + DOC_TYPE_KEYS.join(" | ") + "\n" +
+          "stage: WHERE IN THE LOAN FILE they belong — a different question from doc_type. Only if the message clearly indicates one of these, else empty: " + LOAN_STAGES.join(" | ") + "\n" +
+          "\"initial loan submission\" / \"submit to lender\" => \"Submitted to Lender\". " +
+          "\"conditions\" / \"condition docs\" => \"Conditions / Docs In\".",
+        messages: [{ role: "user", content: cap.slice(0, 500) }],
+      }),
+    });
+    if (!res.ok) throw new Error(`anthropic ${res.status}`);
+    const j = await res.json();
+    const txt = (j.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+    const parsed = JSON.parse(txt.replace(/^```(?:json)?|```$/g, "").trim());
+    const name = String(parsed.name || "").trim();
+    let stage = String(parsed.stage || "").trim();
+    if (stage && !LOAN_STAGES.includes(stage)) stage = "";
+    let dt = String(parsed.doc_type || "").trim();
+    if (dt && !DOC_TYPE_KEYS.includes(dt)) dt = "";
+    return { name, docType: dt || null, stage: stage || null };
+  } catch (e) {
+    console.error("[doc] caption extraction failed, falling back:", String(e));
+    // Conservative fallback: only an explicit "for <Name>" trailer.
+    const m = cap.match(/\bfor\s+([A-Z][a-z'\-]+(?:\s+[A-Z][a-z'\-]+){0,2})\s*$/);
+    return { name: m ? m[1].trim() : "", docType: inferDocType(cap), stage: null };
+  }
 }
-async function saveBorrowerDocument(contact: any, mediaList: { url: string; contentType: string }[], docType: string | null) {
+async function saveBorrowerDocument(contact: any, mediaList: { url: string; contentType: string }[], docType: string | null, loanStage: string | null = null) {
   const imgs: { bytes: Uint8Array; contentType: string }[] = [];
   for (const md of mediaList) {
     try { const m = await fetchTwilioMedia(md.url); imgs.push({ bytes: m.bytes, contentType: md.contentType || m.contentType }); }
@@ -527,13 +661,16 @@ async function saveBorrowerDocument(contact: any, mediaList: { url: string; cont
   let bytes: Uint8Array, fileExt: string, mime: string;
   try { bytes = await imagesToPdf(imgs); fileExt = "pdf"; mime = "application/pdf"; }
   catch (e) { console.error("[doc] pdf embed failed, storing raw", e); bytes = imgs[0].bytes; mime = imgs[0].contentType || "image/jpeg"; fileExt = extFromType(mime); }
-  const typeLabel = docType || "Document";
+  const typeLabel = docType && DOC_TYPE_KEYS.includes(docType) ? docType : "other";
   const slug = typeLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "document";
   const safe = `${slug}_${Date.now()}.${fileExt}`;
   const path = `${contact.id}/${slug}/${safe}`;
   const up = await sb.storage.from(STORAGE_BUCKET).upload(path, bytes, { contentType: mime, upsert: true });
   if (up.error) throw new Error("storage upload: " + up.error.message);
-  const { data: ins, error } = await sb.from("uploaded_documents").insert({ contact_id: contact.id, document_type: typeLabel, file_name: safe, file_size: bytes.byteLength, storage_path: path, file_path: path, status: "received", uploaded_at: new Date().toISOString() }).select("id").single();
+  /* document_type is WHAT it is; loan_stage is WHERE IN THE FILE it belongs.
+   * A paystub can arrive for the initial submission or to clear a condition —
+   * same type, different stage — so these cannot share one field. */
+  const { data: ins, error } = await sb.from("uploaded_documents").insert({ contact_id: contact.id, document_type: typeLabel, loan_stage: loanStage, file_name: safe, file_size: bytes.byteLength, storage_path: path, file_path: path, status: "received", uploaded_at: new Date().toISOString() }).select("id").single();
   if (error) throw new Error("doc insert: " + error.message);
   const uploadedId = ins.id;
   let ocr = false;
@@ -620,17 +757,32 @@ Deno.serve(async (req: Request) => {
         const cands = pending.candidates || [];
         let chosen = matchCandidate(body, cands);
         if (!chosen) { const f = await findContacts(body.trim()); if (f.length === 1) chosen = { contact_id: f[0].id, name: fullName(f[0]), _c: f[0] }; }
+        if (!chosen) {
+          /* A pending row IS open and the reply did not match. Previously this
+           * fell through to the general assistant, which had no idea images were
+           * waiting and told Rene it cannot receive files. Answer the question he
+           * was actually asked instead, and keep the pending row alive so the
+           * next reply can still resolve it. */
+          const cnames = cands.map((c: any, i: number) => `${i + 1}) ${c.name}`).join(", ");
+          outboundText = cnames
+            ? `I couldn't match "${(body || "").trim()}" to a borrower. Did you mean ${cnames}? Reply with the number, or send a different spelling and I'll search again.`
+            : `I couldn't find "${(body || "").trim()}". Send the borrower's full name as it appears in the CRM and I'll file the ${(pending.payload?.media || []).length} image(s) waiting.`;
+          metadata = { path: "doc_upload_unmatched", auth_source: authSource, pending_id: pending.id, tried: (body || "").trim(), candidate_count: cands.length };
+          // Fall through to the shared send/log tail — it already sends
+          // outboundText once and writes exactly one sms_assistant_log row.
+        }
         if (chosen) {
           const contact = chosen._c || (await sb.from("contacts").select(CONTACT_COLS).eq("id", chosen.contact_id).maybeSingle()).data;
           try {
-            const saved = await saveBorrowerDocument(contact, pending.payload?.media || [], pending.payload?.document_type || inferDocType(pending.payload?.caption || ""));
+            // The stage Rene named in the ORIGINAL caption was stored with the
+            // pending row; carry it through so answering "which borrower?" does
+            // not quietly lose "initial loan submission".
+            const pendStage = pending.payload?.loan_stage || null;
+            const saved = await saveBorrowerDocument(contact, pending.payload?.media || [], pending.payload?.document_type || inferDocType(pending.payload?.caption || ""), pendStage);
             await resolvePending(pending.id, chosen.contact_id);
-            outboundText = `✅ Saved ${saved.pages} page(s) to ${fullName(contact)}'s documents.${saved.ocr ? " OCR queued." : ""} ${ADMIN_LEAD_URL_BASE}${contact.id}`;
+            outboundText = `✅ Saved ${saved.pages} page(s) to ${fullName(contact)}'s documents${pendStage ? ` under ${pendStage}` : ""}.${saved.ocr ? " OCR queued." : ""} ${ADMIN_LEAD_URL_BASE}${contact.id}`;
             metadata = { path: "doc_upload_resolved", auth_source: authSource, contact_id: contact.id, contact_name: fullName(contact), uploaded_id: saved.uploaded_id, ocr: saved.ocr, media_count: (pending.payload?.media || []).length };
           } catch (e: any) { errorMessage = e?.message || String(e); outboundText = `Couldn't save those documents: ${errorMessage}`; metadata = { path: "doc_upload_resolved", auth_source: authSource, error: errorMessage }; }
-        } else {
-          outboundText = `I couldn't match "${(body || "").trim()}" to a borrower. Reply with the full name.`;
-          metadata = { path: "doc_upload_pending", auth_source: authSource, pending_id: pending.id };
         }
       // ── Voice memo → whisper → assistant ──
       } else if (audio) {
@@ -647,22 +799,42 @@ Deno.serve(async (req: Request) => {
         outboundText = h.reply; toolCalls = h.toolCalls || []; metadata = { ...h.meta, auth_source: authSource };
       // ── MMS image (non-task) → save to borrower docs ──
       } else if (images.length) {
-        const docType = inferDocType(body || "");
-        const nm = extractNameFromCaption(body || "");
+        const extracted = await extractCaptionTargets(body || "");
+        /* The keyword matcher is the FALLBACK now, not the source. On
+         * "Upload these to initial loan submission for Juan Davila" it returns
+         * null — there is no type word in that sentence — and the two paystubs
+         * landed typed "Document". The model reads the same sentence and knows
+         * they are pay stubs from the images' context in the caption. */
+        const docType = extracted.docType || inferDocType(body || "");
+        const loanStage = extracted.stage;
         let target: any = null, candidates: any[] = [];
-        if (nm) { const f = await findContacts(nm); if (f.length === 1) target = f[0]; else if (f.length > 1) candidates = f.slice(0, 5).map((c: any) => ({ contact_id: c.id, name: fullName(c) })); }
+        if (extracted.name) {
+          const f = await findContacts(extracted.name);
+          if (f.length === 1) target = f[0];
+          else if (f.length > 1) candidates = f.slice(0, 5).map((c: any) => ({ contact_id: c.id, name: fullName(c) }));
+        }
         if (target) {
           try {
-            const saved = await saveBorrowerDocument(target, images, docType);
-            outboundText = `✅ Saved ${saved.pages} page(s) to ${fullName(target)}'s documents as "${docType || "Document"}".${saved.ocr ? " OCR queued." : ""} ${ADMIN_LEAD_URL_BASE}${target.id}`;
-            metadata = { path: "doc_image", auth_source: authSource, contact_id: target.id, contact_name: fullName(target), uploaded_id: saved.uploaded_id, document_type: docType, media_count: images.length, ocr: saved.ocr };
+            const saved = await saveBorrowerDocument(target, images, docType, loanStage);
+            outboundText = `✅ Saved ${saved.pages} page(s) to ${fullName(target)}'s documents as "${docTypeLabel(docType)}"${loanStage ? ` under ${loanStage}` : ""}.${saved.ocr ? " OCR queued." : ""} ${ADMIN_LEAD_URL_BASE}${target.id}`;
+            metadata = { path: "doc_image", auth_source: authSource, contact_id: target.id, contact_name: fullName(target), uploaded_id: saved.uploaded_id, document_type: docType, loan_stage: loanStage, media_count: images.length, ocr: saved.ocr };
           } catch (e: any) { errorMessage = e?.message || String(e); outboundText = `Couldn't save those documents: ${errorMessage}`; metadata = { path: "doc_image", auth_source: authSource, error: errorMessage }; }
         } else {
-          const pid = await writePending(fromPhone, "doc_upload_target", { media: images.map((i) => ({ url: i.url, contentType: i.contentType })), document_type: docType, caption: body || "" }, candidates);
-          outboundText = candidates.length
-            ? `Got ${images.length} image(s). Which borrower — ${candidates.map((c: any, i: number) => `${i + 1}) ${c.name}`).join(", ")}? Reply with the number or name.`
-            : `Got ${images.length} image(s). Which borrower are these for? Reply with their name.`;
-          metadata = { path: "doc_image_pending", auth_source: authSource, pending_id: pid, document_type: docType, media_count: images.length };
+          /* Only PROMISE to remember if the write actually succeeded. writePending
+           * throws now; if it does, say the images could not be held rather than
+           * asking a question whose answer has nowhere to land. */
+          try {
+            const pid = await writePending(fromPhone, "doc_upload_target", { media: images.map((i) => ({ url: i.url, contentType: i.contentType })), document_type: docType, loan_stage: loanStage, caption: body || "" }, candidates);
+            const naming = extracted.name ? ` I couldn't match "${extracted.name}".` : "";
+            outboundText = candidates.length
+              ? `Got ${images.length} image(s).${naming} Which borrower — ${candidates.map((c: any, i: number) => `${i + 1}) ${c.name}`).join(", ")}? Reply with the number or name.`
+              : `Got ${images.length} image(s).${naming} Which borrower are these for? Reply with their full name.`;
+            metadata = { path: "doc_image_pending", auth_source: authSource, pending_id: pid, document_type: docType, loan_stage: loanStage, extracted_name: extracted.name || null, media_count: images.length };
+          } catch (e: any) {
+            errorMessage = e?.message || String(e);
+            outboundText = `I received ${images.length} image(s) but couldn't hold them while we sort out the borrower (${errorMessage}). Resend with the borrower's full name in the message and I'll file them straight away.`;
+            metadata = { path: "doc_image_pending_failed", auth_source: authSource, error: errorMessage, media_count: images.length };
+          }
         }
       // ── Plain text → assistant tool-loop ──
       } else {
