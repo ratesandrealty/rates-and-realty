@@ -502,6 +502,10 @@ async function findOrCreate(b: any): Promise<{id:string; isNew:boolean}> {
     address: b.current_address_street||null, city: b.current_address_city||null,
     state: b.current_address_state||null, zip: b.current_address_zip||null,
     pipeline_status: 'New Lead', source: 'MISMO Import',
+    /* Explicit. contacts.sms_opt_in DEFAULTS TO TRUE, so an imported borrower was
+     * arriving already marked as consenting to texts. A loan file is not consent
+     * to be texted — record real consent only where it is actually obtained. */
+    sms_opt_in: false,
     created_at: new Date().toISOString(), updated_at: new Date().toISOString()
   };
   if (b.ssn_last4)     payload.ssn_last4     = b.ssn_last4;

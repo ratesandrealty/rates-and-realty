@@ -57,9 +57,44 @@ const T: Record<string,(p:any)=>string> = {
   manual: p => p.message,
 };
 
+/* OPT-OUT GATE for every message this function originates.
+ *
+ * Nothing here consulted contacts.sms_opt_in, so a person who replied STOP still
+ * got tour reminders, alert matches and manual customs. It sits inside
+ * handleSingleSMS rather than at each call site because that is the single choke
+ * point every outbound trigger already passes through — reminders, custom/manual,
+ * portal_signup, showing_request, alerts. (Staff alerts to RENE_PHONE call
+ * sendTwilioSMS directly and are deliberately not gated: they are to us.)
+ *
+ * Matches the named contact first, then the last 10 digits — an opt-out belongs
+ * to a PERSON, and a call that omits contact_id must not be a way around it.
+ * Blocks IS FALSE only: an explicit opt-out, never an absence of recorded consent.
+ * A lookup failure blocks rather than sends. */
+async function isOptedOut(to_phone:string, contact_id?:string): Promise<boolean> {
+  try {
+    if (contact_id) {
+      const { data } = await sb.from('contacts').select('sms_opt_in').eq('id', contact_id).maybeSingle();
+      if (data) return data.sms_opt_in === false;
+    }
+    const digits = String(to_phone||'').replace(/\D/g,'').slice(-10);
+    if (digits.length !== 10) return false;
+    const { data } = await sb.from('contacts')
+      .select('sms_opt_in,phone,secondary_phone')
+      .or(`phone.ilike.*${digits},secondary_phone.ilike.*${digits}`).limit(20);
+    return (data||[]).some((c:any) => c.sms_opt_in === false &&
+      (String(c.phone||'').replace(/\D/g,'').slice(-10) === digits ||
+       String(c.secondary_phone||'').replace(/\D/g,'').slice(-10) === digits));
+  } catch (_) { return true; }
+}
+
 async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string) {
   const effectiveTrigger = trigger === 'manual' ? 'custom' : trigger;
   const msg = T[effectiveTrigger](params);
+  if (await isOptedOut(to_phone, ids.contact_id)) {
+    // Logged, not silently dropped: a suppressed message must still be visible.
+    await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:'recipient has opted out of SMS',media_url:mediaUrl});
+    return { sent:false, error:'recipient has opted out of SMS', blocked:true };
+  }
   const result = await sendTwilioSMS(to_phone, msg, mediaUrl);
   await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,twilio_sid:result.sid,status:result.sent?'sent':'failed',error_message:result.error,media_url:mediaUrl});
   await logActivity({contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,crm_id:ids.borrower_id,title:`SMS: ${effectiveTrigger.replace(/_/g,' ')} to ${to_phone}`,description:msg.substring(0,120),status:result.sent?'sent':'failed',sms_body:msg,sms_to:to_phone,metadata:{trigger:effectiveTrigger,sid:result.sid,error:result.error,has_media:!!mediaUrl}});

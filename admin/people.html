@@ -2167,6 +2167,12 @@ async function savePerson() {
   };
   // Strip nulls to avoid overwriting DB defaults
   Object.keys(payload).forEach(function(k) { if (payload[k] === null) delete payload[k]; });
+  /* SMS consent is never inherited. contacts.sms_opt_in DEFAULTS TO TRUE, so a
+   * payload that simply omits it produces a person marked as consenting to texts
+   * that nobody ever asked. Set false here and record real consent only where it
+   * is actually obtained (sms_consent_at / sms_consent_text). Assigned AFTER the
+   * null-strip above so it cannot be removed by it. */
+  payload.sms_opt_in = false;
   // Tags → contacts.tags (text[]). Previously omitted from the payload, which is why
   // newly-added people came back with tags=null. Only write when there's at least one.
   if (tags && tags.length) payload.tags = tags;
@@ -2228,6 +2234,10 @@ async function savePerson() {
             phone: (row.querySelector('.cp-phone').value || '').trim() || null,
             source: payload.source || null,
             pipeline_status: 'New Lead',
+            // Explicit: contacts.sms_opt_in defaults to TRUE, and nobody asked this
+            // co-borrower for permission to text them. See the note on the primary
+            // payload above.
+            sms_opt_in: false,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           };
@@ -3121,7 +3131,11 @@ async function doLeadImport(){
         } catch(e){ console.warn('[lead-import] email prefetch', e.message); }
       }
       for (var bb=0;bb<rows.length;bb+=100){
-        var batch2 = rows.slice(bb, bb+100);
+        /* Bulk CSV import. contacts.sms_opt_in defaults to TRUE, so an import of a
+         * few hundred rows silently created a few hundred people marked as
+         * consenting to texts — the single largest way that flag got set without
+         * anyone being asked. Written false on every imported row. */
+        var batch2 = rows.slice(bb, bb+100).map(function(r){ r.sms_opt_in = false; return r; });
         try {
           var resp2 = await _authClient().from('contacts').insert(batch2).select('id');
           if (resp2.error){ errors += batch2.length; console.warn('[lead-import]', resp2.error.message); }
