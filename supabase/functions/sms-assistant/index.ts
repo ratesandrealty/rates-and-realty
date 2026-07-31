@@ -545,6 +545,14 @@ async function saveBorrowerDocument(contact: any, mediaList: { url: string; cont
 }
 
 // ── Main handler ────────────────────────────────────────────────────────────────
+/* The CTIA opt-out set, matching twilio-inbound's classifyIntent() exactly so the
+ * two inbound lanes cannot disagree about what counts as STOP. Trimmed and
+ * lowercased, so " STOP " and "Stop." both match. */
+function isOptOut(body: string): boolean {
+  const lower = (body || "").toLowerCase().trim();
+  return /^(stop|unsubscribe|quit|cancel|end|optout|opt out|stopall|remove)\b/.test(lower);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const t0 = Date.now();
@@ -563,6 +571,35 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (!fromPhone) return twiml();
+
+    /* OPT-OUT BEFORE AUTHORIZATION — deliberately in this order.
+     *
+     * This line silently rejects anyone not in sms_authorized_phones, so a
+     * borrower who replied STOP to the 888 or the 714 (both route here) was
+     * dropped before anything looked at the words. It was logged to
+     * sms_assistant_log as an unauthorized turn and never acted on: no
+     * classification, no suppression, no opt-out anywhere.
+     *
+     * An opt-out is not a request that needs permission. It is honoured first,
+     * whoever sent it, and only then does the assistant's own auth gate run —
+     * so a staff member typing "cancel" still opts their own number out, which
+     * is the correct reading of the word. */
+    if (isOptOut(body)) {
+      try {
+        const { data: sup } = await sb.rpc("sms_record_optout", {
+          p_phone: fromPhone, p_source: "sms-assistant", p_body: body,
+        });
+        console.log("[sms-assistant] opt-out recorded:", JSON.stringify(sup));
+      } catch (e) {
+        console.error("[sms-assistant] opt-out record failed:", String(e));
+      }
+      rejectReason = "opt_out";
+      metadata = { path: "opt_out", to_phone: toPhone };
+      await logTurn({ from_phone: fromPhone, to_phone: toPhone, inbound_text: body || null, twilio_message_sid: sid, authorized: false, reject_reason: rejectReason, outbound_text: null, outbound_sent_at: null, claude_model: null, claude_input_tokens: null, claude_output_tokens: null, tool_calls: null, duration_ms: Date.now() - t0, error_message: null, metadata });
+      // Twilio itself sends the carrier-mandated STOP confirmation; adding our
+      // own would be a second message to someone who just asked us to stop.
+      return twiml();
+    }
 
     const auth = await isAuthorized(fromPhone);
     authorized = auth.ok; authSource = auth.source;

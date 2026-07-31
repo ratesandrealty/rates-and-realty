@@ -70,21 +70,16 @@ serve(async (req) => {
      * spin round the cron again. */
     async function optedOut(row: any): Promise<boolean> {
       try {
-        if (row.contact_id) {
-          const q = rest(`contacts?select=sms_opt_in&id=eq.${row.contact_id}&limit=1`)
-          const rr = await fetch(q, { headers: svc() })
-          const d = rr.ok ? await rr.json() : []
-          if (d.length) return d[0].sms_opt_in === false
-        }
-        const digits = String(row.to_phone || '').replace(/\D/g, '').slice(-10)
-        if (digits.length !== 10) return false
-        const q2 = rest(`contacts?select=sms_opt_in,phone,secondary_phone&or=(phone.ilike.*${digits},secondary_phone.ilike.*${digits})&limit=20`)
-        const rr2 = await fetch(q2, { headers: svc() })
-        const d2 = rr2.ok ? await rr2.json() : []
-        return d2.some((c: any) =>
-          c.sms_opt_in === false &&
-          (String(c.phone || '').replace(/\D/g, '').slice(-10) === digits ||
-           String(c.secondary_phone || '').replace(/\D/g, '').slice(-10) === digits))
+        /* One predicate, shared with every other gate. Covers BOTH lists —
+         * contacts.sms_opt_in = false and the contact-independent
+         * sms_suppressions table — so a row whose contact_id is null, or whose
+         * number never had a contact at all, is still caught here. */
+        const r = await fetch(rest('rpc/is_phone_suppressed'), {
+          method: 'POST', headers: svc(),
+          body: JSON.stringify({ p_phone: row.to_phone, p_contact_id: row.contact_id || null }),
+        })
+        if (!r.ok) { console.error('[send-scheduled-sms] suppression check HTTP', r.status); return true }
+        return (await r.json()) === true
       } catch (_) {
         // A lookup failure must not become an accidental send to an opted-out number.
         return true

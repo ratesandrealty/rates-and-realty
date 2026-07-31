@@ -227,16 +227,32 @@ Deno.serve(async (req: Request) => {
       stepLog.push("activity_ok");
     }
 
-    // Opt-out / last_contact update
-    if (intent === "opt_out" && contact?.id) {
-      await sb.from("contacts").update({
-        sms_opt_in: false,
-        last_contact_date: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }).eq("id", contact.id).then(
-        () => stepLog.push("optout_set"),
-        (e: any) => stepLog.push(`optout_err:${e?.message?.substring(0,40)}`),
-      );
+    /* OPT-OUT — recorded for the NUMBER, with or without a contact.
+     *
+     * This used to require `contact?.id`, so a STOP from a number nobody had a
+     * record for was classified opt_out and then thrown away. Nothing anywhere
+     * remembered it, and if that number was later added as a contact it arrived
+     * opted in. sms_record_optout() writes the contact-independent suppression
+     * row AND flips any contacts already holding the number, so the two lists
+     * cannot drift apart. */
+    if (intent === "opt_out") {
+      try {
+        const { data: sup } = await sb.rpc("sms_record_optout", {
+          p_phone: fromRaw, p_source: "twilio-inbound", p_body: body,
+        });
+        stepLog.push(`optout_suppressed:${JSON.stringify(sup)?.slice(0, 60)}`);
+      } catch (e: any) {
+        stepLog.push(`optout_err:${e?.message?.substring(0, 40)}`);
+      }
+      if (contact?.id) {
+        await sb.from("contacts").update({
+          last_contact_date: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq("id", contact.id).then(
+          () => stepLog.push("last_contact_set"),
+          (e: any) => stepLog.push(`lc_err:${e?.message?.substring(0, 40)}`),
+        );
+      }
     } else if (contact?.id) {
       await sb.from("contacts").update({
         last_contact_date: new Date().toISOString(),

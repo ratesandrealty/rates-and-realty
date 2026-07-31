@@ -72,19 +72,16 @@ const T: Record<string,(p:any)=>string> = {
  * A lookup failure blocks rather than sends. */
 async function isOptedOut(to_phone:string, contact_id?:string): Promise<boolean> {
   try {
-    if (contact_id) {
-      const { data } = await sb.from('contacts').select('sms_opt_in').eq('id', contact_id).maybeSingle();
-      if (data) return data.sms_opt_in === false;
-    }
-    const digits = String(to_phone||'').replace(/\D/g,'').slice(-10);
-    if (digits.length !== 10) return false;
-    const { data } = await sb.from('contacts')
-      .select('sms_opt_in,phone,secondary_phone')
-      .or(`phone.ilike.*${digits},secondary_phone.ilike.*${digits}`).limit(20);
-    return (data||[]).some((c:any) => c.sms_opt_in === false &&
-      (String(c.phone||'').replace(/\D/g,'').slice(-10) === digits ||
-       String(c.secondary_phone||'').replace(/\D/g,'').slice(-10) === digits));
-  } catch (_) { return true; }
+    /* One predicate, shared with sms_schedule / sms_blast / send-scheduled-sms /
+     * showing-actions. It covers BOTH lists — contacts.sms_opt_in = false and the
+     * contact-independent sms_suppressions table — so a STOP from a number that
+     * was never a contact is honoured here too. Keeping the logic in one SQL
+     * function is the point: five copies of a phone-matching rule is five chances
+     * for one of them to drift. */
+    const { data, error } = await sb.rpc('is_phone_suppressed', { p_phone: to_phone, p_contact_id: contact_id || null });
+    if (error) { console.error('[sms-service] suppression check failed:', error.message); return true; }
+    return data === true;
+  } catch (e) { console.error('[sms-service] suppression check threw:', String(e)); return true; }
 }
 
 async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string) {

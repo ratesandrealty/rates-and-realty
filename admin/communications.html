@@ -52,6 +52,17 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       <div id="statSMS" class="comm-stat"><div class="stat-num">&mdash;</div><div class="stat-label">&#128172; SMS</div></div>
       <div id="statCalls" class="comm-stat"><div class="stat-num">&mdash;</div><div class="stat-label">&#128222; Calls</div></div>
       <div id="statToday" class="comm-stat"><div class="stat-num">&mdash;</div><div class="stat-label">&#9889; Today</div></div>
+      <!-- Suppressed sends. A message blocked because the recipient opted out was
+           previously indistinguishable from a delivered one in this feed — same
+           row, a "blocked" word nobody looks for, buried in the last 100. It gets
+           its own count and its own filter because a suppressed send is a thing
+           you need to be able to find on purpose. Click to filter. -->
+      <div id="statBlocked" class="comm-stat" style="cursor:pointer;display:none;"
+           title="Sends suppressed because the recipient opted out — click to filter"
+           onclick="setCommFilter('blocked','statBlocked')">
+        <div class="stat-num" style="color:#E07F50">&mdash;</div>
+        <div class="stat-label">&#128683; Blocked</div>
+      </div>
     </div>
   </div>
 
@@ -174,6 +185,20 @@ async function loadCommunications() {
   })();
   var today = new Date().toDateString();
   document.getElementById('statToday').querySelector('.stat-num').textContent = _allComms.filter(function(c){return new Date(c.ts).toDateString()===today;}).length;
+  /* Blocked count. Hidden entirely at zero — an always-present "0 Blocked" tile
+   * trains you to ignore it, which defeats the point of surfacing it at all.
+   * Counted over the whole table, not the visible 100, so a suppression that
+   * scrolled off the feed still shows up here. */
+  (function(){
+    var card = document.getElementById('statBlocked');
+    if (!card) return;
+    fetch(SB_URL+'/rest/v1/sms_log?select=id&status=eq.blocked', { headers: Object.assign({}, H, { 'Prefer':'count=exact', 'Range':'0-0' }) })
+      .then(function(r){
+        var cr = r.headers.get('content-range')||''; var t = parseInt((cr.split('/')[1]||'0'),10);
+        if (t > 0) { card.querySelector('.stat-num').textContent = t; card.style.display=''; }
+        else { card.style.display='none'; }
+      }).catch(function(){});
+  })();
 
   document.getElementById('commLoading').style.display = 'none';
   renderCommFeed();
@@ -192,7 +217,9 @@ function filterComms() { renderCommFeed(); }
 function renderCommFeed() {
   var q = (document.getElementById('commSearch')?.value||'').toLowerCase();
   var filtered = _allComms.filter(function(item) {
-    if (_commFilter!=='all' && item.type!==_commFilter) return false;
+    // 'blocked' filters on STATUS, not type — it cuts across email/sms/call.
+    if (_commFilter==='blocked') { if (item.status!=='blocked') return false; }
+    else if (_commFilter!=='all' && item.type!==_commFilter) return false;
     if (q && (item.name||'').toLowerCase().indexOf(q)<0 && (item.title||'').toLowerCase().indexOf(q)<0 && (item.recipient||'').toLowerCase().indexOf(q)<0) return false;
     return true;
   });
@@ -206,7 +233,7 @@ function renderCommItem(item) {
   var icons={email:'\uD83D\uDCE7',sms:'\uD83D\uDCAC',call:'\uD83D\uDCDE'};
   var colors={email:{bg:'rgba(201,168,76,0.08)',border:'rgba(201,168,76,0.15)',text:'#C9A84C'},sms:{bg:'rgba(90,160,224,0.08)',border:'rgba(90,160,224,0.15)',text:'#7BBCE8'},call:{bg:'rgba(82,200,122,0.08)',border:'rgba(82,200,122,0.15)',text:'#52C87A'}};
   var c = colors[item.type]||colors.email;
-  var sc={sent:'#52C87A',delivered:'#52C87A',failed:'#E05252',missed:'#E05252',voicemail:'#AB7FE0',completed:'#52C87A','no-answer':'#E07F50'};
+  var sc={sent:'#52C87A',delivered:'#52C87A',failed:'#E05252',missed:'#E05252',voicemail:'#AB7FE0',completed:'#52C87A','no-answer':'#E07F50',blocked:'#E07F50'};
   var statusCol = sc[item.status]||'#888';
   return '<div class="comm-item" style="border:1px solid '+c.border+';background:'+c.bg+';" '+
     (item.contact_id?'onclick="window.location.href=\'lead-detail?contact_id='+item.contact_id+'\'"':'')+

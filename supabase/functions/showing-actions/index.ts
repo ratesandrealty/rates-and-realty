@@ -250,19 +250,11 @@ Deno.serve(async (req: Request) => {
       let smsBlocked = false;
       if (phone) {
         try {
-          const digits = String(phone).replace(/\D/g, '').slice(-10);
-          if (meta.contact_id) {
-            const { data } = await sb.from('contacts').select('sms_opt_in').eq('id', meta.contact_id).maybeSingle();
-            if (data && data.sms_opt_in === false) smsBlocked = true;
-          }
-          if (!smsBlocked && digits.length === 10) {
-            const { data } = await sb.from('contacts')
-              .select('sms_opt_in,phone,secondary_phone')
-              .or(`phone.ilike.*${digits},secondary_phone.ilike.*${digits}`).limit(20);
-            smsBlocked = (data || []).some((c: any) => c.sms_opt_in === false &&
-              (String(c.phone || '').replace(/\D/g, '').slice(-10) === digits ||
-               String(c.secondary_phone || '').replace(/\D/g, '').slice(-10) === digits));
-          }
+          // Shared predicate — both lists, one implementation. See sms-service.
+          const { data, error } = await sb.rpc('is_phone_suppressed', {
+            p_phone: phone, p_contact_id: meta.contact_id || null,
+          });
+          smsBlocked = error ? true : data === true;
         } catch (_) { smsBlocked = true; }
       }
       if (phone && smsBlocked) {
