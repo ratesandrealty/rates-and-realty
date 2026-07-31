@@ -158,26 +158,35 @@ function collectAttachments(part: any, out: any[]) {
  * every reply he has ever sent. They are not attachments — they are pixels the
  * HTML already draws, referenced as src="cid:...".
  *
- * CONTENT-DISPOSITION CANNOT BE TRUSTED TO MEAN WHAT IT SAYS, and this was
- * measured rather than assumed. On a real signature-bearing thread, Gmail's own
- * ten inline images arrive as:
- *     filename image003.png · contentId ii_19fb05c5c3b7605c1153
- *     Content-Disposition: ATTACHMENT
- * while the 52KB body HTML references every one of them as
- * src="cid:ii_19fb05c5c3b7605c1153". Gmail labels its inline images
- * `attachment`. So "disposition says attachment → keep" keeps all ten, which is
- * exactly the phantom-attachment behaviour this filter exists to prevent.
+ * CONTENT-DISPOSITION IS IGNORED ENTIRELY. It is wrong in BOTH directions, and
+ * both directions were measured on real mail in this mailbox:
  *
- * The cid: reference is the reliable signal, so it decides FIRST and outranks
- * the disposition header:
- *   1. Content-ID referenced as cid: in the body → INLINE, drop. Whatever the
- *      disposition claims, the markup is already drawing it.
- *   2. Content-Disposition: inline → drop.
- *   3. otherwise, a filename means a real attachment → keep.
+ *   disposition says "attachment" but the part is inline —
+ *     thread 19fb05c5, Gmail's own signature images:
+ *       image003.png · Content-ID ii_19fb05c5c3b7605c1153
+ *       Content-Disposition: attachment
+ *     …while the 52KB body HTML draws every one as src="cid:ii_19fb05c5…".
+ *     Trusting the header showed 10 phantom attachments per reply.
  *
- * This depends on holding the REAL body HTML, which is why walk() takes the
+ *   disposition says "inline" but the part is a real attachment —
+ *     thread 19fb55c5 ("RRR" from Giselle Tovar), the PDF Rene could not see:
+ *       Request_for_Repair__1___6_26.pdf · application/pdf · 406,347 bytes
+ *       Content-ID: NONE
+ *       Content-Disposition: inline; filename=Request_for_Repair__1___6_26.pdf
+ *     The message has no HTML part at all, so nothing could possibly reference
+ *     it inline. Trusting the header hid a document a borrower actually sent.
+ *
+ * Gmail's composer marks a previewable attachment `inline`, and marks embedded
+ * signature images `attachment`. The header describes intent to render, not
+ * whether something is an attachment, so it decides nothing here.
+ *
+ * ONE rule, from the only reliable signal — is the markup already drawing it?
+ *   1. Content-ID present AND referenced as cid: in the body → inline, drop.
+ *   2. otherwise a filename means a real attachment → keep.
+ *
+ * Rule 1 depends on holding the REAL body HTML, which is why walk() takes the
  * largest text/html part rather than the first — with a truncated body there are
- * no cid: references to find and rule 1 silently stops working. */
+ * no cid: references to find and the rule silently stops working. */
 function filterRealAttachments(atts: any[], html: string): any[] {
   const body = String(html || '')
   /* A stricter variant was tried and REVERTED: "a Content-ID plus a body with no
@@ -194,7 +203,6 @@ function filterRealAttachments(atts: any[], html: string): any[] {
       const id = a.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       if (new RegExp('cid:' + id, 'i').test(body)) return false
     }
-    if (a.disposition === 'inline') return false
     return true
   })
 }
@@ -441,6 +449,26 @@ serve(async (req) => {
         const first = ms[0]
         const last = ms[ms.length - 1]
         const fromRaw = last ? hdr(last.payload?.headers, 'From') : null
+        /* ATTACHMENT HINT AT ZERO API COST.
+         *
+         * format=metadata does NOT return the parts tree — measured: it yields
+         * one node with kids=0, so there is no filename or attachmentId to read.
+         * The only options for a truthful per-thread flag would each cost
+         * something: a second messages.get per thread (25 extra calls a page),
+         * switching this list to format=full (same call count but every message
+         * body inlined, so a page balloons from tens of KB to megabytes), or a
+         * has:attachment search (+1 call, but Gmail counts inline images so it
+         * flags every signature-bearing reply).
+         *
+         * What metadata DOES return is payload.mimeType, which is already in
+         * this response. A message carrying an attachment is multipart/mixed; a
+         * body-only message is multipart/alternative or text/*. Measured over 20
+         * real INBOX threads: 1 true positive, 19 true negatives, ZERO false
+         * positives and ZERO misses.
+         *
+         * It stays a HINT, not a promise — the authoritative list is computed
+         * when the thread is opened and the filter runs over the real parts. */
+        const hasAttachment = ms.some((x: any) => (x.payload?.mimeType || '') === 'multipart/mixed')
         return {
           id: t.id, snippet: decodeEntities(t.snippet),
           subject: first ? hdr(first.payload?.headers, 'Subject') : null,
@@ -448,6 +476,7 @@ serve(async (req) => {
           date: last?.internalDate ? new Date(Number(last.internalDate)).toISOString() : null,
           unread: ms.some((x: any) => (x.labelIds || []).includes('UNREAD')),
           message_count: ms.length,
+          has_attachment: hasAttachment,
         }
       }))
       return ok({ threads: detailed, next_page_token: lj.nextPageToken || null })

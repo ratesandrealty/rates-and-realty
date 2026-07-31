@@ -301,6 +301,7 @@
       '.gm-row-top{display:flex;gap:6px;align-items:center;height:16px;line-height:16px;overflow:hidden}',
       '.gm-row-from{flex:1;min-width:0;font-size:12px;line-height:16px;color:#ddd;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.gm-row-date{font-size:10.5px;line-height:16px;color:var(--muted,#888);flex-shrink:0}',
+      '.gm-row-clip{font-size:11px;line-height:16px;flex-shrink:0;opacity:.75}',
       '.gm-row-subj{font-size:12.5px;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
       '.gm-row-snip{font-size:11.5px;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
       // Filed-to-lead chip. Inline on line 1 (see the row-height note above), and it
@@ -348,6 +349,25 @@
       '.gm-rx-att .go{color:var(--g);flex-shrink:0;font-size:10.5px;font-weight:700}',
       '.gm-rx-att.busy{opacity:.55;cursor:default}',
       '.gm-rx-att.err{border-color:rgba(248,113,113,.5);color:#fca5a5}',
+      /* hover preview card — body-portalled, position:fixed, so .gm-pane's
+         overflow:auto cannot clip it (same reason as .gm-pop-menu) */
+      '.gm-att-hover{position:fixed;z-index:10060;background:#141414;border:1px solid var(--border2,rgba(255,255,255,.18));border-radius:10px;padding:7px;box-shadow:0 14px 38px rgba(0,0,0,.6);max-width:290px;pointer-events:none}',
+      '.gm-att-hover img{display:block;max-width:274px;max-height:340px;border-radius:6px;background:#fff}',
+      '.gm-att-hover .cap{font-size:11px;color:#aaa;padding:5px 3px 1px;max-width:274px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-att-hover .cap.err{color:#fca5a5;white-space:normal}',
+      /* full viewer modal */
+      '.gm-av-ov{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:10070;display:flex;align-items:center;justify-content:center;padding:20px}',
+      '.gm-av-card{width:1000px;max-width:97vw;height:92vh;background:#111;border:1px solid var(--border2,rgba(255,255,255,.16));border-radius:13px;display:flex;flex-direction:column;overflow:hidden}',
+      '.gm-av-hd{display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));flex-shrink:0}',
+      '.gm-av-name{font-size:13px;font-weight:700;color:#eee;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-av-pg{font-size:11.5px;color:#888;flex-shrink:0}',
+      '.gm-av-hd .gm-btn{padding:5px 10px;font-size:12px}',
+      '.gm-av-hd .gm-btn:disabled{opacity:.4;cursor:default}',
+      '.gm-av-body{flex:1;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:16px;background:#0a0a0a}',
+      '.gm-av-canvas{background:#fff;border-radius:6px;box-shadow:0 6px 26px rgba(0,0,0,.5);max-width:100%}',
+      '.gm-av-img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}',
+      '.gm-av-msg{color:#999;font-size:13px;padding:32px;text-align:center}',
+      '.gm-av-msg.err{color:#fca5a5}',
       /* ── composer ── */
       '.gm-acts{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border,rgba(255,255,255,.1))}',
       // Flex column so header / fields / toolbar / footer stay put and only .gm-scroll
@@ -1253,6 +1273,252 @@
     var arr = new Uint8Array(bin.length);
     for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     return new Blob([arr], { type: mime || 'application/octet-stream' });
+  }
+
+
+  /* ── PDF / IMAGE PREVIEW ────────────────────────────────────────────────────
+   * pdf.js is REUSED, not added. admin/guideline-ai.html already loads 4.0.379
+   * from cdnjs as an ESM module and stashes it on window.__pdfjsLib; this loads
+   * the identical build the same way, so there is one pdf.js version in the app
+   * and no new dependency. The CSP already permits it (script-src * and
+   * worker-src blob: *, set in src/worker.js withCsp).
+   *
+   * Bytes are fetched ONCE per attachment; the decoded blob and the rendered
+   * thumbnail are cached for the session, keyed by messageId|partId — so a
+   * second hover, or a hover then a click, costs nothing. */
+  var PDFJS_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs';
+  var PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+  var _pdfjsPromise = null;
+  function loadPdfJs() {
+    if (window.__pdfjsLib) return Promise.resolve(window.__pdfjsLib);
+    if (_pdfjsPromise) return _pdfjsPromise;
+    _pdfjsPromise = import(PDFJS_SRC).then(function (mod) {
+      mod.GlobalWorkerOptions.workerSrc = window.PDFJS_WORKER_URL || PDFJS_WORKER;
+      window.__pdfjsLib = mod;
+      return mod;
+    });
+    return _pdfjsPromise;
+  }
+
+  var _attCache = {};
+  function attKey(msgId, partId, attId) { return msgId + '|' + (partId || attId || ''); }
+
+  /* Auto-preview ceiling. The 15MB server cap still applies to every fetch; this
+   * lower bar is about not pulling megabytes because a cursor crossed a chip. */
+  var AUTO_PREVIEW_MAX = 5 * 1024 * 1024;
+
+  async function fetchAttachment(cl, mailbox, btn) {
+    var key = attKey(btn.getAttribute('data-att-msg'), btn.getAttribute('data-att-part'), btn.getAttribute('data-att-id'));
+    if (_attCache[key] && _attCache[key].blob) return _attCache[key];
+    var r = await invoke(cl, mailbox, 'get_attachment', {
+      message_id: btn.getAttribute('data-att-msg'),
+      attachment_id: btn.getAttribute('data-att-id'),
+      part_id: btn.getAttribute('data-att-part') || ''
+    });
+    var rec = {
+      blob: b64urlToBlob(r.data_b64url, r.mime_type),
+      mime: r.mime_type, name: r.filename, size: r.size, thumb: null
+    };
+    _attCache[key] = rec;
+    return rec;
+  }
+
+  // Page 1 → dataURL, sized for the hover card.
+  async function renderPdfThumb(blob, targetW) {
+    var lib = await loadPdfJs();
+    var buf = await blob.arrayBuffer();
+    var pdf = await lib.getDocument({ data: buf }).promise;
+    var page = await pdf.getPage(1);
+    var vp1 = page.getViewport({ scale: 1 });
+    var scale = Math.min(2, (targetW || 260) / vp1.width);
+    var vp = page.getViewport({ scale: scale });
+    var c = document.createElement('canvas');
+    c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    var url = c.toDataURL('image/png');
+    try { pdf.destroy(); } catch (e) {}
+    return url;
+  }
+
+  function imgThumbFromBlob(blob) {
+    return new Promise(function (res, rej) {
+      var u = URL.createObjectURL(blob);
+      var im = new Image();
+      im.onload = function () { res(u); };
+      im.onerror = function () { URL.revokeObjectURL(u); rej(new Error('could not decode image')); };
+      im.src = u;
+    });
+  }
+
+  /* Hover card. 400ms dwell before ANYTHING happens — no fetch on a cursor
+   * merely crossing the row. */
+  var _hoverTimer = null, _hoverCard = null;
+  function hideHoverCard() {
+    if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
+    if (_hoverCard) { _hoverCard.remove(); _hoverCard = null; }
+  }
+  function showHoverCard(btn, inner) {
+    if (_hoverCard) { _hoverCard.remove(); _hoverCard = null; }
+    var card = document.createElement('div');
+    card.className = 'gm-att-hover';
+    card.innerHTML = inner;
+    document.body.appendChild(card);
+    var r = btn.getBoundingClientRect();
+    var top = r.top - card.offsetHeight - 8;
+    if (top < 8) top = r.bottom + 8;
+    card.style.top = top + 'px';
+    card.style.left = Math.max(8, Math.min(r.left, window.innerWidth - card.offsetWidth - 8)) + 'px';
+    _hoverCard = card;
+    return card;
+  }
+
+  function wireAttachmentHover(btn, cl, mailbox) {
+    btn.addEventListener('mouseenter', function () {
+      if (_hoverTimer) clearTimeout(_hoverTimer);
+      _hoverTimer = setTimeout(async function () {
+        var name = btn.getAttribute('data-att-name') || 'attachment';
+        var mime = btn.getAttribute('data-att-mime') || '';
+        var size = parseInt(btn.getAttribute('data-att-size') || '0', 10);
+        var key = attKey(btn.getAttribute('data-att-msg'), btn.getAttribute('data-att-part'), btn.getAttribute('data-att-id'));
+        var cached = _attCache[key];
+
+        if (cached && cached.thumb) {
+          showHoverCard(btn, '<img src="' + cached.thumb + '" alt=""><div class="cap">' + esc(name) + '</div>');
+          return;
+        }
+        if (!attCanPreview(mime, name)) return;
+        if (size && size > AUTO_PREVIEW_MAX) {
+          showHoverCard(btn, '<div class="cap">' + esc(attSize(size)) + ' — click to preview</div>');
+          return;
+        }
+        var card = showHoverCard(btn, '<div class="cap">Loading preview…</div>');
+        try {
+          var rec = await fetchAttachment(cl, mailbox, btn);
+          var thumb = (/pdf/i.test(rec.mime) || /\.pdf$/i.test(name))
+            ? await renderPdfThumb(rec.blob, 260)
+            : await imgThumbFromBlob(rec.blob);
+          rec.thumb = thumb;
+          if (_hoverCard === card) card.innerHTML = '<img src="' + thumb + '" alt=""><div class="cap">' + esc(name) + '</div>';
+        } catch (e) {
+          // B5: the server's own words, never a blank box.
+          var msg = (e && e.message) || 'Preview failed';
+          if (_hoverCard === card) {
+            card.innerHTML = '<div class="cap err"></div>';
+            card.firstChild.textContent = msg;
+          }
+        }
+      }, 400);
+    });
+    btn.addEventListener('mouseleave', function () {
+      if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
+      setTimeout(function () {
+        try { if (_hoverCard && !_hoverCard.matches(':hover')) hideHoverCard(); }
+        catch (e) { hideHoverCard(); }
+      }, 150);
+    });
+  }
+
+  /* ── FULL PREVIEW MODAL ─────────────────────────────────────────────────────
+   * Renders from the cached blob. No Gmail URL is ever placed in the DOM, and
+   * every byte still arrives through get_attachment, which re-checks the
+   * JWT-derived mailbox on each call. */
+  async function openAttachmentModal(btn, cl, mailbox) {
+    hideHoverCard();
+    var name = btn.getAttribute('data-att-name') || 'attachment';
+    var mime = btn.getAttribute('data-att-mime') || '';
+    var isPdf = /pdf/i.test(mime) || /\.pdf$/i.test(name);
+    var isImg = /^image\//i.test(mime) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+
+    var ov = document.createElement('div');
+    ov.className = 'gm-av-ov';
+    ov.innerHTML =
+      '<div class="gm-av-card">' +
+        '<div class="gm-av-hd">' +
+          '<span class="gm-av-name"></span>' +
+          '<span class="gm-av-pg" data-av="pg"></span>' +
+          '<span style="flex:1"></span>' +
+          '<button class="gm-btn plain" data-av="prev" title="Previous page">&lsaquo;</button>' +
+          '<button class="gm-btn plain" data-av="next" title="Next page">&rsaquo;</button>' +
+          '<button class="gm-btn plain" data-av="zout" title="Zoom out">&minus;</button>' +
+          '<button class="gm-btn plain" data-av="zin" title="Zoom in">+</button>' +
+          '<button class="gm-btn" data-av="dl">Download</button>' +
+          '<button class="gm-x" data-av="x" aria-label="Close">&times;</button>' +
+        '</div>' +
+        '<div class="gm-av-body" data-av="body"><div class="gm-av-msg">Loading&hellip;</div></div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    ov.querySelector('.gm-av-name').textContent = name;
+    var q = function (n) { return ov.querySelector('[data-av="' + n + '"]'); };
+    var pdf = null, pageNo = 1, zoom = 1;
+    function go(d) { if (!pdf) return; var n = pageNo + d; if (n >= 1 && n <= pdf.numPages) { pageNo = n; draw(); } }
+    function close() { document.removeEventListener('keydown', onKey, true); ov.remove(); }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.stopPropagation(); close(); }
+      else if (isPdf && e.key === 'ArrowRight') go(1);
+      else if (isPdf && e.key === 'ArrowLeft') go(-1);
+    }
+    document.addEventListener('keydown', onKey, true);
+    q('x').addEventListener('click', close);
+    ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
+
+    var rec = null;
+    try {
+      rec = await fetchAttachment(cl, mailbox, btn);
+    } catch (e) {
+      q('body').innerHTML = '<div class="gm-av-msg err"></div>';
+      q('body').firstChild.textContent = (e && e.message) || 'Could not open this attachment';
+      return;
+    }
+
+    q('dl').addEventListener('click', function () {
+      var u = URL.createObjectURL(rec.blob);
+      var a = document.createElement('a'); a.href = u; a.download = rec.name || name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { try { URL.revokeObjectURL(u); } catch (e2) {} }, 30000);
+    });
+
+    if (isImg) {
+      ['pg', 'prev', 'next', 'zout', 'zin'].forEach(function (n) { q(n).style.display = 'none'; });
+      var iu = URL.createObjectURL(rec.blob);
+      q('body').innerHTML = '';
+      var im = document.createElement('img'); im.className = 'gm-av-img'; im.src = iu; im.alt = name;
+      q('body').appendChild(im);
+      return;
+    }
+    if (!isPdf) {
+      ['pg', 'prev', 'next', 'zout', 'zin'].forEach(function (n) { q(n).style.display = 'none'; });
+      q('body').innerHTML = '<div class="gm-av-msg">No preview for this file type &mdash; use Download.</div>';
+      return;
+    }
+
+    try {
+      var lib = await loadPdfJs();
+      pdf = await lib.getDocument({ data: await rec.blob.arrayBuffer() }).promise;
+    } catch (e) {
+      q('body').innerHTML = '<div class="gm-av-msg err"></div>';
+      q('body').firstChild.textContent = 'Could not read this PDF: ' + ((e && e.message) || e);
+      return;
+    }
+    var canvas = document.createElement('canvas');
+    canvas.className = 'gm-av-canvas';
+    q('body').innerHTML = ''; q('body').appendChild(canvas);
+
+    async function draw() {
+      var page = await pdf.getPage(pageNo);
+      var base = page.getViewport({ scale: 1 });
+      var fitW = Math.min(900, Math.max(320, q('body').clientWidth - 32));
+      var vp = page.getViewport({ scale: (fitW / base.width) * zoom });
+      canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+      q('pg').textContent = 'Page ' + pageNo + ' / ' + pdf.numPages;
+      q('prev').disabled = pageNo <= 1;
+      q('next').disabled = pageNo >= pdf.numPages;
+    }
+    q('prev').addEventListener('click', function () { go(-1); });
+    q('next').addEventListener('click', function () { go(1); });
+    q('zin').addEventListener('click', function () { zoom = Math.min(3, zoom * 1.25); draw(); });
+    q('zout').addEventListener('click', function () { zoom = Math.max(0.4, zoom / 1.25); draw(); });
+    draw();
   }
 
   /** YouTube/Loom → clickable thumbnail. */
@@ -2548,6 +2814,7 @@
             'data-att-name="' + esc(name) + '" ' +
             'data-att-mime="' + esc(a.mimeType || '') + '" ' +
             'data-att-preview="' + (canPreview ? '1' : '0') + '" ' +
+            'data-att-size="' + (a.size || 0) + '" ' +
             'title="' + esc(name) + (a.size ? ' · ' + attSize(a.size) : '') + '">' +
             '<span class="ic">' + attIcon(a.mimeType, name) + '</span>' +
             '<span class="n">' + esc(name) + '</span>' +
@@ -2593,35 +2860,30 @@
      * file clicked. Previewable types open in a tab, everything else downloads;
      * both go through a blob URL, so nothing is ever navigated to a Gmail URL
      * that would need its own auth. */
+    /* Attachment chips. Hover (after a 400ms dwell) renders a thumbnail; click
+     * opens the full viewer. Bytes are fetched at most once per attachment and
+     * cached for the session, so hover-then-click costs one request. */
     Array.prototype.forEach.call(host.querySelectorAll('.gm-rx-att'), function (btn) {
+      wireAttachmentHover(btn, cl, mailbox);
       btn.addEventListener('click', async function () {
         if (btn.classList.contains('busy')) return;
-        var msgId = btn.getAttribute('data-att-msg');
-        var attId = btn.getAttribute('data-att-id');
         var name = btn.getAttribute('data-att-name') || 'attachment';
         var preview = btn.getAttribute('data-att-preview') === '1';
-        if (!msgId || !attId) return;
         var go = btn.querySelector('.go'), original = go ? go.textContent : '';
+        if (preview) { openAttachmentModal(btn, cl, mailbox); return; }
+        // Not previewable → download, same as before.
         btn.classList.add('busy'); btn.classList.remove('err');
         if (go) go.textContent = 'Opening…';
         try {
-          var r = await invoke(cl, mailbox, 'get_attachment', {
-            message_id: msgId, attachment_id: attId, part_id: btn.getAttribute('data-att-part') || ''
-          });
-          var blob = b64urlToBlob(r.data_b64url, r.mime_type);
-          var url = URL.createObjectURL(blob);
-          if (preview) {
-            window.open(url, '_blank', 'noopener');
-          } else {
-            var a = document.createElement('a');
-            a.href = url; a.download = r.filename || name;
-            document.body.appendChild(a); a.click(); a.remove();
-          }
-          // Long enough for the tab/download to take the handle, then reclaim it.
+          var rec = await fetchAttachment(cl, mailbox, btn);
+          var url = URL.createObjectURL(rec.blob);
+          var a = document.createElement('a');
+          a.href = url; a.download = rec.name || name;
+          document.body.appendChild(a); a.click(); a.remove();
           setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 60000);
           if (go) go.textContent = original;
         } catch (e) {
-          // Surface the server's own words — 403 and 413 both say something useful.
+          // B5: surface the server's own words — 403 and 413 both say something useful.
           btn.classList.add('err');
           if (go) go.textContent = 'Failed';
           btn.title = (e && e.message) || 'Could not open this attachment';
@@ -2910,6 +3172,10 @@
           '<div class="gm-rowmain">' +
             '<div class="gm-row-top"><span class="gm-row-from">' + (t.unread ? '<span class="gm-dot"></span>' : '') + esc(from) + '</span>' +
             (filed ? '<span class="gm-row-filed" title="Filed to ' + esc(filed) + '">🏷 ' + esc(filed) + '</span>' : '') +
+            // Attachment hint from the list response — see the note in
+            // gmail-inbox list_threads. Costs no extra API call, and it is a
+            // HINT: the thread view computes the authoritative list.
+            (t.has_attachment ? '<span class="gm-row-clip" title="Has an attachment">📎</span>' : '') +
             '<span class="gm-row-date">' + esc(fmtDate(t.date)) + '</span></div>' +
             '<div class="gm-row-subj">' + esc(t.subject || '(no subject)') + (t.message_count > 1 ? '<span class="gm-cnt">' + t.message_count + '</span>' : '') + '</div>' +
             // Quoted trailer trimmed off the preview — see splitQuotedText().
