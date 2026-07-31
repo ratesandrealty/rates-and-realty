@@ -170,13 +170,22 @@ Deno.serve(async (req: Request) => {
     if (action === 'sync_all_pending') {
       const { contact_id } = body;
 
-      let q = sb.from('uploaded_documents')
-        .select('id, contact_id, file_path, file_name')
-        .is('gdrive_file_id', null)
-        .not('file_path', 'is', null);
-      if (contact_id) q = q.eq('contact_id', contact_id);
-
-      const { data: docs } = await q.limit(50);
+      /* CLAIM, then upload. The old code selected rows where gdrive_file_id was
+       * null, uploaded, and only then wrote the id back. Two runs overlapping in
+       * that window — the 10-minute cron and a manual backfill — both saw the
+       * same unclaimed rows and both uploaded, which is how Marlon ended up with
+       * three copies of every SMS file and Santana with five of one PDF, all
+       * stamped within the same few seconds.
+       *
+       * claim_pending_gdrive_syncs uses FOR UPDATE SKIP LOCKED so concurrent
+       * callers get disjoint sets, and stamps gdrive_sync_claimed_at so the
+       * exclusion survives past the transaction. Claims older than 10 minutes
+       * are reclaimable, so a run that dies mid-upload strands nothing. */
+      const { data: docs, error: claimErr } = await sb.rpc('claim_pending_gdrive_syncs', {
+        p_limit: 50,
+        p_contact: contact_id || null,
+      });
+      if (claimErr) return err('claim failed: ' + claimErr.message, 500);
       if (!docs?.length) return ok({ success: true, synced: 0, message: 'No pending docs' });
 
       const contactIds = [...new Set(docs.map((d: any) => d.contact_id).filter(Boolean))];

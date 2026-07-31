@@ -768,13 +768,35 @@ async function saveBorrowerDocument(
   docType: string | null,
   loanStage: string | null = null,
   caption = "",
-): Promise<{ files: SavedDoc[]; merged: boolean }> {
+): Promise<{ files: SavedDoc[]; merged: boolean; failed: number }> {
   const imgs: { bytes: Uint8Array; contentType: string }[] = [];
   for (const md of mediaList) {
     try { const m = await fetchTwilioMedia(md.url); imgs.push({ bytes: m.bytes, contentType: md.contentType || m.contentType }); }
     catch (e) { console.error("[doc] media fetch failed", e); }
   }
   if (!imgs.length) throw new Error("no media downloaded");
+
+  /* REFUSE BEFORE STORING when the borrower has no Drive folder.
+   *
+   * gdrive-sync mirrors a row only when contacts.gdrive_folder_id is set; with
+   * no folder it records reason 'no_folder' and moves on, forever. The document
+   * would sit in the bucket that nothing displays — which is exactly how
+   * 08602380…/sms-uploads/SMS-Upload-20260617-061840.pdf has been invisible
+   * since 17 June: bytes stored, nothing downstream, nobody told.
+   *
+   * We do NOT create the folder here. A borrower folder is not one folder — it
+   * is a root plus the ten-subfolder template (Initial Loan Submission, Final
+   * Loan Conditions, Lender Docs, …) built by the n8n workflow behind
+   * trg_borrower_foldering_ins. Creating a bare root would produce a
+   * malformed borrower file that every later upload inherits. Refusing is
+   * recoverable in one step; a malformed folder is not. */
+  const { data: cRow } = await sb.from("contacts").select("gdrive_folder_id").eq("id", contact.id).maybeSingle();
+  if (!cRow?.gdrive_folder_id) {
+    throw new Error(
+      `${fullName(contact)} has no Google Drive folder, so nothing filed here would ever appear in the CRM. ` +
+      `Open their record and create the folder, then resend — I have not stored anything.`,
+    );
+  }
 
   const typeLabel = docType && DOC_TYPE_KEYS.includes(docType) ? docType : "other";
   const slug = typeLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "document";
@@ -808,9 +830,11 @@ async function saveBorrowerDocument(
   for (const g of groups) {
     const safe = `${slug}_${stamp}${g.idx ? `_${g.idx}` : ""}.${g.ext}`;
     const path = `${contact.id}/${slug}/${safe}`;
+    let uploadedPath: string | null = null;
     try {
       const up = await sb.storage.from(STORAGE_BUCKET).upload(path, g.bytes, { contentType: g.mime, upsert: true });
       if (up.error) throw new Error("storage upload: " + up.error.message);
+      uploadedPath = path;   // from here on, a failure must clean the object up
       /* document_type is WHAT it is; loan_stage is WHERE IN THE FILE it belongs.
        * A paystub can arrive for the initial submission or to clear a condition —
        * same type, different stage — so these cannot share one field. */
@@ -823,6 +847,19 @@ async function saveBorrowerDocument(
       }
       files.push({ uploaded_id: ins.id, file_name: safe, document_type: typeLabel, loan_stage: loanStage, ocr, pages: g.pages });
     } catch (e: any) {
+      /* STORE-AND-FORGET IS THE FAILURE MODE TO KILL. The object goes up before
+       * the row exists, so an insert that throws used to leave bytes in the
+       * bucket with nothing pointing at them — unmirrored, undisplayed, and
+       * silent. Roll the object back so the bucket never holds a file the CRM
+       * has never heard of. If the rollback itself fails, say so loudly: an
+       * orphan we KNOW about is recoverable, one we never noticed is not. */
+      if (uploadedPath) {
+        try {
+          const rm = await sb.storage.from(STORAGE_BUCKET).remove([uploadedPath]);
+          if (rm.error) console.error("[doc] ORPHAN LEFT IN BUCKET —", uploadedPath, rm.error.message);
+          else console.error("[doc] rolled back orphaned object", uploadedPath);
+        } catch (re) { console.error("[doc] ORPHAN LEFT IN BUCKET —", uploadedPath, String(re)); }
+      }
       /* One image failing must not discard the others. Partial success is
        * reported as partial success, never as "saved". */
       errors.push(`${safe}: ${e?.message || String(e)}`);
@@ -831,13 +868,13 @@ async function saveBorrowerDocument(
   }
   if (!files.length) throw new Error(errors.join("; ") || "no files saved");
   if (errors.length) console.error("[doc] partial save,", errors.length, "failed:", errors.join("; "));
-  return { files, merged };
+  return { files, merged, failed: errors.length };
 }
 
 /* Per-FILE confirmation. "✅ Saved 2 page(s)" hid that one of Rene's two images
  * was a credit disclosure filed as a paystub; a line per file makes a mislabel
  * visible in the reply itself, while he still has the documents in hand. */
-function describeSaved(res: { files: SavedDoc[]; merged: boolean }, who: string, url: string): string {
+function describeSaved(res: { files: SavedDoc[]; merged: boolean; failed?: number }, who: string, url: string): string {
   const head = res.merged
     ? `✅ Saved 1 file (${res.files[0]?.pages ?? 1} pages, merged) to ${who}:`
     : `✅ Saved ${res.files.length} file(s) to ${who}:`;
@@ -846,7 +883,8 @@ function describeSaved(res: { files: SavedDoc[]; merged: boolean }, who: string,
     const ocr = f.ocr ? " · OCR queued" : "";
     return `${i + 1}. ${docTypeLabel(f.document_type)}${stage}${ocr}`;
   });
-  return [head, ...lines, url].join("\n");
+  const tail = res.failed ? [`⚠️ ${res.failed} image(s) could NOT be saved — resend them.`] : [];
+  return [head, ...lines, ...tail, url].join("\n");
 }
 
 // ── Main handler ────────────────────────────────────────────────────────────────
