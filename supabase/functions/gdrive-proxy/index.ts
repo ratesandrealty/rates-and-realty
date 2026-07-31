@@ -147,6 +147,35 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    /* resolve-folder: find a named subfolder under a parent, create it if absent.
+     *
+     * This logic used to live only in lpSectionUpload (admin/lead-detail.html),
+     * which is why the admin uploader files into "Initial Loan Submission" while
+     * gdrive-sync dumps portal and SMS uploads at the folder root — two callers,
+     * one of which simply did not have the resolver. It lives here now so both
+     * use the same one. Matching is case-insensitive on the trimmed name; the
+     * folder is created with the caller's exact casing when it does not exist. */
+    if (req.method === "POST" && action === "resolve-folder") {
+      const body = await req.json().catch(() => ({}));
+      const parentId = String(body.parentId || "");
+      const name = String(body.name || "").trim();
+      if (!parentId || !name) return err("parentId and name required", 400);
+      const q = `'${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const lr = await driveFetch(`/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=200`);
+      const ld = await lr.json();
+      const want = name.toLowerCase();
+      const hit = (ld.files || []).find((f: any) => String(f.name || "").trim().toLowerCase() === want);
+      if (hit) return json({ id: hit.id, name: hit.name, created: false });
+      const cr = await driveFetch(`/files?fields=id,name`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [parentId] }),
+      });
+      const cd = await cr.json();
+      if (!cr.ok || !cd.id) return err(cd?.error?.message || `create-folder HTTP ${cr.status}`, 500);
+      return json({ id: cd.id, name: cd.name, created: true });
+    }
+
     if (req.method === "POST" && action === "create-folder") {
       let body: { parentId?: string; name?: string };
       try { body = await req.json(); } catch (_e) { return err("Invalid JSON body", 400); }

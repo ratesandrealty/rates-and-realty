@@ -8,6 +8,20 @@
 # Twilio posts the staff-line (888) SMS/MMS webhook here with no auth header.
 verify_jwt = false
 
+# Called every minute by cron (jobid 39) with Content-Type only and NO
+# Authorization header, so it must not verify a JWT. It was deployed unpinned at
+# 2026-07-31 07:30:09, which flipped it to verify_jwt=true, and every run since
+# returned UNAUTHORIZED_NO_AUTH_HEADER. Nothing alerted; it was found by reading
+# net._http_response.
+[functions.send-scheduled-sms]
+verify_jwt = false
+
+# Same shape: cron jobid 3 posts Content-Type only, no Authorization. Currently
+# false on the deployed copy but it was never pinned, so the next deploy of it
+# would break scheduled email exactly the same way.
+[functions.send-scheduled-emails]
+verify_jwt = false
+
 # Twilio posts here with no auth header either — SMS for +18668919394 and
 # +17149092526. NOT pinning these is how a routine `supabase functions deploy`
 # silently flipped them to verify_jwt=true and 401'd every real inbound message

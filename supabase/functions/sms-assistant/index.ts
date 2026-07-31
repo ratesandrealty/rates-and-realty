@@ -637,14 +637,20 @@ function inferDocType(caption: string): string | null {
   if (/driver'?s? licen[cs]e|passport|\bgov(ernment)?\s?id\b/.test(s)) return "gov_id";
   return null;
 }
-/* The 11 stages the Loan Processing tab already renders (LP_TIMELINE in
- * admin/lead-detail.html). NOT a third vocabulary — the same labels, so a
- * document filed by SMS lands somewhere the UI can already talk about. */
+/* THE TEN DRIVE SUBFOLDERS. Every borrower folder is created from this
+ * template, and one of them is literally "Initial Loan Submission" — the phrase
+ * Rene used in the caption that started all of this.
+ *
+ * This used to be LP_TIMELINE, the Loan Processing pipeline stages. That was the
+ * wrong taxonomy: where a DOCUMENT lives and what stage the LOAN is at are
+ * different facts, and only one of them has a folder you can open. The column
+ * is now uploaded_documents.drive_folder. */
 const LOAN_STAGES = [
-  "Intake", "Docs In", "Submitted to Lender", "Disclosures Out", "Underwriting",
-  "Conditional Approval", "Conditions / Docs In", "Clear to Close",
-  "Docs Out / Signing", "Funded", "Purchased",
+  "Initial Loan Submission", "Final Loan Conditions", "Lender Docs",
+  "Compensation Compliance Docs", "LOEs", "Appraisal", "Invoices",
+  "Real Estate Docs", "HOI", "Escrow & Title",
 ];
+const DEFAULT_DRIVE_FOLDER = "Initial Loan Submission";
 
 /* Caption -> { name, stage }, by MODEL rather than by denylist.
  *
@@ -670,15 +676,21 @@ const LOAN_STAGES = [
  * The vocabulary meets him rather than the other way round. Longest phrase
  * first, so "initial loan submission" cannot be swallowed by "submission". */
 const STAGE_ALIASES: [RegExp, string][] = [
-  [/\binitial\s+loan\s+submission\b/i, "Submitted to Lender"],
-  [/\binitial\s+submission\b/i, "Submitted to Lender"],
-  [/\bloan\s+submission\b/i, "Submitted to Lender"],
-  [/\bsubmit(?:ting|ted)?\s+to\s+(?:the\s+)?lender\b/i, "Submitted to Lender"],
-  [/\bprior\s+to\s+docs\b|\bptd\b/i, "Conditions / Docs In"],
-  [/\bcondition\s*docs?\b|\bconditions\b/i, "Conditions / Docs In"],
-  [/\bclear\s+to\s+close\b|\bctc\b/i, "Clear to Close"],
-  [/\bdocs\s+out\b|\bsigning\b/i, "Docs Out / Signing"],
-  [/\bfunded\b/i, "Funded"],
+  [/\binitial\s+loan\s+submission\b/i, "Initial Loan Submission"],
+  [/\binitial\s+submission\b/i, "Initial Loan Submission"],
+  [/\bloan\s+submission\b/i, "Initial Loan Submission"],
+  [/\bsubmit(?:ting|ted)?\s+to\s+(?:the\s+)?lender\b/i, "Initial Loan Submission"],
+  [/\bfinal\s+conditions?\b/i, "Final Loan Conditions"],
+  [/\bprior\s+to\s+docs\b|\bptd\b/i, "Final Loan Conditions"],
+  [/\bcondition\s*docs?\b|\bconditions\b/i, "Final Loan Conditions"],
+  [/\blender\s+docs?\b/i, "Lender Docs"],
+  [/\bappraisal\b/i, "Appraisal"],
+  [/\binvoice\b/i, "Invoices"],
+  [/\bescrow\b|\btitle\b|\bprelim\b/i, "Escrow & Title"],
+  [/\bhoi\b|\bhomeowner'?s?\s+insurance\b|\bhazard\s+insurance\b/i, "HOI"],
+  [/\bloe\b|\bletter\s+of\s+explanation\b/i, "LOEs"],
+  [/\bpurchase\s+(contract|agreement)\b|\brpa\b|\breal\s+estate\s+docs?\b/i, "Real Estate Docs"],
+  [/\bcomp(ensation)?\s+(compliance|disclosure)\b/i, "Compensation Compliance Docs"],
 ];
 function stageFromAlias(caption: string): string | null {
   for (const [re, stage] of STAGE_ALIASES) if (re.test(caption)) return stage;
@@ -858,7 +870,7 @@ async function saveBorrowerDocument(
       /* document_type is WHAT it is; loan_stage is WHERE IN THE FILE it belongs.
        * A paystub can arrive for the initial submission or to clear a condition —
        * same type, different stage — so these cannot share one field. */
-      const { data: ins, error } = await sb.from("uploaded_documents").insert({ contact_id: contact.id, document_type: typeLabel, loan_stage: loanStage, file_name: safe, file_size: g.bytes.byteLength, storage_path: path, file_path: path, status: "received", uploaded_at: new Date().toISOString() }).select("id").single();
+      const { data: ins, error } = await sb.from("uploaded_documents").insert({ contact_id: contact.id, document_type: typeLabel, drive_folder: loanStage, file_name: safe, file_size: g.bytes.byteLength, storage_path: path, file_path: path, status: "received", uploaded_at: new Date().toISOString() }).select("id").single();
       if (error) throw new Error("doc insert: " + error.message);
       let ocr = false;
       if (OCR_DOC_TYPES.includes(typeLabel)) {
@@ -1047,7 +1059,7 @@ Deno.serve(async (req: Request) => {
             // The stage Rene named in the ORIGINAL caption was stored with the
             // pending row; carry it through so answering "which borrower?" does
             // not quietly lose "initial loan submission".
-            const pendStage = pending.payload?.loan_stage || null;
+            const pendStage = pending.payload?.loan_stage || DEFAULT_DRIVE_FOLDER;
             const pendCaption = pending.payload?.caption || "";
             const saved = await saveBorrowerDocument(contact, pending.payload?.media || [], pending.payload?.document_type || inferDocType(pendCaption), pendStage, pendCaption, testMode);
             await resolvePending(pending.id, chosen.contact_id);
@@ -1078,7 +1090,13 @@ Deno.serve(async (req: Request) => {
          * landed typed "Document". The model reads the same sentence and knows
          * they are pay stubs from the images' context in the caption. */
         const docType = extracted.docType || inferDocType(body || "");
-        const loanStage = extracted.stage;
+        /* Default to Initial Loan Submission when nothing in the caption points
+         * anywhere. It is the first folder in the template, so a wrong default
+         * is early in the file and gets re-filed during normal submission prep
+         * rather than surfacing at CTC; and it is where income and asset
+         * documents — nearly everything that arrives by text — actually belong.
+         * The cost is that it asserts a destination the sender never stated. */
+        const loanStage = extracted.stage || DEFAULT_DRIVE_FOLDER;
         let target: any = null, candidates: any[] = [];
         if (extracted.name) {
           const f = await findContacts(extracted.name);

@@ -181,6 +181,24 @@ Deno.serve(async (req: Request) => {
        * callers get disjoint sets, and stamps gdrive_sync_claimed_at so the
        * exclusion survives past the transaction. Claims older than 10 minutes
        * are reclaimable, so a run that dies mid-upload strands nothing. */
+      /* Resolve the destination subfolder via gdrive-proxy — the SAME resolver
+       * the admin uploader uses. Files used to land at the folder ROOT, which is
+       * why 79 loose copies sit there and none in the subfolders. */
+      const resolveSub = async (parentId: string, name: string): Promise<string> => {
+        try {
+          const r = await fetch(`${SUPABASE_URL}/functions/v1/gdrive-proxy?action=resolve-folder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE_KEY}` },
+            body: JSON.stringify({ parentId, name }),
+          });
+          const d = await r.json();
+          if (r.ok && d.id) return d.id;
+          console.error('[gdrive-sync] resolve-folder failed, using root:', d?.error);
+        } catch (e) { console.error('[gdrive-sync] resolve-folder threw, using root:', String(e)); }
+        return parentId;   // a wrong folder is recoverable; a lost file is not
+      };
+      const DEFAULT_FOLDER = 'Initial Loan Submission';
+
       const { data: docs, error: claimErr } = await sb.rpc('claim_pending_gdrive_syncs', {
         p_limit: 50,
         p_contact: contact_id || null,
@@ -206,8 +224,9 @@ Deno.serve(async (req: Request) => {
       let synced = 0; let skipped = 0;
       const errors: any[] = [];
       for (const doc of docs) {
-        const folderId = folderMap[doc.contact_id];
-        if (!folderId) { skipped++; errors.push({ id: doc.id, reason: 'no_folder' }); continue; }
+        const rootId = folderMap[doc.contact_id];
+        if (!rootId) { skipped++; errors.push({ id: doc.id, reason: 'no_folder' }); continue; }
+        const folderId = await resolveSub(rootId, (doc as any).drive_folder || DEFAULT_FOLDER);
         const { data: fileData } = await sb.storage.from(BUCKET).download(doc.file_path).catch(() => ({ data: null, error: null }));
         if (!fileData) { skipped++; errors.push({ id: doc.id, reason: 'download_failed', path: doc.file_path }); continue; }
         const fileBytes = new Uint8Array(await fileData.arrayBuffer());

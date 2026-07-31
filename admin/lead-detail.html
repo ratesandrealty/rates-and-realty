@@ -7114,9 +7114,19 @@ async function loadDocumentsChecklist() {
   let uploaded = [];
   try {
     if (contactId || leadId) {
-      const q = leadId
-        ? sb.from('uploaded_documents').select('*').eq('lead_id', leadId)
-        : sb.from('uploaded_documents').select('*').eq('contact_id', contactId);
+      /* contact_id, always. leadId is set to contactId at load, so this used to
+       * take the lead_id branch every time — and lead_id is NULL on 26 of 113
+       * rows because all three live writers (portal-data, sms-assistant,
+       * lpSectionUpload) set contact_id only. Those documents were invisible
+       * here regardless of type.
+       *
+       * The assignment at the top of the file is deliberately LEFT ALONE:
+       * leads is a view over contacts, so leadId === contactId is correct for
+       * the ~50 other places that use it (loadTasks filters tasks on
+       * related_id = leadId, addTask refuses without it). Removing it would
+       * blank the Tasks panel and kill task creation. The branch was the bug,
+       * not the assignment. */
+      const q = sb.from('uploaded_documents').select('*').eq('contact_id', contactId);
       const { data } = await q;
       uploaded = data || [];
     }
@@ -11140,11 +11150,45 @@ function lpDropDrop(e, sectionKey, el){ e.preventDefault(); el.classList.remove(
 function lpDropClick(el){ const inp=el.querySelector('input[type=file]'); if(inp) inp.click(); }
 function lpDropInput(inp, sectionKey){ const files=inp.files; if(files&&files.length) lpSectionUpload(sectionKey, files); inp.value=''; }
 function _lpDropStat(sectionKey){ return document.querySelector('.lp-drop[data-section="'+sectionKey+'"] [data-drop-stat]'); }
+/* REPEAT-UPLOAD GUARD.
+ *
+ * There was nothing stopping a second click while the first was still running,
+ * and no check that the same file had just been uploaded. Santana Navarro
+ * Rosales has TWELVE uploaded_documents rows for "Sanderson Paystub.pdf" and
+ * sixteen for "eStmt_2026-02-24-2.pdf" — 42 duplicate rows across the table,
+ * each faithfully mirrored to Drive. The uploader is slow (Drive round trip per
+ * file), so clicking again looks like the reasonable thing to do.
+ *
+ * Two guards, because they catch different mistakes: the in-flight flag stops
+ * the double-click, and the recent-upload set stops the deliberate retry of
+ * something that actually succeeded. */
+let _lpUploadInFlight = false;
+const _lpRecentUploads = new Map();   // "cid|name|size" -> timestamp
+const LP_DUP_WINDOW_MS = 5 * 60 * 1000;
+
 async function lpSectionUpload(sectionKey, fileList){
   const toastFn=window.showToast||window.toast||function(){};
   const files=Array.prototype.slice.call(fileList||[]).filter(Boolean);
   if(!files.length) return;
   const cid=lpCid(); if(!cid){ toastFn('No contact selected', true); return; }
+
+  if(_lpUploadInFlight){ toastFn('An upload is already running — wait for it to finish.', true); return; }
+
+  const _now=Date.now();
+  for(const [k,ts] of _lpRecentUploads){ if(_now-ts>LP_DUP_WINDOW_MS) _lpRecentUploads.delete(k); }
+  const _dupKeys=files.map(f=>cid+'|'+f.name+'|'+f.size);
+  const _dupes=files.filter((f,i)=>_lpRecentUploads.has(_dupKeys[i]));
+  if(_dupes.length===files.length){
+    toastFn(_dupes.length===1
+      ? `"${_dupes[0].name}" was already uploaded a moment ago — it is on the file. Rename it if this is a different document.`
+      : `Those ${_dupes.length} files were already uploaded a moment ago.`, true);
+    return;
+  }
+  if(_dupes.length){
+    toastFn(`Skipping ${_dupes.length} already uploaded: ${_dupes.map(f=>f.name).join(', ')}`, true);
+  }
+  _lpUploadInFlight = true;
+  try {
   const root=(typeof contactData!=='undefined'&&contactData)?contactData.gdrive_folder_id:null;
   if(!root){ toastFn('This borrower has no Drive folder yet — create/link one via “📁 Open in Drive” first.', true); return; }
   await lpLoadSectionFolders();
@@ -11174,12 +11218,15 @@ async function lpSectionUpload(sectionKey, fileList){
       if(!cr.ok||!cd.id) throw new Error((cd&&cd.error)||('create-folder HTTP '+cr.status));
       folderId=cd.id;
     }
-  }catch(e){ setStat('folder error', true); toastFn('Could not resolve “'+folderName+'” folder: '+((e&&e.message)||e), true); return; }
+  }catch(e){ setStat('folder error', true); toastFn('Could not resolve “'+folderName+'” folder: '+((e&&e.message)||e), true); _lpUploadInFlight=false; return; }
   // Per file: CRM row FIRST (the must-have — a VA upload is always recorded), then a best-effort
   // Storage copy, then the Drive upload. Drive failure never loses the file from the CRM.
   let done=0, drivePending=0, crmFail=0;
   for(let i=0;i<files.length;i++){
     const file=files[i];
+    const _dk=cid+'|'+file.name+'|'+file.size;
+    if(_lpRecentUploads.has(_dk)) continue;          // already on the file
+    _lpRecentUploads.set(_dk, Date.now());
     setStat('uploading '+(i+1)+'/'+files.length+'…');
     let finalFile=file;
     if(typeof _convertToPdfIfNeeded==='function'){ try{ const cv=await _convertToPdfIfNeeded(file); if(cv&&cv.file) finalFile=cv.file; }catch(_){} }
@@ -11240,6 +11287,11 @@ function lpRenderSectionDocs(sectionKey, docs){
       +'<span class="lp-secdoc-when">'+lpEsc(when)+'</span>'
       +link+'</div>';
   }).join('');
+  } finally {
+    /* Released on every path, including a thrown one — a stuck flag would
+     * lock the uploader out until reload, which is worse than a duplicate. */
+    _lpUploadInFlight = false;
+  }
 }
 async function lpLoadSectionDocs(sectionKey){
   const cid=lpCid(); if(!cid) return;
