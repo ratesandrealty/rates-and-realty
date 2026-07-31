@@ -45,7 +45,7 @@ const GOOGLE_TOKEN_ROW_ID = "rene";
 const ADMIN_LEAD_URL_BASE = "https://beta.ratesandrealty.com/admin/lead-detail.html?cid=";
 const OCR_CRON_SECRET = "rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1";
 /* KEYS, not labels. See DOC_TYPES below for why this changed. */
-const OCR_DOC_TYPES = ["pay_stubs", "w2", "bank_stmts", "tax_returns"]; // only these trigger ocr-mms-upload
+const OCR_DOC_TYPES = ["pay_stubs", "w2", "bank_statements", "tax_returns"]; // only these trigger ocr-mms-upload
 const CLICKUP_TODO_LIST_ID = Deno.env.get("CLICKUP_LIST_ID_TODO") || "901708416155";
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -555,34 +555,40 @@ async function transcribeAudio(url: string, contentType: string): Promise<string
   if (!res.ok) throw new Error(`whisper ${res.status} ${j.error?.message || ""}`);
   return j.text || "";
 }
-/* The document-type vocabulary the Loan Detail page already uses — DOC_TYPES in
- * admin/lead-detail.html. That checklist matches with
- *     uploaded.find(u => u.document_type === dt.key)
- * an EXACT key comparison, so a row typed "Pay Stubs" (the LABEL) is invisible
- * on the very checklist meant to display it. This path was writing labels;
- * seven rows in uploaded_documents carry "Pay Stubs" and none of them show.
- * Write the key. */
+/* The document-type vocabulary the Documents tab ACTUALLY uses: the filterDocs
+ * buttons (admin/lead-detail.html:4091+), the staging dropdown (:4203+) and
+ * _bulkTypeFromDetected (:7506). Stored data agrees with it — 51 gov_id,
+ * 2 bank_statements.
+ *
+ * NOT DOC_TYPES at :7083. That list says 'id' and 'bank_stmts' and belongs to
+ * loadDocumentsChecklist(), which has zero call sites anywhere in the repo. I
+ * aligned this path to that dead list once; it produced keys that match neither
+ * the live UI nor anything on disk. Two vocabularies live in one file and only
+ * one of them is wired up.
+ *
+ * This path used to write LABELS ("Pay Stubs"), which match nothing at all —
+ * 8 rows across 4 files still carry them. Write the live key. */
 const DOC_TYPES: { key: string; label: string }[] = [
   { key: "w2", label: "W-2 Forms" },
   { key: "pay_stubs", label: "Pay Stubs" },
-  { key: "bank_stmts", label: "Bank Statements" },
-  { key: "id", label: "Government ID" },
-  { key: "tax_returns", label: "Tax Returns (1040)" },
+  { key: "bank_statements", label: "Bank Statements" },
+  { key: "gov_id", label: "Gov ID" },
+  { key: "tax_returns", label: "Tax Returns" },
   { key: "purchase_contract", label: "Purchase Contract" },
-  { key: "other", label: "Other Documents" },
+  { key: "other", label: "Other" },
 ];
 const DOC_TYPE_KEYS = DOC_TYPES.map((d) => d.key);
 function docTypeLabel(key: string | null): string {
-  return DOC_TYPES.find((d) => d.key === key)?.label || "Other Documents";
+  return DOC_TYPES.find((d) => d.key === key)?.label || "Other";
 }
 function inferDocType(caption: string): string | null {
   const s = (caption || "").toLowerCase();
   if (/\bw-?2\b/.test(s)) return "w2";
   if (/pay\s?stub|paystub/.test(s)) return "pay_stubs";
-  if (/bank\s?statement/.test(s)) return "bank_stmts";
+  if (/bank\s?statement/.test(s)) return "bank_statements";
   if (/tax\s?return|1040/.test(s)) return "tax_returns";
   if (/purchase\s?(contract|agreement)/.test(s)) return "purchase_contract";
-  if (/driver'?s? licen[cs]e|passport|\bgov(ernment)?\s?id\b/.test(s)) return "id";
+  if (/driver'?s? licen[cs]e|passport|\bgov(ernment)?\s?id\b/.test(s)) return "gov_id";
   return null;
 }
 /* The 11 stages the Loan Processing tab already renders (LP_TIMELINE in
@@ -613,9 +619,29 @@ const LOAN_STAGES = [
  * docType and stage are separate fields and cannot be collapsed: a pay stub
  * sent for the initial submission and one sent to clear a condition are the
  * same TYPE at different STAGES. */
+/* Phrase -> stage, applied BEFORE the model and again as a fallback. Rene says
+ * "initial loan submission"; the CRM's stage is called "Submitted to Lender".
+ * The vocabulary meets him rather than the other way round. Longest phrase
+ * first, so "initial loan submission" cannot be swallowed by "submission". */
+const STAGE_ALIASES: [RegExp, string][] = [
+  [/\binitial\s+loan\s+submission\b/i, "Submitted to Lender"],
+  [/\binitial\s+submission\b/i, "Submitted to Lender"],
+  [/\bloan\s+submission\b/i, "Submitted to Lender"],
+  [/\bsubmit(?:ting|ted)?\s+to\s+(?:the\s+)?lender\b/i, "Submitted to Lender"],
+  [/\bprior\s+to\s+docs\b|\bptd\b/i, "Conditions / Docs In"],
+  [/\bcondition\s*docs?\b|\bconditions\b/i, "Conditions / Docs In"],
+  [/\bclear\s+to\s+close\b|\bctc\b/i, "Clear to Close"],
+  [/\bdocs\s+out\b|\bsigning\b/i, "Docs Out / Signing"],
+  [/\bfunded\b/i, "Funded"],
+];
+function stageFromAlias(caption: string): string | null {
+  for (const [re, stage] of STAGE_ALIASES) if (re.test(caption)) return stage;
+  return null;
+}
 async function extractCaptionTargets(caption: string): Promise<{ name: string; docType: string | null; stage: string | null }> {
   const cap = (caption || "").trim();
   if (!cap) return { name: "", docType: null, stage: null };
+  const aliasStage = stageFromAlias(cap);
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -629,8 +655,11 @@ async function extractCaptionTargets(caption: string): Promise<{ name: string; d
           "name: the BORROWER's name only. Not the document type, not the loan stage, not verbs. Empty string if no person is named.\n" +
           "doc_type: WHAT the images are. One of these keys, else empty: " + DOC_TYPE_KEYS.join(" | ") + "\n" +
           "stage: WHERE IN THE LOAN FILE they belong — a different question from doc_type. Only if the message clearly indicates one of these, else empty: " + LOAN_STAGES.join(" | ") + "\n" +
-          "\"initial loan submission\" / \"submit to lender\" => \"Submitted to Lender\". " +
-          "\"conditions\" / \"condition docs\" => \"Conditions / Docs In\".",
+          "ALIASES — these are the words Rene actually uses; map them, do not reject them:\n" +
+          "  \"initial loan submission\" / \"initial submission\" / \"loan submission\" / \"submit to lender\" / \"submitting\" => \"Submitted to Lender\"\n" +
+          "  \"conditions\" / \"condition docs\" / \"prior to docs\" / \"ptd\" => \"Conditions / Docs In\"\n" +
+          "  \"ctc\" / \"clear to close\" => \"Clear to Close\"\n" +
+          "  \"signing\" / \"docs out\" => \"Docs Out / Signing\"",
         messages: [{ role: "user", content: cap.slice(0, 500) }],
       }),
     });
@@ -643,12 +672,14 @@ async function extractCaptionTargets(caption: string): Promise<{ name: string; d
     if (stage && !LOAN_STAGES.includes(stage)) stage = "";
     let dt = String(parsed.doc_type || "").trim();
     if (dt && !DOC_TYPE_KEYS.includes(dt)) dt = "";
-    return { name, docType: dt || null, stage: stage || null };
+    /* The alias table wins. It encodes what Rene means by a phrase; the model is
+     * only there for captions no table can anticipate. */
+    return { name, docType: dt || null, stage: aliasStage || stage || null };
   } catch (e) {
     console.error("[doc] caption extraction failed, falling back:", String(e));
     // Conservative fallback: only an explicit "for <Name>" trailer.
     const m = cap.match(/\bfor\s+([A-Z][a-z'\-]+(?:\s+[A-Z][a-z'\-]+){0,2})\s*$/);
-    return { name: m ? m[1].trim() : "", docType: inferDocType(cap), stage: null };
+    return { name: m ? m[1].trim() : "", docType: inferDocType(cap), stage: aliasStage };
   }
 }
 async function saveBorrowerDocument(contact: any, mediaList: { url: string; contentType: string }[], docType: string | null, loanStage: string | null = null) {

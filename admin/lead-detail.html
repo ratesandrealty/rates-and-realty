@@ -5485,12 +5485,28 @@ const params = new URLSearchParams(location.search);
 contactId = params.get('contact_id') || params.get('lead_id') || params.get('id') || null;
 leadId = contactId; // same thing — no separate leads table exists anymore
 
+/* Write text to an element that may not exist. Returns false when the element
+ * is missing so a caller can tell "wrote it" from "there was nowhere to write".
+ * Never throws: a reporting path that can fail is worse than no reporting. */
+function _ldSetText(id, text) {
+  const el = document.getElementById(id);
+  if (!el) { console.warn('[lead-detail] #' + id + ' not in DOM; skipped writing:', text); return false; }
+  el.textContent = text;
+  return true;
+}
+
 /* ── LOAD ── */
 async function loadData() {
   try {
     if (!contactId && !leadId) {
-      document.getElementById('topbar-name').textContent = 'No contact selected';
-      document.getElementById('topbar-status').textContent = '';
+      /* #topbar-status DOES NOT EXIST in this page's markup — only #topbar-name
+       * does. The unguarded write that used to be here threw a TypeError before
+       * the panel below could render, the outer catch turned that into
+       * "Could Not Load Contact: null is not an object", and the real reason —
+       * no contact id in the URL — was destroyed by its own reporting path.
+       * Every topbar write on this page goes through _ldSetText now. */
+      _ldSetText('topbar-name', 'No contact selected');
+      _ldSetText('topbar-status', '');
       const main = document.querySelector('.ld-main');
       if (main) {
         main.innerHTML = `
@@ -5564,8 +5580,7 @@ async function loadData() {
     // pre-filled — reusing the existing loeOpenEditor() / openEmailComposer(). No auto-send.
     try { _consumeCopilotHandoff(); } catch(e){ console.warn('[copilot handoff]', e); }
   } catch (err) {
-    console.error(err);
-    showError('Error loading lead: ' + err.message);
+    showError('Error loading lead: ' + ((err && err.message) || String(err)), err);
   }
 }
 
@@ -20050,11 +20065,37 @@ function commIcon(type) {
 function commTypeLabel(type) {
   return { call:'Phone Call', email:'Email', sms:'SMS / Text', text:'Text Message', meeting:'Meeting' }[type] || type;
 }
-function showError(msg) {
-  const tn = document.getElementById('topbar-name');
-  if (tn) tn.textContent = 'Contact Not Found';
+/* showError(msg, err)
+ * `err` is the ORIGINAL exception when there is one. It is rendered in a
+ * collapsed <details> and always logged with the URL params that were actually
+ * present, because the failure this page hits most often is a link carrying the
+ * wrong parameter name — and "Could Not Load Contact" alone cannot tell you
+ * that. Every DOM write here is guarded: this function runs precisely when the
+ * page is already broken, so it must not be able to throw. */
+function showError(msg, err) {
+  try {
+    console.error('[lead-detail] load failed:', msg, err || '(no error object)', {
+      contactId: (typeof contactId !== 'undefined' ? contactId : null),
+      leadId: (typeof leadId !== 'undefined' ? leadId : null),
+      params: (function () { const o = {}; new URLSearchParams(location.search).forEach((v, k) => { o[k] = v; }); return o; })(),
+    });
+  } catch (_) {}
+  _ldSetText('topbar-name', 'Contact Not Found');
   const ts = document.getElementById('topbar-status');
   if (ts) { ts.textContent = 'Error'; ts.className = 'ld-status-badge sb-lost'; }
+  let detail = '';
+  try {
+    const seen = Array.from(new URLSearchParams(location.search).keys());
+    const bits = [];
+    if (err) bits.push(String((err && (err.stack || err.message)) || err));
+    bits.push('URL parameters present: ' + (seen.length ? seen.join(', ') : '(none)'));
+    bits.push('This page reads the contact id from: contact_id, lead_id, or id.');
+    detail = '<details style="margin-top:4px;max-width:520px;text-align:left;">'
+      + '<summary style="cursor:pointer;color:var(--muted);font-size:.85rem;">Technical details</summary>'
+      + '<pre style="white-space:pre-wrap;word-break:break-word;font-size:.75rem;color:rgba(255,255,255,0.55);margin-top:8px;">'
+      + bits.join('\n\n').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+      + '</pre></details>';
+  } catch (_) { detail = ''; }
   // Show inline error in the main content area
   const main = document.querySelector('.ld-main');
   if (main) {
@@ -20063,6 +20104,7 @@ function showError(msg) {
         <div style="font-size:3rem;">⚠️</div>
         <h2 style="color:var(--text);">Could Not Load Contact</h2>
         <p style="color:var(--muted);max-width:420px;">${msg}</p>
+        ${detail}
         <div style="display:flex;gap:10px;margin-top:8px;">
           <button class="ld-btn-save" onclick="loadData()">↺ Retry</button>
           <button class="ld-btn-cancel" onclick="goBack()">← Go Back</button>
