@@ -229,6 +229,20 @@
     .tier-warm { background:rgba(232,165,71,.15); color:#E8A547; }
     .tier-cold { background:rgba(93,165,232,.15); color:#5DA5E8; }
     .last-scored-at { font-size:.72rem; color:#777; }
+    /* Recent score history: when · why · what moved. */
+    .score-history { margin-top:10px; border-top:1px solid var(--border,rgba(255,255,255,.1)); padding-top:8px; }
+    .score-history-h { font-size:.62rem; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:#777; margin-bottom:5px; }
+    .sc-hrow { display:flex; align-items:baseline; gap:8px; padding:3px 0; font-size:.72rem; line-height:1.45; }
+    .sc-hrow + .sc-hrow { border-top:1px solid rgba(127,127,127,.12); }
+    .sc-h-when { color:#777; flex:0 0 auto; min-width:76px; }
+    .sc-h-why { flex:1; min-width:0; color:#bbb; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .sc-h-eng { flex:0 0 auto; color:#8ab4f8; font-variant-numeric:tabular-nums; }
+    .sc-h-delta { flex:0 0 auto; min-width:34px; text-align:right; font-weight:700; font-variant-numeric:tabular-nums; color:#777; }
+    .sc-h-delta.up { color:#50c878; }
+    .sc-h-delta.down { color:#f87171; }
+    /* Total is floored at 0, so a lead at the floor reads delta 0 while engagement
+       moves. Flag those rows instead of letting the 0 read as "nothing happened". */
+    .sc-hrow.floored .sc-h-delta { color:#fdba74; }
     .score-action-box {
       padding: 10px 16px; border-radius: 10px;
       background: var(--gold-bg); border: 1px solid var(--gold-bdr);
@@ -1743,7 +1757,7 @@
   <script src="/admin/js/vendor/purify.min.js?v=3.4.12"
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
-  <script src="/admin/js/inbox.js?v=8e044bd2e0" defer></script>
+  <script src="/admin/js/inbox.js?v=9b36f60c4d" defer></script>
 </head>
 <body class="admin-page">
 
@@ -2224,6 +2238,13 @@
           </div>
           <div class="score-bars" id="sc-bars"></div>
           <div id="sc-last-scored" class="last-scored-at" style="display:none;font-size:.72rem;color:#777;text-align:right;margin-top:8px;"></div>
+          <!-- Recent score history. The reason string had no home in the UI at all, so
+               a row like "watched 'Rate update' to 100%" was only ever visible in the
+               database. Engagement is shown beside the delta because total_score is
+               floored at 0: a lead pinned at the floor shows delta 0 while engagement
+               is genuinely climbing, and a reason describing real activity next to a
+               bare 0 reads like the activity did not count. -->
+          <div id="sc-history" class="score-history" style="display:none;"></div>
         </div>
       </div>
 
@@ -26130,6 +26151,43 @@ function renderScoreCardFromApi(r) {
         '</div>'
       );
     }).join('');
+  }
+
+  /* Recent score history — newest first. lead-scorer returns `history` oldest-first
+   * (it reverses a descending query), so read it back to front.
+   *
+   * Engagement sits beside the delta on purpose. total_score is clamped to a 0
+   * minimum, so a lead whose subtotal is still under its staleness penalty shows
+   * delta 0 on every row no matter how much engagement it gains — the movement is
+   * real, the delta is a true difference of two clamped totals, and without the
+   * engagement column the reason string looks like it was ignored. */
+  const histEl = document.getElementById('sc-history');
+  if (histEl) {
+    const hist = (r.history || []).slice().reverse().slice(0, 8);
+    if (!hist.length) { histEl.style.display = 'none'; histEl.innerHTML = ''; }
+    else {
+      histEl.style.display = '';
+      histEl.innerHTML = '<div class="score-history-h">Recent activity</div>' + hist.map(function (h) {
+        const d = Number(h.delta || 0);
+        const eng = (h.engagement_score === null || h.engagement_score === undefined) ? null : Number(h.engagement_score);
+        // Floored: no movement in total, but the lead is sitting at 0 with engagement.
+        const floored = d === 0 && Number(h.total_score || 0) === 0 && !!eng;
+        const when = (typeof relativeTime === 'function') ? relativeTime(h.scored_at)
+          : new Date(h.scored_at).toLocaleDateString();
+        const why = h.reason || h.trigger || 'recalculated';
+        const cls = d > 0 ? 'up' : d < 0 ? 'down' : '';
+        const dTxt = d > 0 ? '+' + d : String(d);
+        return '<div class="sc-hrow' + (floored ? ' floored' : '') + '"' +
+            ' title="' + escAttr(why + ' — total ' + (h.total_score != null ? h.total_score : '?') +
+              (eng !== null ? ', engagement ' + eng : '') +
+              (floored ? ' (total is at the 0 floor, so the delta cannot show this)' : '')) + '">' +
+            '<span class="sc-h-when">' + escAttr(when) + '</span>' +
+            '<span class="sc-h-why">' + escAttr(why) + '</span>' +
+            (eng !== null ? '<span class="sc-h-eng">eng ' + eng + '</span>' : '') +
+            '<span class="sc-h-delta ' + cls + '">' + escAttr(dTxt) + '</span>' +
+          '</div>';
+      }).join('');
+    }
   }
 
   // Last scored

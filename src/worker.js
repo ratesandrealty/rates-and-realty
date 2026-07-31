@@ -134,18 +134,19 @@ export default {
            * browser sent. That is why video-track's staff check never fired: it
            * read `authorization` and only ever saw the anon key. Carry the real
            * viewer identity in separate headers instead.
-           *   x-viewer-jwt   — the viewer's Supabase access token, when the page
-           *                    is opened somewhere a session exists (admin host).
            *   x-viewer-staff — the cross-subdomain marker auth-guard.js sets on
-           *                    .ratesandrealty.com; the only signal that survives
-           *                    on the apex, where admin localStorage is unreadable.
+           *                    .ratesandrealty.com. It covers admin.* AND the apex,
+           *                    so it carries the whole browser-based case on its own.
+           *   x-viewer-jwt   — an Authorization header, when a PROGRAMMATIC caller
+           *                    sends one. The page no longer puts a token in the
+           *                    beacon body: that shipped the access token of any
+           *                    viewer holding a session on this origin — including a
+           *                    borrower with a portal login — for a signal the cookie
+           *                    already provides. No credential belongs in a body a
+           *                    public page composes.
            * Both are suppression HINTS, never grants: the worst a forged value can
            * do is stop the forger's own view from scoring. */
           let viewerJwt = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
-          try {
-            const b = JSON.parse(payload);
-            if (!viewerJwt && b && typeof b.viewer_token === 'string') viewerJwt = b.viewer_token.trim();
-          } catch (_) { /* body isn't ours to validate; the function re-parses it */ }
           if (viewerJwt === env.SUPABASE_ANON_KEY) viewerJwt = '';
           const staffCookie = /(?:^|;\s*)rr_staff=1(?:;|$)/.test(request.headers.get('cookie') || '');
 
@@ -623,18 +624,17 @@ function videoPageScript(slug) {
   'if(!v){v=(crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2));sessionStorage.setItem(k,v);}' +
   'return v;}catch(e){return String(Math.random()).slice(2);}})();' +
   'var sent={};' +
-  /* Self-view signal from the page itself. sendBeacon cannot set headers, so the
-   * viewer's own access token rides in the body and the Worker lifts it into
-   * x-viewer-jwt. Only readable when a session exists on THIS origin (i.e. the
-   * admin host); on the apex the rr_staff cookie does the job instead. */
-  'var tok="";try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);' +
-  'if(k&&/^sb-.*-auth-token$/.test(k)){var j=JSON.parse(localStorage.getItem(k)||"{}");' +
-  'if(j&&j.access_token){tok=j.access_token;break;}}}}catch(e){}' +
+  /* Self-view suppression is carried entirely by the rr_staff cookie, which
+   * auth-guard.js scopes to .ratesandrealty.com and which therefore reaches the
+   * Worker on the apex and on admin.* alike. This page deliberately reads NO
+   * access token: it is public, so any token it could find in localStorage might
+   * belong to a borrower with a portal login, and putting a live credential in a
+   * beacon body to learn one bit ("is this staff?") is a bad trade. */
   'var prev=/[?&]preview=1/.test(location.search);' +
   'function track(ev,pct){if(sent[ev])return;sent[ev]=1;' +
   'var u="/v/"+encodeURIComponent(SLUG)+"/track";' +
   'var b=JSON.stringify({slug:SLUG,event:ev,session_id:sid,percent:pct||0,' +
-  'viewer_token:tok||undefined,preview:prev||undefined});' +
+  'preview:prev||undefined});' +
   'try{if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([b],{type:"application/json"}));}' +
   'else{fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:b,keepalive:true});}}catch(e){}}' +
   'track("page_opened");' +

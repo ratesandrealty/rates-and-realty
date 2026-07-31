@@ -1,7 +1,25 @@
+# ⚠ DEPLOY WITH `bash tools/deploy.sh`, NOT a bare `wrangler deploy`.
+#
+# deploy.sh checks asset cache pins, deploys, then verifies the LIVE html actually
+# asks for the pins that were shipped. The [build] hook below is the backstop that
+# makes skipping step 1 impossible — but it cannot do step 3, so use the script.
+#
+# Why this matters more than it used to: src/worker.js now serves any ?v=-pinned
+# asset as `public, max-age=31536000, immutable`. A stale pin used to self-heal on
+# the next load (must-revalidate); now a returning browser holds the old file with
+# no revalidation until a corrected deploy changes the pin. Stale pins went from
+# harmless to "everyone is frozen on old code and nothing tells you".
 name = "ratesandrealty"
 main = "src/worker.js"
 compatibility_date = "2026-03-31"
 compatibility_flags = ["nodejs_compat"]
+
+# Refuses the deploy when any ?v= pin disagrees with its asset's content hash.
+# A non-zero exit from a custom build aborts wrangler before anything ships, and
+# living in wrangler's own config means it fires for EVERY invocation — any
+# machine, any person, any agent, with nothing to remember.
+[build]
+command = "node tools/stamp-assets.mjs --check"
 
 # beta.ratesandrealty.com is attached as a Custom Domain via the Cloudflare
 # dashboard (not declared here). admin.ratesandrealty.com already has a proxied

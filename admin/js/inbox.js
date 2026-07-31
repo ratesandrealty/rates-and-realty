@@ -188,11 +188,24 @@
       esc(initials.toUpperCase()) + '</span>';
   }
 
+  /* List-column timestamps, Gmail's rules: today is a time, yesterday is a word,
+   * anything else is a date. The old version passed hour/minute to
+   * toLocaleDateString for every row, so even year-old mail carried a clock time
+   * that told you nothing and cost width in a 340px column.
+   * A year appears ONLY for a previous calendar year — comparing calendar days,
+   * not elapsed hours, so mail from 11pm last night reads "Yesterday" at 1am. */
   function fmtDate(d) {
     if (!d) return '';
     try {
-      var dt = new Date(d), now = new Date();
-      var opts = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+      var dt = new Date(d);
+      if (isNaN(dt.getTime())) return '';
+      var now = new Date();
+      var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      var startOfDate = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+      var dayDiff = Math.round((startOfToday - startOfDate) / 86400000);
+      if (dayDiff === 0) return dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      if (dayDiff === 1) return 'Yesterday';
+      var opts = { month: 'short', day: 'numeric' };
       if (dt.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
       return dt.toLocaleDateString('en-US', opts);
     } catch (_) { return ''; }
@@ -259,28 +272,40 @@
       // .gm-list is a COLUMN now: category tabs pinned on top, rows scrolling under
       // them. The tabs used to span the full width including the reading pane, where
       // they mean nothing — they only ever filtered this column.
-      '.gm-list{width:340px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--border,rgba(255,255,255,.08))}',
+      /* overflow-x:hidden is load-bearing, not belt-and-braces. `overflow-y:auto`
+       * alone leaves overflow-x computing to `auto` (CSS overflow: a non-visible
+       * value on one axis forces the other from visible to auto), so ANY child a
+       * pixel too wide raises a horizontal scrollbar in this column. */
+      '.gm-list{width:340px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;overflow-x:hidden;border-right:1px solid var(--border,rgba(255,255,255,.08))}',
       // Exactly one scroll region per column. The page itself does not scroll, so the
       // two stacked scrollbars on the right edge collapse to one per pane.
-      '.gm-rows{flex:1;min-height:0;overflow-y:auto}',
+      '.gm-rows{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}',
       '.gm-pane{flex:1;overflow-y:auto;min-width:0;min-height:0;padding:0}',
-      /* ── thread rows: ~96px → ~64px ────────────────────────────────────────
-       * line 1 sender + time, line 2 subject, line 3 one-line snippet, with an
-       * avatar column beside them. */
-      '.gm-row{display:flex;gap:9px;padding:8px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));cursor:pointer;align-items:flex-start}',
+      /* ── thread rows: exactly 3 lines, ~64px ───────────────────────────────
+       * line 1 sender + filed chip + time, line 2 subject, line 3 snippet, with
+       * an avatar column beside them.
+       *
+       * The three lines carry a FIXED 16px height rather than a unitless
+       * line-height. A multiplier still lets a row grow — a tall glyph, an emoji
+       * that falls back to a colour font with different metrics, or any wrap that
+       * slips past white-space:nowrap — and that is how these rows drifted to
+       * ~110px. 16×3 + 8 + 8 padding = 64px, and no content can change it.
+       * The filed chip sits ON line 1 for the same reason: as its own row it was
+       * a fourth line, which is where ~16px of the drift came from. */
+      '.gm-row{display:flex;gap:9px;padding:8px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));cursor:pointer;align-items:flex-start;overflow:hidden}',
       '.gm-row:hover{background:rgba(255,255,255,.03)}',
       '.gm-row.active{background:rgba(201,168,76,.08)}',
       '.gm-row.unread .gm-row-subj{font-weight:800;color:#fff}',
-      '.gm-av{width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#12100b;margin-top:1px;user-select:none}',
-      '.gm-rowmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}',
-      '.gm-row-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}',
-      '.gm-row-from{font-size:12px;color:#ddd;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.gm-row-date{font-size:10.5px;color:var(--muted,#888);flex-shrink:0}',
-      '.gm-row-subj{font-size:12.5px;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35}',
-      '.gm-row-snip{font-size:11.5px;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35}',
-      // Filed-to-lead chip, so filing is visible in the list instead of only after
-      // opening the thread.
-      '.gm-row-filed{display:inline-flex;align-items:center;gap:3px;max-width:100%;font-size:10px;font-weight:700;color:#7ee2a0;background:rgba(80,200,120,.13);border:1px solid rgba(80,200,120,.32);border-radius:9px;padding:0 5px;margin-top:2px;align-self:flex-start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-av{width:28px;height:28px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#12100b;margin-top:2px;user-select:none}',
+      '.gm-rowmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:0}',
+      '.gm-row-top{display:flex;gap:6px;align-items:center;height:16px;line-height:16px;overflow:hidden}',
+      '.gm-row-from{flex:1;min-width:0;font-size:12px;line-height:16px;color:#ddd;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.gm-row-date{font-size:10.5px;line-height:16px;color:var(--muted,#888);flex-shrink:0}',
+      '.gm-row-subj{font-size:12.5px;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
+      '.gm-row-snip{font-size:11.5px;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px}',
+      // Filed-to-lead chip. Inline on line 1 (see the row-height note above), and it
+      // yields to the sender rather than pushing the date out of the row.
+      '.gm-row-filed{display:inline-flex;align-items:center;max-width:44%;flex-shrink:1;min-width:0;font-size:9.5px;line-height:13px;font-weight:700;color:#7ee2a0;background:rgba(80,200,120,.13);border:1px solid rgba(80,200,120,.32);border-radius:8px;padding:0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.gm-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--g);margin-right:6px;vertical-align:middle}',
       '.gm-cnt{display:inline-block;font-size:10px;color:var(--muted,#888);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:9px;padding:0 5px;margin-left:6px}',
       '.gm-empty{padding:40px 20px;text-align:center;color:var(--muted,#888);font-size:13px}',
@@ -446,10 +471,26 @@
       // Full-width at the top of the rail, Gmail-style.
       '.gm-compose{display:block;width:100%;background:var(--g);border:1px solid var(--g);color:#161616;border-radius:9px;padding:9px 12px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0}',
       '.gm-compose:hover{filter:brightness(1.08)}',
-      '.gm-cats{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));overflow-x:auto;flex-shrink:0;-webkit-overflow-scrolling:touch}',
-      '.gm-cats button{padding:9px 14px;border:none;background:transparent;color:var(--muted,#888);font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;border-bottom:2px solid transparent;flex-shrink:0}',
-      '.gm-cats button:hover{color:#ddd}',
-      '.gm-cats button.on{color:var(--g);border-bottom-color:var(--g)}',
+      /* ── CATEGORIES in the rail ──────────────────────────────────────────────
+       * Was a horizontal tab strip pinned above the thread rows. Five nowrap tabs
+       * (~440px of buttons) inside a 340px column meant the strip's own
+       * overflow-x:auto drew a horizontal scrollbar across the top of the list —
+       * the scrollbar in this column. Moving them here removes the overflow source
+       * outright rather than hiding it.
+       *
+       * Deliberately NOT styled like .gm-fold. Categories are slices of Inbox, not
+       * peers of Sent/Trash, so they read as subordinate: grouped under a heading
+       * that matches the MAILBOX label above, indented past the folder icon column,
+       * smaller and lighter, with a dot instead of an icon. */
+      '.gm-cats{display:flex;flex-direction:column;gap:1px;margin-top:2px}',
+      '.gm-cats-l{font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:rgba(255,255,255,.32);padding:6px 2px 3px 9px}',
+      '.gm-cats button{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:5px 9px 5px 20px;border-radius:6px;border:1px solid transparent;background:transparent;color:rgba(255,255,255,.5);font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit}',
+      '.gm-cats button:hover{background:rgba(255,255,255,.04);color:#ccc}',
+      '.gm-cats button.on{background:rgba(201,168,76,.09);color:var(--g);font-weight:700}',
+      '.gm-cats .d{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.5;flex-shrink:0}',
+      '.gm-cats button.on .d{opacity:1}',
+      '.gm-cats .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.gm-cats .c{font-size:10px;font-weight:800;color:var(--g);background:rgba(201,168,76,.14);border-radius:9px;padding:0 5px;flex-shrink:0}',
       '.gm-hint{padding:8px 14px;font-size:11.5px;line-height:1.5;color:#fdba74;background:rgba(251,146,60,.09);border-bottom:1px solid rgba(251,146,60,.3);flex-shrink:0}',
       '.gm-draft-tag{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.4px;color:#fca5a5;border:1px solid rgba(248,113,113,.45);border-radius:4px;padding:0 4px;margin-right:6px;vertical-align:middle}',
       /* ── compose modal sizing ────────────────────────────────────────────────
@@ -498,7 +539,6 @@
       '  .gm-rail{width:172px}',
       '  .gm-list{width:290px}',
       '  .gm-ed{max-height:34vh}',
-      '  .gm-cats button{padding:9px 11px}',
       '}',
       '@media (max-width:768px){',
       // Phone: a 200px rail beside a 100%-wide list leaves nothing for either, so the
@@ -509,6 +549,12 @@
       '  .gm-sw-l{display:none}',
       '  .gm-fold{flex-direction:row;gap:6px;flex:1;min-width:0;overflow-x:auto}',
       '  .gm-fold button{width:auto;min-height:38px;padding:8px 12px;flex-shrink:0}',
+      /* Phone: the rail is a horizontal strip, so the category group becomes one too
+       * and its heading would only eat width. It scrolls inside itself here — that is
+       * safe because the rail is its own row, not stacked over the thread list. */
+      '  .gm-cats{flex-direction:row;gap:6px;flex-basis:100%;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:0}',
+      '  .gm-cats-l{display:none}',
+      '  .gm-cats button{width:auto;min-height:36px;padding:6px 12px;flex-shrink:0}',
       '  .gm-list{width:100%}',
       '  .gm-body .gm-pane{display:none}',
       '  .gm-inbox.gm-show-pane .gm-list{display:none}',
@@ -538,8 +584,6 @@
       '  .gm-ai-lbl{flex-shrink:0}',
       '  .gm-ai-out{margin-left:12px;margin-right:12px}',
       '  .gm-sig-tog{min-height:38px}',
-      /* categories: horizontal scroll strip with real touch targets */
-      '  .gm-cats button{min-height:42px;padding:10px 14px}',
       '  .gm-compose{min-height:40px;padding:9px 16px;width:auto;order:-1}',
       '  .gm-ac{max-height:46vh}',
       '  .gm-ac-n{max-width:100%}',
@@ -1125,6 +1169,36 @@
     if (cut < 24) return { main: s, quoted: '' };
     return { main: s.slice(0, cut), quoted: s.slice(cut) };
   }
+
+  /* Plain-text sibling of splitQuoted(), for Gmail's `snippet` — which arrives as
+   * flattened TEXT, so every anchor splitQuoted() relies on (gmail_quote divs,
+   * cite blockquotes, a "wrote:" followed by a tag) is already gone. That is why
+   * snippets read "… > On Jul 30, 2026, at 4:49 PM, P…": the reply is two words
+   * and the rest of the preview is the quote underneath it.
+   *
+   * Same conservatism, on purpose and in the same direction: no confident
+   * boundary → return the snippet untouched, and a boundary in the first 24
+   * characters means the snippet IS the quote, so show it rather than blank the
+   * row. Showing an extra quote is a much smaller failure than hiding real text. */
+  function splitQuotedText(text) {
+    var s = String(text == null ? '' : text);
+    if (!s) return { main: s, quoted: '' };
+    var candidates = [
+      // Apple Mail / Gmail reply headers, with or without the leading "> " marker.
+      s.search(/(^|\s)>?\s*On\s+[^\n]{6,140}?\s+wrote:/i),
+      s.search(/(^|\s)>?\s*On\s+\w{3},?\s+\w{3}\s+\d{1,2},?\s+\d{4}[^\n]{0,60}?,?\s+at\s+/i),
+      // Outlook: the "-----Original Message-----" rule and the From:/Sent: block.
+      s.search(/(^|\s)-{2,}\s*Original Message\s*-{2,}/i),
+      s.search(/(^|\s)From:\s[^\n]{3,120}?\sSent:\s/i),
+      // A run of quote markers is a quote even when no header survived flattening.
+      s.search(/(^|\s)>\s?>\s?/)
+    ].filter(function (i) { return i > -1; });
+    if (!candidates.length) return { main: s, quoted: '' };
+    var cut = Math.min.apply(null, candidates);
+    if (cut < 24) return { main: s, quoted: '' };
+    return { main: s.slice(0, cut).replace(/[\s>\-]+$/, ''), quoted: s.slice(cut) };
+  }
+  function snippetMain(text) { return splitQuotedText(text).main; }
 
   /** YouTube/Loom → clickable thumbnail. */
   function videoThumbHtml(url) {
@@ -2636,6 +2710,15 @@
             '<span class="n">' + esc(f.label) + '</span>' +
             '<span class="c" data-cnt="' + f.k + '" style="display:none"></span></button>';
         }).join('') + '</div>' +
+        // Categories live under the folders, below Trash, grouped and subordinate.
+        '<div class="gm-cats" data-gm="cats">' +
+          '<div class="gm-cats-l">Categories</div>' + CATEGORIES.map(function (c) {
+            return '<button data-ct="' + c.k + '"' + (c.k === 'CATEGORY_PERSONAL' ? ' class="on"' : '') +
+              ' title="' + esc(c.label) + ' — a slice of Inbox">' +
+              '<span class="d"></span><span class="n">' + esc(c.label) + '</span>' +
+              '<span class="c" data-ccnt="' + c.k + '" style="display:none"></span></button>';
+          }).join('') +
+        '</div>' +
       '</div>' +
       '<div class="gm-main">' +
         // ONE row: search + refresh. The old page-title row and its hint are gone;
@@ -2647,10 +2730,6 @@
         '<div class="gm-hint" data-gm="hint" style="display:none"></div>' +
         '<div class="gm-body">' +
           '<div class="gm-list">' +
-            // Category tabs belong to this column only — they never filtered the pane.
-            '<div class="gm-cats" data-gm="cats">' + CATEGORIES.map(function (c) {
-              return '<button data-ct="' + c.k + '"' + (c.k === 'CATEGORY_PERSONAL' ? ' class="on"' : '') + '>' + esc(c.label) + '</button>';
-            }).join('') + '</div>' +
             '<div class="gm-rows" data-gm="rows"><div class="gm-empty">Loading…</div></div>' +
           '</div>' +
           '<div class="gm-pane"><div class="gm-empty">Select a thread to read.<br><span style="font-size:11.5px;opacity:.7">' + esc(HINT) + '</span></div></div>' +
@@ -2663,6 +2742,25 @@
         hintEl = root.querySelector('[data-gm="hint"]'), foldEl = root.querySelector('[data-gm="fold"]');
 
     function folder() { return FOLDERS.filter(function (f) { return f.k === state.folder; })[0] || FOLDERS[0]; }
+
+    /* Rail highlighting is derived from state in ONE place, because two controls now
+     * describe the same selection: picking a category IS picking Inbox. Setting the
+     * `on` class at each click site instead would let Inbox and a category disagree.
+     *
+     * CHOICE (of the two the brief offered): selecting a category SWITCHES TO INBOX
+     * rather than hiding the group in other folders. Hiding makes the rail change
+     * height as you move between Sent and Inbox, and a category is a useful way to
+     * jump back to Inbox. A category is only lit while it is actually in force —
+     * Inbox with no active search — so it never claims to be filtering Sent. */
+    function syncRail() {
+      var catsLive = state.folder === 'INBOX' && !state.q;
+      Array.prototype.forEach.call(root.querySelectorAll('[data-fd]'), function (x) {
+        x.classList.toggle('on', x.getAttribute('data-fd') === state.folder);
+      });
+      Array.prototype.forEach.call(root.querySelectorAll('[data-ct]'), function (x) {
+        x.classList.toggle('on', catsLive && x.getAttribute('data-ct') === state.category);
+      });
+    }
     function setHint(msg) {
       if (!msg) { hintEl.style.display = 'none'; hintEl.textContent = ''; return; }
       hintEl.style.display = ''; hintEl.textContent = msg;
@@ -2695,10 +2793,11 @@
           avatarHtml(from, (t.from && t.from.email) || '') +
           '<div class="gm-rowmain">' +
             '<div class="gm-row-top"><span class="gm-row-from">' + (t.unread ? '<span class="gm-dot"></span>' : '') + esc(from) + '</span>' +
+            (filed ? '<span class="gm-row-filed" title="Filed to ' + esc(filed) + '">🏷 ' + esc(filed) + '</span>' : '') +
             '<span class="gm-row-date">' + esc(fmtDate(t.date)) + '</span></div>' +
             '<div class="gm-row-subj">' + esc(t.subject || '(no subject)') + (t.message_count > 1 ? '<span class="gm-cnt">' + t.message_count + '</span>' : '') + '</div>' +
-            '<div class="gm-row-snip">' + esc(t.snippet || '') + '</div>' +
-            (filed ? '<span class="gm-row-filed" title="Filed to ' + esc(filed) + '">🏷 ' + esc(filed) + '</span>' : '') +
+            // Quoted trailer trimmed off the preview — see splitQuotedText().
+            '<div class="gm-row-snip">' + esc(snippetMain(t.snippet)) + '</div>' +
           '</div></div>';
       }).join('');
       Array.prototype.forEach.call(listEl.querySelectorAll('[data-tid]'), function (r) {
@@ -2726,10 +2825,14 @@
           var cids = Object.keys(byThread).map(function (k) { return byThread[k]; })
             .filter(function (v, i, a) { return v && a.indexOf(v) === i; });
           if (!cids.length) { ids.forEach(function (id) { state.filed[id] = null; }); return; }
-          return cl.from('contacts').select('id,first_name,last_name,name').in('id', cids).then(function (c) {
+          /* `name` is NOT a column on contacts (only first_name/last_name). Asking for
+           * it made PostgREST reject the whole select, so c.data came back null and
+           * every chip fell through to the literal placeholder "lead" — the filing was
+           * real, the person's name was not. */
+          return cl.from('contacts').select('id,first_name,last_name').in('id', cids).then(function (c) {
             var nm = {};
             (c.data || []).forEach(function (x) {
-              nm[x.id] = (x.name || [x.first_name, x.last_name].filter(Boolean).join(' ') || '').trim() || 'lead';
+              nm[x.id] = ([x.first_name, x.last_name].filter(Boolean).join(' ') || '').trim() || 'lead';
             });
             ids.forEach(function (id) {
               state.filed[id] = byThread[id] ? (nm[byThread[id]] || 'lead') : null;
@@ -2747,13 +2850,16 @@
         var existing = row.querySelector('.gm-row-filed');
         if (!name) { if (existing) existing.remove(); return; }
         if (existing) { existing.textContent = '🏷 ' + name; existing.title = 'Filed to ' + name; return; }
-        var main = row.querySelector('.gm-rowmain');
-        if (!main) return;
+        // Insert before the date on line 1, matching renderList's markup. Appending to
+        // .gm-rowmain would add a fourth line and break the fixed 64px row height.
+        var top = row.querySelector('.gm-row-top');
+        var dateEl = top && top.querySelector('.gm-row-date');
+        if (!top) return;
         var chip = document.createElement('span');
         chip.className = 'gm-row-filed';
         chip.title = 'Filed to ' + name;
         chip.textContent = '🏷 ' + name;
-        main.appendChild(chip);
+        if (dateEl) top.insertBefore(chip, dateEl); else top.appendChild(chip);
       });
     }
 
@@ -2771,18 +2877,36 @@
           if (n > 0) { el2.textContent = n > 999 ? '999+' : String(n); el2.style.display = ''; }
           else { el2.style.display = 'none'; }
         });
+        /* Category unread counts, when the server supplies them. CAVEAT: Gmail's
+         * CATEGORY_* counters span the whole mailbox, so a category that also has
+         * archived unread mail reads slightly higher than the INBOX ∧ CATEGORY list
+         * below it. Absent counts simply render no badge. */
+        CATEGORIES.forEach(function (cat) {
+          var el3 = catsEl && catsEl.querySelector('[data-ccnt="' + cat.k + '"]');
+          if (!el3) return;
+          var cc = counts[cat.k];
+          var n2 = cc ? cc.unread : 0;
+          if (n2 > 0) { el3.textContent = n2 > 999 ? '999+' : String(n2); el3.style.display = ''; }
+          else { el3.style.display = 'none'; }
+        });
       }).catch(function () {});
     }
 
     function renderDrafts() {
       if (!state.drafts.length) { listEl.innerHTML = '<div class="gm-empty">No drafts.</div>'; return; }
+      /* Wrapped in .gm-rowmain like a thread row. Without it the three lines were
+       * direct children of .gm-row, which is display:flex — so they laid out
+       * side-by-side instead of stacked, and a long recipient list pushed the row
+       * wider than the column. */
       listEl.innerHTML = state.drafts.map(function (d) {
         return '<div class="gm-row" data-did="' + esc(d.id) + '">' +
-          '<div class="gm-row-top"><span class="gm-row-from"><span class="gm-draft-tag">Draft</span>' +
-          esc((d.to || []).join(', ') || '(no recipient)') + '</span>' +
-          '<span class="gm-row-date">' + esc(fmtDate(d.date)) + '</span></div>' +
-          '<div class="gm-row-subj">' + esc(d.subject || '(no subject)') + '</div>' +
-          '<div class="gm-row-snip">' + esc(d.snippet || '') + '</div></div>';
+          '<div class="gm-rowmain">' +
+            '<div class="gm-row-top"><span class="gm-row-from"><span class="gm-draft-tag">Draft</span>' +
+            esc((d.to || []).join(', ') || '(no recipient)') + '</span>' +
+            '<span class="gm-row-date">' + esc(fmtDate(d.date)) + '</span></div>' +
+            '<div class="gm-row-subj">' + esc(d.subject || '(no subject)') + '</div>' +
+            '<div class="gm-row-snip">' + esc(snippetMain(d.snippet)) + '</div>' +
+          '</div></div>';
       }).join('');
       Array.prototype.forEach.call(listEl.querySelectorAll('[data-did]'), function (r) {
         r.addEventListener('click', function () { openDraft(r.getAttribute('data-did')); });
@@ -2792,7 +2916,9 @@
     async function loadThreads() {
       listEl.innerHTML = '<div class="gm-empty">Loading…</div>';
       setHint('');
-      catsEl.style.display = (state.folder === 'INBOX' && !state.q) ? '' : 'none';
+      // The category group stays put in every folder now (see syncRail); only its
+      // highlight reflects whether a category is actually in force.
+      syncRail();
       try {
         if (folder().drafts && !state.q) {
           var dd = await invoke(cl, state.mailbox, 'list_drafts', {});
@@ -2862,8 +2988,6 @@
     // folder switcher
     Array.prototype.forEach.call(root.querySelectorAll('[data-fd]'), function (b) {
       b.addEventListener('click', function () {
-        Array.prototype.forEach.call(root.querySelectorAll('[data-fd]'), function (x) { x.classList.remove('on'); });
-        b.classList.add('on');
         state.folder = b.getAttribute('data-fd');
         // A live search overrides folder scoping in listParams(), so picking a folder without
         // clearing it would highlight (say) Sent while still listing the old search hits.
@@ -2875,17 +2999,20 @@
       });
     });
 
-    // category tabs (Inbox only)
+    /* Categories. A category is a SLICE OF INBOX, never a folder, so selecting one
+     * implies Inbox: if you are sitting in Sent or Trash, this moves you to Inbox
+     * and applies the category there rather than pretending to filter Sent. */
     Array.prototype.forEach.call(root.querySelectorAll('[data-ct]'), function (b) {
       b.addEventListener('click', function () {
-        Array.prototype.forEach.call(root.querySelectorAll('[data-ct]'), function (x) { x.classList.remove('on'); });
-        b.classList.add('on');
         state.category = b.getAttribute('data-ct');
+        state.folder = 'INBOX';
         // Same reason as the folder switcher: a live search would swallow the category.
         state.q = ''; searchEl.value = '';
         // The fallback only ever applies to Primary; picking a real category clears it.
         if (state.category !== 'CATEGORY_PERSONAL') state.primaryFellBack = false;
-        state.active = null;
+        state.active = null; state.threads = []; state.drafts = [];
+        paneEl.innerHTML = '<div class="gm-empty">Select a thread to read.</div>';
+        root.classList.remove('gm-show-pane');
         loadThreads();
       });
     });

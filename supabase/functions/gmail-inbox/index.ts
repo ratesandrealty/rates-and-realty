@@ -237,7 +237,17 @@ serve(async (req) => {
      * mailbox load rather than per render. "Archived" is deliberately absent: it is not
      * a Gmail label but a search expression, so it has no count to read. */
     if (action === 'label_counts') {
-      const ids = ['INBOX', 'SENT', 'DRAFT', 'STARRED', 'TRASH']
+      /* CATEGORY_* included so the rail's category group can show unread badges.
+       * Caveat worth knowing when reading them: Gmail's category counters span the
+       * WHOLE mailbox, while the list under them is INBOX ∧ CATEGORY_x — so a
+       * category holding archived unread mail reads a little high. A label that
+       * does not exist (categories are absent when Gmail's tabbed inbox is off)
+       * simply fails its fetch and is omitted, which renders no badge. */
+      const ids = [
+        'INBOX', 'SENT', 'DRAFT', 'STARRED', 'TRASH',
+        'CATEGORY_PERSONAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES',
+        'CATEGORY_SOCIAL', 'CATEGORY_FORUMS',
+      ]
       const counts: Record<string, { unread: number; total: number }> = {}
       await Promise.all(ids.map(async (id) => {
         const r = await gmailApi(mailbox, `labels/${id}`)
