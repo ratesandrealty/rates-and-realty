@@ -2013,8 +2013,8 @@ async function uploadGuidelinePDFs(files) {
 
     if (!/\.pdf$/i.test(file.name)) { setFileStatus('skipped — PDF only'); continue; }
     // Edge fn caps the base64 payload at 28MB, i.e. roughly 21MB of PDF.
-    if (file.size > 28 * 1024 * 1024) {
-      setFileStatus('too large (max 28MB). Please split or compress first.');
+    if (file.size > 21 * 1024 * 1024) {   // 21MB PDF == the 28MB base64 server cap
+      setFileStatus('too large (max 21MB). Please split or compress first.');
       continue;
     }
 
@@ -2232,7 +2232,7 @@ function docRenderQueue() {
       <span style="font-size:18px;">📄</span>
       <div style="flex:1;min-width:0;">
         <div style="font-size:13px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.name}</div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.35);">${(f.size/1024/1024).toFixed(2)} MB${f.size > 28*1024*1024 ? ' <span style="color:#e55;">⚠ Too large (max 28MB)</span>' : ''}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35);">${(f.size/1024/1024).toFixed(2)} MB${f.size > 21*1024*1024 ? ' <span style="color:#e55;">⚠ Too large (max 21MB)</span>' : ''}</div>
       </div>
       <button onclick="docRemoveFile(${i})" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;transition:color 0.2s;" onmouseover="this.style.color='#e55'" onmouseout="this.style.color='rgba(255,255,255,0.3)'">✕</button>
     </div>
@@ -2260,12 +2260,16 @@ async function docUploadAll() {
      to Claude in one request; it no longer is — text is extracted server-side
      and vision only ever sees 25-page slices. The binding constraint is now
      edge function memory during splitting (~4x the file), not any API cap. */
-  /* 28MB — the same number textract-ocr enforces (MAX_BASE64_BYTES, ~21MB of
-     PDF after base64 inflation). Both surfaces on this page now agree with the
-     server rather than each guessing lower. */
-  const oversized = _docPendingFiles.filter(f => f.size > 28 * 1024 * 1024);
+  /* 21 MB of PDF.
+     The server cap is 28 MB on the BASE64 PAYLOAD (textract-ocr
+     MAX_BASE64_BYTES), and base64 inflates by ~33% — 4 output chars per 3 input
+     bytes. So a 28 MB file becomes a ~37 MB body and is rejected server-side.
+     21 MB is the honest client-side equivalent: both ends now express the same
+     limit in the same units, instead of agreeing on a number that means two
+     different things. */
+  const oversized = _docPendingFiles.filter(f => f.size > 21 * 1024 * 1024);
   if (oversized.length) {
-    showToast(`${oversized.map(f=>f.name).join(', ')} exceed 28MB — please split or compress first`);
+    showToast(`${oversized.map(f=>f.name).join(', ')} exceed 21MB — please split or compress first`);
     return;
   }
 

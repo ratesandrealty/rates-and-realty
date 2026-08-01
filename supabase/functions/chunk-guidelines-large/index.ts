@@ -6,7 +6,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 // @ts-ignore
-import { getDocumentProxy } from "https://esm.sh/unpdf@0.12.1";
+import { extractPagesRanged, pdfPageCount, PAGE_SLICE } from "../_shared/pdf-pages.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -24,7 +24,18 @@ const CHUNK_OVERLAP_CHARS = 320;
 const EMBED_BATCH_SIZE = 32;
 const PAGE_BATCH_SIZE = 25;
 const TIME_BUDGET_MS = 110000;
-const CACHE_BUCKET = "lender-guidelines";  // re-use existing bucket
+/* A DEDICATED bucket, not lender-guidelines.
+ *
+ * lender-guidelines has allowed_mime_types restricted to PDFs/Office/images, so
+ * every sidecar upload returned 415 invalid_mime_type — and the write was
+ * wrapped in .catch(console.warn), so the cache silently never existed. Every
+ * invocation re-downloaded and re-extracted the whole PDF from page 1. The
+ * header comment claiming "~95% less IO" described something that never ran.
+ *
+ * Not fixed by widening that bucket's allowlist: it is PUBLIC, and JSON there
+ * would expose extracted guideline text at a guessable URL. chunker-cache is
+ * private and JSON-only. */
+const CACHE_BUCKET = "chunker-cache";
 
 function approxTokens(s: string): number { return Math.ceil(s.length / 4); }
 
@@ -66,64 +77,85 @@ async function buildPageTextCache(guidelineId: string, fileUrl: string): Promise
   const buf = new Uint8Array(await pdfRes.arrayBuffer());
   console.log(`[chunk-large] downloaded ${(buf.byteLength/1024/1024).toFixed(1)}MB`);
 
-  const pdf = await getDocumentProxy(buf);
-  const totalPages = pdf.numPages;
-
-  /* PAGE BY PAGE, not extractText(whole document).
-   *
-   * extractText(pdf, {mergePages:false}) materialises every page's text content
-   * at once. On USDA HB-1-3560 — 511 pages — that returns WORKER_RESOURCE_LIMIT,
-   * so the document could not be chunked by the "large" chunker either. It had
-   * been sitting in skipped_oversize since April for the same underlying reason,
-   * and routing it here only changed the label it was invisible under.
-   *
-   * getPage(n).getTextContent() with an explicit cleanup() keeps one page in
-   * memory at a time. The whole-corpus probe walked a 2,951-page guide this way
-   * without trouble. A page that fails to parse contributes "" rather than
-   * failing the document — a gap in one page is recoverable, a stuck document
-   * is not. */
-  const pages: string[] = [];
-  for (let n = 1; n <= totalPages; n++) {
-    try {
-      const page = await pdf.getPage(n);
-      const tc = await page.getTextContent();
-      pages.push((tc.items || []).map((i: any) => i.str || "").join(" "));
-      page.cleanup?.();
-    } catch (e) {
-      console.error(`[chunk-large] page ${n} text extraction failed:`, String(e));
-      pages.push("");
-    }
-  }
-  console.log(`[chunk-large] extracted ${totalPages} pages, ${pages.reduce((n,t)=>n+t.length,0)} chars`);
+  /* Split-then-parse. Extracting from one getDocumentProxy over the whole
+   * document — even page-by-page — still hit WORKER_RESOURCE_LIMIT on a
+   * 511-page handbook, so the wall is the pdf.js document itself. The shared
+   * extractor slices with pdf-lib first; pdf.js never sees more than 50 pages. */
+  const pages = await extractPagesRanged(buf, (done, total) => {
+    if (done % 100 === 0 || done === total) console.log(`[chunk-large] extracted ${done}/${total} pages`);
+  });
+  console.log(`[chunk-large] extracted ${pages.length} pages, ${pages.reduce((n, t) => n + t.length, 0)} chars`);
   return pages;
 }
 
-async function getCachedPages(guidelineId: string, fileUrl: string): Promise<string[]> {
-  const cachePath = `_cache/${guidelineId}.pages.json`;
-  // Try to read cached sidecar first
-  const { data: cached } = await sb.storage.from(CACHE_BUCKET).download(cachePath);
-  if (cached) {
-    try {
-      const text = await cached.text();
-      const arr = JSON.parse(text);
-      if (Array.isArray(arr) && arr.length) {
-        console.log(`[chunk-large] cache hit ${guidelineId} (${arr.length} pages)`);
-        return arr;
-      }
-    } catch {/* fall through */}
+/* INCREMENTAL SIDECAR.
+ *
+ * Every individual step works — measured: download 3.4MB, pdf-lib parse 511
+ * pages, build a 50-page slice, pdf.js parse it, extract 133,801 chars. What
+ * exhausts the worker is doing all ELEVEN slices in one invocation; the memory
+ * from earlier slices is not reclaimed fast enough.
+ *
+ * So the cache is built a few slices at a time and persisted between
+ * invocations, exactly like the chunking phase it feeds. A partial sidecar is
+ * written with the pages done so far and a `next` marker; the resume cron calls
+ * back every 5 minutes until it is complete. Returning null means "not ready
+ * yet, come back" — NOT a failure, so the caller must not mark the document
+ * failed or done.
+ */
+const SLICES_PER_INVOCATION = 3;   // 150 pages — comfortably inside the limit
+
+type Sidecar = { pages: string[]; next: number; total: number; complete: boolean };
+
+async function readSidecar(guidelineId: string): Promise<Sidecar | null> {
+  const { data } = await sb.storage.from(CACHE_BUCKET).download(`_cache/${guidelineId}.pages.json`);
+  if (!data) return null;
+  try {
+    const parsed = JSON.parse(await data.text());
+    // Legacy sidecars were a bare array and are always complete.
+    if (Array.isArray(parsed)) return { pages: parsed, next: parsed.length, total: parsed.length, complete: true };
+    if (Array.isArray(parsed?.pages)) return parsed as Sidecar;
+  } catch { /* corrupt — rebuild from scratch */ }
+  return null;
+}
+
+async function writeSidecar(guidelineId: string, sc: Sidecar) {
+  await sb.storage.from(CACHE_BUCKET).upload(
+    `_cache/${guidelineId}.pages.json`,
+    new Blob([JSON.stringify(sc)], { type: "application/json" }),
+    { contentType: "application/json", upsert: true },
+  ).then((r: any) => {
+    if (r?.error) throw new Error("sidecar write: " + r.error.message);
+  });   // THROWS. A swallowed write is what made this cache imaginary.
+}
+
+/** Returns the full page array when complete, or null while still building. */
+async function getCachedPages(guidelineId: string, fileUrl: string): Promise<string[] | null> {
+  let sc = await readSidecar(guidelineId);
+  if (sc?.complete) {
+    console.log(`[chunk-large] cache hit ${guidelineId} (${sc.pages.length} pages)`);
+    return sc.pages;
   }
 
-  // Build cache
-  const pages = await buildPageTextCache(guidelineId, fileUrl);
-  // Write sidecar
-  const json = JSON.stringify(pages);
-  await sb.storage.from(CACHE_BUCKET).upload(
-    cachePath,
-    new Blob([json], { type: "application/json" }),
-    { contentType: "application/json", upsert: true }
-  ).catch(e => console.warn("[chunk-large] cache write failed:", e.message));
-  console.log(`[chunk-large] cache built and stored for ${guidelineId} (${pages.length} pages)`);
-  return pages;
+  const res = await fetch(fileUrl);
+  if (!res.ok) throw new Error(`PDF fetch ${res.status}`);
+  const buf = new Uint8Array(await res.arrayBuffer());
+
+  if (!sc) {
+    const total = await pdfPageCount(buf);
+    sc = { pages: new Array(total).fill(""), next: 0, total, complete: false };
+    console.log(`[chunk-large] starting sidecar for ${guidelineId}: ${total} pages`);
+  }
+
+  const from = sc.next;
+  const to = Math.min(from + SLICES_PER_INVOCATION * PAGE_SLICE, sc.total);
+  const got = await extractPagesRanged(buf, undefined, from, to);
+  for (let i = 0; i < got.length; i++) sc.pages[from + i] = got[i];
+  sc.next = to;
+  sc.complete = to >= sc.total;
+  await writeSidecar(guidelineId, sc);
+  console.log(`[chunk-large] sidecar ${guidelineId}: ${to}/${sc.total} pages${sc.complete ? " COMPLETE" : ""}`);
+
+  return sc.complete ? sc.pages : null;
 }
 
 Deno.serve(async (req) => {
@@ -161,8 +193,16 @@ Deno.serve(async (req) => {
 
     const startedAt = (g.last_page_processed || 0) + 1;
 
-    // CACHED page text - downloads PDF only on first invocation
+    // CACHED page text — built incrementally across invocations for long docs.
     const pages = await getCachedPages(guideline_id, g.file_url);
+    if (!pages) {
+      /* Sidecar still building. NOT a failure and NOT done — leave chunk_status
+       * 'running' so the resume cron calls back, and do not touch
+       * last_page_processed, which belongs to the chunking phase. Reporting
+       * "done" here would mark a document indexed with zero chunks, which is
+       * precisely the invisible state this whole exercise is about. */
+      return ok({ message: "Building page cache", status: "extracting" });
+    }
     const totalPages = pages.length;
 
     if (startedAt > totalPages) {

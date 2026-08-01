@@ -4,6 +4,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 // @ts-ignore
 import { extractText, getDocumentProxy } from "https://esm.sh/unpdf@0.12.1";
+import { pdfPageCount } from "../_shared/pdf-pages.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -135,6 +136,26 @@ async function chunkOne(g: any, force: boolean): Promise<any> {
   if (!force && buf.byteLength > MAX_PDF_BYTES) {
     await handOffToLarge(sb, id, `${(buf.byteLength/1024/1024).toFixed(1)}MB`);
     return { chunks: 0, pages: 0, handed_off: `oversize ${(buf.byteLength/1024/1024).toFixed(1)}MB` };
+  }
+
+  /* PAGE COUNT BEFORE EXTRACTION. This guard used to run AFTER
+   * extractPagesFromPdf, which is the call that blows up on a long document —
+   * so the check that exists to route long documents away could never fire on
+   * one. The 6MB routing threshold in upload-guideline was covering this by
+   * accident (small files usually have few pages), not by design: a 3.3MB
+   * 511-page handbook is under the threshold and over the limit, which is
+   * exactly the case that broke. pdf-lib reads the page count from the
+   * structure without touching a text layer. */
+  if (!force) {
+    try {
+      const quickPages = await pdfPageCount(buf);
+      if (quickPages > MAX_PAGE_COUNT) {
+        await handOffToLarge(sb, id, `${quickPages} pages (pre-extraction)`, { ocr_page_count: quickPages });
+        return { chunks: 0, pages: quickPages, handed_off: `${quickPages} pages` };
+      }
+    } catch (e) {
+      console.error("[chunk-guidelines] page-count probe failed, continuing:", String(e));
+    }
   }
 
   const pages = await extractPagesFromPdf(buf);
