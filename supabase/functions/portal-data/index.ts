@@ -54,6 +54,39 @@ Deno.serve(async (req: Request) => {
       if (!contact_id) return err('Could not resolve contact_id', 400);
 
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+      /* SERVER-SIDE DUPLICATE CHECK.
+       *
+       * The client guard below stops the double-tap, but it cannot stop the case
+       * that actually matters: a borrower on a phone with a flaky connection
+       * whose upload succeeded while the response was lost, who then reloads and
+       * sends the same file again. By then the client's in-flight state is gone.
+       * Only the server still knows.
+       *
+       * Matched on (contact_id, file_name, file_size) within 10 minutes —
+       * identical name AND identical byte count from the same borrower in that
+       * window is a retry, not a second document. A genuinely different file
+       * differs in size; a genuinely re-sent one is the same file and does not
+       * need storing twice. */
+      const DUP_WINDOW_MIN = 10;
+      const dupSince = new Date(Date.now() - DUP_WINDOW_MIN * 60_000).toISOString();
+      const { data: dupRow } = await sb.from('uploaded_documents')
+        .select('id, file_path, uploaded_at')
+        .eq('contact_id', contact_id)
+        .eq('file_name', file.name)
+        .eq('file_size', file.size)
+        .gte('uploaded_at', dupSince)
+        .order('uploaded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (dupRow) {
+        console.log('[portal-data] duplicate upload suppressed:', contact_id, file.name, file.size);
+        const { data: sd } = await sb.storage.from('borrower-documents').createSignedUrl(dupRow.file_path, 3600);
+        // 200, not an error: from the borrower's side the file IS on their file.
+        return ok({ success: true, duplicate: true, document_id: dupRow.id, file_url: sd?.signedUrl || null,
+                    message: 'That file is already uploaded.' });
+      }
+
       const storage_path = `${contact_id}/${Date.now()}_${safeName}`;
       const bytes = new Uint8Array(await file.arrayBuffer());
 

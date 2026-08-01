@@ -2361,10 +2361,25 @@ function removeFromQueue(idx) {
   renderFileQueue();
 }
 
+var _portalUploadInFlight = false;
+
 function uploadFiles() {
   if (!fileQueue.length) return;
   var u = currentUser;
   if (!u || !u.id) { showToast('Please log in first', 'error'); return; }
+
+  /* Client guard: stop the second tap while the first upload is running. This
+     is the cheap half — the half that matters is the (contact, name, size)
+     check in portal-data, because a borrower whose connection dropped will
+     reload and retry after this flag is long gone. */
+  if (_portalUploadInFlight) { showToast('Upload already in progress…', 'info'); return; }
+  _portalUploadInFlight = true;
+  var _ubtn = document.querySelector('#uploadBtnWrap .btn, #uploadBtnWrap button') || document.getElementById('uploadBtnWrap');
+  if (_ubtn) { _ubtn.style.pointerEvents = 'none'; _ubtn.style.opacity = '0.55'; }
+  var _release = function () {
+    _portalUploadInFlight = false;
+    if (_ubtn) { _ubtn.style.pointerEvents = ''; _ubtn.style.opacity = ''; }
+  };
 
   var promises = fileQueue.map(function(item, idx) {
     var fd = new FormData();
@@ -2394,14 +2409,19 @@ function uploadFiles() {
   });
 
   Promise.all(promises)
-    .then(function() {
-      showToast(fileQueue.length + ' file(s) uploaded successfully!', 'success');
-      trackPortalAction('document_uploaded', 'Document Uploaded', { file_count: fileQueue.length });
+    .then(function(results) {
+      var dupes = (results || []).filter(function (r) { return r && r.duplicate; }).length;
+      var fresh = fileQueue.length - dupes;
+      if (dupes && !fresh) showToast('Already uploaded — those files are on your file.', 'info');
+      else if (dupes) showToast(fresh + ' file(s) uploaded, ' + dupes + ' already on your file.', 'success');
+      else showToast(fileQueue.length + ' file(s) uploaded successfully!', 'success');
+      trackPortalAction('document_uploaded', 'Document Uploaded', { file_count: fresh, duplicates: dupes });
       fileQueue = [];
       renderFileQueue();
       loadDocHistory();
     })
-    .catch(function() { showToast('Upload error. Try again or call (714) 472-8508', 'error'); });
+    .catch(function() { showToast('Upload error. Try again or call (714) 472-8508', 'error'); })
+    .then(_release, _release);
 }
 
 window._portalDocs = window._portalDocs || [];

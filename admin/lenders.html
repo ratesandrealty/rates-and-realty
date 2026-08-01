@@ -2290,7 +2290,28 @@ async function docUploadAll() {
   `).join('');
 
   let successCount = 0;
-  const filesToUpload = [..._docPendingFiles];
+  /* Dedupe within the batch AND against the last few minutes. btn.disabled
+     already stops the double-click; this stops the same file being queued twice
+     or re-picked after a partial run — the shape that gave Santana 12 rows for
+     one paystub. */
+  const _seenInBatch = new Set();
+  const _lenderRecent = (window.__lenderRecentUploads = window.__lenderRecentUploads || new Map());
+  const _nowMs = Date.now();
+  for (const [k, ts] of _lenderRecent) { if (_nowMs - ts > 5 * 60 * 1000) _lenderRecent.delete(k); }
+  const _lid = window.ldCurrentLenderId || 'none';
+  const filesToUpload = [..._docPendingFiles].filter((f) => {
+    const key = _lid + '|' + f.name + '|' + f.size;
+    if (_seenInBatch.has(key) || _lenderRecent.has(key)) return false;
+    _seenInBatch.add(key);
+    return true;
+  });
+  const _skipped = _docPendingFiles.length - filesToUpload.length;
+  if (_skipped) showToast(`Skipping ${_skipped} file(s) already uploaded a moment ago`);
+  if (!filesToUpload.length) {
+    btn.disabled = false; btn.textContent = '⬆ Upload All';
+    showToast('Nothing new to upload — those files are already on this lender.');
+    return;
+  }
 
   for (let i = 0; i < filesToUpload.length; i++) {
     const file = filesToUpload[i];
@@ -2339,6 +2360,7 @@ async function docUploadAll() {
       }
 
       if (result && result.success) {
+        _lenderRecent.set(_lid + '|' + file.name + '|' + file.size, Date.now());
         /* Report what actually happened. "Uploaded" over a document whose
            pages 101-150 were dropped is the same lie as reporting success over
            a failed write — and a partial index is invisible later, because the
