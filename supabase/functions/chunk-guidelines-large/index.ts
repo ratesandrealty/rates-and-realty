@@ -6,7 +6,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 // @ts-ignore
-import { extractText, getDocumentProxy } from "https://esm.sh/unpdf@0.12.1";
+import { getDocumentProxy } from "https://esm.sh/unpdf@0.12.1";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -68,11 +68,34 @@ async function buildPageTextCache(guidelineId: string, fileUrl: string): Promise
 
   const pdf = await getDocumentProxy(buf);
   const totalPages = pdf.numPages;
-  const result = await extractText(pdf, { mergePages: false });
-  const pages: string[] = Array.isArray(result.text) ? result.text : [String(result.text)];
-  // Pad to numPages if missing
-  while (pages.length < totalPages) pages.push("");
-  return pages.slice(0, totalPages);
+
+  /* PAGE BY PAGE, not extractText(whole document).
+   *
+   * extractText(pdf, {mergePages:false}) materialises every page's text content
+   * at once. On USDA HB-1-3560 — 511 pages — that returns WORKER_RESOURCE_LIMIT,
+   * so the document could not be chunked by the "large" chunker either. It had
+   * been sitting in skipped_oversize since April for the same underlying reason,
+   * and routing it here only changed the label it was invisible under.
+   *
+   * getPage(n).getTextContent() with an explicit cleanup() keeps one page in
+   * memory at a time. The whole-corpus probe walked a 2,951-page guide this way
+   * without trouble. A page that fails to parse contributes "" rather than
+   * failing the document — a gap in one page is recoverable, a stuck document
+   * is not. */
+  const pages: string[] = [];
+  for (let n = 1; n <= totalPages; n++) {
+    try {
+      const page = await pdf.getPage(n);
+      const tc = await page.getTextContent();
+      pages.push((tc.items || []).map((i: any) => i.str || "").join(" "));
+      page.cleanup?.();
+    } catch (e) {
+      console.error(`[chunk-large] page ${n} text extraction failed:`, String(e));
+      pages.push("");
+    }
+  }
+  console.log(`[chunk-large] extracted ${totalPages} pages, ${pages.reduce((n,t)=>n+t.length,0)} chars`);
+  return pages;
 }
 
 async function getCachedPages(guidelineId: string, fileUrl: string): Promise<string[]> {

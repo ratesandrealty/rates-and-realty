@@ -108,6 +108,69 @@ async function checkPendingSyncs(): Promise<SyncCheck> {
   return { ok: false, pending: count, oldest_age_hours: Math.round(ageHours) };
 }
 
+/* INDEXING HEALTH — a guideline the AI cannot read must not sit silently.
+ *
+ * Two states, both of which produced an invisible document before:
+ *   done + 0 chunks  — the row says indexed, the corpus has nothing. A search
+ *                      returns no hit and there is no way to tell that from
+ *                      "this guideline doesn't cover it".
+ *   running > 6h     — the auto-resume cron runs every 5 minutes, so anything
+ *                      still running after six hours is not progressing, it is
+ *                      stuck. USDA HB-1-3560 sat in a terminal state for three
+ *                      months and nothing retried or reported it; that is the
+ *                      failure this check exists to make loud.
+ *
+ * skipped_oversize is included too: it should no longer be reachable now that
+ * chunk-guidelines hands off instead of skipping, so seeing one means the
+ * handoff regressed. */
+type IndexCheck = { ok: boolean; done_no_chunks: any[]; stuck_running: any[]; skipped: any[] };
+
+async function checkIndexingHealth(): Promise<IndexCheck> {
+  const stuckCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  const { data: rows } = await sb
+    .from("lender_guidelines")
+    .select("id, title, chunk_status, chunk_count, updated_at, last_page_processed, ocr_page_count")
+    .eq("is_active", true)
+    .not("file_url", "is", null)
+    .limit(500);
+  const all = rows || [];
+  const doneNoChunks = all.filter((r: any) => r.chunk_status === "done" && !(r.chunk_count > 0));
+  const stuckRunning = all.filter((r: any) => r.chunk_status === "running" && (r.updated_at || "") < stuckCutoff);
+  const skipped = all.filter((r: any) => r.chunk_status === "skipped_oversize");
+  return {
+    ok: !doneNoChunks.length && !stuckRunning.length && !skipped.length,
+    done_no_chunks: doneNoChunks, stuck_running: stuckRunning, skipped,
+  };
+}
+
+function buildIndexingAlert(c: IndexCheck): { key: string; message: string } {
+  const name = (r: any) => `${r.title || r.id}${r.ocr_page_count ? ` (${r.ocr_page_count}p)` : ""}`;
+  const lines: string[] = ["\u26a0\ufe0f Lender guidelines the AI cannot read", ""];
+  if (c.done_no_chunks.length) {
+    lines.push(`${c.done_no_chunks.length} marked INDEXED but hold zero chunks:`);
+    for (const r of c.done_no_chunks.slice(0, 8)) lines.push(`  \u2022 ${name(r)}`);
+    lines.push("");
+  }
+  if (c.stuck_running.length) {
+    lines.push(`${c.stuck_running.length} stuck INDEXING for over 6h (cron runs every 5 min):`);
+    for (const r of c.stuck_running.slice(0, 8)) {
+      lines.push(`  \u2022 ${name(r)} — page ${r.last_page_processed ?? 0} of ${r.ocr_page_count ?? "?"}`);
+    }
+    lines.push("");
+  }
+  if (c.skipped.length) {
+    lines.push(`${c.skipped.length} SKIPPED as oversize — this should be unreachable, the handoff has regressed:`);
+    for (const r of c.skipped.slice(0, 8)) lines.push(`  \u2022 ${name(r)}`);
+    lines.push("");
+  }
+  lines.push("These documents look present in the guidelines list but return nothing in AI search.");
+  lines.push("");
+  lines.push("To retry one:");
+  lines.push(...urlBlock(`${SUPABASE_URL}/functions/v1/chunk-guidelines-large`));
+  lines.push('   with body: {"guideline_id":"<id>"}');
+  return { key: "guidelines_unindexed", message: lines.join("\n") };
+}
+
 async function shouldAlert(alertKey: string): Promise<boolean> {
   const stateKey = `gdrive_alert:${alertKey}`;
   const { data } = await sb.from("system_state")
@@ -257,7 +320,8 @@ Deno.serve(async (req) => {
 
     const oauth = await checkOAuth();
     const syncStatus = await checkPendingSyncs();
-    const allOk = oauth.ok && syncStatus.ok;
+    const indexing = await checkIndexingHealth();
+    const allOk = oauth.ok && syncStatus.ok && indexing.ok;
 
     const result: any = {
       checked_at: new Date().toISOString(),
@@ -267,6 +331,10 @@ Deno.serve(async (req) => {
       sync_ok: syncStatus.ok,
       pending_count: syncStatus.pending,
       pending_oldest_hours: syncStatus.oldest_age_hours,
+      indexing_ok: indexing.ok,
+      indexing_done_no_chunks: indexing.done_no_chunks.map((r: any) => r.title || r.id),
+      indexing_stuck_running: indexing.stuck_running.map((r: any) => r.title || r.id),
+      indexing_skipped: indexing.skipped.map((r: any) => r.title || r.id),
       alert_sent: false,
       alert_skipped_reason: null,
     };
@@ -282,10 +350,15 @@ Deno.serve(async (req) => {
 
     // OAuth issues take priority — they cause sync issues, not the other way around
     let alert: { key: string; message: string };
+    /* OAuth first — it causes sync failures, not the other way round. Indexing
+     * is independent of both, so it is reported when the Drive side is healthy
+     * rather than being masked by it. */
     if (!oauth.ok) {
       alert = buildOAuthAlert(oauth);
-    } else {
+    } else if (!syncStatus.ok) {
       alert = buildSyncStalledAlert(syncStatus);
+    } else {
+      alert = buildIndexingAlert(indexing);
     }
 
     if (!force) {
