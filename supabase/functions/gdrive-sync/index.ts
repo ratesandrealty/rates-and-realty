@@ -33,40 +33,24 @@ function mimeFromName(name: string): string {
   return map[ext] || 'application/octet-stream';
 }
 
-// ── User OAuth access token (refresh_token flow) ─────────────────
+// ── User OAuth access token ───────────────────────────────────────────────
+/* Resolves through _shared/google-user-token.ts: the google_calendar_tokens row
+ * first, GOOGLE_DRIVE_REFRESH_TOKEN only as a fallback. Previously this read the
+ * secret exclusively, so re-authorising via google-calendar-auth updated a row
+ * this function never looked at — two credentials for one Google account, one of
+ * them un-refreshable and dead. Returns null on failure, as before, so callers
+ * are unchanged. */
 async function getUserAccessToken(): Promise<string | null> {
   try {
-    const refreshToken = Deno.env.get('GOOGLE_DRIVE_REFRESH_TOKEN');
-    const clientId     = Deno.env.get('GOOGLE_CLIENT_ID');
-    const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET');
-
-    if (!refreshToken || !clientId || !clientSecret) {
-      console.error('[drive-auth] Missing GOOGLE_DRIVE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, or GOOGLE_CLIENT_SECRET');
-      return null;
-    }
-
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type:    'refresh_token',
-        refresh_token: refreshToken,
-        client_id:     clientId,
-        client_secret: clientSecret,
-      })
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.access_token) {
-      console.error('[drive-auth] Token refresh failed:', JSON.stringify(data));
-      return null;
-    }
-    return data.access_token;
-  } catch (e: any) {
-    console.error('[drive-auth] getUserAccessToken error:', e.message);
+    const { accessToken, source } = await getDriveAccessToken(sb);
+    console.log(`[drive-auth] token ok (source=${source})`);
+    return accessToken;
+  } catch (e) {
+    console.error('[drive-auth]', String(e));
     return null;
   }
 }
+
 
 // ── Upload file bytes directly to Google Drive using user OAuth token ─────
 async function uploadFileToDrive(

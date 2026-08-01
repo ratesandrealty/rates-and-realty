@@ -25,6 +25,7 @@
 // personal My Drive folders.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { getDriveAccessToken } from "../_shared/google-user-token.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { PDFDocument, degrees } from "https://esm.sh/pdf-lib@1.17.1";
 
@@ -37,36 +38,22 @@ const cors = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-async function getGoogleAccessToken(): Promise<string | null> {
+/* Resolves via _shared/google-user-token.ts — google_calendar_tokens row first,
+ * GOOGLE_DRIVE_REFRESH_TOKEN only as fallback. Reading the secret alone meant a
+ * re-authorisation through google-calendar-auth updated a row this function
+ * never consulted, so document saves kept failing after the credential was
+ * fixed. Takes the caller's client so it shares one Supabase connection. */
+async function getGoogleAccessToken(sbClient: any): Promise<string | null> {
   try {
-    const refreshToken = Deno.env.get("GOOGLE_DRIVE_REFRESH_TOKEN");
-    const clientId     = Deno.env.get("GOOGLE_CLIENT_ID");
-    const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
-    if (!refreshToken || !clientId || !clientSecret) {
-      console.error("[save-document] Missing GOOGLE_DRIVE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET");
-      return null;
-    }
-    const res = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.access_token) {
-      console.error("[save-document] token refresh failed:", JSON.stringify(data));
-      return null;
-    }
-    return data.access_token as string;
+    const { accessToken, source } = await getDriveAccessToken(sbClient);
+    console.log(`[save-document] Google token ok (source=${source})`);
+    return accessToken;
   } catch (e) {
-    console.error("[save-document] getGoogleAccessToken error:", (e as Error).message);
+    console.error("[save-document]", String(e));
     return null;
   }
 }
+
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
@@ -127,7 +114,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // 3. Get a Google OAuth access token (user flow — SA has no storage quota).
-    const googleToken = await getGoogleAccessToken();
+    const googleToken = await getGoogleAccessToken(sb);
     if (!googleToken) {
       return err("Google OAuth token unavailable (check GOOGLE_DRIVE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)", 500);
     }

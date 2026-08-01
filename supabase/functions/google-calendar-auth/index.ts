@@ -60,9 +60,20 @@ serve(async (req) => {
     authUrl.searchParams.set('client_id', CLIENT_ID)
     authUrl.searchParams.set('redirect_uri', REDIRECT_URI)
     authUrl.searchParams.set('response_type', 'code')
+    /* FULL drive, not drive.file.
+     *
+     * drive.file only grants access to files THIS app created or the user
+     * explicitly picked. gdrive-sync has to write into borrower folders created
+     * by the n8n foldering workflow under different credentials — a parent
+     * drive.file cannot see. That is why the mirror needs the restricted scope.
+     *
+     * Because this ADDS a scope to an existing grant, prompt=consent below is
+     * mandatory: without it Google treats the re-consent as already-granted and
+     * returns no refresh token at all, which is a silent no-op that looks like
+     * success. */
     authUrl.searchParams.set('scope', [
       'https://www.googleapis.com/auth/calendar',
-      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive',
       'https://www.googleapis.com/auth/gmail.readonly',
     ].join(' '))
     authUrl.searchParams.set('access_type', 'offline')

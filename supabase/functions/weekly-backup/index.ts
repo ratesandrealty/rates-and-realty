@@ -1,39 +1,21 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getDriveAccessToken } from '../_shared/google-user-token.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-/* THROWS on any auth problem.
- *
- * This used to swallow a failed refresh and fall back to GOOGLE_DRIVE_ACCESS_TOKEN
- * — an access token, which lives one hour. So the moment the refresh token broke,
- * every backup proceeded with a credential that had been dead for months, 401'd
- * on every Drive call, and reported nothing. A backup that cannot authenticate
- * has to fail loudly: silence here is indistinguishable from success, and the
- * discovery point is the day someone needs to restore.
- *
- * GOOGLE_DRIVE_ACCESS_TOKEN is deliberately no longer read. It can only ever be
- * stale, and its sole effect was converting a loud failure into a quiet one. */
-async function getValidAccessToken(): Promise<string> {
-  const refreshToken = Deno.env.get('GOOGLE_DRIVE_REFRESH_TOKEN') || '';
-  const clientId = Deno.env.get('GOOGLE_CLIENT_ID') || '';
-  const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET') || '';
-  if (!refreshToken || !clientId || !clientSecret) {
-    throw new Error('Backup aborted: GOOGLE_DRIVE_REFRESH_TOKEN / CLIENT_ID / CLIENT_SECRET not all set');
-  }
-  const resp = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }),
-  });
-  const d = await resp.json().catch(() => ({}));
-  if (!resp.ok || !d.access_token) {
-    throw new Error(`Backup aborted: Drive token refresh failed — ${d.error || resp.status}${d.error_description ? ': ' + d.error_description : ''}`);
-  }
-  return d.access_token;
+/* THROWS on any auth problem, and resolves the token the same way every other
+ * Drive caller does — google_calendar_tokens row first, secret as fallback. It
+ * used to read GOOGLE_DRIVE_ACCESS_TOKEN (an access token, one-hour life) and
+ * fall back to it silently when the refresh failed, so every run since the
+ * refresh token broke proceeded with a credential dead for months. */
+async function getValidAccessToken(sbClient: any): Promise<string> {
+  const { accessToken } = await getDriveAccessToken(sbClient);
+  return accessToken;
 }
+
 
 /* Read the file BACK from Drive and check its size. A 200 from the upload call
  * is not proof the object exists — the whole reason this backup went unnoticed
@@ -125,7 +107,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const token = await getValidAccessToken();
+    const token = await getValidAccessToken(sb);
     const rootFolder = Deno.env.get('GOOGLE_DRIVE_BACKUP_FOLDER_ID') || '';
 
     if (!token) return new Response(JSON.stringify({ error: 'Missing GOOGLE_DRIVE_ACCESS_TOKEN' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

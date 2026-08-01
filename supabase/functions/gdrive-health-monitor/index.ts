@@ -10,6 +10,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { reconcileStorage } from "../_shared/storage-reconcile.ts";
+import { getDriveRefreshToken } from "../_shared/google-user-token.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -17,6 +18,16 @@ const ADMIN_PHONE = "+17144728508";
 const REAUTH_URL = "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/google-calendar-auth";
 const SUPABASE_SECRETS_URL = "https://supabase.com/dashboard/project/ljywhvbmsibwnssxpesh/settings/functions";
 const ALERT_COOLDOWN_HOURS = 12;
+/* Alert prefix. This was emitted as a bare ${RED} by the script that generated
+ * the alert branches, with no such constant in scope — so the monitor threw
+ * "RED is not defined" as soon as one of those branches was selected, and
+ * returned NO alert at all. It went unnoticed because the branch that was
+ * previously selected used a literal emoji; the reconciliation check going
+ * unhealthy is what finally routed execution through a broken one.
+ *
+ * A monitor that throws is worse than a monitor that reports a problem: the
+ * cron discards the 500 and nobody hears anything. */
+const RED = "\uD83D\uDD34";
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -192,11 +203,14 @@ function buildIndexingAlert(c: IndexCheck): { key: string; message: string } {
 type CredCheck = { ok: boolean; stage?: string; reason?: string; user?: string };
 
 async function checkDriveWriteCredential(): Promise<CredCheck> {
-  const refresh = Deno.env.get("GOOGLE_DRIVE_REFRESH_TOKEN");
+  /* Resolve exactly as gdrive-sync does. Probing the secret while the mirror
+   * reads the table would recreate the original bug in mirror image: a monitor
+   * confidently reporting on a credential nothing uses. */
+  const { token: refresh, source: tokenSource } = await getDriveRefreshToken(sb);
   const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
   const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
   if (!refresh || !clientId || !clientSecret) {
-    return { ok: false, stage: "config", reason: "GOOGLE_DRIVE_REFRESH_TOKEN / CLIENT_ID / CLIENT_SECRET not all set" };
+    return { ok: false, stage: "config", reason: `no refresh token (source=${tokenSource}) or CLIENT_ID/SECRET unset` };
   }
   let access = "";
   try {
@@ -220,7 +234,7 @@ async function checkDriveWriteCredential(): Promise<CredCheck> {
     });
     const d = await r.json();
     if (!r.ok) return { ok: false, stage: "drive_call", reason: `${d?.error?.message || r.status}`.slice(0, 200) };
-    return { ok: true, user: d?.user?.emailAddress };
+    return { ok: true, user: `${d?.user?.emailAddress} (token from ${tokenSource})` };
   } catch (e) {
     return { ok: false, stage: "drive_call", reason: String(e).slice(0, 200) };
   }
