@@ -9,6 +9,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { reconcileStorage } from "../_shared/storage-reconcile.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -594,7 +595,11 @@ Deno.serve(async (req) => {
     const syncStatus = await checkPendingSyncs();
     const indexing = await checkIndexingHealth();
     const backup = await checkBackupFreshness();
-    const allOk = oauth.ok && driveCred.ok && staticKeys.ok && embeddings.ok && syncStatus.ok && indexing.ok && backup.ok;
+    /* Rows vs objects. Runs every hour AND is the mandatory post-restore gate —
+     * a restore is exactly when direction A goes from zero to many. */
+    const recon = await reconcileStorage(sb);
+    const allOk = oauth.ok && driveCred.ok && staticKeys.ok && embeddings.ok
+      && syncStatus.ok && indexing.ok && backup.ok && recon.ok;
 
     const result: any = {
       checked_at: new Date().toISOString(),
@@ -617,6 +622,9 @@ Deno.serve(async (req) => {
       backup_ok: backup.ok,
       backup_last_verified: backup.last || null,
       backup_age_days: backup.age_days ?? null,
+      reconcile_ok: recon.ok,
+      reconcile_dangling: recon.dangling,
+      reconcile_orphans: recon.orphans,
       sync_ok: syncStatus.ok,
       pending_count: syncStatus.pending,
       pending_oldest_hours: syncStatus.oldest_age_hours,
@@ -647,6 +655,37 @@ Deno.serve(async (req) => {
        * and a stalled-sync alert is a symptom of it rather than a separate
        * problem. */
       alert = buildCredentialAlert(driveCred);
+    } else if (!recon.ok && recon.dangling.some((d) => d.count !== 0)) {
+      alert = {
+        key: "storage_dangling",
+        message: [
+          `${RED} Documents referenced by the CRM are MISSING from storage`,
+          "",
+          ...recon.dangling.filter((d) => d.count !== 0).flatMap((d) => [
+            `  ${d.entry}: ${d.count === -1 ? "check failed" : d.count + " row(s)"}`,
+            ...d.samples.map((x) => `      ${x}`),
+          ]),
+          "",
+          "Each of these is a row the CRM will show as a document on someone's",
+          "file, whose bytes are not there. If this appeared after a database",
+          "restore, that is expected: Supabase physical backups do not include",
+          "storage objects, so restoring revives rows for files deleted since.",
+        ].join("\n"),
+      };
+    } else if (!recon.ok) {
+      const over = recon.orphans.filter((o) => o.over > 0);
+      alert = {
+        key: "storage_orphans:" + over.map((o) => o.bucket).join(","),
+        message: [
+          `${RED} New orphaned storage objects`,
+          "",
+          ...over.map((o) => `  ${o.bucket}: ${o.count} objects, baseline ${o.baseline} (+${o.over} new)`),
+          "",
+          "Bytes in the bucket that no database row references. They are",
+          "invisible in every CRM surface — not broken, just unreachable.",
+          "Usually a write that stored the object and failed to write its row.",
+        ].join("\n"),
+      };
     } else if (!staticKeys.ok) {
       const dead = staticKeys.results.filter((r) => !r.ok);
       alert = {
