@@ -1,12 +1,15 @@
-// google-calendar-auth v58
+// google-calendar-auth v59
+//   v59: confirmation page moved off this origin — Supabase rewrites HTML from
+//        functions to text/plain, so the page rendered as raw markup.
 //   v58: add gmail.readonly scope (VOE Phase 2 inbound Gmail polling).
 //        No other change to the OAuth flow.
 //
 // What this does:
 //   GET / (no params)         → redirect to Google's OAuth consent screen
-//   GET /?code=...            → exchange code for tokens, save to DB,
-//                                show success HTML page
-//   GET /?error=...           → show error message
+//   GET /?code=...            → exchange code for tokens, save to DB, then
+//                                302 to admin.ratesandrealty.com for the
+//                                confirmation page (see confirmRedirect below)
+//   GET /?error=...           → 302 to the same page with ?error=
 //   GET /?iss=...&code=...    → same as code path (Google sometimes adds
 //                                an `iss` param after consent)
 
@@ -24,28 +27,28 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const htmlHeaders = {
-  'Content-Type': 'text/html; charset=utf-8',
-  'X-Content-Type-Options': 'nosniff',
-  'Cache-Control': 'no-store',
-  ...corsHeaders,
-}
+/* CONFIRMATION IS SERVED FROM OUR OWN ORIGIN, NOT FROM HERE.
+ *
+ * This function used to render the confirmation page itself. It set
+ * 'Content-Type: text/html; charset=utf-8' correctly and the browser still
+ * received text/plain with 'Content-Security-Policy: default-src none; sandbox'
+ * bolted on, so Rene saw raw markup instead of a page. That rewrite is
+ * Supabase's anti-phishing control on *.supabase.co/functions/v1/*: HTML from a
+ * functions origin is deliberately neutered, while application/json from the
+ * same gateway passes through untouched (verified both ways). No header set
+ * here can win that argument, so the page moved to admin.ratesandrealty.com
+ * where the Worker serves HTML as HTML.
+ *
+ * 302 rather than 303: the callback is a GET already, so there is no method to
+ * downgrade. */
+const CONFIRM_URL = 'https://admin.ratesandrealty.com/admin/google-connected.html';
 
-function htmlPage(title: string, bodyInner: string, status = 200): Response {
-  const body = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>${title}</title>
-</head>
-<body style="font-family:sans-serif;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
-  <div style="text-align:center;padding:40px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.3);border-radius:16px;max-width:520px;">
-    ${bodyInner}
-  </div>
-</body>
-</html>`
-  return new Response(body, { status, headers: htmlHeaders })
+function confirmRedirect(error?: string): Response {
+  const to = error ? `${CONFIRM_URL}?error=${encodeURIComponent(error)}` : CONFIRM_URL;
+  return new Response(null, {
+    status: 302,
+    headers: { Location: to, 'Cache-Control': 'no-store', ...corsHeaders },
+  });
 }
 
 serve(async (req) => {
@@ -82,20 +85,7 @@ serve(async (req) => {
   }
 
   if (error) {
-    return htmlPage(
-      'OAuth Error',
-      `
-        <div style="font-size:48px;margin-bottom:16px;">&#x274C;</div>
-        <h2 style="color:#ff6b6b;margin-bottom:8px;">OAuth Error</h2>
-        <p style="color:rgba(255,255,255,0.7);word-break:break-word;">
-          ${escapeHtml(error)}
-        </p>
-        <p style="color:rgba(255,255,255,0.5);font-size:13px;margin-top:24px;">
-          Try again from the original link, or contact support if this persists.
-        </p>
-      `,
-      400,
-    )
+    return confirmRedirect(error)
   }
 
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -112,15 +102,16 @@ serve(async (req) => {
 
   const tokens = await tokenRes.json()
   if (!tokens.access_token) {
-    return htmlPage(
-      'Token Exchange Failed',
-      `
-        <div style="font-size:48px;margin-bottom:16px;">&#x274C;</div>
-        <h2 style="color:#ff6b6b;margin-bottom:8px;">Token Exchange Failed</h2>
-        <pre style="color:rgba(255,255,255,0.7);text-align:left;background:#0a0a0a;padding:12px;border-radius:6px;font-size:12px;overflow:auto;max-height:300px;">${escapeHtml(JSON.stringify(tokens, null, 2))}</pre>
-      `,
-      400,
-    )
+    /* Only Google's error CODE travels to the browser. The previous version
+     * rendered JSON.stringify(tokens) into the page, and this branch is reached
+     * whenever access_token is absent — including responses that still carry an
+     * id_token or a refresh_token alongside the error. Now that the confirmation
+     * is a redirect, that payload would have gone into a URL: logged by the
+     * Worker, kept in history, and sent as a Referer. The detail goes to the
+     * function log instead, where it is already privileged. */
+    console.error('[google-calendar-auth] token exchange failed:',
+                  JSON.stringify({ error: tokens.error, description: tokens.error_description }))
+    return confirmRedirect(String(tokens.error || 'token_exchange_failed'))
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -135,22 +126,6 @@ serve(async (req) => {
 
   await supabase.from('google_calendar_tokens').upsert([row])
 
-  return htmlPage(
-    'Google Connected',
-    `
-      <div style="font-size:48px;margin-bottom:16px;">&#x2705;</div>
-      <h2 style="color:#c9a84c;margin-bottom:8px;">Google Connected!</h2>
-      <p style="color:rgba(255,255,255,0.6);">Calendar + Drive + Gmail access granted for rene@ratesandrealty.com</p>
-      <a href="https://admin.ratesandrealty.com/admin/contacts.html" style="display:inline-block;margin-top:20px;padding:12px 24px;background:#c9a84c;color:#111;border-radius:8px;text-decoration:none;font-weight:700;">Back to CRM &#x2192;</a>
-    `,
-  )
-})
+  return confirmRedirect()
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
+})

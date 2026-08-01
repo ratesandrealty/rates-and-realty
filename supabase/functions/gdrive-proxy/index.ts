@@ -207,6 +207,64 @@ Deno.serve(async (req: Request) => {
       const caller = req.headers.get("x-client-info") || req.headers.get("user-agent") || "unknown";
       console.log(`[gdrive-proxy] trash-file REQUESTED id=${fileId} caller=${caller}`);
 
+      /* ── The fixture exemption ────────────────────────────────────────────
+       *
+       * The two guards below are written for borrower folders, and they refuse
+       * the ZZ-TEST fixture's folder for the same reasons they refuse a real
+       * one: files written there by the production upload path are owned by
+       * rene@ rather than the service account, and the fixture is a contact
+       * row, so its folder is inside "a borrower's tree" as far as guard 2 can
+       * tell. The result was a dedicated test location that could be written to
+       * and never cleaned up — which is how litter ends up somewhere worse.
+       *
+       * The exemption is keyed to the fixture identity CLAUDE.md prescribes:
+       * first_name 'ZZ-TEST' AND lead_source 'automated-test'. Renaming a real
+       * contact to ZZ-TEST is not enough to unlock it. Nothing widens for any
+       * other contact — for every real borrower both guards apply unchanged.
+       *
+       * It also has to trash with the USER token, not the service account: the
+       * SA cannot modify a file it does not own, so routing this through
+       * driveFetch would fail even with the guards satisfied. */
+      const sbFix = createClient(SUPABASE_URL, SERVICE_KEY);
+      const { data: fixture } = await sbFix.from("contacts")
+        .select("id, gdrive_folder_id")
+        .eq("first_name", "ZZ-TEST").eq("lead_source", "automated-test")
+        .not("gdrive_folder_id", "is", null).maybeSingle();
+
+      if (fixture?.gdrive_folder_id) {
+        const fixtureRoot = String(fixture.gdrive_folder_id);
+        const fm = await driveFetch(`/files/${encodeURIComponent(fileId)}?fields=id,name,parents&supportsAllDrives=true`);
+        if (fm.ok) {
+          const fmd = await fm.json();
+          let cur: string[] = fmd.parents || [];
+          let inFixture = false;
+          for (let depth = 0; depth < 4 && cur.length && !inFixture; depth++) {
+            if (cur.includes(fixtureRoot)) { inFixture = true; break; }
+            const nxt: string[] = [];
+            for (const pid of cur) {
+              const pr = await driveFetch(`/files/${encodeURIComponent(pid)}?fields=parents&supportsAllDrives=true`);
+              if (!pr.ok) continue;
+              const pd = await pr.json();
+              for (const gp of pd.parents || []) nxt.push(gp);
+            }
+            cur = nxt;
+          }
+          if (inFixture) {
+            const utok = await getUserAccessToken();
+            if (!utok) return err("fixture cleanup: user OAuth token fetch failed", 500);
+            const tr = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, {
+              method: "PATCH",
+              headers: { Authorization: `Bearer ${utok}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ trashed: true }),
+            });
+            const td = await tr.json().catch(() => ({}));
+            if (!tr.ok) return err(td?.error?.message || `fixture trash HTTP ${tr.status}`, tr.status);
+            console.log(`[gdrive-proxy] trash-file DONE (fixture) id=${fileId} name=${fmd.name} caller=${caller}`);
+            return json({ id: fileId, name: fmd.name, trashed: true, via: "fixture-exemption" });
+          }
+        }
+      }
+
       const mr = await driveFetch(`/files/${encodeURIComponent(fileId)}?fields=id,name,owners(emailAddress),parents,trashed&supportsAllDrives=true`);
       const meta = await mr.json();
       if (!mr.ok) return err(meta?.error?.message || `metadata HTTP ${mr.status}`, mr.status);

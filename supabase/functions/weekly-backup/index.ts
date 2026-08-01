@@ -82,22 +82,57 @@ async function fetchAllRows(sb: any, table: string, columns: string): Promise<an
 }
 
 async function uploadToDrive(token: string, folderId: string, fileName: string, content: string, mimeType: string) {
-  const b = 'rrbackup123';
-  const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: fileName, parents: [folderId] })}\r\n--${b}\r\nContent-Type: ${mimeType}\r\n\r\n${content}\r\n--${b}--`;
-  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${b}` }, body
-  });
-  if (!r.ok) {
-    const err = await r.text();
-    throw new Error(`Drive upload failed (${r.status}): ${err}`);
+  /* REPLACE IN PLACE, DO NOT ADD A SECOND FILE WITH THE SAME NAME.
+   *
+   * Drive is happy to hold many files with identical names in one folder, and
+   * a plain POST created a new one every run. After three runs on 2026-08-01
+   * the day's folder held three files called contacts_2026-08-01.csv — and the
+   * first of them was the truncated 1000-row export from before the pagination
+   * fix. A restore picks by luck between a complete backup and one silently
+   * missing 38 people, with nothing in the name to tell them apart.
+   *
+   * So: look for an existing file of this name in this folder and PATCH its
+   * media if there is one. Drive keeps the prior content as a revision, so this
+   * replaces without destroying. */
+  const q = encodeURIComponent(`name='${fileName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed=false`);
+  let existingId = '';
+  try {
+    const lr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&orderBy=createdTime`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (lr.ok) {
+      const ld = await lr.json();
+      if (ld.files?.length) existingId = ld.files[0].id;
+    }
+  } catch (e) {
+    console.warn(`[weekly-backup] duplicate lookup failed for ${fileName}:`, String(e));
   }
-  const meta = await r.json();
+
+  let meta: any;
+  if (existingId) {
+    const r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=media&fields=id,name`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType },
+      body: content,
+    });
+    if (!r.ok) throw new Error(`Drive replace failed (${r.status}): ${await r.text()}`);
+    meta = await r.json();
+  } else {
+    const b = 'rrbackup123';
+    const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: fileName, parents: [folderId] })}\r\n--${b}\r\nContent-Type: ${mimeType}\r\n\r\n${content}\r\n--${b}--`;
+    const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${b}` }, body
+    });
+    if (!r.ok) throw new Error(`Drive upload failed (${r.status}): ${await r.text()}`);
+    meta = await r.json();
+  }
+
   /* READ IT BACK. A 200 on the upload is not proof the object exists at the
    * size we sent — and "nothing ever looked afterwards" is precisely why this
    * backup went unnoticed for months. */
   const expected = new TextEncoder().encode(content).length;
   const verified = await verifyUploaded(token, meta.id, expected, fileName);
-  return { ...meta, verified_bytes: verified };
+  return { ...meta, sent_bytes: expected, verified_bytes: verified, replaced: !!existingId };
 }
 
 function toCSV(rows: any[], headers: string[]): string {
@@ -163,8 +198,8 @@ Deno.serve(async (req) => {
       const contacts = await fetchAllRows(sb, 'contacts', 'id,first_name,last_name,email,phone,secondary_phone,contact_type,source,funnel_source,credit_score,monthly_income,annual_income,employer_name,job_title,address,city,state,zip,county,tags,notes,company,loan_type,loan_amount,lead_score,score_tier,lead_temperature,appointment_set,appointment_date,created_at,updated_at');
       if (contacts?.length) {
         const h = ['id','first_name','last_name','email','phone','secondary_phone','contact_type','source','funnel_source','credit_score','monthly_income','annual_income','employer_name','job_title','address','city','state','zip','county','tags','notes','company','loan_type','loan_amount','lead_score','score_tier','lead_temperature','appointment_set','appointment_date','created_at','updated_at'];
-        await uploadToDrive(token, dataFolder, `contacts_${dateStr}.csv`, toCSV(contacts, h), 'text/csv');
-        results.contacts = { count: contacts.length };
+        const upC = await uploadToDrive(token, dataFolder, `contacts_${dateStr}.csv`, toCSV(contacts, h), 'text/csv');
+        results.contacts = { count: contacts.length, file: upC.id, sent_bytes: upC.sent_bytes, verified_bytes: upC.verified_bytes, replaced: upC.replaced };
         console.log(`Contacts backed up: ${contacts.length}`);
       } else {
         results.contacts = { count: 0 };
@@ -176,8 +211,8 @@ Deno.serve(async (req) => {
       const leads = await fetchAllRows(sb, 'leads', 'id,contact_id,status,source,loan_type,loan_amount,property_address,property_type,property_value,score,notes,created_at,updated_at');
       if (leads?.length) {
         const h = ['id','contact_id','status','source','loan_type','loan_amount','property_address','property_type','property_value','score','notes','created_at','updated_at'];
-        await uploadToDrive(token, dataFolder, `leads_${dateStr}.csv`, toCSV(leads, h), 'text/csv');
-        results.leads = { count: leads.length };
+        const upL = await uploadToDrive(token, dataFolder, `leads_${dateStr}.csv`, toCSV(leads, h), 'text/csv');
+        results.leads = { count: leads.length, file: upL.id, sent_bytes: upL.sent_bytes, verified_bytes: upL.verified_bytes, replaced: upL.replaced };
         console.log(`Leads backed up: ${leads.length}`);
       } else { results.leads = { count: 0 }; }
     } catch(e: any) { console.error('Leads backup error:', e); results.leads = { error: e.message }; }
@@ -187,8 +222,8 @@ Deno.serve(async (req) => {
       const apps = await fetchAllRows(sb, 'mortgage_applications', 'id,contact_id,loan_type,loan_amount,property_address,created_at');
       if (apps?.length) {
         const h = ['id','contact_id','loan_type','loan_amount','property_address','created_at'];
-        await uploadToDrive(token, dataFolder, `applications_${dateStr}.csv`, toCSV(apps, h), 'text/csv');
-        results.applications = { count: apps.length };
+        const upA = await uploadToDrive(token, dataFolder, `applications_${dateStr}.csv`, toCSV(apps, h), 'text/csv');
+        results.applications = { count: apps.length, file: upA.id, sent_bytes: upA.sent_bytes, verified_bytes: upA.verified_bytes, replaced: upA.replaced };
         console.log(`Applications backed up: ${apps.length}`);
       } else { results.applications = { count: 0 }; }
     } catch(e: any) { console.error('Applications backup error:', e); results.applications = { error: e.message }; }
@@ -198,8 +233,8 @@ Deno.serve(async (req) => {
       const lenders = await fetchAllRows(sb, 'lenders', 'id,name,lender_type,programs,tags,min_credit_score,max_ltv,website,contact_name,contact_email,contact_phone,rep_name,rep_phone,rep_email,channel,priority,is_active,clickup_task_id,last_synced_at');
       if (lenders?.length) {
         const h = ['id','name','lender_type','programs','tags','min_credit_score','max_ltv','website','contact_name','contact_email','contact_phone','rep_name','rep_phone','rep_email','channel','priority','is_active','clickup_task_id','last_synced_at'];
-        await uploadToDrive(token, dataFolder, `lenders_${dateStr}.csv`, toCSV(lenders, h), 'text/csv');
-        results.lenders = { count: lenders.length };
+        const upD = await uploadToDrive(token, dataFolder, `lenders_${dateStr}.csv`, toCSV(lenders, h), 'text/csv');
+        results.lenders = { count: lenders.length, file: upD.id, sent_bytes: upD.sent_bytes, verified_bytes: upD.verified_bytes, replaced: upD.replaced };
         console.log(`Lenders backed up: ${lenders.length}`);
       } else { results.lenders = { count: 0 }; }
     } catch(e: any) { console.error('Lenders backup error:', e); results.lenders = { error: e.message }; }
@@ -234,10 +269,38 @@ Deno.serve(async (req) => {
     }
     results.website = { files_backed_up: siteCount, errors: siteErrors.length, error_list: siteErrors };
 
-    // 7. Log backup
+    /* ── 7. GATE: any failed section fails the whole run ──────────────────
+     *
+     * Each export above is wrapped in its own try/catch that records
+     * results.<table> = { error } and carries on. That is reasonable for
+     * getting the other tables out, but until now execution fell straight
+     * through to writing status 'success' and backup:last_verified — so a
+     * table that threw was recorded as a verified backup anyway.
+     *
+     * That is the same swallow the pagination fix was meant to close, one
+     * layer down: fetchAllRows throws when a table exports fewer rows than it
+     * holds, and this catch turned the throw back into success. A partial
+     * backup must be visible as partial. */
+    const failed: string[] = [];
+    for (const [name, r] of Object.entries(results)) {
+      if (name === 'website') continue;
+      if (r && typeof r === 'object' && 'error' in (r as any)) failed.push(`${name}: ${(r as any).error}`);
+    }
+    if (siteErrors.length) failed.push(`website: ${siteErrors.length} file(s) failed`);
+
     await sb.from('backup_logs').upsert({
-      backup_date: dateStr, results, status: 'success', created_at: now.toISOString()
+      backup_date: dateStr, results,
+      status: failed.length ? 'failed' : 'success',
+      created_at: now.toISOString()
     }, { onConflict: 'backup_date' });
+
+    if (failed.length) {
+      console.error('[weekly-backup] INCOMPLETE, not marking verified:', failed.join(' | '));
+      return new Response(JSON.stringify({
+        success: false, date: dateStr, folder: `Backup_${dateStr}`, failed, results,
+        note: 'backup:last_verified was NOT updated — this backup is incomplete.',
+      }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     /* A marker the hourly monitor reads. backup_logs already existed and said
      * "success" for a run whose Drive writes were never checked, so a separate
