@@ -5,22 +5,53 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+/* THROWS on any auth problem.
+ *
+ * This used to swallow a failed refresh and fall back to GOOGLE_DRIVE_ACCESS_TOKEN
+ * — an access token, which lives one hour. So the moment the refresh token broke,
+ * every backup proceeded with a credential that had been dead for months, 401'd
+ * on every Drive call, and reported nothing. A backup that cannot authenticate
+ * has to fail loudly: silence here is indistinguishable from success, and the
+ * discovery point is the day someone needs to restore.
+ *
+ * GOOGLE_DRIVE_ACCESS_TOKEN is deliberately no longer read. It can only ever be
+ * stale, and its sole effect was converting a loud failure into a quiet one. */
 async function getValidAccessToken(): Promise<string> {
-  let accessToken = Deno.env.get('GOOGLE_DRIVE_ACCESS_TOKEN') || '';
   const refreshToken = Deno.env.get('GOOGLE_DRIVE_REFRESH_TOKEN') || '';
   const clientId = Deno.env.get('GOOGLE_CLIENT_ID') || '';
   const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET') || '';
-  if (refreshToken && clientId && clientSecret) {
-    try {
-      const resp = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }),
-      });
-      if (resp.ok) { const d = await resp.json(); if (d.access_token) { accessToken = d.access_token; console.log('Token refreshed successfully'); } }
-    } catch(e) { console.error('Token refresh failed:', e); }
+  if (!refreshToken || !clientId || !clientSecret) {
+    throw new Error('Backup aborted: GOOGLE_DRIVE_REFRESH_TOKEN / CLIENT_ID / CLIENT_SECRET not all set');
   }
-  return accessToken;
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }),
+  });
+  const d = await resp.json().catch(() => ({}));
+  if (!resp.ok || !d.access_token) {
+    throw new Error(`Backup aborted: Drive token refresh failed — ${d.error || resp.status}${d.error_description ? ': ' + d.error_description : ''}`);
+  }
+  return d.access_token;
+}
+
+/* Read the file BACK from Drive and check its size. A 200 from the upload call
+ * is not proof the object exists — the whole reason this backup went unnoticed
+ * is that nothing ever looked afterwards. Returns the verified byte count. */
+async function verifyUploaded(token: string, fileId: string, expectedBytes: number, label: string): Promise<number> {
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,size,trashed`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`Verify failed for ${label}: HTTP ${r.status}`);
+  const m = await r.json();
+  if (m.trashed) throw new Error(`Verify failed for ${label}: file is trashed`);
+  const got = parseInt(m.size || '0', 10);
+  /* Drive can normalise line endings, so an exact match is too strict; a file
+   * materially smaller than what we sent means a truncated write. */
+  if (!got || got < expectedBytes * 0.9) {
+    throw new Error(`Verify failed for ${label}: Drive reports ${got} bytes, expected ~${expectedBytes}`);
+  }
+  return got;
 }
 
 async function createDriveFolder(token: string, name: string, parentId: string): Promise<string> {
@@ -48,7 +79,13 @@ async function uploadToDrive(token: string, folderId: string, fileName: string, 
     const err = await r.text();
     throw new Error(`Drive upload failed (${r.status}): ${err}`);
   }
-  return r.json();
+  const meta = await r.json();
+  /* READ IT BACK. A 200 on the upload is not proof the object exists at the
+   * size we sent — and "nothing ever looked afterwards" is precisely why this
+   * backup went unnoticed for months. */
+  const expected = new TextEncoder().encode(content).length;
+  const verified = await verifyUploaded(token, meta.id, expected, fileName);
+  return { ...meta, verified_bytes: verified };
 }
 
 function toCSV(rows: any[], headers: string[]): string {
@@ -204,6 +241,16 @@ Deno.serve(async (req) => {
       backup_date: dateStr, results, status: 'success', created_at: now.toISOString()
     }, { onConflict: 'backup_date' });
 
+    /* A marker the hourly monitor reads. backup_logs already existed and said
+     * "success" for a run whose Drive writes were never checked, so a separate
+     * key records only VERIFIED completion — every file read back from Drive at
+     * the expected size. */
+    await sb.from('system_state').upsert({
+      key: 'backup:last_verified',
+      value: { date: dateStr, at: now.toISOString(), results },
+      updated_at: now.toISOString(),
+    });
+
     console.log('Backup complete:', JSON.stringify(results));
     return new Response(JSON.stringify({ success: true, date: dateStr, folder: `Backup_${dateStr}`, results }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -211,6 +258,16 @@ Deno.serve(async (req) => {
 
   } catch (err: any) {
     console.error('Backup fatal error:', err);
+    /* Record the failure. Previously a fatal error returned a 500 to pg_cron,
+     * which discards the body — so a failing backup left no trace anywhere. */
+    try {
+      const sb2 = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      await sb2.from('backup_logs').upsert({
+        backup_date: new Date().toISOString().slice(0, 10),
+        results: { error: String(err?.message || err).slice(0, 500) },
+        status: 'failed', created_at: new Date().toISOString(),
+      }, { onConflict: 'backup_date' });
+    } catch (_) { /* nothing left to try */ }
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });

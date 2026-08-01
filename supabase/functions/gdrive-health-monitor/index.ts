@@ -416,13 +416,37 @@ async function checkEmbeddings(): Promise<{ ok: boolean; null_chunks: number; gu
   return { ok: false, null_chunks: n, guidelines: new Set((data || []).map((r: any) => r.guideline_id)).size };
 }
 
+/* BACKUP FRESHNESS. Reads backup:last_verified — a marker weekly-backup writes
+ * only after every file has been read back from Drive at the expected size.
+ * Deliberately NOT backup_logs: that table already said "success" for a run
+ * whose Drive writes were never checked, and then said nothing at all for
+ * months because a fatal error returned a 500 that pg_cron discards.
+ *
+ * 8 days, not 7: the job is weekly, so 7 would alert on ordinary jitter. 8
+ * means a run has actually been missed. */
+async function checkBackupFreshness(): Promise<{ ok: boolean; last?: string; age_days?: number }> {
+  const { data } = await sb.from("system_state").select("value, updated_at")
+    .eq("key", "backup:last_verified").maybeSingle();
+  if (!data?.updated_at) return { ok: false };
+  const ageDays = (Date.now() - new Date(data.updated_at).getTime()) / 86400000;
+  return { ok: ageDays <= 8, last: (data.value as any)?.date || data.updated_at, age_days: Math.round(ageDays) };
+}
+
+/* Per-key cooldown. The Drive write credential gets 3 hours, not 12: while it
+ * is down every borrower upload is invisible in the CRM, so a repeat alert
+ * costs far less than a quiet gap. Everything else stays at 12, where the
+ * failure is either slow-moving or already visible elsewhere. */
+function cooldownFor(alertKey: string): number {
+  return alertKey === "drive_write_credential" ? 3 : ALERT_COOLDOWN_HOURS;
+}
+
 async function shouldAlert(alertKey: string): Promise<boolean> {
   const stateKey = `gdrive_alert:${alertKey}`;
   const { data } = await sb.from("system_state")
     .select("value, updated_at").eq("key", stateKey).single();
   if (!data?.updated_at) return true;
   const ageHours = (Date.now() - new Date(data.updated_at).getTime()) / 3600000;
-  return ageHours >= ALERT_COOLDOWN_HOURS;
+  return ageHours >= cooldownFor(alertKey);
 }
 
 async function markAlertSent(alertKey: string, summary: string) {
@@ -569,7 +593,8 @@ Deno.serve(async (req) => {
     const embeddings = await checkEmbeddings();
     const syncStatus = await checkPendingSyncs();
     const indexing = await checkIndexingHealth();
-    const allOk = oauth.ok && driveCred.ok && staticKeys.ok && embeddings.ok && syncStatus.ok && indexing.ok;
+    const backup = await checkBackupFreshness();
+    const allOk = oauth.ok && driveCred.ok && staticKeys.ok && embeddings.ok && syncStatus.ok && indexing.ok && backup.ok;
 
     const result: any = {
       checked_at: new Date().toISOString(),
@@ -589,6 +614,9 @@ Deno.serve(async (req) => {
       static_keys: staticKeys.results,
       embeddings_ok: embeddings.ok,
       embeddings_null_chunks: embeddings.null_chunks,
+      backup_ok: backup.ok,
+      backup_last_verified: backup.last || null,
+      backup_age_days: backup.age_days ?? null,
       sync_ok: syncStatus.ok,
       pending_count: syncStatus.pending,
       pending_oldest_hours: syncStatus.oldest_age_hours,
@@ -634,6 +662,24 @@ Deno.serve(async (req) => {
           "  \u2022 ANTHROPIC — SMS assistant, document typing, guideline summaries",
           "  \u2022 TWILIO — all SMS and voice, inbound and outbound",
           "  \u2022 GOOGLE_SA_KEY — the Gmail inbox",
+        ].join("\n"),
+      };
+    } else if (!backup.ok) {
+      alert = {
+        key: "backup_stale",
+        message: [
+          `${RED} CRM backup is stale`,
+          "",
+          backup.last
+            ? `Last VERIFIED backup: ${backup.last} (${backup.age_days} days ago).`
+            : "No verified backup has ever been recorded.",
+          "",
+          "The weekly job runs Sundays 08:00 UTC. Verified means every file was",
+          "read back from Drive at the expected size — not merely that the upload",
+          "call returned 200.",
+          "",
+          "If the Drive credential is also failing, fix that first: the backup",
+          "cannot authenticate without it.",
         ].join("\n"),
       };
     } else if (!embeddings.ok) {
