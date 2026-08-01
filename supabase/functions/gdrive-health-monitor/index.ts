@@ -171,6 +171,100 @@ function buildIndexingAlert(c: IndexCheck): { key: string; message: string } {
   return { key: "guidelines_unindexed", message: lines.join("\n") };
 }
 
+/* THE DRIVE *WRITE* CREDENTIAL — a different credential from checkOAuth's.
+ *
+ * checkOAuth exercises google_calendar_tokens.refresh_token (row id='rene').
+ * gdrive-sync and gdrive-proxy's upload path use the GOOGLE_DRIVE_REFRESH_TOKEN
+ * *secret*. Those are two different grants, and this monitor was only ever
+ * testing the first one — which is why it reported oauth_ok:true for hours
+ * while every document mirror was failing with invalid_grant.
+ *
+ * It also has to run REGARDLESS OF BACKLOG. gdrive-sync returns
+ * {"synced":0,"message":"No pending docs"} and never reaches the token call
+ * when nothing is queued, so the pipeline reports healthy precisely when it is
+ * idle — and then fails on the first real upload. Health has to be measured by
+ * doing the thing, not by the absence of complaints.
+ *
+ * Two steps, because they fail differently: exchange the refresh token (catches
+ * expiry/revocation), then make a trivial authenticated Drive call (catches a
+ * token that mints fine but has lost its scopes). */
+type CredCheck = { ok: boolean; stage?: string; reason?: string; user?: string };
+
+async function checkDriveWriteCredential(): Promise<CredCheck> {
+  const refresh = Deno.env.get("GOOGLE_DRIVE_REFRESH_TOKEN");
+  const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
+  const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
+  if (!refresh || !clientId || !clientSecret) {
+    return { ok: false, stage: "config", reason: "GOOGLE_DRIVE_REFRESH_TOKEN / CLIENT_ID / CLIENT_SECRET not all set" };
+  }
+  let access = "";
+  try {
+    const r = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refresh, client_id: clientId, client_secret: clientSecret }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.access_token) {
+      return { ok: false, stage: "token_exchange",
+               reason: `${d.error || `HTTP ${r.status}`}${d.error_description ? ": " + d.error_description : ""}`.slice(0, 200) };
+    }
+    access = d.access_token;
+  } catch (e) {
+    return { ok: false, stage: "token_exchange", reason: String(e).slice(0, 200) };
+  }
+  try {
+    const r = await fetch("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)", {
+      headers: { Authorization: `Bearer ${access}` },
+    });
+    const d = await r.json();
+    if (!r.ok) return { ok: false, stage: "drive_call", reason: `${d?.error?.message || r.status}`.slice(0, 200) };
+    return { ok: true, user: d?.user?.emailAddress };
+  } catch (e) {
+    return { ok: false, stage: "drive_call", reason: String(e).slice(0, 200) };
+  }
+}
+
+function buildCredentialAlert(c: CredCheck): { key: string; message: string } {
+  return {
+    key: "drive_write_credential",
+    message: [
+      "\ud83d\udd34 Google Drive WRITE credential is broken",
+      "",
+      `Failed at: ${c.stage} — ${c.reason}`,
+      "",
+      "Every document mirror is failing while this is broken:",
+      "  \u2022 borrower uploads (portal, SMS, admin) reach Supabase Storage but never Drive",
+      "  \u2022 the Documents tab reads Drive, so those documents are INVISIBLE in the CRM",
+      "  \u2022 nothing else reports this \u2014 gdrive-sync says \"No pending docs\" when idle",
+      "",
+      "FIX: re-authorize Google Drive OAuth, then update the",
+      "GOOGLE_DRIVE_REFRESH_TOKEN secret:",
+      ...urlBlock(REAUTH_URL),
+    ].join("\n"),
+  };
+}
+
+/* Alert on the in-CRM mention feed as well as SMS. SMS rides the toll-free
+ * numbers that are still failing verification (~18% undelivered), so an alert
+ * about a broken pipeline must not depend on the least reliable channel. */
+async function notifyMentions(body: string) {
+  try {
+    await sb.rpc("app_notify_mentions", {
+      p_source_kind: "system",
+      p_source_id: null,
+      p_body: body,
+      p_actor_user_id: null,
+      p_actor_display: "Drive health monitor",
+      p_contact_id: null,
+    });
+    return true;
+  } catch (e) {
+    console.error("[gdrive-health] app_notify_mentions failed:", String(e));
+    return false;
+  }
+}
+
 async function shouldAlert(alertKey: string): Promise<boolean> {
   const stateKey = `gdrive_alert:${alertKey}`;
   const { data } = await sb.from("system_state")
@@ -319,15 +413,20 @@ Deno.serve(async (req) => {
     }
 
     const oauth = await checkOAuth();
+    const driveCred = await checkDriveWriteCredential();
     const syncStatus = await checkPendingSyncs();
     const indexing = await checkIndexingHealth();
-    const allOk = oauth.ok && syncStatus.ok && indexing.ok;
+    const allOk = oauth.ok && driveCred.ok && syncStatus.ok && indexing.ok;
 
     const result: any = {
       checked_at: new Date().toISOString(),
       oauth_ok: oauth.ok,
       oauth_reason: oauth.reason,
       oauth_failure_kind: oauth.failure_kind,
+      drive_write_credential_ok: driveCred.ok,
+      drive_write_credential_stage: driveCred.stage,
+      drive_write_credential_reason: driveCred.reason,
+      drive_write_credential_user: driveCred.user,
       sync_ok: syncStatus.ok,
       pending_count: syncStatus.pending,
       pending_oldest_hours: syncStatus.oldest_age_hours,
@@ -353,7 +452,12 @@ Deno.serve(async (req) => {
     /* OAuth first — it causes sync failures, not the other way round. Indexing
      * is independent of both, so it is reported when the Drive side is healthy
      * rather than being masked by it. */
-    if (!oauth.ok) {
+    if (!driveCred.ok) {
+      /* First, deliberately. This one silently breaks every document mirror,
+       * and a stalled-sync alert is a symptom of it rather than a separate
+       * problem. */
+      alert = buildCredentialAlert(driveCred);
+    } else if (!oauth.ok) {
       alert = buildOAuthAlert(oauth);
     } else if (!syncStatus.ok) {
       alert = buildSyncStalledAlert(syncStatus);
@@ -369,12 +473,14 @@ Deno.serve(async (req) => {
       }
     }
 
+    const mentioned = await notifyMentions(alert.message);
     const sent = await sendSms(alert.message);
-    if (sent) {
+    result.alert_mentioned = mentioned;
+    if (sent || mentioned) {
       result.alert_sent = true;
       await markAlertSent(alert.key, alert.message);
     } else {
-      result.alert_skipped_reason = "sms_send_failed";
+      result.alert_skipped_reason = "sms_send_failed_and_mention_failed";
     }
 
     return ok({ ...result, status: "unhealthy", message: alert.message });
