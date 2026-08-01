@@ -265,6 +265,110 @@ async function notifyMentions(body: string) {
   }
 }
 
+/* STATIC KEYS — the ones that do not expire but do get revoked.
+ *
+ * None of these has a natural lifetime, which is exactly why nothing noticed
+ * they were unmonitored: there is no expiry date to put in a calendar. They die
+ * on rotation, revocation, or a billing lapse, and the first symptom is a
+ * feature quietly not working. OPENAI is the sharpest: chunk-guidelines throws
+ * on an embed failure and marks the row 'failed', so a dead key does not
+ * corrupt data — but it does stop every new guideline from being searchable,
+ * and the only signal is a status nobody reads.
+ *
+ * Each check is the cheapest authenticated call the provider offers. A 401/403
+ * means the key is dead; a 429 or 5xx means the provider is having a moment and
+ * is NOT reported as a credential failure — alerting on someone else's outage
+ * teaches people to ignore the alert.
+ */
+type KeyCheck = { name: string; ok: boolean; detail?: string };
+
+async function probe(name: string, run: () => Promise<Response>): Promise<KeyCheck> {
+  try {
+    const r = await run();
+    if (r.ok) return { name, ok: true };
+    if (r.status === 429 || r.status >= 500) return { name, ok: true, detail: `provider ${r.status} (not a credential failure)` };
+    const body = (await r.text().catch(() => "")).slice(0, 160);
+    return { name, ok: false, detail: `HTTP ${r.status} ${body}` };
+  } catch (e) {
+    return { name, ok: false, detail: String(e).slice(0, 160) };
+  }
+}
+
+async function checkStaticKeys(): Promise<{ ok: boolean; results: KeyCheck[] }> {
+  const results: KeyCheck[] = [];
+
+  const anthropic = Deno.env.get("ANTHROPIC_API_KEY") || "";
+  results.push(anthropic
+    ? await probe("ANTHROPIC_API_KEY", () => fetch("https://api.anthropic.com/v1/models?limit=1", {
+        headers: { "x-api-key": anthropic, "anthropic-version": "2023-06-01" } }))
+    : { name: "ANTHROPIC_API_KEY", ok: false, detail: "not set" });
+
+  const openai = Deno.env.get("OPENAI_API_KEY") || "";
+  results.push(openai
+    ? await probe("OPENAI_API_KEY", () => fetch("https://api.openai.com/v1/models", {
+        headers: { Authorization: `Bearer ${openai}` } }))
+    : { name: "OPENAI_API_KEY", ok: false, detail: "not set" });
+
+  const tsid = Deno.env.get("TWILIO_ACCOUNT_SID") || "";
+  const ttok = Deno.env.get("TWILIO_AUTH_TOKEN") || "";
+  results.push(tsid && ttok
+    ? await probe("TWILIO_AUTH_TOKEN", () => fetch(`https://api.twilio.com/2010-04-01/Accounts/${tsid}.json`, {
+        headers: { Authorization: `Basic ${btoa(`${tsid}:${ttok}`)}` } }))
+    : { name: "TWILIO_AUTH_TOKEN", ok: false, detail: "not set" });
+
+  /* Gmail domain-wide delegation. Minting the token IS the test: it exercises
+   * the service-account key, the JWT signature and the DWD grant in one call,
+   * which is the whole chain gmail-inbox depends on. */
+  results.push(await probe("GOOGLE_SA_KEY (Gmail DWD)", async () => {
+    const raw = Deno.env.get("GOOGLE_SA_KEY") || "";
+    if (!raw) throw new Error("not set");
+    const sa = JSON.parse(raw);
+    const now = Math.floor(Date.now() / 1000);
+    const b64 = (o: unknown) => btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const head = b64({ alg: "RS256", typ: "JWT" });
+    const claim = b64({
+      iss: sa.client_email,
+      /* gmail.modify — the EXACT scope granted in the Workspace admin console
+       * and the one _shared/gmail-dwd.ts requests. DWD authorisation is
+       * per-scope: probing with gmail.readonly returns unauthorized_client even
+       * when the key is perfectly healthy, which is a false alarm about the very
+       * thing this monitor exists to get right. Check the scope in use. */
+      scope: "https://www.googleapis.com/auth/gmail.modify",
+      aud: "https://oauth2.googleapis.com/token",
+      sub: Deno.env.get("GMAIL_IMPERSONATE") || "rene@ratesandrealty.com",
+      exp: now + 3600, iat: now,
+    });
+    const pem = String(sa.private_key).replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
+    const der = Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
+    const k = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", k, new TextEncoder().encode(`${head}.${claim}`));
+    const jwt = `${head}.${claim}.` + btoa(String.fromCharCode(...new Uint8Array(sig)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return fetch("https://oauth2.googleapis.com/token", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${jwt}`,
+    });
+  }));
+
+  return { ok: results.every((r) => r.ok), results };
+}
+
+/* EMBEDDINGS INTEGRITY. A chunk row with a null embedding is invisible to
+ * vector search while its guideline reads 'done' — indexed to every human
+ * looking at the list, absent from every answer the assistant gives. Both
+ * chunkers embed BEFORE inserting and throw on failure, so this should be
+ * structurally impossible; the check exists because "should be impossible" is
+ * what the sidecar cache was too. */
+async function checkEmbeddings(): Promise<{ ok: boolean; null_chunks: number; guidelines: number }> {
+  const { count } = await sb.from("guideline_chunks")
+    .select("id", { count: "exact", head: true }).is("embedding", null);
+  const n = count || 0;
+  if (!n) return { ok: true, null_chunks: 0, guidelines: 0 };
+  const { data } = await sb.from("guideline_chunks")
+    .select("guideline_id").is("embedding", null).limit(500);
+  return { ok: false, null_chunks: n, guidelines: new Set((data || []).map((r: any) => r.guideline_id)).size };
+}
+
 async function shouldAlert(alertKey: string): Promise<boolean> {
   const stateKey = `gdrive_alert:${alertKey}`;
   const { data } = await sb.from("system_state")
@@ -414,9 +518,11 @@ Deno.serve(async (req) => {
 
     const oauth = await checkOAuth();
     const driveCred = await checkDriveWriteCredential();
+    const staticKeys = await checkStaticKeys();
+    const embeddings = await checkEmbeddings();
     const syncStatus = await checkPendingSyncs();
     const indexing = await checkIndexingHealth();
-    const allOk = oauth.ok && driveCred.ok && syncStatus.ok && indexing.ok;
+    const allOk = oauth.ok && driveCred.ok && staticKeys.ok && embeddings.ok && syncStatus.ok && indexing.ok;
 
     const result: any = {
       checked_at: new Date().toISOString(),
@@ -427,6 +533,10 @@ Deno.serve(async (req) => {
       drive_write_credential_stage: driveCred.stage,
       drive_write_credential_reason: driveCred.reason,
       drive_write_credential_user: driveCred.user,
+      static_keys_ok: staticKeys.ok,
+      static_keys: staticKeys.results,
+      embeddings_ok: embeddings.ok,
+      embeddings_null_chunks: embeddings.null_chunks,
       sync_ok: syncStatus.ok,
       pending_count: syncStatus.pending,
       pending_oldest_hours: syncStatus.oldest_age_hours,
@@ -457,6 +567,36 @@ Deno.serve(async (req) => {
        * and a stalled-sync alert is a symptom of it rather than a separate
        * problem. */
       alert = buildCredentialAlert(driveCred);
+    } else if (!staticKeys.ok) {
+      const dead = staticKeys.results.filter((r) => !r.ok);
+      alert = {
+        key: "static_keys:" + dead.map((d) => d.name).join(","),
+        message: [
+          "\ud83d\udd34 API credential(s) failing",
+          "",
+          ...dead.map((d) => `  \u2022 ${d.name} — ${d.detail}`),
+          "",
+          "What stops working:",
+          "  \u2022 OPENAI — new guidelines chunk but produce no embeddings, so they",
+          "    never appear in AI search even though the row says indexed",
+          "  \u2022 ANTHROPIC — SMS assistant, document typing, guideline summaries",
+          "  \u2022 TWILIO — all SMS and voice, inbound and outbound",
+          "  \u2022 GOOGLE_SA_KEY — the Gmail inbox",
+        ].join("\n"),
+      };
+    } else if (!embeddings.ok) {
+      alert = {
+        key: "embeddings_null",
+        message: [
+          "\ud83d\udd34 Guideline chunks with NO embedding",
+          "",
+          `${embeddings.null_chunks} chunk(s) across ${embeddings.guidelines} guideline(s).`,
+          "",
+          "These are invisible to AI search while their guideline reads 'indexed'.",
+          "Both chunkers embed before inserting, so this means something wrote",
+          "chunks by another path — investigate before re-chunking.",
+        ].join("\n"),
+      };
     } else if (!oauth.ok) {
       alert = buildOAuthAlert(oauth);
     } else if (!syncStatus.ok) {
