@@ -11271,6 +11271,11 @@ async function lpSectionUpload(sectionKey, fileList){
   // NOTE: intentionally NOT loadDocumentsGrid() — it lists Drive via the browser Google OAuth token
   // (_ldEnsureToken) and would pop a Google sign-in (origin_mismatch). The VA has no Drive OAuth;
   // this whole path stays 100% Supabase-session-token only.
+  } finally {
+    /* Released on every path, including a thrown one — a stuck flag would lock
+     * the uploader out until reload, which is worse than a duplicate. */
+    _lpUploadInFlight = false;
+  }
 }
 // ── Per-section CRM doc list (read-only, no Drive access needed) ─────────────
 function lpRenderSectionDocs(sectionKey, docs){
@@ -11287,11 +11292,6 @@ function lpRenderSectionDocs(sectionKey, docs){
       +'<span class="lp-secdoc-when">'+lpEsc(when)+'</span>'
       +link+'</div>';
   }).join('');
-  } finally {
-    /* Released on every path, including a thrown one — a stuck flag would
-     * lock the uploader out until reload, which is worse than a duplicate. */
-    _lpUploadInFlight = false;
-  }
 }
 async function lpLoadSectionDocs(sectionKey){
   const cid=lpCid(); if(!cid) return;
