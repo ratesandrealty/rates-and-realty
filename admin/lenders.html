@@ -2090,7 +2090,7 @@ async function loadLenderDocs(lenderId) {
   }
   try {
     const { data, error: _docsErr } = await _authClient().from('lender_guidelines')
-      .select('id,file_name,file_url,source_type,ocr_status,created_at,title,category')
+      .select('id,file_name,file_url,source_type,ocr_status,created_at,title,category,chunk_status,chunk_count')
       .eq('lender_id', lenderId)
       .neq('is_active', false)
       .order('created_at', { ascending: false });
@@ -2105,9 +2105,23 @@ async function loadLenderDocs(lenderId) {
     }
     container.innerHTML = data.map(function(doc) {
       const url = doc.file_url || (SB_URL + '/storage/v1/object/public/lender-guidelines/' + encodeURIComponent(doc.file_name || ''));
-      const badge = doc.ocr_status === 'completed' ? '✅' : (doc.ocr_status === 'pending' ? '⏳' : '📄');
+      /* THE BADGE NOW MEANS "THE AI CAN SEE THIS", NOT "THE FILE UPLOADED".
+       * ocr_status only said whether text came out of the PDF. A document can
+       * be stored, summarized, and show a green tick while chunk_count is 0 —
+       * meaning it is absent from every guideline search and the assistant
+       * cannot quote a line of it. USDA HB-1-3560 sat like that since April.
+       * chunk_status is the honest signal, so it drives the badge. */
+      const cs = doc.chunk_status, cc = doc.chunk_count || 0;
+      let badge, badgeTitle, badgeColor = '';
+      if (cs === 'done' && cc > 0)       { badge = '✅'; badgeTitle = `Indexed — ${cc} chunk${cc===1?'':'s'} searchable`; }
+      else if (cs === 'running')         { badge = '⏳'; badgeTitle = 'Indexing in progress — resumes automatically every 5 min'; badgeColor = 'color:#fbbf24;'; }
+      else if (cs === 'failed')          { badge = '❌'; badgeTitle = 'Indexing FAILED — the AI cannot see this document'; badgeColor = 'color:#f87171;'; }
+      else if (cs === 'skipped_oversize'){ badge = '⚠️'; badgeTitle = 'Skipped as oversize — the AI cannot see this document'; badgeColor = 'color:#f87171;'; }
+      else if (cs === 'empty')           { badge = '⚠️'; badgeTitle = 'No text extracted — the AI cannot see this document'; badgeColor = 'color:#f87171;'; }
+      else                               { badge = '⏳'; badgeTitle = 'Queued for indexing'; badgeColor = 'color:rgba(255,255,255,0.45);'; }
+      const notIndexed = !(cs === 'done' && cc > 0);
       const label = doc.title || doc.file_name || 'Untitled';
-      const meta = [doc.category, doc.source_type].filter(Boolean).join(' · ');
+      const meta = [doc.category, doc.source_type, (cs === 'done' && cc > 0) ? `${cc} chunks` : null].filter(Boolean).join(' · ');
       // title/file_name are lender-supplied (uploaded through the public lender form).
       // The edge function strips HTML-significant characters on new inserts, but this
       // table has other producers and a backfill history, so escape at render too.
@@ -2116,12 +2130,13 @@ async function loadLenderDocs(lenderId) {
       // HTML-escape for the attribute. The browser decodes the entities back before
       // parsing the JS, so both layers land correctly.
       const safeTitle = escHtmlDoc(String(label).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
-      return `<div style="display:flex;align-items:stretch;gap:0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:6px;transition:border-color 0.15s;" onmouseover="this.style.borderColor='rgba(201,168,76,0.35)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.06)'">
+      return `<div style="display:flex;align-items:stretch;gap:0;background:${notIndexed ? 'rgba(248,113,113,0.06)' : 'rgba(255,255,255,0.03)'};border:1px solid ${notIndexed ? 'rgba(248,113,113,0.30)' : 'rgba(255,255,255,0.06)'};border-radius:8px;margin-bottom:6px;transition:border-color 0.15s;" onmouseover="this.style.borderColor='rgba(201,168,76,0.35)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.06)'">
         <a href="${eUrl}" target="_blank" style="flex:1;display:flex;align-items:center;gap:10px;padding:9px 12px;text-decoration:none;color:inherit;min-width:0;">
-          <span style="font-size:16px;">${badge}</span>
+          <span style="font-size:16px;${badgeColor}" title="${escHtmlDoc(badgeTitle)}">${badge}</span>
           <div style="flex:1;min-width:0;">
             <div style="font-size:12px;font-weight:600;color:#f0ebe0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${eLabel}</div>
             ${eMeta ? `<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">${eMeta}</div>` : ''}
+            ${notIndexed ? `<div style="font-size:10px;color:#f87171;margin-top:2px;font-weight:600;">${escHtmlDoc(badgeTitle)}</div>` : ''}
           </div>
           <span style="font-size:10px;color:rgba(255,255,255,0.3);">↗</span>
         </a>

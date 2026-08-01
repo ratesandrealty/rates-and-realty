@@ -17,9 +17,49 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+
+/* Hand a too-big document to the streaming chunker instead of abandoning it.
+ *
+ * "skipped_oversize" was a terminal state: the auto-resume cron selects only
+ * chunk_status IN (NULL,'running','failed'), so a skipped row was never looked
+ * at again. It kept file_url, ai_summary and a healthy-looking row while the
+ * AI could not see a word of it — the exact silent gap this is closing.
+ * usda-rd-hb-1-3560-consolidated.pdf sat like that since 2026-04-30.
+ *
+ * Setting chunk_status='running' with chunked_at NULL puts it straight into the
+ * cron's work set; the direct invoke below just saves up to five minutes. */
+async function handOffToLarge(sb: any, id: string, why: string, extra: Record<string, unknown> = {}) {
+  await sb.from("lender_guidelines").update({
+    chunk_status: "running",
+    chunked_at: null,
+    last_page_processed: null,
+    ...extra,
+  }).eq("id", id);
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/chunk-guidelines-large`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guideline_id: id }),
+    });
+  } catch (e) {
+    // Non-fatal: the row is already queued for the cron.
+    console.error("[chunk-guidelines] direct handoff failed, cron will pick it up:", String(e));
+  }
+  console.log(`[chunk-guidelines] handed ${id} to chunk-guidelines-large (${why})`);
+}
+
 const CHUNK_TARGET_CHARS = 2000;
 const CHUNK_OVERLAP_CHARS = 320;
 const EMBED_BATCH_SIZE = 32;
+/* These are ROUTING thresholds now, not skip thresholds. Above either one the
+ * document is handed to chunk-guidelines-large, which streams 25 pages per
+ * invocation and is resumed by cron — the whole reason it exists. Raising these
+ * numbers instead would mean one invocation trying to parse and embed a
+ * 200-page PDF inside the edge function timeout, which is the failure this
+ * split was designed around.
+ *
+ * They stay at 8MB/200p because that is where a single invocation stops being
+ * reliable, NOT because of any upload limit. The upload cap is 20MB. */
 const MAX_PDF_BYTES = 8 * 1024 * 1024;
 const MAX_PAGE_COUNT = 200;
 
@@ -81,11 +121,8 @@ async function chunkOne(g: any, force: boolean): Promise<any> {
       if (sizeStr) {
         const size = parseInt(sizeStr);
         if (size > MAX_PDF_BYTES) {
-          await sb.from("lender_guidelines").update({
-            chunk_status: "skipped_oversize",
-            chunked_at: new Date().toISOString(),
-          }).eq("id", id);
-          return { chunks: 0, pages: 0, skipped: `oversize ${(size/1024/1024).toFixed(1)}MB` };
+          await handOffToLarge(sb, id, `${(size/1024/1024).toFixed(1)}MB by HEAD`);
+          return { chunks: 0, pages: 0, handed_off: `oversize ${(size/1024/1024).toFixed(1)}MB` };
         }
       }
     } catch {}
@@ -96,22 +133,15 @@ async function chunkOne(g: any, force: boolean): Promise<any> {
   const buf = new Uint8Array(await pdfRes.arrayBuffer());
 
   if (!force && buf.byteLength > MAX_PDF_BYTES) {
-    await sb.from("lender_guidelines").update({
-      chunk_status: "skipped_oversize",
-      chunked_at: new Date().toISOString(),
-    }).eq("id", id);
-    return { chunks: 0, pages: 0, skipped: `oversize ${(buf.byteLength/1024/1024).toFixed(1)}MB` };
+    await handOffToLarge(sb, id, `${(buf.byteLength/1024/1024).toFixed(1)}MB`);
+    return { chunks: 0, pages: 0, handed_off: `oversize ${(buf.byteLength/1024/1024).toFixed(1)}MB` };
   }
 
   const pages = await extractPagesFromPdf(buf);
 
   if (!force && pages.length > MAX_PAGE_COUNT) {
-    await sb.from("lender_guidelines").update({
-      chunk_status: "skipped_oversize",
-      chunked_at: new Date().toISOString(),
-      ocr_page_count: pages.length,
-    }).eq("id", id);
-    return { chunks: 0, pages: pages.length, skipped: `${pages.length} pages` };
+    await handOffToLarge(sb, id, `${pages.length} pages`, { ocr_page_count: pages.length });
+    return { chunks: 0, pages: pages.length, handed_off: `${pages.length} pages` };
   }
 
   const chunks: any[] = [];
