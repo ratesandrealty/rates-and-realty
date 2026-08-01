@@ -51,6 +51,36 @@ async function createDriveFolder(token: string, name: string, parentId: string):
   return data.id;
 }
 
+
+/* PAGINATE, AND ASSERT COMPLETENESS.
+ *
+ * PostgREST caps an unbounded select at 1000 rows. The 2026-08-01 run exported
+ * exactly 1000 of 1038 contacts and reported success — 38 people silently
+ * absent from the backup. Worse, the read-back verification PASSED, because it
+ * compared the uploaded file against what was sent rather than against what
+ * should have been sent. Verifying the transport while never checking the
+ * payload is the same shape as every other failure found this week.
+ *
+ * So: page through with .range(), then compare the row count against a
+ * head:true count of the table and THROW on any mismatch. A backup missing rows
+ * must not be able to call itself verified. */
+async function fetchAllRows(sb: any, table: string, columns: string): Promise<any[]> {
+  const PAGE = 1000;
+  const out: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb.from(table).select(columns).range(from, from + PAGE - 1);
+    if (error) throw new Error(`${table}: ${error.message}`);
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  const { count, error: cErr } = await sb.from(table).select('id', { count: 'exact', head: true });
+  if (cErr) throw new Error(`${table} count: ${cErr.message}`);
+  if (typeof count === 'number' && out.length !== count) {
+    throw new Error(`Backup aborted: ${table} exported ${out.length} rows but the table holds ${count}. An incomplete backup must not be recorded as verified.`);
+  }
+  return out;
+}
+
 async function uploadToDrive(token: string, folderId: string, fileName: string, content: string, mimeType: string) {
   const b = 'rrbackup123';
   const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: fileName, parents: [folderId] })}\r\n--${b}\r\nContent-Type: ${mimeType}\r\n\r\n${content}\r\n--${b}--`;
@@ -130,10 +160,7 @@ Deno.serve(async (req) => {
 
     // 1. CONTACTS — use actual column names
     try {
-      const { data: contacts, error: cErr } = await sb.from('contacts')
-        .select('id,first_name,last_name,email,phone,secondary_phone,contact_type,source,funnel_source,credit_score,monthly_income,annual_income,employer_name,job_title,address,city,state,zip,county,tags,notes,company,loan_type,loan_amount,lead_score,score_tier,lead_temperature,appointment_set,appointment_date,created_at,updated_at')
-        .order('created_at', { ascending: false });
-      if (cErr) throw cErr;
+      const contacts = await fetchAllRows(sb, 'contacts', 'id,first_name,last_name,email,phone,secondary_phone,contact_type,source,funnel_source,credit_score,monthly_income,annual_income,employer_name,job_title,address,city,state,zip,county,tags,notes,company,loan_type,loan_amount,lead_score,score_tier,lead_temperature,appointment_set,appointment_date,created_at,updated_at');
       if (contacts?.length) {
         const h = ['id','first_name','last_name','email','phone','secondary_phone','contact_type','source','funnel_source','credit_score','monthly_income','annual_income','employer_name','job_title','address','city','state','zip','county','tags','notes','company','loan_type','loan_amount','lead_score','score_tier','lead_temperature','appointment_set','appointment_date','created_at','updated_at'];
         await uploadToDrive(token, dataFolder, `contacts_${dateStr}.csv`, toCSV(contacts, h), 'text/csv');
@@ -146,10 +173,7 @@ Deno.serve(async (req) => {
 
     // 2. LEADS
     try {
-      const { data: leads, error: lErr } = await sb.from('leads')
-        .select('id,contact_id,status,source,loan_type,loan_amount,property_address,property_type,property_value,score,notes,created_at,updated_at')
-        .order('created_at', { ascending: false });
-      if (lErr) throw lErr;
+      const leads = await fetchAllRows(sb, 'leads', 'id,contact_id,status,source,loan_type,loan_amount,property_address,property_type,property_value,score,notes,created_at,updated_at');
       if (leads?.length) {
         const h = ['id','contact_id','status','source','loan_type','loan_amount','property_address','property_type','property_value','score','notes','created_at','updated_at'];
         await uploadToDrive(token, dataFolder, `leads_${dateStr}.csv`, toCSV(leads, h), 'text/csv');
@@ -160,10 +184,7 @@ Deno.serve(async (req) => {
 
     // 3. MORTGAGE APPLICATIONS
     try {
-      const { data: apps, error: aErr } = await sb.from('mortgage_applications')
-        .select('id,contact_id,loan_type,loan_amount,property_address,created_at')
-        .order('created_at', { ascending: false });
-      if (aErr) throw aErr;
+      const apps = await fetchAllRows(sb, 'mortgage_applications', 'id,contact_id,loan_type,loan_amount,property_address,created_at');
       if (apps?.length) {
         const h = ['id','contact_id','loan_type','loan_amount','property_address','created_at'];
         await uploadToDrive(token, dataFolder, `applications_${dateStr}.csv`, toCSV(apps, h), 'text/csv');
@@ -174,10 +195,7 @@ Deno.serve(async (req) => {
 
     // 4. LENDERS
     try {
-      const { data: lenders, error: ldErr } = await sb.from('lenders')
-        .select('id,name,lender_type,programs,tags,min_credit_score,max_ltv,website,contact_name,contact_email,contact_phone,rep_name,rep_phone,rep_email,channel,priority,is_active,clickup_task_id,last_synced_at')
-        .order('name');
-      if (ldErr) throw ldErr;
+      const lenders = await fetchAllRows(sb, 'lenders', 'id,name,lender_type,programs,tags,min_credit_score,max_ltv,website,contact_name,contact_email,contact_phone,rep_name,rep_phone,rep_email,channel,priority,is_active,clickup_task_id,last_synced_at');
       if (lenders?.length) {
         const h = ['id','name','lender_type','programs','tags','min_credit_score','max_ltv','website','contact_name','contact_email','contact_phone','rep_name','rep_phone','rep_email','channel','priority','is_active','clickup_task_id','last_synced_at'];
         await uploadToDrive(token, dataFolder, `lenders_${dateStr}.csv`, toCSV(lenders, h), 'text/csv');
@@ -188,9 +206,7 @@ Deno.serve(async (req) => {
 
     // 5. LENDER SUBMISSIONS
     try {
-      const { data: subs } = await sb.from('lead_lender_submissions')
-        .select('id,lead_id,contact_id,lender_id,status,submitted_at,notes,created_at')
-        .order('created_at', { ascending: false });
+      const subs = await fetchAllRows(sb, 'lead_lender_submissions', 'id,lead_id,contact_id,lender_id,status,submitted_at,notes,created_at');
       if (subs?.length) {
         const h = ['id','lead_id','contact_id','lender_id','status','submitted_at','notes','created_at'];
         await uploadToDrive(token, dataFolder, `lender_submissions_${dateStr}.csv`, toCSV(subs, h), 'text/csv');

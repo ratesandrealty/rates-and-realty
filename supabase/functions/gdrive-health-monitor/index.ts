@@ -200,11 +200,11 @@ function buildIndexingAlert(c: IndexCheck): { key: string; message: string } {
  * Two steps, because they fail differently: exchange the refresh token (catches
  * expiry/revocation), then make a trivial authenticated Drive call (catches a
  * token that mints fine but has lost its scopes). */
-type CredCheck = { ok: boolean; stage?: string; reason?: string; user?: string };
+type CredCheck = { ok: boolean; stage?: string; reason?: string; user?: string; scopes?: string[]; wrote?: string };
 
 async function checkDriveWriteCredential(): Promise<CredCheck> {
   /* Resolve exactly as gdrive-sync does. Probing the secret while the mirror
-   * reads the table would recreate the original bug in mirror image: a monitor
+   * reads the row would recreate the original bug in mirror image: a monitor
    * confidently reporting on a credential nothing uses. */
   const { token: refresh, source: tokenSource } = await getDriveRefreshToken(sb);
   const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
@@ -212,6 +212,8 @@ async function checkDriveWriteCredential(): Promise<CredCheck> {
   if (!refresh || !clientId || !clientSecret) {
     return { ok: false, stage: "config", reason: `no refresh token (source=${tokenSource}) or CLIENT_ID/SECRET unset` };
   }
+
+  // ── 1. exchange ──
   let access = "";
   try {
     const r = await fetch("https://oauth2.googleapis.com/token", {
@@ -228,17 +230,73 @@ async function checkDriveWriteCredential(): Promise<CredCheck> {
   } catch (e) {
     return { ok: false, stage: "token_exchange", reason: String(e).slice(0, 200) };
   }
+
+  /* ── 2. SCOPE. A token minted with drive.file exchanges cleanly and reads
+   * /about perfectly well while being unable to write into any folder the app
+   * did not create — which is every borrower folder, since n8n makes those.
+   * That is precisely the gap that hid for months, so the scope is asserted
+   * rather than assumed. */
+  let scopes: string[] = [];
+  try {
+    const ti = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(access)}`);
+    const td = await ti.json();
+    scopes = String(td.scope || "").split(/\s+/).filter(Boolean);
+  } catch (e) {
+    return { ok: false, stage: "tokeninfo", reason: String(e).slice(0, 200) };
+  }
+  const FULL_DRIVE = "https://www.googleapis.com/auth/drive";
+  if (!scopes.includes(FULL_DRIVE)) {
+    return { ok: false, stage: "scope",
+             reason: `token lacks ${FULL_DRIVE} — has [${scopes.join(", ")}]. drive.file cannot write into borrower folders created by n8n. Re-authorise at /functions/v1/google-calendar-auth`,
+             scopes };
+  }
+
+  // ── 3. read ──
+  let user = "";
   try {
     const r = await fetch("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)", {
-      headers: { Authorization: `Bearer ${access}` },
-    });
+      headers: { Authorization: `Bearer ${access}` } });
     const d = await r.json();
-    if (!r.ok) return { ok: false, stage: "drive_call", reason: `${d?.error?.message || r.status}`.slice(0, 200) };
-    return { ok: true, user: `${d?.user?.emailAddress} (token from ${tokenSource})` };
+    if (!r.ok) return { ok: false, stage: "drive_call", reason: `${d?.error?.message || r.status}`.slice(0, 200), scopes };
+    user = d?.user?.emailAddress || "";
   } catch (e) {
-    return { ok: false, stage: "drive_call", reason: String(e).slice(0, 200) };
+    return { ok: false, stage: "drive_call", reason: String(e).slice(0, 200), scopes };
+  }
+
+  /* ── 4. A REAL WRITE into a real borrower-shaped folder.
+   * The whole point: create a file inside a folder this app did NOT create.
+   * Target is the ZZ-TEST fixture contact's folder — never a real borrower's,
+   * per CLAUDE.md. If the fixture has no folder yet the probe reports that
+   * rather than silently skipping, because a skipped write test is the same as
+   * no write test. Cleaned up immediately whether or not the write succeeds. */
+  const { data: fx } = await sb.from("contacts")
+    .select("id, gdrive_folder_id").eq("first_name", "ZZ-TEST").maybeSingle();
+  if (!fx?.gdrive_folder_id) {
+    return { ok: false, stage: "write_test_unavailable", scopes, user,
+             reason: "ZZ-TEST fixture contact has no gdrive_folder_id — cannot prove a write into a borrower folder. Recreate the fixture (see CLAUDE.md)." };
+  }
+  try {
+    const cr = await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: `_probe_${Date.now()}.txt`, mimeType: "text/plain", parents: [fx.gdrive_folder_id] }),
+    });
+    const cd = await cr.json();
+    if (!cr.ok || !cd.id) {
+      return { ok: false, stage: "borrower_folder_write", scopes, user,
+               reason: `cannot create in a borrower folder: ${cd?.error?.message || cr.status}`.slice(0, 220) };
+    }
+    await fetch(`https://www.googleapis.com/drive/v3/files/${cd.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ trashed: true }),
+    }).catch(() => {});
+    return { ok: true, user: `${user} (token from ${tokenSource})`, scopes, wrote: cd.id };
+  } catch (e) {
+    return { ok: false, stage: "borrower_folder_write", scopes, user, reason: String(e).slice(0, 200) };
   }
 }
+
 
 function buildCredentialAlert(c: CredCheck): { key: string; message: string } {
   return {
@@ -464,6 +522,43 @@ async function shouldAlert(alertKey: string): Promise<boolean> {
   return ageHours >= cooldownFor(alertKey);
 }
 
+/* ── THE MONITOR'S OWN HEALTH ────────────────────────────────────────────────
+ *
+ * A monitor that throws is silent by construction. pg_cron fires this over
+ * net.http_post, records the response in net._http_response, and looks at it
+ * never — so when a generated `${RED}` with no constant in scope made every
+ * alert branch throw, the function returned 500 on every run for hours and the
+ * only symptom was the absence of messages. Absence is not a signal anybody
+ * notices.
+ *
+ * Two layers, because the obvious one is not enough:
+ *
+ *   1. heartbeat() below, called from ok() so EVERY completed run stamps it,
+ *      healthy or not. A run that throws never reaches ok(), so the stamp
+ *      simply stops advancing. Nothing to remember, no branch to get wrong.
+ *
+ *   2. A pg_cron job in pure SQL that alerts when the stamp goes stale — see
+ *      supabase/sql/monitor_deadman.sql. That one lives OUTSIDE this file on
+ *      purpose. A catch block that reports its own failure is still JavaScript
+ *      in the same module: the same typo class that broke the alert branches
+ *      could equally break the reporting, and then the silence is total. The
+ *      dead-man's switch has no template literals, no constants, and no
+ *      dependency on this function loading at all.
+ *
+ * The catch block does still try to report — belt as well as braces — but it is
+ * the SQL switch that makes the guarantee. */
+async function heartbeat(status: string, detail?: any) {
+  try {
+    await sb.from("system_state").upsert({
+      key: "monitor:gdrive_health",
+      value: { status, at: new Date().toISOString(), detail: detail ?? null },
+      updated_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error("[gdrive-health] heartbeat write failed:", String(e));
+  }
+}
+
 async function markAlertSent(alertKey: string, summary: string) {
   const stateKey = `gdrive_alert:${alertKey}`;
   await sb.from("system_state").upsert({
@@ -592,7 +687,14 @@ function buildSyncStalledAlert(check: SyncCheck): { key: string; message: string
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-  const ok = (d: any) => new Response(JSON.stringify(d, null, 2), { headers: { ...cors, "Content-Type": "application/json" } });
+  /* Every completed run stamps the heartbeat, healthy or unhealthy — the point
+   * is "this function ran to the end", not "everything is fine". Deliberately
+   * not awaited into the response path: a heartbeat write that hangs must not
+   * turn a working monitor into a timing-out one. */
+  const ok = (d: any) => {
+    heartbeat(d?.status || "unknown", { alert_sent: d?.alert_sent ?? false, skipped: d?.alert_skipped_reason });
+    return new Response(JSON.stringify(d, null, 2), { headers: { ...cors, "Content-Type": "application/json" } });
+  };
 
   try {
     const url = new URL(req.url);
@@ -629,6 +731,8 @@ Deno.serve(async (req) => {
       drive_write_credential_stage: driveCred.stage,
       drive_write_credential_reason: driveCred.reason,
       drive_write_credential_user: driveCred.user,
+      drive_write_credential_scopes: driveCred.scopes,
+      drive_write_credential_wrote: driveCred.wrote,
       static_keys_ok: staticKeys.ok,
       static_keys: staticKeys.results,
       embeddings_ok: embeddings.ok,
@@ -776,8 +880,40 @@ Deno.serve(async (req) => {
 
     return ok({ ...result, status: "unhealthy", message: alert.message });
   } catch (e: any) {
+    /* Report the monitor's own crash. Everything here is best-effort and
+     * individually guarded, because the one thing worse than a monitor that
+     * throws is a monitor whose error handler throws on top of it. The
+     * heartbeat is deliberately NOT stamped — a crashed run must look stale to
+     * the dead-man's switch, which is the layer that actually guarantees
+     * someone hears about this. */
+    const msg = e?.message || String(e);
+    const stack = String(e?.stack || "").split("\n").slice(0, 4).join("\n");
     console.error("[gdrive-health] FATAL:", e);
-    return new Response(JSON.stringify({ error: e.message || String(e) }), {
+    try {
+      await sb.from("system_state").upsert({
+        key: "monitor:gdrive_health_error",
+        value: { error: msg, stack, at: new Date().toISOString() },
+        updated_at: new Date().toISOString(),
+      });
+    } catch (_) { /* ignore */ }
+    try {
+      const last = await sb.from("system_state").select("value")
+        .eq("key", "gdrive_alert:monitor_crash").maybeSingle();
+      const sentAt = last?.data?.value?.sent_at ? Date.parse(last.data.value.sent_at) : 0;
+      if (Date.now() - sentAt > 3 * 3600 * 1000) {
+        await sendSms([
+          `${RED} The health monitor itself crashed`,
+          "",
+          msg.slice(0, 300),
+          "",
+          "Every check it performs is unreported until this is fixed — the",
+          "credential, backup, storage and indexing alerts are all downstream",
+          "of this function running to completion.",
+        ].join("\n"));
+        await markAlertSent("monitor_crash", msg.slice(0, 300));
+      }
+    } catch (_) { /* ignore */ }
+    return new Response(JSON.stringify({ error: msg }), {
       status: 500,
       headers: { ...cors, "Content-Type": "application/json" },
     });
