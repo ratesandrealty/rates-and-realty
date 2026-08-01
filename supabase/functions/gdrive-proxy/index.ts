@@ -184,16 +184,77 @@ Deno.serve(async (req: Request) => {
      * which is the correct boundary for an endpoint reachable with a service
      * key. */
     if (req.method === "POST" && action === "trash-file") {
+      /* Two explicit guards, checked BEFORE the PATCH.
+       *
+       * The original version relied on Google returning 403 for anything the
+       * service account does not own. That is a guard we neither wrote nor
+       * control: one sharing change, one ownership transfer, one shift in
+       * Google's permission model, and a delete endpoint reachable with a
+       * service key becomes unguarded — and nobody would notice until something
+       * was gone. The constraint has to be ours and it has to be stated.
+       *
+       * Guard 1: the SA must OWN the target. Ownership is asserted from the
+       * metadata, not inferred from an error we hope to receive.
+       * Guard 2: the target must not sit anywhere inside a borrower's folder
+       * tree, EVEN IF the SA owns it — which is exactly the case that occurred:
+       * a health-check folder created by the SA inside a real borrower's Drive
+       * folder was SA-owned and therefore trashable under guard 1 alone.
+       */
       const body = await req.json().catch(() => ({}));
       const fileId = String(body.fileId || "");
       if (!fileId) return err("fileId required", 400);
-      const r = await driveFetch(`/files/${encodeURIComponent(fileId)}?fields=id,name,trashed`, {
+
+      const caller = req.headers.get("x-client-info") || req.headers.get("user-agent") || "unknown";
+      console.log(`[gdrive-proxy] trash-file REQUESTED id=${fileId} caller=${caller}`);
+
+      const mr = await driveFetch(`/files/${encodeURIComponent(fileId)}?fields=id,name,owners(emailAddress),parents,trashed&supportsAllDrives=true`);
+      const meta = await mr.json();
+      if (!mr.ok) return err(meta?.error?.message || `metadata HTTP ${mr.status}`, mr.status);
+
+      // ── Guard 1: SA ownership ──
+      const saEmail = (() => {
+        try { return JSON.parse(Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON") || "{}").client_email || ""; }
+        catch { return ""; }
+      })();
+      const owners: string[] = (meta.owners || []).map((o: any) => String(o.emailAddress || ""));
+      if (!saEmail || !owners.includes(saEmail)) {
+        console.error(`[gdrive-proxy] trash-file REFUSED (not SA-owned) id=${fileId} owners=${owners.join(",")} caller=${caller}`);
+        return err(`Refused: ${meta.name} is not owned by the service account (owners: ${owners.join(", ") || "unknown"})`, 403);
+      }
+
+      // ── Guard 2: never inside a borrower folder tree ──
+      const sbClient = createClient(SUPABASE_URL, SERVICE_KEY);
+      const { data: folders } = await sbClient.from("contacts")
+        .select("id, gdrive_folder_id").not("gdrive_folder_id", "is", null);
+      const borrowerRoots = new Map<string, string>();
+      for (const f of folders || []) borrowerRoots.set(String((f as any).gdrive_folder_id), String((f as any).id));
+
+      let cursor: string[] = meta.parents || [];
+      for (let depth = 0; depth < 8 && cursor.length; depth++) {
+        for (const pid of cursor) {
+          if (borrowerRoots.has(pid)) {
+            console.error(`[gdrive-proxy] trash-file REFUSED (inside borrower folder ${pid}) id=${fileId} caller=${caller}`);
+            return err(`Refused: ${meta.name} is inside a borrower's Drive folder (contact ${borrowerRoots.get(pid)}). Nothing under a borrower folder may be trashed through this endpoint.`, 403);
+          }
+        }
+        const next: string[] = [];
+        for (const pid of cursor) {
+          const pr = await driveFetch(`/files/${encodeURIComponent(pid)}?fields=parents&supportsAllDrives=true`);
+          if (!pr.ok) continue;
+          const pd = await pr.json();
+          for (const gp of pd.parents || []) next.push(gp);
+        }
+        cursor = next;
+      }
+
+      const r = await driveFetch(`/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trashed: true }),
       });
       const d = await r.json();
       if (!r.ok) return err(d?.error?.message || `trash HTTP ${r.status}`, r.status);
+      console.log(`[gdrive-proxy] trash-file DONE id=${fileId} name=${d.name} caller=${caller}`);
       return json({ id: d.id, name: d.name, trashed: d.trashed });
     }
 
