@@ -199,7 +199,18 @@ async function chunkOne(g: any, force: boolean): Promise<any> {
     const batch = chunks.slice(i, i + EMBED_BATCH_SIZE);
     const embeddings = await embedBatch(batch.map(c => c.chunk_text));
     const rows = batch.map((c, idx) => ({ ...c, embedding: embeddings[idx] }));
-    const { error: insErr } = await sb.from("guideline_chunks").insert(rows);
+    /* UPSERT, not insert. The resume path appends: a batch that was written but
+       * whose last_page_processed update did not land is re-run from the same
+       * page, and a plain insert duplicated every chunk in it. Four documents in
+       * the corpus carried duplicates from this — Home-Possible-VLIP-Matrix had
+       * EIGHT copies of every chunk, written unattended by the cron. Duplicates
+       * skew vector search: the same passage is returned repeatedly and crowds
+       * out other results.
+       *
+       * onConflict matches the guideline_chunks_unique_slot index, so a re-run
+       * overwrites its own rows and changes nothing else. */
+      const { error: insErr } = await sb.from("guideline_chunks")
+        .upsert(rows, { onConflict: "guideline_id,page_number,chunk_index" });
     if (insErr) throw new Error(`insert ${insErr.message}`);
   }
 

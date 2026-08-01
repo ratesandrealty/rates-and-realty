@@ -350,6 +350,53 @@ async function checkStaticKeys(): Promise<{ ok: boolean; results: KeyCheck[] }> 
     });
   }));
 
+  /* SERVICE ACCOUNT WRITE — a separate fact from "the SA authenticates".
+   *
+   * Measured today: the SA reads shared Drive content fine and mints tokens
+   * fine, but a PATCH against a file rene@ owns returns 403. It CAN create —
+   * it owns what it makes — which is what gdrive-proxy's resolve-folder and
+   * upload paths rely on. So "auth works" would have been a green light over a
+   * capability that does not exist for the operation being attempted.
+   *
+   * Creates and immediately trashes a folder in the SA's OWN Drive root — never
+   * in a borrower's folder, so a health check can never leave litter where Rene
+   * will find it. */
+  results.push(await probe("GOOGLE_SA (Drive write)", async () => {
+    const raw = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON") || "";
+    if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON not set");
+    const sa = JSON.parse(raw);
+    const now = Math.floor(Date.now() / 1000);
+    const b64 = (o: unknown) => btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const head = b64({ alg: "RS256", typ: "JWT" });
+    const claim = b64({ iss: sa.client_email, scope: "https://www.googleapis.com/auth/drive",
+                        aud: "https://oauth2.googleapis.com/token", exp: now + 3600, iat: now });
+    const pem = String(sa.private_key).replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
+    const der = Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
+    const k = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", k, new TextEncoder().encode(`${head}.${claim}`));
+    const jwt = `${head}.${claim}.` + btoa(String.fromCharCode(...new Uint8Array(sig)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const tr = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${jwt}`,
+    });
+    const td = await tr.json();
+    if (!td.access_token) throw new Error("token: " + JSON.stringify(td).slice(0, 120));
+    const auth = { Authorization: `Bearer ${td.access_token}`, "Content-Type": "application/json" };
+
+    const cr = await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
+      method: "POST", headers: auth,
+      body: JSON.stringify({ name: "_rr_healthcheck", mimeType: "application/vnd.google-apps.folder" }),
+    });
+    if (!cr.ok) return cr;                       // the failure we want reported
+    const { id } = await cr.json();
+    // Clean up after ourselves; a leaked probe folder every hour is its own bug.
+    await fetch(`https://www.googleapis.com/drive/v3/files/${id}`, {
+      method: "PATCH", headers: auth, body: JSON.stringify({ trashed: true }),
+    }).catch(() => {});
+    return cr;
+  }));
+
   return { ok: results.every((r) => r.ok), results };
 }
 
@@ -526,9 +573,14 @@ Deno.serve(async (req) => {
 
     const result: any = {
       checked_at: new Date().toISOString(),
-      oauth_ok: oauth.ok,
-      oauth_reason: oauth.reason,
-      oauth_failure_kind: oauth.failure_kind,
+      /* calendar_oauth_ok, NOT oauth_ok. This checks google_calendar_tokens —
+       * a different grant from the Drive write credential below. Reading as a
+       * global all-clear while the mirror was dead is the exact failure this
+       * monitor was supposed to catch. Nothing parses this JSON (the cron fires
+       * it and discards the body), so the rename breaks no consumer. */
+      calendar_oauth_ok: oauth.ok,
+      calendar_oauth_reason: oauth.reason,
+      calendar_oauth_failure_kind: oauth.failure_kind,
       drive_write_credential_ok: driveCred.ok,
       drive_write_credential_stage: driveCred.stage,
       drive_write_credential_reason: driveCred.reason,

@@ -176,6 +176,27 @@ Deno.serve(async (req: Request) => {
       return json({ id: cd.id, name: cd.name, created: true });
     }
 
+    /* trash-file: move a Drive item the SERVICE ACCOUNT OWNS to the trash.
+     *
+     * Deliberately trash, not delete — Drive keeps it ~30 days, so a wrong id is
+     * recoverable. The SA cannot touch files owned by rene@ (a PATCH there
+     * returns 403), so the blast radius is limited to things this app created,
+     * which is the correct boundary for an endpoint reachable with a service
+     * key. */
+    if (req.method === "POST" && action === "trash-file") {
+      const body = await req.json().catch(() => ({}));
+      const fileId = String(body.fileId || "");
+      if (!fileId) return err("fileId required", 400);
+      const r = await driveFetch(`/files/${encodeURIComponent(fileId)}?fields=id,name,trashed`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trashed: true }),
+      });
+      const d = await r.json();
+      if (!r.ok) return err(d?.error?.message || `trash HTTP ${r.status}`, r.status);
+      return json({ id: d.id, name: d.name, trashed: d.trashed });
+    }
+
     if (req.method === "POST" && action === "create-folder") {
       let body: { parentId?: string; name?: string };
       try { body = await req.json(); } catch (_e) { return err("Invalid JSON body", 400); }
