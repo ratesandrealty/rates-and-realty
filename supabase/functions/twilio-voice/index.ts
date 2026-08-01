@@ -37,6 +37,46 @@ function twimlRes(xml: string) {
   });
 }
 
+
+/* GREETING IS CONFIG, NOT CODE.
+ *
+ * Rene will replace the TTS with his own recorded voice. That should be a row
+ * edit, not a deploy: set app_config.voicemail_greeting_url to an audio file
+ * and this switches from <Say> to <Play> on the next call. Falls back to TTS if
+ * the row is missing, unreadable, or the URL is blank — a greeting that fails
+ * closed to silence would let callers hang up on dead air.
+ *
+ * NMLS is deliberately absent pending the compliance answer. */
+async function greetingConfig(): Promise<{ url: string; text: string }> {
+  const fallback =
+    "You've reached Rene Duarte at Rates and Realty. I'm sorry I missed your call. " +
+    "Please leave your name, number, and a brief message after the tone, and I'll get right back to you.";
+  try {
+    const { data } = await sb.from('app_config')
+      .select('key, value')
+      .in('key', ['voicemail_greeting_url', 'voicemail_greeting_text']);
+    const map: Record<string, string> = {};
+    for (const r of data || []) map[(r as any).key] = String((r as any).value ?? '').trim();
+    return { url: map.voicemail_greeting_url || '', text: map.voicemail_greeting_text || fallback };
+  } catch (e) {
+    console.error('[twilio-voice] greeting config read failed, using TTS default:', String(e));
+    return { url: '', text: fallback };
+  }
+}
+
+function voicemailTwiml(statusCb: string, g: { url: string; text: string }): string {
+  const greet = g.url
+    ? `<Play>${g.url.replace(/&/g, '&amp;')}</Play>`
+    : `<Say voice="Polly.Joanna">${g.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</Say>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  ${greet}
+  <Record maxLength="120" playBeep="true" trim="trim-silence" recordingStatusCallback="${statusCb}" recordingStatusCallbackEvent="completed"/>
+  <Say voice="Polly.Joanna">I didn't get a message. Goodbye.</Say>
+  <Hangup/>
+</Response>`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -156,7 +196,20 @@ Deno.serve(async (req) => {
         }
 
         const statusCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
-        const forwardTo = Deno.env.get('RENE_CELL') || '+17144728508';
+        /* No hardcoded fallback. A wrong number here silently forwards every
+         * inbound business call to whoever owns it, and a hardcoded one keeps
+         * working after the real number changes — the failure would be a caller
+         * reaching a stranger, discovered by the stranger. If the secret is
+         * missing, go straight to voicemail: a message we keep beats a call we
+         * misroute. */
+        const forwardTo = (Deno.env.get('RENE_CELL') || '').trim();
+        if (!forwardTo) {
+          console.error('[twilio-voice] RENE_CELL not set — inbound call routed to voicemail');
+          try {
+            await sb.from('calls_log').update({ status: 'voicemail_no_forward' }).eq('twilio_call_sid', callSid);
+          } catch (_) {}
+          return twimlRes(voicemailTwiml(statusCb, await greetingConfig()));
+        }
         /* timeout=18: short enough that Twilio gives up BEFORE Rene's carrier
          * voicemail answers (~25s on most US carriers). If the carrier answers
          * first, Twilio bridges to it, our <Record> never runs, and the message
@@ -166,7 +219,7 @@ Deno.serve(async (req) => {
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Dial timeout="18" answerOnBridge="true" callerId="${from}" record="record-from-answer" recordingStatusCallback="${statusCb}" action="${statusCb}?phase=inbound_done" method="POST">
-    <Number>${forwardTo}</Number>
+    <Number statusCallback="${statusCb}?phase=leg_status" statusCallbackEvent="completed" statusCallbackMethod="POST">${forwardTo}</Number>
   </Dial>
 </Response>`;
         console.log(`[twilio-voice] INBOUND from=${from} to=${to} sid=${callSid} contact=${inboundContactId} -> ringing ${forwardTo}`);
@@ -175,6 +228,26 @@ Deno.serve(async (req) => {
 
       /* Inbound leg finished without being answered → voicemail. Twilio POSTs
        * DialCallStatus here because of the action= above. */
+      /* A caller who hangs up WHILE RINGING never triggers the Dial action URL —
+       * Twilio stops processing TwiML when the calling party is gone. Without
+       * this the row would sit at 'ringing' forever and a silent hangup would
+       * be indistinguishable from a call still in progress. Two closers:
+       * the per-leg statusCallback below, and the number-level StatusCallback
+       * configured in the Twilio console (see the deploy checklist). */
+      if (phase === 'leg_status' || phase === 'call_status') {
+        const st = params.get('CallStatus') || params.get('DialCallStatus') || 'completed';
+        const dur = parseInt(params.get('CallDuration') || params.get('DialCallDuration') || '0', 10) || null;
+        try {
+          const { data: row } = await sb.from('calls_log')
+            .select('id, status').eq('twilio_call_sid', callSid).maybeSingle();
+          // Never downgrade a row that already reached a terminal outcome.
+          if (row && ['ringing', 'in-progress'].includes(String(row.status))) {
+            await sb.from('calls_log').update({ status: st, duration: dur }).eq('id', row.id);
+          }
+        } catch (e) { console.error('[twilio-voice] leg_status update failed:', String(e)); }
+        return new Response('', { status: 200, headers: corsHeaders });
+      }
+
       if (phase === 'inbound_done') {
         const dialStatus = params.get('DialCallStatus') || '';
         try {
@@ -186,14 +259,8 @@ Deno.serve(async (req) => {
         if (dialStatus === 'completed') {
           return twimlRes(`<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`);
         }
-        const statusCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
-        return twimlRes(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">You've reached Rene Duarte at Rates and Realty. I'm sorry I missed your call. Please leave your name, number, and a brief message after the tone, and I'll get right back to you.</Say>
-  <Record maxLength="120" playBeep="true" trim="trim-silence" recordingStatusCallback="${statusCb}" recordingStatusCallbackEvent="completed"/>
-  <Say voice="Polly.Joanna">I didn't get a message. Goodbye.</Say>
-  <Hangup/>
-</Response>`);
+        const statusCb2 = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
+        return twimlRes(voicemailTwiml(statusCb2, await greetingConfig()));
       }
 
       // Outbound call from browser → return TwiML to dial the destination
