@@ -108,6 +108,94 @@ Deno.serve(async (req) => {
         return new Response('', { status: 200, headers: corsHeaders });
       }
 
+      /* ── INBOUND PSTN CALL ────────────────────────────────────────────
+       * BRANCH ON From, NOT To. For an inbound call Twilio posts To = OUR OWN
+       * number, so the `if (to)` branch below returned TwiML dialling the 866
+       * back to itself with callerId set to the same number. Every real caller
+       * hit that. Nothing was logged, and calls_log has had no inbound row ever
+       * — 11 inbound calls on Twilio in 90 days, zero rows.
+       *
+       * This branch is deliberately narrow so every working path is untouched:
+       * it fires only when the caller is NOT the browser client, there is no
+       * ?phase= (click-to-call's connect step), and To is one of our own
+       * numbers. Anything else falls through to the existing behaviour. */
+      const OUR_NUMBERS = new Set([
+        '+18668919394',   // main business line
+        '+17149092526',
+        '+18886881231',
+      ]);
+      const isBrowserLeg = from.startsWith('client:');
+      const phase = reqUrl.searchParams.get('phase') || '';
+      if (!isBrowserLeg && !phase && OUR_NUMBERS.has(to)) {
+        // Log at call START, so a caller who hangs up before voicemail still exists.
+        let inboundContactId: string | null = null;
+        try {
+          const last10 = from.replace(/\D/g, '').slice(-10);
+          if (last10.length === 10) {
+            const { data: c } = await sb.from('contacts')
+              .select('id')
+              .or(`phone.ilike.%${last10}%,secondary_phone.ilike.%${last10}%`)
+              .limit(1).maybeSingle();
+            inboundContactId = c?.id || null;
+          }
+        } catch (e) { console.error('[twilio-voice] inbound contact match failed:', String(e)); }
+
+        try {
+          await sb.from('calls_log').insert({
+            contact_id: inboundContactId,
+            from_phone: from,
+            to_phone: to,
+            direction: 'inbound',
+            status: 'ringing',
+            twilio_call_sid: callSid,
+            created_at: new Date().toISOString(),
+          });
+        } catch (e) {
+          // Never let a logging failure drop a live call — the caller matters more.
+          console.error('[twilio-voice] inbound calls_log insert failed:', String(e));
+        }
+
+        const statusCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
+        const forwardTo = Deno.env.get('RENE_CELL') || '+17144728508';
+        /* timeout=18: short enough that Twilio gives up BEFORE Rene's carrier
+         * voicemail answers (~25s on most US carriers). If the carrier answers
+         * first, Twilio bridges to it, our <Record> never runs, and the message
+         * lands somewhere the CRM cannot see — the same invisible-recording
+         * problem in a different costume. answerOnBridge keeps the caller
+         * hearing ringback rather than silence. */
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial timeout="18" answerOnBridge="true" callerId="${from}" record="record-from-answer" recordingStatusCallback="${statusCb}" action="${statusCb}?phase=inbound_done" method="POST">
+    <Number>${forwardTo}</Number>
+  </Dial>
+</Response>`;
+        console.log(`[twilio-voice] INBOUND from=${from} to=${to} sid=${callSid} contact=${inboundContactId} -> ringing ${forwardTo}`);
+        return twimlRes(xml);
+      }
+
+      /* Inbound leg finished without being answered → voicemail. Twilio POSTs
+       * DialCallStatus here because of the action= above. */
+      if (phase === 'inbound_done') {
+        const dialStatus = params.get('DialCallStatus') || '';
+        try {
+          await sb.from('calls_log')
+            .update({ status: dialStatus === 'completed' ? 'completed' : dialStatus,
+                      duration: parseInt(params.get('DialCallDuration') || '0', 10) || null })
+            .eq('twilio_call_sid', callSid);
+        } catch (e) { console.error('[twilio-voice] inbound_done update failed:', String(e)); }
+        if (dialStatus === 'completed') {
+          return twimlRes(`<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`);
+        }
+        const statusCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
+        return twimlRes(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">You've reached Rene Duarte at Rates and Realty. I'm sorry I missed your call. Please leave your name, number, and a brief message after the tone, and I'll get right back to you.</Say>
+  <Record maxLength="120" playBeep="true" trim="trim-silence" recordingStatusCallback="${statusCb}" recordingStatusCallbackEvent="completed"/>
+  <Say voice="Polly.Joanna">I didn't get a message. Goodbye.</Say>
+  <Hangup/>
+</Response>`);
+      }
+
       // Outbound call from browser → return TwiML to dial the destination
       if (to) {
         const dialTo = to.startsWith('+') || to.startsWith('client:') ? to : formatPhone(to);
