@@ -1052,14 +1052,29 @@ Deno.serve(async (req) => {
      * answers 200 on failure, the other measured that a call returned. It was
      * true whether or not anything was delivered, which is how an alert nobody
      * received was reported as sent for a whole session. */
-    result.alert_sms_ok = sent.ok;
+    /* TWO SEPARATE FIELDS, so one working leg cannot mask a broken one. That
+     * masking is what hid a channel that had never delivered anything: SMS
+     * worked, the OR was true, and nobody looked at the other half.
+     *
+     * sms_delivered means Twilio ACCEPTED the message and issued a SID. It is
+     * not carrier confirmation — that only exists minutes later, and only from
+     * the Twilio API against the SID recorded here. The name is Rene's; the
+     * limit is written down so it cannot quietly become the next optimistic
+     * boolean. */
+    result.sms_delivered = sent.ok;
     result.alert_sms_sid = sent.sid;
     result.alert_sms_error = sent.error;
     result.alert_sms_to = sent.to;
     result.alert_sms_to_source = sent.to_source;
-    result.alert_notification_ok = crm.ok;
+    result.crm_notified = crm.ok;
     result.alert_notification_ids = crm.ids;
     result.alert_notification_error = crm.error;
+    /* Kept, but now derived from the two above rather than being the only
+     * thing reported. A caller that reads alert_sent alone still learns
+     * "something got through", never "everything worked". */
+    if (sent.ok !== crm.ok) {
+      console.warn(`[gdrive-health] PARTIAL DELIVERY sms=${sent.ok} crm=${crm.ok} sms_err=${sent.error} crm_err=${crm.error}`);
+    }
 
     if (sent.ok || crm.ok) {
       result.alert_sent = true;
