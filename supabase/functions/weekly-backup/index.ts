@@ -145,26 +145,79 @@ function toCSV(rows: any[], headers: string[]): string {
   return lines.join('\n');
 }
 
+const SITE_ORIGIN = 'https://beta.ratesandrealty.com';
+
+/* admin/contacts.html and admin/leads.html are gone from this list: neither has
+ * ever existed in this repo. The site answers an unknown path with the
+ * marketing homepage and a 200, so both backed up as byte-identical copies of
+ * index.html — three names, one 114,987-byte file, and the run reported
+ * errors: 0.
+ *
+ * admin/people.html and admin/pipeline.html replace them — the real contacts
+ * and leads pages. Each was checked against the site root before being added
+ * (people 197,321 bytes / bca4932d22ae, pipeline 15,406 / 0bbad69e542b, root
+ * 114,987 / 1dba3c54bc93) and each matches its repo file byte for byte.
+ * pipeline.html is genuinely small; that is the page, not a truncated fetch.
+ *
+ * This list is a stopgap in any case. Fetching site files over HTTP backs up
+ * whatever the edge happens to serve, which is why a soft 404 could pass for a
+ * page. The R2 sync must read them FROM THE REPO instead — see CLAUDE.md. */
 const SITE_FILES = [
   'index.html',
-  'admin/contacts.html', 'admin/leads.html', 'admin/lead-detail.html',
+  'admin/people.html', 'admin/pipeline.html', 'admin/lead-detail.html',
   'admin/lenders.html',
   'public/apply.html',
   'api/env.js',
 ];
 
-async function fetchSiteFile(path: string): Promise<string | null> {
+async function sha256Hex(s: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* ASSERT THE PAYLOAD, NOT THE STATUS CODE.
+ *
+ * A 200 is not proof the file exists. This site serves the marketing homepage
+ * for any path the Worker does not recognise, so the old check — `if (r.ok)` —
+ * happily stored the homepage under four different names and called it seven
+ * files backed up with zero errors. Verifying the transport while never looking
+ * at the bytes is the same failure the Drive read-back and the row-count
+ * assertion were each added to close; this is the third instance of it.
+ *
+ * So the root is fetched ONCE and every other path is compared against it.
+ * Bytes identical to the site root under a different name is a failure, not a
+ * file. index.html is exempt for the obvious reason: it IS the root. An empty
+ * body is a failure too — there is no file here worth backing up. */
+async function fetchSiteRoot(): Promise<{ body: string; hash: string } | null> {
   try {
-    const r = await fetch(`https://beta.ratesandrealty.com/${path}`, {
+    const r = await fetch(`${SITE_ORIGIN}/`, {
+      headers: { 'User-Agent': 'RatesRealty-Backup/1.0' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) { console.error(`Site root fetch failed: ${r.status}`); return null; }
+    const body = await r.text();
+    return { body, hash: await sha256Hex(body) };
+  } catch (e) {
+    console.error('Site root fetch error:', e);
+    return null;
+  }
+}
+
+async function fetchSiteFile(path: string, rootHash: string | null): Promise<{ content?: string; error?: string }> {
+  try {
+    const r = await fetch(`${SITE_ORIGIN}/${path}`, {
       headers: { 'User-Agent': 'RatesRealty-Backup/1.0' },
       signal: AbortSignal.timeout(15000)
     });
-    if (r.ok) return await r.text();
-    console.log(`Site file not found: ${path} (${r.status})`);
-    return null;
+    if (!r.ok) return { error: `HTTP ${r.status}` };
+    const content = await r.text();
+    if (!content.trim()) return { error: 'empty body' };
+    if (rootHash && path !== 'index.html' && await sha256Hex(content) === rootHash) {
+      return { error: `served the site root (${content.length} bytes) — path does not exist` };
+    }
+    return { content };
   } catch(e) {
-    console.log(`Site file fetch error: ${path}`, e);
-    return null;
+    return { error: `fetch error: ${String(e)}` };
   }
 }
 
@@ -252,19 +305,26 @@ Deno.serve(async (req) => {
     // 6. WEBSITE HTML FILES
     let siteCount = 0;
     const siteErrors: string[] = [];
+    /* Fetched once, up front. If the root itself cannot be fetched the soft-404
+     * comparison is impossible, so that is recorded rather than silently
+     * skipped — otherwise a failed root fetch would quietly restore the old
+     * status-only behaviour for the whole run. */
+    const root = await fetchSiteRoot();
+    if (!root) siteErrors.push('site root: unreachable — soft-404 detection disabled for this run');
     for (const path of SITE_FILES) {
-      const content = await fetchSiteFile(path);
-      if (content) {
+      const got = await fetchSiteFile(path, root?.hash ?? null);
+      if (got.content) {
         const folder = path.startsWith('admin/') ? adminFolder : path.startsWith('public/') ? publicFolder : siteFolder;
         const fname = path.split('/').pop() || path;
         const mime = path.endsWith('.js') ? 'application/javascript' : 'text/html';
         try {
-          await uploadToDrive(token, folder, fname, content, mime);
+          await uploadToDrive(token, folder, fname, got.content, mime);
           siteCount++;
           console.log(`Site file backed up: ${path}`);
         } catch(e: any) { siteErrors.push(`${path}: ${e.message}`); }
       } else {
-        siteErrors.push(`${path}: not found`);
+        console.log(`Site file rejected: ${path} — ${got.error}`);
+        siteErrors.push(`${path}: ${got.error}`);
       }
     }
     results.website = { files_backed_up: siteCount, errors: siteErrors.length, error_list: siteErrors };

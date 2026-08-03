@@ -489,20 +489,103 @@ async function checkEmbeddings(): Promise<{ ok: boolean; null_chunks: number; gu
   return { ok: false, null_chunks: n, guidelines: new Set((data || []).map((r: any) => r.guideline_id)).size };
 }
 
-/* BACKUP FRESHNESS. Reads backup:last_verified — a marker weekly-backup writes
- * only after every file has been read back from Drive at the expected size.
- * Deliberately NOT backup_logs: that table already said "success" for a run
- * whose Drive writes were never checked, and then said nothing at all for
- * months because a fatal error returned a 500 that pg_cron discards.
+/* BACKUP HEALTH. Two independent conditions, because age alone was not enough.
  *
- * 8 days, not 7: the job is weekly, so 7 would alert on ordinary jitter. 8
- * means a run has actually been missed. */
-async function checkBackupFreshness(): Promise<{ ok: boolean; last?: string; age_days?: number }> {
+ *   STALE  — backup:last_verified has not moved in over 8 days. The marker is
+ *            written only after every file has been read back from Drive at the
+ *            expected size. Deliberately NOT backup_logs: that table already
+ *            said "success" for a run whose Drive writes were never checked,
+ *            and then said nothing at all for months because a fatal error
+ *            returned a 500 that pg_cron discards.
+ *            8 days, not 7: the job is weekly, so 7 would alert on jitter.
+ *
+ *   FAILED — the newest backup_logs row says 'failed'. This is checked
+ *            INDEPENDENTLY OF AGE. The failed-section gate in weekly-backup
+ *            correctly withholds the marker when any export throws, but
+ *            withholding a marker is a silence, and staleness only notices a
+ *            silence eight days later. A run that failed this morning was
+ *            invisible until next week. Now it alerts on the next hourly pass.
+ *
+ * The staleness half can be suppressed; the failure half CANNOT. A suppression
+ * is only honoured with a syntactically valid future `until` date — a row with
+ * no expiry, a malformed one, or a past one suppresses nothing and the check
+ * resumes on its own. There is deliberately no way to mute this indefinitely. */
+const BACKUP_SUPPRESS_KEY = "backup:stale_check_suppressed_until";
+
+type BackupHealth = {
+  ok: boolean;
+  last?: string;
+  age_days?: number;
+  stale: boolean;
+  suppressed_until: string | null;
+  suppression_reason: string | null;
+  failed_run: { date: string; sections: string[] } | null;
+};
+
+async function checkBackupHealth(): Promise<BackupHealth> {
   const { data } = await sb.from("system_state").select("value, updated_at")
     .eq("key", "backup:last_verified").maybeSingle();
-  if (!data?.updated_at) return { ok: false };
-  const ageDays = (Date.now() - new Date(data.updated_at).getTime()) / 86400000;
-  return { ok: ageDays <= 8, last: (data.value as any)?.date || data.updated_at, age_days: Math.round(ageDays) };
+
+  const ageDays = data?.updated_at
+    ? (Date.now() - new Date(data.updated_at).getTime()) / 86400000
+    : null;
+  // No marker at all is stale by definition — nothing has ever been verified.
+  const stale = ageDays === null ? true : ageDays > 8;
+
+  /* Bounded suppression. `until` must be YYYY-MM-DD and still in the future;
+   * anything else is ignored, so a suppression cannot outlive its own date. */
+  let suppressedUntil: string | null = null;
+  let suppressionReason: string | null = null;
+  try {
+    const { data: sup } = await sb.from("system_state").select("value")
+      .eq("key", BACKUP_SUPPRESS_KEY).maybeSingle();
+    const until = String((sup?.value as any)?.until || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(until) && new Date(`${until}T23:59:59Z`).getTime() > Date.now()) {
+      suppressedUntil = until;
+      suppressionReason = String((sup?.value as any)?.reason || "").trim() || null;
+    }
+  } catch (e) {
+    // A suppression we cannot read is not a suppression. Fail towards alerting.
+    console.error("[monitor] backup suppression read failed:", String(e));
+  }
+
+  /* The newest run, whatever its date. Not filtered to recent days on purpose:
+   * if the last thing that happened was a failure, that is the current state
+   * however long ago it was. */
+  let failedRun: BackupHealth["failed_run"] = null;
+  try {
+    const { data: newest } = await sb.from("backup_logs")
+      .select("backup_date, status, results")
+      .order("backup_date", { ascending: false }).limit(1).maybeSingle();
+    if (newest && String((newest as any).status) === "failed") {
+      const results = ((newest as any).results || {}) as Record<string, any>;
+      const sections: string[] = [];
+      for (const [name, r] of Object.entries(results)) {
+        if (name === "website") {
+          const list = (r as any)?.error_list;
+          if (Array.isArray(list) && list.length) sections.push(`website: ${list.join("; ")}`);
+          continue;
+        }
+        if (r && typeof r === "object" && "error" in (r as any)) sections.push(`${name}: ${(r as any).error}`);
+      }
+      // A fatal run records results = { error: ... } with no per-table keys.
+      if (!sections.length && typeof (results as any).error === "string") sections.push((results as any).error);
+      failedRun = { date: String((newest as any).backup_date), sections };
+    }
+  } catch (e) {
+    console.error("[monitor] backup_logs read failed:", String(e));
+  }
+
+  const staleCounts = stale && !suppressedUntil;
+  return {
+    ok: !staleCounts && !failedRun,
+    last: (data?.value as any)?.date || data?.updated_at,
+    age_days: ageDays === null ? undefined : Math.round(ageDays),
+    stale,
+    suppressed_until: suppressedUntil,
+    suppression_reason: suppressionReason,
+    failed_run: failedRun,
+  };
 }
 
 /* Per-key cooldown. The Drive write credential gets 3 hours, not 12: while it
@@ -710,7 +793,7 @@ Deno.serve(async (req) => {
     const embeddings = await checkEmbeddings();
     const syncStatus = await checkPendingSyncs();
     const indexing = await checkIndexingHealth();
-    const backup = await checkBackupFreshness();
+    const backup = await checkBackupHealth();
     /* Rows vs objects. Runs every hour AND is the mandatory post-restore gate —
      * a restore is exactly when direction A goes from zero to many. */
     const recon = await reconcileStorage(sb);
@@ -740,6 +823,12 @@ Deno.serve(async (req) => {
       backup_ok: backup.ok,
       backup_last_verified: backup.last || null,
       backup_age_days: backup.age_days ?? null,
+      /* Reported even while suppressed, so a muted check is still visible to
+       * anyone reading this JSON rather than looking like a healthy one. */
+      backup_stale: backup.stale,
+      backup_stale_suppressed_until: backup.suppressed_until,
+      backup_stale_suppression_reason: backup.suppression_reason,
+      backup_failed_run: backup.failed_run,
       reconcile_ok: recon.ok,
       reconcile_dangling: recon.dangling,
       reconcile_orphans: recon.orphans,
@@ -821,6 +910,31 @@ Deno.serve(async (req) => {
           "  \u2022 GOOGLE_SA_KEY — the Gmail inbox",
         ].join("\n"),
       };
+    } else if (backup.failed_run) {
+      /* Ahead of staleness deliberately. A failed run is a fact about the last
+       * thing that actually happened; staleness is an inference from silence.
+       * When both are true the failure is the more actionable of the two. */
+      alert = {
+        key: "backup_failed",
+        message: [
+          `${RED} CRM backup RUN FAILED`,
+          "",
+          `Newest backup_logs row: ${backup.failed_run.date} — status 'failed'.`,
+          "",
+          ...(backup.failed_run.sections.length
+            ? ["Sections that failed:", ...backup.failed_run.sections.map((s) => `  • ${s}`)]
+            : ["No per-section detail was recorded."]),
+          "",
+          "backup:last_verified was deliberately NOT advanced, so the last",
+          "verified backup is still whatever it was before this run. Do not",
+          "treat the folder for this date as a usable backup: some sections",
+          "uploaded and some did not.",
+          "",
+          backup.last
+            ? `Last VERIFIED backup: ${backup.last}${backup.age_days !== undefined ? ` (${backup.age_days} days ago)` : ""}.`
+            : "No verified backup has ever been recorded.",
+        ].join("\n"),
+      };
     } else if (!backup.ok) {
       alert = {
         key: "backup_stale",
@@ -834,6 +948,10 @@ Deno.serve(async (req) => {
           "The weekly job runs Sundays 08:00 UTC. Verified means every file was",
           "read back from Drive at the expected size — not merely that the upload",
           "call returned 200.",
+          "",
+          "Check first whether pg_cron job 'weekly-crm-backup' is still enabled —",
+          "it has been disabled before, and a disabled job produces exactly this",
+          "symptom while looking like nothing is wrong.",
           "",
           "If the Drive credential is also failing, fix that first: the backup",
           "cannot authenticate without it.",

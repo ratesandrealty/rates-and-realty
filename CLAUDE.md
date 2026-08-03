@@ -50,6 +50,32 @@ supabase functions deploy <name> --project-ref ljywhvbmsibwnssxpesh --no-verify-
 Drop `--no-verify-jwt` for functions that require an authenticated caller
 (`gmail-inbox` pins `verify_jwt = true` in `supabase/config.toml`).
 
+## Backups
+
+`weekly-backup` writes to Drive with **rene@'s** user token, not the service
+account. Consequences, both learned the hard way:
+
+- Nothing in the backup tree can be trashed through `gdrive-proxy` — its first
+  guard requires SA ownership, and the SA cannot even read those files (the
+  metadata fetch 404s). Cleanup there is a Drive-UI job.
+- pg_cron job 2 `weekly-crm-backup` is **disabled** pending the R2 sync, so
+  nothing is currently producing backups. `backup:last_verified` last moved
+  2026-08-01.
+
+**The R2 sync must read site files FROM THE REPO, not over HTTP.** Fetching
+`https://beta.ratesandrealty.com/<path>` backs up whatever the edge happens to
+serve: the site answers an unknown path with the marketing homepage and a 200,
+so `admin/contacts.html` and `admin/leads.html` — neither of which exists —
+backed up as byte-identical copies of `index.html` while the run reported
+`errors: 0`. `fetchSiteFile` now hashes the site root once and rejects any file
+whose bytes match it, but that is a guard against a problem the repo as source
+does not have.
+
+Three separate fixes have now closed the same shape of bug in this one function
+— read the file back from Drive, assert the row count against the table, assert
+the payload is not a soft 404. Assume the next one is also a place where
+something checks a status code and never looks at the bytes.
+
 ## Security boundaries worth not breaking
 
 - `gmail-inbox` downloads outbound attachments with the **service role**, which
@@ -89,6 +115,7 @@ be careful. What works is having somewhere else to put it.
 | Drive writes | the **service account's own Drive root** | `GOOGLE_SERVICE_ACCOUNT_JSON`'s account. Create with no `parents`, trash immediately. Never inside a borrower folder — `gdrive-proxy?action=trash-file` will refuse to clean up after you there, by design. |
 | Chunker/PDF caches | bucket **`chunker-cache`** | Private, JSON-only. Never `lender-guidelines`: it is public, and its MIME allowlist silently 415s JSON. |
 | Snapshots before data changes | **`snapshots/*.json`**, committed | Plus a `<table>_<purpose>_<date>` copy in Postgres. See `5a084ce`, `drive-inventory-20260801.json`. |
+| Backup-pipeline dry runs | a scratch edge function, Drive **stubbed** | `weekly-backup` writes with rene@'s user token, so a test run cannot be cleaned up by `gdrive-proxy?action=trash-file` (the SA cannot see, let alone trash, rene@-owned files). Stub the uploads and point the verified marker at a `_SCRATCHTEST` key. |
 | Scratch files | the session scratchpad dir | Never `/tmp`, never the repo. |
 
 Temporary edge functions for one-off investigation are acceptable when they are
