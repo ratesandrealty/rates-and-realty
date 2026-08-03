@@ -15,6 +15,7 @@ import { getDriveRefreshToken } from "../_shared/google-user-token.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ADMIN_PHONE = "+17144728508";
+const ASSISTANT_FROM = Deno.env.get("TWILIO_ASSISTANT_NUMBER") || "+18886881231";
 const REAUTH_URL = "https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/google-calendar-auth";
 const SUPABASE_SECRETS_URL = "https://supabase.com/dashboard/project/ljywhvbmsibwnssxpesh/settings/functions";
 const ALERT_COOLDOWN_HOURS = 12;
@@ -678,6 +679,55 @@ async function markAlertSent(alertKey: string, summary: string) {
   });
 }
 
+/* ── SMS IS A HEADLINE, NOT THE REPORT ───────────────────────────────────────
+ *
+ * The alerts were going out at NINE segments. Not because they were long —
+ * because of one character. A single emoji forces the whole body from GSM-7
+ * into UCS-2, and a segment shrinks from 153 characters to 67. So the red
+ * circle at the top was costing nine times the money and nine times the
+ * exposure to the toll-free deliverability problem, on the channel whose
+ * entire job is reporting that things are broken.
+ *
+ * The SMS now carries the headline and one line of reason. The full text still
+ * goes to the CRM notification, which has no length limit and no per-segment
+ * cost. Anything not representable in GSM-7 is stripped rather than allowed to
+ * silently re-encode the message. */
+const GSM_SUBST: Array<[RegExp, string]> = [
+  [/[—–]/g, "-"],      // em/en dash
+  [/[‘’]/g, "'"],
+  [/[“”]/g, '"'],
+  [/…/g, "..."],
+  [/•/g, "*"],
+  [/→/g, "->"],
+];
+function gsmSafe(s: string): string {
+  let out = s;
+  for (const [re, v] of GSM_SUBST) out = out.replace(re, v);
+  // Whatever is left outside printable ASCII would drag the body into UCS-2.
+  return out.replace(/[^\x20-\x7E\n]/g, "").replace(/[ \t]+/g, " ");
+}
+
+/* Two GSM-7 segments are 306 characters. Leave room for the tail. */
+const SMS_TAIL = " Full detail in the CRM bell.";
+const SMS_MAX = 306 - SMS_TAIL.length;
+
+function smsDigest(full: string): string {
+  const lines = gsmSafe(full).split("\n").map((l) => l.trim()).filter(Boolean);
+  const headline = lines[0] || "CRM health alert";
+  /* Prefer a bullet: in every one of these alerts the bullets are the actual
+   * failures, while the first prose line tends to be a restatement of the
+   * headline. Fall back to the first line that says something. */
+  const body = lines.slice(1);
+  const reason = (
+    body.find((l) => /^[*\-]\s/.test(l)) ||
+    body.find((l) => l.replace(/^[*\-\s]+/, "").length > 8) ||
+    ""
+  ).replace(/^[*\-\s]+/, "");
+  let out = reason ? `${headline}: ${reason}` : headline;
+  if (out.length > SMS_MAX) out = out.slice(0, SMS_MAX - 3).trimEnd() + "...";
+  return out + SMS_TAIL;
+}
+
 /* Prefer the secret over the constant. ADMIN_PHONE is hardcoded, and a
  * hardcoded number keeps working after the real one changes — the same trap
  * twilio-voice removed from RENE_CELL. Unlike a call route, an alert with no
@@ -708,7 +758,16 @@ async function sendSms(message: string): Promise<{ ok: boolean; sid: string | nu
       body: JSON.stringify({
         trigger: "custom",
         to_phone: to,
-        params: { message },
+        /* The digest, not the report. The full text is in the CRM row. */
+        params: { message: smsDigest(message) },
+        /* SEND FROM THE ASSISTANT NUMBER, not the business line. Two reasons:
+         * the 888 is the thread the daily digest and loan nudges already
+         * arrive in, so an alert lands where Rene is looking; and the 866 is
+         * the public line borrowers call and text, where a reply to an alert
+         * would drop into customer flow via twilio-inbound. Same env var
+         * loan-date-nudges uses, so there is one answer to "which number is
+         * ours". */
+        from_phone: ASSISTANT_FROM,
       }),
     });
     const text = await res.text();

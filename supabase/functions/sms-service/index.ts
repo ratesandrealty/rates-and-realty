@@ -16,10 +16,14 @@ function formatPhone(phone: string): string {
   return `+${d}`;
 }
 
-async function sendTwilioSMS(to: string, body: string, mediaUrl?: string): Promise<{sent:boolean;sid?:string;error?:string}> {
+/* fromOverride is optional and defaults to TWILIO_FROM, so every existing
+ * caller is unchanged. It exists because internal alerts should arrive in the
+ * thread Rene already reads (the assistant number) rather than on the public
+ * business line borrowers text — see gdrive-health-monitor. */
+async function sendTwilioSMS(to: string, body: string, mediaUrl?: string, fromOverride?: string): Promise<{sent:boolean;sid?:string;error?:string}> {
   if (!TWILIO_SID || !TWILIO_TOKEN) return { sent:false, error:'Twilio not configured' };
   try {
-    const params: Record<string,string> = {To:formatPhone(to),From:TWILIO_FROM,Body:body};
+    const params: Record<string,string> = {To:formatPhone(to),From:(fromOverride||'').trim()||TWILIO_FROM,Body:body};
     if (mediaUrl) params.MediaUrl = mediaUrl;
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`,{
       method:'POST',
@@ -84,7 +88,7 @@ async function isOptedOut(to_phone:string, contact_id?:string): Promise<boolean>
   } catch (e) { console.error('[sms-service] suppression check threw:', String(e)); return true; }
 }
 
-async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string) {
+async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string) {
   const effectiveTrigger = trigger === 'manual' ? 'custom' : trigger;
   const msg = T[effectiveTrigger](params);
   if (await isOptedOut(to_phone, ids.contact_id)) {
@@ -92,7 +96,7 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
     await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:'recipient has opted out of SMS',media_url:mediaUrl});
     return { sent:false, error:'recipient has opted out of SMS', blocked:true };
   }
-  const result = await sendTwilioSMS(to_phone, msg, mediaUrl);
+  const result = await sendTwilioSMS(to_phone, msg, mediaUrl, fromOverride);
   await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,twilio_sid:result.sid,status:result.sent?'sent':'failed',error_message:result.error,media_url:mediaUrl});
   await logActivity({contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,crm_id:ids.borrower_id,title:`SMS: ${effectiveTrigger.replace(/_/g,' ')} to ${to_phone}`,description:msg.substring(0,120),status:result.sent?'sent':'failed',sms_body:msg,sms_to:to_phone,metadata:{trigger:effectiveTrigger,sid:result.sid,error:result.error,has_media:!!mediaUrl}});
   return result;
@@ -191,7 +195,11 @@ Deno.serve(async (req:Request) => {
     if (validTriggers.includes(trigger)) {
       const effectiveTrigger = trigger === 'manual' ? 'custom' : trigger;
       if (effectiveTrigger === 'custom' && !params.message) return err('params.message required for custom trigger');
-      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url);
+      /* from_phone is opt-in and only honoured for 'custom'/'manual' — the
+       * templated borrower-facing triggers must keep the business line, or a
+       * caller could quietly send borrower mail from an internal number. */
+      const fromOverride = (effectiveTrigger === 'custom' && typeof body.from_phone === 'string') ? body.from_phone : undefined;
+      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride);
       if (trigger === 'portal_signup') await sendTwilioSMS(RENE_PHONE, `New portal signup: ${params.firstName} ${params.lastName||''} (${params.email||to_phone}). ID: ${params.borrowerId||'—'}. Check CRM.`);
       if (trigger === 'showing_request') await sendTwilioSMS(RENE_PHONE, `New showing request from ${params.firstName}: ${params.homeCount} home${params.homeCount!==1?'s':''} on ${params.date||'TBD'}. Check CRM showings.`);
       return ok({success:true, sent:result.sent, sid:result.sid, error:result.error});
