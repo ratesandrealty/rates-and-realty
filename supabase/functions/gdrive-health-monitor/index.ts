@@ -318,23 +318,50 @@ function buildCredentialAlert(c: CredCheck): { key: string; message: string } {
   };
 }
 
-/* Alert on the in-CRM mention feed as well as SMS. SMS rides the toll-free
- * numbers that are still failing verification (~18% undelivered), so an alert
- * about a broken pipeline must not depend on the least reliable channel. */
-async function notifyMentions(body: string) {
+/* Second delivery leg, alongside SMS, so an alert about a broken pipeline does
+ * not depend on one channel.
+ *
+ * THIS USED TO CALL app_notify_mentions AND NEVER DELIVERED ANYTHING. That
+ * function is a MENTION FAN-OUT: it scans the body for `@handle`, looks each
+ * one up in auth_user_roles, and inserts one app_notifications row per match.
+ * A monitor alert contains no @handle, so the loop never ran, the function
+ * returned 0, and not one row was ever written. It did not error — there was
+ * nothing to error about — so the caller's `return true` was accurate about the
+ * call and wrong about the outcome. Every alert_mentioned: true this function
+ * has ever reported was measuring that a call completed.
+ *
+ * Now it inserts directly, for every admin in auth_user_roles, and returns the
+ * row ids it actually created. No rows, no success.
+ *
+ * KNOWN GAP, deliberately not papered over: nothing in this repo reads
+ * app_notifications. The rows are real and queryable, but until a UI renders
+ * them this leg reaches a table, not a person. Treat SMS as the only channel
+ * that currently reaches anyone. */
+async function notifyInCrm(body: string): Promise<{ ok: boolean; ids: string[]; error: string | null }> {
   try {
-    await sb.rpc("app_notify_mentions", {
-      p_source_kind: "system",
-      p_source_id: null,
-      p_body: body,
-      p_actor_user_id: null,
-      p_actor_display: "Drive health monitor",
-      p_contact_id: null,
-    });
-    return true;
+    const { data: admins, error: rErr } = await sb
+      .from("auth_user_roles").select("user_id").eq("role", "admin");
+    if (rErr) return { ok: false, ids: [], error: `admin lookup: ${rErr.message}` };
+    const rows = (admins || []).map((a: any) => ({
+      recipient_user_id: a.user_id,
+      actor_user_id: null,
+      actor_display: "Drive health monitor",
+      kind: "system",
+      source_kind: "monitor",
+      source_id: null,
+      contact_id: null,
+      preview: body.replace(/\s+/g, " ").slice(0, 180),
+    }));
+    if (!rows.length) return { ok: false, ids: [], error: "no admin recipients in auth_user_roles" };
+    /* .select() so the ids come back — the receipt IS the proof. An insert
+     * whose result is discarded is the same optimism in a new place. */
+    const { data, error } = await sb.from("app_notifications").insert(rows).select("id");
+    if (error) return { ok: false, ids: [], error: error.message };
+    const ids = (data || []).map((r: any) => String(r.id));
+    return { ok: ids.length > 0, ids, error: ids.length ? null : "insert returned no rows" };
   } catch (e) {
-    console.error("[gdrive-health] app_notify_mentions failed:", String(e));
-    return false;
+    console.error("[gdrive-health] in-CRM notify failed:", String(e));
+    return { ok: false, ids: [], error: String(e) };
   }
 }
 
@@ -651,7 +678,26 @@ async function markAlertSent(alertKey: string, summary: string) {
   });
 }
 
-async function sendSms(message: string): Promise<boolean> {
+/* Prefer the secret over the constant. ADMIN_PHONE is hardcoded, and a
+ * hardcoded number keeps working after the real one changes — the same trap
+ * twilio-voice removed from RENE_CELL. Unlike a call route, an alert with no
+ * destination is worse than one sent to a stale number, so the constant stays
+ * as a fallback rather than failing closed to silence. Which one was used is
+ * reported, so drift is visible instead of assumed. */
+function adminPhone(): { to: string; source: "RENE_CELL" | "hardcoded" } {
+  const env = (Deno.env.get("RENE_CELL") || "").trim();
+  return env ? { to: env, source: "RENE_CELL" } : { to: ADMIN_PHONE, source: "hardcoded" };
+}
+
+/* RETURNS A RECEIPT, NOT A MOOD.
+ *
+ * This used to `return res.ok` — the HTTP status of the call to sms-service.
+ * sms-service answers 200 with `{sent:false, error:"..."}` when Twilio rejects
+ * the message, so res.ok was true for a send that never happened. The only
+ * honest evidence a message exists is a Twilio message SID, so that is what
+ * comes back and what gets reported. */
+async function sendSms(message: string): Promise<{ ok: boolean; sid: string | null; error: string | null; to: string; to_source: string }> {
+  const { to, source } = adminPhone();
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
       method: "POST",
@@ -661,14 +707,26 @@ async function sendSms(message: string): Promise<boolean> {
       },
       body: JSON.stringify({
         trigger: "custom",
-        to_phone: ADMIN_PHONE,
+        to_phone: to,
         params: { message },
       }),
     });
-    return res.ok;
+    const text = await res.text();
+    let data: any = null;
+    try { data = JSON.parse(text); } catch { /* non-JSON body is itself the error */ }
+    if (!res.ok) {
+      return { ok: false, sid: null, error: `sms-service HTTP ${res.status}: ${text.slice(0, 200)}`, to, to_source: source };
+    }
+    const sid = data?.sid ? String(data.sid) : null;
+    const ok = data?.sent === true && !!sid;
+    return {
+      ok, sid,
+      error: ok ? null : String(data?.error || "sms-service reported no send and returned no SID"),
+      to, to_source: source,
+    };
   } catch (e) {
     console.error("[gdrive-health] sms send failed:", e);
-    return false;
+    return { ok: false, sid: null, error: String(e), to, to_source: source };
   }
 }
 
@@ -986,14 +1044,30 @@ Deno.serve(async (req) => {
       }
     }
 
-    const mentioned = await notifyMentions(alert.message);
+    const crm = await notifyInCrm(alert.message);
     const sent = await sendSms(alert.message);
-    result.alert_mentioned = mentioned;
-    if (sent || mentioned) {
+
+    /* Receipts, per leg. alert_sent used to be `sent || mentioned` where both
+     * inputs were optimistic — one measured an HTTP status from a wrapper that
+     * answers 200 on failure, the other measured that a call returned. It was
+     * true whether or not anything was delivered, which is how an alert nobody
+     * received was reported as sent for a whole session. */
+    result.alert_sms_ok = sent.ok;
+    result.alert_sms_sid = sent.sid;
+    result.alert_sms_error = sent.error;
+    result.alert_sms_to = sent.to;
+    result.alert_sms_to_source = sent.to_source;
+    result.alert_notification_ok = crm.ok;
+    result.alert_notification_ids = crm.ids;
+    result.alert_notification_error = crm.error;
+
+    if (sent.ok || crm.ok) {
       result.alert_sent = true;
+      /* Only now. Marking a failed alert as sent mutes the retry for 12 hours,
+       * so a delivery outage would silence exactly the alerts that prove it. */
       await markAlertSent(alert.key, alert.message);
     } else {
-      result.alert_skipped_reason = "sms_send_failed_and_mention_failed";
+      result.alert_skipped_reason = `all_delivery_legs_failed: sms=${sent.error}; crm=${crm.error}`;
     }
 
     return ok({ ...result, status: "unhealthy", message: alert.message });
