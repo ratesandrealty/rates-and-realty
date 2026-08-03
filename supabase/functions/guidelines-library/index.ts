@@ -317,7 +317,7 @@ GUIDELINE CONTEXT:\n${context || 'No specific guidelines loaded. Answering from 
       query_type: 'semantic',
       result_count: chunks.length,
       session_id
-    }).then(() => {}).catch(() => {});
+    }).then(() => {}, () => {});
   }
 
   return { answer, citations, chunks_used: chunks.length };

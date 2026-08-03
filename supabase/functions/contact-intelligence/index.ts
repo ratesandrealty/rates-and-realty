@@ -162,7 +162,7 @@ Deno.serve(async (req: Request) => {
             user_agent: req.headers.get('user-agent') || ''
           });
           // Update open count on email_log
-          await sb.rpc('increment_email_open', { email_id: emailEntry.id }).catch(() => {});
+          await sb.rpc('increment_email_open', { email_id: emailEntry.id }).then(() => {}, () => {});
           await sb.from('email_log').update({
             open_count: sb.rpc('increment', { row_id: emailEntry.id }),
             first_opened_at: now,

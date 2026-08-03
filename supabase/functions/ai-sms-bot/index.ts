@@ -334,7 +334,7 @@ async function executeTool(name: string, input: any, ctx: { conversation: any; p
           description: `URL: ${url}`, status: "completed",
           metadata: { saved_search_id: saved?.id, criteria: input },
           created_at: new Date().toISOString(),
-        }).catch(() => {});
+        }).then(() => {}, () => {});
       }
       return JSON.stringify({ success: true, saved_search_id: saved?.id, search_url: url, friendly_name: friendlyName });
     }
@@ -355,7 +355,7 @@ async function sendBotReply(phone: string, body: string, contactId: string | nul
     });
     const data = await res.json();
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
-    if (data.sid) await sb.from("sms_log").update({ trigger_type: triggerType }).eq("twilio_sid", data.sid).catch(() => {});
+    if (data.sid) await sb.from("sms_log").update({ trigger_type: triggerType }).eq("twilio_sid", data.sid).then(() => {}, () => {});
     return { ok: true, sid: data.sid };
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
@@ -724,7 +724,7 @@ Deno.serve(async (req) => {
         conversation_id: conversationId, action: "escalate",
         decision_reason: `Crash: ${e?.message || String(e)}`,
         metadata: { phases: phaseLog, fatal: true },
-      }).catch(() => {});
+      }).then(() => {}, () => {});
     }
     return err(e?.message || String(e), 500, { phases: phaseLog });
   }

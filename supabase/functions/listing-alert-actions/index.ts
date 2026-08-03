@@ -239,9 +239,12 @@ Deno.serve(async (req: Request) => {
       return ok({ success: true });
     }
 
-    if (action === 'debug_env') {
-      return ok({ ms_key_present: !!MS_KEY, ml_key_length: ML_KEY?.length || 0, ml_key_prefix: ML_KEY?.substring(0,8)||'none' });
-    }
+    /* debug_env REMOVED. It referenced ML_KEY, which is not defined anywhere in
+     * this file — a ReferenceError on every call, the same defect class that
+     * killed gdrive-sync's token resolution. Not repaired, deleted: it was an
+     * unauthenticated action whose entire purpose was reporting the length and
+     * first eight characters of an API key. Neither is anything a caller needs
+     * and both are things an attacker would like. */
 
     return err('Unknown action: ' + action);
   } catch(e: any) {

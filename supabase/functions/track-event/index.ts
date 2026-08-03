@@ -68,7 +68,7 @@ async function handlePixel(emailId: string) {
         title: "\ud83d\udcec Email opened",
         metadata: { event: "open", email_log_id: emailId, opened: true },
         created_at: now,
-      }).catch(() => {});
+      }).then(() => {}, () => {});
       const { data: c } = await sb.from("contacts").select("email_opens").eq("id", row.contact_id).maybeSingle();
       await sb.from("contacts").update({ email_opens: (c?.email_opens || 0) + 1 }).eq("id", row.contact_id);
       fireScorer(row.contact_id, "email_opened");

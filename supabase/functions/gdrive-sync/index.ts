@@ -49,15 +49,45 @@ function mimeFromName(name: string): string {
  * this function never looked at — two credentials for one Google account, one of
  * them un-refreshable and dead. Returns null on failure, as before, so callers
  * are unchanged. */
+/* THE CATCH IS WHAT COST US THE AFTERNOON, not the missing import.
+ *
+ * A ReferenceError from a missing import was caught here, flattened to null,
+ * and reported by both callers as "OAuth token fetch failed (check
+ * GOOGLE_DRIVE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)". That
+ * message is a diagnosis, and it was the WRONG diagnosis: it named three
+ * healthy secrets and sent everyone to look at a credential that was fine. A
+ * catch that rewrites an exception into a plausible cause is worse than no
+ * catch, because a crash would at least have carried a stack.
+ *
+ * So: keep returning null (callers are unchanged), but carry the real error
+ * class and message out with it, and say plainly when the failure is NOT a
+ * credential problem. A ReferenceError/TypeError here is a code defect and
+ * naming it as one is the whole point. */
+let lastTokenError: string | null = null;
+
 async function getUserAccessToken(sbClient: SupabaseClient): Promise<string | null> {
   try {
     const { accessToken, source } = await getDriveAccessToken(sbClient);
     console.log(`[drive-auth] token ok (source=${source})`);
+    lastTokenError = null;
     return accessToken;
   } catch (e) {
-    console.error('[drive-auth]', String(e));
+    const cls = (e as any)?.constructor?.name || typeof e;
+    const msg = (e as any)?.message || String(e);
+    const isCodeDefect = e instanceof ReferenceError || e instanceof TypeError || e instanceof SyntaxError;
+    lastTokenError = isCodeDefect
+      ? `${cls}: ${msg} — this is a CODE DEFECT in gdrive-sync, not a credential problem. Do not go looking at GOOGLE_* secrets.`
+      : `${cls}: ${msg}`;
+    console.error('[drive-auth] token resolution failed:', lastTokenError, (e as any)?.stack || '');
     return null;
   }
+}
+
+/* The message the callers return. Never invents a cause. */
+function tokenErrorDetail(): string {
+  return lastTokenError
+    ? `Drive token resolution failed — ${lastTokenError}`
+    : 'Drive token resolution failed and recorded no error, which should be impossible; check the function logs.';
 }
 
 
@@ -169,7 +199,7 @@ Deno.serve(async (req: Request) => {
       const mimeType  = fileData.type || mimeFromName(fileName);
 
       const token = await getUserAccessToken(sb);
-      if (!token) return err('OAuth token fetch failed (check GOOGLE_DRIVE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)', 500);
+      if (!token) return err(tokenErrorDetail(), 500);
       const targetFolder = await resolveSub(contact.gdrive_folder_id, (doc as any).drive_folder || DEFAULT_FOLDER);
       const driveResult = await uploadFileToDrive(token, fileName, mimeType, fileBytes, targetFolder);
       if (!driveResult) return err('Drive upload failed');
@@ -213,7 +243,7 @@ Deno.serve(async (req: Request) => {
       (contacts || []).forEach((c: any) => { if (c.gdrive_folder_id) folderMap[c.id] = c.gdrive_folder_id; });
 
       const token = await getUserAccessToken(sb);
-      if (!token) return err('OAuth token fetch failed (check GOOGLE_DRIVE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)', 500);
+      if (!token) return err(tokenErrorDetail(), 500);
 
       // Remaining pending after this batch: pending docs (any contact) - synced-ness
       const { count: pendingCount } = await sb.from('uploaded_documents')

@@ -262,7 +262,7 @@ Deno.serve(async (req: Request) => {
           description: `${result.loan_purpose} · ${result.property_type} · ${result.property_address} · $${Number(result.requested_loan_amount||0).toLocaleString()}`,
           status: 'submitted',
           created_at: new Date().toISOString()
-        }).catch(()=>{});
+        }).then(()=>{}, ()=>{});
       }
 
       return ok({ success:true, intake:result, submission_id: result.submission_id });

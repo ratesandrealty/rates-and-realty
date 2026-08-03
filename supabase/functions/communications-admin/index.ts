@@ -369,7 +369,7 @@ Deno.serve(async (req) => {
 
       // Mark as human-sent
       if (data.sid) {
-        await sb.from("sms_log").update({ trigger_type: "crm_human_reply" }).eq("twilio_sid", data.sid).catch(() => {});
+        await sb.from("sms_log").update({ trigger_type: "crm_human_reply" }).eq("twilio_sid", data.sid).then(() => {}, () => {});
       }
 
       // Pause bot for this conversation if requested
@@ -450,9 +450,9 @@ Deno.serve(async (req) => {
 
       // Backfill all existing logs
       await sb.from("sms_log").update({ contact_id: contactId }).is("contact_id", null).or(`from_phone.ilike.%${phoneL10}%,to_phone.ilike.%${phoneL10}%`);
-      await sb.from("calls_log").update({ contact_id: contactId }).is("contact_id", null).or(`from_phone.ilike.%${phoneL10}%,to_phone.ilike.%${phoneL10}%`).catch(() => {});
+      await sb.from("calls_log").update({ contact_id: contactId }).is("contact_id", null).or(`from_phone.ilike.%${phoneL10}%,to_phone.ilike.%${phoneL10}%`).then(() => {}, () => {});
       await sb.from("bot_conversations").update({ contact_id: contactId }).eq("phone", normalized);
-      await sb.from("twilio_inbound").update({ contact_id: contactId, matched_contact: true }).is("contact_id", null).ilike("from_phone", `%${phoneL10}%`).catch(() => {});
+      await sb.from("twilio_inbound").update({ contact_id: contactId, matched_contact: true }).is("contact_id", null).ilike("from_phone", `%${phoneL10}%`).then(() => {}, () => {});
 
       return ok({ success: true, contact_id: contactId, phone: normalized });
     }

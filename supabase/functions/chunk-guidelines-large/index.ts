@@ -295,7 +295,7 @@ Deno.serve(async (req) => {
   } catch (e: any) {
     console.error("[chunk-large] FATAL:", e);
     if (body?.guideline_id) {
-      await sb.from("lender_guidelines").update({ chunk_status: "failed" }).eq("id", body.guideline_id).catch(() => {});
+      await sb.from("lender_guidelines").update({ chunk_status: "failed" }).eq("id", body.guideline_id).then(() => {}, () => {});
     }
     return err(e.message || String(e), 500);
   }

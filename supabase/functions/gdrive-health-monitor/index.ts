@@ -517,6 +517,56 @@ async function checkEmbeddings(): Promise<{ ok: boolean; null_chunks: number; gu
   return { ok: false, null_chunks: n, guidelines: new Set((data || []).map((r: any) => r.guideline_id)).size };
 }
 
+/* DOES THE MIRROR ACTUALLY MIRROR?
+ *
+ * drive_write_credential_ok read TRUE for the entire two and a half days that
+ * no borrower document reached Drive. It was not lying: it exchanges a token
+ * and writes a probe file into the fixture folder, and both worked. What it
+ * does not do is execute one line of gdrive-sync, which is where the defect
+ * was — a missing import that threw before the credential was ever used.
+ *
+ * A credential probe cannot see this. The only thing that can is the OUTCOME:
+ * rows that have been sitting with a storage path and no gdrive_file_id for
+ * longer than the sync interval. The cron runs every 10 minutes, so 30 gives
+ * it three attempts before anyone is woken.
+ *
+ * This is the check that would have caught it 18 minutes after it shipped
+ * instead of when a borrower's ID went missing. */
+const MIRROR_STALE_MINUTES = 30;
+
+async function checkDocumentMirror(): Promise<{ ok: boolean; stranded: number; oldest_minutes: number | null; samples: string[] }> {
+  try {
+    const cutoff = new Date(Date.now() - MIRROR_STALE_MINUTES * 60_000).toISOString();
+    const { data, error } = await sb.from("uploaded_documents")
+      .select("id, contact_id, file_name, uploaded_at")
+      .is("gdrive_file_id", null)
+      .not("file_path", "is", null)
+      .lt("uploaded_at", cutoff)
+      .order("uploaded_at", { ascending: true })
+      .limit(50);
+    if (error) {
+      console.error("[monitor] mirror check failed:", error.message);
+      // A check that cannot run must not read as healthy.
+      return { ok: false, stranded: -1, oldest_minutes: null, samples: [`check failed: ${error.message}`] };
+    }
+    const rows = data || [];
+    if (!rows.length) return { ok: true, stranded: 0, oldest_minutes: null, samples: [] };
+    const oldest = rows[0] as any;
+    const mins = oldest.uploaded_at
+      ? Math.round((Date.now() - new Date(oldest.uploaded_at).getTime()) / 60_000)
+      : null;
+    return {
+      ok: false,
+      stranded: rows.length,
+      oldest_minutes: mins,
+      samples: rows.slice(0, 5).map((r: any) => `${r.file_name || r.id} (contact ${r.contact_id || "none"})`),
+    };
+  } catch (e) {
+    console.error("[monitor] mirror check threw:", String(e));
+    return { ok: false, stranded: -1, oldest_minutes: null, samples: [`check threw: ${String(e)}`] };
+  }
+}
+
 /* BACKUP HEALTH. Two independent conditions, because age alone was not enough.
  *
  *   STALE  — backup:last_verified has not moved in over 8 days. The marker is
@@ -911,11 +961,12 @@ Deno.serve(async (req) => {
     const syncStatus = await checkPendingSyncs();
     const indexing = await checkIndexingHealth();
     const backup = await checkBackupHealth();
+    const mirror = await checkDocumentMirror();
     /* Rows vs objects. Runs every hour AND is the mandatory post-restore gate —
      * a restore is exactly when direction A goes from zero to many. */
     const recon = await reconcileStorage(sb);
     const allOk = oauth.ok && driveCred.ok && staticKeys.ok && embeddings.ok
-      && syncStatus.ok && indexing.ok && backup.ok && recon.ok;
+      && syncStatus.ok && indexing.ok && backup.ok && recon.ok && mirror.ok;
 
     const result: any = {
       checked_at: new Date().toISOString(),
@@ -946,6 +997,9 @@ Deno.serve(async (req) => {
       backup_stale_suppressed_until: backup.suppressed_until,
       backup_stale_suppression_reason: backup.suppression_reason,
       backup_failed_run: backup.failed_run,
+      mirror_ok: mirror.ok,
+      mirror_stranded: mirror.stranded,
+      mirror_oldest_minutes: mirror.oldest_minutes,
       reconcile_ok: recon.ok,
       reconcile_dangling: recon.dangling,
       reconcile_orphans: recon.orphans,
@@ -979,6 +1033,29 @@ Deno.serve(async (req) => {
        * and a stalled-sync alert is a symptom of it rather than a separate
        * problem. */
       alert = buildCredentialAlert(driveCred);
+    } else if (!mirror.ok) {
+      /* Ahead of the storage checks: a document stuck in the bucket is a
+       * document the CRM shows on a borrower's file and Drive does not have.
+       * That is the same broken promise as a dangling reference, arriving from
+       * the other direction. */
+      alert = {
+        key: "mirror_backlog",
+        message: [
+          `${RED} Borrower documents are NOT reaching Drive`,
+          "",
+          mirror.stranded === -1
+            ? "The mirror check itself failed — see the details below."
+            : `${mirror.stranded} document(s) stored ${MIRROR_STALE_MINUTES}+ minutes ago still have no Drive file.` +
+              (mirror.oldest_minutes ? ` Oldest: ${mirror.oldest_minutes} minutes.` : ""),
+          "",
+          ...mirror.samples.map((s) => `  • ${s}`),
+          "",
+          "The Drive WRITE credential can be healthy while this is broken — it",
+          "was, for two and a half days in August, because the defect was in",
+          "gdrive-sync's own code and threw before the credential was used.",
+          "Call gdrive-sync sync_all_pending and READ THE ERROR IT RETURNS.",
+        ].join("\n"),
+      };
     } else if (!recon.ok && recon.dangling.some((d) => d.count !== 0)) {
       alert = {
         key: "storage_dangling",

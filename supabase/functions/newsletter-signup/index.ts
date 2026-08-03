@@ -71,7 +71,7 @@ async function sendDeliveryEmail(to: string, firstName: string | null, magnet: t
     body: `Hi ${firstName || "there"},\n\nThanks for signing up. Here's your guide: ${magnet.pdf_url}\n\n\u2014 Rene Duarte\nRates &amp; Realty\nNMLS #1795044`,
     status: "queued",
     template: "lead_magnet_delivery",
-  }).catch(() => {});
+  }).then(() => {}, () => {});
 }
 
 Deno.serve(async (req) => {

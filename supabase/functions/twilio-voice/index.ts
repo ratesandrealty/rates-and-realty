@@ -407,7 +407,7 @@ Deno.serve(async (req) => {
           event_type: 'call',
           description: `Outbound call${outcome ? ' - ' + outcome.replace(/_/g, ' ') : ''}${duration ? ' (' + Math.floor(duration / 60) + ':' + String(duration % 60).padStart(2, '0') + ')' : ''}`,
           metadata: { duration, outcome, notes },
-        }).catch(() => {});
+        }).then(() => {}, () => {});
       }
       return jsonRes({ success: true });
     }
