@@ -1,5 +1,14 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2';
+/* THIS IMPORT WAS MISSING. getUserAccessToken() called getDriveAccessToken()
+ * with nothing importing it and a module-scope `sb` that does not exist, so
+ * every call threw ReferenceError, was swallowed by the try/catch, and returned
+ * null — which the callers report as "OAuth token fetch failed". Deployed as
+ * v82 on 2026-08-01 07:23 UTC; from that moment no borrower document reached
+ * Drive. It went unnoticed for two and a half days because it only fires when
+ * there is something to sync, and the next upload was Rene's live MMS test.
+ * `deno check` catches both errors in one second. */
+import { getDriveAccessToken } from '../_shared/google-user-token.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -40,9 +49,9 @@ function mimeFromName(name: string): string {
  * this function never looked at — two credentials for one Google account, one of
  * them un-refreshable and dead. Returns null on failure, as before, so callers
  * are unchanged. */
-async function getUserAccessToken(): Promise<string | null> {
+async function getUserAccessToken(sbClient: SupabaseClient): Promise<string | null> {
   try {
-    const { accessToken, source } = await getDriveAccessToken(sb);
+    const { accessToken, source } = await getDriveAccessToken(sbClient);
     console.log(`[drive-auth] token ok (source=${source})`);
     return accessToken;
   } catch (e) {
@@ -51,6 +60,29 @@ async function getUserAccessToken(): Promise<string | null> {
   }
 }
 
+
+/* Resolve the destination subfolder via gdrive-proxy — the SAME resolver the
+ * admin uploader uses. Files used to land at the folder ROOT, which is why 79
+ * loose copies sit there and none in the subfolders.
+ *
+ * Hoisted to module scope so BOTH entry points use it. It lived inside
+ * sync_all_pending, so the cron path filed correctly while sync_document — the
+ * one a human triggers from the CRM — still dumped at the root. Half a fix is
+ * indistinguishable from no fix to whoever goes looking for the file. */
+const DEFAULT_FOLDER = 'Initial Loan Submission';
+async function resolveSub(parentId: string, name: string): Promise<string> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/gdrive-proxy?action=resolve-folder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE_KEY}` },
+      body: JSON.stringify({ parentId, name }),
+    });
+    const d = await r.json();
+    if (r.ok && d.id) return d.id;
+    console.error('[gdrive-sync] resolve-folder failed, using root:', d?.error);
+  } catch (e) { console.error('[gdrive-sync] resolve-folder threw, using root:', String(e)); }
+  return parentId;   // a wrong folder is recoverable; a lost file is not
+}
 
 // ── Upload file bytes directly to Google Drive using user OAuth token ─────
 async function uploadFileToDrive(
@@ -120,7 +152,7 @@ Deno.serve(async (req: Request) => {
       }
 
       const { data: doc } = await sb.from('uploaded_documents')
-        .select('gdrive_file_id, gdrive_file_url, file_path, file_name')
+        .select('gdrive_file_id, gdrive_file_url, file_path, file_name, drive_folder')
         .eq('id', document_id).single();
       if (doc?.gdrive_file_id) {
         return ok({ success: true, already_synced: true, gdrive_file_id: doc.gdrive_file_id });
@@ -136,9 +168,10 @@ Deno.serve(async (req: Request) => {
       const fileName  = doc.file_name || doc.file_path.split('/').pop()!;
       const mimeType  = fileData.type || mimeFromName(fileName);
 
-      const token = await getUserAccessToken();
+      const token = await getUserAccessToken(sb);
       if (!token) return err('OAuth token fetch failed (check GOOGLE_DRIVE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)', 500);
-      const driveResult = await uploadFileToDrive(token, fileName, mimeType, fileBytes, contact.gdrive_folder_id);
+      const targetFolder = await resolveSub(contact.gdrive_folder_id, (doc as any).drive_folder || DEFAULT_FOLDER);
+      const driveResult = await uploadFileToDrive(token, fileName, mimeType, fileBytes, targetFolder);
       if (!driveResult) return err('Drive upload failed');
 
       await sb.from('uploaded_documents').update({
@@ -165,23 +198,6 @@ Deno.serve(async (req: Request) => {
        * callers get disjoint sets, and stamps gdrive_sync_claimed_at so the
        * exclusion survives past the transaction. Claims older than 10 minutes
        * are reclaimable, so a run that dies mid-upload strands nothing. */
-      /* Resolve the destination subfolder via gdrive-proxy — the SAME resolver
-       * the admin uploader uses. Files used to land at the folder ROOT, which is
-       * why 79 loose copies sit there and none in the subfolders. */
-      const resolveSub = async (parentId: string, name: string): Promise<string> => {
-        try {
-          const r = await fetch(`${SUPABASE_URL}/functions/v1/gdrive-proxy?action=resolve-folder`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE_KEY}` },
-            body: JSON.stringify({ parentId, name }),
-          });
-          const d = await r.json();
-          if (r.ok && d.id) return d.id;
-          console.error('[gdrive-sync] resolve-folder failed, using root:', d?.error);
-        } catch (e) { console.error('[gdrive-sync] resolve-folder threw, using root:', String(e)); }
-        return parentId;   // a wrong folder is recoverable; a lost file is not
-      };
-      const DEFAULT_FOLDER = 'Initial Loan Submission';
 
       const { data: docs, error: claimErr } = await sb.rpc('claim_pending_gdrive_syncs', {
         p_limit: 50,
@@ -196,7 +212,7 @@ Deno.serve(async (req: Request) => {
       const folderMap: Record<string, string> = {};
       (contacts || []).forEach((c: any) => { if (c.gdrive_folder_id) folderMap[c.id] = c.gdrive_folder_id; });
 
-      const token = await getUserAccessToken();
+      const token = await getUserAccessToken(sb);
       if (!token) return err('OAuth token fetch failed (check GOOGLE_DRIVE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)', 500);
 
       // Remaining pending after this batch: pending docs (any contact) - synced-ness

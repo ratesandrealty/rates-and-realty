@@ -627,6 +627,96 @@ const DOC_TYPE_KEYS = DOC_TYPES.map((d) => d.key);
 function docTypeLabel(key: string | null): string {
   return DOC_TYPES.find((d) => d.key === key)?.label || "Other";
 }
+/* ── LOOK AT THE DOCUMENT ────────────────────────────────────────────────────
+ *
+ * Classification read ONLY the caption. Rene texted a driver's licence and a
+ * Social Security card with "Upload to Juan Davila" — a caption naming a person
+ * and nothing else — so inferDocType returned null and both filed as 'other'.
+ * The type was sitting in the pixels the whole time and nothing looked.
+ *
+ * Each image is classified independently, so a batch where one page is not what
+ * the caption says is visible rather than absorbed. The caption still WINS when
+ * it names a type: that is an explicit human instruction and this is a guess.
+ * Vision only fills the silence.
+ *
+ * Bounded on purpose: a per-request timeout, a concurrency cap so a ten-image
+ * text cannot open ten sockets, a byte ceiling below the API's limit, and image
+ * MIME types only. Every failure path returns null, which lands back on the
+ * caption type — a slow model must never cost Rene the upload. */
+const VISION_MODEL = "claude-haiku-4-5";
+const VISION_TIMEOUT_MS = 12_000;
+const VISION_CONCURRENCY = 3;
+const VISION_MAX_BYTES = 4 * 1024 * 1024;
+const VISION_MIME = /^image\/(jpeg|png|gif|webp)$/;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const CHUNK = 0x8000; // avoid blowing the argument limit on large images
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+async function classifyImageByVision(img: { bytes: Uint8Array; contentType: string }): Promise<string | null> {
+  const mt = (img.contentType || "").toLowerCase().split(";")[0].trim();
+  if (!VISION_MIME.test(mt)) return null;
+  if (!img.bytes.byteLength || img.bytes.byteLength > VISION_MAX_BYTES) return null;
+  if (!ANTHROPIC_API_KEY) return null;
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      signal: AbortSignal.timeout(VISION_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: VISION_MODEL,
+        max_tokens: 16,
+        system:
+          "You are shown ONE page of a document a mortgage loan officer received.\n" +
+          "Reply with EXACTLY ONE key from this list and nothing else: " + DOC_TYPE_KEYS.join(" | ") + "\n" +
+          "gov_id covers a driver's licence, state ID, passport, Social Security card, or permanent resident card.\n" +
+          "If you are not confident, reply: other",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mt, data: bytesToBase64(img.bytes) } },
+            { type: "text", text: "Which key?" },
+          ],
+        }],
+      }),
+    });
+    if (!res.ok) throw new Error(`anthropic ${res.status}`);
+    const j = await res.json();
+    const txt = (j.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim().toLowerCase();
+    const key = txt.replace(/[^a-z_]/g, "");
+    return DOC_TYPE_KEYS.includes(key) ? key : null;
+  } catch (e) {
+    console.error("[doc] vision classify failed:", String(e));
+    return null;
+  }
+}
+
+/* Returns the agreed key, or null. Disagreement is LOGGED rather than averaged
+ * away — two different documents in one text is a real thing Rene does, and the
+ * per-file confirmation line is what makes it visible to him. */
+async function classifyBatchByVision(imgs: { bytes: Uint8Array; contentType: string }[]): Promise<{ type: string | null; votes: (string | null)[] }> {
+  const votes: (string | null)[] = new Array(imgs.length).fill(null);
+  for (let i = 0; i < imgs.length; i += VISION_CONCURRENCY) {
+    const slice = imgs.slice(i, i + VISION_CONCURRENCY);
+    const got = await Promise.all(slice.map((im) => classifyImageByVision(im)));
+    got.forEach((g, j) => { votes[i + j] = g; });
+  }
+  const named = votes.filter((v): v is string => !!v && v !== "other");
+  if (!named.length) return { type: null, votes };
+  const tally = new Map<string, number>();
+  for (const v of named) tally.set(v, (tally.get(v) || 0) + 1);
+  const [top] = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+  if (tally.size > 1) {
+    console.warn("[doc] vision disagreement across images:", JSON.stringify([...tally.entries()]), "using", top[0]);
+  }
+  return { type: top[0], votes };
+}
+
 function inferDocType(caption: string): string | null {
   const s = (caption || "").toLowerCase();
   if (/\bw-?2\b/.test(s)) return "w2";
@@ -830,7 +920,18 @@ async function saveBorrowerDocument(
     );
   }
 
-  const typeLabel = docType && DOC_TYPE_KEYS.includes(docType) ? docType : "other";
+  /* Caption first — an explicit type from Rene is an instruction, not a guess.
+   * Vision runs only when the caption named no type, which is the case that
+   * produced 'other' for a driver's licence. Any failure lands back on "other",
+   * exactly where this stood before. */
+  let visionType: string | null = null;
+  if (!docType || !DOC_TYPE_KEYS.includes(docType)) {
+    const t0 = Date.now();
+    const { type, votes } = await classifyBatchByVision(imgs);
+    visionType = type;
+    console.log(`[doc] vision classify: ${JSON.stringify(votes)} -> ${type ?? "none"} in ${Date.now() - t0}ms`);
+  }
+  const typeLabel = docType && DOC_TYPE_KEYS.includes(docType) ? docType : (visionType || "other");
   const slug = typeLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "document";
   const merged = imgs.length > 1 && wantsMerge(caption);
   /* One timestamp for the whole message so a batch sorts together, plus a
