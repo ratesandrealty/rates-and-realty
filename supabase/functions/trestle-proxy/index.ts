@@ -8,118 +8,109 @@ let tokenExpiresAt = 0;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
 };
 
 async function getTrestleToken(): Promise<string> {
-  if (cachedToken && Date.now() < tokenExpiresAt) {
-    return cachedToken;
-  }
-
+  if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
   const clientId = Deno.env.get("TRESTLE_CLIENT_ID");
   const clientSecret = Deno.env.get("TRESTLE_CLIENT_SECRET");
-
-  if (!clientId || !clientSecret) {
-    throw new Error("TRESTLE_CLIENT_ID or TRESTLE_CLIENT_SECRET not configured");
-  }
-
+  if (!clientId || !clientSecret) throw new Error("TRESTLE credentials not configured");
   const res = await fetch(TRESTLE_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret,
-      scope: "api",
-    }),
+    body: new URLSearchParams({ grant_type: "client_credentials", client_id: clientId, client_secret: clientSecret, scope: "api" }),
   });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Trestle auth failed: ${res.status} ${errText}`);
-  }
-
+  if (!res.ok) throw new Error(`Trestle auth failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
   cachedToken = data.access_token;
-  // Expire 60s early to avoid edge cases
   tokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
   return cachedToken!;
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+
+  // ── PHOTO PROXY (GET ?photo=URL) ───────────────────────────────────────────
+  // Email clients can't send auth headers, so we proxy photos through here.
+  // Usage: GET /trestle-proxy?photo=https://api.cotality.com/trestle/Media/...
+  if (req.method === "GET") {
+    const url = new URL(req.url);
+    const photoUrl = url.searchParams.get("photo");
+    if (!photoUrl) {
+      return new Response(JSON.stringify({ error: "photo param required" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    // Validate it's a Trestle URL to prevent open redirect
+    if (!photoUrl.startsWith("https://api.cotality.com/trestle/")) {
+      return new Response(JSON.stringify({ error: "Invalid photo URL" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    try {
+      const token = await getTrestleToken();
+      const imgRes = await fetch(photoUrl, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "image/*" }
+      });
+      if (!imgRes.ok) {
+        return new Response(null, { status: imgRes.status, headers: corsHeaders });
+      }
+      const contentType = imgRes.headers.get("Content-Type") || "image/jpeg";
+      const imageBytes = await imgRes.arrayBuffer();
+      return new Response(imageBytes, {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": contentType,
+          "Cache-Control": "public, max-age=86400", // Cache for 24h
+        }
+      });
+    } catch (e: any) {
+      console.error("[trestle-proxy] Photo proxy error:", e.message);
+      return new Response(null, { status: 500, headers: corsHeaders });
+    }
   }
 
+  // ── DATA PROXY (POST) ─────────────────────────────────────────────────────
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
   }
 
   try {
     const { endpoint, params, rawFilter } = await req.json();
-
     if (!endpoint) {
       return new Response(JSON.stringify({ error: "endpoint is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
-
     const token = await getTrestleToken();
-
-    // Build query string from params object or use pre-built rawFilter
     let queryString = "";
-    if (rawFilter) {
-      queryString = "?" + rawFilter;
-    } else if (params) {
-      queryString = "?" + new URLSearchParams(params).toString();
-    }
+    if (rawFilter) queryString = "?" + rawFilter;
+    else if (params) queryString = "?" + new URLSearchParams(params).toString();
     const url = `${TRESTLE_API_BASE}/${endpoint}${queryString}`;
-
-    console.log("[trestle-proxy] Trestle URL:", url.substring(0, 300));
-
+    console.log("[trestle-proxy] URL:", url.substring(0, 300));
     const mlsRes = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }
     });
-
-    console.log("[trestle-proxy] Trestle status:", mlsRes.status);
-
+    console.log("[trestle-proxy] Status:", mlsRes.status);
     if (!mlsRes.ok) {
       const errText = await mlsRes.text();
-      console.log("[trestle-proxy] Trestle error:", errText.substring(0, 300));
-      return new Response(
-        JSON.stringify({ error: `Trestle API error: ${mlsRes.status}`, detail: errText }),
-        {
-          status: mlsRes.status,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+      console.log("[trestle-proxy] Error:", errText.substring(0, 300));
+      return new Response(JSON.stringify({ error: `Trestle API error: ${mlsRes.status}`, detail: errText }), {
+        status: mlsRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
     }
-
     const mlsData = await mlsRes.json();
-    const resultCount = mlsData?.value?.length || mlsData?.['@odata.count'] || 'unknown';
-    console.log("[trestle-proxy] Result count:", resultCount);
     return new Response(JSON.stringify(mlsData), {
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/json",
-        "Cache-Control": "public, max-age=300",
-      },
+      headers: { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "public, max-age=300" }
     });
-  } catch (e) {
-    return new Response(
-      JSON.stringify({ error: e.message || "Internal error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message || "Internal error" }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
   }
 });
