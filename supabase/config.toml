@@ -163,3 +163,51 @@ verify_jwt = false
 # Cron-driven reconciliation of Twilio inbound against ours. No user context, so
 # no JWT; read-only against Twilio.
 verify_jwt = false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CRON-CALLED FUNCTIONS THAT RECEIVE NO AUTHORIZATION HEADER.
+#
+# pg_cron posts these with Content-Type only. Deployed UNPINNED, they take the
+# CLI default of true and 401 at the gateway before the function runs — the
+# failure this file already records for send-scheduled-sms, send-scheduled-emails,
+# sms-service and clickup-bridge. Each is pinned at its CURRENT deployed value,
+# verified against the platform on 2026-08-04, not assumed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[functions.send-listing-alerts]
+# cron jobid 4 (*/30) posts with no Authorization header.
+verify_jwt = false
+
+[functions.chunk-guidelines-large]
+# cron jobid 9 (*/5, chunk-large-resume) posts with no Authorization header.
+verify_jwt = false
+
+[functions.proactive-followups]
+# cron jobids 20 and 21 both post with no Authorization header. The function has
+# its own x-cron-secret check, which is the actual control.
+verify_jwt = false
+
+[functions.treasury-yields]
+# cron jobid 32 posts with no Authorization header.
+verify_jwt = false
+
+[functions.news-feed]
+# cron jobid 33 (*/4h) posts with no Authorization header.
+verify_jwt = false
+
+[functions.voe-inbound-poll]
+# cron jobid 37 (*/10) posts with no Authorization header.
+verify_jwt = false
+
+[functions.loan-date-nudges]
+# cron jobid 38 posts with no Authorization header.
+verify_jwt = false
+
+[functions.weekly-backup]
+# cron jobid 2 posts with no Authorization header. Deployed false and CORRECT —
+# an earlier note in this session claimed it was already true and therefore
+# broken; re-reading the platform showed false. Pinned because job 2 is disabled
+# pending the R2 sync, so an unpinned redeploy in the meantime would flip it to
+# true and the first run after it is re-enabled would 401 — with nothing watching,
+# since the job that would notice is the one that is off.
+verify_jwt = false

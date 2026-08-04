@@ -68,11 +68,20 @@ echo "── 3/5 verify_jwt pin ────────────────
 if ! grep -q "^\[functions\.$SLUG\]" supabase/config.toml; then
   cat <<EOF
 
-$SLUG is not pinned in supabase/config.toml.
+$SLUG is not pinned in supabase/config.toml. REFUSED.
 
 Deploying it would set verify_jwt from the CLI default (true), not from any
 recorded intent. If that is wrong for this function, every unauthenticated
 caller starts getting 401 and nothing will alert you.
+
+That default has now broken five live paths: send-scheduled-sms (every cron run
+for days), send-scheduled-emails, sms-service (left an open SMS relay when it
+went the other way), esign (a near-miss caught before deploying), and
+clickup-bridge (four days of 401s ending in Rene being told "auth error (401)"
+over SMS). In every case the function was UNPINNED and nobody chose the value.
+
+This refusal is not about new functions. It applies to every slug, because the
+default is applied on every deploy.
 
 Add a block first — at its CURRENT value if you are not trying to change it:
 
