@@ -113,11 +113,25 @@ serve(async (req) => {
       eventBody.attendees = [{ email: contactEmail, displayName: contactName }]
     }
 
+    /* sendUpdates=none, stated rather than inherited.
+     *
+     * When the appointment has a contact with an email, eventBody.attendees above
+     * puts that borrower on the event. Google's default for events.insert/update
+     * is not to mail attendees, so no invitation goes out today — but that is a
+     * DEFAULT, not a decision, and it is one line away from becoming
+     * sendUpdates=all in a future edit meant to "fix invitations". Every borrower
+     * attached to an event would then be mailed at once, retroactively on the
+     * next sync_all.
+     *
+     * NOTE this does not stop the attendee entry itself: a Google-account
+     * borrower can still see the event on their own calendar, because Google
+     * surfaces invitations without mailing them. Whether attaching a lead should
+     * add an attendee at all is a separate, open decision. */
     let method = 'POST'
-    let endpoint = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+    let endpoint = 'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none'
     if (apt.google_event_id) {
       method = 'PUT'
-      endpoint = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${apt.google_event_id}`
+      endpoint = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${apt.google_event_id}?sendUpdates=none`
     }
     const r = await fetch(endpoint, {
       method,
@@ -206,10 +220,12 @@ serve(async (req) => {
     }
 
     let method = 'POST'
-    let endpoint = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+    // No attendees are set on tours today; explicit anyway, so adding one later
+    // cannot silently inherit Google's notification default.
+    let endpoint = 'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none'
     if (tour.google_event_id) {
       method = 'PUT'
-      endpoint = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${tour.google_event_id}`
+      endpoint = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${tour.google_event_id}?sendUpdates=none`
     }
     const r = await fetch(endpoint, {
       method,
