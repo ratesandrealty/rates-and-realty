@@ -6,7 +6,50 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+
+/* The control. verify_jwt=true is NOT one: the gateway accepts any
+ * project-signed JWT, including the anon key printed in dashboard/admin.html's
+ * source, and this function returns contact names, phones and emails alongside
+ * every event.
+ *
+ * Role set is admin/agent/loa, deliberately NOT is_admin(). crm-copilot — the
+ * only internal caller — admits exactly those three and forwards its caller's
+ * Authorization header here, so gating on 'admin' alone would let an agent or loa
+ * use Copilot everywhere EXCEPT calendar lookups: a partial failure that reads as
+ * a bug rather than a permission. Matching the sets removes the mismatch. No
+ * agent or loa user exists today (auth_user_roles holds one admin and one va), so
+ * this is about the model rather than about anyone currently affected.
+ *
+ * The service key is accepted so an internal caller can reach it without a user
+ * session. The VA role is excluded here exactly as crm-copilot excludes it. */
+const STAFF_ROLES = ["admin", "agent", "loa"];
+async function requireStaff(req: Request): Promise<{ ok: boolean; status?: number; msg?: string; role?: string }> {
+  const auth = req.headers.get("Authorization") || "";
+  const token = auth.replace(/^Bearer\s+/i, "").trim();
+  const apikey = (req.headers.get("apikey") || "").trim();
+  if (apikey && apikey === SERVICE_KEY) return { ok: true, role: "service" };
+  if (!token) return { ok: false, status: 401, msg: "missing authorization" };
+  if (token === SERVICE_KEY) return { ok: true, role: "service" };
+  try {
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false },
+    });
+    const { data: userData } = await userClient.auth.getUser();
+    const user = userData?.user;
+    if (!user) return { ok: false, status: 401, msg: "invalid session" };
+    const { data: roleRow } = await sb.from("auth_user_roles").select("role").eq("user_id", user.id).maybeSingle();
+    const role = roleRow?.role || "";
+    if (!STAFF_ROLES.includes(role)) {
+      return { ok: false, status: 403, msg: "Calendar is available to admin/staff only." };
+    }
+    return { ok: true, role };
+  } catch (_e) {
+    return { ok: false, status: 401, msg: "auth check failed" };
+  }
+}
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -278,6 +321,13 @@ async function fetchClickupTasks(start: string, end: string) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+
+  /* Before any routing, so a method or path added later is gated by default
+   * rather than by someone remembering. GET, POST /event and DELETE /event/*
+   * all read or write borrower-linked data; none of them is public. */
+  const auth = await requireStaff(req);
+  if (!auth.ok) return j({ error: auth.msg || "unauthorized" }, auth.status || 403);
+
   const url = new URL(req.url);
   const segments = url.pathname.split("/").filter(Boolean);
   const last = segments[segments.length - 1] || "";
