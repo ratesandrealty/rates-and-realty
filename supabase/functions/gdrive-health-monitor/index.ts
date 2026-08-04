@@ -299,7 +299,43 @@ async function checkDriveWriteCredential(): Promise<CredCheck> {
 }
 
 
+/* TWO DIFFERENT FACTS, TWO DIFFERENT ALERTS.
+ *
+ * "the Drive credential is broken" and "the probe could not run" are not the
+ * same claim, and until 2026-08-04 both produced the identical red
+ * "WRITE credential is broken" message. Every drive_write_credential alert this
+ * monitor has EVER sent — exactly one, at 2026-08-04T22:07Z — was actually
+ * write_test_unavailable: the ZZ-TEST fixture had been deleted 29 minutes
+ * earlier, so the probe had no borrower folder to write into. The credential was
+ * fine; last_ok was recorded an hour before.
+ *
+ * An alert that says "broken" when it means "untested" is how a real one stops
+ * being believed. */
+const PROBE_UNRUNNABLE_STAGES = new Set(["write_test_unavailable"]);
+
+function buildProbeUnrunnableAlert(c: CredCheck): { key: string; message: string } {
+  return {
+    key: "drive_write_probe_unrunnable",
+    message: [
+      "⚠️ Drive write check could NOT RUN — the credential is not implicated",
+      "",
+      `Blocked at: ${c.stage} — ${c.reason}`,
+      "",
+      "What this does and does not mean:",
+      "  • NOT a credential failure — OAuth and the Drive API were not exercised",
+      "  • the write path is UNVERIFIED, not known-broken",
+      "  • borrower uploads may be working normally; nothing here says otherwise",
+      "",
+      "FIX: recreate the ZZ-TEST fixture contact so the probe has a borrower",
+      "folder to write into (see CLAUDE.md → Dedicated test locations).",
+      "Inserting the contact fires the Drive-foldering trigger, which creates it.",
+    ].join("\n"),
+  };
+}
+
 function buildCredentialAlert(c: CredCheck): { key: string; message: string } {
+  // stage is optional on CredCheck; an absent stage is not an unrunnable probe.
+  if (c.stage && PROBE_UNRUNNABLE_STAGES.has(c.stage)) return buildProbeUnrunnableAlert(c);
   return {
     key: "drive_write_credential",
     message: [
@@ -671,6 +707,9 @@ async function checkBackupHealth(): Promise<BackupHealth> {
  * costs far less than a quiet gap. Everything else stays at 12, where the
  * failure is either slow-moving or already visible elsewhere. */
 function cooldownFor(alertKey: string): number {
+  // An unrunnable probe is not urgent — nothing is known to be failing, and a
+  // 3-hourly repeat of "could not check" is exactly the noise that trains people
+  // to ignore the key that matters. It keeps the standard 12h.
   return alertKey === "drive_write_credential" ? 3 : ALERT_COOLDOWN_HOURS;
 }
 
