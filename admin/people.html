@@ -726,9 +726,14 @@ _refreshSessJWT();
 if (window._supabaseClient && window._supabaseClient.auth && window._supabaseClient.auth.onAuthStateChange) {
   window._supabaseClient.auth.onAuthStateChange(function(){ _refreshSessJWT(); });
 }
+/* No ANON_KEY fallback. That key is printed in this page and identifies nobody,
+ * so falling back to it does not authenticate a request — it just changes which
+ * error you get, and turns "not signed in" into a bare 401 that reads as a broken
+ * page. The comment on loadPeople() below records the same fallback being removed
+ * from the RLS read path earlier; this helper kept its own copy. */
 var hdrs = function() {
-  var token = _sessJWT || ANON_KEY;
-  return { apikey: ANON_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+  if (!_sessJWT) throw new Error('Not signed in — reload the page and sign in again.');
+  return { apikey: ANON_KEY, Authorization: 'Bearer ' + _sessJWT, 'Content-Type': 'application/json', Prefer: 'return=representation' };
 };
 
 // Authenticated client helper (Tier 1 auth migration C4).
@@ -745,9 +750,11 @@ function _authClient() {
 async function peopleApi(action, payload) {
   payload = payload || {};
   try {
+    if (!_sessJWT) await _refreshSessJWT();          // the session may not have landed yet
+    if (!_sessJWT) return { error: 'Not signed in — reload the page and sign in again.' };
     var r = await fetch(SB_URL + '/functions/v1/people-admin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: 'Bearer ' + (_sessJWT || ANON_KEY) },
+      headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: 'Bearer ' + _sessJWT },
       body: JSON.stringify(Object.assign({ action: action }, payload))
     });
     return await r.json();
