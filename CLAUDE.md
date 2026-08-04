@@ -135,6 +135,50 @@ something checks a status code and never looks at the bytes.
 - The public `/v/<slug>` page must never read a Supabase session from
   localStorage. It is served to borrowers, so any token it finds may be theirs.
 
+## A guard on a function with a browser caller is FRONTEND-FIRST. Always.
+
+**Adding, tightening, or changing authentication on an edge function that any
+page calls? Ship the frontend change first, have it confirmed working, and only
+then land the guard.** Not a judgement call per function. Not "the frontend
+change is obviously right so both can go together". The order is the rule.
+
+Both halves matter and they are separate steps:
+
+1. Change the caller to send what the guard will require — usually the user's
+   session token instead of the anon key, which is printed in the page and
+   identifies nobody.
+2. **Have a human confirm the page still works.** Loading is not enough: exercise
+   every path that calls the function. For the Communications inbox that was
+   load, send AND search, and the send paths were only proven by sending.
+3. Then land the guard.
+
+Done in that order, a mistake in step 1 shows up as a page that still works
+because the function has not started enforcing yet. Done backwards, the same
+mistake is an outage, and you cannot tell whether the token or the guard is at
+fault because both changed at once.
+
+This is written down because it was followed for `communications-admin` and not
+for `email-service`, in the same session, hours apart. The second one gated every
+action while `admin/lead-detail.html` and `admin/email-marketing.html` were still
+sending the anon key: sending an email from a lead record returned 401 for about
+twelve minutes. The browser callers HAD been audited beforehand — the conclusion
+"they send the anon key" simply never became "so they break the moment this
+ships".
+
+**Audit both sides before writing the guard.** Browser callers and internal
+callers. `esign` calls `email-service` with `{ 'apikey': SERVICE }` and NO
+`Authorization` header, so an Authorization-only check 401s every e-signature
+invite, cancellation and completion email — and `sendRaw` swallows the failure in
+a bare `catch`, so it fails silently on a legally significant path. Five other
+internal callers send `Authorization`; that one does not.
+
+**Then check how each caller reports failure**, because that decides whether a
+mistake is loud or silent. In the same composer, three call sites and three
+behaviours: `send` shows `Send failed: <error>` and leaves the composer open with
+the draft intact; the scheduled send checks `res.ok` and alerts; `saveEmailDraft`
+never looks at the response at all — it toasts "Draft saved" and closes the
+composer, discarding the text, whatever the server said.
+
 ## Probes and tests never touch a borrower's things
 
 **A probe, health check, or test fixture must never create, modify, or delete
