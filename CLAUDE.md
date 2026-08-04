@@ -135,6 +135,26 @@ something checks a status code and never looks at the bytes.
 - The public `/v/<slug>` page must never read a Supabase session from
   localStorage. It is served to borrowers, so any token it finds may be theirs.
 
+## `verify_jwt = true` is NOT an access control
+
+The gateway checks only that the bearer is a JWT **signed by this project** — not
+which key, not what role. **The anon key is a project-signed JWT and it is public**,
+printed in every page's source. So a function pinned `verify_jwt = true` with no
+in-function check is open to anyone who reads the HTML.
+
+`sms-service` was pinned true on 2026-08-03 *specifically to close it*, and the
+pin comment said so. It never closed it: with the public anon key it still reaches
+the function and will send an SMS from the business line.
+
+**19 functions are in this state.** They are listed, tiered and assigned a guard
+type in `docs/PINNED-NOT-GUARDED.md`. Read that before pinning anything as a fix.
+
+The pin is still worth having — it stops a deploy silently flipping the value —
+but it is a STABILITY control, not an access one. Access needs either a session
+guard (`getUser` + `auth_user_roles`, as in `communications-admin` and
+`calendar-data`) or, where the caller has no session, a row-held token validated
+in-function (as `lender-portal` does with `lenders.form_token`).
+
 ## A guard on a function with a browser caller is FRONTEND-FIRST. Always.
 
 **Adding, tightening, or changing authentication on an edge function that any
