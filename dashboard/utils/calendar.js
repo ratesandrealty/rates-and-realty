@@ -37,6 +37,12 @@
     });
   }
 
+  /* Returns the signed-in user's token, or null. Deliberately NOT falling back to
+   * ANON_KEY: calendar-data returns contact names, phones and emails, and the anon
+   * key is printed in this page's source, so it identifies nobody. It is about to
+   * require an admin, and a silent fallback would turn "not signed in" into a bare
+   * 401 that reads as a broken calendar — indistinguishable from a server fault,
+   * and the same trap the Communications composer avoided by failing loudly. */
   async function getAuthToken() {
     var client = getClient();
     if (client) {
@@ -46,7 +52,7 @@
         if (token) return token;
       } catch (e) { /* fall through */ }
     }
-    return ANON_KEY;
+    return null;
   }
 
   // ── Range / navigation ────────────────────────────────────────────
@@ -96,6 +102,7 @@
     var range = getViewRange();
     var sources = Array.from(activeSources).join(',');
     var token = await getAuthToken();
+    if (!token) throw new Error('Not signed in — reload the page and sign in again.');
     var url = SUPABASE_URL + '/functions/v1/calendar-data'
       + '?start=' + encodeURIComponent(range.start.toISOString())
       + '&end=' + encodeURIComponent(range.end.toISOString())
@@ -363,6 +370,7 @@
     if (!ev) return;
     var md = ev.metadata || {};
     var token = await getAuthToken();
+    if (!token) { alert('Not signed in — reload the page and sign in again.'); return; }
     var baseHeaders = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'apikey': ANON_KEY };
     var fn = SUPABASE_URL + '/functions/v1/';
     function req(url, method, body, extra) {
@@ -462,6 +470,7 @@
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
       var token = await getAuthToken();
+      if (!token) throw new Error('Not signed in — reload the page and sign in again.');
       var res = await fetch(SUPABASE_URL + '/functions/v1/calendar-data/event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'apikey': ANON_KEY },
