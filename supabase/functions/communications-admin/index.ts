@@ -412,13 +412,25 @@ Deno.serve(async (req) => {
       const r = await fetch(`${SUPABASE_URL}/functions/v1/email-service`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` },
+        /* to_email, not recipient_email. email-service reads
+         *   body.to_email || body.to || body.to_emails[0]
+         * and has never accepted recipient_email in any revision — so this call
+         * failed validation every time with "to_email, subject, html required",
+         * which reads like the CALLER forgot the fields it plainly sent. Fixed
+         * here rather than by widening email-service: five other callers
+         * (esign, tours-admin, tours-send-reminders, tour-public-view,
+         * send-scheduled-emails) all send to_email correctly, and this was the
+         * only one out of step.
+         *
+         * 'send' is the canonical action. 'send_email' also works — the deployed
+         * email-service aliases it — but that alias is why the failure looked
+         * like a field problem instead of an unknown action. */
         body: JSON.stringify({
-          action: "send_email",
-          recipient_email: recipient,
+          action: "send",
+          to_email: recipient,
           subject,
           html,
           contact_id: contactId || undefined,
-          source: "crm_communications",
         }),
       });
       const data = await r.json();
