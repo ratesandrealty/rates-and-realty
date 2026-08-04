@@ -482,38 +482,30 @@
     }
   }
 
-  async function loadContactsDropdowns() {
-    // Filter dropdown: use /contacts (only those with tasks) so the menu is short.
-    try {
-      var data = await api('/contacts');
-      var contacts = (data && data.contacts) || [];
-      var filterSel = document.querySelector('[data-target=ct-contact-filter]');
-      if (filterSel) {
-        filterSel.innerHTML = '<option value="">All leads</option>'
-          + '<option value="unlinked">— Unlinked tasks —</option>'
-          + contacts.map(function (c) {
-            return '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>';
-          }).join('');
-      }
-    } catch (e) { console.warn('[ct] contacts (filter) load failed:', e); }
-
-    // Modal dropdown: needs ALL contacts so the user can link a brand-new
-    // task to any lead, not just ones that already have ClickUp tasks.
-    try {
-      var res = await fetch(SUPABASE_URL + '/rest/v1/contacts?select=id,first_name,last_name&order=first_name&limit=500', {
-        headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY }
+  /* Both dropdowns were <select>s filled at limit=500 with the ANON key as the
+   * bearer — ~538 of 1,038 contacts unreachable, silently, and RLS bypassed.
+   * Both are now the shared LeadPicker. The modal one keeps the data-field name
+   * so existing .value readers are unchanged; the filter one carries its two
+   * fixed options through `extra`. */
+  var _ctFilterPicker = null, _ctModalPicker = null;
+  function loadContactsDropdowns() {
+    if (!window.LeadPicker) return;
+    var filterHost = document.querySelector('[data-picker=ct-contact-filter]');
+    if (filterHost && !_ctFilterPicker) {
+      _ctFilterPicker = window.LeadPicker.mount(filterHost, {
+        name: 'ct-contact-filter',
+        placeholder: 'All leads — search to filter…',
+        emptyLabel: 'All leads',
+        extra: [{ value: 'unlinked', label: '— Unlinked tasks —' }],
+        onSelect: function () { if (typeof applyFilters === 'function') applyFilters(); }
       });
-      var rows = await res.json();
-      if (!Array.isArray(rows)) return;
-      var modalSel = document.querySelector('[data-field=ct-contact]');
-      if (modalSel) {
-        modalSel.innerHTML = '<option value="">— No lead —</option>'
-          + rows.map(function (r) {
-            var name = ((r.first_name || '') + ' ' + (r.last_name || '')).trim() || '(unnamed)';
-            return '<option value="' + esc(r.id) + '">' + esc(name) + '</option>';
-          }).join('');
-      }
-    } catch (e) { console.warn('[ct] contacts (modal) load failed:', e); }
+    }
+    var modalHost = document.querySelector('[data-picker=ct-contact]');
+    if (modalHost && !_ctModalPicker) {
+      _ctModalPicker = window.LeadPicker.mount(modalHost, {
+        name: 'ct-contact', emptyLabel: '— No lead —'
+      });
+    }
   }
 
   // ── Modal (create + edit) ───────────────────────────────────────

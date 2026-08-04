@@ -43,6 +43,11 @@ const GUARDED = {
   'admin/js/loom-recorder.js':{ min: 5000,   require: [] },
   'src/worker.js':            { min: 15000,  require: ['export default'] },
   'tools/stamp-assets.mjs':   { min: 2000,   require: [] },
+  /* The lead picker is the single implementation behind three mount points; a
+   * truncated copy would silently take all three out at once. */
+  'dashboard/utils/lead-picker.js': { min: 6000, require: ['})();', 'window.LeadPicker', 'function mount'] },
+  'dashboard/utils/calendar.js':    { min: 20000, require: ['})();', 'function getViewRange'] },
+  'dashboard/utils/clickup-tasks.js': { min: 15000, require: ['})();'] },
 };
 
 function check(path, opts) {

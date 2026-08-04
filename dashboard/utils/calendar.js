@@ -430,23 +430,18 @@
     modal.hidden = false;
   }
 
-  async function populateContactsDropdown() {
-    var sel = document.querySelector('[data-field=ev-contact]');
-    if (!sel || sel.options.length > 1) return; // already populated
-    try {
-      var token = await getAuthToken();
-      var res = await fetch(SUPABASE_URL + '/rest/v1/contacts?select=id,first_name,last_name&order=first_name&limit=200', {
-        headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + token }
-      });
-      var contacts = await res.json();
-      if (!Array.isArray(contacts)) return;
-      contacts.forEach(function (c) {
-        var opt = document.createElement('option');
-        opt.value = c.id;
-        opt.textContent = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || '(unnamed)';
-        sel.appendChild(opt);
-      });
-    } catch (e) { console.warn('[cal] contacts dropdown failed:', e); }
+  /* Was a <select> filled with `limit=200` — 838 of 1,038 contacts were absent
+   * from this dropdown with nothing to say so. Now the shared LeadPicker, which
+   * loads every contact and states any shortfall. The hidden input it renders
+   * keeps data-field="ev-contact", so saveNewEvent's .value read is unchanged. */
+  var _evPicker = null;
+  function populateContactsDropdown() {
+    var host = document.querySelector('[data-picker=ev-contact]');
+    if (!host || !window.LeadPicker) return;
+    if (!_evPicker) {
+      _evPicker = window.LeadPicker.mount(host, { name: 'ev-contact', emptyLabel: '— No lead —' });
+    }
+    _evPicker.reset();
   }
 
   async function saveNewEvent() {
