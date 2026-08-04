@@ -63,14 +63,44 @@ const cors = {
 // ── Small helpers ─────────────────────────────────────────────────────────────
 const last10 = (p: string) => (p || "").replace(/\D/g, "").slice(-10);
 const fullName = (c: any) => [c?.first_name, c?.last_name].filter(Boolean).join(" ").trim() || (c?.name || "Unknown");
+/* BOTH of these carry the year, and that is not cosmetic.
+ *
+ * On 2026-08-03 Rene asked for a calendar event "tomorrow at 9 AM". nowPT() fed
+ * the model "Monday, Aug 3, 7:39 PM" with no year, so the model supplied one —
+ * 2025 — and the event was really created on 2025-08-04. friendly() then echoed
+ * "Mon, Aug 4, 9:00 AM" back, also without a year, so the confirmation read as
+ * correct to the model and to Rene. Every visible field agreed, because the one
+ * field that disagreed was in neither formatter. 2025-08-04 was a Monday too,
+ * so even the weekday corroborated it.
+ *
+ * One formatter feeds the model, the other feeds the confirmation. Omit the year
+ * from either and a year-wrong event becomes invisible at that end. */
 function friendly(iso: string): string {
   try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: GOOGLE_TIMEZONE, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+    return new Intl.DateTimeFormat("en-US", { timeZone: GOOGLE_TIMEZONE, weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
   } catch { return iso; }
 }
 function nowPT(): string {
-  try { return new Intl.DateTimeFormat("en-US", { timeZone: GOOGLE_TIMEZONE, weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date()); }
+  try { return new Intl.DateTimeFormat("en-US", { timeZone: GOOGLE_TIMEZONE, weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date()); }
   catch { return new Date().toISOString(); }
+}
+
+/* A date the MODEL supplied, bounds-checked before it becomes a real object in a
+ * real system. Applies to every tool that takes one: create_calendar_event
+ * (start/end) and create_clickup_task (due_date). Rejecting rather than silently
+ * accepting is the point — "tomorrow" resolving to last year must fail loudly.
+ * 26h of slack, not 24: a genuine "this morning" reference plus a timezone edge
+ * is legitimate, a twelve-month error is not. */
+function dateSanity(iso: string, field: string): string | null {
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return `${field} is not a valid date`;
+  const ageHours = (Date.now() - t) / 3600000;
+  if (ageHours > 26) {
+    return `${field} resolved to ${friendly(iso)}, which is ${Math.round(ageHours / 24)} day(s) in the past — refusing. ` +
+           `If a relative date was meant, restate it with the year.`;
+  }
+  if (t - Date.now() > 3 * 365 * 86400000) return `${field} resolved to ${friendly(iso)}, more than three years out — refusing.`;
+  return null;
 }
 function tierFromScore(s: any): string | null {
   if (s == null) return null;
@@ -322,6 +352,13 @@ function matchCandidate(body: string, cands: any[]): any | null {
 async function toolCreateTask(input: any) {
   const name = (input.name || "").trim();
   if (!name) return { success: false, message: "name required" };
+  // due_date is also a model-supplied date — same bounds check as the calendar.
+  if (input.due_date) {
+    const dueISO = parseWhen(input.due_date);
+    if (!dueISO) return { success: false, message: "could not parse due_date (pass ISO 8601)" };
+    const dueBad = dateSanity(dueISO, "due_date");
+    if (dueBad) return { success: false, message: dueBad };
+  }
   // clickup-bridge is verify_jwt=false — call it with CLEAN headers. A stray Authorization
   // bearer gets 401'd at the gateway (~17ms) before reaching the bridge/ClickUp. The bridge
   // holds CLICKUP_API_TOKEN and talks to ClickUp with the RAW token (no Bearer) itself.
@@ -390,7 +427,13 @@ async function getGoogleAccessToken(): Promise<string> {
 async function toolCreateCalendarEvent(input: any) {
   const startISO = parseWhen(input.start);
   if (!startISO) return { success: false, message: "could not parse start time (pass ISO 8601)" };
+  const startBad = dateSanity(startISO, "start");
+  if (startBad) return { success: false, message: startBad };
   const endISO = input.end ? parseWhen(input.end) : new Date(new Date(startISO).getTime() + 3600000).toISOString();
+  if (endISO) {
+    const endBad = dateSanity(endISO, "end");
+    if (endBad) return { success: false, message: endBad };
+  }
   const token = await getGoogleAccessToken();
   const event: any = { summary: input.title, start: { dateTime: startISO, timeZone: GOOGLE_TIMEZONE }, end: { dateTime: endISO, timeZone: GOOGLE_TIMEZONE } };
   if (Array.isArray(input.attendees) && input.attendees.length) event.attendees = input.attendees.map((e: string) => ({ email: e }));
@@ -447,7 +490,18 @@ async function toolTasksToday() {
   const j = await res.json().catch(() => ({} as any));
   if (!res.ok) return { success: false, message: "clickup bridge error " + res.status };
   const tasks = (j.tasks || []).map((t: any) => ({ title: t.title || t.name, status: t.status, priority: t.priority, due_date: t.due_date, url: t.url }));
-  return { success: true, count: j.counts?.today ?? tasks.length, tasks };
+  /* The bridge answers from clickup_task_cache, so a 200 here means "the cache
+   * replied", not "this is what is in ClickUp now". Pass the age through to the
+   * model and say plainly when it is stale, so a day-old list cannot be read out
+   * as today's with nothing attached to it. */
+  const cache = j.cache || {};
+  const out: any = { success: true, count: j.counts?.today ?? tasks.length, tasks, cache_age_minutes: cache.age_minutes ?? null };
+  if (cache.stale) {
+    out.stale = true;
+    out.warning = `This list is from the cached copy, last synced ${cache.age_minutes == null ? 'never' : cache.age_minutes + ' minutes ago'}. ` +
+                  `Tell the user it may be out of date rather than presenting it as current.`;
+  }
+  return out;
 }
 
 async function executeTool(name: string, input: any, ctx: any): Promise<string> {

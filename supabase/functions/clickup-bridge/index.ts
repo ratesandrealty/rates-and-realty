@@ -219,7 +219,25 @@ async function listTasks(url: URL) {
     },
   };
 
-  return { tasks: all, count: all.length, counts };
+  /* This endpoint serves clickup_task_cache, NOT live ClickUp. The cache is only
+   * as fresh as the last successful sync-pull (cron jobid 15), and that job spent
+   * from 2026-07-31 to 2026-08-04 returning 401 at the gateway while this endpoint
+   * went on answering 200 with day-old rows. A caller cannot tell a current answer
+   * from a stale one unless the answer says so, and the SMS assistant reads this
+   * to tell Rene what is due TODAY — a confident, wrong, error-free answer.
+   * Report age; let the caller decide what is too old. */
+  const freshest = all.reduce((m: any, t: any) => (t.fetched_at && (!m || t.fetched_at > m) ? t.fetched_at : m), null as any);
+  const ageMinutes = freshest ? Math.round((Date.now() - new Date(freshest).getTime()) / 60000) : null;
+  return {
+    tasks: all, count: all.length, counts,
+    cache: {
+      source: 'clickup_task_cache',
+      last_synced_at: freshest,
+      age_minutes: ageMinutes,
+      // sync-pull runs every 15 minutes; an hour means at least three missed runs.
+      stale: ageMinutes === null || ageMinutes > 60,
+    },
+  };
 }
 
 async function listContactsWithTasks() {

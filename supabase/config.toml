@@ -92,6 +92,28 @@ verify_jwt = false
 # (gdrive-health-monitor, the CRM UI, cron) sends a service-role or user JWT.
 verify_jwt = true
 
+[functions.clickup-bridge]
+# MUST be false. Both callers reach it with NO Authorization header by design —
+# pg_cron jobid 15 (clickup-bridge-sync, */15) and sms-assistant's
+# create_clickup_task / list_my_tasks_today, whose own header comment records
+# that a stray bearer used to 401 at the gateway. The bridge authenticates to
+# ClickUp itself with the RAW CLICKUP_API_TOKEN.
+#
+# It was deployed UNPINNED on 2026-07-31 10:17, took the CLI default of true, and
+# every caller has been 401'd at the gateway ever since — the cron sync stopped
+# refreshing clickup_task_cache and Rene's SMS task creation returned "auth error
+# (401)". Nothing alerted. Fourth instance of this exact failure, after
+# send-scheduled-sms, send-scheduled-emails and sms-service.
+verify_jwt = false
+
+[functions.lead-scorer]
+# Pinned at its CURRENT value, which is already false. Not a change — cron jobs 12
+# and 18 send a service-role bearer, so it works either way today. Pinned because
+# it was the next one to break for free: unpinned, the next deploy takes the CLI
+# default of true, and trigger_score_recalc() fires through pg_net, which is
+# fire-and-forget, so lead scoring would have gone silent with nothing to notice.
+verify_jwt = false
+
 [functions.email-service]
 # false is now CORRECT, not a compromise — same shape as esign. One action
 # (ai_compose) is called by public/unified-portal.html, which is served to

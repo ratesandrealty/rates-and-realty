@@ -85,7 +85,30 @@ const key = (e) => `${e.code}|${e.file}|${e.message}`;
 
 const files = sources();
 process.stderr.write(`[check-functions] type-checking ${files.length} source(s)…\n`);
-const errors = parse(runCheck(files));
+const raw = runCheck(files);
+const errors = parse(raw);
+
+/* A checker that could not RUN is not a checker that found nothing.
+ *
+ * Adding package.json (jsdom, for tools/test-composer.mjs) made Deno adopt the
+ * npm project and fail type resolution outright:
+ *   "Failed resolving types. Could not find a matching package for 'npm:openai'"
+ * That message carries no TS#### code, so parse() returned [], and this gate
+ * reported "0 known errors, 0 new" and went green — for every function, on every
+ * deploy, silently. Fixed by deno.json's nodeModulesDir:none, but the reason it
+ * went unnoticed for a whole commit is that the gate only ever looked at what it
+ * could parse and never at whether parsing had anything to work with. */
+const toolchainErrors = String(raw)
+  .replace(/\x1b\[[0-9;]*m/g, '')
+  .split('\n')
+  .filter((l) => /^error: /.test(l.trim()) && !/^error: Type checking failed/.test(l.trim()));
+if (toolchainErrors.length && !errors.length) {
+  console.error('\n[check-functions] DEPLOY BLOCKED — the type checker did not run\n');
+  for (const l of toolchainErrors.slice(0, 5)) console.error('  ' + l.trim());
+  console.error('\nThis is NOT "no type errors found". deno check failed before it could');
+  console.error('report any, so this gate has no opinion. Fix the toolchain, then re-run.\n');
+  process.exit(1);
+}
 
 if (process.argv.includes('--update-baseline')) {
   const rec = [...new Set(errors.map(key))].sort();
