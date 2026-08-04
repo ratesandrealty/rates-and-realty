@@ -430,7 +430,16 @@ Deno.serve(async (req: Request) => {
             status: result.sent ? 'sent' : 'failed',
             metadata: JSON.stringify({ message_id: result.message_id, bulk: true, email_log_id: logRow!.id, tracked: true }),
             created_at: new Date().toISOString()
-          }).catch(() => {});
+          /* .then(ok, err), not .catch(). A PostgrestFilterBuilder is a thenable,
+           * not a Promise: it defines then() and no catch(), so `.catch(...)`
+           * threw "sb.from(...).insert(...).catch is not a function" — and threw
+           * on the BUILDER, before the insert was ever executed. bulk_send has
+           * therefore never completed a run: 1 email_marketing_bulk row exists in
+           * email_log (2026-05-02) and 0 activity_events rows carry bulk:true.
+           * The send and the email_log update happen before this line, so a
+           * campaign mailed recipients up to the first contact-matched one and
+           * then returned 500 with no counts. */
+          }).then(() => {}, () => {});
         }
 
         if (result.sent) sent++; else { failed++; errors.push({ to: toEmail, error: result.error }); }
