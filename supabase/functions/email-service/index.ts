@@ -434,8 +434,13 @@ Deno.serve(async (req: Request) => {
            * not a Promise: it defines then() and no catch(), so `.catch(...)`
            * threw "sb.from(...).insert(...).catch is not a function" — and threw
            * on the BUILDER, before the insert was ever executed. bulk_send has
-           * therefore never completed a run: 1 email_marketing_bulk row exists in
-           * email_log (2026-05-02) and 0 activity_events rows carry bulk:true.
+           * therefore never completed a run: email_log held exactly 1
+           * email_marketing_bulk row (2026-05-02) and no activity_events row
+           * carried bulk:true until this fix was verified on 2026-08-04.
+           * Note when checking that yourself: metadata is JSON.stringify'd into a
+           * jsonb column, so it stores as a jsonb STRING scalar and the quotes are
+           * escaped. `metadata::text ilike '%"bulk":true%'` silently matches
+           * nothing; unwrap with `metadata #>> '{}'` first.
            * The send and the email_log update happen before this line, so a
            * campaign mailed recipients up to the first contact-matched one and
            * then returned 500 with no counts. */
