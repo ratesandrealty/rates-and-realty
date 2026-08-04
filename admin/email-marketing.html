@@ -914,10 +914,26 @@ function getSelectedRecipients() {
    ================================================================ */
 let cachedSettings = null;
 
+/* The signed-in user's session token. email-service gates every action except
+ * ai_compose behind an admin check, so the anon key — which is printed in this
+ * page and identifies nobody — gets a 401. Falls back to the anon key so a
+ * not-yet-ready client degrades to the same 401 rather than throwing. Scoped to
+ * email-service deliberately: SB_KEY is still correct for the PostgREST reads
+ * elsewhere in this file, which are RLS-gated rather than function-gated. */
+async function _emailAuthHeaders() {
+  let jwt = null;
+  try {
+    const c = window._supabaseClient || (window.supabase && window.supabase.auth ? window.supabase : null);
+    const s = c && c.auth ? await c.auth.getSession() : null;
+    if (s && s.data && s.data.session) jwt = s.data.session.access_token;
+  } catch (_) {}
+  return { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: 'Bearer ' + (jwt || SB_KEY) };
+}
+
 async function callEmailService(payload) {
   const res = await fetch(SB_URL + '/functions/v1/email-service', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY },
+    headers: await _emailAuthHeaders(),
     body: JSON.stringify(payload),
   });
   return res.json();
