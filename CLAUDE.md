@@ -39,16 +39,60 @@ hard with no pin in the URL would strand a stale copy with no way to bust it.
 
 ## Edge functions
 
-Only some of the ~126 deployed Supabase edge functions have source in this repo.
-Before editing one, pull the deployed copy and diff it — the repo is not
-authoritative for functions not present here. Deploy with:
+**Always deploy with `bash tools/deploy-function.sh <slug>`. Never a bare
+`supabase functions deploy`.**
 
 ```
-supabase functions deploy <name> --project-ref ljywhvbmsibwnssxpesh --no-verify-jwt
+bash tools/deploy-function.sh <slug>
 ```
 
-Drop `--no-verify-jwt` for functions that require an authenticated caller
-(`gmail-inbox` pins `verify_jwt = true` in `supabase/config.toml`).
+`deploy.sh` gates the SITE. Edge functions ship through the Supabase CLI, which
+passes through none of it, and that gap has cost real outages three times. The
+wrapper is the only path that does all five:
+
+1. `check-functions.mjs` — no NEW type error, no undefined identifier.
+2. `check-function-drift.mjs` — refuse if production holds source this repo has
+   never committed. See below.
+3. refuse if the slug is not pinned in `supabase/config.toml`.
+4. deploy — **never** passing `--no-verify-jwt`; `config.toml` decides.
+5. re-read what is actually live: deployed source now matches the repo, and
+   `verify_jwt` matches the pin.
+
+**Never pass `--no-verify-jwt`.** It overrides `config.toml` from the command
+line, which is exactly how `sms-service` became an open SMS relay on the
+business line. Deploying an UNPINNED function is the same bug pointing the other
+way: the CLI defaults it to `verify_jwt = true`, which is how every
+`send-scheduled-sms` cron run returned `UNAUTHORIZED_NO_AUTH_HEADER` for days
+with nothing alerting. Pin the value — at its current setting if you are not
+trying to change it — and let the file decide.
+
+### Drift: the repo is authoritative, but only because it was made so
+
+All 128 deployed functions now have source here. That is recent. `email-service`
+was **85 days** behind production — the deployed copy had the action alias table,
+link/open tracking, `bulk_send`, `bulk_schedule`, merge tags and attachments, and
+the repo had none of it. A deploy from this checkout would have rolled all of it
+back, reported success, and broken email marketing with no error anywhere.
+`trestle-proxy` looked like a 2-day redeploy from timestamps and was actually a
+`GET ?photo=` endpoint that listing emails depend on.
+
+So the drift check does not ask "are the repo and production different" — they
+are different every time you deploy, that is the point of deploying. It asks
+**"is what is running something we have a record of"**, by comparing the deployed
+bytes against every committed revision of that file on every branch:
+
+- matches the working tree → in sync
+- matches an earlier commit → the repo has moved ahead, deploying is safe
+- matches nothing → production holds code that has never been in this repo.
+  **Refused.** Capture it first:
+
+```
+supabase functions download <slug> --project-ref ljywhvbmsibwnssxpesh --use-api
+git add -A && git commit -m "Capture deployed <slug>"     # source-only, no deploy
+```
+
+Sweep everything with `node tools/check-function-drift.mjs --all`. Run it before
+trusting the repo on any function you have not personally touched.
 
 ## Backups
 
