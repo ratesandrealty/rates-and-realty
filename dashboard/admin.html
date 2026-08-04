@@ -4175,11 +4175,37 @@ const commsState = {
   loading: false,
 };
 
+/* The signed-in user's session token, via the client-acquisition pattern the rest
+ * of the dashboard uses. Returns null rather than a fallback — see commsApi. */
+async function commsAuthToken() {
+  let sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient, w = 0;
+  while (!sb && w < 5000) {
+    await new Promise(r => setTimeout(r, 100)); w += 100;
+    sb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient;
+  }
+  if (!sb || !sb.auth) return null;
+  try {
+    const ss = await sb.auth.getSession();
+    return (ss && ss.data && ss.data.session && ss.data.session.access_token) || null;
+  } catch (_) { return null; }
+}
+
+/* Sends the USER's session token, not _SB_KEY. communications-admin reads 90 days
+ * of sms/email/call logs plus contacts, and can send SMS and email on the business
+ * line — the anon key authenticates nobody, it is hardcoded above and served to
+ * every visitor of this page.
+ *
+ * Deliberately does NOT fall back to the anon key when there is no session. A
+ * fallback would keep working right up until the function starts enforcing, and
+ * then present as an unexplained 401 with no clue that the token was never the
+ * user's. Fail here, visibly, instead. */
 async function commsApi(action, payload = {}) {
   try {
+    const tok = await commsAuthToken();
+    if (!tok) return { error: 'Not signed in — reload the page and sign in again.' };
     const r = await fetch(_COMMS_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ..._SB_HEADERS },
+      headers: { 'Content-Type': 'application/json', apikey: _SB_KEY, Authorization: `Bearer ${tok}` },
       body: JSON.stringify({ action, ...payload }),
     });
     return await r.json();
