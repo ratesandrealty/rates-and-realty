@@ -56,16 +56,44 @@ async function deleteGoogleEvent(eventId: string): Promise<boolean> {
   } catch (e) { return false; }
 }
 
-async function fetchGoogleEvents(start: string, end: string): Promise<any[]> {
+/* Google returns at most maxResults per call and hands back a nextPageToken when
+ * there is more. Without the loop, a range holding more than 250 events silently
+ * returned the first 250 and the caller could not tell — no error, no flag, just
+ * a short calendar. The agenda view asks for 30 days and month asks for ~2, so
+ * this bites first on a busy month and would bite immediately on a year view.
+ *
+ * The `warning` return is the other half. This used to `return []` on any failure
+ * — an expired token, a 500, a network blip — which renders as "no events" and is
+ * indistinguishable from an empty calendar. A calendar that is empty because the
+ * fetch failed must not look like a calendar that is empty. */
+const GOOGLE_PAGE_SIZE = 250;
+const GOOGLE_MAX_PAGES = 20;   // 5,000 events; a real year is far below this
+async function fetchGoogleEvents(start: string, end: string): Promise<{ events: any[]; warning: string | null }> {
   const token = await getGoogleAccessToken();
-  if (!token) return [];
+  if (!token) return { events: [], warning: "Google Calendar is not connected — no Google events are shown." };
+  const out: any[] = [];
+  let pageToken: string | undefined;
   try {
-    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(start)}&timeMax=${encodeURIComponent(end)}&singleEvents=true&orderBy=startTime&maxResults=250`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return [];
-    const body = await res.json();
-    return (body.items || []).map((ev: any) => normalizeGoogleEvent(ev));
-  } catch (e) { return []; }
+    for (let page = 0; page < GOOGLE_MAX_PAGES; page++) {
+      const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events`
+        + `?timeMin=${encodeURIComponent(start)}&timeMax=${encodeURIComponent(end)}`
+        + `&singleEvents=true&orderBy=startTime&maxResults=${GOOGLE_PAGE_SIZE}`
+        + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        return { events: out, warning: `Google Calendar returned ${res.status}; showing ${out.length} event(s) fetched before the failure.${detail ? " " + detail.slice(0, 120) : ""}` };
+      }
+      const body = await res.json();
+      for (const ev of body.items || []) out.push(normalizeGoogleEvent(ev));
+      pageToken = body.nextPageToken || undefined;
+      if (!pageToken) return { events: out, warning: null };
+    }
+    // Ran out of pages rather than out of events — say so instead of truncating quietly.
+    return { events: out, warning: `More than ${GOOGLE_PAGE_SIZE * GOOGLE_MAX_PAGES} Google events in this range; the list is truncated. Narrow the range.` };
+  } catch (e) {
+    return { events: out, warning: `Google Calendar fetch failed: ${(e as Error)?.message || String(e)}. Showing ${out.length} event(s).` };
+  }
 }
 
 function normalizeGoogleEvent(ev: any) {
@@ -97,11 +125,19 @@ function normalizeGoogleEvent(ev: any) {
   };
 }
 
+/* Explicit caps. None of these had one, so the row count came from PostgREST's
+ * default max-rows — a value set outside this repo that nobody here chose, and
+ * which truncates without saying so. A year view multiplies every range by ~12,
+ * so the cap becomes reachable rather than theoretical. Stated here so the number
+ * is a decision. Current table sizes: appointments 10, tours 19, tasks 194,
+ * clickup_task_cache 282. */
+const DB_ROW_LIMIT = 2000;
+
 async function fetchAppointments(start: string, end: string) {
   const { data } = await sb.from("appointments")
     .select("id, contact_id, title, type, scheduled_at, duration_minutes, status, notes, attendee_name, meeting_url, google_event_id")
     .gte("scheduled_at", start).lte("scheduled_at", end)
-    .neq("status", "canceled").order("scheduled_at", { ascending: true });
+    .neq("status", "canceled").order("scheduled_at", { ascending: true }).limit(DB_ROW_LIMIT);
   if (!data) return [];
   const contactIds = [...new Set(data.map(a => a.contact_id).filter(Boolean))];
   const contactMap = new Map();
@@ -136,7 +172,7 @@ async function fetchTours(start: string, end: string) {
     .select("id, contact_id, title, scheduled_start, status, share_token, google_event_id, synced_to_google_at")
     .gte("scheduled_start", start).lte("scheduled_start", end)
     .not("scheduled_start", "is", null).neq("status", "canceled")
-    .order("scheduled_start", { ascending: true });
+    .order("scheduled_start", { ascending: true }).limit(DB_ROW_LIMIT);
   if (!data) return [];
   const contactIds = [...new Set(data.map(b => b.contact_id).filter(Boolean))];
   const contactMap = new Map();
@@ -176,7 +212,7 @@ async function fetchCrmTasks(start: string, end: string) {
     const { data, error } = await sb.from("tasks")
       .select("id, title, due_date, contact_id, status, priority, description")
       .gte("due_date", start).lte("due_date", end)
-      .neq("status", "completed").order("due_date", { ascending: true });
+      .neq("status", "completed").order("due_date", { ascending: true }).limit(DB_ROW_LIMIT);
     if (error || !data) return [];
     const contactIds = [...new Set(data.map(t => t.contact_id).filter(Boolean))];
     const contactMap = new Map();
@@ -210,7 +246,7 @@ async function fetchClickupTasks(start: string, end: string) {
       .gte("due_date", start).lte("due_date", end)
       .not("due_date", "is", null)
       .not("status", "in", "(complete,closed,done)")
-      .order("due_date", { ascending: true });
+      .order("due_date", { ascending: true }).limit(DB_ROW_LIMIT);
     if (error || !data) return [];
     const contactIds = [...new Set(data.map(t => t.contact_id).filter(Boolean))];
     const contactMap = new Map();
@@ -252,14 +288,16 @@ Deno.serve(async (req) => {
       const sourcesParam = url.searchParams.get("sources") || "google,appts,tours,tasks,clickup";
       const sources = new Set(sourcesParam.split(","));
 
-      const promises: Promise<any[]>[] = [];
-      promises.push(sources.has("google") ? fetchGoogleEvents(start, end) : Promise.resolve([]));
+      const promises: Promise<any>[] = [];   // heterogeneous: google returns {events,warning}, the rest return arrays
+      promises.push(sources.has("google") ? fetchGoogleEvents(start, end) : Promise.resolve({ events: [], warning: null }));
       promises.push(sources.has("appts") ? fetchAppointments(start, end) : Promise.resolve([]));
       promises.push(sources.has("tours") ? fetchTours(start, end) : Promise.resolve([]));
       promises.push(sources.has("tasks") ? fetchCrmTasks(start, end) : Promise.resolve([]));
       promises.push(sources.has("clickup") ? fetchClickupTasks(start, end) : Promise.resolve([]));
 
-      const [googleEvents, appointments, tours, tasks, clickupTasks] = await Promise.all(promises);
+      const [googleResult, appointments, tours, tasks, clickupTasks] = await Promise.all(promises);
+      const googleEvents = googleResult.events || [];
+      const googleWarning = googleResult.warning || null;
 
       // Dedupe: collapse Google events whose extendedProperties point at a CRM appointment OR tour we're also returning
       const crmApptGoogleIds = new Set(appointments.map((a: any) => a.metadata?.google_event_id).filter(Boolean));
@@ -280,7 +318,14 @@ Deno.serve(async (req) => {
         clickup: clickupTasks.length,
         total: allEvents.length,
       };
-      return j({ events: allEvents, counts, range: { start, end }, generated_at: new Date().toISOString() });
+      return j({
+        events: allEvents, counts, range: { start, end },
+        /* Present ONLY when something went wrong or was truncated. A caller that
+         * ignores it is no worse off than before; a caller that shows it can tell
+         * "no events" from "we could not read them". */
+        ...(googleWarning ? { warnings: { google: googleWarning } } : {}),
+        generated_at: new Date().toISOString(),
+      });
     }
 
     if (req.method === "POST" && (last === "event" || last === "calendar-data")) {
