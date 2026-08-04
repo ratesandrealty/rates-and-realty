@@ -20,6 +20,15 @@ const ANTHROPIC_KEY = Deno.env.get('ANTHROPIC_API_KEY');
 async function requireAdmin(req: Request): Promise<{ ok: boolean; status?: number; msg?: string }> {
   const auth = req.headers.get('Authorization') || '';
   const token = auth.replace(/^Bearer\s+/i, '').trim();
+  /* The service key also counts when presented as `apikey`. esign's sendRaw()
+   * sends { 'Content-Type', 'apikey': SERVICE } and NO Authorization header at
+   * all, so an Authorization-only check 401s every e-signature invite,
+   * cancellation and completion email — and sendRaw swallows the failure in a
+   * bare catch, so it would have failed silently on a legally significant path.
+   * Caught by auditing callers after deploying; live for about four minutes.
+   * Equality against SERVICE_KEY is just as strong from either header. */
+  const apikey = (req.headers.get('apikey') || '').trim();
+  if (apikey && apikey === SERVICE_KEY) return { ok: true };
   if (!token) return { ok: false, status: 401, msg: 'missing authorization' };
   if (token === SERVICE_KEY) return { ok: true };
   try {
