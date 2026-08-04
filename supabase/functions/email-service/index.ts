@@ -10,7 +10,71 @@ const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 const ANTHROPIC_KEY = Deno.env.get('ANTHROPIC_API_KEY');
+
+/* Copied from esign/index.ts, same shape as communications-admin. Applied to the
+ * RESOLVED action, never the raw one — `send_email` aliases to `send`, and
+ * checking the string the caller supplied would let the alias table walk an
+ * allowlist straight past the gate. That table already hid two bugs today. */
+async function requireAdmin(req: Request): Promise<{ ok: boolean; status?: number; msg?: string }> {
+  const auth = req.headers.get('Authorization') || '';
+  const token = auth.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return { ok: false, status: 401, msg: 'missing authorization' };
+  if (token === SERVICE_KEY) return { ok: true };
+  try {
+    const u = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false },
+    });
+    const { data: { user } } = await u.auth.getUser();
+    if (!user) return { ok: false, status: 401, msg: 'invalid session' };
+    const { data: isAdmin } = await u.rpc('is_admin');
+    if (!isAdmin) return { ok: false, status: 403, msg: 'admin only' };
+    return { ok: true };
+  } catch (_e) {
+    return { ok: false, status: 401, msg: 'auth check failed' };
+  }
+}
+
+/* ai_compose is the one action that stays public — the borrower portal's
+ * assistant calls it with no session of any kind. So it needs a spend guard.
+ *
+ * Same fixed-window counter and the same video_chat_limits table as video-chat,
+ * under a compose: key prefix; deliberately not a second limiter. One deviation:
+ * video-chat's bump() reads with .maybeSingle(), which ERRORS on two rows for a
+ * key. There is no unique index on bucket_key, so two concurrent first-hits
+ * insert two rows, after which maybeSingle() errors, bump() destructures only
+ * { data } so the error reads as "no row", and it inserts a third — the bucket
+ * silently stops counting forever. compose:all is hit by EVERY request, so it is
+ * the likeliest key in the system to hit that. Ordering and taking one row makes
+ * a duplicate harmless. The real fix is a unique index on bucket_key, which
+ * would also repair video-chat; flagged, not applied here. */
+const MAX_COMPOSE_PER_IP_HOUR = 20;
+const MAX_COMPOSE_PER_SESSION_HOUR = 10;
+const MAX_COMPOSE_GLOBAL_HOUR = 200;
+
+async function bumpCompose(key: string, max: number): Promise<boolean> {
+  const now = new Date();
+  const { data: rows } = await sb.from('video_chat_limits')
+    .select('*').eq('bucket_key', key).order('id', { ascending: true }).limit(1);
+  const data = rows && rows.length ? rows[0] : null;
+  if (!data) {
+    await sb.from('video_chat_limits').insert({ bucket_key: key, hits: 1, window_start: now.toISOString() });
+    return true;
+  }
+  const started = new Date(data.window_start).getTime();
+  if (now.getTime() - started > 3600_000) {
+    await sb.from('video_chat_limits').update({ hits: 1, window_start: now.toISOString(), updated_at: now.toISOString() }).eq('bucket_key', key);
+    return true;
+  }
+  if (data.hits >= max) return false;
+  await sb.from('video_chat_limits').update({ hits: data.hits + 1, updated_at: now.toISOString() }).eq('bucket_key', key);
+  return true;
+}
+
+const clientIp = (req: Request) =>
+  (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || req.headers.get('cf-connecting-ip') || 'unknown';
 
 const TRACK_BASE = `${SUPABASE_URL}/functions/v1/track-event`;
 
@@ -245,7 +309,12 @@ async function aiComposeEmail(prompt: string, contactName: string): Promise<stri
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 800, messages: [{ role: 'user', content: system + '\n\n' + user }] })
+    /* `system` as the API parameter, not prepended to the user turn. Concatenated
+     * into one user message the persona was just leading text a caller could
+     * override outright — and ai_compose is reachable unauthenticated from the
+     * borrower portal, so "caller" is anyone. It is still a general-purpose
+     * generator; this only stops the trivial override. */
+    body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 800, system, messages: [{ role: 'user', content: user }] })
   });
   const data = await res.json();
   const rawText = data.content?.[0]?.text?.trim() || '';
@@ -270,6 +339,34 @@ Deno.serve(async (req: Request) => {
       'history': 'get_history', 'schedule': 'bulk_schedule', 'schedule_blast': 'bulk_schedule',
       'schedule_send': 'bulk_schedule', 'settings': 'get_settings',
     } as Record<string, string>)[rawAction] || rawAction;
+
+    /* Everything except ai_compose requires an admin session or the service key.
+     * Written as "not ai_compose" rather than an allowlist of gated actions so a
+     * new action is protected the moment it is added, and an unknown action does
+     * not enumerate the valid ones to a stranger.
+     *
+     * Until 2026-08-04 this function had no caller authentication at all: anyone
+     * with the URL could send email as rene@ratesandrealty.com. ai_compose stays
+     * open because public/unified-portal.html is served to borrowers and calls it
+     * with no session — it cannot send, it only returns generated text. */
+    if (action !== 'ai_compose') {
+      const adm = await requireAdmin(req);
+      if (!adm.ok) return err(adm.msg || 'unauthorized', adm.status || 403);
+    } else {
+      /* No session identifier reaches here: the portal posts { action, prompt }
+       * and nothing else — it holds a portal_user in localStorage but does not
+       * send it. Rather than invent a session key, the per-IP and global buckets
+       * carry this, and the per-session bucket only engages if a caller supplies
+       * session_id. Wire the portal to send one and it tightens automatically. */
+      const ip = clientIp(req);
+      const sessionId = (body.session_id || '').toString().slice(0, 120);
+      const okIp = await bumpCompose('compose:ip:' + ip, MAX_COMPOSE_PER_IP_HOUR);
+      const okAll = await bumpCompose('compose:all', MAX_COMPOSE_GLOBAL_HOUR);
+      const okSess = sessionId ? await bumpCompose('compose:sess:' + sessionId, MAX_COMPOSE_PER_SESSION_HOUR) : true;
+      if (!okIp || !okAll || !okSess) {
+        return err('Rate limit reached for AI compose. Try again shortly.', 429);
+      }
+    }
 
     if (action === 'get_settings') {
       const settings = await getSettings();

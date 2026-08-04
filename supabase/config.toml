@@ -93,12 +93,16 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.email-service]
-# Pinned at its CURRENT value so a bug fix cannot change the gateway contract.
-# false is NOT the right answer: this function has no caller authentication and
-# sends email as rene@ratesandrealty.com for anyone who knows the URL. It is on
-# the open-surface list with communications-admin, people-admin, bot-admin,
-# tours-admin, listing-alert-actions and borrower-drive, and wants the same
-# in-function guard. Change it deliberately, not alongside something else.
+# false is now CORRECT, not a compromise — same shape as esign. One action
+# (ai_compose) is called by public/unified-portal.html, which is served to
+# borrowers, so a blanket JWT requirement would 401 the borrower assistant. The
+# control is inside the function: requireAdmin() on every action except
+# ai_compose, applied to the RESOLVED action so the alias table cannot walk a
+# gated action past it. ai_compose cannot send; it returns generated text, and
+# its spend guard is the compose:* rate limit in video_chat_limits.
+#
+# Unlike communications-admin, which went to true because every one of its
+# callers holds a session, this one keeps a genuinely public entry point.
 verify_jwt = false
 
 [functions.communications-admin]
