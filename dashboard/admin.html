@@ -5545,10 +5545,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <div class="bulk-picker bulk-picker-wide" data-target="bulk-lead-picker" hidden>
   <div class="bulk-picker-header">Assign <span data-field="bl-count">0</span> tasks to lead</div>
-  <input type="search" class="bulk-picker-search" data-field="bl-search" placeholder="Search leads…" />
-  <div class="bulk-picker-list" data-target="bl-list">
-    <div style="padding:12px;color:#888;font-size:12px;">Loading leads…</div>
-  </div>
+  <div class="bulk-picker-list" data-picker="bl-contact"></div>
 </div>
 
 <script>
@@ -5643,55 +5640,27 @@ document.addEventListener('DOMContentLoaded', function() {
     };
   }
 
-  async function lead(trigger, count, onChoose) {
+  /* Was the fourth and last capped picker: it fetched limit=500 with the ANON key
+   * as the bearer and filtered that list by NAME only — a search box over a list
+   * already cut short, which is worse than no search because it looks exhaustive.
+   * Now the shared LeadPicker, so all four sites are one implementation. The
+   * popover keeps its own positioning and header; only the list is the component. */
+  var _blPicker = null;
+  function lead(trigger, count, onChoose) {
     closeAll();
     var picker = document.querySelector('[data-target=bulk-lead-picker]');
-    if (!picker) return;
+    if (!picker || !window.LeadPicker) return;
     picker.querySelector('[data-field=bl-count]').textContent = String(count);
     position(picker, trigger);
     picker.hidden = false;
-    var listEl = picker.querySelector('[data-target=bl-list]');
-    var search = picker.querySelector('[data-field=bl-search]');
-    listEl.innerHTML = '<div style="padding:12px;color:#888;font-size:12px;">Loading leads…</div>';
-
-    var contacts = [];
-    try {
-      var res = await fetch(supabaseUrl + '/rest/v1/contacts?select=id,first_name,last_name&order=first_name&limit=500', {
-        headers: { 'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey }
-      });
-      var rows = await res.json();
-      if (Array.isArray(rows)) contacts = rows;
-    } catch (e) {
-      listEl.innerHTML = '<div style="padding:12px;color:#ff7777;">Failed to load: ' + esc(e.message || 'unknown') + '</div>';
-      return;
-    }
-
-    function buildList(filter) {
-      var f = (filter || '').toLowerCase();
-      var filtered = contacts.filter(function (c) {
-        if (!f) return true;
-        var n = ((c.first_name || '') + ' ' + (c.last_name || '')).toLowerCase();
-        return n.indexOf(f) !== -1;
-      });
-      var html = '<button class="bulk-picker-option" data-cid="">— Unlink (no lead) —</button>'
-        + '<div class="bulk-picker-divider"></div>'
-        + filtered.map(function (c) {
-            var name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || '(unnamed)';
-            return '<button class="bulk-picker-option" data-cid="' + esc(c.id) + '">' + esc(name) + '</button>';
-          }).join('');
-      listEl.innerHTML = html;
-      Array.prototype.forEach.call(listEl.querySelectorAll('[data-cid]'), function (btn) {
-        btn.onclick = function () {
-          var cid = btn.dataset.cid || null;
-          picker.hidden = true;
-          onChoose(cid);
-        };
-      });
-    }
-    buildList('');
-    search.value = '';
-    search.oninput = function (e) { buildList(e.target.value); };
-    setTimeout(function () { search.focus(); }, 50);
+    var host = picker.querySelector('[data-picker=bl-contact]');
+    if (_blPicker) _blPicker.destroy();
+    _blPicker = window.LeadPicker.mount(host, {
+      emptyLabel: '— Unlink (no lead) —',
+      placeholder: 'Search leads by name, phone or email…',
+      onSelect: function (cid) { picker.hidden = true; onChoose(cid || null); }
+    });
+    setTimeout(function () { var i = host.querySelector('.lp-input'); if (i) i.focus(); }, 50);
   }
 
   // Outside-click + Escape dismissal — wired once globally.
