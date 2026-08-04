@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1';
 import fontkit from 'https://esm.sh/@pdf-lib/fontkit@1.1.1';
 
-const URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const BUCKET = 'esign';
@@ -14,7 +14,7 @@ const cors = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey'
 };
-const svc = () => createClient(URL, SERVICE, { auth: { persistSession: false } });
+const svc = () => createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
 const json = (d: any, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 const fmtTs = (t: any) => t ? new Date(t).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }) + ' PT' : '\u2014';
 
@@ -118,7 +118,7 @@ async function requireAdmin(req: Request): Promise<{ ok: boolean; userId: string
   if (!token) return { ok: false, userId: null, status: 401, msg: 'missing authorization' };
   if (token === SERVICE) return { ok: true, userId: null };
   try {
-    const u = createClient(URL, ANON, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false } });
+    const u = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false } });
     const { data: { user } } = await u.auth.getUser();
     if (!user) return { ok: false, userId: null, status: 401, msg: 'invalid session' };
     const { data: isAdmin } = await u.rpc('is_admin');

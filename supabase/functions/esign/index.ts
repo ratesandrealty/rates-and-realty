@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 
-const URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const PUBLIC_BASE = 'https://homes.ratesandrealty.com';
@@ -14,7 +14,7 @@ const cors = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey'
 };
-const svc = () => createClient(URL, SERVICE, { auth: { persistSession: false } });
+const svc = () => createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
 const json = (d: any, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 const esc = (x: any) => String(x ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const genToken = () => { const a = new Uint8Array(24); crypto.getRandomValues(a); return [...a].map(b => b.toString(16).padStart(2,'0')).join(''); };
@@ -33,7 +33,7 @@ async function requireAdmin(req: Request): Promise<{ ok: boolean; userId: string
   if (!token) return { ok: false, userId: null, status: 401, msg: 'missing authorization' };
   if (token === SERVICE) return { ok: true, userId: null };
   try {
-    const u = createClient(URL, ANON, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false } });
+    const u = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false } });
     const { data: { user } } = await u.auth.getUser();
     if (!user) return { ok: false, userId: null, status: 401, msg: 'invalid session' };
     const { data: isAdmin } = await u.rpc('is_admin');
@@ -44,7 +44,7 @@ async function requireAdmin(req: Request): Promise<{ ok: boolean; userId: string
 
 async function sendRaw(p: { to_email: string; subject: string; html: string; cc?: string; contact_id?: string|null }) {
   try {
-    await fetch(`${URL}/functions/v1/email-service`, {
+    await fetch(`${SUPABASE_URL}/functions/v1/email-service`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': SERVICE },
       body: JSON.stringify({ action: 'send', to_email: p.to_email, subject: p.subject, html: p.html, cc: p.cc, contact_id: p.contact_id || null })
     });
@@ -53,7 +53,7 @@ async function sendRaw(p: { to_email: string; subject: string; html: string; cc?
 
 async function callEsignDocs(action: string, payload: any) {
   try {
-    const r = await fetch(`${URL}/functions/v1/esign-docs`, {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/esign-docs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE}`, 'apikey': SERVICE },
       body: JSON.stringify({ action, ...payload })
@@ -105,7 +105,7 @@ async function sendLinkSms(env: any, signer: any, force = false) {
   const title = rawTitle.length > 60 ? rawTitle.slice(0, 57) + '\u2026' : rawTitle;
   const msg = `Hi ${first}, Rene Duarte (Rates & Realty) sent you a document to e-sign: ${title}. Review & sign here: ${signingUrl} Reply STOP to opt out.`;
   try {
-    await fetch(`${URL}/functions/v1/sms-service`, {
+    await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SERVICE, 'Authorization': `Bearer ${SERVICE}` },
       body: JSON.stringify({ trigger: 'custom', to_phone: phone, params: { message: msg, firstName: first }, contact_id: signer.person_contact_id || env.contact_id || null, trigger_id: env.id })
