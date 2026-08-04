@@ -7075,7 +7075,7 @@ async function sendInlineReply(btn) {
   btn.disabled = true; btn.textContent = '…';
   try {
     const res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: await _rnrAuthHeaders(),
       body: JSON.stringify({ trigger: 'manual', to_phone: _smsDest(phone), params: { message: text }, contact_id: cid, direction: 'outbound' })
     });
     const data = await res.json();
@@ -18927,7 +18927,7 @@ async function saveAlertEdit(alertId) {
       var first = (contactData && contactData.first_name) || 'there';
       var msg = 'Hi '+first+'! Your "'+updates.name+'" listing alert has been updated with new criteria. I\'ll notify you when matching homes hit the market. - Rene (714) 472-8508';
       fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
-        method:'POST', headers:{'Content-Type':'application/json'},
+        method:'POST', headers: await _rnrAuthHeaders(),
         body: JSON.stringify({ trigger:'manual', to_phone:_smsDest(phone), params:{message:msg}, contact_id:_slbCid(), direction:'outbound' })
       }).catch(function(){});
     }
@@ -19301,7 +19301,7 @@ async function slbShareSms() {
   var msg = 'Hi '+first+'! I found homes matching what you\'re looking for in '+cityText+'. Check them out: '+linkToSend+' - Rene (714) 472-8508';
   try {
     var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
-      method:'POST', headers:{'Content-Type':'application/json'},
+      method:'POST', headers: await _rnrAuthHeaders(),
       body: JSON.stringify({ trigger:'manual', to_phone:_smsDest(phone), params:{message:msg}, contact_id: cid, direction:'outbound' })
     });
     var data = await res.json();
@@ -19454,7 +19454,7 @@ async function quickSendSms() {
   var origTxt = btn.textContent; btn.textContent = '…'; btn.disabled = true;
   try {
     var res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: await _rnrAuthHeaders(),
       body: JSON.stringify({ trigger: 'manual', to_phone: _smsDest(phone), params: { message: text }, contact_id: cid, direction: 'outbound' })
     });
     var data = await res.json();
@@ -34475,7 +34475,7 @@ async function _tcSendNow(){
       if(!_tcState.toPhone && !_isVaSession()){ throw new Error('No phone number'); }
       var body={ trigger:'custom', to_phone:_tcState.toPhone, params:{ message:msg }, contact_id:_tcState.cid };
       var media=_tcMedia(); if(media) body.media_url=media;
-      var res=await fetch(SMS_FN,{ method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) });
+      var res=await fetch(SMS_FN,{ method:'POST', headers: await _rnrAuthHeaders(), body:JSON.stringify(body) });
       var data=await res.json().catch(function(){ return {}; });
       if(!res.ok || data.sent===false || (data.success===false)) throw new Error(data.error||('send failed ('+res.status+')'));
       showToast('Text sent ✓');
@@ -34933,7 +34933,7 @@ async function smsRunAiCompose() {
   var origTxt = btn.textContent; btn.disabled = true; btn.textContent = '...';
   try {
     var res = await fetch(SMS_FN, {
-      method:'POST', headers:{'Content-Type':'application/json'},
+      method:'POST', headers: await _rnrAuthHeaders(),
       body: JSON.stringify({ trigger:'ai_compose', prompt: userPrompt, contact_name: smsContactData?.firstName || '', tone: smsTone })
     });
     var data = await res.json();
@@ -34962,9 +34962,9 @@ async function smsAiSuggest3() {
     'Rewrite this SMS with a warm, friendly tone. Situation: ' + situation,
     'Rewrite this SMS with a brief, action-oriented tone. Situation: ' + situation
   ];
-  var promises = variations.map(function(p) {
+  var promises = variations.map(async function(p) {          // async: _rnrAuthHeaders() is awaited
     return fetch(SMS_FN, {
-      method:'POST', headers:{'Content-Type':'application/json'},
+      method:'POST', headers: await _rnrAuthHeaders(),
       body: JSON.stringify({ trigger:'ai_compose', prompt: p, contact_name: smsContactData?.firstName || '', tone: smsTone })
     }).then(function(r){ return r.json(); }).catch(function(){ return {}; });
   });
@@ -35164,7 +35164,7 @@ async function loadSmsHistory() {
   // Try get_log trigger first
   try {
     var res = await fetch(SMS_FN, {
-      method:'POST', headers:{'Content-Type':'application/json'},
+      method:'POST', headers: await _rnrAuthHeaders(),
       body: JSON.stringify({ trigger:'get_log', contact_id: cid, portal_user_id: smsContactData?.portalUserId || null })
     });
     var data = await res.json();
@@ -35203,7 +35203,7 @@ async function sendSmsFromModal() {
     };
     if (smsMediaUrl) payload.media_url = smsMediaUrl;
     var res = await fetch(SMS_FN, {
-      method:'POST', headers:{'Content-Type':'application/json'},
+      method:'POST', headers: await _rnrAuthHeaders(),
       body: JSON.stringify(payload)
     });
     var data = await res.json();

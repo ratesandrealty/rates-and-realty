@@ -562,7 +562,7 @@
     if (a.channel === 'email') {
       if (!c.email) throw new Error('No email on file for this lead');
       var er = await fetch(base + '/functions/v1/email-service', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon },
+        method: 'POST', headers: await _scAuthHeaders(anon),   // session token: email-service is guarded / has no caller auth of its own
         body: JSON.stringify({ action: 'send', contact_id: a.contact_id, to: [c.email], from: 'rene@ratesandrealty.com', subject: a.subject || '', body_html: (a.body || '').replace(/\n/g, '<br>'), body_text: a.body || '' })
       });
       var ed = await er.json().catch(function () { return {}; });
@@ -570,7 +570,7 @@
     } else {
       if (!c.phone) throw new Error('No phone on file for this lead');
       var sr = await fetch(base + '/functions/v1/sms-service', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon },
+        method: 'POST', headers: await _scAuthHeaders(anon),   // session token: sms-service is guarded / has no caller auth of its own
         body: JSON.stringify({ trigger: 'manual', to_phone: c.phone, params: { message: a.body || '' }, contact_id: a.contact_id, direction: 'outbound' })
       });
       var sd = await sr.json().catch(function () { return {}; });
@@ -1180,4 +1180,16 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
+
+  /* Session token, no anon fallback. sms-service sends from the business line and
+   * checks nothing itself; email-service gates every action but ai_compose. The
+   * anon key satisfies only the gateway, which accepts any project-signed JWT. */
+  async function _scAuthHeaders(anon) {
+    var sb = window._supabaseClient || (window.supabase && window.supabase.auth ? window.supabase : null);
+    var jwt = null;
+    try { var r = sb && sb.auth ? await sb.auth.getSession() : null; if (r && r.data && r.data.session) jwt = r.data.session.access_token; } catch (e) {}
+    if (!jwt) throw new Error('Not signed in — reload the page and sign in again.');
+    return { 'Content-Type': 'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + jwt };
+  }
+
 })();

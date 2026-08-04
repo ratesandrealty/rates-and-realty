@@ -930,6 +930,20 @@ async function _emailAuthHeaders() {
   return { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: 'Bearer ' + (jwt || SB_KEY) };
 }
 
+/* Session token for sms-service. Separate from _emailAuthHeaders because there is
+ * no fallback here: a send that cannot be attributed to a signed-in user should
+ * fail, not go out under the anon key. */
+async function _smsAuthHeaders() {
+  let jwt = null;
+  try {
+    const c = window._supabaseClient || (window.supabase && window.supabase.auth ? window.supabase : null);
+    const s = c && c.auth ? await c.auth.getSession() : null;
+    if (s && s.data && s.data.session) jwt = s.data.session.access_token;
+  } catch (_) {}
+  if (!jwt) throw new Error('Not signed in — reload the page and sign in again.');
+  return { apikey: SB_KEY, Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' };
+}
+
 async function callEmailService(payload) {
   const res = await fetch(SB_URL + '/functions/v1/email-service', {
     method: 'POST',
@@ -1471,7 +1485,10 @@ async function sendSmsCampaign(mode) {
   const sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
   const sbKey = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
   const smsFn = sbUrl + '/functions/v1/sms-service';
-  const headers = { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json' };
+  /* sms-service sends from the business line and has no caller auth of its own,
+     so the anon key here authenticated nobody — it only satisfied the gateway,
+     which accepts any project-signed JWT. Session token, no fallback. */
+  const headers = await _smsAuthHeaders();
 
   let sent = 0, failed = 0;
   showToast('Sending SMS 0/' + recipients.length + '...');
@@ -1503,7 +1520,7 @@ async function sendSmsTest() {
   try {
     const res = await fetch(sbUrl + '/functions/v1/sms-service', {
       method: 'POST',
-      headers: { 'apikey': sbKey, 'Authorization': 'Bearer ' + sbKey, 'Content-Type': 'application/json' },
+      headers: await _smsAuthHeaders(),
       body: JSON.stringify({ trigger: 'custom', to_phone: '+17144728508', params: { message: fullMsg } })
     });
     var data = await res.json().catch(function() { return {}; });
