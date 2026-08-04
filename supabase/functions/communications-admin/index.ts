@@ -265,40 +265,55 @@ Deno.serve(async (req) => {
     if (action === "get_thread") {
       const contactId = body.contact_id || null;
       const phone = body.phone || null;
-      if (!contactId && !phone) return err("contact_id or phone required");
+      /* Third thread key. list_conversations groups an email with no contact as
+       * `e:<address>` and leaves phone null, so those rows listed fine and then
+       * failed to open with "contact_id or phone required" — including every
+       * system notification from the health monitor. The "Unmatched" filter chip
+       * selects for exactly this state, so it was reachable by design. */
+      const email = String(body.email || "").trim().toLowerCase() || null;
+      if (!contactId && !phone && !email) return err("contact_id, phone or email required");
 
       const phoneL10 = phone ? last10(phone) : null;
       const sinceClause = body.since ? new Date(body.since).toISOString() : new Date(Date.now() - 365 * 86400000).toISOString();
 
-      // Pull messages on multiple matching axes
-      const filters: any[] = [];
-      if (contactId) filters.push({ col: "contact_id", val: contactId });
+      /* Every axis below is either constrained or returns nothing. An axis with
+       * no applicable filter used to fall through UNFILTERED: opening an
+       * unmatched-by-phone conversation ran the email query with no contact_id
+       * and no else-branch, so the last 200 emails in the CRM — every borrower —
+       * were interleaved into that one stranger's thread. Adding a third key
+       * without closing this would have done the same for the SMS and call
+       * queries. NONE is not an optimisation; it is the guard. */
+      const NONE = Promise.resolve({ data: [] });
 
-      // SMS
-      let smsQ = sb.from("sms_log")
+      // SMS — by contact, else by phone. An email-only thread has no SMS axis.
+      const smsBase = () => sb.from("sms_log")
         .select("id, direction, from_phone, to_phone, body, status, twilio_sid, contact_id, trigger_type, error_message, created_at")
         .gte("created_at", sinceClause)
         .order("created_at", { ascending: true })
         .limit(500);
-      if (contactId) smsQ = smsQ.eq("contact_id", contactId);
-      else if (phoneL10) smsQ = smsQ.or(`from_phone.ilike.%${phoneL10}%,to_phone.ilike.%${phoneL10}%`);
+      const smsQ = contactId ? smsBase().eq("contact_id", contactId)
+        : phoneL10 ? smsBase().or(`from_phone.ilike.%${phoneL10}%,to_phone.ilike.%${phoneL10}%`)
+        : NONE;
 
-      // Email
-      let emailQ = sb.from("email_log")
+      // Email — by contact, else by recipient address.
+      const emailBase = () => sb.from("email_log")
         .select("id, recipient_email:to_email, recipient_name:to_name, subject, body:body_text, status, contact_id, sent_at, opened_at, created_at")
         .gte("created_at", sinceClause)
         .order("created_at", { ascending: true })
         .limit(200);
-      if (contactId) emailQ = emailQ.eq("contact_id", contactId);
+      const emailQ = contactId ? emailBase().eq("contact_id", contactId)
+        : email ? emailBase().ilike("to_email", email)
+        : NONE;
 
-      // Calls
-      let callsQ = sb.from("calls_log")
+      // Calls — by contact, else by phone.
+      const callsBase = () => sb.from("calls_log")
         .select("*")
         .gte("created_at", sinceClause)
         .order("created_at", { ascending: true })
         .limit(100);
-      if (contactId) callsQ = callsQ.eq("contact_id", contactId);
-      else if (phoneL10) callsQ = callsQ.or(`from_phone.ilike.%${phoneL10}%,to_phone.ilike.%${phoneL10}%`);
+      const callsQ = contactId ? callsBase().eq("contact_id", contactId)
+        : phoneL10 ? callsBase().or(`from_phone.ilike.%${phoneL10}%,to_phone.ilike.%${phoneL10}%`)
+        : NONE;
 
       // Bot decisions (so we can surface AI vs human and reasoning)
       let botQ;
