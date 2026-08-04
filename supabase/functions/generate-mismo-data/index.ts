@@ -6,7 +6,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // full SSN lives in the admin-only application_ssn vault; this function runs as
 // service_role and overlays the vaulted SSN onto the application before building XML.
 //
-// ── Fidelity gates (2026-07-14 rewrite) ─────────────────────────────────────
+// ── Fidelity gates (2026-07-14 rewrite) ────────────────────────────────
 // 1. DECLARATIONS: sourced from real columns via coalesce(decl_X, declaration_X)
 //    for the borrower, and the 5 real co_borrower_decl_* for the co-borrower.
 //    NULL => the indicator is OMITTED. We never emit a hardcoded `false`
@@ -69,7 +69,7 @@ const mapHousing = (h: any) => { if(!h) return null; const v=String(h).toLowerCa
 const mapLiabType = (t: any) => { if(!t) return 'Revolving'; const v=String(t).toLowerCase(); if(v.includes('mortgage')) return 'MortgageLoan'; if(v.includes('install')) return 'Installment'; if(v.includes('revolv')) return 'Revolving'; if(v.includes('lease')) return 'LeasePayment'; if(v.includes('heloc')) return 'HELOC'; if(v.includes('open')) return 'Open30DayChargeAccount'; if(v.includes('taxes')||v.includes('lien')) return 'TaxLien'; return 'Revolving'; };
 const mapAssetType = (t: any) => { if(!t) return 'CheckingAccount'; const v=String(t).toLowerCase(); if(v.includes('check')) return 'CheckingAccount'; if(v.includes('saving')) return 'SavingsAccount'; if(v.includes('money')) return 'MoneyMarketFund'; if(v.includes('stock')||v.includes('bond')) return 'StocksAndBonds'; if(v.includes('mutual')) return 'MutualFund'; if(v.includes('retire')||v.includes('401')||v.includes('ira')) return 'RetirementFund'; if(v.includes('cd')||v.includes('certificate')) return 'CertificateOfDepositTimeDeposit'; if(v.includes('gift')) return 'GiftsTotal'; if(v.includes('trust')) return 'TrustAccount'; return 'CheckingAccount'; };
 
-// ── Income type mapping ──────────────────────────────────────────────────────
+// ── Income type mapping ─────────────────────────────────────────
 // Free-text income_type (e.g. "Base Salary", "Bonus", "Alimony") -> ULAD IncomeType
 // enum, plus whether the item is employment income (drives EmploymentIncomeIndicator).
 const EMPLOYMENT_INCOME = new Set(['Base','Overtime','Bonus','Commission','MilitaryEntitlements']);
@@ -90,7 +90,7 @@ const mapIncomeType = (t: any): string => {
 };
 const isEmploymentIncome = (uladType: string): boolean => EMPLOYMENT_INCOME.has(uladType);
 
-// ── HMDA / demographic value mapping ─────────────────────────────────────────
+// ── HMDA / demographic value mapping ────────────────────────────────
 // Values arrive as jsonb arrays of strings (ethnicity/race) or a text scalar (sex).
 // Empty/absent => nothing emitted for that category. Refusal sentinel => refusal.
 const asArray = (v: any): string[] => {
@@ -322,7 +322,7 @@ Deno.serve(async (req: Request) => {
           // Last resort: a single total_monthly_income lump (order 1 only).
           if (!items.length && order === 1) { const tmi = numOrNull(app.total_monthly_income); if (tmi && tmi > 0) items.push({ amount: n2(tmi), uladType: 'Base', employment: true }); }
         }
-        warnings.push(`Borrower ${order} (${b.first} ${b.last}`.trim() + `): income taken from flat fallback columns (structured loan_income empty) — simplified, not itemized.`);
+        warnings.push(`Borrower ${order} (${(b.first + ' ' + b.last).trim()}): income taken from flat fallback columns (structured loan_income empty) — simplified, not itemized.`);
       }
 
       if (b.emp_name) { empSeq++; b.empLabel = 'EMPLOYER_' + empSeq; } else b.empLabel = null;

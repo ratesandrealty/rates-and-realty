@@ -10,76 +10,69 @@ const cors = {
   'Content-Type': 'application/json',
 };
 
-const dbHeaders = {
+const h = {
   'apikey': SERVICE_KEY,
   'Authorization': `Bearer ${SERVICE_KEY}`,
   'Content-Type': 'application/json',
   'Prefer': 'return=minimal',
 };
 
-const RELATED_TABLES = [
-  'activity_events', 'email_log', 'sms_log', 'twilio_inbound',
-  'loan_conditions', 'condition_documents', 'condition_notes',
-  'listing_alerts', 'alert_sent_listings', 'saved_listings',
-  'credit_applications', 'contact_tags', 'page_views',
-  'portal_page_views', 'mortgage_applications', 'liabilities',
-  'scheduled_emails', 'documents', 'tasks', 'notes',
-  'leads', 'portal_users',
-];
-// Tables that reference contacts via a different FK column name
-const RELATED_VIA_RELATED = ['contact_relationships']; // has related_contact_id too
-
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
   try {
     const { contact_ids } = await req.json();
-    if (!Array.isArray(contact_ids) || !contact_ids.length) {
+    if (!Array.isArray(contact_ids) || !contact_ids.length)
       return new Response(JSON.stringify({ error: 'contact_ids array required' }), { status: 400, headers: cors });
-    }
 
-    console.log(`[delete-contacts] Deleting ${contact_ids.length} contacts`);
+    console.log(`[delete-contacts] Deleting ${contact_ids.length}:`, contact_ids.join(', '));
     const results: any[] = [];
 
     for (const id of contact_ids) {
       try {
-        for (const table of RELATED_TABLES) {
-          await fetch(`${SUPABASE_URL}/rest/v1/${table}?contact_id=eq.${id}`, {
-            method: 'DELETE', headers: dbHeaders,
-          }).catch(() => {});
-        }
-        // Also delete rows where this contact is referenced as related_contact_id
-        for (const table of RELATED_VIA_RELATED) {
-          await fetch(`${SUPABASE_URL}/rest/v1/${table}?contact_id=eq.${id}`, {
-            method: 'DELETE', headers: dbHeaders,
-          }).catch(() => {});
-          await fetch(`${SUPABASE_URL}/rest/v1/${table}?related_contact_id=eq.${id}`, {
-            method: 'DELETE', headers: dbHeaders,
-          }).catch(() => {});
-        }
+        // All FK constraints are now ON DELETE CASCADE so a single
+        // DELETE on contacts cascades through the entire tree.
+        // Only need to handle self-referential SET NULL FKs first.
 
+        // 1. NULL out self-referential FKs on OTHER contacts pointing to this one
+        await Promise.allSettled([
+          fetch(`${SUPABASE_URL}/rest/v1/contacts?referred_by_contact_id=eq.${id}`, {
+            method: 'PATCH', headers: h,
+            body: JSON.stringify({ referred_by_contact_id: null })
+          }),
+          fetch(`${SUPABASE_URL}/rest/v1/contacts?primary_borrower_contact_id=eq.${id}`, {
+            method: 'PATCH', headers: h,
+            body: JSON.stringify({ primary_borrower_contact_id: null, is_co_borrower: false })
+          }),
+        ]);
+
+        // 2. Single DELETE — Postgres CASCADE handles everything else
         const res = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}`, {
-          method: 'DELETE', headers: dbHeaders,
+          method: 'DELETE', headers: h,
         });
 
-        let errDetail = '';
+        let errText = '';
         if (!res.ok) {
-          try { errDetail = await res.text(); } catch(_) {}
-          console.error(`[delete-contacts] ${id} FAILED ${res.status}: ${errDetail}`);
+          try { errText = await res.text(); } catch(_){}
+          console.error(`[delete-contacts] FAILED ${id} (${res.status}): ${errText}`);
         } else {
-          console.log(`[delete-contacts] ${id}: deleted`);
+          console.log(`[delete-contacts] ✓ deleted ${id}`);
         }
-        results.push({ id, success: res.ok, status: res.status, error: res.ok ? undefined : errDetail });
-      } catch (err: any) {
-        console.error(`[delete-contacts] Error deleting ${id}:`, err.message);
-        results.push({ id, success: false, error: err.message });
+
+        results.push({ id, success: res.ok, status: res.status, error: res.ok ? undefined : errText });
+
+      } catch (e: any) {
+        console.error(`[delete-contacts] Exception for ${id}:`, e.message);
+        results.push({ id, success: false, error: e.message });
       }
     }
 
     const deleted = results.filter(r => r.success).length;
+    console.log(`[delete-contacts] Done: ${deleted}/${contact_ids.length}`);
     return new Response(JSON.stringify({ deleted, total: contact_ids.length, results }), { headers: cors });
-  } catch (err: any) {
-    console.error('[delete-contacts] Fatal error:', err);
-    return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: cors });
+
+  } catch (e: any) {
+    console.error('[delete-contacts] Fatal:', e);
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: cors });
   }
 });

@@ -13,11 +13,11 @@ const CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID')!
 const CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET')!
 const POLL_SECRET = Deno.env.get('VOE_POLL_SECRET') || ''
 
-const SELF_ADDRESSES = ['rene@ratesandrealty.com', 'processing@ratesandrealty.com', 'reneduarte.homeside@gmail.com']
+const SELF_ADDRESSES = ['rene@ratesandrealty.com','processing@ratesandrealty.com','reneduarte.homeside@gmail.com']
 const J = { 'Content-Type': 'application/json' }
 
-function rest(path: string) { return `${SUPABASE_URL}/rest/v1/${path}` }
-function svc() { return { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' } }
+function rest(path: string){ return `${SUPABASE_URL}/rest/v1/${path}` }
+function svc(){ return { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' } }
 
 async function getToken(): Promise<string> {
   const r = await fetch(rest('google_calendar_tokens?id=eq.rene&select=access_token,refresh_token,expires_at'), { headers: svc() })
@@ -40,7 +40,7 @@ async function getToken(): Promise<string> {
   return access_token
 }
 
-async function gmailList(token: string, q: string, max = 25) {
+async function gmailList(token: string, q: string, max = 25){
   const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${max}&q=${encodeURIComponent(q)}`
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!r.ok) return { error: `list ${r.status}`, messages: [] as any[] }
@@ -48,18 +48,18 @@ async function gmailList(token: string, q: string, max = 25) {
   return { messages: (j.messages || []) as any[] }
 }
 
-async function gmailGet(token: string, id: string) {
+async function gmailGet(token: string, id: string){
   const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: { Authorization: `Bearer ${token}` } })
   if (!r.ok) return null
   return await r.json()
 }
 
-function hdr(headers: any[], name: string) { const h = (headers || []).find((x: any) => (x.name || '').toLowerCase() === name.toLowerCase()); return h ? h.value : null }
-function parseEmail(v: string | null) { if (!v) return null; const m = v.match(/<([^>]+)>/); return (m ? m[1] : v).trim().toLowerCase() }
-function b64urlDecode(data: string) { try { const b = data.replace(/-/g, '+').replace(/_/g, '/'); const pad = b.length % 4 ? '='.repeat(4 - (b.length % 4)) : ''; const bin = atob(b + pad); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new TextDecoder('utf-8').decode(bytes) } catch { return '' } }
-function walk(part: any, acc: { text: string, html: string }) { if (!part) return; const mt = (part.mimeType || '').toLowerCase(); const d = part.body && part.body.data; if (mt === 'text/plain' && d && !acc.text) acc.text = b64urlDecode(d); else if (mt === 'text/html' && d && !acc.html) acc.html = b64urlDecode(d); if (Array.isArray(part.parts)) for (const p of part.parts) walk(p, acc) }
+function hdr(headers: any[], name: string){ const h = (headers || []).find((x: any) => (x.name || '').toLowerCase() === name.toLowerCase()); return h ? h.value : null }
+function parseEmail(v: string | null){ if (!v) return null; const m = v.match(/<([^>]+)>/); return (m ? m[1] : v).trim().toLowerCase() }
+function b64urlDecode(data: string){ try { const b = data.replace(/-/g, '+').replace(/_/g, '/'); const pad = b.length % 4 ? '='.repeat(4 - (b.length % 4)) : ''; const bin = atob(b + pad); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new TextDecoder('utf-8').decode(bytes) } catch { return '' } }
+function walk(part: any, acc: { text: string, html: string }){ if (!part) return; const mt = (part.mimeType || '').toLowerCase(); const d = part.body && part.body.data; if (mt === 'text/plain' && d && !acc.text) acc.text = b64urlDecode(d); else if (mt === 'text/html' && d && !acc.html) acc.html = b64urlDecode(d); if (Array.isArray(part.parts)) for (const p of part.parts) walk(p, acc) }
 
-async function rpc(name: string, args: any) { const r = await fetch(rest('rpc/' + name), { method: 'POST', headers: svc(), body: JSON.stringify(args || {}) }); const t = await r.text(); try { return JSON.parse(t) } catch { return t } }
+async function rpc(name: string, args: any){ const r = await fetch(rest('rpc/' + name), { method: 'POST', headers: svc(), body: JSON.stringify(args || {}) }); const t = await r.text(); try { return JSON.parse(t) } catch { return t } }
 
 serve(async (req) => {
   if (POLL_SECRET) {

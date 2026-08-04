@@ -13,10 +13,6 @@ const CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID')!;
 const CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET')!;
 const sb = createClient(SB_URL, SB_KEY);
 
-// Cron-ping this function every 45 minutes from cron-job.org to keep the
-// Google OAuth token permanently fresh. It refreshes when the stored token
-// has fewer than 10 minutes of life remaining and preserves the existing
-// refresh_token unless Google rotates it (rare).
 async function refreshGoogleToken(): Promise<{ success: boolean; message: string; expires_at?: string; was_expired?: boolean }> {
   const { data: tokenRow, error } = await sb.from('google_calendar_tokens').select('*').eq('id', 'rene').single();
   if (error || !tokenRow) return { success: false, message: 'No token found. Visit /functions/v1/google-calendar-auth to authorize.' };
@@ -65,7 +61,7 @@ Deno.serve(async (req: Request) => {
 <div style="max-width:480px;width:100%;padding:32px 20px">
   <div style="text-align:center;margin-bottom:20px"><div style="font-size:1.2rem;font-weight:700;color:#C9A84C">Rates &amp; Realty</div><div style="font-size:.72rem;color:#555">Google Token Manager</div></div>
   <div style="background:#111;border:1px solid #222;border-radius:12px;padding:24px">
-    <div style="font-size:2rem;text-align:center;margin-bottom:10px">${result.success ? '\u2705' : '\u274c'}</div>
+    <div style="font-size:2rem;text-align:center;margin-bottom:10px">${result.success ? '✅' : '❌'}</div>
     <h2 style="color:${result.success ? '#22c55e' : '#ef4444'};font-size:.95rem;margin:0 0 10px;text-align:center">${result.success ? 'Google Auth Active' : 'Auth Error'}</h2>
     <p style="color:#aaa;font-size:.82rem;line-height:1.7;margin:0 0 14px">${result.message}</p>
     ${result.expires_at ? '<div style="background:#1a1a1a;border-radius:8px;padding:10px 12px;font-size:.76rem;color:#888"><div>Next expiry: <strong style="color:#C9A84C">' + new Date(result.expires_at).toLocaleString('en-US',{timeZone:'America/Los_Angeles'}) + ' PT</strong></div><div style="margin-top:3px">Refreshed this call: <strong style="color:' + (result.was_expired ? '#22c55e' : '#666') + '">' + (result.was_expired ? 'Yes' : 'No (still valid)') + '</strong></div></div>' : ''}
