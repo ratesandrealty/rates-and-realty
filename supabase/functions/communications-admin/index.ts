@@ -18,7 +18,43 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+
+/* Copied from esign/index.ts, which has run this shape since June. Every action
+ * here goes through it — including list_conversations, get_thread and search,
+ * which are the worst exposure in the function: 90 days of sms_log, email_log,
+ * calls_log and the contacts behind them.
+ *
+ * Until 2026-08-04 this function had NO caller authentication of any kind. It
+ * ran service-role queries straight off req.json(), and verify_jwt=false meant
+ * the gateway did not stop anyone either — anyone who knew the URL could read
+ * every conversation and send SMS and email on the business line.
+ *
+ * is_admin() resolves current_app_role() = 'admin', which matches what
+ * auth-guard.js already enforces on this page: non-admin roles are restricted to
+ * a page allowlist that does not include dashboard/admin. The one VA account
+ * cannot reach the Communications inbox anyway, so this locks out nobody who is
+ * not already locked out. */
+async function requireAdmin(req: Request): Promise<{ ok: boolean; userId: string | null; status?: number; msg?: string }> {
+  const auth = req.headers.get("Authorization") || "";
+  const token = auth.replace(/^Bearer\s+/i, "").trim();
+  if (!token) return { ok: false, userId: null, status: 401, msg: "missing authorization" };
+  if (token === SERVICE_KEY) return { ok: true, userId: null };
+  try {
+    const u = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false },
+    });
+    const { data: { user } } = await u.auth.getUser();
+    if (!user) return { ok: false, userId: null, status: 401, msg: "invalid session" };
+    const { data: isAdmin } = await u.rpc("is_admin");
+    if (!isAdmin) return { ok: false, userId: user.id, status: 403, msg: "admin only" };
+    return { ok: true, userId: user.id };
+  } catch (_e) {
+    return { ok: false, userId: null, status: 401, msg: "auth check failed" };
+  }
+}
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +76,12 @@ Deno.serve(async (req) => {
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 
   try {
+    /* Before the body is read for anything else. Gating per-action would leave
+     * the next action someone adds ungated by default; gating here means a new
+     * action is protected the moment it is written. */
+    const adm = await requireAdmin(req);
+    if (!adm.ok) return err(adm.msg || "unauthorized", adm.status || 403);
+
     const body = await req.json();
     const action = (body.action || "").toLowerCase();
 

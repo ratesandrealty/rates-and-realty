@@ -102,14 +102,21 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.communications-admin]
-# Pinned at its CURRENT value, and false is NOT the right answer — this function
-# has no caller authentication at all and is being fixed. The pin exists so a
-# routine deploy cannot flip the gateway ahead of that work: the CRM only started
-# sending a user session token on 2026-08-03 (7ca6562) and the send/search paths
-# are not yet confirmed against it, so a silent flip to true could 401 the
-# composer before anyone knew the token had to reach it. Remove this block in the
-# same change that lands the in-function requireAdmin() guard.
-verify_jwt = false
+# Now TRUE. The in-function requireAdmin() guard landed alongside this, and the
+# CRM sends the signed-in user's session token on all three paths — load, send
+# and search were each confirmed by hand against a real session before this flip.
+#
+# Pinned true rather than deleted. The previous comment said to remove the block;
+# that turns out to be wrong twice over. tools/deploy-function.sh refuses an
+# unpinned slug, and an unpinned function takes the CLI default — which is how
+# send-scheduled-sms silently became verify_jwt=true and returned
+# UNAUTHORIZED_NO_AUTH_HEADER on every cron run for days. A value this file does
+# not state is a value nobody decided.
+#
+# The gateway check is defence in depth, not the control. It accepts ANY
+# project-signed JWT including the public anon key, so requireAdmin() inside the
+# function is what actually distinguishes an admin from a stranger.
+verify_jwt = true
 
 [functions.esign]
 # The borrower signing page (sign.html) posts action=view / action=submit with an
