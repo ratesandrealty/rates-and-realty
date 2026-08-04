@@ -8,6 +8,7 @@
 # the previous copy — the file was current, the HTML still pointed at the old ?v=.
 #
 #   0. check-js  refuse to deploy if a guarded JS file is empty/truncated
+#   0b test-composer  refuse to deploy if the composer's sanitizer behaviour moved
 #   1. typecheck refuse to deploy on any NEW edge-function type error, and on any
 #                undefined identifier at all. gdrive-sync shipped a call to an
 #                unimported function; every borrower document stopped reaching
@@ -32,7 +33,7 @@ set -euo pipefail
 HOST="${1:-https://admin.ratesandrealty.com}"
 cd "$(dirname "$0")/.."
 
-echo "── 1/5 file integrity ───────────────────────────────────"
+echo "── 1/6 file integrity ───────────────────────────────────"
 # Before anything is hashed or shipped. stamp-assets happily mints a content
 # hash for a truncated file and verify-deploy happily confirms the live page
 # asks for exactly those bytes — both check CONSISTENCY, neither checks that
@@ -44,7 +45,20 @@ if ! node tools/check-js.mjs --baseline; then
 fi
 
 echo
-echo "── 2/5 edge function types ──────────────────────────────"
+echo "── 2/6 composer behaviour ───────────────────────────────"
+# The sanitizer is the one place in this repo where a silent divergence is a
+# security bug rather than drift. check-js proves inbox.js arrived whole; this
+# proves it still does what it did. Mutation-tested: disabling the style hook,
+# widening ALLOWED_TAGS, dropping the table attrs, or making sanitize degrade
+# instead of throwing each fail at least one assertion.
+if ! node tools/test-composer.mjs; then
+  echo
+  echo "Composer behaviour changed. Nothing was deployed."
+  exit 1
+fi
+
+echo
+echo "── 3/6 edge function types ──────────────────────────────"
 # Non-zero exit blocks the deploy, same as the pin check. Undefined identifiers
 # are always fatal and cannot be baselined — they are ReferenceErrors the moment
 # the line runs, which is exactly how the Drive mirror died silently.
@@ -55,7 +69,7 @@ if ! node tools/check-functions.mjs; then
 fi
 
 echo
-echo "── 3/5 cache pins ───────────────────────────────────────"
+echo "── 4/6 cache pins ───────────────────────────────────────"
 if ! node tools/stamp-assets.mjs --check; then
   echo
   echo "Pins are stale. Fix and commit them, then re-run:"
@@ -65,9 +79,9 @@ if ! node tools/stamp-assets.mjs --check; then
 fi
 
 echo
-echo "── 4/5 wrangler deploy ──────────────────────────────────"
+echo "── 5/6 wrangler deploy ──────────────────────────────────"
 npx wrangler deploy
 
 echo
-echo "── 5/5 verify live ──────────────────────────────────────"
+echo "── 6/6 verify live ──────────────────────────────────────"
 node tools/verify-deploy.mjs "$HOST"
