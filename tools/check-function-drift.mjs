@@ -90,13 +90,22 @@ if (!slugs.length) {
 }
 
 const work = mkdtempSync(join(tmpdir(), 'fn-drift-'));
-const drifted = [], missing = [], ahead = [], synced = [], unreadable = [];
+const drifted = [], missing = [], ahead = [], synced = [], unreadable = [], fresh = [];
+
+/* "Not deployed yet" is NOT drift, and conflating the two sent the first new
+ * function of this tool's life out through the bare CLI — the exact ungated path
+ * the wrapper exists to replace. Nothing is in production, so there is nothing to
+ * roll back and nothing to protect: a first deploy is always safe on these
+ * grounds. It still has to be pinned, which deploy-function.sh enforces
+ * separately — and for a new slug that pin is a decision nobody has made yet. */
+const deployed = new Set(all ? slugs : deployedSlugs());
 
 try {
   process.stderr.write(`[drift] comparing ${slugs.length} function(s) against deployed…\n`);
   for (const slug of slugs) {
     const rel = `supabase/functions/${slug}/index.ts`;
     const abs = join(ROOT, rel);
+    if (!deployed.has(slug)) { fresh.push(slug); continue; }
     let live, downloadErr = null;
     try { live = download(slug, work); } catch (e) { live = null; downloadErr = String(e.stderr || e.message || e).trim().split('\n')[0]; }
     /* Not drift. Saying "production holds code you have no record of" when the
@@ -119,6 +128,10 @@ if (synced.length) console.log(`[drift] in sync: ${synced.length}`);
 if (ahead.length) {
   console.log(`[drift] repo ahead of deployed (safe to deploy): ${ahead.length}`);
   for (const s of ahead) console.log(`    ${s}`);
+}
+if (fresh.length) {
+  console.log(`[drift] NOT DEPLOYED YET — nothing in production to lose: ${fresh.length}`);
+  for (const s of fresh) console.log(`    ${s}    (first deploy; make sure its config.toml pin is deliberate)`);
 }
 
 if (!drifted.length && !missing.length && !unreadable.length) {

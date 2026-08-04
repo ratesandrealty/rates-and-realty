@@ -82,8 +82,13 @@ Add a block first — at its CURRENT value if you are not trying to change it:
       const {execFileSync}=require('node:child_process');
       const l=JSON.parse(execFileSync('supabase',['functions','list','--project-ref','$PROJECT_REF','-o','json'],{encoding:'utf8',maxBuffer:1<<26}));
       const f=l.find(x=>x.slug==='$SLUG');
-      process.stdout.write(f?String(f.verify_jwt):'true');
-    " 2>/dev/null || echo "<current value>")   # what is live right now
+      // A slug with nothing deployed has no current value to preserve. Say so
+      // rather than printing the CLI default as though it were an observation —
+      // an unpinned new function silently taking that default is the same bug
+      // this block exists to prevent.
+      process.stdout.write(f?String(f.verify_jwt)+'   # what is live right now'
+                            :'true|false   # NEW: nothing is live, so this is a decision, not a default');
+    " 2>/dev/null || echo "<current value>")
 EOF
   exit 1
 fi
