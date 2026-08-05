@@ -116,6 +116,27 @@ var SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.su
 var SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
 var H = { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY };
 
+/* Session token for the activity-tracker write, so created_by is stamped with
+   who asked. H is the ANON key — it identifies nobody. See lead-detail.html for
+   the full note. Optional: a null token still writes, just unattributed. */
+var _atTok = null;
+async function _atRefreshTok() {
+  try {
+    var c = window._supabaseClient || null;
+    if (!c) return;
+    var s = await c.auth.getSession();
+    _atTok = (s && s.data && s.data.session && s.data.session.access_token) || null;
+  } catch (e) { _atTok = null; }
+}
+_atRefreshTok();
+setInterval(_atRefreshTok, 20 * 60 * 1000);
+function _atHeaders() {
+  var h = { 'Content-Type': 'application/json' };
+  if (_atTok) h['Authorization'] = 'Bearer ' + _atTok;
+  return h;
+}
+
+
 var _allComms = [];
 var _commFilter = 'all';
 
@@ -292,7 +313,7 @@ async function saveCallLog() {
   var notes=document.getElementById('callNotes').value.trim();
   var res=await fetch(SB_URL+'/rest/v1/call_log',{method:'POST',headers:Object.assign({'Content-Type':'application/json','Prefer':'return=minimal'},H),body:JSON.stringify({contact_id:cid,direction:dir,status:status,to_phone:dir==='outbound'?phone:null,from_phone:dir==='inbound'?phone:null,duration_seconds:Math.round(dur*60),notes:notes||null})});
   if (!res.ok){showToast('Save failed');return;}
-  if (cid){fetch(SB_URL+'/functions/v1/activity-tracker',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},H),body:JSON.stringify({action:'track_event',contact_id:cid,type:'CALL',description:dir+' call \u2014 '+status+(notes?': '+notes.slice(0,100):''),metadata:{direction:dir,status:status,duration_seconds:Math.round(dur*60)}})}).catch(function(){});}
+  if (cid){fetch(SB_URL+'/functions/v1/activity-tracker',{method:'POST',headers:_atHeaders(),body:JSON.stringify({action:'track_event',contact_id:cid,type:'CALL',description:dir+' call \u2014 '+status+(notes?': '+notes.slice(0,100):''),metadata:{direction:dir,status:status,duration_seconds:Math.round(dur*60)}})}).catch(function(){});}
   document.getElementById('logCallModal').style.display='none';
   showToast('Call logged \u2713');
   loadCommunications();

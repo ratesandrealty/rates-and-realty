@@ -4,6 +4,39 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization,apikey' };
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
+/* WHO ASKED, as opposed to who wrote.
+ *
+ * Every write here goes through the service role, which has no auth.uid() — so
+ * activity_events.created_by was populated on 50 of 1,277 rows (3.9%) and NOT
+ * ONE row in the entire database was attributable to the VA. "What she did"
+ * could not be answered at all, and it is the one thing that cannot be
+ * backfilled: a day that ships without this is a day of work permanently
+ * unattributable.
+ *
+ * DELIBERATELY OPTIONAL. It returns null for an anon key, a missing header, an
+ * expired token or a service-role call, and every caller carries on exactly as
+ * before. This is attribution, NOT a guard — nothing is rejected on its
+ * account, so it cannot cause the kind of outage the email-service guard did.
+ * Callers that do not yet send a session token simply keep stamping null, and
+ * start working the moment they do.
+ *
+ * Attribution is to the ACCOUNT, not a person: processing@ is a shared login,
+ * so a stamped uid means "somebody signed in as the VA", not a named human.
+ * The surfaces that display this say so. */
+async function callerUid(req: Request): Promise<string | null> {
+  const raw = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!raw || raw.split('.').length !== 3) return null;
+  try {
+    // The anon and service keys are well-formed JWTs too; neither has a user.
+    const claims = JSON.parse(atob(raw.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (!claims?.sub || claims.role === 'anon' || claims.role === 'service_role') return null;
+  } catch (_) { return null; }
+  try {
+    const { data, error } = await sb.auth.getUser(raw);
+    return (!error && data?.user?.id) ? data.user.id : null;
+  } catch (_) { return null; }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -11,6 +44,7 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json();
     const { action } = body;
+    const uid = await callerUid(req);   // null unless a real user session was sent
 
     // Track page view
     if (action === 'page_view') {
@@ -43,6 +77,7 @@ Deno.serve(async (req: Request) => {
           description: page_url,
           page_url,
           status: 'viewed',
+          created_by: uid,
           session_id: session_id || null,
           metadata: JSON.stringify({ referrer, device_type, ip }),
           created_at: new Date().toISOString()
@@ -68,6 +103,7 @@ Deno.serve(async (req: Request) => {
         title: title || 'Event',
         description: description || null,
         status: status || 'completed',
+        created_by: uid,
         metadata: metadata ? JSON.stringify(metadata) : null,
         created_at: new Date().toISOString()
       });

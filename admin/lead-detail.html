@@ -19758,6 +19758,38 @@ function goBack() {
    at a known list page, or the hardcoded fallback. */
 var _BACK_LIST_PATHS = ['/admin/people', '/admin/pipeline', '/admin/qualifying', '/dashboard/admin'];
 
+
+/* WHO ASKED — session token for attribution writes.
+ *
+ * activity-tracker writes activity_events under the service role, which has no
+ * auth.uid(), so created_by was populated on 3.9% of rows and NOT ONE row was
+ * attributable to the VA. The function now stamps the caller's uid when a real
+ * session token arrives; these call sites are what make one arrive. All four
+ * previously sent either no Authorization header at all or the ANON key, which
+ * identifies nobody.
+ *
+ * Cached and refreshed rather than fetched per call: the three lead-detail call
+ * sites are fire-and-forget inside non-async functions, and restructuring them
+ * is more risk than this page needs. Access tokens last ~60 minutes; refreshing
+ * every 20 keeps one current. A stale or missing token stamps null and the
+ * write still succeeds — attribution is optional by design, never a guard. */
+var _atTok = null;
+async function _atRefreshTok() {
+  try {
+    var c = (typeof _authClient === 'function') ? _authClient() : (window._supabaseClient || null);
+    if (!c) return;
+    var s = await c.auth.getSession();
+    _atTok = (s && s.data && s.data.session && s.data.session.access_token) || null;
+  } catch (e) { _atTok = null; }
+}
+_atRefreshTok();
+setInterval(_atRefreshTok, 20 * 60 * 1000);
+function _atHeaders() {
+  var h = { 'Content-Type': 'application/json' };
+  if (_atTok) h['Authorization'] = 'Bearer ' + _atTok;
+  return h;
+}
+
 function goBackToList() {
   try {
     var ref = document.referrer;
@@ -19973,7 +20005,7 @@ async function updatePipelineStage(newStage) {
       .eq('id', contactId);
     if (!error) {
       showToast('Stage: ' + newStage);
-      fetch((window.APP_CONFIG?.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co')+'/functions/v1/activity-tracker',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'track_event',contact_id:contactId,type:'STAGE_CHANGE',description:'Stage \u2192 '+newStage,metadata:{stage:newStage}})}).catch(function(){});
+      fetch((window.APP_CONFIG?.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co')+'/functions/v1/activity-tracker',{method:'POST',headers:_atHeaders(),body:JSON.stringify({action:'track_event',contact_id:contactId,type:'STAGE_CHANGE',description:'Stage \u2192 '+newStage,metadata:{stage:newStage}})}).catch(function(){});
     } else {
       if (contactData) contactData.pipeline_status = prevStage;
       if (leadData) leadData.status = prevStage;
@@ -32134,7 +32166,11 @@ function handleCallClick() {
   var phone = (contactData?.phone || contactData?.secondary_phone || '').replace(/\D/g, '');
   if (!phone) { showToast('No phone number on file', true); return; }
   fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/activity-tracker', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: _atHeaders(),
+    /* "Call initiated by Rene" is hardcoded and will be WRONG the moment the VA
+       places a call — it is the same conflation this whole change exists to fix.
+       Left as-is for now because created_by carries the truth and the title is
+       cosmetic; worth correcting when the display surface is built. */
     body: JSON.stringify({ action: 'track_event', contact_id: new URLSearchParams(location.search).get('contact_id'),
       type: 'call', channel: 'phone', direction: 'outbound', title: 'Call initiated by Rene', status: 'initiated', metadata: { phone: phone } })
   }).catch(function(){});
@@ -33714,7 +33750,7 @@ async function sendEmailFromComposer() {
       closeEmailComposer();
       // Log activity
       fetch((window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/activity-tracker', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: _atHeaders(),
         body: JSON.stringify({ action: 'track_event', contact_id: cid, type: 'EMAIL', channel: 'email', direction: 'outbound', title: 'Email sent: ' + subject, status: 'completed', metadata: { to: toEmails, subject: subject } })
       }).catch(function(){});
     } else { showToast('Send failed: ' + (data.error || 'unknown'), true); }
