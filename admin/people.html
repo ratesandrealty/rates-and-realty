@@ -39,7 +39,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 .layout{display:flex;flex:1;overflow:hidden}
 
-.views-sidebar{width:196px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+/* overflow-y:auto is load-bearing. body is height:100vh/overflow:hidden and
+   .layout is overflow:hidden, so anything taller than the viewport was CLIPPED
+   with no way to reach it — Saved Views ran past "+ Save Current View" and the
+   whole Navigate section below it was unreachable on a 900px-tall screen. The
+   mobile drawer rule already set overflow-y:auto; only desktop was missing it,
+   which is why it looked fine on a tall monitor.
+   min-height:0 because a flex child will not shrink below its content by
+   default, so without it the sidebar grows past .layout instead of scrolling. */
+.views-sidebar{width:196px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;overflow-x:hidden;min-height:0}
+/* Cap the saved-views list so a long list cannot push Navigate off the bottom.
+   Without this the sidebar scrolls but Navigate is still a long way down. */
+#viewsList{max-height:38vh;overflow-y:auto;overflow-x:hidden}
 .vs-section{padding:10px 12px;border-bottom:1px solid var(--border)}
 .vs-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--muted);margin-bottom:6px}
 .view-item{display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:12px;color:var(--muted);border:1px solid transparent;transition:all .15s;margin-bottom:2px;position:relative}
@@ -431,6 +442,16 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
   </div>
   <div class="fp-body">
+    <!-- Both directions, because "filter out" is the ask as often as "filter to".
+         State lives in the lead_shares JOIN TABLE, not a column on contacts — see
+         _sharedContactIds. -->
+    <div class="fp-section">
+      <div class="fp-section-title">Shared with VA</div>
+      <div class="fp-pills" id="fpSharePills">
+        <button type="button" class="fp-pill" id="fpShareYes" onclick="setShareFilter('yes')">Shared</button>
+        <button type="button" class="fp-pill" id="fpShareNo"  onclick="setShareFilter('no')">Not shared</button>
+      </div>
+    </div>
     <div class="fp-section">
       <div class="fp-section-title">Tags</div>
       <div class="fp-pills" id="fpTagPills"></div>
@@ -781,6 +802,13 @@ var _activeViewId = null;
 var _vaMode = 'leads';
 
 // Advanced filters state
+/* Shared-with-VA state. The lead-detail toggle does NOT write a column on
+   contacts — it inserts/deletes a row in the JOIN TABLE lead_shares
+   (contact_id, shared_with_user_id, shared_by). So this cannot be filtered from
+   the contacts payload alone; the ids are fetched separately and held here.
+   '' = off, 'yes' = only shared, 'no' = only NOT shared. */
+var _sharedContactIds = null;   // Set, or null until loaded
+var _filterShared = '';
 var _filterSources = [];
 var _filterLoanTypes = [];
 var _filterPipelines = [];
@@ -1043,6 +1071,18 @@ function applyFilters() {
     }
     if (_currentType === 'referral_partner') {
       if (ct !== 'referral_partner' && !p.referral_partner_id) return false;
+    }
+
+    // Advanced: Shared with VA — inclusion AND exclusion
+    if (_filterShared) {
+      // Not loaded yet (or the read failed): show everything rather than
+      // silently hiding rows behind an empty Set, which would read as "nothing
+      // is shared" when the truth is "we do not know yet".
+      if (_sharedContactIds) {
+        var isShared = _sharedContactIds.has(p.id);
+        if (_filterShared === 'yes' && !isShared) return false;
+        if (_filterShared === 'no' && isShared) return false;
+      }
     }
 
     // Advanced: Sources (case-insensitive)
@@ -1352,6 +1392,38 @@ function renderReferralPartnerPills() {
     }).join('');
 }
 
+/* Shared-with-VA. Two-state toggle rather than a checkbox: Rene's phrasing was
+   "filter out", and a checkbox can only express inclusion. Clicking the active
+   one clears it. */
+function setShareFilter(v) {
+  _filterShared = (_filterShared === v) ? '' : v;
+  renderShareFilterPills();
+  applyFilters();
+}
+
+function renderShareFilterPills() {
+  var y = document.getElementById('fpShareYes'), n = document.getElementById('fpShareNo');
+  if (y) y.classList.toggle('selected', _filterShared === 'yes');
+  if (n) n.classList.toggle('selected', _filterShared === 'no');
+}
+
+/* lead_shares is admin-readable only. A VA session gets zero rows back, which
+   would make every lead look unshared — so the filter is hidden entirely rather
+   than shown answering wrongly. */
+async function loadSharedContactIds() {
+  try {
+    var client = _authClient();
+    var r = await client.from('lead_shares').select('contact_id');
+    if (r.error) throw r.error;
+    _sharedContactIds = new Set((r.data || []).map(function (x) { return x.contact_id; }));
+  } catch (e) {
+    console.warn('[people] lead_shares unreadable — hiding the Shared with VA filter:', e && e.message);
+    _sharedContactIds = null;
+    var sec = document.getElementById('fpSharePills');
+    if (sec && sec.parentNode) sec.parentNode.style.display = 'none';
+  }
+}
+
 function setReferralFilter(partnerId) {
   _filterReferralPartner = partnerId;
   applyFilters();
@@ -1427,6 +1499,7 @@ function renderActiveFilters() {
     pills.push({ label: 'Partner: ' + (rp ? rp.first_name + ' ' + rp.last_name : _filterReferralPartner), clear: function() { setReferralFilter(null); } });
   }
   if (_filterPortal !== 'any') pills.push({ label: 'Portal: ' + _filterPortal, clear: function() { _filterPortal = 'any'; applyFilters(); renderFilterPanelOptions(); } });
+  if (_filterShared) pills.push({ label: _filterShared === 'yes' ? 'Shared with VA' : 'Not shared with VA', clear: function() { _filterShared = ''; renderShareFilterPills(); applyFilters(); } });
 
   if (!pills.length) { row.style.display = 'none'; return; }
   row.style.display = 'flex';
@@ -1446,6 +1519,8 @@ function clearAllFilters() {
   _filterTemps = [];
   _filterPortal = 'any';
   _filterReferralPartner = null;
+  _filterShared = '';
+  renderShareFilterPills();
   _currentTab = 'all';
   _currentType = 'all';
   _searchQ = '';
@@ -2538,7 +2613,7 @@ function _ensureVaMode(attempt) {
 }
 
 /* ====== BOOT ====== */
-Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners(), loadPeopleStats()]).then(function() {
+Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners(), loadPeopleStats(), loadSharedContactIds()]).then(function() {
   if (_rpFilterId) {
     _allPeople = _allPeople.filter(function(p) { return p.referral_partner_id === _rpFilterId; });
     updateTabCounts();
