@@ -2708,7 +2708,7 @@
           <div id="lpSnapshotBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;"></div></div>
         <div class="lp-card"><div class="lp-h">📅 Critical Dates</div>
           <div id="lpDatesBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;"></div></div>
-        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><button type="button" id="lpAssignVaBtn" onclick="openAssignVaModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">👤 Assign to VA</button></div><div id="lpVaTasksBody"></div></div>
+        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><!-- The separate "Assign to VA" button was removed. It sat beside a quick-add that created UNASSIGNED tasks, so two controls on one card looked equivalent and only one did what both appeared to do — 0 of 207 tasks ever got an assignee. Quick-add now assigns by default (_vaDefaultAssignee), which is what this button was for. openAssignVaModal() is retained for assigning to someone OTHER than the VA; nothing currently opens it. --></div><div id="lpVaTasksBody"></div></div>
         <div class="lp-card"><div class="lp-h">✅ Intake / Setup Checklist</div><div id="lpIntakeBody"></div></div>
         <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
         <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
@@ -15440,6 +15440,40 @@ function _vaDueDisplay(iso){
   return { txt:txt, color:color };
 }
 
+
+/* Resolve the VA to assign quick-add tasks to. By ROLE, never a hardcoded uuid.
+ *
+ * tasks.assigned_to was populated on 0 of 207 rows, so va_daily_tasks — which
+ * filters `assigned_to = auth.uid()` — could never return anything and the VA's
+ * Daily Tasks panel was structurally empty. Tasks saved and reached nobody.
+ *
+ * va_task_add self-assigns only for va/agent callers, so when RENE (admin) uses
+ * quick-add the task is created unassigned. These two call sites now pass the
+ * assignee explicitly. The RPC stays honest: null means unassigned, the caller
+ * decides — a silent default inside a shared RPC would surprise crm-copilot and
+ * any future caller.
+ *
+ * By role because the processing@ account was renamed today; the uuid survived,
+ * but a recreated account gets a new one and a hardcoded literal would fail
+ * silently, stamping a user that no longer exists. staff_assignees() is the same
+ * RPC the Assign modal already uses.
+ *
+ * ZERO or MORE THAN ONE va -> null. An unassigned task is recoverable; one
+ * assigned to the wrong person is not. */
+var _vaAssigneeCache;
+async function _vaDefaultAssignee(){
+  if(_vaAssigneeCache !== undefined) return _vaAssigneeCache;
+  _vaAssigneeCache = null;
+  try{
+    const { data, error } = await _authClient().rpc('staff_assignees');
+    if(error) throw error;
+    const vas = (data||[]).filter(function(r){ return String(r.role||'').toLowerCase()==='va'; });
+    if(vas.length === 1) _vaAssigneeCache = vas[0].user_id;
+    else console.warn('[va-assign] expected exactly one va, found '+vas.length+' — leaving unassigned');
+  }catch(e){ console.warn('[va-assign] staff_assignees failed, leaving unassigned:', e && e.message); }
+  return _vaAssigneeCache;
+}
+
 async function lpLoadVaTasks(){
   const body = document.getElementById('lpVaTasksBody'); if(!body) return;
   if(!_vaTasks.length && !body.innerHTML.trim()) body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
@@ -15516,6 +15550,12 @@ function _vaRenderTasks(){
       const due = _vaDueDisplay(t.due_date);
       const dueEl = due ? '<span style="font-size:10px;color:'+due.color+';font-weight:600;flex-shrink:0;">'+lpEsc(due.txt)+'</span>' : '';
       const who = t.contact_name ? '<span style="font-size:10px;color:#888;flex-shrink:0;">· '+lpEsc(t.contact_name)+'</span>' : '';
+      /* Assignee on every row. Its absence is what hid this bug for months: an
+         unassigned task looked identical to an assigned one, so nobody could see
+         that NOTHING had ever been assigned. */
+      const _asg = t.assigned_to
+        ? '<span style="font-size:9px;color:#3FB950;border:1px solid rgba(63,185,80,.35);border-radius:9px;padding:1px 6px;flex-shrink:0;">assigned</span>'
+        : '<span style="font-size:9px;color:#E0A852;border:1px solid rgba(224,168,82,.35);border-radius:9px;padding:1px 6px;flex-shrink:0;" title="Nobody owns this task — nobody will see it in Daily Tasks">unassigned</span>';
       const del = hideDelete ? '' : '<button onclick="lpVaDelete(\''+t.id+'\')" title="Delete" style="flex-shrink:0;background:transparent;border:none;color:#777;cursor:pointer;font-size:12px;line-height:1;padding:2px;">🗑️</button>';
       const noteCount = (_vaHist[t.id]||[]).filter(function(h){ return h.kind==='note'; }).length;
       const open = !!_vaHistOpen[t.id];
@@ -15523,6 +15563,7 @@ function _vaRenderTasks(){
       const row = '<div style="display:flex;align-items:center;gap:7px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);">'
         + '<button onclick="lpVaComplete(\''+t.id+'\')" title="Mark done" style="flex-shrink:0;width:18px;height:18px;border-radius:4px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#3FB950;cursor:pointer;font-size:12px;line-height:1;padding:0;">✓</button>'
         + '<span style="flex:1;min-width:0;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+lpEsc(t.description||'')+'">'+lpEsc(t.title||'(untitled)')+'</span>'
+        + _asg
         + badge + dueEl + who
         + noteBtn
         + '<button onclick="lpVaEdit(\''+t.id+'\')" title="Edit" style="flex-shrink:0;background:transparent;border:none;color:#888;cursor:pointer;font-size:12px;line-height:1;padding:2px;">✏️</button>'
@@ -15562,7 +15603,7 @@ async function lpVaAdd(){
   const prio=(document.getElementById('vaNewPrio')||{}).value || 'normal';
   const due=_vaDueToIso((document.getElementById('vaNewDue')||{}).value);
   try{
-    const { error } = await _authClient().rpc('va_task_add', { p_title:title, p_priority:prio, p_due_date:due, p_contact_id:null, p_description:null });
+    const { error } = await _authClient().rpc('va_task_add', { p_title:title, p_priority:prio, p_due_date:due, p_contact_id:null, p_description:null, p_assigned_to: await _vaDefaultAssignee() });
     if(error){ _vaToast(error,'Could not add task'); return; }
     await lpLoadVaTasks();
   }catch(e){ _vaToast(e,'Could not add task'); }
@@ -15571,7 +15612,7 @@ async function lpVaAdd(){
 async function lpVaAddSuggested(title){
   if(!title) return;
   try{
-    const { error } = await _authClient().rpc('va_task_add', { p_title:title, p_priority:'normal', p_due_date:null, p_contact_id:null, p_description:null });
+    const { error } = await _authClient().rpc('va_task_add', { p_title:title, p_priority:'normal', p_due_date:null, p_contact_id:null, p_description:null, p_assigned_to: await _vaDefaultAssignee() });
     if(error){ _vaToast(error,'Could not add task'); return; }
     await lpLoadVaTasks();
   }catch(e){ _vaToast(e,'Could not add task'); }
