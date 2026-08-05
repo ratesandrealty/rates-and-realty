@@ -113,17 +113,23 @@ Deno.serve(async (req) => {
         if (gate) await sb.from('video_chat_limits').update({ hits: 1, window_start: new Date().toISOString() }).eq('bucket_key', 'reconcile_alert');
         else await sb.from('video_chat_limits').insert({ bucket_key: 'reconcile_alert', hits: 1, window_start: new Date().toISOString() });
         try {
-          await sb.rpc('app_notify_mentions', {
+          /* app_notify_system, not app_notify_mentions. The old call scanned this
+           * body for @handles, found none, and inserted nothing — so this alert
+           * has never once reached Rene, including the OPT-OUT case, which is a
+           * compliance signal. out.alerted was set to true regardless, so the
+           * response reported success for a notification nobody received. */
+          const notified = await sb.rpc('app_notify_system', {
             p_source_kind: 'sms',
             p_source_id: null,
             p_body: `⚠️ ${missing.length} inbound text(s) in the last ${days}d reached Twilio but never reached the CRM`
               + (droppedOptOuts.length ? ` — including ${droppedOptOuts.length} OPT-OUT(s), now suppressed.` : '.')
               + ' Usually a webhook failure (Twilio error 11200).',
-            p_actor_user_id: null,
             p_actor_display: 'SMS reconciliation',
             p_contact_id: null,
           });
-          out.alerted = true;
+          // Report what actually happened, not that we tried.
+          out.alerted = !notified.error && Number(notified.data || 0) > 0;
+          if (notified.error) console.error('[reconcile] notify failed:', notified.error.message);
         } catch (e) { console.error('[reconcile] notify failed', String(e)); out.alerted = false; }
       } else out.alerted = 'throttled';
     }

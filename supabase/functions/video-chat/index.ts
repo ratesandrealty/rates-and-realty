@@ -186,16 +186,48 @@ function normalizeName(raw: unknown): string | null {
 /* Loud failure. The visitor keeps a friendly sentence; everyone who can DO
  * something about it gets the real thing. Throttled per video per hour through
  * the rate-limit table that already exists, so an outage cannot flood the bell. */
+/* Relay a milestone to video-track. Everything the visitor-facing guards need
+ * travels as headers, because video-track deliberately never reads
+ * `authorization` for identity — the Worker overwrites it with the anon key.
+ *
+ * The service role here marks the call INTERNAL, which is what lets a contact_id
+ * be trusted; a visitor's own relayed request carries the anon key and can never
+ * assert one. */
+async function trackEvent(
+  event: string, sessionId: string, contactId: string | null,
+  slug: string, ip: string, req: Request, note?: string,
+) {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/video-track`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        'x-viewer-ip': ip,
+        'x-viewer-ua': String(req.headers.get('x-viewer-ua') || 'Mozilla/5.0 (video-chat)'),
+        // Forwarded so a staff member testing their own video is still suppressed.
+        'x-viewer-staff': String(req.headers.get('x-viewer-staff') || ''),
+        'x-viewer-jwt': String(req.headers.get('x-viewer-jwt') || ''),
+      },
+      body: JSON.stringify({ slug, event, session_id: sessionId, contact_id: contactId, note: note || '' }),
+    });
+    const t = await r.text();
+    if (!r.ok) console.error('[video-chat] video-track', event, r.status, t.slice(0, 200));
+    else console.log('[video-chat]', event, '->', t.slice(0, 200));
+  } catch (e) { console.error('[video-chat] video-track call failed:', String(e)); }
+}
+
 async function reportFailure(slug: string, sessionId: string, detail: string, video: { id: string; created_by: string | null; contact_id: string | null } | null) {
   console.error(`[video-chat] UPSTREAM FAILURE slug=${slug} session=${sessionId} :: ${detail}`);
   try {
     if (!(await bump('err:' + slug, 1))) return;   // already reported this hour
     if (!video) return;
-    await sb.rpc('app_notify_mentions', {
+    // app_notify_system, not app_notify_mentions: this body has no @handle, so
+    // the old call notified nobody while returning cleanly. See the note there.
+    await sb.rpc('app_notify_system', {
       p_source_kind: 'video',
       p_source_id: video.id,
       p_body: `⚠️ The AI chat on video /v/${slug} is failing — visitors are getting the fallback message. ${detail.slice(0, 300)}`,
-      p_actor_user_id: video.created_by,
       p_actor_display: 'Video chat',
       p_contact_id: video.contact_id,
     });
@@ -266,10 +298,38 @@ Deno.serve(async (req) => {
     .select('role,content').eq('session_id', sessionId)
     .order('created_at', { ascending: true }).limit(12);
 
+  /* contact_id is the session's MATCHED contact or nothing.
+   *
+   * It used to fall back to vid.contact_id, which means "who Rene SENT this to"
+   * — not who is typing. A /v/ link gets forwarded, so the fallback filed a
+   * stranger's words against the original recipient's record. Frank's six
+   * messages all landed on Rene Duarte's own contact that way. Null until a real
+   * match; the capture path backfills every row for the session once identity is
+   * actually established (see the update after capture). */
   await sb.from('video_chat_messages').insert({
-    video_slug: slug, session_id: sessionId, contact_id: sess.contact_id || vid.contact_id || null,
+    video_slug: slug, session_id: sessionId, contact_id: sess.contact_id || null,
     role: 'user', content: message, ip_address: ip,
   });
+
+  /* B6a — first inbound message. Rene wants to know someone reached out even if
+   * they never give a name, which is the common case: Frank chatted for a minute
+   * and left, and nothing anywhere recorded that a person had shown up.
+   *
+   * Keyed on the session by COUNTING this session's user turns rather than by a
+   * flag column: after the insert above, a count of exactly 1 means the message
+   * just stored was the first. A replay or a later turn counts higher and is
+   * silently skipped, so no new state and no migration is needed to make it fire
+   * once.
+   *
+   * Routed through video-track rather than notifying directly, so the bot and
+   * self-view guards apply here exactly as to every other milestone — otherwise
+   * every crawler that renders the page becomes a notification. */
+  try {
+    const { count: userTurns } = await sb.from('video_chat_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('session_id', sessionId).eq('role', 'user');
+    if (userTurns === 1) await trackEvent('chat_started', sessionId, sess.contact_id || null, slug, ip, req, message);
+  } catch (e) { console.error('[video-chat] first-message notify failed:', String(e)); }
 
   /* What the model still needs, expressed as instruction rather than left for it
    * to infer from the transcript. `stop_asking` is the two-declines rule and it is
@@ -551,24 +611,7 @@ Deno.serve(async (req) => {
      * and depth guards apply here exactly as they do to every other milestone.
      * video-track also owns the "worth a call" notification, so B6 needs nothing
      * new built. */
-    try {
-      const tr = await fetch(`${SUPABASE_URL}/functions/v1/video-track`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Service role marks this as an internal call, which is what lets the
-          // contact_id below be trusted. A visitor's relayed request carries the
-          // anon key and can never assert one.
-          Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-          'x-viewer-ip': ip,
-          'x-viewer-ua': String(req.headers.get('x-viewer-ua') || 'Mozilla/5.0 (video-chat)'),
-        },
-        body: JSON.stringify({ slug, event: 'chat_lead_captured', session_id: sessionId, contact_id: capturedContactId }),
-      });
-      const trBody = await tr.text();
-      if (!tr.ok) console.error('[video-chat] video-track returned', tr.status, trBody.slice(0, 200));
-      else console.log('[video-chat] scoring event:', trBody.slice(0, 200));
-    } catch (e) { console.error('[video-chat] video-track call failed:', String(e)); }
+    await trackEvent('chat_lead_captured', sessionId, capturedContactId, slug, ip, req);
   }
 
   return ok({ reply, captured, degraded, fields });

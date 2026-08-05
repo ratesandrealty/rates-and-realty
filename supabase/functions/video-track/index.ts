@@ -210,21 +210,47 @@ Deno.serve(async (req) => {
     await sb.from('videos').update({ view_count: (vid.view_count || 0) + 1 }).eq('id', vid.id);
   }
 
-  /* The moment to call. Uses the EXISTING notification path
-   * (app_notify_mentions → notifications, surfaced by notifications_list and the
-   * bell). Nothing new was built for this. */
-  if (contactId && outType !== 'video_rewatch' &&
-      ['video_completed', 'video_cta_clicked', 'video_chat_lead_captured'].includes(outType)) {
+  /* The moment to call.
+   *
+   * This used to call app_notify_mentions and had NEVER delivered anything.
+   * That function is not a general notifier despite the name: it scans p_body
+   * for @handles, and this body has none, so it iterated zero times, returned 0
+   * and inserted nothing. Zero notifications with source_kind='video' exist,
+   * ever. app_notify_system inserts by ROLE instead and returns a count.
+   *
+   * Two deliberate differences from the old condition:
+   *
+   * - contactId is no longer required. An anonymous stranger chatting on a
+   *   forwarded link is exactly the person Rene most wants to hear about, and
+   *   requiring a contact meant silence for precisely that case.
+   * - chat milestones notify even when outType is video_rewatch. The depth cap
+   *   is a SCORING control: a second visitor on the same video is a rewatch for
+   *   scoring, and still news. Watch milestones keep the old behaviour, so a
+   *   rewatch does not re-alert. */
+  const CHAT_ALWAYS = ['video_chat_started', 'video_chat_lead_captured'];
+  const notifyType = CHAT_ALWAYS.includes(ev.type) ? ev.type : outType;
+  const shouldNotify = CHAT_ALWAYS.includes(ev.type)
+    ? true
+    : (!!contactId && outType !== 'video_rewatch' &&
+       ['video_completed', 'video_cta_clicked'].includes(outType));
+
+  if (shouldNotify) {
     try {
-      await sb.rpc('app_notify_mentions', {
+      const note = String(body.note || '').slice(0, 240);
+      const who = contactId ? '' : ' (not yet identified)';
+      const n = await sb.rpc('app_notify_system', {
         p_source_kind: 'video',
         p_source_id: vid.id,
-        p_body: `🎥 ${reason} — warm right now, worth a call.`,
-        p_actor_user_id: vid.created_by,
+        p_body: notifyType === 'video_chat_started'
+          ? `💬 Someone started chatting on “${vid.title || 'your video'}”${who}${note ? ` — “${note}”` : ''}`
+          : notifyType === 'video_chat_lead_captured'
+            ? `🎯 ${reason}${who} — contact details left on the video chat.`
+            : `🎥 ${reason} — warm right now, worth a call.`,
         p_actor_display: 'Video engagement',
         p_contact_id: contactId,
       });
-    } catch (_) { /* notification failure must not lose the event */ }
+      console.log('[video-track] notified', JSON.stringify(n.data ?? n), 'for', notifyType);
+    } catch (e) { console.error('[video-track] notify failed:', String(e)); }
   }
 
   return ok({ ok: true, type: outType, milestone: ev.type, reason, scored: outType !== 'video_rewatch' });

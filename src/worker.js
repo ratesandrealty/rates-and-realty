@@ -202,7 +202,35 @@ export default {
         // ── poster proxy (same reasoning as media) ──
         if (sub === 'poster') {
           const meta = await resolve();
-          if (!meta || !meta.poster_url) return new Response('Not found', { status: 404 });
+          if (!meta) return new Response('Not found', { status: 404 });
+          /* No stored poster → a BRANDED STATIC image, never a frame of the
+           * recording.
+           *
+           * Poster capture used to take a real frame off the live preview while
+           * recording. For a screen recording that frame is whatever was on
+           * screen — routinely a borrower's lead-detail page, with their name,
+           * phone and email in it. The /v/ page is public and gets forwarded, so
+           * that would publish borrower PII as a thumbnail to anyone holding the
+           * link. Capture is deliberately NOT restored; see the note in
+           * loom-recorder.js. Every video currently has poster_path null, so
+           * nothing has been exposed. */
+          if (!meta.poster_url) {
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">'
+              + '<rect width="1280" height="720" fill="#0F0F11"/>'
+              + '<circle cx="640" cy="330" r="86" fill="none" stroke="#C9A84C" stroke-width="5" opacity=".9"/>'
+              + '<path d="M614 284 L614 376 L692 330 Z" fill="#C9A84C"/>'
+              + '<text x="640" y="486" text-anchor="middle" font-family="Segoe UI,Arial,Helvetica,sans-serif"'
+              + ' font-size="34" font-weight="700" letter-spacing="6" fill="#C9A84C">RATES &amp; REALTY</text>'
+              + '<text x="640" y="530" text-anchor="middle" font-family="Segoe UI,Arial,Helvetica,sans-serif"'
+              + ' font-size="21" fill="#8b8b8b">A personal video message</text></svg>';
+            return new Response(svg, {
+              headers: {
+                'content-type': 'image/svg+xml; charset=utf-8',
+                'Cache-Control': 'public, max-age=86400',
+                'X-Content-Type-Options': 'nosniff',
+              },
+            });
+          }
           const up = await fetch(meta.poster_url);
           const h = new Headers();
           ['content-type', 'content-length', 'etag'].forEach((k) => { const v = up.headers.get(k); if (v) h.set(k, v); });
@@ -605,7 +633,9 @@ function videoPageHtml(slug, meta, ctas) {
             '" target="_blank" rel="noopener noreferrer">' + p[1] + '</a>';
    }).join('');
 
-  var poster = meta.poster_url ? ' poster="/v/' + s + '/poster"' : '';
+  // Always pinned: /poster serves a branded placeholder when none is stored, so
+  // the player never opens on a blank or broken frame.
+  var poster = ' poster="/v/' + s + '/poster"';
   var inner =
     '<div class="player"><video id="v" controls playsinline preload="metadata"' + poster + '>' +
     '<source src="/v/' + s + '/media" type="' + vEsc(meta.mime_type || 'video/mp4') + '"></video></div>' +

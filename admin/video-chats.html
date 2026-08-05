@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="/api/env.js?v=20260412b"></script>
+  <title>Video Chats | Rates &amp; Realty CRM</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.3/dist/umd/supabase.js"></script>
+  <script src="/admin/js/auth-guard.js?v=a93446dde2"></script>
+  <style>
+    :root{color-scheme:dark}
+    *{box-sizing:border-box}
+    body{margin:0;background:#0b0b0d;color:#E0DDD4;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;font-size:14px}
+    .wrap{max-width:940px;margin:0 auto;padding:22px 16px 60px}
+    h1{font-size:20px;margin:0 0 4px;color:#C9A84C}
+    .sub{color:#8b8b8b;font-size:12.5px;margin:0 0 20px;line-height:1.5}
+    .s{background:#121214;border:1px solid rgba(201,168,76,.18);border-radius:12px;margin-bottom:12px;overflow:hidden}
+    .sh{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;flex-wrap:wrap}
+    .sh:hover{background:#17140f}
+    .who{font-weight:700;font-size:14px}
+    .pill{font-size:11px;font-weight:700;border-radius:99px;padding:3px 9px;white-space:nowrap}
+    .matched{background:rgba(74,222,128,.14);color:#4ade80}
+    .anon{background:rgba(201,168,76,.14);color:#C9A84C}
+    .meta{color:#777;font-size:12px;margin-left:auto;text-align:right}
+    .body{display:none;border-top:1px solid rgba(201,168,76,.14);padding:12px 14px;background:#0e0e10}
+    .body.open{display:block}
+    .m{margin-bottom:10px;line-height:1.55}
+    .m .r{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#777;margin-bottom:2px}
+    .m.user .r{color:#C9A84C}
+    .m .c{white-space:pre-wrap}
+    .m.user .c{color:#fff}
+    .m.assistant .c{color:#b9b5ab}
+    a{color:#C9A84C}
+    .empty{color:#777;padding:30px 4px;text-align:center}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Video Chats</h1>
+  <p class="sub">
+    Every conversation a visitor had with the assistant on a <code>/v/&lt;slug&gt;</code> page.
+    Sessions where nobody left contact details have no lead record to sit on &mdash; this is
+    where they live. Matched sessions also appear on the lead's activity feed.
+  </p>
+  <div id="list"><div class="empty">Loading&hellip;</div></div>
+</div>
+
+<script>
+/* Read-only. Deliberately a page of its own rather than a tab on the lead
+ * record: the sessions that most need reading are the ones with NO contact, and
+ * those cannot appear on any lead by definition. Frank chatted for a minute,
+ * gave a first name, never left a number, and there was nowhere at all that
+ * fact was visible. */
+(function () {
+  var el = document.getElementById('list');
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function when(t) {
+    if (!t) return '';
+    try { return new Date(t).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' PT'; }
+    catch (e) { return String(t); }
+  }
+
+  /* auth-guard.js sets window._supabaseClient but emits NO ready event — an
+   * earlier draft of this page listened for a 'supabase-ready' that does not
+   * exist and would simply never have loaded. Poll for it, the same way
+   * sms-activity.html does. */
+  async function client(maxMs) {
+    if (typeof window.getSupabaseClient === 'function') {
+      try { return await window.getSupabaseClient(); } catch (e) { /* fall through */ }
+    }
+    var start = Date.now();
+    while (!window._supabaseClient && Date.now() - start < (maxMs || 5000)) {
+      await new Promise(function (r) { setTimeout(r, 50); });
+    }
+    return window._supabaseClient || null;
+  }
+
+  async function load() {
+    var cl = await client();
+    if (!cl) { el.innerHTML = '<div class="empty">Not signed in.</div>'; return; }
+
+    var s = await cl.from('video_chat_sessions')
+      .select('session_id,video_slug,contact_id,name,phone,email,captured_at,created_at')
+      .order('created_at', { ascending: false }).limit(200);
+    if (s.error) { el.innerHTML = '<div class="empty">Could not load: ' + esc(s.error.message) + '</div>'; return; }
+    var sessions = s.data || [];
+    if (!sessions.length) { el.innerHTML = '<div class="empty">No video chats yet.</div>'; return; }
+
+    var m = await cl.from('video_chat_messages')
+      .select('session_id,role,content,created_at')
+      .in('session_id', sessions.map(function (x) { return x.session_id; }))
+      .order('created_at', { ascending: true });
+    var byS = {};
+    (m.data || []).forEach(function (r) { (byS[r.session_id] = byS[r.session_id] || []).push(r); });
+
+    el.innerHTML = sessions.map(function (x) {
+      var msgs = byS[x.session_id] || [];
+      var identified = !!(x.contact_id || x.phone || x.email);
+      var label = x.name || 'Anonymous visitor';
+      var contactBits = [x.phone, x.email].filter(Boolean).join(' · ');
+      return '<div class="s">'
+        + '<div class="sh" data-s="' + esc(x.session_id) + '">'
+        +   '<span class="who">' + esc(label) + '</span>'
+        +   '<span class="pill ' + (identified ? 'matched' : 'anon') + '">'
+        +     (identified ? 'contact details' : 'no contact details') + '</span>'
+        +   (contactBits ? '<span style="color:#8b8b8b;font-size:12px">' + esc(contactBits) + '</span>' : '')
+        +   '<span class="meta">' + msgs.length + ' message' + (msgs.length === 1 ? '' : 's')
+        +     ' &middot; ' + esc(when(x.created_at)) + '<br>'
+        +     '<a href="/v/' + esc(x.video_slug) + '" target="_blank" rel="noopener">/v/' + esc(x.video_slug) + '</a>'
+        +     (x.contact_id ? ' &middot; <a href="/admin/lead-detail.html?contact_id=' + esc(x.contact_id) + '">lead</a>' : '')
+        +   '</span>'
+        + '</div>'
+        + '<div class="body" id="b-' + esc(x.session_id) + '">'
+        +   (msgs.length ? msgs.map(function (r) {
+              return '<div class="m ' + (r.role === 'user' ? 'user' : 'assistant') + '">'
+                + '<div class="r">' + (r.role === 'user' ? esc(label) : 'Assistant') + '</div>'
+                + '<div class="c">' + esc(r.content) + '</div></div>';
+            }).join('') : '<div class="empty">No messages stored.</div>')
+        + '</div></div>';
+    }).join('');
+
+    el.addEventListener('click', function (e) {
+      var h = e.target.closest('.sh'); if (!h) return;
+      var b = document.getElementById('b-' + h.getAttribute('data-s'));
+      if (b) b.classList.toggle('open');
+    });
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
