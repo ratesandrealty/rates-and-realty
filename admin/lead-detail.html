@@ -34721,12 +34721,24 @@ function _tcStartVideo(){
       var link = v && (v.watch_url || (v.slug ? 'https://ratesandrealty.com/v/' + v.slug : ''));
       if(!link){ showToast('Video saved but no link came back', true); return; }
       _tcState.videoUrl = link;
+      /* The textarea is the ONLY thing that carries the link into the message —
+       * _tcState.videoUrl is recorded but never read by the send path. So if the
+       * composer is gone or hidden when this fires, the link is lost with no
+       * sign: openTextComposer() clears tcBody.value and resets videoUrl, so
+       * reopening wipes it. That is how the first recording ended up saved,
+       * correctly attached to the contact, and yet nowhere Rene could see.
+       * Never report success in that case — show the link so it can be copied. */
+      var ov = document.getElementById('tcOverlay');
       var ta = document.getElementById('tcBody');
-      if(ta){
-        var cur = ta.value ? ta.value.replace(/[ \t\r\n]+$/, '') + '\n' : '';
-        ta.value = cur + '📹 Video: ' + link;
-        if(typeof _tcCharCount === 'function') _tcCharCount();   // refresh the 0/160 + segment readout
+      var composerOpen = ov && ov.style.display !== 'none';
+      if(!ta || !composerOpen){
+        showToast('Video saved, but the composer was closed — link: ' + link, true);
+        console.warn('[tc] video saved with no open composer to receive it:', link);
+        return;
       }
+      var cur = ta.value ? ta.value.replace(/[ \t\r\n]+$/, '') + '\n' : '';
+      ta.value = cur + '📹 Video: ' + link;
+      if(typeof _tcCharCount === 'function') _tcCharCount();   // refresh the 0/160 + segment readout
       showToast('Video ready');
     }
   });
@@ -37389,6 +37401,6 @@ async function recordNewVoicemail() {
 })();
 </script>
 
-  <script src="/admin/js/loom-recorder.js?v=b5c1352244"></script>
+  <script src="/admin/js/loom-recorder.js?v=a4bbecc1b2"></script>
 </body>
 </html>

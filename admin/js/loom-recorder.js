@@ -28,6 +28,7 @@
 
   var BUCKET = 'video-messages';
   var MAX_BYTES = 100 * 1024 * 1024;                 // 100 MB bucket ceiling
+  var MIN_BYTES = 1024;                              // below this the capture produced no frames — see save()
   // Watch links go to the PUBLIC apex host (not the admin host the recorder runs on),
   // so links shared to borrowers point at the public site.
   var WATCH_BASE = 'https://ratesandrealty.com';
@@ -64,7 +65,12 @@
     if (document.getElementById('loom-recorder-css')) return;
     var s = document.createElement('style'); s.id = 'loom-recorder-css';
     s.textContent = [
-      '.lr-ov{position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:18px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
+      /* Top of the page, deliberately. The recorder is opened FROM other modals
+       * (lead-detail's SMS composer is z-index 100001, its order/vendor modals are
+       * 2147483000), so anything lower renders behind its own launcher: invisible,
+       * and unclickable because the launcher's backdrop covers the viewport too.
+       * That is exactly what happened on the first SMS-composer recording. */
+      '.lr-ov{position:fixed;inset:0;z-index:2147483600;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:18px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
       '.lr-box{width:min(560px,96vw);max-height:calc(100vh - 36px);overflow:hidden;background:#0d0d0d;border:1px solid rgba(201,168,76,.32);border-radius:16px;box-shadow:0 24px 64px rgba(0,0,0,.6);display:flex;flex-direction:column}',
       '.lr-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:14px;font-weight:700;color:#C9A84C;flex-shrink:0}',
       '.lr-x{background:transparent;border:none;color:#888;font-size:17px;cursor:pointer;padding:4px 8px;border-radius:7px;line-height:1;font-family:inherit}',
@@ -209,7 +215,6 @@
         ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.lineWidth = Math.max(2, r * 0.05); ctx.strokeStyle = 'rgba(201,168,76,.92)'; ctx.stroke();
       }
-      _rec && (_rec.raf = requestAnimationFrame(drawFrame));
     }
 
     var canvasStream = canvas.captureStream(30);
@@ -220,7 +225,22 @@
     beginRecorder(canvasStream, canvasStream, 'loom', false, {
       screenStream: screenStream, camStream: camStream, screenVid: screenVid, camVid: camVid
     });
-    _rec.raf = requestAnimationFrame(drawFrame);
+    /* Drive the composite off a timer, NOT requestAnimationFrame.
+     *
+     * rAF is suspended while the document is hidden or occluded — and "hidden"
+     * is the NORMAL state for a screen recording, because the whole point is
+     * that the user switches to the window they are demonstrating. With rAF the
+     * canvas then stops being repainted, canvas.captureStream produces no
+     * frames, and Chrome's webm muxer stalls waiting for a first video frame —
+     * so it writes no audio either. The first SMS-composer recording ran 22
+     * seconds by the wall clock and uploaded 110 bytes: a bare EBML header.
+     * The missing camera bubble was the same stall, seen from the other side.
+     *
+     * setInterval is throttled when backgrounded (to ~1/sec) but never
+     * suspended, so a backgrounded recording degrades to a choppy video instead
+     * of an empty one. */
+    _rec.raf = setInterval(drawFrame, 33);
+    drawFrame();
     renderRecordingUi('loom', false, null, canvas);
     watchScreenEnd(screenStream);
   }
@@ -284,7 +304,7 @@
   function stopRecording() {
     if (!_rec || _rec.stopped) return;
     _rec.stopped = true;
-    if (_rec.raf) { cancelAnimationFrame(_rec.raf); _rec.raf = null; }
+    if (_rec.raf) { clearInterval(_rec.raf); _rec.raf = null; }   // a setInterval handle now — see startLoom
     if (_rec.timer) { clearInterval(_rec.timer); _rec.timer = null; }
     try { if (_rec.recorder && _rec.recorder.state !== 'inactive') _rec.recorder.stop(); } catch (e) {}
     stopTracks();
@@ -301,7 +321,7 @@
   // Full teardown (streams + object URL); used on close/menu/re-record.
   function teardownStreams() {
     if (!_rec) return;
-    if (_rec.raf) { cancelAnimationFrame(_rec.raf); _rec.raf = null; }
+    if (_rec.raf) { clearInterval(_rec.raf); _rec.raf = null; }   // a setInterval handle now — see startLoom
     if (_rec.timer) { clearInterval(_rec.timer); _rec.timer = null; }
     try { if (_rec.recorder && _rec.recorder.state !== 'inactive') { _rec.stopped = true; _rec.recorder.onstop = null; _rec.recorder.stop(); } } catch (e) {}
     stopTracks();
@@ -340,6 +360,17 @@
     var inp = document.getElementById('lr-title-in');
     var title = (inp && inp.value.trim()) || defaultTitle(_rec.kind);
     if (_rec.blob.size > MAX_BYTES) { if (errEl) errEl.textContent = 'Recording is over 100 MB — record a shorter clip.'; return; }
+    /* Lower bound too. Only the ceiling was checked, so a capture that produced
+     * no frames uploaded happily, minted a slug and reported success — the
+     * caller had a link to a video that plays nothing, which is worse than an
+     * error because it gets sent to a borrower. A header-only webm is ~110
+     * bytes; a real one-second clip is tens of KB, so 1 KB separates them
+     * cleanly with room to spare. */
+    if (_rec.blob.size < MIN_BYTES) {
+      if (errEl) errEl.textContent = 'That recording captured no video (' + _rec.blob.size + ' bytes). '
+        + 'Nothing was saved — record again, and keep this tab visible while you do.';
+      return;
+    }
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="lr-spin"></span>Uploading…'; }
     if (errEl) errEl.textContent = '';
     try {
