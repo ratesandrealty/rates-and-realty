@@ -2363,8 +2363,10 @@
      * page's fixed modal, and insertion through thumbLinkHtml + the composer's
      * sanitizing insertHTML instead of a Quill call. */
     var VID_BUCKET = 'video-messages';
-    // Public origin that serves /v/<slug>. Matches loom-recorder.js so both
-    // recorders hand out the same shape of link.
+    // Public origin that serves /v/<slug>. loom-recorder.js now emits the same
+    // shape — until 2026-08-05 it emitted /watch.html?v=<slug> while this comment
+    // already claimed they matched, which is the kind of claim worth checking
+    // rather than reading.
     var WATCH_BASE = 'https://ratesandrealty.com';
     function openVideoRecorder(anchor) {
       var box = document.createElement('div');

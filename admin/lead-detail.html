@@ -1757,7 +1757,7 @@
   <script src="/admin/js/vendor/purify.min.js?v=3.4.12"
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
-  <script src="/admin/js/inbox.js?v=5f668f145b" defer></script>
+  <script src="/admin/js/inbox.js?v=9c005a2b5d" defer></script>
 </head>
 <body class="admin-page">
 
@@ -34092,18 +34092,6 @@ function _tcEnsureModal(){
         +'<button type="button" onclick="_tcClearMedia()" style="background:none;border:none;color:#E5484D;cursor:pointer;font-size:14px;flex-shrink:0;">✕</button>'
       +'</div>'
       +'<input id="tcMediaUrl" type="url" placeholder="…or paste an image URL" oninput="_tcState.mediaUrl=(this.value||\'\').trim()||null" style="width:100%;box-sizing:border-box;margin-top:6px;background:#131315;border:1px solid rgba(201,168,76,0.1);border-radius:7px;color:#999;font-size:11px;padding:5px 9px;outline:none;font-family:inherit;">'
-      +'<div id="tcVideoPanel" style="display:none;flex-direction:column;gap:8px;margin-top:8px;padding:10px;background:#0C0C0E;border:1px solid rgba(201,168,76,0.25);border-radius:10px;">'
-        +'<video id="tcVideoPreview" playsinline style="width:100%;max-height:220px;border-radius:8px;background:#000;"></video>'
-        +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'
-          +'<span id="tcVidStatus" style="font-size:11px;color:#C9A84C;">Ready</span>'
-          +'<div style="display:flex;gap:6px;">'
-            +'<button type="button" id="tcVidStart" onclick="_tcRecBegin()" style="background:linear-gradient(135deg,#7A5020,#C9A84C);border:none;color:#1A0E00;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">● Record</button>'
-            +'<button type="button" id="tcVidStop" onclick="_tcRecStop()" style="display:none;background:#E5484D;border:none;color:#fff;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">■ Stop</button>'
-            +'<button type="button" id="tcVidAccept" onclick="_tcVidAccept()" style="display:none;background:#3FB950;border:none;color:#06210f;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Use video</button>'
-            +'<button type="button" onclick="_tcCloseVideo()" style="background:transparent;border:1px solid rgba(255,255,255,0.15);color:#888;border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>'
-          +'</div>'
-        +'</div>'
-      +'</div>'
       +'<div id="tcSchedQueue" style="display:none;margin-top:8px;"></div>'
       +'<div id="tcSchedRow" style="display:none;flex-direction:column;gap:8px;margin-top:8px;padding:10px;background:#131315;border:1px solid rgba(201,168,76,0.2);border-radius:8px;">'
         +'<div style="display:flex;flex-wrap:wrap;gap:5px;">'
@@ -34409,7 +34397,7 @@ function openTextComposer(){
   var _d=norm.digits;
   document.getElementById('tcSub').textContent = (_d.length>=10) ? ('('+_d.slice(0,3)+') '+_d.slice(3,6)+'-'+_d.slice(6,10)) : (_d ? _d : (_isVaSession()?'routed by contact':'No phone on file'));
   var ta=document.getElementById('tcBody'); if(ta) ta.value='';
-  _tcClearMedia(); _tcCloseVideo();
+  _tcClearMedia();   // _tcCloseVideo() removed with the bespoke recorder; LoomRecorder owns its own overlay teardown
   var _bl=document.getElementById('tcBlast'); if(_bl) _bl.checked=false;
   var _bp=document.getElementById('tcBlastPanel'); if(_bp) _bp.style.display='none';
   var _rs=document.getElementById('tcRecipSearch'); if(_rs) _rs.value='';
@@ -34709,67 +34697,39 @@ function _tcClearMedia(){
 }
 
 // ── Video recording (MediaRecorder) ─────────────────────────────────────────
-var _tcRec={ stream:null, recorder:null, chunks:[], blob:null, startTs:0, timer:null };
-async function _tcStartVideo(){
-  var panel=document.getElementById('tcVideoPanel'); if(!panel) return;
-  panel.style.display='flex';
-  try{ _tcRec.stream=await navigator.mediaDevices.getUserMedia({ video:true, audio:true }); }
-  catch(e){ showToast('Camera/mic blocked: '+((e&&e.message)||e), true); panel.style.display='none'; return; }
-  var vid=document.getElementById('tcVideoPreview'); if(vid){ vid.srcObject=_tcRec.stream; vid.muted=true; vid.controls=false; try{ vid.play(); }catch(_){} }
-  var st=document.getElementById('tcVidStart'); if(st){ st.style.display='inline-flex'; st.textContent='● Record'; }
-  var sp=document.getElementById('tcVidStop'); if(sp) sp.style.display='none';
-  var ac=document.getElementById('tcVidAccept'); if(ac) ac.style.display='none';
-  var stx=document.getElementById('tcVidStatus'); if(stx) stx.textContent='Ready';
-}
-function _tcRecBegin(){
-  if(!_tcRec.stream) return;
-  _tcRec.chunks=[]; _tcRec.blob=null;
-  var mime=(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('video/webm')) ? 'video/webm' : '';
-  try{ _tcRec.recorder=new MediaRecorder(_tcRec.stream, mime?{mimeType:mime}:undefined); }
-  catch(e){ showToast('Recording unsupported here', true); return; }
-  _tcRec.recorder.ondataavailable=function(ev){ if(ev.data && ev.data.size) _tcRec.chunks.push(ev.data); };
-  _tcRec.recorder.onstop=function(){ _tcRec.blob=new Blob(_tcRec.chunks,{ type:(_tcRec.recorder&&_tcRec.recorder.mimeType)||'video/webm' }); _tcVidShowResult(); };
-  _tcRec.startTs=Date.now(); _tcRec.recorder.start();
-  var st=document.getElementById('tcVidStart'); if(st) st.style.display='none';
-  var sp=document.getElementById('tcVidStop'); if(sp) sp.style.display='inline-flex';
-  _tcRec.timer=setInterval(function(){
-    var s=Math.floor((Date.now()-_tcRec.startTs)/1000);
-    var stx=document.getElementById('tcVidStatus'); if(stx) stx.textContent = s>=15 ? ('● Recording '+s+'s ⚠ keep it short') : ('● Recording '+s+'s');
-    if(s>=60) _tcRecStop();   // hard cap 60s
-  }, 250);
-}
-function _tcRecStop(){ if(_tcRec.recorder && _tcRec.recorder.state!=='inactive'){ try{ _tcRec.recorder.stop(); }catch(_){} } if(_tcRec.timer){ clearInterval(_tcRec.timer); _tcRec.timer=null; } }
-function _tcVidShowResult(){
-  if(!_tcRec.blob) return;
-  var s=Math.floor((Date.now()-_tcRec.startTs)/1000), mb=_tcRec.blob.size/1048576;
-  var warn=(s>15 || mb>5) ? (' ⚠ long/large') : '';
-  var stx=document.getElementById('tcVidStatus'); if(stx) stx.textContent='Recorded '+s+'s · '+mb.toFixed(1)+' MB'+warn;
-  var vid=document.getElementById('tcVideoPreview'); if(vid){ vid.srcObject=null; try{ vid.src=URL.createObjectURL(_tcRec.blob); }catch(_){} vid.muted=false; vid.controls=true; }
-  var sp=document.getElementById('tcVidStop'); if(sp) sp.style.display='none';
-  var st=document.getElementById('tcVidStart'); if(st){ st.style.display='inline-flex'; st.textContent='Re-record'; }
-  var ac=document.getElementById('tcVidAccept'); if(ac) ac.style.display='inline-flex';
-}
-async function _tcVidAccept(){
-  if(!_tcRec.blob){ showToast('Record first', true); return; }
-  var s=Math.floor((Date.now()-_tcRec.startTs)/1000), mb=_tcRec.blob.size/1048576;
-  if((s>15 || mb>5) && !confirm('This clip is '+s+'s / '+mb.toFixed(1)+' MB — long/large for texting. Use it anyway?')) return;
-  var btn=document.getElementById('tcVidAccept'); if(btn){ btn.disabled=true; btn.textContent='Uploading…'; }
-  try{
-    var f=new File([_tcRec.blob], 'video_'+Date.now()+'.webm', { type:_tcRec.blob.type||'video/webm' });
-    var url=await _tcUploadToBucket(f);
-    _tcState.videoUrl=url;
-    if(_tcState.videoAsMedia){ _tcSetMedia(url); }   // hook: attach as MMS media_url instead
-    else { var ta=document.getElementById('tcBody'); if(ta){ ta.value=(ta.value?ta.value.replace(/\s*$/,'')+'\n':'')+'📹 Video: '+url; _tcCharCount(); } }
-    showToast('Video uploaded ✓'); _tcCloseVideo();
-  }catch(e){ showToast('Video upload failed: '+((e&&e.message)||e), true); }
-  if(btn){ btn.disabled=false; btn.textContent='Use video'; }
-}
-function _tcCloseVideo(){
-  var panel=document.getElementById('tcVideoPanel'); if(panel) panel.style.display='none';
-  _tcRecStop();
-  if(_tcRec.stream){ try{ _tcRec.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){} _tcRec.stream=null; }
-  var vid=document.getElementById('tcVideoPreview'); if(vid){ vid.srcObject=null; vid.src=''; vid.controls=false; }
-  _tcRec.blob=null; _tcRec.chunks=[];
+/* Video for the SMS composer is the SHARED recorder, not a fourth MediaRecorder.
+ *
+ * This was ~90 lines of its own getUserMedia/MediaRecorder plumbing that uploaded
+ * to the sms-media bucket and pasted the raw supabase.co storage URL into the
+ * message. That meant the supabase.co origin visible to borrowers, no videos row
+ * and no slug -- so no view tracking, no scoring against the lead, and none of
+ * the CTAs on the /v/ landing page.
+ *
+ * LoomRecorder uploads to video-messages, calls video_create to mint a slug, and
+ * returns watch_url = https://ratesandrealty.com/v/<slug>. contact_id is passed
+ * so views score against THIS lead, which is the point of routing through /v/
+ * rather than handing out a bucket URL.
+ *
+ * Already-sent raw sms-media links are untouched and still resolve; that bucket
+ * is not changed or emptied. */
+function _tcStartVideo(){
+  if(!window.LoomRecorder){ showToast('Recorder still loading, try again in a moment', true); return; }
+  window.LoomRecorder.open({
+    context: 'sms',
+    contact_id: (_tcState && _tcState.cid) || null,
+    onSaved: function(v){
+      var link = v && (v.watch_url || (v.slug ? 'https://ratesandrealty.com/v/' + v.slug : ''));
+      if(!link){ showToast('Video saved but no link came back', true); return; }
+      _tcState.videoUrl = link;
+      var ta = document.getElementById('tcBody');
+      if(ta){
+        var cur = ta.value ? ta.value.replace(/[ \t\r\n]+$/, '') + '\n' : '';
+        ta.value = cur + '📹 Video: ' + link;
+        if(typeof _tcCharCount === 'function') _tcCharCount();   // refresh the 0/160 + segment readout
+      }
+      showToast('Video ready');
+    }
+  });
 }
 
 // ── Blast (multi-recipient) ─────────────────────────────────────────────────
@@ -37429,5 +37389,6 @@ async function recordNewVoicemail() {
 })();
 </script>
 
+  <script src="/admin/js/loom-recorder.js?v=b5c1352244"></script>
 </body>
 </html>

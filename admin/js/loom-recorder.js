@@ -16,7 +16,8 @@
    On save: upload the webm to the PUBLIC 'video-messages' bucket at
    videos/<uuid>.webm, resolve the public URL, then call the live backend RPC
    video_create(...) which mints a shareable slug. onSaved gets the slug +
-   watch_url ( `${location.origin}/watch.html?v=<slug>` ).
+   watch_url ( `https://ratesandrealty.com/v/<slug>` — the canonical landing
+   page; the Worker 301s the older /watch.html?v=<slug> form to it).
 
    Self-contained (no external deps beyond the page's Supabase client) and
    idempotent — safe to include on any admin/staff page.
@@ -360,7 +361,21 @@
       if (r.error) throw r.error;
       var data = r.data || {};
       var slug = data.slug || '';
-      var watchUrl = WATCH_BASE + '/watch.html?v=' + encodeURIComponent(slug);
+      /* /v/<slug>, not /watch.html?v=<slug>.
+       *
+       * /v/ is the canonical landing page: the Worker serves the page there and
+       * proxies /v/<slug>/media with Range support, /track to video-track and
+       * /chat to video-chat. watch.html is a client-rendered page that calls
+       * video_get_public itself and has none of that plumbing.
+       *
+       * Already-sent watch.html links keep working — src/worker.js 301s
+       * /watch.html?v=<slug> to /v/<slug>, verified live against a real slug —
+       * so this changes only what NEW links look like.
+       *
+       * It also makes inbox.js's claim true: its openVideoRecorder already emits
+       * /v/<slug> while asserting in a comment that both recorders "hand out the
+       * same shape of link". They did not until this line changed. */
+      var watchUrl = WATCH_BASE + '/v/' + encodeURIComponent(slug);
       var saved = { slug: slug, public_url: data.public_url || publicUrl, title: data.title || title, watch_url: watchUrl };
       closeOverlay();
       if (typeof _opts.onSaved === 'function') { try { _opts.onSaved(saved); } catch (e) { console.error('[loom] onSaved threw', e); } }
