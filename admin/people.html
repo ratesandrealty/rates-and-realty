@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="/admin/js/supabase-client.js?v=5e7926468b"></script>
 <script src="/admin/js/auth-guard.js?v=a93446dde2"></script>
+  <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <script src="/admin/js/crm-comms.js?v=d4687bb733"></script>
 <style>
 :root {
@@ -385,7 +386,15 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       <div class="filter-chip" id="fc-buyer" onclick="setType('buyer')">Buyer</div>
       <div class="filter-chip" id="fc-refinance" onclick="setType('refinance')">Refinance</div>
       <div class="filter-chip" id="fc-investor" onclick="setType('investor')">Investor</div>
-      <div class="filter-chip" id="fc-referral_partner" onclick="setType('referral_partner')">Referral Partner</div>
+      <!-- The "Referral Partner" TYPE chip was removed. It filtered
+           contact_type==='referral_partner' || referral_partner_id — but ZERO
+           contacts carry that contact_type, so it returned 36 referred
+           BORROWERS under a label promising partners, and duplicated the
+           Referrals tab (37) to within the single text-only row.
+           Replaced by a chip that opens the real per-partner picker, which was
+           already built and working but buried in the Filters panel under Tags
+           and Source, where Rene never found it. -->
+      <div class="filter-chip" id="fc-partner-open" onclick="openReferralPartnerFilter()" title="Show leads referred by a specific partner">By Partner ▾</div>
       <div class="filter-sep"></div>
       <button class="btn btn-ghost btn-sm filters-btn" onclick="toggleFilterPanel()" id="filtersBtn">Filters</button>
       <div class="filter-sep"></div>
@@ -886,7 +895,7 @@ async function loadPeople() {
     var fin = finMap[c.id] || {};
     var effectiveScore = (c.lead_score != null && c.lead_score !== '') ? parseInt(c.lead_score) : (lead.score != null ? parseInt(lead.score) : 0);
     if (isNaN(effectiveScore)) effectiveScore = 0;
-    var effectiveTier = effectiveScore >= 80 ? 'Hot' : effectiveScore >= 50 ? 'Warm' : 'Cold';
+    var effectiveTier = window.LEAD_TIERS.tierOf(effectiveScore);
     var ct = c.contact_tags || [];
     var tags = ct.map(function(ct) { return ct.tags; }).filter(Boolean);
     var maLoanType = (c.mortgage_applications && c.mortgage_applications[0]) ? c.mortgage_applications[0].loan_type : null;
@@ -983,8 +992,9 @@ function updateTabCounts() {
   var counts = { all: _allPeople.length, hot: 0, warm: 0, cold: 0, 'new': 0, referrals: 0, no_contact: 0 };
   _allPeople.forEach(function(p) {
     var score = p.effective_score || 0;
-    if (score >= 80) counts.hot++;
-    else if (score >= 50) counts.warm++;
+    var _t = window.LEAD_TIERS.tierOf(score);
+    if (_t === 'Hot') counts.hot++;
+    else if (_t === 'Warm') counts.warm++;
     else counts.cold++;
     if (p.created_at && (now - new Date(p.created_at).getTime()) < fourteenDays) counts['new']++;
     if (p.referred_by || p.referral_partner_id) counts.referrals++;
@@ -1043,9 +1053,9 @@ function applyFilters() {
     var ct = (p.contact_type || '').toLowerCase();
 
     // Tab filter
-    if (_currentTab === 'hot' && score < 80) return false;
-    if (_currentTab === 'warm' && (score < 50 || score >= 80)) return false;
-    if (_currentTab === 'cold' && score >= 50) return false;
+    if (_currentTab === 'hot' && score < window.LEAD_TIERS.HOT) return false;
+    if (_currentTab === 'warm' && (score < window.LEAD_TIERS.WARM || score >= window.LEAD_TIERS.HOT)) return false;
+    if (_currentTab === 'cold' && score >= window.LEAD_TIERS.WARM) return false;
     if (_currentTab === 'new') {
       if (!p.created_at || (now - new Date(p.created_at).getTime()) >= fourteenDays) return false;
     }
@@ -1229,7 +1239,7 @@ function renderTable() {
     var init = initials(p.first_name, p.last_name);
     var name = ((p.first_name||'') + ' ' + (p.last_name||'')).trim() || 'Unknown';
     var score = p.effective_score || 0;
-    var scoreClass = score >= 80 ? 'score-hot' : score >= 50 ? 'score-warm' : 'score-cold';
+    var scoreClass = window.LEAD_TIERS.classOf(score);
     var isSelected = _selected.has(p.id);
     return '<tr onclick="openPerson(\'' + p.id + '\')" class="' + (isSelected?'selected':'') + '">'
       + '<td class="cb-col" onclick="event.stopPropagation()"><input type="checkbox" ' + (isSelected?'checked':'') + ' onchange="toggleSelect(\'' + p.id + '\',this)"></td>'
@@ -1254,7 +1264,7 @@ function renderCards() {
     var init = initials(p.first_name, p.last_name);
     var name = ((p.first_name||'') + ' ' + (p.last_name||'')).trim() || 'Unknown';
     var score = p.effective_score || 0;
-    var scoreClass = score >= 80 ? 'score-hot' : score >= 50 ? 'score-warm' : 'score-cold';
+    var scoreClass = window.LEAD_TIERS.classOf(score);
     return '<div class="person-card" onclick="openPerson(\'' + p.id + '\')">'
       + '<div class="card-av" style="background:' + av.bg + ';color:' + av.fg + '">' + init + '</div>'
       + '<div class="card-name">' + name + '</div>'
@@ -1428,6 +1438,26 @@ function setReferralFilter(partnerId) {
   _filterReferralPartner = partnerId;
   applyFilters();
   renderReferralPartnerPills();
+  var chip = document.getElementById('fc-partner-open');
+  if (chip) {
+    var rp = partnerId && _referralPartners.find(function (p) { return p.id === partnerId; });
+    chip.textContent = rp ? (rp.first_name + ' ' + (rp.last_name || '') + ' ×') : 'By Partner ▾';
+    chip.classList.toggle('active', !!partnerId);
+  }
+}
+
+/* Open the Filters panel scrolled to the partner picker. The picker itself is
+   unchanged and already worked — it was simply unreachable in practice, sitting
+   below Tags and Source in a panel most people never open. Clicking the chip
+   while a partner is selected clears it, so the chip is also the way out. */
+function openReferralPartnerFilter() {
+  if (_filterReferralPartner) { setReferralFilter(null); return; }
+  var panel = document.getElementById('filterPanel');
+  if (panel && !panel.classList.contains('open')) toggleFilterPanel();
+  setTimeout(function () {
+    var sec = document.getElementById('fpReferralPills');
+    if (sec && sec.scrollIntoView) sec.scrollIntoView({ block: 'center' });
+  }, 60);
 }
 
 function toggleTemp(btn) {
