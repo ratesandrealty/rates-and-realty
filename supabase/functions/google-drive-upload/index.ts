@@ -19,6 +19,31 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    /* WHO ASKED, as opposed to who wrote. The service role has no auth.uid(),
+     * so uploaded_documents.uploaded_by was populated on 10.5% of rows and NOT
+     * ONE of them was the VA's — documents filed is the most visible part of
+     * "what she did", and it was invisible.
+     *
+     * DELIBERATELY OPTIONAL: null for an anon key, a missing header, an expired
+     * token or a service-role call, and the upload proceeds exactly as before.
+     * Attribution, not a guard — nothing is rejected on its account, so this
+     * cannot break a live upload path.
+     *
+     * Attribution is to the ACCOUNT: processing@ is a shared login, so a stamped
+     * uid means "somebody signed in as the VA", not a named person. */
+    let uploadedBy: string | null = null
+    try {
+      const raw = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
+      if (raw && raw.split('.').length === 3) {
+        // The anon and service keys are well-formed JWTs too; neither has a user.
+        const claims = JSON.parse(atob(raw.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+        if (claims?.sub && claims.role !== 'anon' && claims.role !== 'service_role') {
+          const { data, error } = await supabase.auth.getUser(raw)
+          if (!error && data?.user?.id) uploadedBy = data.user.id
+        }
+      }
+    } catch (_) { uploadedBy = null }
+
     // ── Upload file to Supabase Storage + insert DB record ──
     if (action === 'upload_to_storage') {
       const { file_base64, file_name, file_type, storage_path, contact_id, lead_id, document_type, file_size } = body
@@ -64,6 +89,7 @@ serve(async (req) => {
           file_url: null,
           status: 'received',
           file_size: file_size,
+          uploaded_by: uploadedBy,
           uploaded_at: new Date().toISOString()
         })
 
