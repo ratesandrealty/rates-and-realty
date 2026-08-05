@@ -29,6 +29,13 @@
   var BUCKET = 'video-messages';
   var MAX_BYTES = 100 * 1024 * 1024;                 // 100 MB bucket ceiling
   var MIN_BYTES = 1024;                              // below this the capture produced no frames — see save()
+  /* Camera-bubble geometry, as fractions of the frame's SHORTER side so it looks
+   * the same on a 16:9 monitor and a portrait one. Constants rather than
+   * draggable: dragging needs pointer handling on the preview canvas mapped back
+   * to capture coordinates, and a position that persists across recordings, for
+   * a choice most people make once. Revisit if Rene actually wants to move it. */
+  var BUBBLE_R_FRAC = 0.09;                          // radius — 18% of the short side across
+  var BUBBLE_MARGIN_FRAC = 0.025;                    // gap from the left and bottom edges
   // Watch links go to the PUBLIC apex host (not the admin host the recorder runs on),
   // so links shared to borrowers point at the public site.
   var WATCH_BASE = 'https://ratesandrealty.com';
@@ -203,8 +210,15 @@
       if (!_rec || _rec.stopped) return;
       try { ctx.drawImage(screenVid, 0, 0, canvas.width, canvas.height); } catch (e) {}
       if (camVid.videoWidth) {
-        var r = Math.round(Math.min(canvas.width, canvas.height) * 0.16);
-        var margin = Math.round(r * 0.55);
+        /* Bottom-left, Loom-style. The anchor was already bottom-left, but at
+         * BUBBLE_R_FRAC 0.16 the bubble was 32% of the frame height — its top
+         * edge began 59% down, so it filled the lower-left quadrant and read as
+         * sitting high rather than tucked in the corner. The margin was derived
+         * from the radius (0.55r), so it grew with the oversized bubble instead
+         * of hugging the edge. Margin is now a fraction of the frame. */
+        var minDim = Math.min(canvas.width, canvas.height);
+        var r = Math.round(minDim * BUBBLE_R_FRAC);
+        var margin = Math.round(minDim * BUBBLE_MARGIN_FRAC);
         var cx = margin + r, cy = canvas.height - margin - r;
         var vw = camVid.videoWidth, vh = camVid.videoHeight, side = Math.min(vw, vh);
         var sx = (vw - side) / 2, sy = (vh - side) / 2;
