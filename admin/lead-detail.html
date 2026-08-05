@@ -15815,8 +15815,9 @@ async function notifRenderList(){
       /* Same rule as the dashboard bell: notifOpen navigates only when there is
          a contact behind the row. Monitor alerts have contact_id null, so a
          pointer cursor advertised a jump that never came. */
-      const canNav = !!n.contact_id;
-      return '<div onclick="notifOpen(\''+n.id+'\',\''+(n.contact_id||'')+'\',\''+(n.source_kind||'')+'\',\''+(n.source_id||'')+'\',\''+(n.kind||'')+'\')" title="'+(canNav?'Open lead':'Click to mark read')+'" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:'+(canNav?'pointer':'default')+';background:'+bg+';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\''+bg+'\'">'
+      const canNav = !!(n.link || n.contact_id);
+      const navTitle = n.link ? 'Open' : (n.contact_id ? 'Open lead' : 'Click to mark read');
+      return '<div onclick="notifOpen(\''+n.id+'\',\''+(n.contact_id||'')+'\',\''+(n.source_kind||'')+'\',\''+(n.source_id||'')+'\',\''+(n.kind||'')+'\',\''+lpEsc(n.link||'')+'\')" title="'+navTitle+'" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:'+(canNav?'pointer':'default')+';background:'+bg+';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\''+bg+'\'">'
         +'<div style="display:flex;gap:6px;align-items:baseline;">'+(unread?'<span style="flex-shrink:0;width:7px;height:7px;border-radius:50%;background:#C9A84C;display:inline-block;"></span>':'')
         +kicon
         +'<span style="font-size:12px;color:#eee;font-weight:600;">'+lpEsc(n.actor_display||'Someone')+'</span>'
@@ -15835,10 +15836,15 @@ function notifToggle(ev){
   box.style.display='block';
   notifRenderList();
 }
-async function notifOpen(id, contactId, sourceKind, sourceId, kind){
+async function notifOpen(id, contactId, sourceKind, sourceId, kind, link){
   try{ await _authClient().rpc('notification_mark_read', { p_id:id }); }catch(_){}
   notifRefreshCount();
   _notifHide();
+  /* An explicit target wins over the contact_id rule. "Someone chatted on your
+     video" from a visitor who left no details has no lead to open, but it does
+     name a session /admin/video-chats can read — that was a dead click.
+     Site-relative paths only; anything else is ignored rather than followed. */
+  if(link && /^\/[^/]/.test(link)){ window.location.href = link; return; }
   // A task note is identifiable by either source_kind='task_note' (legacy) or kind='task_note'
   // (add_task_note sets kind='task_note', source_kind='task', source_id=<task_id>).
   const isTaskNote = !!sourceId && (sourceKind==='task_note' || kind==='task_note');

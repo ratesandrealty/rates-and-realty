@@ -238,9 +238,19 @@ Deno.serve(async (req) => {
     try {
       const note = String(body.note || '').slice(0, 240);
       const who = contactId ? '' : ' (not yet identified)';
+      /* Where the row should OPEN. The producer decides, because only the
+       * producer knows: a chat session whose visitor never left contact details
+       * has no lead page to go to, and the bell's contact_id-only rule made it a
+       * dead click. It has a session and /admin/video-chats can read it. */
+      const link = contactId
+        ? `/admin/lead-detail?contact_id=${contactId}`
+        : (CHAT_ALWAYS.includes(ev.type) && sessionId
+            ? `/admin/video-chats?session=${encodeURIComponent(sessionId)}`
+            : null);
       const n = await sb.rpc('app_notify_system', {
         p_source_kind: 'video',
         p_source_id: vid.id,
+        p_link: link,
         p_body: notifyType === 'video_chat_started'
           ? `💬 Someone started chatting on “${vid.title || 'your video'}”${who}${note ? ` — “${note}”` : ''}`
           : notifyType === 'video_chat_lead_captured'

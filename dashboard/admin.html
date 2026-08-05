@@ -1289,6 +1289,10 @@
           <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><rect x="2" y="4" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M2.5 6l7.5 5 7.5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Inbox
         </a>
+        <a class="crm-nav-link" href="/admin/video-chats">
+          <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M13 8.5l5-2.5v8l-5-2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          Video Chats
+        </a>
         <a class="crm-nav-link" href="/admin/chat.html">
           <svg class="crm-nav-icon-svg" viewBox="0 0 20 20" fill="none"><path d="M3 4h14a1 1 0 011 1v8a1 1 0 01-1 1H7l-3 3v-3a1 1 0 01-1-1V5a1 1 0 011-1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
           Staff Chat
@@ -5731,13 +5735,15 @@ document.addEventListener('DOMContentLoaded', function() {
         var kicon = n.kind === 'sms_inbound' ? '<span style="flex-shrink:0;margin-right:1px;">💬</span>'
                   : n.kind === 'doc_uploaded' ? '<span style="flex-shrink:0;margin-right:1px;">📄</span>'
                   : n.kind === 'system' ? '<span style="flex-shrink:0;margin-right:1px;">🛠</span>' : '';
-        /* notifOpen only navigates when there is a contact to navigate to.
+        /* notifOpen navigates when the row carries an explicit link, or when
+           there is a contact to navigate to.
            System alerts from the health monitor have contact_id null, so a
            pointer cursor promised a jump that never happened — every monitor
            alert looked broken on click. Marking read still works; the cursor
            now says that is all it does. */
-        var canNav = !!n.contact_id;
-        return '<div onclick="notifOpen(\'' + n.id + '\',\'' + (n.contact_id||'') + '\',\'' + (n.source_kind||'') + '\',\'' + (n.source_id||'') + '\',\'' + (n.kind||'') + '\')" title="' + (canNav ? 'Open lead' : 'Click to mark read') + '" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:' + (canNav ? 'pointer' : 'default') + ';background:' + bg + ';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\'' + bg + '\'">'
+        var canNav = !!(n.link || n.contact_id);
+        var navTitle = n.link ? 'Open' : (n.contact_id ? 'Open lead' : 'Click to mark read');
+        return '<div onclick="notifOpen(\'' + n.id + '\',\'' + (n.contact_id||'') + '\',\'' + (n.source_kind||'') + '\',\'' + (n.source_id||'') + '\',\'' + (n.kind||'') + '\',\'' + escapeHtml(n.link||'') + '\')" title="' + navTitle + '" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:' + (canNav ? 'pointer' : 'default') + ';background:' + bg + ';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\'' + bg + '\'">'
           + '<div style="display:flex;gap:6px;align-items:baseline;">' + (unread ? '<span style="flex-shrink:0;width:7px;height:7px;border-radius:50%;background:#C9A84C;display:inline-block;"></span>' : '')
           + kicon
           + '<span style="font-size:12px;color:#eee;font-weight:600;">' + escapeHtml(n.actor_display || 'Someone') + '</span>'
@@ -5756,12 +5762,20 @@ document.addEventListener('DOMContentLoaded', function() {
     box.style.display = 'block';
     notifRenderList();
   };
-  window.notifOpen = async function(id, contactId, sourceKind, sourceId, kind){
+  window.notifOpen = async function(id, contactId, sourceKind, sourceId, kind, link){
     try{ var sb = await _dnClient(); if(sb) await sb.rpc('notification_mark_read', { p_id:id }); }catch(_){}
     notifRefreshCount(); _dnHide();
-    /* No contact, nowhere to go — mark read and close, deliberately. System
-       alerts (source_kind 'monitor') have no lead behind them; sending them to
-       lead-detail with an empty contact_id would open a blank record. */
+    /* An explicit target wins. The destination used to be derived from
+       contact_id alone, so "someone chatted on your video" — a visitor who gave
+       no contact details and therefore has no lead — was a dead click, even
+       though the row names a session /admin/video-chats can open. Producers set
+       `link` because only they know where a row belongs. Site-relative only:
+       anything else is ignored rather than followed. */
+    if(link && /^\/[^/]/.test(link)){ window.location.href = link; return; }
+    /* No target and no contact, nowhere to go — mark read and close,
+       deliberately. System alerts (source_kind 'monitor') have no lead behind
+       them; sending them to lead-detail with an empty contact_id would open a
+       blank record. */
     if(contactId){
       var hash = (kind === 'sms_inbound') ? '#text'
                : (kind === 'doc_uploaded') ? '#documents'

@@ -126,9 +126,27 @@
 
     el.addEventListener('click', function (e) {
       var h = e.target.closest('.sh'); if (!h) return;
+      if (e.target.closest('a')) return;   // let the /v/ and lead links through
       var b = document.getElementById('b-' + h.getAttribute('data-s'));
       if (b) b.classList.toggle('open');
     });
+
+    /* ?session=<id> — what the bell links to. A notification about a visitor who
+     * left no contact details has no lead page to open, so it comes here; if it
+     * landed on a list of 200 collapsed rows the click would be barely better
+     * than the dead one it replaced. Open that session and scroll to it. */
+    var want = new URLSearchParams(location.search).get('session');
+    if (want) {
+      var b = document.getElementById('b-' + want);
+      if (b) {
+        b.classList.add('open');
+        b.parentNode.style.borderColor = '#C9A84C';
+        b.parentNode.scrollIntoView({ block: 'center' });
+      } else {
+        el.insertAdjacentHTML('afterbegin',
+          '<div class="empty">That chat session is no longer listed (only the most recent 200 are shown).</div>');
+      }
+    }
   }
 
   load();
