@@ -818,6 +818,11 @@ var _vaMode = 'leads';
    '' = off, 'yes' = only shared, 'no' = only NOT shared. */
 var _sharedContactIds = null;   // Set, or null until loaded
 var _filterShared = '';
+/* Relative day thresholds, so a saved view stays correct as time passes — an
+   absolute last_contact_to date would silently go stale the day after it was
+   saved. 0 = off. */
+var _filterStaleDays = 0;
+var _filterExcludeClosed = false;
 var _filterSources = [];
 var _filterLoanTypes = [];
 var _filterPipelines = [];
@@ -915,7 +920,13 @@ async function loadPeople() {
       referred_by: c.referred_by || '',
       referral_partner_id: c.referral_partner_id || null,
       pipeline_status: c.pipeline_status || (lead.status ? normStatus(lead.status) : 'New Lead'),
-      lead_status: lead.status ? normStatus(lead.status) : (c.pipeline_status || 'New Lead'),
+      /* pipeline_status is authoritative. lead_status (exposed as leads.status)
+         is a creation-time fossil: the leads view's INSTEAD OF UPDATE trigger
+         writes pipeline_status and never touches lead_status, so nothing kept
+         it current. All 32 disagreements ran one way — lead_status stuck on
+         'New Lead' while the deal advanced to Contacted/Pre-Approved/Closed.
+         Kept as a key so the CSV export and column picker still resolve. */
+      lead_status: c.pipeline_status || 'New Lead',
       crm_id: c.crm_id || '',
       borrower_id: c.borrower_id || '',
       portal_user_id: c.portal_user_id || null,
@@ -1083,6 +1094,22 @@ function applyFilters() {
       if (ct !== 'referral_partner' && !p.referral_partner_id) return false;
     }
 
+    /* Advanced: stale-days + exclude-closed.
+       These exist so "Needs Follow-Up" and "Stalled" can be REAL saved views.
+       Both used to carry {tab:'no_contact'} — a flat 5 days with no closed/lost
+       exclusion — which is neither what their names say nor what the stat pills
+       of the same names count (7 and 14 days, excluding Closed and Lost). Three
+       names shared one filter and disagreed with the pills beside them. */
+    if (_filterStaleDays > 0) {
+      var lastC = p.last_contact_date ? new Date(p.last_contact_date).getTime() : 0;
+      // Never contacted counts as stale — it is the most overdue case, not the least.
+      if (lastC && (now - lastC) < _filterStaleDays * 86400000) return false;
+    }
+    if (_filterExcludeClosed) {
+      var ps = p.pipeline_status || '';
+      if (ps === 'Closed' || ps === 'Lost') return false;
+    }
+
     // Advanced: Shared with VA — inclusion AND exclusion
     if (_filterShared) {
       // Not loaded yet (or the read failed): show everything rather than
@@ -1115,7 +1142,7 @@ function applyFilters() {
     }
     // Advanced: Pipeline
     if (_filterPipelines.length > 0) {
-      if (_filterPipelines.indexOf(p.lead_status || p.pipeline_status) < 0) return false;
+      if (_filterPipelines.indexOf(p.pipeline_status || p.lead_status) < 0) return false;
     }
     // (VA "Loan Processing" is no longer a filter over _allPeople — it renders a
     //  dedicated board from the va_processing_board RPC; see setVaView/renderProcessingBoard.)
@@ -1244,7 +1271,7 @@ function renderTable() {
     return '<tr onclick="openPerson(\'' + p.id + '\')" class="' + (isSelected?'selected':'') + '">'
       + '<td class="cb-col" onclick="event.stopPropagation()"><input type="checkbox" ' + (isSelected?'checked':'') + ' onchange="toggleSelect(\'' + p.id + '\',this)"></td>'
       + '<td><div class="person-cell"><div class="person-av" style="background:' + av.bg + ';color:' + av.fg + '">' + init + '</div><div><div class="person-name">' + name + '</div><div class="person-type">' + (p.contact_type||'Lead') + '</div></div></div></td>'
-      + '<td onclick="event.stopPropagation()"><select class="pipeline-select" onchange="updateStageInline(\'' + p.id + '\',this.value)" style="color:' + stageColor(p.lead_status) + '">' + ['New Lead','Contacted','Qualified','Pre-Qualified','Application','Processing','Closed'].map(function(s) { return '<option value="' + s + '"' + (p.lead_status===s?' selected':'') + '>' + s + '</option>'; }).join('') + '</select></td>'
+      + '<td onclick="event.stopPropagation()"><select class="pipeline-select" onchange="updateStageInline(\'' + p.id + '\',this.value)" style="color:' + stageColor(p.pipeline_status) + '">' + ['New Lead','Contacted','Qualified','Pre-Qualified','Application','Processing','Closed'].map(function(s) { return '<option value="' + s + '"' + (p.pipeline_status===s?' selected':'') + '>' + s + '</option>'; }).join('') + '</select></td>'
       + '<td><div class="contact-info-cell"><div>' + (p.email||'-') + '</div><div class="phone">' + (p.phone||'') + '</div></div></td>'
       + '<td><span class="score-cell ' + scoreClass + '">' + (score||'-') + '</span></td>'
       + '<td><span class="source-tag">' + (p.source||'-') + '</span></td>'
@@ -1269,7 +1296,7 @@ function renderCards() {
       + '<div class="card-av" style="background:' + av.bg + ';color:' + av.fg + '">' + init + '</div>'
       + '<div class="card-name">' + name + '</div>'
       + '<div class="card-email">' + (p.email||p.phone||'No contact info') + '</div>'
-      + '<div class="card-row"><span class="source-tag">' + (p.lead_status||'New Lead') + '</span><span class="score-cell ' + scoreClass + '">' + (score||'?') + '</span></div>'
+      + '<div class="card-row"><span class="source-tag">' + (p.pipeline_status||'New Lead') + '</span><span class="score-cell ' + scoreClass + '">' + (score||'?') + '</span></div>'
       + (p.effective_loan_type ? '<div style="font-size:11px;color:var(--muted)">' + p.effective_loan_type + (p.loan_amount ? ' &middot; $' + Number(p.loan_amount).toLocaleString() : '') + '</div>' : '')
       + '<div class="card-tags">' + renderTagMini(p.tags) + '</div>'
       + '</div>';
@@ -1550,6 +1577,8 @@ function clearAllFilters() {
   _filterPortal = 'any';
   _filterReferralPartner = null;
   _filterShared = '';
+  _filterStaleDays = 0;
+  _filterExcludeClosed = false;
   renderShareFilterPills();
   _currentTab = 'all';
   _currentType = 'all';
@@ -1608,6 +1637,8 @@ function applyView(id) {
   _filterTagIds = (f.tag_ids || []).slice();
   _filterTemps = (f.temperatures || []).slice();
   _filterPortal = f.has_portal || 'any';
+  _filterStaleDays = Number(f.stale_days) || 0;
+  _filterExcludeClosed = !!f.exclude_closed;
   _searchQ = f.search || '';
   document.getElementById('searchInput').value = _searchQ;
   document.getElementById('fpScoreMin').value = f.min_score || '';
@@ -1697,8 +1728,11 @@ function openPerson(contactId) { window.location.href = 'lead-detail?contact_id=
 async function updateStageInline(contactId, status) {
   var { error: _c1Err } = await _authClient().from('contacts').update({ pipeline_status: status, updated_at: new Date().toISOString() }).eq('id', contactId);
   if (_c1Err) console.warn('[stage-update contacts]', _c1Err);
-  var { error: _l1Err } = await _authClient().from('leads').update({ status: status, updated_at: new Date().toISOString() }).eq('contact_id', contactId);
-  if (_l1Err) console.warn('[stage-update leads]', _l1Err);
+  /* The leads.update({status}) call that used to sit here was removed. leads is a
+     VIEW and its INSTEAD OF UPDATE trigger (leads_update_fn) writes
+     pipeline_status and never reads NEW.status — so this succeeded, returned no
+     error, and changed nothing. A write nobody receives is worse than no write:
+     it reads as belt-and-braces while doing exactly none of it. */
   var p = _allPeople.find(function(x) { return x.id === contactId; });
   if (p) { p.lead_status = status; p.pipeline_status = status; }
   showToast('Stage updated to ' + status);

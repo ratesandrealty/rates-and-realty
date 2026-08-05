@@ -217,9 +217,20 @@ Deno.serve(async (req) => {
         { count: needsFollowUp }, { count: stalled },
       ] = await Promise.all([
         sb.from("contacts").select("id", { count: "exact", head: true }),
-        sb.from("contacts").select("id", { count: "exact", head: true }).eq("lead_temperature", "Hot"),
-        sb.from("contacts").select("id", { count: "exact", head: true }).eq("lead_temperature", "Warm"),
-        sb.from("contacts").select("id", { count: "exact", head: true }).eq("lead_temperature", "Cold"),
+        /* Derived from lead_score, NOT the stored lead_temperature column.
+         *
+         * The pill and the Hot TAB used to be different quantities wearing the
+         * same label: the pill counted lead_temperature='Hot' (4) while the tab
+         * counted a score threshold (0). Nothing writes lead_temperature —
+         * no DB function, no app code — so it is a fossil, and three of its four
+         * stored-Hot rows are closed deals.
+         *
+         * These thresholds are the same 75/50 as admin/js/lead-tiers.js. They
+         * cannot literally share the constant across the Deno/browser boundary,
+         * so if you change one, change the other. */
+        sb.from("contacts").select("id", { count: "exact", head: true }).gte("lead_score", 75),
+        sb.from("contacts").select("id", { count: "exact", head: true }).gte("lead_score", 50).lt("lead_score", 75),
+        sb.from("contacts").select("id", { count: "exact", head: true }).or("lead_score.lt.50,lead_score.is.null"),
         sb.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", dayAgo),
         sb.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", weekAgo),
         sb.from("contacts").select("id", { count: "exact", head: true }).in("pipeline_status", ["Pre-Approved", "Processing", "Under Contract", "Submitted", "Approved"]),
