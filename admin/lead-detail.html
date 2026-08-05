@@ -9963,7 +9963,16 @@ async function _lpSaveAppField(col, value){
       await _authClient().from('mortgage_applications').update({ [col]:value, updated_at:new Date().toISOString() }).eq('id',appId);
       if(typeof _activeBorrowerApp!=='undefined' && _activeBorrowerApp && _activeBorrowerApp.id===appId){ _activeBorrowerApp[col]=value; }
     }
-    else { await _authClient().from('mortgage_applications').insert({ contact_id:cid, [col]:value }); }
+    /* UPSERT, not insert. This is a per-field autosave doing check-then-act:
+       look up the app row, UPDATE if found, INSERT if not. Two fields saved
+       quickly on a contact with no application both completed the lookup
+       before either insert committed, so both inserted — four borrowers
+       (Hurtado, Torres, Quintero, Boswell) ended up with duplicate
+       applications 57-110ms apart, each firing clickup_app_submitted a
+       second time and producing a duplicate task AND ClickUp card.
+       mortgage_applications_one_per_contact now makes the second insert
+       FAIL, so this must upsert or a routine field save starts erroring. */
+    else { await _authClient().from('mortgage_applications').upsert({ contact_id:cid, [col]:value }, { onConflict:'contact_id' }); }
   }catch(e){ console.warn('[lpSaveAppField '+col+']', e&&e.message); }
 }
 function lpSaveCurrentLoan(){
@@ -10571,7 +10580,8 @@ async function lpSaveDate(key, value, appcol){
     try{
       const app = await _fetchAppRowForContact(cid);
       if(app && app.id){ await _authClient().from('mortgage_applications').update({[appcol]:value||null, updated_at:new Date().toISOString()}).eq('id',app.id); }
-      else { await _authClient().from('mortgage_applications').insert({contact_id:cid,[appcol]:value||null}); }
+      // Same race, same fix — see the note on the other insert site.
+      else { await _authClient().from('mortgage_applications').upsert({contact_id:cid,[appcol]:value||null}, { onConflict:'contact_id' }); }
     }catch(e){ console.warn('[lpSaveDate app]', e.message); }
     lpLoadHealth(cid);   // re-run loan_health so the banner/urgent/glow reflect the new date
     return;
