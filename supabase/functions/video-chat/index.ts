@@ -222,12 +222,11 @@ async function reportFailure(slug: string, sessionId: string, detail: string, vi
   try {
     if (!(await bump('err:' + slug, 1))) return;   // already reported this hour
     if (!video) return;
-    // app_notify_system, not app_notify_mentions: this body has no @handle, so
-    // the old call notified nobody while returning cleanly. See the note there.
-    await sb.rpc('app_notify_system', {
+    await sb.rpc('app_notify_mentions', {
       p_source_kind: 'video',
       p_source_id: video.id,
       p_body: `⚠️ The AI chat on video /v/${slug} is failing — visitors are getting the fallback message. ${detail.slice(0, 300)}`,
+      p_actor_user_id: video.created_by,
       p_actor_display: 'Video chat',
       p_contact_id: video.contact_id,
     });
