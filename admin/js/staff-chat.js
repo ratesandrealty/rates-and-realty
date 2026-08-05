@@ -355,27 +355,67 @@
       catch (_) { scToast('Could not download attachment'); }
     }
   }
-  function openLightbox(path, name) {
+  /* FOUR ways out, because any one missing strands somebody:
+   *   1. an X button that is always visible and touch-sized (44px) — the old
+   *      one was a 15px #888 glyph on a near-black backdrop, styled with the
+   *      generic .sc-icon class shared with 12px inline controls
+   *   2. clicking the backdrop — the old handler only fired when the click
+   *      target WAS .sc-light-ov, but .sc-light-body fills the whole area below
+   *      the bar, so every click on the dark surround hit the body div instead
+   *      and did nothing
+   *   3. Escape, which did not exist at all
+   *   4. Browser Back is NOT required and must not be: nothing here touches
+   *      history, so Back would leave the page entirely
+   *
+   * Matches the email attachment viewer's exit semantics deliberately
+   * (inbox.js openAttachmentViewer: X, capture-phase Escape, backdrop). The two
+   * cannot share code today — see the note on _scLightKey. */
+  var _scLightKey = null;
+
+  function openLightbox(path, name, kind) {
     signedUrl(path).then(function (url) {
+      closeLightbox();                       // never stack two
+      var k = kind || 'image';
+      var media = k === 'video' || k === 'recording'
+        ? '<video src="' + esc(url) + '" controls autoplay playsinline></video>'
+        : k === 'audio'
+          ? '<audio src="' + esc(url) + '" controls autoplay></audio>'
+          : '<img src="' + esc(url) + '" alt="' + esc(name || '') + '">';
       var ov = document.createElement('div'); ov.className = 'sc-light-ov'; ov.id = 'sc-light-ov';
       ov.innerHTML = '<div class="sc-light-bar"><span class="sc-light-name">' + esc(name || '') + '</span>'
-        + '<button type="button" class="sc-light-dl" data-sc-download="' + esc(path) + '" data-name="' + esc(name || 'image') + '">⬇ Download</button>'
-        + '<button type="button" class="sc-icon" data-sc-light-close aria-label="Close">✕</button></div>'
-        + '<div class="sc-light-body"><img src="' + esc(url) + '" alt="' + esc(name || '') + '"></div>';
+        + '<button type="button" class="sc-light-dl" data-sc-download="' + esc(path) + '" data-name="' + esc(name || 'file') + '">⬇ Download</button>'
+        + '<button type="button" class="sc-light-x" data-sc-light-close aria-label="Close">✕</button></div>'
+        + '<div class="sc-light-body">' + media + '</div>';
       document.body.appendChild(ov);
-    }).catch(function () { scToast('Could not open image'); });
+      _scLightKey = function (e) { if (e.key === 'Escape') { e.stopPropagation(); closeLightbox(); } };
+      document.addEventListener('keydown', _scLightKey, true);
+    }).catch(function () { scToast('Could not open attachment'); });
   }
-  function closeLightbox() { var ov = document.getElementById('sc-light-ov'); if (ov) ov.remove(); }
+
+  function closeLightbox() {
+    if (_scLightKey) { document.removeEventListener('keydown', _scLightKey, true); _scLightKey = null; }
+    var ov = document.getElementById('sc-light-ov');
+    if (ov) {
+      // Stop playback explicitly; removing the node alone can leave audio running.
+      try { ov.querySelectorAll('video,audio').forEach(function (m) { try { m.pause(); } catch (_) {} }); } catch (_) {}
+      ov.remove();
+    }
+  }
 
   function attViewHtml(kind, mime, url, name, size, path) {
     var k = kind || kindOf(mime);
     var dl = '" data-sc-download="' + esc(path) + '" data-name="' + esc(name) + '"';
     if (k === 'image') return '<div class="sc-att-imgwrap">'
-      + '<img class="sc-att-img" src="' + esc(url) + '" alt="' + esc(name) + '" data-sc-light="' + esc(path) + '" data-name="' + esc(name) + '">'
+      + '<img class="sc-att-img" src="' + esc(url) + '" alt="' + esc(name) + '" data-sc-light="' + esc(path) + '" data-name="' + esc(name) + '" data-lkind="image">'
       + '<button type="button" class="sc-att-dl' + dl + ' title="Download">⬇</button></div>';
+    /* Expand is a BUTTON, not a click-the-video gesture: clicking a <video>
+       toggles playback, so overloading it would make play and full-screen the
+       same gesture. Always visible — hover does not exist on touch. */
     if (k === 'video' || k === 'recording') return '<div class="sc-att-vidwrap">'
       + '<video class="sc-att-media" controls preload="metadata" src="' + esc(url) + '"></video>'
-      + '<button type="button" class="sc-att-dl2' + dl + '>⬇ Download</button></div>';
+      + '<div class="sc-att-vidbtns">'
+      + '<button type="button" class="sc-att-dl2" data-sc-light="' + esc(path) + '" data-name="' + esc(name) + '" data-lkind="video">⤢ Expand</button>'
+      + '<button type="button" class="sc-att-dl2' + dl + '>⬇ Download</button></div></div>';
     if (k === 'audio') return '<div class="sc-att-audwrap">'
       + '<audio class="sc-att-audio" controls preload="metadata" src="' + esc(url) + '"></audio>'
       + '<button type="button" class="sc-att-dl2' + dl + '>⬇ Download</button></div>';
@@ -1010,7 +1050,12 @@
       '.sc-att-dl2{align-self:flex-start;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#e6e6e6;font-size:11px;font-weight:600;border-radius:7px;padding:4px 10px;cursor:pointer;font-family:inherit}',
       '.sc-att-dl2:hover{background:rgba(255,255,255,.14)}',
       // full-size image lightbox
-      '.sc-light-ov{position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.9);display:flex;flex-direction:column}',
+      '.sc-light-ov{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.92);display:flex;flex-direction:column}',
+      '.sc-light-x{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#fff;font-size:18px;line-height:1;cursor:pointer;border-radius:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:inherit}',
+      '.sc-light-x:hover{background:rgba(255,255,255,.22)}',
+      '.sc-light-body video,.sc-light-body audio{max-width:100%;max-height:100%;outline:none}',
+      '.sc-light-body video{background:#000;border-radius:6px}',
+      '.sc-att-vidbtns{display:flex;gap:6px;flex-wrap:wrap}',
       '.sc-light-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;flex-shrink:0}',
       '.sc-light-name{flex:1;min-width:0;color:#ddd;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.sc-light-dl{background:#C9A84C;border:none;color:#111;font-weight:700;font-size:12px;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;flex-shrink:0}',
@@ -1150,8 +1195,15 @@
       if (e.target.closest('[data-sc-new]')) { showNewChat(); return; }
       if (e.target.closest('[data-sc-send]')) { send(); return; }
       var dlb = e.target.closest('[data-sc-download]'); if (dlb) { downloadAttachment(dlb.getAttribute('data-sc-download'), dlb.getAttribute('data-name')); return; }
-      if (e.target.closest('[data-sc-light-close]') || (e.target.classList && e.target.classList.contains('sc-light-ov'))) { closeLightbox(); return; }
-      var lb = e.target.closest('[data-sc-light]'); if (lb) { openLightbox(lb.getAttribute('data-sc-light'), lb.getAttribute('data-name')); return; }
+      if (e.target.closest('[data-sc-light-close]')) { closeLightbox(); return; }
+      /* Backdrop: anywhere inside the overlay that is not the media itself or a
+         control. The old test required e.target to BE .sc-light-ov, but
+         .sc-light-body covers everything below the bar, so clicks on the dark
+         surround never matched and the backdrop appeared dead. */
+      var inOv = e.target.closest('#sc-light-ov');
+      if (inOv && !e.target.closest('img,video,audio,button')) { closeLightbox(); return; }
+      var lb = e.target.closest('[data-sc-light]');
+      if (lb) { openLightbox(lb.getAttribute('data-sc-light'), lb.getAttribute('data-name'), lb.getAttribute('data-lkind')); return; }
       if (e.target.closest('[data-sc-attach]')) { var f = document.getElementById('sc-file'); if (f) f.click(); return; }
       if (e.target.closest('[data-sc-record]')) { openRecordMenu(); return; }
       var rm = e.target.closest('[data-sc-tray-remove]'); if (rm) { removePending(rm.getAttribute('data-sc-tray-remove')); return; }
