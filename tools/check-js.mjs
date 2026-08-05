@@ -48,6 +48,19 @@ const GUARDED = {
   'dashboard/utils/lead-picker.js': { min: 6000, require: ['})();', 'window.LeadPicker', 'function mount'] },
   'dashboard/utils/calendar.js':    { min: 20000, require: ['})();', 'function getViewRange'] },
   'dashboard/utils/clickup-tasks.js': { min: 15000, require: ['})();'] },
+
+  /* HTML pages carrying substantial inline script. Unguarded until a dangling
+   * ").join('');" in people.html shipped to production and broke the whole
+   * page — this list existed, the deploy gate ran, and neither looked at the
+   * file that was broken. Anchors are the LAST thing in each page's script, so
+   * a truncated tail fails the check even if what survives happens to parse. */
+  'admin/people.html':          { min: 180000, require: ['function applyFilters', 'writeFiltersToUrl'] },
+  'admin/lead-detail.html':     { min: 2000000, require: ['function goBack', 'function notifOpen'] },
+  'dashboard/admin.html':       { min: 300000, require: ['window.notifOpen'] },
+  'admin/email-marketing.html': { min: 95000,  require: ['function emVideo'] },
+  'admin/pipeline.html':        { min: 12000,  require: [] },
+  'admin/lenders.html':         { min: 140000, require: [] },
+  'admin/video-chats.html':     { min: 6000,   require: ['video_chat_sessions'] },
 };
 
 function check(path, opts) {
@@ -61,6 +74,50 @@ function check(path, opts) {
 
   let src = '';
   try { src = readFileSync(path, 'utf8'); } catch (e) { errs.push(`${path}: unreadable — ${e.message}`); }
+
+  /* HTML: parse the INLINE SCRIPT BLOCKS, one at a time, the way a browser does.
+   *
+   * This guard only ever covered .js/.mjs, so the biggest and most-edited files
+   * in the repo — lead-detail.html at 2.3 MB, people.html, dashboard/admin.html
+   * — were never parsed at all. A scripted edit left a dangling ").join('');"
+   * in people.html, deploy.sh ran check-js, check-js said "OK — 10 guarded
+   * files", and the page shipped with its entire inline script failing to
+   * parse: static nav, nothing else. The gate was honest; it just wasn't
+   * looking here.
+   *
+   * Blocks are checked SEPARATELY because that is how a browser treats them: a
+   * parse error in one does not stop the next, but it does kill everything in
+   * that block. Concatenating them could also mask an imbalance in one by
+   * cancelling it against another.
+   *
+   * Only executable blocks: no src= (that's a separate file, guarded on its own
+   * terms) and no non-JS type= (application/json, text/template). */
+  if (src && /\.html?$/i.test(path)) {
+    const blocks = [...src.matchAll(/<script([^>]*)>([\s\S]*?)<\/script\s*>/gi)]
+      .filter(([, attrs]) => !/\bsrc\s*=/i.test(attrs)
+        && !/\btype\s*=\s*["']?(?!text\/javascript|module|application\/javascript)[^"'\s>]+/i.test(attrs));
+    if (!blocks.length) errs.push(`${path}: no inline <script> blocks found — extraction may be broken`);
+    blocks.forEach(([, , code], i) => {
+      const where = `${path} inline block ${i + 1}/${blocks.length}`;
+      try {
+        new Function(code);
+      } catch (scriptErr) {
+        const tmp = `${tmpdir()}/checkjs-${randomUUID()}.mjs`;
+        try {
+          writeFileSync(tmp, code);
+          execFileSync(process.execPath, ['--check', tmp], { stdio: 'pipe' });
+        } catch (modErr) {
+          const detail = (modErr.stderr && modErr.stderr.toString().trim().split('\n').find((l) => /Error|error/.test(l)))
+            || scriptErr.message;
+          errs.push(`${where}: SYNTAX ERROR — ${detail}`);
+        } finally { try { unlinkSync(tmp); } catch (_) {} }
+      }
+    });
+    for (const needle of (opts.require || [])) {
+      if (!src.includes(needle)) errs.push(`${path}: missing required anchor ${JSON.stringify(needle)} — the tail of the file may be missing`);
+    }
+    return errs;
+  }
 
   if (src) {
     /* Two dialects. new Function() is a script parser and rejects `export` /
