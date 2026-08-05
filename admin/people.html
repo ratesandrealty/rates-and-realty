@@ -477,10 +477,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       <div class="fp-section-title">Pipeline Status</div>
       <div class="fp-pills" id="fpPipelinePills"></div>
     </div>
-    <div class="fp-section">
-      <div class="fp-section-title">Lead Temperature</div>
-      <div class="fp-pills" id="fpTempPills"></div>
-    </div>
+    <!-- The duplicate "Lead Temperature" section that sat here is gone. There
+         were two, both writing the SAME _filterTemps array: this one rendered
+         its pills from JS into #fpTempPills, the one below Lead Score Range is
+         static HTML (#fpTempToggles) calling toggleTemp(). Sharing state but
+         not sharing a renderer, they could disagree on screen — toggling one
+         left the other's highlight stale. The static one survives because it
+         cannot be blanked by a JS throw, which is exactly what left this one
+         empty while Referral Partner below it was stuck on "Loading...". -->
     <div class="fp-section">
       <div class="fp-section-title">Referral Partner</div>
       <div class="fp-pills" id="fpReferralPills"><span style="font-size:11px;color:#444;">Loading...</span></div>
@@ -1345,28 +1349,24 @@ function toggleFilterPanel() {
   if (!isOpen) renderFilterPanelOptions();
 }
 
+/* Each section is isolated. This function used to be a straight sequence ending
+   in renderReferralPartnerPills(), so ANY throw above that line -- a missing
+   option constant, one bad tag row -- left the partner picker showing
+   "Loading..." permanently, with the real error swallowed by whoever called it.
+   One broken section should cost you that section, not the panel. */
+function _fpSection(name, fn) {
+  try { fn(); } catch (e) { console.error('[filter-panel] ' + name + ' failed:', e); }
+}
+
 function renderFilterPanelOptions() {
-  renderFilterPanelTags();
-  renderPillGroup('fpSourcePills', SOURCE_OPTIONS, _filterSources, function(val) { toggleArrayFilter(_filterSources, val); applyFilters(); renderFilterPanelOptions(); });
-  renderPillGroup('fpLoanPills', LOAN_OPTIONS, _filterLoanTypes, function(val) { toggleArrayFilter(_filterLoanTypes, val); applyFilters(); renderFilterPanelOptions(); });
-  renderPillGroup('fpPipelinePills', PIPELINE_OPTIONS, _filterPipelines, function(val) { toggleArrayFilter(_filterPipelines, val); applyFilters(); renderFilterPanelOptions(); });
-  // Temperature pills
-  var tempContainer = document.getElementById('fpTempPills');
-  if (tempContainer) {
-    var tempOpts = [
-      {val:'Hot',icon:'\uD83D\uDD25',color:'#F07878',border:'rgba(224,82,82,0.3)'},
-      {val:'Warm',icon:'\u2600\uFE0F',color:'#E0A852',border:'rgba(224,165,82,0.3)'},
-      {val:'Cold',icon:'\uD83E\uDDCA',color:'#7BBCE8',border:'rgba(90,160,224,0.3)'}
-    ];
-    tempContainer.innerHTML = tempOpts.map(function(t) {
-      var sel = _filterTemps.indexOf(t.val) >= 0;
-      return '<div class="fp-pill' + (sel?' selected':'') + '" onclick="toggleTempFilter(\'' + t.val + '\')" ' +
-        'style="border-color:' + (sel?t.border:'rgba(255,255,255,0.1)') + ';color:' + (sel?t.color:'#888') + ';' +
-        (sel?'background:rgba(201,168,76,0.1);':'') + '">' + t.icon + ' ' + t.val + '</div>';
-    }).join('');
+  _fpSection('referral partners', renderReferralPartnerPills);
+  _fpSection('tags', renderFilterPanelTags);
+  _fpSection('source', function() { renderPillGroup('fpSourcePills', SOURCE_OPTIONS, _filterSources, function(val) { toggleArrayFilter(_filterSources, val); applyFilters(); renderFilterPanelOptions(); }); });
+  _fpSection('loan types', function() { renderPillGroup('fpLoanPills', LOAN_OPTIONS, _filterLoanTypes, function(val) { toggleArrayFilter(_filterLoanTypes, val); applyFilters(); renderFilterPanelOptions(); }); });
+  _fpSection('pipeline', function() { renderPillGroup('fpPipelinePills', PIPELINE_OPTIONS, _filterPipelines, function(val) { toggleArrayFilter(_filterPipelines, val); applyFilters(); renderFilterPanelOptions(); }); });
+  // (the #fpTempPills renderer was removed with its duplicate section above)
+).join('');
   }
-  // Referral partner pills
-  renderReferralPartnerPills();
 }
 
 function renderFilterPanelTags() {
@@ -1408,17 +1408,40 @@ function toggleTempFilter(val) {
 }
 
 var _referralPartners = [];
+/* 'loading' until the fetch settles, then 'ok' or 'error'. Without this the
+   pills could only ever say "Loading..." or "No partners", so a failed read and
+   a genuinely empty table looked identical -- and a read that never rendered at
+   all looked like a read still in flight, forever. */
+var _rpState = 'loading';
+var _rpError = '';
+
 async function loadReferralPartners() {
   try {
     var { data, error } = await _authClient().from('referral_partners').select('id,first_name,last_name,company').order('first_name');
     if (error) throw error;
     _referralPartners = data || [];
-  } catch(e) { console.warn('[loadReferralPartners]', e); _referralPartners = []; }
+    _rpState = 'ok'; _rpError = '';
+  } catch(e) {
+    console.warn('[loadReferralPartners]', e);
+    _referralPartners = [];
+    _rpState = 'error';
+    _rpError = (e && (e.message || e.hint || e.code)) || String(e);
+  }
+  // Render as soon as we know, rather than waiting for someone to open the
+  // panel -- that dependency is why a stuck "Loading..." was invisible.
+  try { renderReferralPartnerPills(); } catch (e2) { console.warn('[rp render]', e2); }
 }
 
 function renderReferralPartnerPills() {
   var container = document.getElementById('fpReferralPills');
   if (!container) return;
+  if (_rpState === 'loading') { container.innerHTML = '<span style="font-size:11px;color:#444;">Loading…</span>'; return; }
+  if (_rpState === 'error') {
+    container.innerHTML = '<span style="font-size:11px;color:#F07878;">Could not load partners — '
+      + String(_rpError).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; })
+      + ' <button type="button" class="fp-pill" onclick="loadReferralPartners()">Retry</button></span>';
+    return;
+  }
   if (!_referralPartners.length) { container.innerHTML = '<span style="font-size:11px;color:#444;">No partners</span>'; return; }
   container.innerHTML =
     '<div class="fp-pill' + (!_filterReferralPartner ? ' selected' : '') + '" onclick="setReferralFilter(null)">Any</div>' +
@@ -3448,7 +3471,13 @@ async function applyBulkStage() {
   }
   closeBulkStage();
   showToast('Updated ' + ids.length + ' contacts to ' + window._bulkNewStage);
-  loadPage(_currentPage);
+  /* Was loadPage(_currentPage) — NEITHER of those exists anywhere in this page
+     or in any script it loads. So every bulk stage change updated the contacts,
+     closed the modal, toasted "Updated N contacts" and then threw a
+     ReferenceError, leaving the list showing the OLD stage. The writes landed;
+     the refresh never ran, so it looked like the update had failed. Found by a
+     defined-vs-referenced sweep, not by parsing — this line is valid syntax. */
+  await loadPeople();
 }
 
 function bulkExportCSV() {
