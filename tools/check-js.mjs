@@ -39,7 +39,10 @@ const GUARDED = {
   'admin/js/inbox.js':        { min: 150000, require: ['})();', 'function renderThread', 'function mount'] },
   'admin/js/auth-guard.js':   { min: 8000,   require: ['})();', 'redirectToLogin'] },
   'admin/js/task-capture.js': { min: 20000,  require: ['})();', 'openDialog'] },
-  'admin/js/staff-chat.js':   { min: 2000,   require: [] },
+  /* Floor was 2000 for a 91 KB file — it would have passed a copy that lost 97%
+   * of itself. Measured at 91349, set at ~85%. Anchors are the module's export
+   * and the two things a truncated tail would drop. */
+  'admin/js/staff-chat.js':   { min: 77000,  require: ['})();', 'function attViewHtml', 'function openLightbox'] },
   'admin/js/loom-recorder.js':{ min: 5000,   require: [] },
   /* The single attachment viewer behind BOTH the email attachment path and (once
    * mounted) staff chat. Floor measured at 10747 bytes, set at ~85%. */

@@ -355,51 +355,46 @@
       catch (_) { scToast('Could not download attachment'); }
     }
   }
-  /* FOUR ways out, because any one missing strands somebody:
-   *   1. an X button that is always visible and touch-sized (44px) — the old
-   *      one was a 15px #888 glyph on a near-black backdrop, styled with the
-   *      generic .sc-icon class shared with 12px inline controls
-   *   2. clicking the backdrop — the old handler only fired when the click
-   *      target WAS .sc-light-ov, but .sc-light-body fills the whole area below
-   *      the bar, so every click on the dark surround hit the body div instead
-   *      and did nothing
-   *   3. Escape, which did not exist at all
-   *   4. Browser Back is NOT required and must not be: nothing here touches
-   *      history, so Back would leave the page entirely
+  /* Delegates to the SHARED viewer (admin/js/attachment-viewer.js), the same one
+   * the email attachment path uses. The half-built lightbox that lived here is
+   * gone: it handled images only, its X was a 15px #888 glyph on a near-black
+   * backdrop, its backdrop test required e.target to BE the overlay when a child
+   * div covered the whole area, and it had no Escape — so in practice the only
+   * way out was reloading the page.
    *
-   * Matches the email attachment viewer's exit semantics deliberately
-   * (inbox.js openAttachmentViewer: X, capture-phase Escape, backdrop). The two
-   * cannot share code today — see the note on _scLightKey. */
-  var _scLightKey = null;
-
+   * PDFs now PREVIEW rather than downloading, which was the point of extracting
+   * the viewer at all. Images and video go through the same component.
+   *
+   * fetch() differs from inbox's: staff chat has a storage_path and mints a
+   * signed URL, where inbox reads data-att-* attributes and calls the Gmail edge
+   * function. Both return {blob,mime,name,size}; neither contract lives in the
+   * viewer. No onOpen hook — that exists for inbox's hover card, which staff
+   * chat does not have. */
   function openLightbox(path, name, kind) {
-    signedUrl(path).then(function (url) {
-      closeLightbox();                       // never stack two
-      var k = kind || 'image';
-      var media = k === 'video' || k === 'recording'
-        ? '<video src="' + esc(url) + '" controls autoplay playsinline></video>'
-        : k === 'audio'
-          ? '<audio src="' + esc(url) + '" controls autoplay></audio>'
-          : '<img src="' + esc(url) + '" alt="' + esc(name || '') + '">';
-      var ov = document.createElement('div'); ov.className = 'sc-light-ov'; ov.id = 'sc-light-ov';
-      ov.innerHTML = '<div class="sc-light-bar"><span class="sc-light-name">' + esc(name || '') + '</span>'
-        + '<button type="button" class="sc-light-dl" data-sc-download="' + esc(path) + '" data-name="' + esc(name || 'file') + '">⬇ Download</button>'
-        + '<button type="button" class="sc-light-x" data-sc-light-close aria-label="Close">✕</button></div>'
-        + '<div class="sc-light-body">' + media + '</div>';
-      document.body.appendChild(ov);
-      _scLightKey = function (e) { if (e.key === 'Escape') { e.stopPropagation(); closeLightbox(); } };
-      document.addEventListener('keydown', _scLightKey, true);
-    }).catch(function () { scToast('Could not open attachment'); });
+    if (!window.AttachmentViewer) { scToast('Viewer still loading, try again in a moment'); return; }
+    window.AttachmentViewer.open({
+      name: name || 'attachment',
+      mime: mimeForKind(kind),
+      fetch: async function () {
+        var url = await signedUrl(path);
+        // window.fetch explicitly: `fetch` is shadowed by this option's own key.
+        var r = await window.fetch(url);
+        if (!r.ok) throw new Error('Could not load attachment (HTTP ' + r.status + ')');
+        var blob = await r.blob();
+        return { blob: blob, mime: blob.type || mimeForKind(kind), name: name || 'attachment', size: blob.size };
+      }
+    });
   }
 
-  function closeLightbox() {
-    if (_scLightKey) { document.removeEventListener('keydown', _scLightKey, true); _scLightKey = null; }
-    var ov = document.getElementById('sc-light-ov');
-    if (ov) {
-      // Stop playback explicitly; removing the node alone can leave audio running.
-      try { ov.querySelectorAll('video,audio').forEach(function (m) { try { m.pause(); } catch (_) {} }); } catch (_) {}
-      ov.remove();
-    }
+  /* The viewer decides how to render from the MIME type, but a chat attachment
+     carries a coarse `kind` on the element. Map it so a PDF opens as a PDF; the
+     real blob type wins once the bytes arrive. */
+  function mimeForKind(kind) {
+    if (kind === 'image') return 'image/*';
+    if (kind === 'video' || kind === 'recording') return 'video/*';
+    if (kind === 'audio') return 'audio/*';
+    if (kind === 'pdf') return 'application/pdf';
+    return '';
   }
 
   function attViewHtml(kind, mime, url, name, size, path) {
@@ -419,7 +414,17 @@
     if (k === 'audio') return '<div class="sc-att-audwrap">'
       + '<audio class="sc-att-audio" controls preload="metadata" src="' + esc(url) + '"></audio>'
       + '<button type="button" class="sc-att-dl2' + dl + '>⬇ Download</button></div>';
-    return '<button type="button" class="sc-att-file' + dl + '><span class="sc-att-fic">📄</span><span class="sc-att-fmeta"><span class="sc-att-fname">' + esc(name) + '</span><span class="sc-att-fsize">' + esc(humanSize(size)) + '</span></span><span class="sc-att-fdl">⬇</span></button>';
+    /* A PDF now OPENS in the shared viewer rather than downloading — that was the
+       whole point of the extraction. The ⬇ stays as a separate control so
+       downloading is still one click, and non-previewable types fall through to
+       the viewer's "No preview for this file type — use Download." */
+    var isPdf = /pdf/i.test(mime || '') || /\.pdf$/i.test(name || '');
+    return '<div class="sc-att-filewrap">'
+      + '<button type="button" class="sc-att-file" data-sc-light="' + esc(path) + '" data-name="' + esc(name) + '" data-lkind="' + (isPdf ? 'pdf' : 'file') + '">'
+      + '<span class="sc-att-fic">' + (isPdf ? '📕' : '📄') + '</span>'
+      + '<span class="sc-att-fmeta"><span class="sc-att-fname">' + esc(name) + '</span>'
+      + '<span class="sc-att-fsize">' + esc(humanSize(size)) + (isPdf ? ' · tap to preview' : '') + '</span></span></button>'
+      + '<button type="button" class="sc-att-dl2' + dl + '>⬇</button></div>';
   }
   function attPlaceholderHtml(a) {
     var kind = a.kind || kindOf(a.mime_type);
@@ -1050,17 +1055,8 @@
       '.sc-att-dl2{align-self:flex-start;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#e6e6e6;font-size:11px;font-weight:600;border-radius:7px;padding:4px 10px;cursor:pointer;font-family:inherit}',
       '.sc-att-dl2:hover{background:rgba(255,255,255,.14)}',
       // full-size image lightbox
-      '.sc-light-ov{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.92);display:flex;flex-direction:column}',
-      '.sc-light-x{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#fff;font-size:18px;line-height:1;cursor:pointer;border-radius:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:inherit}',
-      '.sc-light-x:hover{background:rgba(255,255,255,.22)}',
-      '.sc-light-body video,.sc-light-body audio{max-width:100%;max-height:100%;outline:none}',
-      '.sc-light-body video{background:#000;border-radius:6px}',
       '.sc-att-vidbtns{display:flex;gap:6px;flex-wrap:wrap}',
-      '.sc-light-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;flex-shrink:0}',
-      '.sc-light-name{flex:1;min-width:0;color:#ddd;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.sc-light-dl{background:#C9A84C;border:none;color:#111;font-weight:700;font-size:12px;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;flex-shrink:0}',
-      '.sc-light-body{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 16px 16px}',
-      '.sc-light-body img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}',
+      '.sc-att-filewrap{display:flex;align-items:stretch;gap:6px;max-width:100%}',
       // record overlay
       '.sc-rec-ov{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:18px}',
       '.sc-rec-box{width:min(420px,94vw);background:#0d0d0d;border:1px solid rgba(201,168,76,.3);border-radius:14px;overflow:hidden;box-shadow:0 20px 56px rgba(0,0,0,.6);display:flex;flex-direction:column}',
@@ -1195,13 +1191,8 @@
       if (e.target.closest('[data-sc-new]')) { showNewChat(); return; }
       if (e.target.closest('[data-sc-send]')) { send(); return; }
       var dlb = e.target.closest('[data-sc-download]'); if (dlb) { downloadAttachment(dlb.getAttribute('data-sc-download'), dlb.getAttribute('data-name')); return; }
-      if (e.target.closest('[data-sc-light-close]')) { closeLightbox(); return; }
-      /* Backdrop: anywhere inside the overlay that is not the media itself or a
-         control. The old test required e.target to BE .sc-light-ov, but
-         .sc-light-body covers everything below the bar, so clicks on the dark
-         surround never matched and the backdrop appeared dead. */
-      var inOv = e.target.closest('#sc-light-ov');
-      if (inOv && !e.target.closest('img,video,audio,button')) { closeLightbox(); return; }
+      /* The X / backdrop / Escape handling moved into the shared viewer, which
+         owns its own overlay. Nothing here manages it any more. */
       var lb = e.target.closest('[data-sc-light]');
       if (lb) { openLightbox(lb.getAttribute('data-sc-light'), lb.getAttribute('data-name'), lb.getAttribute('data-lkind')); return; }
       if (e.target.closest('[data-sc-attach]')) { var f = document.getElementById('sc-file'); if (f) f.click(); return; }
