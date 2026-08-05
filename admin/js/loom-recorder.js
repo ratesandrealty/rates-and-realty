@@ -147,6 +147,21 @@
       + '<span>' + esc(title) + '<span class="lr-sub">' + esc(sub) + '</span></span></button>';
   }
 
+  /* A neutral end-of-session notice, for when nothing went wrong.
+   *
+   * Deliberately NOT permError. That one opens with "Screen sharing was blocked
+   * or cancelled — you also need to allow the camera & microphone", which is
+   * actively misleading when permissions were never the problem: it sends the
+   * user off to check settings that were fine. Ending the share from Chrome's
+   * bar on the Ready screen is an ordinary change of mind, not a failure, and
+   * has to read like one. */
+  function notice(title, msg) {
+    teardownStreams();
+    setHead(title);
+    body().innerHTML = '<div class="lr-msg">' + esc(msg) + '</div>'
+      + '<div class="lr-ctrl"><button type="button" class="lr-btn ghost" data-lr-menu style="flex:1">← Back</button></div>';
+  }
+
   function permError(mode, detail) {
     teardownStreams();
     setHead('Permission needed');
@@ -269,7 +284,8 @@
     try {
       var vt0 = screenStream.getVideoTracks()[0];
       if (vt0) vt0.addEventListener('ended', function () {
-        if (_armed) permError('loom', 'Screen sharing ended before recording started.');
+        if (_armed) notice('Nothing recorded',
+          'You ended screen sharing before pressing Start recording. Nothing was recorded — go back and choose a mode to try again.');
       });
     } catch (e) {}
   }
@@ -283,7 +299,12 @@
       + '</div>'
       + '<div class="lr-ctrl">'
       + '<button type="button" class="lr-btn ghost" data-lr-menu>← Back</button>'
-      + '<button type="button" class="lr-btn" data-lr-go style="flex:1">▶ Start recording</button>'
+      /* gold, like lr-save. Bare .lr-btn sets no background and no colour, so it
+       * fell through to the UA default — a grey system button with black text on
+       * a dark overlay, next to a properly styled ghost "Back". The primary
+       * action read as less legitimate than the way out of it, which is why the
+       * first user of this screen reached for Chrome's Stop-sharing bar. */
+      + '<button type="button" class="lr-btn gold" data-lr-go style="flex:1;padding:12px 16px;font-size:14px">▶ Start recording</button>'
       + '</div>';
     var stage = document.getElementById('lr-stage');
     if (stage && _armed) stage.appendChild(_armed.canvas);
@@ -406,7 +427,7 @@
     var mime = bestMime(isAudio);
     var recorder;
     try { recorder = mime ? new MediaRecorder(recordStream, { mimeType: mime }) : new MediaRecorder(recordStream); }
-    catch (e) { permError(mode, 'Recording is not supported in this browser'); try { recordStream.getTracks().forEach(function (t) { t.stop(); }); } catch (x) {} return; }
+    catch (e) { notice('Can’t record here', 'This browser can’t record video. Chrome or Edge on a desktop will work.'); try { recordStream.getTracks().forEach(function (t) { t.stop(); }); } catch (x) {} return; }
     var chunks = [];
     recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
     recorder.onstop = function () {
@@ -420,7 +441,7 @@
       startedAt: 0, timer: null, blob: null, previewUrl: null
     };
     try { recorder.start(); _rec.startedAt = performance.now(); }
-    catch (e) { permError(mode, 'Could not start recording'); teardownStreams(); return; }
+    catch (e) { notice('Could not start', 'The recorder failed to start. Nothing was recorded — go back and try again.'); teardownStreams(); return; }
   }
 
   function renderRecordingUi(mode, isAudio, previewStream, canvasEl) {
